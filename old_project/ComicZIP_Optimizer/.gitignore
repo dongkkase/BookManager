@@ -1,0 +1,48 @@
+# Build
+build/
+dist/
+*.spec
+*.zip
+
+# Config
+config.json
+rename_history.json
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Cache / DB
+api_cache.db
+cache/
+
+# Logs / temp
+*.log
+*.tmp
+*.bak
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Virtual env
+venv/
+.env
+.env.*
+
+# Test / coverage
+.pytest_cache/
+.coverage
+
+# Project data
+data/
+
+.api_cache.db
+
+.aiexclude
+
+memo.md
