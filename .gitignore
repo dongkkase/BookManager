@@ -1,0 +1,52 @@
+# User Custom
+/old_project
+memo.md
+.vscode
+.roo
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production Build (React, Electron)
+build/
+dist/
+out/
+release/
+
+# Testing
+coverage/
+
+# Node Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Local LLM Models & Weights
+*.gguf
+*.bin
+*.pt
+*.safetensors
+*.onnx
+models/
+weights/
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
