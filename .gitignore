@@ -12,7 +12,7 @@ memo.md
 node_modules/
 
 
-# Production Build (React, Electron) 
+# Production Build (React, Electron)
 build/
 dist/
 out/
