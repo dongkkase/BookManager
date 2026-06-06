@@ -1,5 +1,8 @@
 # User Custom
 .DS_Store
+.bak
+.roo
+.vscode
 /old_project
 memo.md
 .vscode
