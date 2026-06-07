@@ -1,33 +1,35 @@
-import sys
 import ctypes
-import traceback
 import os
+import sys
+import traceback
 
 # [핵심] PyInstaller -w 모드(콘솔 숨김)에서 sys.stdout/stderr가 None이 되어
 # 외부 백엔드 서버(WebDAV 등)가 내부 로깅을 시도하다 크래시(연결 유실)되는 현상을 전역적으로 차단합니다.
-if sys.stdout is None: sys.stdout = open(os.devnull, "w")
-if sys.stderr is None: sys.stderr = open(os.devnull, "w")
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
 
 os.environ["QT_LOGGING_RULES"] = "qt.gui.icc.warning=false"
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QSharedMemory, Qt
-from PyQt6.QtGui import QFontDatabase, QFont
-from ui.main_window import RenamerApp
 from config import get_font_path
+from PyQt6.QtCore import QSharedMemory
+from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtWidgets import QApplication
+from ui.main_window import RenamerApp
 
 
 def exception_hook(exctype, value, tb):
     traceback.print_exception(exctype, value, tb)
+
 
 sys.excepthook = exception_hook
 
 
 def register_custom_fonts(app):
     """fonts/ 폴더의 TTF를 Qt에 등록하고 앱 기본 폰트를 설정 (Windows/Mac 크로스플랫폼)"""
-    from PyQt6.QtGui import QFontDatabase, QFont
-    from config import get_font_path, load_config
-    
+    from config import load_config
+
     config = load_config()
     # 설정된 배율(scale) 가져오기
     scale = config.get("font_scale", 100) / 100.0
@@ -35,7 +37,7 @@ def register_custom_fonts(app):
     base_pixel_size = int(13 * scale)
 
     font_files = {
-        "Jua":        "Jua-Regular.ttf",
+        "Jua": "Jua-Regular.ttf",
         "NotoSansKR": "NotoSansKR-Regular.ttf",
     }
     loaded = []
@@ -53,7 +55,13 @@ def register_custom_fonts(app):
     # 환경 설정의 글꼴 가져오기
     ff = config.get("font_family", "Default")
     if ff == "Default":
-        family = "Jua" if "Jua" in loaded else "Noto Sans KR" if "NotoSansKR" in loaded else None
+        family = (
+            "Jua"
+            if "Jua" in loaded
+            else "Noto Sans KR"
+            if "NotoSansKR" in loaded
+            else None
+        )
     else:
         family = ff
 
@@ -70,10 +78,11 @@ def register_custom_fonts(app):
 
 if __name__ == "__main__":
     # OS 종속성 방어 (Windows에서만 작업 표시줄 그룹화 적용)
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                'dongkkase.comiczip.optimizer.1')
+                "dongkkase.comiczip.optimizer.1"
+            )
             # ClearType(서브픽셀) 렌더링 활성화
             ctypes.windll.gdi32.SetFontSmoothing(True)
         except Exception:

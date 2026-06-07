@@ -1,9 +1,11 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 
+
 class BaseServerThread(QThread):
     """
     모든 공유 서버(OPDS, WebDAV, API 등)의 기본이 되는 추상화 스레드 클래스입니다.
     """
+
     # 서버의 상태(로그 메시지 등)를 UI로 전달하는 시그널
     log_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)

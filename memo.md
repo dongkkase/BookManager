@@ -3,7 +3,6 @@
 ----
 
 ## [역할 및 목표]
-당신은 데스크톱 애플리케이션 개발 및 크로스플랫폼 마이그레이션 전문가입니다. 
 현재 Python(PyQt6)으로 개발된 `ComicZIP Optimizer` 애플리케이션을 **Electron**(Node.js + Web Frontend) 기반으로 마이그레이션해야 합니다.
 
 **최종 목표:** 
