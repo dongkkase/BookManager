@@ -138,3 +138,47 @@ export async function extractWith7Zip(sevenZExe, arcPath, innerPath) {
     throw new Error(`7-Zip extraction failed: ${e.message}`);
   }
 }
+
+/**
+ * List all entries inside an archive (ZIP, CBZ, RAR, CBR, 7z).
+ * @param {string} arcPath - Path to archive file
+ * @param {string} extType - File extension of the archive
+ * @param {string} sevenZExe - Path to 7-Zip executable
+ * @returns {Promise<Array>} Array of entry objects { name, size }
+ */
+export async function listArchiveEntries(arcPath, extType, sevenZExe) {
+  const ext = extType.toLowerCase();
+  
+  if (ext === '.zip' || ext === '.cbz') {
+    const names = await listZipContents(arcPath);
+    return names.map(name => ({ name, size: 0 }));
+  } else {
+    // Use 7-Zip for other formats
+    try {
+      const { stdout } = await execFileAsync(sevenZExe, ['l', arcPath], {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      
+      const entries = [];
+      const lines = stdout.split('\n');
+      
+      for (const line of lines) {
+        // 7-Zip list output format parsing
+        const parts = line.trim().split(/\s{2,}/);
+        if (parts.length >= 6 && !line.startsWith('-------') && !line.startsWith('Path') && line.trim() !== '') {
+          const name = parts.slice(5).join(' ').trim();
+          const sizeMatch = line.match(/(\d+)\s+/);
+          const size = sizeMatch ? parseInt(sizeMatch[1]) : 0;
+          
+          if (name && !name.startsWith('.') && !name.endsWith('/')) {
+            entries.push({ name, size });
+          }
+        }
+      }
+      
+      return entries;
+    } catch (e) {
+      throw new Error(`7-Zip list failed: ${e.message}`);
+    }
+  }
+}

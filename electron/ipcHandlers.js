@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -135,7 +135,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // ========== 앱 정보 ==========
   ipcMain.handle('app:version', () => {
-    return app?..getVersion?.() || '2.8.1';
+    return app?.getVersion?.() || '3.0.0';
   });
 
   // ========== 윈도우 관련 ==========
@@ -149,6 +149,3 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     console.log('[Renderer Log]:', data);
   });
 }
-
-// app, BrowserWindow import
-import { app, BrowserWindow } from 'electron';

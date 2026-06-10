@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 export class ConfigManager {
   constructor(userDataPath, executableDir) {
@@ -87,8 +88,7 @@ export class ConfigManager {
 // os.cpu_count() 대체
 function osCores() {
   try {
-    const { cpus } = await import('os');
-    return cpus().length;
+    return os.cpus().length;
   } catch {
     return 4;
   }

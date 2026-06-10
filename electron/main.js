@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { setupIPCHandlers } from './ipcHandlers.js';
 import { ConfigManager } from './configManager.js';
@@ -40,10 +41,10 @@ function getExecutableDir() {
 }
 
 // 바이너리 도구 경로
-function getBinPath(toolName) {
+async function getBinPath(toolName) {
   const ext = process.platform === 'win32' ? '.exe' : '';
   const binPath = path.join(getExecutableDir(), 'bin', 'win', toolName + ext);
-  if (path.existsSync(binPath)) return binPath;
+  if (fs.existsSync(binPath)) return binPath;
   
   // 시스템에서 검색
   try {
@@ -61,7 +62,7 @@ function getBinPath(toolName) {
 // 폰트 경로
 function getFontPath(fontFilename) {
   const fontPath = path.join(getExecutableDir(), 'fonts', fontFilename);
-  if (path.existsSync(fontPath)) return fontPath;
+  if (fs.existsSync(fontPath)) return fontPath;
   return null;
 }
 

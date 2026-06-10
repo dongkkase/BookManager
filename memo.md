@@ -1,3 +1,4 @@
+npx kill-port 5173
 npm run electron:dev
 
 - 이 프로젝트의 이름과 개발되어야 할 프로그램의 이름은 `BookManager`입니다.
@@ -22,3 +23,15 @@ npm run electron:dev
    4. 메인 비즈니스 로직 및 백그라운드 워커
    5. 외부 바이너리 실행 로직 변환
    6. 로컬 서버 포팅
+
+남은 마이그레이션을 체크하여 진행하자
+
+[x] Core/parsers 마이그레이션
+[x] Task/organizeTask.js 마이그레이션 (organize_task.py: 488줄)
+[ ] [-] Task/renameTask.js 마이그레이션 (rename_task.py: 595줄)
+[ ] Task/updateTask.js 마이그레이션 (update_task.py: 156줄)
+[ ] Task/apiWorkers.js 마이그레이션 (api_workers.py: 299줄)
+[ ] Server 마이그레이션 (opds_server.py, webdav_server.py, manager.py)
+[ ] API 마이그레이션 (api_fetcher.py, api_server.py)
+[ ] 프론트엔드 Tab 컴포넌트 완전 구현
+[ ] 기능 100% 동일성 검증 테스트 (최종 QA)
