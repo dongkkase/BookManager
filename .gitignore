@@ -53,3 +53,6 @@ weights/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+.rooignore
+.clineignore
