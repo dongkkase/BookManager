@@ -115,4 +115,5 @@ function OrganizerTab({ config, t }) {
   );
 }
 
+export { OrganizerTab };
 export default OrganizerTab;

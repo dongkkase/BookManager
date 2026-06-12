@@ -108,4 +108,5 @@ function MetadataTab({ config, t }) {
   );
 }
 
+export { MetadataTab };
 export default MetadataTab;

@@ -37,7 +37,7 @@ function SettingsModal({ isOpen, onClose, config, onSave, t }) {
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <span className="modal-title">{t('settings.title') || '설정'}</span>
-          <button className="modal-close" onClick={handleClose}>×</button>
+          <button className="modal-close" onClick={handleCancel}>×</button>
         </div>
 
         <div className="modal-body">
@@ -213,4 +213,5 @@ function SettingsModal({ isOpen, onClose, config, onSave, t }) {
   );
 }
 
+export { SettingsModal };
 export default SettingsModal;

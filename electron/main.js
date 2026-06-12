@@ -108,7 +108,7 @@ function createMainWindow() {
     title: 'BookManager',
     icon: path.join(getExecutableDir(), 'app.ico'),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -133,13 +133,18 @@ function createMainWindow() {
 }
 
 function createTray() {
-  const iconPath = path.join(getExecutableDir(), 'app.ico');
-  
-  if (process.platform === 'darwin') {
-    // macOS는 템플릿 아이콘 사용
-    tray = new Tray(iconPath);
-  } else {
-    tray = new Tray(iconPath);
+  try {
+    const iconPath = getResourcePath('src', 'app.ico');
+    
+    if (process.platform === 'darwin') {
+      // macOS는 템플릿 아이콘 사용
+      tray = new Tray(iconPath);
+    } else {
+      tray = new Tray(iconPath);
+    }
+  } catch (error) {
+    console.warn('Tray icon failed to load, continuing without tray:', error.message);
+    return;
   }
 
   const contextMenu = Menu.buildFromTemplate([

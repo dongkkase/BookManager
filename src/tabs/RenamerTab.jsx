@@ -113,4 +113,5 @@ function RenamerTab({ config, t }) {
   );
 }
 
+export { RenamerTab };
 export default RenamerTab;

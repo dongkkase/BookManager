@@ -11,18 +11,19 @@ import { useI18n } from './hooks/useI18n';
 import './styles/App.css';
 
 const TABS = [
-  { id: 'organizer', label: 'organizer' },
-  { id: 'renamer', label: 'renamer' },
-  { id: 'metadata', label: 'metadata' },
-  { id: 'folder', label: 'folder' },
-  { id: 'sharing', label: 'sharing' },
+  { id: 'folder', label: '폴더' },
+  { id: 'organizer', label: '압축 파일 구조 정리(평탄화)' },
+  { id: 'renamer', label: '내부 파일명 변경' },
+  { id: 'metadata', label: '메타데이터 관리' },
+  { id: 'sharing', label: '공유 서버' },
+  { id: 'releases', label: '업데이트 및 릴리즈 노트' },
 ];
 
 function App() {
-  const [activeTab, setActiveTab] = useState('organizer');
+  const [activeTab, setActiveTab] = useState('folder');
   const [showSettings, setShowSettings] = useState(false);
-  const [config, setConfig] = useConfig();
-  const { t, lang } = useI18n();
+  const { config, saveConfig: setConfig } = useConfig();
+  const { t, language } = useI18n();
 
   useEffect(() => {
     // 앱 초기화
@@ -53,35 +54,46 @@ function App() {
     setShowSettings(false);
     if (updatedConfig) {
       setConfig(updatedConfig);
-      window.electronAPI.saveConfig(updatedConfig);
     }
   }, []);
 
   const renderTabContent = () => {
     switch (activeTab) {
       case 'organizer':
-        return <OrganizerTab config={config} />;
+        return <OrganizerTab config={config} t={t} />;
       case 'renamer':
-        return <RenamerTab config={config} />;
+        return <RenamerTab config={config} t={t} />;
       case 'metadata':
-        return <MetadataTab config={config} />;
+        return <MetadataTab config={config} t={t} />;
       case 'folder':
-        return <FolderTab config={config} />;
+        return <FolderTab config={config} t={t} />;
       case 'sharing':
-        return <SharingTab config={config} />;
+        return <SharingTab config={config} t={t} />;
+      case 'releases':
+        return <div style={{ padding: '20px', color: '#fff' }}>업데이트 및 릴리즈 노트 탭 구현 필요</div>;
       default:
-        return <OrganizerTab config={config} />;
+        return <FolderTab config={config} t={t} />;
     }
   };
 
   return (
-    <div className={`app ${lang}`}>
-      <div className="app-header">
-        <div className="app-title">BookManager</div>
-        <div className="app-actions">
-          <button className="settings-btn" onClick={handleSettings}>
-            ⚙️ 설정
-          </button>
+    <div className={`app-container ${language}`}>
+      <div className="app-title-bar">
+        ComicZIP Optimizer v2.8.1
+      </div>
+      
+      <div className="top-menu-bar">
+        <div className="top-menu-left">
+          <button className="top-btn">📁 폴더 추가</button>
+          <button className="top-btn">📄 파일 추가</button>
+          <button className="top-btn">➖ 선택 삭제</button>
+          <button className="top-btn">🗑️ 전체 비우기</button>
+          <button className="top-btn">☑️ 전체 선택/해제</button>
+        </div>
+        <div className="top-menu-right">
+          <button className="top-btn">🐛 버그 신고 및 건의</button>
+          <button className="top-btn top-btn-version">✅ v2.8.1 (최신 버전)</button>
+          <button className="top-btn top-btn-settings" onClick={handleSettings}>⚙️ 환경 설정</button>
         </div>
       </div>
       

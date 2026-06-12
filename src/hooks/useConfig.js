@@ -10,7 +10,7 @@ export function useConfig() {
 
   const loadConfig = useCallback(async () => {
     try {
-      const currentConfig = await window.electronAPI.config.get();
+      const currentConfig = await window.electronAPI.getConfig();
       setConfig(currentConfig);
       setLoading(false);
     } catch (error) {
@@ -21,7 +21,8 @@ export function useConfig() {
 
   const saveConfig = useCallback(async (updates) => {
     try {
-      const updatedConfig = await window.electronAPI.config.update(updates);
+      await window.electronAPI.saveConfig(updates);
+      const updatedConfig = await window.electronAPI.getConfig();
       setConfig(updatedConfig);
       return updatedConfig;
     } catch (error) {

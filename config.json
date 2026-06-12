@@ -1,0 +1,18 @@
+{
+  "lang": "ko",
+  "target_format": "none",
+  "backup_on": false,
+  "flatten_folders": false,
+  "webp_conversion": false,
+  "img_quality": 100,
+  "jpg_quality": 85,
+  "max_threads": 10,
+  "play_sound": true,
+  "viewer_path": "",
+  "dup_check_folders": [],
+  "font_family": "Default",
+  "font_scale": 100,
+  "btn_primary": "#0078d7",
+  "start_num": 0,
+  "completion_sound": "Default.wav"
+}
