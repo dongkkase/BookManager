@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
@@ -7,15 +7,14 @@ import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { extractCoreTitle, extractVolNumbers } from '../utils/folderUtils';
+import { useFolderScan } from '../hooks/useFolderScan';
+import { useFileSelection } from '../hooks/useFileSelection';
 import '../styles/FolderTab.css';
 
 function FolderTab({ config, t }) {
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
-  const [fileDataCache, setFileDataCache] = useState({});
-  const [scanning, setScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState('대기 중...');
+  const { scanning, scanProgress, fileDataCache, statusMessage, scanFolder, getCachedFiles } = useFolderScan(t);
 
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -32,27 +31,11 @@ function FolderTab({ config, t }) {
   // --- 검색 상태 ---
   const [searchQuery, setSearchQuery] = useState('');
 
-  // --- 선택 상태 ---
-  const [selectedFiles, setSelectedFiles] = useState([]);
-  const [selectedFileData, setSelectedFileData] = useState(null);
-
-  // --- 사이드바 상태 ---
-  const [libraries, setLibraries] = useState([]);
-  const [favorites, setFavorites] = useState([]);
-
-  // --- 누락 권수 상태 ---
-  const [missingData, setMissingData] = useState([]);
-  const [showMissingDialog, setShowMissingDialog] = useState(false);
-  const [isCheckingMissing, setIsCheckingMissing] = useState(false);
-
-  // --- refs ---
-  const fileTableRef = useRef(null);
-
   // 파일 데이터 가져오기 (캐시에서)
   const getCurrentFileData = useCallback(() => {
     if (!selectedFolderPath) return [];
-    return fileDataCache[selectedFolderPath] || [];
-  }, [fileDataCache, selectedFolderPath]);
+    return getCachedFiles(selectedFolderPath) || [];
+  }, [getCachedFiles, selectedFolderPath]);
 
   // 필터링된 파일 데이터
   const filteredFileData = useMemo(() => {
@@ -68,35 +51,28 @@ function FolderTab({ config, t }) {
     });
   }, [getCurrentFileData, searchQuery]);
 
+  // --- 선택 상태 ---
+  const { selectedFiles, selectedFileData, selectFile, clearSelection } = useFileSelection(filteredFileData);
+
+  // --- 사이드바 상태 ---
+  const [libraries, setLibraries] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+
+  // --- 누락 권수 상태 ---
+  const [missingData, setMissingData] = useState([]);
+  const [showMissingDialog, setShowMissingDialog] = useState(false);
+  const [isCheckingMissing, setIsCheckingMissing] = useState(false);
+
+  // --- refs ---
+  const fileTableRef = useRef(null);
+
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
     setSelectedFolderPath(folderPath);
-    setSelectedFiles([]);
-    setSelectedFileData(null);
+    clearSelection();
     setSearchQuery('');
-    await scanFolder(folderPath);
-  }, []);
-
-  // 폴더 스캔
-  const scanFolder = useCallback(async (folderPath) => {
-    setScanning(true);
-    setScanProgress(0);
-    setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
-    try {
-      const files = await window.electronAPI?.scanFolder(folderPath, includeSubfolders) || [];
-      setFileDataCache(prev => ({
-        ...prev,
-        [folderPath]: files,
-      }));
-      setScanProgress(100);
-      setStatusMessage(`${files.length}개 항목 확인`);
-    } catch (error) {
-      console.error('폴더 스캔 실패:', error);
-      setStatusMessage('스캔 중 오류 발생');
-    } finally {
-      setScanning(false);
-    }
-  }, [includeSubfolders, t]);
+    await scanFolder(folderPath, { includeSubfolders, enableDupCheck });
+  }, [includeSubfolders, enableDupCheck, scanFolder, clearSelection]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
@@ -157,37 +133,17 @@ function FolderTab({ config, t }) {
   }, [filteredFileData]);
 
   const handleRefresh = useCallback(() => {
-    if (selectedFolderPath) scanFolder(selectedFolderPath);
-  }, [selectedFolderPath, scanFolder]);
+    if (selectedFolderPath) scanFolder(selectedFolderPath, { includeSubfolders, enableDupCheck });
+  }, [selectedFolderPath, scanFolder, includeSubfolders, enableDupCheck]);
 
-  const handleFileSelect = useCallback((files, fileData) => {
-    setSelectedFiles(files);
-    if (fileData && files.length > 0) {
-      setSelectedFileData(fileData);
+  const handleFileSelect = useCallback((filesOrPath) => {
+    if (Array.isArray(filesOrPath)) {
+      if (filesOrPath.length > 0) selectFile(filesOrPath[0]);
+      else clearSelection();
     } else {
-      setSelectedFileData(null);
+      selectFile(filesOrPath);
     }
-  }, []);
-
-  // --- IPC ---
-  useEffect(() => {
-    const handleScanProgress = (event, progress) => {
-      setScanProgress(progress);
-      setStatusMessage(`스캔 진행률: ${Math.round(progress)}%`);
-    };
-    const handleScanComplete = (event, files) => {
-      setFileDataCache(prev => ({ ...prev, [selectedFolderPath]: files || [] }));
-      setScanProgress(100);
-      setScanning(false);
-      setStatusMessage(`${files?.length || 0}개 파일 발견`);
-    };
-    window.electronIPC?.on('scan-progress', handleScanProgress);
-    window.electronIPC?.on('scan-complete', handleScanComplete);
-    return () => {
-      window.electronIPC?.removeListener('scan-progress', handleScanProgress);
-      window.electronIPC?.removeListener('scan-complete', handleScanComplete);
-    };
-  }, [selectedFolderPath]);
+  }, [selectFile, clearSelection]);
 
   // View Stack
   const renderViewStack = () => {
@@ -197,14 +153,14 @@ function FolderTab({ config, t }) {
       sortKey,
       sortOrder,
       groupKey,
-      onFileSelect: handleFileSelect,
+      onSelect: handleFileSelect,
       t,
     };
     switch (viewMode) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} onSelect={(path) => handleFileSelect([path])} t={t} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} onSelect={handleFileSelect} t={t} sortKey={sortKey} groupKey={groupKey} />;
     }
   };
 
@@ -291,9 +247,15 @@ function FolderTab({ config, t }) {
             </div>
           </div>
 
-          <div className="view-container">
+          <div className="view-container" style={{ flex: 1, overflow: 'hidden' }}>
              {renderViewStack()}
           </div>
+          
+          {selectedFileData && (
+            <div style={{ height: '250px', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+              <DetailPanel selectedFile={selectedFileData} t={t} />
+            </div>
+          )}
 
           <div className="right-bottom-bar">
             <div className="status-info">

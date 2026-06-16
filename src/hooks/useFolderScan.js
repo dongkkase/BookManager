@@ -135,14 +135,22 @@ export function useFolderScan(t) {
       setStatusMessage(message || (t('folder.status.error') || '스캔 중 오류 발생'));
     };
 
-    window.electronIPC?.on('scan-progress', handleScanProgress);
-    window.electronIPC?.on('scan-complete', handleScanComplete);
-    window.electronIPC?.on('scan-error', handleScanError);
+    let removeProgress, removeComplete, removeError;
+
+    if (window.electronAPI?.onScanProgress) {
+      removeProgress = window.electronAPI.onScanProgress(handleScanProgress);
+    }
+    if (window.electronAPI?.onScanComplete) {
+      removeComplete = window.electronAPI.onScanComplete(handleScanComplete);
+    }
+    if (window.electronAPI?.onScanError) {
+      removeError = window.electronAPI.onScanError(handleScanError);
+    }
 
     return () => {
-      window.electronIPC?.removeListener('scan-progress', handleScanProgress);
-      window.electronIPC?.removeListener('scan-complete', handleScanComplete);
-      window.electronIPC?.removeListener('scan-error', handleScanError);
+      if (removeProgress) removeProgress();
+      if (removeComplete) removeComplete();
+      if (removeError) removeError();
     };
   }, [t]);
 

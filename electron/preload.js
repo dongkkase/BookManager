@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stat: (filePath) => ipcRenderer.invoke('fs:stat', filePath),
   exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),
   
+  // 폴더 스캔
+  scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
+  
   // 라이브러리 DB
   initLibrary: (dbPath) => ipcRenderer.invoke('library:init', dbPath),
   queryLibrary: (query, params) => ipcRenderer.invoke('library:query', query, params),
@@ -54,6 +57,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTaskError: (callback) => ipcRenderer.on('task:error', (_, data) => callback(data)),
   onServerLog: (callback) => ipcRenderer.on('server:log', (_, data) => callback(data)),
   onLog: (callback) => ipcRenderer.on('log', (_, data) => callback(data)),
+  
+  onScanProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('scan-progress', handler);
+    return () => ipcRenderer.removeListener('scan-progress', handler);
+  },
+  onScanComplete: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('scan-complete', handler);
+    return () => ipcRenderer.removeListener('scan-complete', handler);
+  },
+  onScanError: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('scan-error', handler);
+    return () => ipcRenderer.removeListener('scan-error', handler);
+  },
   
   // 윈도우 관련
   minimizeWindow: () => ipcRenderer.send('window:minimize'),

@@ -1,11 +1,25 @@
-import { ipcMain, app, BrowserWindow } from 'electron';
+import pkg from 'electron';
+const { ipcMain, app, BrowserWindow, dialog } = pkg;
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+import { scanFolder } from './tasks/folderScanTask.js';
+
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath) {
   
+  // ========== 폴더 스캔 ==========
+  ipcMain.handle('folder:scan', async (event, folderPath, options) => {
+    try {
+      return await scanFolder(folderPath, options, event);
+    } catch (error) {
+      console.error('Folder scan error:', error);
+      event.sender.send('scan-error', { message: error.message });
+      throw error;
+    }
+  });
+
   // ========== 설정 관련 ==========
   ipcMain.handle('config:get', () => {
     return configManager.getConfig();
