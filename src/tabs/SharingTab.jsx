@@ -1,117 +1,161 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import '../styles/SharingTab.css';
 
 /**
- * 공유 서버 탭 컴포넌트
- * 기존 PyQt6 TabSharing의 React 버전
- * HTTP/WebDAV 서버 시작/정지, LAN 공유 등을 담당
+ * Sharing 탭 컴포넌트
+ * OPDS 및 WebDAV 공유 서버 관리
  */
 function SharingTab({ config, t }) {
-  const [httpServerRunning, setHttpServerRunning] = useState(false);
-  const [webdavServerRunning, setWebdavServerRunning] = useState(false);
-  const [httpPort, setHttpPort] = useState(config?.httpPort || 8080);
-  const [webdavPort, setWebdavPort] = useState(config?.webdavPort || 8081);
+  const [opdsPort, setOpdsPort] = useState(8080);
+  const [opdsRunning, setOpdsRunning] = useState(false);
+  
+  const [webdavId, setWebdavId] = useState('user');
+  const [webdavPw, setWebdavPw] = useState('1234');
+  const [webdavPwVisible, setWebdavPwVisible] = useState(false);
+  const [webdavPort, setWebdavPort] = useState(8081);
+  const [webdavRunning, setWebdavRunning] = useState(false);
+  
+  const [localIp, setLocalIp] = useState('127.0.0.1');
+  const [logs, setLogs] = useState(['[INFO] 서버 로그가 준비되었습니다.']);
 
-  const toggleHttpServer = async () => {
-    try {
-      if (httpServerRunning) {
-        await window.electronAPI.stopServer('http');
-        setHttpServerRunning(false);
-      } else {
-        await window.electronAPI.startServer('http', httpPort);
-        setHttpServerRunning(true);
-      }
-    } catch (error) {
-      console.error('HTTP 서버 토글 실패:', error);
-    }
+  // 더미 데이터 초기화
+  useEffect(() => {
+    // 실제 환경에서는 네트워크 인터페이스를 통해 IP를 가져옴
+    setLocalIp('192.168.1.100');
+  }, []);
+
+  const handleCopyUrl = (url) => {
+    navigator.clipboard.writeText(url)
+      .then(() => alert('URL이 복사되었습니다.'))
+      .catch(err => console.error('복사 실패:', err));
   };
 
-  const toggleWebdavServer = async () => {
-    try {
-      if (webdavServerRunning) {
-        await window.electronAPI.stopServer('webdav');
-        setWebdavServerRunning(false);
-      } else {
-        await window.electronAPI.startServer('webdav', webdavPort);
-        setWebdavServerRunning(true);
-      }
-    } catch (error) {
-      console.error('WebDAV 서버 토글 실패:', error);
+  const handleToggleOpds = () => {
+    if (!opdsRunning) {
+      setLogs(prev => [...prev, `[INFO] OPDS 서버가 포트 ${opdsPort}에서 시작되었습니다.`]);
+    } else {
+      setLogs(prev => [...prev, '[INFO] OPDS 서버가 성공적으로 중지되었습니다.']);
     }
+    setOpdsRunning(!opdsRunning);
   };
+
+  const handleToggleWebdav = () => {
+    if (!webdavRunning) {
+      setLogs(prev => [...prev, `[INFO] WebDAV 서버가 포트 ${webdavPort}에서 시작되었습니다.`]);
+    } else {
+      setLogs(prev => [...prev, '[INFO] WebDAV 서버가 성공적으로 중지되었습니다.']);
+    }
+    setWebdavRunning(!webdavRunning);
+  };
+
+  const opdsUrl = `http://${localIp}:${opdsPort}/opds`;
+  const webdavUrl = `http://${localIp}:${webdavPort}/`;
 
   return (
-    <div className="tab-content sharing-tab">
-      <div className="tab-header">
-        <h2>{t('sharing.title') || '공유 서버'}</h2>
-      </div>
-
-      <div className="sharing-content">
-        {/* HTTP 서버 섹션 */}
-        <div className="server-section">
-          <h3>{t('sharing.httpServer') || 'HTTP 서버'}</h3>
-          <div className="server-controls">
-            <div className="port-input">
-              <label>{t('sharing.port') || '포트'}</label>
-              <input
-                type="number"
-                value={httpPort}
-                onChange={e => setHttpPort(Number(e.target.value))}
-                disabled={httpServerRunning}
-                min={1}
-                max={65535}
+    <div className="sharing-tab">
+      <div className="sharing-left-panel">
+        
+        {/* OPDS 그룹 */}
+        <div className="sharing-groupbox">
+          <div className="sharing-groupbox-title">OPDS 공유 서버 (Panels 지원)</div>
+          <div className="sharing-groupbox-content">
+            <div className="sharing-row">
+              <span className="sharing-label">포트:</span>
+              <input 
+                type="number" 
+                className="sharing-input-num" 
+                value={opdsPort} 
+                onChange={(e) => setOpdsPort(e.target.value)}
+                disabled={opdsRunning}
               />
+              <div className="sharing-spacer"></div>
+              <button 
+                className={`sharing-btn-toggle ${opdsRunning ? 'running' : ''}`}
+                onClick={handleToggleOpds}
+              >
+                {opdsRunning ? '■ OPDS 서버 끄기' : '⏻ OPDS 서버 켜기'}
+              </button>
             </div>
-            <button
-              className={httpServerRunning ? 'btn-danger' : 'btn-primary'}
-              onClick={toggleHttpServer}
-            >
-              {httpServerRunning
-                ? t('sharing.stop') || '정지'
-                : t('sharing.start') || '시작'}
-            </button>
+            
+            <div className="sharing-row url-row">
+              <input type="text" className="sharing-input-url" value={opdsUrl} readOnly />
+              <button className="sharing-btn-copy" onClick={() => handleCopyUrl(opdsUrl)}>📋 URL 복사</button>
+            </div>
           </div>
-          {httpServerRunning && (
-            <div className="server-url">
-              <span>{t('sharing.accessUrl') || '접속 URL:'}</span>
-              <a href={`http://localhost:${httpPort}`} target="_blank" rel="noopener noreferrer">
-                http://localhost:{httpPort}
-              </a>
-            </div>
-          )}
         </div>
 
-        {/* WebDAV 서버 섹션 */}
-        <div className="server-section">
-          <h3>{t('sharing.webdavServer') || 'WebDAV 서버'}</h3>
-          <div className="server-controls">
-            <div className="port-input">
-              <label>{t('sharing.port') || '포트'}</label>
-              <input
-                type="number"
-                value={webdavPort}
-                onChange={e => setWebdavPort(Number(e.target.value))}
-                disabled={webdavServerRunning}
-                min={1}
-                max={65535}
+        {/* WebDAV 그룹 */}
+        <div className="sharing-groupbox mt-20">
+          <div className="sharing-groupbox-title">WebDAV 공유 서버 (ComicGlass 지원)</div>
+          <div className="sharing-groupbox-content">
+            <div className="sharing-desc">※ 앱에서 접속 시 사용할 계정을 설정하세요.</div>
+            
+            <div className="sharing-row">
+              <span className="sharing-label">아이디:</span>
+              <input 
+                type="text" 
+                className="sharing-input" 
+                value={webdavId} 
+                onChange={(e) => setWebdavId(e.target.value)}
+                disabled={webdavRunning}
               />
+              <span className="sharing-label ml-10">비밀번호:</span>
+              <div className="sharing-pw-wrapper">
+                <input 
+                  type={webdavPwVisible ? 'text' : 'password'} 
+                  className="sharing-input pw-input" 
+                  value={webdavPw} 
+                  onChange={(e) => setWebdavPw(e.target.value)}
+                  disabled={webdavRunning}
+                />
+                <button 
+                  className="sharing-btn-pw-eye"
+                  onClick={() => setWebdavPwVisible(!webdavPwVisible)}
+                  disabled={webdavRunning}
+                >
+                  {webdavPwVisible ? '👁️' : '👁️‍🗨️'}
+                </button>
+              </div>
             </div>
-            <button
-              className={webdavServerRunning ? 'btn-danger' : 'btn-primary'}
-              onClick={toggleWebdavServer}
-            >
-              {webdavServerRunning
-                ? t('sharing.stop') || '정지'
-                : t('sharing.start') || '시작'}
-            </button>
+
+            <div className="sharing-row">
+              <span className="sharing-label">포트:</span>
+              <input 
+                type="number" 
+                className="sharing-input-num" 
+                value={webdavPort} 
+                onChange={(e) => setWebdavPort(e.target.value)}
+                disabled={webdavRunning}
+              />
+              <div className="sharing-spacer"></div>
+              <button 
+                className={`sharing-btn-toggle ${webdavRunning ? 'running' : ''}`}
+                onClick={handleToggleWebdav}
+              >
+                {webdavRunning ? '■ WebDAV 서버 끄기' : '⏻ WebDAV 서버 켜기'}
+              </button>
+            </div>
+
+            <div className="sharing-row url-row">
+              <input type="text" className="sharing-input-url" value={webdavUrl} readOnly />
+              <button className="sharing-btn-copy" onClick={() => handleCopyUrl(webdavUrl)}>📋 URL 복사</button>
+            </div>
           </div>
-          {webdavServerRunning && (
-            <div className="server-url">
-              <span>{t('sharing.accessUrl') || '접속 URL:'}</span>
-              <a href={`http://localhost:${webdavPort}`} target="_blank" rel="noopener noreferrer">
-                http://localhost:{webdavPort}
-              </a>
-            </div>
-          )}
+        </div>
+
+      </div>
+
+      {/* 로그 콘솔 */}
+      <div className="sharing-right-panel">
+        <div className="sharing-groupbox h-full">
+          <div className="sharing-groupbox-title">서버 상태 로그</div>
+          <div className="sharing-groupbox-content h-full">
+            <textarea 
+              className="sharing-log-console" 
+              readOnly 
+              value={logs.join('\n')}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -119,3 +163,4 @@ function SharingTab({ config, t }) {
 }
 
 export { SharingTab };
+export default SharingTab;

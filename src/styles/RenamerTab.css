@@ -1,0 +1,273 @@
+.renamer-tab {
+  display: flex;
+  height: 100%;
+  padding: 15px;
+  box-sizing: border-box;
+  background-color: #2b2b2b;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  gap: 15px;
+}
+
+/* Left Panel */
+.renamer-left-panel {
+  width: 280px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  background-color: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 15px;
+  box-sizing: border-box;
+}
+
+.renamer-preview-title {
+  text-align: center;
+  font-weight: bold;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.renamer-preview-img-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #2a2a2a;
+  border: 1px dashed #555;
+  border-radius: 4px;
+  min-height: 250px;
+}
+
+.renamer-no-image {
+  color: #777;
+  font-size: 13px;
+}
+
+.renamer-divider {
+  height: 1px;
+  background-color: #444;
+  margin: 15px 0;
+}
+
+/* Right Panel */
+.renamer-right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Options Bar */
+.renamer-options-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  background-color: #1e1e1e;
+  padding: 10px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  flex-wrap: wrap;
+}
+
+.renamer-btn-toggle {
+  background-color: #3a3a3a;
+  color: white;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.renamer-btn-toggle.active {
+  background-color: #3498DB;
+  border-color: #3498DB;
+}
+
+.renamer-spacer {
+  flex: 1;
+}
+
+.renamer-label {
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.renamer-select {
+  background-color: #3a3a3a;
+  color: white;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 12px;
+}
+
+.renamer-select:disabled {
+  opacity: 0.5;
+}
+
+.renamer-input-custom {
+  background-color: #3a3a3a;
+  color: white;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 12px;
+  width: 80px;
+}
+
+.renamer-input-custom:disabled {
+  opacity: 0.5;
+}
+
+.renamer-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.renamer-btn-icon {
+  background-color: #4a4a4a;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.renamer-btn-icon:disabled {
+  opacity: 0.5;
+}
+
+.renamer-input-num {
+  background-color: #3a3a3a;
+  color: white;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 12px;
+  width: 40px;
+  text-align: center;
+}
+
+.renamer-input-num:disabled {
+  opacity: 0.5;
+}
+
+/* Content Area */
+.renamer-content-area {
+  flex: 1;
+  background-color: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.renamer-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.renamer-empty-image {
+  width: 256px;
+  height: 256px;
+  opacity: 0.55;
+  margin-bottom: 20px;
+}
+
+.renamer-empty-text {
+  color: #aaaaaa;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.renamer-split-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.renamer-table-wrapper {
+  flex: 1;
+  overflow: auto;
+  border-bottom: 2px solid #2b2b2b;
+}
+
+.renamer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.renamer-table th {
+  background-color: #333;
+  color: #fff;
+  padding: 8px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid #444;
+}
+
+.renamer-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #333;
+}
+
+.renamer-table tbody tr:hover {
+  background-color: #2a2d3e;
+}
+
+.renamer-table tbody tr.selected {
+  background-color: #1a4b7c;
+}
+
+.renamer-order-btns {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+}
+
+.renamer-order-btns button {
+  background-color: #444;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.renamer-order-btns button:hover:not(:disabled) {
+  background-color: #555;
+}
+
+.renamer-order-btns button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Bottom Info */
+.renamer-bottom-info {
+  margin-top: 10px;
+  text-align: center;
+  color: #ccc;
+  font-size: 13px;
+}

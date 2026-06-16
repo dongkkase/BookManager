@@ -1,115 +1,141 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import '../styles/OrganizerTab.css';
 
 /**
  * Organizer 탭 컴포넌트
- * 코믹 파일 정리/구성 기능
- * 기존 PyQt6 Tab1Organizer와 동일한 구조
+ * 압축 파일 구조 정리 (평탄화)
  */
 function OrganizerTab({ config, t }) {
-  const [fileList, setFileList] = React.useState([]);
-  const [selectedItems, setSelectedItems] = React.useState(new Set());
+  const [fileList, setFileList] = useState([]);
+  const [expandedItems, setExpandedItems] = useState(new Set());
+  const [isAllExpanded, setIsAllExpanded] = useState(true);
 
-  const handleAddFolder = async () => {
-    if (window.electronAPI && window.electronAPI.dialog) {
-      const folder = await window.electronAPI.dialog.selectFolder();
-      if (folder) {
-        // TODO: 폴더 내 파일 스캔 및 트리에 추가
-        console.log('폴더 추가:', folder);
+  // 더미 데이터 (UI 확인용)
+  useEffect(() => {
+    setFileList([
+      {
+        id: '1',
+        title: '어떤 마술의 금서목록',
+        originalName: '[에피] 어떤 마술의 금서목록',
+        checked: true,
+        outPath: '/Users/dummy/Downloads/어떤 마술의 금서목록',
+        sizeMb: 125.4,
+        volumes: [
+          { id: '1-1', title: '어떤 마술의 금서목록 v01', originalName: 'vol.1.zip', type: 'archive' },
+          { id: '1-2', title: '어떤 마술의 금서목록 v02', originalName: 'vol.2.zip', type: 'archive' },
+        ]
+      },
+      {
+        id: '2',
+        title: '원피스',
+        originalName: 'One Piece',
+        checked: true,
+        outPath: '/Users/dummy/Downloads/원피스',
+        sizeMb: 50.2,
+        volumes: [
+          { id: '2-1', title: '원피스 v100', originalName: 'OP_100.zip', type: 'archive' },
+        ]
       }
-    }
-  };
+    ]);
+    setExpandedItems(new Set(['1', '2']));
+  }, []);
 
-  const handleAddFile = async () => {
-    if (window.electronAPI && window.electronAPI.dialog) {
-      const files = await window.electronAPI.dialog.selectFiles();
-      if (files && files.length > 0) {
-        // TODO: 파일 스캔 및 트리에 추가
-        console.log('파일 추가:', files);
-      }
-    }
-  };
-
-  const handleRemoveSelected = () => {
-    // TODO: 선택된 항목 제거
-    setSelectedItems(new Set());
-  };
-
-  const handleClearAll = () => {
-    setFileList([]);
-    setSelectedItems(new Set());
-  };
-
-  const handleToggleAll = () => {
-    if (selectedItems.size === fileList.length) {
-      setSelectedItems(new Set());
+  const handleToggleExpandAll = () => {
+    if (isAllExpanded) {
+      setExpandedItems(new Set());
     } else {
-      setSelectedItems(new Set(fileList.map((_, i) => i)));
+      setExpandedItems(new Set(fileList.map(f => f.id)));
     }
+    setIsAllExpanded(!isAllExpanded);
+  };
+
+  const handleToggleExpand = (id) => {
+    const newExpanded = new Set(expandedItems);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
+    } else {
+      newExpanded.add(id);
+    }
+    setExpandedItems(newExpanded);
+  };
+
+  const handleCheck = (id) => {
+    setFileList(prev => prev.map(f => f.id === id ? { ...f, checked: !f.checked } : f));
   };
 
   return (
-    <div className="tab-content organizer-tab">
-      <div className="toolbar">
-        <button className="toolbar-button" onClick={handleAddFolder}>
-          <span className="icon">📁</span>
-          <span>{t('organizer.add_folder') || '폴더 추가'}</span>
+    <div className="organizer-tab">
+      <div className="org-local-toolbar">
+        <button className="org-btn" onClick={handleToggleExpandAll}>
+          ↕ {t('organizer.expand_all') || '전체 펼치기 / 접기'}
         </button>
-        <button className="toolbar-button" onClick={handleAddFile}>
-          <span className="icon">📄</span>
-          <span>{t('organizer.add_file') || '파일 추가'}</span>
-        </button>
-        <div className="toolbar-separator" />
-        <button className="toolbar-button" onClick={handleToggleAll}>
-          <span className="icon">☑️</span>
-          <span>{t('organizer.toggle_all') || '전체 체크/해제'}</span>
-        </button>
-        <button className="toolbar-button" onClick={handleRemoveSelected}>
-          <span className="icon">🗑️</span>
-          <span>{t('organizer.remove_selected') || '선택 삭제'}</span>
-        </button>
-        <button className="toolbar-button" onClick={handleClearAll}>
-          <span className="icon">❌</span>
-          <span>{t('organizer.clear_all') || '전체 삭제'}</span>
-        </button>
-        <div className="toolbar-spacer" />
-        <span className="file-count">
-          {t('organizer.count') || '개수'}: {fileList.length}
-        </span>
+        <button className="org-btn">{t('organizer.batch_default') || '일괄: 기본경로'}</button>
+        <button className="org-btn">{t('organizer.batch_title') || '일괄: 책제목경로'}</button>
       </div>
 
-      <div className="file-tree-container">
+      <div className="org-content-area">
         {fileList.length === 0 ? (
-          <div className="empty-state">
-            <img src="/draganddrop1.png" alt="Drag and Drop" className="empty-image" />
-            <p>{t('organizer.drag_drop') || '파일이나 폴더를 여기에 드래그 앤 드롭하세요'}</p>
+          <div className="org-empty-state">
+            <img src="/draganddrop1.png" alt="Drag and Drop" className="org-empty-image" />
+            <p className="org-empty-text">{t('organizer.drag_drop') || '파일이나 폴더를 여기에 드래그 앤 드롭하세요'}</p>
           </div>
         ) : (
-          <div className="file-tree">
-            {fileList.map((file, index) => (
-              <div
-                key={index}
-                className={`tree-item ${selectedItems.has(index) ? 'selected' : ''}`}
-                onClick={() => {
-                  const newSelected = new Set(selectedItems);
-                  if (newSelected.has(index)) {
-                    newSelected.delete(index);
-                  } else {
-                    newSelected.add(index);
-                  }
-                  setSelectedItems(newSelected);
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedItems.has(index)}
-                  onChange={() => {}}
-                />
-                <span className="file-name">{file.name}</span>
-                <span className="file-path">{file.path}</span>
-              </div>
-            ))}
+          <div className="org-tree-container">
+            <div className="org-tree-header">
+              <div className="org-col-name">{t('organizer.col_name') || '파일명'}</div>
+              <div className="org-col-path">{t('organizer.col_path') || '결과 경로'}</div>
+              <div className="org-col-count">{t('organizer.col_count') || '항목수'}</div>
+              <div className="org-col-size">{t('organizer.col_size') || '용량'}</div>
+            </div>
+            
+            <div className="org-tree-body">
+              {fileList.map((file) => (
+                <div key={file.id} className="org-tree-item-group">
+                  <div className="org-tree-row org-root-row">
+                    <div className="org-col-name" onClick={() => handleToggleExpand(file.id)}>
+                      <span className="org-expand-icon">
+                        {expandedItems.has(file.id) ? '▼' : '▶'}
+                      </span>
+                      <input 
+                        type="checkbox" 
+                        checked={file.checked} 
+                        onChange={() => handleCheck(file.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <span className="org-icon">📦</span>
+                      <span className="org-title">{file.title}</span>
+                      <span className="org-original-name"> ({file.originalName})</span>
+                    </div>
+                    <div className="org-col-path org-path-widget">
+                      <input type="text" className="org-path-input" value={file.outPath} readOnly />
+                      <button className="org-path-btn">기본값</button>
+                      <button className="org-path-btn">책제목</button>
+                      <button className="org-path-btn">일괄: 권</button>
+                      <button className="org-path-btn">일괄: 화</button>
+                    </div>
+                    <div className="org-col-count">{file.volumes.length} Items</div>
+                    <div className="org-col-size">{file.sizeMb.toFixed(1)} MB</div>
+                  </div>
+                  
+                  {expandedItems.has(file.id) && file.volumes.map((vol) => (
+                    <div key={vol.id} className="org-tree-row org-child-row">
+                      <div className="org-col-full">
+                        <span className="org-indent">↳</span>
+                        <span className="org-icon">{vol.type === 'archive' ? '📦' : '📁'}</span>
+                        <span className="org-title">{vol.title}.zip</span>
+                        <span className="org-original-name"> ({vol.originalName})</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         )}
+      </div>
+
+      <div className="org-bottom-info">
+        {t('organizer.total_files')?.replace('{count}', fileList.length) || `총 ${fileList.length}개의 파일이 리스트에 있습니다.`}
       </div>
     </div>
   );
