@@ -99,12 +99,15 @@ if (!gotTheLock) {
   });
 }
 
-function createMainWindow() {
+function createMainWindow(config) {
+  const minWidth = config?.min_window_width || 1200;
+  const minHeight = config?.min_window_height || 780;
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    minWidth: 800,
-    minHeight: 600,
+    minWidth: minWidth,
+    minHeight: minHeight,
     title: 'BookManager',
     icon: path.join(getExecutableDir(), 'app.ico'),
     webPreferences: {
@@ -190,7 +193,7 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createMainWindow();
+    createMainWindow(configManager.config);
   }
 });
 

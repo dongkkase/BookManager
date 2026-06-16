@@ -1,10 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, forwardRef } from 'react';
 
 /**
  * FileTableView - 파일 테이블 뷰 컴포넌트
  * Python QTableView -> React 포트
  */
-const FileTableView = ({
+const FileTableView = forwardRef(({
   files = [],
   sortKey = 'name',
   groupKey = 'none',
@@ -15,7 +15,7 @@ const FileTableView = ({
   onSelectAll,
   onDeselectAll,
   t
-}) => {
+}, ref) => {
   // 컬럼 정의 (PyQt 원본 기준)
   const columns = [
     { key: 'cover', label: ':: 커버', width: '60px', sortable: false },
@@ -190,7 +190,7 @@ const FileTableView = ({
       )}
     </div>
   );
-};
+});
 
 export { FileTableView };
 export default FileTableView;
