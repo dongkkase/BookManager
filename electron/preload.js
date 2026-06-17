@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 파일 시스템
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
+  getRoots: () => ipcRenderer.invoke('fs:getRoots'),
   stat: (filePath) => ipcRenderer.invoke('fs:stat', filePath),
   exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),
   

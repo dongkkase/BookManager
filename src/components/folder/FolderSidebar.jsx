@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 /**
  * 좌측 사이드바 컴포넌트
@@ -6,6 +6,47 @@ import React, { useState } from 'react';
  */
 function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test'], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [roots, setRoots] = useState([]);
+  const [folderCache, setFolderCache] = useState({});
+
+  useEffect(() => {
+    const fetchRoots = async () => {
+      try {
+        if (window.electronAPI && window.electronAPI.getRoots) {
+          const fetchedRoots = await window.electronAPI.getRoots();
+          const rootNodes = fetchedRoots.map(r => ({ name: r, path: r, isFolder: true }));
+          setRoots(rootNodes);
+        }
+      } catch (error) {
+        console.error('Failed to fetch roots:', error);
+      }
+    };
+    fetchRoots();
+  }, []);
+
+  const loadFolder = async (folderPath) => {
+    if (folderCache[folderPath]) return; // 이미 로드됨
+    try {
+      if (window.electronAPI && window.electronAPI.readDir) {
+        const items = await window.electronAPI.readDir(folderPath);
+        const folders = items
+          .filter(i => i.isDirectory)
+          .map(i => {
+            // 경로 결합 처리 (간단한 구현)
+            const separator = folderPath.endsWith('/') || folderPath.endsWith('\\') ? '' : '/';
+            return {
+              name: i.name,
+              path: folderPath + separator + i.name,
+              isFolder: true
+            };
+          });
+        setFolderCache(prev => ({ ...prev, [folderPath]: folders }));
+      }
+    } catch (error) {
+      console.error('Failed to read dir:', error);
+      setFolderCache(prev => ({ ...prev, [folderPath]: [] }));
+    }
+  };
 
   const toggleFolder = (path) => {
     const next = new Set(expandedFolders);
@@ -13,6 +54,7 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
       next.delete(path);
     } else {
       next.add(path);
+      loadFolder(path);
     }
     setExpandedFolders(next);
   };
@@ -74,7 +116,10 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
   const renderTreeNode = (node, depth = 0) => {
     const isExpanded = expandedFolders.has(node.path);
     const isActive = selectedFolderPath === node.path;
-    const hasChildren = node.children && node.children.length > 0;
+    const children = folderCache[node.path] || [];
+    
+    // 이 노드가 자식을 가질 가능성이 있는지 (일단 폴더면 있다고 가정, 로드 후 비어있으면 없는 것으로 표시)
+    const hasChildren = folderCache[node.path] ? children.length > 0 : true;
 
     return (
       <li key={node.path} className="tree-node">
@@ -92,60 +137,23 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
           }}
           onClick={() => {
             onSelectFolder && onSelectFolder(node.path);
-            if (hasChildren) toggleFolder(node.path);
+            if (node.isFolder) toggleFolder(node.path);
           }}
         >
           <span style={{ width: '12px', display: 'inline-block', textAlign: 'center', marginRight: '4px', fontSize: '10px' }}>
-            {hasChildren ? (isExpanded ? '▼' : '▶') : ' '}
+            {node.isFolder ? (hasChildren ? (isExpanded ? '▼' : '▶') : ' ') : ' '}
           </span>
-          <span style={{ marginRight: '4px' }}>{node.isFolder ? '📁' : '📄'}</span>
+          <span style={{ marginRight: '4px' }}>{node.isFolder ? (isExpanded ? '📂' : '📁') : '📄'}</span>
           <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
         </div>
-        {hasChildren && isExpanded && (
+        {node.isFolder && isExpanded && children.length > 0 && (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {node.children.map(child => renderTreeNode(child, depth + 1))}
+            {children.map(child => renderTreeNode(child, depth + 1))}
           </ul>
         )}
       </li>
     );
   };
-
-  // 폴더 트리 구조 (데모 데이터)
-  const treeData = [
-    {
-      name: 'Game (G:)',
-      path: 'G:',
-      isFolder: true,
-      children: [
-        { name: 'Ani', path: 'G:/Ani', isFolder: true, children: [] },
-        { name: 'backup', path: 'G:/backup', isFolder: true, children: [] },
-        { name: 'bak', path: 'G:/bak', isFolder: true, children: [] },
-        { name: 'EpicGames', path: 'G:/EpicGames', isFolder: true, children: [] },
-        {
-          name: 'Mirror',
-          path: 'G:/Mirror',
-          isFolder: true,
-          children: [
-            {
-              name: 'Book',
-              path: 'G:/Mirror/Book',
-              isFolder: true,
-              children: [
-                {
-                  name: '_만화',
-                  path: 'G:/Mirror/Book/_만화',
-                  isFolder: true,
-                  children: [
-                    { name: '(만화) 어서 와, 아빠', path: 'G:/Mirror/Book/_만화/어서와 아빠', isFolder: true, children: [] }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ],
-    },
-  ];
 
   const renderFolderTree = () => (
     <div className="sidebar-section" style={{ marginTop: '10px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -159,7 +167,7 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
         </div>
       </div>
       <ul className="nav-list" style={{ flex: 1, overflowY: 'auto' }}>
-        {treeData.map(node => renderTreeNode(node))}
+        {roots.map(node => renderTreeNode(node))}
       </ul>
     </div>
   );
@@ -174,3 +182,4 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
 }
 
 export { FolderSidebar };
+export default FolderSidebar;

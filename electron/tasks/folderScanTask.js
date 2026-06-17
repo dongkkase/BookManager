@@ -2,6 +2,24 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
+// folderUtils를 동적으로 import하여 메타데이터를 추출합니다
+async function extractMetadata(name) {
+  try {
+    // ES 모듈 동적 임포트 (Node 환경에서 src 파일 접근)
+    const folderUtilsUrl = new URL('../../src/utils/folderUtils.js', import.meta.url);
+    const { extractCoreTitle, extractVolNumbers } = await import(folderUtilsUrl);
+    
+    const series = extractCoreTitle(name);
+    const vols = extractVolNumbers(name, series);
+    const volume = vols.length > 0 ? (vols.length === 1 ? String(vols[0]) : `${vols[0]}~${vols[vols.length - 1]}`) : '';
+    
+    return { series, volume };
+  } catch (err) {
+    console.warn('Failed to extract metadata:', err);
+    return { series: name, volume: '' };
+  }
+}
+
 export async function scanFolder(folderPath, options = {}, event) {
   const { includeSubfolders = true, targetExts = ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.pdf', '.epub'] } = options;
   const results = [];
@@ -29,6 +47,8 @@ export async function scanFolder(folderPath, options = {}, event) {
           try {
             const stats = await fs.promises.stat(fullPath);
             scannedCount++;
+            
+            const meta = await extractMetadata(entry.name);
 
             // Mocking metadata and thumbnail properties for UI
             const fileData = {
@@ -42,9 +62,9 @@ export async function scanFolder(folderPath, options = {}, event) {
               created: new Date(stats.birthtimeMs).toISOString(),
               modified: new Date(stats.mtimeMs).toISOString(),
               is_folder: false,
-              series: '',
+              series: meta.series || '',
               title: entry.name,
-              volume: '',
+              volume: meta.volume || '',
               chapter: '',
               author: '',
               resolution: '',

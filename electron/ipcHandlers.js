@@ -100,6 +100,23 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 파일 시스템 ==========
+  ipcMain.handle('fs:getRoots', async () => {
+    if (process.platform === 'win32') {
+      try {
+        const { execSync } = await import('child_process');
+        const output = execSync('wmic logicaldisk get name').toString();
+        const drives = output.split('\r\r\n')
+          .map(line => line.trim())
+          .filter(line => /^[A-Z]:$/.test(line));
+        return drives;
+      } catch (e) {
+        return ['C:'];
+      }
+    } else {
+      return ['/'];
+    }
+  });
+
   ipcMain.handle('fs:readDir', (_, dirPath) => {
     try {
       const items = fs.readdirSync(dirPath, { withFileTypes: true });

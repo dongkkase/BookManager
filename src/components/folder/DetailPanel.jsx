@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 
 /**
  * DetailPanel - 하단 상세 정보 패널
@@ -58,7 +58,7 @@ const DetailPanel = ({ selectedFile = null, t }) => {
   // 선택된 파일이 없는 경우
   if (!selectedFile) {
     return (
-      <div className="folder-detail-panel">
+      <div className="folder-detail-panel empty">
         <div className="detail-empty-state">
           {t('folder.detail.no_selection') || '파일을 선택하세요'}
         </div>
@@ -66,38 +66,45 @@ const DetailPanel = ({ selectedFile = null, t }) => {
     );
   }
 
+  const bgStyle = selectedFile.cover && !imageError ? { backgroundImage: `url(${selectedFile.cover})` } : {};
+
   return (
     <div className="folder-detail-panel">
-      {/* 좌측: 커버 이미지 */}
-      <div className="detail-cover-section">
-        {selectedFile.cover && !imageError ? (
-          <img
-            src={selectedFile.cover}
-            alt={selectedFile.name || ''}
-            className="detail-cover-image"
-            onError={handleImageError}
-          />
-        ) : (
-          <div className="detail-cover-placeholder">
-            <div className="placeholder-icon">📄</div>
-            <div className="placeholder-text">No Cover</div>
-          </div>
-        )}
-      </div>
+      <div className="folder-detail-bg" style={bgStyle}></div>
+      <div className="folder-detail-overlay"></div>
+      
+      <div className="folder-detail-content">
+        {/* 좌측: 커버 이미지 */}
+        <div className="detail-cover-section">
+          {selectedFile.cover && !imageError ? (
+            <img
+              src={selectedFile.cover}
+              alt={selectedFile.name || ''}
+              className="detail-cover-image"
+              onError={handleImageError}
+            />
+          ) : (
+            <div className="detail-cover-placeholder">
+              <div className="placeholder-icon">📄</div>
+              <div className="placeholder-text">No Cover</div>
+            </div>
+          )}
+        </div>
 
-      {/* 우측: 메타데이터 그리드 */}
-      <div className="detail-metadata-section">
-        <div className="metadata-grid">
-          {metadataFields.map((field) => (
-            <React.Fragment key={field.key}>
-              <div className="metadata-label">
-                {t(field.labelKey) || field.key}
-              </div>
-              <div className="metadata-value">
-                {formatValue(field.key, selectedFile[field.key])}
-              </div>
-            </React.Fragment>
-          ))}
+        {/* 우측: 메타데이터 그리드 */}
+        <div className="detail-metadata-section">
+          <div className="metadata-grid">
+            {metadataFields.map((field) => (
+              <React.Fragment key={field.key}>
+                <div className="metadata-label">
+                  {t(field.labelKey) || field.key}
+                </div>
+                <div className="metadata-value" title={String(formatValue(field.key, selectedFile[field.key]))}>
+                  {formatValue(field.key, selectedFile[field.key])}
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
         </div>
       </div>
     </div>

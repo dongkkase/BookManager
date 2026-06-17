@@ -13,8 +13,10 @@ export function extractCoreTitle(name) {
   cleanName = cleanName.replace(RE_TRASH_2, "");
   // 파이썬의 핵심 로직 중 대괄호, 괄호 등 제거 (간소화)
   cleanName = cleanName.replace(/\[.*?\]|\(.*?\)/g, "");
-  // 뒤에 붙은 숫자/화수/권수 등 제거
+  // 뒤에 붙은 숫자/화수/권수 등 제거 (단위가 앞에 있는 경우, e.g. vol 14)
   cleanName = cleanName.replace(/(?:\b(?:vol|v|권|화|장|편|부|제|chapter|ch|#)\s*\.?\s*\d+(?:\.\d+)?(?:[~\-]\d+(?:\.\d+)?)?).*$/ig, "");
+  // 단위가 뒤에 있는 경우 제거 (e.g. 14권, 13~14화)
+  cleanName = cleanName.replace(/\s*\d+(?:\.\d+)?(?:\s*[~\-]\s*\d+(?:\.\d+)?)?\s*(?:권|화|장|편|부|vol|ch|ep).*$/ig, "");
   // 맨 뒤에 숫자로 끝나는 패턴 제거 (ex: 나루토 14 -> 나루토)
   cleanName = cleanName.replace(/\s*\d+(?:\.\d+)?\s*$/g, "");
   // 특수문자 정리
