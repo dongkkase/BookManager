@@ -1,4 +1,5 @@
 import React, { useMemo, forwardRef } from 'react';
+import { FaIcon } from '../FaIcon';
 
 /**
  * FileTableView - 파일 테이블 뷰 컴포넌트
@@ -7,36 +8,42 @@ import React, { useMemo, forwardRef } from 'react';
 const FileTableView = forwardRef(({
   files = [],
   sortKey = 'name',
+  sortOrder = 'asc',
   groupKey = 'none',
   selectedFiles = [],
   dupFiles = [],
   onSort,
   onSelect,
+  onContextMenu,
   onSelectAll,
   onDeselectAll,
+  scale = 50,
   t
 }, ref) => {
+  const rowHeight = Math.round(36 + Number(scale || 50) * 0.42);
+  const coverSize = Math.round(32 + Number(scale || 50) * 0.28);
   // 컬럼 정의 (PyQt 원본 기준)
   const columns = [
-    { key: 'cover', label: ':: 커버', width: '60px', sortable: false },
-    { key: 'resolution', label: ':: 해상도', width: '100px', sortable: true },
-    { key: 'size', label: ':: 용량', width: '100px', sortable: true },
-    { key: 'created', label: ':: 생성일', width: '150px', sortable: true },
-    { key: 'series', label: ':: 시리즈', width: '200px', sortable: true },
-    { key: 'name', label: ':: 파일명', width: '200px', sortable: true },
-    { key: 'title', label: ':: 제목', width: '200px', sortable: true },
-    { key: 'volume', label: ':: 권', width: '60px', sortable: true },
-    { key: 'chapter', label: ':: 화', width: '60px', sortable: true },
-    { key: 'author', label: ':: 작가', width: '120px', sortable: true },
-    { key: 'modified', label: ':: 수정일', width: '150px', sortable: true },
-    { key: 'series_group', label: ':: 시리즈 그룹', width: '120px', sortable: true },
-    { key: 'producer', label: ':: 제작진', width: '120px', sortable: true },
-    { key: 'publisher', label: ':: 출판사', width: '120px', sortable: true },
-    { key: 'imprint', label: ':: 임프린트', width: '120px', sortable: true },
-    { key: 'genre', label: ':: 장르', width: '120px', sortable: true },
-    { key: 'total_volume', label: ':: 전체권수', width: '80px', sortable: true },
-    { key: 'page_count', label: ':: 페이지수', width: '80px', sortable: true },
-    { key: 'format', label: ':: 포맷', width: '80px', sortable: true }
+    { key: 'cover', label: t('col_cover'), width: '60px', sortable: false },
+    { key: 'dup_count', label: t('folder_dup_check_off').replace(/[☐☑]\s*/, ''), width: '80px', sortable: true },
+    { key: 'resolution', label: t('col_res'), width: '100px', sortable: true },
+    { key: 'size', label: t('col_size'), width: '100px', sortable: true },
+    { key: 'created', label: t('col_ctime'), width: '150px', sortable: true },
+    { key: 'series', label: t('col_series'), width: '200px', sortable: true },
+    { key: 'name', label: t('col_name'), width: '240px', sortable: true },
+    { key: 'title', label: t('col_title'), width: '160px', sortable: true },
+    { key: 'volume', label: t('col_vol'), width: '70px', sortable: true },
+    { key: 'chapter', label: t('col_num'), width: '60px', sortable: true },
+    { key: 'author', label: t('col_writer'), width: '120px', sortable: true },
+    { key: 'modified', label: t('col_mtime'), width: '150px', sortable: true },
+    { key: 'series_group', label: t('col_series_group'), width: '120px', sortable: true },
+    { key: 'producer', label: t('col_creators'), width: '120px', sortable: true },
+    { key: 'publisher', label: t('col_publisher'), width: '120px', sortable: true },
+    { key: 'imprint', label: t('col_imprint'), width: '120px', sortable: true },
+    { key: 'genre', label: t('col_genre'), width: '140px', sortable: true },
+    { key: 'total_volume', label: t('col_vol_count'), width: '90px', sortable: true },
+    { key: 'page_count', label: t('col_page_count'), width: '90px', sortable: true },
+    { key: 'format', label: t('col_format'), width: '80px', sortable: true }
   ];
 
   // 그룹화 및 정렬 처리
@@ -50,9 +57,11 @@ const FileTableView = forwardRef(({
         const valA = a[sortKey] || '';
         const valB = b[sortKey] || '';
         if (typeof valA === 'number' && typeof valB === 'number') {
-          return valA - valB;
+          const result = valA - valB;
+          return sortOrder === 'desc' ? -result : result;
         }
-        return String(valA).localeCompare(String(valB), 'ko');
+        const result = String(valA).localeCompare(String(valB), 'ko');
+        return sortOrder === 'desc' ? -result : result;
       });
     }
 
@@ -69,7 +78,7 @@ const FileTableView = forwardRef(({
     }
 
     return { ['전체']: processed };
-  }, [files, sortKey, groupKey, t]);
+  }, [files, sortKey, sortOrder, groupKey, t]);
 
   const formatSize = (bytes) => {
     if (!bytes || bytes === 0) return '-';
@@ -99,29 +108,20 @@ const FileTableView = forwardRef(({
     }
   };
 
-  const handleRowClick = (file, e) => {
+  const handleRowClick = (file, e, index) => {
     if (!onSelect || !file.path) return;
-    onSelect(file.path);
+    onSelect(file.path, e, index);
   };
 
   return (
-    <div className="file-table-container" style={{ overflowX: 'auto', overflowY: 'auto', height: '100%', backgroundColor: '#2b2b2b' }}>
-      <table className="file-table" style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', color: 'white', fontSize: '12px' }}>
-        <thead style={{ position: 'sticky', top: 0, backgroundColor: '#1f1f1f', zIndex: 1 }}>
+    <div className="file-table-container">
+      <table className="file-table">
+        <thead>
           <tr>
             {columns.map(col => (
               <th
                 key={col.key}
-                style={{
-                  width: col.width,
-                  minWidth: col.width,
-                  padding: '5px',
-                  border: '1px solid #444',
-                  textAlign: 'left',
-                  cursor: col.sortable ? 'pointer' : 'default',
-                  fontWeight: 'bold',
-                  whiteSpace: 'nowrap'
-                }}
+                style={{ width: col.width, minWidth: col.width, cursor: col.sortable ? 'pointer' : 'default' }}
                 onClick={() => col.sortable && onSort && onSort(col.key)}
               >
                 {col.label}
@@ -134,48 +134,52 @@ const FileTableView = forwardRef(({
             <React.Fragment key={groupName}>
               {groupName !== '전체' && (
                 <tr className="group-header-row">
-                  <td colSpan={columns.length} style={{ padding: '5px', backgroundColor: '#3a3a3a', fontWeight: 'bold' }}>
-                    {groupName}
+                  <td colSpan={columns.length}>
+                    <span className="group-folder-icon"><FaIcon name="folder" /></span> {groupName}
                   </td>
                 </tr>
               )}
               {groupFiles.map((file, index) => (
                 <tr
                   key={file.path || index}
-                  style={{
-                    backgroundColor: selectedFiles.includes(file.path) ? '#3a7ebf' : 'transparent',
-                    cursor: 'pointer'
-                  }}
-                  onClick={(e) => handleRowClick(file, e)}
+                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
+                  onClick={(e) => handleRowClick(file, e, index)}
+                  onContextMenu={(event) => onContextMenu?.(event, file, index)}
                 >
-                  <td className="cover-cell" style={{ padding: '2px', border: '1px solid #444', textAlign: 'center' }}>
+                  <td className="cover-cell">
                     {file.cover ? (
                       <img
                         src={file.cover}
                         alt=""
-                        style={{ width: '32px', height: '44px', objectFit: 'cover' }}
                         loading="lazy"
                       />
                     ) : '-'}
                   </td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.resolution || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{formatSize(file.size)}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{formatDate(file.created)}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.series || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.name || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.title || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.volume || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.chapter || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.author || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{formatDate(file.modified)}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.series_group || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.producer || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.publisher || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.imprint || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.genre || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.total_volume || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.page_count || ''}</td>
-                  <td style={{ padding: '4px', border: '1px solid #444' }}>{file.format || file.type || ''}</td>
+                  <td
+                    className="dup-cell"
+                    title={file.duplicate_matches?.map(match => `${match.name} (${match.ratio}%)`).join('\n') || ''}
+                  >
+                    {file.dup_count > 0 ? `${file.dup_count}개 / ${file.max_ratio}%` : ''}
+                  </td>
+                  <td>{file.resolution || ''}</td>
+                  <td>{formatSize(file.size)}</td>
+                  <td>{formatDate(file.created)}</td>
+                  <td>{file.series || ''}</td>
+                  <td>{file.name || ''}</td>
+                  <td>{file.title || ''}</td>
+                  <td>{file.volume || ''}</td>
+                  <td>{file.chapter || ''}</td>
+                  <td>{file.author || ''}</td>
+                  <td>{formatDate(file.modified)}</td>
+                  <td>{file.series_group || ''}</td>
+                  <td>{file.producer || ''}</td>
+                  <td>{file.publisher || ''}</td>
+                  <td>{file.imprint || ''}</td>
+                  <td>{file.genre || ''}</td>
+                  <td>{file.total_volume || ''}</td>
+                  <td>{file.page_count || ''}</td>
+                  <td>{file.format || file.type || ''}</td>
                 </tr>
               ))}
             </React.Fragment>
@@ -183,8 +187,8 @@ const FileTableView = forwardRef(({
         </tbody>
       </table>
       {files.length === 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>
-          <div style={{ fontSize: '48px', opacity: 0.5 }}>📂</div>
+        <div className="empty-folder-page">
+          <div style={{ fontSize: '48px', opacity: 0.5 }}><FaIcon name="folder" size={48} /></div>
           <div>파일이 없습니다</div>
         </div>
       )}

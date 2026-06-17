@@ -31,6 +31,7 @@ export class ConfigManager {
 
     return {
       lang: 'ko',
+      language: 'ko',
       target_format: 'none',
       backup_on: false,
       flatten_folders: false,
@@ -40,7 +41,23 @@ export class ConfigManager {
       max_threads: defaultThreads,
       play_sound: true,
       viewer_path: '',
+      libraries: [],
+      favorites: [],
       dup_check_folders: [],
+      opds_port: 8080,
+      webdav_port: 8081,
+      webdav_username: 'user',
+      webdav_password: '1234',
+      pass_skip_meta: false,
+      api_keys: {
+        aladin: '',
+        vine: '',
+        google: '',
+        ai_trans_enabled: false,
+        ai_provider: 'Gemini',
+        ai_key: '',
+        tag_rules: '',
+      },
       font_family: 'Default',
       font_scale: 100,
       btn_primary: '#0078d7',
@@ -57,6 +74,12 @@ export class ConfigManager {
       if (fs.existsSync(this.configPath)) {
         const data = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
         Object.assign(defaultConfig, data);
+        defaultConfig.api_keys = {
+          ...this.getDefaultConfig().api_keys,
+          ...(data.api_keys || {}),
+        };
+        defaultConfig.language = defaultConfig.language || defaultConfig.lang || 'ko';
+        defaultConfig.lang = defaultConfig.lang || defaultConfig.language || 'ko';
       }
     } catch (error) {
       console.error('설정 로드 실패:', error);

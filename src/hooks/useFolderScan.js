@@ -24,18 +24,28 @@ export function useFolderScan(t) {
 
   const currentFolderRef = useRef(null);
 
+  const getCacheKey = useCallback((folderPath, options = {}) => {
+    const includeSubfolders = options.includeSubfolders ?? true;
+    const enableDupCheck = options.enableDupCheck ?? false;
+    const dupFolders = (options.dupFolders || []).filter(Boolean).sort();
+    return JSON.stringify({ folderPath, includeSubfolders, enableDupCheck, dupFolders });
+  }, []);
+
   // --- 폴더 스캔 ---
   const scanFolder = useCallback(async (folderPath, options = {}) => {
     const { includeSubfolders = true, enableDupCheck = false } = options;
+    const force = options.force === true;
 
     if (!folderPath) {
       setStatusMessage(t('folder.status.no_folder') || '스캔할 폴더를 선택하세요');
       return [];
     }
 
+    const cacheKey = getCacheKey(folderPath, options);
+
     // 캐시에 데이터가 있다면 재사용
-    if (fileDataCache[folderPath]) {
-      return fileDataCache[folderPath];
+    if (!force && fileDataCache[cacheKey]) {
+      return fileDataCache[cacheKey];
     }
 
     currentFolderRef.current = folderPath;
@@ -47,12 +57,13 @@ export function useFolderScan(t) {
       const files = await window.electronAPI.scanFolder(folderPath, {
         includeSubfolders,
         enableDupCheck,
+        dupFolders: options.dupFolders || [],
       });
 
       // 스캔 완료
       setFileDataCache(prev => ({
         ...prev,
-        [folderPath]: files || [],
+        [cacheKey]: files || [],
       }));
       setScanProgress(100);
       const count = files?.length || 0;
@@ -68,7 +79,7 @@ export function useFolderScan(t) {
     } finally {
       setScanning(false);
     }
-  }, [fileDataCache, t]);
+  }, [fileDataCache, getCacheKey, t]);
 
   // --- 스캔 취소 ---
   const cancelScan = useCallback(() => {
@@ -81,17 +92,23 @@ export function useFolderScan(t) {
   }, [abortController]);
 
   // --- 캐시에서 파일 데이터 가져오기 ---
-  const getCachedFiles = useCallback((folderPath) => {
-    return fileDataCache[folderPath] || [];
-  }, [fileDataCache]);
+  const getCachedFiles = useCallback((folderPath, options = {}) => {
+    return fileDataCache[getCacheKey(folderPath, options)] || [];
+  }, [fileDataCache, getCacheKey]);
 
   // --- 캐시 초기화 ---
   const clearCache = useCallback((folderPath) => {
     if (folderPath) {
-      // 특정 폴더 캐시만 제거
+      // 특정 폴더 관련 캐시만 제거
       setFileDataCache(prev => {
         const newCache = { ...prev };
-        delete newCache[folderPath];
+        Object.keys(newCache).forEach(key => {
+          try {
+            if (JSON.parse(key).folderPath === folderPath) delete newCache[key];
+          } catch {
+            delete newCache[key];
+          }
+        });
         return newCache;
       });
     } else {
@@ -102,7 +119,7 @@ export function useFolderScan(t) {
 
   // --- IPC 이벤트 리스너 ---
   useEffect(() => {
-    const handleScanProgress = (event, data) => {
+    const handleScanProgress = (data) => {
       const { progress, message } = data || {};
       if (progress !== undefined) {
         setScanProgress(progress);
@@ -112,12 +129,12 @@ export function useFolderScan(t) {
       }
     };
 
-    const handleScanComplete = (event, data) => {
-      const { files, folderPath } = data || {};
-      if (folderPath && files) {
+    const handleScanComplete = (data) => {
+      const { files, folderPath, cacheKey } = data || {};
+      if (folderPath && files && cacheKey) {
         setFileDataCache(prev => ({
           ...prev,
-          [folderPath]: files,
+          [cacheKey]: files,
         }));
         setScanProgress(100);
         setScanning(false);
@@ -128,7 +145,7 @@ export function useFolderScan(t) {
       }
     };
 
-    const handleScanError = (event, data) => {
+    const handleScanError = (data) => {
       const { error, message } = data || {};
       console.error('스캔 오류:', error || message);
       setScanning(false);

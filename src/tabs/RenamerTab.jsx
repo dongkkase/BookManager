@@ -1,134 +1,325 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FaIcon } from '../components/FaIcon';
 import '../styles/RenamerTab.css';
+import dragDropImage from '../images/draganddrop1.png';
 
-/**
- * Renamer 탭 컴포넌트
- * 내부 파일명 변경
- */
+const ARCHIVE_FILTERS = [
+  { name: 'Archives', extensions: ['zip', 'cbz', 'cbr', '7z', 'rar'] },
+];
+
+function basename(filePath) {
+  return String(filePath || '').split(/[\\/]/).pop() || '';
+}
+
+function stem(filePath) {
+  const name = basename(filePath);
+  return name.replace(/\.[^.]+$/, '');
+}
+
+function safeName(name) {
+  return String(name || '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/^[._\-\s]+/, '')
+    .trim() || 'Page';
+}
+
+function padFor(totalCount) {
+  if (totalCount < 100) return 2;
+  if (totalCount < 1000) return 3;
+  return 4;
+}
+
+function generateEntryName(entry, index, totalCount, options) {
+  const originalName = entry.oldName || basename(entry.originalPath);
+  const ext = (originalName.match(/\.[^.]+$/)?.[0]) || '.jpg';
+  if (options.keepName) return originalName;
+
+  const n = Number(options.startNum || 0) + index;
+  const padded = String(n).padStart(padFor(totalCount), '0');
+  const archiveStem = safeName(options.archiveStem);
+  const customText = safeName(options.customText || 'Custom');
+
+  if (options.patternIndex === 1) return index === 0 ? `Cover${ext}` : `Page_${padded}${ext}`;
+  if (options.patternIndex === 2) return `${archiveStem}_${padded}${ext}`;
+  if (options.patternIndex === 3) return index === 0 ? `${archiveStem}_Cover${ext}` : `${archiveStem}_Page_${padded}${ext}`;
+  if (options.patternIndex === 4) return `${customText}_${padded}${ext}`;
+  return `${padded}${ext}`;
+}
+
+function refreshItemNames(item, options) {
+  const archiveStem = stem(item.filepath || item.name);
+  const entries = (item.entries || []).map((entry, index, source) => ({
+    ...entry,
+    newName: generateEntryName(entry, index, source.length, { ...options, archiveStem }),
+  }));
+  return { ...item, entries, count: entries.length };
+}
+
 function RenamerTab({ config, t }) {
   const [fileList, setFileList] = useState([]);
   const [selectedArchiveId, setSelectedArchiveId] = useState(null);
-  
-  // 상태 변수
-  const [isAllChecked, setIsAllChecked] = useState(true);
-  const [isCapAllChecked, setIsCapAllChecked] = useState(false);
-  const [isExifAllChecked, setIsExifAllChecked] = useState(true);
-  
-  const [pattern, setPattern] = useState('001.jpg');
-  const [customText, setCustomText] = useState('');
-  const [keepName, setKeepName] = useState(false);
-  const [startNum, setStartNum] = useState(0);
+  const [patternIndex, setPatternIndex] = useState(Number(config?.rename_pattern_idx || 0));
+  const [customText, setCustomText] = useState(config?.custom_text || '');
+  const [keepName, setKeepName] = useState(Boolean(config?.keep_internal_name || false));
+  const [startNum, setStartNum] = useState(Number(config?.start_num || 0));
+  const [isWorking, setIsWorking] = useState(false);
+  const [statusMessage, setStatusMessage] = useState(t('status_wait'));
+  const [progress, setProgress] = useState(0);
+  const [lastResult, setLastResult] = useState(null);
 
-  // 더미 데이터
+  const patternLabels = useMemo(() => {
+    const labels = t('patterns');
+    return Array.isArray(labels) && labels.length > 0
+      ? labels
+      : ['001.jpg', 'Page_001.jpg', 'Title_001.jpg', 'Title_Page_001.jpg', 'Custom_001.jpg'];
+  }, [t]);
+
+  const renameOptions = useMemo(() => ({
+    patternIndex,
+    customText,
+    keepName,
+    startNum,
+  }), [patternIndex, customText, keepName, startNum]);
+
   useEffect(() => {
-    setFileList([
-      {
-        id: '1',
-        name: '어떤 마술의 금서목록 v01.zip',
-        checked: true,
-        capOpt: false,
-        exifOpt: true,
-        count: 154,
-        sizeMb: 45.2,
-        entries: [
-          { id: '1-1', oldName: 'cover.jpg', newName: 'Page_000.jpg', sizeKb: 120.5 },
-          { id: '1-2', oldName: '001.jpg', newName: 'Page_001.jpg', sizeKb: 85.2 },
-          { id: '1-3', oldName: '002.jpg', newName: 'Page_002.jpg', sizeKb: 90.1 },
-        ]
-      },
-      {
-        id: '2',
-        name: '원피스 100권.zip',
-        checked: true,
-        capOpt: false,
-        exifOpt: true,
-        count: 205,
-        sizeMb: 60.8,
-        entries: [
-          { id: '2-1', oldName: 'OP_100_001.jpg', newName: '001.jpg', sizeKb: 150.0 },
-          { id: '2-2', oldName: 'OP_100_002.jpg', newName: '002.jpg', sizeKb: 145.2 },
-        ]
+    const removeProgress = window.electronAPI?.onTaskProgress?.((data) => {
+      if (data?.task?.startsWith('renamer:')) {
+        setProgress(data.progress ?? 0);
+        if (data.message) setStatusMessage(data.message);
       }
-    ]);
+    });
+    return () => {
+      if (typeof removeProgress === 'function') removeProgress();
+    };
   }, []);
 
-  const handleStartNumChange = (delta) => {
-    setStartNum(prev => Math.max(0, prev + delta));
+  useEffect(() => {
+    setFileList(prev => prev.map(item => refreshItemNames(item, renameOptions)));
+  }, [renameOptions]);
+
+  const activeArchive = useMemo(
+    () => fileList.find(file => file.id === selectedArchiveId) || fileList[0] || null,
+    [fileList, selectedArchiveId]
+  );
+  const activeEntries = activeArchive?.entries || [];
+  const checkedCount = useMemo(() => fileList.filter(file => file.checked).length, [fileList]);
+  const allChecked = fileList.length > 0 && fileList.every(file => file.checked);
+  const capAllChecked = fileList.length > 0 && fileList.every(file => file.capOpt);
+  const exifAllChecked = fileList.length > 0 && fileList.every(file => file.exifOpt);
+
+  const updateFile = (id, updater, refreshNames = true) => {
+    setFileList(prev => prev.map(file => {
+      if (file.id !== id) return file;
+      const nextFile = updater(file);
+      return refreshNames ? refreshItemNames(nextFile, renameOptions) : nextFile;
+    }));
   };
 
-  const activeArchive = fileList.find(f => f.id === selectedArchiveId);
+  const analyzePaths = useCallback(async (paths) => {
+    const cleanPaths = [...new Set((paths || []).filter(Boolean))];
+    if (cleanPaths.length === 0) return;
+
+    setIsWorking(true);
+    setProgress(0);
+    setLastResult(null);
+    setStatusMessage(t('msg_loading_list'));
+
+    try {
+      const result = await window.electronAPI.analyzeRenamer(cleanPaths, {
+        lang: config?.language || config?.lang || 'ko',
+        ...renameOptions,
+      });
+
+      const nextItems = (result.items || []).map(item => refreshItemNames(item, renameOptions));
+      setFileList(prev => {
+        const byPath = new Map(prev.map(item => [item.filepath, item]));
+        for (const item of nextItems) byPath.set(item.filepath, item);
+        return [...byPath.values()];
+      });
+      if (nextItems[0]) setSelectedArchiveId(nextItems[0].id);
+      if (result.skippedFiles?.length) {
+        setStatusMessage(`${t('msg_unsupported_format')}: ${result.skippedFiles.join(', ')}`);
+      } else {
+        setStatusMessage(t('msg_done'));
+      }
+    } catch (error) {
+      setStatusMessage(`${t('msg_failed')}: ${error.message}`);
+    } finally {
+      setProgress(100);
+      setIsWorking(false);
+    }
+  }, [config?.language, config?.lang, renameOptions, t]);
+
+  const handleSelectFiles = useCallback(async () => {
+    const paths = await window.electronAPI.selectFiles(t('add_file'), ARCHIVE_FILTERS);
+    await analyzePaths(paths);
+  }, [analyzePaths, t]);
+
+  const handleSelectFolder = useCallback(async () => {
+    const folderPath = await window.electronAPI.selectFolder(t('add_folder'));
+    if (folderPath) await analyzePaths([folderPath]);
+  }, [analyzePaths, t]);
+
+  const handleDrop = useCallback(async (event) => {
+    event.preventDefault();
+    const paths = Array.from(event.dataTransfer.files || [])
+      .map(file => file.path)
+      .filter(Boolean);
+    await analyzePaths(paths);
+  }, [analyzePaths]);
+
+  const handleDragOver = useCallback((event) => {
+    event.preventDefault();
+  }, []);
+
+  const toggleAllChecked = () => {
+    const nextChecked = !allChecked;
+    setFileList(prev => prev.map(file => ({ ...file, checked: nextChecked })));
+  };
+
+  const toggleAllCap = () => {
+    const nextChecked = !capAllChecked;
+    setFileList(prev => prev.map(file => ({ ...file, capOpt: nextChecked })));
+  };
+
+  const toggleAllExif = () => {
+    const nextChecked = !exifAllChecked;
+    setFileList(prev => prev.map(file => ({ ...file, exifOpt: nextChecked })));
+  };
+
+  const handleMoveEntry = (archiveId, entryIndex, mode) => {
+    updateFile(archiveId, file => {
+      const entries = [...(file.entries || [])];
+      const [entry] = entries.splice(entryIndex, 1);
+      let targetIndex = entryIndex;
+      if (mode === 'top') targetIndex = 0;
+      if (mode === 'up') targetIndex = Math.max(0, entryIndex - 1);
+      if (mode === 'down') targetIndex = Math.min(entries.length, entryIndex + 1);
+      if (mode === 'bottom') targetIndex = entries.length;
+      entries.splice(targetIndex, 0, entry);
+      return { ...file, entries };
+    });
+  };
+
+  const handleStartNumChange = (delta) => {
+    setStartNum(prev => Math.max(0, Number(prev || 0) + delta));
+  };
+
+  const handleClear = () => {
+    setFileList([]);
+    setSelectedArchiveId(null);
+    setLastResult(null);
+    setStatusMessage(t('status_wait'));
+    setProgress(0);
+  };
+
+  const handleExecute = async () => {
+    if (checkedCount === 0) {
+      setStatusMessage(t('msg_no_targets'));
+      return;
+    }
+
+    setIsWorking(true);
+    setProgress(0);
+    setLastResult(null);
+    setStatusMessage(t('msg_processing_overlay'));
+
+    try {
+      const result = await window.electronAPI.executeRenamer(fileList, {
+        lang: config?.language || config?.lang || 'ko',
+        target_format: config?.target_format || 'none',
+        backup_on: config?.backup_on || false,
+        flattenFolders: config?.flatten_folders || false,
+        ...renameOptions,
+      });
+      setLastResult(result);
+      const success = result.stats?.success?.length || 0;
+      const skip = result.stats?.skip?.length || 0;
+      const error = result.stats?.error?.length || 0;
+      setStatusMessage(t('msg_job_done', [success, skip, error]));
+    } catch (error) {
+      setStatusMessage(`${t('msg_failed')}: ${error.message}`);
+    } finally {
+      setProgress(100);
+      setIsWorking(false);
+    }
+  };
 
   return (
-    <div className="renamer-tab">
+    <div className="renamer-tab" onDrop={handleDrop} onDragOver={handleDragOver}>
       <div className="renamer-left-panel">
-        <div className="renamer-preview-title">{t('renamer.cover_preview') || '커버 미리보기'}</div>
+        <div className="renamer-preview-title">{t('cover_preview')}</div>
         <div className="renamer-preview-img-box">
-          <span className="renamer-no-image">이미지 없음</span>
+          <span className="renamer-no-image">{activeEntries[0]?.oldName || t('tf_empty_no_data')}</span>
         </div>
-        
-        <div className="renamer-divider"></div>
-        
-        <div className="renamer-preview-title">{t('renamer.inner_preview') || '내부 파일 미리보기'}</div>
+
+        <div className="renamer-divider" />
+
+        <div className="renamer-preview-title">{t('inner_preview')}</div>
         <div className="renamer-preview-img-box">
-          <span className="renamer-no-image">이미지 없음</span>
+          <span className="renamer-no-image">{activeEntries[1]?.oldName || activeEntries[0]?.newName || t('tf_empty_no_data')}</span>
         </div>
       </div>
 
       <div className="renamer-right-panel">
+        <div className="renamer-local-toolbar">
+          <button className="renamer-btn-toggle" onClick={handleSelectFolder} disabled={isWorking}><FaIcon name="folder" /> {t('add_folder')}</button>
+          <button className="renamer-btn-toggle" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>
+          <button className="renamer-btn-toggle" onClick={handleClear} disabled={isWorking || fileList.length === 0}><FaIcon name="trash" /> {t('clear_all')}</button>
+          <div className="renamer-spacer" />
+          <button className="renamer-btn-toggle renamer-run-btn" onClick={handleExecute} disabled={isWorking || checkedCount === 0}>{t('run_btn')}</button>
+        </div>
+
         <div className="renamer-options-bar">
-          <button className={`renamer-btn-toggle ${isAllChecked ? 'active' : ''}`}>
-            {isAllChecked ? '☑' : '☐'} 전체 선택
+          <button className={`renamer-btn-toggle ${allChecked ? 'active' : ''}`} onClick={toggleAllChecked} disabled={fileList.length === 0}>
+            <FaIcon name="checkSquare" /> {t('toggle_all')}
           </button>
-          <button className={`renamer-btn-toggle ${isCapAllChecked ? 'active' : ''}`}>
-            {isCapAllChecked ? '☑' : '☐'} 이미지 압축 일괄 (85%)
+          <button className={`renamer-btn-toggle ${capAllChecked ? 'active' : ''}`} onClick={toggleAllCap} disabled={fileList.length === 0} title={t('tt_cap_opt')}>
+            <FaIcon name="checkSquare" /> {t('btn_cap_all')} ({config?.quality || 85}%)
           </button>
-          <button className={`renamer-btn-toggle ${isExifAllChecked ? 'active' : ''}`}>
-            {isExifAllChecked ? '☑' : '☐'} EXIF 제거 일괄
+          <button className={`renamer-btn-toggle ${exifAllChecked ? 'active' : ''}`} onClick={toggleAllExif} disabled={fileList.length === 0} title={t('tt_exif_rem')}>
+            <FaIcon name="checkSquare" /> {t('btn_exif_all')}
           </button>
 
-          <div className="renamer-spacer"></div>
+          <div className="renamer-spacer" />
 
-          <label className="renamer-label">이름 패턴:</label>
-          <select 
-            className="renamer-select" 
-            value={pattern} 
-            onChange={(e) => setPattern(e.target.value)}
+          <label className="renamer-label">{t('tf_rename_mode')}:</label>
+          <select
+            className="renamer-select"
+            value={patternIndex}
+            onChange={(event) => setPatternIndex(Number(event.target.value))}
             disabled={keepName}
           >
-            <option value="001.jpg">001.jpg</option>
-            <option value="Page_001.jpg">Page_001.jpg</option>
-            <option value="Title_001.jpg">Title_001.jpg</option>
-            <option value="Title_Page_001.jpg">Title_Page_001.jpg</option>
-            <option value="Custom">Custom</option>
+            {patternLabels.map((label, index) => (
+              <option key={`${label}-${index}`} value={index}>{label}</option>
+            ))}
           </select>
 
-          <input 
-            type="text" 
-            className="renamer-input-custom" 
-            placeholder="Custom" 
+          <input
+            type="text"
+            className="renamer-input-custom"
+            placeholder="Custom"
             value={customText}
-            onChange={(e) => setCustomText(e.target.value)}
-            disabled={keepName || pattern !== 'Custom'}
+            onChange={(event) => setCustomText(event.target.value)}
+            disabled={keepName || patternIndex !== 4}
           />
 
           <label className="renamer-checkbox-label">
-            <input 
-              type="checkbox" 
-              checked={keepName} 
-              onChange={(e) => setKeepName(e.target.checked)} 
+            <input
+              type="checkbox"
+              checked={keepName}
+              onChange={(event) => setKeepName(event.target.checked)}
             />
-            내부 파일명 유지
+            {t('tab2_keep_name')}
           </label>
 
-          <div className="renamer-spacer"></div>
-
-          <label className="renamer-label">시작 번호:</label>
+          <label className="renamer-label">{t('tab2_start_num')}</label>
           <button className="renamer-btn-icon" onClick={() => handleStartNumChange(-1)} disabled={keepName}>-</button>
-          <input 
-            type="number" 
-            className="renamer-input-num" 
-            value={startNum} 
-            onChange={(e) => setStartNum(Math.max(0, parseInt(e.target.value) || 0))}
+          <input
+            type="number"
+            className="renamer-input-num"
+            value={startNum}
+            onChange={(event) => setStartNum(Math.max(0, Number.parseInt(event.target.value, 10) || 0))}
             disabled={keepName}
           />
           <button className="renamer-btn-icon" onClick={() => handleStartNumChange(1)} disabled={keepName}>+</button>
@@ -137,41 +328,61 @@ function RenamerTab({ config, t }) {
         <div className="renamer-content-area">
           {fileList.length === 0 ? (
             <div className="renamer-empty-state">
-              <img src="/draganddrop1.png" alt="Drag and Drop" className="renamer-empty-image" />
-              <p className="renamer-empty-text">파일이나 폴더를 여기에 드래그 앤 드롭하세요</p>
+              <img src={dragDropImage} alt="" className="renamer-empty-image" />
+              <p className="renamer-empty-text">{t('drag_drop')}</p>
             </div>
           ) : (
             <div className="renamer-split-view">
-              {/* 상단: 압축 파일 리스트 */}
               <div className="renamer-table-wrapper top-table">
                 <table className="renamer-table">
                   <thead>
                     <tr>
-                      <th style={{ width: '40%' }}>파일명</th>
-                      <th style={{ width: '10%' }}>항목수</th>
-                      <th style={{ width: '15%' }}>용량</th>
-                      <th style={{ width: '17%' }}>이미지 압축 일괄</th>
-                      <th style={{ width: '18%' }}>EXIF 제거 일괄</th>
+                      <th style={{ width: '44%' }}>{t('col_name')}</th>
+                      <th style={{ width: '12%' }}>{t('col_page_count')}</th>
+                      <th style={{ width: '14%' }}>{t('col_size')}</th>
+                      <th style={{ width: '15%' }}>{t('col_cap_opt')}</th>
+                      <th style={{ width: '15%' }}>{t('col_exif_rem')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {fileList.map((file) => (
-                      <tr 
-                        key={file.id} 
-                        className={selectedArchiveId === file.id ? 'selected' : ''}
+                      <tr
+                        key={file.id}
+                        className={activeArchive?.id === file.id ? 'selected' : ''}
                         onClick={() => setSelectedArchiveId(file.id)}
                       >
                         <td>
-                          <input type="checkbox" checked={file.checked} readOnly />
-                          <span style={{ marginLeft: '5px' }}>{file.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={file.checked}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              updateFile(file.id, current => ({ ...current, checked: !current.checked }));
+                            }}
+                          />
+                          <span className="renamer-file-name">{file.name}</span>
                         </td>
-                        <td style={{ textAlign: 'center' }}>{file.count}</td>
-                        <td style={{ textAlign: 'right' }}>{file.sizeMb.toFixed(1)} MB</td>
-                        <td style={{ textAlign: 'center' }}>
-                          <input type="checkbox" checked={file.capOpt} readOnly />
+                        <td className="renamer-cell-center">{file.count}</td>
+                        <td className="renamer-cell-right">{Number(file.sizeMb || 0).toFixed(1)} MB</td>
+                        <td className="renamer-cell-center">
+                          <input
+                            type="checkbox"
+                            checked={file.capOpt}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              updateFile(file.id, current => ({ ...current, capOpt: !current.capOpt }));
+                            }}
+                          />
                         </td>
-                        <td style={{ textAlign: 'center' }}>
-                          <input type="checkbox" checked={file.exifOpt} readOnly />
+                        <td className="renamer-cell-center">
+                          <input
+                            type="checkbox"
+                            checked={file.exifOpt}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              updateFile(file.id, current => ({ ...current, exifOpt: !current.exifOpt }));
+                            }}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -179,37 +390,46 @@ function RenamerTab({ config, t }) {
                 </table>
               </div>
 
-              {/* 하단: 내부 파일 리스트 */}
               <div className="renamer-table-wrapper bottom-table">
                 <table className="renamer-table">
                   <thead>
                     <tr>
-                      <th style={{ width: '35%' }}>기존 이름</th>
-                      <th style={{ width: '35%' }}>변경될 이름</th>
-                      <th style={{ width: '15%' }}>파일 크기</th>
-                      <th style={{ width: '15%' }}>순서 변경</th>
+                      <th style={{ width: '35%' }}>{t('tf_col_old_name')}</th>
+                      <th style={{ width: '35%' }}>{t('tf_col_new_name')}</th>
+                      <th style={{ width: '15%' }}>{t('col_size')}</th>
+                      <th style={{ width: '15%' }}>{t('col_order')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {activeArchive ? activeArchive.entries.map((entry, index) => (
                       <tr key={entry.id}>
-                        <td>{entry.oldName}</td>
-                        <td>{entry.newName}</td>
-                        <td style={{ textAlign: 'right' }}>{entry.sizeKb.toFixed(1)} KB</td>
-                        <td style={{ textAlign: 'center' }}>
+                        <td title={entry.originalPath}>{entry.oldName}</td>
+                        <td>
+                          <input
+                            className="renamer-entry-input"
+                            value={entry.newName}
+                            onChange={(event) => {
+                              const nextName = event.target.value;
+                              updateFile(activeArchive.id, file => ({
+                                ...file,
+                                entries: file.entries.map(current => current.id === entry.id ? { ...current, newName: nextName } : current),
+                              }), false);
+                            }}
+                          />
+                        </td>
+                        <td className="renamer-cell-right">{Number(entry.size_kb || 0).toFixed(1)} KB</td>
+                        <td className="renamer-cell-center">
                           <div className="renamer-order-btns">
-                            <button disabled={index === 0}>⇈</button>
-                            <button disabled={index === 0}>↑</button>
-                            <button disabled={index === activeArchive.entries.length - 1}>↓</button>
-                            <button disabled={index === activeArchive.entries.length - 1}>⇊</button>
+                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'top')} disabled={index === 0}>⇈</button>
+                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'up')} disabled={index === 0}>↑</button>
+                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'down')} disabled={index === activeArchive.entries.length - 1}>↓</button>
+                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'bottom')} disabled={index === activeArchive.entries.length - 1}>⇊</button>
                           </div>
                         </td>
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan="4" style={{ textAlign: 'center', color: '#888' }}>
-                          압축 파일을 선택하면 내부 파일이 표시됩니다.
-                        </td>
+                        <td colSpan="4" className="renamer-empty-row">{t('t3_msg_sel')}</td>
                       </tr>
                     )}
                   </tbody>
@@ -218,9 +438,16 @@ function RenamerTab({ config, t }) {
             </div>
           )}
         </div>
-        
+
         <div className="renamer-bottom-info">
-          총 {fileList.length}개의 압축 파일이 리스트에 있습니다.
+          <div>
+            {t('total_files', { count: fileList.length })} / {checkedCount} checked
+            {lastResult?.stats?.error?.length ? <span className="renamer-error-text"> · {lastResult.stats.error.join(' / ')}</span> : null}
+          </div>
+          <div className="renamer-progress-wrap">
+            <span>{statusMessage}</span>
+            <progress value={progress} max="100" />
+          </div>
         </div>
       </div>
     </div>

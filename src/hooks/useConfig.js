@@ -21,8 +21,8 @@ export function useConfig() {
 
   const saveConfig = useCallback(async (updates) => {
     try {
-      await window.electronAPI.saveConfig(updates);
-      const updatedConfig = await window.electronAPI.getConfig();
+      const savedConfig = await window.electronAPI.saveConfig(updates);
+      const updatedConfig = savedConfig || await window.electronAPI.getConfig();
       setConfig(updatedConfig);
       return updatedConfig;
     } catch (error) {

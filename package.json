@@ -50,16 +50,6 @@
         "filter": ["**/*"]
       },
       {
-        "from": "fonts",
-        "to": "fonts",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "sounds",
-        "to": "sounds",
-        "filter": ["**/*"]
-      },
-      {
         "from": "src",
         "to": "src",
         "filter": ["**/*"]

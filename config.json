@@ -1,5 +1,6 @@
 {
   "lang": "ko",
+  "language": "ko",
   "target_format": "none",
   "backup_on": false,
   "flatten_folders": false,
@@ -9,7 +10,25 @@
   "max_threads": 10,
   "play_sound": true,
   "viewer_path": "",
-  "dup_check_folders": [],
+  "libraries": [],
+  "favorites": [],
+  "dup_check_folders": [
+    "/Volumes/drive1/_만화"
+  ],
+  "opds_port": 8080,
+  "webdav_port": 8081,
+  "webdav_username": "user",
+  "webdav_password": "1234",
+  "pass_skip_meta": false,
+  "api_keys": {
+    "aladin": "",
+    "vine": "",
+    "google": "",
+    "ai_trans_enabled": false,
+    "ai_provider": "Gemini",
+    "ai_key": "",
+    "tag_rules": ""
+  },
   "font_family": "Default",
   "font_scale": 100,
   "btn_primary": "#0078d7",

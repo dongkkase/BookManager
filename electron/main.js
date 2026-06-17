@@ -27,8 +27,8 @@ function getResourcePath(...subPaths) {
     // 개발 모드: 프로젝트 루트의 리소스 폴더 사용
     return path.join(__dirname, '..', ...subPaths);
   } else {
-    // 프로덕션 모드: app.getAppPath() 사용
-    return path.join(app.getAppPath(), ...subPaths);
+    // 프로덕션 모드: extraResources에 복사된 리소스 사용
+    return path.join(process.resourcesPath, ...subPaths);
   }
 }
 
@@ -61,8 +61,10 @@ async function getBinPath(toolName) {
 
 // 폰트 경로
 function getFontPath(fontFilename) {
-  const fontPath = path.join(getExecutableDir(), 'fonts', fontFilename);
+  const fontPath = getResourcePath('src', 'fonts', fontFilename);
   if (fs.existsSync(fontPath)) return fontPath;
+  const legacyFontPath = path.join(getExecutableDir(), 'fonts', fontFilename);
+  if (fs.existsSync(legacyFontPath)) return legacyFontPath;
   return null;
 }
 
@@ -137,7 +139,7 @@ function createMainWindow(config) {
 
 function createTray() {
   try {
-    const iconPath = getResourcePath('src', 'app.ico');
+    const iconPath = getResourcePath('src', 'images', 'app.ico');
     
     if (process.platform === 'darwin') {
       // macOS는 템플릿 아이콘 사용

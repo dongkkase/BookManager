@@ -1,4 +1,5 @@
 import React from 'react';
+import { FaIcon } from '../FaIcon';
 
 /**
  * ThumbnailView - 썸네일 그리드 뷰 컴포넌트
@@ -12,27 +13,39 @@ import React from 'react';
  */
 const ThumbnailView = ({
   files = [],
+  fileData = [],
   selectedFiles = [],
   onSelect,
+  onContextMenu,
+  scale = 50,
   t
 }) => {
-  const handleItemClick = (file, e) => {
+  const items = files.length > 0 ? files : fileData;
+  const itemWidth = Math.round(82 + Number(scale || 50) * 0.68);
+  const imageWidth = Math.round(72 + Number(scale || 50) * 0.52);
+  const imageHeight = Math.round(imageWidth * 1.34);
+
+  const handleItemClick = (file, e, index) => {
     if (!onSelect || !file.path) return;
 
-    if (e.ctrlKey || e.metaKey) {
-      onSelect(file.path);
-    } else {
-      onSelect(file.path);
-    }
+    onSelect(file.path, e, index);
   };
 
   return (
-    <div className="thumbnail-grid">
-      {files.map((file, index) => (
+    <div
+      className="thumbnail-grid"
+      style={{
+        '--thumb-item-width': `${itemWidth}px`,
+        '--thumb-image-width': `${imageWidth}px`,
+        '--thumb-image-height': `${imageHeight}px`,
+      }}
+    >
+      {items.map((file, index) => (
         <div
           key={file.path || index}
           className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''}`}
-          onClick={(e) => handleItemClick(file, e)}
+          onClick={(e) => handleItemClick(file, e, index)}
+          onContextMenu={(event) => onContextMenu?.(event, file, index)}
         >
           {file.cover ? (
             <img
@@ -49,15 +62,15 @@ const ThumbnailView = ({
               background: 'var(--bg-tertiary)',
               fontSize: '24px'
             }}>
-              📄
+              <FaIcon name="file" size={24} />
             </div>
           )}
           <span className="thumb-label">{file.name || '-'}</span>
         </div>
       ))}
-      {files.length === 0 && (
+      {items.length === 0 && (
         <div className="empty-folder-page" style={{ gridColumn: '1 / -1' }}>
-          <div className="empty-icon">📂</div>
+          <div className="empty-icon"><FaIcon name="folder" size={32} /></div>
           <div className="empty-message">{t('folder.message.noFiles') || '파일이 없습니다'}</div>
         </div>
       )}

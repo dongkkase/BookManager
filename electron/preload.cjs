@@ -23,8 +23,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 파일 시스템
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
+  getRoots: () => ipcRenderer.invoke('fs:getRoots'),
+  getSpecialPaths: () => ipcRenderer.invoke('fs:getSpecialPaths'),
   stat: (filePath) => ipcRenderer.invoke('fs:stat', filePath),
   exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),
+  renameFile: (oldPath, newPath) => ipcRenderer.invoke('fs:rename', oldPath, newPath),
+  multiRenameFiles: (renameMap) => ipcRenderer.invoke('fs:multiRename', renameMap),
+  undoRename: () => ipcRenderer.invoke('fs:undoRename'),
+  deleteFiles: (filePaths) => ipcRenderer.invoke('fs:delete', filePaths),
+  openInExplorer: (folderPath) => ipcRenderer.invoke('fs:openInExplorer', folderPath),
+  showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
+  exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
+  executeLibraryMove: (movePlans) => ipcRenderer.invoke('fs:executeLibraryMove', movePlans),
+  extractCoreTitle: (filename) => ipcRenderer.invoke('parser:extractCoreTitle', filename),
   
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
@@ -35,6 +46,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeLibrary: () => ipcRenderer.invoke('library:close'),
   
   // 작업 관련
+  analyzeOrganizer: (paths, options) => ipcRenderer.invoke('organizer:analyze', paths, options),
+  executeOrganizer: (items, options) => ipcRenderer.invoke('organizer:execute', items, options),
+  analyzeRenamer: (paths, options) => ipcRenderer.invoke('renamer:analyze', paths, options),
+  executeRenamer: (items, options) => ipcRenderer.invoke('renamer:execute', items, options),
+  analyzeMetadata: (paths, options) => ipcRenderer.invoke('metadata:analyze', paths, options),
+  saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
+  clearApiCache: () => ipcRenderer.invoke('cache:clearApi'),
+  clearDupCache: () => ipcRenderer.invoke('folder:clearDupCache'),
+  updateFolderIndex: (folders) => ipcRenderer.invoke('folder:updateIndex', folders),
   startOrganizeTask: (options) => ipcRenderer.invoke('task:organize:start', options),
   startRenameTask: (options) => ipcRenderer.invoke('task:rename:start', options),
   startExtractTask: (options) => ipcRenderer.invoke('task:extract:start', options),
@@ -44,6 +64,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startServer: (serverType, options) => ipcRenderer.invoke('server:start', serverType, options),
   stopServer: (serverType) => ipcRenderer.invoke('server:stop', serverType),
   getServerStatus: () => ipcRenderer.invoke('server:status'),
+  getReleases: () => ipcRenderer.invoke('releases:list'),
   
   // API 관련
   fetchMetadata: (options) => ipcRenderer.invoke('api:fetch', options),
@@ -55,7 +76,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTaskProgress: (callback) => ipcRenderer.on('task:progress', (_, data) => callback(data)),
   onTaskComplete: (callback) => ipcRenderer.on('task:complete', (_, data) => callback(data)),
   onTaskError: (callback) => ipcRenderer.on('task:error', (_, data) => callback(data)),
-  onServerLog: (callback) => ipcRenderer.on('server:log', (_, data) => callback(data)),
+  onServerLog: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('server:log', handler);
+    return () => ipcRenderer.removeListener('server:log', handler);
+  },
   onLog: (callback) => ipcRenderer.on('log', (_, data) => callback(data)),
   
   onScanProgress: (callback) => {

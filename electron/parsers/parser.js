@@ -1,5 +1,3 @@
-import { diffRatio } from 'difflib';
-import { pathToFileURL } from 'url';
 import path from 'path';
 
 // difflib is not a built-in Node.js module, so we implement a simple similarity function

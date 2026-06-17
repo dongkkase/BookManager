@@ -100,6 +100,14 @@ export function useFileSelection(fileData = []) {
     clearSelection();
   }, [clearSelection]);
 
+  // --- 선택 반전 ---
+  const invertSelection = useCallback(() => {
+    const allPaths = fileData.map(file => file.path).filter(Boolean);
+    setSelectedFiles(prev => {
+      return allPaths.filter(path => !prev.includes(path));
+    });
+  }, [fileData]);
+
   // --- 선택 범위 내 여부 확인 ---
   const isInSelectionRange = useCallback((index) => {
     if (selectionStartRef.current === null) return false;
@@ -130,6 +138,7 @@ export function useFileSelection(fileData = []) {
     clearSelection,
     selectAll,
     deselectAll,
+    invertSelection,
     isInSelectionRange,
   };
 }

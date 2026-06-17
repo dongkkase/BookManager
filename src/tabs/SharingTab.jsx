@@ -6,22 +6,55 @@ import '../styles/SharingTab.css';
  * OPDS 및 WebDAV 공유 서버 관리
  */
 function SharingTab({ config, t }) {
-  const [opdsPort, setOpdsPort] = useState(8080);
+  const [opdsPort, setOpdsPort] = useState(config?.opds_port || 8080);
   const [opdsRunning, setOpdsRunning] = useState(false);
   
-  const [webdavId, setWebdavId] = useState('user');
-  const [webdavPw, setWebdavPw] = useState('1234');
+  const [webdavId, setWebdavId] = useState(config?.webdav_username || 'user');
+  const [webdavPw, setWebdavPw] = useState(config?.webdav_password || '1234');
   const [webdavPwVisible, setWebdavPwVisible] = useState(false);
-  const [webdavPort, setWebdavPort] = useState(8081);
+  const [webdavPort, setWebdavPort] = useState(config?.webdav_port || 8081);
   const [webdavRunning, setWebdavRunning] = useState(false);
+  const [busyServer, setBusyServer] = useState(null);
   
   const [localIp, setLocalIp] = useState('127.0.0.1');
   const [logs, setLogs] = useState(['[INFO] 서버 로그가 준비되었습니다.']);
 
-  // 더미 데이터 초기화
   useEffect(() => {
-    // 실제 환경에서는 네트워크 인터페이스를 통해 IP를 가져옴
-    setLocalIp('192.168.1.100');
+    setOpdsPort(config?.opds_port || 8080);
+    setWebdavPort(config?.webdav_port || 8081);
+    setWebdavId(config?.webdav_username || 'user');
+    setWebdavPw(config?.webdav_password || '1234');
+  }, [config]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const applyStatus = (status) => {
+      if (!status || !isMounted) return;
+      setLocalIp(status.localIp || '127.0.0.1');
+      setOpdsRunning(Boolean(status.OPDS?.running));
+      setWebdavRunning(Boolean(status.WebDAV?.running));
+      if (status.OPDS?.port) setOpdsPort(status.OPDS.port);
+      if (status.WebDAV?.port) setWebdavPort(status.WebDAV.port);
+    };
+
+    window.electronAPI?.getServerStatus?.()
+      .then(applyStatus)
+      .catch(error => {
+        setLogs(prev => [...prev, `[ERROR] 서버 상태 확인 실패: ${error.message}`]);
+      });
+
+    const cleanup = window.electronAPI?.onServerLog?.((data) => {
+      if (data?.status) applyStatus(data.status);
+      if (data?.message) {
+        setLogs(prev => [...prev, `[${data.type || 'SERVER'}] ${data.message}`]);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (typeof cleanup === 'function') cleanup();
+    };
   }, []);
 
   const handleCopyUrl = (url) => {
@@ -30,22 +63,48 @@ function SharingTab({ config, t }) {
       .catch(err => console.error('복사 실패:', err));
   };
 
-  const handleToggleOpds = () => {
-    if (!opdsRunning) {
-      setLogs(prev => [...prev, `[INFO] OPDS 서버가 포트 ${opdsPort}에서 시작되었습니다.`]);
-    } else {
-      setLogs(prev => [...prev, '[INFO] OPDS 서버가 성공적으로 중지되었습니다.']);
+  const handleToggleOpds = async () => {
+    setBusyServer('OPDS');
+    try {
+      if (!opdsRunning) {
+        const result = await window.electronAPI.startServer('OPDS', { port: Number(opdsPort) });
+        setLocalIp(result.localIp || localIp);
+        setOpdsRunning(Boolean(result.running));
+        setLogs(prev => [...prev, `[OPDS] ${result.url || `포트 ${opdsPort}`} 서버를 시작했습니다.`]);
+      } else {
+        await window.electronAPI.stopServer('OPDS');
+        setOpdsRunning(false);
+        setLogs(prev => [...prev, '[OPDS] 서버가 성공적으로 중지되었습니다.']);
+      }
+    } catch (error) {
+      setLogs(prev => [...prev, `[ERROR] OPDS 서버 처리 실패: ${error.message}`]);
+    } finally {
+      setBusyServer(null);
     }
-    setOpdsRunning(!opdsRunning);
   };
 
-  const handleToggleWebdav = () => {
-    if (!webdavRunning) {
-      setLogs(prev => [...prev, `[INFO] WebDAV 서버가 포트 ${webdavPort}에서 시작되었습니다.`]);
-    } else {
-      setLogs(prev => [...prev, '[INFO] WebDAV 서버가 성공적으로 중지되었습니다.']);
+  const handleToggleWebdav = async () => {
+    setBusyServer('WebDAV');
+    try {
+      if (!webdavRunning) {
+        const result = await window.electronAPI.startServer('WebDAV', {
+          port: Number(webdavPort),
+          username: webdavId,
+          password: webdavPw,
+        });
+        setLocalIp(result.localIp || localIp);
+        setWebdavRunning(Boolean(result.running));
+        setLogs(prev => [...prev, `[WebDAV] ${result.url || `포트 ${webdavPort}`} 서버를 시작했습니다.`]);
+      } else {
+        await window.electronAPI.stopServer('WebDAV');
+        setWebdavRunning(false);
+        setLogs(prev => [...prev, '[WebDAV] 서버가 성공적으로 중지되었습니다.']);
+      }
+    } catch (error) {
+      setLogs(prev => [...prev, `[ERROR] WebDAV 서버 처리 실패: ${error.message}`]);
+    } finally {
+      setBusyServer(null);
     }
-    setWebdavRunning(!webdavRunning);
   };
 
   const opdsUrl = `http://${localIp}:${opdsPort}/opds`;
@@ -72,8 +131,9 @@ function SharingTab({ config, t }) {
               <button 
                 className={`sharing-btn-toggle ${opdsRunning ? 'running' : ''}`}
                 onClick={handleToggleOpds}
+                disabled={busyServer === 'OPDS'}
               >
-                {opdsRunning ? '■ OPDS 서버 끄기' : '⏻ OPDS 서버 켜기'}
+                {busyServer === 'OPDS' ? '처리 중...' : opdsRunning ? '■ OPDS 서버 끄기' : '⏻ OPDS 서버 켜기'}
               </button>
             </div>
             
@@ -131,8 +191,9 @@ function SharingTab({ config, t }) {
               <button 
                 className={`sharing-btn-toggle ${webdavRunning ? 'running' : ''}`}
                 onClick={handleToggleWebdav}
+                disabled={busyServer === 'WebDAV'}
               >
-                {webdavRunning ? '■ WebDAV 서버 끄기' : '⏻ WebDAV 서버 켜기'}
+                {busyServer === 'WebDAV' ? '처리 중...' : webdavRunning ? '■ WebDAV 서버 끄기' : '⏻ WebDAV 서버 켜기'}
               </button>
             </div>
 

@@ -22,16 +22,15 @@ const DetailPanel = ({ selectedFile = null, t }) => {
     setImageError(true);
   };
 
-  // 메타데이터 필드 정의
   const metadataFields = [
-    { key: 'name', labelKey: 'folder.columns.name' },
-    { key: 'series', labelKey: 'folder.columns.series' },
-    { key: 'title', labelKey: 'folder.columns.title' },
-    { key: 'volume', labelKey: 'folder.columns.volume' },
-    { key: 'issue', labelKey: 'folder.columns.issue' },
-    { key: 'writer', labelKey: 'folder.columns.writer' },
-    { key: 'size', labelKey: 'folder.columns.size' },
-    { key: 'modified', labelKey: 'folder.columns.modified' },
+    { key: 'producer', labelKey: 'col_creators' },
+    { key: 'publisher', labelKey: 'col_publisher' },
+    { key: 'page_count', labelKey: 'col_page_count' },
+    { key: 'total_volume', labelKey: 'col_vol_count' },
+    { key: 'format', labelKey: 'col_format' },
+    { key: 'rating', labelKey: 'col_rating' },
+    { key: 'age_rating', labelKey: 'col_age_rating' },
+    { key: 'date', labelKey: 'col_pub_date' },
   ];
 
   // 파일 크기 포맷팅
@@ -67,6 +66,10 @@ const DetailPanel = ({ selectedFile = null, t }) => {
   }
 
   const bgStyle = selectedFile.cover && !imageError ? { backgroundImage: `url(${selectedFile.cover})` } : {};
+  const title = selectedFile.title || selectedFile.name || '-';
+  const series = selectedFile.series || t('info_no_series');
+  const volume = selectedFile.volume ? `${selectedFile.volume}권` : '';
+  const tags = [selectedFile.genre, selectedFile.format, selectedFile.publisher].filter(Boolean).flatMap(value => String(value).split(/[;,]/)).slice(0, 6);
 
   return (
     <div className="folder-detail-panel">
@@ -74,7 +77,6 @@ const DetailPanel = ({ selectedFile = null, t }) => {
       <div className="folder-detail-overlay"></div>
       
       <div className="folder-detail-content">
-        {/* 좌측: 커버 이미지 */}
         <div className="detail-cover-section">
           {selectedFile.cover && !imageError ? (
             <img
@@ -85,25 +87,43 @@ const DetailPanel = ({ selectedFile = null, t }) => {
             />
           ) : (
             <div className="detail-cover-placeholder">
-              <div className="placeholder-icon">📄</div>
-              <div className="placeholder-text">No Cover</div>
+              <div className="placeholder-icon">▧</div>
             </div>
           )}
         </div>
 
-        {/* 우측: 메타데이터 그리드 */}
         <div className="detail-metadata-section">
-          <div className="metadata-grid">
-            {metadataFields.map((field) => (
-              <React.Fragment key={field.key}>
-                <div className="metadata-label">
-                  {t(field.labelKey) || field.key}
-                </div>
-                <div className="metadata-value" title={String(formatValue(field.key, selectedFile[field.key]))}>
-                  {formatValue(field.key, selectedFile[field.key])}
-                </div>
-              </React.Fragment>
-            ))}
+          <div className="detail-heading">
+            <div className="detail-series">{series}</div>
+            <div className="detail-title">{title} {volume}</div>
+            <div className="detail-tags">
+              {tags.length > 0 ? tags.map(tag => <span key={tag}>{tag}</span>) : <span>-</span>}
+            </div>
+          </div>
+
+          <div className="detail-info-card">
+            <div className="metadata-grid">
+              {metadataFields.map((field) => (
+                <React.Fragment key={field.key}>
+                  <div className="metadata-label">{t(field.labelKey)}</div>
+                  <div className="metadata-value" title={String(formatValue(field.key, selectedFile[field.key]))}>
+                    {formatValue(field.key, selectedFile[field.key])}
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+            <div className="detail-extra">
+              <div className="detail-extra-title">{t('meta_summary')}</div>
+              <p>{selectedFile.description || t('info_no_summary')}</p>
+              <dl>
+                <dt>{t('info_arc_team_loc')}</dt>
+                <dd>- / - / -</dd>
+                <dt>{t('col_characters')}</dt>
+                <dd>-</dd>
+                <dt>{t('col_web')}</dt>
+                <dd>{selectedFile.link || '-'}</dd>
+              </dl>
+            </div>
           </div>
         </div>
       </div>

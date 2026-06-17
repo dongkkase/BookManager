@@ -6,24 +6,26 @@ import { RenamerTab } from './tabs/RenamerTab';
 import { MetadataTab } from './tabs/MetadataTab';
 import { FolderTab } from './tabs/FolderTab';
 import { SharingTab } from './tabs/SharingTab';
+import { ReleaseTab } from './tabs/ReleaseTab';
+import { FaIcon } from './components/FaIcon';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
 import './styles/App.css';
 
 const TABS = [
-  { id: 'folder', label: '폴더' },
-  { id: 'organizer', label: '압축 파일 구조 정리(평탄화)' },
-  { id: 'renamer', label: '내부 파일명 변경' },
-  { id: 'metadata', label: '메타데이터 관리' },
-  { id: 'sharing', label: '공유 서버' },
-  { id: 'releases', label: '업데이트 및 릴리즈 노트' },
+  { id: 'folder', labelKey: 'tab_folders' },
+  { id: 'organizer', labelKey: 'tab1' },
+  { id: 'renamer', labelKey: 'tab2' },
+  { id: 'metadata', labelKey: 'tab3' },
+  { id: 'sharing', labelKey: 'tab_sharing' },
+  { id: 'releases', labelKey: 'tab_releases' },
 ];
 
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
   const [showSettings, setShowSettings] = useState(false);
   const { config, saveConfig: setConfig } = useConfig();
-  const { t, language } = useI18n();
+  const { t, language, changeLanguage } = useI18n();
 
   useEffect(() => {
     // 앱 초기화
@@ -50,12 +52,19 @@ function App() {
     setShowSettings(true);
   }, []);
 
-  const handleSettingsClose = useCallback((updatedConfig) => {
+  const handleSettingsClose = useCallback(async (updatedConfig) => {
     setShowSettings(false);
     if (updatedConfig) {
-      setConfig(updatedConfig);
+      const savedConfig = await setConfig(updatedConfig);
+      const nextLang = savedConfig?.language || savedConfig?.lang || updatedConfig.language || updatedConfig.lang;
+      if (nextLang) await changeLanguage(nextLang);
     }
-  }, []);
+  }, [setConfig, changeLanguage]);
+
+  const translatedTabs = TABS.map(tab => ({
+    ...tab,
+    label: t(tab.labelKey),
+  }));
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -66,39 +75,39 @@ function App() {
       case 'metadata':
         return <MetadataTab config={config} t={t} />;
       case 'folder':
-        return <FolderTab config={config} t={t} />;
+        return <FolderTab config={config} saveConfig={setConfig} t={t} />;
       case 'sharing':
         return <SharingTab config={config} t={t} />;
       case 'releases':
-        return <div style={{ padding: '20px', color: '#fff' }}>업데이트 및 릴리즈 노트 탭 구현 필요</div>;
+        return <ReleaseTab config={config} t={t} />;
       default:
-        return <FolderTab config={config} t={t} />;
+        return <FolderTab config={config} saveConfig={setConfig} t={t} />;
     }
   };
 
   return (
     <div className={`app-container ${language}`}>
       <div className="app-title-bar">
-        ComicZIP Optimizer v2.8.1
+        {t('title')}
       </div>
       
       <div className="top-menu-bar">
         <div className="top-menu-left">
-          <button className="top-btn">📁 폴더 추가</button>
-          <button className="top-btn">📄 파일 추가</button>
-          <button className="top-btn">➖ 선택 삭제</button>
-          <button className="top-btn">🗑️ 전체 비우기</button>
-          <button className="top-btn">☑️ 전체 선택/해제</button>
+          <button className="top-btn"><FaIcon name="folder" />{t('add_folder')}</button>
+          <button className="top-btn"><FaIcon name="file" />{t('add_file')}</button>
+          <button className="top-btn"><FaIcon name="minusCircle" />{t('remove_sel')}</button>
+          <button className="top-btn"><FaIcon name="trash" />{t('clear_all')}</button>
+          <button className="top-btn"><FaIcon name="checkSquare" />{t('toggle_all')}</button>
         </div>
         <div className="top-menu-right">
-          <button className="top-btn">🐛 버그 신고 및 건의</button>
-          <button className="top-btn top-btn-version">✅ v2.8.1 (최신 버전)</button>
-          <button className="top-btn top-btn-settings" onClick={handleSettings}>⚙️ 환경 설정</button>
+          <button className="top-btn"><FaIcon name="bug" />{t('btn_issue')}</button>
+          <button className="top-btn top-btn-version"><FaIcon name="circleCheck" />{t('msg_latest_version', ['2.8.1'])}</button>
+          <button className="top-btn top-btn-settings" onClick={handleSettings}><FaIcon name="gear" />{t('settings_btn')}</button>
         </div>
       </div>
       
       <TabBar 
-        tabs={TABS} 
+        tabs={translatedTabs}
         activeTab={activeTab} 
         onTabChange={handleTabChange} 
         t={t}

@@ -1,13 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { FaIcon } from '../FaIcon';
 
 /**
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test'], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder }) {
+function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onAddLibrary, onRemoveLibrary, onAddFavorite, onRemoveFavorite, onFolderContextMenu }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [roots, setRoots] = useState([]);
   const [folderCache, setFolderCache] = useState({});
+  const [specialPaths, setSpecialPaths] = useState({});
+
+  const treeRoots = useMemo(() => {
+    const libraryNodes = (libraries || []).map(lib => ({
+      name: lib.split(/[\\/]/).pop() || lib,
+      path: lib,
+      isFolder: true,
+      isLibraryRoot: true,
+    }));
+    const libraryPathSet = new Set(libraryNodes.map(node => node.path));
+    const systemRoots = roots.filter(root => !libraryPathSet.has(root.path));
+    return [...libraryNodes, ...systemRoots];
+  }, [libraries, roots]);
 
   useEffect(() => {
     const fetchRoots = async () => {
@@ -22,6 +36,12 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
       }
     };
     fetchRoots();
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI?.getSpecialPaths?.()
+      .then(paths => setSpecialPaths(paths || {}))
+      .catch(error => console.error('Failed to fetch special paths:', error));
   }, []);
 
   const loadFolder = async (folderPath) => {
@@ -63,24 +83,35 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
   const renderLibraryList = () => (
     <div className="sidebar-section">
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>라이브러리</span>
-        <button style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>⚙</button>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>{t('folder.sidebar.libraries') || '라이브러리'}</span>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button title={t('folder.sidebar.add_library') || '라이브러리 추가'} onClick={onAddLibrary} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>➕</button>
+        </div>
       </div>
       <ul className="nav-list">
         {libraries.length > 0 ? libraries.map((lib, idx) => (
           <li
             key={idx}
-            className={selectedLibrary === idx ? 'selected' : ''}
-            onClick={() => onSelectLibrary(idx)}
+            className={selectedLibrary === idx || selectedFolderPath === lib ? 'selected' : ''}
+            onClick={() => {
+              if (onSelectLibrary) onSelectLibrary(idx);
+              if (onSelectFolder) onSelectFolder(lib);
+            }}
+            onContextMenu={(event) => onFolderContextMenu?.(event, lib)}
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
           >
-            <span>{lib.name || lib.path || `Library ${idx + 1}`}</span>
-            <span>⋮</span>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={lib}>{lib.split(/[\\/]/).pop() || lib}</span>
+            <span
+              onClick={(e) => { e.stopPropagation(); onRemoveLibrary && onRemoveLibrary(lib); }}
+              style={{ cursor: 'pointer', color: '#ff6b6b' }}
+              title={t('folder.sidebar.remove_library') || '제거'}
+            >
+              ✖
+            </span>
           </li>
         )) : (
-          <li className="selected" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>_만화</span>
-            <span style={{ color: '#E67E22' }}>⚙ ⋮</span>
+          <li style={{ color: '#888', fontStyle: 'italic', padding: '4px 8px' }}>
+            라이브러리가 없습니다
           </li>
         )}
       </ul>
@@ -91,16 +122,38 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
   const renderFavoritesList = () => (
     <div className="sidebar-section" style={{ marginTop: '10px' }}>
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>즐겨찾기</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>{t('folder.sidebar.favorites') || '즐겨찾기'}</span>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            title={t('folder.sidebar.add_favorite') || '현재 폴더 즐겨찾기에 추가'}
+            onClick={() => selectedFolderPath && onAddFavorite && onAddFavorite(selectedFolderPath)}
+            style={{ backgroundColor: 'transparent', color: selectedFolderPath ? 'gold' : 'gray', border: 'none', cursor: selectedFolderPath ? 'pointer' : 'default' }}
+            disabled={!selectedFolderPath}
+          >
+            ⭐
+          </button>
+        </div>
       </div>
       <ul className="nav-list">
         {favorites.map((fav, idx) => (
           <li
             key={idx}
-            className={selectedFavorite === idx ? 'selected' : ''}
-            onClick={() => onSelectFavorite(idx)}
+            className={selectedFavorite === idx || selectedFolderPath === fav ? 'selected' : ''}
+            onClick={() => {
+              if (onSelectFavorite) onSelectFavorite(idx);
+              if (onSelectFolder) onSelectFolder(fav);
+            }}
+            onContextMenu={(event) => onFolderContextMenu?.(event, fav)}
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
           >
-            {fav.name || fav || `Favorite ${idx + 1}`}
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={fav}>{fav.split(/[\\/]/).pop() || fav}</span>
+            <span
+              onClick={(e) => { e.stopPropagation(); onRemoveFavorite && onRemoveFavorite(fav); }}
+              style={{ cursor: 'pointer', color: '#ff6b6b' }}
+              title={t('folder.sidebar.remove_favorite') || '제거'}
+            >
+              ✖
+            </span>
           </li>
         ))}
         {favorites.length === 0 && (
@@ -139,12 +192,15 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
             onSelectFolder && onSelectFolder(node.path);
             if (node.isFolder) toggleFolder(node.path);
           }}
+          onContextMenu={(event) => onFolderContextMenu?.(event, node.path)}
         >
           <span style={{ width: '12px', display: 'inline-block', textAlign: 'center', marginRight: '4px', fontSize: '10px' }}>
             {node.isFolder ? (hasChildren ? (isExpanded ? '▼' : '▶') : ' ') : ' '}
           </span>
-          <span style={{ marginRight: '4px' }}>{node.isFolder ? (isExpanded ? '📂' : '📁') : '📄'}</span>
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+          <span style={{ marginRight: '4px', display: 'inline-flex', color: node.isFolder ? '#f0b536' : '#b8c7d4' }}>
+            <FaIcon name={node.isFolder ? 'folder' : 'file'} size={12} />
+          </span>
+          <span style={{ minWidth: 0, whiteSpace: 'nowrap' }}>{node.name}</span>
         </div>
         {node.isFolder && isExpanded && children.length > 0 && (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -160,14 +216,14 @@ function FolderSidebar({ t, libraries = [], favorites = ['temp', '책2', 'test']
       <div className="nav-header">
         <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>폴더</span>
         <div style={{ display: 'flex', gap: '4px' }}>
-          <button style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>🖥</button>
-          <button style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>📥</button>
-          <button style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>📤</button>
-          <button style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>🏠</button>
+          <button title="바탕화면" onClick={() => specialPaths.desktop && onSelectFolder?.(specialPaths.desktop)} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="desktop" size={12} /></button>
+          <button title="문서" onClick={() => specialPaths.documents && onSelectFolder?.(specialPaths.documents)} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="fileLines" size={12} /></button>
+          <button title="다운로드" onClick={() => specialPaths.downloads && onSelectFolder?.(specialPaths.downloads)} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="download" size={12} /></button>
+          <button title="홈" onClick={() => specialPaths.home && onSelectFolder?.(specialPaths.home)} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="house" size={12} /></button>
         </div>
       </div>
-      <ul className="nav-list" style={{ flex: 1, overflowY: 'auto' }}>
-        {roots.map(node => renderTreeNode(node))}
+      <ul className="nav-list folder-tree-list" style={{ flex: 1 }}>
+        {treeRoots.map(node => renderTreeNode(node))}
       </ul>
     </div>
   );

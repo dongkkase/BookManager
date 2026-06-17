@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
  * 폴더 탭 툴바 컴포넌트
  * 그룹화, 정렬, 뷰 모드 토글, 하위 폴더 포함, 중복 검사 버튼 포함
  */
-function FolderToolbar({ t, viewMode, setViewMode, sortKey, setSortKey, groupKey, setGroupKey, includeSubfolders, setIncludeSubfolders, enableDupCheck, setEnableDupCheck, onRefresh }) {
+function FolderToolbar({ t, viewMode, setViewMode, sortKey, setSortKey, groupKey, setGroupKey, includeSubfolders, setIncludeSubfolders, enableDupCheck, setEnableDupCheck, onRefresh, onLayoutClick }) {
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
   const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
   const sortRef = useRef(null);
@@ -43,15 +43,13 @@ function FolderToolbar({ t, viewMode, setViewMode, sortKey, setSortKey, groupKey
 
   return (
     <div className="folder-toolbar">
-      {/* 그룹화 그룹 */}
       <div className="toolbar-group">
         <div className="toolbar-dropdown" ref={groupRef}>
           <button
             className="toolbar-btn"
             onClick={() => { setGroupDropdownOpen(!groupDropdownOpen); setSortDropdownOpen(false); }}
           >
-            <span className="btn-icon">📑</span>
-            {t('folder.toolbar.group_by') || '그룹화'}
+            {t('folder.toolbar.group_by') || '그룹화 ▼'}
           </button>
           {groupDropdownOpen && (
             <div className="dropdown-menu">
@@ -70,15 +68,15 @@ function FolderToolbar({ t, viewMode, setViewMode, sortKey, setSortKey, groupKey
         </div>
       </div>
 
-      {/* 정렬 그룹 */}
+      <button className="toolbar-btn">{t('folder.toolbar.filter') || '필터 ▼'}</button>
+
       <div className="toolbar-group">
         <div className="toolbar-dropdown" ref={sortRef}>
           <button
             className="toolbar-btn"
             onClick={() => { setSortDropdownOpen(!sortDropdownOpen); setGroupDropdownOpen(false); }}
           >
-            <span className="btn-icon">🔢</span>
-            {t('folder.toolbar.sort_by') || '정렬'}
+            {t('folder.toolbar.sort_by') || '정렬 ▼'}
           </button>
           {sortDropdownOpen && (
             <div className="dropdown-menu">
@@ -97,59 +95,8 @@ function FolderToolbar({ t, viewMode, setViewMode, sortKey, setSortKey, groupKey
         </div>
       </div>
 
-      {/* 뷰 모드 그룹 */}
-      <div className="toolbar-group">
-        <button
-          className={`toolbar-btn ${viewMode === 'detail' ? 'active' : ''}`}
-          onClick={() => setViewMode('detail')}
-          title={t('folder.toolbar.view_detail') || '상세'}
-        >
-          <span className="btn-icon">📋</span>
-        </button>
-        <button
-          className={`toolbar-btn ${viewMode === 'thumbnail' ? 'active' : ''}`}
-          onClick={() => setViewMode('thumbnail')}
-          title={t('folder.toolbar.view_thumbnail') || '썸네일'}
-        >
-          <span className="btn-icon">🖼️</span>
-        </button>
-        <button
-          className={`toolbar-btn ${viewMode === 'tile' ? 'active' : ''}`}
-          onClick={() => setViewMode('tile')}
-          title={t('folder.toolbar.view_tile') || '타일'}
-        >
-          <span className="btn-icon">🔲</span>
-        </button>
-      </div>
-
-      {/* 토글 그룹 */}
-      <div className="toolbar-group">
-        <button
-          className={`toolbar-btn ${includeSubfolders ? 'active' : ''}`}
-          onClick={() => setIncludeSubfolders(!includeSubfolders)}
-          title={t('folder.toolbar.include_subfolders') || '하위 폴더 포함'}
-        >
-          <span className="btn-icon">📂</span>
-        </button>
-        <button
-          className={`toolbar-btn ${enableDupCheck ? 'active' : ''}`}
-          onClick={() => setEnableDupCheck(!enableDupCheck)}
-          title={t('folder.toolbar.dup_check') || '중복 검사'}
-        >
-          <span className="btn-icon">🔍</span>
-        </button>
-      </div>
-
-      {/* 새로고침 */}
-      <div className="toolbar-group">
-        <button
-          className="toolbar-btn"
-          onClick={onRefresh}
-          title={t('folder.toolbar.refresh') || '새로고침'}
-        >
-          <span className="btn-icon">🔄</span>
-        </button>
-      </div>
+      <button className="toolbar-btn" onClick={onLayoutClick}>{t('folder.toolbar.layouts') || '레이아웃 관리 ▼'}</button>
+      <button className="toolbar-btn csv-btn">{t('folder.toolbar.export_csv') || 'CSV 내보내기'}</button>
     </div>
   );
 }

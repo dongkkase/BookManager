@@ -1,4 +1,5 @@
 import React from 'react';
+import { FaIcon } from '../FaIcon';
 
 /**
  * TileView - 타일 뷰 컴포넌트
@@ -12,10 +13,17 @@ import React from 'react';
  */
 const TileView = ({
   files = [],
+  fileData = [],
   selectedFiles = [],
   onSelect,
+  onContextMenu,
+  scale = 50,
   t
 }) => {
+  const items = files.length > 0 ? files : fileData;
+  const imageWidth = Math.round(72 + Number(scale || 50) * 0.58);
+  const imageHeight = Math.round(imageWidth * 1.32);
+  const minColumnWidth = Math.round(280 + Number(scale || 50) * 2.1);
   const formatSize = (bytes) => {
     if (!bytes || bytes === 0) return '-';
     const units = ['B', 'KB', 'MB', 'GB'];
@@ -28,23 +36,27 @@ const TileView = ({
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
-  const handleItemClick = (file, e) => {
+  const handleItemClick = (file, e, index) => {
     if (!onSelect || !file.path) return;
 
-    if (e.ctrlKey || e.metaKey) {
-      onSelect(file.path);
-    } else {
-      onSelect(file.path);
-    }
+    onSelect(file.path, e, index);
   };
 
   return (
-    <div className="tile-grid">
-      {files.map((file, index) => (
+    <div
+      className="tile-grid"
+      style={{
+        '--tile-image-width': `${imageWidth}px`,
+        '--tile-image-height': `${imageHeight}px`,
+        '--tile-min-column-width': `${minColumnWidth}px`,
+      }}
+    >
+      {items.map((file, index) => (
         <div
           key={file.path || index}
           className={`tile-item ${selectedFiles.includes(file.path) ? 'selected' : ''}`}
-          onClick={(e) => handleItemClick(file, e)}
+          onClick={(e) => handleItemClick(file, e, index)}
+          onContextMenu={(event) => onContextMenu?.(event, file, index)}
         >
           {file.cover ? (
             <img
@@ -61,7 +73,7 @@ const TileView = ({
               background: 'var(--bg-tertiary)',
               fontSize: '32px'
             }}>
-              📄
+              <FaIcon name="file" size={30} />
             </div>
           )}
           <div className="tile-info">
@@ -74,9 +86,9 @@ const TileView = ({
           </div>
         </div>
       ))}
-      {files.length === 0 && (
+      {items.length === 0 && (
         <div className="empty-folder-page" style={{ gridColumn: '1 / -1' }}>
-          <div className="empty-icon">📂</div>
+          <div className="empty-icon"><FaIcon name="folder" size={32} /></div>
           <div className="empty-message">{t('folder.message.noFiles') || '파일이 없습니다'}</div>
         </div>
       )}

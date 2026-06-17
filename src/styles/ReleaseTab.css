@@ -62,10 +62,29 @@
   margin-bottom: 5px;
 }
 
+.release-card-link {
+  display: inline-block;
+  margin-top: 14px;
+  color: #3498DB;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .release-loading,
 .release-error {
   color: #aaaaaa;
   font-size: 16px;
   text-align: center;
   margin-top: 50px;
+}
+
+.release-error.compact {
+  margin-top: 0;
+  padding: 10px 12px;
+  border: 1px solid #4a3d22;
+  border-radius: 4px;
+  background: #2a2418;
+  color: #f0b44c;
+  font-size: 13px;
 }
