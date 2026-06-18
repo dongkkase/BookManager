@@ -11,16 +11,16 @@ import { FaIcon } from './components/FaIcon';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
+import {
+  ISSUE_URL,
+  TABS,
+  canAcceptGlobalDrop,
+  formatAppTitle,
+  isFileToolbarEnabled,
+  normalizeDroppedPaths,
+} from './appShell';
+import { shouldShowToast } from './toastPolicy';
 import './styles/App.css';
-
-const TABS = [
-  { id: 'folder', labelKey: 'tab_folders' },
-  { id: 'organizer', labelKey: 'tab1' },
-  { id: 'renamer', labelKey: 'tab2' },
-  { id: 'metadata', labelKey: 'tab3' },
-  { id: 'sharing', labelKey: 'tab_sharing' },
-  { id: 'releases', labelKey: 'tab_releases' },
-];
 
 function fontFamilyForConfig(fontFamily = 'Default') {
   if (!fontFamily || fontFamily === 'Default') {
@@ -49,9 +49,12 @@ function App() {
   const [activeTab, setActiveTab] = useState('folder');
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState(null);
+  const [appVersion, setAppVersion] = useState('');
+  const [workingTab, setWorkingTab] = useState(null);
   const { config, saveConfig: setConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n();
   const didRestoreTab = useRef(false);
+  const lastToast = useRef(null);
 
   useEffect(() => {
     if (!config || didRestoreTab.current) return;
@@ -60,6 +63,25 @@ function App() {
     setActiveTab(restoredTab?.id || 'folder');
     didRestoreTab.current = true;
   }, [config]);
+
+  useEffect(() => {
+    let isMounted = true;
+    window.electronAPI?.getAppVersion?.()
+      .then(version => {
+        if (isMounted) setAppVersion(String(version || ''));
+      })
+      .catch(error => {
+        console.error('앱 버전 로드 실패:', error);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const appTitle = formatAppTitle(appVersion);
+  useEffect(() => {
+    document.title = appTitle;
+  }, [appTitle]);
 
   const handleTabChange = useCallback((tabId) => {
     const tabIndex = TABS.findIndex(tab => tab.id === tabId);
@@ -76,9 +98,13 @@ function App() {
 
   const showToast = useCallback((message, duration = 2500) => {
     if (!message) return;
+    const normalizedMessage = String(message);
+    const shownAt = Date.now();
+    if (!shouldShowToast(lastToast.current, normalizedMessage, shownAt)) return;
+    lastToast.current = { message: normalizedMessage, shownAt };
     setToast({
       id: `${Date.now()}-${Math.random()}`,
-      message: String(message),
+      message: normalizedMessage,
       duration,
     });
   }, []);
@@ -86,6 +112,34 @@ function App() {
   const dispatchAppAction = useCallback((action) => {
     window.dispatchEvent(new CustomEvent('bookmanager:action', { detail: { action, activeTab } }));
   }, [activeTab]);
+
+  useEffect(() => {
+    const handleWorkingState = (event) => {
+      const tabId = event.detail?.tabId;
+      const nextWorking = Boolean(event.detail?.isWorking);
+      setWorkingTab(current => nextWorking ? tabId : current === tabId ? null : current);
+    };
+    window.addEventListener('bookmanager:working-state', handleWorkingState);
+    return () => window.removeEventListener('bookmanager:working-state', handleWorkingState);
+  }, []);
+
+  const isWorking = workingTab === activeTab;
+  const handleGlobalDragOver = useCallback((event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = canAcceptGlobalDrop(activeTab, isWorking) ? 'copy' : 'none';
+  }, [activeTab, isWorking]);
+
+  const handleGlobalDrop = useCallback((event) => {
+    event.preventDefault();
+    if (!canAcceptGlobalDrop(activeTab, isWorking)) return;
+    const paths = normalizeDroppedPaths(
+      Array.from(event.dataTransfer.files || []).map(file => file.path),
+    );
+    if (paths.length === 0) return;
+    window.dispatchEvent(new CustomEvent('bookmanager:action', {
+      detail: { action: 'drop-paths', activeTab, paths },
+    }));
+  }, [activeTab, isWorking]);
 
   const handleSettingsClose = useCallback(async (updatedConfig) => {
     setShowSettings(false);
@@ -101,6 +155,7 @@ function App() {
     label: t(tab.labelKey),
   }));
   const appStyle = useMemo(() => fontVarsForConfig(config || {}), [config?.font_family, config?.font_scale]);
+  const fileToolbarEnabled = isFileToolbarEnabled(activeTab, isWorking);
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -122,22 +177,27 @@ function App() {
   };
 
   return (
-    <div className={`app-container ${language}`} style={appStyle}>
+    <div
+      className={`app-container ${language}`}
+      style={appStyle}
+      onDragOver={handleGlobalDragOver}
+      onDrop={handleGlobalDrop}
+    >
       <div className="app-title-bar">
-        {t('title')}
+        {appTitle}
       </div>
       
       <div className="top-menu-bar">
         <div className="top-menu-left">
-          <button className="top-btn" onClick={() => dispatchAppAction('add-folder')}><FaIcon name="folder" />{t('add_folder')}</button>
-          <button className="top-btn" onClick={() => dispatchAppAction('add-file')}><FaIcon name="file" />{t('add_file')}</button>
-          <button className="top-btn" onClick={() => dispatchAppAction('remove-selected')}><FaIcon name="minusCircle" />{t('remove_sel')}</button>
-          <button className="top-btn" onClick={() => dispatchAppAction('clear-all')}><FaIcon name="trash" />{t('clear_all')}</button>
-          <button className="top-btn" onClick={() => dispatchAppAction('toggle-all')}><FaIcon name="checkSquare" />{t('toggle_all')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-folder')}><FaIcon name="folder" />{t('add_folder')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-file')}><FaIcon name="file" />{t('add_file')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('remove-selected')}><FaIcon name="minusCircle" />{t('remove_sel')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('clear-all')}><FaIcon name="trash" />{t('clear_all')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('toggle-all')}><FaIcon name="checkSquare" />{t('toggle_all')}</button>
         </div>
         <div className="top-menu-right">
-          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.('https://github.com/dongkkase/ComicZIP_Optimizer/issues')}><FaIcon name="bug" />{t('btn_issue')}</button>
-          <button className="top-btn top-btn-version" onClick={() => handleTabChange('releases')}><FaIcon name="circleCheck" />{t('msg_latest_version', ['2.8.1'])}</button>
+          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
+          <button className="top-btn top-btn-version" onClick={() => handleTabChange('releases')}><FaIcon name="circleCheck" />{t('msg_latest_version', [appVersion || '-'])}</button>
           <button className="top-btn top-btn-settings" onClick={handleSettings}><FaIcon name="gear" />{t('settings_btn')}</button>
         </div>
       </div>
@@ -146,6 +206,7 @@ function App() {
         tabs={translatedTabs}
         activeTab={activeTab} 
         onTabChange={handleTabChange} 
+        disabled={isWorking}
         t={t}
       />
       

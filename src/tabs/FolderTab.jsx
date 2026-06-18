@@ -228,12 +228,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [handleFolderChange, t]);
 
   const handleAddFileFromToolbar = useCallback(async () => {
-    const paths = await window.electronAPI?.selectFiles?.(t('add_file'), [
-      { name: 'Archives', extensions: ['zip', 'cbz', 'cbr', '7z', 'rar'] },
-    ]);
+    const paths = await window.electronAPI?.selectArchives?.(t('add_file'));
     const firstParent = parentPath(paths?.[0]);
     if (firstParent) await handleFolderChange(firstParent);
   }, [handleFolderChange, t]);
+
+  const handleDroppedPaths = useCallback(async (paths) => {
+    for (const droppedPath of paths || []) {
+      const stat = await window.electronAPI?.stat?.(droppedPath);
+      const targetFolder = stat?.isDirectory ? droppedPath : parentPath(droppedPath);
+      if (!targetFolder) continue;
+      await handleFolderChange(targetFolder);
+      return;
+    }
+  }, [handleFolderChange]);
 
   const handleFileSelect = useCallback((filePath, event, index) => {
     if (Array.isArray(filePath)) {
@@ -442,6 +450,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       const action = event.detail?.action;
       if (action === 'add-folder') handleAddFolderFromToolbar();
       else if (action === 'add-file') handleAddFileFromToolbar();
+      else if (action === 'drop-paths') handleDroppedPaths(event.detail?.paths);
       else if (action === 'remove-selected') deleteSelectedFiles();
       else if (action === 'clear-all') clearSelection();
       else if (action === 'toggle-all') {
@@ -459,6 +468,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     filteredFileData.length,
     handleAddFileFromToolbar,
     handleAddFolderFromToolbar,
+    handleDroppedPaths,
     selectAll,
     selectedFiles.length,
   ]);

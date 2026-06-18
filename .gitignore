@@ -11,6 +11,7 @@
 !README.*.md
 !LICENSE.md
 !LICENSE.*.md
+!MIGRATION_DETAIL_CHECKLIST.md
 
 # Dependencies
 node_modules/

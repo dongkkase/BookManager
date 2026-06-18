@@ -3,10 +3,6 @@ import { FaIcon } from '../components/FaIcon';
 import '../styles/OrganizerTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
-const ARCHIVE_FILTERS = [
-  { name: 'Archives', extensions: ['zip', 'cbz', 'cbr', '7z', 'rar'] },
-];
-
 function OrganizerTab({ config, t, showToast }) {
   const [fileList, setFileList] = useState([]);
   const [expandedItems, setExpandedItems] = useState(new Set());
@@ -70,7 +66,7 @@ function OrganizerTab({ config, t, showToast }) {
   }, [config?.language, config?.lang, t]);
 
   const handleSelectFiles = useCallback(async () => {
-    const paths = await window.electronAPI.selectFiles(t('add_file'), ARCHIVE_FILTERS);
+    const paths = await window.electronAPI.selectArchives(t('add_file'));
     await analyzePaths(paths);
   }, [analyzePaths, t]);
 
@@ -79,17 +75,14 @@ function OrganizerTab({ config, t, showToast }) {
     if (folderPath) await analyzePaths([folderPath]);
   }, [analyzePaths, t]);
 
-  const handleDrop = useCallback(async (event) => {
-    event.preventDefault();
-    const paths = Array.from(event.dataTransfer.files || [])
-      .map(file => file.path)
-      .filter(Boolean);
-    await analyzePaths(paths);
-  }, [analyzePaths]);
-
-  const handleDragOver = useCallback((event) => {
-    event.preventDefault();
-  }, []);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'organizer', isWorking },
+    }));
+    return () => window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'organizer', isWorking: false },
+    }));
+  }, [isWorking]);
 
   const handleToggleExpandAll = () => {
     if (isAllExpanded) {
@@ -205,6 +198,7 @@ function OrganizerTab({ config, t, showToast }) {
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
+      else if (action === 'drop-paths') analyzePaths(event.detail?.paths);
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();
       else if (action === 'toggle-all') handleToggleAllChecked();
@@ -212,10 +206,10 @@ function OrganizerTab({ config, t, showToast }) {
 
     window.addEventListener('bookmanager:action', handleAppAction);
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
-  }, [handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
+  }, [analyzePaths, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
 
   return (
-    <div className="organizer-tab" onDrop={handleDrop} onDragOver={handleDragOver}>
+    <div className="organizer-tab">
       <div className="org-local-toolbar">
         <button className="org-btn" onClick={handleSelectFolder} disabled={isWorking}><FaIcon name="folder" /> {t('add_folder')}</button>
         <button className="org-btn" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>

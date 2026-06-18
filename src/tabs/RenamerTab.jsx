@@ -3,10 +3,6 @@ import { FaIcon } from '../components/FaIcon';
 import '../styles/RenamerTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
-const ARCHIVE_FILTERS = [
-  { name: 'Archives', extensions: ['zip', 'cbz', 'cbr', '7z', 'rar'] },
-];
-
 function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
 }
@@ -164,7 +160,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [config?.language, config?.lang, renameOptions, t]);
 
   const handleSelectFiles = useCallback(async () => {
-    const paths = await window.electronAPI.selectFiles(t('add_file'), ARCHIVE_FILTERS);
+    const paths = await window.electronAPI.selectArchives(t('add_file'));
     await analyzePaths(paths);
   }, [analyzePaths, t]);
 
@@ -173,17 +169,14 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     if (folderPath) await analyzePaths([folderPath]);
   }, [analyzePaths, t]);
 
-  const handleDrop = useCallback(async (event) => {
-    event.preventDefault();
-    const paths = Array.from(event.dataTransfer.files || [])
-      .map(file => file.path)
-      .filter(Boolean);
-    await analyzePaths(paths);
-  }, [analyzePaths]);
-
-  const handleDragOver = useCallback((event) => {
-    event.preventDefault();
-  }, []);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'renamer', isWorking },
+    }));
+    return () => window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'renamer', isWorking: false },
+    }));
+  }, [isWorking]);
 
   const toggleAllChecked = () => {
     const nextChecked = !allChecked;
@@ -342,6 +335,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
+      else if (action === 'drop-paths') analyzePaths(event.detail?.paths);
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();
       else if (action === 'toggle-all') toggleAllChecked();
@@ -349,10 +343,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
 
     window.addEventListener('bookmanager:action', handleAppAction);
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
-  }, [handleRemoveChecked, handleSelectFiles, handleSelectFolder, isWorking, toggleAllChecked]);
+  }, [analyzePaths, handleRemoveChecked, handleSelectFiles, handleSelectFolder, isWorking, toggleAllChecked]);
 
   return (
-    <div className="renamer-tab" onDrop={handleDrop} onDragOver={handleDragOver}>
+    <div className="renamer-tab">
       <div className="renamer-left-panel">
         <div className="renamer-preview-title">{t('cover_preview')}</div>
         <div className="renamer-preview-img-box">

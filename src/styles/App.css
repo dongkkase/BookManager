@@ -192,6 +192,7 @@ body.is-resizing-panel * {
   line-height: 1.45;
   text-align: center;
   white-space: pre-line;
+  overflow-wrap: anywhere;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   animation: app-toast-life 2.5s ease both;
 }

@@ -11,6 +11,12 @@ import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.
 import { analyzeRenamerInputs, executeRenamer } from './tasks/renamerTask.js';
 import { analyzeMetadataInputs, saveMetadataItems } from './tasks/metadataTask.js';
 import { getSharingServerStatus, startSharingServer, stopSharingServer } from './servers/sharingServers.js';
+import {
+  createArchiveDialogOptions,
+  createFolderDialogOptions,
+  normalizeArchiveDialogResult,
+  normalizeFolderDialogResult,
+} from './dialogOptions.js';
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
@@ -2210,11 +2216,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 파일/폴더 선택 ==========
   ipcMain.handle('dialog:selectFolder', async (event, title) => {
     const window = BrowserWindow.fromWebContents(event.sender);
-    const { canceled, filePaths } = await dialog.showOpenDialog(window, {
-      properties: ['openDirectory'],
-      title: title || '폴더 선택',
-    });
-    return canceled ? null : filePaths?.[0] || null;
+    const result = await dialog.showOpenDialog(window, createFolderDialogOptions(title));
+    return normalizeFolderDialogResult(result);
+  });
+
+  ipcMain.handle('dialog:selectArchives', async (event, title) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(window, createArchiveDialogOptions(title));
+    return normalizeArchiveDialogResult(result);
   });
 
   ipcMain.handle('dialog:selectFile', async (_, title, filters) => {

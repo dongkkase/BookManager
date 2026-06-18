@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 파일/폴더 선택
   selectFolder: (title) => ipcRenderer.invoke('dialog:selectFolder', title),
+  selectArchives: (title) => ipcRenderer.invoke('dialog:selectArchives', title),
   selectFile: (title, filters) => ipcRenderer.invoke('dialog:selectFile', title, filters),
   selectFiles: (title, filters) => ipcRenderer.invoke('dialog:selectFiles', title, filters),
   saveFile: (title, filters) => ipcRenderer.invoke('dialog:saveFile', title, filters),

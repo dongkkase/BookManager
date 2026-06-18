@@ -3,10 +3,6 @@ import { FaIcon } from '../components/FaIcon';
 import '../styles/MetadataTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
-const ARCHIVE_FILTERS = [
-  { name: 'Archives', extensions: ['zip', 'cbz', 'cbr', '7z', 'rar'] },
-];
-
 const API_SOURCES = ['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine'];
 
 const SECTION_TABS = [
@@ -239,7 +235,7 @@ function MetadataTab({ config, t, showToast }) {
   }, [config?.language, config?.lang, t]);
 
   const handleSelectFiles = useCallback(async () => {
-    const paths = await window.electronAPI.selectFiles(t('add_file'), ARCHIVE_FILTERS);
+    const paths = await window.electronAPI.selectArchives(t('add_file'));
     await analyzePaths(paths);
   }, [analyzePaths, t]);
 
@@ -247,14 +243,6 @@ function MetadataTab({ config, t, showToast }) {
     const folderPath = await window.electronAPI.selectFolder(t('add_folder'));
     if (folderPath) await analyzePaths([folderPath]);
   }, [analyzePaths, t]);
-
-  const handleDrop = useCallback(async (event) => {
-    event.preventDefault();
-    const paths = Array.from(event.dataTransfer.files || [])
-      .map(file => file.path)
-      .filter(Boolean);
-    await analyzePaths(paths);
-  }, [analyzePaths]);
 
   const handleClear = useCallback(() => {
     setFileList([]);
@@ -282,9 +270,14 @@ function MetadataTab({ config, t, showToast }) {
     });
   }, []);
 
-  const handleDragOver = useCallback((event) => {
-    event.preventDefault();
-  }, []);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'metadata', isWorking },
+    }));
+    return () => window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'metadata', isWorking: false },
+    }));
+  }, [isWorking]);
 
   const handleCopyField = (fieldId) => {
     const value = batchMetadata[fieldId];
@@ -662,6 +655,7 @@ function MetadataTab({ config, t, showToast }) {
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
+      else if (action === 'drop-paths') analyzePaths(event.detail?.paths);
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();
       else if (action === 'toggle-all') handleToggleAllChecked();
@@ -669,7 +663,7 @@ function MetadataTab({ config, t, showToast }) {
 
     window.addEventListener('bookmanager:action', handleAppAction);
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
-  }, [handleClear, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
+  }, [analyzePaths, handleClear, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
 
   useEffect(() => {
     const handleShortcut = (event) => {
@@ -861,7 +855,7 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   return (
-    <div className="metadata-tab" onDrop={handleDrop} onDragOver={handleDragOver}>
+    <div className="metadata-tab">
       {fileList.length === 0 ? (
         <div className="meta-empty-drop">
           <img src={dragDropImage} alt="" />
