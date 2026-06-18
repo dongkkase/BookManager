@@ -1,1 +1,0 @@
-# ComicZIP Optimizer Server Modules
