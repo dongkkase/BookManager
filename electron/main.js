@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { setupIPCHandlers } from './ipcHandlers.js';
 import { ConfigManager } from './configManager.js';
 import { setupI18n } from './utils/i18n.js';
+import { resolveWindowState, serializeWindowState } from './windowState.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,18 +114,17 @@ if (!gotTheLock) {
 }
 
 function createMainWindow(config) {
-  const minWidth = config?.min_window_width || 1200;
-  const minHeight = config?.min_window_height || 780;
-  const workArea = screen.getPrimaryDisplay().workAreaSize;
-  const preferredWidth = isDev ? 1880 : 1280;
-  const initialWidth = Math.min(preferredWidth, Math.max(minWidth, workArea.width - 40));
-  const initialHeight = Math.min(800, Math.max(minHeight, workArea.height - 40));
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const windowState = resolveWindowState(
+    config,
+    screen.getAllDisplays(),
+    primaryDisplay.workArea,
+  );
 
   mainWindow = new BrowserWindow({
-    width: initialWidth,
-    height: initialHeight,
-    minWidth: minWidth,
-    minHeight: minHeight,
+    ...windowState.bounds,
+    minWidth: windowState.minWidth,
+    minHeight: windowState.minHeight,
     title: 'BookManager',
     icon: getAppIconPath(),
     webPreferences: {
@@ -144,7 +144,15 @@ function createMainWindow(config) {
   }
 
   mainWindow.once('ready-to-show', () => {
+    if (windowState.isMaximized) {
+      mainWindow.maximize();
+    }
     mainWindow.show();
+  });
+
+  mainWindow.on('close', () => {
+    if (!configManager || !mainWindow || mainWindow.isDestroyed()) return;
+    configManager.updateConfig(serializeWindowState(mainWindow));
   });
 
   mainWindow.on('closed', () => {

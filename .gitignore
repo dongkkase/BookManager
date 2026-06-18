@@ -1,11 +1,9 @@
 # User Custom
 .DS_Store
-.bak
 .roo
 .vscode
 /old_project
-.vscode
-.roo
+.idea/
 
 # Local Markdown documents
 *.md
@@ -16,16 +14,22 @@
 
 # Dependencies
 node_modules/
+.npm/
+.pnpm-store/
+.yarn/
 
-
-# Production Build (React, Electron)
+# Build output and bundler caches
 build/
 dist/
+dist-electron/
 out/
 release/
+.vite/
+.cache/
 
 # Testing
 coverage/
+.nyc_output/
 
 # Node Logs
 logs
@@ -37,10 +41,47 @@ pnpm-debug.log*
 
 # Environment Variables
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Local application data and caches
+config.json
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+rename_history.json
+thumbnails/
+
+# Temporary and backup files
+temp_screenshot*.png
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Local certificates and signing credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.mobileprovision
+
+# Python caches used while comparing the legacy project
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Local LLM Models & Weights
 *.gguf
@@ -62,5 +103,3 @@ Thumbs.db
 
 .rooignore
 .clineignore
-old_project/.DS_Store
-config.json

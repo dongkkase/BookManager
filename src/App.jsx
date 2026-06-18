@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { TabBar } from './components/TabBar';
 import { SettingsModal } from './components/SettingsModal';
 import { OrganizerTab } from './tabs/OrganizerTab';
@@ -51,27 +51,24 @@ function App() {
   const [toast, setToast] = useState(null);
   const { config, saveConfig: setConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n();
+  const didRestoreTab = useRef(false);
 
   useEffect(() => {
-    // 앱 초기화
-    const initApp = async () => {
-      try {
-        // 설정 로드
-        const loadedConfig = await window.electronAPI.getConfig();
-        if (loadedConfig) {
-          setConfig(loadedConfig);
-        }
-      } catch (error) {
-        console.error('앱 초기화 실패:', error);
-      }
-    };
-
-    initApp();
-  }, []);
+    if (!config || didRestoreTab.current) return;
+    const savedIndex = Number(config.last_tab_index);
+    const restoredTab = Number.isInteger(savedIndex) ? TABS[savedIndex] : null;
+    setActiveTab(restoredTab?.id || 'folder');
+    didRestoreTab.current = true;
+  }, [config]);
 
   const handleTabChange = useCallback((tabId) => {
+    const tabIndex = TABS.findIndex(tab => tab.id === tabId);
+    if (tabIndex < 0) return;
     setActiveTab(tabId);
-  }, []);
+    setConfig({ last_tab_index: tabIndex }).catch(error => {
+      console.error('마지막 탭 저장 실패:', error);
+    });
+  }, [setConfig]);
 
   const handleSettings = useCallback(() => {
     setShowSettings(true);
@@ -140,7 +137,7 @@ function App() {
         </div>
         <div className="top-menu-right">
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.('https://github.com/dongkkase/ComicZIP_Optimizer/issues')}><FaIcon name="bug" />{t('btn_issue')}</button>
-          <button className="top-btn top-btn-version" onClick={() => setActiveTab('releases')}><FaIcon name="circleCheck" />{t('msg_latest_version', ['2.8.1'])}</button>
+          <button className="top-btn top-btn-version" onClick={() => handleTabChange('releases')}><FaIcon name="circleCheck" />{t('msg_latest_version', ['2.8.1'])}</button>
           <button className="top-btn top-btn-settings" onClick={handleSettings}><FaIcon name="gear" />{t('settings_btn')}</button>
         </div>
       </div>

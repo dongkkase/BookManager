@@ -8,6 +8,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
+    "test": "node --test electron/*.test.js",
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
