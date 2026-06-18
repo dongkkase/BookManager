@@ -6,7 +6,7 @@ import '../styles/SharingTab.css';
  * Sharing 탭 컴포넌트
  * OPDS 및 WebDAV 공유 서버 관리
  */
-function SharingTab({ config, saveConfig, t }) {
+function SharingTab({ config, saveConfig, t, showToast }) {
   const [opdsPort, setOpdsPort] = useState(config?.opds_port || 8080);
   const [opdsRunning, setOpdsRunning] = useState(false);
   
@@ -60,7 +60,10 @@ function SharingTab({ config, saveConfig, t }) {
 
   const handleCopyUrl = (url) => {
     navigator.clipboard.writeText(url)
-      .then(() => setLogs(prev => [...prev, `[INFO] URL이 복사되었습니다: ${url}`]))
+      .then(() => {
+        setLogs(prev => [...prev, `[INFO] URL이 복사되었습니다: ${url}`]);
+        showToast?.('URL이 복사되었습니다.');
+      })
       .catch(err => setLogs(prev => [...prev, `[ERROR] URL 복사 실패: ${err.message}`]));
   };
 

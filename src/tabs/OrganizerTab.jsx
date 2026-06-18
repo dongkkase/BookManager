@@ -7,7 +7,7 @@ const ARCHIVE_FILTERS = [
   { name: 'Archives', extensions: ['zip', 'cbz', 'cbr', '7z', 'rar'] },
 ];
 
-function OrganizerTab({ config, t }) {
+function OrganizerTab({ config, t, showToast }) {
   const [fileList, setFileList] = useState([]);
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [isAllExpanded, setIsAllExpanded] = useState(true);
@@ -185,7 +185,9 @@ function OrganizerTab({ config, t }) {
       setLastResult(result);
       const success = result.stats?.success?.length || 0;
       const errors = result.stats?.error?.length || 0;
-      setStatusMessage(t('msg_job_done', [success, result.stats?.skip?.length || 0, errors]));
+      const message = t('msg_job_done', [success, result.stats?.skip?.length || 0, errors]);
+      setStatusMessage(message);
+      showToast?.(message);
       if (config?.play_sound !== false) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }

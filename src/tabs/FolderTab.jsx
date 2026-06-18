@@ -17,12 +17,63 @@ function parentPath(filePath) {
   return parts.join('/') || '';
 }
 
-function FolderTab({ config, saveConfig, t }) {
+function replaceBasename(filePath, nextName) {
+  const value = String(filePath || '');
+  const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+  return separatorIndex >= 0 ? `${value.slice(0, separatorIndex + 1)}${nextName}` : nextName;
+}
+
+function basename(filePath) {
+  return String(filePath || '').split(/[\\/]/).pop() || '';
+}
+
+function joinPath(base, ...parts) {
+  const separator = String(base || '').includes('\\') ? '\\' : '/';
+  return [String(base || '').replace(/[\\/]+$/, ''), ...parts.map(part => String(part || '').replace(/^[\\/]+|[\\/]+$/g, ''))]
+    .filter(Boolean)
+    .join(separator);
+}
+
+function findMissingVolumes(files = []) {
+  const seriesMap = {};
+  files.forEach(file => {
+    if (file.is_folder) return;
+    const seriesName = file.series || extractCoreTitle(file.name) || 'Unknown';
+    if (!seriesMap[seriesName]) seriesMap[seriesName] = [];
+    seriesMap[seriesName].push({
+      name: file.name,
+      folder_path: file.full_path || file.path || file.folder_path,
+      series_name: seriesName,
+    });
+  });
+
+  const missing = [];
+  for (const [series, items] of Object.entries(seriesMap)) {
+    const volumes = new Set();
+    let folderPath = '';
+    items.forEach(item => {
+      extractVolNumbers(item.name, item.series_name).forEach(volume => volumes.add(volume));
+      if (!folderPath) folderPath = parentPath(item.folder_path) || item.folder_path;
+    });
+    if (volumes.size === 0) continue;
+    const sorted = [...volumes].sort((a, b) => a - b);
+    if (sorted[sorted.length - 1] - sorted[0] >= 150) continue;
+    const missingVolumes = [];
+    for (let volume = sorted[0]; volume <= sorted[sorted.length - 1]; volume += 1) {
+      if (!volumes.has(volume)) missingVolumes.push(String(volume));
+    }
+    if (missingVolumes.length) missing.push({ series, missing: missingVolumes, folder_path: folderPath });
+  }
+  return missing.sort((a, b) => a.series.localeCompare(b.series));
+}
+
+function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
   const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles } = useFolderScan(t);
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
+  const hasShownMissingToastRef = useRef(false);
 
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -141,70 +192,35 @@ function FolderTab({ config, saveConfig, t }) {
     setSelectedFolderPath(folderPath);
     clearSelection();
     setSearchQuery('');
-    await scanFolder(folderPath, scanOptions);
-  }, [scanOptions, scanFolder, clearSelection]);
+    const files = await scanFolder(folderPath, scanOptions);
+    const missing = findMissingVolumes(files || []);
+    setMissingData(missing);
+    if (missing.length > 0) {
+      const messageKey = hasShownMissingToastRef.current ? 'tf_local_missing_alert' : 'tf_toast_missing';
+      hasShownMissingToastRef.current = true;
+      window.setTimeout(() => showToast?.(t(messageKey, [missing.length])), 1000);
+    }
+  }, [scanOptions, scanFolder, clearSelection, showToast, t]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
     setIsCheckingMissing(true);
-    // 현재 표시되는 파일들 중 폴더가 아닌 파일만 대상으로 누락 권수 확인
-    const seriesMap = {};
-    
-    // 비동기 작업인 척 하기 위해 setTimeout 사용 (대량 데이터일 수 있으므로)
     setTimeout(() => {
-      filteredFileData.forEach(file => {
-        if (file.is_folder) return;
-        const seriesName = file.series || extractCoreTitle(file.name) || 'Unknown';
-        if (!seriesMap[seriesName]) {
-          seriesMap[seriesName] = [];
-        }
-        seriesMap[seriesName].push({
-          name: file.name,
-          folder_path: file.path || file.folder_path,
-          series_name: seriesName
-        });
-      });
-
-      const missing = [];
-      for (const [sName, items] of Object.entries(seriesMap)) {
-        const vols = new Set();
-        let folderPath = '';
-        items.forEach(item => {
-          const vNums = extractVolNumbers(item.name, item.series_name);
-          vNums.forEach(v => vols.add(v));
-          if (!folderPath) folderPath = item.folder_path;
-        });
-
-        if (vols.size > 0) {
-          const arr = Array.from(vols).sort((a, b) => a - b);
-          const minV = arr[0];
-          const maxV = arr[arr.length - 1];
-          if (maxV - minV < 150) {
-            const missingVols = [];
-            for (let i = minV; i <= maxV; i++) {
-              if (!vols.has(i)) missingVols.push(String(i));
-            }
-            if (missingVols.length > 0) {
-              missing.push({
-                series: sName,
-                missing: missingVols,
-                folder_path: folderPath
-              });
-            }
-          }
-        }
-      }
-      
-      missing.sort((a, b) => a.series.localeCompare(b.series));
+      const missing = findMissingVolumes(filteredFileData);
       setMissingData(missing);
       setIsCheckingMissing(false);
-      setShowMissingDialog(true);
+      if (missing.length > 0) setShowMissingDialog(true);
+      else showToast?.(t('msg_no_missing_vols'));
     }, 100);
-  }, [filteredFileData]);
+  }, [filteredFileData, showToast, t]);
 
-  const handleRefresh = useCallback(() => {
-    if (selectedFolderPath) scanFolder(selectedFolderPath, { ...scanOptions, force: true });
-  }, [selectedFolderPath, scanFolder, scanOptions]);
+  const handleRefresh = useCallback(async () => {
+    if (!selectedFolderPath) return;
+    const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
+    const missing = findMissingVolumes(files || []);
+    setMissingData(missing);
+    if (missing.length > 0) showToast?.(t('tf_local_missing_alert', [missing.length]));
+  }, [selectedFolderPath, scanFolder, scanOptions, showToast, t]);
 
   const handleAddFolderFromToolbar = useCallback(async () => {
     const folderPath = await window.electronAPI?.selectFolder?.(t('add_folder'));
@@ -259,6 +275,82 @@ function FolderTab({ config, saveConfig, t }) {
     handleRefresh();
   }, [clearSelection, handleRefresh, selectedFileObjects]);
 
+  const renameSelectedFile = useCallback(async () => {
+    const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
+    if (!target) return;
+    const oldName = String(target).split(/[\\/]/).pop() || '';
+    const nextName = window.prompt(t('msg_rename_desc'), oldName)?.trim();
+    if (!nextName || nextName === oldName) return;
+    const result = await window.electronAPI?.renameFile?.(target, replaceBasename(target, nextName));
+    if (!result?.success) {
+      showToast?.(result?.message || t('msg_rename_dup'));
+      return;
+    }
+    showToast?.(t('msg_rename_success'));
+    clearSelection();
+    handleRefresh();
+  }, [activeSelectedFile, clearSelection, handleRefresh, showToast, t]);
+
+  const undoLastRename = useCallback(async () => {
+    const result = await window.electronAPI?.undoRename?.();
+    if (!result?.success) {
+      showToast?.(result?.message || result?.errors?.join(' / ') || t('tf_undo_fail'));
+      return;
+    }
+    showToast?.(`${t('tf_undo_success')} (${result.successCount || 0} files)`);
+    clearSelection();
+    handleRefresh();
+  }, [clearSelection, handleRefresh, showToast, t]);
+
+  const groupSelectedBySeries = useCallback(async () => {
+    const plans = selectedFileObjects.flatMap(file => {
+      const source = file.full_path || file.path;
+      const coreTitle = extractCoreTitle(file.name || basename(source));
+      if (!source || !coreTitle || basename(parentPath(source)).toLowerCase() === coreTitle.toLowerCase()) return [];
+      return [{ src: source, dest: joinPath(parentPath(source), coreTitle, basename(source)) }];
+    });
+    if (plans.length === 0) {
+      showToast?.(t('tf_empty_no_data'));
+      return;
+    }
+    if (!window.confirm(`${plans.length}개 파일을 시리즈별 폴더로 이동할까요?`)) return;
+    const result = await window.electronAPI?.executeLibraryMove?.(plans);
+    if (result?.successCount > 0) {
+      showToast?.(t('msg_series_grouped', [result.successCount]));
+      clearSelection();
+      handleRefresh();
+    } else {
+      showToast?.(result?.errors?.join(' / ') || t('tf_empty_no_data'));
+    }
+  }, [clearSelection, handleRefresh, selectedFileObjects, showToast, t]);
+
+  const moveSelectedToLibrary = useCallback(async () => {
+    if (selectedFileObjects.length === 0) return;
+    if (libraries.length === 0) {
+      showToast?.(t('warn_no_library'));
+      return;
+    }
+    const targetLibrary = libraries.length === 1
+      ? libraries[0]
+      : window.prompt(`이동할 라이브러리 경로를 입력하세요:\n${libraries.join('\n')}`, libraries[0])?.trim();
+    if (!targetLibrary || !libraries.includes(targetLibrary)) return;
+    const plans = selectedFileObjects.map(file => {
+      const source = file.full_path || file.path;
+      return {
+        src: source,
+        dest: joinPath(targetLibrary, basename(parentPath(source)), basename(source)),
+      };
+    }).filter(plan => plan.src);
+    const result = await window.electronAPI?.executeLibraryMove?.(plans);
+    if (result?.successCount > 0) {
+      showToast?.(t('msg_move_lib_done', [result.successCount]));
+      clearSelection();
+      handleRefresh();
+    } else {
+      showToast?.(result?.errors?.join(' / ') || t('msg_failed'));
+    }
+  }, [clearSelection, handleRefresh, libraries, selectedFileObjects, showToast, t]);
+
   const showFileContextMenu = useCallback((event, file, index) => {
     event.preventDefault();
     if (file?.path && !selectedFiles.includes(file.path)) {
@@ -291,8 +383,16 @@ function FolderTab({ config, saveConfig, t }) {
       if (target) await window.electronAPI?.showInFolder?.(target);
     } else if (action === 'delete-file') {
       await deleteSelectedFiles();
+    } else if (action === 'rename-file') {
+      await renameSelectedFile();
+    } else if (action === 'undo-rename') {
+      await undoLastRename();
+    } else if (action === 'group-series') {
+      await groupSelectedBySeries();
+    } else if (action === 'move-library') {
+      await moveSelectedToLibrary();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteSelectedFiles, handleFolderChange, openFolderPath, scanFolder, scanOptions, selectedFolderPath]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteSelectedFiles, groupSelectedBySeries, handleFolderChange, moveSelectedToLibrary, openFolderPath, renameSelectedFile, scanFolder, scanOptions, selectedFolderPath, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -587,6 +687,10 @@ function FolderTab({ config, saveConfig, t }) {
           ) : (
             <>
               <button onClick={() => handleContextAction('show-file')}>파일 위치 열기</button>
+              <button onClick={() => handleContextAction('rename-file')}>{t('action_rename_file')}</button>
+              <button onClick={() => handleContextAction('undo-rename')}>{t('tf_undo_success')}</button>
+              <button onClick={() => handleContextAction('group-series')}>{t('action_group_by_series')}</button>
+              <button onClick={() => handleContextAction('move-library')}>{t('action_move_to_library')}</button>
               <button onClick={() => handleContextAction('delete-file')}>선택 삭제</button>
             </>
           )}

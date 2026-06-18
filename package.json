@@ -65,7 +65,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "app.ico"
+      "icon": "src/images/app.ico"
     },
     "mac": {
       "target": [
@@ -74,6 +74,7 @@
           "arch": ["universal"]
         }
       ],
+      "icon": "src/images/app.png",
       "category": "public.app-category.utilities"
     },
     "linux": {
@@ -83,6 +84,7 @@
           "arch": ["x64"]
         }
       ],
+      "icon": "src/images/app.png",
       "category": "Utility"
     }
   }

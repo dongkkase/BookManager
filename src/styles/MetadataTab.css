@@ -634,27 +634,59 @@ textarea.meta-input {
   align-items: center;
   justify-content: center;
   padding: 3px;
-  background: rgba(0, 0, 0, 0.78);
+  isolation: isolate;
+  background: transparent;
   box-sizing: border-box;
   overflow: auto;
 }
 
+.meta-api-dialog-backdrop::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  background: rgba(0, 0, 0, 0.76);
+  pointer-events: none;
+  animation: meta-api-backdrop-in 0.24s ease-out both;
+}
+
 .meta-api-dialog {
-  width: 1050px;
-  height: 780px;
-  min-width: 1050px;
-  min-height: 780px;
+  position: relative;
+  width: var(--meta-search-min-width, 1050px);
+  height: var(--meta-search-min-height, 780px);
+  min-width: var(--meta-search-min-width, 1050px);
+  min-height: var(--meta-search-min-height, 780px);
   max-width: calc(100vw - 6px);
   max-height: calc(100vh - 6px);
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   background: #1d1d1d;
-  border: 1px solid #555;
-  border-radius: 0;
-  box-shadow: 0 12px 42px rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(132, 163, 199, 0.48);
+  border-radius: 10px;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.82),
+    0 0 0 1px rgba(255, 255, 255, 0.035),
+    0 0 28px rgba(43, 129, 213, 0.12);
   overflow: hidden;
   resize: both;
+  transform-origin: center;
+  will-change: transform;
+}
+
+@keyframes meta-api-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meta-api-dialog-backdrop::before {
+    animation: none;
+  }
 }
 
 .meta-api-dialog-header {
@@ -672,7 +704,6 @@ textarea.meta-input {
 }
 
 .meta-api-dialog-query {
-  padding-left: 12px;
   color: #2fa9f4;
   font-size: 23px;
   font-weight: 900;
@@ -739,7 +770,7 @@ textarea.meta-input {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(405px, 42.3%) minmax(0, 1fr);
+  grid-template-columns: minmax(405px, 39%) minmax(0, 1fr);
   gap: 5px;
   padding: 0 10px 0;
 }
@@ -994,7 +1025,7 @@ textarea.meta-input {
   background: rgba(72, 72, 72, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 5px;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.15;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
 }

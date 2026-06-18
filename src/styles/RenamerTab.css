@@ -350,3 +350,27 @@
   color: #ff6b6b;
   font-weight: 700;
 }
+.renamer-context-menu {
+  position: fixed;
+  z-index: 2200;
+  min-width: 170px;
+  padding: 5px;
+  border: 1px solid #555;
+  border-radius: 5px;
+  background: #252525;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+}
+
+.renamer-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 3px;
+  background: transparent;
+  color: #eee;
+  text-align: left;
+}
+
+.renamer-context-menu button:hover {
+  background: #3d3d3d;
+}

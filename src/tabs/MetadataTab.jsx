@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import '../styles/MetadataTab.css';
 import dragDropImage from '../images/draganddrop1.png';
@@ -131,7 +131,7 @@ function similarity(a = '', b = '') {
   return hits / Math.max(leftSet.size, rightSet.size, 1);
 }
 
-function MetadataTab({ config, t }) {
+function MetadataTab({ config, t, showToast }) {
   const [fileList, setFileList] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -305,6 +305,7 @@ function MetadataTab({ config, t }) {
       }
       return { ...item, metadata };
     });
+    showToast?.(t('t3_msg_applied_series_tag'));
   };
 
   const getCommaValues = (value) => String(value || '')
@@ -323,6 +324,14 @@ function MetadataTab({ config, t }) {
   };
 
   const handleApplyBatchToSeries = () => {
+    const hasBatchData = META_FIELDS.some(field => {
+      const value = batchMetadata[field.id];
+      return applyEmpty || (value !== undefined && value !== null && String(value).trim() !== '');
+    });
+    if (!hasBatchData) {
+      showToast?.(t('t3_msg_no_data_copy'));
+      return;
+    }
     setFileList(prev => prev.map(item => {
       if (!activeItem || item.group !== activeItem.group) return item;
       const metadata = { ...(item.metadata || {}) };
@@ -334,6 +343,7 @@ function MetadataTab({ config, t }) {
       }
       return { ...item, metadata };
     }));
+    showToast?.(t('t3_msg_applied_series_all'));
   };
 
   const handleCopyMyToBatch = () => {
@@ -344,6 +354,7 @@ function MetadataTab({ config, t }) {
   const handleResetActive = () => {
     if (!activeItem) return;
     updateItem(activeItem.id, item => ({ ...item, metadata: { ...(item.originalMetadata || {}) } }));
+    showToast?.((config?.language || config?.lang) === 'ko' ? '시리즈 데이터가 초기화되었습니다.' : 'Series reset complete.');
   };
 
   const applyMetadataToBatch = (metadata = {}) => {
@@ -467,6 +478,7 @@ function MetadataTab({ config, t }) {
     const query = searchQuery.trim();
     if (!query) {
       setStatusMessage('검색어를 입력하세요.');
+      showToast?.((config?.language || config?.lang) === 'ko' ? '검색어를 입력해주세요.' : 'Please enter a search keyword.');
       return;
     }
     await fetchMetadataResults({ source: apiSource, query, page });
@@ -476,6 +488,7 @@ function MetadataTab({ config, t }) {
     applyMetadataToBatch(result.metadata || {});
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage('검색 결과를 일괄 편집창에 불러왔습니다.');
+    showToast?.(t('t3_msg_applied_series_tag'));
   };
 
   const filenameStem = (name = '') => String(name).replace(/\.[^.]+$/, '');
@@ -510,6 +523,13 @@ function MetadataTab({ config, t }) {
         },
       };
     }));
+    const messageKey = {
+      Title: 't3_msg_auto_title_done',
+      Volume: 't3_msg_auto_vol_done',
+      Number: 't3_msg_auto_chap_done',
+      PageCount: 't3_msg_auto_pages_done',
+    }[field];
+    if (messageKey) showToast?.(t(messageKey));
   };
 
   const handleAutoMatchSeries = async () => {
@@ -532,11 +552,13 @@ function MetadataTab({ config, t }) {
       const first = result.results?.[0];
       if (!first) {
         setStatusMessage('자동 매칭 결과가 없습니다.');
+        showToast?.(t('t3_msg_no_search_result'));
         return;
       }
       applyMetadataToSeries(first.metadata || {});
       setBatchMetadata(first.metadata || {});
       setStatusMessage('시리즈 자동 매칭을 적용했습니다.');
+      showToast?.(t('t3_msg_auto_match_done'));
     } catch (error) {
       setStatusMessage(`자동 매칭 실패: ${error.message}`);
     } finally {
@@ -583,10 +605,12 @@ function MetadataTab({ config, t }) {
     }).find(item => item.id !== activeItem.id && item.metadata && Object.keys(item.metadata).length > 0);
     if (!latest) {
       setStatusMessage('불러올 최신권 메타데이터가 없습니다.');
+      showToast?.('불러올 최신권 메타데이터가 없습니다.');
       return;
     }
     setBatchMetadata({ ...(latest.metadata || {}) });
     setStatusMessage('최신권 메타데이터를 일괄 편집창에 불러왔습니다.');
+    showToast?.('최신권 메타데이터를 일괄 편집창에 불러왔습니다.');
   };
 
   const handleSave = async (all = false) => {
@@ -608,7 +632,14 @@ function MetadataTab({ config, t }) {
       setLastResult(result);
       const success = result.stats?.success?.length || 0;
       const errors = result.stats?.error?.length || 0;
-      setStatusMessage(all ? t('msg_job_done', [success, 0, errors]) : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done')));
+      const message = all
+        ? t('t3_msg_save_all_done', { success_count: success, fail_count: errors })
+        : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));
+      setStatusMessage(message);
+      showToast?.(message);
+      if (success > 0 && config?.play_sound !== false) {
+        window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
+      }
     } catch (error) {
       setStatusMessage(`${t('msg_failed')}: ${error.message}`);
     } finally {
@@ -987,6 +1018,9 @@ function MetadataTab({ config, t }) {
           onSearch={fetchMetadataResults}
           onResolveRidiDate={resolveRidiPublishDate}
           targetLang={config?.language || config?.lang || 'ko'}
+          minWidth={config?.metadata_search_min_width}
+          minHeight={config?.metadata_search_min_height}
+          showToast={showToast}
         />
       )}
       </>
@@ -995,7 +1029,20 @@ function MetadataTab({ config, t }) {
   );
 }
 
-function MetadataSearchDialog({ state, apiSources, onClose, onSelect, onSearch, onResolveRidiDate, targetLang = 'ko', t }) {
+function MetadataSearchDialog({
+  state,
+  apiSources,
+  onClose,
+  onSelect,
+  onSearch,
+  onResolveRidiDate,
+  targetLang = 'ko',
+  minWidth = 1050,
+  minHeight = 780,
+  t,
+  showToast,
+}) {
+  const dialogRef = useRef(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [dialogApi, setDialogApi] = useState(state.apiSource || apiSources[0]);
   const [dialogQuery, setDialogQuery] = useState(state.query || state.actualQuery || '');
@@ -1008,6 +1055,45 @@ function MetadataSearchDialog({ state, apiSources, onClose, onSelect, onSearch, 
   const resolvingRidiDates = useRef(new Set());
   const rawSelected = state.results[selectedIndex];
   const selected = showTranslated && translatedResult ? translatedResult : rawSelected;
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog?.animate) return undefined;
+
+    const animation = dialog.animate([
+      {
+        transform: 'translateY(28px) scale(0.94)',
+        boxShadow: '0 8px 22px rgba(0, 0, 0, 0.35)',
+      },
+      {
+        offset: 0.72,
+        transform: 'translateY(-3px) scale(1.008)',
+        boxShadow: '0 28px 76px rgba(0, 0, 0, 0.86)',
+      },
+      {
+        transform: 'translateY(0) scale(1)',
+        boxShadow: '0 24px 70px rgba(0, 0, 0, 0.82)',
+      },
+    ], {
+      duration: 380,
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      fill: 'both',
+    });
+
+    return () => animation.cancel();
+  }, []);
+
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+
+    window.addEventListener('keydown', handleEscape, true);
+    return () => window.removeEventListener('keydown', handleEscape, true);
+  }, [onClose]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -1046,6 +1132,7 @@ function MetadataSearchDialog({ state, apiSources, onClose, onSelect, onSearch, 
       if (response?.success === false) {
         throw new Error(response.error || text('meta_cache_clear_failed', '검색 캐시를 비우지 못했습니다.'));
       }
+      showToast?.(text('msg_cache_cleared', '검색 캐시 및 표지 이미지가 모두 초기화되었습니다.'));
       if (dialogQuery.trim()) runSearch(1);
     } catch (error) {
       setCacheError(error.message || text('meta_cache_clear_failed', '검색 캐시를 비우지 못했습니다.'));
@@ -1132,6 +1219,11 @@ function MetadataSearchDialog({ state, apiSources, onClose, onSelect, onSearch, 
     if (/^https?:\/\//i.test(String(link || ''))) window.electronAPI?.openExternal?.(link);
   };
 
+  const dialogMinimumSize = {
+    '--meta-search-min-width': `${Math.max(720, Number(minWidth) || 1050)}px`,
+    '--meta-search-min-height': `${Math.max(560, Number(minHeight) || 780)}px`,
+  };
+
   useEffect(() => {
     const handleShortcut = (event) => {
       if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
@@ -1153,8 +1245,20 @@ function MetadataSearchDialog({ state, apiSources, onClose, onSelect, onSearch, 
   }, [dialogApi, dialogQuery, onSearch, onSelect, selected, state.loading]);
 
   return (
-    <div className="meta-api-dialog-backdrop">
-      <div className="meta-api-dialog" role="dialog" aria-label={text('meta_search_title', '메타데이터 검색')}>
+    <div
+      className="meta-api-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        className="meta-api-dialog"
+        role="dialog"
+        aria-label={text('meta_search_title', '메타데이터 검색')}
+        style={dialogMinimumSize}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="meta-api-dialog-header">
           <div className="meta-api-dialog-heading">
             <div className="meta-api-dialog-query">{state.actualQuery}</div>

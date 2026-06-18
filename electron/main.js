@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -30,6 +30,12 @@ function getResourcePath(...subPaths) {
     // 프로덕션 모드: extraResources에 복사된 리소스 사용
     return path.join(process.resourcesPath, ...subPaths);
   }
+}
+
+function getAppIconPath() {
+  const iconFile = process.platform === 'win32' ? 'app.ico' : 'app.png';
+  const iconPath = getResourcePath('src', 'images', iconFile);
+  return fs.existsSync(iconPath) ? iconPath : undefined;
 }
 
 // 실행 파일 디렉토리
@@ -82,6 +88,11 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    const appIconPath = getAppIconPath();
+    if (process.platform === 'darwin' && appIconPath) {
+      app.dock.setIcon(appIconPath);
+    }
+
     // 설정 관리자 초기화
     configManager = new ConfigManager(getUserDataPath(), getExecutableDir());
     await configManager.initialize();
@@ -94,7 +105,7 @@ if (!gotTheLock) {
     setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
 
     // 메인 윈도우 생성
-    createMainWindow();
+    createMainWindow(config);
 
     // 트레이 생성
     createTray();
@@ -104,14 +115,18 @@ if (!gotTheLock) {
 function createMainWindow(config) {
   const minWidth = config?.min_window_width || 1200;
   const minHeight = config?.min_window_height || 780;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const preferredWidth = isDev ? 1880 : 1280;
+  const initialWidth = Math.min(preferredWidth, Math.max(minWidth, workArea.width - 40));
+  const initialHeight = Math.min(800, Math.max(minHeight, workArea.height - 40));
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: initialWidth,
+    height: initialHeight,
     minWidth: minWidth,
     minHeight: minHeight,
     title: 'BookManager',
-    icon: path.join(getExecutableDir(), 'app.ico'),
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -139,7 +154,8 @@ function createMainWindow(config) {
 
 function createTray() {
   try {
-    const iconPath = getResourcePath('src', 'images', 'app.ico');
+    const iconPath = getAppIconPath();
+    if (!iconPath) throw new Error('Application icon not found');
     
     if (process.platform === 'darwin') {
       // macOS는 템플릿 아이콘 사용

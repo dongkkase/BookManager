@@ -54,6 +54,8 @@ function normalizeConfig(config) {
     completion_sound: 'Default.wav',
     font_family: 'Default',
     font_scale: 100,
+    metadata_search_min_width: 1050,
+    metadata_search_min_height: 780,
     ...(config || {}),
     libraries: libraryFolders,
     dup_check_folders: libraryFolders,
@@ -64,7 +66,7 @@ function normalizeConfig(config) {
   };
 }
 
-function SettingsModal({ isOpen = true, onClose, config, onSave, t }) {
+function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast }) {
   const [localConfig, setLocalConfig] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState('basic');
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -158,7 +160,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t }) {
     setMaintenanceMessage('');
     try {
       const result = await window.electronAPI?.clearDupCache?.();
-      setMaintenanceMessage(`${label('folder_clear_cache_done', '중복 매칭 캐시가 초기화되었습니다.')} (${result?.changes || 0})`);
+      const message = `${label('folder_clear_cache_done', '중복 매칭 캐시가 초기화되었습니다.')} (${result?.changes || 0})`;
+      setMaintenanceMessage(message);
+      showToast?.(message);
     } catch (error) {
       setMaintenanceMessage(`중복 캐시 초기화 실패: ${error.message}`);
     } finally {
@@ -171,7 +175,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t }) {
     setMaintenanceMessage('');
     try {
       const result = await window.electronAPI?.updateFolderIndex?.(localConfig.dup_check_folders || []);
-      setMaintenanceMessage(`${label('setting_update_index_msg', '대상 폴더의 변경사항을 확인하고 인덱스를 최신 상태로 갱신했습니다.')} (${result?.total || 0})`);
+      const message = `${label('setting_update_index_msg', '대상 폴더의 변경사항을 확인하고 인덱스를 최신 상태로 갱신했습니다.')} (${result?.total || 0})`;
+      setMaintenanceMessage(message);
+      showToast?.(message);
     } catch (error) {
       setMaintenanceMessage(`인덱스 갱신 실패: ${error.message}`);
     } finally {
@@ -184,7 +190,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t }) {
     setMaintenanceMessage('');
     try {
       await window.electronAPI?.clearApiCache?.();
-      setMaintenanceMessage(label('msg_cache_cleared', '검색 캐시 및 표지 이미지가 모두 초기화되었습니다.'));
+      const message = label('msg_cache_cleared', '검색 캐시 및 표지 이미지가 모두 초기화되었습니다.');
+      setMaintenanceMessage(message);
+      showToast?.(message);
     } catch (error) {
       setMaintenanceMessage(`API 캐시 초기화 실패: ${error.message}`);
     } finally {

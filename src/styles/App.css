@@ -169,6 +169,39 @@ body.is-resizing-panel * {
   padding: 4px 7px 0;
 }
 
+.app-toast-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 24px 90px;
+  pointer-events: none;
+}
+
+.app-toast {
+  max-width: min(760px, calc(100vw - 48px));
+  padding: 12px 24px;
+  border: 1px solid #e67e22;
+  border-radius: 8px;
+  background: rgba(187, 121, 15, 0.94);
+  color: #fff;
+  font-size: var(--font-lg);
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
+  white-space: pre-line;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: app-toast-life 2.5s ease both;
+}
+
+@keyframes app-toast-life {
+  0% { opacity: 0; transform: translateY(8px); }
+  12%, 82% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(4px); }
+}
+
 /* ============================================
    설정 모달 (기존 스타일 유지)
    ============================================ */

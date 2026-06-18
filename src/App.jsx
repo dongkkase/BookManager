@@ -8,6 +8,7 @@ import { FolderTab } from './tabs/FolderTab';
 import { SharingTab } from './tabs/SharingTab';
 import { ReleaseTab } from './tabs/ReleaseTab';
 import { FaIcon } from './components/FaIcon';
+import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
 import './styles/App.css';
@@ -47,6 +48,7 @@ function fontVarsForConfig(config = {}) {
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
   const [showSettings, setShowSettings] = useState(false);
+  const [toast, setToast] = useState(null);
   const { config, saveConfig: setConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n();
 
@@ -75,6 +77,15 @@ function App() {
     setShowSettings(true);
   }, []);
 
+  const showToast = useCallback((message, duration = 2500) => {
+    if (!message) return;
+    setToast({
+      id: `${Date.now()}-${Math.random()}`,
+      message: String(message),
+      duration,
+    });
+  }, []);
+
   const dispatchAppAction = useCallback((action) => {
     window.dispatchEvent(new CustomEvent('bookmanager:action', { detail: { action, activeTab } }));
   }, [activeTab]);
@@ -97,19 +108,19 @@ function App() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'organizer':
-        return <OrganizerTab config={config} t={t} />;
+        return <OrganizerTab config={config} t={t} showToast={showToast} />;
       case 'renamer':
-        return <RenamerTab config={config} saveConfig={setConfig} t={t} />;
+        return <RenamerTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />;
       case 'metadata':
-        return <MetadataTab config={config} t={t} />;
+        return <MetadataTab config={config} t={t} showToast={showToast} />;
       case 'folder':
-        return <FolderTab config={config} saveConfig={setConfig} t={t} />;
+        return <FolderTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />;
       case 'sharing':
-        return <SharingTab config={config} saveConfig={setConfig} t={t} />;
+        return <SharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />;
       case 'releases':
         return <ReleaseTab config={config} t={t} />;
       default:
-        return <FolderTab config={config} saveConfig={setConfig} t={t} />;
+        return <FolderTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />;
     }
   };
 
@@ -150,8 +161,10 @@ function App() {
           config={config} 
           onClose={handleSettingsClose}
           t={t}
+          showToast={showToast}
         />
       )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

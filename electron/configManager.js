@@ -63,8 +63,10 @@ export class ConfigManager {
       btn_primary: '#0078d7',
       start_num: 0,
       completion_sound: 'Default.wav',
-      min_window_width: 1200,
+      min_window_width: 1250,
       min_window_height: 780,
+      metadata_search_min_width: 1200,
+      metadata_search_min_height: 780,
     };
   }
 

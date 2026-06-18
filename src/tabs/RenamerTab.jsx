@@ -16,6 +16,12 @@ function stem(filePath) {
   return name.replace(/\.[^.]+$/, '');
 }
 
+function replaceBasename(filePath, nextName) {
+  const value = String(filePath || '');
+  const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+  return separatorIndex >= 0 ? `${value.slice(0, separatorIndex + 1)}${nextName}` : nextName;
+}
+
 function safeName(name) {
   return String(name || '')
     .replace(/[\\/:*?"<>|]/g, '_')
@@ -55,7 +61,7 @@ function refreshItemNames(item, options) {
   return { ...item, entries, count: entries.length };
 }
 
-function RenamerTab({ config, saveConfig, t }) {
+function RenamerTab({ config, saveConfig, t, showToast }) {
   const [fileList, setFileList] = useState([]);
   const [selectedArchiveId, setSelectedArchiveId] = useState(null);
   const [patternIndex, setPatternIndex] = useState(Number(config?.rename_pattern_idx || 0));
@@ -66,6 +72,7 @@ function RenamerTab({ config, saveConfig, t }) {
   const [statusMessage, setStatusMessage] = useState(t('status_wait'));
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
 
   const patternLabels = useMemo(() => {
     const labels = t('patterns');
@@ -91,6 +98,12 @@ function RenamerTab({ config, saveConfig, t }) {
     return () => {
       if (typeof removeProgress === 'function') removeProgress();
     };
+  }, []);
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+    return () => window.removeEventListener('click', closeMenu);
   }, []);
 
   useEffect(() => {
@@ -223,6 +236,60 @@ function RenamerTab({ config, saveConfig, t }) {
     });
   }, [selectedArchiveId]);
 
+  const handleArchiveContextAction = useCallback(async (action) => {
+    const archive = contextMenu?.archive;
+    setContextMenu(null);
+    if (!archive?.filepath) return;
+
+    if (action === 'show') {
+      const result = await window.electronAPI?.showInFolder?.(archive.filepath);
+      if (result?.success === false) showToast?.(t('msg_path_open_fail', [result.message || '']));
+      return;
+    }
+
+    if (action === 'rename') {
+      const oldName = basename(archive.filepath);
+      const nextName = window.prompt(t('msg_rename_desc'), oldName)?.trim();
+      if (!nextName || nextName === oldName) return;
+      const nextPath = replaceBasename(archive.filepath, nextName);
+      const result = await window.electronAPI?.renameFile?.(archive.filepath, nextPath);
+      if (!result?.success) {
+        showToast?.(result?.message || t('msg_reload_fail'));
+        return;
+      }
+      setFileList(prev => prev.map(item => item.id === archive.id
+        ? refreshItemNames({ ...item, filepath: nextPath, name: nextName }, renameOptions)
+        : item));
+      showToast?.(t('msg_rename_success'));
+      return;
+    }
+
+    if (action === 'reload') {
+      try {
+        const result = await window.electronAPI.analyzeRenamer([archive.filepath], {
+          lang: config?.language || config?.lang || 'ko',
+          ...renameOptions,
+        });
+        const reloaded = result.items?.[0];
+        if (!reloaded) {
+          showToast?.(result.skippedFiles?.length ? t('msg_reload_nested') : t('msg_reload_fail'));
+          return;
+        }
+        const nextItem = refreshItemNames({
+          ...reloaded,
+          checked: archive.checked,
+          capOpt: archive.capOpt,
+          exifOpt: archive.exifOpt,
+        }, renameOptions);
+        setFileList(prev => prev.map(item => item.id === archive.id ? nextItem : item));
+        setSelectedArchiveId(nextItem.id);
+        showToast?.(t('msg_reload_success'));
+      } catch (error) {
+        showToast?.(`${t('msg_reload_fail')} ${error.message}`);
+      }
+    }
+  }, [config?.language, config?.lang, contextMenu, renameOptions, showToast, t]);
+
   const handleExecute = async () => {
     if (checkedCount === 0) {
       setStatusMessage(t('msg_no_targets'));
@@ -255,7 +322,9 @@ function RenamerTab({ config, saveConfig, t }) {
       const success = result.stats?.success?.length || 0;
       const skip = result.stats?.skip?.length || 0;
       const error = result.stats?.error?.length || 0;
-      setStatusMessage(t('msg_job_done', [success, skip, error]));
+      const message = t('msg_job_done', [success, skip, error]);
+      setStatusMessage(message);
+      showToast?.(message);
       if (config?.play_sound !== false) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
@@ -387,6 +456,12 @@ function RenamerTab({ config, saveConfig, t }) {
                         key={file.id}
                         className={activeArchive?.id === file.id ? 'selected' : ''}
                         onClick={() => setSelectedArchiveId(file.id)}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setSelectedArchiveId(file.id);
+                          setContextMenu({ x: event.clientX, y: event.clientY, archive: file });
+                        }}
                       >
                         <td>
                           <input
@@ -487,6 +562,17 @@ function RenamerTab({ config, saveConfig, t }) {
           </div>
         </div>
       </div>
+      {contextMenu && (
+        <div
+          className="renamer-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={event => event.stopPropagation()}
+        >
+          <button onClick={() => handleArchiveContextAction('show')}>{t('action_find_path')}</button>
+          <button onClick={() => handleArchiveContextAction('rename')}>{t('action_rename_file')}</button>
+          <button onClick={() => handleArchiveContextAction('reload')}>{t('action_reload_file')}</button>
+        </div>
+      )}
     </div>
   );
 }

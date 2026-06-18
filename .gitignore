@@ -4,9 +4,15 @@
 .roo
 .vscode
 /old_project
-memo.md
 .vscode
 .roo
+
+# Local Markdown documents
+*.md
+!README.md
+!README.*.md
+!LICENSE.md
+!LICENSE.*.md
 
 # Dependencies
 node_modules/
