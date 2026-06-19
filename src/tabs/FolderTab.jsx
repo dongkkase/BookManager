@@ -69,6 +69,8 @@ import {
   applyConflictChoice,
   createLibraryMovePlans,
 } from '../libraryMovePolicy';
+import { hasPrimaryModifier, shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { emitStatusState } from '../statusState';
 import '../styles/FolderTab.css';
 
 function parentPath(filePath) {
@@ -97,6 +99,7 @@ function joinPath(base, ...parts) {
 function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
+  const [pathDraft, setPathDraft] = useState('');
   const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles } = useFolderScan(t);
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
@@ -130,16 +133,39 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [preparingDuplicates, setPreparingDuplicates] = useState(false);
   const [duplicatePreparationStatus, setDuplicatePreparationStatus] = useState('');
   const [duplicatePreparationProgress, setDuplicatePreparationProgress] = useState(0);
+  const [libraryTaskMode, setLibraryTaskMode] = useState(null);
   const [treeRefreshToken, setTreeRefreshToken] = useState(0);
   const [itemScales, setItemScales] = useState({ table: 50, tile: 50, thumbnail: 50 });
   const [showLayoutDialog, setShowLayoutDialog] = useState(false);
   const [showDeleteLayoutDialog, setShowDeleteLayoutDialog] = useState(false);
+  const [showMissingDialog, setShowMissingDialog] = useState(false);
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
   const [seriesMovePreview, setSeriesMovePreview] = useState(null);
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
   const [moveConflict, setMoveConflict] = useState(null);
+  const closeTopOverlay = useCallback(() => {
+    if (moveConflict) return true;
+    if (showMultiRenameDialog) setShowMultiRenameDialog(false);
+    else if (libraryMoveRequest) setLibraryMoveRequest(null);
+    else if (seriesMovePreview) setSeriesMovePreview(null);
+    else if (showDeleteLayoutDialog) setShowDeleteLayoutDialog(false);
+    else if (showLayoutDialog) setShowLayoutDialog(false);
+    else if (showMissingDialog) setShowMissingDialog(false);
+    else if (contextMenu) setContextMenu(null);
+    else return false;
+    return true;
+  }, [
+    contextMenu,
+    libraryMoveRequest,
+    moveConflict,
+    seriesMovePreview,
+    showDeleteLayoutDialog,
+    showLayoutDialog,
+    showMissingDialog,
+    showMultiRenameDialog,
+  ]);
 
   // --- 검색 상태 ---
   const [searchQuery, setSearchQuery] = useState('');
@@ -149,6 +175,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     includeSubfolders,
     enableDupCheck,
     dupFolders: config?.dup_check_folders || [],
+    fastInitial: true,
   }), [includeSubfolders, enableDupCheck, config?.dup_check_folders]);
 
   // 파일 데이터 가져오기 (캐시에서)
@@ -212,6 +239,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!config || restoredViewSettingsRef.current) return;
     setViewMode(normalizeViewMode(config.folder_view_mode));
     setItemScales(normalizeViewScales(config.folder_item_scales));
+    setSortKey(config.folder_sort_key || 'name');
+    setSortOrder(config.folder_sort_order === 'desc' ? 'desc' : 'asc');
+    setGroupKey(config.folder_group_key || 'none');
     restoredViewSettingsRef.current = true;
   }, [config]);
 
@@ -221,10 +251,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       saveConfig?.({
         folder_view_mode: viewMode,
         folder_item_scales: normalizeViewScales(itemScales),
+        folder_sort_key: sortKey,
+        folder_sort_order: sortOrder,
+        folder_group_key: groupKey,
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [itemScales, saveConfig, viewMode]);
+  }, [groupKey, itemScales, saveConfig, sortKey, sortOrder, viewMode]);
 
   useEffect(() => {
     if (!activeSelectedFile || initializedDetailHeightRef.current) return;
@@ -235,12 +268,57 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.(data => {
+      if (data?.task === 'folder:scan') {
+        emitStatusState('folder', {
+          message: data.message || t('folder.status.scanning') || '폴더 스캔 중...',
+          progress: data.progress ?? 0,
+          phase: data.progress >= 100 ? 'idle' : 'executing',
+          currentItem: data.currentFile || '',
+          currentItemName: data.currentFileName || '',
+        });
+        return;
+      }
       if (data?.task !== 'folder:updateIndex') return;
-      setDuplicatePreparationStatus(data.message || t('dup_scan_start'));
-      setDuplicatePreparationProgress(Math.max(0, Math.min(100, Number(data.progress) || 0)));
+      const progress = Math.max(0, Math.min(100, Number(data.progress) || 0));
+      const fallbackMessage = libraryTaskMode === 'metadata'
+        ? t('folder_optimizing', [0, 0])
+        : t('dup_scan_start');
+      const message = data.message || fallbackMessage;
+      setDuplicatePreparationStatus(message);
+      setDuplicatePreparationProgress(progress);
+      emitStatusState('folder', {
+        message,
+        progress,
+        phase: 'executing',
+      });
     });
     return () => {
       if (typeof removeProgress === 'function') removeProgress();
+    };
+  }, [libraryTaskMode, t]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+      detail: { tabId: 'folder', isWorking: preparingDuplicates },
+    }));
+    if (!preparingDuplicates) return;
+    emitStatusState('folder', {
+      message: duplicatePreparationStatus || t('dup_scan_start'),
+      progress: duplicatePreparationProgress,
+      phase: 'executing',
+    });
+  }, [duplicatePreparationProgress, duplicatePreparationStatus, preparingDuplicates, t]);
+
+  useEffect(() => {
+    return () => {
+      window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+        detail: { tabId: 'folder', isWorking: false },
+      }));
+      emitStatusState('folder', {
+        message: t('status_wait'),
+        progress: 0,
+        phase: 'idle',
+      });
     };
   }, [t]);
 
@@ -292,7 +370,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // --- 누락 권수 상태 ---
   const [missingData, setMissingData] = useState([]);
-  const [showMissingDialog, setShowMissingDialog] = useState(false);
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
 
   // --- refs ---
@@ -310,13 +387,41 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const analyze = async () => {
       if (cancelled) return;
       setIsCheckingMissing(true);
+      const shouldLockScreen = libraryFolders.length > 0;
+      if (shouldLockScreen) {
+        window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+          detail: { tabId: 'folder', isWorking: true },
+        }));
+        emitStatusState('folder', {
+          message: t('dup_scan_start'),
+          progress: 0,
+          phase: 'executing',
+        });
+      }
       try {
         const libraryFiles = [];
-        for (const folderPath of libraryFolders) {
+        const prioritizedFolders = selectedFolderPath
+          ? [
+              ...libraryFolders.filter(folderPath => folderPath === selectedFolderPath),
+              ...libraryFolders.filter(folderPath => folderPath !== selectedFolderPath),
+            ]
+          : libraryFolders;
+        for (let index = 0; index < prioritizedFolders.length; index += 1) {
+          const folderPath = prioritizedFolders[index];
           if (cancelled) return;
+          if (shouldLockScreen) {
+            emitStatusState('folder', {
+              message: t('dup_scan_progress', [index, libraryFiles.length]),
+              progress: Math.round((index / Math.max(prioritizedFolders.length, 1)) * 100),
+              phase: 'executing',
+            });
+          }
           const files = await window.electronAPI?.scanFolder?.(folderPath, {
             includeSubfolders: true,
             enableDupCheck: false,
+            skipArchiveExtraction: true,
+            suppressEvents: true,
+            reportTaskProgress: true,
           });
           if (Array.isArray(files)) libraryFiles.push(...files);
         }
@@ -331,7 +436,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           showToast?.({ key: 'tf_toast_missing', values: [missing.length] });
         }
       } finally {
-        if (!cancelled) setIsCheckingMissing(false);
+        if (!cancelled) {
+          setIsCheckingMissing(false);
+          if (shouldLockScreen) {
+            window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+              detail: { tabId: 'folder', isWorking: false },
+            }));
+            emitStatusState('folder', {
+              message: t('status_wait'),
+              progress: 0,
+              phase: 'idle',
+            });
+          }
+        }
       }
     };
 
@@ -339,8 +456,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      if (libraryFolders.length > 0) {
+        window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
+          detail: { tabId: 'folder', isWorking: false },
+        }));
+        emitStatusState('folder', {
+          message: t('status_wait'),
+          progress: 0,
+          phase: 'idle',
+        });
+      }
     };
-  }, [config, getCurrentFileData, showToast]);
+  }, [config, getCurrentFileData, selectedFolderPath, showToast, t]);
 
   const scheduleLocalMissingToast = useCallback((folderPath, missing) => {
     if (missingLocalTimerRef.current) window.clearTimeout(missingLocalTimerRef.current);
@@ -357,6 +484,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
     setSelectedFolderPath(folderPath);
+    setPathDraft(folderPath);
     clearSelection();
     setSearchQuery('');
     const files = await scanFolder(folderPath, scanOptions);
@@ -371,6 +499,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     await handleFolderChange(folderPath);
     return true;
   }, [handleFolderChange]);
+
+  const handlePathNavigation = useCallback(async () => {
+    const targetPath = pathDraft.trim();
+    if (!targetPath) return;
+    if (await handleSafeFolderNavigation(targetPath)) return;
+    await window.electronAPI?.showMessage?.({
+      type: 'warning',
+      title: t('dlg_warn'),
+      message: t('msg_network_offline'),
+      language: config?.language || config?.lang || 'ko',
+    });
+  }, [config?.lang, config?.language, handleSafeFolderNavigation, pathDraft, t]);
 
   const runInternalFileAction = useCallback(async action => {
     internalFileActionRef.current = true;
@@ -499,7 +639,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       setDuplicatePreparationStatus(t('dup_scan_start'));
       setDuplicatePreparationProgress(0);
       try {
-        const result = await window.electronAPI?.updateFolderIndex?.(dupFolders);
+        const result = await window.electronAPI?.updateFolderIndex?.(dupFolders, {
+          priorityFolder: selectedFolderPath,
+          language: config?.language || config?.lang || 'ko',
+        });
         if (result?.success === false) throw new Error(result.message || t('msg_failed'));
       } catch (error) {
         setEnableDupCheck(false);
@@ -568,12 +711,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     await saveConfig?.({ last_selected_library: folderPath });
     setPreparingDuplicates(true);
-    setDuplicatePreparationStatus(t('dup_scan_start'));
+    setLibraryTaskMode(optimizeMetadata ? 'metadata' : 'index');
+    setDuplicatePreparationStatus(optimizeMetadata ? t('folder_optimizing', [0, 0]) : t('dup_scan_start'));
     setDuplicatePreparationProgress(0);
     try {
       const result = await window.electronAPI?.updateFolderIndex?.(
         [folderPath],
-        { mode: choice },
+        { mode: choice, language: config?.language || config?.lang || 'ko' },
       );
       if (result?.success === false) throw new Error(result.message || t('msg_failed'));
 
@@ -583,6 +727,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           ...scanOptions,
           includeSubfolders: true,
           force: true,
+          fastInitial: false,
         });
         setMissingData(findMissingVolumes(files || []));
         setSelectedFolderPath(folderPath);
@@ -601,8 +746,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       });
     } finally {
       setPreparingDuplicates(false);
+      setLibraryTaskMode(null);
       setDuplicatePreparationStatus('');
       setDuplicatePreparationProgress(0);
+      emitStatusState('folder', {
+        message: t('status_wait'),
+        progress: 0,
+        phase: 'idle',
+      });
     }
   }, [
     config?.language,
@@ -907,7 +1058,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           || plan.src.startsWith(`${library}\\`)
         ))),
       ])];
-      await window.electronAPI?.updateFolderIndex?.(affectedLibraries, { mode: 'smart' });
+      await window.electronAPI?.updateFolderIndex?.(affectedLibraries, {
+        mode: 'smart',
+        priorityFolder: selectedFolderPath,
+        language: config?.language || config?.lang || 'ko',
+      });
       if (folderPlan) {
         await handleFolderChange(folderPlan.dest);
       } else {
@@ -923,7 +1078,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     }
-  }, [clearSelection, config?.language, config?.lang, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, saveConfig, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, saveConfig, selectedFolderPath, showToast, t]);
 
   const openLibraryMoveDialog = useCallback(async () => {
     if (libraries.length === 0) {
@@ -1186,19 +1341,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      const tag = event.target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.target?.isContentEditable) return;
+      if (event.key === 'Escape' && closeTopOverlay()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (!shouldHandleGlobalShortcut(event)) return;
 
       if (event.key === 'F5') {
         event.preventDefault();
         handleSmartRefresh(event.shiftKey);
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectAll();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'i') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'i') {
         event.preventDefault();
         invertSelection();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
         searchInputRef.current?.focus();
       } else if (event.key === 'Escape') {
@@ -1238,7 +1397,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, moveActiveSelection, openSelectedInExplorer, renameSelectedFile, selectAll]);
+  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, moveActiveSelection, openSelectedInExplorer, renameSelectedFile, selectAll]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -1452,6 +1611,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   return (
     <div className="folder-tab">
       <div className="folder-main-area" ref={mainAreaRef}>
+        {preparingDuplicates && (
+          <div className="folder-working-overlay">
+            <div className="folder-working-panel">
+              <div className="folder-working-spinner" aria-hidden="true" />
+              <span>{duplicatePreparationStatus || t('dup_scan_start')}</span>
+              <div className="folder-working-progress" aria-hidden="true">
+                <div style={{ width: `${duplicatePreparationProgress}%` }} />
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Left Panel */}
         {isSidebarVisible && (
@@ -1557,6 +1727,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
             
             <div className="right-toolbar-right">
+              <input
+                type="text"
+                className="path-navigation-input"
+                aria-label={t('col_path')}
+                placeholder={t('col_path')}
+                value={pathDraft}
+                onChange={event => setPathDraft(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') handlePathNavigation();
+                  if (event.key === 'Escape') setPathDraft(selectedFolderPath);
+                }}
+              />
               <div className="search-input-wrap">
                 <input
                   type="text"

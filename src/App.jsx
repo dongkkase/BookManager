@@ -26,33 +26,12 @@ import {
   shouldShowToast,
   toastIdentity,
 } from './toastPolicy';
-import { resolveUpdateInfo } from './updatePolicy';
+import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
 import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
+import workingAnimation from './images/rainbow cat remix.gif';
+import { fontVarsForConfig } from './fontPolicy';
 import './styles/App.css';
-
-function fontFamilyForConfig(fontFamily = 'Default') {
-  if (!fontFamily || fontFamily === 'Default') {
-    return "'Jua', Arial, 'Noto Sans KR', 'Malgun Gothic', 'Segoe UI Emoji', sans-serif";
-  }
-  return `'${String(fontFamily).replace(/'/g, "\\'")}', 'Segoe UI Emoji', sans-serif`;
-}
-
-function fontVarsForConfig(config = {}) {
-  const scale = Math.max(0.8, Math.min(1.55, Number(config?.font_scale || 100) / 100));
-  const size = value => `${Math.max(8, Math.round(value * scale))}px`;
-  return {
-    '--font-primary': fontFamilyForConfig(config?.font_family),
-    '--font-scale': String(scale),
-    '--font-xs': size(11),
-    '--font-sm': size(12),
-    '--font-base': size(13),
-    '--font-md': size(14),
-    '--font-lg': size(16),
-    '--font-xl': size(18),
-    '--font-2xl': size(20),
-  };
-}
 
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
@@ -73,6 +52,7 @@ function App() {
   const { t, language, changeLanguage } = useI18n();
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
+  const isAppLocked = Boolean(workingTab);
   const isWorking = workingTab === activeTab;
 
   useEffect(() => {
@@ -172,7 +152,7 @@ function App() {
       const tabId = event.detail?.tabId;
       const paths = normalizeDroppedPaths(event.detail?.paths);
       const tabIndex = TABS.findIndex(tab => tab.id === tabId);
-      if (tabIndex < 0 || isWorking) return;
+      if (tabIndex < 0 || isAppLocked) return;
       setActiveTab(tabId);
       setConfig({ last_tab_index: tabIndex }).catch(error => {
         console.error('자동 전달 탭 저장 실패:', error);
@@ -185,7 +165,7 @@ function App() {
     };
     window.addEventListener('bookmanager:navigate', handleNavigate);
     return () => window.removeEventListener('bookmanager:navigate', handleNavigate);
-  }, [isWorking, setConfig]);
+  }, [isAppLocked, setConfig]);
 
   const handleSettings = useCallback(() => {
     setSettingsInitialTab('basic');
@@ -230,12 +210,12 @@ function App() {
 
   const handleGlobalDragOver = useCallback((event) => {
     event.preventDefault();
-    event.dataTransfer.dropEffect = canAcceptGlobalDrop(activeTab, isWorking) ? 'copy' : 'none';
-  }, [activeTab, isWorking]);
+    event.dataTransfer.dropEffect = canAcceptGlobalDrop(activeTab, isAppLocked) ? 'copy' : 'none';
+  }, [activeTab, isAppLocked]);
 
   const handleGlobalDrop = useCallback(async (event) => {
     event.preventDefault();
-    if (!canAcceptGlobalDrop(activeTab, isWorking)) return;
+    if (!canAcceptGlobalDrop(activeTab, isAppLocked)) return;
     const paths = normalizeDroppedPaths(
       Array.from(event.dataTransfer.files || []).map(file => file.path),
     );
@@ -266,7 +246,7 @@ function App() {
     window.dispatchEvent(new CustomEvent('bookmanager:action', {
       detail: { action: 'drop-paths', activeTab, paths: acceptedPaths },
     }));
-  }, [activeTab, isWorking, language, showToast, t]);
+  }, [activeTab, isAppLocked, language, showToast, t]);
 
   const handleSettingsClose = useCallback(async (updatedConfig) => {
     setShowSettings(false);
@@ -289,7 +269,10 @@ function App() {
         await setConfig({ last_tab_index: 0 });
         const folders = savedConfig?.dup_check_folders || updatedConfig.dup_check_folders || [];
         if (folders.length > 0) {
-          window.electronAPI?.updateFolderIndex?.(folders).catch(error => {
+          window.electronAPI?.updateFolderIndex?.(folders, {
+            priorityFolder: savedConfig?.last_selected_library || updatedConfig.last_selected_library,
+            language: nextLang,
+          }).catch(error => {
             console.error('라이브러리 인덱스 갱신 실패:', error);
           });
         }
@@ -313,7 +296,7 @@ function App() {
     label: t(tab.labelKey),
   }));
   const appStyle = useMemo(() => fontVarsForConfig(config || {}), [config?.font_family, config?.font_scale]);
-  const fileToolbarEnabled = isFileToolbarEnabled(activeTab, isWorking);
+  const fileToolbarEnabled = isFileToolbarEnabled(activeTab, isAppLocked);
   const activeToolbarState = toolbarStates[activeTab] || {
     totalCount: 0,
     checkedCount: 0,
@@ -326,6 +309,13 @@ function App() {
     phase: 'idle',
     canRun: false,
   };
+  const lockStatus = workingTab
+    ? statusStates[workingTab] || activeStatus
+    : activeStatus;
+  const lockMessage = lockStatus.message || t('msg_processing_overlay') || t('status_wait');
+  const lockCurrentItem = lockStatus.currentItem || '';
+  const lockCurrentItemName = lockStatus.currentItemName || lockCurrentItem;
+  const lockAriaLabel = [lockMessage, lockCurrentItem].filter(Boolean).join(' ');
   const runningServers = ['OPDS', 'WebDAV'].filter(type => serverStatus?.[type]?.running);
   const serverTooltip = runningServers
     .map(type => `${type}: ${serverStatus?.[type]?.url || ''}`)
@@ -333,12 +323,21 @@ function App() {
   const showRunButton = activeTab === 'organizer' || activeTab === 'renamer';
   const isExecuting = activeStatus.phase === 'executing';
   const isCancelling = activeStatus.phase === 'cancelling';
-  const showProgress = activeStatus.phase !== 'idle';
-  const handleVersionClick = useCallback(() => {
+  const showProgress = lockStatus.phase !== 'idle';
+  const handleVersionClick = useCallback(async () => {
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: t('msg_update_prompt_title'),
+      message: t('msg_update_prompt'),
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language,
+    });
+    if (!shouldOpenUpdatePage(response)) return;
     window.electronAPI?.openExternal?.(
       updateInfo.available && updateInfo.url ? updateInfo.url : RELEASES_URL,
     );
-  }, [updateInfo]);
+  }, [language, t, updateInfo]);
 
   return (
     <div
@@ -347,10 +346,6 @@ function App() {
       onDragOver={handleGlobalDragOver}
       onDrop={handleGlobalDrop}
     >
-      <div className="app-title-bar">
-        {appTitle}
-      </div>
-      
       <div className="top-menu-bar">
         <div className="top-menu-left">
           <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-folder')}><FaIcon name="folderOpen" />{t('add_folder')}</button>
@@ -363,7 +358,7 @@ function App() {
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
           <button
             className={`top-btn top-btn-version ${updateInfo.available ? 'update-available' : ''}`}
-            disabled={isWorking}
+            disabled={isAppLocked}
             onClick={handleVersionClick}
           >
             <FaIcon name={updateInfo.available ? 'gift' : 'circleCheck'} />
@@ -371,7 +366,7 @@ function App() {
               ? t('msg_update_available', [appVersion || '-', updateInfo.latestVersion])
               : t('msg_latest_version', [appVersion || '-'])}
           </button>
-          <button className="top-btn top-btn-settings" disabled={isWorking} onClick={handleSettings}><FaIcon name="gear" />{t('settings_btn')}</button>
+          <button className="top-btn top-btn-settings" disabled={isAppLocked} onClick={handleSettings}><FaIcon name="gear" />{t('settings_btn')}</button>
         </div>
       </div>
       
@@ -379,7 +374,7 @@ function App() {
         tabs={translatedTabs}
         activeTab={activeTab} 
         onTabChange={handleTabChange} 
-        disabled={isWorking}
+        disabled={isAppLocked}
         t={t}
       />
       
@@ -389,15 +384,12 @@ function App() {
         </div>
         <div className={`app-tab-panel ${activeTab === 'organizer' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'organizer'}>
           <OrganizerTab config={config} t={t} showToast={showToast} />
-          {activeTab === 'organizer' && isWorking && <div className="app-working-overlay"><span className="app-working-spinner" /><span>{activeStatus.message}</span></div>}
         </div>
         <div className={`app-tab-panel ${activeTab === 'renamer' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'renamer'}>
           <RenamerTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
-          {activeTab === 'renamer' && isWorking && <div className="app-working-overlay"><span className="app-working-spinner" /><span>{activeStatus.message}</span></div>}
         </div>
         <div className={`app-tab-panel ${activeTab === 'metadata' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'metadata'}>
           <MetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
-          {activeTab === 'metadata' && isWorking && <div className="app-working-overlay"><span className="app-working-spinner" /><span>{activeStatus.message}</span></div>}
         </div>
         <div className="app-tab-panel" hidden={activeTab !== 'sharing'}>
           <SharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
@@ -405,6 +397,17 @@ function App() {
         <div className="app-tab-panel" hidden={activeTab !== 'releases'}>
           <ReleaseTab config={config} t={t} />
         </div>
+        {isAppLocked && (
+          <div className="app-lock-screen" role="status" aria-live="polite" aria-label={lockAriaLabel}>
+            <img src={workingAnimation} alt="" />
+            <span>{lockMessage}</span>
+            {lockCurrentItem && (
+              <span className="app-lock-current-file" title={lockCurrentItem}>
+                {lockCurrentItemName}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="app-bottom-bar">
@@ -414,17 +417,17 @@ function App() {
               <FaIcon name="towerBroadcast" size={14} />
             </span>
           )}
-          <span className="app-status-message">{activeStatus.message || t('status_wait')}</span>
+          <span className="app-status-message">{lockStatus.message || t('status_wait')}</span>
           {showProgress && (
             <div className="app-progress">
-              <div className="app-progress-fill" style={{ width: `${activeStatus.progress}%` }} />
+              <div className="app-progress-fill" style={{ width: `${lockStatus.progress}%` }} />
             </div>
           )}
         </div>
         {showRunButton && (
           <button
             className={`app-run-button ${isExecuting || isCancelling ? 'cancel' : ''}`}
-            disabled={isCancelling || (!isExecuting && (isWorking || !activeStatus.canRun))}
+            disabled={isCancelling || (!isExecuting && (isAppLocked || !activeStatus.canRun))}
             onClick={() => dispatchAppAction(isExecuting ? 'cancel-current' : 'run-current')}
           >
             <FaIcon name={isExecuting || isCancelling ? 'stopCircle' : 'rocket'} size={16} />

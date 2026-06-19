@@ -1,10 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
+import crypto from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { LibraryDB } from '../database/library_db.js';
 
 const DEFAULT_TARGET_EXTS = ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7', '.pdf', '.epub'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
+const MAX_INLINE_ZIP_BYTES = 256 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
 
 async function getFolderUtils() {
   const folderUtilsUrl = new URL('../../src/utils/folderUtils.js', import.meta.url);
@@ -57,7 +63,7 @@ function parseComicInfo(xml) {
     page_count: readXmlTag(xml, 'PageCount'),
     total_volume: readXmlTag(xml, 'Count'),
     description: readXmlTag(xml, 'Summary'),
-    series_group: readXmlTag(xml, 'AlternateSeries'),
+    series_group: readXmlTag(xml, 'SeriesGroup') || readXmlTag(xml, 'AlternateSeries'),
     tags: readXmlTag(xml, 'Tags'),
     characters: readXmlTag(xml, 'Characters'),
     teams: readXmlTag(xml, 'Teams'),
@@ -137,16 +143,6 @@ function readZipEntry(buffer, entry) {
   return null;
 }
 
-function getImageMime(filename) {
-  const ext = path.extname(filename).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.png') return 'image/png';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.gif') return 'image/gif';
-  if (ext === '.bmp') return 'image/bmp';
-  return 'application/octet-stream';
-}
-
 function getImageResolution(buffer, filename) {
   const ext = path.extname(filename).toLowerCase();
   try {
@@ -179,35 +175,175 @@ function getImageResolution(buffer, filename) {
   return '';
 }
 
-async function extractArchiveMetadata(filePath, ext) {
-  if (ext !== '.zip' && ext !== '.cbz') return {};
+async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailDir, thumbnailEncoder) {
+  if (!imageBuffer || !thumbnailDir) return '';
+  const encoded = typeof thumbnailEncoder === 'function'
+    ? thumbnailEncoder(imageBuffer)
+    : null;
+  const outputBuffer = encoded?.buffer || imageBuffer;
+  const hash = crypto.createHash('md5')
+    .update(`${path.normalize(filePath)}_${mtime}`)
+    .digest('hex');
+  const extension = encoded?.extension || (IMAGE_EXTS.includes(path.extname(imageName).toLowerCase())
+    ? path.extname(imageName).toLowerCase()
+    : '.jpg');
+  const thumbnailPath = path.join(thumbnailDir, `${hash}${extension}`);
+  await fs.promises.mkdir(thumbnailDir, { recursive: true });
+  await fs.promises.writeFile(thumbnailPath, outputBuffer);
+  return thumbnailPath;
+}
 
+async function extractWith7Zip(filePath, sevenZExe) {
+  if (!sevenZExe) return {};
+  const { stdout } = await execFileAsync(sevenZExe, ['l', '-slt', filePath], {
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+    windowsHide: true,
+  });
+  const entries = String(stdout || '')
+    .split(/\r?\n/)
+    .filter(line => line.startsWith('Path = '))
+    .map(line => line.slice(7).trim())
+    .filter(Boolean);
+  const comicInfoName = entries.find(name => path.basename(name).toLowerCase() === 'comicinfo.xml');
+  const imageName = entries
+    .filter(name => IMAGE_EXTS.includes(path.extname(name).toLowerCase()))
+    .sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))[0];
+  const result = {};
+
+  if (comicInfoName) {
+    result.has_metadata = true;
+    const extracted = await execFileAsync(sevenZExe, ['e', '-so', filePath, comicInfoName], {
+      encoding: 'buffer',
+      maxBuffer: MAX_INLINE_COVER_BYTES,
+      windowsHide: true,
+    });
+    Object.assign(result, parseComicInfo(extracted.stdout.toString('utf8')));
+  }
+  if (imageName) {
+    const extracted = await execFileAsync(sevenZExe, ['e', '-so', filePath, imageName], {
+      encoding: 'buffer',
+      maxBuffer: MAX_INLINE_COVER_BYTES,
+      windowsHide: true,
+    });
+    result.imageBuffer = extracted.stdout;
+    result.imageName = imageName;
+    result.resolution = getImageResolution(extracted.stdout, imageName);
+  }
+  return result;
+}
+
+async function extractArchiveMetadata(filePath, ext, options = {}) {
   try {
-    const buffer = await fs.promises.readFile(filePath);
-    const entries = listZipEntries(buffer);
-    const comicInfoEntry = entries.find(entry => path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
-    const imageEntry = entries
-      .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.name.endsWith('/'))
-      .sort((a, b) => a.name.localeCompare(b.name, 'ko'))[0];
+    let result = {};
+    if (ext === '.zip' || ext === '.cbz') {
+      const maxInlineZipBytes = options.maxInlineZipBytes || MAX_INLINE_ZIP_BYTES;
+      const archiveSize = options.size || fs.statSync(filePath).size;
+      if (archiveSize > maxInlineZipBytes) {
+        result = await extractWith7Zip(filePath, options.sevenZExe);
+      } else {
+        const buffer = await fs.promises.readFile(filePath);
+        const entries = listZipEntries(buffer);
+        const comicInfoEntry = entries.find(entry => path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
+        const imageEntry = entries
+          .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.name.endsWith('/'))
+          .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
 
-    const result = {};
-    if (comicInfoEntry) {
-      result.has_metadata = true;
-      const xmlBuffer = readZipEntry(buffer, comicInfoEntry);
-      if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
-    }
-    if (imageEntry) {
-      const imageBuffer = readZipEntry(buffer, imageEntry);
-      if (imageBuffer) {
-        result.cover = `data:${getImageMime(imageEntry.name)};base64,${imageBuffer.toString('base64')}`;
-        result.resolution = getImageResolution(imageBuffer, imageEntry.name);
+        if (comicInfoEntry) {
+          result.has_metadata = true;
+          const xmlBuffer = readZipEntry(buffer, comicInfoEntry);
+          if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
+        }
+        if (imageEntry) {
+          const imageBuffer = readZipEntry(buffer, imageEntry);
+          if (imageBuffer) {
+            result.imageBuffer = imageBuffer;
+            result.imageName = imageEntry.name;
+            result.resolution = getImageResolution(imageBuffer, imageEntry.name);
+          }
+        }
       }
+    } else if (['.rar', '.cbr', '.7z', '.cb7'].includes(ext)) {
+      result = await extractWith7Zip(filePath, options.sevenZExe);
     }
+
+    if (result.imageBuffer) {
+      result.thumb_path = await saveThumbnail(
+        result.imageBuffer,
+        result.imageName,
+        filePath,
+        options.mtime,
+        options.thumbnailDir,
+        options.thumbnailEncoder,
+      );
+    }
+    delete result.imageBuffer;
+    delete result.imageName;
     return result;
   } catch (error) {
     console.warn(`Failed to extract archive metadata: ${filePath}`, error.message);
     return {};
   }
+}
+
+function metadataFromCache(cached = {}) {
+  const hasMetadata = [
+    cached.title,
+    cached.series,
+    cached.series_group,
+    cached.volume,
+    cached.number,
+    cached.writer,
+    cached.publisher,
+    cached.summary,
+  ].some(Boolean);
+  return {
+    title: cached.title || '',
+    series: cached.series || '',
+    volume: cached.volume || '',
+    chapter: cached.number || '',
+    writer: cached.writer || '',
+    publisher: cached.publisher || '',
+    imprint: cached.imprint || '',
+    genre: cached.genre || '',
+    page_count: cached.page_count || '',
+    total_volume: cached.volume_count || '',
+    description: cached.summary || '',
+    series_group: cached.series_group || '',
+    tags: cached.tags || '',
+    characters: cached.characters || '',
+    teams: cached.teams || '',
+    locations: cached.locations || '',
+    story_arc: cached.story_arc || '',
+    notes: cached.notes || '',
+    link: cached.web || '',
+    language: cached.language || '',
+    manga: cached.manga || '',
+    age_rating: cached.age_rating || '',
+    rating: cached.rating || '',
+    date: cached.publish_date || '',
+    format: cached.format || '',
+    resolution: cached.resolution || '',
+    producer: cached.creators || '',
+    has_metadata: hasMetadata,
+    thumb_path: cached.thumb_path || '',
+  };
+}
+
+function isValidCache(cached, stats) {
+  return Boolean(
+    cached
+    && Math.abs(Number(cached.mtime) - stats.mtimeMs / 1000) < 2
+    && Number(cached.size) === stats.size,
+  );
+}
+
+function sortEntriesForPriority(entries = []) {
+  return [...entries].sort((left, right) => {
+    if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
+    if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+    return left.name.localeCompare(right.name, 'ko', { numeric: true });
+  });
 }
 
 function normalizeForCompare(text = '') {
@@ -330,15 +466,78 @@ function attachDuplicateMatches(files, dupCache) {
   });
 }
 
-async function createFileData(fullPath, stats) {
+async function createFileData(fullPath, stats, options = {}) {
   const name = path.basename(fullPath);
   const folderPath = path.dirname(fullPath);
   const ext = path.extname(name).toLowerCase();
   const filenameMeta = await extractFilenameMetadata(name);
-  const archiveMeta = await extractArchiveMetadata(fullPath, ext);
+  const cached = options.libraryDb
+    ? await options.libraryDb.getFileInfo(fullPath)
+    : null;
+  const cachedThumbnailExists = Boolean(
+    cached?.thumb_path
+    && fs.existsSync(cached.thumb_path)
+    && fs.statSync(cached.thumb_path).size > 0,
+  );
+  const cacheValid = options.force !== true && isValidCache(cached, stats);
+  let archiveMeta = cacheValid ? metadataFromCache(cached) : {};
+  const shouldExtractArchive = options.skipArchiveExtraction !== true;
+
+  if (shouldExtractArchive && (!cacheValid || !cachedThumbnailExists)) {
+    const extracted = await extractArchiveMetadata(fullPath, ext, {
+      sevenZExe: options.sevenZExe,
+      thumbnailDir: options.thumbnailDir,
+      mtime: stats.mtimeMs,
+      size: stats.size,
+      thumbnailEncoder: options.thumbnailEncoder,
+    });
+    archiveMeta = {
+      ...(cacheValid ? archiveMeta : {}),
+      ...extracted,
+    };
+    if (options.libraryDb) {
+      await options.libraryDb.upsertFileInfo({
+        path: fullPath,
+        mtime: stats.mtimeMs / 1000,
+        size: stats.size,
+        ext,
+        resolution: archiveMeta.resolution || '',
+        title: archiveMeta.title || '',
+        series: archiveMeta.series || '',
+        series_group: archiveMeta.series_group || '',
+        volume: archiveMeta.volume || '',
+        number: archiveMeta.chapter || '',
+        writer: archiveMeta.writer || '',
+        creators: archiveMeta.producer || '',
+        publisher: archiveMeta.publisher || '',
+        imprint: archiveMeta.imprint || '',
+        genre: archiveMeta.genre || '',
+        volume_count: archiveMeta.total_volume || '',
+        page_count: archiveMeta.page_count || '',
+        format: archiveMeta.format || ext.replace('.', '').toUpperCase(),
+        manga: archiveMeta.manga || '',
+        language: archiveMeta.language || '',
+        rating: archiveMeta.rating || '',
+        age_rating: archiveMeta.age_rating || '',
+        publish_date: archiveMeta.date || '',
+        summary: archiveMeta.description || '',
+        characters: archiveMeta.characters || '',
+        teams: archiveMeta.teams || '',
+        locations: archiveMeta.locations || '',
+        story_arc: archiveMeta.story_arc || '',
+        tags: archiveMeta.tags || '',
+        notes: archiveMeta.notes || '',
+        web: archiveMeta.link || '',
+        thumb_path: archiveMeta.thumb_path || '',
+      });
+    }
+  }
 
   const series = archiveMeta.series || filenameMeta.series || '';
   const volume = archiveMeta.volume || filenameMeta.volume || '';
+  const thumbnailPath = archiveMeta.thumb_path && fs.existsSync(archiveMeta.thumb_path)
+    ? archiveMeta.thumb_path
+    : '';
 
   return {
     name,
@@ -365,7 +564,7 @@ async function createFileData(fullPath, stats) {
     colorist: archiveMeta.colorist || '',
     letterer: archiveMeta.letterer || '',
     cover_artist: archiveMeta.cover_artist || '',
-    producer: [
+    producer: archiveMeta.producer || [
       archiveMeta.writer,
       archiveMeta.penciller,
       archiveMeta.inker,
@@ -394,14 +593,18 @@ async function createFileData(fullPath, stats) {
     date: archiveMeta.date || '',
     has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
-    cover: archiveMeta.cover || '',
+    thumb_path: thumbnailPath,
+    cover: thumbnailPath
+      ? `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}`
+      : '',
+    cache_source: cacheValid && cachedThumbnailExists ? 'library' : 'archive',
     duplicate_matches: [],
     dup_count: 0,
     max_ratio: 0,
   };
 }
 
-export async function inspectFolderFile(fullPath) {
+export async function inspectFolderFile(fullPath, options = {}) {
   const stats = await fs.promises.stat(fullPath);
   if (!stats.isFile()) {
     return {
@@ -414,7 +617,15 @@ export async function inspectFolderFile(fullPath) {
       cover: '',
     };
   }
-  return createFileData(fullPath, stats);
+  const libraryDb = options.libraryDb || (options.dbPath ? new LibraryDB({ dbPath: options.dbPath }) : null);
+  try {
+    return await createFileData(fullPath, stats, {
+      ...options,
+      libraryDb,
+    });
+  } finally {
+    if (!options.libraryDb) await libraryDb?.close();
+  }
 }
 
 export async function scanFolder(folderPath, options = {}, event) {
@@ -423,11 +634,29 @@ export async function scanFolder(folderPath, options = {}, event) {
     enableDupCheck = false,
     dupFolders = [],
     targetExts = DEFAULT_TARGET_EXTS,
+    dbPath,
+    thumbnailDir,
+    sevenZExe,
+    force = false,
+    skipArchiveExtraction = false,
+    suppressEvents = false,
+    thumbnailEncoder,
   } = options;
   const normalizedExts = targetExts.map(ext => ext.toLowerCase());
   const results = [];
   let scannedCount = 0;
   let matchedCount = 0;
+  const libraryDb = options.libraryDb || (dbPath ? new LibraryDB({ dbPath }) : null);
+  let lastTaskProgressAt = 0;
+
+  function emitTaskProgress(payload) {
+    if (!event || !options.reportTaskProgress || event.sender.isDestroyed()) return;
+    event.sender.send('task:progress', {
+      task: 'folder:scan',
+      folderPath,
+      ...payload,
+    });
+  }
 
   async function scanDir(currentPath) {
     let entries;
@@ -438,7 +667,7 @@ export async function scanFolder(folderPath, options = {}, event) {
       return;
     }
 
-    for (const entry of entries) {
+    for (const entry of sortEntriesForPriority(entries)) {
       const fullPath = path.join(currentPath, entry.name);
 
       if (entry.isDirectory()) {
@@ -448,15 +677,32 @@ export async function scanFolder(folderPath, options = {}, event) {
         const ext = path.extname(entry.name).toLowerCase();
         if (normalizedExts.includes(ext)) {
           try {
+            const now = Date.now();
+            if (now - lastTaskProgressAt > 150) {
+              lastTaskProgressAt = now;
+              emitTaskProgress({
+                progress: Math.min(80, Math.floor((matchedCount / Math.max(scannedCount, 1)) * 80)),
+                message: `${matchedCount}개 항목 검색 중...`,
+                currentFile: fullPath,
+                currentFileName: entry.name,
+              });
+            }
             const stats = await fs.promises.stat(fullPath);
-            results.push(await createFileData(fullPath, stats));
+            results.push(await createFileData(fullPath, stats, {
+              libraryDb,
+              thumbnailDir,
+              sevenZExe,
+              force,
+              skipArchiveExtraction,
+              thumbnailEncoder,
+            }));
             matchedCount += 1;
           } catch (statError) {
             console.error(`Failed to process file: ${fullPath}`, statError);
           }
         }
 
-        if (event && scannedCount % 50 === 0) {
+        if (event && !suppressEvents && scannedCount % 50 === 0) {
           event.sender.send('scan-progress', {
             progress: Math.min(80, Math.floor((matchedCount / Math.max(scannedCount, 1)) * 80)),
             message: `${matchedCount}개 항목 검색 중...`,
@@ -466,20 +712,38 @@ export async function scanFolder(folderPath, options = {}, event) {
     }
   }
 
-  await scanDir(folderPath);
+  try {
+    await scanDir(folderPath);
+  } finally {
+    if (!options.libraryDb) await libraryDb?.close();
+  }
 
   let files = results;
   if (enableDupCheck && dupFolders.length > 0) {
+    emitTaskProgress({
+      progress: 85,
+      message: `중복 검사 대상 준비 중...`,
+      currentFile: '',
+      currentFileName: '',
+    });
     const dupCache = await buildDupCache(dupFolders, normalizedExts, event);
     files = attachDuplicateMatches(results, dupCache);
   }
 
-  if (event) {
+  emitTaskProgress({
+    progress: 100,
+    message: `${files.length}개 항목 검색 완료`,
+    currentFile: '',
+    currentFileName: '',
+  });
+
+  if (event && !suppressEvents) {
     const cacheKey = JSON.stringify({
       folderPath,
       includeSubfolders,
       enableDupCheck,
       dupFolders: (dupFolders || []).filter(Boolean).sort(),
+      skipArchiveExtraction,
     });
     event.sender.send('scan-complete', { files, folderPath, cacheKey });
   }

@@ -52,13 +52,27 @@
   --font-mono: 'Consolas', 'Courier New', monospace;
   
   /* 폰트 크기 */
+  --font-3xs: 9px;
+  --font-2xs: 10px;
   --font-xs: 11px;
   --font-sm: 12px;
   --font-base: 13px;
   --font-md: 14px;
+  --font-15: 15px;
   --font-lg: 16px;
+  --font-17: 17px;
   --font-xl: 18px;
   --font-2xl: 20px;
+  --font-3xl: 23px;
+  --font-4xl: 24px;
+  --font-5xl: 25px;
+  --font-display: 48px;
+  --font-scale: 1;
+  --control-height-sm: 24px;
+  --control-height: 28px;
+  --control-height-lg: 34px;
+  --checkbox-size: 16px;
+  --table-cell-y: 6px;
   
   /* 간격 */
   --spacing-xs: 4px;
@@ -129,6 +143,8 @@ body {
 /* 버튼 기본 스타일 */
 button {
   font-family: var(--font-primary);
+  min-height: var(--control-height-sm);
+  line-height: 1.25;
   cursor: pointer;
   border: none;
   outline: none;
@@ -137,11 +153,32 @@ button {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  pointer-events: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[role="link"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #4db8ff;
+  outline-offset: 2px;
+}
+
+label:has(input:not(:disabled)),
+[role="button"]:not([aria-disabled="true"]),
+[role="link"] {
+  cursor: pointer;
 }
 
 /* 입력 필드 기본 스타일 */
 input, textarea, select {
   font-family: var(--font-primary);
+  font-size: inherit;
+  line-height: 1.3;
   background-color: var(--bg-secondary);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
@@ -149,6 +186,15 @@ input, textarea, select {
   padding: var(--spacing-sm) var(--spacing-md);
   outline: none;
   transition: border-color var(--transition-fast);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select {
+  min-height: var(--control-height);
+}
+
+textarea {
+  min-height: calc(var(--control-height-lg) * 2);
 }
 
 input:focus, textarea:focus, select:focus {
@@ -159,8 +205,8 @@ input:focus, textarea:focus, select:focus {
 input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -180,7 +226,12 @@ input[type="checkbox"]:checked::after {
   left: 50%;
   transform: translate(-50%, -50%);
   color: white;
-  font-size: 11px;
+  font-size: var(--font-xs);
+}
+
+table th,
+table td {
+  line-height: 1.35;
 }
 
 /* 링크 */

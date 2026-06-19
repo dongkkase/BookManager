@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, resolveTitles } from '../parsers/parser.js';
+import { missingBinaryMessage } from '../binaryPolicy.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
@@ -156,7 +157,12 @@ async function listWith7z(filePath, sevenZExe) {
     }
   }
   if (current?.name) entries.push(current);
-  return entries.filter(entry => entry.name !== path.basename(filePath));
+  const archivePath = path.resolve(filePath).replace(/\\/g, '/').normalize('NFC').toLowerCase();
+  const archiveName = path.basename(filePath).normalize('NFC').toLowerCase();
+  return entries.filter(entry => {
+    const entryName = String(entry.name).replace(/\\/g, '/').normalize('NFC').toLowerCase();
+    return entryName !== archivePath && entryName !== archiveName;
+  });
 }
 
 async function listArchiveEntries(filePath, sevenZExe) {
@@ -420,7 +426,7 @@ async function createFlatStaging(leaf, tempBase) {
 
 async function processOrganizerItem(item, options) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error('7za executable not found.');
+  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const sourcePath = item.filepath;
   const filename = path.basename(sourcePath);

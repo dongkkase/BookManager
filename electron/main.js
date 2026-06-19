@@ -1,12 +1,15 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, net, protocol, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { setupIPCHandlers } from './ipcHandlers.js';
 import { ConfigManager } from './configManager.js';
 import { setupI18n } from './utils/i18n.js';
 import { resolveWindowState, serializeWindowState } from './windowState.js';
-import { createExitDialogOptions } from './exitPolicy.js';
+import { createExitDialogOptions, shouldProceedWithExit } from './exitPolicy.js';
+import { getSharingServerStatus, stopAllSharingServers } from './servers/sharingServers.js';
+import { findBinaryPath } from './binaryPolicy.js';
+import { resolveThumbnailDir } from './dataPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,11 +20,21 @@ let configManager = null;
 let ipcController = null;
 let allowWindowClose = false;
 let isShowingExitDialog = false;
+let sharingServersStopped = false;
 
 // 개발 모드 여부
 const isDev = process.argv.includes('--dev');
 const APP_NAME = 'BookManager';
 const APP_ID = 'com.bookmanager.app';
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'bookmanager-thumbnail',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+  },
+}]);
 
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
@@ -64,21 +77,11 @@ function getExecutableDir() {
 
 // 바이너리 도구 경로
 async function getBinPath(toolName) {
-  const ext = process.platform === 'win32' ? '.exe' : '';
-  const binPath = path.join(getExecutableDir(), 'bin', 'win', toolName + ext);
-  if (fs.existsSync(binPath)) return binPath;
-  
-  // 시스템에서 검색
-  try {
-    const { execSync } = await import('child_process');
-    if (process.platform === 'win32') {
-      return execSync(`where ${toolName}`).toString().trim().split('\n')[0];
-    } else {
-      return execSync(`which ${toolName}`).toString().trim();
-    }
-  } catch {
-    return null;
-  }
+  return findBinaryPath(toolName, {
+    resourcesPath: process.resourcesPath,
+    executableDir: getExecutableDir(),
+    projectRoot: path.join(__dirname, '..'),
+  });
 }
 
 // 폰트 경로
@@ -104,6 +107,18 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    protocol.handle('bookmanager-thumbnail', request => {
+      const requestedName = decodeURIComponent(new URL(request.url).pathname.slice(1));
+      if (!requestedName || path.basename(requestedName) !== requestedName) {
+        return new Response('Not found', { status: 404 });
+      }
+      const thumbnailPath = path.join(resolveThumbnailDir(getExecutableDir()), requestedName);
+      if (!fs.existsSync(thumbnailPath)) {
+        return new Response('Not found', { status: 404 });
+      }
+      return net.fetch(pathToFileURL(thumbnailPath).href);
+    });
+
     const appIconPath = getAppIconPath();
     if (process.platform === 'darwin' && appIconPath) {
       app.dock.setIcon(appIconPath);
@@ -189,7 +204,7 @@ function createMainWindow(config) {
           mainWindow,
           createExitDialogOptions(runtimeState.language),
         );
-        if (result.response !== 0) return;
+        if (!shouldProceedWithExit(result.response)) return;
         ipcController?.cancelAll(windowOwnerId);
         await ipcController?.waitForIdle(windowOwnerId, 30000);
       } finally {
@@ -213,10 +228,15 @@ function createTray() {
   try {
     const iconPath = getAppIconPath();
     if (!iconPath) throw new Error('Application icon not found');
-    
+
     if (process.platform === 'darwin') {
-      // macOS는 템플릿 아이콘 사용
-      tray = new Tray(iconPath);
+      const trayIcon = nativeImage.createFromPath(iconPath).resize({
+        width: 16,
+        height: 16,
+        quality: 'best',
+      });
+      trayIcon.setTemplateImage(true);
+      tray = new Tray(trayIcon);
     } else {
       tray = new Tray(iconPath);
     }
@@ -264,6 +284,20 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', async event => {
+    const status = getSharingServerStatus();
+    const hasRunningServer = status.OPDS.running || status.WebDAV.running;
+    if (sharingServersStopped || !hasRunningServer) return;
+
+    event.preventDefault();
+    try {
+        await stopAllSharingServers();
+    } finally {
+        sharingServersStopped = true;
+        app.quit();
+    }
 });
 
 app.on('activate', () => {

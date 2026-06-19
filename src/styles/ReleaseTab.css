@@ -30,32 +30,47 @@
 
 .release-card-title {
   color: #3498DB;
-  font-size: 20px;
+  font-size: var(--font-2xl);
   font-weight: bold;
   margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .release-card-date {
   color: #aaaaaa;
-  font-size: 13px;
+  font-size: var(--font-base);
   font-weight: normal;
 }
 
 .release-card-body {
   color: #e0e0e0;
-  font-size: 14px;
+  font-size: var(--font-md);
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-.release-card-body h2 {
-  font-size: 16px;
-  margin-top: 0;
-  margin-bottom: 10px;
+.release-card-body h2,
+.release-card-body h3 {
+  font-size: var(--font-lg);
+  margin: 18px 0 10px;
   color: #fff;
 }
 
-.release-card-body ul {
-  margin: 0;
+.release-card-body h2:first-child,
+.release-card-body h3:first-child {
+  margin-top: 0;
+}
+
+.release-card-body p {
+  margin: 0 0 12px;
+  white-space: pre-line;
+}
+
+.release-card-body ul,
+.release-card-body ol {
+  margin: 0 0 12px;
   padding-left: 20px;
 }
 
@@ -67,15 +82,45 @@
   display: inline-block;
   margin-top: 14px;
   color: #3498DB;
-  font-size: 13px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: var(--font-base);
   font-weight: 700;
   text-decoration: none;
+  cursor: pointer;
+}
+
+.release-inline-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  color: #60a5fa;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.release-card-body pre {
+  overflow-x: auto;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #18181b;
+  color: #f4f4f5;
+}
+
+.release-card-body code {
+  font-family: Consolas, Monaco, monospace;
 }
 
 .release-loading,
 .release-error {
   color: #aaaaaa;
-  font-size: 16px;
+  font-size: var(--font-lg);
   text-align: center;
   margin-top: 50px;
 }
@@ -87,5 +132,5 @@
   border-radius: 4px;
   background: #2a2418;
   color: #f0b44c;
-  font-size: 13px;
+  font-size: var(--font-base);
 }

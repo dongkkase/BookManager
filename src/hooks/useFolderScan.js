@@ -25,6 +25,15 @@ export function useFolderScan(t) {
   const currentFolderRef = useRef(null);
   const fileDataCacheRef = useRef({});
   const activeScansRef = useRef(new Map());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activeScansRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     fileDataCacheRef.current = fileDataCache;
@@ -33,14 +42,16 @@ export function useFolderScan(t) {
   const getCacheKey = useCallback((folderPath, options = {}) => {
     const includeSubfolders = options.includeSubfolders ?? true;
     const enableDupCheck = options.enableDupCheck ?? false;
+    const skipArchiveExtraction = options.skipArchiveExtraction === true;
     const dupFolders = (options.dupFolders || []).filter(Boolean).sort();
-    return JSON.stringify({ folderPath, includeSubfolders, enableDupCheck, dupFolders });
+    return JSON.stringify({ folderPath, includeSubfolders, enableDupCheck, dupFolders, skipArchiveExtraction });
   }, []);
 
   // --- 폴더 스캔 ---
   const scanFolder = useCallback(async (folderPath, options = {}) => {
     const { includeSubfolders = true, enableDupCheck = false } = options;
     const force = options.force === true;
+    const fastInitial = options.fastInitial === true && options.skipArchiveExtraction !== true;
 
     if (!folderPath) {
       setStatusMessage(t('folder.status.no_folder') || '스캔할 폴더를 선택하세요');
@@ -60,17 +71,71 @@ export function useFolderScan(t) {
 
     const scanPromise = (async () => {
       currentFolderRef.current = folderPath;
-      setScanning(true);
-      setScanProgress(0);
-      setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
+      if (mountedRef.current) {
+        setScanning(true);
+        setScanProgress(0);
+        setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
+      }
 
       try {
-        const files = await window.electronAPI.scanFolder(folderPath, {
+        const requestOptions = {
           includeSubfolders,
           enableDupCheck,
           dupFolders: options.dupFolders || [],
+          force,
+        };
+
+        if (fastInitial) {
+          const quickFiles = await window.electronAPI.scanFolder(folderPath, {
+            ...requestOptions,
+            enableDupCheck: false,
+            dupFolders: [],
+            skipArchiveExtraction: true,
+            suppressEvents: true,
+          });
+
+          if (!mountedRef.current) return quickFiles || [];
+          setFileDataCache(prev => ({
+            ...prev,
+            [cacheKey]: quickFiles || [],
+          }));
+          const quickCount = quickFiles?.length || 0;
+          setStatusMessage(
+            t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
+          );
+          setScanProgress(100);
+          setScanning(false);
+
+          window.electronAPI.scanFolder(folderPath, {
+            ...requestOptions,
+            force: true,
+            skipArchiveExtraction: false,
+            suppressEvents: true,
+          }).then(files => {
+            if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
+            setFileDataCache(prev => ({
+              ...prev,
+              [cacheKey]: files || [],
+            }));
+            setScanProgress(100);
+            const count = files?.length || 0;
+            setStatusMessage(
+              t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
+            );
+          }).catch(error => {
+            console.error('폴더 메타데이터 갱신 실패:', error);
+          });
+
+          return quickFiles || [];
+        }
+
+        const files = await window.electronAPI.scanFolder(folderPath, {
+          ...requestOptions,
+          skipArchiveExtraction: options.skipArchiveExtraction === true,
+          suppressEvents: options.suppressEvents === true,
         });
 
+        if (!mountedRef.current) return files || [];
         setFileDataCache(prev => ({
           ...prev,
           [cacheKey]: files || [],
@@ -84,11 +149,11 @@ export function useFolderScan(t) {
         return files || [];
       } catch (error) {
         console.error('폴더 스캔 실패:', error);
-        setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
+        if (mountedRef.current) setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
         return [];
       } finally {
         activeScansRef.current.delete(cacheKey);
-        if (activeScansRef.current.size === 0) setScanning(false);
+        if (mountedRef.current && activeScansRef.current.size === 0) setScanning(false);
       }
     })();
 

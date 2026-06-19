@@ -51,6 +51,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         libraries,
         dup_check_folders: libraries,
         api_keys: {
+            ...apiKeys,
             aladin: String(apiKeys.aladin || '').trim(),
             vine: String(apiKeys.vine || '').trim(),
             google: String(apiKeys.google || '').trim(),

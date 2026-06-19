@@ -2,6 +2,7 @@ import React from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage } from './CoverImage';
 import { groupFolderFiles } from '../../folderViewState';
+import { FolderEmptyState } from './FolderEmptyState';
 
 /**
  * TileView - 타일 뷰 컴포넌트
@@ -100,10 +101,7 @@ const TileView = ({
         </React.Fragment>
       ))}
       {items.length === 0 && (
-        <div className="empty-folder-page" style={{ gridColumn: '1 / -1' }}>
-          <div className="empty-icon"><FaIcon name="folder" size={32} /></div>
-          <div className="empty-message">{t('folder.message.noFiles') || '파일이 없습니다'}</div>
-        </div>
+        <FolderEmptyState t={t} />
       )}
     </div>
   );

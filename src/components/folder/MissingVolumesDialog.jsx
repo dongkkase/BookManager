@@ -1,14 +1,24 @@
 import React from 'react';
+import { useModalAccessibility } from '../../hooks/useModalAccessibility';
 
 export function MissingVolumesDialog({ missingData = [], onClose, onGoToFolder, t }) {
+  const dialogRef = useModalAccessibility(Boolean(missingData?.length), onClose);
   if (!missingData || missingData.length === 0) return null;
 
   return (
-    <div className="folder-dialog-backdrop">
-      <div className="missing-dialog">
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <div
+        ref={dialogRef}
+        className="missing-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="missing-volumes-title"
+        tabIndex={-1}
+        onMouseDown={event => event.stopPropagation()}
+      >
         <div className="dialog-titlebar">
-          <span>▣ {t?.('tf_dlg_missing_title') || '누락 권수 확인'}</span>
-          <button onClick={onClose}>×</button>
+          <span id="missing-volumes-title">▣ {t?.('tf_dlg_missing_title') || '누락 권수 확인'}</span>
+          <button aria-label={t?.('btn_close') || '닫기'} onClick={onClose}>×</button>
         </div>
         <div className="missing-dialog-desc">
           {t?.('tf_dlg_missing_desc') || '다음 시리즈들에 누락된 권/화가 발견되었습니다:'}

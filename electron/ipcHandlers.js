@@ -1,5 +1,5 @@
 import pkg from 'electron';
-const { ipcMain, app, BrowserWindow, dialog, shell, net } = pkg;
+const { ipcMain, app, BrowserWindow, dialog, shell, net, nativeImage } = pkg;
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -31,6 +31,28 @@ import {
   createLibrarySyncDialogOptions,
   resolveLibrarySyncChoice,
 } from './libraryDialog.js';
+import { normalizeExternalUrl } from './externalUrlPolicy.js';
+import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
+import { setLanguage, t as i18nT } from './utils/i18n.js';
+import { LibraryDB } from './database/library_db.js';
+import {
+  clearApiCache,
+  getCachedApiResults,
+  openApiCache as openApiCacheDb,
+  setCachedApiResults,
+} from './database/apiCache.js';
+import {
+  resolveApiCacheDbPath,
+  resolveAppDataDir,
+  resolveLibraryDbPath,
+  resolveRenameHistoryPath,
+  resolveThumbnailDir,
+} from './dataPaths.js';
+import {
+  executeLibraryMove,
+  executeMultiRename,
+  undoRename,
+} from './fsOperations.js';
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
@@ -1546,24 +1568,8 @@ async function searchRidibooks(query, page = 1) {
   });
 }
 
-function markdownToHtml(markdown = '') {
-  const escaped = String(markdown)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  return escaped
-    .replace(/^### (.*)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.*)$/gm, '<h2>$1</h2>')
-    .replace(/^\s*[-*] (.*)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, match => `<ul>${match}</ul>`)
-    .replace(/\n{2,}/g, '<br><br>')
-    .replace(/\n/g, '<br>');
-}
-
 const INDEX_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
 const imageDataUrlCache = new Map();
-const API_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function mimeFromUrl(url = '', contentType = '') {
   const cleanType = String(contentType || '').split(';')[0].trim();
@@ -1615,120 +1621,29 @@ async function enrichResultImages(results = []) {
   return next;
 }
 
-async function openApiCacheDb(dbPath) {
-  const cachePath = dbPath.replace(/\.db$/i, '.json');
-  const dbDir = path.dirname(cachePath);
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-
-  let data = { search_cache: {} };
-  if (fs.existsSync(cachePath)) {
-    try {
-      data = JSON.parse(await fs.promises.readFile(cachePath, 'utf8'));
-    } catch {
-      data = { search_cache: {} };
-    }
-  }
-  if (!data.search_cache || typeof data.search_cache !== 'object') {
-    data.search_cache = {};
-  }
-
-  return {
-    cachePath,
-    data,
-    async persist() {
-      await fs.promises.writeFile(cachePath, JSON.stringify(data, null, 2), 'utf8');
-    },
-    close() {},
-  };
+function isPathInsideOrEqual(childPath, parentPath) {
+  const relative = path.relative(parentPath, childPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function getCachedApiResults(db, apiName, cacheQuery) {
-  const row = db.data?.search_cache?.[`${apiName}\u001f${cacheQuery}`];
-  if (!row) return null;
-  const updatedAt = new Date(row.updated_at).getTime();
-  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt > API_CACHE_TTL_MS) return null;
-  return Array.isArray(row.results) ? row.results : null;
-}
-
-async function setCachedApiResults(db, apiName, cacheQuery, results) {
-  db.data.search_cache[`${apiName}\u001f${cacheQuery}`] = {
-    api: apiName,
-    query: cacheQuery,
-    results: results || [],
-    updated_at: new Date().toISOString(),
-  };
-  await db.persist();
-}
-
-async function openLibraryDb(dbPath) {
-  const cachePath = dbPath.replace(/\.db$/i, '.json');
-  const dbDir = path.dirname(cachePath);
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-
-  let data = { target_index: [], dup_match: [] };
-  if (fs.existsSync(cachePath)) {
-    try {
-      data = JSON.parse(await fs.promises.readFile(cachePath, 'utf8'));
-    } catch {
-      data = { target_index: [], dup_match: [] };
-    }
-  }
-  if (!Array.isArray(data.target_index)) data.target_index = [];
-  if (!Array.isArray(data.dup_match)) data.dup_match = [];
-
-  const persist = async () => {
-    await fs.promises.writeFile(cachePath, JSON.stringify(data, null, 2), 'utf8');
-  };
-
-  return {
-    prepare(sql) {
-      const normalized = String(sql).replace(/\s+/g, ' ').trim().toUpperCase();
-      return {
-        run(...args) {
-          if (normalized.startsWith('DELETE FROM DUP_MATCH')) {
-            const changes = data.dup_match.length;
-            data.dup_match = [];
-            return { changes };
-          }
-          if (normalized.startsWith('DELETE FROM TARGET_INDEX WHERE TARGET_FOLDER')) {
-            const [targetFolder] = args;
-            const before = data.target_index.length;
-            data.target_index = data.target_index.filter(row => row.target_folder !== targetFolder);
-            return { changes: before - data.target_index.length };
-          }
-          if (normalized.startsWith('INSERT OR REPLACE INTO TARGET_INDEX')) {
-            const [targetFolder, filePath] = args;
-            const existing = data.target_index.find(row => row.target_folder === targetFolder && row.file_path === filePath);
-            if (!existing) data.target_index.push({ target_folder: targetFolder, file_path: filePath });
-            return { changes: 1 };
-          }
-          return { changes: 0 };
-        },
-      };
-    },
-    transaction(fn) {
-      return (...args) => {
-        const result = fn(...args);
-        return result;
-      };
-    },
-    async persist() {
-      await persist();
-    },
-    close() {},
-  };
-}
-
-async function scanArchivePaths(rootPath) {
+async function scanArchivePaths(rootPath, priorityFolder = '') {
   const results = [];
+  const visitedDirs = new Set();
   async function walk(currentPath) {
+    const normalizedCurrentPath = path.resolve(currentPath);
+    if (visitedDirs.has(normalizedCurrentPath)) return;
+    visitedDirs.add(normalizedCurrentPath);
     let entries;
     try {
       entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
     } catch {
       return;
     }
-    for (const entry of entries) {
+    const sortedEntries = [...entries].sort((left, right) => {
+      if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
+      return left.name.localeCompare(right.name, 'ko', { numeric: true });
+    });
+    for (const entry of sortedEntries) {
       const fullPath = path.join(currentPath, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);
@@ -1736,6 +1651,15 @@ async function scanArchivePaths(rootPath) {
         results.push(fullPath);
       }
     }
+  }
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedPriority = priorityFolder ? path.resolve(priorityFolder) : '';
+  if (
+    resolvedPriority
+    && fs.existsSync(resolvedPriority)
+    && isPathInsideOrEqual(resolvedPriority, resolvedRoot)
+  ) {
+    await walk(resolvedPriority);
   }
   await walk(rootPath);
   return results;
@@ -1745,6 +1669,28 @@ async function scanArchivePaths(rootPath) {
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath) {
   const cancellationRegistry = new TaskCancellationRegistry();
   const runtimeStates = new Map();
+  const appDataDir = () => getExecutableDir();
+  const apiCacheDbPath = () => resolveApiCacheDbPath(appDataDir());
+  const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
+  const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
+  const thumbnailDir = () => resolveThumbnailDir(appDataDir());
+  const encodeThumbnail = imageBuffer => {
+    const image = nativeImage.createFromBuffer(imageBuffer);
+    if (image.isEmpty()) return null;
+    const size = image.getSize();
+    const scale = Math.min(1, 400 / Math.max(size.width, size.height));
+    const thumbnail = scale < 1
+      ? image.resize({
+          width: Math.max(1, Math.round(size.width * scale)),
+          height: Math.max(1, Math.round(size.height * scale)),
+          quality: 'best',
+        })
+      : image;
+    return {
+      buffer: thumbnail.toPNG(),
+      extension: '.png',
+    };
+  };
 
   ipcMain.on('app:setRuntimeState', (event, state) => {
     runtimeStates.set(event.sender.id, normalizeRuntimeState(state));
@@ -1753,7 +1699,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 폴더 스캔 ==========
   ipcMain.handle('folder:scan', async (event, folderPath, options) => {
     try {
-      return await scanFolder(folderPath, options, event);
+      const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+      return await scanFolder(folderPath, {
+        ...(options || {}),
+        dbPath: libraryDbPath(),
+        thumbnailDir: thumbnailDir(),
+        sevenZExe,
+        thumbnailEncoder: encodeThumbnail,
+      }, event);
     } catch (error) {
       console.error('Folder scan error:', error);
       event.sender.send('scan-error', { message: error.message });
@@ -1930,7 +1883,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       usedNamuWiki: identification?.usedNamuWiki ?? false,
       candidates: titleCandidates,
     });
-    const apiCacheDb = await openApiCacheDb(path.join(configManager.userDataPath, '.api_cache.db'));
+    const apiCacheDb = await openApiCacheDb(apiCacheDbPath());
     const cacheQuery = `${query}::${titleCandidates.join('|')}::p${page}::v14`;
     try {
       const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);
@@ -2004,7 +1957,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       cached: false,
     });
 
-    const writeCacheDb = await openApiCacheDb(path.join(configManager.userDataPath, '.api_cache.db'));
+    const writeCacheDb = await openApiCacheDb(apiCacheDbPath());
     try {
       if (Array.isArray(results) && results.length > 0) {
         await setCachedApiResults(writeCacheDb, apiName, cacheQuery, results);
@@ -2090,25 +2043,35 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // ========== 공유 서버 ==========
   ipcMain.handle('server:start', async (event, serverType, options = {}) => {
+    const sendServerLog = log => {
+        if (!event.sender.isDestroyed()) {
+            event.sender.send('server:log', { ...log, status: getSharingServerStatus() });
+        }
+    };
     const config = configManager.getConfig() || {};
     const updates = serverType === 'WebDAV'
-      ? {
-          webdav_port: Number(options.port) || config.webdav_port || 8081,
-          webdav_username: options.username ?? config.webdav_username ?? 'user',
-          webdav_password: options.password ?? config.webdav_password ?? '1234',
+        ? {
+            webdav_port: Number(options.port) || config.webdav_port || 8081,
+            webdav_username: String(options.username ?? config.webdav_username ?? 'user').trim() || 'user',
+            webdav_password: String(options.password ?? config.webdav_password ?? '1234').trim() || '1234',
         }
-      : {
-          opds_port: Number(options.port) || config.opds_port || 8080,
+        : {
+            opds_port: Number(options.port) || config.opds_port || 8080,
         };
     configManager.saveConfig({ ...config, ...updates });
-    return startSharingServer(serverType, { ...options, port: updates.webdav_port || updates.opds_port }, configManager.getConfig(), (log) => {
-      event.sender.send('server:log', { ...log, status: getSharingServerStatus() });
-    });
+    return startSharingServer(
+        serverType,
+        { ...options, port: updates.webdav_port || updates.opds_port },
+        configManager.getConfig(),
+        sendServerLog,
+    );
   });
 
   ipcMain.handle('server:stop', async (event, serverType) => {
-    return stopSharingServer(serverType, (log) => {
-      event.sender.send('server:log', { ...log, status: getSharingServerStatus() });
+    return stopSharingServer(serverType, log => {
+        if (!event.sender.isDestroyed()) {
+            event.sender.send('server:log', { ...log, status: getSharingServerStatus() });
+        }
     });
   });
 
@@ -2122,77 +2085,97 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     namuSearchCache.clear();
     metadataTranslationCache.clear();
     imageDataUrlCache.clear();
-    const targets = [
+    const legacyTargets = [
+      path.join(resolveAppDataDir(getExecutableDir()), '.api_cache.json'),
       path.join(configManager.userDataPath, '.api_cache.json'),
-      path.join(configManager.userDataPath, '.api_cache.db'),
       path.join(getExecutableDir(), '.api_cache.json'),
-      path.join(getExecutableDir(), '.api_cache.db'),
     ];
+    const cacheResults = [
+      clearApiCache(
+        apiCacheDbPath(),
+        [thumbnailDir()],
+      ),
+      clearApiCache(
+        path.join(configManager.userDataPath, '.api_cache.db'),
+        [path.join(configManager.userDataPath, 'api_cover_cache')],
+      ),
+      clearApiCache(
+        path.join(getExecutableDir(), '.api_cache.db'),
+        [path.join(getExecutableDir(), 'api_cover_cache')],
+      ),
+    ];
+    const cacheResult = cacheResults.reduce((total, result) => ({
+      deletedRows: total.deletedRows + result.deletedRows,
+      deletedFiles: total.deletedFiles + result.deletedFiles,
+    }), { deletedRows: 0, deletedFiles: 0 });
     let deleted = 0;
-    for (const target of targets) {
+    for (const target of legacyTargets) {
       if (fs.existsSync(target)) {
         fs.unlinkSync(target);
         deleted += 1;
       }
     }
-    return { success: true, deleted };
+    return { success: true, deleted, ...cacheResult };
   });
 
   ipcMain.handle('folder:clearDupCache', async () => {
-    const db = await openLibraryDb(path.join(configManager.userDataPath, 'library.db'));
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
     try {
-      const result = db.prepare('DELETE FROM dup_match').run();
-      await db.persist();
+      const result = await db.clearDupCache();
       return { success: true, changes: result.changes };
     } finally {
-      db.close();
+      await db.close();
     }
   });
 
   ipcMain.handle('folder:updateIndex', async (event, folders = null, options = {}) => {
     const config = configManager.getConfig() || {};
+    setLanguage(options.language || config.language || config.lang || 'ko');
     const mode = options.mode === 'smart' ? 'smart' : 'force';
     const lastMtimes = { ...(config.index_last_mtimes || {}) };
+    const priorityFolder = options.priorityFolder
+      ? path.resolve(options.priorityFolder)
+      : (config.last_selected_library ? path.resolve(config.last_selected_library) : '');
     const targetFolders = (folders || config.dup_check_folders || config.libraries || [])
       .filter(Boolean)
       .map(folder => path.resolve(folder))
-      .filter(folder => fs.existsSync(folder));
-
-    const db = await openLibraryDb(path.join(configManager.userDataPath, 'library.db'));
-    try {
-      const clearStmt = db.prepare('DELETE FROM target_index WHERE target_folder = ?');
-      const insertStmt = db.prepare('INSERT OR REPLACE INTO target_index (target_folder, file_path) VALUES (?, ?)');
-      const insertMany = db.transaction((root, files) => {
-        clearStmt.run(root);
-        for (const filePath of files) insertStmt.run(root, filePath);
+      .filter(folder => fs.existsSync(folder))
+      .sort((left, right) => {
+        if (priorityFolder && isPathInsideOrEqual(priorityFolder, left)) return -1;
+        if (priorityFolder && isPathInsideOrEqual(priorityFolder, right)) return 1;
+        return 0;
       });
 
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
       let total = 0;
       let skippedFolders = 0;
       for (let index = 0; index < targetFolders.length; index += 1) {
         const folder = targetFolders[index];
-        const currentMtime = fs.statSync(folder).mtimeMs;
-        if (mode === 'smart' && lastMtimes[folder] === currentMtime) {
+        const files = await scanArchivePaths(folder, priorityFolder);
+        const fingerprint = files.map(filePath => {
+          const stat = fs.statSync(filePath);
+          return `${filePath}\u001f${stat.size}\u001f${stat.mtimeMs}`;
+        }).join('\u001e');
+        if (mode === 'smart' && lastMtimes[folder] === fingerprint) {
           skippedFolders += 1;
           continue;
         }
         event.sender.send('task:progress', {
           task: 'folder:updateIndex',
           progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
-          message: `인덱스 갱신 중: ${path.basename(folder) || folder}`,
+          message: i18nT('dup_scan_progress', [total, files.length]),
         });
-        const files = await scanArchivePaths(folder);
-        insertMany(folder, files);
+        await db.replaceTargetIndex(folder, files);
         total += files.length;
-        lastMtimes[folder] = currentMtime;
+        lastMtimes[folder] = fingerprint;
       }
-      await db.persist();
       configManager.updateConfig({ index_last_mtimes: lastMtimes });
 
       event.sender.send('task:progress', {
         task: 'folder:updateIndex',
         progress: 100,
-        message: `인덱스 갱신 완료: ${total}개`,
+        message: i18nT('dup_scan_complete', [total]),
       });
       return {
         success: true,
@@ -2202,33 +2185,33 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         mode,
       };
     } finally {
-      db.close();
+      await db.close();
     }
   });
 
   // ========== 릴리즈 노트 ==========
   ipcMain.handle('releases:list', async () => {
-    try {
-      const releases = await requestJson('https://api.github.com/repos/dongkkase/ComicZIP_Optimizer/releases?per_page=10');
-      return releases.map(item => ({
-        id: item.id || item.tag_name,
-        name: item.name || item.tag_name,
-        tag: item.tag_name,
-        date: item.published_at ? item.published_at.slice(0, 10) : '',
-        body: markdownToHtml(item.body || ''),
-        url: item.html_url,
-      }));
-    } catch (error) {
-      return {
-        error: error.message,
-        releases: [{
-          id: 'current',
-          name: `v${app?.getVersion?.() || '3.0.0'}`,
-          date: '',
-          body: '릴리즈 정보를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.',
-        }],
-      };
-    }
+      try {
+          const releases = await requestJson('https://api.github.com/repos/dongkkase/ComicZIP_Optimizer/releases?per_page=10');
+          return releases
+              .map(item => ({
+                  id: item.id || item.tag_name,
+                  name: item.name || item.tag_name,
+                  tag: item.tag_name,
+                  date: item.published_at ? item.published_at.slice(0, 10) : '',
+                  publishedAt: item.published_at || '',
+                  body: item.body || '릴리즈 내용이 없습니다.',
+                  url: item.html_url,
+                  draft: Boolean(item.draft),
+                  prerelease: Boolean(item.prerelease),
+              }))
+              .sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+      } catch (error) {
+          return {
+              error: error.message,
+              releases: [],
+          };
+      }
   });
 
   // ========== 설정 관련 ==========
@@ -2267,17 +2250,22 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 사운드 재생 ==========
   ipcMain.handle('sound:play', async (_, soundFilename) => {
     try {
-      let soundPath = getResourcePath('src', 'sounds', soundFilename);
+      const safeFilename = normalizeSoundFilename(soundFilename);
+      if (!safeFilename) return false;
+      let soundPath = getResourcePath('src', 'sounds', safeFilename);
       if (!fs.existsSync(soundPath)) {
-        soundPath = path.join(getExecutableDir(), 'sounds', soundFilename);
+        soundPath = path.join(getExecutableDir(), 'sounds', safeFilename);
       }
       if (fs.existsSync(soundPath)) {
-        const { exec } = await import('child_process');
-        if (process.platform === 'darwin') {
-          exec(`afplay "${soundPath}" &`);
-        } else if (process.platform === 'win32') {
-          exec(`powershell -Command "(New-Object Media.SoundPlayer '${soundPath}').PlaySync()"`);
-        }
+        const soundCommand = createSoundCommand(process.platform, soundPath);
+        const child = spawn(soundCommand.command, soundCommand.args, {
+          detached: false,
+          env: { ...process.env, ...soundCommand.env },
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.on('error', error => console.error('사운드 재생 실패:', error));
+        child.unref();
         return true;
       }
       return false;
@@ -2434,7 +2422,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 파일/폴더 작업 확장 (FolderTab 지원) ==========
-  const historyPath = path.join(configManager.userDataPath, 'rename_history.json');
+  const historyPath = renameHistoryPath();
 
   function loadRenameHistory() {
     try {
@@ -2449,6 +2437,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   function saveRenameHistory(history) {
     try {
+      fs.mkdirSync(path.dirname(historyPath), { recursive: true });
       fs.writeFileSync(historyPath, JSON.stringify(history, null, 2), 'utf-8');
     } catch (e) {
       console.error('Failed to save rename history', e);
@@ -2499,79 +2488,24 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // 2. 다중 파일 이름 변경 (Multi-rename)
   ipcMain.handle('fs:multiRename', async (_, renameMap) => {
-    const errors = [];
-    let successCount = 0;
-    const actualMapping = {};
-
-    for (const [oldPath, newPath] of Object.entries(renameMap)) {
-      try {
-        if (!fs.existsSync(oldPath)) {
-          errors.push(`${path.basename(oldPath)}: 원본 파일이 없습니다.`);
-          continue;
-        }
-        if (fs.existsSync(newPath) && oldPath.toLowerCase() !== newPath.toLowerCase()) {
-          errors.push(`${path.basename(newPath)}: 이미 동일한 파일명이 존재합니다.`);
-          continue;
-        }
-        fs.renameSync(oldPath, newPath);
-        actualMapping[newPath] = oldPath;
-        successCount++;
-      } catch (err) {
-        errors.push(`${path.basename(oldPath)} 변경 실패: ${err.message}`);
-      }
-    }
-
-    if (Object.keys(actualMapping).length > 0) {
-      const history = loadRenameHistory();
-      history.push({
-        timestamp: Date.now(),
-        mapping: actualMapping
-      });
-      if (history.length > 10) history.splice(0, history.length - 10);
-      saveRenameHistory(history);
-    }
-
+    const result = executeMultiRename(renameMap, loadRenameHistory());
+    saveRenameHistory(result.history);
     return {
-      success: errors.length === 0,
-      successCount,
-      errors
+      success: result.success,
+      successCount: result.successCount,
+      errors: result.errors
     };
   });
 
   // 3. 파일 이름 변경 Undo
   ipcMain.handle('fs:undoRename', async () => {
-    const history = loadRenameHistory();
-    if (history.length === 0) {
-      return { success: false, message: '되돌릴 이력이 없습니다.' };
-    }
-    const lastRecord = history.pop();
-    const { mapping } = lastRecord;
-    const errors = [];
-    let successCount = 0;
-
-    for (const [currentPath, oldPath] of Object.entries(mapping)) {
-      if (fs.existsSync(currentPath)) {
-        try {
-          if (fs.existsSync(oldPath)) {
-            errors.push(`${path.basename(oldPath)}이(가) 이미 존재합니다.`);
-            continue;
-          }
-          fs.renameSync(currentPath, oldPath);
-          successCount++;
-        } catch (err) {
-          errors.push(`${path.basename(currentPath)} 복구 실패: ${err.message}`);
-        }
-      } else {
-        errors.push(`${path.basename(currentPath)} 파일을 찾을 수 없습니다.`);
-      }
-    }
-
-    saveRenameHistory(history);
-
+    const result = undoRename(loadRenameHistory());
+    saveRenameHistory(result.history);
     return {
-      success: errors.length === 0,
-      successCount,
-      errors
+      success: result.success,
+      successCount: result.successCount,
+      errors: result.errors,
+      message: result.message
     };
   });
 
@@ -2648,7 +2582,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       if (!filePath || !fs.existsSync(filePath)) {
         return { success: false, message: 'File not found.' };
       }
-      return { success: true, file: await inspectFolderFile(filePath) };
+      const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+      return {
+        success: true,
+        file: await inspectFolderFile(filePath, {
+          dbPath: libraryDbPath(),
+          thumbnailDir: thumbnailDir(),
+          sevenZExe,
+          force: true,
+          thumbnailEncoder: encodeThumbnail,
+        }),
+      };
     } catch (error) {
       return { success: false, message: error.message };
     }
@@ -2698,84 +2642,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // 8. 라이브러리로 파일 이동 처리 (충돌 해결 지원)
   ipcMain.handle('fs:executeLibraryMove', async (_event, movePlans) => {
-    let successCount = 0;
-    let skippedCount = 0;
-    const errors = [];
-    const completedMoves = [];
-
-    for (const plan of movePlans) {
-      let { src, dest } = plan;
-      if (!fs.existsSync(src)) {
-        continue;
-      }
-
-      if (fs.existsSync(dest) && path.normalize(src) !== path.normalize(dest)) {
-        const choice = plan.conflictAction || 'skip';
-        if (choice === 'skip') {
-          skippedCount++;
-          continue;
-        } else if (choice === 'overwrite') {
-          try {
-            const destinationStats = fs.statSync(dest);
-            if (destinationStats.isDirectory()) {
-              fs.rmSync(dest, { recursive: true, force: true });
-            } else {
-              fs.unlinkSync(dest);
-            }
-          } catch (e) {
-            errors.push(`기존 파일 삭제 실패: ${path.basename(dest)}`);
-            continue;
-          }
-        } else if (choice === 'rename') {
-          const ext = path.extname(dest);
-          const base = dest.substring(0, dest.length - ext.length);
-          let counter = 1;
-          while (fs.existsSync(`${base}_${counter}${ext}`)) {
-            counter++;
-          }
-          dest = `${base}_${counter}${ext}`;
-        }
-      }
-
-      try {
-        const destDir = path.dirname(dest);
-        if (!fs.existsSync(destDir)) {
-          fs.mkdirSync(destDir, { recursive: true });
-        }
-        try {
-          fs.renameSync(src, dest);
-        } catch (error) {
-          if (error.code !== 'EXDEV') throw error;
-          const sourceStats = fs.statSync(src);
-          if (sourceStats.isDirectory()) {
-            fs.cpSync(src, dest, { recursive: true });
-            fs.rmSync(src, { recursive: true, force: true });
-          } else {
-            fs.copyFileSync(src, dest);
-            fs.unlinkSync(src);
-          }
-        }
-        successCount++;
-        completedMoves.push({ src, dest });
-        const cleanupRoot = plan.cleanupRoot;
-        if (cleanupRoot && path.normalize(cleanupRoot) === path.normalize(path.dirname(src))) {
-          try {
-            if (fs.readdirSync(cleanupRoot).length === 0) fs.rmdirSync(cleanupRoot);
-          } catch {
-            // A non-empty or concurrently changed source folder is intentionally preserved.
-          }
-        }
-      } catch (err) {
-        errors.push(`${path.basename(src)} 이동 실패: ${err.message}`);
-      }
-    }
-
-    return {
-      successCount,
-      skippedCount,
-      errors,
-      completedMoves
-    };
+    return executeLibraryMove(movePlans);
   });
 
   // 9. 파일명에서 코어 시리즈명 추출
@@ -2810,7 +2677,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('app:openExternal', async (_event, url) => {
-    await shell.openExternal(url);
+    const safeUrl = normalizeExternalUrl(url);
+    if (!safeUrl) throw new Error('허용되지 않는 외부 URL입니다.');
+    await shell.openExternal(safeUrl);
     return true;
   });
 

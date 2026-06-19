@@ -842,54 +842,56 @@
 
 ### 8.1 OPDS
 
-- [ ] 그룹 제목에 Panels 지원 문구가 표시된다.
-- [ ] 포트 입력 범위는 1024~65535다.
-- [ ] 기본 포트는 8080이다.
-- [ ] 포트 변경 즉시 config와 URL을 갱신한다.
-- [ ] 서버 OFF 시 `OPDS 서버 켜기`와 power 아이콘을 표시한다.
-- [ ] 서버 ON 시 `OPDS 서버 끄기`와 stop 아이콘을 표시한다.
-- [ ] 서버 시작 중 중복 클릭을 막는다.
-- [ ] 시작 성공 시 포트 input을 비활성화한다.
-- [ ] 중지 성공 시 포트 input을 다시 활성화한다.
-- [ ] URL은 `http(s)://로컬IP:포트/opds` 형식이다.
-- [ ] URL input은 읽기 전용이다.
+- [-] 그룹 제목에 Panels 지원 문구가 표시된다.
+- [-] 포트 입력 범위는 1024~65535다.
+- [-] 기본 포트는 8080이다.
+- [-] 포트 변경 즉시 config와 URL을 갱신한다.
+- [-] 서버 OFF 시 `OPDS 서버 켜기`와 power 아이콘을 표시한다.
+- [-] 서버 ON 시 `OPDS 서버 끄기`와 stop 아이콘을 표시한다.
+- [-] 서버 시작 중 중복 클릭을 막는다.
+- [-] 시작 성공 시 포트 input을 비활성화한다.
+- [-] 중지 성공 시 포트 input을 다시 활성화한다.
+- [-] URL은 `http(s)://로컬IP:포트/opds` 형식이다.
+- [-] URL input은 읽기 전용이다.
 - [ ] URL 복사 버튼이 정확한 URL을 clipboard에 넣는다.
-- [ ] OPDS root에 라이브러리 목록이 표시된다.
-- [ ] 하위 폴더 탐색이 가능하다.
-- [ ] 아카이브 다운로드 MIME과 파일명이 클라이언트에서 정상 인식된다.
+- [-] OPDS root에 라이브러리 목록이 표시된다.
+- [-] 하위 폴더 탐색이 가능하다.
+- [-] 아카이브 다운로드 MIME과 파일명이 클라이언트에서 정상 인식된다.
 - [ ] Panels 실제 기기/앱에서 목록 탐색과 다운로드를 검증한다.
 
 ### 8.2 WebDAV
 
-- [ ] 그룹 제목에 ComicGlass 지원 문구가 표시된다.
-- [ ] 아이디 기본값은 `user`다.
-- [ ] 비밀번호 기본값은 `1234`다.
-- [ ] 빈 아이디/비밀번호 저장 시 기본값 보정이 원본과 같다.
-- [ ] 비밀번호는 기본 마스킹된다.
-- [ ] eye 아이콘으로 표시/숨김을 토글한다.
-- [ ] 포트 범위는 1024~65535, 기본값은 8081이다.
-- [ ] 서버 ON 시 포트/아이디/비밀번호 입력을 비활성화한다.
-- [ ] 서버 OFF 시 다시 활성화한다.
-- [ ] URL은 `http://로컬IP:포트/` 형식이다.
+- [-] 그룹 제목에 ComicGlass 지원 문구가 표시된다.
+- [-] 아이디 기본값은 `user`다.
+- [-] 비밀번호 기본값은 `1234`다.
+- [-] 빈 아이디/비밀번호 저장 시 기본값 보정이 원본과 같다.
+- [-] 비밀번호는 기본 마스킹된다.
+- [-] eye 아이콘으로 표시/숨김을 토글한다.
+- [-] 포트 범위는 1024~65535, 기본값은 8081이다.
+- [-] 서버 ON 시 포트/아이디/비밀번호 입력을 비활성화한다.
+- [-] 서버 OFF 시 다시 활성화한다.
+- [-] URL은 `http://로컬IP:포트/` 형식이다.
 - [ ] URL 복사가 동작한다.
-- [ ] Basic Auth 실패 시 401과 인증 헤더를 반환한다.
-- [ ] PROPFIND depth 처리와 XML 응답이 ComicGlass에서 인식된다.
-- [ ] 폴더 탐색과 파일 다운로드가 가능하다.
-- [ ] 등록 라이브러리 밖 경로 접근을 차단한다.
-- [ ] path traversal과 잘못된 URL encoding을 차단한다.
+- [-] Basic Auth 실패 시 401과 인증 헤더를 반환한다.
+- [-] PROPFIND depth 처리와 XML 응답이 ComicGlass에서 인식된다.
+- [-] 폴더 탐색과 파일 다운로드가 가능하다.
+- [-] 등록 라이브러리 밖 경로 접근을 차단한다.
+- [-] path traversal과 잘못된 URL encoding을 차단한다.
 - [ ] ComicGlass 실제 기기/앱에서 로그인, 탐색, 다운로드를 검증한다.
 
 ### 8.3 상태 로그와 전역 상태
 
 - [ ] 오른쪽 로그 패널이 원본 레이아웃과 동일하다.
-- [ ] 일반 메시지는 `[INFO]`로 표시한다.
-- [ ] 오류는 `[ERROR]`와 빨간색으로 표시한다.
-- [ ] 서버 시작/중지/포트 충돌/인증 오류를 로그에 남긴다.
-- [ ] 새 로그가 추가되면 마지막 줄이 보이도록 스크롤한다.
-- [ ] 하나 이상의 서버 실행 시 메인 하단 서버 상태 아이콘을 표시한다.
-- [ ] 앱 종료 시 실행 중인 서버를 안전하게 닫는다.
-- [ ] 포트 충돌 시 버튼/입력 상태가 OFF 상태로 복구된다.
-- [ ] 네트워크 인터페이스가 없으면 127.0.0.1 fallback을 표시한다.
+- [-] 일반 메시지는 `[INFO]`로 표시한다.
+- [-] 오류는 `[ERROR]`와 빨간색으로 표시한다.
+- [-] 서버 시작/중지/포트 충돌/인증 오류를 로그에 남긴다.
+- [-] 새 로그가 추가되면 마지막 줄이 보이도록 스크롤한다.
+- [-] 하나 이상의 서버 실행 시 메인 하단 서버 상태 아이콘을 표시한다.
+- [-] 앱 종료 시 실행 중인 서버를 안전하게 닫는다.
+- [-] 포트 충돌 시 버튼/입력 상태가 OFF 상태로 복구된다.
+- [-] 네트워크 인터페이스가 없으면 127.0.0.1 fallback을 표시한다.
+
+진행 메모: OPDS 라이브러리 루트/하위 탐색/MIME·파일명 다운로드, WebDAV Basic Auth/Depth 0·1/폴더·파일 응답, 라이브러리 경계·traversal·잘못된 encoding·symlink 차단을 서버 테스트로 검증했다. 전체 테스트 148개와 Vite 프로덕션 빌드가 통과했다. 실제 Panels/ComicGlass 기기 연결, Electron clipboard 동작, 원본 스크린샷과 실행 화면의 픽셀 단위 대조는 실기 검증이 필요하다.
 
 ---
 
@@ -900,18 +902,20 @@
 
 기준 스크린샷: `old_project/ui_screenshot/6. 업데이트 및 릴리즈 노트/1.png`
 
-- [ ] 앱 시작 후 현재 버전과 최신 버전을 비동기로 비교한다.
-- [ ] 네트워크 실패가 앱 시작을 막지 않는다.
-- [ ] 최신 버전이 없으면 현재 버전 버튼 스타일을 유지한다.
-- [ ] 업데이트가 있으면 버전 버튼을 녹색 update 스타일로 바꾼다.
-- [ ] 버전 버튼 클릭 시 업데이트 여부 확인 또는 릴리즈 URL을 연다.
-- [ ] 릴리즈 노트를 최신순으로 표시한다.
-- [ ] 버전, 날짜, 제목, 본문 형식이 원본과 같다.
-- [ ] Markdown/링크가 안전하게 렌더링된다.
-- [ ] 로딩 중 상태가 표시된다.
-- [ ] 네트워크 실패 시 fallback 문구를 표시한다.
-- [ ] 외부 링크는 기본 브라우저로 연다.
-- [ ] 자동 업데이트 스크립트를 유지한다면 다운로드, 검증, 재실행, 실패 복구를 검증한다.
+- [-] 앱 시작 후 현재 버전과 최신 버전을 비동기로 비교한다.
+- [-] 네트워크 실패가 앱 시작을 막지 않는다.
+- [-] 최신 버전이 없으면 현재 버전 버튼 스타일을 유지한다.
+- [-] 업데이트가 있으면 버전 버튼을 녹색 update 스타일로 바꾼다.
+- [-] 버전 버튼 클릭 시 업데이트 여부 확인 또는 릴리즈 URL을 연다.
+- [-] 릴리즈 노트를 최신순으로 표시한다.
+- [-] 버전, 날짜, 제목, 본문 형식이 원본과 같다.
+- [-] Markdown/링크가 안전하게 렌더링된다.
+- [-] 로딩 중 상태가 표시된다.
+- [-] 네트워크 실패 시 fallback 문구를 표시한다.
+- [-] 외부 링크는 기본 브라우저로 연다.
+- [-] 자동 업데이트 스크립트를 유지한다면 다운로드, 검증, 재실행, 실패 복구를 검증한다.
+
+진행 메모: 앱 시작 시 GitHub 릴리즈를 비동기로 조회해 안정 릴리즈 기준으로 버전을 비교하고, 실패 시 앱 동작을 유지하도록 구현했다. 릴리즈 노트는 게시일 최신순으로 정렬하며 HTML 직접 삽입 없이 제목·목록·문단·굵게·코드·HTTP(S) 링크를 React 요소로 렌더링한다. 외부 브라우저 호출은 HTTP(S)만 허용한다. Python 자동 덮어쓰기 업데이트 스크립트는 Electron 빌드에 유지하지 않고 릴리즈 페이지를 여는 방식으로 대체했다. 전체 테스트 155개와 Vite 프로덕션 빌드가 통과했다. 실제 GitHub 네트워크 응답과 기본 브라우저 전환의 실기 확인은 남아 있다.
 
 ---
 
@@ -922,32 +926,34 @@
 
 ### 10.1 다국어
 
-- [ ] Python i18n의 모든 key를 Electron i18n에 옮겼다.
-- [ ] 한국어/영어/일본어에서 누락 key가 화면에 key 문자열로 노출되지 않는다.
-- [ ] fallback 언어와 fallback 문구가 원본과 같다.
-- [ ] `{count}`, `{msg}`, positional format 값이 정확히 치환된다.
+- [-] Python i18n의 모든 key를 Electron i18n에 옮겼다.
+- [-] 한국어/영어/일본어에서 누락 key가 화면에 key 문자열로 노출되지 않는다.
+- [-] fallback 언어와 fallback 문구가 원본과 같다.
+- [-] `{count}`, `{msg}`, positional format 값이 정확히 치환된다.
 - [ ] 탭, 버튼, tooltip, placeholder, popup, Toast, 로그까지 모두 번역된다.
-- [ ] 언어별 권/화/Vol/Ch/巻/話 표기가 parser와 출력 파일명에 반영된다.
+- [-] 언어별 권/화/Vol/Ch/巻/話 표기가 parser와 출력 파일명에 반영된다.
 - [ ] 한국어/일본어 IME 조합이 input, 검색, 태그, 이름 변경에서 안전하다.
 
 ### 10.2 폰트와 배율
 
-- [ ] NotoSansKR-Regular.ttf를 번들하고 로드한다.
-- [ ] Jua-Regular.ttf를 번들하고 로드한다.
-- [ ] Default 선택 시 플랫폼 기본 폰트 fallback이 안정적이다.
-- [ ] font scale이 모든 `s11/s12/s13/s14/s16/s20` 대응 요소에 일관되게 적용된다.
+- [-] NotoSansKR-Regular.ttf를 번들하고 로드한다.
+- [-] Jua-Regular.ttf를 번들하고 로드한다.
+- [-] Default 선택 시 플랫폼 기본 폰트 fallback이 안정적이다.
+- [-] font scale이 모든 `s11/s12/s13/s14/s16/s20` 대응 요소에 일관되게 적용된다.
 - [ ] 배율 80%, 100%, 155%에서 버튼과 입력이 잘리지 않는다.
-- [ ] 표 행 높이와 아이콘 정렬이 폰트 배율에 맞게 증가한다.
+- [-] 표 행 높이와 아이콘 정렬이 폰트 배율에 맞게 증가한다.
 
 ### 10.3 이미지, 아이콘, 사운드
 
-- [ ] draganddrop1/2/3 이미지를 그대로 재사용한다.
-- [ ] nodata/nodata2와 rainbow cat 리소스 사용 위치를 원본과 대조한다.
-- [ ] 모든 Font Awesome 아이콘의 종류와 의미가 원본과 같다.
+- [-] draganddrop1/2/3 이미지를 그대로 재사용한다.
+- [-] nodata/nodata2와 rainbow cat 리소스 사용 위치를 원본과 대조한다.
+- [-] 모든 Font Awesome 아이콘의 종류와 의미가 원본과 같다.
 - [ ] 아이콘 색상이 normal/hover/active/disabled 상태에 맞다.
-- [ ] sounds 폴더의 모든 mp3/wav를 빌드에 포함한다.
+- [-] sounds 폴더의 모든 mp3/wav를 빌드에 포함한다.
 - [ ] 선택 완료음이 개발/패키지 모드 모두에서 재생된다.
-- [ ] 완료음 OFF 시 어떤 작업도 소리를 재생하지 않는다.
+- [-] 완료음 OFF 시 어떤 작업도 소리를 재생하지 않는다.
+
+진행 메모: Python i18n과 Electron 번역 키를 대조해 누락 키가 없음을 확인하고 세 언어의 모든 키가 fallback을 포함해 실제 문구로 해석되는 테스트를 추가했다. named/positional placeholder와 한·영·일 권/화 단위도 검증했다. 원본 폰트, drag/drop, nodata, rainbow cat 리소스는 SHA-256 해시가 일치하며 폴더 빈 화면과 작업 overlay에 원본 이미지를 연결했다. 15개 사운드를 번들 대상으로 검증하고 macOS `afplay`, Windows `MediaPlayer`를 shell 없이 실행하도록 변경했다. CSS와 JSX의 고정 px 글꼴을 공통 배율 변수로 전환하고 버튼, 입력, 체크박스, 표 행, 아이콘 컨트롤 크기도 80~155% 배율에 연동했다. 고정 글꼴 재유입을 막는 정적 테스트를 추가했으며 전체 169개 테스트와 프로덕션 빌드가 통과했다. 실제 80/100/155% 화면의 잘림 여부, IME 조합, Windows/macOS 실기 사운드 재생은 추가 검증이 필요하다.
 
 ---
 
@@ -958,50 +964,52 @@
 
 ### 11.1 지원 형식
 
-- [ ] ZIP 읽기/쓰기
-- [ ] CBZ 읽기/쓰기
-- [ ] 7z 읽기/쓰기
+- [-] ZIP 읽기/쓰기
+- [-] CBZ 읽기/쓰기
+- [-] 7z 읽기/쓰기
 - [ ] RAR 읽기
 - [ ] CBR 읽기
-- [ ] RAR/CBR 메타데이터 쓰기의 플랫폼 제한 안내
-- [ ] 대문자 확장자 처리
-- [ ] 확장자와 실제 포맷 불일치 처리
-- [ ] 암호화 압축 처리
-- [ ] 손상 압축 처리
-- [ ] 빈 압축 처리
-- [ ] 내부 한글/일본어 파일명 인코딩 처리
+- [-] RAR/CBR 메타데이터 쓰기의 플랫폼 제한 안내
+- [-] 대문자 확장자 처리
+- [-] 확장자와 실제 포맷 불일치 처리
+- [-] 암호화 압축 처리
+- [-] 손상 압축 처리
+- [-] 빈 압축 처리
+- [-] 내부 한글/일본어 파일명 인코딩 처리
 
 ### 11.2 외부 바이너리
 
-- [ ] Windows 패키지에서 7za.exe 경로를 찾는다.
-- [ ] macOS에서 bundled/system 7z fallback을 찾는다.
-- [ ] cwebp, pngquant, jpegtran 실행 경로를 찾는다.
-- [ ] Windows에서 subprocess 창이 뜨지 않는다.
-- [ ] 인자에 공백/한글/특수문자 경로를 안전하게 전달한다.
-- [ ] exit code와 stderr를 오류 로그에 반영한다.
-- [ ] 실행 파일이 없을 때 사용자에게 필요한 조치를 안내한다.
+- [-] Windows 패키지에서 7za.exe 경로를 찾는다.
+- [-] macOS에서 bundled/system 7z fallback을 찾는다.
+- [-] cwebp, pngquant, jpegtran 실행 경로를 찾는다.
+- [-] Windows에서 subprocess 창이 뜨지 않는다.
+- [-] 인자에 공백/한글/특수문자 경로를 안전하게 전달한다.
+- [-] exit code와 stderr를 오류 로그에 반영한다.
+- [-] 실행 파일이 없을 때 사용자에게 필요한 조치를 안내한다.
 - [ ] 취소 시 child process를 안전하게 종료한다.
 
 ### 11.3 임시 파일과 원자성
 
-- [ ] 임시 디렉터리 이름 충돌을 방지한다.
-- [ ] 출력 완성 전 원본을 삭제하지 않는다.
-- [ ] 같은 경로 교체는 임시 아카이브 완성 후 원자적으로 수행한다.
-- [ ] 실패 시 원본을 복구한다.
-- [ ] backup 설정 ON/OFF를 모든 작업에서 일관되게 적용한다.
-- [ ] 성공/실패/취소 후 temp 파일을 정리한다.
+- [-] 임시 디렉터리 이름 충돌을 방지한다.
+- [-] 출력 완성 전 원본을 삭제하지 않는다.
+- [-] 같은 경로 교체는 임시 아카이브 완성 후 원자적으로 수행한다.
+- [-] 실패 시 원본을 복구한다.
+- [-] backup 설정 ON/OFF를 모든 작업에서 일관되게 적용한다.
+- [-] 성공/실패/취소 후 temp 파일을 정리한다.
 - [ ] 앱 강제 종료 후 남은 temp가 다음 실행을 방해하지 않는다.
 
 ### 11.4 parser 동등성
 
-- [ ] 시리즈명 추출 결과를 대표 파일명 corpus로 Python과 비교한다.
-- [ ] 제목 추출 결과를 비교한다.
-- [ ] 권수 추출 결과를 비교한다.
-- [ ] 화수 추출 결과를 비교한다.
-- [ ] 시즌/부/part/외전 인식 결과를 비교한다.
-- [ ] 소수 권수, 범위, 합본 표기를 비교한다.
-- [ ] 괄호, 대괄호, 작가명, 릴리즈 그룹 제거 결과를 비교한다.
-- [ ] 한국어/영어/일본어 표기 결과를 비교한다.
+- [-] 시리즈명 추출 결과를 대표 파일명 corpus로 Python과 비교한다.
+- [-] 제목 추출 결과를 비교한다.
+- [-] 권수 추출 결과를 비교한다.
+- [-] 화수 추출 결과를 비교한다.
+- [-] 시즌/부/part/외전 인식 결과를 비교한다.
+- [-] 소수 권수, 범위, 합본 표기를 비교한다.
+- [-] 괄호, 대괄호, 작가명, 릴리즈 그룹 제거 결과를 비교한다.
+- [-] 한국어/영어/일본어 표기 결과를 비교한다.
+
+진행 메모: ZIP/CBZ/7z 읽기·쓰기와 대문자 확장자, 확장자와 실제 포맷 불일치, 암호화·손상·빈 압축, 한글·일본어 내부 경로를 실제 7z 기반 테스트로 검증했다. 7z 목록의 아카이브 헤더를 내부 중첩 압축으로 오인하던 문제를 수정했다. 바이너리 탐색은 셸 명령 없이 Windows bundled 도구, macOS/Linux bundled 및 PATH fallback을 순서대로 확인하며 도구 누락 시 설치 조치를 안내한다. 메타데이터 저장도 임시 복사본 완성 후 원본을 교체하고 backup 설정을 적용하도록 변경했다. Python parser corpus 대조 과정에서 영문 제목 유사도 차이를 발견해 연속 일치 블록 방식으로 수정했다. 전체 181개 테스트와 프로덕션 빌드가 통과했다. RAR/CBR 실제 샘플 읽기, 실행 중 child process 강제 종료, 앱 강제 종료 후 남은 temp 자동 청소는 추가 검증이 필요하다.
 
 ---
 
@@ -1010,41 +1018,45 @@
 원본 근거: `config.py`, `core/library_db.py`, `.api_cache.db`, `data/library.db`  
 현재 대응: `electron/configManager.js`, `electron/database/library_db.js`
 
-- [ ] 기존 config.json을 Electron에서 손실 없이 읽는다.
-- [ ] 알 수 없는 기존 key를 저장 시 삭제하지 않는다.
-- [ ] `lang`과 `language` 호환을 유지한다.
-- [ ] `target_format`, `backup_on`, `flatten_folders`, `webp_conversion`, `img_quality`, `max_threads`, `play_sound`, `completion_sound`를 유지한다.
-- [ ] `dup_check_folders`, `libraries`, `favorites`의 중복과 형식을 정규화한다.
-- [ ] `api_keys` 내부 key를 유지한다.
-- [ ] 창, 탭, splitter, 보기 모드, 정렬, 그룹, 레이아웃 상태를 저장한다.
-- [ ] config 파일이 없으면 원본 기본값으로 생성한다.
-- [ ] config JSON이 손상되면 백업하고 안전한 기본값으로 복구한다.
-- [ ] 여러 빠른 변경이 config write race를 만들지 않는다.
-- [ ] library.db schema와 기존 데이터 마이그레이션을 검증한다.
-- [ ] 중복 인덱스 갱신이 신규/수정/삭제 파일을 반영한다.
-- [ ] API cache TTL이 원본과 같다.
-- [ ] 캐시 삭제가 DB row와 썸네일 파일을 모두 정리한다.
+- [-] 기존 config.json을 Electron에서 손실 없이 읽는다.
+- [-] 알 수 없는 기존 key를 저장 시 삭제하지 않는다.
+- [-] `lang`과 `language` 호환을 유지한다.
+- [-] `target_format`, `backup_on`, `flatten_folders`, `webp_conversion`, `img_quality`, `max_threads`, `play_sound`, `completion_sound`를 유지한다.
+- [-] `dup_check_folders`, `libraries`, `favorites`의 중복과 형식을 정규화한다.
+- [-] `api_keys` 내부 key를 유지한다.
+- [-] 창, 탭, splitter, 보기 모드, 정렬, 그룹, 레이아웃 상태를 저장한다.
+- [-] config 파일이 없으면 원본 기본값으로 생성한다.
+- [-] config JSON이 손상되면 백업하고 안전한 기본값으로 복구한다.
+- [-] 여러 빠른 변경이 config write race를 만들지 않는다.
+- [-] library.db schema와 기존 데이터 마이그레이션을 검증한다.
+- [-] 중복 인덱스 갱신이 신규/수정/삭제 파일을 반영한다.
+- [-] API cache TTL이 원본과 같다.
+- [-] 캐시 삭제가 DB row와 썸네일 파일을 모두 정리한다.
+
+진행 메모: 기존 config의 알 수 없는 key와 사용자 정의 API key를 유지하면서 `lang`/`language`, 작업 설정, 라이브러리·즐겨찾기 형식을 정규화한다. config는 같은 디렉터리의 임시 파일을 거쳐 원자적으로 교체하며, 손상 JSON은 `.corrupt-*.bak`으로 보존하고 기본 설정을 생성한다. 폴더 보기 모드와 크기뿐 아니라 정렬·순서·그룹 상태도 저장하도록 보강했다. `library.db`는 JSON 보조 파일 대신 실제 SQLite를 사용하며 원본 Python `files`, `dup_cache`, `dup_target_index` schema와 과도기 `file_info`, `dup_match`, `target_index` schema를 모두 이관한다. 중복 인덱스는 경로·크기·수정시간 fingerprint로 신규·수정·삭제를 감지한다. API 캐시는 원본과 같은 SQLite schema 및 7일 TTL을 사용하고 초기화 시 검색·이미지·번역 row와 표지 캐시 파일을 함께 정리한다. 전체 191개 테스트와 프로덕션 빌드가 통과했다.
 
 ---
 
 ## 13. 접근성 및 세밀한 상호작용
 
-- [ ] 모든 클릭 가능한 요소에 pointer cursor가 있다.
-- [ ] disabled 요소는 색상뿐 아니라 실제 입력도 차단한다.
+- [-] 모든 클릭 가능한 요소에 pointer cursor가 있다.
+- [-] disabled 요소는 색상뿐 아니라 실제 입력도 차단한다.
 - [ ] Tab 키 focus 순서가 시각적 순서와 같다.
-- [ ] focus ring이 어두운 배경에서 보인다.
-- [ ] Enter가 multiline input에서 의도치 않게 저장/검색을 실행하지 않는다.
-- [ ] Escape가 최상위 모달부터 닫는다.
-- [ ] 모달 뒤 페이지가 스크롤되지 않는다.
-- [ ] 우클릭 메뉴가 바깥 클릭/Escape/항목 선택 후 닫힌다.
-- [ ] dropdown이 화면 아래에서 잘리면 위쪽으로 열린다.
-- [ ] tooltip은 hover 후 표시되고 클릭을 막지 않는다.
-- [ ] 버튼 double-click이 작업을 두 번 시작하지 않는다.
-- [ ] 느린 IPC 응답 중 로딩/disabled 상태를 표시한다.
-- [ ] renderer unmount 후 늦은 IPC event가 state를 변경하지 않는다.
-- [ ] 긴 작업 중 Electron 창이 “응답 없음” 상태가 되지 않는다.
-- [ ] 키보드 단축키는 input/textarea/select focus 중 텍스트 입력을 침범하지 않는다.
-- [ ] Windows의 Ctrl과 macOS의 Cmd를 저장/전체 선택 등에 올바르게 매핑한다.
+- [-] focus ring이 어두운 배경에서 보인다.
+- [-] Enter가 multiline input에서 의도치 않게 저장/검색을 실행하지 않는다.
+- [-] Escape가 최상위 모달부터 닫는다.
+- [-] 모달 뒤 페이지가 스크롤되지 않는다.
+- [-] 우클릭 메뉴가 바깥 클릭/Escape/항목 선택 후 닫힌다.
+- [-] dropdown이 화면 아래에서 잘리면 위쪽으로 열린다.
+- [-] tooltip은 hover 후 표시되고 클릭을 막지 않는다.
+- [-] 버튼 double-click이 작업을 두 번 시작하지 않는다.
+- [-] 느린 IPC 응답 중 로딩/disabled 상태를 표시한다.
+- [-] renderer unmount 후 늦은 IPC event가 state를 변경하지 않는다.
+- [-] 긴 작업 중 Electron 창이 “응답 없음” 상태가 되지 않는다.
+- [-] 키보드 단축키는 input/textarea/select focus 중 텍스트 입력을 침범하지 않는다.
+- [-] Windows의 Ctrl과 macOS의 Cmd를 저장/전체 선택 등에 올바르게 매핑한다.
+
+진행 메모: 공통 `focus-visible` ring과 pointer/disabled 정책을 추가하고 키보드로 동작하는 비버튼 요소에 role, tabIndex, Enter/Space 처리를 적용했다. 모달 공통 hook은 첫 컨트롤 focus, Tab 순환, Escape, 이전 focus 복원, 배경 scroll 잠금을 처리한다. 폴더 툴바 dropdown은 화면 아래 공간이 부족하면 위로 열리고, 바깥 클릭과 Escape로 닫힌 뒤 trigger로 focus를 복원한다. 전역 단축키는 input/textarea/select/contenteditable 입력 중 실행되지 않으며 Windows/Linux Ctrl과 macOS Cmd를 구분한다. Organizer/Renamer/Metadata 실행은 동기 lock으로 빠른 중복 클릭을 차단하고, config/i18n/폴더 스캔은 unmount 후 늦은 IPC 응답의 state 변경을 막는다. 전체 197개 테스트와 프로덕션 빌드가 통과했다. 실제 화면에서 전체 Tab 순서를 처음부터 끝까지 이동하는 실기 검증은 남아 있다.
 
 ---
 
@@ -1054,77 +1066,79 @@
 
 ### 14.1 질문/확인 팝업
 
-- [ ] 업데이트 페이지 이동/업데이트 실행 확인
-- [ ] 설정 변경 후 앱 재시작 확인
-- [ ] 메타데이터 탭 파일 드롭 시 부모 폴더 전체 추가 여부
-- [ ] 작업 중 앱 종료 확인
-- [ ] 폴더/파일 실제 삭제 확인
-- [ ] 시리즈 메타데이터 초기화 확인
-- [ ] 시리즈 그룹 삭제 확인
-- [ ] API 검색 캐시 삭제 확인
-- [ ] 중복 매칭 캐시 삭제 확인
-- [ ] 폴더 인덱스 스마트 업데이트/강제 재스캔/취소 선택
-- [ ] 구조 정리/이름 변경 결과 후 다음 탭 계속 여부
+- [-] 업데이트 페이지 이동/업데이트 실행 확인
+- [-] 설정 변경 후 앱 재시작 확인
+- [-] 메타데이터 탭 파일 드롭 시 부모 폴더 전체 추가 여부
+- [-] 작업 중 앱 종료 확인
+- [-] 폴더/파일 실제 삭제 확인
+- [-] 시리즈 메타데이터 초기화 확인
+- [-] 시리즈 그룹 삭제 확인
+- [-] API 검색 캐시 삭제 확인
+- [-] 중복 매칭 캐시 삭제 확인
+- [-] 폴더 인덱스 스마트 업데이트/강제 재스캔/취소 선택
+- [-] 구조 정리/이름 변경 결과 후 다음 탭 계속 여부
 
 ### 14.2 정보/경고/오류
 
-- [ ] 실행 대상 없음
-- [ ] 추가 파일 중 nested archive 존재
-- [ ] 지원하지 않는 파일 존재
-- [ ] 파일이 존재하지 않음
-- [ ] 동일 이름 존재
-- [ ] 파일 rename 권한 오류
-- [ ] 일반 rename 오류
-- [ ] 외부 뷰어 미설정
-- [ ] 잘못된 이동 경로
-- [ ] CSV 데이터 없음/완료/실패
-- [ ] 실행 취소 기록 없음/실패
-- [ ] 누락 권수 없음
-- [ ] 등록 라이브러리 없음
-- [ ] 메타데이터 저장 실패
-- [ ] RAR/CBR 저장에 WinRAR 필요
-- [ ] 서버 포트 충돌/시작 실패/중지 실패
-- [ ] API key 누락/검색 실패/번역 실패
-- [ ] 작업 취소 완료
+- [-] 실행 대상 없음
+- [-] 추가 파일 중 nested archive 존재
+- [-] 지원하지 않는 파일 존재
+- [-] 파일이 존재하지 않음
+- [-] 동일 이름 존재
+- [-] 파일 rename 권한 오류
+- [-] 일반 rename 오류
+- [-] 외부 뷰어 미설정
+- [-] 잘못된 이동 경로
+- [-] CSV 데이터 없음/완료/실패
+- [-] 실행 취소 기록 없음/실패
+- [-] 누락 권수 없음
+- [-] 등록 라이브러리 없음
+- [-] 메타데이터 저장 실패
+- [-] RAR/CBR 저장에 WinRAR 필요
+- [-] 서버 포트 충돌/시작 실패/중지 실패
+- [-] API key 누락/검색 실패/번역 실패
+- [-] 작업 취소 완료
 
 ### 14.3 input 전수
 
-- [ ] 폴더 검색
-- [ ] 폴더/파일 단일 이름 변경
-- [ ] 여러 파일 이름 변경 기존/새 형식
-- [ ] 레이아웃 이름 저장
-- [ ] 삭제할 레이아웃 선택
-- [ ] 경로로 이동
-- [ ] 구조 정리 출력 경로
-- [ ] 구조 정리 자식 파일명
-- [ ] 내부 파일명 custom pattern
-- [ ] 내부 파일명 시작 번호
-- [ ] 메타데이터 검색어
-- [ ] 모든 ComicInfo text/number/date/multiline/tag 입력
-- [ ] API 검색 다이얼로그 검색어
-- [ ] 뷰어 경로
-- [ ] WebDAV 아이디/비밀번호
-- [ ] API secret key
-- [ ] 태그 치환 규칙 textarea
+- [-] 폴더 검색
+- [-] 폴더/파일 단일 이름 변경
+- [-] 여러 파일 이름 변경 기존/새 형식
+- [-] 레이아웃 이름 저장
+- [-] 삭제할 레이아웃 선택
+- [-] 경로로 이동
+- [-] 구조 정리 출력 경로
+- [-] 구조 정리 자식 파일명
+- [-] 내부 파일명 custom pattern
+- [-] 내부 파일명 시작 번호
+- [-] 메타데이터 검색어
+- [-] 모든 ComicInfo text/number/date/multiline/tag 입력
+- [-] API 검색 다이얼로그 검색어
+- [-] 뷰어 경로
+- [-] WebDAV 아이디/비밀번호
+- [-] API secret key
+- [-] 태그 치환 규칙 textarea
 
 ### 14.4 dropdown 전수
 
-- [ ] 환경설정 언어
-- [ ] 완료 알림 소리
-- [ ] 폰트
-- [ ] 폰트 배율
-- [ ] 출력 포맷
-- [ ] AI provider
-- [ ] 폴더 그룹 기준
-- [ ] 폴더 필터 checkable action
-- [ ] 폴더 정렬 기준/순서
-- [ ] 저장 레이아웃 적용/삭제
-- [ ] 라이브러리 이동 대상
-- [ ] 여러 파일 이름 변경 순번 위치
-- [ ] 내부 파일명 패턴
-- [ ] 메타데이터 검색 API
-- [ ] 메타데이터 Format/Manga/Yes-No/등급/언어 등 모든 combo
-- [ ] API 검색 다이얼로그 API
+- [-] 환경설정 언어
+- [-] 완료 알림 소리
+- [-] 폰트
+- [-] 폰트 배율
+- [-] 출력 포맷
+- [-] AI provider
+- [-] 폴더 그룹 기준
+- [-] 폴더 필터 checkable action
+- [-] 폴더 정렬 기준/순서
+- [-] 저장 레이아웃 적용/삭제
+- [-] 라이브러리 이동 대상
+- [-] 여러 파일 이름 변경 순번 위치
+- [-] 내부 파일명 패턴
+- [-] 메타데이터 검색 API
+- [-] 메타데이터 Format/Manga/Yes-No/등급/언어 등 모든 combo
+- [-] API 검색 다이얼로그 API
+
+진행 메모: 업데이트 페이지 이동과 시리즈 그룹 삭제에 기본값 `아니오` 확인을 추가했다. 분석 단계에서 nested archive와 기타 지원 불가 파일을 분리해 경고하고, RAR/CBR 메타데이터 저장 제한은 WinRAR 필요 조건과 CBZ/ZIP 변환 대안을 안내한다. 폴더 상단에 직접 경로 입력 및 Enter 이동을 추가하고 잘못된 경로는 경고한다. 질문·입력·dropdown의 실제 제어 연결을 정적 계약 테스트로 고정했으며 전체 203개 테스트와 프로덕션 빌드가 통과했다.
 
 ---
 
@@ -1132,34 +1146,34 @@
 
 ### 15.1 최소 샘플 세트
 
-- [ ] 정상 ZIP 1권
-- [ ] 정상 CBZ 1권
-- [ ] 다중 폴더 ZIP
-- [ ] 압축 안의 압축
-- [ ] ComicInfo.xml 포함 파일
-- [ ] ComicInfo.xml 미포함 파일
-- [ ] 커버 없는 파일
-- [ ] 한글/영문/일본어 파일명
-- [ ] 같은 이름 파일 2개
-- [ ] 손상 ZIP
-- [ ] 암호화 ZIP
+- [-] 정상 ZIP 1권
+- [-] 정상 CBZ 1권
+- [-] 다중 폴더 ZIP
+- [-] 압축 안의 압축
+- [-] ComicInfo.xml 포함 파일
+- [-] ComicInfo.xml 미포함 파일
+- [-] 커버 없는 파일
+- [-] 한글/영문/일본어 파일명
+- [-] 같은 이름 파일 2개
+- [-] 손상 ZIP
+- [-] 암호화 ZIP
 - [ ] RAR/CBR
-- [ ] 7z
-- [ ] 이미지 1장/9장/10장/99장/100장 파일
+- [-] 7z
+- [-] 이미지 1장/9장/10장/99장/100장 파일
 - [ ] NAS 또는 네트워크 경로 파일
 - [ ] 읽기 전용/권한 없는 경로 파일
 
 ### 15.2 회귀 흐름
 
-- [ ] 폴더 탭에서 파일 선택 → 구조 정리 탭 전달 → 실행 → 이름 변경 탭 계속
-- [ ] 이름 변경 실행 → 메타데이터 탭 계속 → API 검색 → 전체 저장
-- [ ] 폴더 탭에서 여러 파일 이름 변경 → 실행 취소
-- [ ] 폴더 탭에서 시리즈별 폴더 정리 → 라이브러리 이동 → 이름 충돌 해결
+- [-] 폴더 탭에서 파일 선택 → 구조 정리 탭 전달 → 실행 → 이름 변경 탭 계속
+- [-] 이름 변경 실행 → 메타데이터 탭 계속 → API 검색 → 전체 저장
+- [-] 폴더 탭에서 여러 파일 이름 변경 → 실행 취소
+- [-] 폴더 탭에서 시리즈별 폴더 정리 → 라이브러리 이동 → 이름 충돌 해결
 - [ ] 설정에서 포맷/WebP 변경 → 목록 초기화 알림 → 새 설정으로 재분석
 - [ ] 언어/폰트 변경 → 재시작 → 창/탭/설정 복원
-- [ ] OPDS/WebDAV 동시 실행 → 앱 종료 → 포트 정상 해제
-- [ ] 긴 작업 시작 → 취소 → 즉시 다른 작업 실행
-- [ ] 긴 작업 시작 → 앱 종료 거부 → 작업 계속
+- [-] OPDS/WebDAV 동시 실행 → 앱 종료 → 포트 정상 해제
+- [-] 긴 작업 시작 → 취소 → 즉시 다른 작업 실행
+- [-] 긴 작업 시작 → 앱 종료 거부 → 작업 계속
 - [ ] 긴 작업 시작 → 강제 종료 승인 → 원본 파일 무결성 검사
 
 ### 15.3 시각 회귀
@@ -1175,38 +1189,42 @@
 - [ ] 색상, 여백, 폭, 높이, 줄바꿈, scrollbar, hover, focus 차이를 기록한다.
 - [ ] 100% 배율과 125% 이상 배율에서 다시 비교한다.
 
+진행 메모: 임시 디렉터리에 ZIP/CBZ/CBR 확장자/7z, 다중 폴더, nested archive, ComicInfo 포함·미포함, 커버 없음, 한글·영문·일본어, 동명 파일, 손상·암호화 파일과 1/9/10/99/100장 경계 샘플을 생성하는 최소 corpus 테스트를 추가했다. CBR 확장자는 ZIP 컨테이너 호환 경로로 검증했으나 실제 RAR 컨테이너 샘플은 없어 `RAR/CBR` 항목은 완료 처리하지 않았다. Organizer 결과를 Renamer로 전달하고 Metadata에서 ComicInfo를 전체 저장한 뒤 아카이브 내용을 재검사했다. API 검색 결과의 필수 키 정책과 ComicInfo 메타데이터 변환 정책을 분리해 검증했다. 다중 파일 이름 변경은 실제 파일 rename 후 undo로 원래 경로와 내용을 복구하는 테스트를 추가했다. 시리즈 폴더 정리 후 라이브러리 이동은 이름 충돌 시 `rename` 선택으로 기존 파일과 신규 파일을 모두 보존하는 테스트를 추가했다. OPDS/WebDAV 동시 실행 후 전체 중지와 포트 재사용, 취소 정리 직후 다른 작업 실행, 종료 거부 시 작업 취소를 진행하지 않는 정책을 검증했다. Organizer/Renamer 취소 시 원본 바이트가 동일함도 확인했다. 15.3은 기준 스크린샷 32장 manifest, 탭별 개수, PNG 크기, 100%/125% 비교 배율 정책, 64개 현재 캡처 매트릭스, PNG 크기·픽셀 차이·차이율·최대 채널 차이 요약, 색상·여백·scrollbar·hover·focus 관련 CSS 계약을 테스트로 고정했다. 현재 환경에서는 Electron 현재 화면 캡처 파일을 생성해 기준 이미지와 대조하지 않았으므로 15.3 체크박스는 완료 처리하지 않았다. 전체 218개 테스트와 프로덕션 빌드가 통과했다. NAS·권한 제한 경로, API 실연동, 재시작 복원, 작업 도중 강제 종료, 실제 화면 캡처 비교는 후속 실기 검증이 필요하다.
+
 ---
 
 ## 16. 현재 구현 파일별 감사 대상
 
 아래 파일은 “구현됨” 표시가 아니라 원본과 대조해야 할 현재 코드 위치다.
 
-- [ ] `src/App.jsx` — 공통 툴바, 탭, 상태, 설정, Toast
-- [ ] `src/components/SettingsModal.jsx` — 환경설정 전체
-- [ ] `src/components/Toast.jsx` — Toast 수명/위치/중복
-- [ ] `src/tabs/FolderTab.jsx` — 폴더 탭 조합과 컨텍스트 메뉴
-- [ ] `src/components/folder/FolderSidebar.jsx` — 라이브러리/즐겨찾기/트리
-- [ ] `src/components/folder/FolderToolbar.jsx` — 그룹/필터/정렬/검색
-- [ ] `src/components/folder/FileTableView.jsx` — 상세 보기
-- [ ] `src/components/folder/ThumbnailView.jsx` — 썸네일 보기
-- [ ] `src/components/folder/TileView.jsx` — 타일 보기
-- [ ] `src/components/folder/DetailPanel.jsx` — 상세 정보
-- [ ] `src/components/folder/MissingVolumesDialog.jsx` — 누락 권수
-- [ ] `src/tabs/OrganizerTab.jsx` — 구조 정리 UI
-- [ ] `src/tabs/RenamerTab.jsx` — 내부 파일명 UI
-- [ ] `src/tabs/MetadataTab.jsx` — 메타 입력/API 검색/저장
-- [ ] `src/tabs/SharingTab.jsx` — OPDS/WebDAV UI
-- [ ] `src/tabs/ReleaseTab.jsx` — 릴리즈 노트
-- [ ] `electron/ipcHandlers.js` — renderer/main 경계의 모든 입력 검증
-- [ ] `electron/configManager.js` — 설정 호환과 원자적 저장
-- [ ] `electron/tasks/folderScanTask.js` — 폴더/메타/커버 스캔
-- [ ] `electron/tasks/organizerTask.js` — 구조 분석
-- [ ] `electron/tasks/organizeTask.js` — 구조 정리 실행
-- [ ] `electron/tasks/renamerTask.js` — 내부 이름 분석/실행
-- [ ] `electron/tasks/metadataTask.js` — 메타 분석/API 처리
-- [ ] `electron/tasks/saveTask.js` — ComicInfo 저장
-- [ ] `electron/servers/sharingServers.js` — OPDS/WebDAV 호환성
-- [ ] `electron/database/library_db.js` — 인덱스/중복/시리즈 그룹
+- [-] `src/App.jsx` — 공통 툴바, 탭, 상태, 설정, Toast
+- [-] `src/components/SettingsModal.jsx` — 환경설정 전체
+- [-] `src/components/Toast.jsx` — Toast 수명/위치/중복
+- [-] `src/tabs/FolderTab.jsx` — 폴더 탭 조합과 컨텍스트 메뉴
+- [-] `src/components/folder/FolderSidebar.jsx` — 라이브러리/즐겨찾기/트리
+- [-] `src/components/folder/FolderToolbar.jsx` — 그룹/필터/정렬/레이아웃
+- [-] `src/components/folder/FileTableView.jsx` — 상세 보기
+- [-] `src/components/folder/ThumbnailView.jsx` — 썸네일 보기
+- [-] `src/components/folder/TileView.jsx` — 타일 보기
+- [-] `src/components/folder/DetailPanel.jsx` — 상세 정보
+- [-] `src/components/folder/MissingVolumesDialog.jsx` — 누락 권수
+- [-] `src/tabs/OrganizerTab.jsx` — 구조 정리 UI
+- [-] `src/tabs/RenamerTab.jsx` — 내부 파일명 UI
+- [-] `src/tabs/MetadataTab.jsx` — 메타 입력/API 검색/저장
+- [-] `src/tabs/SharingTab.jsx` — OPDS/WebDAV UI
+- [-] `src/tabs/ReleaseTab.jsx` — 릴리즈 노트
+- [-] `electron/ipcHandlers.js` — renderer/main 경계의 모든 입력 검증
+- [-] `electron/configManager.js` — 설정 호환과 원자적 저장
+- [-] `electron/tasks/folderScanTask.js` — 폴더/메타/커버 스캔
+- [-] `electron/tasks/organizerTask.js` — 구조 분석
+- [-] `electron/tasks/organizeTask.js` — 구조 정리 실행
+- [-] `electron/tasks/renamerTask.js` — 내부 이름 분석/실행
+- [-] `electron/tasks/metadataTask.js` — 메타 분석/API 처리
+- [-] `electron/tasks/saveTask.js` — ComicInfo 저장
+- [-] `electron/servers/sharingServers.js` — OPDS/WebDAV 호환성
+- [-] `electron/database/library_db.js` — 인덱스/중복/시리즈 그룹
+
+진행 메모: 16번의 26개 구현 감사 대상 파일을 `IMPLEMENTATION_AUDIT_TARGETS`로 목록화하고 각 파일의 핵심 책임 단서가 실제 코드에 남아 있는지 정적 테스트로 고정했다. `FolderToolbar`의 검색 책임은 현재 `FolderTab` 인라인 검색 UI에 있으므로 감사 단서는 그룹/필터/정렬/레이아웃으로 잡고, 검색은 `FolderTab`의 `searchQuery` 경로에서 확인한다. 이 테스트는 파일 존재, 중복 없는 대상 목록, 책임 단서 4개 이상을 검증한다. 전체 220개 테스트와 Vite 프로덕션 빌드가 통과했다. 원본 화면과의 최종 동작·시각 대조는 15.3 및 17번 출시 게이트에서 계속 확인해야 한다.
 
 ---
 

@@ -3,6 +3,7 @@
 .roo
 .vscode
 /old_project
+/data
 .idea/
 
 # Local Markdown documents

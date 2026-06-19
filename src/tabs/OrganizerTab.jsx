@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { filterExistingResultPaths } from '../resultLog';
@@ -14,11 +14,10 @@ import {
   titleOutputPath,
 } from '../organizerPolicy';
 import '../styles/OrganizerTab.css';
-import dragDropImage1 from '../images/draganddrop1.png';
-import dragDropImage2 from '../images/draganddrop2.png';
-import dragDropImage3 from '../images/draganddrop3.png';
-
-const DRAG_DROP_IMAGES = [dragDropImage1, dragDropImage2, dragDropImage3];
+import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
+import { shouldPlayCompletionSound } from '../completionSoundPolicy';
+import { shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { partitionSkippedFiles } from '../notificationPolicy';
 
 function OrganizerTab({ config, t, showToast }) {
   const language = config?.language || config?.lang || 'ko';
@@ -31,11 +30,12 @@ function OrganizerTab({ config, t, showToast }) {
   const [lastResult, setLastResult] = useState(null);
   const [taskPhase, setTaskPhase] = useState('idle');
   const [selectedItemId, setSelectedItemId] = useState('');
+  const executeLockRef = useRef(false);
   const [skippedFiles, setSkippedFiles] = useState([]);
   const [editingVolume, setEditingVolume] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const emptyImage = useMemo(
-    () => DRAG_DROP_IMAGES[Math.floor(Math.random() * DRAG_DROP_IMAGES.length)],
+    () => selectRandomResource(DRAG_DROP_IMAGES),
     [],
   );
 
@@ -96,6 +96,23 @@ function OrganizerTab({ config, t, showToast }) {
       setSkippedFiles(prev => [...new Set([...prev, ...(result.skippedFiles || [])])]);
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_unsupported_format')} ${result.skippedFiles.join(', ')}`);
+        const skipped = partitionSkippedFiles(result.skippedFiles);
+        if (skipped.nested.length > 0) {
+          await window.electronAPI?.showMessage?.({
+            type: 'warning',
+            title: t('dlg_warn'),
+            message: `${t('msg_nested_archive')}${skipped.nested.join('\n')}`,
+            language,
+          });
+        }
+        if (skipped.unsupported.length > 0) {
+          await window.electronAPI?.showMessage?.({
+            type: 'warning',
+            title: t('dlg_warn'),
+            message: `${t('msg_unsupported_format')}${skipped.unsupported.join('\n')}`,
+            language,
+          });
+        }
       } else {
         setStatusMessage(t('msg_done'));
       }
@@ -246,6 +263,7 @@ function OrganizerTab({ config, t, showToast }) {
   }, []);
 
   const handleExecute = async () => {
+    if (executeLockRef.current) return;
     if (selectedCount === 0) {
       setStatusMessage(t('msg_no_targets'));
       await window.electronAPI?.showMessage?.({
@@ -257,6 +275,7 @@ function OrganizerTab({ config, t, showToast }) {
       return;
     }
 
+    executeLockRef.current = true;
     setIsWorking(true);
     setTaskPhase('executing');
     setProgress(0);
@@ -290,7 +309,7 @@ function OrganizerTab({ config, t, showToast }) {
       const message = t('msg_job_done', [success, result.stats?.skip?.length || 0, errors]);
       setStatusMessage(message);
       showToast?.(message);
-      if (config?.play_sound !== false) {
+      if (shouldPlayCompletionSound(config, success, result.cancelled)) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {
@@ -301,6 +320,7 @@ function OrganizerTab({ config, t, showToast }) {
         language,
       });
     } finally {
+      executeLockRef.current = false;
       setProgress(0);
       setStatusMessage(t('status_wait'));
       setIsWorking(false);
@@ -349,8 +369,7 @@ function OrganizerTab({ config, t, showToast }) {
   useEffect(() => {
     const handleKeyDown = event => {
       if (isWorking || editingVolume) return;
-      const tag = event.target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (!shouldHandleGlobalShortcut(event)) return;
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
         handleRemoveHighlighted();
@@ -401,7 +420,19 @@ function OrganizerTab({ config, t, showToast }) {
                     className="org-tree-row org-root-row"
                     onClick={() => setSelectedItemId(item.id)}
                   >
-                    <div className="org-col-name" onClick={() => handleToggleExpand(item.id)}>
+                    <div
+                      className="org-col-name"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={expandedItems.has(item.id)}
+                      onClick={() => handleToggleExpand(item.id)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          handleToggleExpand(item.id);
+                        }
+                      }}
+                    >
                       <span className="org-expand-icon">{expandedItems.has(item.id) ? '▼' : '▶'}</span>
                       <input
                         type="checkbox"

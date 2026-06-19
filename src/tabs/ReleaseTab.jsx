@@ -1,78 +1,141 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { normalizeReleaseList, parseReleaseMarkdown } from '../releasePolicy';
 import '../styles/ReleaseTab.css';
 
-/**
- * Release 탭 컴포넌트
- * 업데이트 및 릴리즈 노트
- */
-function ReleaseTab({ config, t }) {
-  const [releases, setReleases] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let isMounted = true;
-    const loadReleases = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const result = await window.electronAPI?.getReleases?.();
-        if (!isMounted) return;
-        if (Array.isArray(result)) {
-          setReleases(result);
-        } else {
-          setError(result?.error || '');
-          setReleases(result?.releases || []);
+function InlineContent({ tokens, onOpenExternal }) {
+    return tokens.map((token, index) => {
+        if (token.type === 'link') {
+            return (
+                <button
+                    key={`${token.url}-${index}`}
+                    type="button"
+                    className="release-inline-link"
+                    onClick={() => onOpenExternal(token.url)}
+                >
+                    {token.label}
+                </button>
+            );
         }
-      } catch (loadError) {
-        if (!isMounted) return;
-        setError(loadError.message);
-        setReleases([]);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
+        if (token.type === 'strong') {
+            return <strong key={index}>{token.value}</strong>;
+        }
+        if (token.type === 'code') {
+            return <code key={index}>{token.value}</code>;
+        }
+        return <React.Fragment key={index}>{token.value}</React.Fragment>;
+    });
+}
+
+function MarkdownBody({ markdown, onOpenExternal }) {
+    const blocks = useMemo(() => parseReleaseMarkdown(markdown), [markdown]);
+
+    return blocks.map((block, index) => {
+        const key = `${block.type}-${index}`;
+        if (block.type === 'heading') {
+            const Heading = block.level === 1 ? 'h2' : 'h3';
+            return <Heading key={key}><InlineContent tokens={block.content} onOpenExternal={onOpenExternal} /></Heading>;
+        }
+        if (block.type === 'list') {
+            const List = block.items.every(item => item.ordered) ? 'ol' : 'ul';
+            return (
+                <List key={key}>
+                    {block.items.map((item, itemIndex) => (
+                        <li key={itemIndex}>
+                            <InlineContent tokens={item.content} onOpenExternal={onOpenExternal} />
+                        </li>
+                    ))}
+                </List>
+            );
+        }
+        if (block.type === 'code') {
+            return <pre key={key}><code>{block.value}</code></pre>;
+        }
+        return (
+            <p key={key}>
+                <InlineContent tokens={block.content} onOpenExternal={onOpenExternal} />
+            </p>
+        );
+    });
+}
+
+function ReleaseTab({ t }) {
+    const [releases, setReleases] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        let isMounted = true;
+
+        window.electronAPI?.getReleases?.()
+            .then(result => {
+                if (!isMounted) return;
+                const items = Array.isArray(result) ? result : result?.releases;
+                setReleases(normalizeReleaseList(items));
+                setError(Array.isArray(result) ? '' : String(result?.error || ''));
+            })
+            .catch(loadError => {
+                if (!isMounted) return;
+                setError(loadError.message || 'NETWORK_ERROR');
+                setReleases([]);
+            })
+            .finally(() => {
+                if (isMounted) setLoading(false);
+            });
+
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    const openExternal = url => {
+        window.electronAPI?.openExternal?.(url).catch(openError => {
+            setError(openError.message || 'OPEN_EXTERNAL_FAILED');
+        });
     };
 
-    loadReleases();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  return (
-    <div className="release-tab">
-      <div className="release-scroll-area">
-        <div className="release-content-container">
-          
-          {loading ? (
-            <div className="release-loading">릴리즈 노트를 불러오는 중...</div>
-          ) : releases.length === 0 ? (
-            <div className="release-error">릴리즈 노트를 불러오는데 실패했습니다.{error ? ` (${error})` : ''}</div>
-          ) : (
-            <>
-              {error && <div className="release-error compact">릴리즈 정보를 온라인에서 가져오지 못했습니다. {error}</div>}
-              {releases.map(item => (
-              <div key={item.id || item.tag || item.name} className="release-card">
-                <div className="release-card-title">
-                  <FaIcon name="archive" /> {item.name} <span className="release-card-date">({item.date})</span>
+    return (
+        <div className="release-tab">
+            <div className="release-scroll-area">
+                <div className="release-content-container">
+                    {loading ? (
+                        <div className="release-loading">{t('msg_loading_list')}</div>
+                    ) : releases.length === 0 ? (
+                        <div className="release-error">{t('msg_release_load_fail')}</div>
+                    ) : (
+                        <>
+                            {error && (
+                                <div className="release-error compact">
+                                    {t('msg_release_load_fail')}
+                                </div>
+                            )}
+                            {releases.map(item => (
+                                <article key={item.id} className="release-card">
+                                    <div className="release-card-title">
+                                        <FaIcon name="archive" size={18} />
+                                        <span>{item.name}</span>
+                                        {item.date && <span className="release-card-date">({item.date})</span>}
+                                    </div>
+                                    <div className="release-card-body">
+                                        <MarkdownBody markdown={item.body} onOpenExternal={openExternal} />
+                                    </div>
+                                    {item.url && (
+                                        <button
+                                            type="button"
+                                            className="release-card-link"
+                                            onClick={() => openExternal(item.url)}
+                                        >
+                                            GitHub
+                                        </button>
+                                    )}
+                                </article>
+                            ))}
+                        </>
+                    )}
                 </div>
-                <div 
-                  className="release-card-body" 
-                  dangerouslySetInnerHTML={{ __html: item.body }} 
-                />
-                {item.url && (
-                  <a className="release-card-link" href={item.url} target="_blank" rel="noreferrer">GitHub에서 보기</a>
-                )}
-              </div>
-              ))}
-            </>
-          )}
-
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 }
 
 export { ReleaseTab };

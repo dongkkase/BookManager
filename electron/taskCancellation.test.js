@@ -69,3 +69,16 @@ test('각 작업 루프는 파일 처리 전 취소 요청을 반영한다', asy
     assert.deepEqual(renamer.stats.error, []);
     assert.deepEqual(metadata.stats.error, []);
 });
+
+test('취소된 작업 정리 직후 같은 창에서 새 작업을 시작할 수 있다', async () => {
+    const registry = new TaskCancellationRegistry();
+    const first = registry.start(1, 'organizer');
+    assert.equal(registry.cancel(1, 'organizer'), true);
+    registry.finish(1, 'organizer', first);
+
+    const second = registry.start(1, 'renamer');
+    assert.equal(second.shouldCancel(), false);
+    assert.equal(registry.hasActive(1), true);
+    registry.finish(1, 'renamer', second);
+    assert.equal(registry.hasActive(1), false);
+});

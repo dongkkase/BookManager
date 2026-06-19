@@ -33,6 +33,7 @@ import {
   faLayerGroup,
   faLink,
   faMagnifyingGlass,
+  faPowerOff,
   faRocket,
   faSquareCheck,
   faSquare,
@@ -57,6 +58,7 @@ const ICONS = {
   checkSquare: faSquareCheck,
   square: faSquare,
   stopCircle: faStopCircle,
+  powerOff: faPowerOff,
   bug: faBug,
   circleCheck: faCircleCheck,
   gear: faGear,
@@ -93,6 +95,8 @@ const ICONS = {
   link: faLink,
 };
 
+export const ICON_NAMES = Object.freeze(Object.keys(ICONS));
+
 function FaIcon({ name, className = '', title, size = 14 }) {
   const icon = ICONS[name];
   if (!icon) return null;
@@ -103,7 +107,10 @@ function FaIcon({ name, className = '', title, size = 14 }) {
       className={`fa-icon ${className}`.trim()}
       title={title}
       aria-hidden={title ? undefined : true}
-      style={{ width: size, height: size }}
+      style={{
+        width: `calc(${size}px * var(--font-scale, 1))`,
+        height: `calc(${size}px * var(--font-scale, 1))`,
+      }}
     />
   );
 }

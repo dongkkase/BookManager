@@ -17,6 +17,7 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
         max_threads: 99,
         font_scale: 77,
         dup_check_folders: ['/Books'],
+        api_keys: { custom_provider: 'keep-me' },
     }, 8);
 
     assert.equal(normalized.language, 'ja');
@@ -27,6 +28,7 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.max_threads, 6);
     assert.equal(normalized.font_scale, 80);
     assert.deepEqual(normalized.libraries, ['/Books']);
+    assert.equal(normalized.api_keys.custom_provider, 'keep-me');
 });
 
 test('folder paths are deduplicated without changing first occurrence order', () => {

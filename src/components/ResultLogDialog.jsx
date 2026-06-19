@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { canContinueResult, formatResultLog, normalizeResultStats } from '../resultLog';
+import { useModalAccessibility } from '../hooks/useModalAccessibility';
 
 export function ResultLogDialog({
   result,
@@ -11,6 +12,7 @@ export function ResultLogDialog({
 }) {
   const continueHandledRef = useRef(false);
   const closeButtonRef = useRef(null);
+  const dialogRef = useModalAccessibility(Boolean(result), onClose);
   const stats = useMemo(() => normalizeResultStats(result?.stats), [result?.stats]);
   const logContent = useMemo(() => formatResultLog(stats), [stats]);
   const showContinue = Boolean(
@@ -23,17 +25,6 @@ export function ResultLogDialog({
     continueHandledRef.current = false;
     closeButtonRef.current?.focus();
   }, [result]);
-
-  useEffect(() => {
-    const handleKeyDown = event => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose?.();
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [onClose]);
 
   const handleContinue = () => {
     if (continueHandledRef.current) return;
@@ -48,10 +39,12 @@ export function ResultLogDialog({
       onMouseDown={event => event.stopPropagation()}
     >
       <section
+        ref={dialogRef}
         className="result-log-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="result-log-title"
+        tabIndex={-1}
       >
         <h2 id="result-log-title">{t('log_title')}</h2>
         <div className="result-log-summary">

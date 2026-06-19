@@ -20,9 +20,10 @@ import os from 'os';
 import crypto from 'crypto';
 import { parseStringPromise } from 'xml2js';
 import { getLibraryDB } from '../database/library_db.js';
+import { resolveThumbnailDir } from '../dataPaths.js';
 
 class LibraryExtractWorker extends EventEmitter {
-  constructor(filepaths, sevenZipPath, thumbDir) {
+  constructor(filepaths, sevenZipPath, thumbDir = resolveThumbnailDir(process.cwd())) {
     super();
     this.filepaths = filepaths;
     this.sevenZipPath = sevenZipPath;

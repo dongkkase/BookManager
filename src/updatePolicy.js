@@ -16,11 +16,16 @@ export function compareVersions(left, right) {
     return 0;
 }
 
+export function shouldOpenUpdatePage(response) {
+    return response === 'yes';
+}
+
 export function resolveUpdateInfo(currentVersion, releasesResult) {
     const releases = Array.isArray(releasesResult)
         ? releasesResult
         : releasesResult?.releases || [];
     const candidates = releases
+        .filter(release => !release?.draft && !release?.prerelease)
         .map(release => ({
             version: parseVersion(release.tag || release.name)?.join('.'),
             url: release.url || '',

@@ -6,11 +6,21 @@ import { emitStatusState } from '../statusState';
 import {
     adjacentSelectionAfterRemoval,
     clampMetadataNumber,
-    cleanMetadataSummary,
     inferMetadataFromArchiveName,
 } from '../metadataPolicy';
 import '../styles/MetadataTab.css';
-import dragDropImage from '../images/draganddrop1.png';
+import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
+import { shouldPlayCompletionSound } from '../completionSoundPolicy';
+import {
+  hasPrimaryModifier as hasPlatformPrimaryModifier,
+  isTextEntryTarget,
+} from '../interactionPolicy';
+import { partitionSkippedFiles } from '../notificationPolicy';
+import {
+  apiSourceHasRequiredKey,
+  metadataFromApiResult,
+  requiredApiKeyForSource,
+} from '../metadataApiPolicy';
 
 const API_SOURCES = ['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine'];
 
@@ -100,8 +110,7 @@ const TAG_OPTIONS = [
 ];
 
 function isMetadataTextInput(target) {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+  return isTextEntryTarget(target);
 }
 
 function shortcutCode(event) {
@@ -114,9 +123,7 @@ function isMacPlatform() {
 }
 
 function hasPrimaryModifier(event) {
-  return isMacPlatform()
-    ? event.metaKey && !event.ctrlKey
-    : event.ctrlKey && !event.metaKey;
+  return hasPlatformPrimaryModifier(event, isMacPlatform() ? 'MacIntel' : 'Win32');
 }
 
 function groupItems(items) {
@@ -142,7 +149,9 @@ function similarity(a = '', b = '') {
 }
 
 function MetadataTab({ config, saveConfig, t, showToast }) {
+  const dragDropImage = useMemo(() => selectRandomResource(DRAG_DROP_IMAGES), []);
   const [fileList, setFileList] = useState([]);
+  const saveLockRef = useRef(false);
   const [selectedFileId, setSelectedFileId] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
@@ -255,6 +264,23 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       if (items[0]) setSelectedGroup('');
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_unsupported_format')}: ${result.skippedFiles.join(', ')}`);
+        const skipped = partitionSkippedFiles(result.skippedFiles);
+        if (skipped.nested.length > 0) {
+          await window.electronAPI?.showMessage?.({
+            type: 'warning',
+            title: t('dlg_warn'),
+            message: `${t('msg_nested_archive')}${skipped.nested.join('\n')}`,
+            language: config?.language || config?.lang || 'ko',
+          });
+        }
+        if (skipped.unsupported.length > 0) {
+          await window.electronAPI?.showMessage?.({
+            type: 'warning',
+            title: t('dlg_warn'),
+            message: `${t('msg_unsupported_format')}${skipped.unsupported.join('\n')}`,
+            language: config?.language || config?.lang || 'ko',
+          });
+        }
       } else {
         setStatusMessage(t('msg_done'));
       }
@@ -441,9 +467,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
     const cleanQuery = String(query || '').trim();
     if (!cleanQuery) return;
-    const keyMap = { '알라딘': 'aladin', 'Google Books': 'google', Vine: 'vine' };
-    const requiredKey = keyMap[source];
-    if (requiredKey && !String(config?.api_keys?.[requiredKey] || '').trim()) {
+    const requiredKey = requiredApiKeyForSource(source);
+    if (!apiSourceHasRequiredKey(source, config?.api_keys || {})) {
       setApiSearch(prev => ({
         ...prev,
         open: true,
@@ -535,11 +560,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleSelectApiResult = (result) => {
-    applyMetadataToBatch({
-      ...(result.metadata || {}),
-      Summary: cleanMetadataSummary(result.metadata?.Summary || result.summary || ''),
-      Manga: result.metadata?.Manga || 'YesAndRightToLeft',
-    });
+    applyMetadataToBatch(metadataFromApiResult(result));
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage('검색 결과를 일괄 편집창에 불러왔습니다.');
     showToast?.({ key: 't3_msg_applied_series_tag' });
@@ -662,6 +683,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleSave = async (all = false) => {
+    if (saveLockRef.current) return;
     const targets = all
       ? fileList.filter(item => item.checked !== false)
       : activeItem ? [{ ...activeItem, checked: true }] : [];
@@ -676,6 +698,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       return;
     }
 
+    saveLockRef.current = true;
     setIsWorking(true);
     setTaskPhase('executing');
     setProgress(0);
@@ -701,7 +724,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));
       setStatusMessage(message);
       showToast?.(message);
-      if (success > 0 && config?.play_sound !== false) {
+      if (shouldPlayCompletionSound(config, success, false)) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {
@@ -712,6 +735,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     } finally {
+      saveLockRef.current = false;
       setProgress(0);
       setStatusMessage(t('status_wait'));
       setIsWorking(false);
@@ -731,10 +755,21 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   useEffect(() => {
-    const handleDelete = (event) => {
+    const handleDelete = async (event) => {
       if (event.key !== 'Delete' || apiSearch.open || isWorking || isMetadataTextInput(event.target)) return;
       if (!selectedFileId && !selectedGroup) return;
       event.preventDefault();
+      if (selectedGroup) {
+        const response = await window.electronAPI?.showMessage?.({
+          type: 'question',
+          title: t('dlg_warn'),
+          message: t('t3_msg_delete_series_group'),
+          buttons: 'yes-no',
+          defaultChoice: 'no',
+          language: config?.language || config?.lang || 'ko',
+        });
+        if (response !== 'yes') return;
+      }
       setFileList(prev => {
         const removedIds = selectedGroup
           ? prev.filter(item => item.group === selectedGroup).map(item => item.id)
@@ -747,7 +782,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     };
     window.addEventListener('keydown', handleDelete, true);
     return () => window.removeEventListener('keydown', handleDelete, true);
-  }, [apiSearch.open, isWorking, selectedFileId, selectedGroup]);
+  }, [apiSearch.open, config?.lang, config?.language, isWorking, selectedFileId, selectedGroup, t]);
 
   useEffect(() => {
     const handleAppAction = (event) => {

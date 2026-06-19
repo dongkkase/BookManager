@@ -3,6 +3,7 @@ import { FaIcon } from '../FaIcon';
 import { normalizeColumnLayout } from '../../folderColumnLayout';
 import { groupFolderFiles } from '../../folderViewState';
 import { CoverImage } from './CoverImage';
+import { FolderEmptyState } from './FolderEmptyState';
 
 /**
  * FileTableView - 파일 테이블 뷰 컴포넌트
@@ -160,10 +161,7 @@ const FileTableView = forwardRef(({
         </tbody>
       </table>
       {files.length === 0 && (
-        <div className="empty-folder-page">
-          <div style={{ fontSize: '48px', opacity: 0.5 }}><FaIcon name="folder" size={48} /></div>
-          <div>파일이 없습니다</div>
-        </div>
+        <FolderEmptyState t={t} />
       )}
     </div>
   );

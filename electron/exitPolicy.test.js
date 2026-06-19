@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createExitDialogOptions, normalizeRuntimeState } from './exitPolicy.js';
+import {
+    createExitDialogOptions,
+    normalizeRuntimeState,
+    shouldProceedWithExit,
+} from './exitPolicy.js';
 
 test('종료 경고는 아니오를 기본 및 취소 선택으로 사용한다', () => {
     const options = createExitDialogOptions('ko');
@@ -22,4 +26,10 @@ test('렌더러 종료 상태를 안전한 기본값으로 정규화한다', () 
         activeTab: 'renamer',
     });
     assert.equal(normalizeRuntimeState({ language: 'invalid' }).language, 'ko');
+});
+
+test('종료 거부는 작업 취소와 창 닫기를 진행하지 않는다', () => {
+    assert.equal(shouldProceedWithExit(0), true);
+    assert.equal(shouldProceedWithExit(1), false);
+    assert.equal(shouldProceedWithExit(undefined), false);
 });

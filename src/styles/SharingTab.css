@@ -45,7 +45,7 @@
   padding: 0 5px;
   color: #60a5fa;
   font-weight: bold;
-  font-size: 13px;
+  font-size: var(--font-base);
 }
 
 .sharing-groupbox-content {
@@ -86,13 +86,13 @@
 /* Typography & Labels */
 .sharing-desc {
   color: #a1a1aa;
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .sharing-label {
   color: #a1a1aa;
   font-weight: bold;
-  font-size: 13px;
+  font-size: var(--font-base);
 }
 
 /* Inputs */
@@ -103,7 +103,7 @@
   border: 1px solid #27272a;
   border-radius: 6px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--font-base);
 }
 
 .sharing-input:focus,
@@ -144,7 +144,8 @@
   border: none;
   color: #a1a1aa;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-md);
+  padding: 4px;
 }
 
 /* Buttons */
@@ -155,7 +156,7 @@
   border-radius: 6px;
   padding: 8px 15px;
   font-weight: bold;
-  font-size: 13px;
+  font-size: var(--font-base);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -164,6 +165,13 @@
 
 .sharing-btn-toggle:hover {
   background-color: #366cb5;
+}
+
+.sharing-btn-toggle:disabled,
+.sharing-btn-copy:disabled,
+.sharing-btn-pw-eye:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .sharing-btn-toggle.running {
@@ -181,7 +189,7 @@
   border: 1px solid #27272a;
   border-radius: 6px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--font-base);
 }
 
 .sharing-input-url:focus {
@@ -195,7 +203,7 @@
   border-radius: 6px;
   padding: 8px 15px;
   font-weight: bold;
-  font-size: 13px;
+  font-size: var(--font-base);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -216,16 +224,22 @@
   width: 100%;
   height: 100%;
   font-family: Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--font-sm);
   background-color: #09090b;
   color: #d4d4d8;
   border: 1px solid #27272a;
   border-radius: 6px;
   padding: 10px;
   box-sizing: border-box;
-  resize: none;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .sharing-log-console:focus {
   outline: none;
+}
+
+.sharing-log-error {
+  color: #ef4444;
 }

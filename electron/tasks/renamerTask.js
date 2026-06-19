@@ -3,6 +3,7 @@ import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
+import { missingBinaryMessage } from '../binaryPolicy.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
@@ -159,7 +160,12 @@ async function listWith7z(filePath, sevenZExe) {
     }
   }
   if (current?.name) entries.push(current);
-  return entries.filter(entry => entry.name !== path.basename(filePath));
+  const archivePath = normalizeInnerPath(path.resolve(filePath)).toLowerCase();
+  const archiveName = path.basename(filePath).normalize('NFC').toLowerCase();
+  return entries.filter(entry => {
+    const entryName = normalizeInnerPath(entry.name).toLowerCase();
+    return entryName !== archivePath && entryName !== archiveName;
+  });
 }
 
 function imageMime(entryPath) {
@@ -172,7 +178,7 @@ function imageMime(entryPath) {
 }
 
 export async function extractRenamerImage(filePath, entryPath, sevenZExe) {
-  if (!sevenZExe) return { success: false, message: '7za executable not found.' };
+  if (!sevenZExe) return { success: false, message: missingBinaryMessage('7z') };
   return new Promise(resolve => {
     const child = spawn(sevenZExe, ['x', '-so', filePath, entryPath], {
       windowsHide: true,
@@ -415,7 +421,7 @@ async function optimizeExtractedImages(rootDir, item, options) {
 
 async function processRenamerItem(item, options) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error('7za executable not found.');
+  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const sourcePath = item.filepath;
   const filename = path.basename(sourcePath);

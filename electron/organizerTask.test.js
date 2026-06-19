@@ -75,6 +75,7 @@ test('Organizer 취소는 원본을 보존하고 결과를 만들지 않는다',
         fs.writeFileSync(path.join(input, '001.png'), Buffer.from('page'));
         const source = path.join(root, 'Cancel.zip');
         spawnSync(sevenZExe, ['a', '-tzip', source, '*'], { cwd: input, stdio: 'ignore' });
+        const original = fs.readFileSync(source);
         const analyzed = await analyzeOrganizerInputs([source], { sevenZExe, lang: 'ko' });
 
         const result = await executeOrganizer(analyzed.items, {
@@ -86,6 +87,7 @@ test('Organizer 취소는 원본을 보존하고 결과를 만들지 않는다',
         assert.equal(result.cancelled, true);
         assert.deepEqual(result.createdFiles, []);
         assert.equal(fs.existsSync(source), true);
+        assert.deepEqual(fs.readFileSync(source), original);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

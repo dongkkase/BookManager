@@ -116,6 +116,7 @@ test('실행 전 취소 요청은 원본을 보존한다', async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-cancel-'));
     try {
         const source = createArchive(sevenZExe, root, 'Cancel', { '1.png': PNG_1X1 });
+        const original = fs.readFileSync(source);
         const analyzed = await analyzeRenamerInputs([source], { sevenZExe });
         const result = await executeRenamer(analyzed.items, {
             sevenZExe,
@@ -123,6 +124,7 @@ test('실행 전 취소 요청은 원본을 보존한다', async t => {
         });
         assert.equal(result.cancelled, true);
         assert.equal(fs.existsSync(source), true);
+        assert.deepEqual(fs.readFileSync(source), original);
         assert.deepEqual(result.outputFiles, []);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });

@@ -40,3 +40,7 @@ export function createExitDialogOptions(language = 'ko') {
         noLink: true,
     };
 }
+
+export function shouldProceedWithExit(response) {
+    return response === 0;
+}

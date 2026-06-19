@@ -1,6 +1,7 @@
 import React from 'react';
 import { FaIcon } from './FaIcon';
 import { normalizeSettingsConfig, safeThreadLimit, uniquePaths } from '../settingsPolicy';
+import { useModalAccessibility } from '../hooks/useModalAccessibility';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -61,6 +62,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const [soundOptions, setSoundOptions] = React.useState(['Default.wav']);
   const [showApiManual, setShowApiManual] = React.useState(false);
   const threadMax = React.useMemo(() => safeThreadMax(), []);
+  const handleCancel = React.useCallback(() => {
+    setLocalConfig(normalizeConfig(config));
+    onClose?.();
+  }, [config, onClose]);
+  const dialogRef = useModalAccessibility(isOpen, () => {
+    if (showApiManual) setShowApiManual(false);
+    else handleCancel();
+  });
 
   React.useEffect(() => {
     if (isOpen) {
@@ -81,18 +90,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
       cancelled = true;
     };
   }, [isOpen]);
-
-  React.useEffect(() => {
-    if (!isOpen) return undefined;
-    const handleEscape = event => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      if (showApiManual) setShowApiManual(false);
-      else handleCancel();
-    };
-    window.addEventListener('keydown', handleEscape, true);
-    return () => window.removeEventListener('keydown', handleEscape, true);
-  });
 
   if (!isOpen || !localConfig) return null;
 
@@ -125,11 +122,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     const nextConfig = normalizeSettingsConfig(localConfig, navigator.hardwareConcurrency || 4);
     onSave?.(nextConfig);
     onClose?.(nextConfig);
-  };
-
-  const handleCancel = () => {
-    setLocalConfig(normalizeConfig(config));
-    onClose?.();
   };
 
   const handleSelectViewer = async () => {
@@ -186,7 +178,10 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     setMaintenanceBusy('index');
     setMaintenanceMessage('');
     try {
-      const result = await window.electronAPI?.updateFolderIndex?.(localConfig.dup_check_folders || []);
+      const result = await window.electronAPI?.updateFolderIndex?.(localConfig.dup_check_folders || [], {
+        priorityFolder: localConfig.last_selected_library,
+        language: localConfig.language || localConfig.lang || 'ko',
+      });
       const message = `${label('setting_update_index_msg', '대상 폴더의 변경사항을 확인하고 인덱스를 최신 상태로 갱신했습니다.')} (${result?.total || 0})`;
       setMaintenanceMessage(message);
       showToast?.({
@@ -258,10 +253,18 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
   return (
     <div className="modal-overlay" onClick={handleCancel}>
-      <div className="modal-content settings-modal-content" onClick={event => event.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="modal-content settings-modal-content"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
+        tabIndex={-1}
+        onClick={event => event.stopPropagation()}
+      >
         <div className="modal-header">
-          <span className="modal-title">{t('settings_title')}</span>
-          <button className="modal-close" onClick={handleCancel}>×</button>
+          <span id="settings-modal-title" className="modal-title">{t('settings_title')}</span>
+          <button className="modal-close" aria-label={t('btn_close')} onClick={handleCancel}>×</button>
         </div>
 
         <div className="settings-tabs">
@@ -482,7 +485,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
         </div>
         {showApiManual && (
           <div className="settings-manual-backdrop" onClick={() => setShowApiManual(false)}>
-            <div className="settings-manual-dialog" role="dialog" onClick={event => event.stopPropagation()}>
+            <div className="settings-manual-dialog" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}>
               <h3>{label('api_manual_title', 'API 발급 매뉴얼')}</h3>
               <button onClick={() => window.electronAPI?.openExternal?.('https://blog.aladin.co.kr/openapi')}>Aladin OpenAPI</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://comicvine.gamespot.com/api/')}>Comic Vine API</button>

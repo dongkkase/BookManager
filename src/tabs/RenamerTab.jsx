@@ -10,7 +10,10 @@ import {
   refreshRenamerItem,
 } from '../renamerPolicy';
 import '../styles/RenamerTab.css';
-import dragDropImage from '../images/draganddrop1.png';
+import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
+import { shouldPlayCompletionSound } from '../completionSoundPolicy';
+import { shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { partitionSkippedFiles } from '../notificationPolicy';
 
 function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
@@ -23,7 +26,9 @@ function replaceBasename(filePath, nextName) {
 }
 
 function RenamerTab({ config, saveConfig, t, showToast }) {
+  const dragDropImage = useMemo(() => selectRandomResource(DRAG_DROP_IMAGES), []);
   const [fileList, setFileList] = useState([]);
+  const executeLockRef = useRef(false);
   const [selectedArchiveId, setSelectedArchiveId] = useState(null);
   const [patternIndex, setPatternIndex] = useState(Number(config?.rename_pattern_idx || 0));
   const [customText, setCustomText] = useState(config?.custom_text || '');
@@ -180,6 +185,23 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       if (nextItems[0]) setSelectedArchiveId(nextItems[0].id);
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_unsupported_format')}: ${result.skippedFiles.join(', ')}`);
+        const skipped = partitionSkippedFiles(result.skippedFiles);
+        if (skipped.nested.length > 0) {
+          await window.electronAPI?.showMessage?.({
+            type: 'warning',
+            title: t('dlg_warn'),
+            message: `${t('msg_nested_archive')}${skipped.nested.join('\n')}`,
+            language: config?.language || config?.lang || 'ko',
+          });
+        }
+        if (skipped.unsupported.length > 0) {
+          await window.electronAPI?.showMessage?.({
+            type: 'warning',
+            title: t('dlg_warn'),
+            message: `${t('msg_unsupported_format')}${skipped.unsupported.join('\n')}`,
+            language: config?.language || config?.lang || 'ko',
+          });
+        }
       } else {
         setStatusMessage(t('msg_done'));
       }
@@ -358,6 +380,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [config?.language, config?.lang, contextMenu, renameOptions, showToast, t]);
 
   const handleExecute = async () => {
+    if (executeLockRef.current) return;
     if (checkedCount === 0) {
       setStatusMessage(t('msg_no_targets'));
       await window.electronAPI?.showMessage?.({
@@ -369,6 +392,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       return;
     }
 
+    executeLockRef.current = true;
     setIsWorking(true);
     setTaskPhase('executing');
     setProgress(0);
@@ -419,7 +443,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       const message = t('msg_job_done', [success, skip, error]);
       setStatusMessage(message);
       showToast?.(message);
-      if (config?.play_sound !== false) {
+      if (shouldPlayCompletionSound(config, success, result.cancelled)) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {
@@ -430,6 +454,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     } finally {
+      executeLockRef.current = false;
       setProgress(0);
       setStatusMessage(t('status_wait'));
       setIsWorking(false);
@@ -477,8 +502,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
 
   useEffect(() => {
     const handleKeyDown = event => {
-      const tag = event.target?.tagName?.toLowerCase();
-      if (isWorking || tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (isWorking || !shouldHandleGlobalShortcut(event)) return;
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedArchiveId) {
         event.preventDefault();
         setFileList(prev => {

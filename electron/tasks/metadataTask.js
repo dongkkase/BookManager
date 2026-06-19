@@ -3,6 +3,7 @@ import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
+import { missingBinaryMessage } from '../binaryPolicy.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
@@ -101,7 +102,12 @@ async function listWith7z(filePath, sevenZExe) {
     }
   }
   if (current?.name) entries.push(current);
-  return entries.filter(entry => entry.name !== path.basename(filePath));
+  const archivePath = path.resolve(filePath).replace(/\\/g, '/').normalize('NFC').toLowerCase();
+  const archiveName = path.basename(filePath).normalize('NFC').toLowerCase();
+  return entries.filter(entry => {
+    const entryName = String(entry.name).replace(/\\/g, '/').normalize('NFC').toLowerCase();
+    return entryName !== archivePath && entryName !== archiveName;
+  });
 }
 
 async function extractArchiveFile(filePath, innerPath, sevenZExe) {
@@ -181,7 +187,7 @@ function inferMetadataFromFilename(filePath, pageCount) {
 
 export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error('7za executable not found.');
+  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const archives = await expandInputPaths(paths);
   const items = [];
@@ -240,11 +246,20 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   return { items, skippedFiles };
 }
 
-async function injectComicInfo(filePath, metadata, sevenZExe) {
+export function metadataWriteSupport(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.rar' || ext === '.cbr') {
-    throw new Error('RAR/CBR 저장은 아직 지원하지 않습니다. CBZ 변환 후 저장하세요.');
+    return {
+      supported: false,
+      message: 'RAR/CBR 메타데이터 저장에는 Windows용 WinRAR가 필요합니다. 현재 환경에서는 CBZ 또는 ZIP으로 변환한 후 저장하세요.',
+    };
   }
+  return { supported: true, message: '' };
+}
+
+async function injectComicInfo(filePath, metadata, sevenZExe) {
+  const support = metadataWriteSupport(filePath);
+  if (!support.supported) throw new Error(support.message);
 
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_Metadata_'));
   try {
@@ -264,7 +279,7 @@ async function injectComicInfo(filePath, metadata, sevenZExe) {
 
 export async function saveMetadataItems(items, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error('7za executable not found.');
+  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], skip: [], error: [] };
@@ -281,11 +296,59 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       message: options.lang === 'en' ? `[${index + 1}/${targets.length}] Saving: ${item.name}` : `[${index + 1}/${targets.length}] 저장 중: ${item.name}`,
     });
 
+    const extension = path.extname(item.filepath);
+    const token = `${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const tempArchive = path.join(
+      path.dirname(item.filepath),
+      `.${path.basename(item.filepath, extension)}.bookmanager_metadata_${token}${extension}`,
+    );
+    const sourceHoldingPath = `${item.filepath}.bookmanager.metadata.old`;
     try {
-      await injectComicInfo(item.filepath, item.metadata || {}, sevenZExe);
+      const support = metadataWriteSupport(item.filepath);
+      if (!support.supported) {
+        stats.skip.push(`${item.name || item.filepath} - ${support.message}`);
+        continue;
+      }
+      await fsp.copyFile(item.filepath, tempArchive);
+      await injectComicInfo(tempArchive, item.metadata || {}, sevenZExe);
+      if (options.shouldCancel?.()) {
+        cancelled = true;
+        break;
+      }
+
+      if (options.backup_on) {
+        const backupDir = path.join(path.dirname(item.filepath), 'bak');
+        await fsp.mkdir(backupDir, { recursive: true });
+        let backupPath = path.join(backupDir, path.basename(item.filepath));
+        if (fs.existsSync(backupPath)) {
+          backupPath = path.join(
+            backupDir,
+            `${path.basename(item.filepath, extension)}_${token}${extension}`,
+          );
+        }
+        await fsp.copyFile(item.filepath, backupPath);
+      }
+
+      await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
+      await fsp.rename(item.filepath, sourceHoldingPath);
+      try {
+        await fsp.rename(tempArchive, item.filepath);
+        await fsp.rm(sourceHoldingPath, { force: true });
+      } catch (error) {
+        await fsp.rm(item.filepath, { force: true }).catch(() => {});
+        if (fs.existsSync(sourceHoldingPath)) {
+          await fsp.rename(sourceHoldingPath, item.filepath);
+        }
+        throw error;
+      }
       stats.success.push(item.name || path.basename(item.filepath));
     } catch (error) {
       stats.error.push(`${item.name || item.filepath} - ${error.message}`);
+    } finally {
+      await fsp.rm(tempArchive, { force: true }).catch(() => {});
+      if (fs.existsSync(sourceHoldingPath) && !fs.existsSync(item.filepath)) {
+        await fsp.rename(sourceHoldingPath, item.filepath).catch(() => {});
+      }
     }
     if (options.shouldCancel?.()) {
       cancelled = true;

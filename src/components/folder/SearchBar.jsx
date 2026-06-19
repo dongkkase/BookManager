@@ -23,7 +23,7 @@ function SearchBar({ searchQuery = '', onSearchChange, t }) {
           className="toolbar-btn"
           onClick={handleClear}
           title={t('common.close') || '닫기'}
-          style={{ padding: '4px 8px', fontSize: '14px' }}
+          style={{ padding: '4px 8px', fontSize: 'var(--font-md)' }}
         >
           ✕
         </button>

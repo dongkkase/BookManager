@@ -117,7 +117,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const renderLibraryList = () => (
     <div className="sidebar-section">
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>{t('folder.sidebar.libraries') || '라이브러리'}</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.libraries') || '라이브러리'}</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button title={t('tab_folder_settings')} onClick={onOpenLibrarySettings} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="gear" size={12} /></button>
           <button title={t('folder.sidebar.add_library') || '라이브러리 추가'} onClick={onAddLibrary} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>➕</button>
@@ -159,7 +159,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const renderFavoritesList = () => (
     <div className="sidebar-section" style={{ marginTop: '10px' }}>
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>{t('folder.sidebar.favorites') || '즐겨찾기'}</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.favorites') || '즐겨찾기'}</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button
             title={t('folder.sidebar.add_favorite') || '현재 폴더 즐겨찾기에 추가'}
@@ -228,7 +228,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             alignItems: 'center',
             cursor: 'pointer',
             color: '#d1d5db',
-            fontSize: '12px'
+            fontSize: 'var(--font-sm)'
           }}
           onClick={() => {
             setSelectedSource('tree');
@@ -237,7 +237,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           }}
           onContextMenu={(event) => onFolderContextMenu?.(event, node.path, siblings.map(item => item.path))}
         >
-          <span style={{ width: '12px', display: 'inline-block', textAlign: 'center', marginRight: '4px', fontSize: '10px' }}>
+          <span style={{ width: 'var(--font-sm)', display: 'inline-block', textAlign: 'center', marginRight: '4px', fontSize: 'var(--font-2xs)' }}>
             {node.isFolder ? (hasChildren ? (isExpanded ? '▼' : '▶') : ' ') : ' '}
           </span>
           <span style={{ marginRight: '4px', display: 'inline-flex', color: node.isFolder ? '#f0b536' : '#b8c7d4' }}>
@@ -257,7 +257,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const renderFolderTree = () => (
     <div className="sidebar-section" style={{ marginTop: '10px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: '13px' }}>폴더</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>폴더</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           {[
             ['desktop', 'folder_desktop', 'desktop'],

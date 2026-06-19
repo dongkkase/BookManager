@@ -38,36 +38,25 @@ body.is-resizing-panel * {
 }
 
 /* ============================================
-   상단 앱 헤더 (타이틀 바)
-   ============================================ */
-.app-title-bar {
-  display: flex;
-  align-items: center;
-  height: 24px;
-  background-color: #1b1b1b;
-  color: #d8d8d8;
-  padding: 0 7px;
-  font-size: var(--font-xs);
-  -webkit-app-region: drag;
-}
-
-/* ============================================
    상단 메뉴 바 (버튼 영역)
    ============================================ */
 .top-menu-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 42px;
+  min-height: calc(var(--control-height-lg) + 8px);
   padding: 5px 10px 4px;
   background-color: #1b1b1b;
   border-bottom: none;
+  overflow-x: auto;
+  flex: 0 0 auto;
 }
 
 .top-menu-left, .top-menu-right {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .top-btn {
@@ -83,6 +72,7 @@ body.is-resizing-panel * {
   align-items: center;
   gap: 6px;
   transition: background-color 0.2s;
+  white-space: nowrap;
 }
 
 .top-btn:hover:not(:disabled) {
@@ -155,6 +145,8 @@ body.is-resizing-panel * {
   padding: 0 7px;
   margin-top: 0;
   border-bottom: 1px solid #444;
+  overflow-x: auto;
+  flex: 0 0 auto;
 }
 
 .tab-item {
@@ -171,6 +163,8 @@ body.is-resizing-panel * {
   font-size: var(--font-xs);
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .tab-item:hover:not(.active) {
@@ -188,6 +182,7 @@ body.is-resizing-panel * {
    메인 콘텐츠 영역
    ============================================ */
 .app-content {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -214,31 +209,55 @@ body.is-resizing-panel * {
   pointer-events: none;
 }
 
-.app-working-overlay {
+.app-lock-screen {
   position: absolute;
   inset: 0;
   z-index: 1200;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  background: rgba(0, 0, 0, 0.58);
+  background: rgba(0, 0, 0, 0.7);
   color: #fff;
-  font-size: var(--font-lg);
+  font-size: var(--font-md);
   font-weight: bold;
+  text-align: center;
+  pointer-events: all;
+  animation: app-lock-fade-in 100ms ease-out;
 }
 
-.app-working-spinner {
-  width: 22px;
-  height: 22px;
-  border: 3px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #3498db;
-  border-radius: 50%;
-  animation: app-working-spin 0.8s linear infinite;
+.app-lock-screen img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
 }
 
-@keyframes app-working-spin {
-  to { transform: rotate(360deg); }
+.app-lock-screen span {
+  max-width: min(640px, calc(100% - 32px));
+  overflow-wrap: anywhere;
+}
+
+.app-lock-current-file {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+@keyframes app-lock-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .tab-continue-btn {
@@ -304,7 +323,7 @@ body.is-resizing-panel * {
 
 .app-run-button {
   min-width: 170px;
-  height: 45px;
+  min-height: calc(var(--control-height-lg) + 11px);
   padding: 10px 20px;
   border-radius: 6px;
   background: var(--accent-primary);
@@ -482,14 +501,14 @@ body.is-resizing-panel * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 34px;
+  min-height: var(--control-height-lg);
   padding: 0 10px;
   border-bottom: none;
   background-color: #1e1e1e;
 }
 
 .modal-title {
-  font-size: 13px;
+  font-size: var(--font-base);
   font-weight: bold;
   color: #fff;
 }
@@ -498,7 +517,7 @@ body.is-resizing-panel * {
   background: transparent;
   color: #b0b0b0;
   border: none;
-  font-size: 16px;
+  font-size: var(--font-lg);
   cursor: pointer;
 }
 
@@ -523,7 +542,7 @@ body.is-resizing-panel * {
   border-radius: 4px;
   padding: 8px 13px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 
@@ -536,8 +555,8 @@ body.is-resizing-panel * {
   width: 500px;
   min-width: 500px;
   max-width: 500px;
-  height: 750px;
-  min-height: 750px;
+  height: min(750px, calc(100vh - 8px));
+  min-height: min(750px, calc(100vh - 8px));
   max-height: calc(100vh - 8px);
   background-color: #1e1e1e;
   border-color: #3f3f3f;
@@ -550,6 +569,8 @@ body.is-resizing-panel * {
   padding: 10px 16px 0;
   border-bottom: none;
   background-color: #1e1e1e;
+  overflow-x: auto;
+  flex: 0 0 auto;
 }
 
 .settings-tabs button {
@@ -560,9 +581,11 @@ body.is-resizing-panel * {
   border-radius: 5px 5px 0 0;
   padding: 9px 22px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: var(--font-sm);
   cursor: pointer;
   min-width: 99px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .settings-tabs button.active {
@@ -640,7 +663,7 @@ body.is-resizing-panel * {
 .settings-fieldset legend {
   padding: 0 8px;
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 900;
 }
 
@@ -651,7 +674,7 @@ body.is-resizing-panel * {
 
 .settings-row {
   display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-columns: minmax(128px, 34%) minmax(0, 1fr);
   align-items: center;
   gap: 0;
   margin-bottom: 14px;
@@ -660,7 +683,7 @@ body.is-resizing-panel * {
 .settings-label {
   color: #f0f0f0;
   font-weight: 900;
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .settings-select,
@@ -673,9 +696,9 @@ body.is-resizing-panel * {
   border: 1px solid #555;
   border-radius: 4px;
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 700;
-  min-height: 28px;
+  min-height: var(--control-height);
 }
 
 .settings-select:disabled,
@@ -712,7 +735,7 @@ body.is-resizing-panel * {
   width: 62px;
   color: #fff;
   font-weight: 900;
-  font-size: 12px;
+  font-size: var(--font-sm);
   text-align: right;
 }
 
@@ -729,7 +752,7 @@ body.is-resizing-panel * {
   align-items: center;
   gap: 8px;
   color: #f4f4f4;
-  font-size: 13px;
+  font-size: var(--font-base);
   font-weight: 700;
 }
 
@@ -740,7 +763,7 @@ body.is-resizing-panel * {
   align-items: flex-start;
   margin: 16px 0;
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 
@@ -750,8 +773,8 @@ body.is-resizing-panel * {
 
 .settings-check-row input[type="checkbox"] {
   appearance: none;
-  width: 17px;
-  height: 17px;
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
   border: 1px solid #9a9a9a;
   border-radius: 5px;
   margin: 0;
@@ -786,7 +809,7 @@ body.is-resizing-panel * {
 .settings-help {
   margin: 0;
   color: #bfc7d0;
-  font-size: 12px;
+  font-size: var(--font-sm);
   line-height: 1.5;
   white-space: pre-line;
 }
@@ -824,7 +847,7 @@ body.is-resizing-panel * {
   border-radius: 4px;
   padding: 8px 13px;
   font-weight: 900;
-  font-size: 12px;
+  font-size: var(--font-sm);
   cursor: pointer;
   white-space: nowrap;
   display: inline-flex;
@@ -879,7 +902,7 @@ body.is-resizing-panel * {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #eee;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 
@@ -900,7 +923,7 @@ body.is-resizing-panel * {
 
 .settings-maintenance-actions span {
   color: #bfc7d0;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 700;
   line-height: 1.45;
 }
@@ -917,7 +940,7 @@ body.is-resizing-panel * {
   border-radius: 4px;
   background-color: #2a2418;
   color: #f0b44c;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 700;
   white-space: pre-line;
 }

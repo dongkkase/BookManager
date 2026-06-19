@@ -3,25 +3,61 @@ import {
   FOLDER_GROUP_KEYS,
   FOLDER_SORT_KEYS,
 } from '../../folderToolbarState';
+import { dropdownVerticalPlacement } from '../../interactionPolicy';
 
 function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, menuClassName = '' }) {
   const ref = useRef(null);
+  const menuRef = useRef(null);
+  const [placement, setPlacement] = useState('down');
 
   useEffect(() => {
     if (!open) return undefined;
     const close = event => {
       if (!ref.current?.contains(event.target)) setOpen(false);
     };
+    const handleKeyDown = event => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      ref.current?.querySelector('button')?.focus();
+    };
     document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
   }, [open, setOpen]);
+
+  useEffect(() => {
+    if (!open || !ref.current || !menuRef.current) return;
+    setPlacement(dropdownVerticalPlacement(
+      ref.current.getBoundingClientRect(),
+      menuRef.current.offsetHeight,
+      window.innerHeight,
+    ));
+    menuRef.current.querySelector('button')?.focus();
+  }, [open]);
 
   return (
     <div className="toolbar-dropdown" ref={ref}>
-      <button className={`toolbar-btn ${buttonClassName}`} onClick={() => setOpen(!open)}>
+      <button
+        className={`toolbar-btn ${buttonClassName}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
         {buttonLabel}
       </button>
-      {open && <div className={`dropdown-menu ${menuClassName}`}>{children}</div>}
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          className={`dropdown-menu dropdown-menu-${placement} ${menuClassName}`}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 }

@@ -19,6 +19,7 @@ test('책 제목 출력 경로는 제목 없음 fallback을 사용한다', () =>
 test('권과 화 단위를 언어별로 변경한다', () => {
     assert.equal(changeOrganizerUnit('Series 2 외전', 'chapter', 'ko'), 'Series 외전 2화');
     assert.equal(changeOrganizerUnit('Series 2권', 'volume', 'en'), 'Series v2');
+    assert.equal(changeOrganizerUnit('シリーズ 3話', 'volume', 'ja'), 'シリーズ 3巻');
 });
 
 test('파일명 금지 문자를 안전하게 치환한다', () => {

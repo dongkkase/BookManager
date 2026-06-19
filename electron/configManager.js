@@ -1,25 +1,84 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { resolveConfigPath } from './dataPaths.js';
 
 export class ConfigManager {
   constructor(userDataPath, executableDir, options = {}) {
     this.userDataPath = userDataPath;
     this.executableDir = executableDir;
-    this.configPath = path.join(
-      options.useUserData ? userDataPath : executableDir,
-      'config.json',
-    );
+    this.configPath = options.configPath || resolveConfigPath(executableDir);
+    this.legacyConfigPaths = [
+      executableDir ? path.join(executableDir, 'config.json') : null,
+      userDataPath ? path.join(userDataPath, 'config.json') : null,
+    ].filter((legacyPath, index, paths) => (
+      legacyPath
+      && path.resolve(legacyPath) !== path.resolve(this.configPath)
+      && paths.indexOf(legacyPath) === index
+    ));
     this.config = null;
+  }
+
+  normalizePathList(values = []) {
+    const seen = new Set();
+    const result = [];
+    for (const value of Array.isArray(values) ? values : []) {
+      const rawPath = typeof value === 'string' ? value : value?.path;
+      const normalized = String(rawPath || '').trim();
+      if (!normalized) continue;
+      const key = normalized.replace(/[\\/]+$/, '').toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(normalized);
+    }
+    return result;
+  }
+
+  normalizeFavorites(values = []) {
+    const seen = new Set();
+    const result = [];
+    for (const value of Array.isArray(values) ? values : []) {
+      const rawPath = typeof value === 'string' ? value : value?.path;
+      const normalized = String(rawPath || '').trim();
+      if (!normalized) continue;
+      const key = normalized.replace(/[\\/]+$/, '').toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(typeof value === 'string'
+        ? normalized
+        : { ...value, path: normalized });
+    }
+    return result;
+  }
+
+  normalizeConfig(data = {}) {
+    const defaults = this.getDefaultConfig();
+    const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    const lang = raw.language || raw.lang || defaults.language;
+    const libraries = this.normalizePathList([
+      ...(raw.libraries || []),
+      ...(raw.dup_check_folders || []),
+    ]);
+    const favorites = this.normalizeFavorites(raw.favorites || raw.folder_favorites || []);
+    return {
+      ...defaults,
+      ...raw,
+      lang,
+      language: lang,
+      libraries,
+      dup_check_folders: libraries,
+      favorites,
+      folder_favorites: favorites,
+      api_keys: {
+        ...defaults.api_keys,
+        ...(raw.api_keys || {}),
+      },
+    };
   }
 
   async initialize() {
     try {
-      // 사용자 데이터 디렉토리 생성
-      if (!fs.existsSync(this.userDataPath)) {
-        fs.mkdirSync(this.userDataPath, { recursive: true });
-      }
-      // 설정 로드
+      fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
       this.config = this.loadConfig();
     } catch (error) {
       console.error('ConfigManager 초기화 실패:', error);
@@ -83,28 +142,62 @@ export class ConfigManager {
   }
 
   loadConfig() {
-    const defaultConfig = this.getDefaultConfig();
     try {
+      this.migrateLegacyConfig();
       if (fs.existsSync(this.configPath)) {
         const data = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
-        Object.assign(defaultConfig, data);
-        defaultConfig.api_keys = {
-          ...this.getDefaultConfig().api_keys,
-          ...(data.api_keys || {}),
-        };
-        defaultConfig.language = defaultConfig.language || defaultConfig.lang || 'ko';
-        defaultConfig.lang = defaultConfig.lang || defaultConfig.language || 'ko';
+        this.config = this.normalizeConfig(data);
+        return this.config;
       }
     } catch (error) {
       console.error('설정 로드 실패:', error);
+      try {
+        const corruptPath = `${this.configPath}.corrupt-${Date.now()}.bak`;
+        fs.renameSync(this.configPath, corruptPath);
+      } catch {
+        // 손상 파일이 없거나 이동할 수 없으면 기본 설정 생성만 진행합니다.
+      }
     }
-    return defaultConfig;
+    this.config = this.normalizeConfig({});
+    this.saveConfig(this.config);
+    return this.config;
+  }
+
+  migrateLegacyConfig() {
+    if (fs.existsSync(this.configPath)) {
+      return false;
+    }
+    for (const legacyPath of this.legacyConfigPaths) {
+      try {
+        if (!fs.existsSync(legacyPath)) {
+          continue;
+        }
+        fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
+        fs.copyFileSync(legacyPath, this.configPath);
+        return true;
+      } catch (error) {
+        console.error('기존 설정 마이그레이션 실패:', error);
+      }
+    }
+    return false;
   }
 
   saveConfig(configData) {
     try {
-      fs.writeFileSync(this.configPath, JSON.stringify(configData, null, 2), 'utf-8');
-      this.config = configData;
+      const nextConfig = this.normalizeConfig({
+        ...(this.config || {}),
+        ...(configData || {}),
+        api_keys: {
+          ...(this.config?.api_keys || {}),
+          ...(configData?.api_keys || {}),
+        },
+      });
+      const configDir = path.dirname(this.configPath);
+      fs.mkdirSync(configDir, { recursive: true });
+      const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(nextConfig, null, 2), 'utf-8');
+      fs.renameSync(tempPath, this.configPath);
+      this.config = nextConfig;
       return true;
     } catch (error) {
       console.error('설정 저장 실패:', error);
@@ -117,10 +210,7 @@ export class ConfigManager {
   }
 
   updateConfig(updates) {
-    if (this.config) {
-      Object.assign(this.config, updates);
-      this.saveConfig(this.config);
-    }
+    return this.saveConfig(updates);
   }
 }
 

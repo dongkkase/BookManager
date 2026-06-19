@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 /**
  * 설정 상태 관리 훅
@@ -7,15 +7,18 @@ import { useState, useEffect, useCallback } from 'react';
 export function useConfig() {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(true);
 
   const loadConfig = useCallback(async () => {
     try {
       const currentConfig = await window.electronAPI.getConfig();
-      setConfig(currentConfig);
-      setLoading(false);
+      if (mountedRef.current) {
+        setConfig(currentConfig);
+        setLoading(false);
+      }
     } catch (error) {
       console.error('설정 로드 실패:', error);
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, []);
 
@@ -23,7 +26,7 @@ export function useConfig() {
     try {
       const savedConfig = await window.electronAPI.saveConfig(updates);
       const updatedConfig = savedConfig || await window.electronAPI.getConfig();
-      setConfig(updatedConfig);
+      if (mountedRef.current) setConfig(updatedConfig);
       return updatedConfig;
     } catch (error) {
       console.error('설정 저장 실패:', error);
@@ -32,7 +35,11 @@ export function useConfig() {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadConfig();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [loadConfig]);
 
   return { config, loading, saveConfig, reloadConfig: loadConfig };

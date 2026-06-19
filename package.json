@@ -45,6 +45,14 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      {
+        "from": "src/utils",
+        "to": "src/utils",
+        "filter": [
+          "i18n.js",
+          "i18nData.js"
+        ]
+      },
       "version.json"
     ],
     "extraResources": [
@@ -71,10 +79,11 @@
     "mac": {
       "target": [
         {
-          "target": "dmg",
+          "target": "zip",
           "arch": ["universal"]
         }
       ],
+      "artifactName": "BookManager-${version}-portable-${arch}.${ext}",
       "icon": "src/images/app-1024.png",
       "category": "public.app-category.utilities"
     },

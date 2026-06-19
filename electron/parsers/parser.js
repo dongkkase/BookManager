@@ -13,42 +13,42 @@ function getSimilarity(a, b) {
   return sequenceMatcher(aComp, bComp);
 }
 
-// Simple SequenceMatcher implementation (Python difflib equivalent)
 function sequenceMatcher(a, b) {
   if (!a && !b) return 1.0;
   if (!a || !b) return 0.0;
-  const n = a.length;
-  const m = b.length;
-  if (n === 0 || m === 0) return 0;
 
-  // Use a simplified approach: count matching characters
-  let matches = 0;
-  const used = new Array(m).fill(false);
-  const longestMatchLength = 0;
-
-  for (let i = 0; i < n; i++) {
-    let bestJ = -1;
-    let bestLen = 0;
-    for (let j = 0; j < m; j++) {
-      if (used[j]) continue;
-      let len = 0;
-      while (i + len < n && j + len < m && a[i + len] === b[j + len] && !used[j + len]) {
-        len++;
+  function longestMatch(aStart, aEnd, bStart, bEnd) {
+    let previous = new Array(bEnd - bStart + 1).fill(0);
+    let best = { a: aStart, b: bStart, size: 0 };
+    for (let aIndex = aStart; aIndex < aEnd; aIndex += 1) {
+      const current = new Array(bEnd - bStart + 1).fill(0);
+      for (let bIndex = bStart; bIndex < bEnd; bIndex += 1) {
+        if (a[aIndex] !== b[bIndex]) continue;
+        const relative = bIndex - bStart;
+        current[relative + 1] = previous[relative] + 1;
+        if (current[relative + 1] > best.size) {
+          best = {
+            a: aIndex - current[relative + 1] + 1,
+            b: bIndex - current[relative + 1] + 1,
+            size: current[relative + 1],
+          };
+        }
       }
-      if (len > bestLen) {
-        bestLen = len;
-        bestJ = j;
-      }
+      previous = current;
     }
-    if (bestJ >= 0) {
-      for (let k = 0; k < bestLen && bestJ + k < m; k++) {
-        used[bestJ + k] = true;
-      }
-      matches += bestLen;
-    }
+    return best;
   }
 
-  return (2.0 * matches) / (n + m);
+  function matchingBlockSize(aStart, aEnd, bStart, bEnd) {
+    const match = longestMatch(aStart, aEnd, bStart, bEnd);
+    if (match.size === 0) return 0;
+    return match.size
+      + matchingBlockSize(aStart, match.a, bStart, match.b)
+      + matchingBlockSize(match.a + match.size, aEnd, match.b + match.size, bEnd);
+  }
+
+  const matches = matchingBlockSize(0, a.length, 0, b.length);
+  return (2.0 * matches) / (a.length + b.length);
 }
 
 export function cleanDisplayTitle(text) {
