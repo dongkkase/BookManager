@@ -6,6 +6,7 @@ import { setupIPCHandlers } from './ipcHandlers.js';
 import { ConfigManager } from './configManager.js';
 import { setupI18n } from './utils/i18n.js';
 import { resolveWindowState, serializeWindowState } from './windowState.js';
+import { createExitDialogOptions } from './exitPolicy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,9 +14,19 @@ const __dirname = path.dirname(__filename);
 let mainWindow = null;
 let tray = null;
 let configManager = null;
+let ipcController = null;
+let allowWindowClose = false;
+let isShowingExitDialog = false;
 
 // 개발 모드 여부
 const isDev = process.argv.includes('--dev');
+const APP_NAME = 'BookManager';
+const APP_ID = 'com.bookmanager.app';
+
+app.setName(APP_NAME);
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_ID);
+}
 
 // 앱 사용자 데이터 디렉토리
 function getUserDataPath() {
@@ -34,7 +45,11 @@ function getResourcePath(...subPaths) {
 }
 
 function getAppIconPath() {
-  const iconFile = process.platform === 'win32' ? 'app.ico' : 'app.png';
+  const iconFile = process.platform === 'win32'
+    ? 'app.ico'
+    : process.platform === 'darwin'
+      ? 'app-1024.png'
+      : 'app.png';
   const iconPath = getResourcePath('src', 'images', iconFile);
   return fs.existsSync(iconPath) ? iconPath : undefined;
 }
@@ -95,7 +110,9 @@ if (!gotTheLock) {
     }
 
     // 설정 관리자 초기화
-    configManager = new ConfigManager(getUserDataPath(), getExecutableDir());
+    configManager = new ConfigManager(getUserDataPath(), getExecutableDir(), {
+      useUserData: app.isPackaged && process.platform === 'darwin',
+    });
     await configManager.initialize();
 
     // i18n 초기화
@@ -103,7 +120,7 @@ if (!gotTheLock) {
     await setupI18n(config?.lang || 'ko');
 
     // IPC 핸들러 설정
-    setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
+    ipcController = setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
 
     // 메인 윈도우 생성
     createMainWindow(config);
@@ -125,8 +142,11 @@ function createMainWindow(config) {
     ...windowState.bounds,
     minWidth: windowState.minWidth,
     minHeight: windowState.minHeight,
-    title: 'BookManager',
+    title: APP_NAME,
     icon: getAppIconPath(),
+    frame: true,
+    titleBarStyle: 'default',
+    backgroundColor: '#1b1b1b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -134,6 +154,7 @@ function createMainWindow(config) {
     },
     show: false,
   });
+  const windowOwnerId = mainWindow.webContents.id;
 
   // 개발 모드 또는 로컬 파일 로드
   if (isDev) {
@@ -150,13 +171,41 @@ function createMainWindow(config) {
     mainWindow.show();
   });
 
-  mainWindow.on('close', () => {
-    if (!configManager || !mainWindow || mainWindow.isDestroyed()) return;
-    configManager.updateConfig(serializeWindowState(mainWindow));
+  mainWindow.on('close', async (event) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (allowWindowClose) {
+      configManager?.updateConfig(serializeWindowState(mainWindow));
+      return;
+    }
+
+    event.preventDefault();
+    if (isShowingExitDialog) return;
+
+    const runtimeState = ipcController?.getRuntimeState(windowOwnerId);
+    if (runtimeState?.isWorking) {
+      isShowingExitDialog = true;
+      try {
+        const result = await dialog.showMessageBox(
+          mainWindow,
+          createExitDialogOptions(runtimeState.language),
+        );
+        if (result.response !== 0) return;
+        ipcController?.cancelAll(windowOwnerId);
+        await ipcController?.waitForIdle(windowOwnerId, 30000);
+      } finally {
+        isShowingExitDialog = false;
+      }
+    }
+
+    configManager?.updateConfig(serializeWindowState(mainWindow));
+    allowWindowClose = true;
+    mainWindow.close();
   });
 
   mainWindow.on('closed', () => {
+    ipcController?.clear(windowOwnerId);
     mainWindow = null;
+    allowWindowClose = false;
   });
 }
 
@@ -178,7 +227,7 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'BookManager 열기',
+      label: `${APP_NAME} 열기`,
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -195,7 +244,7 @@ function createTray() {
     },
   ]);
 
-  tray.setToolTip('BookManager');
+  tray.setToolTip(APP_NAME);
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
@@ -223,7 +272,7 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('will-quit', () => {
   if (tray) {
     tray.destroy();
     tray = null;

@@ -1,3 +1,5 @@
+import { normalizeNativePath, normalizeNativePaths } from './pathPolicy.js';
+
 export const ARCHIVE_FILTER = Object.freeze({
     name: 'Archive files',
     extensions: Object.freeze(['zip', 'cbz', 'cbr', '7z', 'rar']),
@@ -18,12 +20,27 @@ export function createArchiveDialogOptions(title) {
     };
 }
 
-export function normalizeFolderDialogResult(result = {}) {
+export function normalizeFolderDialogResult(result = {}, platform = process.platform) {
     if (result.canceled) return null;
-    return result.filePaths?.[0] || null;
+    return normalizeNativePath(result.filePaths?.[0], platform) || null;
 }
 
-export function normalizeArchiveDialogResult(result = {}) {
+export function normalizeArchiveDialogResult(result = {}, platform = process.platform) {
     if (result.canceled) return [];
-    return Array.isArray(result.filePaths) ? result.filePaths.filter(Boolean) : [];
+    return normalizeNativePaths(result.filePaths, platform);
+}
+
+export function normalizeFileDialogResult(result = {}, platform = process.platform) {
+    if (result.canceled) return null;
+    return normalizeNativePath(result.filePaths?.[0], platform) || null;
+}
+
+export function normalizeFilesDialogResult(result = {}, platform = process.platform) {
+    if (result.canceled) return [];
+    return normalizeNativePaths(result.filePaths, platform);
+}
+
+export function normalizeSaveDialogResult(result = {}, platform = process.platform) {
+    if (result.canceled) return null;
+    return normalizeNativePath(result.filePath, platform) || null;
 }

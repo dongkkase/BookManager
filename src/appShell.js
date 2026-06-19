@@ -1,5 +1,6 @@
 export const APP_NAME = 'BookManager';
 export const ISSUE_URL = 'https://github.com/dongkkase/ComicZIP_Optimizer/issues';
+export const RELEASES_URL = 'https://github.com/dongkkase/ComicZIP_Optimizer/releases';
 
 export const TABS = Object.freeze([
     { id: 'folder', labelKey: 'tab_folders' },
@@ -24,14 +25,23 @@ export function normalizeDroppedPaths(paths = []) {
     const seen = new Set();
     const normalized = [];
 
-    for (const path of paths) {
-        const value = String(path || '').trim();
-        if (!value || seen.has(value)) continue;
-        seen.add(value);
-        normalized.push(value);
+    for (const filePath of paths) {
+        const value = String(filePath || '').replace(/\0/g, '').normalize('NFC');
+        if (!value) continue;
+        const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]/.test(value);
+        const normalizedPath = isWindowsPath ? value.replace(/\//g, '\\') : value;
+        const comparisonKey = isWindowsPath ? normalizedPath.toLocaleLowerCase() : normalizedPath;
+        if (seen.has(comparisonKey)) continue;
+        seen.add(comparisonKey);
+        normalized.push(normalizedPath);
     }
 
     return normalized;
+}
+
+export function resolveTabId(savedIndex) {
+    const index = Number(savedIndex);
+    return Number.isInteger(index) && TABS[index] ? TABS[index].id : TABS[0].id;
 }
 
 export function formatAppTitle(version) {

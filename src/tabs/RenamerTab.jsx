@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { ResultLogDialog } from '../components/ResultLogDialog';
+import { filterExistingResultPaths } from '../resultLog';
+import { createToolbarState, emitToolbarState } from '../toolbarState';
+import { emitStatusState } from '../statusState';
 import '../styles/RenamerTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
@@ -69,6 +73,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [taskPhase, setTaskPhase] = useState('idle');
 
   const patternLabels = useMemo(() => {
     const labels = t('patterns');
@@ -113,6 +118,18 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const activeEntries = activeArchive?.entries || [];
   const checkedCount = useMemo(() => fileList.filter(file => file.checked).length, [fileList]);
   const allChecked = fileList.length > 0 && fileList.every(file => file.checked);
+
+  useEffect(() => {
+    emitToolbarState('renamer', createToolbarState(fileList));
+  }, [fileList]);
+  useEffect(() => {
+    emitStatusState('renamer', {
+      message: statusMessage,
+      progress,
+      phase: taskPhase,
+      canRun: checkedCount > 0,
+    });
+  }, [checkedCount, progress, statusMessage, taskPhase]);
   const capAllChecked = fileList.length > 0 && fileList.every(file => file.capOpt);
   const exifAllChecked = fileList.length > 0 && fileList.every(file => file.exifOpt);
 
@@ -129,6 +146,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     if (cleanPaths.length === 0) return;
 
     setIsWorking(true);
+    setTaskPhase('analyzing');
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('msg_loading_list'));
@@ -152,10 +170,12 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         setStatusMessage(t('msg_done'));
       }
     } catch (error) {
+      showToast?.(`${t('msg_failed')}: ${error.message}`);
       setStatusMessage(`${t('msg_failed')}: ${error.message}`);
     } finally {
       setProgress(100);
       setIsWorking(false);
+      setTaskPhase('idle');
     }
   }, [config?.language, config?.lang, renameOptions, t]);
 
@@ -253,7 +273,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       setFileList(prev => prev.map(item => item.id === archive.id
         ? refreshItemNames({ ...item, filepath: nextPath, name: nextName }, renameOptions)
         : item));
-      showToast?.(t('msg_rename_success'));
+      showToast?.({ key: 'msg_rename_success' });
       return;
     }
 
@@ -286,10 +306,17 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const handleExecute = async () => {
     if (checkedCount === 0) {
       setStatusMessage(t('msg_no_targets'));
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('msg_no_targets'),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
 
     setIsWorking(true);
+    setTaskPhase('executing');
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('msg_processing_overlay'));
@@ -311,7 +338,15 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         max_threads: config?.max_threads || 1,
         ...renameOptions,
       });
-      setLastResult(result);
+      const outputFiles = await filterExistingResultPaths(
+        result.outputFiles,
+        filePath => window.electronAPI?.exists?.(filePath),
+      );
+      setLastResult({ ...result, outputFiles });
+      if (result.cancelled) {
+        setStatusMessage(t('msg_cancelled'));
+        return;
+      }
       const success = result.stats?.success?.length || 0;
       const skip = result.stats?.skip?.length || 0;
       const error = result.stats?.error?.length || 0;
@@ -322,20 +357,49 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {
-      setStatusMessage(`${t('msg_failed')}: ${error.message}`);
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: `${t('msg_failed')}:\n${error.message}`,
+        language: config?.language || config?.lang || 'ko',
+      });
     } finally {
-      setProgress(100);
+      setProgress(0);
+      setStatusMessage(t('status_wait'));
       setIsWorking(false);
+      setTaskPhase('idle');
     }
   };
 
+  const handleCancel = useCallback(async () => {
+    if (taskPhase !== 'executing') return;
+    setTaskPhase('cancelling');
+    setStatusMessage(t('cancel_wait'));
+    await window.electronAPI?.stopTask?.('renamer');
+  }, [taskPhase, t]);
+
+  const handleContinueToMetadata = useCallback(() => {
+    const paths = lastResult?.outputFiles || [];
+    if (paths.length === 0 || lastResult?.cancelled) return;
+    setLastResult(null);
+    window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+      detail: { tabId: 'metadata', paths },
+    }));
+  }, [lastResult]);
+
   useEffect(() => {
     const handleAppAction = (event) => {
+      if (event.detail?.activeTab !== 'renamer') return;
       const action = event.detail?.action;
+      if (action === 'cancel-current') {
+        handleCancel();
+        return;
+      }
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
-      else if (action === 'drop-paths') analyzePaths(event.detail?.paths);
+      else if (action === 'drop-paths' || action === 'load-paths') analyzePaths(event.detail?.paths);
+      else if (action === 'run-current') handleExecute();
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();
       else if (action === 'toggle-all') toggleAllChecked();
@@ -343,7 +407,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
 
     window.addEventListener('bookmanager:action', handleAppAction);
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
-  }, [analyzePaths, handleRemoveChecked, handleSelectFiles, handleSelectFolder, isWorking, toggleAllChecked]);
+  }, [analyzePaths, handleCancel, handleExecute, handleRemoveChecked, handleSelectFiles, handleSelectFolder, isWorking, toggleAllChecked]);
 
   return (
     <div className="renamer-tab">
@@ -367,7 +431,6 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
           <button className="renamer-btn-toggle" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>
           <button className="renamer-btn-toggle" onClick={handleClear} disabled={isWorking || fileList.length === 0}><FaIcon name="trash" /> {t('clear_all')}</button>
           <div className="renamer-spacer" />
-          <button className="renamer-btn-toggle renamer-run-btn" onClick={handleExecute} disabled={isWorking || checkedCount === 0}>{t('run_btn')}</button>
         </div>
 
         <div className="renamer-options-bar">
@@ -548,14 +611,20 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-bottom-info">
           <div>
             {t('total_files', { count: fileList.length })} / {checkedCount} checked
-            {lastResult?.stats?.error?.length ? <span className="renamer-error-text"> · {lastResult.stats.error.join(' / ')}</span> : null}
           </div>
-          <div className="renamer-progress-wrap">
-            <span>{statusMessage}</span>
-            <progress value={progress} max="100" />
-          </div>
+          <div className="renamer-progress-wrap" />
         </div>
       </div>
+      {lastResult && (
+        <ResultLogDialog
+          result={lastResult}
+          outputPaths={lastResult.outputFiles}
+          continueLabelKey="btn_continue_tab3"
+          onClose={() => setLastResult(null)}
+          onContinue={handleContinueToMetadata}
+          t={t}
+        />
+      )}
       {contextMenu && (
         <div
           className="renamer-context-menu"

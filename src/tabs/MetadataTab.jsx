@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { ResultLogDialog } from '../components/ResultLogDialog';
+import { createToolbarState, emitToolbarState } from '../toolbarState';
+import { emitStatusState } from '../statusState';
 import '../styles/MetadataTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
@@ -140,6 +143,7 @@ function MetadataTab({ config, t, showToast }) {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: config?.last_meta_api || '리디북스', query: '', cached: false });
+  const [taskPhase, setTaskPhase] = useState('idle');
   const primaryShortcut = isMacPlatform() ? 'Cmd' : 'Ctrl';
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
@@ -178,6 +182,21 @@ function MetadataTab({ config, t, showToast }) {
   const checkedCount = useMemo(() => fileList.filter(item => item.checked !== false).length, [fileList]);
 
   useEffect(() => {
+    emitToolbarState(
+      'metadata',
+      createToolbarState(fileList, item => item.checked !== false),
+    );
+  }, [fileList]);
+  useEffect(() => {
+    emitStatusState('metadata', {
+      message: statusMessage,
+      progress,
+      phase: taskPhase,
+      canRun: false,
+    });
+  }, [progress, statusMessage, taskPhase]);
+
+  useEffect(() => {
     if (activeItem && selectedFileId !== activeItem.id) setSelectedFileId(activeItem.id);
     if (activeItem) setSearchQuery(activeItem.metadata?.Series || activeItem.metadata?.Title || activeItem.name.replace(/\.[^.]+$/, ''));
   }, [activeItem, selectedFileId]);
@@ -206,6 +225,7 @@ function MetadataTab({ config, t, showToast }) {
     if (cleanPaths.length === 0) return;
 
     setIsWorking(true);
+    setTaskPhase('analyzing');
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('t3_msg_analyzing'));
@@ -227,10 +247,12 @@ function MetadataTab({ config, t, showToast }) {
         setStatusMessage(t('msg_done'));
       }
     } catch (error) {
+      showToast?.(`${t('msg_failed')}: ${error.message}`);
       setStatusMessage(`${t('msg_failed')}: ${error.message}`);
     } finally {
       setProgress(100);
       setIsWorking(false);
+      setTaskPhase('idle');
     }
   }, [config?.language, config?.lang, t]);
 
@@ -298,7 +320,7 @@ function MetadataTab({ config, t, showToast }) {
       }
       return { ...item, metadata };
     });
-    showToast?.(t('t3_msg_applied_series_tag'));
+    showToast?.({ key: 't3_msg_applied_series_tag' });
   };
 
   const getCommaValues = (value) => String(value || '')
@@ -336,7 +358,7 @@ function MetadataTab({ config, t, showToast }) {
       }
       return { ...item, metadata };
     }));
-    showToast?.(t('t3_msg_applied_series_all'));
+    showToast?.({ key: 't3_msg_applied_series_all' });
   };
 
   const handleCopyMyToBatch = () => {
@@ -481,7 +503,7 @@ function MetadataTab({ config, t, showToast }) {
     applyMetadataToBatch(result.metadata || {});
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage('검색 결과를 일괄 편집창에 불러왔습니다.');
-    showToast?.(t('t3_msg_applied_series_tag'));
+    showToast?.({ key: 't3_msg_applied_series_tag' });
   };
 
   const filenameStem = (name = '') => String(name).replace(/\.[^.]+$/, '');
@@ -522,7 +544,7 @@ function MetadataTab({ config, t, showToast }) {
       Number: 't3_msg_auto_chap_done',
       PageCount: 't3_msg_auto_pages_done',
     }[field];
-    if (messageKey) showToast?.(t(messageKey));
+    if (messageKey) showToast?.({ key: messageKey });
   };
 
   const handleAutoMatchSeries = async () => {
@@ -551,7 +573,7 @@ function MetadataTab({ config, t, showToast }) {
       applyMetadataToSeries(first.metadata || {});
       setBatchMetadata(first.metadata || {});
       setStatusMessage('시리즈 자동 매칭을 적용했습니다.');
-      showToast?.(t('t3_msg_auto_match_done'));
+      showToast?.({ key: 't3_msg_auto_match_done' });
     } catch (error) {
       setStatusMessage(`자동 매칭 실패: ${error.message}`);
     } finally {
@@ -610,10 +632,17 @@ function MetadataTab({ config, t, showToast }) {
     const targets = all ? fileList : activeItem ? [activeItem] : [];
     if (targets.length === 0) {
       setStatusMessage(t('msg_no_targets'));
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('msg_no_targets'),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
 
     setIsWorking(true);
+    setTaskPhase('executing');
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('msg_processing_overlay'));
@@ -623,6 +652,10 @@ function MetadataTab({ config, t, showToast }) {
         lang: config?.language || config?.lang || 'ko',
       });
       setLastResult(result);
+      if (result.cancelled) {
+        setStatusMessage(t('msg_cancelled'));
+        return;
+      }
       const success = result.stats?.success?.length || 0;
       const errors = result.stats?.error?.length || 0;
       const message = all
@@ -634,10 +667,17 @@ function MetadataTab({ config, t, showToast }) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {
-      setStatusMessage(`${t('msg_failed')}: ${error.message}`);
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: `${t('msg_failed')}:\n${error.message}`,
+        language: config?.language || config?.lang || 'ko',
+      });
     } finally {
-      setProgress(100);
+      setProgress(0);
+      setStatusMessage(t('status_wait'));
       setIsWorking(false);
+      setTaskPhase('idle');
     }
   };
 
@@ -651,11 +691,12 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleAppAction = (event) => {
+      if (event.detail?.activeTab !== 'metadata') return;
       const action = event.detail?.action;
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
-      else if (action === 'drop-paths') analyzePaths(event.detail?.paths);
+      else if (action === 'drop-paths' || action === 'load-paths') analyzePaths(event.detail?.paths);
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();
       else if (action === 'toggle-all') handleToggleAllChecked();
@@ -995,12 +1036,14 @@ function MetadataTab({ config, t, showToast }) {
           </div>
         </div>
 
-        <div className="meta-status-row">
-          <span>{statusMessage}</span>
-          {lastResult?.stats?.error?.length ? <span className="meta-error-text">{lastResult.stats.error.join(' / ')}</span> : null}
-          <progress value={progress} max="100" />
-        </div>
       </main>
+      {lastResult && (
+        <ResultLogDialog
+          result={lastResult}
+          onClose={() => setLastResult(null)}
+          t={t}
+        />
+      )}
       {apiSearch.open && (
         <MetadataSearchDialog
           state={apiSearch}
@@ -1126,7 +1169,7 @@ function MetadataSearchDialog({
       if (response?.success === false) {
         throw new Error(response.error || text('meta_cache_clear_failed', '검색 캐시를 비우지 못했습니다.'));
       }
-      showToast?.(text('msg_cache_cleared', '검색 캐시 및 표지 이미지가 모두 초기화되었습니다.'));
+      showToast?.({ key: 'msg_cache_cleared' });
       if (dialogQuery.trim()) runSearch(1);
     } catch (error) {
       setCacheError(error.message || text('meta_cache_clear_failed', '검색 캐시를 비우지 못했습니다.'));

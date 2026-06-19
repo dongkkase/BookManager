@@ -5,7 +5,10 @@ import {
     createArchiveDialogOptions,
     createFolderDialogOptions,
     normalizeArchiveDialogResult,
+    normalizeFileDialogResult,
+    normalizeFilesDialogResult,
     normalizeFolderDialogResult,
+    normalizeSaveDialogResult,
 } from './dialogOptions.js';
 
 test('폴더 선택기는 디렉터리만 선택한다', () => {
@@ -41,4 +44,29 @@ test('아카이브 선택 취소는 빈 목록을 반환한다', () => {
         }),
         ['/tmp/a.cbz', '/tmp/b.zip'],
     );
+});
+
+test('모든 선택기 결과에 공통 경로 정규화를 적용한다', () => {
+    assert.equal(
+        normalizeFolderDialogResult({ filePaths: ['//NAS/공유/만화'] }, 'win32'),
+        '\\\\NAS\\공유\\만화',
+    );
+    assert.equal(
+        normalizeFileDialogResult({ filePaths: ['C:/도구/뷰어.exe'] }, 'win32'),
+        'C:\\도구\\뷰어.exe',
+    );
+    assert.deepEqual(
+        normalizeFilesDialogResult({ filePaths: ['C:/책/a.cbz', 'c:\\책\\a.cbz'] }, 'win32'),
+        ['C:\\책\\a.cbz'],
+    );
+    assert.equal(
+        normalizeSaveDialogResult({ filePath: `/tmp/${'한글'.normalize('NFD')}.csv` }, 'darwin'),
+        '/tmp/한글.csv',
+    );
+});
+
+test('일반 선택기 취소도 기존 상태를 변경하지 않는 값으로 반환한다', () => {
+    assert.equal(normalizeFileDialogResult({ canceled: true, filePaths: ['/tmp/a'] }), null);
+    assert.deepEqual(normalizeFilesDialogResult({ canceled: true, filePaths: ['/tmp/a'] }), []);
+    assert.equal(normalizeSaveDialogResult({ canceled: true, filePath: '/tmp/a' }), null);
 });

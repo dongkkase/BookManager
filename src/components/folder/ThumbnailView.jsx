@@ -1,5 +1,7 @@
 import React from 'react';
 import { FaIcon } from '../FaIcon';
+import { CoverImage } from './CoverImage';
+import { groupFolderFiles } from '../../folderViewState';
 
 /**
  * ThumbnailView - 썸네일 그리드 뷰 컴포넌트
@@ -17,6 +19,10 @@ const ThumbnailView = ({
   selectedFiles = [],
   onSelect,
   onContextMenu,
+  onScroll,
+  sortKey = 'name',
+  sortOrder = 'asc',
+  groupKey = 'none',
   scale = 50,
   t
 }) => {
@@ -24,6 +30,7 @@ const ThumbnailView = ({
   const itemWidth = Math.round(82 + Number(scale || 50) * 0.68);
   const imageWidth = Math.round(72 + Number(scale || 50) * 0.52);
   const imageHeight = Math.round(imageWidth * 1.34);
+  const groups = groupFolderFiles(items, groupKey, sortKey, sortOrder);
 
   const handleItemClick = (file, e, index) => {
     if (!onSelect || !file.path) return;
@@ -34,39 +41,39 @@ const ThumbnailView = ({
   return (
     <div
       className="thumbnail-grid"
+      onScroll={onScroll}
       style={{
         '--thumb-item-width': `${itemWidth}px`,
         '--thumb-image-width': `${imageWidth}px`,
         '--thumb-image-height': `${imageHeight}px`,
       }}
     >
-      {items.map((file, index) => (
-        <div
-          key={file.path || index}
-          className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''}`}
-          onClick={(e) => handleItemClick(file, e, index)}
-          onContextMenu={(event) => onContextMenu?.(event, file, index)}
-        >
-          {file.cover ? (
-            <img
-              src={file.cover}
-              alt={file.name || ''}
-              className="thumb-image"
-              loading="lazy"
-            />
-          ) : (
-            <div className="thumb-image" style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'var(--bg-tertiary)',
-              fontSize: '24px'
-            }}>
-              <FaIcon name="file" size={24} />
+      {groups.map(group => (
+        <React.Fragment key={group.name || 'all'}>
+          {group.name && (
+            <div className="folder-view-group-header">
+              <FaIcon name="folder" />
+              {t('group_header', [group.name, group.files.length])}
             </div>
           )}
-          <span className="thumb-label">{file.name || '-'}</span>
-        </div>
+          {group.files.map((file, index) => (
+            <div
+              key={file.path || index}
+              className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''}`}
+              onClick={(e) => handleItemClick(file, e, index)}
+              onContextMenu={(event) => onContextMenu?.(event, file, index)}
+            >
+              <CoverImage
+                src={file.cover}
+                alt={file.name || ''}
+                className="thumb-image"
+                t={t}
+                iconSize={24}
+              />
+              <span className="thumb-label">{file.name || '-'}</span>
+            </div>
+          ))}
+        </React.Fragment>
       ))}
       {items.length === 0 && (
         <div className="empty-folder-page" style={{ gridColumn: '1 / -1' }}>

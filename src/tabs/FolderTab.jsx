@@ -9,6 +9,45 @@ import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog'
 import { extractCoreTitle, extractVolNumbers } from '../utils/folderUtils';
 import { useFolderScan } from '../hooks/useFolderScan';
 import { useFileSelection } from '../hooks/useFileSelection';
+import {
+  clampDetailHeight,
+  clampSidebarWidth,
+  resolveDetailHeight,
+  resolveSidebarWidth,
+} from '../folderLayout';
+import {
+  folderToggleLabelKey,
+  shouldDisableFolderToggles,
+} from '../folderToggleState';
+import { isLibraryContext, resolveLastSelectedLibrary } from '../libraryState';
+import {
+  addFavoriteEntry,
+  normalizeFavorites,
+  removeFavoriteEntry,
+  serializeFavorites,
+} from '../favoriteState';
+import {
+  clampContextMenuPosition,
+  isFavoriteFolder,
+  replaceTreePath,
+} from '../folderContextState';
+import {
+  resolveSelectionAfterDelete,
+} from '../folderTreeState';
+import {
+  filterFolderFiles,
+  normalizeSavedLayouts,
+} from '../folderToolbarState';
+import {
+  createDefaultColumnLayout,
+  moveColumn,
+  normalizeColumnLayout,
+  serializeColumnLayout,
+} from '../folderColumnLayout';
+import {
+  normalizeViewMode,
+  normalizeViewScales,
+} from '../folderViewState';
 import '../styles/FolderTab.css';
 
 function parentPath(filePath) {
@@ -73,22 +112,37 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles } = useFolderScan(t);
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
+  const viewContainerRef = useRef(null);
+  const viewScrollPositionsRef = useRef({ table: 0, tile: 0, thumbnail: 0 });
   const hasShownMissingToastRef = useRef(false);
+  const restoredLayoutRef = useRef(false);
+  const initializedDetailHeightRef = useRef(false);
+  const restoredColumnLayoutRef = useRef(false);
+  const restoredViewSettingsRef = useRef(false);
+  const internalFileActionRef = useRef(false);
+  const watchedMtimeRef = useRef(null);
 
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(292);
-  const [detailPanelHeight, setDetailPanelHeight] = useState(318);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(240);
+  const [detailPanelHeight, setDetailPanelHeight] = useState(245);
 
   // --- 뷰 상태 ---
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'thumbnail' | 'tile'
   const [sortKey, setSortKey] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
   const [groupKey, setGroupKey] = useState('none');
+  const [metadataMissingOnly, setMetadataMissingOnly] = useState(false);
   const [includeSubfolders, setIncludeSubfolders] = useState(false);
   const [enableDupCheck, setEnableDupCheck] = useState(false);
+  const [preparingDuplicates, setPreparingDuplicates] = useState(false);
+  const [duplicatePreparationStatus, setDuplicatePreparationStatus] = useState('');
+  const [duplicatePreparationProgress, setDuplicatePreparationProgress] = useState(0);
+  const [treeRefreshToken, setTreeRefreshToken] = useState(0);
   const [itemScales, setItemScales] = useState({ table: 50, tile: 50, thumbnail: 50 });
   const [showLayoutDialog, setShowLayoutDialog] = useState(false);
+  const [showDeleteLayoutDialog, setShowDeleteLayoutDialog] = useState(false);
+  const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
 
   // --- 검색 상태 ---
@@ -110,16 +164,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // 필터링된 파일 데이터
   const filteredFileData = useMemo(() => {
     const files = getCurrentFileData();
-    if (!searchQuery.trim()) return files;
-    const query = searchQuery.toLowerCase();
-    return files.filter(file => {
-      const name = (file.name || '').toLowerCase();
-      const path = (file.path || '').toLowerCase();
-      const series = (file.series || '').toLowerCase();
-      const title = (file.title || '').toLowerCase();
-      return name.includes(query) || path.includes(query) || series.includes(query) || title.includes(query);
+    return filterFolderFiles(files, {
+      query: searchQuery,
+      metadataMissingOnly,
     });
-  }, [getCurrentFileData, searchQuery]);
+  }, [getCurrentFileData, metadataMissingOnly, searchQuery]);
+  const savedLayouts = useMemo(
+    () => normalizeSavedLayouts(config?.folder_saved_layouts),
+    [config?.folder_saved_layouts],
+  );
 
   // --- 선택 상태 ---
   const {
@@ -136,11 +189,63 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const activeSelectedFile = selectedFileData();
   const itemScale = itemScales[viewMode] || 50;
 
+  useEffect(() => {
+    if (!config || restoredLayoutRef.current) return;
+    const mainWidth = mainAreaRef.current?.clientWidth || 1200;
+    const rightHeight = rightPanelRef.current?.clientHeight || 700;
+    setLeftPanelWidth(resolveSidebarWidth(config.folder_left_panel_width, mainWidth));
+    setDetailPanelHeight(resolveDetailHeight(config.folder_detail_panel_height, rightHeight));
+    initializedDetailHeightRef.current = config.folder_detail_panel_height !== undefined;
+    restoredLayoutRef.current = true;
+  }, [config]);
+
+  useEffect(() => {
+    if (!config || restoredColumnLayoutRef.current) return;
+    setColumnLayout(normalizeColumnLayout(config.folder_column_layout));
+    restoredColumnLayoutRef.current = true;
+  }, [config]);
+
+  useEffect(() => {
+    if (!config || restoredViewSettingsRef.current) return;
+    setViewMode(normalizeViewMode(config.folder_view_mode));
+    setItemScales(normalizeViewScales(config.folder_item_scales));
+    restoredViewSettingsRef.current = true;
+  }, [config]);
+
+  useEffect(() => {
+    if (!restoredViewSettingsRef.current) return undefined;
+    const timer = window.setTimeout(() => {
+      saveConfig?.({
+        folder_view_mode: viewMode,
+        folder_item_scales: normalizeViewScales(itemScales),
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [itemScales, saveConfig, viewMode]);
+
+  useEffect(() => {
+    if (!activeSelectedFile || initializedDetailHeightRef.current) return;
+    const rightHeight = rightPanelRef.current?.clientHeight || 700;
+    setDetailPanelHeight(resolveDetailHeight(undefined, rightHeight));
+    initializedDetailHeightRef.current = true;
+  }, [activeSelectedFile]);
+
+  useEffect(() => {
+    const removeProgress = window.electronAPI?.onTaskProgress?.(data => {
+      if (data?.task !== 'folder:updateIndex') return;
+      setDuplicatePreparationStatus(data.message || t('dup_scan_start'));
+      setDuplicatePreparationProgress(Math.max(0, Math.min(100, Number(data.progress) || 0)));
+    });
+    return () => {
+      if (typeof removeProgress === 'function') removeProgress();
+    };
+  }, [t]);
+
   // --- 사이드바 상태 ---
   const libraries = useMemo(() => (
     [...new Set([...(config?.libraries || []), ...(config?.dup_check_folders || [])])]
   ), [config?.libraries, config?.dup_check_folders]);
-  const favorites = config?.favorites || [];
+  const favoriteEntries = useMemo(() => normalizeFavorites(config || {}), [config]);
 
   const addLibrary = useCallback(async () => {
     try {
@@ -168,16 +273,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [libraries, saveConfig]);
 
   const addFavorite = useCallback(async (path) => {
-    if (saveConfig && !favorites.includes(path)) {
-      await saveConfig({ favorites: [...favorites, path] });
+    if (saveConfig) {
+      const nextFavorites = addFavoriteEntry(favoriteEntries, path);
+      if (nextFavorites !== favoriteEntries) {
+        await saveConfig(serializeFavorites(nextFavorites));
+      }
     }
-  }, [favorites, saveConfig]);
+  }, [favoriteEntries, saveConfig]);
 
   const removeFavorite = useCallback(async (path) => {
     if (saveConfig) {
-      await saveConfig({ favorites: favorites.filter(f => f !== path) });
+      await saveConfig(serializeFavorites(removeFavoriteEntry(favoriteEntries, path)));
     }
-  }, [favorites, saveConfig]);
+  }, [favoriteEntries, saveConfig]);
 
   // --- 누락 권수 상태 ---
   const [missingData, setMissingData] = useState([]);
@@ -198,9 +306,63 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (missing.length > 0) {
       const messageKey = hasShownMissingToastRef.current ? 'tf_local_missing_alert' : 'tf_toast_missing';
       hasShownMissingToastRef.current = true;
-      window.setTimeout(() => showToast?.(t(messageKey, [missing.length])), 1000);
+      window.setTimeout(() => showToast?.({ key: messageKey, values: [missing.length] }), 1000);
     }
   }, [scanOptions, scanFolder, clearSelection, showToast, t]);
+
+  const handleSafeFolderNavigation = useCallback(async folderPath => {
+    if (!folderPath) return false;
+    const exists = await window.electronAPI?.exists?.(folderPath);
+    if (!exists) return false;
+    await handleFolderChange(folderPath);
+    return true;
+  }, [handleFolderChange]);
+
+  const runInternalFileAction = useCallback(async action => {
+    internalFileActionRef.current = true;
+    try {
+      return await action();
+    } finally {
+      window.setTimeout(async () => {
+        if (selectedFolderPath) {
+          try {
+            const stat = await window.electronAPI?.stat?.(selectedFolderPath);
+            watchedMtimeRef.current = stat?.isDirectory ? stat.mtime : null;
+          } catch {
+            watchedMtimeRef.current = null;
+          }
+        }
+        internalFileActionRef.current = false;
+      }, 1500);
+    }
+  }, [selectedFolderPath]);
+
+  useEffect(() => {
+    watchedMtimeRef.current = null;
+    if (!selectedFolderPath) return undefined;
+    let disposed = false;
+
+    const pollFolder = async () => {
+      if (disposed || internalFileActionRef.current || scanning || preparingDuplicates) return;
+      const stat = await window.electronAPI?.stat?.(selectedFolderPath);
+      if (!stat?.isDirectory) return;
+      if (watchedMtimeRef.current === null) {
+        watchedMtimeRef.current = stat.mtime;
+        return;
+      }
+      if (stat.mtime === watchedMtimeRef.current) return;
+      watchedMtimeRef.current = stat.mtime;
+      setTreeRefreshToken(current => current + 1);
+      await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
+    };
+
+    pollFolder();
+    const timer = window.setInterval(pollFolder, 10000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [preparingDuplicates, scanFolder, scanOptions, scanning, selectedFolderPath]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
@@ -219,8 +381,166 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
     const missing = findMissingVolumes(files || []);
     setMissingData(missing);
-    if (missing.length > 0) showToast?.(t('tf_local_missing_alert', [missing.length]));
+    if (missing.length > 0) showToast?.({ key: 'tf_local_missing_alert', values: [missing.length] });
   }, [selectedFolderPath, scanFolder, scanOptions, showToast, t]);
+
+  const handleSmartRefresh = useCallback(async (force = false) => {
+    if (!selectedFolderPath || scanning || preparingDuplicates) return;
+    const stat = await window.electronAPI?.stat?.(selectedFolderPath);
+    if (!force && stat?.isDirectory && watchedMtimeRef.current === stat.mtime) return;
+    if (stat?.isDirectory) watchedMtimeRef.current = stat.mtime;
+    await handleRefresh();
+  }, [handleRefresh, preparingDuplicates, scanning, selectedFolderPath]);
+
+  const handleIncludeSubfoldersChange = useCallback(async () => {
+    if (shouldDisableFolderToggles(scanning, preparingDuplicates)) return;
+    const nextValue = !includeSubfolders;
+    setIncludeSubfolders(nextValue);
+    clearSelection();
+    if (!selectedFolderPath) return;
+    const nextOptions = { ...scanOptions, includeSubfolders: nextValue, force: true };
+    const files = await scanFolder(selectedFolderPath, nextOptions);
+    setMissingData(findMissingVolumes(files || []));
+  }, [
+    clearSelection,
+    includeSubfolders,
+    preparingDuplicates,
+    scanFolder,
+    scanOptions,
+    scanning,
+    selectedFolderPath,
+  ]);
+
+  const handleDupCheckChange = useCallback(async () => {
+    if (shouldDisableFolderToggles(scanning, preparingDuplicates)) return;
+    const nextValue = !enableDupCheck;
+    const dupFolders = config?.dup_check_folders || [];
+    setEnableDupCheck(nextValue);
+    clearSelection();
+
+    if (nextValue && dupFolders.length > 0) {
+      setPreparingDuplicates(true);
+      setDuplicatePreparationStatus(t('dup_scan_start'));
+      setDuplicatePreparationProgress(0);
+      try {
+        const result = await window.electronAPI?.updateFolderIndex?.(dupFolders);
+        if (result?.success === false) throw new Error(result.message || t('msg_failed'));
+      } catch (error) {
+        setEnableDupCheck(false);
+        await window.electronAPI?.showMessage?.({
+          type: 'error',
+          title: t('dlg_err'),
+          message: `${t('msg_failed')}:\n${error.message}`,
+          language: config?.language || config?.lang || 'ko',
+        });
+        return;
+      } finally {
+        setPreparingDuplicates(false);
+        setDuplicatePreparationStatus('');
+        setDuplicatePreparationProgress(0);
+      }
+    }
+
+    if (!selectedFolderPath) return;
+    const nextOptions = {
+      ...scanOptions,
+      enableDupCheck: nextValue,
+      dupFolders,
+      force: true,
+    };
+    const files = await scanFolder(selectedFolderPath, nextOptions);
+    setMissingData(findMissingVolumes(files || []));
+  }, [
+    clearSelection,
+    config?.dup_check_folders,
+    config?.language,
+    config?.lang,
+    enableDupCheck,
+    preparingDuplicates,
+    scanFolder,
+    scanOptions,
+    scanning,
+    selectedFolderPath,
+  ]);
+
+  const handleRefreshTree = useCallback(async () => {
+    if (scanning || preparingDuplicates) return;
+    setTreeRefreshToken(current => current + 1);
+    await handleRefresh();
+  }, [handleRefresh, preparingDuplicates, scanning]);
+
+  const handleLibrarySelect = useCallback(async folderPath => {
+    if (!folderPath) return;
+    await saveConfig?.({ last_selected_library: folderPath });
+    await handleFolderChange(folderPath);
+  }, [handleFolderChange, saveConfig]);
+
+  const openLibrarySettings = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('bookmanager:open-settings', {
+      detail: { tab: 'folder' },
+    }));
+  }, []);
+
+  const runLibraryIndexAction = useCallback(async (folderPath, optimizeMetadata = false) => {
+    if (!folderPath || preparingDuplicates || scanning) return;
+    const choice = await window.electronAPI?.chooseLibrarySyncMode?.({
+      title: optimizeMetadata ? t('menu_optimize_meta') : t('setting_update_index'),
+      message: t('msg_optimize_desc', [basename(folderPath)]),
+      language: config?.language || config?.lang || 'ko',
+    });
+    if (!choice || choice === 'cancel') return;
+
+    await saveConfig?.({ last_selected_library: folderPath });
+    setPreparingDuplicates(true);
+    setDuplicatePreparationStatus(t('dup_scan_start'));
+    setDuplicatePreparationProgress(0);
+    try {
+      const result = await window.electronAPI?.updateFolderIndex?.(
+        [folderPath],
+        { mode: choice },
+      );
+      if (result?.success === false) throw new Error(result.message || t('msg_failed'));
+
+      if (optimizeMetadata) {
+        setIncludeSubfolders(true);
+        const files = await scanFolder(folderPath, {
+          ...scanOptions,
+          includeSubfolders: true,
+          force: true,
+        });
+        setMissingData(findMissingVolumes(files || []));
+        setSelectedFolderPath(folderPath);
+        clearSelection();
+        setSearchQuery('');
+      } else {
+        await handleFolderChange(folderPath);
+      }
+      showToast?.({ key: 'setting_update_index_msg' });
+    } catch (error) {
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: `${t('msg_failed')}:\n${error.message}`,
+        language: config?.language || config?.lang || 'ko',
+      });
+    } finally {
+      setPreparingDuplicates(false);
+      setDuplicatePreparationStatus('');
+      setDuplicatePreparationProgress(0);
+    }
+  }, [
+    config?.language,
+    config?.lang,
+    clearSelection,
+    handleFolderChange,
+    preparingDuplicates,
+    saveConfig,
+    scanFolder,
+    scanOptions,
+    scanning,
+    showToast,
+    t,
+  ]);
 
   const handleAddFolderFromToolbar = useCallback(async () => {
     const folderPath = await window.electronAPI?.selectFolder?.(t('add_folder'));
@@ -265,6 +585,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
+  const handleViewModeChange = useCallback(nextMode => {
+    const currentScroller = viewContainerRef.current?.querySelector(
+      '.file-table-container, .thumbnail-grid, .tile-grid',
+    );
+    if (currentScroller) viewScrollPositionsRef.current[viewMode] = currentScroller.scrollTop;
+    setViewMode(nextMode);
+    window.requestAnimationFrame(() => {
+      const nextScroller = viewContainerRef.current?.querySelector(
+        '.file-table-container, .thumbnail-grid, .tile-grid',
+      );
+      if (!nextScroller) return;
+      nextScroller.scrollTop = viewScrollPositionsRef.current[nextMode]
+        ?? viewScrollPositionsRef.current[viewMode]
+        ?? 0;
+    });
+  }, [viewMode]);
+
   const openSelectedInExplorer = useCallback(async () => {
     const target = activeSelectedFile?.full_path || activeSelectedFile?.path || selectedFolderPath;
     if (target) await window.electronAPI?.showInFolder?.(target);
@@ -277,11 +614,30 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const deleteSelectedFiles = useCallback(async () => {
     const targets = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);
     if (targets.length === 0) return;
-    if (!window.confirm(`${targets.length}개 항목을 휴지통으로 이동할까요?`)) return;
-    await window.electronAPI?.deleteFiles?.(targets);
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: t('dlg_warn'),
+      message: `${targets.length}개 항목을 휴지통으로 이동할까요?`,
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: config?.language || config?.lang || 'ko',
+    });
+    if (response !== 'yes') return;
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.deleteFiles?.(targets),
+    );
+    if (result?.success === false) {
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: result.errors?.join('\n') || result.message || t('msg_failed'),
+        language: config?.language || config?.lang || 'ko',
+      });
+      return;
+    }
     clearSelection();
     handleRefresh();
-  }, [clearSelection, handleRefresh, selectedFileObjects]);
+  }, [clearSelection, config?.language, config?.lang, handleRefresh, runInternalFileAction, selectedFileObjects, t]);
 
   const renameSelectedFile = useCallback(async () => {
     const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
@@ -289,15 +645,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const oldName = String(target).split(/[\\/]/).pop() || '';
     const nextName = window.prompt(t('msg_rename_desc'), oldName)?.trim();
     if (!nextName || nextName === oldName) return;
-    const result = await window.electronAPI?.renameFile?.(target, replaceBasename(target, nextName));
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.renameFile?.(target, replaceBasename(target, nextName)),
+    );
     if (!result?.success) {
       showToast?.(result?.message || t('msg_rename_dup'));
       return;
     }
-    showToast?.(t('msg_rename_success'));
+    showToast?.({ key: 'msg_rename_success' });
     clearSelection();
     handleRefresh();
-  }, [activeSelectedFile, clearSelection, handleRefresh, showToast, t]);
+  }, [activeSelectedFile, clearSelection, handleRefresh, runInternalFileAction, showToast, t]);
 
   const undoLastRename = useCallback(async () => {
     const result = await window.electronAPI?.undoRename?.();
@@ -321,27 +679,49 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       showToast?.(t('tf_empty_no_data'));
       return;
     }
-    if (!window.confirm(`${plans.length}개 파일을 시리즈별 폴더로 이동할까요?`)) return;
-    const result = await window.electronAPI?.executeLibraryMove?.(plans);
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: t('dlg_warn'),
+      message: `${plans.length}개 파일을 시리즈별 폴더로 이동할까요?`,
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: config?.language || config?.lang || 'ko',
+    });
+    if (response !== 'yes') return;
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.executeLibraryMove?.(plans),
+    );
     if (result?.successCount > 0) {
       showToast?.(t('msg_series_grouped', [result.successCount]));
       clearSelection();
       handleRefresh();
     } else {
-      showToast?.(result?.errors?.join(' / ') || t('tf_empty_no_data'));
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: result?.errors?.join('\n') || t('tf_empty_no_data'),
+        language: config?.language || config?.lang || 'ko',
+      });
     }
-  }, [clearSelection, handleRefresh, selectedFileObjects, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, handleRefresh, runInternalFileAction, selectedFileObjects, showToast, t]);
 
   const moveSelectedToLibrary = useCallback(async () => {
     if (selectedFileObjects.length === 0) return;
     if (libraries.length === 0) {
-      showToast?.(t('warn_no_library'));
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('warn_no_library'),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
+    const restoredLibrary = resolveLastSelectedLibrary(libraries, config?.last_selected_library);
     const targetLibrary = libraries.length === 1
       ? libraries[0]
-      : window.prompt(`이동할 라이브러리 경로를 입력하세요:\n${libraries.join('\n')}`, libraries[0])?.trim();
+      : window.prompt(`이동할 라이브러리 경로를 입력하세요:\n${libraries.join('\n')}`, restoredLibrary)?.trim();
     if (!targetLibrary || !libraries.includes(targetLibrary)) return;
+    await saveConfig?.({ last_selected_library: targetLibrary });
     const plans = selectedFileObjects.map(file => {
       const source = file.full_path || file.path;
       return {
@@ -349,15 +729,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         dest: joinPath(targetLibrary, basename(parentPath(source)), basename(source)),
       };
     }).filter(plan => plan.src);
-    const result = await window.electronAPI?.executeLibraryMove?.(plans);
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.executeLibraryMove?.(plans),
+    );
     if (result?.successCount > 0) {
       showToast?.(t('msg_move_lib_done', [result.successCount]));
       clearSelection();
       handleRefresh();
     } else {
-      showToast?.(result?.errors?.join(' / ') || t('msg_failed'));
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: result?.errors?.join('\n') || t('msg_failed'),
+        language: config?.language || config?.lang || 'ko',
+      });
     }
-  }, [clearSelection, handleRefresh, libraries, selectedFileObjects, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, config?.last_selected_library, handleRefresh, libraries, runInternalFileAction, saveConfig, selectedFileObjects, showToast, t]);
 
   const showFileContextMenu = useCallback((event, file, index) => {
     event.preventDefault();
@@ -367,9 +754,155 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setContextMenu({ type: 'file', x: event.clientX, y: event.clientY, file });
   }, [selectFile, selectedFiles]);
 
-  const showFolderContextMenu = useCallback((event, folderPath) => {
+  const showFolderContextMenu = useCallback((event, folderPath, siblingPaths = []) => {
     event.preventDefault();
-    setContextMenu({ type: 'folder', x: event.clientX, y: event.clientY, folderPath });
+    setContextMenu({
+      type: 'folder',
+      x: event.clientX,
+      y: event.clientY,
+      folderPath,
+      siblingPaths,
+    });
+  }, []);
+
+  const showLibraryContextMenu = useCallback((event, folderPath) => {
+    event.preventDefault();
+    setContextMenu({ type: 'library', x: event.clientX, y: event.clientY, folderPath });
+  }, []);
+
+  const showFolderError = useCallback(async (messageKey, detail) => {
+    await window.electronAPI?.showMessage?.({
+      type: 'error',
+      title: t('dlg_err'),
+      message: t(messageKey, [detail]),
+      language: config?.language || config?.lang || 'ko',
+    });
+  }, [config?.language, config?.lang, t]);
+
+  const refreshContextFolder = useCallback(async folderPath => {
+    if (!folderPath) return;
+    setTreeRefreshToken(current => current + 1);
+    if (folderPath === selectedFolderPath) {
+      await scanFolder(folderPath, { ...scanOptions, force: true });
+    }
+  }, [scanFolder, scanOptions, selectedFolderPath]);
+
+  const renameContextFolder = useCallback(async folderPath => {
+    if (!folderPath) return;
+    const oldName = basename(folderPath);
+    const input = window.prompt(t('dlg_ren_folder_msg'), oldName);
+    if (input === null) return;
+    const nextName = input.trim();
+    if (!nextName) return;
+    if (nextName === oldName) {
+      await showFolderError('dlg_err_ren_folder', t('msg_rename_dup'));
+      return;
+    }
+
+    const nextPath = replaceBasename(folderPath, nextName);
+    if (await window.electronAPI?.exists?.(nextPath)) {
+      await showFolderError('dlg_err_ren_folder', t('msg_rename_dup'));
+      return;
+    }
+
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.renameFile?.(folderPath, nextPath),
+    );
+    if (!result?.success) {
+      await showFolderError('dlg_err_ren_folder', result?.message || t('msg_failed'));
+      return;
+    }
+
+    const configPatch = {};
+    if (isFavoriteFolder(favoriteEntries, folderPath)) {
+      const withoutOldPath = removeFavoriteEntry(favoriteEntries, folderPath);
+      Object.assign(configPatch, serializeFavorites(addFavoriteEntry(withoutOldPath, nextPath)));
+    }
+    if ((config?.libraries || []).includes(folderPath)) {
+      configPatch.libraries = config.libraries.map(path => path === folderPath ? nextPath : path);
+    }
+    if ((config?.dup_check_folders || []).includes(folderPath)) {
+      configPatch.dup_check_folders = config.dup_check_folders.map(path => path === folderPath ? nextPath : path);
+    }
+    if (Object.keys(configPatch).length > 0) {
+      await saveConfig?.(configPatch);
+    }
+
+    const nextSelection = replaceTreePath(selectedFolderPath, folderPath, nextPath);
+    setTreeRefreshToken(current => current + 1);
+    if (nextSelection !== selectedFolderPath) {
+      await handleFolderChange(nextSelection);
+    }
+  }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
+
+  const deleteContextFolder = useCallback(async menu => {
+    const folderPath = menu?.folderPath;
+    if (!folderPath) return;
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: t('dlg_del_folder_title'),
+      message: t('dlg_del_folder_msg', [basename(folderPath)]),
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: config?.language || config?.lang || 'ko',
+    });
+    if (response !== 'yes') return;
+
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.deleteFiles?.([folderPath]),
+    );
+    if (!result?.success) {
+      await showFolderError('dlg_del_err', result?.errors?.join('\n') || result?.message || t('msg_failed'));
+      return;
+    }
+
+    if (isFavoriteFolder(favoriteEntries, folderPath)) {
+      await removeFavorite(folderPath);
+    }
+    if (libraries.includes(folderPath)) {
+      await removeLibrary(folderPath);
+    }
+    const nextSelection = resolveSelectionAfterDelete(folderPath, menu.siblingPaths);
+    setTreeRefreshToken(current => current + 1);
+    if (nextSelection && await window.electronAPI?.exists?.(nextSelection)) {
+      await handleFolderChange(nextSelection);
+    } else {
+      setSelectedFolderPath('');
+      clearSelection();
+    }
+  }, [clearSelection, config?.language, config?.lang, favoriteEntries, handleFolderChange, libraries, removeFavorite, removeLibrary, runInternalFileAction, showFolderError, t]);
+
+  const moveContextFolderToLibrary = useCallback(async folderPath => {
+    if (!folderPath || libraries.length === 0) return;
+    const availableLibraries = libraries.filter(library => library !== folderPath);
+    if (availableLibraries.length === 0) return;
+    const restoredLibrary = resolveLastSelectedLibrary(availableLibraries, config?.last_selected_library);
+    const targetLibrary = availableLibraries.length === 1
+      ? availableLibraries[0]
+      : window.prompt(`이동할 라이브러리 경로를 입력하세요:\n${availableLibraries.join('\n')}`, restoredLibrary)?.trim();
+    if (!targetLibrary || !availableLibraries.includes(targetLibrary)) return;
+    const destination = joinPath(targetLibrary, basename(folderPath));
+    if (await window.electronAPI?.exists?.(destination)) {
+      await showFolderError('dlg_err_occurred', t('msg_rename_dup'));
+      return;
+    }
+    await saveConfig?.({ last_selected_library: targetLibrary });
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.executeLibraryMove?.([{ src: folderPath, dest: destination }]),
+    );
+    if (result?.successCount !== 1) {
+      await showFolderError('dlg_err_occurred', result?.errors?.join('\n') || t('msg_failed'));
+      return;
+    }
+    setTreeRefreshToken(current => current + 1);
+    await handleFolderChange(destination);
+  }, [config?.last_selected_library, handleFolderChange, libraries, runInternalFileAction, saveConfig, showFolderError, t]);
+
+  const sendFolderToTab = useCallback((folderPath, tabId) => {
+    if (!folderPath) return;
+    window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+      detail: { tabId, paths: [folderPath] },
+    }));
   }, []);
 
   const handleContextAction = useCallback(async (action) => {
@@ -377,15 +910,32 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'open-folder') {
+    if (action === 'sync-library' && isLibraryContext(menu)) {
+      await runLibraryIndexAction(menu.folderPath, false);
+    } else if (action === 'optimize-library' && isLibraryContext(menu)) {
+      await runLibraryIndexAction(menu.folderPath, true);
+    } else if (action === 'open-folder') {
       handleFolderChange(menu.folderPath || selectedFolderPath);
     } else if (action === 'open-explorer') {
       await openFolderPath(menu.folderPath || selectedFolderPath);
     } else if (action === 'favorite-folder') {
       await addFavorite(menu.folderPath || selectedFolderPath);
+    } else if (action === 'unfavorite-folder') {
+      await removeFavorite(menu.folderPath || selectedFolderPath);
     } else if (action === 'refresh-folder') {
-      const folderPath = menu.folderPath || selectedFolderPath;
-      if (folderPath) await scanFolder(folderPath, { ...scanOptions, force: true });
+      await refreshContextFolder(menu.folderPath || selectedFolderPath);
+    } else if (action === 'rename-folder') {
+      await renameContextFolder(menu.folderPath);
+    } else if (action === 'delete-folder') {
+      await deleteContextFolder(menu);
+    } else if (action === 'move-folder-library') {
+      await moveContextFolderToLibrary(menu.folderPath);
+    } else if (action === 'send-organizer') {
+      sendFolderToTab(menu.folderPath, 'organizer');
+    } else if (action === 'send-renamer') {
+      sendFolderToTab(menu.folderPath, 'renamer');
+    } else if (action === 'send-metadata') {
+      sendFolderToTab(menu.folderPath, 'metadata');
     } else if (action === 'show-file') {
       const target = menu.file?.full_path || menu.file?.path;
       if (target) await window.electronAPI?.showInFolder?.(target);
@@ -400,7 +950,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'move-library') {
       await moveSelectedToLibrary();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteSelectedFiles, groupSelectedBySeries, handleFolderChange, moveSelectedToLibrary, openFolderPath, renameSelectedFile, scanFolder, scanOptions, selectedFolderPath, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, groupSelectedBySeries, handleFolderChange, moveContextFolderToLibrary, moveSelectedToLibrary, openFolderPath, refreshContextFolder, removeFavorite, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectedFolderPath, sendFolderToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -409,7 +959,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
       if (event.key === 'F5') {
         event.preventDefault();
-        handleRefresh();
+        handleSmartRefresh(event.shiftKey);
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectAll();
@@ -429,11 +979,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         event.preventDefault();
         openSelectedInExplorer();
       } else if (event.key === '1') {
-        setViewMode('table');
+        handleViewModeChange('table');
       } else if (event.key === '2') {
-        setViewMode('tile');
+        handleViewModeChange('tile');
       } else if (event.key === '3') {
-        setViewMode('thumbnail');
+        handleViewModeChange('thumbnail');
       }
     };
 
@@ -443,10 +993,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, deleteSelectedFiles, handleRefresh, invertSelection, openSelectedInExplorer, selectAll]);
+  }, [clearSelection, closeContextMenu, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, openSelectedInExplorer, selectAll]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
+      if (event.detail?.activeTab !== 'folder') return;
       const action = event.detail?.action;
       if (action === 'add-folder') handleAddFolderFromToolbar();
       else if (action === 'add-file') handleAddFileFromToolbar();
@@ -481,11 +1032,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     const handleMove = (moveEvent) => {
       const nextWidth = startWidth + moveEvent.clientX - startX;
-      const maxWidth = Math.max(240, containerWidth - 520);
-      setLeftPanelWidth(Math.min(maxWidth, Math.max(220, nextWidth)));
+      setLeftPanelWidth(clampSidebarWidth(nextWidth, containerWidth));
     };
 
-    const handleUp = () => {
+    const handleUp = (upEvent) => {
+      const nextWidth = startWidth + upEvent.clientX - startX;
+      const savedWidth = clampSidebarWidth(nextWidth, containerWidth);
+      setLeftPanelWidth(savedWidth);
+      saveConfig?.({ folder_left_panel_width: savedWidth }).catch(error => {
+        console.error('폴더 좌우 splitter 저장 실패:', error);
+      });
       document.body.classList.remove('is-resizing-panel');
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
@@ -494,7 +1050,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     document.body.classList.add('is-resizing-panel');
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
-  }, [leftPanelWidth]);
+  }, [leftPanelWidth, saveConfig]);
 
   const startVerticalResize = useCallback((event) => {
     event.preventDefault();
@@ -504,11 +1060,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     const handleMove = (moveEvent) => {
       const nextHeight = startHeight - (moveEvent.clientY - startY);
-      const maxHeight = Math.max(180, containerHeight - 150);
-      setDetailPanelHeight(Math.min(maxHeight, Math.max(180, nextHeight)));
+      setDetailPanelHeight(clampDetailHeight(nextHeight, containerHeight));
     };
 
-    const handleUp = () => {
+    const handleUp = (upEvent) => {
+      const nextHeight = startHeight - (upEvent.clientY - startY);
+      const savedHeight = clampDetailHeight(nextHeight, containerHeight);
+      setDetailPanelHeight(savedHeight);
+      saveConfig?.({ folder_detail_panel_height: savedHeight }).catch(error => {
+        console.error('폴더 상하 splitter 저장 실패:', error);
+      });
       document.body.classList.remove('is-resizing-panel');
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
@@ -517,16 +1078,110 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     document.body.classList.add('is-resizing-panel');
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
-  }, [detailPanelHeight]);
+  }, [detailPanelHeight, saveConfig]);
 
-  const handleSort = useCallback((key) => {
-    if (sortKey === key) {
+  const handleSort = useCallback((key, toggleSameKey = true) => {
+    if (sortKey === key && toggleSameKey) {
       setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
       setSortOrder('asc');
     }
   }, [sortKey]);
+
+  const handleToggleSortOrder = useCallback(() => {
+    setSortOrder(current => current === 'asc' ? 'desc' : 'asc');
+  }, []);
+
+  const handleSaveLayout = useCallback(async () => {
+    const name = window.prompt(t('dlg_save_lay_msg'))?.trim();
+    if (!name) return;
+    const currentLayouts = config?.folder_saved_layouts && typeof config.folder_saved_layouts === 'object'
+      ? { ...config.folder_saved_layouts }
+      : {};
+    if (currentLayouts[name]) {
+      const response = await window.electronAPI?.showMessage?.({
+        type: 'question',
+        title: t('dlg_warn'),
+        message: `${name}\n${t('lbl_conflict_desc')}`,
+        buttons: 'yes-no',
+        defaultChoice: 'no',
+        language: config?.language || config?.lang || 'ko',
+      });
+      if (response !== 'yes') return;
+    }
+    currentLayouts[name] = {
+      sortKey,
+      sortOrder,
+      groupKey,
+      columns: serializeColumnLayout(columnLayout),
+    };
+    await saveConfig?.({ folder_saved_layouts: currentLayouts });
+  }, [columnLayout, config?.folder_saved_layouts, config?.language, config?.lang, groupKey, saveConfig, sortKey, sortOrder, t]);
+
+  const handleDeleteLayout = useCallback(async name => {
+    if (!name || !savedLayouts.includes(name)) return;
+    const currentLayouts = { ...(config?.folder_saved_layouts || {}) };
+    delete currentLayouts[name];
+    await saveConfig?.({ folder_saved_layouts: currentLayouts });
+    setShowDeleteLayoutDialog(false);
+  }, [config?.folder_saved_layouts, saveConfig, savedLayouts]);
+
+  const handleApplyLayout = useCallback(name => {
+    const layout = config?.folder_saved_layouts?.[name];
+    if (!layout || typeof layout !== 'object') return;
+    if (layout.sortKey) setSortKey(layout.sortKey);
+    if (layout.sortOrder) setSortOrder(layout.sortOrder);
+    if (layout.groupKey) setGroupKey(layout.groupKey);
+    if (layout.columns) {
+      const nextColumns = normalizeColumnLayout(layout.columns);
+      setColumnLayout(nextColumns);
+      saveConfig?.({ folder_column_layout: serializeColumnLayout(nextColumns) });
+    }
+  }, [config?.folder_saved_layouts, saveConfig]);
+
+  const handleApplyColumnLayout = useCallback(async nextLayout => {
+    const normalized = normalizeColumnLayout(nextLayout);
+    setColumnLayout(normalized);
+    setShowLayoutDialog(false);
+    await saveConfig?.({ folder_column_layout: serializeColumnLayout(normalized) });
+  }, [saveConfig]);
+
+  const handleExportCsv = useCallback(async () => {
+    if (filteredFileData.length === 0) {
+      showToast?.(t('dlg_exp_no_data'));
+      return;
+    }
+    const filePath = await window.electronAPI?.saveFile?.(t('dlg_exp_title'), [
+      { name: 'CSV', extensions: ['csv'] },
+    ]);
+    if (!filePath) return;
+    const headers = [
+      t('col_name'),
+      t('col_path'),
+      t('col_size'),
+      t('col_ext'),
+      t('col_series'),
+      t('col_title'),
+      t('col_writer'),
+      t('col_publisher'),
+      t('col_genre'),
+    ];
+    const rows = filteredFileData.map(file => [
+      file.name,
+      file.full_path || file.path,
+      file.size,
+      file.ext,
+      file.series,
+      file.title,
+      file.author || file.writer,
+      file.publisher,
+      file.genre,
+    ]);
+    const result = await window.electronAPI?.exportCsv?.(filePath, headers, rows);
+    if (result?.success) showToast?.(t('dlg_exp_done'));
+    else showToast?.(result?.message || t('msg_failed'));
+  }, [filteredFileData, showToast, t]);
 
   // View Stack
   const renderViewStack = () => {
@@ -538,13 +1193,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       groupKey,
       onSelect: handleFileSelect,
       onContextMenu: showFileContextMenu,
+      onScroll: event => {
+        viewScrollPositionsRef.current[viewMode] = event.currentTarget.scrollTop;
+      },
       t,
     };
     switch (viewMode) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} onSelect={handleFileSelect} onContextMenu={showFileContextMenu} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} onSelect={handleFileSelect} onContextMenu={showFileContextMenu} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} scale={itemScale} />;
     }
   };
 
@@ -557,29 +1215,49 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           <div className="folder-left-panel" style={{ flexBasis: `${leftPanelWidth}px`, width: `${leftPanelWidth}px` }}>
             <div className="left-toolbar">
               <div className="left-toolbar-row">
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={includeSubfolders} onChange={e => setIncludeSubfolders(e.target.checked)} />
-                  {t('folder.toolbar.include_subfolders')}
-                </label>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={enableDupCheck} onChange={e => setEnableDupCheck(e.target.checked)} />
-                  {t('folder.toolbar.dup_check')}
-                </label>
+                <button
+                  className={`folder-checkable-btn ${includeSubfolders ? 'checked' : ''}`}
+                  type="button"
+                  aria-pressed={includeSubfolders}
+                  disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
+                  onClick={handleIncludeSubfoldersChange}
+                >
+                  {t(folderToggleLabelKey('subfolders', includeSubfolders))}
+                </button>
+                <button
+                  className={`folder-checkable-btn ${enableDupCheck ? 'checked' : ''}`}
+                  type="button"
+                  aria-pressed={enableDupCheck}
+                  disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
+                  onClick={handleDupCheckChange}
+                >
+                  {t(folderToggleLabelKey('duplicates', enableDupCheck))}
+                </button>
               </div>
-              <button className="full-btn" onClick={handleRefresh}>{t('folder.toolbar.refresh')}</button>
+              <button
+                className="full-btn"
+                disabled={scanning || preparingDuplicates}
+                onClick={handleRefreshTree}
+              >
+                {t('folder_refresh_tree')}
+              </button>
             </div>
             
             <div className="sidebar-container">
               <FolderSidebar
                 libraries={libraries}
-                favorites={favorites}
+                favorites={favoriteEntries}
                 selectedFolderPath={selectedFolderPath}
-                onSelectFolder={handleFolderChange}
+                onSelectFolder={handleSafeFolderNavigation}
+                onSelectLibraryFolder={handleLibrarySelect}
                 onAddLibrary={addLibrary}
                 onRemoveLibrary={removeLibrary}
                 onAddFavorite={addFavorite}
                 onRemoveFavorite={removeFavorite}
                 onFolderContextMenu={showFolderContextMenu}
+                onLibraryContextMenu={showLibraryContextMenu}
+                onOpenLibrarySettings={openLibrarySettings}
+                refreshToken={treeRefreshToken}
                 t={t}
               />
             </div>
@@ -613,40 +1291,65 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 className={`toggle-btn ${isSidebarVisible ? 'active' : ''}`}
                 onClick={() => setIsSidebarVisible(!isSidebarVisible)}
               >
-                ✓ 사이드바
+                {t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}
               </button>
               
               <FolderToolbar 
                 t={t}
-                viewMode={viewMode}
-                setViewMode={setViewMode}
                 sortKey={sortKey}
-                setSortKey={setSortKey}
+                sortOrder={sortOrder}
+                onSort={handleSort}
+                onToggleSortOrder={handleToggleSortOrder}
                 groupKey={groupKey}
                 setGroupKey={setGroupKey}
-                includeSubfolders={includeSubfolders}
-                setIncludeSubfolders={setIncludeSubfolders}
-                enableDupCheck={enableDupCheck}
-                setEnableDupCheck={setEnableDupCheck}
-                onRefresh={handleRefresh}
-                onLayoutClick={() => setShowLayoutDialog(true)}
+                metadataMissingOnly={metadataMissingOnly}
+                setMetadataMissingOnly={setMetadataMissingOnly}
+                savedLayouts={savedLayouts}
+                onEditLayout={() => setShowLayoutDialog(true)}
+                onSaveLayout={handleSaveLayout}
+                onDeleteLayout={() => savedLayouts.length > 0 && setShowDeleteLayoutDialog(true)}
+                onApplyLayout={handleApplyLayout}
+                onExportCsv={handleExportCsv}
               />
             </div>
             
             <div className="right-toolbar-right">
-              <input 
-                type="text" 
-                className="search-input" 
-                ref={searchInputRef}
-                placeholder={t('folder.toolbar.search')}
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-              <button className="refresh-btn" onClick={handleRefresh}>{t('folder.toolbar.refresh')}</button>
+              <div className="search-input-wrap">
+                <input
+                  type="text"
+                  className="search-input"
+                  ref={searchInputRef}
+                  placeholder={t('folder_search_ph')}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button
+                    className="search-clear-btn"
+                    onClick={() => {
+                      setSearchQuery('');
+                      searchInputRef.current?.focus();
+                    }}
+                    aria-label="Clear search"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              <button
+                className="refresh-btn"
+                onClick={event => handleSmartRefresh(event.shiftKey)}
+                title="Shift+Click: Force refresh"
+              >
+                {t('folder_refresh_list')}
+              </button>
             </div>
           </div>
 
-          <div className="view-container">
+          <div
+            className="view-container"
+            ref={viewContainerRef}
+          >
              {renderViewStack()}
           </div>
           
@@ -669,9 +1372,30 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               {formatStatus(t, selectedFiles, filteredFileData)}
             </div>
             <div className="view-controls">
-              <button className={`view-icon-btn ${viewMode === 'table' ? 'active' : ''}`} onClick={() => setViewMode('table')}>☰</button>
-              <button className={`view-icon-btn ${viewMode === 'tile' ? 'active' : ''}`} onClick={() => setViewMode('tile')}>☷</button>
-              <button className={`view-icon-btn ${viewMode === 'thumbnail' ? 'active' : ''}`} onClick={() => setViewMode('thumbnail')}>▦</button>
+              <button
+                className={`view-icon-btn ${viewMode === 'table' ? 'active' : ''}`}
+                title={t('menu_detail')}
+                aria-pressed={viewMode === 'table'}
+                onClick={() => handleViewModeChange('table')}
+              >
+                ☰
+              </button>
+              <button
+                className={`view-icon-btn ${viewMode === 'thumbnail' ? 'active' : ''}`}
+                title={t('menu_thumbnail')}
+                aria-pressed={viewMode === 'thumbnail'}
+                onClick={() => handleViewModeChange('thumbnail')}
+              >
+                ▦
+              </button>
+              <button
+                className={`view-icon-btn ${viewMode === 'tile' ? 'active' : ''}`}
+                title={t('menu_tile')}
+                aria-pressed={viewMode === 'tile'}
+                onClick={() => handleViewModeChange('tile')}
+              >
+                ☷
+              </button>
               <span className="scale-label">{t('folder_item_size')}</span>
               <input
                 type="range"
@@ -687,12 +1411,34 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       </div>
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
-          {contextMenu.type === 'folder' ? (
+          {contextMenu.type === 'library' ? (
+            <>
+              <button onClick={() => handleContextAction('sync-library')}>{t('setting_update_index')}</button>
+              <button onClick={() => handleContextAction('optimize-library')}>{t('menu_optimize_meta')}</button>
+              <button onClick={() => handleContextAction('open-explorer')}>{t('action_open_exp')}</button>
+            </>
+          ) : contextMenu.type === 'folder' ? (
             <>
               <button onClick={() => handleContextAction('open-folder')}>열기</button>
-              <button onClick={() => handleContextAction('open-explorer')}>탐색기에서 열기</button>
-              <button onClick={() => handleContextAction('favorite-folder')}>즐겨찾기에 추가</button>
-              <button onClick={() => handleContextAction('refresh-folder')}>새로고침</button>
+              <button onClick={() => handleContextAction('refresh-folder')}>{t('action_refresh')}</button>
+              <button onClick={() => handleContextAction('rename-folder')}>{t('action_ren_folder')}</button>
+              <button onClick={() => handleContextAction('delete-folder')}>{t('action_del_folder')}</button>
+              <div className="folder-context-menu-separator" />
+              <button onClick={() => handleContextAction(
+                isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
+                  ? 'unfavorite-folder'
+                  : 'favorite-folder'
+              )}>
+                {t(isFavoriteFolder(favoriteEntries, contextMenu.folderPath) ? 'action_fav_rem' : 'action_fav_add')}
+              </button>
+              <button onClick={() => handleContextAction('open-explorer')}>{t('action_open_exp')}</button>
+              {!libraries.includes(contextMenu.folderPath) && libraries.length > 0 && (
+                <button onClick={() => handleContextAction('move-folder-library')}>{t('action_move_folder_to_library')}</button>
+              )}
+              <div className="folder-context-menu-separator" />
+              <button onClick={() => handleContextAction('send-organizer')}>{t('action_flatten_structure')}</button>
+              <button onClick={() => handleContextAction('send-renamer')}>{t('action_inner_ren')}</button>
+              <button onClick={() => handleContextAction('send-metadata')}>{t('action_meta_edit')}</button>
             </>
           ) : (
             <>
@@ -709,7 +1455,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       
       {/* Global Bottom Status Bar */}
       <div className="global-status-bar">
-        <span className="status-message">{scanning ? `${statusMessage} (${scanProgress}%)` : statusMessage}</span>
+        <span className="status-message">
+          {preparingDuplicates
+            ? `${duplicatePreparationStatus || t('dup_scan_start')} (${duplicatePreparationProgress}%)`
+            : scanning
+              ? `${statusMessage} (${scanProgress}%)`
+              : statusMessage}
+        </span>
       </div>
       {showMissingDialog && (
         <MissingVolumesDialog
@@ -723,32 +1475,66 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         />
       )}
       {showLayoutDialog && (
-        <LayoutEditDialog onClose={() => setShowLayoutDialog(false)} t={t} />
+        <LayoutEditDialog
+          layout={columnLayout}
+          onApply={handleApplyColumnLayout}
+          onClose={() => setShowLayoutDialog(false)}
+          t={t}
+        />
+      )}
+      {showDeleteLayoutDialog && (
+        <LayoutDeleteDialog
+          layouts={savedLayouts}
+          onDelete={handleDeleteLayout}
+          onClose={() => setShowDeleteLayoutDialog(false)}
+          t={t}
+        />
       )}
     </div>
   );
 }
 
 function ContextMenu({ x, y, children }) {
+  const menuRef = useRef(null);
+  const [position, setPosition] = useState({ x, y });
+
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    setPosition(clampContextMenuPosition(
+      x,
+      y,
+      menu.offsetWidth,
+      menu.offsetHeight,
+      window.innerWidth,
+      window.innerHeight,
+    ));
+  }, [x, y]);
+
   return (
-    <div className="folder-context-menu" style={{ left: x, top: y }} onClick={event => event.stopPropagation()}>
+    <div
+      ref={menuRef}
+      className="folder-context-menu"
+      style={{ left: position.x, top: position.y }}
+      onClick={event => event.stopPropagation()}
+    >
       {children}
     </div>
   );
 }
 
-function LayoutEditDialog({ onClose, t }) {
-  const columns = [
-    '커버', '파일명', '용량', '해상도', '수정일', '생성일', '파일경로', '확장자',
-    '시리즈', '제목', '권', '화', '작가', '시리즈 그룹', '제작진', '출판사',
-    '임프린트', '장르', '전체권수', '페이지수', '포맷',
-  ];
+function LayoutEditDialog({ layout, onApply, onClose, t }) {
+  const [draft, setDraft] = useState(() => normalizeColumnLayout(layout));
 
-  const checked = new Set(['커버', '파일명', '용량', '해상도', '수정일', '생성일', '시리즈', '제목', '권', '화', '작가', '시리즈 그룹', '제작진', '출판사']);
+  const updateColumn = (index, changes) => {
+    setDraft(current => current.map((column, columnIndex) => (
+      columnIndex === index ? { ...column, ...changes } : column
+    )));
+  };
 
   return (
-    <div className="folder-dialog-backdrop">
-      <div className="layout-dialog">
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <div className="layout-dialog" onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar">
           <span>▣ {t('dlg_edit_lay_title')}</span>
           <button onClick={onClose}>×</button>
@@ -756,16 +1542,76 @@ function LayoutEditDialog({ onClose, t }) {
         <div className="layout-dialog-body">
           <div className="layout-dialog-label">{t('dlg_edit_lay_msg')}</div>
           <div className="layout-column-list">
-            {columns.map(column => (
-              <label key={column} className="layout-column-row">
-                <input type="checkbox" defaultChecked={checked.has(column)} />
-                <span>{column}</span>
-              </label>
+            {draft.map((column, index) => (
+              <div key={column.key} className="layout-column-row">
+                <input
+                  type="checkbox"
+                  checked={column.visible}
+                  onChange={event => updateColumn(index, { visible: event.target.checked })}
+                />
+                <span className="layout-column-name">
+                  {column.key === 'dup_count'
+                    ? t(column.labelKey).replace(/[☐☑]\s*/, '')
+                    : t(column.labelKey)}
+                </span>
+                <input
+                  className="layout-column-width"
+                  type="number"
+                  min="40"
+                  max="600"
+                  value={column.width}
+                  onChange={event => updateColumn(index, { width: Number(event.target.value) })}
+                  aria-label={`${column.key} width`}
+                />
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={() => setDraft(current => moveColumn(current, index, -1))}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  disabled={index === draft.length - 1}
+                  onClick={() => setDraft(current => moveColumn(current, index, 1))}
+                >
+                  ↓
+                </button>
+              </div>
             ))}
           </div>
         </div>
         <div className="layout-dialog-footer">
-          <button onClick={onClose}>{t('btn_ok')}</button>
+          <button onClick={() => onApply(draft)}>{t('btn_ok')}</button>
+          <button onClick={onClose}>{t('btn_cancel')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
+  const [selected, setSelected] = useState(layouts[0] || '');
+
+  return (
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <div className="layout-delete-dialog" onMouseDown={event => event.stopPropagation()}>
+        <div className="dialog-titlebar">
+          <span>{t('menu_del_layout')}</span>
+          <button onClick={onClose}>×</button>
+        </div>
+        <div className="layout-delete-body">
+          <label htmlFor="layout-delete-select">{t('dlg_del_lay_msg')}</label>
+          <select
+            id="layout-delete-select"
+            value={selected}
+            onChange={event => setSelected(event.target.value)}
+          >
+            {layouts.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </div>
+        <div className="layout-dialog-footer">
+          <button onClick={() => onDelete(selected)}>{t('btn_ok')}</button>
           <button onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>

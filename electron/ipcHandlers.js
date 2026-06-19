@@ -15,8 +15,21 @@ import {
   createArchiveDialogOptions,
   createFolderDialogOptions,
   normalizeArchiveDialogResult,
+  normalizeFileDialogResult,
+  normalizeFilesDialogResult,
   normalizeFolderDialogResult,
+  normalizeSaveDialogResult,
 } from './dialogOptions.js';
+import { TaskCancellationRegistry } from './taskCancellation.js';
+import { normalizeRuntimeState } from './exitPolicy.js';
+import {
+  createMessageDialogOptions,
+  resolveMessageDialogResponse,
+} from './messageDialog.js';
+import {
+  createLibrarySyncDialogOptions,
+  resolveLibrarySyncChoice,
+} from './libraryDialog.js';
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
@@ -1729,6 +1742,12 @@ async function scanArchivePaths(rootPath) {
 
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath) {
+  const cancellationRegistry = new TaskCancellationRegistry();
+  const runtimeStates = new Map();
+
+  ipcMain.on('app:setRuntimeState', (event, state) => {
+    runtimeStates.set(event.sender.id, normalizeRuntimeState(state));
+  });
 
   // ========== 폴더 스캔 ==========
   ipcMain.handle('folder:scan', async (event, folderPath, options) => {
@@ -1754,24 +1773,31 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('organizer:execute', async (event, items, options = {}) => {
+    const taskId = 'organizer';
+    const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const cwebpExe = options.cwebpExe || await getBinPath('cwebp');
-    return executeOrganizer(items, {
-      ...config,
-      ...options,
-      sevenZExe,
-      cwebpExe,
-      lang: options.lang || config.language || config.lang || 'ko',
-      target_format: options.target_format ?? config.target_format ?? 'none',
-      backup_on: options.backup_on ?? config.backup_on ?? false,
-      flatten_folders: options.flatten_folders ?? options.flattenFolders ?? config.flatten_folders ?? false,
-      webp_conversion: options.webp_conversion ?? options.webpConversion ?? config.webp_conversion ?? false,
-      img_quality: options.img_quality ?? config.img_quality ?? config.jpg_quality ?? 100,
-      max_threads: options.max_threads ?? config.max_threads ?? 1,
-    }, (progress) => {
-      event.sender.send('task:progress', { task: 'organizer:execute', ...progress });
-    });
+    try {
+      return await executeOrganizer(items, {
+        ...config,
+        ...options,
+        sevenZExe,
+        cwebpExe,
+        shouldCancel: () => controller.shouldCancel(),
+        lang: options.lang || config.language || config.lang || 'ko',
+        target_format: options.target_format ?? config.target_format ?? 'none',
+        backup_on: options.backup_on ?? config.backup_on ?? false,
+        flatten_folders: options.flatten_folders ?? options.flattenFolders ?? config.flatten_folders ?? false,
+        webp_conversion: options.webp_conversion ?? options.webpConversion ?? config.webp_conversion ?? false,
+        img_quality: options.img_quality ?? config.img_quality ?? config.jpg_quality ?? 100,
+        max_threads: options.max_threads ?? config.max_threads ?? 1,
+      }, (progress) => {
+        event.sender.send('task:progress', { task: 'organizer:execute', ...progress });
+      });
+    } finally {
+      cancellationRegistry.finish(event.sender.id, taskId, controller);
+    }
   });
 
   // ========== 내부 파일명 변경 ==========
@@ -1787,14 +1813,18 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('renamer:execute', async (event, items, options = {}) => {
+    const taskId = 'renamer';
+    const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const cwebpExe = options.cwebpExe || await getBinPath('cwebp');
-    return executeRenamer(items, {
+    try {
+      return await executeRenamer(items, {
       ...config,
       ...options,
       sevenZExe,
       cwebpExe,
+      shouldCancel: () => controller.shouldCancel(),
       lang: options.lang || config.language || config.lang || 'ko',
       target_format: options.target_format ?? config.target_format ?? 'none',
       backup_on: options.backup_on ?? config.backup_on ?? false,
@@ -1803,9 +1833,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       webpConversion: options.webpConversion ?? options.webp_conversion ?? config.webp_conversion ?? false,
       img_quality: options.img_quality ?? config.img_quality ?? config.jpg_quality ?? 100,
       max_threads: options.max_threads ?? config.max_threads ?? 1,
-    }, (progress) => {
-      event.sender.send('task:progress', { task: 'renamer:execute', ...progress });
-    });
+      }, (progress) => {
+        event.sender.send('task:progress', { task: 'renamer:execute', ...progress });
+      });
+    } finally {
+      cancellationRegistry.finish(event.sender.id, taskId, controller);
+    }
   });
 
   // ========== 메타데이터 관리 ==========
@@ -1821,16 +1854,23 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('metadata:save', async (event, items, options = {}) => {
+    const taskId = 'metadata';
+    const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
-    return saveMetadataItems(items, {
-      ...config,
-      ...options,
-      sevenZExe,
-      lang: options.lang || config.language || config.lang || 'ko',
-    }, (progress) => {
-      event.sender.send('task:progress', { task: 'metadata:save', ...progress });
-    });
+    try {
+      return await saveMetadataItems(items, {
+        ...config,
+        ...options,
+        sevenZExe,
+        shouldCancel: () => controller.shouldCancel(),
+        lang: options.lang || config.language || config.lang || 'ko',
+      }, (progress) => {
+        event.sender.send('task:progress', { task: 'metadata:save', ...progress });
+      });
+    } finally {
+      cancellationRegistry.finish(event.sender.id, taskId, controller);
+    }
   });
 
   ipcMain.handle('api:fetch', async (_event, options = {}) => {
@@ -2026,8 +2066,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return { success: false, message: '별도 추출 작업은 현재 구조 정리/내부 파일명 변경 작업에 통합되어 있습니다.' };
   });
 
-  ipcMain.handle('task:stop', async () => {
-    return { success: false, message: '현재 실행 중인 작업 취소는 아직 지원하지 않습니다.' };
+  ipcMain.handle('task:stop', async (event, taskId) => {
+    const success = cancellationRegistry.cancel(event.sender.id, String(taskId || ''));
+    return {
+      success,
+      message: success ? '취소 요청을 전달했습니다.' : '실행 중인 작업을 찾을 수 없습니다.',
+    };
   });
 
   // ========== 공유 서버 ==========
@@ -2091,8 +2135,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('folder:updateIndex', async (event, folders = null) => {
+  ipcMain.handle('folder:updateIndex', async (event, folders = null, options = {}) => {
     const config = configManager.getConfig() || {};
+    const mode = options.mode === 'smart' ? 'smart' : 'force';
+    const lastMtimes = { ...(config.index_last_mtimes || {}) };
     const targetFolders = (folders || config.dup_check_folders || config.libraries || [])
       .filter(Boolean)
       .map(folder => path.resolve(folder))
@@ -2108,8 +2154,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       });
 
       let total = 0;
+      let skippedFolders = 0;
       for (let index = 0; index < targetFolders.length; index += 1) {
         const folder = targetFolders[index];
+        const currentMtime = fs.statSync(folder).mtimeMs;
+        if (mode === 'smart' && lastMtimes[folder] === currentMtime) {
+          skippedFolders += 1;
+          continue;
+        }
         event.sender.send('task:progress', {
           task: 'folder:updateIndex',
           progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
@@ -2118,15 +2170,23 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         const files = await scanArchivePaths(folder);
         insertMany(folder, files);
         total += files.length;
+        lastMtimes[folder] = currentMtime;
       }
       await db.persist();
+      configManager.updateConfig({ index_last_mtimes: lastMtimes });
 
       event.sender.send('task:progress', {
         task: 'folder:updateIndex',
         progress: 100,
         message: `인덱스 갱신 완료: ${total}개`,
       });
-      return { success: true, folderCount: targetFolders.length, total };
+      return {
+        success: true,
+        folderCount: targetFolders.length,
+        skippedFolders,
+        total,
+        mode,
+      };
     } finally {
       db.close();
     }
@@ -2226,33 +2286,62 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return normalizeArchiveDialogResult(result);
   });
 
-  ipcMain.handle('dialog:selectFile', async (_, title, filters) => {
-    const result = await import('electron');
-    const { filePaths } = await result.dialog.showOpenDialog({
+  ipcMain.handle('dialog:metadataDropChoice', async (event, options = {}) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
+      type: 'question',
+      title: options.title || '추가 방식 선택',
+      message: options.message || '',
+      buttons: 'yes-no-cancel',
+      defaultChoice: 'yes',
+      language: options.language,
+    };
+    const result = await dialog.showMessageBox(window, createMessageDialogOptions(dialogOptions));
+    return resolveMessageDialogResponse(dialogOptions, result.response);
+  });
+
+  ipcMain.handle('dialog:message', async (event, options = {}) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showMessageBox(window, createMessageDialogOptions(options));
+    return resolveMessageDialogResponse(options, result.response);
+  });
+
+  ipcMain.handle('dialog:librarySyncChoice', async (event, options = {}) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showMessageBox(
+      window,
+      createLibrarySyncDialogOptions(options),
+    );
+    return resolveLibrarySyncChoice(result.response);
+  });
+
+  ipcMain.handle('dialog:selectFile', async (event, title, filters) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(window, {
       properties: ['openFile'],
       title: title || '파일 선택',
       filters: filters || [],
     });
-    return filePaths?.[0] || null;
+    return normalizeFileDialogResult(result);
   });
 
-  ipcMain.handle('dialog:selectFiles', async (_, title, filters) => {
-    const result = await import('electron');
-    const { filePaths } = await result.dialog.showOpenDialog({
+  ipcMain.handle('dialog:selectFiles', async (event, title, filters) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(window, {
       properties: ['openFile', 'multiSelections'],
       title: title || '파일 선택',
       filters: filters || [],
     });
-    return filePaths || [];
+    return normalizeFilesDialogResult(result);
   });
 
-  ipcMain.handle('dialog:saveFile', async (_, title, filters) => {
-    const result = await import('electron');
-    const { filePath } = await result.dialog.showSaveDialog({
+  ipcMain.handle('dialog:saveFile', async (event, title, filters) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showSaveDialog(window, {
       title: title || '저장',
       filters: filters || [],
     });
-    return filePath || null;
+    return normalizeSaveDialogResult(result);
   });
 
   // ========== 파일 시스템 ==========
@@ -2610,4 +2699,19 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   ipcMain.on('log', (event, data) => {
     console.log('[Renderer Log]:', data);
   });
+
+  return {
+    getRuntimeState(ownerId) {
+      return runtimeStates.get(ownerId) || normalizeRuntimeState();
+    },
+    cancelAll(ownerId) {
+      return cancellationRegistry.cancelAll(ownerId);
+    },
+    waitForIdle(ownerId, timeoutMs) {
+      return cancellationRegistry.waitForIdle(ownerId, timeoutMs);
+    },
+    clear(ownerId) {
+      runtimeStates.delete(ownerId);
+    },
+  };
 }

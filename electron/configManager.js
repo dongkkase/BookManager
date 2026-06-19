@@ -3,10 +3,13 @@ import path from 'path';
 import os from 'os';
 
 export class ConfigManager {
-  constructor(userDataPath, executableDir) {
+  constructor(userDataPath, executableDir, options = {}) {
     this.userDataPath = userDataPath;
     this.executableDir = executableDir;
-    this.configPath = path.join(executableDir, 'config.json');
+    this.configPath = path.join(
+      options.useUserData ? userDataPath : executableDir,
+      'config.json',
+    );
     this.config = null;
   }
 
@@ -43,6 +46,7 @@ export class ConfigManager {
       viewer_path: '',
       libraries: [],
       favorites: [],
+      folder_favorites: [],
       dup_check_folders: [],
       opds_port: 8080,
       webdav_port: 8081,
@@ -67,6 +71,10 @@ export class ConfigManager {
       height: 800,
       is_maximized: false,
       last_tab_index: 0,
+      folder_left_panel_width: null,
+      folder_detail_panel_height: null,
+      last_selected_library: '',
+      index_last_mtimes: {},
       min_window_width: 1200,
       min_window_height: 750,
       metadata_search_min_width: 1200,

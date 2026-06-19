@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 파일/폴더 선택
   selectFolder: (title) => ipcRenderer.invoke('dialog:selectFolder', title),
   selectArchives: (title) => ipcRenderer.invoke('dialog:selectArchives', title),
+  chooseMetadataDrop: (options) => ipcRenderer.invoke('dialog:metadataDropChoice', options),
+  showMessage: (options) => ipcRenderer.invoke('dialog:message', options),
+  chooseLibrarySyncMode: (options) => ipcRenderer.invoke('dialog:librarySyncChoice', options),
   selectFile: (title, filters) => ipcRenderer.invoke('dialog:selectFile', title, filters),
   selectFiles: (title, filters) => ipcRenderer.invoke('dialog:selectFiles', title, filters),
   saveFile: (title, filters) => ipcRenderer.invoke('dialog:saveFile', title, filters),
@@ -55,7 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
   clearApiCache: () => ipcRenderer.invoke('cache:clearApi'),
   clearDupCache: () => ipcRenderer.invoke('folder:clearDupCache'),
-  updateFolderIndex: (folders) => ipcRenderer.invoke('folder:updateIndex', folders),
+  updateFolderIndex: (folders, options) => ipcRenderer.invoke('folder:updateIndex', folders, options),
   startOrganizeTask: (options) => ipcRenderer.invoke('task:organize:start', options),
   startRenameTask: (options) => ipcRenderer.invoke('task:rename:start', options),
   startExtractTask: (options) => ipcRenderer.invoke('task:extract:start', options),
@@ -77,9 +80,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   parseFilename: (filename) => ipcRenderer.invoke('parser:parse', filename),
   
   // 이벤트 리스너
-  onTaskProgress: (callback) => ipcRenderer.on('task:progress', (_, data) => callback(data)),
-  onTaskComplete: (callback) => ipcRenderer.on('task:complete', (_, data) => callback(data)),
-  onTaskError: (callback) => ipcRenderer.on('task:error', (_, data) => callback(data)),
+  onTaskProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('task:progress', handler);
+    return () => ipcRenderer.removeListener('task:progress', handler);
+  },
+  onTaskComplete: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('task:complete', handler);
+    return () => ipcRenderer.removeListener('task:complete', handler);
+  },
+  onTaskError: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('task:error', handler);
+    return () => ipcRenderer.removeListener('task:error', handler);
+  },
   onServerLog: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('server:log', handler);
@@ -116,4 +131,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 앱 정보
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  setRuntimeState: (state) => ipcRenderer.send('app:setRuntimeState', state),
 });

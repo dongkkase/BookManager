@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 파일/폴더 선택
   selectFolder: (title) => ipcRenderer.invoke('dialog:selectFolder', title),
   selectArchives: (title) => ipcRenderer.invoke('dialog:selectArchives', title),
+  chooseMetadataDrop: (options) => ipcRenderer.invoke('dialog:metadataDropChoice', options),
+  showMessage: (options) => ipcRenderer.invoke('dialog:message', options),
+  chooseLibrarySyncMode: (options) => ipcRenderer.invoke('dialog:librarySyncChoice', options),
   selectFile: (title, filters) => ipcRenderer.invoke('dialog:selectFile', title, filters),
   selectFiles: (title, filters) => ipcRenderer.invoke('dialog:selectFiles', title, filters),
   saveFile: (title, filters) => ipcRenderer.invoke('dialog:saveFile', title, filters),
@@ -28,6 +31,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSpecialPaths: () => ipcRenderer.invoke('fs:getSpecialPaths'),
   stat: (filePath) => ipcRenderer.invoke('fs:stat', filePath),
   exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),
+  renameFile: (oldPath, newPath) => ipcRenderer.invoke('fs:rename', oldPath, newPath),
+  multiRenameFiles: (renameMap) => ipcRenderer.invoke('fs:multiRename', renameMap),
+  undoRename: () => ipcRenderer.invoke('fs:undoRename'),
+  deleteFiles: (filePaths) => ipcRenderer.invoke('fs:delete', filePaths),
+  openInExplorer: (folderPath) => ipcRenderer.invoke('fs:openInExplorer', folderPath),
+  showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
+  exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
+  executeLibraryMove: (movePlans) => ipcRenderer.invoke('fs:executeLibraryMove', movePlans),
+  extractCoreTitle: (filename) => ipcRenderer.invoke('parser:extractCoreTitle', filename),
   
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
@@ -46,7 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
   clearApiCache: () => ipcRenderer.invoke('cache:clearApi'),
   clearDupCache: () => ipcRenderer.invoke('folder:clearDupCache'),
-  updateFolderIndex: (folders) => ipcRenderer.invoke('folder:updateIndex', folders),
+  updateFolderIndex: (folders, options) => ipcRenderer.invoke('folder:updateIndex', folders, options),
   startOrganizeTask: (options) => ipcRenderer.invoke('task:organize:start', options),
   startRenameTask: (options) => ipcRenderer.invoke('task:rename:start', options),
   startExtractTask: (options) => ipcRenderer.invoke('task:extract:start', options),
@@ -68,9 +80,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   parseFilename: (filename) => ipcRenderer.invoke('parser:parse', filename),
   
   // 이벤트 리스너
-  onTaskProgress: (callback) => ipcRenderer.on('task:progress', (_, data) => callback(data)),
-  onTaskComplete: (callback) => ipcRenderer.on('task:complete', (_, data) => callback(data)),
-  onTaskError: (callback) => ipcRenderer.on('task:error', (_, data) => callback(data)),
+  onTaskProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('task:progress', handler);
+    return () => ipcRenderer.removeListener('task:progress', handler);
+  },
+  onTaskComplete: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('task:complete', handler);
+    return () => ipcRenderer.removeListener('task:complete', handler);
+  },
+  onTaskError: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('task:error', handler);
+    return () => ipcRenderer.removeListener('task:error', handler);
+  },
   onServerLog: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('server:log', handler);
@@ -107,4 +131,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 앱 정보
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  setRuntimeState: (state) => ipcRenderer.send('app:setRuntimeState', state),
 });

@@ -50,6 +50,7 @@ function normalizeConfig(config) {
     play_sound: true,
     viewer_path: '',
     favorites: [],
+    folder_favorites: [],
     pass_skip_meta: false,
     completion_sound: 'Default.wav',
     font_family: 'Default',
@@ -66,7 +67,7 @@ function normalizeConfig(config) {
   };
 }
 
-function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast }) {
+function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, initialTab = 'basic' }) {
   const [localConfig, setLocalConfig] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState('basic');
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -76,8 +77,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast })
   const threadMax = React.useMemo(() => safeThreadMax(), []);
 
   React.useEffect(() => {
-    if (isOpen) setLocalConfig(normalizeConfig(config));
-  }, [config, isOpen]);
+    if (isOpen) {
+      setLocalConfig(normalizeConfig(config));
+      setActiveTab(initialTab);
+    }
+  }, [config, initialTab, isOpen]);
 
   if (!isOpen || !localConfig) return null;
 
@@ -155,14 +159,25 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast })
   };
 
   const handleClearDupCache = async () => {
-    if (!window.confirm(label('folder_clear_cache_confirm', '저장된 모든 중복 매칭 결과 캐시를 삭제하시겠습니까?'))) return;
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: label('dlg_warn', '경고'),
+      message: label('folder_clear_cache_confirm', '저장된 모든 중복 매칭 결과 캐시를 삭제하시겠습니까?'),
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: localConfig.language || localConfig.lang || 'ko',
+    });
+    if (response !== 'yes') return;
     setMaintenanceBusy('dup-cache');
     setMaintenanceMessage('');
     try {
       const result = await window.electronAPI?.clearDupCache?.();
       const message = `${label('folder_clear_cache_done', '중복 매칭 캐시가 초기화되었습니다.')} (${result?.changes || 0})`;
       setMaintenanceMessage(message);
-      showToast?.(message);
+      showToast?.({
+        key: 'folder_clear_cache_done',
+        suffix: ` (${result?.changes || 0})`,
+      });
     } catch (error) {
       setMaintenanceMessage(`중복 캐시 초기화 실패: ${error.message}`);
     } finally {
@@ -177,7 +192,10 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast })
       const result = await window.electronAPI?.updateFolderIndex?.(localConfig.dup_check_folders || []);
       const message = `${label('setting_update_index_msg', '대상 폴더의 변경사항을 확인하고 인덱스를 최신 상태로 갱신했습니다.')} (${result?.total || 0})`;
       setMaintenanceMessage(message);
-      showToast?.(message);
+      showToast?.({
+        key: 'setting_update_index_msg',
+        suffix: ` (${result?.total || 0})`,
+      });
     } catch (error) {
       setMaintenanceMessage(`인덱스 갱신 실패: ${error.message}`);
     } finally {
@@ -192,7 +210,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast })
       await window.electronAPI?.clearApiCache?.();
       const message = label('msg_cache_cleared', '검색 캐시 및 표지 이미지가 모두 초기화되었습니다.');
       setMaintenanceMessage(message);
-      showToast?.(message);
+      showToast?.({ key: 'msg_cache_cleared' });
     } catch (error) {
       setMaintenanceMessage(`API 캐시 초기화 실패: ${error.message}`);
     } finally {

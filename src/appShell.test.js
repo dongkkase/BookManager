@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { legacyTranslations } from './utils/i18nData.js';
 import {
     APP_NAME,
     ISSUE_URL,
@@ -8,6 +9,7 @@ import {
     formatAppTitle,
     isFileToolbarEnabled,
     normalizeDroppedPaths,
+    resolveTabId,
 } from './appShell.js';
 
 test('탭 순서가 원본 순서를 유지한다', () => {
@@ -50,4 +52,39 @@ test('드롭 경로는 입력 순서를 유지하며 중복과 빈 값을 제거
         normalizeDroppedPaths(['/books/a.cbz', '', '/books/b.zip', '/books/a.cbz']),
         ['/books/a.cbz', '/books/b.zip'],
     );
+});
+
+test('드롭 경로는 Unicode와 Windows NAS 구분자를 정규화한다', () => {
+    assert.deepEqual(
+        normalizeDroppedPaths([
+            `C:/만화/${'한글'.normalize('NFD')}/책.cbz`,
+            'c:\\만화\\한글\\책.cbz',
+            '//NAS/공유/漫画/📚.cbz',
+        ]),
+        ['C:\\만화\\한글\\책.cbz', '\\\\NAS\\공유\\漫画\\📚.cbz'],
+    );
+});
+
+test('마지막 탭 인덱스를 복원하고 잘못된 값은 첫 탭으로 보정한다', () => {
+    assert.equal(resolveTabId(0), 'folder');
+    assert.equal(resolveTabId(3), 'metadata');
+    assert.equal(resolveTabId('5'), 'releases');
+    assert.equal(resolveTabId(-1), 'folder');
+    assert.equal(resolveTabId(99), 'folder');
+    assert.equal(resolveTabId('invalid'), 'folder');
+});
+
+test('한국어·영어·일본어 탭 문구가 원본 번역 키를 그대로 사용한다', () => {
+    const expected = {
+        ko: ['폴더', '압축 파일 구조 정리(평탄화)', '내부 파일명 변경', '메타데이터 관리', '공유 서버', '업데이트 및 릴리즈 노트'],
+        en: ['Folders', 'Archive Organizer', 'Inner Renamer', 'Metadata Management', 'Sharing', 'Updates & Release Notes'],
+        ja: ['フォルダ', 'アーカイブ構成整理 (フラット化)', '内部ファイル名変更', 'メタデータ管理', '共有サーバー', 'アップデート & リリースノート'],
+    };
+
+    for (const [language, labels] of Object.entries(expected)) {
+        assert.deepEqual(
+            TABS.map(tab => legacyTranslations[language][tab.labelKey]),
+            labels,
+        );
+    }
 });

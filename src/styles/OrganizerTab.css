@@ -215,10 +215,9 @@
 
 .org-progress-row {
   flex: 0 0 30px;
-  display: grid;
-  grid-template-columns: 180px 1fr;
+  display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-end;
   color: #2db1ff;
   font-size: 11px;
 }

@@ -1,102 +1,153 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  FOLDER_GROUP_KEYS,
+  FOLDER_SORT_KEYS,
+} from '../../folderToolbarState';
 
-/**
- * 폴더 탭 툴바 컴포넌트
- * 그룹화, 정렬, 뷰 모드 토글, 하위 폴더 포함, 중복 검사 버튼 포함
- */
-function FolderToolbar({ t, viewMode, setViewMode, sortKey, setSortKey, groupKey, setGroupKey, includeSubfolders, setIncludeSubfolders, enableDupCheck, setEnableDupCheck, onRefresh, onLayoutClick }) {
-  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
-  const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
-  const sortRef = useRef(null);
-  const groupRef = useRef(null);
+function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, menuClassName = '' }) {
+  const ref = useRef(null);
 
-  // 외부 클릭 시 드롭다운 닫기
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (sortRef.current && !sortRef.current.contains(event.target)) {
-        setSortDropdownOpen(false);
-      }
-      if (groupRef.current && !groupRef.current.contains(event.target)) {
-        setGroupDropdownOpen(false);
-      }
+    if (!open) return undefined;
+    const close = event => {
+      if (!ref.current?.contains(event.target)) setOpen(false);
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open, setOpen]);
 
-  // 정렬 옵션
-  const sortOptions = [
-    { key: 'name', label: t('folder.columns.name') || '이름' },
-    { key: 'size', label: t('folder.columns.size') || '크기' },
-    { key: 'modified', label: t('folder.columns.modified') || '수정일' },
-    { key: 'series', label: t('folder.columns.series') || '시리즈' },
-    { key: 'volume', label: t('folder.columns.volume') || '권' },
-  ];
+  return (
+    <div className="toolbar-dropdown" ref={ref}>
+      <button className={`toolbar-btn ${buttonClassName}`} onClick={() => setOpen(!open)}>
+        {buttonLabel}
+      </button>
+      {open && <div className={`dropdown-menu ${menuClassName}`}>{children}</div>}
+    </div>
+  );
+}
 
-  // 그룹화 옵션
-  const groupOptions = [
-    { key: 'none', label: t('folder.toolbar.no_group') || '없음' },
-    { key: 'series', label: t('folder.columns.series') || '시리즈' },
-    { key: 'volume', label: t('folder.columns.volume') || '권' },
-    { key: 'type', label: t('folder.toolbar.group_by_type') || '파일 유형' },
-  ];
+function FolderToolbar({
+  t,
+  sortKey,
+  sortOrder,
+  onSort,
+  onToggleSortOrder,
+  groupKey,
+  setGroupKey,
+  metadataMissingOnly,
+  setMetadataMissingOnly,
+  savedLayouts = [],
+  onEditLayout,
+  onSaveLayout,
+  onDeleteLayout,
+  onApplyLayout,
+  onExportCsv,
+}) {
+  const [openMenu, setOpenMenu] = useState('');
+  const setMenu = menu => open => setOpenMenu(open ? menu : '');
+
+  const groupLabels = {
+    none: '없음',
+    folder_path: t('menu_folder'),
+    ext: t('col_ext'),
+    series: t('col_series'),
+    title: t('col_title'),
+    author: t('col_writer'),
+    publisher: t('col_publisher'),
+    genre: t('col_genre'),
+  };
+  const sortLabels = {
+    name: t('col_name'),
+    size: t('col_size'),
+    modified: t('col_mtime'),
+    ext: t('col_ext'),
+    series: t('col_series'),
+    title: t('col_title'),
+    author: t('col_writer'),
+  };
 
   return (
     <div className="folder-toolbar">
-      <div className="toolbar-group">
-        <div className="toolbar-dropdown" ref={groupRef}>
+      <Dropdown
+        buttonClassName={groupKey !== 'none' ? 'active' : ''}
+        buttonLabel={t('folder_grouped')}
+        open={openMenu === 'group'}
+        setOpen={setMenu('group')}
+      >
+        {FOLDER_GROUP_KEYS.map(key => (
           <button
-            className="toolbar-btn"
-            onClick={() => { setGroupDropdownOpen(!groupDropdownOpen); setSortDropdownOpen(false); }}
+            key={key}
+            className={`dropdown-item ${groupKey === key ? 'active' : ''}`}
+            onClick={() => {
+              setGroupKey(key);
+              setOpenMenu('');
+            }}
           >
-            {t('folder.toolbar.group_by') || '그룹화 ▼'}
+            <span className="check-mark">{groupKey === key ? '✓' : ''}</span>
+            {groupLabels[key]}
           </button>
-          {groupDropdownOpen && (
-            <div className="dropdown-menu">
-              {groupOptions.map(opt => (
-                <div
-                  key={opt.key}
-                  className={`dropdown-item ${groupKey === opt.key ? 'active' : ''}`}
-                  onClick={() => { setGroupKey(opt.key); setGroupDropdownOpen(false); }}
-                >
-                  <span className="check-mark">{groupKey === opt.key ? '✓' : ''}</span>
-                  {opt.label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+        ))}
+      </Dropdown>
 
-      <button className="toolbar-btn">{t('folder.toolbar.filter') || '필터 ▼'}</button>
+      <Dropdown
+        buttonClassName={metadataMissingOnly ? 'active' : ''}
+        buttonLabel={t('folder_filter')}
+        open={openMenu === 'filter'}
+        setOpen={setMenu('filter')}
+      >
+        <button
+          className={`dropdown-item ${metadataMissingOnly ? 'active' : ''}`}
+          onClick={() => setMetadataMissingOnly(!metadataMissingOnly)}
+        >
+          <span className="check-mark">{metadataMissingOnly ? '✓' : ''}</span>
+          {t('filter_no_meta')}
+        </button>
+      </Dropdown>
 
-      <div className="toolbar-group">
-        <div className="toolbar-dropdown" ref={sortRef}>
+      <Dropdown
+        buttonClassName={sortKey !== 'name' || sortOrder !== 'asc' ? 'active' : ''}
+        buttonLabel={t('folder_sorted')}
+        open={openMenu === 'sort'}
+        setOpen={setMenu('sort')}
+      >
+        {FOLDER_SORT_KEYS.map(key => (
           <button
-            className="toolbar-btn"
-            onClick={() => { setSortDropdownOpen(!sortDropdownOpen); setGroupDropdownOpen(false); }}
+            key={key}
+            className={`dropdown-item ${sortKey === key ? 'active' : ''}`}
+            onClick={() => {
+              onSort(key, false);
+              setOpenMenu('');
+            }}
           >
-            {t('folder.toolbar.sort_by') || '정렬 ▼'}
+            <span className="check-mark">{sortKey === key ? '✓' : ''}</span>
+            {sortLabels[key]}
           </button>
-          {sortDropdownOpen && (
-            <div className="dropdown-menu">
-              {sortOptions.map(opt => (
-                <div
-                  key={opt.key}
-                  className={`dropdown-item ${sortKey === opt.key ? 'active' : ''}`}
-                  onClick={() => { setSortKey(opt.key); setSortDropdownOpen(false); }}
-                >
-                  <span className="check-mark">{sortKey === opt.key ? '✓' : ''}</span>
-                  {opt.label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+        ))}
+        <div className="dropdown-separator" />
+        <button className="dropdown-item" onClick={onToggleSortOrder}>
+          <span className="check-mark">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+          {t('menu_toggle_order')}
+        </button>
+      </Dropdown>
 
-      <button className="toolbar-btn" onClick={onLayoutClick}>{t('folder.toolbar.layouts') || '레이아웃 관리 ▼'}</button>
-      <button className="toolbar-btn csv-btn">{t('folder.toolbar.export_csv') || 'CSV 내보내기'}</button>
+      <Dropdown
+        buttonLabel={t('folder_layouts')}
+        open={openMenu === 'layout'}
+        setOpen={setMenu('layout')}
+      >
+        <button className="dropdown-item" onClick={onEditLayout}><span />{t('menu_edit_layout')}</button>
+        <button className="dropdown-item" onClick={onSaveLayout}><span />{t('menu_save_layout')}</button>
+        <button className="dropdown-item" onClick={onDeleteLayout}><span />{t('menu_del_layout')}</button>
+        {savedLayouts.length > 0 && <div className="dropdown-separator" />}
+        {savedLayouts.map(name => (
+          <button key={name} className="dropdown-item" onClick={() => onApplyLayout(name)}>
+            <span />
+            {name}
+          </button>
+        ))}
+      </Dropdown>
+
+      <button className="toolbar-btn csv-btn" onClick={onExportCsv}>{t('folder_export_csv')}</button>
     </div>
   );
 }

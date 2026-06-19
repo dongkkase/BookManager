@@ -75,7 +75,7 @@
           "arch": ["universal"]
         }
       ],
-      "icon": "src/images/app.png",
+      "icon": "src/images/app-1024.png",
       "category": "public.app-category.utilities"
     },
     "linux": {

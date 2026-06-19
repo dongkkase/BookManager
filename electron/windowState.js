@@ -1,5 +1,7 @@
 const DEFAULT_WIDTH = 1200;
 const DEFAULT_HEIGHT = 800;
+const MIN_WIDTH = 1200;
+const MIN_HEIGHT = 750;
 
 function toFiniteNumber(value) {
     const number = Number(value);
@@ -24,8 +26,8 @@ function intersectsWorkArea(bounds, workArea) {
 }
 
 export function resolveWindowState(config = {}, displays = [], primaryWorkArea = {}) {
-    const minWidth = Math.max(1, Math.round(toFiniteNumber(config.min_window_width) ?? 1200));
-    const minHeight = Math.max(1, Math.round(toFiniteNumber(config.min_window_height) ?? 750));
+    const minWidth = MIN_WIDTH;
+    const minHeight = MIN_HEIGHT;
     const workArea = {
         x: toFiniteNumber(primaryWorkArea.x) ?? 0,
         y: toFiniteNumber(primaryWorkArea.y) ?? 0,

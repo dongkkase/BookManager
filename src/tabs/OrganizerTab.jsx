@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { ResultLogDialog } from '../components/ResultLogDialog';
+import { filterExistingResultPaths } from '../resultLog';
+import { createToolbarState, emitToolbarState } from '../toolbarState';
+import { emitStatusState } from '../statusState';
 import '../styles/OrganizerTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
@@ -11,6 +15,7 @@ function OrganizerTab({ config, t, showToast }) {
   const [statusMessage, setStatusMessage] = useState(t('status_wait'));
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
+  const [taskPhase, setTaskPhase] = useState('idle');
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.((data) => {
@@ -26,11 +31,25 @@ function OrganizerTab({ config, t, showToast }) {
 
   const selectedCount = useMemo(() => fileList.filter(item => item.checked).length, [fileList]);
 
+  useEffect(() => {
+    emitToolbarState('organizer', createToolbarState(fileList));
+  }, [fileList]);
+
+  useEffect(() => {
+    emitStatusState('organizer', {
+      message: statusMessage,
+      progress,
+      phase: taskPhase,
+      canRun: selectedCount > 0,
+    });
+  }, [progress, selectedCount, statusMessage, taskPhase]);
+
   const analyzePaths = useCallback(async (paths) => {
     const cleanPaths = [...new Set((paths || []).filter(Boolean))];
     if (cleanPaths.length === 0) return;
 
     setIsWorking(true);
+    setTaskPhase('analyzing');
     setProgress(0);
     setStatusMessage(t('msg_loading_list'));
     setLastResult(null);
@@ -58,10 +77,12 @@ function OrganizerTab({ config, t, showToast }) {
         setStatusMessage(t('msg_done'));
       }
     } catch (error) {
+      showToast?.(`${t('msg_failed')}: ${error.message}`);
       setStatusMessage(`${t('msg_failed')}: ${error.message}`);
     } finally {
       setProgress(100);
       setIsWorking(false);
+      setTaskPhase('idle');
     }
   }, [config?.language, config?.lang, t]);
 
@@ -157,10 +178,17 @@ function OrganizerTab({ config, t, showToast }) {
   const handleExecute = async () => {
     if (selectedCount === 0) {
       setStatusMessage(t('msg_no_targets'));
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('msg_no_targets'),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
 
     setIsWorking(true);
+    setTaskPhase('executing');
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('msg_processing_overlay'));
@@ -175,7 +203,15 @@ function OrganizerTab({ config, t, showToast }) {
         img_quality: config?.img_quality ?? config?.jpg_quality ?? 100,
         max_threads: config?.max_threads || 1,
       });
-      setLastResult(result);
+      const createdFiles = await filterExistingResultPaths(
+        result.createdFiles,
+        filePath => window.electronAPI?.exists?.(filePath),
+      );
+      setLastResult({ ...result, createdFiles });
+      if (result.cancelled) {
+        setStatusMessage(t('msg_cancelled'));
+        return;
+      }
       const success = result.stats?.success?.length || 0;
       const errors = result.stats?.error?.length || 0;
       const message = t('msg_job_done', [success, result.stats?.skip?.length || 0, errors]);
@@ -185,20 +221,49 @@ function OrganizerTab({ config, t, showToast }) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {
-      setStatusMessage(`${t('msg_failed')}: ${error.message}`);
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: `${t('msg_failed')}:\n${error.message}`,
+        language: config?.language || config?.lang || 'ko',
+      });
     } finally {
-      setProgress(100);
+      setProgress(0);
+      setStatusMessage(t('status_wait'));
       setIsWorking(false);
+      setTaskPhase('idle');
     }
   };
 
+  const handleCancel = useCallback(async () => {
+    if (taskPhase !== 'executing') return;
+    setTaskPhase('cancelling');
+    setStatusMessage(t('cancel_wait'));
+    await window.electronAPI?.stopTask?.('organizer');
+  }, [taskPhase, t]);
+
+  const handleContinueToRenamer = useCallback(() => {
+    const paths = lastResult?.createdFiles || [];
+    if (paths.length === 0 || lastResult?.cancelled) return;
+    setLastResult(null);
+    window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+      detail: { tabId: 'renamer', paths },
+    }));
+  }, [lastResult]);
+
   useEffect(() => {
     const handleAppAction = (event) => {
+      if (event.detail?.activeTab !== 'organizer') return;
       const action = event.detail?.action;
+      if (action === 'cancel-current') {
+        handleCancel();
+        return;
+      }
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
-      else if (action === 'drop-paths') analyzePaths(event.detail?.paths);
+      else if (action === 'drop-paths' || action === 'load-paths') analyzePaths(event.detail?.paths);
+      else if (action === 'run-current') handleExecute();
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();
       else if (action === 'toggle-all') handleToggleAllChecked();
@@ -206,7 +271,7 @@ function OrganizerTab({ config, t, showToast }) {
 
     window.addEventListener('bookmanager:action', handleAppAction);
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
-  }, [analyzePaths, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
+  }, [analyzePaths, handleCancel, handleExecute, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
 
   return (
     <div className="organizer-tab">
@@ -220,7 +285,6 @@ function OrganizerTab({ config, t, showToast }) {
         <button className="org-btn" onClick={handleBatchTitle} disabled={fileList.length === 0}>{t('batch_title')}</button>
         <button className="org-btn" onClick={handleClear} disabled={isWorking || fileList.length === 0}><FaIcon name="trash" /> {t('clear_all')}</button>
         <div className="org-toolbar-spacer" />
-        <button className="org-btn org-run-btn" onClick={handleExecute} disabled={isWorking || selectedCount === 0}>{t('run_btn')}</button>
       </div>
 
       <div className="org-content-area">
@@ -288,20 +352,21 @@ function OrganizerTab({ config, t, showToast }) {
         )}
       </div>
 
-      <div className="org-progress-row">
-        <div className="org-progress-track"><div className="org-progress-fill" style={{ width: `${progress}%` }} /></div>
-        <span>{statusMessage}</span>
-      </div>
-
-      {lastResult?.stats?.error?.length > 0 && (
-        <div className="org-result-errors">
-          {lastResult.stats.error.slice(0, 5).map(error => <div key={error}>{error}</div>)}
-        </div>
-      )}
+      <div className="org-progress-row" />
 
       <div className="org-bottom-info">
         {t('organizer.total_files', { count: fileList.length })} / {selectedCount} checked
       </div>
+      {lastResult && (
+        <ResultLogDialog
+          result={lastResult}
+          outputPaths={lastResult.createdFiles}
+          continueLabelKey="btn_continue_tab2"
+          onClose={() => setLastResult(null)}
+          onContinue={handleContinueToRenamer}
+          t={t}
+        />
+      )}
     </div>
   );
 }

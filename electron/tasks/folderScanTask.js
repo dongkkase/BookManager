@@ -172,6 +172,7 @@ async function extractArchiveMetadata(filePath, ext) {
 
     const result = {};
     if (comicInfoEntry) {
+      result.has_metadata = true;
       const xmlBuffer = readZipEntry(buffer, comicInfoEntry);
       if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
     }
@@ -346,6 +347,7 @@ async function createFileData(fullPath, stats) {
     total_volume: archiveMeta.total_volume || '',
     page_count: archiveMeta.page_count || '',
     description: archiveMeta.description || '',
+    has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
     cover: archiveMeta.cover || '',
     duplicate_matches: [],

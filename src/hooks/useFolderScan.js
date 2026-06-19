@@ -23,6 +23,12 @@ export function useFolderScan(t) {
   const [abortController, setAbortController] = useState(null);
 
   const currentFolderRef = useRef(null);
+  const fileDataCacheRef = useRef({});
+  const activeScansRef = useRef(new Map());
+
+  useEffect(() => {
+    fileDataCacheRef.current = fileDataCache;
+  }, [fileDataCache]);
 
   const getCacheKey = useCallback((folderPath, options = {}) => {
     const includeSubfolders = options.includeSubfolders ?? true;
@@ -44,42 +50,51 @@ export function useFolderScan(t) {
     const cacheKey = getCacheKey(folderPath, options);
 
     // 캐시에 데이터가 있다면 재사용
-    if (!force && fileDataCache[cacheKey]) {
-      return fileDataCache[cacheKey];
+    if (!force && fileDataCacheRef.current[cacheKey]) {
+      return fileDataCacheRef.current[cacheKey];
     }
 
-    currentFolderRef.current = folderPath;
-    setScanning(true);
-    setScanProgress(0);
-    setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
-
-    try {
-      const files = await window.electronAPI.scanFolder(folderPath, {
-        includeSubfolders,
-        enableDupCheck,
-        dupFolders: options.dupFolders || [],
-      });
-
-      // 스캔 완료
-      setFileDataCache(prev => ({
-        ...prev,
-        [cacheKey]: files || [],
-      }));
-      setScanProgress(100);
-      const count = files?.length || 0;
-      setStatusMessage(
-        t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
-      );
-
-      return files || [];
-    } catch (error) {
-      console.error('폴더 스캔 실패:', error);
-      setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
-      return [];
-    } finally {
-      setScanning(false);
+    if (activeScansRef.current.has(cacheKey)) {
+      return activeScansRef.current.get(cacheKey);
     }
-  }, [fileDataCache, getCacheKey, t]);
+
+    const scanPromise = (async () => {
+      currentFolderRef.current = folderPath;
+      setScanning(true);
+      setScanProgress(0);
+      setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
+
+      try {
+        const files = await window.electronAPI.scanFolder(folderPath, {
+          includeSubfolders,
+          enableDupCheck,
+          dupFolders: options.dupFolders || [],
+        });
+
+        setFileDataCache(prev => ({
+          ...prev,
+          [cacheKey]: files || [],
+        }));
+        setScanProgress(100);
+        const count = files?.length || 0;
+        setStatusMessage(
+          t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
+        );
+
+        return files || [];
+      } catch (error) {
+        console.error('폴더 스캔 실패:', error);
+        setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
+        return [];
+      } finally {
+        activeScansRef.current.delete(cacheKey);
+        if (activeScansRef.current.size === 0) setScanning(false);
+      }
+    })();
+
+    activeScansRef.current.set(cacheKey, scanPromise);
+    return scanPromise;
+  }, [getCacheKey, t]);
 
   // --- 스캔 취소 ---
   const cancelScan = useCallback(() => {

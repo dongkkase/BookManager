@@ -265,8 +265,13 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
 
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], skip: [], error: [] };
+  let cancelled = false;
 
   for (let index = 0; index < targets.length; index += 1) {
+    if (options.shouldCancel?.()) {
+      cancelled = true;
+      break;
+    }
     const item = targets[index];
     onProgress?.({
       progress: Math.round((index / Math.max(targets.length, 1)) * 100),
@@ -279,8 +284,14 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
     } catch (error) {
       stats.error.push(`${item.name || item.filepath} - ${error.message}`);
     }
+    if (options.shouldCancel?.()) {
+      cancelled = true;
+      break;
+    }
   }
 
-  onProgress?.({ progress: 100, message: options.lang === 'en' ? 'Done!' : '작업 완료!' });
-  return { stats, cancelled: false };
+  if (!cancelled) {
+    onProgress?.({ progress: 100, message: options.lang === 'en' ? 'Done!' : '작업 완료!' });
+  }
+  return { stats, cancelled };
 }

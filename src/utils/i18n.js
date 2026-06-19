@@ -202,7 +202,12 @@ export function getCurrentLanguage() {
 export function formatTranslation(template, values = []) {
   if (typeof template !== 'string') return template;
   if (Array.isArray(values)) {
-    return values.reduce((text, value, index) => text.replaceAll(`{${index}}`, String(value)), template);
+    return values.reduce((text, value, index) => {
+      const indexed = text.replaceAll(`{${index}}`, String(value));
+      if (indexed !== text) return indexed;
+      if (!indexed.includes('{}')) return indexed;
+      return indexed.replace('{}', String(value));
+    }, template);
   }
   return Object.entries(values).reduce(
     (text, [key, value]) => text.replaceAll(`{${key}}`, String(value)),
