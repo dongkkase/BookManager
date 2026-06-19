@@ -15,19 +15,20 @@ export function MissingVolumesDialog({ missingData = [], onClose, onGoToFolder, 
         </div>
 
         <div className="missing-list">
-          {missingData.map((item, idx) => {
+          {missingData.map(item => {
             let missingStr = item.missing.join(', ');
             if (item.missing.length > 8) {
-               missingStr = item.missing.slice(0, 8).join(', ') + ` ... (총 ${item.missing.length}권 누락)`;
+              missingStr = item.missing.slice(0, 8).join(', ')
+                + (t?.('msg_missing_total', [item.missing.length]) || ` ... (${item.missing.length})`);
             }
 
             return (
-              <div key={idx} className="missing-row">
+              <div key={`${item.series}-${item.folder_path}`} className="missing-row">
                 <div className="missing-series" title={item.series}>
                   {item.series}
                 </div>
                 <div className="missing-values">
-                  {`누락: ${missingStr}`}
+                  {t?.('msg_missing_prefix', [missingStr]) || missingStr}
                 </div>
                 <button onClick={() => onGoToFolder(item.folder_path)}>
                   {t?.('tf_btn_move') || '이동'}

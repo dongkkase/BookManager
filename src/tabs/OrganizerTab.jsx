@@ -4,10 +4,24 @@ import { ResultLogDialog } from '../components/ResultLogDialog';
 import { filterExistingResultPaths } from '../resultLog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
+import {
+  changeOrganizerUnit,
+  defaultOutputPath,
+  organizerVolumePrefix,
+  removeOrganizerItems,
+  sanitizeOrganizerName,
+  targetExtension,
+  titleOutputPath,
+} from '../organizerPolicy';
 import '../styles/OrganizerTab.css';
-import dragDropImage from '../images/draganddrop1.png';
+import dragDropImage1 from '../images/draganddrop1.png';
+import dragDropImage2 from '../images/draganddrop2.png';
+import dragDropImage3 from '../images/draganddrop3.png';
+
+const DRAG_DROP_IMAGES = [dragDropImage1, dragDropImage2, dragDropImage3];
 
 function OrganizerTab({ config, t, showToast }) {
+  const language = config?.language || config?.lang || 'ko';
   const [fileList, setFileList] = useState([]);
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [isAllExpanded, setIsAllExpanded] = useState(true);
@@ -16,6 +30,14 @@ function OrganizerTab({ config, t, showToast }) {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [taskPhase, setTaskPhase] = useState('idle');
+  const [selectedItemId, setSelectedItemId] = useState('');
+  const [skippedFiles, setSkippedFiles] = useState([]);
+  const [editingVolume, setEditingVolume] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const emptyImage = useMemo(
+    () => DRAG_DROP_IMAGES[Math.floor(Math.random() * DRAG_DROP_IMAGES.length)],
+    [],
+  );
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.((data) => {
@@ -56,12 +78,12 @@ function OrganizerTab({ config, t, showToast }) {
 
     try {
       const result = await window.electronAPI.analyzeOrganizer(cleanPaths, {
-        lang: config?.language || config?.lang || 'ko',
+        lang: language,
       });
       setFileList(prev => {
         const byPath = new Map(prev.map(item => [item.filepath, item]));
         for (const item of result.items || []) {
-          byPath.set(item.filepath, item);
+          if (!byPath.has(item.filepath)) byPath.set(item.filepath, item);
         }
         return [...byPath.values()];
       });
@@ -71,6 +93,7 @@ function OrganizerTab({ config, t, showToast }) {
         return next;
       });
       setIsAllExpanded(true);
+      setSkippedFiles(prev => [...new Set([...prev, ...(result.skippedFiles || [])])]);
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_unsupported_format')} ${result.skippedFiles.join(', ')}`);
       } else {
@@ -84,7 +107,7 @@ function OrganizerTab({ config, t, showToast }) {
       setIsWorking(false);
       setTaskPhase('idle');
     }
-  }, [config?.language, config?.lang, t]);
+  }, [language, t]);
 
   const handleSelectFiles = useCallback(async () => {
     const paths = await window.electronAPI.selectArchives(t('add_file'));
@@ -136,36 +159,83 @@ function OrganizerTab({ config, t, showToast }) {
   };
 
   const handleVolumeNameChange = (itemId, volumeId, newName) => {
+    const safeValue = sanitizeOrganizerName(newName);
+    if (!safeValue) return;
     updateItem(itemId, item => ({
       ...item,
-      volumes: item.volumes.map(volume => volume.id === volumeId ? { ...volume, new_name: newName } : volume),
+      volumes: item.volumes.map(volume => volume.id === volumeId ? { ...volume, new_name: safeValue } : volume),
     }));
   };
 
   const handleBatchDefault = () => {
     setFileList(prev => prev.map(item => ({
       ...item,
-      out_path: item.filepath.replace(/[\\/][^\\/]+$/, ''),
+      out_path: item.checked ? defaultOutputPath(item.filepath) : item.out_path,
     })));
   };
 
   const handleBatchTitle = () => {
     setFileList(prev => prev.map(item => ({
       ...item,
-      out_path: `${item.filepath.replace(/[\\/][^\\/]+$/, '')}/${item.clean_title || item.name.replace(/\.[^.]+$/, '')}`,
+      out_path: item.checked ? titleOutputPath(item) : item.out_path,
     })));
+  };
+
+  const handleBatchUnit = (itemId, unit) => {
+    updateItem(itemId, item => ({
+      ...item,
+      volumes: item.volumes.map(volume => ({
+        ...volume,
+        new_name: changeOrganizerUnit(
+          volume.new_name,
+          unit,
+          language,
+        ),
+      })),
+    }));
   };
 
   const handleClear = () => {
     setFileList([]);
     setExpandedItems(new Set());
     setLastResult(null);
+    setSelectedItemId('');
+    setSkippedFiles([]);
     setStatusMessage(t('status_wait'));
     setProgress(0);
   };
 
+  useEffect(() => {
+    const handleReset = event => {
+      if (event.detail?.tabs?.includes('organizer') && !isWorking) handleClear();
+    };
+    window.addEventListener('bookmanager:reset-task-tabs', handleReset);
+    return () => window.removeEventListener('bookmanager:reset-task-tabs', handleReset);
+  }, [isWorking, t]);
+
+  const removeByIds = useCallback((ids) => {
+    setFileList(prev => {
+      const result = removeOrganizerItems(prev, ids);
+      setSelectedItemId(result.nextSelectedId);
+      setExpandedItems(current => {
+        const next = new Set(current);
+        ids.forEach(id => next.delete(id));
+        return next;
+      });
+      return result.items;
+    });
+  }, []);
+
   const handleRemoveChecked = useCallback(() => {
-    setFileList(prev => prev.filter(item => !item.checked));
+    removeByIds(fileList.filter(item => item.checked).map(item => item.id));
+  }, [fileList, removeByIds]);
+
+  const handleRemoveHighlighted = useCallback(() => {
+    if (selectedItemId) removeByIds([selectedItemId]);
+  }, [removeByIds, selectedItemId]);
+
+  const openVolumeEditor = useCallback((itemId, volume) => {
+    setEditingVolume({ itemId, volumeId: volume.id, value: volume.new_name || '' });
   }, []);
 
   const handleToggleAllChecked = useCallback(() => {
@@ -182,7 +252,7 @@ function OrganizerTab({ config, t, showToast }) {
         type: 'warning',
         title: t('dlg_warn'),
         message: t('msg_no_targets'),
-        language: config?.language || config?.lang || 'ko',
+        language,
       });
       return;
     }
@@ -194,8 +264,11 @@ function OrganizerTab({ config, t, showToast }) {
     setStatusMessage(t('msg_processing_overlay'));
 
     try {
+      window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
+        detail: { tabs: ['renamer', 'metadata'] },
+      }));
       const result = await window.electronAPI.executeOrganizer(fileList, {
-        lang: config?.language || config?.lang || 'ko',
+        lang: language,
         target_format: config?.target_format || 'none',
         backup_on: config?.backup_on || false,
         flatten_folders: config?.flatten_folders || false,
@@ -225,7 +298,7 @@ function OrganizerTab({ config, t, showToast }) {
         type: 'error',
         title: t('dlg_err'),
         message: `${t('msg_failed')}:\n${error.message}`,
-        language: config?.language || config?.lang || 'ko',
+        language,
       });
     } finally {
       setProgress(0);
@@ -273,13 +346,32 @@ function OrganizerTab({ config, t, showToast }) {
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
   }, [analyzePaths, handleCancel, handleExecute, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
 
+  useEffect(() => {
+    const handleKeyDown = event => {
+      if (isWorking || editingVolume) return;
+      const tag = event.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        handleRemoveHighlighted();
+      }
+    };
+    const closeContextMenu = () => setContextMenu(null);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('click', closeContextMenu);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('click', closeContextMenu);
+    };
+  }, [editingVolume, handleRemoveHighlighted, isWorking]);
+
   return (
     <div className="organizer-tab">
       <div className="org-local-toolbar">
         <button className="org-btn" onClick={handleSelectFolder} disabled={isWorking}><FaIcon name="folder" /> {t('add_folder')}</button>
         <button className="org-btn" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>
         <button className="org-btn" onClick={handleToggleExpandAll} disabled={fileList.length === 0}>
-          ↕ {t('organizer.expand_all')}
+          ↕ {language === 'ko' ? '전체 펼치기 / 접기' : language === 'ja' ? 'すべて展開 / 折りたたみ' : 'Expand / Collapse All'}
         </button>
         <button className="org-btn" onClick={handleBatchDefault} disabled={fileList.length === 0}>{t('batch_default')}</button>
         <button className="org-btn" onClick={handleBatchTitle} disabled={fileList.length === 0}>{t('batch_title')}</button>
@@ -290,7 +382,7 @@ function OrganizerTab({ config, t, showToast }) {
       <div className="org-content-area">
         {fileList.length === 0 ? (
           <div className="org-empty-state">
-            <img src={dragDropImage} alt="" className="org-empty-image" />
+            <img src={emptyImage} alt="" className="org-empty-image" />
             <p className="org-empty-text">{t('drag_drop')}</p>
           </div>
         ) : (
@@ -304,8 +396,11 @@ function OrganizerTab({ config, t, showToast }) {
 
             <div className="org-tree-body">
               {fileList.map((item) => (
-                <div key={item.id} className="org-tree-item-group">
-                  <div className="org-tree-row org-root-row">
+                <div key={item.id} className={`org-tree-item-group ${selectedItemId === item.id ? 'selected' : ''}`}>
+                  <div
+                    className="org-tree-row org-root-row"
+                    onClick={() => setSelectedItemId(item.id)}
+                  >
                     <div className="org-col-name" onClick={() => handleToggleExpand(item.id)}>
                       <span className="org-expand-icon">{expandedItems.has(item.id) ? '▼' : '▶'}</span>
                       <input
@@ -324,27 +419,51 @@ function OrganizerTab({ config, t, showToast }) {
                         className="org-path-input"
                         value={item.out_path || ''}
                         onChange={(event) => handleOutPathChange(item.id, event.target.value)}
+                        onClick={event => event.stopPropagation()}
                       />
+                      <button type="button" onClick={() => handleOutPathChange(item.id, defaultOutputPath(item.filepath))}>
+                        {language === 'ko' ? '기본값' : language === 'ja' ? 'デフォルト' : 'Default'}
+                      </button>
+                      <button type="button" onClick={() => handleOutPathChange(item.id, titleOutputPath(item))}>
+                        {language === 'ko' ? '책제목' : language === 'ja' ? 'タイトル' : 'Title'}
+                      </button>
+                      <button type="button" onClick={() => handleBatchUnit(item.id, 'volume')}>
+                        {language === 'ja' ? '一括: 巻' : language === 'en' ? 'All: Vol' : '일괄: 권'}
+                      </button>
+                      <button type="button" onClick={() => handleBatchUnit(item.id, 'chapter')}>
+                        {language === 'ja' ? '一括: 話' : language === 'en' ? 'All: Ch' : '일괄: 화'}
+                      </button>
                     </div>
                     <div className="org-col-count">{item.volumes?.length || 0}</div>
                     <div className="org-col-size">{Number(item.size_mb || 0).toFixed(1)} MB</div>
                   </div>
 
-                  {expandedItems.has(item.id) && item.volumes.map((volume) => (
-                    <div key={volume.id} className="org-tree-row org-child-row">
+                  {expandedItems.has(item.id) && item.volumes.map((volume) => {
+                    const extension = targetExtension(volume, config?.target_format || 'none');
+                    const prefix = organizerVolumePrefix(volume);
+                    return (
+                    <div
+                      key={volume.id}
+                      className="org-tree-row org-child-row"
+                      onClick={() => setSelectedItemId(item.id)}
+                      onDoubleClick={() => openVolumeEditor(item.id, volume)}
+                      onContextMenu={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setSelectedItemId(item.id);
+                        setContextMenu({ x: event.clientX, y: event.clientY, itemId: item.id, volume });
+                      }}
+                    >
                       <div className="org-col-name org-child-name">
                         <span className="org-indent">↳</span>
                         <span className="org-icon"><FaIcon name={volume.type === 'archive' ? 'archive' : 'folder'} /></span>
-                        <input
-                          type="text"
-                          className="org-volume-input"
-                          value={volume.new_name}
-                          onChange={(event) => handleVolumeNameChange(item.id, volume.id, event.target.value)}
-                        />
+                        <span className="org-volume-name">{prefix}{volume.new_name}{extension}</span>
                         <span className="org-original-name">({volume.original_basename}, {volume.image_count}p)</span>
+                        {volume.spinoff_folder && <span className="org-spinoff">SPINOFF</span>}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -355,8 +474,39 @@ function OrganizerTab({ config, t, showToast }) {
       <div className="org-progress-row" />
 
       <div className="org-bottom-info">
-        {t('organizer.total_files', { count: fileList.length })} / {selectedCount} checked
+        {t('total_files', { count: fileList.length })} / {selectedCount} checked
       </div>
+      {skippedFiles.length > 0 && (
+        <div className="org-result-errors">
+          {t('msg_unsupported_format')}
+          {skippedFiles.map(file => <div key={file}>{file}</div>)}
+        </div>
+      )}
+      {contextMenu && (
+        <div
+          className="org-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={event => event.stopPropagation()}
+        >
+          <button onClick={() => {
+            openVolumeEditor(contextMenu.itemId, contextMenu.volume);
+            setContextMenu(null);
+          }}>
+            {t('action_rename_file')}
+          </button>
+        </div>
+      )}
+      {editingVolume && (
+        <OrganizerFilenameDialog
+          value={editingVolume.value}
+          onClose={() => setEditingVolume(null)}
+          onConfirm={value => {
+            handleVolumeNameChange(editingVolume.itemId, editingVolume.volumeId, value);
+            setEditingVolume(null);
+          }}
+          t={t}
+        />
+      )}
       {lastResult && (
         <ResultLogDialog
           result={lastResult}
@@ -367,6 +517,33 @@ function OrganizerTab({ config, t, showToast }) {
           t={t}
         />
       )}
+    </div>
+  );
+}
+
+function OrganizerFilenameDialog({ value, onClose, onConfirm, t }) {
+  const [draft, setDraft] = useState(value);
+  const safeDraft = sanitizeOrganizerName(draft);
+  return (
+    <div className="org-dialog-backdrop" onMouseDown={onClose}>
+      <div className="org-filename-dialog" onMouseDown={event => event.stopPropagation()}>
+        <h3>{t('msg_rename_title')}</h3>
+        <label htmlFor="org-filename-input">{t('msg_rename_desc')}</label>
+        <input
+          id="org-filename-input"
+          autoFocus
+          value={draft}
+          onChange={event => setDraft(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && safeDraft) onConfirm(safeDraft);
+            if (event.key === 'Escape') onClose();
+          }}
+        />
+        <div>
+          <button disabled={!safeDraft} onClick={() => onConfirm(safeDraft)}>{t('btn_ok')}</button>
+          <button onClick={onClose}>{t('btn_cancel')}</button>
+        </div>
+      </div>
     </div>
   );
 }

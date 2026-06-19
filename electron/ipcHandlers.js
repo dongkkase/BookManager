@@ -5,10 +5,11 @@ import path from 'path';
 import os from 'os';
 import https from 'https';
 import http from 'http';
+import { spawn } from 'child_process';
 
-import { scanFolder } from './tasks/folderScanTask.js';
+import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
-import { analyzeRenamerInputs, executeRenamer } from './tasks/renamerTask.js';
+import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
 import { analyzeMetadataInputs, saveMetadataItems } from './tasks/metadataTask.js';
 import { getSharingServerStatus, startSharingServer, stopSharingServer } from './servers/sharingServers.js';
 import {
@@ -1778,12 +1779,16 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const cwebpExe = options.cwebpExe || await getBinPath('cwebp');
+    const pngquantExe = options.pngquantExe || await getBinPath('pngquant');
+    const jpegtranExe = options.jpegtranExe || await getBinPath('jpegtran');
     try {
       return await executeOrganizer(items, {
         ...config,
         ...options,
         sevenZExe,
         cwebpExe,
+        pngquantExe,
+        jpegtranExe,
         shouldCancel: () => controller.shouldCancel(),
         lang: options.lang || config.language || config.lang || 'ko',
         target_format: options.target_format ?? config.target_format ?? 'none',
@@ -1812,18 +1817,27 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     });
   });
 
+  ipcMain.handle('renamer:extractImage', async (_event, filePath, entryPath) => {
+    const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+    return extractRenamerImage(filePath, entryPath, sevenZExe);
+  });
+
   ipcMain.handle('renamer:execute', async (event, items, options = {}) => {
     const taskId = 'renamer';
     const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const cwebpExe = options.cwebpExe || await getBinPath('cwebp');
+    const pngquantExe = options.pngquantExe || await getBinPath('pngquant');
+    const jpegtranExe = options.jpegtranExe || await getBinPath('jpegtran');
     try {
       return await executeRenamer(items, {
       ...config,
       ...options,
       sevenZExe,
       cwebpExe,
+      pngquantExe,
+      jpegtranExe,
       shouldCancel: () => controller.shouldCancel(),
       lang: options.lang || config.language || config.lang || 'ko',
       target_format: options.target_format ?? config.target_format ?? 'none',
@@ -2273,6 +2287,22 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+  ipcMain.handle('sound:list', () => {
+    const directories = [
+      getResourcePath('src', 'sounds'),
+      path.join(getExecutableDir(), 'sounds'),
+    ];
+    const files = new Set();
+    for (const directory of directories) {
+      if (!fs.existsSync(directory)) continue;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isFile() && /\.(mp3|wav)$/i.test(entry.name)) files.add(entry.name);
+      }
+    }
+    const sorted = [...files].filter(name => name !== 'Default.wav').sort((a, b) => a.localeCompare(b));
+    return ['Default.wav', ...sorted];
+  });
+
   // ========== 파일/폴더 선택 ==========
   ipcMain.handle('dialog:selectFolder', async (event, title) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -2335,11 +2365,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return normalizeFilesDialogResult(result);
   });
 
-  ipcMain.handle('dialog:saveFile', async (event, title, filters) => {
+  ipcMain.handle('dialog:saveFile', async (event, title, filters, defaultPath) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(window, {
       title: title || '저장',
       filters: filters || [],
+      defaultPath: defaultPath || undefined,
     });
     return normalizeSaveDialogResult(result);
   });
@@ -2438,12 +2469,31 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         timestamp: Date.now(),
         mapping: { [newPath]: oldPath }
       });
-      if (history.length > 30) history.shift();
+      if (history.length > 10) history.splice(0, history.length - 10);
       saveRenameHistory(history);
 
       return { success: true };
     } catch (error) {
-      return { success: false, message: error.message };
+      return { success: false, code: error.code || '', message: error.message };
+    }
+  });
+
+  ipcMain.handle('fs:openWithViewer', async (_, viewerPath, filePath) => {
+    try {
+      if (!viewerPath || !fs.existsSync(viewerPath)) {
+        return { success: false, code: 'VIEWER_NOT_FOUND', message: 'Viewer executable not found.' };
+      }
+      if (!filePath || !fs.existsSync(filePath)) {
+        return { success: false, code: 'FILE_NOT_FOUND', message: 'File not found.' };
+      }
+      const child = spawn(viewerPath, [filePath], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      return { success: true };
+    } catch (error) {
+      return { success: false, code: error.code || '', message: error.message };
     }
   });
 
@@ -2477,7 +2527,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         timestamp: Date.now(),
         mapping: actualMapping
       });
-      if (history.length > 30) history.shift();
+      if (history.length > 10) history.splice(0, history.length - 10);
       saveRenameHistory(history);
     }
 
@@ -2575,6 +2625,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // 7. CSV 파일로 내보내기
   ipcMain.handle('fs:exportCsv', async (_, { filePath, headers, rows }) => {
     try {
+      const targetPath = path.extname(filePath).toLowerCase() === '.csv'
+        ? filePath
+        : `${filePath}.csv`;
       let csvContent = '\uFEFF'; // UTF-8 BOM
       csvContent += headers.map(h => `"${h.replace(/"/g, '""')}"`).join(',') + '\n';
       for (const row of rows) {
@@ -2583,7 +2636,60 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           return `"${val.replace(/"/g, '""')}"`;
         }).join(',') + '\n';
       }
-      fs.writeFileSync(filePath, csvContent, 'utf8');
+      fs.writeFileSync(targetPath, csvContent, 'utf8');
+      return { success: true, filePath: targetPath };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  });
+
+  ipcMain.handle('fs:filePreview', async (_, filePath) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) {
+        return { success: false, message: 'File not found.' };
+      }
+      return { success: true, file: await inspectFolderFile(filePath) };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  });
+
+  ipcMain.handle('fs:expandFolderMove', async (_, sourceRoot, destinationRoot) => {
+    const plans = [];
+    async function walk(currentPath) {
+      const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const sourcePath = path.join(currentPath, entry.name);
+        if (entry.isDirectory()) {
+          await walk(sourcePath);
+        } else if (entry.isFile()) {
+          plans.push({
+            src: sourcePath,
+            dest: path.join(destinationRoot, path.relative(sourceRoot, sourcePath)),
+            cleanupRoot: '',
+          });
+        }
+      }
+    }
+    try {
+      await walk(sourceRoot);
+      return { success: true, plans };
+    } catch (error) {
+      return { success: false, message: error.message, plans: [] };
+    }
+  });
+
+  ipcMain.handle('fs:removeEmptyTree', async (_, rootPath) => {
+    async function removeEmpty(currentPath) {
+      const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) await removeEmpty(path.join(currentPath, entry.name));
+      }
+      const remaining = await fs.promises.readdir(currentPath);
+      if (remaining.length === 0) await fs.promises.rmdir(currentPath);
+    }
+    try {
+      if (rootPath && fs.existsSync(rootPath)) await removeEmpty(rootPath);
       return { success: true };
     } catch (error) {
       return { success: false, message: error.message };
@@ -2591,9 +2697,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // 8. 라이브러리로 파일 이동 처리 (충돌 해결 지원)
-  ipcMain.handle('fs:executeLibraryMove', async (event, movePlans) => {
-    const window = BrowserWindow.fromWebContents(event.sender);
+  ipcMain.handle('fs:executeLibraryMove', async (_event, movePlans) => {
     let successCount = 0;
+    let skippedCount = 0;
     const errors = [];
     const completedMoves = [];
 
@@ -2604,25 +2710,23 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       }
 
       if (fs.existsSync(dest) && path.normalize(src) !== path.normalize(dest)) {
-        const choice = dialog.showMessageBoxSync(window, {
-          type: 'warning',
-          buttons: ['스킵(Skip)', '덮어쓰기(Overwrite)', '새 이름으로 저장(Rename)'],
-          defaultId: 0,
-          title: '파일 이름 충돌',
-          message: `대상의 위치에 이미 파일이 존재합니다:\n${path.basename(dest)}\n\n어떻게 하시겠습니까?`,
-          cancelId: 0
-        });
-
-        if (choice === 0) {
+        const choice = plan.conflictAction || 'skip';
+        if (choice === 'skip') {
+          skippedCount++;
           continue;
-        } else if (choice === 1) {
+        } else if (choice === 'overwrite') {
           try {
-            fs.unlinkSync(dest);
+            const destinationStats = fs.statSync(dest);
+            if (destinationStats.isDirectory()) {
+              fs.rmSync(dest, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(dest);
+            }
           } catch (e) {
             errors.push(`기존 파일 삭제 실패: ${path.basename(dest)}`);
             continue;
           }
-        } else if (choice === 2) {
+        } else if (choice === 'rename') {
           const ext = path.extname(dest);
           const base = dest.substring(0, dest.length - ext.length);
           let counter = 1;
@@ -2638,9 +2742,29 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         if (!fs.existsSync(destDir)) {
           fs.mkdirSync(destDir, { recursive: true });
         }
-        fs.renameSync(src, dest);
+        try {
+          fs.renameSync(src, dest);
+        } catch (error) {
+          if (error.code !== 'EXDEV') throw error;
+          const sourceStats = fs.statSync(src);
+          if (sourceStats.isDirectory()) {
+            fs.cpSync(src, dest, { recursive: true });
+            fs.rmSync(src, { recursive: true, force: true });
+          } else {
+            fs.copyFileSync(src, dest);
+            fs.unlinkSync(src);
+          }
+        }
         successCount++;
         completedMoves.push({ src, dest });
+        const cleanupRoot = plan.cleanupRoot;
+        if (cleanupRoot && path.normalize(cleanupRoot) === path.normalize(path.dirname(src))) {
+          try {
+            if (fs.readdirSync(cleanupRoot).length === 0) fs.rmdirSync(cleanupRoot);
+          } catch {
+            // A non-empty or concurrently changed source folder is intentionally preserved.
+          }
+        }
       } catch (err) {
         errors.push(`${path.basename(src)} 이동 실패: ${err.message}`);
       }
@@ -2648,6 +2772,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
     return {
       successCount,
+      skippedCount,
       errors,
       completedMoves
     };
@@ -2686,6 +2811,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   ipcMain.handle('app:openExternal', async (_event, url) => {
     await shell.openExternal(url);
+    return true;
+  });
+
+  ipcMain.handle('app:relaunch', () => {
+    app.relaunch();
+    app.quit();
     return true;
   });
 

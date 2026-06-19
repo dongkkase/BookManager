@@ -64,6 +64,19 @@ async function expandInputPaths(paths) {
   return [...new Set(archives)].sort(naturalCompare);
 }
 
+async function directUnsupportedInputs(paths) {
+  const skipped = [];
+  for (const inputPath of paths || []) {
+    try {
+      const stat = await fsp.stat(inputPath);
+      if (stat.isFile() && !isArchive(inputPath)) skipped.push(path.basename(inputPath));
+    } catch {
+      skipped.push(`${path.basename(inputPath)} (not found)`);
+    }
+  }
+  return skipped;
+}
+
 function findEndOfCentralDirectory(buffer) {
   const signature = 0x06054b50;
   const minOffset = Math.max(0, buffer.length - 0xffff - 22);
@@ -211,7 +224,7 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
   const lang = options.lang || 'ko';
   const archives = await expandInputPaths(paths);
   const results = [];
-  const skippedFiles = [];
+  const skippedFiles = await directUnsupportedInputs(paths);
 
   for (let index = 0; index < archives.length; index += 1) {
     const filePath = archives[index];
@@ -243,7 +256,9 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
           original_basename: leafBaseName,
           new_name: applyLangFormat(rawName, lang),
           type: group.name === 'Root_Files' ? 'archive' : 'folder',
+          source_ext: path.extname(filePath).toLowerCase(),
           image_count: group.images.length,
+          spinoff_folder: /외전|번외|side\s*story|spin[\s-]*off/i.test(group.name),
         };
       });
 
@@ -357,6 +372,52 @@ async function convertImagesToWebp(rootDir, cwebpExe, quality = 85) {
   return converted;
 }
 
+async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
+  while (true) {
+    const nested = [];
+    async function collect(currentDir) {
+      const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) await collect(fullPath);
+        else if (entry.isFile() && isArchive(fullPath)) nested.push(fullPath);
+      }
+    }
+    await collect(rootDir);
+    if (nested.length === 0) return;
+    for (const archivePath of nested) {
+      if (shouldCancel?.()) throw new Error('ORGANIZER_CANCELLED');
+      const destination = archivePath.slice(0, -path.extname(archivePath).length);
+      await fsp.mkdir(destination, { recursive: true });
+      await runProcess(sevenZExe, ['x', archivePath, `-o${destination}`, '-y']);
+      await fsp.rm(archivePath, { force: true });
+    }
+  }
+}
+
+async function createFlatStaging(leaf, tempBase) {
+  const staging = path.join(tempBase, `flat_${Math.random().toString(16).slice(2)}`);
+  await fsp.mkdir(staging, { recursive: true });
+  let index = 0;
+  async function walk(currentDir) {
+    const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    entries.sort((a, b) => naturalCompare(a.name, b.name));
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && isImage(entry.name)) {
+        index += 1;
+        const extension = path.extname(entry.name).toLowerCase();
+        const target = path.join(staging, `${String(index).padStart(5, '0')}${extension}`);
+        await fsp.copyFile(fullPath, target);
+      }
+    }
+  }
+  await walk(leaf);
+  return staging;
+}
+
 async function processOrganizerItem(item, options) {
   const sevenZExe = options.sevenZExe;
   if (!sevenZExe) throw new Error('7za executable not found.');
@@ -366,11 +427,14 @@ async function processOrganizerItem(item, options) {
   const targetExt = targetExtFor(sourcePath, options.target_format);
   const tempBase = path.join(os.tmpdir(), `BookManager_Organizer_${Date.now()}_${Math.random().toString(16).slice(2)}`);
   const created = [];
+  const tempArchives = [];
 
   await fsp.mkdir(tempBase, { recursive: true });
 
   try {
+    if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
     await runProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
+    await extractNestedArchives(tempBase, sevenZExe, options.shouldCancel);
     const actualRoot = await getActualRoot(tempBase);
     const leaves = await getImageLeaves(actualRoot);
     if (leaves.length === 0) throw new Error('이미지 파일이 없거나 압축을 풀 수 없습니다.');
@@ -379,19 +443,36 @@ async function processOrganizerItem(item, options) {
     const archiveType = targetExt === '.7z' ? '-t7z' : '-tzip';
 
     for (let index = 0; index < leaves.length; index += 1) {
+      if (options.shouldCancel?.()) {
+        for (const createdPath of created) await fsp.rm(createdPath, { force: true }).catch(() => {});
+        return { cancelled: true, message: filename, created: [] };
+      }
       const leaf = leaves[index];
       const volumeName = safeName(volumes[index]?.new_name || `${item.clean_title || path.basename(sourcePath, path.extname(sourcePath))} ${String(index + 1).padStart(2, '0')}권`);
       const outDir = item.out_path || path.dirname(sourcePath);
       await fsp.mkdir(outDir, { recursive: true });
       const targetPath = await uniquePath(path.join(outDir, `${volumeName}${targetExt}`));
       const tempArchive = path.join(os.tmpdir(), `BookManager_Done_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(targetPath)}`);
+      tempArchives.push(tempArchive);
 
       if (options.webp_conversion || options.webpConversion) {
         await convertImagesToWebp(leaf, options.cwebpExe, options.img_quality ?? options.jpg_quality ?? 85);
       }
-      await runProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: leaf });
+      const packRoot = options.flatten_folders || options.flattenFolders
+        ? await createFlatStaging(leaf, tempBase)
+        : leaf;
+      if (options.shouldCancel?.()) {
+        for (const createdPath of created) await fsp.rm(createdPath, { force: true }).catch(() => {});
+        return { cancelled: true, message: filename, created: [] };
+      }
+      await runProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot });
       await fsp.rename(tempArchive, targetPath);
       created.push(targetPath);
+    }
+
+    if (options.shouldCancel?.()) {
+      for (const createdPath of created) await fsp.rm(createdPath, { force: true }).catch(() => {});
+      return { cancelled: true, message: filename, created: [] };
     }
 
     if (options.backup_on) {
@@ -405,7 +486,15 @@ async function processOrganizerItem(item, options) {
     }
 
     return { success: true, message: filename, created };
+  } catch (error) {
+    for (const createdPath of created) {
+      await fsp.rm(createdPath, { force: true }).catch(() => {});
+    }
+    throw error;
   } finally {
+    for (const tempArchive of tempArchives) {
+      await fsp.rm(tempArchive, { force: true }).catch(() => {});
+    }
     await fsp.rm(tempBase, { recursive: true, force: true });
   }
 }
@@ -429,6 +518,11 @@ export async function executeOrganizer(items, options = {}, onProgress) {
 
     try {
       const result = await processOrganizerItem(item, options);
+      if (result.cancelled) {
+        stats.skip.push(`${item.name || path.basename(item.filepath)} (Cancelled)`);
+        cancelled = true;
+        break;
+      }
       stats.success.push(result.message);
       createdFiles.push(...result.created);
     } catch (error) {

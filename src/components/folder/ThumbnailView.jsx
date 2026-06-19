@@ -17,9 +17,11 @@ const ThumbnailView = ({
   files = [],
   fileData = [],
   selectedFiles = [],
+  activeSelectedPath = '',
   onSelect,
   onContextMenu,
   onScroll,
+  onClearSelection,
   sortKey = 'name',
   sortOrder = 'asc',
   groupKey = 'none',
@@ -42,6 +44,9 @@ const ThumbnailView = ({
     <div
       className="thumbnail-grid"
       onScroll={onScroll}
+      onClick={event => {
+        if (event.target === event.currentTarget) onClearSelection?.();
+      }}
       style={{
         '--thumb-item-width': `${itemWidth}px`,
         '--thumb-image-width': `${imageWidth}px`,
@@ -59,7 +64,8 @@ const ThumbnailView = ({
           {group.files.map((file, index) => (
             <div
               key={file.path || index}
-              className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''}`}
+              data-file-path={file.path}
+              className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
               onClick={(e) => handleItemClick(file, e, index)}
               onContextMenu={(event) => onContextMenu?.(event, file, index)}
             >

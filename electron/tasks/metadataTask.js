@@ -7,10 +7,13 @@ import { spawn } from 'child_process';
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
 const XML_FIELDS = [
-  'Series', 'SeriesGroup', 'Title', 'Volume', 'Number', 'Summary', 'Writer', 'Penciller',
-  'Publisher', 'Imprint', 'Genre', 'Tags', 'Year', 'Month', 'Day', 'LanguageISO',
-  'Manga', 'Format', 'AgeRating', 'Web', 'Characters', 'Locations', 'Teams', 'Notes',
-  'PageCount', 'Count', 'ComicZipAddedDate', 'ComicZipModifiedDate',
+  'Series', 'SeriesGroup', 'Title', 'Number', 'Count', 'Volume',
+  'AlternateSeries', 'AlternateNumber', 'AlternateCount', 'Summary', 'Notes', 'Web',
+  'Writer', 'Penciller', 'Inker', 'Colorist', 'Letterer', 'CoverArtist', 'Editor',
+  'Translator', 'Publisher', 'Imprint', 'Genre', 'Tags', 'Characters', 'Teams',
+  'Locations', 'PageCount', 'LanguageISO', 'Format', 'BlackAndWhite', 'Manga',
+  'AgeRating', 'CommunityRating', 'Year', 'Month', 'Day',
+  'ComicZipAddedDate', 'ComicZipModifiedDate',
 ];
 
 function naturalCompare(a, b) {
@@ -124,7 +127,7 @@ function encodeXml(text) {
     .replace(/'/g, '&apos;');
 }
 
-function parseComicInfo(xmlText) {
+export function parseComicInfo(xmlText) {
   const metadata = {};
   for (const field of XML_FIELDS) {
     const match = String(xmlText || '').match(new RegExp(`<${field}[^>]*>([\\s\\S]*?)<\\/${field}>`, 'i'));
@@ -133,7 +136,7 @@ function parseComicInfo(xmlText) {
   return metadata;
 }
 
-function createComicInfoXml(metadata = {}) {
+export function createComicInfoXml(metadata = {}) {
   const now = new Date().toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
   const data = { ...metadata };
   const addedDate = data.ComicZipAddedDate || now;

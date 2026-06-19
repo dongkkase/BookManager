@@ -6,7 +6,7 @@ import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
-import { extractCoreTitle, extractVolNumbers } from '../utils/folderUtils';
+import { extractCoreTitle } from '../utils/folderUtils';
 import { useFolderScan } from '../hooks/useFolderScan';
 import { useFileSelection } from '../hooks/useFileSelection';
 import {
@@ -45,9 +45,30 @@ import {
   serializeColumnLayout,
 } from '../folderColumnLayout';
 import {
+  groupFolderFiles,
   normalizeViewMode,
   normalizeViewScales,
 } from '../folderViewState';
+import { selectedFilesSize } from '../folderSelectionState';
+import {
+  fileOperationErrorKind,
+  protectedRenameName,
+} from '../fileActionPolicy';
+import {
+  buildRenameMap,
+  inferRenamePattern,
+  normalPatternToRegex,
+  normalReplacementToRegex,
+  previewRename,
+  regexReplacementToNormal,
+} from '../multiRenamePolicy';
+import {
+  findMissingVolumes,
+} from '../missingVolumesPolicy';
+import {
+  applyConflictChoice,
+  createLibraryMovePlans,
+} from '../libraryMovePolicy';
 import '../styles/FolderTab.css';
 
 function parentPath(filePath) {
@@ -73,39 +94,6 @@ function joinPath(base, ...parts) {
     .join(separator);
 }
 
-function findMissingVolumes(files = []) {
-  const seriesMap = {};
-  files.forEach(file => {
-    if (file.is_folder) return;
-    const seriesName = file.series || extractCoreTitle(file.name) || 'Unknown';
-    if (!seriesMap[seriesName]) seriesMap[seriesName] = [];
-    seriesMap[seriesName].push({
-      name: file.name,
-      folder_path: file.full_path || file.path || file.folder_path,
-      series_name: seriesName,
-    });
-  });
-
-  const missing = [];
-  for (const [series, items] of Object.entries(seriesMap)) {
-    const volumes = new Set();
-    let folderPath = '';
-    items.forEach(item => {
-      extractVolNumbers(item.name, item.series_name).forEach(volume => volumes.add(volume));
-      if (!folderPath) folderPath = parentPath(item.folder_path) || item.folder_path;
-    });
-    if (volumes.size === 0) continue;
-    const sorted = [...volumes].sort((a, b) => a - b);
-    if (sorted[sorted.length - 1] - sorted[0] >= 150) continue;
-    const missingVolumes = [];
-    for (let volume = sorted[0]; volume <= sorted[sorted.length - 1]; volume += 1) {
-      if (!volumes.has(volume)) missingVolumes.push(String(volume));
-    }
-    if (missingVolumes.length) missing.push({ series, missing: missingVolumes, folder_path: folderPath });
-  }
-  return missing.sort((a, b) => a.series.localeCompare(b.series));
-}
-
 function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
@@ -115,6 +103,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const viewContainerRef = useRef(null);
   const viewScrollPositionsRef = useRef({ table: 0, tile: 0, thumbnail: 0 });
   const hasShownMissingToastRef = useRef(false);
+  const missingBackgroundKeyRef = useRef('');
+  const missingLocalTimerRef = useRef(null);
+  const lastMissingLocalToastRef = useRef({ folderPath: '', timestamp: 0 });
+  const conflictResolverRef = useRef(null);
   const restoredLayoutRef = useRef(false);
   const initializedDetailHeightRef = useRef(false);
   const restoredColumnLayoutRef = useRef(false);
@@ -144,6 +136,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [showDeleteLayoutDialog, setShowDeleteLayoutDialog] = useState(false);
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
+  const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
+  const [seriesMovePreview, setSeriesMovePreview] = useState(null);
+  const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
+  const [moveConflict, setMoveConflict] = useState(null);
 
   // --- 검색 상태 ---
   const [searchQuery, setSearchQuery] = useState('');
@@ -173,10 +169,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
   );
+  const displayedFileData = useMemo(
+    () => groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder)
+      .flatMap(group => group.files),
+    [filteredFileData, groupKey, sortKey, sortOrder],
+  );
 
   // --- 선택 상태 ---
   const {
     selectedFiles,
+    activeSelectedPath,
     selectedFileData,
     selectFile,
     toggleFile,
@@ -185,7 +187,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectAll,
     deselectAll,
     invertSelection,
-  } = useFileSelection(filteredFileData);
+    moveActiveSelection,
+  } = useFileSelection(displayedFileData);
   const activeSelectedFile = selectedFileData();
   const itemScale = itemScales[viewMode] || 50;
 
@@ -295,20 +298,71 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // --- refs ---
   const fileTableRef = useRef(null);
 
+  useEffect(() => {
+    const libraryFolders = [...new Set([
+      ...(config?.libraries || []),
+      ...(config?.dup_check_folders || []),
+    ])].filter(Boolean);
+    const backgroundKey = JSON.stringify(libraryFolders);
+    if (!config || missingBackgroundKeyRef.current === backgroundKey) return undefined;
+    let cancelled = false;
+
+    const analyze = async () => {
+      if (cancelled) return;
+      setIsCheckingMissing(true);
+      try {
+        const libraryFiles = [];
+        for (const folderPath of libraryFolders) {
+          if (cancelled) return;
+          const files = await window.electronAPI?.scanFolder?.(folderPath, {
+            includeSubfolders: true,
+            enableDupCheck: false,
+          });
+          if (Array.isArray(files)) libraryFiles.push(...files);
+        }
+        if (cancelled) return;
+        const missing = findMissingVolumes(
+          libraryFolders.length > 0 ? libraryFiles : getCurrentFileData(),
+        );
+        missingBackgroundKeyRef.current = backgroundKey;
+        setMissingData(missing);
+        if (missing.length > 0 && !hasShownMissingToastRef.current) {
+          hasShownMissingToastRef.current = true;
+          showToast?.({ key: 'tf_toast_missing', values: [missing.length] });
+        }
+      } finally {
+        if (!cancelled) setIsCheckingMissing(false);
+      }
+    };
+
+    const timer = window.setTimeout(analyze, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [config, getCurrentFileData, showToast]);
+
+  const scheduleLocalMissingToast = useCallback((folderPath, missing) => {
+    if (missingLocalTimerRef.current) window.clearTimeout(missingLocalTimerRef.current);
+    if (!folderPath || missing.length === 0) return;
+    const now = Date.now();
+    const previous = lastMissingLocalToastRef.current;
+    if (previous.folderPath === folderPath && now - previous.timestamp < 5000) return;
+    missingLocalTimerRef.current = window.setTimeout(() => {
+      lastMissingLocalToastRef.current = { folderPath, timestamp: Date.now() };
+      showToast?.({ key: 'tf_local_missing_alert', values: [missing.length] });
+    }, 1000);
+  }, [showToast]);
+
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
     setSelectedFolderPath(folderPath);
     clearSelection();
     setSearchQuery('');
     const files = await scanFolder(folderPath, scanOptions);
-    const missing = findMissingVolumes(files || []);
-    setMissingData(missing);
-    if (missing.length > 0) {
-      const messageKey = hasShownMissingToastRef.current ? 'tf_local_missing_alert' : 'tf_toast_missing';
-      hasShownMissingToastRef.current = true;
-      window.setTimeout(() => showToast?.({ key: messageKey, values: [missing.length] }), 1000);
-    }
-  }, [scanOptions, scanFolder, clearSelection, showToast, t]);
+    const localMissing = findMissingVolumes(files || []);
+    scheduleLocalMissingToast(folderPath, localMissing);
+  }, [scanOptions, scanFolder, clearSelection, scheduleLocalMissingToast]);
 
   const handleSafeFolderNavigation = useCallback(async folderPath => {
     if (!folderPath) return false;
@@ -366,23 +420,45 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
+    if (isCheckingMissing) return;
+    if (missingData.length > 0) {
+      setShowMissingDialog(true);
+      return;
+    }
     setIsCheckingMissing(true);
-    setTimeout(() => {
-      const missing = findMissingVolumes(filteredFileData);
+    window.setTimeout(async () => {
+      const libraryFolders = [...new Set([
+        ...(config?.libraries || []),
+        ...(config?.dup_check_folders || []),
+      ])].filter(Boolean);
+      const files = [];
+      for (const folderPath of libraryFolders) {
+        const scanned = await window.electronAPI?.scanFolder?.(folderPath, {
+          includeSubfolders: true,
+          enableDupCheck: false,
+        });
+        if (Array.isArray(scanned)) files.push(...scanned);
+      }
+      const missing = findMissingVolumes(libraryFolders.length > 0 ? files : filteredFileData);
       setMissingData(missing);
       setIsCheckingMissing(false);
       if (missing.length > 0) setShowMissingDialog(true);
-      else showToast?.(t('msg_no_missing_vols'));
-    }, 100);
-  }, [filteredFileData, showToast, t]);
+      else {
+        await window.electronAPI?.showMessage?.({
+          type: 'info',
+          title: t('tf_dlg_missing_title'),
+          message: t('msg_no_missing_vols'),
+          language: config?.language || config?.lang || 'ko',
+        });
+      }
+    }, 0);
+  }, [config?.dup_check_folders, config?.lang, config?.language, config?.libraries, filteredFileData, isCheckingMissing, missingData.length, t]);
 
   const handleRefresh = useCallback(async () => {
     if (!selectedFolderPath) return;
     const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
-    const missing = findMissingVolumes(files || []);
-    setMissingData(missing);
-    if (missing.length > 0) showToast?.({ key: 'tf_local_missing_alert', values: [missing.length] });
-  }, [selectedFolderPath, scanFolder, scanOptions, showToast, t]);
+    scheduleLocalMissingToast(selectedFolderPath, findMissingVolumes(files || []));
+  }, [selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
   const handleSmartRefresh = useCallback(async (force = false) => {
     if (!selectedFolderPath || scanning || preparingDuplicates) return;
@@ -611,13 +687,36 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (folderPath) await window.electronAPI?.openInExplorer?.(folderPath);
   }, []);
 
+  const openSelectedInViewer = useCallback(async () => {
+    const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
+    if (!target) return;
+    if (!config?.viewer_path) {
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('dlg_warn_viewer'),
+        language: config?.language || config?.lang || 'ko',
+      });
+      return;
+    }
+    const result = await window.electronAPI?.openWithViewer?.(config.viewer_path, target);
+    if (!result?.success) {
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: result?.message || t('msg_failed'),
+        language: config?.language || config?.lang || 'ko',
+      });
+    }
+  }, [activeSelectedFile, config?.language, config?.lang, config?.viewer_path, t]);
+
   const deleteSelectedFiles = useCallback(async () => {
     const targets = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);
     if (targets.length === 0) return;
     const response = await window.electronAPI?.showMessage?.({
       type: 'question',
       title: t('dlg_warn'),
-      message: `${targets.length}개 항목을 휴지통으로 이동할까요?`,
+      message: t('dlg_del_file_msg', [targets.length]),
       buttons: 'yes-no',
       defaultChoice: 'no',
       language: config?.language || config?.lang || 'ko',
@@ -643,30 +742,60 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
     if (!target) return;
     const oldName = String(target).split(/[\\/]/).pop() || '';
-    const nextName = window.prompt(t('msg_rename_desc'), oldName)?.trim();
-    if (!nextName || nextName === oldName) return;
+    const inputName = window.prompt(t('msg_rename_desc'), oldName);
+    if (inputName === null) return;
+    const policy = protectedRenameName(oldName, inputName);
+    if (!policy.valid) {
+      if (policy.reason === 'empty' || policy.reason === 'same') return;
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('msg_rename_title'),
+        message: t('msg_err_rename_fail', [t('msg_rename_dup')]),
+        language: config?.language || config?.lang || 'ko',
+      });
+      return;
+    }
+    const nextPath = replaceBasename(target, policy.name);
+    if (await window.electronAPI?.exists?.(nextPath)) {
+      showToast?.(t('msg_rename_dup'));
+      return;
+    }
     const result = await runInternalFileAction(
-      () => window.electronAPI?.renameFile?.(target, replaceBasename(target, nextName)),
+      () => window.electronAPI?.renameFile?.(target, nextPath),
     );
     if (!result?.success) {
-      showToast?.(result?.message || t('msg_rename_dup'));
+      const kind = fileOperationErrorKind(result);
+      const detail = kind === 'permission'
+        ? `${t('dlg_err')}: ${result?.message || 'Permission denied'}`
+        : result?.message || t('msg_failed');
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('msg_rename_title'),
+        message: t('msg_err_rename_fail', [detail]),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
     showToast?.({ key: 'msg_rename_success' });
-    clearSelection();
-    handleRefresh();
-  }, [activeSelectedFile, clearSelection, handleRefresh, runInternalFileAction, showToast, t]);
+    await handleRefresh();
+    selectFile(nextPath);
+  }, [activeSelectedFile, config?.language, config?.lang, handleRefresh, runInternalFileAction, selectFile, showToast, t]);
 
   const undoLastRename = useCallback(async () => {
     const result = await window.electronAPI?.undoRename?.();
     if (!result?.success) {
-      showToast?.(result?.message || result?.errors?.join(' / ') || t('tf_undo_fail'));
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: result?.message || result?.errors?.join(' / ') || t('tf_undo_fail'),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
     showToast?.(`${t('tf_undo_success')} (${result.successCount || 0} files)`);
     clearSelection();
     handleRefresh();
-  }, [clearSelection, handleRefresh, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, handleRefresh, showToast, t]);
 
   const groupSelectedBySeries = useCallback(async () => {
     const plans = selectedFileObjects.flatMap(file => {
@@ -679,18 +808,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       showToast?.(t('tf_empty_no_data'));
       return;
     }
-    const response = await window.electronAPI?.showMessage?.({
-      type: 'question',
-      title: t('dlg_warn'),
-      message: `${plans.length}개 파일을 시리즈별 폴더로 이동할까요?`,
-      buttons: 'yes-no',
-      defaultChoice: 'no',
-      language: config?.language || config?.lang || 'ko',
-    });
-    if (response !== 'yes') return;
+    setSeriesMovePreview(plans);
+  }, [selectedFileObjects, showToast, t]);
+
+  const executeSeriesMove = useCallback(async plans => {
     const result = await runInternalFileAction(
       () => window.electronAPI?.executeLibraryMove?.(plans),
     );
+    setSeriesMovePreview(null);
     if (result?.successCount > 0) {
       showToast?.(t('msg_series_grouped', [result.successCount]));
       clearSelection();
@@ -703,10 +828,44 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     }
-  }, [clearSelection, config?.language, config?.lang, handleRefresh, runInternalFileAction, selectedFileObjects, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, handleRefresh, runInternalFileAction, showToast, t]);
 
-  const moveSelectedToLibrary = useCallback(async () => {
-    if (selectedFileObjects.length === 0) return;
+  const requestConflictChoice = useCallback(conflict => new Promise(resolve => {
+    conflictResolverRef.current = resolve;
+    setMoveConflict(conflict);
+  }), []);
+
+  const resolveConflictChoice = useCallback(choice => {
+    const resolve = conflictResolverRef.current;
+    conflictResolverRef.current = null;
+    setMoveConflict(null);
+    resolve?.(choice);
+  }, []);
+
+  const executeLibraryMovePlans = useCallback(async plans => {
+    const resolvedPlans = [];
+    for (const plan of plans) {
+      if (!await window.electronAPI?.exists?.(plan.dest)) {
+        resolvedPlans.push(plan);
+        continue;
+      }
+      const sourcePreview = await window.electronAPI?.getFilePreview?.(plan.src);
+      const destinationPreview = await window.electronAPI?.getFilePreview?.(plan.dest);
+      const choice = await requestConflictChoice({
+        plan,
+        source: sourcePreview?.file || { name: basename(plan.src), path: plan.src },
+        destination: destinationPreview?.file || { name: basename(plan.dest), path: plan.dest },
+      });
+      resolvedPlans.push(applyConflictChoice(plan, choice || 'skip'));
+    }
+
+    return runInternalFileAction(
+      () => window.electronAPI?.executeLibraryMove?.(resolvedPlans),
+    );
+  }, [requestConflictChoice, runInternalFileAction]);
+
+  const moveSelectedToLibrary = useCallback(async plans => {
+    if (!Array.isArray(plans) || plans.length === 0) return;
     if (libraries.length === 0) {
       await window.electronAPI?.showMessage?.({
         type: 'warning',
@@ -716,27 +875,47 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       });
       return;
     }
-    const restoredLibrary = resolveLastSelectedLibrary(libraries, config?.last_selected_library);
-    const targetLibrary = libraries.length === 1
-      ? libraries[0]
-      : window.prompt(`이동할 라이브러리 경로를 입력하세요:\n${libraries.join('\n')}`, restoredLibrary)?.trim();
-    if (!targetLibrary || !libraries.includes(targetLibrary)) return;
+    const targetLibrary = plans[0]?.targetLibrary;
+    if (!targetLibrary) return;
+    setLibraryMoveRequest(null);
     await saveConfig?.({ last_selected_library: targetLibrary });
-    const plans = selectedFileObjects.map(file => {
-      const source = file.full_path || file.path;
-      return {
-        src: source,
-        dest: joinPath(targetLibrary, basename(parentPath(source)), basename(source)),
-      };
-    }).filter(plan => plan.src);
-    const result = await runInternalFileAction(
-      () => window.electronAPI?.executeLibraryMove?.(plans),
-    );
+    const folderPlan = plans.find(plan => plan.folderMode);
+    let executablePlans = plans;
+    if (folderPlan) {
+      const expanded = await window.electronAPI?.expandFolderMove?.(folderPlan.src, folderPlan.dest);
+      if (!expanded?.success) {
+        await window.electronAPI?.showMessage?.({
+          type: 'error',
+          title: t('dlg_err'),
+          message: t('dlg_err_occurred', [expanded?.message || t('msg_failed')]),
+          language: config?.language || config?.lang || 'ko',
+        });
+        return;
+      }
+      executablePlans = expanded.plans.map(plan => ({ ...plan, targetLibrary }));
+    }
+    const result = await executeLibraryMovePlans(executablePlans);
+    if (folderPlan) await window.electronAPI?.removeEmptyTree?.(folderPlan.src);
     if (result?.successCount > 0) {
       showToast?.(t('msg_move_lib_done', [result.successCount]));
       clearSelection();
-      handleRefresh();
-    } else {
+      const affectedLibraries = [...new Set([
+        targetLibrary,
+        ...libraries.filter(library => executablePlans.some(plan => (
+          plan.src === library
+          || plan.src.startsWith(`${library}/`)
+          || plan.src.startsWith(`${library}\\`)
+        ))),
+      ])];
+      await window.electronAPI?.updateFolderIndex?.(affectedLibraries, { mode: 'smart' });
+      if (folderPlan) {
+        await handleFolderChange(folderPlan.dest);
+      } else {
+        await handleRefresh();
+      }
+      setTreeRefreshToken(current => current + 1);
+    }
+    if (result?.errors?.length > 0) {
       await window.electronAPI?.showMessage?.({
         type: 'error',
         title: t('dlg_err'),
@@ -744,7 +923,56 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     }
-  }, [clearSelection, config?.language, config?.lang, config?.last_selected_library, handleRefresh, libraries, runInternalFileAction, saveConfig, selectedFileObjects, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, saveConfig, showToast, t]);
+
+  const openLibraryMoveDialog = useCallback(async () => {
+    if (libraries.length === 0) {
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('warn_no_library'),
+        language: config?.language || config?.lang || 'ko',
+      });
+      return;
+    }
+    if (selectedFileObjects.length === 0) return;
+    setLibraryMoveRequest({
+      sources: selectedFileObjects,
+      folderMode: false,
+    });
+  }, [config?.language, config?.lang, libraries.length, selectedFileObjects, t]);
+
+  const sendSelectedFilesToTab = useCallback(tabId => {
+    const paths = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);
+    if (paths.length === 0) return;
+    window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+      detail: { tabId, paths },
+    }));
+  }, [selectedFileObjects]);
+
+  const executeMultiRename = useCallback(async rows => {
+    const renameMap = buildRenameMap(rows);
+    const targetCount = Object.keys(renameMap).length;
+    if (targetCount === 0) return { success: false, successCount: 0, errors: [] };
+    const result = await runInternalFileAction(
+      () => window.electronAPI?.multiRenameFiles?.(renameMap),
+    );
+    await handleRefresh();
+    if (result?.errors?.length > 0) {
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('msg_multi_rename_errors', [
+          result.successCount || 0,
+          result.errors.slice(0, 10).join('\n'),
+        ]),
+        language: config?.language || config?.lang || 'ko',
+      });
+    } else if (result?.successCount > 0) {
+      showToast?.(t('msg_multi_rename_done', [result.successCount]));
+    }
+    return result;
+  }, [config?.language, config?.lang, handleRefresh, runInternalFileAction, showToast, t]);
 
   const showFileContextMenu = useCallback((event, file, index) => {
     event.preventDefault();
@@ -873,30 +1101,24 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [clearSelection, config?.language, config?.lang, favoriteEntries, handleFolderChange, libraries, removeFavorite, removeLibrary, runInternalFileAction, showFolderError, t]);
 
   const moveContextFolderToLibrary = useCallback(async folderPath => {
-    if (!folderPath || libraries.length === 0) return;
+    if (!folderPath) return;
+    if (libraries.length === 0) {
+      await window.electronAPI?.showMessage?.({
+        type: 'warning',
+        title: t('dlg_warn'),
+        message: t('warn_no_library'),
+        language: config?.language || config?.lang || 'ko',
+      });
+      return;
+    }
     const availableLibraries = libraries.filter(library => library !== folderPath);
     if (availableLibraries.length === 0) return;
-    const restoredLibrary = resolveLastSelectedLibrary(availableLibraries, config?.last_selected_library);
-    const targetLibrary = availableLibraries.length === 1
-      ? availableLibraries[0]
-      : window.prompt(`이동할 라이브러리 경로를 입력하세요:\n${availableLibraries.join('\n')}`, restoredLibrary)?.trim();
-    if (!targetLibrary || !availableLibraries.includes(targetLibrary)) return;
-    const destination = joinPath(targetLibrary, basename(folderPath));
-    if (await window.electronAPI?.exists?.(destination)) {
-      await showFolderError('dlg_err_occurred', t('msg_rename_dup'));
-      return;
-    }
-    await saveConfig?.({ last_selected_library: targetLibrary });
-    const result = await runInternalFileAction(
-      () => window.electronAPI?.executeLibraryMove?.([{ src: folderPath, dest: destination }]),
-    );
-    if (result?.successCount !== 1) {
-      await showFolderError('dlg_err_occurred', result?.errors?.join('\n') || t('msg_failed'));
-      return;
-    }
-    setTreeRefreshToken(current => current + 1);
-    await handleFolderChange(destination);
-  }, [config?.last_selected_library, handleFolderChange, libraries, runInternalFileAction, saveConfig, showFolderError, t]);
+    setLibraryMoveRequest({
+      sources: [folderPath],
+      folderMode: true,
+      libraries: availableLibraries,
+    });
+  }, [config?.language, config?.lang, libraries, t]);
 
   const sendFolderToTab = useCallback((folderPath, tabId) => {
     if (!folderPath) return;
@@ -939,6 +1161,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'show-file') {
       const target = menu.file?.full_path || menu.file?.path;
       if (target) await window.electronAPI?.showInFolder?.(target);
+    } else if (action === 'view-file') {
+      await openSelectedInViewer();
     } else if (action === 'delete-file') {
       await deleteSelectedFiles();
     } else if (action === 'rename-file') {
@@ -948,9 +1172,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'group-series') {
       await groupSelectedBySeries();
     } else if (action === 'move-library') {
-      await moveSelectedToLibrary();
+      await openLibraryMoveDialog();
+    } else if (action === 'multi-rename') {
+      setShowMultiRenameDialog(true);
+    } else if (action === 'send-file-organizer') {
+      sendSelectedFilesToTab('organizer');
+    } else if (action === 'send-file-renamer') {
+      sendSelectedFilesToTab('renamer');
+    } else if (action === 'send-file-metadata') {
+      sendSelectedFilesToTab('metadata');
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, groupSelectedBySeries, handleFolderChange, moveContextFolderToLibrary, moveSelectedToLibrary, openFolderPath, refreshContextFolder, removeFavorite, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectedFolderPath, sendFolderToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, groupSelectedBySeries, handleFolderChange, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -978,6 +1210,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       } else if (event.key === 'Enter') {
         event.preventDefault();
         openSelectedInExplorer();
+      } else if (event.key === 'F2') {
+        event.preventDefault();
+        renameSelectedFile();
+      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        const nextPath = moveActiveSelection(event.key === 'ArrowUp' ? -1 : 1, event.shiftKey);
+        if (nextPath) {
+          window.requestAnimationFrame(() => {
+            viewContainerRef.current
+              ?.querySelector('.active-selection')
+              ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          });
+        }
       } else if (event.key === '1') {
         handleViewModeChange('table');
       } else if (event.key === '2') {
@@ -993,7 +1238,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, openSelectedInExplorer, selectAll]);
+  }, [clearSelection, closeContextMenu, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, moveActiveSelection, openSelectedInExplorer, renameSelectedFile, selectAll]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -1007,7 +1252,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       else if (action === 'toggle-all') {
         if (selectedFiles.length >= filteredFileData.length && filteredFileData.length > 0) deselectAll();
         else selectAll();
-      }
+      } else if (action === 'invert-selection') invertSelection();
     };
 
     window.addEventListener('bookmanager:action', handleAppAction);
@@ -1020,6 +1265,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     handleAddFileFromToolbar,
     handleAddFolderFromToolbar,
     handleDroppedPaths,
+    invertSelection,
     selectAll,
     selectedFiles.length,
   ]);
@@ -1149,50 +1395,47 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const handleExportCsv = useCallback(async () => {
     if (filteredFileData.length === 0) {
-      showToast?.(t('dlg_exp_no_data'));
+      await window.electronAPI?.showMessage?.({
+        type: 'info',
+        title: t('dlg_exp_title'),
+        message: t('dlg_exp_no_data'),
+        language: config?.language || config?.lang || 'ko',
+      });
       return;
     }
     const filePath = await window.electronAPI?.saveFile?.(t('dlg_exp_title'), [
       { name: 'CSV', extensions: ['csv'] },
-    ]);
+    ], 'My_Library_Export.csv');
     if (!filePath) return;
-    const headers = [
-      t('col_name'),
-      t('col_path'),
-      t('col_size'),
-      t('col_ext'),
-      t('col_series'),
-      t('col_title'),
-      t('col_writer'),
-      t('col_publisher'),
-      t('col_genre'),
-    ];
-    const rows = filteredFileData.map(file => [
-      file.name,
-      file.full_path || file.path,
-      file.size,
-      file.ext,
-      file.series,
-      file.title,
-      file.author || file.writer,
-      file.publisher,
-      file.genre,
-    ]);
+    const exportColumns = columnLayout.filter(column => column.visible);
+    const headers = exportColumns.map(column => t(column.labelKey));
+    const rows = filteredFileData.map(file => exportColumns.map(column => {
+      if (column.key === 'folder_path') return file.folder_path || parentPath(file.full_path || file.path);
+      if (column.key === 'author') return file.author || file.writer || '';
+      if (column.key === 'cover') return file.cover ? t('folder_cover_img') : '';
+      return file[column.key] ?? '';
+    }));
     const result = await window.electronAPI?.exportCsv?.(filePath, headers, rows);
-    if (result?.success) showToast?.(t('dlg_exp_done'));
-    else showToast?.(result?.message || t('msg_failed'));
-  }, [filteredFileData, showToast, t]);
+    await window.electronAPI?.showMessage?.({
+      type: result?.success ? 'info' : 'error',
+      title: result?.success ? t('dlg_exp_title') : t('dlg_err'),
+      message: result?.success ? t('dlg_exp_done') : t('dlg_err_occurred', [result?.message || t('msg_failed')]),
+      language: config?.language || config?.lang || 'ko',
+    });
+  }, [columnLayout, config?.language, config?.lang, filteredFileData, t]);
 
   // View Stack
   const renderViewStack = () => {
     const props = {
       fileData: filteredFileData,
       selectedFiles,
+      activeSelectedPath,
       sortKey,
       sortOrder,
       groupKey,
       onSelect: handleFileSelect,
       onContextMenu: showFileContextMenu,
+      onClearSelection: clearSelection,
       onScroll: event => {
         viewScrollPositionsRef.current[viewMode] = event.currentTarget.scrollTop;
       },
@@ -1202,7 +1445,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} onSelect={handleFileSelect} onContextMenu={showFileContextMenu} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} scale={itemScale} />;
     }
   };
 
@@ -1442,11 +1685,21 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </>
           ) : (
             <>
-              <button onClick={() => handleContextAction('show-file')}>파일 위치 열기</button>
+              <button onClick={() => handleContextAction('view-file')}>{t('action_view')}</button>
+              <button onClick={() => handleContextAction('show-file')}>{t('action_open_exp')}</button>
               <button onClick={() => handleContextAction('rename-file')}>{t('action_rename_file')}</button>
               <button onClick={() => handleContextAction('undo-rename')}>{t('tf_undo_success')}</button>
+              <button onClick={() => handleContextAction('multi-rename')}>{t('tf_menu_rename_multi')}</button>
               <button onClick={() => handleContextAction('group-series')}>{t('action_group_by_series')}</button>
               <button onClick={() => handleContextAction('move-library')}>{t('action_move_to_library')}</button>
+              <div className="folder-context-menu-separator" />
+              <button onClick={() => handleContextAction('send-file-organizer')}>{t('action_flatten_structure')}</button>
+              <button onClick={() => handleContextAction('send-file-renamer')}>{t('action_inner_ren')}</button>
+              <button onClick={() => handleContextAction('send-file-metadata')}>{t('action_meta_edit')}</button>
+              <button onClick={() => {
+                closeContextMenu();
+                invertSelection();
+              }}>{t('action_inv_sel')}</button>
               <button onClick={() => handleContextAction('delete-file')}>선택 삭제</button>
             </>
           )}
@@ -1469,6 +1722,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           onClose={() => setShowMissingDialog(false)}
           onGoToFolder={(path) => {
             setShowMissingDialog(false);
+            setGroupKey('folder');
             handleFolderChange(path);
           }}
           t={t}
@@ -1487,6 +1741,43 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           layouts={savedLayouts}
           onDelete={handleDeleteLayout}
           onClose={() => setShowDeleteLayoutDialog(false)}
+          t={t}
+        />
+      )}
+      {showMultiRenameDialog && (
+        <MultiRenameLaunchDialog
+          files={selectedFileObjects}
+          onExecute={executeMultiRename}
+          onClose={() => setShowMultiRenameDialog(false)}
+          t={t}
+        />
+      )}
+      {seriesMovePreview && (
+        <MovePreviewDialog
+          plans={seriesMovePreview}
+          onConfirm={() => executeSeriesMove(seriesMovePreview)}
+          onClose={() => setSeriesMovePreview(null)}
+          t={t}
+        />
+      )}
+      {libraryMoveRequest && (
+        <LibraryMoveDialog
+          sources={libraryMoveRequest.sources}
+          folderMode={libraryMoveRequest.folderMode}
+          libraries={libraryMoveRequest.libraries || libraries}
+          initialValue={resolveLastSelectedLibrary(
+            libraryMoveRequest.libraries || libraries,
+            config?.last_selected_library,
+          )}
+          onConfirm={moveSelectedToLibrary}
+          onClose={() => setLibraryMoveRequest(null)}
+          t={t}
+        />
+      )}
+      {moveConflict && (
+        <MoveConflictDialog
+          conflict={moveConflict}
+          onChoose={resolveConflictChoice}
           t={t}
         />
       )}
@@ -1619,6 +1910,326 @@ function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
   );
 }
 
+function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
+  const inferred = useMemo(
+    () => inferRenamePattern(files.map(file => file.name || basename(file.path))),
+    [files],
+  );
+  const [oldPattern, setOldPattern] = useState(inferred.oldPattern);
+  const [newPattern, setNewPattern] = useState(inferred.newPattern);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [regexMode, setRegexMode] = useState(false);
+  const [folderNameMode, setFolderNameMode] = useState(false);
+  const [previousNewPattern, setPreviousNewPattern] = useState(inferred.newPattern);
+  const [padNumbersEnabled, setPadNumbersEnabled] = useState(false);
+  const [numberDigits, setNumberDigits] = useState(3);
+  const [addSequence, setAddSequence] = useState(false);
+  const [sequenceStart, setSequenceStart] = useState(1);
+  const [sequenceDigits, setSequenceDigits] = useState(3);
+  const [sequencePosition, setSequencePosition] = useState('before');
+  const [rows, setRows] = useState([]);
+  const [previewing, setPreviewing] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const previewGenerationRef = useRef(0);
+
+  useEffect(() => {
+    const generation = previewGenerationRef.current + 1;
+    previewGenerationRef.current = generation;
+    setPreviewing(true);
+    const timer = window.setTimeout(async () => {
+      const options = {
+        oldPattern,
+        newPattern,
+        caseSensitive,
+        regexMode,
+        folderNameMode,
+        padNumbers: padNumbersEnabled,
+        numberDigits,
+        addSequence,
+        sequenceStart,
+        sequenceDigits,
+        sequencePosition,
+      };
+      const previews = await Promise.all(files.map(async (file, index) => {
+        const row = previewRename(file, options, index);
+        const targetPath = replaceBasename(row.path, row.newName);
+        if (row.status !== 'ok') return { ...row, targetPath };
+        const duplicateInPreview = files.some((_, otherIndex) => (
+          otherIndex !== index
+          && previewRename(files[otherIndex], options, otherIndex).newName.toLowerCase() === row.newName.toLowerCase()
+        ));
+        const exists = await window.electronAPI?.exists?.(targetPath);
+        return {
+          ...row,
+          targetPath,
+          status: duplicateInPreview || exists ? 'conflict' : 'ok',
+        };
+      }));
+      if (previewGenerationRef.current !== generation) return;
+      setRows(previews);
+      setPreviewing(false);
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [
+    addSequence,
+    caseSensitive,
+    files,
+    folderNameMode,
+    newPattern,
+    numberDigits,
+    oldPattern,
+    padNumbersEnabled,
+    regexMode,
+    sequenceDigits,
+    sequencePosition,
+    sequenceStart,
+  ]);
+
+  const toggleRegexMode = checked => {
+    if (checked) {
+      const converted = normalPatternToRegex(oldPattern);
+      setOldPattern(converted.source.replace(/^\^|\$$/g, ''));
+      setNewPattern(normalReplacementToRegex(newPattern));
+    } else {
+      setOldPattern(inferred.oldPattern);
+      setNewPattern(regexReplacementToNormal(newPattern));
+    }
+    setRegexMode(checked);
+  };
+
+  const toggleFolderNameMode = checked => {
+    if (checked) {
+      setPreviousNewPattern(newPattern);
+      const firstPath = files[0]?.full_path || files[0]?.path || '';
+      const parts = firstPath.split(/[\\/]/);
+      parts.pop();
+      setNewPattern(parts.pop() || newPattern);
+    } else {
+      setNewPattern(previousNewPattern);
+    }
+    setFolderNameMode(checked);
+  };
+
+  const execute = async () => {
+    const targets = rows.filter(row => row.status === 'ok');
+    if (targets.length === 0) return;
+    setExecuting(true);
+    setProgress(10);
+    const result = await onExecute(targets);
+    setProgress(100);
+    setExecuting(false);
+    if ((result?.errors?.length || 0) === 0 && result?.successCount > 0) onClose();
+  };
+
+  const statusText = status => ({
+    ok: t('tf_status_ok'),
+    conflict: t('tf_status_conflict'),
+    unchanged: t('tf_status_invalid'),
+    error: t('tf_status_invalid'),
+  })[status] || status;
+
+  return (
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <div className="file-action-dialog multi-rename-launch-dialog" onMouseDown={event => event.stopPropagation()}>
+        <div className="dialog-titlebar">
+          <span>{t('tf_menu_rename_multi')}</span>
+          <button onClick={onClose} disabled={executing}>×</button>
+        </div>
+        <div className="multi-rename-body">
+          <div className="multi-rename-patterns">
+            <label>
+              <span>기존 형식</span>
+              <input value={oldPattern} onChange={event => setOldPattern(event.target.value)} disabled={folderNameMode || executing} />
+            </label>
+            <label>
+              <span>새 형식</span>
+              <input value={newPattern} onChange={event => setNewPattern(event.target.value)} disabled={folderNameMode || executing} />
+            </label>
+          </div>
+          <div className="multi-rename-options">
+            <label><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} /> 대소문자 구분</label>
+            <label><input type="checkbox" checked={regexMode} onChange={event => toggleRegexMode(event.target.checked)} /> 정규식 모드</label>
+            <label><input type="checkbox" checked={folderNameMode} onChange={event => toggleFolderNameMode(event.target.checked)} /> 폴더명으로 이름 바꾸기</label>
+            <label>
+              <input type="checkbox" checked={padNumbersEnabled} onChange={event => setPadNumbersEnabled(event.target.checked)} />
+              숫자 자리수 맞추기
+              <input type="number" min="1" max="4" value={numberDigits} disabled={!padNumbersEnabled} onChange={event => setNumberDigits(Number(event.target.value))} />
+            </label>
+            <label>
+              <input type="checkbox" checked={addSequence} onChange={event => setAddSequence(event.target.checked)} />
+              순번 추가
+              <input type="number" min="0" max="99999" value={sequenceStart} disabled={!addSequence} onChange={event => setSequenceStart(Number(event.target.value))} />
+              <input type="number" min="1" max="10" value={sequenceDigits} disabled={!addSequence} onChange={event => setSequenceDigits(Number(event.target.value))} />
+              <select value={sequencePosition} disabled={!addSequence} onChange={event => setSequencePosition(event.target.value)}>
+                <option value="before">앞</option>
+                <option value="after">뒤</option>
+              </select>
+            </label>
+          </div>
+          <div className="multi-rename-preview">
+            <table>
+              <thead>
+                <tr>
+                  <th>이전 파일명</th>
+                  <th>새 파일명</th>
+                  <th>{t('tf_col_status')}</th>
+                  <th>{t('col_path')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(row => (
+                  <tr key={row.path} className={`rename-status-${row.status}`}>
+                    <td>{row.oldName}</td>
+                    <td>{row.newName}</td>
+                    <td>{statusText(row.status)}</td>
+                    <td>{row.path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {(previewing || executing) && (
+            <div className="multi-rename-progress">
+              <progress max="100" value={executing ? progress : undefined} />
+              <span>{executing ? `${progress}%` : '미리보기 갱신 중...'}</span>
+            </div>
+          )}
+        </div>
+        <div className="layout-dialog-footer">
+          <button disabled={executing || previewing || !rows.some(row => row.status === 'ok')} onClick={execute}>{t('btn_ok')}</button>
+          <button disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MovePreviewDialog({ plans, onConfirm, onClose, t }) {
+  return (
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <div className="file-action-dialog" onMouseDown={event => event.stopPropagation()}>
+        <div className="dialog-titlebar">
+          <span>{t('action_group_by_series')}</span>
+          <button onClick={onClose}>×</button>
+        </div>
+        <div className="file-action-dialog-body">
+          <div>{t('msg_group_proceed', [plans.length])}</div>
+          <div className="file-action-list">
+            {plans.map(plan => (
+              <div key={plan.src}>
+                <strong>{basename(plan.src)}</strong>
+                <span>→ {plan.dest}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="layout-dialog-footer">
+          <button onClick={onConfirm}>{t('btn_ok')}</button>
+          <button onClick={onClose}>{t('btn_cancel')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onConfirm, onClose, t }) {
+  const [selected, setSelected] = useState(initialValue || libraries[0] || '');
+  const [createCurrentFolder, setCreateCurrentFolder] = useState(true);
+  const plans = useMemo(
+    () => createLibraryMovePlans(sources, selected, { createCurrentFolder, folderMode }),
+    [createCurrentFolder, folderMode, selected, sources],
+  );
+
+  return (
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <div className="file-action-dialog library-move-dialog" onMouseDown={event => event.stopPropagation()}>
+        <div className="dialog-titlebar">
+          <span>{t('dlg_move_lib_title')}</span>
+          <button onClick={onClose}>×</button>
+        </div>
+        <div className="file-action-dialog-body">
+          <label htmlFor="library-move-select">{t('lbl_select_lib')}</label>
+          <select
+            id="library-move-select"
+            value={selected}
+            onChange={event => setSelected(event.target.value)}
+          >
+            {libraries.map(library => <option key={library} value={library}>{library}</option>)}
+          </select>
+          {!folderMode && (
+            <label className="library-move-folder-option">
+              <input
+                type="checkbox"
+                checked={createCurrentFolder}
+                onChange={event => setCreateCurrentFolder(event.target.checked)}
+              />
+              <span>{t('chk_create_folder')}</span>
+            </label>
+          )}
+          <strong>{t('lbl_preview_move')}</strong>
+          <div className="library-move-preview">
+            <div className="library-move-preview-head">
+              <span>{t('col_source_path')}</span>
+              <span>{t('col_dest_path')}</span>
+            </div>
+            {plans.map(plan => (
+              <div className="library-move-preview-row" key={plan.src}>
+                <span title={plan.src}>{plan.src}</span>
+                <span title={plan.dest}>{plan.dest}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="layout-dialog-footer">
+          <button disabled={!selected || plans.length === 0} onClick={() => onConfirm(plans)}>{t('btn_ok')}</button>
+          <button onClick={onClose}>{t('btn_cancel')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoveConflictDialog({ conflict, onChoose, t }) {
+  const { plan, source, destination } = conflict;
+  return (
+    <div className="folder-dialog-backdrop">
+      <div className="file-action-dialog move-conflict-dialog">
+        <div className="dialog-titlebar">
+          <span>{t('dlg_conflict_title')}</span>
+        </div>
+        <div className="move-conflict-body">
+          <strong className="move-conflict-warning">{t('lbl_conflict_desc')}</strong>
+          <code title={plan.dest}>{plan.dest}</code>
+          <div className="move-conflict-compare">
+            <ConflictFileCard title={t('col_source')} file={source} t={t} />
+            <ConflictFileCard title={t('col_dest')} file={destination} t={t} />
+          </div>
+        </div>
+        <div className="layout-dialog-footer">
+          <button className="danger" onClick={() => onChoose('overwrite')}>{t('btn_overwrite')}</button>
+          <button onClick={() => onChoose('rename')}>{t('btn_rename_new')}</button>
+          <button onClick={() => onChoose('skip')}>{t('btn_skip')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConflictFileCard({ title, file, t }) {
+  return (
+    <section className="move-conflict-card">
+      <strong>{title}</strong>
+      <div className="move-conflict-cover">
+        {file?.cover
+          ? <img src={file.cover} alt={file.name || ''} />
+          : <span>{t('folder_no_cover')}</span>}
+      </div>
+      <span>{formatBytes(file?.size || 0)} | {file?.resolution || '-'}</span>
+    </section>
+  );
+}
+
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1632,9 +2243,8 @@ function formatBytes(bytes) {
 }
 
 function formatStatus(t, selectedFiles, files) {
-  const totalSize = formatBytes(files.reduce((sum, file) => sum + (Number(file.size) || 0), 0));
-  const selected = selectedFiles.length > 0 ? selectedFiles[0] : t('menu_none');
-  return t('folder_status_sel', [selected, files.length, totalSize]);
+  const selectedSize = formatBytes(selectedFilesSize(files, selectedFiles));
+  return t('folder_status_sel', [selectedFiles.length, files.length, selectedSize]);
 }
 
 export { FolderTab };

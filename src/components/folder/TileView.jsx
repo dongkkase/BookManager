@@ -17,9 +17,11 @@ const TileView = ({
   files = [],
   fileData = [],
   selectedFiles = [],
+  activeSelectedPath = '',
   onSelect,
   onContextMenu,
   onScroll,
+  onClearSelection,
   sortKey = 'name',
   sortOrder = 'asc',
   groupKey = 'none',
@@ -53,6 +55,9 @@ const TileView = ({
     <div
       className="tile-grid"
       onScroll={onScroll}
+      onClick={event => {
+        if (event.target === event.currentTarget) onClearSelection?.();
+      }}
       style={{
         '--tile-image-width': `${imageWidth}px`,
         '--tile-image-height': `${imageHeight}px`,
@@ -70,7 +75,8 @@ const TileView = ({
           {group.files.map((file, index) => (
             <div
               key={file.path || index}
-              className={`tile-item ${selectedFiles.includes(file.path) ? 'selected' : ''}`}
+              data-file-path={file.path}
+              className={`tile-item ${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
               onClick={(e) => handleItemClick(file, e, index)}
               onContextMenu={(event) => onContextMenu?.(event, file, index)}
             >

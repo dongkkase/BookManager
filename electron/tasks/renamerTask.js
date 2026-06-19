@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
+const NESTED_ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar', '.alz', '.egg']);
 
 function naturalCompare(a, b) {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
@@ -19,10 +20,6 @@ function isImage(entryPath) {
   return IMAGE_EXTS.has(path.extname(entryPath).toLowerCase());
 }
 
-function isWebpConvertible(entryPath) {
-  return ['.jpg', '.jpeg', '.png', '.bmp'].includes(path.extname(entryPath).toLowerCase());
-}
-
 function normalizeInnerPath(entryPath) {
   return String(entryPath || '').replace(/\\/g, '/').normalize('NFC');
 }
@@ -32,10 +29,6 @@ function safeName(name) {
     .replace(/[\\/:*?"<>|]/g, '_')
     .replace(/^[._\-\s]+/, '')
     .trim() || 'Page';
-}
-
-function makeId(seed) {
-  return `${seed}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
 }
 
 async function expandInputPaths(paths) {
@@ -70,6 +63,19 @@ async function expandInputPaths(paths) {
   return [...new Set(archives)].sort(naturalCompare);
 }
 
+async function directUnsupportedInputs(paths) {
+  const skipped = [];
+  for (const inputPath of paths || []) {
+    try {
+      const stat = await fsp.stat(inputPath);
+      if (stat.isFile() && !isArchive(inputPath)) skipped.push(`${path.basename(inputPath)} (unsupported format)`);
+    } catch {
+      skipped.push(`${path.basename(inputPath)} (not found)`);
+    }
+  }
+  return skipped;
+}
+
 function findEndOfCentralDirectory(buffer) {
   const signature = 0x06054b50;
   const minOffset = Math.max(0, buffer.length - 0xffff - 22);
@@ -102,6 +108,7 @@ function listZipEntries(buffer) {
       name: normalizeInnerPath(name),
       isDir: name.endsWith('/'),
       size: uncompressedSize || compressedSize,
+      encrypted: Boolean(flags & 0x1),
     });
 
     centralOffset += 46 + fileNameLength + extraLength + commentLength;
@@ -142,22 +149,61 @@ async function listWith7z(filePath, sevenZExe) {
     const value = line.slice(idx + 3);
     if (key === 'Path') {
       if (current?.name) entries.push(current);
-      current = { name: normalizeInnerPath(value), isDir: false, size: 0 };
+      current = { name: normalizeInnerPath(value), isDir: false, size: 0, encrypted: false };
     } else if (current && key === 'Attributes') {
       current.isDir = value.includes('D');
     } else if (current && key === 'Size') {
       current.size = Number(value) || 0;
+    } else if (current && key === 'Encrypted') {
+      current.encrypted = value === '+';
     }
   }
   if (current?.name) entries.push(current);
   return entries.filter(entry => entry.name !== path.basename(filePath));
 }
 
+function imageMime(entryPath) {
+  const extension = path.extname(entryPath).toLowerCase();
+  if (extension === '.png') return 'image/png';
+  if (extension === '.webp') return 'image/webp';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.bmp') return 'image/bmp';
+  return 'image/jpeg';
+}
+
+export async function extractRenamerImage(filePath, entryPath, sevenZExe) {
+  if (!sevenZExe) return { success: false, message: '7za executable not found.' };
+  return new Promise(resolve => {
+    const child = spawn(sevenZExe, ['x', '-so', filePath, entryPath], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks = [];
+    let errorText = '';
+    child.stdout.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    child.stderr.on('data', chunk => { errorText += chunk.toString(); });
+    child.on('error', error => resolve({ success: false, message: error.message }));
+    child.on('close', code => {
+      const buffer = Buffer.concat(chunks);
+      if (code !== 0 || buffer.length === 0) {
+        resolve({ success: false, message: errorText || 'Image extraction failed.' });
+        return;
+      }
+      resolve({
+        success: true,
+        dataUrl: `data:${imageMime(entryPath)};base64,${buffer.toString('base64')}`,
+      });
+    });
+  });
+}
+
 async function listArchiveEntries(filePath, sevenZExe) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.zip' || ext === '.cbz') {
     try {
-      return listZipEntries(await fsp.readFile(filePath));
+      const nativeEntries = listZipEntries(await fsp.readFile(filePath));
+      if (nativeEntries.length > 0) return nativeEntries;
+      return listWith7z(filePath, sevenZExe);
     } catch {
       return listWith7z(filePath, sevenZExe);
     }
@@ -173,7 +219,9 @@ function padFor(totalCount) {
 
 export function generateRenamedEntryName(entry, index, totalCount, options = {}) {
   const basename = path.posix.basename(normalizeInnerPath(entry.oldName || entry.originalPath || entry.name || ''));
-  const ext = path.extname(basename) || '.jpg';
+  const ext = options.webpConversion || options.webp_conversion
+    ? '.webp'
+    : path.extname(basename) || '.jpg';
   if (options.keepName) return basename;
 
   const startNum = Number.isFinite(Number(options.startNum)) ? Number(options.startNum) : 0;
@@ -196,6 +244,11 @@ function buildEntries(filePath, archiveEntries, options = {}) {
   const images = archiveEntries
     .filter(entry => !entry.isDir && isImage(entry.name))
     .sort((a, b) => naturalCompare(a.name, b.name));
+  const coverIndex = images.findIndex(entry => path.posix.basename(entry.name).toLowerCase().startsWith('cover'));
+  if (coverIndex > 0) {
+    const [cover] = images.splice(coverIndex, 1);
+    images.unshift(cover);
+  }
 
   return images.map((entry, index) => {
     const oldName = normalizeInnerPath(entry.name);
@@ -227,7 +280,7 @@ export function refreshRenamerEntries(item, options = {}) {
 export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
   const archives = await expandInputPaths(paths);
   const items = [];
-  const skippedFiles = [];
+  const skippedFiles = await directUnsupportedInputs(paths);
 
   for (let index = 0; index < archives.length; index += 1) {
     const filePath = archives[index];
@@ -240,14 +293,22 @@ export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
     try {
       const stat = await fsp.stat(filePath);
       const archiveEntries = await listArchiveEntries(filePath, options.sevenZExe);
+      if (archiveEntries.some(entry => entry.encrypted)) {
+        skippedFiles.push(`${name} (encrypted archive)`);
+        continue;
+      }
+      if (archiveEntries.some(entry => !entry.isDir && NESTED_ARCHIVE_EXTS.has(path.extname(entry.name).toLowerCase()))) {
+        skippedFiles.push(`${name} (nested archive)`);
+        continue;
+      }
       const entries = buildEntries(filePath, archiveEntries, options);
       if (entries.length === 0) {
-        skippedFiles.push(name);
+        skippedFiles.push(`${name} (no supported images)`);
         continue;
       }
 
       items.push({
-        id: makeId(filePath),
+        id: filePath,
         filepath: filePath,
         name,
         checked: true,
@@ -298,32 +359,58 @@ async function removeEmptyDirs(rootDir) {
   if (remaining.length === 0) await fsp.rmdir(rootDir);
 }
 
-async function convertImagesToWebp(rootDir, cwebpExe, quality = 85) {
-  if (!cwebpExe) return 0;
-  let converted = 0;
+async function optimizeExtractedImages(rootDir, item, options) {
+  const optimize = Boolean(item.capOpt);
+  const stripExif = Boolean(item.exifOpt);
+  if (!optimize && !stripExif) return;
+
+  async function replaceWhenUseful(sourcePath, tempPath) {
+    const [sourceStat, tempStat] = await Promise.all([fsp.stat(sourcePath), fsp.stat(tempPath)]);
+    if (stripExif || tempStat.size < sourceStat.size) {
+      await fsp.rm(sourcePath, { force: true });
+      await fsp.rename(tempPath, sourcePath);
+    } else {
+      await fsp.rm(tempPath, { force: true });
+    }
+  }
+
   async function walk(currentDir) {
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
+      if (options.shouldCancel?.()) return;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);
-      } else if (entry.isFile() && isWebpConvertible(entry.name)) {
-        const webpPath = path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.webp`);
-        const tempPath = await uniquePath(path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.tmp.webp`));
-        try {
-          await runProcess(cwebpExe, [fullPath, '-o', tempPath, '-q', String(Math.max(1, Math.min(100, Number(quality) || 85)))]);
-          if (fs.existsSync(webpPath)) await fsp.rm(webpPath, { force: true });
-          await fsp.rename(tempPath, webpPath);
-          await fsp.rm(fullPath, { force: true });
-          converted += 1;
-        } catch {
-          await fsp.rm(tempPath, { force: true }).catch(() => {});
+        continue;
+      }
+      if (!entry.isFile() || !isImage(entry.name)) continue;
+      const extension = path.extname(entry.name).toLowerCase();
+      const tempPath = `${fullPath}.opt.tmp`;
+      try {
+        if ((extension === '.jpg' || extension === '.jpeg') && options.jpegtranExe) {
+          const args = ['-optimize', '-copy', stripExif ? 'none' : 'all', '-outfile', tempPath, fullPath];
+          await runProcess(options.jpegtranExe, args);
+          await replaceWhenUseful(fullPath, tempPath);
+        } else if (extension === '.png' && options.pngquantExe) {
+          const quality = Math.max(40, Math.min(100, Number(options.img_quality) || 85));
+          const args = ['--force', '--quality', `${quality}-${quality}`, '--output', tempPath];
+          if (stripExif) args.push('--strip');
+          args.push(fullPath);
+          await runProcess(options.pngquantExe, args);
+          await replaceWhenUseful(fullPath, tempPath);
+        } else if (extension === '.webp' && options.cwebpExe) {
+          const quality = Math.max(1, Math.min(100, Number(options.img_quality) || 85));
+          const args = [fullPath, '-o', tempPath, '-q', String(quality)];
+          if (stripExif) args.push('-metadata', 'none');
+          await runProcess(options.cwebpExe, args);
+          await replaceWhenUseful(fullPath, tempPath);
         }
+      } catch {
+        await fsp.rm(tempPath, { force: true }).catch(() => {});
       }
     }
   }
   await walk(rootDir);
-  return converted;
 }
 
 async function processRenamerItem(item, options) {
@@ -337,10 +424,12 @@ async function processRenamerItem(item, options) {
   const tempBase = path.join(os.tmpdir(), `BookManager_Renamer_${Date.now()}_${Math.random().toString(16).slice(2)}`);
   const holdingDir = path.join(tempBase, '.bookmanager_rename_tmp');
   const archiveType = targetExt === '.7z' ? '-t7z' : '-tzip';
+  let tempArchive = '';
 
   await fsp.mkdir(holdingDir, { recursive: true });
 
   try {
+    if (options.shouldCancel?.()) return { cancelled: true, message: filename };
     await runProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
 
     const moves = [];
@@ -360,9 +449,24 @@ async function processRenamerItem(item, options) {
     }
 
     for (const move of moves) {
-      await fsp.rename(move.oldAbs, move.tempAbs);
+      const sourceExtension = path.extname(move.oldAbs).toLowerCase();
+      if ((options.webp_conversion || options.webpConversion) && sourceExtension !== '.webp') {
+        if (!options.cwebpExe) throw new Error('cwebp executable not found.');
+        await runProcess(options.cwebpExe, [
+          move.oldAbs,
+          '-o',
+          move.tempAbs,
+          '-q',
+          String(Math.max(1, Math.min(100, Number(options.img_quality) || 85))),
+          ...(item.exifOpt ? ['-metadata', 'none'] : []),
+        ]);
+        await fsp.rm(move.oldAbs, { force: true });
+      } else {
+        await fsp.rename(move.oldAbs, move.tempAbs);
+      }
     }
     for (const move of moves) {
+      if (options.shouldCancel?.()) return { cancelled: true, message: filename };
       if (fs.existsSync(move.targetAbs)) await fsp.rm(move.targetAbs, { force: true });
       await fsp.rename(move.tempAbs, move.targetAbs);
     }
@@ -374,12 +478,12 @@ async function processRenamerItem(item, options) {
     const finalPath = options.deleteOriginal === false
       ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
       : path.join(path.dirname(sourcePath), outputName);
-    const tempArchive = path.join(os.tmpdir(), `BookManager_Renamed_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+    tempArchive = path.join(os.tmpdir(), `BookManager_Renamed_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
 
-    if (options.webp_conversion || options.webpConversion) {
-      await convertImagesToWebp(tempBase, options.cwebpExe, options.img_quality ?? options.jpg_quality ?? 85);
-    }
+    await optimizeExtractedImages(tempBase, item, options);
+    if (options.shouldCancel?.()) return { cancelled: true, message: filename };
     await runProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: tempBase });
+    if (options.shouldCancel?.()) return { cancelled: true, message: filename };
 
     if (options.backup_on) {
       const backupDir = path.join(path.dirname(sourcePath), 'bak');
@@ -390,13 +494,23 @@ async function processRenamerItem(item, options) {
     if (options.deleteOriginal === false) {
       await fsp.rename(tempArchive, finalPath);
     } else {
-      if (fs.existsSync(finalPath)) await fsp.rm(finalPath, { force: true });
-      await fsp.rename(tempArchive, finalPath);
-      if (finalPath !== sourcePath && fs.existsSync(sourcePath)) await fsp.rm(sourcePath, { force: true });
+      const sourceHoldingPath = `${sourcePath}.bookmanager.tmp`;
+      await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
+      await fsp.rename(sourcePath, sourceHoldingPath);
+      try {
+        if (fs.existsSync(finalPath)) await fsp.rm(finalPath, { force: true });
+        await fsp.rename(tempArchive, finalPath);
+        await fsp.rm(sourceHoldingPath, { force: true });
+      } catch (error) {
+        await fsp.rm(finalPath, { force: true }).catch(() => {});
+        if (fs.existsSync(sourceHoldingPath)) await fsp.rename(sourceHoldingPath, sourcePath);
+        throw error;
+      }
     }
 
     return { success: true, message: filename, outputPath: finalPath };
   } finally {
+    if (tempArchive) await fsp.rm(tempArchive, { force: true }).catch(() => {});
     await fsp.rm(tempBase, { recursive: true, force: true });
   }
 }
@@ -405,6 +519,7 @@ export async function executeRenamer(items, options = {}, onProgress) {
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], skip: [], error: [] };
   const outputFiles = [];
+  const pathMap = {};
   let cancelled = false;
 
   for (let index = 0; index < targets.length; index += 1) {
@@ -420,8 +535,14 @@ export async function executeRenamer(items, options = {}, onProgress) {
 
     try {
       const result = await processRenamerItem(item, options);
+      if (result.cancelled) {
+        stats.skip.push(`${item.name || path.basename(item.filepath)} (Cancelled)`);
+        cancelled = true;
+        break;
+      }
       stats.success.push(result.message);
       outputFiles.push(result.outputPath);
+      pathMap[item.filepath] = result.outputPath;
     } catch (error) {
       stats.error.push(`${item.name || item.filepath} - ${error.message}`);
     }
@@ -434,5 +555,10 @@ export async function executeRenamer(items, options = {}, onProgress) {
   if (!cancelled) {
     onProgress?.({ progress: 100, message: options.lang === 'en' ? 'Done!' : '작업 완료!' });
   }
-  return { stats, outputFiles, cancelled };
+  return {
+    stats,
+    outputFiles,
+    cancelled,
+    pathMap,
+  };
 }

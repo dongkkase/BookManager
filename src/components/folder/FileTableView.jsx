@@ -14,6 +14,7 @@ const FileTableView = forwardRef(({
   sortOrder = 'asc',
   groupKey = 'none',
   selectedFiles = [],
+  activeSelectedPath = '',
   dupFiles = [],
   onSort,
   onSelect,
@@ -21,6 +22,7 @@ const FileTableView = forwardRef(({
   onScroll,
   onSelectAll,
   onDeselectAll,
+  onClearSelection,
   columnLayout,
   scale = 50,
   t
@@ -108,7 +110,14 @@ const FileTableView = forwardRef(({
   };
 
   return (
-    <div ref={ref} className="file-table-container" onScroll={onScroll}>
+    <div
+      ref={ref}
+      className="file-table-container"
+      onScroll={onScroll}
+      onClick={event => {
+        if (event.target === event.currentTarget) onClearSelection?.();
+      }}
+    >
       <table className="file-table">
         <thead>
           <tr>
@@ -137,7 +146,8 @@ const FileTableView = forwardRef(({
               {group.files.map((file, index) => (
                 <tr
                   key={file.path || index}
-                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                  data-file-path={file.path}
+                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
                   style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
                   onClick={(e) => handleRowClick(file, e, index)}
                   onContextMenu={(event) => onContextMenu?.(event, file, index)}

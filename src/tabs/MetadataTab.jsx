@@ -3,6 +3,12 @@ import { FaIcon } from '../components/FaIcon';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
+import {
+    adjacentSelectionAfterRemoval,
+    clampMetadataNumber,
+    cleanMetadataSummary,
+    inferMetadataFromArchiveName,
+} from '../metadataPolicy';
 import '../styles/MetadataTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
@@ -20,6 +26,9 @@ const BASIC_FIELDS = [
   { id: 'Title', label: '제목', type: 'text' },
   { id: 'Series', label: '시리즈', type: 'text' },
   { id: 'SeriesGroup', label: '시리즈 그룹\n(세계관 묶기 등)', type: 'select', options: [''] },
+  { id: 'AlternateSeries', label: '대체 시리즈', type: 'text' },
+  { id: 'AlternateNumber', label: '대체 화', type: 'number' },
+  { id: 'AlternateCount', label: '대체 전체권수', type: 'number' },
   { id: 'Count', label: '전체권수', type: 'number' },
   { id: 'Volume', label: '권 (Volume)', type: 'text' },
   { id: 'Number', label: '화 (Chapter)', type: 'text' },
@@ -35,6 +44,7 @@ const CREATOR_FIELDS = [
   { id: 'Letterer', label: '글자 작업', type: 'text' },
   { id: 'CoverArtist', label: '표지 작가', type: 'text' },
   { id: 'Editor', label: '편집자', type: 'text' },
+  { id: 'Translator', label: '번역자', type: 'text' },
 ];
 
 const PUBLISHER_FIELDS = [
@@ -52,6 +62,7 @@ const OTHER_FIELDS = [
   { id: 'CommunityRating', label: '커뮤니티 평점', type: 'text' },
   { id: 'LanguageISO', label: '언어 코드 (ISO)', type: 'text' },
   { id: 'Manga', label: '읽기 방향', type: 'select', options: ['', 'YesAndRightToLeft', 'Yes', 'No', 'RightToLeft'] },
+  { id: 'BlackAndWhite', label: '흑백', type: 'select', options: ['', 'Yes', 'No'] },
   { id: 'Notes', label: '메모', type: 'textarea' },
 ];
 
@@ -130,9 +141,11 @@ function similarity(a = '', b = '') {
   return hits / Math.max(leftSet.size, rightSet.size, 1);
 }
 
-function MetadataTab({ config, t, showToast }) {
+function MetadataTab({ config, saveConfig, t, showToast }) {
   const [fileList, setFileList] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [apiSource, setApiSource] = useState(config?.last_meta_api || '리디북스');
   const [applyEmpty, setApplyEmpty] = useState(false);
@@ -174,11 +187,10 @@ function MetadataTab({ config, t, showToast }) {
   }, []);
 
   const activeItem = useMemo(
-    () => fileList.find(item => item.id === selectedFileId) || fileList[0] || null,
+    () => fileList.find(item => item.id === selectedFileId) || null,
     [fileList, selectedFileId]
   );
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
-  const selectedIndex = activeItem ? fileList.findIndex(item => item.id === activeItem.id) : -1;
   const checkedCount = useMemo(() => fileList.filter(item => item.checked !== false).length, [fileList]);
 
   useEffect(() => {
@@ -197,9 +209,8 @@ function MetadataTab({ config, t, showToast }) {
   }, [progress, statusMessage, taskPhase]);
 
   useEffect(() => {
-    if (activeItem && selectedFileId !== activeItem.id) setSelectedFileId(activeItem.id);
     if (activeItem) setSearchQuery(activeItem.metadata?.Series || activeItem.metadata?.Title || activeItem.name.replace(/\.[^.]+$/, ''));
-  }, [activeItem, selectedFileId]);
+  }, [activeItem]);
 
   const updateItem = (id, updater) => {
     setFileList(prev => prev.map(item => item.id === id ? updater(item) : item));
@@ -241,6 +252,7 @@ function MetadataTab({ config, t, showToast }) {
         return [...byPath.values()];
       });
       if (items[0]) setSelectedFileId(items[0].id);
+      if (items[0]) setSelectedGroup('');
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_unsupported_format')}: ${result.skippedFiles.join(', ')}`);
       } else {
@@ -269,18 +281,28 @@ function MetadataTab({ config, t, showToast }) {
   const handleClear = useCallback(() => {
     setFileList([]);
     setSelectedFileId(null);
+    setSelectedGroup('');
+    setCollapsedGroups(new Set());
     setBatchMetadata({});
     setLastResult(null);
     setStatusMessage(t('status_wait'));
     setProgress(0);
   }, [t]);
 
+  useEffect(() => {
+    const handleReset = event => {
+      if (event.detail?.tabs?.includes('metadata') && !isWorking) handleClear();
+    };
+    window.addEventListener('bookmanager:reset-task-tabs', handleReset);
+    return () => window.removeEventListener('bookmanager:reset-task-tabs', handleReset);
+  }, [handleClear, isWorking]);
+
   const handleRemoveChecked = useCallback(() => {
     setFileList(prev => {
+      const removedIds = prev.filter(item => item.checked !== false).map(item => item.id);
       const next = prev.filter(item => item.checked === false);
-      if (!next.some(item => item.id === selectedFileId)) {
-        setSelectedFileId(next[0]?.id || null);
-      }
+      setSelectedFileId(adjacentSelectionAfterRemoval(prev, removedIds, selectedFileId));
+      setSelectedGroup('');
       return next;
     });
   }, [selectedFileId]);
@@ -366,9 +388,22 @@ function MetadataTab({ config, t, showToast }) {
     setBatchMetadata({ ...(activeItem.metadata || {}) });
   };
 
-  const handleResetActive = () => {
+  const handleResetActive = async () => {
     if (!activeItem) return;
-    updateItem(activeItem.id, item => ({ ...item, metadata: { ...(item.originalMetadata || {}) } }));
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: t('dlg_warn'),
+      message: (config?.language || config?.lang) === 'en'
+        ? 'Reset metadata for this entire series to its original state?'
+        : '이 시리즈 전체의 메타데이터를 원래 상태로 초기화하시겠습니까?',
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: config?.language || config?.lang || 'ko',
+    });
+    if (response !== 'yes') return;
+    setFileList(prev => prev.map(item => item.group === activeItem.group
+      ? { ...item, metadata: { ...(item.originalMetadata || {}) } }
+      : item));
     showToast?.((config?.language || config?.lang) === 'ko' ? '시리즈 데이터가 초기화되었습니다.' : 'Series reset complete.');
   };
 
@@ -500,7 +535,11 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   const handleSelectApiResult = (result) => {
-    applyMetadataToBatch(result.metadata || {});
+    applyMetadataToBatch({
+      ...(result.metadata || {}),
+      Summary: cleanMetadataSummary(result.metadata?.Summary || result.summary || ''),
+      Manga: result.metadata?.Manga || 'YesAndRightToLeft',
+    });
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage('검색 결과를 일괄 편집창에 불러왔습니다.');
     showToast?.({ key: 't3_msg_applied_series_tag' });
@@ -509,18 +548,12 @@ function MetadataTab({ config, t, showToast }) {
   const filenameStem = (name = '') => String(name).replace(/\.[^.]+$/, '');
 
   const inferTitleParts = (item) => {
-    const stem = filenameStem(item.name || item.filepath || '');
-    const volumeMatch = stem.match(/(?:^|[\s_-])(?:v|vol\.?|volume)?\s*(\d+(?:\.\d+)?)\s*권?/i);
-    const chapterMatch = stem.match(/(?:^|[\s_-])(?:ch\.?|chapter|화)\s*(\d+(?:\.\d+)?)/i);
-    const series = stem
-      .replace(/\s*(?:v|vol\.?|volume)?\s*\d+(?:\.\d+)?\s*권?/i, '')
-      .replace(/\s*(?:ch\.?|chapter|화)\s*\d+(?:\.\d+)?/i, '')
-      .trim() || stem;
+    const inferred = inferMetadataFromArchiveName(
+      item.name || item.filepath || '',
+      config?.language || config?.lang || 'ko',
+    );
     return {
-      Title: stem,
-      Series: series,
-      Volume: volumeMatch?.[1] || '',
-      Number: chapterMatch?.[1] || '',
+      ...inferred,
       PageCount: item.pageCount ? String(item.pageCount) : '',
     };
   };
@@ -629,7 +662,9 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   const handleSave = async (all = false) => {
-    const targets = all ? fileList : activeItem ? [activeItem] : [];
+    const targets = all
+      ? fileList.filter(item => item.checked !== false)
+      : activeItem ? [{ ...activeItem, checked: true }] : [];
     if (targets.length === 0) {
       setStatusMessage(t('msg_no_targets'));
       await window.electronAPI?.showMessage?.({
@@ -646,6 +681,9 @@ function MetadataTab({ config, t, showToast }) {
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('msg_processing_overlay'));
+    window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
+      detail: { tabs: ['organizer', 'renamer'] },
+    }));
 
     try {
       const result = await window.electronAPI.saveMetadata(targets, {
@@ -683,11 +721,33 @@ function MetadataTab({ config, t, showToast }) {
 
   const bumpField = (fieldId, delta, target = 'active') => {
     const source = target === 'batch' ? batchMetadata : activeItem?.metadata;
-    const current = Number.parseInt(source?.[fieldId] || '0', 10) || 0;
-    const next = Math.max(0, current + delta);
+    const rawValue = source?.[fieldId];
+    const dateDefaults = { Year: new Date().getFullYear(), Month: new Date().getMonth() + 1, Day: new Date().getDate() };
+    const current = Number.parseInt(rawValue, 10);
+    const base = Number.isFinite(current) ? current : (dateDefaults[fieldId] || 0);
+    const next = clampMetadataNumber(fieldId, base + delta);
     if (target === 'batch') updateBatchMetadata(fieldId, String(next));
     else updateActiveMetadata(fieldId, String(next));
   };
+
+  useEffect(() => {
+    const handleDelete = (event) => {
+      if (event.key !== 'Delete' || apiSearch.open || isWorking || isMetadataTextInput(event.target)) return;
+      if (!selectedFileId && !selectedGroup) return;
+      event.preventDefault();
+      setFileList(prev => {
+        const removedIds = selectedGroup
+          ? prev.filter(item => item.group === selectedGroup).map(item => item.id)
+          : [selectedFileId];
+        const nextId = adjacentSelectionAfterRemoval(prev, removedIds, selectedFileId);
+        setSelectedFileId(nextId);
+        setSelectedGroup('');
+        return prev.filter(item => !removedIds.includes(item.id));
+      });
+    };
+    window.addEventListener('keydown', handleDelete, true);
+    return () => window.removeEventListener('keydown', handleDelete, true);
+  }, [apiSearch.open, isWorking, selectedFileId, selectedGroup]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -755,7 +815,20 @@ function MetadataTab({ config, t, showToast }) {
         </select>
       );
     }
-    return <input type="text" className={className} value={value || ''} onChange={event => onChange(event.target.value)} />;
+    return (
+      <input
+        type="text"
+        inputMode={field.type === 'number' ? 'numeric' : undefined}
+        className={className}
+        value={value || ''}
+        onChange={event => onChange(event.target.value)}
+        onBlur={event => {
+          if (field.type === 'number' && event.target.value.trim()) {
+            onChange(clampMetadataNumber(field.id, event.target.value));
+          }
+        }}
+      />
+    );
   };
 
   const renderFieldRows = (fields) => (
@@ -848,6 +921,17 @@ function MetadataTab({ config, t, showToast }) {
     scroller.scrollTo({ top: section.offsetTop - 8, behavior: 'smooth' });
   };
 
+  const syncActiveSection = () => {
+    const scroller = formScrollRef.current;
+    if (!scroller) return;
+    let nextSection = SECTION_TABS[0].id;
+    for (const section of SECTION_TABS) {
+      const node = sectionRefs.current[section.id];
+      if (node && node.offsetTop <= scroller.scrollTop + 90) nextSection = section.id;
+    }
+    setActiveSection(nextSection);
+  };
+
   const renderAllSections = () => {
     const setRef = id => node => {
       if (node) sectionRefs.current[id] = node;
@@ -916,15 +1000,38 @@ function MetadataTab({ config, t, showToast }) {
 
         <div className="meta-tree-container">
           <ul className="meta-tree">
-              {groupedItems.map((dir) => (
-                <li key={dir.name} className="meta-tree-dir">
-                  <span className="meta-tree-icon"><FaIcon name="folder" /></span> {dir.name}
-                  <ul>
+              {groupedItems.map((dir) => {
+                const collapsed = collapsedGroups.has(dir.name);
+                return (
+                <li key={dir.name} className={`meta-tree-dir ${selectedGroup === dir.name ? 'selected' : ''}`}>
+                  <button
+                    type="button"
+                    className="meta-tree-dir-button"
+                    title={dir.name}
+                    onClick={() => {
+                      setSelectedGroup(dir.name);
+                      setSelectedFileId(null);
+                    }}
+                    onDoubleClick={() => setCollapsedGroups(prev => {
+                      const next = new Set(prev);
+                      if (next.has(dir.name)) next.delete(dir.name);
+                      else next.add(dir.name);
+                      return next;
+                    })}
+                  >
+                    <span className="meta-tree-chevron">{collapsed ? '▸' : '▾'}</span>
+                    <span className="meta-tree-icon"><FaIcon name="folder" /></span>
+                    <span>{dir.name}</span>
+                  </button>
+                  {!collapsed && <ul>
                     {dir.children.map((file) => (
                       <li
                         key={file.id}
                         className={`meta-tree-file ${activeItem?.id === file.id ? 'selected' : ''}`}
-                        onClick={() => setSelectedFileId(file.id)}
+                        onClick={() => {
+                          setSelectedGroup('');
+                          setSelectedFileId(file.id);
+                        }}
                         title={file.filepath}
                       >
                         <input
@@ -940,9 +1047,9 @@ function MetadataTab({ config, t, showToast }) {
                         {file.name}
                       </li>
                     ))}
-                  </ul>
+                  </ul>}
                 </li>
-              ))}
+              )})}
           </ul>
         </div>
       </aside>
@@ -950,14 +1057,22 @@ function MetadataTab({ config, t, showToast }) {
       <main className="meta-right-panel">
         <div className="meta-search-bar">
           <span className="meta-search-label">검색 API :</span>
-          <select className="meta-api-select" value={apiSource} onChange={(event) => setApiSource(event.target.value)}>
+          <select
+            className="meta-api-select"
+            value={apiSource}
+            onChange={(event) => {
+              const nextApi = event.target.value;
+              setApiSource(nextApi);
+              saveConfig?.({ last_meta_api: nextApi });
+            }}
+          >
             {API_SOURCES.map(source => <option key={source} value={source}>{source}</option>)}
           </select>
           <span className="meta-search-label">검색어 :</span>
           <input
             type="text"
             className="meta-search-input"
-            placeholder={t('meta_search_title')}
+            placeholder={t('t3_search_ph')}
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
           />
@@ -977,11 +1092,27 @@ function MetadataTab({ config, t, showToast }) {
             ))}
           </div>
           <div className="meta-nav-center">
-            <button className="meta-nav-btn" disabled={selectedIndex <= 0} onClick={() => setSelectedFileId(fileList[selectedIndex - 1]?.id)}>
+            <button
+              className="meta-nav-btn"
+              disabled={!activeItem || fileList.filter(item => item.group === activeItem.group).findIndex(item => item.id === activeItem.id) <= 0}
+              onClick={() => {
+                const siblings = fileList.filter(item => item.group === activeItem.group);
+                const index = siblings.findIndex(item => item.id === activeItem.id);
+                setSelectedFileId(siblings[index - 1]?.id || null);
+              }}
+            >
               <FaIcon name="chevronLeft" size={9} />
               <span>이전 권</span>
             </button>
-            <button className="meta-nav-btn" disabled={selectedIndex < 0 || selectedIndex >= fileList.length - 1} onClick={() => setSelectedFileId(fileList[selectedIndex + 1]?.id)}>
+            <button
+              className="meta-nav-btn"
+              disabled={!activeItem || fileList.filter(item => item.group === activeItem.group).findIndex(item => item.id === activeItem.id) >= fileList.filter(item => item.group === activeItem.group).length - 1}
+              onClick={() => {
+                const siblings = fileList.filter(item => item.group === activeItem.group);
+                const index = siblings.findIndex(item => item.id === activeItem.id);
+                setSelectedFileId(siblings[index + 1]?.id || null);
+              }}
+            >
               <span>다음 권</span>
               <FaIcon name="chevronRight" size={9} />
             </button>
@@ -1017,9 +1148,23 @@ function MetadataTab({ config, t, showToast }) {
         </div>
 
         <div className="meta-form-area">
-          <div className="meta-form-scroll" ref={formScrollRef}>
+          <div className="meta-form-scroll" ref={formScrollRef} onScroll={syncActiveSection}>
             {renderAllSections()}
           </div>
+          {!activeItem && (
+            <button
+              type="button"
+              className="meta-selection-overlay"
+              onClick={() => window.electronAPI?.showMessage?.({
+                type: 'info',
+                title: t('msg_notice'),
+                message: t('t3_msg_sel'),
+                language: config?.language || config?.lang || 'ko',
+              })}
+            >
+              {t('t3_msg_sel')}
+            </button>
+          )}
         </div>
 
         <div className="meta-bottom-bar">

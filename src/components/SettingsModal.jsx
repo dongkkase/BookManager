@@ -1,5 +1,6 @@
 import React from 'react';
 import { FaIcon } from './FaIcon';
+import { normalizeSettingsConfig, safeThreadLimit, uniquePaths } from '../settingsPolicy';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -8,13 +9,6 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const FORMAT_KEYS = ['none', 'zip', 'cbz', 'cbr', '7z'];
-const SOUND_OPTIONS = [
-  'Default.wav',
-  'complete.wav',
-  'Twinkle Sparkle.mp3',
-  'MadeInAbyss.mp3',
-  'Legend of Zelda - Rupee.mp3',
-];
 const FONT_SCALES = Array.from({ length: 16 }, (_, index) => 80 + index * 5);
 const DEFAULT_API_KEYS = {
   aladin: '',
@@ -27,19 +21,11 @@ const DEFAULT_API_KEYS = {
 };
 
 function safeThreadMax() {
-  const cores = navigator.hardwareConcurrency || 4;
-  return cores <= 4 ? Math.max(1, cores - 1) : Math.max(1, cores - 2);
+  return safeThreadLimit(navigator.hardwareConcurrency || 4);
 }
 
 function normalizeConfig(config) {
-  const lang = config?.language || config?.lang || 'ko';
-  const libraryFolders = [...new Set([
-    ...(config?.libraries || []),
-    ...(config?.dup_check_folders || []),
-  ])];
-  return {
-    lang,
-    language: lang,
+  return normalizeSettingsConfig({
     target_format: 'none',
     backup_on: false,
     flatten_folders: false,
@@ -58,13 +44,11 @@ function normalizeConfig(config) {
     metadata_search_min_width: 1050,
     metadata_search_min_height: 780,
     ...(config || {}),
-    libraries: libraryFolders,
-    dup_check_folders: libraryFolders,
     api_keys: {
       ...DEFAULT_API_KEYS,
       ...(config?.api_keys || {}),
     },
-  };
+  }, navigator.hardwareConcurrency || 4);
 }
 
 function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, initialTab = 'basic' }) {
@@ -74,6 +58,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const [maintenanceMessage, setMaintenanceMessage] = React.useState('');
   const [maintenanceBusy, setMaintenanceBusy] = React.useState('');
   const [selectedDupFolder, setSelectedDupFolder] = React.useState('');
+  const [soundOptions, setSoundOptions] = React.useState(['Default.wav']);
+  const [showApiManual, setShowApiManual] = React.useState(false);
   const threadMax = React.useMemo(() => safeThreadMax(), []);
 
   React.useEffect(() => {
@@ -82,6 +68,31 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
       setActiveTab(initialTab);
     }
   }, [config, initialTab, isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return undefined;
+    let cancelled = false;
+    window.electronAPI?.listSounds?.()
+      .then(files => {
+        if (!cancelled && Array.isArray(files) && files.length > 0) setSoundOptions(files);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleEscape = event => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (showApiManual) setShowApiManual(false);
+      else handleCancel();
+    };
+    window.addEventListener('keydown', handleEscape, true);
+    return () => window.removeEventListener('keydown', handleEscape, true);
+  });
 
   if (!isOpen || !localConfig) return null;
 
@@ -111,21 +122,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   };
 
   const handleSave = () => {
-    const lang = localConfig.language || localConfig.lang || 'ko';
-    const libraryFolders = [...new Set([
-      ...(localConfig.libraries || []),
-      ...(localConfig.dup_check_folders || []),
-    ])];
-    const nextConfig = {
-      ...localConfig,
-      lang,
-      language: lang,
-      libraries: libraryFolders,
-      dup_check_folders: libraryFolders,
-      max_threads: Math.min(threadMax, Math.max(1, Number(localConfig.max_threads) || 1)),
-      img_quality: Math.min(100, Math.max(1, Number(localConfig.img_quality) || 100)),
-      font_scale: Number(localConfig.font_scale) || 100,
-    };
+    const nextConfig = normalizeSettingsConfig(localConfig, navigator.hardwareConcurrency || 4);
     onSave?.(nextConfig);
     onClose?.(nextConfig);
   };
@@ -144,7 +141,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     const folderPath = await window.electronAPI?.selectFolder?.(label('dlg_sel_dup_folder', '라이브러리 폴더 선택'));
     if (!folderPath) return;
     setLocalConfig(prev => {
-      const folders = [...new Set([...(prev.libraries || []), ...(prev.dup_check_folders || []), folderPath])];
+      const folders = uniquePaths(prev.libraries || [], prev.dup_check_folders || [], [folderPath]);
       return { ...prev, libraries: folders, dup_check_folders: folders };
     });
   };
@@ -204,6 +201,15 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   };
 
   const handleClearApiCache = async () => {
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: label('btn_clear_cache', '검색 캐시 비우기'),
+      message: label('meta_cache_clear_confirm', '검색 결과와 표지 이미지 캐시를 모두 삭제하시겠습니까?'),
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: localConfig.language || localConfig.lang || 'ko',
+    });
+    if (response !== 'yes') return;
     setMaintenanceBusy('api-cache');
     setMaintenanceMessage('');
     try {
@@ -218,7 +224,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     }
   };
 
-  const renderSecretInput = (key, placeholder) => (
+  const renderSecretInput = (key, placeholder, disabled = false) => (
     <div className="settings-secret-row">
       <input
         className="settings-input"
@@ -226,13 +232,16 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
         placeholder={placeholder}
         value={localConfig.api_keys?.[key] || ''}
         onChange={event => handleApiChange(key, event.target.value)}
+        disabled={disabled}
       />
       <button
         className={`settings-icon-btn ${showSecrets[key] ? 'active' : ''}`}
         type="button"
         onClick={() => setShowSecrets(prev => ({ ...prev, [key]: !prev[key] }))}
+        disabled={disabled}
+        aria-label={showSecrets[key] ? 'Hide secret' : 'Show secret'}
       >
-        <FaIcon name="eye" />
+        <FaIcon name={showSecrets[key] ? 'eyeSlash' : 'eye'} />
       </button>
     </div>
   );
@@ -283,7 +292,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                       window.electronAPI?.playSound?.(event.target.value);
                     }}
                   >
-                    {SOUND_OPTIONS.map(file => <option key={file} value={file}>{file.replace(/\.(mp3|wav)$/i, '')}</option>)}
+                    {soundOptions.map(file => <option key={file} value={file}>{file.replace(/\.(mp3|wav)$/i, '')}</option>)}
                   </select>
                 </div>
               </div>
@@ -333,7 +342,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               {renderCheck('play_sound', t('play_sound'))}
               {renderCheck('backup_on', t('backup'))}
               {renderCheck('flatten_folders', t('flatten'), t('flatten_desc'))}
-              {renderCheck('pass_skip_meta', t('opt_pass_skip_meta'))}
+              {renderCheck('pass_skip_meta', t('opt_pass_skip_meta'), t('opt_pass_skip_meta_tip'))}
 
               <div className="settings-row">
                 <span className="settings-label">{t('common_quality')}</span>
@@ -351,7 +360,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               <div className="settings-row">
                 <span className="settings-label">{label('viewer_lbl', '뷰어 프로그램:')}</span>
                 <div className="settings-path-row">
-                  <input className="settings-input" value={localConfig.viewer_path || ''} placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')} onChange={event => handleChange('viewer_path', event.target.value)} />
+                  <input className="settings-input" value={localConfig.viewer_path || ''} placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')} readOnly />
                   <button className="settings-action-btn" onClick={handleSelectViewer}>{label('btn_find', '찾기')}</button>
                 </div>
               </div>
@@ -419,14 +428,15 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                 <span className="settings-label">{t('ai_api_key')}</span>
                 {renderSecretInput(
                   'ai_key',
-                  localConfig.api_keys?.ai_provider === 'OpenAI' ? 'OpenAI API Key (sk-...)' : 'Gemini API Key (AIza...)'
+                  localConfig.api_keys?.ai_provider === 'OpenAI' ? 'OpenAI API Key (sk-...)' : 'Gemini API Key (AIza...)',
+                  !localConfig.api_keys?.ai_trans_enabled,
                 )}
               </div>
               <p className="settings-help">{t('ai_notice')}</p>
               </fieldset>
 
               <div className="settings-api-manual-row">
-                <button className="settings-action-btn settings-blue-btn"><FaIcon name="bookOpen" />{label('btn_api_manual', 'API 발급 매뉴얼')}</button>
+                <button className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}><FaIcon name="bookOpen" />{label('btn_api_manual', 'API 발급 매뉴얼')}</button>
               </div>
 
               <div className="settings-row">
@@ -470,6 +480,17 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
           <button className="btn btn-secondary" onClick={handleCancel}>{t('btn_cancel')}</button>
           <button className="btn btn-primary" onClick={handleSave}>{t('btn_save')}</button>
         </div>
+        {showApiManual && (
+          <div className="settings-manual-backdrop" onClick={() => setShowApiManual(false)}>
+            <div className="settings-manual-dialog" role="dialog" onClick={event => event.stopPropagation()}>
+              <h3>{label('api_manual_title', 'API 발급 매뉴얼')}</h3>
+              <button onClick={() => window.electronAPI?.openExternal?.('https://blog.aladin.co.kr/openapi')}>Aladin OpenAPI</button>
+              <button onClick={() => window.electronAPI?.openExternal?.('https://comicvine.gamespot.com/api/')}>Comic Vine API</button>
+              <button onClick={() => window.electronAPI?.openExternal?.('https://console.cloud.google.com/')}>Google Cloud Console</button>
+              <button className="settings-manual-close" onClick={() => setShowApiManual(false)}>{label('btn_close', '닫기')}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

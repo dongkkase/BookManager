@@ -1,9 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { filterExistingResultPaths } from '../resultLog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
+import {
+  clampStartNumber,
+  moveRenamerEntry,
+  refreshRenamerItem,
+} from '../renamerPolicy';
 import '../styles/RenamerTab.css';
 import dragDropImage from '../images/draganddrop1.png';
 
@@ -11,54 +16,10 @@ function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
 }
 
-function stem(filePath) {
-  const name = basename(filePath);
-  return name.replace(/\.[^.]+$/, '');
-}
-
 function replaceBasename(filePath, nextName) {
   const value = String(filePath || '');
   const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
   return separatorIndex >= 0 ? `${value.slice(0, separatorIndex + 1)}${nextName}` : nextName;
-}
-
-function safeName(name) {
-  return String(name || '')
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/^[._\-\s]+/, '')
-    .trim() || 'Page';
-}
-
-function padFor(totalCount) {
-  if (totalCount < 100) return 2;
-  if (totalCount < 1000) return 3;
-  return 4;
-}
-
-function generateEntryName(entry, index, totalCount, options) {
-  const originalName = entry.oldName || basename(entry.originalPath);
-  const ext = (originalName.match(/\.[^.]+$/)?.[0]) || '.jpg';
-  if (options.keepName) return originalName;
-
-  const n = Number(options.startNum || 0) + index;
-  const padded = String(n).padStart(padFor(totalCount), '0');
-  const archiveStem = safeName(options.archiveStem);
-  const customText = safeName(options.customText || 'Custom');
-
-  if (options.patternIndex === 1) return index === 0 ? `Cover${ext}` : `Page_${padded}${ext}`;
-  if (options.patternIndex === 2) return `${archiveStem}_${padded}${ext}`;
-  if (options.patternIndex === 3) return index === 0 ? `${archiveStem}_Cover${ext}` : `${archiveStem}_Page_${padded}${ext}`;
-  if (options.patternIndex === 4) return `${customText}_${padded}${ext}`;
-  return `${padded}${ext}`;
-}
-
-function refreshItemNames(item, options) {
-  const archiveStem = stem(item.filepath || item.name);
-  const entries = (item.entries || []).map((entry, index, source) => ({
-    ...entry,
-    newName: generateEntryName(entry, index, source.length, { ...options, archiveStem }),
-  }));
-  return { ...item, entries, count: entries.length };
 }
 
 function RenamerTab({ config, saveConfig, t, showToast }) {
@@ -74,6 +35,13 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const [lastResult, setLastResult] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [taskPhase, setTaskPhase] = useState('idle');
+  const [selectedEntryId, setSelectedEntryId] = useState(null);
+  const [coverPreview, setCoverPreview] = useState('');
+  const [innerPreview, setInnerPreview] = useState('');
+  const [previewError, setPreviewError] = useState({ cover: false, inner: false });
+  const [skippedFiles, setSkippedFiles] = useState([]);
+  const customInputRef = useRef(null);
+  const dragEntryIndexRef = useRef(-1);
 
   const patternLabels = useMemo(() => {
     const labels = t('patterns');
@@ -87,7 +55,8 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     customText,
     keepName,
     startNum,
-  }), [patternIndex, customText, keepName, startNum]);
+    webpConversion: Boolean(config?.webp_conversion),
+  }), [config?.webp_conversion, patternIndex, customText, keepName, startNum]);
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.((data) => {
@@ -108,14 +77,28 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   useEffect(() => {
-    setFileList(prev => prev.map(item => refreshItemNames(item, renameOptions)));
+    setFileList(prev => prev.map(item => refreshRenamerItem(item, renameOptions)));
   }, [renameOptions]);
+
+  useEffect(() => {
+    if (patternIndex === 4 && !keepName) customInputRef.current?.focus();
+  }, [keepName, patternIndex]);
+
+  useEffect(() => {
+    saveConfig?.({
+      rename_pattern_idx: patternIndex,
+      custom_text: customText,
+      keep_internal_name: keepName,
+      start_num: startNum,
+    });
+  }, [customText, keepName, patternIndex, saveConfig, startNum]);
 
   const activeArchive = useMemo(
     () => fileList.find(file => file.id === selectedArchiveId) || fileList[0] || null,
     [fileList, selectedArchiveId]
   );
   const activeEntries = activeArchive?.entries || [];
+  const activeEntry = activeEntries.find(entry => entry.id === selectedEntryId) || activeEntries[0] || null;
   const checkedCount = useMemo(() => fileList.filter(file => file.checked).length, [fileList]);
   const allChecked = fileList.length > 0 && fileList.every(file => file.checked);
 
@@ -137,9 +120,37 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     setFileList(prev => prev.map(file => {
       if (file.id !== id) return file;
       const nextFile = updater(file);
-      return refreshNames ? refreshItemNames(nextFile, renameOptions) : nextFile;
+      return refreshNames ? refreshRenamerItem(nextFile, renameOptions) : nextFile;
     }));
   };
+
+  const loadPreview = useCallback(async (target, archive, entry) => {
+    if (!archive?.filepath || !entry?.originalPath) {
+      if (target === 'cover') setCoverPreview('');
+      else setInnerPreview('');
+      return;
+    }
+    setPreviewError(current => ({ ...current, [target]: false }));
+    const result = await window.electronAPI?.extractArchiveImage?.(
+      archive.filepath,
+      entry.originalPath,
+    );
+    const dataUrl = result?.success ? result.dataUrl : '';
+    if (target === 'cover') setCoverPreview(dataUrl);
+    else setInnerPreview(dataUrl);
+    if (!dataUrl) setPreviewError(current => ({ ...current, [target]: true }));
+  }, []);
+
+  useEffect(() => {
+    const cover = activeEntries.find(entry => basename(entry.oldName).toLowerCase().startsWith('cover'))
+      || activeEntries[0];
+    setSelectedEntryId(current => activeEntries.some(entry => entry.id === current) ? current : activeEntries[0]?.id || null);
+    loadPreview('cover', activeArchive, cover);
+  }, [activeArchive?.id, activeEntries, loadPreview]);
+
+  useEffect(() => {
+    loadPreview('inner', activeArchive, activeEntry);
+  }, [activeArchive, activeEntry, loadPreview]);
 
   const analyzePaths = useCallback(async (paths) => {
     const cleanPaths = [...new Set((paths || []).filter(Boolean))];
@@ -157,12 +168,15 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         ...renameOptions,
       });
 
-      const nextItems = (result.items || []).map(item => refreshItemNames(item, renameOptions));
+      const nextItems = (result.items || []).map(item => refreshRenamerItem(item, renameOptions));
       setFileList(prev => {
         const byPath = new Map(prev.map(item => [item.filepath, item]));
-        for (const item of nextItems) byPath.set(item.filepath, item);
+        for (const item of nextItems) {
+          if (!byPath.has(item.filepath)) byPath.set(item.filepath, item);
+        }
         return [...byPath.values()];
       });
+      setSkippedFiles(prev => [...new Set([...prev, ...(result.skippedFiles || [])])]);
       if (nextItems[0]) setSelectedArchiveId(nextItems[0].id);
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_unsupported_format')}: ${result.skippedFiles.join(', ')}`);
@@ -215,29 +229,38 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
 
   const handleMoveEntry = (archiveId, entryIndex, mode) => {
     updateFile(archiveId, file => {
-      const entries = [...(file.entries || [])];
-      const [entry] = entries.splice(entryIndex, 1);
       let targetIndex = entryIndex;
       if (mode === 'top') targetIndex = 0;
       if (mode === 'up') targetIndex = Math.max(0, entryIndex - 1);
-      if (mode === 'down') targetIndex = Math.min(entries.length, entryIndex + 1);
-      if (mode === 'bottom') targetIndex = entries.length;
-      entries.splice(targetIndex, 0, entry);
-      return { ...file, entries };
+      if (mode === 'down') targetIndex = Math.min(file.entries.length - 1, entryIndex + 1);
+      if (mode === 'bottom') targetIndex = file.entries.length - 1;
+      return { ...file, entries: moveRenamerEntry(file.entries, entryIndex, targetIndex) };
     });
   };
 
   const handleStartNumChange = (delta) => {
-    setStartNum(prev => Math.max(0, Number(prev || 0) + delta));
+    setStartNum(prev => clampStartNumber(Number(prev || 0) + delta));
   };
 
   const handleClear = () => {
     setFileList([]);
     setSelectedArchiveId(null);
     setLastResult(null);
+    setSelectedEntryId(null);
+    setCoverPreview('');
+    setInnerPreview('');
+    setSkippedFiles([]);
     setStatusMessage(t('status_wait'));
     setProgress(0);
   };
+
+  useEffect(() => {
+    const handleReset = event => {
+      if (event.detail?.tabs?.includes('renamer') && !isWorking) handleClear();
+    };
+    window.addEventListener('bookmanager:reset-task-tabs', handleReset);
+    return () => window.removeEventListener('bookmanager:reset-task-tabs', handleReset);
+  }, [isWorking, t]);
 
   const handleRemoveChecked = useCallback(() => {
     setFileList(prev => {
@@ -261,24 +284,55 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     }
 
     if (action === 'rename') {
+      if (!await window.electronAPI?.exists?.(archive.filepath)) {
+        await window.electronAPI?.showMessage?.({
+          type: 'warning',
+          title: t('dlg_warn'),
+          message: t('msg_file_not_exist'),
+          language: config?.language || config?.lang || 'ko',
+        });
+        return;
+      }
       const oldName = basename(archive.filepath);
       const nextName = window.prompt(t('msg_rename_desc'), oldName)?.trim();
       if (!nextName || nextName === oldName) return;
       const nextPath = replaceBasename(archive.filepath, nextName);
+      if (await window.electronAPI?.exists?.(nextPath)) {
+        await window.electronAPI?.showMessage?.({
+          type: 'warning',
+          title: t('msg_rename_title'),
+          message: t('msg_rename_dup'),
+          language: config?.language || config?.lang || 'ko',
+        });
+        return;
+      }
       const result = await window.electronAPI?.renameFile?.(archive.filepath, nextPath);
       if (!result?.success) {
-        showToast?.(result?.message || t('msg_reload_fail'));
+        const permission = ['EACCES', 'EPERM'].includes(result?.code);
+        await window.electronAPI?.showMessage?.({
+          type: 'error',
+          title: t('dlg_err'),
+          message: t('msg_err_rename_fail', [
+            permission ? `${t('dlg_err')}: ${result?.message}` : result?.message || t('msg_reload_fail'),
+          ]),
+          language: config?.language || config?.lang || 'ko',
+        });
         return;
       }
       setFileList(prev => prev.map(item => item.id === archive.id
-        ? refreshItemNames({ ...item, filepath: nextPath, name: nextName }, renameOptions)
+        ? refreshRenamerItem({ ...item, id: nextPath, filepath: nextPath, name: nextName }, renameOptions)
         : item));
+      setSelectedArchiveId(nextPath);
       showToast?.({ key: 'msg_rename_success' });
       return;
     }
 
     if (action === 'reload') {
       try {
+        if (!await window.electronAPI?.exists?.(archive.filepath)) {
+          showToast?.(t('msg_file_not_exist'));
+          return;
+        }
         const result = await window.electronAPI.analyzeRenamer([archive.filepath], {
           lang: config?.language || config?.lang || 'ko',
           ...renameOptions,
@@ -288,7 +342,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
           showToast?.(result.skippedFiles?.length ? t('msg_reload_nested') : t('msg_reload_fail'));
           return;
         }
-        const nextItem = refreshItemNames({
+        const nextItem = refreshRenamerItem({
           ...reloaded,
           checked: archive.checked,
           capOpt: archive.capOpt,
@@ -322,12 +376,9 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     setStatusMessage(t('msg_processing_overlay'));
 
     try {
-      await saveConfig?.({
-        rename_pattern_idx: patternIndex,
-        custom_text: customText,
-        keep_internal_name: keepName,
-        start_num: startNum,
-      });
+      window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
+        detail: { tabs: ['organizer', 'metadata'] },
+      }));
       const result = await window.electronAPI.executeRenamer(fileList, {
         lang: config?.language || config?.lang || 'ko',
         target_format: config?.target_format || 'none',
@@ -346,6 +397,21 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       if (result.cancelled) {
         setStatusMessage(t('msg_cancelled'));
         return;
+      }
+      const previousSelectedPath = activeArchive?.filepath;
+      if (outputFiles.length > 0) {
+        const reloaded = await window.electronAPI.analyzeRenamer(outputFiles, {
+          lang: config?.language || config?.lang || 'ko',
+          ...renameOptions,
+        });
+        const reloadedItems = (reloaded.items || []).map(item => refreshRenamerItem(item, renameOptions));
+        setFileList(reloadedItems);
+        const mappedPath = result.pathMap?.[previousSelectedPath] || outputFiles[0];
+        setSelectedArchiveId(
+          reloadedItems.find(item => item.filepath === mappedPath)?.id
+          || reloadedItems[0]?.id
+          || null,
+        );
       }
       const success = result.stats?.success?.length || 0;
       const skip = result.stats?.skip?.length || 0;
@@ -409,19 +475,41 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
   }, [analyzePaths, handleCancel, handleExecute, handleRemoveChecked, handleSelectFiles, handleSelectFolder, isWorking, toggleAllChecked]);
 
+  useEffect(() => {
+    const handleKeyDown = event => {
+      const tag = event.target?.tagName?.toLowerCase();
+      if (isWorking || tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedArchiveId) {
+        event.preventDefault();
+        setFileList(prev => {
+          const index = prev.findIndex(file => file.id === selectedArchiveId);
+          const next = prev.filter(file => file.id !== selectedArchiveId);
+          setSelectedArchiveId(next[Math.min(Math.max(index, 0), next.length - 1)]?.id || null);
+          return next;
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isWorking, selectedArchiveId]);
+
   return (
     <div className="renamer-tab">
       <div className="renamer-left-panel">
         <div className="renamer-preview-title">{t('cover_preview')}</div>
         <div className="renamer-preview-img-box">
-          <span className="renamer-no-image">{activeEntries[0]?.oldName || t('tf_empty_no_data')}</span>
+          {coverPreview && !previewError.cover
+            ? <img src={coverPreview} alt="" onError={() => setPreviewError(current => ({ ...current, cover: true }))} />
+            : <span className="renamer-no-image">{activeArchive ? t('no_preview') : t('tf_empty_no_data')}</span>}
         </div>
 
         <div className="renamer-divider" />
 
         <div className="renamer-preview-title">{t('inner_preview')}</div>
         <div className="renamer-preview-img-box">
-          <span className="renamer-no-image">{activeEntries[1]?.oldName || activeEntries[0]?.newName || t('tf_empty_no_data')}</span>
+          {innerPreview && !previewError.inner
+            ? <img src={innerPreview} alt="" onError={() => setPreviewError(current => ({ ...current, inner: true }))} />
+            : <span className="renamer-no-image">{activeEntry ? t('no_image') : t('tf_empty_no_data')}</span>}
         </div>
       </div>
 
@@ -459,6 +547,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
           </select>
 
           <input
+            ref={customInputRef}
             type="text"
             className="renamer-input-custom"
             placeholder="Custom"
@@ -482,7 +571,9 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
             type="number"
             className="renamer-input-num"
             value={startNum}
-            onChange={(event) => setStartNum(Math.max(0, Number.parseInt(event.target.value, 10) || 0))}
+            min="0"
+            max="999999"
+            onChange={(event) => setStartNum(clampStartNumber(event.target.value))}
             disabled={keepName}
           />
           <button className="renamer-btn-icon" onClick={() => handleStartNumChange(1)} disabled={keepName}>+</button>
@@ -571,7 +662,26 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                   </thead>
                   <tbody>
                     {activeArchive ? activeArchive.entries.map((entry, index) => (
-                      <tr key={entry.id}>
+                      <tr
+                        key={entry.id}
+                        className={activeEntry?.id === entry.id ? 'selected' : ''}
+                        draggable
+                        onClick={() => setSelectedEntryId(entry.id)}
+                        onDragStart={() => {
+                          dragEntryIndexRef.current = index;
+                        }}
+                        onDragOver={event => event.preventDefault()}
+                        onDrop={event => {
+                          event.preventDefault();
+                          const sourceIndex = dragEntryIndexRef.current;
+                          dragEntryIndexRef.current = -1;
+                          if (sourceIndex < 0 || sourceIndex === index) return;
+                          updateFile(activeArchive.id, file => ({
+                            ...file,
+                            entries: moveRenamerEntry(file.entries, sourceIndex, index),
+                          }));
+                        }}
+                      >
                         <td title={entry.originalPath}>{entry.oldName}</td>
                         <td>
                           <input
@@ -615,6 +725,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
           <div className="renamer-progress-wrap" />
         </div>
       </div>
+      {skippedFiles.length > 0 && (
+        <div className="renamer-skip-log">
+          {skippedFiles.map(item => <div key={item}>{item}</div>)}
+        </div>
+      )}
       {lastResult && (
         <ResultLogDialog
           result={lastResult}

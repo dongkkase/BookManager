@@ -45,15 +45,35 @@ function parseComicInfo(xml) {
     series: readXmlTag(xml, 'Series'),
     volume: readXmlTag(xml, 'Volume'),
     chapter: readXmlTag(xml, 'Number'),
-    author: readXmlTag(xml, 'Writer') || readXmlTag(xml, 'Penciller'),
     writer: readXmlTag(xml, 'Writer'),
-    producer: readXmlTag(xml, 'Penciller'),
+    penciller: readXmlTag(xml, 'Penciller'),
+    inker: readXmlTag(xml, 'Inker'),
+    colorist: readXmlTag(xml, 'Colorist'),
+    letterer: readXmlTag(xml, 'Letterer'),
+    cover_artist: readXmlTag(xml, 'CoverArtist'),
     publisher: readXmlTag(xml, 'Publisher'),
     imprint: readXmlTag(xml, 'Imprint'),
     genre: readXmlTag(xml, 'Genre'),
     page_count: readXmlTag(xml, 'PageCount'),
     total_volume: readXmlTag(xml, 'Count'),
     description: readXmlTag(xml, 'Summary'),
+    series_group: readXmlTag(xml, 'AlternateSeries'),
+    tags: readXmlTag(xml, 'Tags'),
+    characters: readXmlTag(xml, 'Characters'),
+    teams: readXmlTag(xml, 'Teams'),
+    locations: readXmlTag(xml, 'Locations'),
+    story_arc: readXmlTag(xml, 'StoryArc'),
+    notes: readXmlTag(xml, 'Notes'),
+    link: readXmlTag(xml, 'Web'),
+    language: readXmlTag(xml, 'LanguageISO'),
+    manga: readXmlTag(xml, 'Manga'),
+    age_rating: readXmlTag(xml, 'AgeRating'),
+    rating: readXmlTag(xml, 'CommunityRating'),
+    date: [
+      readXmlTag(xml, 'Year'),
+      readXmlTag(xml, 'Month'),
+      readXmlTag(xml, 'Day'),
+    ].filter(Boolean).join('-'),
   };
 }
 
@@ -338,15 +358,40 @@ async function createFileData(fullPath, stats) {
     volume,
     sorted_volume: filenameMeta.sorted_volume,
     chapter: archiveMeta.chapter || '',
-    author: archiveMeta.author || '',
-    writer: archiveMeta.writer || archiveMeta.author || '',
-    producer: archiveMeta.producer || '',
+    author: archiveMeta.writer || archiveMeta.penciller || '',
+    writer: archiveMeta.writer || '',
+    penciller: archiveMeta.penciller || '',
+    inker: archiveMeta.inker || '',
+    colorist: archiveMeta.colorist || '',
+    letterer: archiveMeta.letterer || '',
+    cover_artist: archiveMeta.cover_artist || '',
+    producer: [
+      archiveMeta.writer,
+      archiveMeta.penciller,
+      archiveMeta.inker,
+      archiveMeta.colorist,
+      archiveMeta.letterer,
+      archiveMeta.cover_artist,
+    ].filter(Boolean).join(', '),
     publisher: archiveMeta.publisher || '',
     imprint: archiveMeta.imprint || '',
     genre: archiveMeta.genre || '',
     total_volume: archiveMeta.total_volume || '',
     page_count: archiveMeta.page_count || '',
     description: archiveMeta.description || '',
+    series_group: archiveMeta.series_group || '',
+    tags: archiveMeta.tags || '',
+    characters: archiveMeta.characters || '',
+    teams: archiveMeta.teams || '',
+    locations: archiveMeta.locations || '',
+    story_arc: archiveMeta.story_arc || '',
+    notes: archiveMeta.notes || '',
+    link: archiveMeta.link || '',
+    language: archiveMeta.language || '',
+    manga: archiveMeta.manga || '',
+    age_rating: archiveMeta.age_rating || '',
+    rating: archiveMeta.rating || '',
+    date: archiveMeta.date || '',
     has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
     cover: archiveMeta.cover || '',
@@ -354,6 +399,22 @@ async function createFileData(fullPath, stats) {
     dup_count: 0,
     max_ratio: 0,
   };
+}
+
+export async function inspectFolderFile(fullPath) {
+  const stats = await fs.promises.stat(fullPath);
+  if (!stats.isFile()) {
+    return {
+      name: path.basename(fullPath),
+      path: fullPath,
+      full_path: fullPath,
+      is_folder: stats.isDirectory(),
+      size: stats.size,
+      resolution: '',
+      cover: '',
+    };
+  }
+  return createFileData(fullPath, stats);
 }
 
 export async function scanFolder(folderPath, options = {}, event) {

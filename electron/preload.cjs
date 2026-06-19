@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 사운드 재생
   playSound: (soundFilename) => ipcRenderer.invoke('sound:play', soundFilename),
+  listSounds: () => ipcRenderer.invoke('sound:list'),
   
   // 파일/폴더 선택
   selectFolder: (title) => ipcRenderer.invoke('dialog:selectFolder', title),
@@ -23,7 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseLibrarySyncMode: (options) => ipcRenderer.invoke('dialog:librarySyncChoice', options),
   selectFile: (title, filters) => ipcRenderer.invoke('dialog:selectFile', title, filters),
   selectFiles: (title, filters) => ipcRenderer.invoke('dialog:selectFiles', title, filters),
-  saveFile: (title, filters) => ipcRenderer.invoke('dialog:saveFile', title, filters),
+  saveFile: (title, filters, defaultPath) => ipcRenderer.invoke('dialog:saveFile', title, filters, defaultPath),
   
   // 파일 시스템
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
@@ -37,7 +38,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteFiles: (filePaths) => ipcRenderer.invoke('fs:delete', filePaths),
   openInExplorer: (folderPath) => ipcRenderer.invoke('fs:openInExplorer', folderPath),
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
+  openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
   exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
+  getFilePreview: (filePath) => ipcRenderer.invoke('fs:filePreview', filePath),
+  expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),
+  removeEmptyTree: (rootPath) => ipcRenderer.invoke('fs:removeEmptyTree', rootPath),
   executeLibraryMove: (movePlans) => ipcRenderer.invoke('fs:executeLibraryMove', movePlans),
   extractCoreTitle: (filename) => ipcRenderer.invoke('parser:extractCoreTitle', filename),
   
@@ -53,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   analyzeOrganizer: (paths, options) => ipcRenderer.invoke('organizer:analyze', paths, options),
   executeOrganizer: (items, options) => ipcRenderer.invoke('organizer:execute', items, options),
   analyzeRenamer: (paths, options) => ipcRenderer.invoke('renamer:analyze', paths, options),
+  extractArchiveImage: (filePath, entryPath) => ipcRenderer.invoke('renamer:extractImage', filePath, entryPath),
   executeRenamer: (items, options) => ipcRenderer.invoke('renamer:execute', items, options),
   analyzeMetadata: (paths, options) => ipcRenderer.invoke('metadata:analyze', paths, options),
   saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
@@ -131,5 +137,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 앱 정보
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
   setRuntimeState: (state) => ipcRenderer.send('app:setRuntimeState', state),
 });

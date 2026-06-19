@@ -28,6 +28,7 @@ import {
 } from './toastPolicy';
 import { resolveUpdateInfo } from './updatePolicy';
 import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
+import { settingsEffects } from './settingsPolicy';
 import './styles/App.css';
 
 function fontFamilyForConfig(fontFamily = 'Default') {
@@ -271,10 +272,41 @@ function App() {
     setShowSettings(false);
     if (updatedConfig) {
       const savedConfig = await setConfig(updatedConfig);
+      const effects = settingsEffects(config || {}, savedConfig || updatedConfig);
       const nextLang = savedConfig?.language || savedConfig?.lang || updatedConfig.language || updatedConfig.lang;
       if (nextLang) await changeLanguage(nextLang);
+      if (effects.resetTaskTabs) {
+        window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
+          detail: { tabs: ['organizer', 'renamer', 'metadata'] },
+        }));
+        const resetMessage = t('msg_settings_changed_clear');
+        showToast(resetMessage && resetMessage !== 'msg_settings_changed_clear'
+          ? resetMessage
+          : '설정 변경으로 작업 목록을 초기화했습니다.');
+      }
+      if (effects.librariesChanged) {
+        setActiveTab('folder');
+        await setConfig({ last_tab_index: 0 });
+        const folders = savedConfig?.dup_check_folders || updatedConfig.dup_check_folders || [];
+        if (folders.length > 0) {
+          window.electronAPI?.updateFolderIndex?.(folders).catch(error => {
+            console.error('라이브러리 인덱스 갱신 실패:', error);
+          });
+        }
+      }
+      if (effects.restartRecommended) {
+        const response = await window.electronAPI?.showMessage?.({
+          type: 'question',
+          title: t('msg_restart_title'),
+          message: t('msg_restart_desc'),
+          buttons: 'yes-no',
+          defaultChoice: 'no',
+          language: nextLang,
+        });
+        if (response === 'yes') await window.electronAPI?.relaunchApp?.();
+      }
     }
-  }, [setConfig, changeLanguage]);
+  }, [changeLanguage, config, setConfig, showToast, t]);
 
   const translatedTabs = TABS.map(tab => ({
     ...tab,
@@ -364,7 +396,7 @@ function App() {
           {activeTab === 'renamer' && isWorking && <div className="app-working-overlay"><span className="app-working-spinner" /><span>{activeStatus.message}</span></div>}
         </div>
         <div className={`app-tab-panel ${activeTab === 'metadata' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'metadata'}>
-          <MetadataTab config={config} t={t} showToast={showToast} />
+          <MetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
           {activeTab === 'metadata' && isWorking && <div className="app-working-overlay"><span className="app-working-spinner" /><span>{activeStatus.message}</span></div>}
         </div>
         <div className="app-tab-panel" hidden={activeTab !== 'sharing'}>

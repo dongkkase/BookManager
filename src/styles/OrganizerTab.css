@@ -111,6 +111,10 @@
   border-bottom: 1px solid #151515;
 }
 
+.org-tree-item-group.selected > .org-root-row {
+  background: #31566f;
+}
+
 .org-tree-row {
   display: grid;
   grid-template-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 92px 100px;
@@ -172,9 +176,8 @@
 
 .org-title {
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  white-space: normal;
   color: #fff;
 }
 
@@ -189,6 +192,18 @@
 
 .org-path-widget {
   gap: 5px;
+}
+
+.org-path-widget button {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 2px 6px;
+  color: #fff;
+  background: #4a4a4a;
+  border: 1px solid #606060;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .org-path-input,
@@ -206,6 +221,21 @@
 
 .org-volume-input {
   max-width: 420px;
+}
+
+.org-volume-name {
+  color: #fff;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.org-spinoff {
+  margin-left: 8px;
+  padding: 1px 5px;
+  color: #ffcb67;
+  background: #47351b;
+  border-radius: 3px;
+  font-size: 9px;
 }
 
 .org-indent {
@@ -256,4 +286,69 @@
   justify-content: center;
   color: #ccc;
   font-size: 11px;
+}
+
+.org-context-menu {
+  position: fixed;
+  z-index: 1600;
+  min-width: 150px;
+  padding: 4px;
+  background: #242424;
+  border: 1px solid #555;
+  border-radius: 4px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.org-context-menu button {
+  width: 100%;
+  padding: 6px 9px;
+  color: #fff;
+  background: transparent;
+  border: none;
+  text-align: left;
+}
+
+.org-context-menu button:hover {
+  background: #315064;
+}
+
+.org-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.org-filename-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(580px, calc(100vw - 40px));
+  min-height: 220px;
+  padding: 20px;
+  color: #fff;
+  background: #2b2b2b;
+  border: 1px solid #555;
+  border-radius: 7px;
+}
+
+.org-filename-dialog h3 {
+  margin: 0;
+}
+
+.org-filename-dialog input {
+  height: 40px;
+  padding: 6px 9px;
+  color: #fff;
+  background: #171717;
+  border: 1px solid #555;
+  font-size: 15px;
+}
+
+.org-filename-dialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

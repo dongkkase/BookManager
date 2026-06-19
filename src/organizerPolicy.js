@@ -1,0 +1,66 @@
+const INVALID_FILENAME_CHARS = /[\\/:*?"<>|]/g;
+
+export function defaultOutputPath(filePath) {
+    const value = String(filePath || '');
+    const index = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+    return index >= 0 ? value.slice(0, index) : '';
+}
+
+export function titleOutputPath(item) {
+    const base = defaultOutputPath(item?.filepath);
+    const title = String(item?.clean_title || '').trim();
+    const folderName = !title || title === '제목없음' ? '제목없음_수정필요' : title;
+    const separator = base.includes('\\') ? '\\' : '/';
+    return `${base}${separator}${folderName}`;
+}
+
+export function sanitizeOrganizerName(name) {
+    return String(name || '')
+        .replace(INVALID_FILENAME_CHARS, '_')
+        .replace(/^[._\-\s]+/, '')
+        .trim();
+}
+
+export function targetExtension(item, targetFormat) {
+    if (targetFormat && targetFormat !== 'none') return `.${String(targetFormat).replace(/^\./, '').toLowerCase()}`;
+    if (item?.type === 'archive' && item?.source_ext) return String(item.source_ext).toLowerCase();
+    if (item?.type === 'archive') {
+        const match = String(item?.inner_path || item?.original_path || '').match(/\.[^.\\/]+$/);
+        if (match) return match[0].toLowerCase();
+    }
+    return '.zip';
+}
+
+export function organizerVolumePrefix(volume) {
+    const parts = String(volume?.original_path || '').split(/[\\/]/).filter(Boolean);
+    if (parts.length < 2) return '';
+    const parent = parts[parts.length - 2];
+    const match = parent.match(/(\d+\s*부|제\s*\d+\s*부|시즌\s*\d+|season\s*\d+|part\s*\d+)/i);
+    return `[${(match?.[1] || parent).trim()}] `;
+}
+
+export function changeOrganizerUnit(name, unit, lang = 'ko') {
+    const match = String(name || '').match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?\s*([^0-9]*)$/i);
+    if (!match) return String(name || '').trim();
+    let base = match[1].trim();
+    const number = match[2].trim();
+    const tail = match[3].trim();
+    if (tail) base = `${base} ${tail}`.trim();
+    const suffix = lang === 'en'
+        ? (unit === 'chapter' ? 'c' : 'v')
+        : lang === 'ja'
+            ? (unit === 'chapter' ? '話' : '巻')
+            : (unit === 'chapter' ? '화' : '권');
+    if (lang === 'en') return base ? `${base} ${suffix}${number}` : `${suffix}${number}`;
+    return base ? `${base} ${number}${suffix}` : `${number}${suffix}`;
+}
+
+export function removeOrganizerItems(items, ids) {
+    const removeIds = new Set(ids || []);
+    const firstIndex = items.findIndex(item => removeIds.has(item.id));
+    const nextItems = items.filter(item => !removeIds.has(item.id));
+    const nextSelectedId = nextItems.length === 0 || firstIndex < 0
+        ? ''
+        : nextItems[Math.min(firstIndex, nextItems.length - 1)].id;
+    return { items: nextItems, nextSelectedId };
+}

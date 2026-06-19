@@ -1,135 +1,165 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FaIcon } from '../FaIcon';
+import {
+  duplicateDetailRows,
+  formatDetailValue,
+  splitMetadataValues,
+  visibleDetailTags,
+} from '../../detailPanelState';
 
-/**
- * DetailPanel - 하단 상세 정보 패널
- * Python PyQt6의 DetailBackgroundWidget 포트
- * 
- * 선택된 파일의 커버 이미지와 메타데이터를 표시합니다.
- * 
- * Props:
- *   selectedFile: 선택된 파일 데이터 객체 (null 가능)
- *   t: 번역 함수
- */
+function formatSize(bytes) {
+  if (!bytes) return '-';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = Number(bytes);
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+}
+
+function formatDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
 const DetailPanel = ({ selectedFile = null, t }) => {
   const [imageError, setImageError] = useState(false);
 
-  // 선택 파일 변경 시 이미지 에러 리셋
   useEffect(() => {
     setImageError(false);
-  }, [selectedFile]);
+  }, [selectedFile?.path]);
 
-  const handleImageError = () => {
-    setImageError(true);
-  };
+  const tags = useMemo(
+    () => visibleDetailTags(selectedFile || {}, []),
+    [selectedFile],
+  );
+  const duplicates = useMemo(() => duplicateDetailRows(selectedFile || {}), [selectedFile]);
 
-  const metadataFields = [
-    { key: 'producer', labelKey: 'col_creators' },
-    { key: 'publisher', labelKey: 'col_publisher' },
-    { key: 'page_count', labelKey: 'col_page_count' },
-    { key: 'total_volume', labelKey: 'col_vol_count' },
-    { key: 'format', labelKey: 'col_format' },
-    { key: 'rating', labelKey: 'col_rating' },
-    { key: 'age_rating', labelKey: 'col_age_rating' },
-    { key: 'date', labelKey: 'col_pub_date' },
-  ];
-
-  // 파일 크기 포맷팅
-  const formatSize = (bytes) => {
-    if (!bytes || bytes === 0) return '-';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = Number(bytes);
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    return `${size.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
-  };
-
-  // 값 포맷팅
-  const formatValue = (key, value) => {
-    if (key === 'size' && typeof value === 'number') {
-      return formatSize(value);
-    }
-    return value || '-';
-  };
-
-  // 선택된 파일이 없는 경우
   if (!selectedFile) {
-    return (
-      <div className="folder-detail-panel empty">
-        <div className="detail-empty-state">
-          {t('folder.detail.no_selection') || '파일을 선택하세요'}
-        </div>
-      </div>
-    );
+    return <div className="folder-detail-panel empty"><div className="detail-empty-state">-</div></div>;
   }
 
-  const bgStyle = selectedFile.cover && !imageError ? { backgroundImage: `url(${selectedFile.cover})` } : {};
-  const title = selectedFile.title || selectedFile.name || '-';
-  const series = selectedFile.series || t('info_no_series');
-  const volume = selectedFile.volume ? `${selectedFile.volume}권` : '';
-  const tags = [selectedFile.genre, selectedFile.format, selectedFile.publisher].filter(Boolean).flatMap(value => String(value).split(/[;,]/)).slice(0, 6);
+  const coverAvailable = selectedFile.cover && !imageError;
+  const creators = splitMetadataValues(
+    selectedFile.writer,
+    selectedFile.penciller,
+    selectedFile.inker,
+    selectedFile.colorist,
+    selectedFile.letterer,
+    selectedFile.cover_artist,
+  ).join(', ');
+  const leftFields = [
+    ['user', t('col_creators'), creators, true],
+    ['building', t('col_publisher'), selectedFile.publisher],
+    ['fileLines', t('col_page_count'), selectedFile.page_count],
+    ['bookOpen', t('col_vol_count'), selectedFile.total_volume],
+    ['archive', `${t('col_format')} / ${t('col_manga')}`, [selectedFile.format, selectedFile.manga].filter(Boolean).join(' / ')],
+    ['star', t('col_rating'), selectedFile.rating],
+    ['child', t('col_age_rating'), selectedFile.age_rating],
+    ['link', t('col_web'), selectedFile.link],
+  ];
+  const arcTeamLocation = [
+    splitMetadataValues(selectedFile.story_arc).join(', '),
+    splitMetadataValues(selectedFile.teams).join(', '),
+    splitMetadataValues(selectedFile.locations).join(', '),
+  ].filter(Boolean).join(' / ');
 
   return (
     <div className="folder-detail-panel">
-      <div className="folder-detail-bg" style={bgStyle}></div>
-      <div className="folder-detail-overlay"></div>
-      
-      <div className="folder-detail-content">
-        <div className="detail-cover-section">
-          {selectedFile.cover && !imageError ? (
-            <img
-              src={selectedFile.cover}
-              alt={selectedFile.name || ''}
-              className="detail-cover-image"
-              onError={handleImageError}
-            />
-          ) : (
-            <div className="detail-cover-placeholder">
-              <div className="placeholder-icon">▧</div>
-            </div>
-          )}
-        </div>
-
-        <div className="detail-metadata-section">
-          <div className="detail-heading">
-            <div className="detail-series">{series}</div>
-            <div className="detail-title">{title} {volume}</div>
-            <div className="detail-tags">
-              {tags.length > 0 ? tags.map(tag => <span key={tag}>{tag}</span>) : <span>-</span>}
+      {coverAvailable && <div className="folder-detail-bg" style={{ backgroundImage: `url(${selectedFile.cover})` }} />}
+      <div className="folder-detail-overlay" />
+      <div className="folder-detail-scroll">
+        <div className="folder-detail-content">
+          <div className="detail-cover-section">
+            <div className="detail-cover-stack">
+              {coverAvailable ? (
+                <img
+                  src={selectedFile.cover}
+                  alt={selectedFile.name || ''}
+                  className="detail-cover-image"
+                  onError={() => setImageError(true)}
+                />
+              ) : (
+                <div className="detail-cover-placeholder" title={t('folder_no_cover')}>
+                  <FaIcon name="file" size={42} />
+                  <span>{t('folder_no_cover')}</span>
+                </div>
+              )}
+              <div className="detail-cover-caption">
+                <div>{t('col_res')}: {selectedFile.resolution || '-'}, ({formatSize(selectedFile.size)})</div>
+                <div>{formatDate(selectedFile.created || selectedFile.ctime)}</div>
+                <div>{formatDate(selectedFile.modified || selectedFile.mtime)}</div>
+              </div>
             </div>
           </div>
 
-          <div className="detail-info-card">
-            <div className="metadata-grid">
-              {metadataFields.map((field) => (
-                <React.Fragment key={field.key}>
-                  <div className="metadata-label">{t(field.labelKey)}</div>
-                  <div className="metadata-value" title={String(formatValue(field.key, selectedFile[field.key]))}>
-                    {formatValue(field.key, selectedFile[field.key])}
+          <div className="detail-metadata-section">
+            <div className="detail-heading">
+              <div className="detail-series">{selectedFile.series || t('info_no_series')}</div>
+              <div className="detail-title">{selectedFile.title || selectedFile.name || '-'}</div>
+              <div className="detail-tags">
+                {tags.length > 0 ? tags.map(tag => <span key={tag}>{tag}</span>) : <span>-</span>}
+              </div>
+            </div>
+
+            <div className="detail-info-card">
+              <DetailFieldGroup fields={leftFields} />
+              <section className="detail-extra">
+                <DetailLine icon="fileLines" label={t('col_summary')} value={selectedFile.description || t('info_no_summary')} plain />
+                <DetailLine icon="layers" label={t('info_arc_team_loc')} value={arcTeamLocation} inline />
+                <DetailLine icon="user" label={t('col_characters')} value={selectedFile.characters} inline />
+              </section>
+            </div>
+
+            {duplicates.length > 0 && (
+              <section className="detail-duplicates">
+                <h4>{t('dup_match_found', [duplicates.length])}</h4>
+                {duplicates.map(item => (
+                  <div key={`${item.path}-${item.name}`}>
+                    <span>{item.ratio}%</span>
+                    <strong>{item.name}</strong>
+                    <code>{item.path}</code>
                   </div>
-                </React.Fragment>
-              ))}
-            </div>
-            <div className="detail-extra">
-              <div className="detail-extra-title">{t('meta_summary')}</div>
-              <p>{selectedFile.description || t('info_no_summary')}</p>
-              <dl>
-                <dt>{t('info_arc_team_loc')}</dt>
-                <dd>- / - / -</dd>
-                <dt>{t('col_characters')}</dt>
-                <dd>-</dd>
-                <dt>{t('col_web')}</dt>
-                <dd>{selectedFile.link || '-'}</dd>
-              </dl>
-            </div>
+                ))}
+              </section>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
 };
+
+function DetailFieldGroup({ fields }) {
+  return (
+    <div className="metadata-grid">
+      {fields.map(([icon, label, value, emptyWhenMissing]) => (
+        <React.Fragment key={label}>
+          <div className="metadata-label">
+            <FaIcon name={icon} size={12} />
+            <span>{label}</span>
+          </div>
+          <div className="metadata-value" title={formatDetailValue(value)}>
+            {emptyWhenMissing && !value ? '' : formatDetailValue(value)}
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function DetailLine({ icon, label, value, plain = false, inline = false }) {
+  const display = splitMetadataValues(value).join(', ') || '-';
+  return (
+    <div className={`detail-line ${plain ? 'plain' : ''} ${inline ? 'inline' : ''}`.trim()}>
+      <strong><FaIcon name={icon} size={12} /><span>{label}</span></strong>
+      <span>{display}</span>
+    </div>
+  );
+}
 
 export { DetailPanel };
 export default DetailPanel;

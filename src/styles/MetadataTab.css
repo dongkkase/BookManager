@@ -103,6 +103,32 @@
   color: #fff;
 }
 
+.meta-tree-dir.selected {
+  background: #313f52;
+  border-radius: 4px;
+}
+
+.meta-tree-dir-button {
+  display: grid;
+  grid-template-columns: 12px 14px max-content;
+  align-items: center;
+  gap: 4px;
+  min-width: 100%;
+  width: max-content;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.meta-tree-chevron {
+  color: #b8c0cc;
+}
+
 .meta-tree-file {
   display: grid;
   grid-template-columns: 14px 14px minmax(0, 1fr);
@@ -143,6 +169,25 @@
   min-width: 0;
   overflow: hidden;
   padding-left: 4px;
+}
+
+.meta-form-area {
+  position: relative;
+}
+
+.meta-selection-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  color: #f0f0f0;
+  font: inherit;
+  background: rgba(0, 0, 0, 0.42);
+  border: 0;
+  cursor: pointer;
 }
 
 .meta-search-bar {
