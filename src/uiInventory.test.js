@@ -145,6 +145,14 @@ test('타일 모드는 항목 크기 변화에도 카드 레이아웃을 유지�
     ]);
 });
 
+test('리스트 파일 강제 업데이트는 선택 파일을 단일 파일 미리보기로 갱신한다', () => {
+    assertInventory('folder', [
+        ['파일 강제 업데이트 메뉴', "handleContextAction('update-files')"],
+        ['파일 강제 업데이트 단일 파일 추출', 'getFilePreview'],
+        ['파일 강제 업데이트 캐시 반영', 'updateCachedFiles'],
+    ]);
+});
+
 test('자세히 보기 테이블 헤더는 컬럼 조작과 정렬 상태를 노출한다', () => {
     assertInventory('folder', [
         ['테이블 컬럼 폭 조절 콜백', 'onColumnLayoutChange'],

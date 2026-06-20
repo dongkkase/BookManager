@@ -19,6 +19,13 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const treeListRef = useRef(null);
   const selectedNodeRef = useRef(null);
 
+  const focusSelectedNode = (block = 'center') => {
+    const node = selectedNodeRef.current;
+    if (!node) return;
+    node.focus?.({ preventScroll: true });
+    node.scrollIntoView?.({ block, inline: 'nearest', behavior: 'smooth' });
+  };
+
   const treeRoots = useMemo(() => {
     const libraryNodes = (libraries || []).map(lib => ({
       name: lib.split(/[\\/]/).pop() || lib,
@@ -103,7 +110,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
         await loadFolder(ancestor);
       }
       window.requestAnimationFrame(() => {
-        selectedNodeRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+        window.requestAnimationFrame(() => focusSelectedNode('center'));
       });
     };
 
@@ -112,6 +119,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
       cancelled = true;
     };
   }, [selectedFolderPath, treeRoots]);
+
+  useEffect(() => {
+    if (!selectedFolderPath) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => focusSelectedNode('center'));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedFolderPath, expandedFolders, folderCache]);
 
   // 라이브러리 목록
   const renderLibraryList = () => (
@@ -219,6 +234,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
       <li key={node.path} className="tree-node">
         <div
           ref={isActive ? selectedNodeRef : null}
+          tabIndex={isActive ? -1 : undefined}
           className={isActive ? 'selected' : ''}
           style={{ 
             paddingLeft: `${8 + depth * 15}px`,

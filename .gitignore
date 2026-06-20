@@ -2,6 +2,7 @@
 .DS_Store
 .roo
 .vscode
+.bak
 /old_project
 /data
 .idea/

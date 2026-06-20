@@ -40,7 +40,6 @@ import {
 } from '../folderToolbarState';
 import {
   createDefaultColumnLayout,
-  moveColumn,
   normalizeColumnLayout,
   serializeColumnLayout,
 } from '../folderColumnLayout';
@@ -102,7 +101,7 @@ function joinPath(base, ...parts) {
 function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
-  const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles } = useFolderScan(t);
+  const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles, updateCachedFiles } = useFolderScan(t);
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
   const viewContainerRef = useRef(null);
@@ -1014,15 +1013,33 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setSeriesMovePreview(plans);
   }, [selectedFileObjects, showToast, t]);
 
-  const forceUpdateSelectedFiles = useCallback(async () => {
-    if (!selectedFolderPath || selectedFileObjects.length === 0) return;
-    await scanFolder(selectedFolderPath, {
-      ...scanOptions,
-      force: true,
-      fastInitial: false,
-    });
-    showToast?.(t('action_update_files'));
-  }, [scanFolder, scanOptions, selectedFileObjects.length, selectedFolderPath, showToast, t]);
+  const forceUpdateSelectedFiles = useCallback(async contextFile => {
+    if (!selectedFolderPath) return;
+    const contextPath = contextFile?.full_path || contextFile?.path;
+    const targets = selectedFileObjects.length > 0 && (!contextPath || selectedFiles.includes(contextPath))
+      ? selectedFileObjects
+      : [contextFile].filter(Boolean);
+    if (targets.length === 0) return;
+
+    const refreshed = [];
+    for (const file of targets) {
+      const filePath = file.full_path || file.path;
+      if (!filePath) continue;
+      const result = await window.electronAPI?.getFilePreview?.(filePath);
+      if (result?.success && result.file) {
+        refreshed.push({
+          ...file,
+          ...result.file,
+          path: file.path,
+          full_path: file.full_path || result.file.full_path || result.file.path,
+        });
+      }
+    }
+    if (refreshed.length > 0) {
+      updateCachedFiles(selectedFolderPath, scanOptions, refreshed);
+      showToast?.(`${t('action_update_files')} (${refreshed.length})`);
+    }
+  }, [scanOptions, selectedFileObjects, selectedFiles, selectedFolderPath, showToast, t, updateCachedFiles]);
 
   const executeSeriesMove = useCallback(async plans => {
     const result = await runInternalFileAction(
@@ -1381,7 +1398,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'view-file') {
       await openSelectedInViewer();
     } else if (action === 'update-files') {
-      await forceUpdateSelectedFiles();
+      await forceUpdateSelectedFiles(menu.file);
     } else if (action === 'delete-file') {
       await deleteSelectedFiles();
     } else if (action === 'rename-file') {
@@ -2131,7 +2148,7 @@ function LayoutEditDialog({ layout, onApply, onClose, t }) {
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="layout-dialog" onMouseDown={event => event.stopPropagation()}>
+      <div className="layout-dialog layout-edit-dialog" onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar">
           <span>▣ {t('dlg_edit_lay_title')}</span>
           <button onClick={onClose}>×</button>
@@ -2141,46 +2158,25 @@ function LayoutEditDialog({ layout, onApply, onClose, t }) {
           <div className="layout-column-list">
             {draft.map((column, index) => (
               <div key={column.key} className="layout-column-row">
-                <input
-                  type="checkbox"
-                  checked={column.visible}
-                  onChange={event => updateColumn(index, { visible: event.target.checked })}
-                />
-                <span className="layout-column-name">
-                  {column.key === 'dup_count'
-                    ? t(column.labelKey).replace(/[☐☑]\s*/, '')
-                    : t(column.labelKey)}
-                </span>
-                <input
-                  className="layout-column-width"
-                  type="number"
-                  min="40"
-                  max="600"
-                  value={column.width}
-                  onChange={event => updateColumn(index, { width: Number(event.target.value) })}
-                  aria-label={`${column.key} width`}
-                />
-                <button
-                  type="button"
-                  disabled={index === 0}
-                  onClick={() => setDraft(current => moveColumn(current, index, -1))}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  disabled={index === draft.length - 1}
-                  onClick={() => setDraft(current => moveColumn(current, index, 1))}
-                >
-                  ↓
-                </button>
+                <label className="layout-column-toggle">
+                  <input
+                    type="checkbox"
+                    checked={column.visible}
+                    onChange={event => updateColumn(index, { visible: event.target.checked })}
+                  />
+                  <span className="layout-column-name">
+                    {column.key === 'dup_count'
+                      ? t(column.labelKey).replace(/[☐☑]\s*/, '')
+                      : t(column.labelKey)}
+                  </span>
+                </label>
               </div>
             ))}
           </div>
         </div>
         <div className="layout-dialog-footer">
-          <button onClick={() => onApply(draft)}>{t('btn_ok')}</button>
-          <button onClick={onClose}>{t('btn_cancel')}</button>
+          <button className="primary" onClick={() => onApply(draft)}>{t('btn_ok')}</button>
+          <button className="secondary" onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
     </div>

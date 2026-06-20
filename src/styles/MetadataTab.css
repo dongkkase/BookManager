@@ -787,6 +787,7 @@ textarea.meta-input {
   border-radius: 6px;
   font-weight: 900;
   cursor: pointer;
+  padding:0 15px;
 }
 
 .meta-api-search-controls button:disabled {

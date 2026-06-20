@@ -29,9 +29,9 @@ test('공통 파일 툴바는 파일 작업 탭에서만 활성화된다', () =>
     assert.equal(isFileToolbarEnabled('organizer', true), false);
 });
 
-test('앱 제목에 BookManager 이름과 현재 버전을 사용한다', () => {
+test('앱 제목은 버전을 제외한 BookManager 이름만 사용한다', () => {
     assert.equal(APP_NAME, 'BookManager');
-    assert.equal(formatAppTitle('3.0.0'), 'BookManager v3.0.0');
+    assert.equal(formatAppTitle('3.0.0'), 'BookManager');
     assert.equal(formatAppTitle(''), 'BookManager');
 });
 

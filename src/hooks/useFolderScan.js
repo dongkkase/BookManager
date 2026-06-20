@@ -178,6 +178,33 @@ export function useFolderScan(t) {
     return fileDataCache[getCacheKey(folderPath, options)] || [];
   }, [fileDataCache, getCacheKey]);
 
+  const updateCachedFiles = useCallback((folderPath, options = {}, updatedFiles = []) => {
+    const files = Array.isArray(updatedFiles) ? updatedFiles.filter(file => file?.path) : [];
+    if (!folderPath || files.length === 0) return;
+    const preferredKey = getCacheKey(folderPath, options);
+    setFileDataCache(prev => {
+      const targetKeys = Object.keys(prev).filter(key => {
+        if (key === preferredKey) return true;
+        try {
+          return JSON.parse(key).folderPath === folderPath;
+        } catch {
+          return false;
+        }
+      });
+      if (targetKeys.length === 0) return prev;
+      const updatedByPath = new Map(files.map(file => [file.path, file]));
+      const next = { ...prev };
+      for (const key of targetKeys) {
+        const currentFiles = next[key] || [];
+        next[key] = currentFiles.map(file => {
+          const updated = updatedByPath.get(file.path);
+          return updated ? { ...file, ...updated } : file;
+        });
+      }
+      return next;
+    });
+  }, [getCacheKey]);
+
   // --- 캐시 초기화 ---
   const clearCache = useCallback((folderPath) => {
     if (folderPath) {
@@ -295,6 +322,7 @@ export function useFolderScan(t) {
     scanFolder,
     cancelScan,
     getCachedFiles,
+    updateCachedFiles,
     clearCache,
   };
 }

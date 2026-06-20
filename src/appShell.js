@@ -45,6 +45,5 @@ export function resolveTabId(savedIndex) {
 }
 
 export function formatAppTitle(version) {
-    const normalizedVersion = String(version || '').trim();
-    return normalizedVersion ? `${APP_NAME} v${normalizedVersion}` : APP_NAME;
+    return APP_NAME;
 }
