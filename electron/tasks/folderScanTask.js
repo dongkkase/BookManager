@@ -330,6 +330,17 @@ function metadataFromCache(cached = {}) {
   };
 }
 
+function thumbnailUrlForPath(thumbnailPath) {
+  if (!thumbnailPath || !fs.existsSync(thumbnailPath)) return '';
+  let version = '';
+  try {
+    version = `?v=${Math.round(fs.statSync(thumbnailPath).mtimeMs)}`;
+  } catch {
+    version = '';
+  }
+  return `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}${version}`;
+}
+
 function isValidCache(cached, stats) {
   return Boolean(
     cached
@@ -594,9 +605,7 @@ async function createFileData(fullPath, stats, options = {}) {
     has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
     thumb_path: thumbnailPath,
-    cover: thumbnailPath
-      ? `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}`
-      : '',
+    cover: thumbnailUrlForPath(thumbnailPath),
     cache_source: cacheValid && cachedThumbnailExists ? 'library' : 'archive',
     duplicate_matches: [],
     dup_count: 0,
@@ -648,6 +657,7 @@ export async function scanFolder(folderPath, options = {}, event) {
   let matchedCount = 0;
   const libraryDb = options.libraryDb || (dbPath ? new LibraryDB({ dbPath }) : null);
   let lastTaskProgressAt = 0;
+  let lastTaskLogAt = 0;
 
   function emitTaskProgress(payload) {
     if (!event || !options.reportTaskProgress || event.sender.isDestroyed()) return;
@@ -656,6 +666,30 @@ export async function scanFolder(folderPath, options = {}, event) {
       folderPath,
       ...payload,
     });
+    const now = Date.now();
+    if (payload.progress >= 100 || now - lastTaskLogAt > 2000) {
+      lastTaskLogAt = now;
+      console.log(`[FolderScan] ${Math.round(payload.progress || 0)}% matched=${matchedCount} scanned=${scannedCount} current=${payload.currentFile || folderPath}`);
+    }
+  }
+
+  function emitFileReady(file) {
+    if (!event || !options.reportFileReady || event.sender.isDestroyed() || !file?.path) return;
+    const cacheKey = JSON.stringify({
+      folderPath,
+      includeSubfolders,
+      enableDupCheck,
+      dupFolders: (dupFolders || []).filter(Boolean).sort(),
+      skipArchiveExtraction,
+    });
+    event.sender.send('folder:fileReady', {
+      folderPath,
+      cacheKey,
+      file,
+    });
+    if (file.cover) {
+      console.log(`[FolderScan] thumbnail ready ${file.path}`);
+    }
   }
 
   async function scanDir(currentPath) {
@@ -688,15 +722,17 @@ export async function scanFolder(folderPath, options = {}, event) {
               });
             }
             const stats = await fs.promises.stat(fullPath);
-            results.push(await createFileData(fullPath, stats, {
+            const fileData = await createFileData(fullPath, stats, {
               libraryDb,
               thumbnailDir,
               sevenZExe,
               force,
               skipArchiveExtraction,
               thumbnailEncoder,
-            }));
+            });
+            results.push(fileData);
             matchedCount += 1;
+            emitFileReady(fileData);
           } catch (statError) {
             console.error(`Failed to process file: ${fullPath}`, statError);
           }

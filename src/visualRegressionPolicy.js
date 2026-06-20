@@ -5,7 +5,7 @@ export const VISUAL_BASELINE_GROUPS = Object.freeze([
     id: 'folder',
     label: '폴더 탭',
     pathIncludes: '1. 폴더 메뉴',
-    expectedCount: 8,
+    expectedCount: 9,
   },
   {
     id: 'organizer',
@@ -78,7 +78,7 @@ export const VISUAL_STYLE_CONTRACTS = Object.freeze([
       '.folder-resizer-vertical:hover',
       '.dropdown-menu-up',
       '.dropdown-item:hover',
-      '.path-navigation-input:focus',
+      '.goto-path-input:focus',
       'border-left: 1px dashed #666',
     ],
   },

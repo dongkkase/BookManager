@@ -5,6 +5,9 @@ import test from 'node:test';
 const sources = {
     app: fs.readFileSync(new URL('./App.jsx', import.meta.url), 'utf8'),
     folder: fs.readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8'),
+    fileTable: fs.readFileSync(new URL('./components/folder/FileTableView.jsx', import.meta.url), 'utf8'),
+    thumbnailView: fs.readFileSync(new URL('./components/folder/ThumbnailView.jsx', import.meta.url), 'utf8'),
+    tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
     metadata: fs.readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8'),
     organizer: fs.readFileSync(new URL('./tabs/OrganizerTab.jsx', import.meta.url), 'utf8'),
@@ -28,7 +31,8 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['여러 파일 이름 변경 새 형식', 'value={newPattern}'],
         ['레이아웃 이름 저장', "t('dlg_save_lay_msg')"],
         ['삭제할 레이아웃 선택', 'id="layout-delete-select"'],
-        ['경로로 이동', 'className="path-navigation-input"'],
+        ['경로로 이동', "t('fm_title')"],
+        ['경로 이동 단축키', "event.key.toLowerCase() === 'g'"],
     ]);
     assertInventory('organizer', [
         ['구조 정리 출력 경로', 'item.out_path'],
@@ -83,6 +87,78 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
         ['메타데이터 검색 API', 'value={apiSource}'],
         ['메타데이터 combo', "field.type === 'select'"],
         ['API 검색 다이얼로그 API', 'value={dialogApi}'],
+    ]);
+});
+
+test('폴더 탭 컨텍스트 메뉴는 기존 Python 메뉴 항목과 단축키를 노출한다', () => {
+    assertInventory('folder', [
+        ['컨텍스트 메뉴 단축키 표시', 'folder-context-menu-shortcut'],
+        ['탐색기 폴더 이름 변경 단축키', 'shortcut="Shift+R"'],
+        ['탐색기 폴더 구조 정리 단축키', 'shortcut="F1"'],
+        ['탐색기 폴더 내부 이름 변경 단축키', 'shortcut="F2"'],
+        ['탐색기 폴더 메타데이터 편집 단축키', 'shortcut="F3"'],
+        ['탐색기 폴더 삭제 단축키', 'shortcut="Del"'],
+        ['리스트 파일 강제 업데이트', "t('action_update_files')"],
+        ['리스트 이름 변경 취소', "t('tf_undo_rename')"],
+        ['리스트 전체 선택', "t('action_sel_all')"],
+        ['리스트 새로고침 단축키', 'shortcut="F5"'],
+    ]);
+});
+
+test('이름 바꾸기 미리보기는 컬럼 크기 조절과 변경 색상 표시를 제공한다', () => {
+    assertInventory('folder', [
+        ['미리보기 컬럼 폭 상태', 'columnWidths'],
+        ['미리보기 컬럼 리사이저', 'multi-rename-column-resizer'],
+        ['미리보기 컬럼 자동 리사이즈', 'autoResizeColumn'],
+        ['미리보기 컬럼 더블클릭 자동 리사이즈', 'onDoubleClick'],
+        ['변경된 새 파일명 색상 클래스', 'rename-new-name-changed'],
+    ]);
+});
+
+test('자세히 보기 테이블도 빈 영역 드래그 선택 콜백을 받는다', () => {
+    assertInventory('folder', [
+        ['테이블 드래그 선택 콜백 전달', 'onDragSelect={selectPaths}'],
+    ]);
+});
+
+test('썸네일 모드는 커버 카드 오버레이 디자인을 사용한다', () => {
+    assertInventory('thumbnailView', [
+        ['썸네일 커버 카드 구조', 'thumbnail-cover-card'],
+        ['썸네일 평점 배지', 'thumbnail-rating-badge'],
+        ['썸네일 페이지 배지', 'thumbnail-page-badge'],
+    ]);
+});
+
+test('상세보기 패널은 선택 항목 내용 높이에 맞춰 자동 조절한다', () => {
+    assertInventory('folder', [
+        ['상세보기 내용 높이 변경 핸들러', 'handleDetailContentHeightChange'],
+        ['상세보기 내용 높이 콜백 연결', 'onContentHeightChange={handleDetailContentHeightChange}'],
+    ]);
+});
+
+test('타일 모드는 항목 크기 변화에도 카드 레이아웃을 유지한다', () => {
+    assertInventory('tileView', [
+        ['타일 최소 폭은 이미지 폭 기반 계산', 'imageWidth + Math.round'],
+        ['타일 이미지 높이 CSS 변수', "'--tile-image-height'"],
+        ['타일 작가 출판사 장르 표시', 'tile-meta-line'],
+        ['타일 줄거리 표시', 'tile-summary'],
+    ]);
+});
+
+test('자세히 보기 테이블 헤더는 컬럼 조작과 정렬 상태를 노출한다', () => {
+    assertInventory('folder', [
+        ['테이블 컬럼 폭 조절 콜백', 'onColumnLayoutChange'],
+    ]);
+    assertInventory('fileTable', [
+        ['테이블 컬럼 리사이저', 'file-table-column-resizer'],
+        ['테이블 컬럼 드래그 순서 변경', 'moveColumnTo'],
+        ['테이블 컬럼 드래그 그립 아이콘', 'name="grip-vertical"'],
+        ['테이블 컬럼 드래그 고스트', 'file-table-column-drag-ghost'],
+        ['테이블 컬럼 드래그 시작 표시', 'drag-source'],
+        ['테이블 지정 컬럼 중앙 정렬', 'centeredColumnKeys'],
+        ['테이블 중앙 정렬 셀 클래스', 'center-cell'],
+        ['테이블 정렬 활성 클래스', 'active-sort'],
+        ['테이블 정렬 방향 아이콘', 'file-table-sort-icon'],
     ]);
 });
 

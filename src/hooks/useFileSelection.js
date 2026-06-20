@@ -126,6 +126,16 @@ export function useFileSelection(fileData = []) {
     });
   }, [fileData]);
 
+  const selectPaths = useCallback((paths = []) => {
+    const validPaths = paths.filter(Boolean);
+    setSelectedFiles(validPaths);
+    setActiveSelectedPath(validPaths[validPaths.length - 1] || '');
+    const lastPath = validPaths[validPaths.length - 1];
+    const lastIndex = lastPath ? fileData.findIndex(file => file.path === lastPath) : -1;
+    setLastSelectedIndex(lastIndex);
+    selectionStartRef.current = lastPath ? { path: lastPath, index: lastIndex } : null;
+  }, [fileData]);
+
   const moveActiveSelection = useCallback((direction, extend = false) => {
     if (fileData.length === 0) return '';
     const currentIndex = activeSelectedPath
@@ -180,6 +190,7 @@ export function useFileSelection(fileData = []) {
     selectAll,
     deselectAll,
     invertSelection,
+    selectPaths,
     moveActiveSelection,
     isInSelectionRange,
   };

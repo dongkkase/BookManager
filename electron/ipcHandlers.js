@@ -1626,13 +1626,29 @@ function isPathInsideOrEqual(childPath, parentPath) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-async function scanArchivePaths(rootPath, priorityFolder = '') {
+async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null) {
   const results = [];
   const visitedDirs = new Set();
+  let scannedCount = 0;
+  let lastProgressAt = 0;
+
+  function reportProgress(currentPath, force = false) {
+    if (typeof onProgress !== 'function') return;
+    const now = Date.now();
+    if (!force && now - lastProgressAt < 2000) return;
+    lastProgressAt = now;
+    onProgress({
+      scannedCount,
+      matchedCount: results.length,
+      currentPath,
+    });
+  }
+
   async function walk(currentPath) {
     const normalizedCurrentPath = path.resolve(currentPath);
     if (visitedDirs.has(normalizedCurrentPath)) return;
     visitedDirs.add(normalizedCurrentPath);
+    reportProgress(currentPath);
     let entries;
     try {
       entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
@@ -1647,8 +1663,12 @@ async function scanArchivePaths(rootPath, priorityFolder = '') {
       const fullPath = path.join(currentPath, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);
-      } else if (entry.isFile() && INDEX_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        results.push(fullPath);
+      } else if (entry.isFile()) {
+        scannedCount += 1;
+        if (INDEX_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+          results.push(fullPath);
+        }
+        reportProgress(fullPath);
       }
     }
   }
@@ -1662,6 +1682,7 @@ async function scanArchivePaths(rootPath, priorityFolder = '') {
     await walk(resolvedPriority);
   }
   await walk(rootPath);
+  reportProgress(rootPath, true);
   return results;
 }
 
@@ -2132,6 +2153,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const config = configManager.getConfig() || {};
     setLanguage(options.language || config.language || config.lang || 'ko');
     const mode = options.mode === 'smart' ? 'smart' : 'force';
+    const shouldOptimizeMetadata = options.optimizeMetadata === true;
     const lastMtimes = { ...(config.index_last_mtimes || {}) };
     const priorityFolder = options.priorityFolder
       ? path.resolve(options.priorityFolder)
@@ -2150,21 +2172,45 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     try {
       let total = 0;
       let skippedFolders = 0;
+      let metadataTotal = 0;
+      console.log(`[LibraryIndex] start folders=${targetFolders.length} mode=${mode} optimizeMetadata=${shouldOptimizeMetadata}`);
       for (let index = 0; index < targetFolders.length; index += 1) {
         const folder = targetFolders[index];
-        const files = await scanArchivePaths(folder, priorityFolder);
+        console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length}: ${folder}`);
+        const files = await scanArchivePaths(folder, priorityFolder, progress => {
+          const message = i18nT('dup_scan_progress', [progress.scannedCount, progress.matchedCount]);
+          const folderProgress = Math.min(0.95, progress.scannedCount / (progress.scannedCount + 1000));
+          const overallProgress = Math.min(
+            95,
+            Math.round(((index + folderProgress) / Math.max(targetFolders.length, 1)) * 100),
+          );
+          console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length} scanned=${progress.scannedCount} matched=${progress.matchedCount} current=${progress.currentPath}`);
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('task:progress', {
+              task: 'folder:updateIndex',
+              progress: overallProgress,
+              message,
+              currentFile: progress.currentPath,
+              currentFileName: path.basename(progress.currentPath || ''),
+            });
+          }
+        });
         const fingerprint = files.map(filePath => {
           const stat = fs.statSync(filePath);
           return `${filePath}\u001f${stat.size}\u001f${stat.mtimeMs}`;
         }).join('\u001e');
         if (mode === 'smart' && lastMtimes[folder] === fingerprint) {
           skippedFolders += 1;
+          console.log(`[LibraryIndex] skipped unchanged ${index + 1}/${targetFolders.length}: ${folder} matched=${files.length}`);
           continue;
         }
+        console.log(`[LibraryIndex] writing index ${index + 1}/${targetFolders.length}: ${folder} matched=${files.length}`);
         event.sender.send('task:progress', {
           task: 'folder:updateIndex',
           progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
           message: i18nT('dup_scan_progress', [total, files.length]),
+          currentFile: folder,
+          currentFileName: path.basename(folder),
         });
         await db.replaceTargetIndex(folder, files);
         total += files.length;
@@ -2172,16 +2218,50 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       }
       configManager.updateConfig({ index_last_mtimes: lastMtimes });
 
+      if (shouldOptimizeMetadata) {
+        const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+        console.log(`[LibraryIndex] metadata optimize start folders=${targetFolders.length}`);
+        for (let index = 0; index < targetFolders.length; index += 1) {
+          const folder = targetFolders[index];
+          console.log(`[LibraryIndex] metadata optimize ${index + 1}/${targetFolders.length}: ${folder}`);
+          event.sender.send('task:progress', {
+            task: 'folder:updateIndex',
+            progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
+            message: i18nT('folder_optimizing', [index, targetFolders.length]),
+            currentFile: folder,
+            currentFileName: path.basename(folder),
+          });
+          const files = await scanFolder(folder, {
+            includeSubfolders: true,
+            enableDupCheck: false,
+            force: mode === 'force',
+            skipArchiveExtraction: false,
+            suppressEvents: true,
+            reportTaskProgress: true,
+            libraryDb: db,
+            thumbnailDir: thumbnailDir(),
+            sevenZExe,
+            thumbnailEncoder: encodeThumbnail,
+          }, event);
+          metadataTotal += files.length;
+          console.log(`[LibraryIndex] metadata optimize done ${index + 1}/${targetFolders.length}: ${folder} files=${files.length}`);
+        }
+      }
+
+      console.log(`[LibraryIndex] complete folders=${targetFolders.length} indexed=${total} skipped=${skippedFolders} metadata=${metadataTotal}`);
       event.sender.send('task:progress', {
         task: 'folder:updateIndex',
         progress: 100,
-        message: i18nT('dup_scan_complete', [total]),
+        message: shouldOptimizeMetadata
+          ? i18nT('folder_optimizing', [metadataTotal, metadataTotal])
+          : i18nT('dup_scan_complete', [total]),
       });
       return {
         success: true,
         folderCount: targetFolders.length,
         skippedFolders,
         total,
+        metadataTotal,
         mode,
       };
     } finally {

@@ -1,4 +1,4 @@
-import React, { useMemo, forwardRef } from 'react';
+import React, { useMemo, forwardRef, useRef, useState, useEffect } from 'react';
 import { FaIcon } from '../FaIcon';
 import { normalizeColumnLayout } from '../../folderColumnLayout';
 import { groupFolderFiles } from '../../folderViewState';
@@ -19,17 +19,28 @@ const FileTableView = forwardRef(({
   dupFiles = [],
   onSort,
   onSelect,
+  onDragSelect,
   onContextMenu,
   onScroll,
   onSelectAll,
   onDeselectAll,
   onClearSelection,
+  onColumnLayoutChange,
   columnLayout,
   scale = 50,
   t
-}, ref) => {
-  const rowHeight = Math.round(36 + Number(scale || 50) * 0.42);
-  const coverSize = Math.round(32 + Number(scale || 50) * 0.28);
+    }, ref) => {
+    const dragSelectRef = useRef({ active: false, moved: false });
+    const rubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
+    const columnResizeRef = useRef(null);
+    const headerReorderRef = useRef({ active: false, moved: false, sourceKey: '', targetKey: '', startX: 0, startY: 0 });
+    const [selectionBox, setSelectionBox] = useState(null);
+    const [dragOverColumnKey, setDragOverColumnKey] = useState('');
+    const [dragSourceColumnKey, setDragSourceColumnKey] = useState('');
+    const [columnDragGhost, setColumnDragGhost] = useState(null);
+    const rowHeight = Math.round(36 + Number(scale || 50) * 0.42);
+    const coverSize = Math.round(32 + Number(scale || 50) * 0.28);
+    const normalizedLayout = useMemo(() => normalizeColumnLayout(columnLayout), [columnLayout]);
   const columns = useMemo(() => normalizeColumnLayout(columnLayout)
     .filter(column => column.visible)
     .map(column => ({
@@ -39,11 +50,34 @@ const FileTableView = forwardRef(({
         ? t(column.labelKey).replace(/[☐☑]\s*/, '')
         : t(column.labelKey),
     })), [columnLayout, t]);
+    const tableWidth = useMemo(
+        () => columns.reduce((total, column) => total + Number(column.width || 0), 0),
+        [columns],
+    );
+    const centeredColumnKeys = useMemo(() => new Set([
+        'resolution',
+        'size',
+        'created',
+        'volume',
+        'chapter',
+        'modified',
+        'ext',
+        'total_volume',
+        'page_count',
+        'format',
+    ]), []);
 
-  const groupedData = useMemo(
-    () => groupFolderFiles(files, groupKey, sortKey, sortOrder),
-    [files, groupKey, sortKey, sortOrder],
-  );
+    const groupedData = useMemo(
+        () => groupFolderFiles(files, groupKey, sortKey, sortOrder),
+        [files, groupKey, sortKey, sortOrder],
+    );
+    const fileIndexByPath = useMemo(() => {
+        const map = new Map();
+        groupedData.flatMap(group => group.files).forEach((file, index) => {
+            if (file.path) map.set(file.path, index);
+        });
+        return map;
+    }, [groupedData]);
 
   const formatSize = (bytes) => {
     if (!bytes || bytes === 0) return '-';
@@ -73,12 +107,200 @@ const FileTableView = forwardRef(({
     }
   };
 
-  const handleRowClick = (file, e, index) => {
-    if (!onSelect || !file.path) return;
-    onSelect(file.path, e, index);
-  };
+    const commitColumnLayout = (nextLayout, persist = false) => {
+        onColumnLayoutChange?.(nextLayout, persist);
+    };
+
+    const resizeColumn = (columnKey, width, persist = false) => {
+        const nextLayout = normalizedLayout.map(column => (
+            column.key === columnKey
+                ? { ...column, width: Math.max(40, Math.min(600, Math.round(width))) }
+                : column
+        ));
+        commitColumnLayout(nextLayout, persist);
+    };
+
+    const moveColumnTo = (sourceKey, targetKey) => {
+        if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+        const sourceIndex = normalizedLayout.findIndex(column => column.key === sourceKey);
+        const targetIndex = normalizedLayout.findIndex(column => column.key === targetKey);
+        if (sourceIndex < 0 || targetIndex < 0) return;
+        const nextLayout = [...normalizedLayout];
+        const [sourceColumn] = nextLayout.splice(sourceIndex, 1);
+        nextLayout.splice(targetIndex, 0, sourceColumn);
+        commitColumnLayout(nextLayout, true);
+    };
+
+    const startColumnResize = (event, column) => {
+        event.preventDefault();
+        event.stopPropagation();
+        columnResizeRef.current = {
+            key: column.key,
+            startX: event.clientX,
+            startWidth: column.width,
+        };
+        document.body.classList.add('is-resizing-table-column');
+    };
+
+    const startColumnReorder = (event, column) => {
+        if (event.button !== 0 || event.target.closest('.file-table-column-resizer')) return;
+        const headerCell = event.currentTarget.closest('[data-column-key]');
+        const rect = headerCell?.getBoundingClientRect();
+        if (!rect) return;
+        headerReorderRef.current = {
+            active: true,
+            moved: false,
+            sourceKey: column.key,
+            targetKey: column.key,
+            startX: event.clientX,
+            startY: event.clientY,
+        };
+        setDragSourceColumnKey(column.key);
+        setColumnDragGhost({
+            x: rect.left,
+            y: rect.top,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            width: rect.width,
+            height: rect.height,
+            label: column.label,
+        });
+    };
+
+    useEffect(() => {
+        const handleMouseMove = event => {
+            const state = columnResizeRef.current;
+            if (state) {
+                event.preventDefault();
+                resizeColumn(state.key, state.startWidth + event.clientX - state.startX);
+                return;
+            }
+
+            const reorderState = headerReorderRef.current;
+            if (!reorderState.active) return;
+            const moved = Math.abs(event.clientX - reorderState.startX) > 4 || Math.abs(event.clientY - reorderState.startY) > 4;
+            if (!moved) return;
+            event.preventDefault();
+            headerReorderRef.current.moved = true;
+            document.body.classList.add('is-reordering-table-column');
+            setColumnDragGhost(current => current ? {
+                ...current,
+                x: event.clientX - current.offsetX,
+                y: event.clientY - current.offsetY,
+            } : null);
+            const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('[data-column-key]');
+            const targetKey = target?.dataset?.columnKey || '';
+            if (targetKey) {
+                headerReorderRef.current.targetKey = targetKey;
+                setDragOverColumnKey(targetKey);
+            }
+        };
+        const handleMouseUp = event => {
+            const state = columnResizeRef.current;
+            if (state) {
+                columnResizeRef.current = null;
+                document.body.classList.remove('is-resizing-table-column');
+                resizeColumn(state.key, state.startWidth + event.clientX - state.startX, true);
+                return;
+            }
+
+            const reorderState = headerReorderRef.current;
+            if (!reorderState.active) return;
+            headerReorderRef.current = { active: false, moved: reorderState.moved, sourceKey: '', targetKey: '', startX: 0, startY: 0 };
+            document.body.classList.remove('is-reordering-table-column');
+            setDragSourceColumnKey('');
+            setDragOverColumnKey('');
+            setColumnDragGhost(null);
+            if (reorderState.moved) {
+                event.preventDefault();
+                moveColumnTo(reorderState.sourceKey, reorderState.targetKey);
+            }
+        };
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            document.body.classList.remove('is-resizing-table-column');
+            document.body.classList.remove('is-reordering-table-column');
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [normalizedLayout, onColumnLayoutChange]);
+
+    const handleRowClick = (file, e, index) => {
+        if (dragSelectRef.current.moved || rubberSelectRef.current.moved) {
+            dragSelectRef.current.moved = false;
+            rubberSelectRef.current.moved = false;
+            return;
+        }
+        if (!onSelect || !file.path) return;
+        onSelect(file.path, e, index);
+    };
+
+    const handleRowMouseDown = (file, event, index) => {
+        if (event.button !== 0 || !onSelect || !file.path) return;
+        dragSelectRef.current = { active: true, moved: false };
+        onSelect(file.path, event, index);
+    };
+
+    const handleRowMouseEnter = (file, event, index) => {
+        if (!dragSelectRef.current.active || !onSelect || !file.path) return;
+        dragSelectRef.current.moved = true;
+        onSelect(file.path, { ...event, shiftKey: true }, index);
+    };
+
+    const stopDragSelect = () => {
+        dragSelectRef.current.active = false;
+    };
+
+    const updateRubberSelection = (event) => {
+        const state = rubberSelectRef.current;
+        const container = ref?.current;
+        if (!state.active || !container) return;
+        const rect = container.getBoundingClientRect();
+        const left = Math.min(state.startX, event.clientX);
+        const top = Math.min(state.startY, event.clientY);
+        const right = Math.max(state.startX, event.clientX);
+        const bottom = Math.max(state.startY, event.clientY);
+        const moved = Math.abs(event.clientX - state.startX) > 3 || Math.abs(event.clientY - state.startY) > 3;
+        rubberSelectRef.current.moved = moved;
+        if (!moved) return;
+        setSelectionBox({
+            left: left - rect.left + container.scrollLeft,
+            top: top - rect.top + container.scrollTop,
+            width: right - left,
+            height: bottom - top,
+        });
+        const selected = Array.from(container.querySelectorAll('[data-file-path]'))
+            .filter(element => {
+                const itemRect = element.getBoundingClientRect();
+                return itemRect.right >= left
+                    && itemRect.left <= right
+                    && itemRect.bottom >= top
+                    && itemRect.top <= bottom;
+            })
+            .map(element => element.dataset.filePath)
+            .filter(Boolean);
+        onDragSelect?.(selected);
+    };
+
+    const startRubberSelection = (event) => {
+        if (event.button !== 0 || event.target.closest('thead')) return;
+        rubberSelectRef.current = {
+            active: true,
+            moved: false,
+            startX: event.clientX,
+            startY: event.clientY,
+        };
+        setSelectionBox(null);
+    };
+
+    const stopRubberSelection = () => {
+        rubberSelectRef.current.active = false;
+        setSelectionBox(null);
+    };
 
   const renderCell = (file, column) => {
+    const className = centeredColumnKeys.has(column.key) ? 'center-cell' : undefined;
     if (column.key === 'cover') {
       return (
         <td key={column.key} className="cover-cell">
@@ -103,11 +325,11 @@ const FileTableView = forwardRef(({
         </td>
       );
     }
-    if (column.key === 'size') return <td key={column.key}>{formatSize(file.size)}</td>;
     if (column.key === 'created' || column.key === 'modified') {
-      return <td key={column.key}>{formatDate(file[column.key])}</td>;
+      return <td key={column.key} className={className}>{formatDate(file[column.key])}</td>;
     }
-    return <td key={column.key}>{file[column.key] || ''}</td>;
+    if (column.key === 'size') return <td key={column.key} className={className}>{formatSize(file.size)}</td>;
+    return <td key={column.key} className={className}>{file[column.key] || ''}</td>;
   };
 
   return (
@@ -115,20 +337,63 @@ const FileTableView = forwardRef(({
       ref={ref}
       className="file-table-container"
       onScroll={onScroll}
-      onClick={event => {
-        if (event.target === event.currentTarget) onClearSelection?.();
-      }}
-    >
-      <table className="file-table">
+	      onClick={event => {
+	        if (rubberSelectRef.current.moved) {
+	          rubberSelectRef.current.moved = false;
+	          return;
+	        }
+	        if (event.target === event.currentTarget) onClearSelection?.();
+	      }}
+	      onMouseDown={startRubberSelection}
+	      onMouseMove={updateRubberSelection}
+	      onMouseLeave={() => {
+	        stopDragSelect();
+	        stopRubberSelection();
+	      }}
+	      onMouseUp={() => {
+	        stopDragSelect();
+	        stopRubberSelection();
+	      }}
+	    >
+      <table className="file-table" style={{ width: `${Math.max(tableWidth, 1)}px` }}>
+        <colgroup>
+          {columns.map(column => (
+            <col key={column.key} style={{ width: `${column.width}px` }} />
+          ))}
+        </colgroup>
         <thead>
           <tr>
             {columns.map(col => (
               <th
                 key={col.key}
-                style={{ width: `${col.width}px`, minWidth: `${col.width}px`, cursor: col.sortable ? 'pointer' : 'default' }}
-                onClick={() => col.sortable && onSort && onSort(col.key)}
+                data-column-key={col.key}
+                className={`${col.sortable ? 'sortable' : ''} ${centeredColumnKeys.has(col.key) ? 'center-column' : ''} ${sortKey === col.key ? 'active-sort' : ''} ${dragSourceColumnKey === col.key ? 'drag-source' : ''} ${dragOverColumnKey === col.key ? 'drag-over' : ''}`}
+                onClick={() => {
+                  if (headerReorderRef.current.moved) {
+                    headerReorderRef.current.moved = false;
+                    return;
+                  }
+                  if (col.sortable && onSort) onSort(col.key);
+                }}
               >
-                {col.label}
+                <span
+                  className="file-table-header-grip"
+                  onMouseDown={event => startColumnReorder(event, col)}
+                  title="컬럼 순서 변경"
+                >
+                  <FaIcon name="grip-vertical" size={10} />
+                </span>
+                <span className="file-table-header-label">{col.label}</span>
+                {sortKey === col.key && (
+                  <span className="file-table-sort-icon" aria-hidden="true">
+                    {sortOrder === 'asc' ? '▲' : '▼'}
+                  </span>
+                )}
+                <span
+                  className="file-table-column-resizer"
+                  onMouseDown={event => startColumnResize(event, col)}
+                  onClick={event => event.stopPropagation()}
+                />
               </th>
             ))}
           </tr>
@@ -144,26 +409,56 @@ const FileTableView = forwardRef(({
                   </td>
                 </tr>
               )}
-              {group.files.map((file, index) => (
-                <tr
-                  key={file.path || index}
-                  data-file-path={file.path}
-                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
-                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
-                  onClick={(e) => handleRowClick(file, e, index)}
-                  onContextMenu={(event) => onContextMenu?.(event, file, index)}
-                >
-                  {columns.map(column => renderCell(file, column))}
-                </tr>
-              ))}
+	              {group.files.map((file, index) => {
+	                const fileIndex = fileIndexByPath.get(file.path) ?? index;
+	                return (
+	                <tr
+	                  key={file.path || index}
+	                  data-file-path={file.path}
+	                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+	                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
+	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
+	                  onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
+	                  onClick={(event) => handleRowClick(file, event, fileIndex)}
+	                  onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
+	                >
+	                  {columns.map(column => renderCell(file, column))}
+	                </tr>
+	                );
+	              })}
             </React.Fragment>
           ))}
         </tbody>
       </table>
-      {files.length === 0 && (
-        <FolderEmptyState t={t} />
-      )}
-    </div>
+          {columnDragGhost && (
+            <div
+              className="file-table-column-drag-ghost"
+              style={{
+                left: `${columnDragGhost.x}px`,
+                top: `${columnDragGhost.y}px`,
+                width: `${columnDragGhost.width}px`,
+                height: `${columnDragGhost.height}px`,
+              }}
+            >
+              <span className="file-table-column-drag-grip"><FaIcon name="grip-vertical" size={10} /></span>
+              <span className="file-table-column-drag-label">{columnDragGhost.label}</span>
+            </div>
+          )}
+	      {files.length === 0 && (
+	        <FolderEmptyState t={t} />
+	      )}
+	      {selectionBox && (
+	        <div
+	          className="folder-drag-selection-box"
+	          style={{
+	            left: `${selectionBox.left}px`,
+	            top: `${selectionBox.top}px`,
+	            width: `${selectionBox.width}px`,
+	            height: `${selectionBox.height}px`,
+	          }}
+	        />
+	      )}
+	    </div>
   );
 });
 

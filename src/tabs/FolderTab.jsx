@@ -56,11 +56,14 @@ import {
 } from '../fileActionPolicy';
 import {
   buildRenameMap,
+  folderNameRenamePattern,
   inferRenamePattern,
   normalPatternToRegex,
   normalReplacementToRegex,
   previewRename,
+  regexPatternToNormal,
   regexReplacementToNormal,
+  resolveRenamePreviewConflicts,
 } from '../multiRenamePolicy';
 import {
   findMissingVolumes,
@@ -99,7 +102,6 @@ function joinPath(base, ...parts) {
 function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
-  const [pathDraft, setPathDraft] = useState('');
   const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles } = useFolderScan(t);
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
@@ -120,6 +122,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [leftPanelWidth, setLeftPanelWidth] = useState(240);
+  const [rightPanelWidth, setRightPanelWidth] = useState(900);
+  const [viewContainerWidth, setViewContainerWidth] = useState(900);
   const [detailPanelHeight, setDetailPanelHeight] = useState(245);
 
   // --- 뷰 상태 ---
@@ -142,12 +146,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
+  const [showGotoDialog, setShowGotoDialog] = useState(false);
+  const [gotoPathDraft, setGotoPathDraft] = useState('');
   const [seriesMovePreview, setSeriesMovePreview] = useState(null);
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
   const [moveConflict, setMoveConflict] = useState(null);
   const closeTopOverlay = useCallback(() => {
     if (moveConflict) return true;
     if (showMultiRenameDialog) setShowMultiRenameDialog(false);
+    else if (showGotoDialog) setShowGotoDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
     else if (seriesMovePreview) setSeriesMovePreview(null);
     else if (showDeleteLayoutDialog) setShowDeleteLayoutDialog(false);
@@ -162,6 +169,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     moveConflict,
     seriesMovePreview,
     showDeleteLayoutDialog,
+    showGotoDialog,
     showLayoutDialog,
     showMissingDialog,
     showMultiRenameDialog,
@@ -214,6 +222,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectAll,
     deselectAll,
     invertSelection,
+    selectPaths,
     moveActiveSelection,
   } = useFileSelection(displayedFileData);
   const activeSelectedFile = selectedFileData();
@@ -267,6 +276,39 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [activeSelectedFile]);
 
   useEffect(() => {
+    const panel = rightPanelRef.current;
+    if (!panel) return undefined;
+    const updateWidth = () => {
+      setRightPanelWidth(Math.max(320, Math.round(panel.clientWidth || 900)));
+    };
+    updateWidth();
+    if (typeof ResizeObserver !== 'function') {
+      window.addEventListener('resize', updateWidth);
+      return () => window.removeEventListener('resize', updateWidth);
+    }
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [isSidebarVisible]);
+
+  useEffect(() => {
+    const container = viewContainerRef.current;
+    if (!container) return undefined;
+    const updateWidth = () => {
+      const width = Math.max(320, Math.round(container.clientWidth || 900));
+      setViewContainerWidth(current => current === width ? current : width);
+    };
+    updateWidth();
+    if (typeof ResizeObserver !== 'function') {
+      window.addEventListener('resize', updateWidth);
+      return () => window.removeEventListener('resize', updateWidth);
+    }
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [isSidebarVisible, viewMode]);
+
+  useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.(data => {
       if (data?.task === 'folder:scan') {
         emitStatusState('folder', {
@@ -290,6 +332,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         message,
         progress,
         phase: 'executing',
+        currentItem: data.currentFile || '',
+        currentItemName: data.currentFileName || '',
       });
     });
     return () => {
@@ -484,7 +528,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
     setSelectedFolderPath(folderPath);
-    setPathDraft(folderPath);
     clearSelection();
     setSearchQuery('');
     const files = await scanFolder(folderPath, scanOptions);
@@ -500,17 +543,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return true;
   }, [handleFolderChange]);
 
-  const handlePathNavigation = useCallback(async () => {
-    const targetPath = pathDraft.trim();
+  const handlePathNavigation = useCallback(async targetPathValue => {
+    const targetPath = String(targetPathValue || '').trim();
     if (!targetPath) return;
-    if (await handleSafeFolderNavigation(targetPath)) return;
+    if (await handleSafeFolderNavigation(targetPath)) {
+      setShowGotoDialog(false);
+      return;
+    }
     await window.electronAPI?.showMessage?.({
       type: 'warning',
-      title: t('dlg_warn'),
-      message: t('msg_network_offline'),
+      title: t('fm_error'),
+      message: t('fm_error_desc'),
       language: config?.language || config?.lang || 'ko',
     });
-  }, [config?.lang, config?.language, handleSafeFolderNavigation, pathDraft, t]);
+  }, [config?.lang, config?.language, handleSafeFolderNavigation, t]);
 
   const runInternalFileAction = useCallback(async action => {
     internalFileActionRef.current = true;
@@ -717,7 +763,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     try {
       const result = await window.electronAPI?.updateFolderIndex?.(
         [folderPath],
-        { mode: choice, language: config?.language || config?.lang || 'ko' },
+        {
+          mode: choice,
+          optimizeMetadata,
+          priorityFolder: selectedFolderPath,
+          language: config?.language || config?.lang || 'ko',
+        },
       );
       if (result?.success === false) throw new Error(result.message || t('msg_failed'));
 
@@ -726,7 +777,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         const files = await scanFolder(folderPath, {
           ...scanOptions,
           includeSubfolders: true,
-          force: true,
+          force: false,
           fastInitial: false,
         });
         setMissingData(findMissingVolumes(files || []));
@@ -765,6 +816,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     scanFolder,
     scanOptions,
     scanning,
+    selectedFolderPath,
     showToast,
     t,
   ]);
@@ -961,6 +1013,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     setSeriesMovePreview(plans);
   }, [selectedFileObjects, showToast, t]);
+
+  const forceUpdateSelectedFiles = useCallback(async () => {
+    if (!selectedFolderPath || selectedFileObjects.length === 0) return;
+    await scanFolder(selectedFolderPath, {
+      ...scanOptions,
+      force: true,
+      fastInitial: false,
+    });
+    showToast?.(t('action_update_files'));
+  }, [scanFolder, scanOptions, selectedFileObjects.length, selectedFolderPath, showToast, t]);
 
   const executeSeriesMove = useCallback(async plans => {
     const result = await runInternalFileAction(
@@ -1318,6 +1380,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (target) await window.electronAPI?.showInFolder?.(target);
     } else if (action === 'view-file') {
       await openSelectedInViewer();
+    } else if (action === 'update-files') {
+      await forceUpdateSelectedFiles();
     } else if (action === 'delete-file') {
       await deleteSelectedFiles();
     } else if (action === 'rename-file') {
@@ -1336,8 +1400,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       sendSelectedFilesToTab('renamer');
     } else if (action === 'send-file-metadata') {
       sendSelectedFilesToTab('metadata');
+    } else if (action === 'select-all') {
+      selectAll();
+    } else if (action === 'invert-selection') {
+      invertSelection();
+    } else if (action === 'refresh-list') {
+      await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, groupSelectedBySeries, handleFolderChange, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, invertSelection, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -1348,7 +1418,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       }
       if (!shouldHandleGlobalShortcut(event)) return;
 
-      if (event.key === 'F5') {
+      if (event.key === 'F1') {
+        event.preventDefault();
+        sendSelectedFilesToTab('organizer');
+      } else if (event.key === 'F2') {
+        event.preventDefault();
+        sendSelectedFilesToTab('renamer');
+      } else if (event.key === 'F3') {
+        event.preventDefault();
+        sendSelectedFilesToTab('metadata');
+      } else if (event.key === 'F5') {
         event.preventDefault();
         handleSmartRefresh(event.shiftKey);
       } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'a') {
@@ -1357,9 +1436,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'i') {
         event.preventDefault();
         invertSelection();
+      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        undoLastRename();
       } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
         searchInputRef.current?.focus();
+      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'g') {
+        event.preventDefault();
+        setGotoPathDraft(selectedFolderPath);
+        setShowGotoDialog(true);
+      } else if (event.shiftKey && event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        setShowMultiRenameDialog(true);
       } else if (event.key === 'Escape') {
         clearSelection();
         closeContextMenu();
@@ -1369,9 +1458,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       } else if (event.key === 'Enter') {
         event.preventDefault();
         openSelectedInExplorer();
-      } else if (event.key === 'F2') {
-        event.preventDefault();
-        renameSelectedFile();
       } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         event.preventDefault();
         const nextPath = moveActiveSelection(event.key === 'ArrowUp' ? -1 : 1, event.shiftKey);
@@ -1397,7 +1483,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, moveActiveSelection, openSelectedInExplorer, renameSelectedFile, selectAll]);
+  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, moveActiveSelection, openSelectedInExplorer, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -1552,6 +1638,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     await saveConfig?.({ folder_column_layout: serializeColumnLayout(normalized) });
   }, [saveConfig]);
 
+  const handleDetailContentHeightChange = useCallback(contentHeight => {
+    if (!activeSelectedFile || !contentHeight) return;
+    const containerHeight = rightPanelRef.current?.clientHeight || 700;
+    const nextHeight = clampDetailHeight(contentHeight, containerHeight);
+    setDetailPanelHeight(current => Math.abs(current - nextHeight) > 2 ? nextHeight : current);
+  }, [activeSelectedFile]);
+
+  const handleColumnLayoutChange = useCallback((nextLayout, persist = false) => {
+    const normalized = normalizeColumnLayout(nextLayout);
+    setColumnLayout(normalized);
+    if (persist) {
+      saveConfig?.({ folder_column_layout: serializeColumnLayout(normalized) }).catch(error => {
+        console.error('폴더 컬럼 레이아웃 저장 실패:', error);
+      });
+    }
+  }, [saveConfig]);
+
   const handleExportCsv = useCallback(async () => {
     if (filteredFileData.length === 0) {
       await window.electronAPI?.showMessage?.({
@@ -1593,6 +1696,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       sortOrder,
       groupKey,
       onSelect: handleFileSelect,
+      onDragSelect: selectPaths,
       onContextMenu: showFileContextMenu,
       onClearSelection: clearSelection,
       onScroll: event => {
@@ -1604,13 +1708,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 
   return (
     <div className="folder-tab">
-      <div className="folder-main-area" ref={mainAreaRef}>
+      <div
+        className="folder-main-area"
+        ref={mainAreaRef}
+        style={{ '--folder-sidebar-width': isSidebarVisible ? `${leftPanelWidth}px` : '0px' }}
+      >
         {preparingDuplicates && (
           <div className="folder-working-overlay">
             <div className="folder-working-panel">
@@ -1697,7 +1805,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         )}
 
         {/* Right Panel */}
-        <div className="folder-right-panel" ref={rightPanelRef}>
+        <div
+          className="folder-right-panel"
+          ref={rightPanelRef}
+          style={{ '--folder-right-panel-width': `${rightPanelWidth}px` }}
+        >
           <div className="right-toolbar">
             <div className="right-toolbar-left">
               <button 
@@ -1727,18 +1839,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
             
             <div className="right-toolbar-right">
-              <input
-                type="text"
-                className="path-navigation-input"
-                aria-label={t('col_path')}
-                placeholder={t('col_path')}
-                value={pathDraft}
-                onChange={event => setPathDraft(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') handlePathNavigation();
-                  if (event.key === 'Escape') setPathDraft(selectedFolderPath);
-                }}
-              />
               <div className="search-input-wrap">
                 <input
                   type="text"
@@ -1774,6 +1874,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           <div
             className="view-container"
             ref={viewContainerRef}
+            style={{ '--folder-view-width': `${viewContainerWidth}px` }}
           >
              {renderViewStack()}
           </div>
@@ -1787,7 +1888,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 onMouseDown={startVerticalResize}
               />
               <div className="detail-panel-wrap" style={{ flexBasis: `${detailPanelHeight}px`, height: `${detailPanelHeight}px` }}>
-                <DetailPanel selectedFile={activeSelectedFile} t={t} />
+                <DetailPanel selectedFile={activeSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
               </div>
             </>
           )}
@@ -1838,51 +1939,56 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
           {contextMenu.type === 'library' ? (
             <>
-              <button onClick={() => handleContextAction('sync-library')}>{t('setting_update_index')}</button>
-              <button onClick={() => handleContextAction('optimize-library')}>{t('menu_optimize_meta')}</button>
-              <button onClick={() => handleContextAction('open-explorer')}>{t('action_open_exp')}</button>
+              <ContextMenuItem onClick={() => handleContextAction('sync-library')} label={t('setting_update_index')} />
+              <ContextMenuItem onClick={() => handleContextAction('optimize-library')} label={t('menu_optimize_meta')} />
+              <div className="folder-context-menu-separator" />
+              <ContextMenuItem onClick={() => handleContextAction('open-explorer')} label={`📂 ${t('action_open_exp')}`} />
             </>
           ) : contextMenu.type === 'folder' ? (
             <>
-              <button onClick={() => handleContextAction('open-folder')}>열기</button>
-              <button onClick={() => handleContextAction('refresh-folder')}>{t('action_refresh')}</button>
-              <button onClick={() => handleContextAction('rename-folder')}>{t('action_ren_folder')}</button>
-              <button onClick={() => handleContextAction('delete-folder')}>{t('action_del_folder')}</button>
+              <ContextMenuItem
+                onClick={() => handleContextAction(
+                  isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
+                    ? 'unfavorite-folder'
+                    : 'favorite-folder'
+                )}
+                label={isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
+                  ? t('action_fav_rem')
+                  : `📌 ${t('action_fav_add')}`}
+              />
               <div className="folder-context-menu-separator" />
-              <button onClick={() => handleContextAction(
-                isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
-                  ? 'unfavorite-folder'
-                  : 'favorite-folder'
-              )}>
-                {t(isFavoriteFolder(favoriteEntries, contextMenu.folderPath) ? 'action_fav_rem' : 'action_fav_add')}
-              </button>
-              <button onClick={() => handleContextAction('open-explorer')}>{t('action_open_exp')}</button>
+              <ContextMenuItem onClick={() => handleContextAction('open-explorer')} label={`📂 ${t('action_open_exp')}`} />
+              <ContextMenuItem onClick={() => handleContextAction('rename-folder')} label={t('action_ren_folder')} shortcut="Shift+R" />
               {!libraries.includes(contextMenu.folderPath) && libraries.length > 0 && (
-                <button onClick={() => handleContextAction('move-folder-library')}>{t('action_move_folder_to_library')}</button>
+                <ContextMenuItem onClick={() => handleContextAction('move-folder-library')} label={t('action_move_folder_to_library')} />
               )}
               <div className="folder-context-menu-separator" />
-              <button onClick={() => handleContextAction('send-organizer')}>{t('action_flatten_structure')}</button>
-              <button onClick={() => handleContextAction('send-renamer')}>{t('action_inner_ren')}</button>
-              <button onClick={() => handleContextAction('send-metadata')}>{t('action_meta_edit')}</button>
+              <ContextMenuItem onClick={() => handleContextAction('send-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
+              <ContextMenuItem onClick={() => handleContextAction('send-renamer')} label={t('action_inner_ren')} shortcut="F2" />
+              <ContextMenuItem onClick={() => handleContextAction('send-metadata')} label={t('action_meta_edit')} shortcut="F3" />
+              <div className="folder-context-menu-separator" />
+              <ContextMenuItem onClick={() => handleContextAction('delete-folder')} label={t('action_del_folder')} shortcut="Del" />
+              <ContextMenuItem onClick={() => handleContextAction('refresh-folder')} label={t('action_refresh')} shortcut="F5" />
             </>
           ) : (
             <>
-              <button onClick={() => handleContextAction('view-file')}>{t('action_view')}</button>
-              <button onClick={() => handleContextAction('show-file')}>{t('action_open_exp')}</button>
-              <button onClick={() => handleContextAction('rename-file')}>{t('action_rename_file')}</button>
-              <button onClick={() => handleContextAction('undo-rename')}>{t('tf_undo_success')}</button>
-              <button onClick={() => handleContextAction('multi-rename')}>{t('tf_menu_rename_multi')}</button>
-              <button onClick={() => handleContextAction('group-series')}>{t('action_group_by_series')}</button>
-              <button onClick={() => handleContextAction('move-library')}>{t('action_move_to_library')}</button>
+              <ContextMenuItem onClick={() => handleContextAction('view-file')} label={t('action_view')} />
+              <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
+              <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
+              <ContextMenuItem onClick={() => handleContextAction('send-file-metadata')} label={t('action_meta_edit')} shortcut="F3" />
+              <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
               <div className="folder-context-menu-separator" />
-              <button onClick={() => handleContextAction('send-file-organizer')}>{t('action_flatten_structure')}</button>
-              <button onClick={() => handleContextAction('send-file-renamer')}>{t('action_inner_ren')}</button>
-              <button onClick={() => handleContextAction('send-file-metadata')}>{t('action_meta_edit')}</button>
-              <button onClick={() => {
-                closeContextMenu();
-                invertSelection();
-              }}>{t('action_inv_sel')}</button>
-              <button onClick={() => handleContextAction('delete-file')}>선택 삭제</button>
+              <ContextMenuItem onClick={() => handleContextAction('group-series')} label={t('action_group_by_series')} />
+              <ContextMenuItem onClick={() => handleContextAction('move-library')} label={t('action_move_file_to_library')} />
+              <div className="folder-context-menu-separator" />
+              <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t('action_del_files')} shortcut="Del" />
+              <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t('tf_menu_rename_multi')} shortcut="Shift+R" />
+              <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut="Ctrl+Z" />
+              <ContextMenuItem onClick={() => handleContextAction('show-file')} label={`📂 ${t('action_open_exp')}`} />
+              <div className="folder-context-menu-separator" />
+              <ContextMenuItem onClick={() => handleContextAction('select-all')} label={t('action_sel_all')} shortcut="Ctrl+A" />
+              <ContextMenuItem onClick={() => handleContextAction('invert-selection')} label={t('action_inv_sel')} />
+              <ContextMenuItem onClick={() => handleContextAction('refresh-list')} label={t('action_refresh')} shortcut="F5" />
             </>
           )}
         </ContextMenu>
@@ -1931,6 +2037,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           files={selectedFileObjects}
           onExecute={executeMultiRename}
           onClose={() => setShowMultiRenameDialog(false)}
+          t={t}
+        />
+      )}
+      {showGotoDialog && (
+        <GotoPathDialog
+          value={gotoPathDraft}
+          onChange={setGotoPathDraft}
+          onConfirm={() => handlePathNavigation(gotoPathDraft)}
+          onClose={() => setShowGotoDialog(false)}
           t={t}
         />
       )}
@@ -1993,6 +2108,15 @@ function ContextMenu({ x, y, children }) {
     >
       {children}
     </div>
+  );
+}
+
+function ContextMenuItem({ label, shortcut = '', onClick }) {
+  return (
+    <button type="button" className="folder-context-menu-item" onClick={onClick}>
+      <span className="folder-context-menu-label">{label}</span>
+      <span className="folder-context-menu-shortcut">{shortcut}</span>
+    </button>
   );
 }
 
@@ -2092,6 +2216,48 @@ function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
   );
 }
 
+function GotoPathDialog({ value, onChange, onConfirm, onClose, t }) {
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }, []);
+
+  const submit = event => {
+    event.preventDefault();
+    onConfirm();
+  };
+
+  return (
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <form className="goto-path-dialog" onSubmit={submit} onMouseDown={event => event.stopPropagation()}>
+        <div className="dialog-titlebar">
+          <span>{t('fm_title')}</span>
+          <button type="button" onClick={onClose}>×</button>
+        </div>
+        <div className="goto-path-dialog-body">
+          <label htmlFor="goto-path-input">{t('fm_dsc')}</label>
+          <input
+            id="goto-path-input"
+            ref={inputRef}
+            className="goto-path-input"
+            type="text"
+            value={value}
+            onChange={event => onChange(event.target.value)}
+          />
+        </div>
+        <div className="layout-dialog-footer">
+          <button type="submit" className="goto-path-confirm">{t('btn_ok')}</button>
+          <button type="button" className="goto-path-cancel" onClick={onClose}>{t('btn_cancel')}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
   const inferred = useMemo(
     () => inferRenamePattern(files.map(file => file.name || basename(file.path))),
@@ -2113,7 +2279,9 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
   const [previewing, setPreviewing] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [columnWidths, setColumnWidths] = useState([300, 300, 80, 300]);
   const previewGenerationRef = useRef(0);
+  const tableResizeRef = useRef(null);
 
   useEffect(() => {
     const generation = previewGenerationRef.current + 1;
@@ -2125,7 +2293,6 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
         newPattern,
         caseSensitive,
         regexMode,
-        folderNameMode,
         padNumbers: padNumbersEnabled,
         numberDigits,
         addSequence,
@@ -2133,21 +2300,10 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
         sequenceDigits,
         sequencePosition,
       };
-      const previews = await Promise.all(files.map(async (file, index) => {
-        const row = previewRename(file, options, index);
-        const targetPath = replaceBasename(row.path, row.newName);
-        if (row.status !== 'ok') return { ...row, targetPath };
-        const duplicateInPreview = files.some((_, otherIndex) => (
-          otherIndex !== index
-          && previewRename(files[otherIndex], options, otherIndex).newName.toLowerCase() === row.newName.toLowerCase()
-        ));
-        const exists = await window.electronAPI?.exists?.(targetPath);
-        return {
-          ...row,
-          targetPath,
-          status: duplicateInPreview || exists ? 'conflict' : 'ok',
-        };
-      }));
+      const previews = await resolveRenamePreviewConflicts(
+        files.map((file, index) => previewRename(file, options, index)),
+        targetPath => window.electronAPI?.exists?.(targetPath),
+      );
       if (previewGenerationRef.current !== generation) return;
       setRows(previews);
       setPreviewing(false);
@@ -2157,7 +2313,6 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
     addSequence,
     caseSensitive,
     files,
-    folderNameMode,
     newPattern,
     numberDigits,
     oldPattern,
@@ -2174,7 +2329,7 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
       setOldPattern(converted.source.replace(/^\^|\$$/g, ''));
       setNewPattern(normalReplacementToRegex(newPattern));
     } else {
-      setOldPattern(inferred.oldPattern);
+      setOldPattern(regexPatternToNormal(oldPattern));
       setNewPattern(regexReplacementToNormal(newPattern));
     }
     setRegexMode(checked);
@@ -2186,7 +2341,7 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
       const firstPath = files[0]?.full_path || files[0]?.path || '';
       const parts = firstPath.split(/[\\/]/);
       parts.pop();
-      setNewPattern(parts.pop() || newPattern);
+      setNewPattern(folderNameRenamePattern(newPattern, parts.pop() || '', regexMode));
     } else {
       setNewPattern(previousNewPattern);
     }
@@ -2194,8 +2349,11 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
   };
 
   const execute = async () => {
-    const targets = rows.filter(row => row.status === 'ok');
-    if (targets.length === 0) return;
+    const targets = rows.filter(row => row.status === 'ok' && row.oldName !== row.newName);
+    if (targets.length === 0) {
+      onClose();
+      return;
+    }
     setExecuting(true);
     setProgress(10);
     const result = await onExecute(targets);
@@ -2209,63 +2367,168 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
     conflict: t('tf_status_conflict'),
     unchanged: t('tf_status_invalid'),
     error: t('tf_status_invalid'),
+    invalid: t('tf_status_invalid'),
   })[status] || status;
+
+  const tableWidth = columnWidths.reduce((total, width) => total + width, 0);
+  const previewColumnLabels = ['이전 파일명', '새 파일명', t('tf_col_status'), t('col_path')];
+
+  const measureColumnTextWidth = useCallback((text) => {
+    const canvas = measureColumnTextWidth.canvas || document.createElement('canvas');
+    measureColumnTextWidth.canvas = canvas;
+    const context = canvas.getContext('2d');
+    context.font = '800 12px sans-serif';
+    return Math.ceil(context.measureText(String(text || '')).width);
+  }, []);
+
+  const autoResizeColumn = useCallback((columnIndex) => {
+    const values = rows.map(row => ([
+      row.oldName,
+      row.newName,
+      statusText(row.status),
+      row.path,
+    ][columnIndex]));
+    const maxTextWidth = [previewColumnLabels[columnIndex], ...values]
+      .reduce((max, value) => Math.max(max, measureColumnTextWidth(value)), 0);
+    const nextWidth = Math.min(Math.max(maxTextWidth + 28, 60), 720);
+    setColumnWidths(widths => widths.map((width, index) => (
+      index === columnIndex ? nextWidth : width
+    )));
+  }, [measureColumnTextWidth, previewColumnLabels, rows, statusText]);
+
+  const startColumnResize = (event, columnIndex) => {
+    event.preventDefault();
+    event.stopPropagation();
+    tableResizeRef.current = {
+      columnIndex,
+      startX: event.clientX,
+      startWidth: columnWidths[columnIndex],
+    };
+    document.body.classList.add('multi-rename-resizing');
+  };
+
+  useEffect(() => {
+    const handleMouseMove = event => {
+      const state = tableResizeRef.current;
+      if (!state) return;
+      event.preventDefault();
+      const delta = event.clientX - state.startX;
+      setColumnWidths(widths => widths.map((width, index) => (
+        index === state.columnIndex ? Math.max(60, state.startWidth + delta) : width
+      )));
+    };
+    const handleMouseUp = () => {
+      tableResizeRef.current = null;
+      document.body.classList.remove('multi-rename-resizing');
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.body.classList.remove('multi-rename-resizing');
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const renderResizeHeader = (label, columnIndex, className = '') => (
+    <th className={className}>
+      <span>{label}</span>
+      <span
+        className="multi-rename-column-resizer"
+        onMouseDown={event => startColumnResize(event, columnIndex)}
+        onDoubleClick={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          autoResizeColumn(columnIndex);
+        }}
+        title="컬럼 너비 조절"
+      />
+    </th>
+  );
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
       <div className="file-action-dialog multi-rename-launch-dialog" onMouseDown={event => event.stopPropagation()}>
-        <div className="dialog-titlebar">
-          <span>{t('tf_menu_rename_multi')}</span>
-          <button onClick={onClose} disabled={executing}>×</button>
+        <div className="dialog-titlebar multi-rename-titlebar">
+          <span className="multi-rename-title">
+            <span className="multi-rename-title-icon">▣</span>
+            {t('tf_menu_rename_multi')}
+          </span>
+          <button type="button" onClick={onClose} disabled={executing}>×</button>
         </div>
         <div className="multi-rename-body">
-          <div className="multi-rename-patterns">
-            <label>
-              <span>기존 형식</span>
-              <input value={oldPattern} onChange={event => setOldPattern(event.target.value)} disabled={folderNameMode || executing} />
-            </label>
-            <label>
-              <span>새 형식</span>
-              <input value={newPattern} onChange={event => setNewPattern(event.target.value)} disabled={folderNameMode || executing} />
-            </label>
-          </div>
-          <div className="multi-rename-options">
-            <label><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} /> 대소문자 구분</label>
-            <label><input type="checkbox" checked={regexMode} onChange={event => toggleRegexMode(event.target.checked)} /> 정규식 모드</label>
-            <label><input type="checkbox" checked={folderNameMode} onChange={event => toggleFolderNameMode(event.target.checked)} /> 폴더명으로 이름 바꾸기</label>
-            <label>
-              <input type="checkbox" checked={padNumbersEnabled} onChange={event => setPadNumbersEnabled(event.target.checked)} />
-              숫자 자리수 맞추기
-              <input type="number" min="1" max="4" value={numberDigits} disabled={!padNumbersEnabled} onChange={event => setNumberDigits(Number(event.target.value))} />
-            </label>
-            <label>
-              <input type="checkbox" checked={addSequence} onChange={event => setAddSequence(event.target.checked)} />
-              순번 추가
-              <input type="number" min="0" max="99999" value={sequenceStart} disabled={!addSequence} onChange={event => setSequenceStart(Number(event.target.value))} />
-              <input type="number" min="1" max="10" value={sequenceDigits} disabled={!addSequence} onChange={event => setSequenceDigits(Number(event.target.value))} />
-              <select value={sequencePosition} disabled={!addSequence} onChange={event => setSequencePosition(event.target.value)}>
-                <option value="before">앞</option>
-                <option value="after">뒤</option>
-              </select>
-            </label>
-          </div>
+          <fieldset className="multi-rename-rules">
+            <legend>변경 규칙</legend>
+            <div className="multi-rename-patterns">
+              <label>
+                <span>기존 형식:</span>
+                <input value={oldPattern} onChange={event => setOldPattern(event.target.value)} disabled={executing} />
+              </label>
+              <label>
+                <span>새 형식:</span>
+                <input value={newPattern} onChange={event => setNewPattern(event.target.value)} disabled={executing} />
+              </label>
+            </div>
+            <div className="multi-rename-options multi-rename-options-primary">
+              <label><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} /> 대소문자 구분</label>
+              <label><input type="checkbox" checked={regexMode} onChange={event => toggleRegexMode(event.target.checked)} /> 정규식</label>
+              <label><input type="checkbox" checked={folderNameMode} onChange={event => toggleFolderNameMode(event.target.checked)} /> 폴더명으로 이름 바꾸기</label>
+              <label>
+                <input type="checkbox" checked={padNumbersEnabled} onChange={event => setPadNumbersEnabled(event.target.checked)} />
+                숫자 자리수 맞추기:
+                <input type="number" min="1" max="4" value={numberDigits} disabled={!padNumbersEnabled} onChange={event => setNumberDigits(Number(event.target.value))} />
+              </label>
+            </div>
+            <div className="multi-rename-options multi-rename-options-sequence">
+              <label>
+                <input type="checkbox" checked={addSequence} onChange={event => setAddSequence(event.target.checked)} />
+                순번 추가
+              </label>
+              <label>
+                시작:
+                <input type="number" min="0" max="99999" value={sequenceStart} disabled={!addSequence} onChange={event => setSequenceStart(Number(event.target.value))} />
+              </label>
+              <label>
+                자리수:
+                <input type="number" min="1" max="10" value={sequenceDigits} disabled={!addSequence} onChange={event => setSequenceDigits(Number(event.target.value))} />
+              </label>
+              <label>
+                위치:
+                <select value={sequencePosition} disabled={!addSequence} onChange={event => setSequencePosition(event.target.value)}>
+                  <option value="before">앞(Front)</option>
+                  <option value="after">뒤(Back)</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
           <div className="multi-rename-preview">
-            <table>
+            <table style={{ width: `${tableWidth}px` }}>
+              <colgroup>
+                <col style={{ width: `${columnWidths[0]}px` }} />
+                <col style={{ width: `${columnWidths[1]}px` }} />
+                <col style={{ width: `${columnWidths[2]}px` }} />
+                <col style={{ width: `${columnWidths[3]}px` }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>이전 파일명</th>
-                  <th>새 파일명</th>
-                  <th>{t('tf_col_status')}</th>
-                  <th>{t('col_path')}</th>
+                  {renderResizeHeader(previewColumnLabels[0], 0)}
+                  {renderResizeHeader(previewColumnLabels[1], 1)}
+                  {renderResizeHeader(previewColumnLabels[2], 2, 'multi-rename-status-column')}
+                  {renderResizeHeader(previewColumnLabels[3], 3)}
                 </tr>
               </thead>
               <tbody>
                 {rows.map(row => (
                   <tr key={row.path} className={`rename-status-${row.status}`}>
-                    <td>{row.oldName}</td>
-                    <td>{row.newName}</td>
-                    <td>{statusText(row.status)}</td>
-                    <td>{row.path}</td>
+                    <td title={row.oldName}>{row.oldName}</td>
+                    <td
+                      className={row.oldName !== row.newName ? 'rename-new-name-changed' : ''}
+                      title={row.newName}
+                    >
+                      {row.newName}
+                    </td>
+                    <td className="multi-rename-status-column" title={statusText(row.status)}>{statusText(row.status)}</td>
+                    <td title={row.path}>{row.path}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2278,9 +2541,9 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
             </div>
           )}
         </div>
-        <div className="layout-dialog-footer">
-          <button disabled={executing || previewing || !rows.some(row => row.status === 'ok')} onClick={execute}>{t('btn_ok')}</button>
-          <button disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
+        <div className="layout-dialog-footer multi-rename-footer">
+          <button type="button" className="primary" disabled={executing || previewing || !rows.some(row => row.status === 'ok')} onClick={execute}>{t('btn_ok')}</button>
+          <button type="button" disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
     </div>

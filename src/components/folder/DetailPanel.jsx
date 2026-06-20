@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import {
   duplicateDetailRows,
@@ -25,8 +25,9 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
-const DetailPanel = ({ selectedFile = null, t }) => {
+const DetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
   const [imageError, setImageError] = useState(false);
+  const contentRef = useRef(null);
 
   useEffect(() => {
     setImageError(false);
@@ -37,6 +38,22 @@ const DetailPanel = ({ selectedFile = null, t }) => {
     [selectedFile],
   );
   const duplicates = useMemo(() => duplicateDetailRows(selectedFile || {}), [selectedFile]);
+
+  useEffect(() => {
+    if (!selectedFile || !contentRef.current) return undefined;
+    const measure = () => {
+      const content = contentRef.current;
+      if (!content) return;
+      onContentHeightChange?.(Math.ceil(content.scrollHeight));
+    };
+    const frame = window.requestAnimationFrame(measure);
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    if (observer) observer.observe(contentRef.current);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [onContentHeightChange, selectedFile?.path]);
 
   if (!selectedFile) {
     return <div className="folder-detail-panel empty"><div className="detail-empty-state">-</div></div>;
@@ -72,7 +89,7 @@ const DetailPanel = ({ selectedFile = null, t }) => {
       {coverAvailable && <div className="folder-detail-bg" style={{ backgroundImage: `url(${selectedFile.cover})` }} />}
       <div className="folder-detail-overlay" />
       <div className="folder-detail-scroll">
-        <div className="folder-detail-content">
+        <div className="folder-detail-content" ref={contentRef}>
           <div className="detail-cover-section">
             <div className="detail-cover-stack">
               {coverAvailable ? (

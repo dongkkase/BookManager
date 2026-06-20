@@ -77,3 +77,9 @@ test('저장된 썸네일은 제한된 전용 프로토콜로 제공한다', () 
     assert.match(mainSource, /resolveThumbnailDir\(getExecutableDir\(\)\)/);
     assert.match(mainSource, /path\.basename\(requestedName\) !== requestedName/);
 });
+
+test('렌더러 CSP는 전용 썸네일 프로토콜 이미지를 허용한다', () => {
+    const indexSource = fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
+
+    assert.match(indexSource, /img-src[^;]*bookmanager-thumbnail:/);
+});

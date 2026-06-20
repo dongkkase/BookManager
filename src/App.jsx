@@ -271,6 +271,8 @@ function App() {
         if (folders.length > 0) {
           window.electronAPI?.updateFolderIndex?.(folders, {
             priorityFolder: savedConfig?.last_selected_library || updatedConfig.last_selected_library,
+            optimizeMetadata: true,
+            mode: 'smart',
             language: nextLang,
           }).catch(error => {
             console.error('라이브러리 인덱스 갱신 실패:', error);

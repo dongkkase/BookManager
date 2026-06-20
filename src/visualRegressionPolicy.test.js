@@ -75,7 +75,7 @@ function makePng({ width, height, pixels }) {
 
 test('15.3 기준 스크린샷 manifest는 모든 탭과 설정 화면을 포함한다', () => {
   const files = walkPngFiles(baselineRoot);
-  assert.equal(files.length, 32);
+  assert.equal(files.length, VISUAL_REQUIRED_CAPTURE_COUNT / VISUAL_CAPTURE_SCALES.length);
 
   for (const group of VISUAL_BASELINE_GROUPS) {
     const matched = files.filter(filePath => matchVisualGroup(filePath)?.id === group.id);
@@ -110,13 +110,14 @@ test('15.3 비교 대상 시각 속성은 CSS 계약으로 고정한다', () => 
   }
 });
 
-test('15.3 현재 캡처 매트릭스는 기준 32장과 100%/125% 배율을 모두 요구한다', () => {
+test('15.3 현재 캡처 매트릭스는 기준 스크린샷과 100%/125% 배율을 모두 요구한다', () => {
   const matrix = buildVisualCaptureMatrix();
+  const baselineCount = VISUAL_REQUIRED_CAPTURE_COUNT / VISUAL_CAPTURE_SCALES.length;
 
   assert.equal(matrix.length, VISUAL_REQUIRED_CAPTURE_COUNT);
-  assert.equal(VISUAL_REQUIRED_CAPTURE_COUNT, 64);
-  assert.equal(matrix.filter(item => item.scale === 1).length, 32);
-  assert.equal(matrix.filter(item => item.scale === 1.25).length, 32);
+  assert.equal(VISUAL_REQUIRED_CAPTURE_COUNT, baselineCount * VISUAL_CAPTURE_SCALES.length);
+  assert.equal(matrix.filter(item => item.scale === 1).length, baselineCount);
+  assert.equal(matrix.filter(item => item.scale === 1.25).length, baselineCount);
   assert.deepEqual(
     matrix.filter(item => item.groupId === 'settings').map(item => `${item.scenario}@${item.scale}`),
     ['1@1', '1@1.25', '2@1', '2@1.25', '3@1', '3@1.25'],

@@ -73,15 +73,24 @@ test('폴더 스캔은 썸네일 파일과 ComicInfo DB 캐시를 재사용한�
         fs.writeFileSync(archivePath, Buffer.alloc(originalStat.size));
         fs.utimesSync(archivePath, originalStat.atime, originalStat.mtime);
 
-        const second = await scanFolder(libraryDir, {
-            dbPath,
-            thumbnailDir,
-            sevenZExe,
-        });
+        const originalWarn = console.warn;
+        const warnings = [];
+        let second;
+        try {
+            console.warn = (...args) => warnings.push(args.join(' '));
+            second = await scanFolder(libraryDir, {
+                dbPath,
+                thumbnailDir,
+                sevenZExe,
+            });
+        } finally {
+            console.warn = originalWarn;
+        }
         assert.equal(second[0].cache_source, 'library');
         assert.equal(second[0].title, 'Cached Title');
         assert.equal(second[0].series, 'Cached Series');
         assert.equal(second[0].thumb_path, first[0].thumb_path);
+        assert.equal(warnings.some(message => message.includes('Failed to extract archive metadata')), false);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -109,6 +118,53 @@ test('큰 CBZ는 전체 파일 버퍼를 할당하지 않고 스캔한다', asyn
         assert.equal(warnings.some(message => message.includes('Array buffer allocation failed')), false);
     } finally {
         console.warn = originalWarn;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('폴더 스캔은 파일별 준비 이벤트를 보낸다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-file-ready-'));
+    const inputDir = path.join(root, 'input');
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const dbPath = path.join(root, 'library.db');
+    const archivePath = path.join(libraryDir, 'Ready Book.cbz');
+    const events = [];
+    const event = {
+        sender: {
+            isDestroyed: () => false,
+            send: (channel, payload) => events.push({ channel, payload }),
+        },
+    };
+
+    try {
+        fs.mkdirSync(inputDir, { recursive: true });
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(path.join(inputDir, '001.png'), PNG_1X1);
+        const created = spawnSync(sevenZExe, ['a', '-tzip', archivePath, '*'], {
+            cwd: inputDir,
+            stdio: 'ignore',
+        });
+        assert.equal(created.status, 0);
+
+        await scanFolder(libraryDir, {
+            dbPath,
+            thumbnailDir,
+            sevenZExe,
+            reportFileReady: true,
+        }, event);
+
+        const ready = events.find(item => item.channel === 'folder:fileReady');
+        assert.equal(ready?.payload?.file?.path, archivePath);
+        assert.match(ready.payload.file.cover, /^bookmanager-thumbnail:\/\/cache\//);
+        assert.equal(fs.existsSync(ready.payload.file.thumb_path), true);
+    } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
 });

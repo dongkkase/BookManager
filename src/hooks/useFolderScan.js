@@ -108,9 +108,11 @@ export function useFolderScan(t) {
 
           window.electronAPI.scanFolder(folderPath, {
             ...requestOptions,
-            force: true,
+            force: false,
             skipArchiveExtraction: false,
             suppressEvents: true,
+            reportTaskProgress: true,
+            reportFileReady: true,
           }).then(files => {
             if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
             setFileDataCache(prev => ({
@@ -199,6 +201,36 @@ export function useFolderScan(t) {
 
   // --- IPC 이벤트 리스너 ---
   useEffect(() => {
+    const handleFolderFileReady = (data) => {
+      if (!data?.file?.path) return;
+      if (data.folderPath && currentFolderRef.current !== data.folderPath) return;
+      setFileDataCache(prev => {
+        const targetKey = prev[data.cacheKey]
+          ? data.cacheKey
+          : Object.keys(prev).find(key => {
+              try {
+                const parsed = JSON.parse(key);
+                return parsed.folderPath === data.folderPath;
+              } catch {
+                return false;
+              }
+            });
+        if (!targetKey) return prev;
+        const currentFiles = prev[targetKey] || [];
+        const index = currentFiles.findIndex(file => file.path === data.file.path);
+        if (index < 0) return prev;
+        const nextFiles = [...currentFiles];
+        nextFiles[index] = {
+          ...nextFiles[index],
+          ...data.file,
+        };
+        return {
+          ...prev,
+          [targetKey]: nextFiles,
+        };
+      });
+    };
+
     const handleScanProgress = (data) => {
       const { progress, message } = data || {};
       if (progress !== undefined) {
@@ -232,8 +264,11 @@ export function useFolderScan(t) {
       setStatusMessage(message || (t('folder.status.error') || '스캔 중 오류 발생'));
     };
 
-    let removeProgress, removeComplete, removeError;
+    let removeFileReady, removeProgress, removeComplete, removeError;
 
+    if (window.electronAPI?.onFolderFileReady) {
+      removeFileReady = window.electronAPI.onFolderFileReady(handleFolderFileReady);
+    }
     if (window.electronAPI?.onScanProgress) {
       removeProgress = window.electronAPI.onScanProgress(handleScanProgress);
     }
@@ -245,6 +280,7 @@ export function useFolderScan(t) {
     }
 
     return () => {
+      if (removeFileReady) removeFileReady();
       if (removeProgress) removeProgress();
       if (removeComplete) removeComplete();
       if (removeError) removeError();

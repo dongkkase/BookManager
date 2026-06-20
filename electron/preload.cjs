@@ -113,6 +113,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('scan-progress', handler);
     return () => ipcRenderer.removeListener('scan-progress', handler);
   },
+  onFolderFileReady: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('folder:fileReady', handler);
+    return () => ipcRenderer.removeListener('folder:fileReady', handler);
+  },
   onScanComplete: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('scan-complete', handler);

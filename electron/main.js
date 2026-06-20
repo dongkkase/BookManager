@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, net, protocol, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
 import { setupIPCHandlers } from './ipcHandlers.js';
 import { ConfigManager } from './configManager.js';
 import { setupI18n } from './utils/i18n.js';
@@ -93,6 +93,15 @@ function getFontPath(fontFilename) {
   return null;
 }
 
+function mimeTypeForThumbnail(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
 // 단일 인스턴스 락
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -107,7 +116,7 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
-    protocol.handle('bookmanager-thumbnail', request => {
+    protocol.handle('bookmanager-thumbnail', async request => {
       const requestedName = decodeURIComponent(new URL(request.url).pathname.slice(1));
       if (!requestedName || path.basename(requestedName) !== requestedName) {
         return new Response('Not found', { status: 404 });
@@ -116,7 +125,13 @@ if (!gotTheLock) {
       if (!fs.existsSync(thumbnailPath)) {
         return new Response('Not found', { status: 404 });
       }
-      return net.fetch(pathToFileURL(thumbnailPath).href);
+      const data = await fs.promises.readFile(thumbnailPath);
+      return new Response(data, {
+        headers: {
+          'Content-Type': mimeTypeForThumbnail(thumbnailPath),
+          'Cache-Control': 'no-store',
+        },
+      });
     });
 
     const appIconPath = getAppIconPath();
