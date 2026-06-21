@@ -3,9 +3,11 @@ const { ipcMain, app, BrowserWindow, dialog, shell, net, nativeImage } = pkg;
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
+import { promisify } from 'util';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
@@ -32,6 +34,11 @@ import {
   resolveLibrarySyncChoice,
 } from './libraryDialog.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
+import {
+  pathHasHiddenDirectorySegment,
+  shouldSkipScanDirectoryEntry,
+} from './scanExclusions.js';
+import { SCAN_TARGET_EXTENSIONS } from './scanTargets.js';
 import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { LibraryDB } from './database/library_db.js';
@@ -1571,8 +1578,15 @@ async function searchRidibooks(query, page = 1) {
   });
 }
 
-const INDEX_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
+const INDEX_EXTENSIONS = new Set(SCAN_TARGET_EXTENSIONS);
+const LIBRARY_SCAN_VISUAL_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
+const LIBRARY_SCAN_PROGRESS_INTERVAL_MS = 500;
+const LIBRARY_SCAN_PROGRESS_MATCH_DELTA = 250;
+const LIBRARY_SCAN_STAT_CONCURRENCY = 16;
+const THUMBNAIL_TARGET_WIDTH = 500;
+const THUMBNAIL_WEBP_QUALITY = 82;
 const imageDataUrlCache = new Map();
+const execFileAsync = promisify(execFile);
 
 function mimeFromUrl(url = '', contentType = '') {
   const cleanType = String(contentType || '').split(';')[0].trim();
@@ -1629,25 +1643,160 @@ function isPathInsideOrEqual(childPath, parentPath) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null) {
-  const results = [];
-  const visitedDirs = new Set();
-  let scannedCount = 0;
-  let lastProgressAt = 0;
+function createTaskCancelledError() {
+  const error = new Error(i18nT('msg_cancelled'));
+  error.code = 'TASK_CANCELLED';
+  return error;
+}
 
-  function reportProgress(currentPath, force = false) {
+function throwIfTaskCancelled(shouldCancel) {
+  if (typeof shouldCancel === 'function' && shouldCancel()) throw createTaskCancelledError();
+}
+
+function nowIsoString() {
+  return new Date().toISOString();
+}
+
+function safeStatMtime(filePath) {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function createArchiveIndexEntry(filePath, targetFolder) {
+  const stat = await fs.promises.stat(filePath);
+  return {
+    full_path: path.resolve(filePath),
+    target_folder: path.resolve(targetFolder),
+    name: path.basename(filePath),
+    size: stat.size,
+    mtime: stat.mtimeMs,
+  };
+}
+
+async function buildArchiveIndexEntries(filePaths = [], targetFolder, options = {}) {
+  const {
+    shouldCancel = null,
+    onProgress = null,
+    concurrency = LIBRARY_SCAN_STAT_CONCURRENCY,
+  } = options;
+  const entries = new Array(filePaths.length);
+  let nextIndex = 0;
+  let completedCount = 0;
+  let lastProgressAt = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, filePaths.length || 1));
+
+  function reportProgress(currentPath = '', force = false) {
     if (typeof onProgress !== 'function') return;
     const now = Date.now();
-    if (!force && now - lastProgressAt < 2000) return;
+    if (!force && now - lastProgressAt < LIBRARY_SCAN_PROGRESS_INTERVAL_MS) return;
     lastProgressAt = now;
     onProgress({
-      scannedCount,
-      matchedCount: results.length,
+      completedCount,
+      totalCount: filePaths.length,
       currentPath,
     });
   }
 
+  async function worker() {
+    while (nextIndex < filePaths.length) {
+      throwIfTaskCancelled(shouldCancel);
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const filePath = filePaths[currentIndex];
+      try {
+        entries[currentIndex] = await createArchiveIndexEntry(filePath, targetFolder);
+      } catch {
+        // 파일이 수집 직후 삭제되었거나 접근 불가하면 이번 인덱스 대상에서 제외합니다.
+      } finally {
+        completedCount += 1;
+        reportProgress(filePath);
+      }
+    }
+  }
+
+  reportProgress(targetFolder, true);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  reportProgress(targetFolder, true);
+  return entries.filter(Boolean);
+}
+
+function createArchiveFingerprint(entries = []) {
+  const hash = crypto.createHash('sha1');
+  for (const entry of entries) {
+    hash
+      .update(entry.full_path)
+      .update('\u001f')
+      .update(String(entry.size))
+      .update('\u001f')
+      .update(String(entry.mtime))
+      .update('\u001e');
+  }
+  return `sha1:${entries.length}:${hash.digest('hex')}`;
+}
+
+export function normalizeLibraryScanStateForRenderer(folderPath, state = {}, exists = false) {
+  const libraryPath = path.resolve(folderPath);
+  const rootMtime = exists ? safeStatMtime(libraryPath) : 0;
+  const lastRootMtime = Number(state.root_mtime || 0);
+  const status = state.status || 'idle';
+  const neverScanned = !state.last_scanned_at;
+  const changedSinceScan = exists && !state.fingerprint && state.last_scanned_at && rootMtime > lastRootMtime + 2;
+  return {
+    libraryPath,
+    status,
+    exists,
+    needsScan: neverScanned || status === 'error' || status === 'cancelled' || changedSinceScan,
+    changedSinceScan,
+    fileCount: Number(state.file_count || 0),
+    indexedCount: Number(state.indexed_count || 0),
+    addedCount: Number(state.added_count || 0),
+    updatedCount: Number(state.updated_count || 0),
+    removedCount: Number(state.removed_count || 0),
+    lastScannedAt: state.last_scanned_at || '',
+    lastCheckedAt: state.last_checked_at || '',
+    lastChangedAt: state.last_changed_at || '',
+    lastError: state.last_error || '',
+    scanReason: state.scan_reason || '',
+    rootMtime,
+    storedRootMtime: lastRootMtime,
+  };
+}
+
+export async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null, shouldCancel = null, onMatch = null) {
+  const results = [];
+  const visitedDirs = new Set();
+  let scannedCount = 0;
+  let lastProgressAt = 0;
+  let lastProgressMatchedCount = -1;
+  const startedAt = Date.now();
+  let lastCurrentPath = rootPath;
+  let progressTimer = null;
+
+  function reportProgress(currentPath, force = false) {
+    if (typeof onProgress !== 'function') return;
+    if (currentPath) lastCurrentPath = currentPath;
+    const now = Date.now();
+    const matchedDelta = Math.abs(results.length - lastProgressMatchedCount);
+    if (
+      !force
+      && now - lastProgressAt < LIBRARY_SCAN_PROGRESS_INTERVAL_MS
+      && matchedDelta < LIBRARY_SCAN_PROGRESS_MATCH_DELTA
+    ) return;
+    lastProgressAt = now;
+    lastProgressMatchedCount = results.length;
+    onProgress({
+      scannedCount,
+      matchedCount: results.length,
+      currentPath: currentPath || lastCurrentPath,
+      elapsedSeconds: Math.max(0, Math.floor((now - startedAt) / 1000)),
+    });
+  }
+
   async function walk(currentPath) {
+    throwIfTaskCancelled(shouldCancel);
     const normalizedCurrentPath = path.resolve(currentPath);
     if (visitedDirs.has(normalizedCurrentPath)) return;
     visitedDirs.add(normalizedCurrentPath);
@@ -1663,6 +1812,8 @@ async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null
       return left.name.localeCompare(right.name, 'ko', { numeric: true });
     });
     for (const entry of sortedEntries) {
+      throwIfTaskCancelled(shouldCancel);
+      if (shouldSkipScanDirectoryEntry(entry)) continue;
       const fullPath = path.join(currentPath, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);
@@ -1670,23 +1821,66 @@ async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null
         scannedCount += 1;
         if (INDEX_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
           results.push(fullPath);
+          if (typeof onMatch === 'function') await onMatch(fullPath);
+          reportProgress(fullPath);
+        } else {
+          reportProgress(fullPath);
         }
-        reportProgress(fullPath);
       }
     }
   }
-  const resolvedRoot = path.resolve(rootPath);
-  const resolvedPriority = priorityFolder ? path.resolve(priorityFolder) : '';
-  if (
-    resolvedPriority
-    && fs.existsSync(resolvedPriority)
-    && isPathInsideOrEqual(resolvedPriority, resolvedRoot)
-  ) {
-    await walk(resolvedPriority);
+  try {
+    if (typeof onProgress === 'function') {
+      reportProgress(rootPath, true);
+      progressTimer = setInterval(() => {
+        reportProgress(lastCurrentPath || rootPath, true);
+      }, 1000);
+    }
+    const resolvedRoot = path.resolve(rootPath);
+    const resolvedPriority = priorityFolder ? path.resolve(priorityFolder) : '';
+    if (
+      resolvedPriority
+      && fs.existsSync(resolvedPriority)
+      && isPathInsideOrEqual(resolvedPriority, resolvedRoot)
+      && !pathHasHiddenDirectorySegment(resolvedPriority, resolvedRoot)
+    ) {
+      await walk(resolvedPriority);
+    }
+    await walk(rootPath);
+    reportProgress(rootPath, true);
+  } finally {
+    if (progressTimer) clearInterval(progressTimer);
   }
-  await walk(rootPath);
-  reportProgress(rootPath, true);
   return results;
+}
+
+export async function extractLibraryScanVisualItem(filePath, options = {}) {
+  const {
+    libraryDb,
+    thumbnailDir,
+    sevenZExe = '',
+    thumbnailEncoder = null,
+    allowArchiveExtraction = false,
+    force = false,
+    lang = 'ko',
+    shouldCancel = null,
+  } = options;
+  throwIfTaskCancelled(shouldCancel);
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  if (!LIBRARY_SCAN_VISUAL_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
+
+  const file = await inspectFolderFile(filePath, {
+    libraryDb,
+    thumbnailDir,
+    sevenZExe,
+    thumbnailEncoder,
+    force,
+    skipArchiveExtraction: allowArchiveExtraction !== true,
+    lang,
+    shouldCancel,
+  });
+  throwIfTaskCancelled(shouldCancel);
+  return file?.cover ? file : null;
 }
 
 // IPC 핸들러 설정
@@ -1698,30 +1892,140 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
-  const encodeThumbnail = imageBuffer => {
+  const encodeThumbnail = async imageBuffer => {
     const image = nativeImage.createFromBuffer(imageBuffer);
     if (image.isEmpty()) return null;
     const size = image.getSize();
-    const scale = Math.min(1, 400 / Math.max(size.width, size.height));
-    const thumbnail = scale < 1
-      ? image.resize({
-          width: Math.max(1, Math.round(size.width * scale)),
-          height: Math.max(1, Math.round(size.height * scale)),
-          quality: 'best',
-        })
-      : image;
-    return {
-      buffer: thumbnail.toPNG(),
-      extension: '.png',
-    };
-  };
+    if (!size.width || !size.height) return null;
+    const cwebpExe = await getBinPath('cwebp');
+    const targetHeight = Math.max(1, Math.round(size.height * (THUMBNAIL_TARGET_WIDTH / size.width)));
+    const thumbnail = image.resize({
+      width: THUMBNAIL_TARGET_WIDTH,
+      height: targetHeight,
+      quality: 'best',
+    });
+    const pngBuffer = thumbnail.toPNG();
+    if (!cwebpExe) {
+      console.warn('[Thumbnail] cwebp executable not found; saving PNG fallback.');
+      return {
+        buffer: pngBuffer,
+        extension: '.png',
+      };
+    }
 
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bookmanager-thumbnail-'));
+    const inputPath = path.join(tempDir, 'input.png');
+    const outputPath = path.join(tempDir, 'output.webp');
+    try {
+      await fs.promises.writeFile(inputPath, pngBuffer);
+      try {
+        await execFileAsync(cwebpExe, [
+          inputPath,
+          '-q',
+          String(THUMBNAIL_WEBP_QUALITY),
+          '-metadata',
+          'none',
+          '-mt',
+          '-o',
+          outputPath,
+        ], {
+          windowsHide: true,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        return {
+          buffer: await fs.promises.readFile(outputPath),
+          extension: '.webp',
+        };
+      } catch (error) {
+        console.warn(`[Thumbnail] cwebp failed; saving PNG fallback: ${error.message}`);
+        return {
+          buffer: pngBuffer,
+          extension: '.png',
+        };
+      }
+    } finally {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+  };
+  const optimizeMetadataForPaths = async (folder, filePaths, options = {}, event) => {
+    const {
+      libraryDb,
+      sevenZExe,
+      shouldCancel,
+      force = false,
+      lang = 'ko',
+      touchHeartbeat = null,
+    } = options;
+    const cacheKey = JSON.stringify({
+      folderPath: folder,
+      includeSubfolders: true,
+      enableDupCheck: false,
+      dupFolders: [],
+      skipArchiveExtraction: false,
+    });
+    const files = [];
+    let lastProgressAt = 0;
+
+    function emitProgress(index, filePath = '', forceProgress = false) {
+      if (event.sender.isDestroyed()) return;
+      const now = Date.now();
+      if (!forceProgress && now - lastProgressAt < LIBRARY_SCAN_PROGRESS_INTERVAL_MS) return;
+      lastProgressAt = now;
+      event.sender.send('task:progress', {
+        task: 'folder:updateIndex',
+        progress: Math.min(95, Math.round((index / Math.max(filePaths.length, 1)) * 100)),
+        message: i18nT('folder_optimizing', [index, filePaths.length]),
+        libraryPhase: 'metadata',
+        currentFile: filePath,
+        currentFileName: path.basename(filePath || ''),
+      });
+    }
+
+    for (let index = 0; index < filePaths.length; index += 1) {
+      throwIfTaskCancelled(shouldCancel);
+      if (typeof touchHeartbeat === 'function') touchHeartbeat();
+      const filePath = filePaths[index];
+      emitProgress(index, filePath, index === 0);
+      let file = null;
+      try {
+        file = await inspectFolderFile(filePath, {
+          libraryDb,
+          thumbnailDir: thumbnailDir(),
+          sevenZExe,
+          thumbnailEncoder: encodeThumbnail,
+          force,
+          skipArchiveExtraction: false,
+          lang,
+          shouldCancel,
+        });
+      } catch (error) {
+        if (error?.code === 'TASK_CANCELLED') throw error;
+        console.warn(`[LibraryIndex] metadata extraction skipped: ${filePath}`, error.message);
+        continue;
+      }
+      throwIfTaskCancelled(shouldCancel);
+      if (file) files.push(file);
+      if (file && !event.sender.isDestroyed()) {
+        event.sender.send('folder:fileReady', {
+          folderPath: folder,
+          cacheKey,
+          file,
+          libraryPhase: 'metadata',
+        });
+      }
+    }
+    emitProgress(filePaths.length, '', true);
+
+    return files;
+  };
   ipcMain.on('app:setRuntimeState', (event, state) => {
     runtimeStates.set(event.sender.id, normalizeRuntimeState(state));
   });
 
   // ========== 폴더 스캔 ==========
   ipcMain.handle('folder:scan', async (event, folderPath, options) => {
+    const taskId = 'folder:scan';
+    const controller = cancellationRegistry.start(event.sender.id, taskId);
     try {
       const config = configManager.getConfig() || {};
       const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
@@ -1732,11 +2036,25 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         thumbnailDir: thumbnailDir(),
         sevenZExe,
         thumbnailEncoder: encodeThumbnail,
+        shouldCancel: () => controller.shouldCancel(),
       }, event);
     } catch (error) {
+      if (error?.code === 'TASK_CANCELLED') {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('task:progress', {
+            task: 'folder:scan',
+            progress: 0,
+            message: i18nT('msg_cancelled'),
+            phase: 'idle',
+          });
+        }
+        return [];
+      }
       console.error('Folder scan error:', error);
       event.sender.send('scan-error', { message: error.message });
       throw error;
+    } finally {
+      cancellationRegistry.finish(event.sender.id, taskId, controller);
     }
   });
 
@@ -2159,11 +2477,32 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+  ipcMain.handle('folder:getLibraryScanStates', async (_event, folders = []) => {
+    const targetFolders = [...new Set((folders || []).filter(Boolean).map(folder => path.resolve(folder)))];
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const states = await db.getLibraryScanStates(targetFolders);
+      const stateByPath = new Map(states.map(state => [path.resolve(state.library_path), state]));
+      return targetFolders.map(folder => normalizeLibraryScanStateForRenderer(
+        folder,
+        stateByPath.get(folder),
+        fs.existsSync(folder),
+      ));
+    } finally {
+      await db.close();
+    }
+  });
+
   ipcMain.handle('folder:updateIndex', async (event, folders = null, options = {}) => {
+    const taskId = 'folder:updateIndex';
+    const controller = cancellationRegistry.start(event.sender.id, taskId);
+    const shouldCancel = () => controller.shouldCancel();
     const config = configManager.getConfig() || {};
-    setLanguage(options.language || config.language || config.lang || 'ko');
+    const lang = options.language || config.language || config.lang || 'ko';
+    setLanguage(lang);
     const mode = options.mode === 'smart' ? 'smart' : 'force';
     const shouldOptimizeMetadata = options.optimizeMetadata === true;
+    const metadataOnly = shouldOptimizeMetadata && options.metadataOnly === true;
     const lastMtimes = { ...(config.index_last_mtimes || {}) };
     const priorityFolder = options.priorityFolder
       ? path.resolve(options.priorityFolder)
@@ -2179,89 +2518,286 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       });
 
     const db = new LibraryDB({ dbPath: libraryDbPath() });
+    let activeFolder = '';
+    let activeState = null;
+    let scanHeartbeatPromise = Promise.resolve();
+    let lastScanHeartbeatAt = 0;
+    const queueLibraryScanHeartbeat = (folder, rootMtime, scanReason) => {
+      const nowMs = Date.now();
+      if (nowMs - lastScanHeartbeatAt < 5000) return;
+      lastScanHeartbeatAt = nowMs;
+      const checkedAt = new Date(nowMs).toISOString();
+      const stateSnapshot = {
+        ...(activeState || {}),
+        library_path: folder,
+        status: 'scanning',
+        root_mtime: rootMtime,
+        last_checked_at: checkedAt,
+        last_error: '',
+        scan_reason: scanReason,
+      };
+      scanHeartbeatPromise = scanHeartbeatPromise
+        .catch(() => {})
+        .then(() => db.saveLibraryScanState(stateSnapshot).catch(() => {}));
+    };
+    const flushLibraryScanHeartbeat = async () => {
+      await scanHeartbeatPromise.catch(() => {});
+    };
     try {
       let total = 0;
+      let changedTotal = 0;
       let skippedFolders = 0;
       let metadataTotal = 0;
-      console.log(`[LibraryIndex] start folders=${targetFolders.length} mode=${mode} optimizeMetadata=${shouldOptimizeMetadata}`);
-      for (let index = 0; index < targetFolders.length; index += 1) {
-        const folder = targetFolders[index];
-        console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length}: ${folder}`);
-        const files = await scanArchivePaths(folder, priorityFolder, progress => {
-          const message = i18nT('dup_scan_progress', [progress.scannedCount, progress.matchedCount]);
-          const folderProgress = Math.min(0.95, progress.scannedCount / (progress.scannedCount + 1000));
-          const overallProgress = Math.min(
-            95,
-            Math.round(((index + folderProgress) / Math.max(targetFolders.length, 1)) * 100),
-          );
-          console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length} scanned=${progress.scannedCount} matched=${progress.matchedCount} current=${progress.currentPath}`);
+      let visualTotal = 0;
+      const metadataTargetsByFolder = new Map();
+      const scanStateByFolder = new Map();
+      const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+      console.log(`[LibraryIndex] start folders=${targetFolders.length} mode=${mode} optimizeMetadata=${shouldOptimizeMetadata} metadataOnly=${metadataOnly}`);
+      if (metadataOnly) {
+        for (const folder of targetFolders) {
+          throwIfTaskCancelled(shouldCancel);
+          activeFolder = folder;
+          activeState = await db.getLibraryScanState(folder);
+          const targets = (await db.getTargetIndex(folder))
+            .map(row => row.full_path)
+            .filter(filePath => filePath && fs.existsSync(filePath));
+          total += targets.length;
+          metadataTargetsByFolder.set(folder, targets);
+          const metadataState = {
+            ...(activeState || {}),
+            library_path: folder,
+            status: 'scanning',
+            file_count: Number(activeState?.file_count || targets.length),
+            indexed_count: Number(activeState?.indexed_count || targets.length),
+            last_checked_at: nowIsoString(),
+            last_error: '',
+            scan_reason: 'metadata',
+          };
+          await db.saveLibraryScanState(metadataState);
+          scanStateByFolder.set(folder, metadataState);
+        }
+      } else {
+        for (let index = 0; index < targetFolders.length; index += 1) {
+          throwIfTaskCancelled(shouldCancel);
+          const folder = targetFolders[index];
+          activeFolder = folder;
+          activeState = await db.getLibraryScanState(folder);
+          const checkedAt = nowIsoString();
+          const rootMtime = safeStatMtime(folder);
+          await db.saveLibraryScanState({
+            ...(activeState || {}),
+            library_path: folder,
+            status: 'scanning',
+            root_mtime: rootMtime,
+            last_checked_at: checkedAt,
+            last_error: '',
+            scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+          });
+          lastScanHeartbeatAt = Date.now();
+          console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length}: ${folder}`);
+          const filePaths = await scanArchivePaths(folder, priorityFolder, progress => {
+            const message = i18nT('dup_scan_progress_live', [
+              progress.scannedCount,
+              progress.matchedCount,
+              progress.elapsedSeconds || 0,
+            ]);
+            queueLibraryScanHeartbeat(folder, rootMtime, shouldOptimizeMetadata ? 'metadata' : mode);
+            const liveFloor = progress.matchedCount > 0 ? 0.08 : progress.scannedCount > 0 ? 0.02 : 0;
+            const folderProgress = Math.min(
+              0.95,
+              Math.max(liveFloor, progress.scannedCount / (progress.scannedCount + 200)),
+            );
+            const overallProgress = Math.min(
+              95,
+              Math.max(
+                progress.scannedCount > 0 || progress.elapsedSeconds > 0 ? 1 : 0,
+                Math.round(((index + folderProgress) / Math.max(targetFolders.length, 1)) * 100),
+              ),
+            );
+            console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length} scanned=${progress.scannedCount} matched=${progress.matchedCount} current=${progress.currentPath}`);
+            if (!event.sender.isDestroyed()) {
+              event.sender.send('task:progress', {
+                task: 'folder:updateIndex',
+                progress: overallProgress,
+                message,
+                libraryPhase: 'indexing',
+                currentFile: progress.currentPath,
+                currentFileName: path.basename(progress.currentPath || ''),
+              });
+            }
+          }, shouldCancel);
+          await flushLibraryScanHeartbeat();
+          throwIfTaskCancelled(shouldCancel);
+          const entries = await buildArchiveIndexEntries(filePaths, folder, {
+            shouldCancel,
+            onProgress: progress => {
+              if (event.sender.isDestroyed()) return;
+              event.sender.send('task:progress', {
+                task: 'folder:updateIndex',
+                progress: Math.min(95, Math.round(((index + 0.96) / Math.max(targetFolders.length, 1)) * 100)),
+                message: i18nT('dup_scan_progress', [progress.completedCount, progress.totalCount]),
+                libraryPhase: 'indexing',
+                currentFile: progress.currentPath,
+                currentFileName: path.basename(progress.currentPath || ''),
+              });
+            }
+          });
+          const fingerprint = createArchiveFingerprint(entries);
+          const previousFingerprint = activeState?.fingerprint || lastMtimes[folder] || '';
+          if (mode === 'smart' && previousFingerprint === fingerprint) {
+            const scannedAt = nowIsoString();
+            skippedFolders += 1;
+            total += entries.length;
+            metadataTargetsByFolder.set(
+              folder,
+              shouldOptimizeMetadata ? entries.map(entry => entry.full_path) : [],
+            );
+            lastMtimes[folder] = fingerprint;
+            const readyState = {
+              ...(activeState || {}),
+              library_path: folder,
+              status: 'ready',
+              fingerprint,
+              root_mtime: safeStatMtime(folder),
+              file_count: entries.length,
+              indexed_count: Number(activeState?.indexed_count || entries.length),
+              added_count: 0,
+              updated_count: 0,
+              removed_count: 0,
+              last_checked_at: scannedAt,
+              last_scanned_at: scannedAt,
+              last_changed_at: activeState?.last_changed_at || '',
+              last_error: '',
+              scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+            };
+            await db.saveLibraryScanState(readyState);
+            scanStateByFolder.set(folder, readyState);
+            console.log(`[LibraryIndex] skipped unchanged ${index + 1}/${targetFolders.length}: ${folder} matched=${entries.length}`);
+            continue;
+          }
+          throwIfTaskCancelled(shouldCancel);
+          console.log(`[LibraryIndex] writing index ${index + 1}/${targetFolders.length}: ${folder} matched=${entries.length}`);
           if (!event.sender.isDestroyed()) {
             event.sender.send('task:progress', {
               task: 'folder:updateIndex',
-              progress: overallProgress,
-              message,
-              currentFile: progress.currentPath,
-              currentFileName: path.basename(progress.currentPath || ''),
+              progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
+              message: i18nT('dup_scan_progress', [total, entries.length]),
+              libraryPhase: 'indexing',
+              currentFile: folder,
+              currentFileName: path.basename(folder),
             });
           }
-        });
-        const fingerprint = files.map(filePath => {
-          const stat = fs.statSync(filePath);
-          return `${filePath}\u001f${stat.size}\u001f${stat.mtimeMs}`;
-        }).join('\u001e');
-        if (mode === 'smart' && lastMtimes[folder] === fingerprint) {
-          skippedFolders += 1;
-          console.log(`[LibraryIndex] skipped unchanged ${index + 1}/${targetFolders.length}: ${folder} matched=${files.length}`);
-          continue;
+          const syncResult = await db.syncTargetIndex(folder, entries);
+          const changedCount = syncResult.addedCount + syncResult.updatedCount + syncResult.removedCount;
+          changedTotal += changedCount;
+          total += syncResult.indexedCount;
+          metadataTargetsByFolder.set(
+            folder,
+            (shouldOptimizeMetadata || mode === 'force')
+              ? entries.map(entry => entry.full_path)
+              : [...syncResult.added, ...syncResult.updated],
+          );
+          const scannedAt = nowIsoString();
+          const indexedState = {
+            library_path: folder,
+            status: 'scanning',
+            fingerprint,
+            root_mtime: safeStatMtime(folder),
+            file_count: entries.length,
+            indexed_count: syncResult.indexedCount,
+            added_count: syncResult.addedCount,
+            updated_count: syncResult.updatedCount,
+            removed_count: syncResult.removedCount,
+            last_scanned_at: scannedAt,
+            last_checked_at: scannedAt,
+            last_changed_at: changedCount > 0 ? scannedAt : (activeState?.last_changed_at || ''),
+            last_error: '',
+            scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+          };
+          await db.saveLibraryScanState(indexedState);
+          scanStateByFolder.set(folder, indexedState);
+          lastMtimes[folder] = fingerprint;
         }
-        console.log(`[LibraryIndex] writing index ${index + 1}/${targetFolders.length}: ${folder} matched=${files.length}`);
-        event.sender.send('task:progress', {
-          task: 'folder:updateIndex',
-          progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
-          message: i18nT('dup_scan_progress', [total, files.length]),
-          currentFile: folder,
-          currentFileName: path.basename(folder),
-        });
-        await db.replaceTargetIndex(folder, files);
-        total += files.length;
-        lastMtimes[folder] = fingerprint;
+        configManager.updateConfig({ index_last_mtimes: lastMtimes });
       }
-      configManager.updateConfig({ index_last_mtimes: lastMtimes });
 
-      if (shouldOptimizeMetadata) {
-        const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
-        console.log(`[LibraryIndex] metadata optimize start folders=${targetFolders.length}`);
+      const foldersWithMetadataTargets = targetFolders
+        .filter(folder => {
+          if (!metadataTargetsByFolder.has(folder)) return false;
+          const targets = metadataTargetsByFolder.get(folder);
+          return targets === null || targets.length > 0;
+        });
+      const metadataTargetFolderSet = new Set(foldersWithMetadataTargets);
+      if (foldersWithMetadataTargets.length > 0) {
+        console.log(`[LibraryIndex] metadata extraction start folders=${foldersWithMetadataTargets.length} optimizeMetadata=${shouldOptimizeMetadata}`);
         for (let index = 0; index < targetFolders.length; index += 1) {
+          throwIfTaskCancelled(shouldCancel);
           const folder = targetFolders[index];
-          console.log(`[LibraryIndex] metadata optimize ${index + 1}/${targetFolders.length}: ${folder}`);
-          event.sender.send('task:progress', {
-            task: 'folder:updateIndex',
-            progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
-            message: i18nT('folder_optimizing', [index, targetFolders.length]),
-            currentFile: folder,
-            currentFileName: path.basename(folder),
-          });
-          const files = await scanFolder(folder, {
-            includeSubfolders: true,
-            enableDupCheck: false,
-            force: mode === 'force',
-            skipArchiveExtraction: false,
-            suppressEvents: true,
-            reportTaskProgress: true,
+          if (!metadataTargetFolderSet.has(folder)) continue;
+          activeFolder = folder;
+          activeState = await db.getLibraryScanState(folder);
+          console.log(`[LibraryIndex] metadata extraction ${index + 1}/${targetFolders.length}: ${folder}`);
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('task:progress', {
+              task: 'folder:updateIndex',
+              progress: Math.round((index / Math.max(targetFolders.length, 1)) * 100),
+              message: i18nT('folder_optimizing', [index, targetFolders.length]),
+              libraryPhase: 'metadata',
+              currentFile: folder,
+              currentFileName: path.basename(folder),
+            });
+          }
+          const metadataTargets = metadataTargetsByFolder.get(folder);
+          const files = await optimizeMetadataForPaths(folder, metadataTargets || [], {
             libraryDb: db,
-            thumbnailDir: thumbnailDir(),
             sevenZExe,
-            thumbnailEncoder: encodeThumbnail,
+            shouldCancel,
+            force: shouldOptimizeMetadata || mode === 'force',
+            lang,
+            touchHeartbeat: () => queueLibraryScanHeartbeat(
+              folder,
+              safeStatMtime(folder),
+              shouldOptimizeMetadata ? 'metadata' : mode,
+            ),
           }, event);
-          metadataTotal += files.length;
-          console.log(`[LibraryIndex] metadata optimize done ${index + 1}/${targetFolders.length}: ${folder} files=${files.length}`);
+          throwIfTaskCancelled(shouldCancel);
+          if (shouldOptimizeMetadata) metadataTotal += files.length;
+          else visualTotal += files.length;
+          await flushLibraryScanHeartbeat();
+          const state = scanStateByFolder.get(folder) || activeState || {};
+          const readyState = {
+            ...state,
+            library_path: folder,
+            status: 'ready',
+            last_checked_at: nowIsoString(),
+            last_error: '',
+            scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+          };
+          await db.saveLibraryScanState(readyState);
+          scanStateByFolder.set(folder, readyState);
+          console.log(`[LibraryIndex] metadata extraction done ${index + 1}/${targetFolders.length}: ${folder} files=${files.length}`);
         }
+      }
+      for (const [folder, state] of scanStateByFolder.entries()) {
+        if (state.status === 'ready') continue;
+        const readyState = {
+          ...state,
+          library_path: folder,
+          status: 'ready',
+          last_checked_at: nowIsoString(),
+          last_error: '',
+          scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+        };
+        await db.saveLibraryScanState(readyState);
+        scanStateByFolder.set(folder, readyState);
       }
 
       console.log(`[LibraryIndex] complete folders=${targetFolders.length} indexed=${total} skipped=${skippedFolders} metadata=${metadataTotal}`);
       event.sender.send('task:progress', {
         task: 'folder:updateIndex',
         progress: 100,
+        phase: 'idle',
+        libraryPhase: 'idle',
         message: shouldOptimizeMetadata
           ? i18nT('folder_optimizing', [metadataTotal, metadataTotal])
           : i18nT('dup_scan_complete', [total]),
@@ -2271,11 +2807,55 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         folderCount: targetFolders.length,
         skippedFolders,
         total,
+        changedTotal,
         metadataTotal,
+        visualTotal,
         mode,
       };
+    } catch (error) {
+      await flushLibraryScanHeartbeat();
+      if (error?.code === 'TASK_CANCELLED') {
+        console.log(`[LibraryIndex] cancelled folders=${targetFolders.length}`);
+        if (activeFolder) {
+          await db.saveLibraryScanState({
+            ...(activeState || {}),
+            library_path: activeFolder,
+            status: 'cancelled',
+            last_checked_at: nowIsoString(),
+            last_error: '',
+            scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+          });
+        }
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('task:progress', {
+            task: 'folder:updateIndex',
+            progress: 0,
+            message: i18nT('msg_cancelled'),
+            phase: 'idle',
+            libraryPhase: 'idle',
+          });
+        }
+        return {
+          success: true,
+          cancelled: true,
+          folderCount: targetFolders.length,
+          mode,
+        };
+      }
+      if (activeFolder) {
+        await db.saveLibraryScanState({
+          ...(activeState || {}),
+          library_path: activeFolder,
+          status: 'error',
+          last_checked_at: nowIsoString(),
+          last_error: error.message || String(error),
+          scan_reason: shouldOptimizeMetadata ? 'metadata' : mode,
+        });
+      }
+      throw error;
     } finally {
       await db.close();
+      cancellationRegistry.finish(event.sender.id, taskId, controller);
     }
   });
 

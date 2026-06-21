@@ -4,19 +4,33 @@ import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { LibraryDB } from '../database/library_db.js';
+import { shouldSkipScanDirectoryEntry } from '../scanExclusions.js';
+import { SCAN_TARGET_EXTENSIONS } from '../scanTargets.js';
 import {
   listZipEntriesFromFile,
   readZipEntryFromFile,
 } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 
-const DEFAULT_TARGET_EXTS = ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7', '.pdf', '.epub'];
+const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 function taskText(lang, key, values) {
   return translate(key, lang || 'ko', values);
+}
+
+function createTaskCancelledError(lang) {
+  const error = new Error(taskText(lang, 'msg_cancelled'));
+  error.code = 'TASK_CANCELLED';
+  return error;
+}
+
+function throwIfTaskCancelled(options) {
+  if (typeof options?.shouldCancel === 'function' && options.shouldCancel()) {
+    throw createTaskCancelledError(options.lang);
+  }
 }
 
 async function getFolderUtils() {
@@ -30,10 +44,10 @@ async function extractFilenameMetadata(name) {
     const series = extractCoreTitle(name);
     const vols = extractVolNumbers(name, series);
     const volume = vols.length > 0 ? (vols.length === 1 ? String(vols[0]) : `${vols[0]}~${vols[vols.length - 1]}`) : '';
-    return { series, volume, sorted_volume: vols[0] || null };
+    return { series, volume, sorted_volume: vols[0] || null, nums: vols };
   } catch (err) {
     console.warn('Failed to extract filename metadata:', err);
-    return { series: path.parse(name).name, volume: '', sorted_volume: null };
+    return { series: path.parse(name).name, volume: '', sorted_volume: null, nums: [] };
   }
 }
 
@@ -125,7 +139,7 @@ function getImageResolution(buffer, filename) {
 async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailDir, thumbnailEncoder) {
   if (!imageBuffer || !thumbnailDir) return '';
   const encoded = typeof thumbnailEncoder === 'function'
-    ? thumbnailEncoder(imageBuffer)
+    ? await thumbnailEncoder(imageBuffer, { imageName, filePath, mtime, thumbnailDir })
     : null;
   const outputBuffer = encoded?.buffer || imageBuffer;
   const hash = crypto.createHash('md5')
@@ -307,40 +321,164 @@ function normalizeForCompare(text = '') {
   const synonyms = {
     '블랙': '검은', black: '검은', '화이트': '흰', white: '흰',
     '레드': '빨간', red: '빨간', '블루': '파란', blue: '파란',
-    love: '사랑', hell: '지옥', hero: '영웅', heroes: '영웅',
+    '그린': '녹색', green: '녹색', love: '사랑', hell: '지옥',
+    hero: '영웅', heroes: '영웅', king: '왕', god: '신',
+    dark: '어둠', '다크': '어둠', new: '새로운', super: '슈퍼',
+    dragon: '드래곤', hunter: '헌터', master: '마스터',
+    legend: '전설', world: '세계', sword: '검',
   };
-  const stopwords = ['만화책', '만화', '코믹스', 'e북', 'ebook', '완결', '합본', '웹툰', '단행본', '시리즈', '총집편', '풀컬러', '미완'];
+  const stopwords = ['만화책', '만화', '코믹스', 'e북', 'ebook', '완결', '합본', '웹툰', '단행본', '시리즈', '총집편', '풀컬러', 'in', 'the', 'of', 'a', 'an', '미완'];
   let value = text.toLowerCase();
-  for (const word of stopwords) value = value.replace(new RegExp(word, 'gi'), '');
+  for (const word of stopwords) {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (/^[a-z]+$/.test(word)) {
+      value = value.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), '');
+    } else {
+      value = value.replace(new RegExp(`(?<![가-힣a-z])${escaped}(?![가-힣a-z])`, 'gi'), '');
+    }
+  }
   for (const [from, to] of Object.entries(synonyms)) value = value.replace(new RegExp(`\\b${from}\\b`, 'gi'), to);
-  return value.replace(/[^가-힣a-z0-9]/g, '');
+  const charOnly = value.replace(/[^가-힣a-z]/g, '');
+  return charOnly || value.replace(/[^가-힣a-z0-9]/g, '');
 }
 
 function bigrams(text) {
   if (!text) return new Set();
-  if (text.length === 1) return new Set([text]);
   const values = new Set();
   for (let i = 0; i < text.length - 1; i += 1) values.add(text.slice(i, i + 2));
   return values;
 }
 
-function similarity(a, b) {
+function sequenceMatcherRatio(a, b) {
+  if (!a && !b) return 1;
   if (!a || !b) return 0;
-  const short = a.length <= b.length ? a : b;
-  const long = a.length > b.length ? a : b;
-  const containment = long.includes(short) ? 1 : 0;
-  const aBigrams = bigrams(a);
-  const bBigrams = bigrams(b);
-  const intersection = [...aBigrams].filter(value => bBigrams.has(value)).length;
-  const union = new Set([...aBigrams, ...bBigrams]).size || 1;
-  return Math.max(containment, intersection / union);
+
+  function longestMatch(aStart, aEnd, bStart, bEnd) {
+    let previous = new Array(bEnd - bStart + 1).fill(0);
+    let best = { a: aStart, b: bStart, size: 0 };
+    for (let aIndex = aStart; aIndex < aEnd; aIndex += 1) {
+      const current = new Array(bEnd - bStart + 1).fill(0);
+      for (let bIndex = bStart; bIndex < bEnd; bIndex += 1) {
+        if (a[aIndex] !== b[bIndex]) continue;
+        const relative = bIndex - bStart;
+        current[relative + 1] = previous[relative] + 1;
+        if (current[relative + 1] > best.size) {
+          best = {
+            a: aIndex - current[relative + 1] + 1,
+            b: bIndex - current[relative + 1] + 1,
+            size: current[relative + 1],
+          };
+        }
+      }
+      previous = current;
+    }
+    return best;
+  }
+
+  function matchingBlockSize(aStart, aEnd, bStart, bEnd) {
+    const match = longestMatch(aStart, aEnd, bStart, bEnd);
+    if (match.size === 0) return 0;
+    return match.size
+      + matchingBlockSize(aStart, match.a, bStart, match.b)
+      + matchingBlockSize(match.a + match.size, aEnd, match.b + match.size, bEnd);
+  }
+
+  const matches = matchingBlockSize(0, a.length, 0, b.length);
+  return (2 * matches) / (a.length + b.length);
 }
 
-async function buildDupCache(dupFolders, targetExts, event, lang = 'ko') {
+function similarity(a, b) {
+  if (!a || !b) return 0;
+  const aBigrams = bigrams(a);
+  const bBigrams = bigrams(b);
+  if (aBigrams.size > 0 && bBigrams.size > 0 && [...aBigrams].every(value => !bBigrams.has(value))) {
+    return 0;
+  }
+
+  const standardRatio = sequenceMatcherRatio(a, b);
+  const matchLength = [...sequenceMatcherBlocks(a, b)].reduce((total, block) => total + block.size, 0);
+  const minLength = Math.min(a.length, b.length);
+  const containedRatio = minLength > 0 ? matchLength / minLength : 0;
+  let score = (standardRatio + containedRatio) / 2;
+
+  if (containedRatio >= 0.9) {
+    score = Math.max(score, 0.75);
+    if (minLength <= 3 && standardRatio < 0.4) {
+      score *= 0.8;
+    }
+  }
+
+  return score;
+}
+
+function* sequenceMatcherBlocks(a, b) {
+  function longestMatch(aStart, aEnd, bStart, bEnd) {
+    let previous = new Array(bEnd - bStart + 1).fill(0);
+    let best = { a: aStart, b: bStart, size: 0 };
+    for (let aIndex = aStart; aIndex < aEnd; aIndex += 1) {
+      const current = new Array(bEnd - bStart + 1).fill(0);
+      for (let bIndex = bStart; bIndex < bEnd; bIndex += 1) {
+        if (a[aIndex] !== b[bIndex]) continue;
+        const relative = bIndex - bStart;
+        current[relative + 1] = previous[relative] + 1;
+        if (current[relative + 1] > best.size) {
+          best = {
+            a: aIndex - current[relative + 1] + 1,
+            b: bIndex - current[relative + 1] + 1,
+            size: current[relative + 1],
+          };
+        }
+      }
+      previous = current;
+    }
+    return best;
+  }
+
+  function* blocks(aStart, aEnd, bStart, bEnd) {
+    const match = longestMatch(aStart, aEnd, bStart, bEnd);
+    if (match.size === 0) return;
+    yield* blocks(aStart, match.a, bStart, match.b);
+    yield match;
+    yield* blocks(match.a + match.size, aEnd, match.b + match.size, bEnd);
+  }
+
+  yield* blocks(0, a.length, 0, b.length);
+}
+
+function sameVolumeNumbers(aNums = [], bNums = []) {
+  if (aNums.length !== bNums.length) return false;
+  if (aNums.length === 0) return true;
+  return aNums.every((num, index) => num === bNums[index]);
+}
+
+async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options = {}) {
   const cache = [];
   const seen = new Set();
 
+  async function addFilePath(fullPath) {
+    if (!fullPath || seen.has(fullPath)) return;
+    if (!targetExts.includes(path.extname(fullPath).toLowerCase())) return;
+    seen.add(fullPath);
+    try {
+      const stats = await fs.promises.stat(fullPath);
+      const meta = await extractFilenameMetadata(path.basename(fullPath));
+      const compareTitle = normalizeForCompare(meta.series || path.parse(fullPath).name);
+      cache.push({
+        name: path.basename(fullPath),
+        path: path.dirname(fullPath),
+        full_path: fullPath,
+        size: stats.size,
+        series: meta.series,
+        nums: meta.nums || [],
+        compareTitle,
+      });
+    } catch {
+      // Ignore unreadable duplicate target files.
+    }
+  }
+
   async function scanDir(currentPath) {
+    throwIfTaskCancelled(options);
     let entries;
     try {
       entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
@@ -349,33 +487,36 @@ async function buildDupCache(dupFolders, targetExts, event, lang = 'ko') {
     }
 
     for (const entry of entries) {
+      if (shouldSkipScanDirectoryEntry(entry)) continue;
       const fullPath = path.join(currentPath, entry.name);
       if (entry.isDirectory()) {
         await scanDir(fullPath);
-      } else if (entry.isFile() && targetExts.includes(path.extname(entry.name).toLowerCase()) && !seen.has(fullPath)) {
-        seen.add(fullPath);
-        try {
-          const stats = await fs.promises.stat(fullPath);
-          const meta = await extractFilenameMetadata(entry.name);
-          const compareTitle = normalizeForCompare(meta.series || path.parse(entry.name).name);
-          cache.push({
-            name: entry.name,
-            path: currentPath,
-            full_path: fullPath,
-            size: stats.size,
-            series: meta.series,
-            nums: meta.sorted_volume ? [meta.sorted_volume] : [],
-            compareTitle,
-          });
-        } catch {
-          // Ignore unreadable duplicate target files.
-        }
+      } else if (entry.isFile()) {
+        await addFilePath(fullPath);
       }
     }
   }
 
   for (const folder of dupFolders || []) {
-    if (folder && fs.existsSync(folder)) await scanDir(folder);
+    throwIfTaskCancelled(options);
+    if (!folder || !fs.existsSync(folder)) continue;
+    let indexedRows = [];
+    if (options.libraryDb && !options.libraryDb.__bookManagerUnavailable) {
+      try {
+        indexedRows = await options.libraryDb.getTargetIndex(folder);
+      } catch (error) {
+        options.libraryDb.__bookManagerUnavailable = true;
+        console.warn(`[FolderScan] duplicate index unavailable; falling back to directory scan: ${error.message}`);
+      }
+    }
+    if (indexedRows.length > 0) {
+      for (const row of indexedRows) {
+        throwIfTaskCancelled(options);
+        await addFilePath(row.full_path);
+      }
+    } else {
+      await scanDir(folder);
+    }
   }
 
   if (event && cache.length) {
@@ -393,13 +534,12 @@ function attachDuplicateMatches(files, dupCache) {
 
   return files.map(file => {
     const compareTitle = normalizeForCompare(file.series || path.parse(file.name).name);
-    const fileNums = file.sorted_volume ? [file.sorted_volume] : [];
+    const fileNums = file.compare_nums || (file.sorted_volume ? [file.sorted_volume] : []);
     const matches = [];
 
     for (const candidate of dupCache) {
       if (path.normalize(candidate.full_path) === path.normalize(file.full_path)) continue;
-      const sameNumber = !fileNums.length || !candidate.nums.length || fileNums.some(num => candidate.nums.includes(num));
-      if (!sameNumber) continue;
+      if (!sameVolumeNumbers(fileNums, candidate.nums)) continue;
 
       const ratio = similarity(compareTitle, candidate.compareTitle);
       if (ratio >= 0.7) {
@@ -532,6 +672,7 @@ async function createFileData(fullPath, stats, options = {}) {
     title: archiveMeta.title || path.parse(name).name,
     volume,
     sorted_volume: filenameMeta.sorted_volume,
+    compare_nums: filenameMeta.nums || [],
     chapter: archiveMeta.chapter || '',
     author: archiveMeta.writer || archiveMeta.penciller || '',
     writer: archiveMeta.writer || '',
@@ -668,6 +809,8 @@ export async function scanFolder(folderPath, options = {}, event) {
     }
 
     for (const entry of sortEntriesForPriority(entries)) {
+      throwIfTaskCancelled(options);
+      if (shouldSkipScanDirectoryEntry(entry)) continue;
       const fullPath = path.join(currentPath, entry.name);
 
       if (entry.isDirectory()) {
@@ -677,6 +820,7 @@ export async function scanFolder(folderPath, options = {}, event) {
         const ext = path.extname(entry.name).toLowerCase();
         if (normalizedExts.includes(ext)) {
           try {
+            throwIfTaskCancelled(options);
             const now = Date.now();
             if (now - lastTaskProgressAt > 150) {
               lastTaskProgressAt = now;
@@ -696,10 +840,12 @@ export async function scanFolder(folderPath, options = {}, event) {
               skipArchiveExtraction,
               thumbnailEncoder,
             });
+            throwIfTaskCancelled(options);
             results.push(fileData);
             matchedCount += 1;
             emitFileReady(fileData);
           } catch (statError) {
+            if (statError?.code === 'TASK_CANCELLED') throw statError;
             console.error(`Failed to process file: ${fullPath}`, statError);
           }
         }
@@ -722,13 +868,15 @@ export async function scanFolder(folderPath, options = {}, event) {
 
   let files = results;
   if (enableDupCheck && dupFolders.length > 0) {
+    throwIfTaskCancelled(options);
     emitTaskProgress({
       progress: 85,
       message: taskText(lang, 'task_dup_prepare'),
       currentFile: '',
       currentFileName: '',
     });
-    const dupCache = await buildDupCache(dupFolders, normalizedExts, event, lang);
+    const dupCache = await buildDupCache(dupFolders, normalizedExts, event, lang, options);
+    throwIfTaskCancelled(options);
     files = attachDuplicateMatches(results, dupCache);
   }
 

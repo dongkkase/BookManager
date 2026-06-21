@@ -91,6 +91,13 @@ function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
 }
 
+function normalizeLibraryKey(folderPath = '') {
+  return String(folderPath)
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
 function joinPath(base, ...parts) {
   const separator = String(base || '').includes('\\') ? '\\' : '/';
   return [String(base || '').replace(/[\\/]+$/, ''), ...parts.map(part => String(part || '').replace(/^[\\/]+|[\\/]+$/g, ''))]
@@ -110,6 +117,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const missingBackgroundKeyRef = useRef('');
   const missingLocalTimerRef = useRef(null);
   const lastMissingLocalToastRef = useRef({ folderPath: '', timestamp: 0 });
+  const backgroundLibraryScanCancelRef = useRef(null);
+  const folderStatusItemRef = useRef({ currentItem: '', currentItemName: '' });
+  const activeLibraryScanKeyRef = useRef('');
+  const libraryScanUiHeartbeatRef = useRef(0);
+  const preparingDuplicatesRef = useRef(false);
+  const pendingInitialLibraryIndexRef = useRef('');
+  const libraryPhaseRef = useRef('');
   const conflictResolverRef = useRef(null);
   const restoredLayoutRef = useRef(false);
   const initializedDetailHeightRef = useRef(false);
@@ -136,7 +150,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [preparingDuplicates, setPreparingDuplicates] = useState(false);
   const [duplicatePreparationStatus, setDuplicatePreparationStatus] = useState('');
   const [duplicatePreparationProgress, setDuplicatePreparationProgress] = useState(0);
+  const [folderTaskCancelling, setFolderTaskCancelling] = useState(false);
   const [libraryTaskMode, setLibraryTaskMode] = useState(null);
+  const [libraryScanStateMap, setLibraryScanStateMap] = useState({});
+  const [missingData, setMissingData] = useState([]);
+  const [isCheckingMissing, setIsCheckingMissing] = useState(false);
   const [treeRefreshToken, setTreeRefreshToken] = useState(0);
   const [itemScales, setItemScales] = useState({ table: 50, tile: 50, thumbnail: 50 });
   const [showLayoutDialog, setShowLayoutDialog] = useState(false);
@@ -177,6 +195,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 검색 상태 ---
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef(null);
+
+  useEffect(() => {
+    preparingDuplicatesRef.current = preparingDuplicates;
+  }, [preparingDuplicates]);
 
   const scanOptions = useMemo(() => ({
     includeSubfolders,
@@ -310,47 +332,82 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.(data => {
       if (data?.task === 'folder:scan') {
-        emitStatusState('folder', {
-          message: data.message || t('folder.status.scanning'),
-          progress: data.progress ?? 0,
-          phase: data.progress >= 100 ? 'idle' : 'executing',
-          currentItem: data.currentFile || '',
-          currentItemName: data.currentFileName || '',
-        });
         return;
       }
       if (data?.task !== 'folder:updateIndex') return;
       const progress = Math.max(0, Math.min(100, Number(data.progress) || 0));
-      const fallbackMessage = libraryTaskMode === 'metadata'
+      const activeLibraryScanKey = activeLibraryScanKeyRef.current;
+      const nowMs = Date.now();
+      if (activeLibraryScanKey && nowMs - libraryScanUiHeartbeatRef.current >= 5000) {
+        libraryScanUiHeartbeatRef.current = nowMs;
+        const checkedAt = new Date(nowMs).toISOString();
+        setLibraryScanStateMap(prev => {
+          const current = prev[activeLibraryScanKey];
+          if (!current || current.status !== 'scanning') return prev;
+          return {
+            ...prev,
+            [activeLibraryScanKey]: {
+              ...current,
+              status: 'scanning',
+              needsScan: false,
+              lastCheckedAt: checkedAt,
+            },
+          };
+        });
+      }
+      const isMetadataOnlyMode = libraryTaskMode === 'metadata';
+      const fallbackMessage = isMetadataOnlyMode
         ? t('folder_optimizing', [0, 0])
         : t('dup_scan_start');
       const message = data.message || fallbackMessage;
+      const libraryPhase = isMetadataOnlyMode
+        ? 'metadata'
+        : data.libraryPhase || 'indexing';
+      libraryPhaseRef.current = libraryPhase;
       setDuplicatePreparationStatus(message);
       setDuplicatePreparationProgress(progress);
+      if (data.currentFile || data.currentFileName) {
+        folderStatusItemRef.current = {
+          currentItem: data.currentFile || folderStatusItemRef.current.currentItem,
+          currentItemName: data.currentFileName || data.currentFile || folderStatusItemRef.current.currentItemName,
+        };
+      }
       emitStatusState('folder', {
+        task: data.task,
+        display: 'library-slide',
         message,
         progress,
-        phase: 'executing',
-        currentItem: data.currentFile || '',
-        currentItemName: data.currentFileName || '',
+        phase: data.phase || (folderTaskCancelling ? 'cancelling' : progress >= 100 ? 'idle' : 'executing'),
+        libraryPhase,
+        libraryTaskMode,
+        currentItem: folderStatusItemRef.current.currentItem,
+        currentItemName: folderStatusItemRef.current.currentItemName,
       });
     });
     return () => {
       if (typeof removeProgress === 'function') removeProgress();
     };
-  }, [libraryTaskMode, t]);
+  }, [folderTaskCancelling, libraryTaskMode, t]);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
       detail: { tabId: 'folder', isWorking: preparingDuplicates },
     }));
-    if (!preparingDuplicates) return;
-    emitStatusState('folder', {
-      message: duplicatePreparationStatus || t('dup_scan_start'),
-      progress: duplicatePreparationProgress,
-      phase: 'executing',
-    });
-  }, [duplicatePreparationProgress, duplicatePreparationStatus, preparingDuplicates, t]);
+    if (preparingDuplicates) {
+      emitStatusState('folder', {
+        task: 'folder:updateIndex',
+        display: 'library-slide',
+        message: duplicatePreparationStatus || t('dup_scan_start'),
+        progress: duplicatePreparationProgress,
+        phase: folderTaskCancelling ? 'cancelling' : 'executing',
+        libraryPhase: libraryPhaseRef.current || (libraryTaskMode === 'metadata' ? 'metadata' : 'indexing'),
+        libraryTaskMode,
+        currentItem: folderStatusItemRef.current.currentItem,
+        currentItemName: folderStatusItemRef.current.currentItemName,
+      });
+      return;
+    }
+  }, [duplicatePreparationProgress, duplicatePreparationStatus, folderTaskCancelling, libraryTaskMode, preparingDuplicates, t]);
 
   useEffect(() => {
     return () => {
@@ -371,6 +428,70 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   ), [config?.libraries, config?.dup_check_folders]);
   const favoriteEntries = useMemo(() => normalizeFavorites(config || {}), [config]);
 
+  const refreshLibraryScanStates = useCallback(async (targetFolders = libraries) => {
+    const folders = [...new Set((targetFolders || []).filter(Boolean))];
+    if (folders.length === 0) {
+      setLibraryScanStateMap({});
+      return;
+    }
+    try {
+      const states = await window.electronAPI?.getLibraryScanStates?.(folders);
+      if (!Array.isArray(states)) return;
+      setLibraryScanStateMap(prev => {
+        const next = { ...prev };
+        const activeLibraryScanKey = preparingDuplicatesRef.current ? activeLibraryScanKeyRef.current : '';
+        for (const state of states) {
+          const key = normalizeLibraryKey(state.libraryPath || state.library_path);
+          if (!key) continue;
+          next[key] = activeLibraryScanKey === key && prev[key]?.status === 'scanning'
+            ? {
+                ...prev[key],
+                ...state,
+                status: 'scanning',
+                needsScan: false,
+                lastCheckedAt: state.lastCheckedAt || prev[key].lastCheckedAt,
+              }
+            : state;
+        }
+        for (const key of Object.keys(next)) {
+          if (!folders.some(folder => normalizeLibraryKey(folder) === key)) delete next[key];
+        }
+        return next;
+      });
+    } catch (error) {
+      console.error('라이브러리 스캔 상태 조회 실패:', error);
+    }
+  }, [libraries]);
+
+  const markLibraryScanStatesCancelled = useCallback((targetFolders = null) => {
+    const targetKeys = Array.isArray(targetFolders)
+      ? new Set(targetFolders.filter(Boolean).map(normalizeLibraryKey))
+      : null;
+    const checkedAt = new Date().toISOString();
+    setLibraryScanStateMap(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [key, state] of Object.entries(next)) {
+        const shouldMark = targetKeys ? targetKeys.has(key) : state?.status === 'scanning';
+        if (!shouldMark) continue;
+        next[key] = {
+          ...(state || {}),
+          status: 'cancelled',
+          needsScan: true,
+          lastCheckedAt: checkedAt,
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    refreshLibraryScanStates();
+    const timer = window.setInterval(() => refreshLibraryScanStates(), 60000);
+    return () => window.clearInterval(timer);
+  }, [refreshLibraryScanStates]);
+
   const addLibrary = useCallback(async () => {
     try {
       const folderPath = await window.electronAPI.selectFolder(t('dlg_sel_dup_folder'));
@@ -380,6 +501,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           libraries: nextLibraries,
           dup_check_folders: nextLibraries,
         });
+        pendingInitialLibraryIndexRef.current = folderPath;
       }
     } catch (e) {
       console.error(e);
@@ -411,10 +533,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
   }, [favoriteEntries, saveConfig]);
 
-  // --- 누락 권수 상태 ---
-  const [missingData, setMissingData] = useState([]);
-  const [isCheckingMissing, setIsCheckingMissing] = useState(false);
-
   // --- refs ---
   const fileTableRef = useRef(null);
 
@@ -426,21 +544,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const backgroundKey = JSON.stringify(libraryFolders);
     if (!config || missingBackgroundKeyRef.current === backgroundKey) return undefined;
     let cancelled = false;
+    backgroundLibraryScanCancelRef.current = () => {
+      cancelled = true;
+      setIsCheckingMissing(false);
+      setFolderTaskCancelling(false);
+    };
 
     const analyze = async () => {
       if (cancelled) return;
+      if (preparingDuplicatesRef.current) return;
       setIsCheckingMissing(true);
-      const shouldLockScreen = libraryFolders.length > 0;
-      if (shouldLockScreen) {
-        window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
-          detail: { tabId: 'folder', isWorking: true },
-        }));
-        emitStatusState('folder', {
-          message: t('dup_scan_start'),
-          progress: 0,
-          phase: 'executing',
-        });
-      }
       try {
         const libraryFiles = [];
         const prioritizedFolders = selectedFolderPath
@@ -452,19 +565,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         for (let index = 0; index < prioritizedFolders.length; index += 1) {
           const folderPath = prioritizedFolders[index];
           if (cancelled) return;
-          if (shouldLockScreen) {
-            emitStatusState('folder', {
-              message: t('dup_scan_progress', [index, libraryFiles.length]),
-              progress: Math.round((index / Math.max(prioritizedFolders.length, 1)) * 100),
-              phase: 'executing',
-            });
-          }
+          if (preparingDuplicatesRef.current) return;
           const files = await window.electronAPI?.scanFolder?.(folderPath, {
             includeSubfolders: true,
             enableDupCheck: false,
             skipArchiveExtraction: true,
             suppressEvents: true,
-            reportTaskProgress: true,
+            reportTaskProgress: false,
+            reportFileReady: false,
           });
           if (Array.isArray(files)) libraryFiles.push(...files);
         }
@@ -479,18 +587,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           showToast?.({ key: 'tf_toast_missing', values: [missing.length] });
         }
       } finally {
+        if (backgroundLibraryScanCancelRef.current) backgroundLibraryScanCancelRef.current = null;
         if (!cancelled) {
           setIsCheckingMissing(false);
-          if (shouldLockScreen) {
-            window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
-              detail: { tabId: 'folder', isWorking: false },
-            }));
-            emitStatusState('folder', {
-              message: t('status_wait'),
-              progress: 0,
-              phase: 'idle',
-            });
-          }
         }
       }
     };
@@ -498,19 +597,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const timer = window.setTimeout(analyze, 0);
     return () => {
       cancelled = true;
+      if (backgroundLibraryScanCancelRef.current) backgroundLibraryScanCancelRef.current = null;
       window.clearTimeout(timer);
-      if (libraryFolders.length > 0) {
-        window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
-          detail: { tabId: 'folder', isWorking: false },
-        }));
-        emitStatusState('folder', {
-          message: t('status_wait'),
-          progress: 0,
-          phase: 'idle',
-        });
-      }
     };
-  }, [config, getCurrentFileData, selectedFolderPath, showToast, t]);
+  }, [config, getCurrentFileData, selectedFolderPath, showToast]);
 
   const scheduleLocalMissingToast = useCallback((folderPath, missing) => {
     if (missingLocalTimerRef.current) window.clearTimeout(missingLocalTimerRef.current);
@@ -621,6 +711,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         const scanned = await window.electronAPI?.scanFolder?.(folderPath, {
           includeSubfolders: true,
           enableDupCheck: false,
+          skipArchiveExtraction: true,
+          suppressEvents: true,
         });
         if (Array.isArray(scanned)) files.push(...scanned);
       }
@@ -679,32 +771,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setEnableDupCheck(nextValue);
     clearSelection();
 
-    if (nextValue && dupFolders.length > 0) {
-      setPreparingDuplicates(true);
-      setDuplicatePreparationStatus(t('dup_scan_start'));
-      setDuplicatePreparationProgress(0);
-      try {
-        const result = await window.electronAPI?.updateFolderIndex?.(dupFolders, {
-          priorityFolder: selectedFolderPath,
-          language: config?.language || config?.lang || 'ko',
-        });
-        if (result?.success === false) throw new Error(result.message || t('msg_failed'));
-      } catch (error) {
-        setEnableDupCheck(false);
-        await window.electronAPI?.showMessage?.({
-          type: 'error',
-          title: t('dlg_err'),
-          message: `${t('msg_failed')}:\n${error.message}`,
-          language: config?.language || config?.lang || 'ko',
-        });
-        return;
-      } finally {
-        setPreparingDuplicates(false);
-        setDuplicatePreparationStatus('');
-        setDuplicatePreparationProgress(0);
-      }
-    }
-
     if (!selectedFolderPath) return;
     const nextOptions = {
       ...scanOptions,
@@ -717,8 +783,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [
     clearSelection,
     config?.dup_check_folders,
-    config?.language,
-    config?.lang,
     enableDupCheck,
     preparingDuplicates,
     scanFolder,
@@ -745,18 +809,51 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }));
   }, []);
 
-  const runLibraryIndexAction = useCallback(async (folderPath, optimizeMetadata = false) => {
+  const runLibraryIndexAction = useCallback(async (folderPath, optimizeMetadata = false, options = {}) => {
     if (!folderPath || preparingDuplicates || scanning) return;
-    const choice = await window.electronAPI?.chooseLibrarySyncMode?.({
-      title: optimizeMetadata ? t('menu_optimize_meta') : t('setting_update_index'),
-      message: t('msg_optimize_desc', [basename(folderPath)]),
-      language: config?.language || config?.lang || 'ko',
-    });
+    let wasCancelled = false;
+    let shouldRefreshIndexedFolder = false;
+    let shouldShowSuccessToast = false;
+    const choice = options.skipPrompt
+      ? (options.mode === 'force' ? 'force' : 'smart')
+      : await window.electronAPI?.chooseLibrarySyncMode?.({
+          title: optimizeMetadata ? t('menu_optimize_meta') : t('setting_update_index'),
+          message: t('msg_optimize_desc', [basename(folderPath)]),
+          language: config?.language || config?.lang || 'ko',
+        });
     if (!choice || choice === 'cancel') return;
 
+    if (isCheckingMissing) {
+      backgroundLibraryScanCancelRef.current?.();
+      await window.electronAPI?.stopTask?.('folder:scan');
+    }
     await saveConfig?.({ last_selected_library: folderPath });
+    folderStatusItemRef.current = {
+      currentItem: folderPath,
+      currentItemName: basename(folderPath),
+    };
+    activeLibraryScanKeyRef.current = normalizeLibraryKey(folderPath);
+    libraryScanUiHeartbeatRef.current = Date.now();
+    const scanStartedAt = new Date().toISOString();
+    setLibraryScanStateMap(prev => {
+      const key = normalizeLibraryKey(folderPath);
+      return {
+        ...prev,
+        [key]: {
+          ...(prev[key] || {}),
+          libraryPath: folderPath,
+          status: 'scanning',
+          needsScan: false,
+          lastCheckedAt: scanStartedAt,
+        },
+      };
+    });
+    preparingDuplicatesRef.current = true;
+    libraryPhaseRef.current = optimizeMetadata && !options.showIndexingVisual ? 'metadata' : 'indexing';
     setPreparingDuplicates(true);
-    setLibraryTaskMode(optimizeMetadata ? 'metadata' : 'index');
+    setLibraryTaskMode(optimizeMetadata
+      ? (options.showIndexingVisual ? 'metadata-initial' : 'metadata')
+      : 'index');
     setDuplicatePreparationStatus(optimizeMetadata ? t('folder_optimizing', [0, 0]) : t('dup_scan_start'));
     setDuplicatePreparationProgress(0);
     try {
@@ -765,28 +862,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         {
           mode: choice,
           optimizeMetadata,
+          metadataOnly: optimizeMetadata && !options.showIndexingVisual,
           priorityFolder: selectedFolderPath,
           language: config?.language || config?.lang || 'ko',
         },
       );
       if (result?.success === false) throw new Error(result.message || t('msg_failed'));
-
-      if (optimizeMetadata) {
-        setIncludeSubfolders(true);
-        const files = await scanFolder(folderPath, {
-          ...scanOptions,
-          includeSubfolders: true,
-          force: false,
-          fastInitial: false,
-        });
-        setMissingData(findMissingVolumes(files || []));
-        setSelectedFolderPath(folderPath);
-        clearSelection();
-        setSearchQuery('');
-      } else {
-        await handleFolderChange(folderPath);
+      if (result?.cancelled) {
+        wasCancelled = true;
+        return;
       }
-      showToast?.({ key: 'setting_update_index_msg' });
+      shouldRefreshIndexedFolder = true;
+      shouldShowSuccessToast = true;
     } catch (error) {
       await window.electronAPI?.showMessage?.({
         type: 'error',
@@ -795,30 +882,100 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     } finally {
+      preparingDuplicatesRef.current = false;
       setPreparingDuplicates(false);
+      setFolderTaskCancelling(false);
       setLibraryTaskMode(null);
       setDuplicatePreparationStatus('');
       setDuplicatePreparationProgress(0);
+      folderStatusItemRef.current = { currentItem: '', currentItemName: '' };
+      await refreshLibraryScanStates([folderPath]);
+      if (wasCancelled) markLibraryScanStatesCancelled([folderPath]);
+      activeLibraryScanKeyRef.current = '';
+      libraryScanUiHeartbeatRef.current = 0;
+      libraryPhaseRef.current = '';
       emitStatusState('folder', {
         message: t('status_wait'),
         progress: 0,
         phase: 'idle',
       });
     }
+    if (!shouldRefreshIndexedFolder) return;
+    const refreshOptions = optimizeMetadata
+      ? {
+          ...scanOptions,
+          includeSubfolders: true,
+          force: true,
+        }
+      : {
+          ...scanOptions,
+          force: true,
+        };
+    if (optimizeMetadata) setIncludeSubfolders(true);
+    setSelectedFolderPath(folderPath);
+    clearSelection();
+    setSearchQuery('');
+    const files = await scanFolder(folderPath, {
+      ...refreshOptions,
+      fastInitial: false,
+      silent: true,
+      suppressEvents: true,
+      reportTaskProgress: false,
+      reportFileReady: false,
+    });
+    setMissingData(findMissingVolumes(files || []));
+    if (shouldShowSuccessToast) showToast?.({ key: 'setting_update_index_msg' });
   }, [
     config?.language,
     config?.lang,
     clearSelection,
-    handleFolderChange,
+    markLibraryScanStatesCancelled,
     preparingDuplicates,
+    refreshLibraryScanStates,
     saveConfig,
     scanFolder,
     scanOptions,
     scanning,
     selectedFolderPath,
     showToast,
+    isCheckingMissing,
     t,
   ]);
+
+  useEffect(() => {
+    const folderPath = pendingInitialLibraryIndexRef.current;
+    if (!folderPath || preparingDuplicates || scanning) return;
+    if (!libraries.includes(folderPath)) return;
+    pendingInitialLibraryIndexRef.current = '';
+    runLibraryIndexAction(folderPath, true, {
+      mode: 'smart',
+      skipPrompt: true,
+      showIndexingVisual: true,
+    });
+  }, [libraries, preparingDuplicates, runLibraryIndexAction, scanning]);
+
+  const handleCancelCurrentTask = useCallback(async () => {
+    if (!preparingDuplicates && !scanning && !isCheckingMissing) return;
+    setFolderTaskCancelling(true);
+    setDuplicatePreparationStatus(t('cancel_wait'));
+    const isLibraryScanTask = preparingDuplicates;
+    emitStatusState('folder', {
+      task: preparingDuplicates ? 'folder:updateIndex' : isCheckingMissing ? 'folder:libraryScan' : 'folder:scan',
+      display: isLibraryScanTask ? 'library-slide' : '',
+      message: t('cancel_wait'),
+      progress: duplicatePreparationProgress || scanProgress,
+      phase: 'cancelling',
+      libraryPhase: isLibraryScanTask ? (libraryPhaseRef.current || (libraryTaskMode === 'metadata' ? 'metadata' : 'indexing')) : '',
+      libraryTaskMode,
+    });
+    if (isCheckingMissing) backgroundLibraryScanCancelRef.current?.();
+    await Promise.all([
+      window.electronAPI?.stopTask?.('folder:updateIndex'),
+      window.electronAPI?.stopTask?.('folder:scan'),
+    ]);
+    await refreshLibraryScanStates();
+    markLibraryScanStatesCancelled();
+  }, [duplicatePreparationProgress, isCheckingMissing, libraryTaskMode, markLibraryScanStatesCancelled, preparingDuplicates, refreshLibraryScanStates, scanProgress, scanning, t]);
 
   const handleAddFolderFromToolbar = useCallback(async () => {
     const folderPath = await window.electronAPI?.selectFolder?.(t('add_folder'));
@@ -1142,6 +1299,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         priorityFolder: selectedFolderPath,
         language: config?.language || config?.lang || 'ko',
       });
+      await refreshLibraryScanStates(affectedLibraries);
       if (folderPlan) {
         await handleFolderChange(folderPlan.dest);
       } else {
@@ -1157,7 +1315,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     }
-  }, [clearSelection, config?.language, config?.lang, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, saveConfig, selectedFolderPath, showToast, t]);
+  }, [clearSelection, config?.language, config?.lang, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedFolderPath, showToast, t]);
 
   const openLibraryMoveDialog = useCallback(async () => {
     if (libraries.length === 0) {
@@ -1506,6 +1664,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const handleAppAction = (event) => {
       if (event.detail?.activeTab !== 'folder') return;
       const action = event.detail?.action;
+      if (action === 'cancel-current') {
+        handleCancelCurrentTask();
+        return;
+      }
+      if (preparingDuplicates || scanning) return;
       if (action === 'add-folder') handleAddFolderFromToolbar();
       else if (action === 'add-file') handleAddFileFromToolbar();
       else if (action === 'drop-paths') handleDroppedPaths(event.detail?.paths);
@@ -1526,10 +1689,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     filteredFileData.length,
     handleAddFileFromToolbar,
     handleAddFolderFromToolbar,
+    handleCancelCurrentTask,
     handleDroppedPaths,
     invertSelection,
+    preparingDuplicates,
     selectAll,
     selectedFiles.length,
+    scanning,
   ]);
 
   const startHorizontalResize = useCallback((event) => {
@@ -1736,18 +1902,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         ref={mainAreaRef}
         style={{ '--folder-sidebar-width': isSidebarVisible ? `${leftPanelWidth}px` : '0px' }}
       >
-        {preparingDuplicates && (
-          <div className="folder-working-overlay">
-            <div className="folder-working-panel">
-              <div className="folder-working-spinner" aria-hidden="true" />
-              <span>{duplicatePreparationStatus || t('dup_scan_start')}</span>
-              <div className="folder-working-progress" aria-hidden="true">
-                <div style={{ width: `${duplicatePreparationProgress}%` }} />
-              </div>
-            </div>
-          </div>
-        )}
-        
         {/* Left Panel */}
         {isSidebarVisible && (
           <div className="folder-left-panel" style={{ flexBasis: `${leftPanelWidth}px`, width: `${leftPanelWidth}px` }}>
@@ -1795,6 +1949,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 onFolderContextMenu={showFolderContextMenu}
                 onLibraryContextMenu={showLibraryContextMenu}
                 onOpenLibrarySettings={openLibrarySettings}
+                onSyncLibrary={runLibraryIndexAction}
+                libraryScanStateMap={libraryScanStateMap}
                 refreshToken={treeRefreshToken}
                 t={t}
               />
@@ -2011,16 +2167,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         </ContextMenu>
       )}
       
-      {/* Global Bottom Status Bar */}
-      <div className="global-status-bar">
-        <span className="status-message">
-          {preparingDuplicates
-            ? `${duplicatePreparationStatus || t('dup_scan_start')} (${duplicatePreparationProgress}%)`
-            : scanning
-              ? `${statusMessage} (${scanProgress}%)`
-              : statusMessage}
-        </span>
-      </div>
       {showMissingDialog && (
         <MissingVolumesDialog
           missingData={missingData}

@@ -6,7 +6,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
 import { replaceZipEntry } from './core/zipArchive.js';
+import { extractLibraryScanVisualItem } from './ipcHandlers.js';
 import { scanFolder } from './tasks/folderScanTask.js';
+import { SCAN_TARGET_EXTENSIONS } from './scanTargets.js';
 
 const PNG_1X1 = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n1cAAAAASUVORK5CYII=',
@@ -123,6 +125,48 @@ test('큰 CBZ는 전체 파일 버퍼를 할당하지 않고 스캔한다', asyn
     }
 });
 
+test('폴더 스캔은 dot-folder 안의 책 파일을 제외한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-hidden-folder-scan-'));
+    const libraryDir = path.join(root, 'library');
+    const hiddenDir = path.join(libraryDir, '.yacreaderlibrary');
+
+    try {
+        fs.mkdirSync(hiddenDir, { recursive: true });
+        fs.writeFileSync(path.join(libraryDir, 'Visible Book.cbz'), '');
+        fs.writeFileSync(path.join(hiddenDir, 'Hidden Book.cbz'), '');
+
+        const files = await scanFolder(libraryDir, {
+            sevenZExe: '',
+            skipArchiveExtraction: true,
+        });
+
+        assert.deepEqual(files.map(file => file.name), ['Visible Book.cbz']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('폴더 스캔 기본 대상 확장자에는 텍스트 파일이 포함된다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-folder-target-exts-'));
+    const libraryDir = path.join(root, 'library');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(path.join(libraryDir, 'Notes.txt'), 'memo');
+        fs.writeFileSync(path.join(libraryDir, 'Ignored.md'), 'memo');
+
+        const files = await scanFolder(libraryDir, {
+            sevenZExe: '',
+            skipArchiveExtraction: true,
+        });
+
+        assert.equal(SCAN_TARGET_EXTENSIONS.includes('.txt'), true);
+        assert.deepEqual(files.map(file => file.name), ['Notes.txt']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-native-scan-'));
     const libraryDir = path.join(root, 'library');
@@ -151,6 +195,126 @@ test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한�
         assert.equal(files[0].has_metadata, true);
         assert.match(files[0].cover, /^bookmanager-thumbnail:\/\/cache\//);
         assert.equal(fs.existsSync(files[0].thumb_path), true);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('폴더 스캔은 비동기 썸네일 인코더의 확장자로 썸네일을 저장한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-async-thumbnail-encoder-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const archivePath = path.join(libraryDir, 'Async Thumbnail.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(archivePath, '001.png', PNG_1X1);
+
+        const files = await scanFolder(libraryDir, {
+            thumbnailDir,
+            sevenZExe: '',
+            thumbnailEncoder: async imageBuffer => ({
+                buffer: imageBuffer,
+                extension: '.webp',
+            }),
+        });
+
+        assert.equal(files.length, 1);
+        assert.equal(path.extname(files[0].thumb_path), '.webp');
+        assert.equal(fs.existsSync(files[0].thumb_path), true);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('강제 메타데이터 최적화는 유효한 캐시가 있어도 DB 메타데이터를 갱신한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-force-metadata-cache-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const dbPath = path.join(root, 'library.db');
+    const archivePath = path.join(libraryDir, 'Force Metadata.cbz');
+    const cachedThumbnailPath = path.join(thumbnailDir, 'cached.png');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.mkdirSync(thumbnailDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(archivePath, '001.png', PNG_1X1);
+        await replaceZipEntry(
+            archivePath,
+            'ComicInfo.xml',
+            '<ComicInfo><Title>Forced Title</Title><Series>Forced Series</Series><Writer>Forced Writer</Writer><PageCount>12</PageCount></ComicInfo>',
+        );
+        fs.writeFileSync(cachedThumbnailPath, PNG_1X1);
+
+        const stat = fs.statSync(archivePath);
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: archivePath,
+            mtime: stat.mtimeMs / 1000,
+            size: stat.size,
+            ext: '.cbz',
+            title: '',
+            series: '',
+            writer: '',
+            thumb_path: cachedThumbnailPath,
+        });
+        await library.close();
+
+        const files = await scanFolder(libraryDir, {
+            dbPath,
+            thumbnailDir,
+            sevenZExe: '',
+            force: true,
+        });
+
+        assert.equal(files.length, 1);
+        assert.equal(files[0].title, 'Forced Title');
+        assert.equal(files[0].series, 'Forced Series');
+        const updatedLibrary = new LibraryDB({ dbPath });
+        try {
+            const updated = await updatedLibrary.getFileInfo(archivePath);
+            assert.equal(updated.title, 'Forced Title');
+            assert.equal(updated.series, 'Forced Series');
+            assert.equal(updated.writer, 'Forced Writer');
+            assert.equal(updated.pages, '12');
+        } finally {
+            await updatedLibrary.close();
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 스캔 시각 항목은 캐시가 없어도 썸네일을 추출한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-visual-item-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const dbPath = path.join(root, 'library.db');
+    const archivePath = path.join(libraryDir, 'Visual Book.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(archivePath, '001.png', PNG_1X1);
+
+        const library = new LibraryDB({ dbPath });
+        try {
+            const file = await extractLibraryScanVisualItem(archivePath, {
+                libraryDb: library,
+                thumbnailDir,
+                sevenZExe: '',
+                allowArchiveExtraction: true,
+            });
+
+            assert.equal(file?.path, archivePath);
+            assert.match(file.cover, /^bookmanager-thumbnail:\/\/cache\//);
+            assert.equal(fs.existsSync(file.thumb_path), true);
+            assert.equal((await library.getFileInfo(archivePath)).thumb_path, file.thumb_path);
+        } finally {
+            await library.close();
+        }
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

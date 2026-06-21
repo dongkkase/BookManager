@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
   clearApiCache: () => ipcRenderer.invoke('cache:clearApi'),
   clearDupCache: () => ipcRenderer.invoke('folder:clearDupCache'),
+  getLibraryScanStates: (folders) => ipcRenderer.invoke('folder:getLibraryScanStates', folders),
   updateFolderIndex: (folders, options) => ipcRenderer.invoke('folder:updateIndex', folders, options),
   startOrganizeTask: (options) => ipcRenderer.invoke('task:organize:start', options),
   startRenameTask: (options) => ipcRenderer.invoke('task:rename:start', options),

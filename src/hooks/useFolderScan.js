@@ -51,7 +51,8 @@ export function useFolderScan(t) {
   const scanFolder = useCallback(async (folderPath, options = {}) => {
     const { includeSubfolders = true, enableDupCheck = false } = options;
     const force = options.force === true;
-    const fastInitial = options.fastInitial === true && options.skipArchiveExtraction !== true;
+    const silent = options.silent === true;
+    const fastInitial = options.fastInitial === true && options.skipArchiveExtraction !== true && !silent;
 
     if (!folderPath) {
       setStatusMessage(t('folder.status.no_folder') || '스캔할 폴더를 선택하세요');
@@ -71,7 +72,7 @@ export function useFolderScan(t) {
 
     const scanPromise = (async () => {
       currentFolderRef.current = folderPath;
-      if (mountedRef.current) {
+      if (mountedRef.current && !silent) {
         setScanning(true);
         setScanProgress(0);
         setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
@@ -111,7 +112,8 @@ export function useFolderScan(t) {
             force: false,
             skipArchiveExtraction: false,
             suppressEvents: true,
-            reportTaskProgress: true,
+            background: true,
+            reportTaskProgress: false,
             reportFileReady: true,
           }).then(files => {
             if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
@@ -135,6 +137,8 @@ export function useFolderScan(t) {
           ...requestOptions,
           skipArchiveExtraction: options.skipArchiveExtraction === true,
           suppressEvents: options.suppressEvents === true,
+          reportTaskProgress: options.reportTaskProgress !== false,
+          reportFileReady: options.reportFileReady !== false,
         });
 
         if (!mountedRef.current) return files || [];
@@ -142,20 +146,22 @@ export function useFolderScan(t) {
           ...prev,
           [cacheKey]: files || [],
         }));
-        setScanProgress(100);
-        const count = files?.length || 0;
-        setStatusMessage(
-          t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
-        );
+        if (!silent) {
+          setScanProgress(100);
+          const count = files?.length || 0;
+          setStatusMessage(
+            t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
+          );
+        }
 
         return files || [];
       } catch (error) {
         console.error('폴더 스캔 실패:', error);
-        if (mountedRef.current) setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
+        if (mountedRef.current && !silent) setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
         return [];
       } finally {
         activeScansRef.current.delete(cacheKey);
-        if (mountedRef.current && activeScansRef.current.size === 0) setScanning(false);
+        if (mountedRef.current && !silent && activeScansRef.current.size === 0) setScanning(false);
       }
     })();
 
@@ -231,6 +237,15 @@ export function useFolderScan(t) {
     const handleFolderFileReady = (data) => {
       if (!data?.file?.path) return;
       if (data.folderPath && currentFolderRef.current !== data.folderPath) return;
+      if (data.file.cover) {
+        window.dispatchEvent(new CustomEvent('bookmanager:folder-thumbnail-ready', {
+          detail: {
+            src: data.file.cover,
+            name: data.file.name || data.file.filename || data.file.path,
+            path: data.file.path,
+          },
+        }));
+      }
       setFileDataCache(prev => {
         const targetKey = prev[data.cacheKey]
           ? data.cacheKey
@@ -268,6 +283,16 @@ export function useFolderScan(t) {
       }
     };
 
+    const handleTaskProgress = (data) => {
+      if (data?.task !== 'folder:scan') return;
+      if (data.progress !== undefined) {
+        setScanProgress(Math.max(0, Math.min(100, Number(data.progress) || 0)));
+      }
+      if (data.message) {
+        setStatusMessage(data.message);
+      }
+    };
+
     const handleScanComplete = (data) => {
       const { files, folderPath, cacheKey } = data || {};
       if (folderPath && files && cacheKey) {
@@ -291,13 +316,16 @@ export function useFolderScan(t) {
       setStatusMessage(message || (t('folder.status.error') || '스캔 중 오류 발생'));
     };
 
-    let removeFileReady, removeProgress, removeComplete, removeError;
+    let removeFileReady, removeProgress, removeTaskProgress, removeComplete, removeError;
 
     if (window.electronAPI?.onFolderFileReady) {
       removeFileReady = window.electronAPI.onFolderFileReady(handleFolderFileReady);
     }
     if (window.electronAPI?.onScanProgress) {
       removeProgress = window.electronAPI.onScanProgress(handleScanProgress);
+    }
+    if (window.electronAPI?.onTaskProgress) {
+      removeTaskProgress = window.electronAPI.onTaskProgress(handleTaskProgress);
     }
     if (window.electronAPI?.onScanComplete) {
       removeComplete = window.electronAPI.onScanComplete(handleScanComplete);
@@ -309,6 +337,7 @@ export function useFolderScan(t) {
     return () => {
       if (removeFileReady) removeFileReady();
       if (removeProgress) removeProgress();
+      if (removeTaskProgress) removeTaskProgress();
       if (removeComplete) removeComplete();
       if (removeError) removeError();
     };

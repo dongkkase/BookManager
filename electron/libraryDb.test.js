@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
+import { normalizeLibraryScanStateForRenderer, scanArchivePaths } from './ipcHandlers.js';
 
 test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-db-'));
@@ -47,6 +48,9 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
         });
         const updated = await library.getFileInfo('/Books/A.cbz');
         assert.equal(updated.mtime, 11);
+        assert.equal(updated.mod_date, 11);
+        assert.equal(updated.filepath, '/Books/A.cbz');
+        assert.equal(updated.file_size, 120);
         assert.equal(updated.title, 'A 1권 수정');
         assert.equal(updated.thumbnail, '/thumb/new.jpg');
         await library.close();
@@ -90,6 +94,35 @@ test('과도기 file_info, target_index, dup_match schema를 원본 schema로 �
     }
 });
 
+test('과도기 file_info filepath alias를 원본 files schema로 이관한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-filepath-migrate-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const old = new Database(dbPath);
+        old.exec(`
+            CREATE TABLE file_info (
+                filepath TEXT PRIMARY KEY, file_size INTEGER, ext TEXT, mod_date REAL,
+                meta_title TEXT, meta_volume TEXT, meta_chapter TEXT, meta_pages INTEGER,
+                meta_creator TEXT, thumbnail TEXT, series_name TEXT
+            );
+        `);
+        old.prepare('INSERT INTO file_info VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+            '/Books/Alias.cbz', 300, '.cbz', 30, 'Alias Title', '1', '', 42, 'Alias Writer', '/thumb/alias.jpg', 'Alias Series',
+        );
+        old.close();
+
+        const library = new LibraryDB({ dbPath });
+        const migrated = await library.getFileInfo('/Books/Alias.cbz');
+        assert.equal(migrated.series, 'Alias Series');
+        assert.equal(migrated.title, 'Alias Title');
+        assert.equal(migrated.file_size, 300);
+        assert.equal(migrated.thumbnail, '/thumb/alias.jpg');
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('대상 인덱스 교체는 신규·수정·삭제 파일 상태를 반영한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-index-'));
     try {
@@ -111,6 +144,205 @@ test('대상 인덱스 교체는 신규·수정·삭제 파일 상태를 반영�
         assert.deepEqual(rows.map(row => row.full_path).sort(), [first, added].sort());
         assert.equal(rows.find(row => row.full_path === first).size, 7);
         await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('대상 인덱스 증분 동기화는 추가·수정·삭제만 반영한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-sync-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const folder = path.join(root, 'Books');
+        fs.mkdirSync(folder);
+        const first = path.join(folder, 'A.cbz');
+        const second = path.join(folder, 'B.cbz');
+        fs.writeFileSync(first, 'a');
+        fs.writeFileSync(second, 'b');
+        const entryFor = filePath => {
+            const stat = fs.statSync(filePath);
+            return {
+                full_path: filePath,
+                target_folder: folder,
+                name: path.basename(filePath),
+                size: stat.size,
+                mtime: stat.mtimeMs,
+            };
+        };
+
+        const library = new LibraryDB({ dbPath });
+        const initial = await library.syncTargetIndex(folder, [entryFor(first), entryFor(second)]);
+        assert.equal(initial.addedCount, 2);
+        assert.equal(initial.updatedCount, 0);
+        assert.equal(initial.removedCount, 0);
+
+        const unchanged = await library.syncTargetIndex(folder, [entryFor(first), entryFor(second)]);
+        assert.equal(unchanged.addedCount, 0);
+        assert.equal(unchanged.updatedCount, 0);
+        assert.equal(unchanged.removedCount, 0);
+        assert.equal(unchanged.unchangedCount, 2);
+
+        fs.writeFileSync(first, 'updated');
+        const third = path.join(folder, 'C.cbz');
+        fs.writeFileSync(third, 'c');
+        const changed = await library.syncTargetIndex(folder, [entryFor(first), entryFor(third)]);
+        assert.equal(changed.addedCount, 1);
+        assert.equal(changed.updatedCount, 1);
+        assert.equal(changed.removedCount, 1);
+        const rows = await library.getTargetIndex(folder);
+        assert.deepEqual(rows.map(row => row.full_path).sort(), [first, third].sort());
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 스캔 상태를 저장하고 기본 상태를 조회한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-state-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const folder = path.join(root, 'Books');
+        const emptyFolder = path.join(root, 'Empty');
+        fs.mkdirSync(folder);
+        fs.mkdirSync(emptyFolder);
+        const library = new LibraryDB({ dbPath });
+        await library.saveLibraryScanState({
+            library_path: folder,
+            status: 'ready',
+            fingerprint: 'abc',
+            file_count: 3,
+            indexed_count: 3,
+            added_count: 1,
+            updated_count: 2,
+            removed_count: 0,
+            last_scanned_at: '2026-06-21T00:00:00.000Z',
+            last_checked_at: '2026-06-21T00:00:00.000Z',
+        });
+
+        const saved = await library.getLibraryScanState(folder);
+        assert.equal(saved.status, 'ready');
+        assert.equal(saved.file_count, 3);
+        assert.equal(saved.added_count, 1);
+
+        const states = await library.getLibraryScanStates([folder, emptyFolder]);
+        assert.equal(states.find(state => state.library_path === folder).fingerprint, 'abc');
+        assert.equal(states.find(state => state.library_path === emptyFolder).status, 'idle');
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 인덱싱 경로 수집은 dot-folder 안의 책 파일을 제외한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-hidden-folder-'));
+    const libraryDir = path.join(root, 'library');
+    const hiddenDir = path.join(libraryDir, '.yacreaderlibrary');
+
+    try {
+        fs.mkdirSync(hiddenDir, { recursive: true });
+        const visiblePath = path.join(libraryDir, 'Visible Book.cbz');
+        const hiddenPath = path.join(hiddenDir, 'Hidden Book.cbz');
+        fs.writeFileSync(visiblePath, '');
+        fs.writeFileSync(hiddenPath, '');
+
+        const paths = await scanArchivePaths(libraryDir);
+
+        assert.deepEqual(paths, [visiblePath]);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 인덱싱 경로 수집은 폴더 스캔과 같은 대상 확장자를 사용한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-target-exts-'));
+    const libraryDir = path.join(root, 'library');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        const expected = [
+            'Book.cbz',
+            'Comic.cbr',
+            'Archive.zip',
+            'Bundle.7z',
+            'Pack.cb7',
+            'Document.pdf',
+            'Novel.epub',
+            'Notes.txt',
+        ].map(name => path.join(libraryDir, name));
+        for (const filePath of expected) fs.writeFileSync(filePath, '');
+        fs.writeFileSync(path.join(libraryDir, 'Ignored.md'), '');
+
+        const paths = await scanArchivePaths(libraryDir);
+
+        assert.deepEqual(paths.sort(), expected.sort());
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 인덱싱 경로 수집 완료 콜백은 대상 파일에만 호출된다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-match-callback-'));
+    const libraryDir = path.join(root, 'library');
+    const hiddenDir = path.join(libraryDir, '.yacreaderlibrary');
+
+    try {
+        fs.mkdirSync(hiddenDir, { recursive: true });
+        const visiblePath = path.join(libraryDir, 'Visible Book.cbz');
+        const textPath = path.join(libraryDir, 'Notes.txt');
+        fs.writeFileSync(visiblePath, '');
+        fs.writeFileSync(textPath, '');
+        fs.writeFileSync(path.join(libraryDir, 'Ignored.md'), '');
+        fs.writeFileSync(path.join(hiddenDir, 'Hidden Book.cbz'), '');
+        const matched = [];
+
+        const paths = await scanArchivePaths(libraryDir, '', null, null, filePath => {
+            matched.push(filePath);
+        });
+
+        assert.deepEqual(paths.sort(), [visiblePath, textPath].sort());
+        assert.deepEqual(matched.sort(), [visiblePath, textPath].sort());
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 렌더러 상태는 fingerprint가 있으면 루트 mtime만으로 업데이트 필요 처리하지 않는다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-render-state-'));
+    const libraryDir = path.join(root, 'library');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        const state = normalizeLibraryScanStateForRenderer(libraryDir, {
+            status: 'ready',
+            fingerprint: 'stable',
+            root_mtime: 0,
+            last_scanned_at: '2026-06-21T00:00:00.000Z',
+            last_checked_at: '2026-06-21T00:00:00.000Z',
+        }, true);
+
+        assert.equal(state.changedSinceScan, false);
+        assert.equal(state.needsScan, false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 렌더러 상태는 중단된 스캔을 수동 갱신 대상으로 표시한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-cancel-state-'));
+    const libraryDir = path.join(root, 'library');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        const state = normalizeLibraryScanStateForRenderer(libraryDir, {
+            status: 'cancelled',
+            fingerprint: 'stable',
+            root_mtime: 0,
+            last_scanned_at: '2026-06-21T00:00:00.000Z',
+            last_checked_at: '2026-06-21T00:01:00.000Z',
+        }, true);
+
+        assert.equal(state.status, 'cancelled');
+        assert.equal(state.needsScan, true);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

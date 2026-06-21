@@ -82,3 +82,17 @@ test('취소된 작업 정리 직후 같은 창에서 새 작업을 시작할 �
     registry.finish(1, 'renamer', second);
     assert.equal(registry.hasActive(1), false);
 });
+
+test('같은 창의 같은 작업 ID가 겹쳐도 모두 취소한다', () => {
+    const registry = new TaskCancellationRegistry();
+    const first = registry.start(1, 'folder:scan');
+    const second = registry.start(1, 'folder:scan');
+
+    assert.equal(registry.cancel(1, 'folder:scan'), true);
+    assert.equal(first.shouldCancel(), true);
+    assert.equal(second.shouldCancel(), true);
+    registry.finish(1, 'folder:scan', first);
+    assert.equal(registry.hasActive(1), true);
+    registry.finish(1, 'folder:scan', second);
+    assert.equal(registry.hasActive(1), false);
+});

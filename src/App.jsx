@@ -27,12 +27,25 @@ import {
   shouldShowToast,
   toastIdentity,
 } from './toastPolicy';
+import {
+  hasMatchingLockScanItem,
+  mergeLockScanItem,
+  mergeLockScanQueueItem,
+} from './lockScanItems';
+import {
+  isLibraryIndexingPhase,
+  resolveEffectiveWorkingTab,
+  shouldCollectLibraryScanSlideItem,
+  shouldUseLibraryScanSlide,
+} from './appLockState';
 import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
 import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
 import workingAnimation from './images/rainbow cat remix.gif';
 import { fontVarsForConfig } from './fontPolicy';
 import './styles/App.css';
+
+const LIBRARY_SCAN_SLIDE_INTERVAL_MS = 900;
 
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
@@ -43,6 +56,8 @@ function App() {
   const [workingTab, setWorkingTab] = useState(null);
   const [toolbarStates, setToolbarStates] = useState({});
   const [statusStates, setStatusStates] = useState({});
+  const [lockThumbnails, setLockThumbnails] = useState([]);
+  const [lockThumbnailIndex, setLockThumbnailIndex] = useState(0);
   const [serverStatus, setServerStatus] = useState(null);
   const [updateInfo, setUpdateInfo] = useState({
     available: false,
@@ -53,16 +68,98 @@ function App() {
   const { t, language, changeLanguage } = useI18n(config);
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
-  const isAppLocked = Boolean(workingTab);
-  const isWorking = workingTab === activeTab;
+  const lockThumbnailsRef = useRef([]);
+  const libraryScanSlideActiveRef = useRef(false);
+  const lockScanQueueRef = useRef([]);
+  const lockScanQueueTimerRef = useRef(null);
+  const effectiveWorkingTab = useMemo(
+    () => resolveEffectiveWorkingTab(workingTab, statusStates, activeTab),
+    [activeTab, statusStates, workingTab],
+  );
+  const isAppLocked = Boolean(effectiveWorkingTab);
+  const isWorking = effectiveWorkingTab === activeTab;
+  const effectiveWorkingStatus = effectiveWorkingTab ? statusStates[effectiveWorkingTab] : null;
+  const isLibraryScanSlideActive = shouldUseLibraryScanSlide(effectiveWorkingTab, effectiveWorkingStatus || {});
+
+  const stopLockScanQueueTimer = useCallback(() => {
+    if (!lockScanQueueTimerRef.current) return;
+    window.clearInterval(lockScanQueueTimerRef.current);
+    lockScanQueueTimerRef.current = null;
+  }, []);
+
+  const displayLockScanItem = useCallback((item = {}) => {
+    const next = mergeLockScanItem(lockThumbnailsRef.current, item);
+    if (next === lockThumbnailsRef.current) return;
+    lockThumbnailsRef.current = next;
+    setLockThumbnails(next);
+  }, []);
+
+  const drainLockScanQueue = useCallback(() => {
+    if (!libraryScanSlideActiveRef.current) {
+      lockScanQueueRef.current = [];
+      stopLockScanQueueTimer();
+      return;
+    }
+    const [nextItem, ...restItems] = lockScanQueueRef.current;
+    if (!nextItem) {
+      stopLockScanQueueTimer();
+      return;
+    }
+    lockScanQueueRef.current = restItems;
+    displayLockScanItem(nextItem);
+    if (restItems.length === 0) stopLockScanQueueTimer();
+  }, [displayLockScanItem, stopLockScanQueueTimer]);
+
+  const startLockScanQueueTimer = useCallback(() => {
+    if (lockScanQueueTimerRef.current) return;
+    lockScanQueueTimerRef.current = window.setInterval(
+      drainLockScanQueue,
+      LIBRARY_SCAN_SLIDE_INTERVAL_MS,
+    );
+  }, [drainLockScanQueue]);
+
+  const pushLockScanItem = useCallback((item = {}) => {
+    if (!libraryScanSlideActiveRef.current) {
+      return;
+    }
+    const visibleItems = lockThumbnailsRef.current;
+    if (visibleItems.length === 0 && lockScanQueueRef.current.length === 0) {
+      displayLockScanItem(item);
+      return;
+    }
+    if (hasMatchingLockScanItem(visibleItems, item)) {
+      displayLockScanItem(item);
+      return;
+    }
+    const nextQueue = mergeLockScanQueueItem(lockScanQueueRef.current, item);
+    if (nextQueue === lockScanQueueRef.current) return;
+    lockScanQueueRef.current = nextQueue;
+    startLockScanQueueTimer();
+  }, [displayLockScanItem, startLockScanQueueTimer]);
+
+  useEffect(() => {
+    libraryScanSlideActiveRef.current = isLibraryScanSlideActive;
+    if (isLibraryScanSlideActive) return undefined;
+    lockScanQueueRef.current = [];
+    stopLockScanQueueTimer();
+    return undefined;
+  }, [isLibraryScanSlideActive, stopLockScanQueueTimer]);
+
+  useEffect(() => {
+    return () => stopLockScanQueueTimer();
+  }, [stopLockScanQueueTimer]);
+
+  useEffect(() => {
+    lockThumbnailsRef.current = lockThumbnails;
+  }, [lockThumbnails]);
 
   useEffect(() => {
     window.electronAPI?.setRuntimeState?.({
-      isWorking: Boolean(workingTab),
+      isWorking: isAppLocked,
       language,
       activeTab,
     });
-  }, [activeTab, language, workingTab]);
+  }, [activeTab, isAppLocked, language]);
 
   useEffect(() => {
     if (!config || didRestoreTab.current) return;
@@ -89,10 +186,66 @@ function App() {
       const { tabId, ...state } = event.detail || {};
       if (!tabId) return;
       setStatusStates(current => ({ ...current, [tabId]: state }));
+      if (shouldUseLibraryScanSlide(tabId, state)) {
+        libraryScanSlideActiveRef.current = true;
+      }
+      if (shouldCollectLibraryScanSlideItem(tabId, state)) {
+        pushLockScanItem({
+          path: state.currentItem || '',
+          name: state.currentItemName || state.currentItem || '',
+        });
+      }
     };
     window.addEventListener('bookmanager:status-state', handleStatusState);
     return () => window.removeEventListener('bookmanager:status-state', handleStatusState);
-  }, []);
+  }, [pushLockScanItem]);
+
+  useEffect(() => {
+    const handleThumbnailReady = (event) => {
+      const thumbnail = event.detail || {};
+      pushLockScanItem({
+        src: thumbnail.src || '',
+        name: thumbnail.name || thumbnail.path || '',
+        path: thumbnail.path || '',
+      });
+    };
+    window.addEventListener('bookmanager:folder-thumbnail-ready', handleThumbnailReady);
+    const removeFolderFileReady = window.electronAPI?.onFolderFileReady?.(data => {
+      const file = data?.file || {};
+      pushLockScanItem({
+        src: file.cover || '',
+        name: file.name || file.filename || file.path || '',
+        path: file.path || '',
+      });
+    });
+    return () => {
+      window.removeEventListener('bookmanager:folder-thumbnail-ready', handleThumbnailReady);
+      if (typeof removeFolderFileReady === 'function') removeFolderFileReady();
+    };
+  }, [pushLockScanItem]);
+
+  useEffect(() => {
+    if (!isAppLocked) {
+      lockThumbnailsRef.current = [];
+      lockScanQueueRef.current = [];
+      stopLockScanQueueTimer();
+      setLockThumbnails([]);
+      setLockThumbnailIndex(0);
+      return undefined;
+    }
+    if (isLibraryScanSlideActive) {
+      setLockThumbnailIndex(0);
+      return undefined;
+    }
+    if (lockThumbnails.length <= 1) {
+      setLockThumbnailIndex(0);
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setLockThumbnailIndex(current => (current + 1) % lockThumbnails.length);
+    }, 1600);
+    return () => window.clearInterval(timer);
+  }, [isAppLocked, isLibraryScanSlideActive, lockThumbnails.length, stopLockScanQueueTimer]);
 
   useEffect(() => {
     let isMounted = true;
@@ -322,19 +475,29 @@ function App() {
     phase: 'idle',
     canRun: false,
   };
-  const lockStatus = workingTab
-    ? statusStates[workingTab] || activeStatus
+  const lockStatus = effectiveWorkingTab
+    ? statusStates[effectiveWorkingTab] || activeStatus
     : activeStatus;
   const lockStatusMessage = translateKnownText(lockStatus.message, language);
   const lockMessage = lockStatusMessage || t('msg_processing_overlay') || t('status_wait');
   const lockCurrentItem = lockStatus.currentItem || '';
   const lockCurrentItemName = lockStatus.currentItemName || lockCurrentItem;
   const lockAriaLabel = [lockMessage, lockCurrentItem].filter(Boolean).join(' ');
+  const useLibraryScanSlide = shouldUseLibraryScanSlide(effectiveWorkingTab, lockStatus);
+  const lockIsLibraryIndexing = useLibraryScanSlide && isLibraryIndexingPhase(lockStatus);
+  const lockThumbnailItems = lockThumbnails.length > 0 && !lockIsLibraryIndexing
+    ? (useLibraryScanSlide
+      ? lockThumbnails.slice(-5)
+      : [...lockThumbnails.slice(lockThumbnailIndex), ...lockThumbnails.slice(0, lockThumbnailIndex)]
+        .slice(0, Math.min(8, lockThumbnails.length)))
+    : [];
   const runningServers = ['OPDS', 'WebDAV'].filter(type => serverStatus?.[type]?.running);
   const serverTooltip = runningServers
     .map(type => `${type}: ${serverStatus?.[type]?.url || ''}`)
     .join('\n');
-  const showRunButton = activeTab === 'organizer' || activeTab === 'renamer';
+  const showRunButton = activeTab === 'organizer'
+    || activeTab === 'renamer'
+    || (activeTab === 'folder' && ['executing', 'cancelling'].includes(activeStatus.phase));
   const isExecuting = activeStatus.phase === 'executing';
   const isCancelling = activeStatus.phase === 'cancelling';
   const showProgress = lockStatus.phase !== 'idle';
@@ -411,9 +574,88 @@ function App() {
         <div className="app-tab-panel" hidden={activeTab !== 'releases'}>
           <ReleaseTab config={config} t={t} />
         </div>
-        {isAppLocked && (
+        {isAppLocked && useLibraryScanSlide && (
+          <div className="app-library-scan-slide" role="status" aria-live="polite" aria-label={lockAriaLabel}>
+            <div className={`app-library-scan-stage ${lockIsLibraryIndexing ? 'is-indexing' : ''}`}>
+              {lockIsLibraryIndexing ? (
+                <div className="app-library-indexing-visual">
+                  <img className="app-library-indexing-image" src={workingAnimation} alt="" />
+                </div>
+              ) : lockThumbnailItems.length > 0 ? (
+                <div className="app-library-scan-rail">
+                  {lockThumbnailItems.map(item => (
+                    <div
+                      className={`app-library-scan-card ${item.src ? '' : 'is-placeholder'}`}
+                      key={item.key || item.src || item.path || item.name}
+                    >
+                      {item.src ? (
+                        <img
+                          className="app-library-scan-thumbnail"
+                          src={item.src}
+                          alt=""
+                        />
+                      ) : (
+                        <div className="app-library-scan-placeholder" aria-hidden="true">
+                          <FaIcon name="bookOpen" size={24} />
+                        </div>
+                      )}
+                      {item.name && (
+                        <span className="app-library-scan-caption" title={item.path || item.name}>
+                          {item.name}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="app-library-scan-empty">
+                  <span>{lockCurrentItemName || lockMessage}</span>
+                </div>
+              )}
+            </div>
+            <div className="app-library-scan-info">
+              <span className="app-library-scan-message">{lockMessage}</span>
+              {lockCurrentItem && (
+                <span className="app-library-scan-current" title={lockCurrentItem}>
+                  {lockCurrentItemName}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {isAppLocked && !useLibraryScanSlide && (
           <div className="app-lock-screen" role="status" aria-live="polite" aria-label={lockAriaLabel}>
-            <img src={workingAnimation} alt="" />
+            {lockThumbnailItems.length > 0 ? (
+              <div className="app-lock-thumbnail-stage">
+                <div className="app-lock-thumbnail-rail">
+                  {lockThumbnailItems.map(item => (
+                    <div
+                      className={`app-lock-thumbnail-frame ${item.src ? '' : 'is-placeholder'}`}
+                      key={item.key || item.src || item.path || item.name}
+                    >
+                      {item.src ? (
+                        <img
+                          className="app-lock-thumbnail"
+                          src={item.src}
+                          alt=""
+                        />
+                      ) : (
+                        <div className="app-lock-thumbnail-placeholder" aria-hidden="true">
+                          <FaIcon name="bookOpen" size={28} />
+                        </div>
+                      )}
+                      {item.name && (
+                        <span className="app-lock-thumbnail-caption" title={item.path || item.name}>
+                          {item.name}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <img className="app-lock-working-image" src={workingAnimation} alt="" />
+            )}
             <span>{lockMessage}</span>
             {lockCurrentItem && (
               <span className="app-lock-current-file" title={lockCurrentItem}>

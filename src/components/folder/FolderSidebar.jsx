@@ -5,12 +5,19 @@ import {
   chooseTreeRoot,
   joinTreePath,
 } from '../../folderTreeState';
+import {
+  isLibraryScanning,
+  libraryStatusClass,
+  libraryStatusText,
+  normalizeLibraryKey,
+  shouldShowLibrarySyncButton,
+} from '../../folderLibraryStatus';
 
 /**
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onRemoveLibrary, onAddFavorite, onRemoveFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onRemoveLibrary, onAddFavorite, onRemoveFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [roots, setRoots] = useState([]);
   const [folderCache, setFolderCache] = useState({});
@@ -139,10 +146,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
         </div>
       </div>
       <ul className="nav-list">
-        {libraries.length > 0 ? libraries.map((lib, idx) => (
+        {libraries.length > 0 ? libraries.map((lib, idx) => {
+          const scanState = libraryScanStateMap[normalizeLibraryKey(lib)];
+          const isSyncing = isLibraryScanning(scanState);
+          const showSyncButton = shouldShowLibrarySyncButton(scanState);
+          return (
           <li
             key={idx}
-            className={selectedSource === 'library' && (selectedLibrary === idx || selectedFolderPath === lib) ? 'selected' : ''}
+            className={`library-list-item ${selectedSource === 'library' && (selectedLibrary === idx || selectedFolderPath === lib) ? 'selected' : ''}`}
             onClick={() => {
               setSelectedSource('library');
               if (onSelectLibrary) onSelectLibrary(idx);
@@ -150,18 +161,43 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
               else if (onSelectFolder) onSelectFolder(lib);
             }}
             onContextMenu={(event) => onLibraryContextMenu?.(event, lib)}
-            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
           >
-            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={lib}>{lib.split(/[\\/]/).pop() || lib}</span>
-            <span
-              onClick={(e) => { e.stopPropagation(); onRemoveLibrary && onRemoveLibrary(lib); }}
-              style={{ cursor: 'pointer', color: '#ff6b6b' }}
-              title={t('folder.sidebar.remove_library')}
-            >
-              ✖
-            </span>
+            <div className="library-list-main" title={lib}>
+              <span className="library-list-name">{lib.split(/[\\/]/).pop() || lib}</span>
+              <span className={`library-scan-status ${libraryStatusClass(scanState)}`}>
+                {libraryStatusText(t, scanState)}
+              </span>
+            </div>
+            <div className="library-list-actions">
+              {showSyncButton && (
+                <button
+                  type="button"
+                  className="library-sync-btn"
+                  disabled={isSyncing}
+                  title={t('folder_library_manual_scan')}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSyncLibrary?.(lib, false);
+                  }}
+                >
+                  <FaIcon name="arrowRotateLeft" size={11} />
+                </button>
+              )}
+              <button
+                type="button"
+                className="library-remove-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRemoveLibrary?.(lib);
+                }}
+                title={t('folder.sidebar.remove_library')}
+              >
+                <FaIcon name="xmark" size={11} />
+              </button>
+            </div>
           </li>
-        )) : (
+          );
+        }) : (
           <li style={{ color: '#888', fontStyle: 'italic', padding: '4px 8px' }}>
             {t('folder.sidebar.empty_libraries')}
           </li>
@@ -251,7 +287,13 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             onSelectFolder && onSelectFolder(node.path);
             if (node.isFolder) toggleFolder(node.path);
           }}
-          onContextMenu={(event) => onFolderContextMenu?.(event, node.path, siblings.map(item => item.path))}
+          onContextMenu={(event) => {
+            if (node.isLibraryRoot) {
+              onLibraryContextMenu?.(event, node.path);
+              return;
+            }
+            onFolderContextMenu?.(event, node.path, siblings.map(item => item.path));
+          }}
         >
           <span
             className="folder-tree-expander"

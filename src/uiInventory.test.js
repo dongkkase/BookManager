@@ -148,6 +148,10 @@ test('자세히 보기 테이블도 빈 영역 드래그 선택 콜백을 받는
     ]);
 });
 
+test('폴더 탭은 앱 공통 하단 상태바와 중복되는 자체 상태바를 렌더링하지 않는다', () => {
+    assert.equal(sources.folder.includes('className="global-status-bar"'), false);
+});
+
 test('썸네일 모드는 커버 카드 오버레이 디자인을 사용한다', () => {
     assertInventory('thumbnailView', [
         ['썸네일 커버 카드 구조', 'thumbnail-cover-card'],
