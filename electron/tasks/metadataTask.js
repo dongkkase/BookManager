@@ -4,6 +4,12 @@ import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import {
+  listZipEntries,
+  readZipEntry,
+  replaceZipEntry,
+} from '../core/zipArchive.js';
+import { translate } from '../../src/utils/i18n.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
@@ -17,6 +23,10 @@ const XML_FIELDS = [
   'ComicZipAddedDate', 'ComicZipModifiedDate',
 ];
 
+function taskText(lang, key, values) {
+  return translate(key, lang || 'ko', values);
+}
+
 function naturalCompare(a, b) {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }
@@ -27,6 +37,11 @@ function isArchive(filePath) {
 
 function isImage(filePath) {
   return IMAGE_EXTS.has(path.extname(filePath).toLowerCase());
+}
+
+function isZipArchive(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext === '.zip' || ext === '.cbz';
 }
 
 async function expandInputPaths(paths) {
@@ -83,6 +98,7 @@ function runProcess(command, args, options = {}) {
 }
 
 async function listWith7z(filePath, sevenZExe) {
+  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
   const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath]);
   const entries = [];
   let current = null;
@@ -111,8 +127,28 @@ async function listWith7z(filePath, sevenZExe) {
 }
 
 async function extractArchiveFile(filePath, innerPath, sevenZExe) {
+  if (isZipArchive(filePath)) {
+    const buffer = await fsp.readFile(filePath);
+    const entry = listZipEntries(buffer).find(item => item.name === innerPath);
+    if (!entry) throw new Error(`${innerPath} not found`);
+    const extracted = readZipEntry(buffer, entry);
+    if (!extracted) throw new Error(`${innerPath} extraction failed`);
+    return extracted;
+  }
   const result = await runProcess(sevenZExe, ['e', '-so', filePath, innerPath]);
   return result.buffer;
+}
+
+async function listArchiveEntries(filePath, sevenZExe) {
+  if (isZipArchive(filePath)) {
+    const buffer = await fsp.readFile(filePath);
+    return listZipEntries(buffer).map(entry => ({
+      name: entry.name,
+      isDir: entry.isDirectory,
+      size: entry.uncompressedSize,
+    }));
+  }
+  return listWith7z(filePath, sevenZExe);
 }
 
 function decodeXml(text) {
@@ -187,7 +223,6 @@ function inferMetadataFromFilename(filePath, pageCount) {
 
 export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const archives = await expandInputPaths(paths);
   const items = [];
@@ -198,11 +233,11 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
     const filename = path.basename(filePath);
     onProgress?.({
       progress: Math.round((index / Math.max(archives.length, 1)) * 100),
-      message: options.lang === 'en' ? `[${index + 1}/${archives.length}] Analyzing: ${filename}` : `[${index + 1}/${archives.length}] 메타데이터 분석 중: ${filename}`,
+      message: taskText(options.lang, 'task_metadata_analyzing', { index: index + 1, total: archives.length, name: filename }),
     });
 
     try {
-      const entries = await listWith7z(filePath, sevenZExe);
+      const entries = await listArchiveEntries(filePath, sevenZExe);
       const imageEntries = entries
         .filter(entry => !entry.isDir && isImage(entry.name))
         .sort((a, b) => naturalCompare(a.name, b.name));
@@ -242,24 +277,33 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
     }
   }
 
-  onProgress?.({ progress: 100, message: options.lang === 'en' ? 'Analysis Done' : '분석 완료' });
+  onProgress?.({ progress: 100, message: taskText(options.lang, 'task_analysis_done') });
   return { items, skippedFiles };
 }
 
-export function metadataWriteSupport(filePath) {
+export function metadataWriteSupport(filePath, lang = 'ko') {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.rar' || ext === '.cbr') {
     return {
       supported: false,
-      message: 'RAR/CBR 메타데이터 저장에는 Windows용 WinRAR가 필요합니다. 현재 환경에서는 CBZ 또는 ZIP으로 변환한 후 저장하세요.',
+      message: taskText(lang, 'metadata_rar_write_unsupported'),
     };
   }
   return { supported: true, message: '' };
 }
 
-async function injectComicInfo(filePath, metadata, sevenZExe) {
-  const support = metadataWriteSupport(filePath);
+async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {
+  const support = metadataWriteSupport(filePath, lang);
   if (!support.supported) throw new Error(support.message);
+
+  if (isZipArchive(filePath)) {
+    await replaceZipEntry(filePath, 'ComicInfo.xml', createComicInfoXml(metadata), {
+      removeMatchingBasename: true,
+    });
+    return true;
+  }
+
+  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_Metadata_'));
   try {
@@ -279,7 +323,6 @@ async function injectComicInfo(filePath, metadata, sevenZExe) {
 
 export async function saveMetadataItems(items, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], skip: [], error: [] };
@@ -293,7 +336,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
     const item = targets[index];
     onProgress?.({
       progress: Math.round((index / Math.max(targets.length, 1)) * 100),
-      message: options.lang === 'en' ? `[${index + 1}/${targets.length}] Saving: ${item.name}` : `[${index + 1}/${targets.length}] 저장 중: ${item.name}`,
+      message: taskText(options.lang, 'task_metadata_saving', { index: index + 1, total: targets.length, name: item.name }),
     });
 
     const extension = path.extname(item.filepath);
@@ -304,13 +347,13 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
     );
     const sourceHoldingPath = `${item.filepath}.bookmanager.metadata.old`;
     try {
-      const support = metadataWriteSupport(item.filepath);
+      const support = metadataWriteSupport(item.filepath, options.lang);
       if (!support.supported) {
         stats.skip.push(`${item.name || item.filepath} - ${support.message}`);
         continue;
       }
       await fsp.copyFile(item.filepath, tempArchive);
-      await injectComicInfo(tempArchive, item.metadata || {}, sevenZExe);
+      await injectComicInfo(tempArchive, item.metadata || {}, sevenZExe, options.lang);
       if (options.shouldCancel?.()) {
         cancelled = true;
         break;
@@ -357,7 +400,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
   }
 
   if (!cancelled) {
-    onProgress?.({ progress: 100, message: options.lang === 'en' ? 'Done!' : '작업 완료!' });
+    onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
   }
   return { stats, cancelled };
 }

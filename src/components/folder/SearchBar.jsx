@@ -14,7 +14,7 @@ function SearchBar({ searchQuery = '', onSearchChange, t }) {
       <input
         type="text"
         className="folder-search-input"
-        placeholder={t('folder.toolbar.search') || '검색'}
+        placeholder={t('folder.toolbar.search')}
         value={searchQuery}
         onChange={(e) => onSearchChange(e.target.value)}
       />
@@ -22,7 +22,7 @@ function SearchBar({ searchQuery = '', onSearchChange, t }) {
         <button
           className="toolbar-btn"
           onClick={handleClear}
-          title={t('common.close') || '닫기'}
+          title={t('common.close')}
           style={{ padding: '4px 8px', fontSize: 'var(--font-md)' }}
         >
           ✕

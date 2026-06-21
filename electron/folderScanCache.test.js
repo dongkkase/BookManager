@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
+import { replaceZipEntry } from './core/zipArchive.js';
 import { scanFolder } from './tasks/folderScanTask.js';
 
 const PNG_1X1 = Buffer.from(
@@ -118,6 +119,39 @@ test('큰 CBZ는 전체 파일 버퍼를 할당하지 않고 스캔한다', asyn
         assert.equal(warnings.some(message => message.includes('Array buffer allocation failed')), false);
     } finally {
         console.warn = originalWarn;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-native-scan-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const archivePath = path.join(libraryDir, 'Native Book.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(archivePath, '001.png', PNG_1X1);
+        await replaceZipEntry(
+            archivePath,
+            'ComicInfo.xml',
+            '<ComicInfo><Title>Native Title</Title><Series>Native Series</Series><Volume>5</Volume></ComicInfo>',
+        );
+
+        const files = await scanFolder(libraryDir, {
+            thumbnailDir,
+            sevenZExe: '',
+        });
+
+        assert.equal(files.length, 1);
+        assert.equal(files[0].cache_source, 'archive');
+        assert.equal(files[0].title, 'Native Title');
+        assert.equal(files[0].series, 'Native Series');
+        assert.equal(files[0].has_metadata, true);
+        assert.match(files[0].cover, /^bookmanager-thumbnail:\/\/cache\//);
+        assert.equal(fs.existsSync(files[0].thumb_path), true);
+    } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
 });

@@ -10,6 +10,11 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const FORMAT_KEYS = ['none', 'zip', 'cbz', 'cbr', '7z'];
+const RENAMER_ARCHIVE_COMPRESSION_OPTIONS = [
+  { value: 'auto', labelKey: 'renamer_archive_compression_auto', fallback: '자동 (추천)' },
+  { value: 'fast', labelKey: 'renamer_archive_compression_fast', fallback: '빠름' },
+  { value: 'maximum', labelKey: 'renamer_archive_compression_maximum', fallback: '최대 압축' },
+];
 const FONT_SCALES = Array.from({ length: 16 }, (_, index) => 80 + index * 5);
 const DEFAULT_API_KEYS = {
   aladin: '',
@@ -33,6 +38,7 @@ function normalizeConfig(config) {
     webp_conversion: false,
     img_quality: 100,
     jpg_quality: 85,
+    renamer_archive_compression: 'auto',
     max_threads: Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 0.5)),
     play_sound: true,
     viewer_path: '',
@@ -52,7 +58,7 @@ function normalizeConfig(config) {
   }, navigator.hardwareConcurrency || 4);
 }
 
-function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, initialTab = 'basic' }) {
+function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, initialTab = 'basic', onLanguagePreviewChange }) {
   const [localConfig, setLocalConfig] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState('basic');
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -116,6 +122,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
   const handleLanguageChange = (value) => {
     setLocalConfig(prev => ({ ...prev, lang: value, language: value }));
+    onLanguagePreviewChange?.(value);
   };
 
   const handleSave = () => {
@@ -168,7 +175,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
         suffix: ` (${result?.changes || 0})`,
       });
     } catch (error) {
-      setMaintenanceMessage(`중복 캐시 초기화 실패: ${error.message}`);
+      setMaintenanceMessage(label('folder_clear_cache_failed', '중복 캐시 초기화 실패: {msg}').replace('{msg}', error.message));
     } finally {
       setMaintenanceBusy('');
     }
@@ -189,7 +196,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
         suffix: ` (${result?.total || 0})`,
       });
     } catch (error) {
-      setMaintenanceMessage(`인덱스 갱신 실패: ${error.message}`);
+      setMaintenanceMessage(label('setting_update_index_failed', '인덱스 갱신 실패: {msg}').replace('{msg}', error.message));
     } finally {
       setMaintenanceBusy('');
     }
@@ -213,7 +220,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
       setMaintenanceMessage(message);
       showToast?.({ key: 'msg_cache_cleared' });
     } catch (error) {
-      setMaintenanceMessage(`API 캐시 초기화 실패: ${error.message}`);
+      setMaintenanceMessage(label('meta_cache_clear_failed_detail', 'API 캐시 초기화 실패: {msg}').replace('{msg}', error.message));
     } finally {
       setMaintenanceBusy('');
     }
@@ -234,7 +241,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
         type="button"
         onClick={() => setShowSecrets(prev => ({ ...prev, [key]: !prev[key] }))}
         disabled={disabled}
-        aria-label={showSecrets[key] ? 'Hide secret' : 'Show secret'}
+        aria-label={showSecrets[key] ? label('secret_hide', '비밀번호 숨기기') : label('secret_show', '비밀번호 보기')}
       >
         <FaIcon name={showSecrets[key] ? 'eyeSlash' : 'eye'} />
       </button>
@@ -351,10 +358,26 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                 <span className="settings-label">{t('common_quality')}</span>
                 <div className="settings-slider-control">
                   <input type="range" min="1" max="100" value={localConfig.img_quality || 100} onChange={event => handleChange('img_quality', Number(event.target.value))} />
-                  <span>{localConfig.img_quality || 100}%{Number(localConfig.img_quality) === 100 ? ' (Lossless)' : ''}</span>
+                  <span>{localConfig.img_quality || 100}%{Number(localConfig.img_quality) === 100 ? ` (${label('quality_lossless', '무손실')})` : ''}</span>
                 </div>
               </div>
               <p className="settings-help">{t('tt_img_quality_desc')}</p>
+
+              <div className="settings-row">
+                <span className="settings-label">{label('renamer_archive_compression_lbl', '재압축 강도 :')}</span>
+                <select
+                  className="settings-select"
+                  value={localConfig.renamer_archive_compression || 'auto'}
+                  onChange={event => handleChange('renamer_archive_compression', event.target.value)}
+                >
+                  {RENAMER_ARCHIVE_COMPRESSION_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {label(option.labelKey, option.fallback)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="settings-help">{label('renamer_archive_compression_desc', '내부 파일명 변경에서 다시 압축할 때만 적용됩니다. 빠름은 속도 우선, 최대 압축은 용량 우선입니다.')}</p>
 
               {renderCheck('webp_conversion', t('webp'), label('webp_desc', '모든 이미지를 고효율 WebP 포맷으로 변환하여 압축자 호환성을 보장합니다.'))}
 
@@ -395,11 +418,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               </div>
               </fieldset>
               <fieldset className="settings-fieldset">
-              <legend>인덱스 및 캐시 관리</legend>
+              <legend>{label('settings_maintenance_title', '인덱스 및 캐시 관리')}</legend>
               <div className="settings-maintenance-actions">
                 <span>{label('setting_update_index_msg', '등록된 대상 폴더의 변경사항을 확인하여 인덱스를 최신화합니다.')}</span>
                 <button className="settings-action-btn" onClick={handleUpdateIndex} disabled={Boolean(maintenanceBusy)}>
-                  {maintenanceBusy === 'index' ? '갱신 중...' : label('setting_update_index', '인덱스 색인 갱신')}
+                  {maintenanceBusy === 'index' ? label('setting_update_index_busy', '갱신 중...') : label('setting_update_index', '인덱스 색인 갱신')}
                 </button>
               </div>
               <div className="settings-maintenance-actions">
@@ -461,13 +484,13 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               <textarea
                 className="settings-textarea"
                 value={localConfig.api_keys?.tag_rules || ''}
-                placeholder={'Shounen, 소년만화 -> 소년\nAction -> 액션'}
+                placeholder={label('tag_rules_placeholder', 'Shounen, 소년만화 -> 소년\nAction -> 액션')}
                 onChange={event => handleApiChange('tag_rules', event.target.value)}
               />
               <div className="settings-maintenance-actions">
                 <button className="settings-action-btn settings-danger-btn" onClick={handleClearApiCache} disabled={Boolean(maintenanceBusy)}>
                   <FaIcon name="trash" />
-                  {maintenanceBusy === 'api-cache' ? '초기화 중...' : label('btn_clear_cache', '검색 캐시 비우기')}
+                  {maintenanceBusy === 'api-cache' ? label('cache_clearing', '초기화 중...') : label('btn_clear_cache', '검색 캐시 비우기')}
                 </button>
               </div>
               </fieldset>

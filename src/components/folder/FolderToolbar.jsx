@@ -83,7 +83,7 @@ function FolderToolbar({
   const setMenu = menu => open => setOpenMenu(open ? menu : '');
 
   const groupLabels = {
-    none: '없음',
+    none: t('menu_none'),
     folder_path: t('menu_folder'),
     ext: t('col_ext'),
     series: t('col_series'),

@@ -122,6 +122,8 @@ const ALIASES = {
       remove_library: 'action_del_folder',
       add_favorite: 'action_fav_add',
       remove_favorite: 'action_fav_rem',
+      empty_libraries: 'folder_sidebar_empty_libraries',
+      empty_favorites: 'folder_sidebar_empty_favorites',
     },
     columns: {
       cover: 'col_cover',
@@ -225,6 +227,19 @@ export function translate(key, lang = currentLanguage, values) {
   const value = directValue ?? nestedValue ?? aliasValue;
   if (value === undefined) return key;
   return values === undefined ? value : formatTranslation(value, values);
+}
+
+export function translateKnownText(text, lang = currentLanguage) {
+  if (typeof text !== 'string' || text.length === 0) return text;
+  const safeLang = normalizeLanguage(lang);
+  for (const translations of Object.values(legacyTranslations)) {
+    for (const [key, value] of Object.entries(translations)) {
+      if (typeof value === 'string' && value === text) {
+        return translate(key, safeLang);
+      }
+    }
+  }
+  return text;
 }
 
 export { legacyTranslations };

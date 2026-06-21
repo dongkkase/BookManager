@@ -17,6 +17,10 @@ function formatToggleLabel(t, protocol, running) {
 }
 
 function SharingTab({ config, saveConfig, t, showToast }) {
+    const text = (key, fallback, values) => {
+        const translated = t?.(key, values);
+        return translated && translated !== key ? translated : fallback;
+    };
     const [opdsPort, setOpdsPort] = useState(config?.opds_port || 8080);
     const [opdsRunning, setOpdsRunning] = useState(false);
     const [webdavId, setWebdavId] = useState(config?.webdav_username || 'user');
@@ -27,7 +31,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     const [busyServer, setBusyServer] = useState(null);
     const [localIp, setLocalIp] = useState('127.0.0.1');
     const [logs, setLogs] = useState([
-        { type: 'INFO', message: '서버 로그가 준비되었습니다.' },
+        { type: 'INFO', message: text('tab_sharing_log_ready', '서버 로그가 준비되었습니다.') },
     ]);
     const logConsoleRef = useRef(null);
 
@@ -72,7 +76,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
 
         window.electronAPI?.getServerStatus?.()
             .then(applyStatus)
-            .catch(error => appendLog('ERROR', `서버 상태 확인 실패: ${error.message}`));
+            .catch(error => appendLog('ERROR', text('tab_sharing_status_failed', '서버 상태 확인 실패: {msg}', { msg: error.message })));
 
         const cleanup = window.electronAPI?.onServerLog?.(data => {
             if (data?.status) applyStatus(data.status);
@@ -94,7 +98,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         try {
             await saveConfig?.({ [key]: nextPort });
         } catch (error) {
-            appendLog('ERROR', `설정 저장 실패: ${error.message}`);
+            appendLog('ERROR', text('config_save_failed', '설정 저장 실패: {msg}', { msg: error.message }));
         }
         return nextPort;
     };
@@ -105,7 +109,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         try {
             await saveConfig?.({ [key]: nextValue });
         } catch (error) {
-            appendLog('ERROR', `설정 저장 실패: ${error.message}`);
+            appendLog('ERROR', text('config_save_failed', '설정 저장 실패: {msg}', { msg: error.message }));
         }
         return nextValue;
     };
@@ -113,10 +117,10 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     const handleCopyUrl = async url => {
         try {
             await navigator.clipboard.writeText(url);
-            appendLog('INFO', `URL이 복사되었습니다: ${url}`);
-            showToast?.('URL이 복사되었습니다.');
+            appendLog('INFO', text('tab_sharing_url_copied_detail', 'URL이 복사되었습니다: {url}', { url }));
+            showToast?.({ key: 'tab_sharing_url_copied' });
         } catch (error) {
-            appendLog('ERROR', `URL 복사 실패: ${error.message}`);
+            appendLog('ERROR', text('tab_sharing_url_copy_failed', 'URL 복사 실패: {msg}', { msg: error.message }));
         }
     };
 
@@ -135,7 +139,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             }
         } catch (error) {
             setOpdsRunning(false);
-            appendLog('ERROR', `OPDS 서버 처리 실패: ${error.message}`);
+            appendLog('ERROR', text('tab_sharing_opds_action_failed', 'OPDS 서버 처리 실패: {msg}', { msg: error.message }));
         } finally {
             setBusyServer(null);
         }
@@ -162,7 +166,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             }
         } catch (error) {
             setWebdavRunning(false);
-            appendLog('ERROR', `WebDAV 서버 처리 실패: ${error.message}`);
+            appendLog('ERROR', text('tab_sharing_webdav_action_failed', 'WebDAV 서버 처리 실패: {msg}', { msg: error.message }));
         } finally {
             setBusyServer(null);
         }
@@ -203,7 +207,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                             >
                                 <FaIcon name={opdsRunning ? 'stopCircle' : 'powerOff'} />
                                 {busyServer === 'OPDS'
-                                    ? '처리 중...'
+                                    ? t('tab_sharing_processing')
                                     : formatToggleLabel(t, 'OPDS', opdsRunning)}
                             </button>
                             <div className="sharing-spacer" />
@@ -260,7 +264,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                                     className="sharing-btn-pw-eye"
                                     onClick={() => setWebdavPwVisible(current => !current)}
                                     disabled={webdavRunning}
-                                    aria-label={webdavPwVisible ? '비밀번호 숨기기' : '비밀번호 보기'}
+                                    aria-label={webdavPwVisible ? t('secret_hide') : t('secret_show')}
                                 >
                                     <FaIcon name={webdavPwVisible ? 'eye' : 'eyeSlash'} />
                                 </button>
@@ -294,7 +298,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                             >
                                 <FaIcon name={webdavRunning ? 'stopCircle' : 'powerOff'} />
                                 {busyServer === 'WebDAV'
-                                    ? '처리 중...'
+                                    ? t('tab_sharing_processing')
                                     : formatToggleLabel(t, 'WebDAV', webdavRunning)}
                             </button>
                             <div className="sharing-spacer" />

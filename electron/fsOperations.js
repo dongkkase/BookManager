@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { t as i18nT } from './utils/i18n.js';
 
 function appendRenameHistory(history, mapping) {
   if (Object.keys(mapping).length === 0) return history;
@@ -22,18 +23,18 @@ export function executeMultiRename(renameMap, history = []) {
   for (const [oldPath, newPath] of Object.entries(renameMap || {})) {
     try {
       if (!fs.existsSync(oldPath)) {
-        errors.push(`${path.basename(oldPath)}: 원본 파일이 없습니다.`);
+        errors.push(i18nT('fs_original_missing', [path.basename(oldPath)]));
         continue;
       }
       if (fs.existsSync(newPath) && oldPath.toLowerCase() !== newPath.toLowerCase()) {
-        errors.push(`${path.basename(newPath)}: 이미 동일한 파일명이 존재합니다.`);
+        errors.push(i18nT('fs_name_exists', [path.basename(newPath)]));
         continue;
       }
       fs.renameSync(oldPath, newPath);
       actualMapping[newPath] = oldPath;
       successCount++;
     } catch (error) {
-      errors.push(`${path.basename(oldPath)} 변경 실패: ${error.message}`);
+      errors.push(i18nT('fs_rename_failed', [path.basename(oldPath), error.message]));
     }
   }
 
@@ -51,7 +52,7 @@ export function undoRename(history = []) {
       success: false,
       successCount: 0,
       errors: [],
-      message: '되돌릴 이력이 없습니다.',
+      message: i18nT('fs_undo_empty'),
       history,
     };
   }
@@ -65,16 +66,16 @@ export function undoRename(history = []) {
     if (fs.existsSync(currentPath)) {
       try {
         if (fs.existsSync(oldPath)) {
-          errors.push(`${path.basename(oldPath)}이(가) 이미 존재합니다.`);
+          errors.push(i18nT('fs_restore_exists', [path.basename(oldPath)]));
           continue;
         }
         fs.renameSync(currentPath, oldPath);
         successCount++;
       } catch (error) {
-        errors.push(`${path.basename(currentPath)} 복구 실패: ${error.message}`);
+        errors.push(i18nT('fs_restore_failed', [path.basename(currentPath), error.message]));
       }
     } else {
-      errors.push(`${path.basename(currentPath)} 파일을 찾을 수 없습니다.`);
+      errors.push(i18nT('fs_file_missing', [path.basename(currentPath)]));
     }
   }
 
@@ -111,7 +112,7 @@ export function executeLibraryMove(movePlans = []) {
             fs.unlinkSync(dest);
           }
         } catch (_error) {
-          errors.push(`기존 파일 삭제 실패: ${path.basename(dest)}`);
+          errors.push(i18nT('fs_delete_existing_failed', [path.basename(dest)]));
           continue;
         }
       } else if (choice === 'rename') {
@@ -150,7 +151,7 @@ export function executeLibraryMove(movePlans = []) {
         }
       }
     } catch (error) {
-      errors.push(`${path.basename(src)} 이동 실패: ${error.message}`);
+      errors.push(i18nT('fs_move_failed', [path.basename(src), error.message]));
     }
   }
 

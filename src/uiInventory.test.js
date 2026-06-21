@@ -14,6 +14,7 @@ const sources = {
     renamer: fs.readFileSync(new URL('./tabs/RenamerTab.jsx', import.meta.url), 'utf8'),
     settings: fs.readFileSync(new URL('./components/SettingsModal.jsx', import.meta.url), 'utf8'),
     sharing: fs.readFileSync(new URL('./tabs/SharingTab.jsx', import.meta.url), 'utf8'),
+    ipcHandlers: fs.readFileSync(new URL('../electron/ipcHandlers.js', import.meta.url), 'utf8'),
 };
 
 function assertInventory(sourceName, controls) {
@@ -24,6 +25,12 @@ function assertInventory(sourceName, controls) {
 }
 
 test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
+    assertInventory('app', [
+        ['설정 기반 언어 동기화', 'useI18n(config)'],
+    ]);
+    assertInventory('ipcHandlers', [
+        ['설정 저장 시 메인 프로세스 언어 갱신', 'setLanguage(nextLang)'],
+    ]);
     assertInventory('folder', [
         ['폴더 검색', 'value={searchQuery}'],
         ['폴더/파일 단일 이름 변경', 'window.prompt'],
@@ -67,6 +74,7 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
         ['폰트', "localConfig.font_family || 'Default'"],
         ['폰트 배율', 'localConfig.font_scale || 100'],
         ['출력 포맷', "localConfig.target_format || 'none'"],
+        ['내부 파일명 변경 재압축 강도', "localConfig.renamer_archive_compression || 'auto'"],
         ['AI provider', "localConfig.api_keys?.ai_provider || 'Gemini'"],
     ]);
     assertInventory('folderToolbar', [
@@ -87,6 +95,25 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
         ['메타데이터 검색 API', 'value={apiSource}'],
         ['메타데이터 combo', "field.type === 'select'"],
         ['API 검색 다이얼로그 API', 'value={dialogApi}'],
+    ]);
+});
+
+test('내부 파일명 변경 리스트는 키보드 이동과 대상 삭제를 지원한다', () => {
+    assertInventory('renamer', [
+        ['대상 압축 파일 리스트 키보드 핸들러', 'handleArchiveTableKeyDown'],
+        ['내부 파일 리스트 키보드 핸들러', 'handleInnerTableKeyDown'],
+        ['대상 압축 파일 리스트 포커스', 'ref={archiveTableRef}'],
+        ['내부 파일 리스트 포커스', 'ref={innerTableRef}'],
+        ['방향키 아래 이동', "event.key === 'ArrowDown'"],
+        ['대상 압축 파일 Delete 삭제', "event.key === 'Delete'"],
+        ['sticky 헤더 고려 선택 행 스크롤', 'scrollTableRowIntoView'],
+    ]);
+});
+
+test('내부 파일명 변경 대상 리스트는 출력 포맷 변경 배지를 표시한다', () => {
+    assertInventory('renamer', [
+        ['대상 압축 파일 포맷 변경 배지 계산', 'archiveChangeBadges(file, config)'],
+        ['대상 압축 파일 포맷 변경 배지 클래스', 'renamer-format-badge'],
     ]);
 });
 

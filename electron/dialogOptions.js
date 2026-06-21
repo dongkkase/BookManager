@@ -1,4 +1,5 @@
 import { normalizeNativePath, normalizeNativePaths } from './pathPolicy.js';
+import { getCurrentLanguage, translate } from '../src/utils/i18n.js';
 
 export const ARCHIVE_FILTER = Object.freeze({
     name: 'Archive files',
@@ -7,14 +8,14 @@ export const ARCHIVE_FILTER = Object.freeze({
 
 export function createFolderDialogOptions(title) {
     return {
-        title: title || '폴더 선택',
+        title: title || translate('dialog_select_folder', getCurrentLanguage()),
         properties: ['openDirectory'],
     };
 }
 
 export function createArchiveDialogOptions(title) {
     return {
-        title: title || '파일 선택',
+        title: title || translate('dialog_select_file', getCurrentLanguage()),
         properties: ['openFile', 'multiSelections'],
         filters: [ARCHIVE_FILTER],
     };

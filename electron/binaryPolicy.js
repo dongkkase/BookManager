@@ -5,6 +5,8 @@ const TOOL_ALIASES = {
     '7za': ['7za', '7z'],
     '7z': ['7z', '7za'],
     cwebp: ['cwebp'],
+    cjpeg: ['cjpeg'],
+    djpeg: ['djpeg'],
     pngquant: ['pngquant'],
     jpegtran: ['jpegtran'],
 };

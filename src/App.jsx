@@ -11,6 +11,7 @@ import { FaIcon } from './components/FaIcon';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
+import { translateKnownText } from './utils/i18n';
 import {
   ISSUE_URL,
   RELEASES_URL,
@@ -49,7 +50,7 @@ function App() {
     url: '',
   });
   const { config, saveConfig: setConfig } = useConfig();
-  const { t, language, changeLanguage } = useI18n();
+  const { t, language, changeLanguage } = useI18n(config);
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
   const isAppLocked = Boolean(workingTab);
@@ -250,19 +251,23 @@ function App() {
 
   const handleSettingsClose = useCallback(async (updatedConfig) => {
     setShowSettings(false);
+    if (!updatedConfig) {
+      const savedLang = config?.language || config?.lang || 'ko';
+      await changeLanguage(savedLang);
+      return;
+    }
     if (updatedConfig) {
+      const requestedLang = updatedConfig.language || updatedConfig.lang;
+      if (requestedLang) await changeLanguage(requestedLang);
       const savedConfig = await setConfig(updatedConfig);
       const effects = settingsEffects(config || {}, savedConfig || updatedConfig);
-      const nextLang = savedConfig?.language || savedConfig?.lang || updatedConfig.language || updatedConfig.lang;
+      const nextLang = savedConfig?.language || savedConfig?.lang || requestedLang;
       if (nextLang) await changeLanguage(nextLang);
       if (effects.resetTaskTabs) {
         window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
           detail: { tabs: ['organizer', 'renamer', 'metadata'] },
         }));
-        const resetMessage = t('msg_settings_changed_clear');
-        showToast(resetMessage && resetMessage !== 'msg_settings_changed_clear'
-          ? resetMessage
-          : '설정 변경으로 작업 목록을 초기화했습니다.');
+        showToast({ key: 'msg_settings_changed_clear' });
       }
       if (effects.librariesChanged) {
         setActiveTab('folder');
@@ -293,6 +298,12 @@ function App() {
     }
   }, [changeLanguage, config, setConfig, showToast, t]);
 
+  const handleSettingsLanguagePreview = useCallback((nextLanguage) => {
+    changeLanguage(nextLanguage).catch(error => {
+      console.error('언어 미리보기 적용 실패:', error);
+    });
+  }, [changeLanguage]);
+
   const translatedTabs = TABS.map(tab => ({
     ...tab,
     label: t(tab.labelKey),
@@ -314,7 +325,8 @@ function App() {
   const lockStatus = workingTab
     ? statusStates[workingTab] || activeStatus
     : activeStatus;
-  const lockMessage = lockStatus.message || t('msg_processing_overlay') || t('status_wait');
+  const lockStatusMessage = translateKnownText(lockStatus.message, language);
+  const lockMessage = lockStatusMessage || t('msg_processing_overlay') || t('status_wait');
   const lockCurrentItem = lockStatus.currentItem || '';
   const lockCurrentItemName = lockStatus.currentItemName || lockCurrentItem;
   const lockAriaLabel = [lockMessage, lockCurrentItem].filter(Boolean).join(' ');
@@ -419,7 +431,7 @@ function App() {
               <FaIcon name="towerBroadcast" size={14} />
             </span>
           )}
-          <span className="app-status-message">{lockStatus.message || t('status_wait')}</span>
+          <span className="app-status-message">{lockStatusMessage || t('status_wait')}</span>
           {showProgress && (
             <div className="app-progress">
               <div className="app-progress-fill" style={{ width: `${lockStatus.progress}%` }} />
@@ -443,6 +455,7 @@ function App() {
           config={config} 
           initialTab={settingsInitialTab}
           onClose={handleSettingsClose}
+          onLanguagePreviewChange={handleSettingsLanguagePreview}
           t={t}
           showToast={showToast}
         />

@@ -3,6 +3,12 @@ import path from 'path';
 import os from 'os';
 import { resolveConfigPath } from './dataPaths.js';
 
+const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
+
+function normalizeLanguage(value, fallback = 'ko') {
+  return SUPPORTED_LANGUAGES.has(value) ? value : fallback;
+}
+
 export class ConfigManager {
   constructor(userDataPath, executableDir, options = {}) {
     this.userDataPath = userDataPath;
@@ -54,7 +60,7 @@ export class ConfigManager {
   normalizeConfig(data = {}) {
     const defaults = this.getDefaultConfig();
     const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-    const lang = raw.language || raw.lang || defaults.language;
+    const lang = normalizeLanguage(raw.language || raw.lang, defaults.language);
     const libraries = this.normalizePathList([
       ...(raw.libraries || []),
       ...(raw.dup_check_folders || []),
@@ -100,6 +106,7 @@ export class ConfigManager {
       webp_conversion: false,
       img_quality: 100,
       jpg_quality: 85,
+      renamer_archive_compression: 'auto',
       max_threads: defaultThreads,
       play_sound: true,
       viewer_path: '',
@@ -184,9 +191,14 @@ export class ConfigManager {
 
   saveConfig(configData) {
     try {
+      const requestedLang = configData?.language || configData?.lang;
       const nextConfig = this.normalizeConfig({
         ...(this.config || {}),
         ...(configData || {}),
+        ...(requestedLang ? {
+          lang: requestedLang,
+          language: requestedLang,
+        } : {}),
         api_keys: {
           ...(this.config?.api_keys || {}),
           ...(configData?.api_keys || {}),

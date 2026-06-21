@@ -321,7 +321,7 @@ const FileTableView = forwardRef(({
           className="dup-cell"
           title={file.duplicate_matches?.map(match => `${match.name} (${match.ratio}%)`).join('\n') || ''}
         >
-          {file.dup_count > 0 ? `${file.dup_count}개 / ${file.max_ratio}%` : ''}
+          {file.dup_count > 0 ? t('dup_count_format', [file.dup_count, file.max_ratio]) : ''}
         </td>
       );
     }
@@ -379,7 +379,7 @@ const FileTableView = forwardRef(({
                 <span
                   className="file-table-header-grip"
                   onMouseDown={event => startColumnReorder(event, col)}
-                  title="컬럼 순서 변경"
+                  title={t('column_reorder')}
                 >
                   <FaIcon name="grip-vertical" size={10} />
                 </span>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatTranslation, legacyTranslations, translate } from './utils/i18n.js';
+import { formatTranslation, legacyTranslations, translate, translateKnownText } from './utils/i18n.js';
 
 test('인덱스 및 순차 자리표시자에 동적 값을 삽입한다', () => {
     assert.equal(formatTranslation('{0}개 성공, {1}개 실패', [3, 1]), '3개 성공, 1개 실패');
@@ -34,4 +34,10 @@ test('named placeholder와 반복 placeholder를 모두 치환한다', () => {
         formatTranslation('{count}개 중 {count}개 완료: {msg}', { count: 2, msg: '완료' }),
         '2개 중 2개 완료: 완료',
     );
+});
+
+test('이미 표시 중인 번역 문자열을 현재 언어 문구로 다시 해석한다', () => {
+    assert.equal(translateKnownText(legacyTranslations.ko.status_wait, 'en'), legacyTranslations.en.status_wait);
+    assert.equal(translateKnownText(legacyTranslations.en.status_wait, 'ja'), legacyTranslations.ja.status_wait);
+    assert.equal(translateKnownText('사용자 입력 문자열', 'en'), '사용자 입력 문자열');
 });

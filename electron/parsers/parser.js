@@ -2,6 +2,8 @@ import path from 'path';
 
 // difflib is not a built-in Node.js module, so we implement a simple similarity function
 function getSimilarity(a, b) {
+  a = String(a || '').normalize('NFC');
+  b = String(b || '').normalize('NFC');
   const aComp = a.replace(/[\[\(].*?[\]\)]/g, '').replace(/[a-zA-Z]/g, '').replace(/\s/g, '');
   const bComp = b.replace(/[\[\(].*?[\]\)]/g, '').replace(/[a-zA-Z]/g, '').replace(/\s/g, '');
   if (!aComp || !bComp) {
@@ -52,7 +54,7 @@ function sequenceMatcher(a, b) {
 }
 
 export function cleanDisplayTitle(text) {
-  let cleaned = String(text);
+  let cleaned = String(text).normalize('NFC');
   cleaned = cleaned.replace(
     /[\[\(](번외편?|외전|스핀오프|특별편?|단편|합본)[\]\)]/g,
     ' $1 '
@@ -89,7 +91,7 @@ export function cleanDisplayTitle(text) {
 }
 
 export function extractCoreTitle(text) {
-  let cleaned = cleanDisplayTitle(text);
+  let cleaned = cleanDisplayTitle(String(text).normalize('NFC'));
   const delimiterRegex = /(\d{3,4}\s*px|\d+\s*(?:권|화|부(?!터))?\s*[~-]\s*\d+|\d+\s*(?:권|화|부(?!터)|화씩)|완결|\s완(\s|$))/i;
   const match = cleaned.match(delimiterRegex);
   if (match && match.index > 0) {
@@ -120,6 +122,7 @@ export function extractCoreTitle(text) {
 }
 
 export function isGarbageFolderName(text) {
+  text = String(text || '').normalize('NFC');
   const textLower = text.toLowerCase();
   if (textLower.includes('gigafile') || textLower.includes('down')) {
     return true;
@@ -138,16 +141,21 @@ export function isGarbageFolderName(text) {
 }
 
 export function resolveTitles(filepath, innerName = '') {
+  const resolvedPath = path.resolve(String(filepath || '')).normalize('NFC');
   const p = {
-    stem: path.basename(filepath, path.extname(filepath)),
-    parent: { name: path.dirname(filepath) ? path.basename(path.dirname(filepath)) : '' },
+    stem: path.basename(resolvedPath, path.extname(resolvedPath)),
+    parent: { name: path.dirname(resolvedPath) ? path.basename(path.dirname(resolvedPath)) : '' },
     parents: (() => {
-      const dir = path.dirname(filepath);
+      const dir = path.dirname(resolvedPath);
       const parents = [];
       let current = dir;
-      while (current && current !== path.parse(current).root) {
-        parents.push({ name: path.basename(current) });
-        current = path.dirname(current);
+      const root = path.parse(current).root;
+      while (current && current !== root) {
+        const parentName = path.basename(current);
+        if (parentName) parents.push({ name: parentName });
+        const next = path.dirname(current);
+        if (!next || next === current) break;
+        current = next;
       }
       return parents;
     })()
@@ -275,8 +283,10 @@ export function fixEncoding(text) {
 }
 
 export function formatLeafName(parentCore, leafName, index, totalItems, lang = 'ko') {
+  parentCore = String(parentCore || '').normalize('NFC');
   const pad = Math.max(2, String(totalItems).length);
   let leafClean = String(leafName)
+    .normalize('NFC')
     .replace(/\.(zip|cbz|cbr|rar|7z)$/i, '')
     .trim();
 

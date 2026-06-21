@@ -4,7 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { setupIPCHandlers } from './ipcHandlers.js';
 import { ConfigManager } from './configManager.js';
-import { setupI18n } from './utils/i18n.js';
+import { setupI18n, t as i18nT } from './utils/i18n.js';
 import { resolveWindowState, serializeWindowState } from './windowState.js';
 import { createExitDialogOptions, shouldProceedWithExit } from './exitPolicy.js';
 import { getSharingServerStatus, stopAllSharingServers } from './servers/sharingServers.js';
@@ -262,7 +262,7 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `${APP_NAME} 열기`,
+      label: i18nT('tray_open_app', [APP_NAME]),
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -272,7 +272,7 @@ function createTray() {
     },
     { type: 'separator' },
     {
-      label: '종료',
+      label: i18nT('tray_quit'),
       click: () => {
         app.quit();
       },
@@ -308,7 +308,7 @@ app.on('before-quit', async event => {
 
     event.preventDefault();
     try {
-        await stopAllSharingServers();
+        await stopAllSharingServers(undefined, configManager?.getConfig?.() || {});
     } finally {
         sharingServersStopped = true;
         app.quit();

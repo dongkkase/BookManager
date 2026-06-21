@@ -9,8 +9,12 @@ export const SUPPORTED_ARCHIVE_EXTENSIONS = Object.freeze([
 const SUPPORTED_EXTENSION_SET = new Set(SUPPORTED_ARCHIVE_EXTENSIONS);
 
 export function isSupportedArchivePath(filePath) {
-    const match = String(filePath || '').toLowerCase().match(/\.[^./\\]+$/);
-    return Boolean(match && SUPPORTED_EXTENSION_SET.has(match[0]));
+    const normalized = String(filePath || '')
+        .normalize('NFC')
+        .replace(/[\s"'“”‘’\u200b-\u200f\u202a-\u202e\u2060\ufeff]+$/giu, '')
+        .toLowerCase();
+    const match = normalized.match(/\.[^./\\]+$/);
+    return Boolean(match && SUPPORTED_EXTENSION_SET.has(match[0].trim()));
 }
 
 export function classifyDroppedEntries(entries = []) {

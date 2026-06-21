@@ -1,6 +1,10 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
+  faAngleDown,
+  faAngleUp,
+  faAnglesDown,
+  faAnglesUp,
   faArrowRotateLeft,
   faBookOpen,
   faBoxArchive,
@@ -49,6 +53,14 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
+  angleDown: faAngleDown,
+  angleUp: faAngleUp,
+  anglesDown: faAnglesDown,
+  anglesUp: faAnglesUp,
+  'angle-down': faAngleDown,
+  'angle-up': faAngleUp,
+  'angles-down': faAnglesDown,
+  'angles-up': faAnglesUp,
   folder: faFolder,
   folderOpen: faFolderOpen,
   folderMinus: faFolderMinus,

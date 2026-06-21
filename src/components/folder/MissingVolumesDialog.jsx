@@ -17,11 +17,11 @@ export function MissingVolumesDialog({ missingData = [], onClose, onGoToFolder, 
         onMouseDown={event => event.stopPropagation()}
       >
         <div className="dialog-titlebar">
-          <span id="missing-volumes-title">▣ {t?.('tf_dlg_missing_title') || '누락 권수 확인'}</span>
-          <button aria-label={t?.('btn_close') || '닫기'} onClick={onClose}>×</button>
+          <span id="missing-volumes-title">▣ {t?.('tf_dlg_missing_title')}</span>
+          <button aria-label={t?.('btn_close')} onClick={onClose}>×</button>
         </div>
         <div className="missing-dialog-desc">
-          {t?.('tf_dlg_missing_desc') || '다음 시리즈들에 누락된 권/화가 발견되었습니다:'}
+          {t?.('tf_dlg_missing_desc')}
         </div>
 
         <div className="missing-list">
@@ -41,7 +41,7 @@ export function MissingVolumesDialog({ missingData = [], onClose, onGoToFolder, 
                   {t?.('msg_missing_prefix', [missingStr]) || missingStr}
                 </div>
                 <button onClick={() => onGoToFolder(item.folder_path)}>
-                  {t?.('tf_btn_move') || '이동'}
+                  {t?.('tf_btn_move')}
                 </button>
               </div>
             );

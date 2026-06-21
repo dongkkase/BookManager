@@ -11,6 +11,11 @@ import {
     parseComicInfo,
     saveMetadataItems,
 } from './tasks/metadataTask.js';
+import {
+    listZipEntries,
+    readZipEntry,
+    replaceZipEntry,
+} from './core/zipArchive.js';
 
 function find7z() {
     for (const candidate of ['/usr/local/bin/7z', '/opt/homebrew/bin/7z', '7z', '7za']) {
@@ -55,9 +60,42 @@ test('ComicInfo XML parsing is case insensitive and preserves added date', () =>
 test('RAR과 CBR 메타데이터 쓰기 제한을 명확히 안내한다', () => {
     assert.equal(metadataWriteSupport('book.rar').supported, false);
     assert.equal(metadataWriteSupport('BOOK.CBR').supported, false);
-    assert.match(metadataWriteSupport('book.rar').message, /WinRAR/);
     assert.match(metadataWriteSupport('book.rar').message, /CBZ|ZIP/);
     assert.equal(metadataWriteSupport('book.cbz').supported, true);
+});
+
+test('CBZ 메타데이터 분석과 저장은 외부 7z 없이 처리한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-native-'));
+    try {
+        const source = path.join(root, '작품명 02권.cbz');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '001.jpg', Buffer.from('cover'));
+        await replaceZipEntry(source, 'ComicInfo.xml', createComicInfoXml({
+            Series: '기존 작품',
+            Title: '기존 제목',
+        }));
+
+        const analyzed = await analyzeMetadataInputs([source], {});
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].metadata.Series, '기존 작품');
+        assert.equal(analyzed.items[0].hasComicInfo, true);
+        assert.equal(analyzed.items[0].pageCount, 1);
+
+        analyzed.items[0].metadata.Series = '변경된 작품';
+        const saved = await saveMetadataItems(analyzed.items, {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const buffer = fs.readFileSync(source);
+        const comicInfoEntry = listZipEntries(buffer).find(entry => entry.name === 'ComicInfo.xml');
+        assert.ok(comicInfoEntry);
+        const xml = readZipEntry(buffer, comicInfoEntry).toString('utf8');
+        assert.match(xml, /<Series>변경된 작품<\/Series>/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });
 
 test('메타데이터 저장은 백업 후 원본 경로를 원자적으로 교체한다', async t => {

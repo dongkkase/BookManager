@@ -1,6 +1,7 @@
 const FORMAT_KEYS = new Set(['none', 'zip', 'cbz', 'cbr', '7z']);
 const LANGUAGE_KEYS = new Set(['ko', 'en', 'ja']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
+const RENAMER_ARCHIVE_COMPRESSION_KEYS = new Set(['auto', 'fast', 'maximum']);
 
 export function safeThreadLimit(coreCount = 4) {
     const cores = Math.max(1, Number(coreCount) || 4);
@@ -41,6 +42,9 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         webp_conversion: Boolean(config.webp_conversion ?? config.convert_webp),
         convert_webp: Boolean(config.webp_conversion ?? config.convert_webp),
         img_quality: Math.min(100, Math.max(1, Number(config.img_quality) || 100)),
+        renamer_archive_compression: RENAMER_ARCHIVE_COMPRESSION_KEYS.has(config.renamer_archive_compression)
+            ? config.renamer_archive_compression
+            : 'auto',
         max_threads: Math.min(threadMax, Math.max(1, Number(config.max_threads) || Math.floor(coreCount / 2) || 1)),
         play_sound: config.play_sound !== false,
         pass_skip_meta: Boolean(config.pass_skip_meta),
@@ -65,12 +69,11 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
 
 export function settingsEffects(previous = {}, next = {}) {
     const taskResetKeys = ['target_format', 'webp_conversion', 'img_quality'];
-    const restartKeys = ['lang', 'language', 'font_family', 'font_scale'];
     const changed = key => JSON.stringify(previous?.[key]) !== JSON.stringify(next?.[key]);
 
     return {
         resetTaskTabs: taskResetKeys.some(changed),
-        restartRecommended: restartKeys.some(changed),
+        restartRecommended: false,
         librariesChanged: JSON.stringify(uniquePaths(previous.libraries || [], previous.dup_check_folders || []))
             !== JSON.stringify(uniquePaths(next.libraries || [], next.dup_check_folders || [])),
     };

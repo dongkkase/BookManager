@@ -126,6 +126,29 @@ test('연속 부분 저장은 이전 변경과 임시 파일 정리를 유지한
     }
 });
 
+test('언어 부분 저장은 lang과 language를 같은 값으로 동기화한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-language-'));
+    try {
+        writeDataConfig(root, {
+            lang: 'ko',
+            language: 'ko',
+        });
+        const manager = new ConfigManager(root, root);
+        manager.loadConfig();
+        manager.updateConfig({ lang: 'en' });
+        let saved = JSON.parse(fs.readFileSync(dataConfigPath(root), 'utf8'));
+        assert.equal(saved.lang, 'en');
+        assert.equal(saved.language, 'en');
+
+        manager.updateConfig({ language: 'ja' });
+        saved = JSON.parse(fs.readFileSync(dataConfigPath(root), 'utf8'));
+        assert.equal(saved.lang, 'ja');
+        assert.equal(saved.language, 'ja');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('루트의 기존 config.json은 data/config.json으로 복사해 읽는다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-legacy-'));
     try {

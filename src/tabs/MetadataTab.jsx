@@ -22,73 +22,79 @@ import {
   requiredApiKeyForSource,
 } from '../metadataApiPolicy';
 
-const API_SOURCES = ['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine'];
+const API_SOURCES = [
+  { value: '리디북스', labelKey: 'api_source_ridi' },
+  { value: '알라딘', labelKey: 'api_source_aladin' },
+  { value: 'Google Books', labelKey: 'api_source_google' },
+  { value: 'Anilist', labelKey: 'api_source_anilist' },
+  { value: 'Vine', labelKey: 'api_source_vine' },
+];
 
 const SECTION_TABS = [
-  { id: 'basic', label: '기본\n정보' },
-  { id: 'creators', label: '작가 및\n제작진' },
-  { id: 'publisher', label: '출판\n정보' },
-  { id: 'tags', label: '장르/태그/\n등장인물' },
-  { id: 'other', label: '기타\n정보' },
+  { id: 'basic', labelKey: 't3_nav_basic' },
+  { id: 'creators', labelKey: 't3_nav_crew' },
+  { id: 'publisher', labelKey: 't3_nav_publish' },
+  { id: 'tags', labelKey: 't3_nav_genre' },
+  { id: 'other', labelKey: 't3_nav_etc' },
 ];
 
 const BASIC_FIELDS = [
-  { id: 'Title', label: '제목', type: 'text' },
-  { id: 'Series', label: '시리즈', type: 'text' },
-  { id: 'SeriesGroup', label: '시리즈 그룹\n(세계관 묶기 등)', type: 'select', options: [''] },
-  { id: 'AlternateSeries', label: '대체 시리즈', type: 'text' },
-  { id: 'AlternateNumber', label: '대체 화', type: 'number' },
-  { id: 'AlternateCount', label: '대체 전체권수', type: 'number' },
-  { id: 'Count', label: '전체권수', type: 'number' },
-  { id: 'Volume', label: '권 (Volume)', type: 'text' },
-  { id: 'Number', label: '화 (Chapter)', type: 'text' },
-  { id: 'PageCount', label: '페이지수', type: 'number' },
-  { id: 'Summary', label: '줄거리', type: 'textarea' },
+  { id: 'Title', labelKey: 't3_f_title', type: 'text' },
+  { id: 'Series', labelKey: 't3_f_series', type: 'text' },
+  { id: 'SeriesGroup', labelKey: 't3_f_sgroup', type: 'select', options: [''] },
+  { id: 'AlternateSeries', labelKey: 't3_f_alt_series', type: 'text' },
+  { id: 'AlternateNumber', labelKey: 't3_f_alt_num', type: 'number' },
+  { id: 'AlternateCount', labelKey: 't3_f_alt_count', type: 'number' },
+  { id: 'Count', labelKey: 't3_f_count', type: 'number' },
+  { id: 'Volume', labelKey: 't3_f_vol', type: 'text' },
+  { id: 'Number', labelKey: 't3_f_num', type: 'text' },
+  { id: 'PageCount', labelKey: 't3_f_page', type: 'number' },
+  { id: 'Summary', labelKey: 't3_f_sum', type: 'textarea' },
 ];
 
 const CREATOR_FIELDS = [
-  { id: 'Writer', label: '글 작가', type: 'text' },
-  { id: 'Penciller', label: '그림 작가', type: 'text' },
-  { id: 'Inker', label: '잉크 작업', type: 'text' },
-  { id: 'Colorist', label: '채색 작가', type: 'text' },
-  { id: 'Letterer', label: '글자 작업', type: 'text' },
-  { id: 'CoverArtist', label: '표지 작가', type: 'text' },
-  { id: 'Editor', label: '편집자', type: 'text' },
-  { id: 'Translator', label: '번역자', type: 'text' },
+  { id: 'Writer', labelKey: 't3_f_writer', type: 'text' },
+  { id: 'Penciller', labelKey: 't3_f_pen', type: 'text' },
+  { id: 'Inker', labelKey: 't3_f_inker', type: 'text' },
+  { id: 'Colorist', labelKey: 't3_f_color', type: 'text' },
+  { id: 'Letterer', labelKey: 't3_f_letter', type: 'text' },
+  { id: 'CoverArtist', labelKey: 't3_f_cover', type: 'text' },
+  { id: 'Editor', labelKey: 't3_f_editor', type: 'text' },
+  { id: 'Translator', labelKey: 't3_f_translator', type: 'text' },
 ];
 
 const PUBLISHER_FIELDS = [
-  { id: 'Publisher', label: '출판사', type: 'text' },
-  { id: 'Imprint', label: '출판 레이블', type: 'text' },
-  { id: 'Web', label: '웹사이트', type: 'textarea' },
-  { id: 'Format', label: '포맷', type: 'select', options: ['', 'Manga', 'Comic', 'Webtoon'] },
-  { id: 'Year', label: '년', type: 'number' },
-  { id: 'Month', label: '월', type: 'number' },
-  { id: 'Day', label: '일', type: 'number' },
+  { id: 'Publisher', labelKey: 't3_f_pub', type: 'text' },
+  { id: 'Imprint', labelKey: 't3_f_imp', type: 'text' },
+  { id: 'Web', labelKey: 't3_f_web', type: 'textarea' },
+  { id: 'Format', labelKey: 't3_f_format', type: 'select', options: ['', 'Manga', 'Comic', 'Webtoon'] },
+  { id: 'Year', labelKey: 't3_f_year', type: 'number' },
+  { id: 'Month', labelKey: 't3_f_month', type: 'number' },
+  { id: 'Day', labelKey: 't3_f_day', type: 'number' },
 ];
 
 const OTHER_FIELDS = [
-  { id: 'AgeRating', label: '연령 등급', type: 'select', options: ['', 'Everyone', 'Teen', 'Mature', 'Adult'] },
-  { id: 'CommunityRating', label: '커뮤니티 평점', type: 'text' },
-  { id: 'LanguageISO', label: '언어 코드 (ISO)', type: 'text' },
-  { id: 'Manga', label: '읽기 방향', type: 'select', options: ['', 'YesAndRightToLeft', 'Yes', 'No', 'RightToLeft'] },
-  { id: 'BlackAndWhite', label: '흑백', type: 'select', options: ['', 'Yes', 'No'] },
-  { id: 'Notes', label: '메모', type: 'textarea' },
+  { id: 'AgeRating', labelKey: 't3_f_age', type: 'select', options: ['', 'Everyone', 'Teen', 'Mature', 'Adult'] },
+  { id: 'CommunityRating', labelKey: 't3_f_rate', type: 'text' },
+  { id: 'LanguageISO', labelKey: 't3_f_iso', type: 'text' },
+  { id: 'Manga', labelKey: 't3_f_dir', type: 'select', options: ['', 'YesAndRightToLeft', 'Yes', 'No', 'RightToLeft'] },
+  { id: 'BlackAndWhite', labelKey: 't3_f_bw', type: 'select', options: ['', 'Yes', 'No'] },
+  { id: 'Notes', labelKey: 't3_f_notes', type: 'textarea' },
 ];
 
 const META_FIELDS = [
   ...BASIC_FIELDS,
   ...CREATOR_FIELDS,
   ...PUBLISHER_FIELDS,
-  { id: 'Genre', label: '장르', type: 'text' },
-  { id: 'Tags', label: '태그', type: 'text' },
-  { id: 'Characters', label: '등장인물', type: 'text' },
-  { id: 'Locations', label: '장소', type: 'text' },
-  { id: 'Teams', label: '소속 팀', type: 'text' },
+  { id: 'Genre', labelKey: 't3_f_genre', type: 'text' },
+  { id: 'Tags', labelKey: 't3_f_tags_lbl', type: 'text' },
+  { id: 'Characters', labelKey: 't3_f_char', type: 'text' },
+  { id: 'Locations', labelKey: 't3_f_locations', type: 'text' },
+  { id: 'Teams', labelKey: 't3_f_teams', type: 'text' },
   ...OTHER_FIELDS,
 ];
 
-const GENRE_OPTIONS = [
+const DEFAULT_GENRE_OPTIONS = [
   '액션', '모험', '코미디', '드라마', '판타지',
   'SF', '미스터리', '공포', '스릴러', '심리',
   '로맨스', '일상', '학원', '스포츠', '역사',
@@ -98,7 +104,7 @@ const GENRE_OPTIONS = [
   '게임', '도박', '생존', '비극', '패러디',
 ];
 
-const TAG_OPTIONS = [
+const DEFAULT_TAG_OPTIONS = [
   '복수', '토너먼트', '퀘스트', '여행', '수사',
   '변치 작전', '생존', '시간 여행', '타임 루프', '평행세계',
   '환생', '회귀', '빙의', '안티히어로', '악역 주인공',
@@ -169,6 +175,38 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const primaryShortcut = isMacPlatform() ? 'Cmd' : 'Ctrl';
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
+  const language = config?.language || config?.lang || 'ko';
+  const text = useCallback((key, fallback, values) => {
+    const translated = t?.(key, values);
+    return translated && translated !== key ? translated : fallback;
+  }, [t]);
+  const apiSourceLabel = useCallback((source) => {
+    const entry = API_SOURCES.find(item => item.value === source);
+    return entry ? text(entry.labelKey, entry.value) : source;
+  }, [text]);
+  const localizedOptions = useCallback((key, fallback) => {
+    const translated = t?.(key);
+    return translated && typeof translated === 'object' && !Array.isArray(translated)
+      ? Object.values(translated)
+      : fallback;
+  }, [t]);
+  const genreOptions = useMemo(() => localizedOptions('meta_genres', DEFAULT_GENRE_OPTIONS), [localizedOptions]);
+  const tagOptions = useMemo(() => localizedOptions('meta_tags', DEFAULT_TAG_OPTIONS), [localizedOptions]);
+  const fieldLabel = useCallback(field => text(field.labelKey, field.label || field.id), [text]);
+  const sectionLabel = useCallback(section => text(section.labelKey, section.id), [text]);
+  const optionLabel = useCallback((field, option) => {
+    if (!option) return '';
+    const key = field.id === 'Format'
+      ? 'meta_formats'
+      : field.id === 'AgeRating'
+        ? 'meta_age'
+        : field.id === 'Manga'
+          ? 'meta_manga'
+          : field.id === 'BlackAndWhite' ? 'meta_yes_no' : '';
+    if (!key) return option;
+    const translated = t?.(key);
+    return translated && typeof translated === 'object' ? translated[option] || option : option;
+  }, [t]);
   const tagRules = useMemo(() => {
     const rules = {};
     for (const line of String(config?.api_keys?.tag_rules || '').split(/\r?\n/)) {
@@ -419,18 +457,16 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     const response = await window.electronAPI?.showMessage?.({
       type: 'question',
       title: t('dlg_warn'),
-      message: (config?.language || config?.lang) === 'en'
-        ? 'Reset metadata for this entire series to its original state?'
-        : '이 시리즈 전체의 메타데이터를 원래 상태로 초기화하시겠습니까?',
+      message: text('t3_msg_reset_series_confirm', '이 시리즈 전체의 메타데이터를 원래 상태로 초기화하시겠습니까?'),
       buttons: 'yes-no',
       defaultChoice: 'no',
-      language: config?.language || config?.lang || 'ko',
+      language,
     });
     if (response !== 'yes') return;
     setFileList(prev => prev.map(item => item.group === activeItem.group
       ? { ...item, metadata: { ...(item.originalMetadata || {}) } }
       : item));
-    showToast?.((config?.language || config?.lang) === 'ko' ? '시리즈 데이터가 초기화되었습니다.' : 'Series reset complete.');
+    showToast?.({ key: 't3_msg_reset_series_done' });
   };
 
   const applyMetadataToBatch = (metadata = {}) => {
@@ -474,7 +510,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         open: true,
         loading: false,
         results: [],
-        error: '환경설정에서 API 키를 입력해주세요.',
+        error: text('api_key_missing', '환경설정에서 API 키를 입력해주세요.'),
         actualQuery: cleanQuery,
         query: cleanQuery,
         page,
@@ -508,7 +544,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           open: true,
           loading: false,
           results: [],
-          error: result.error || '검색에 실패했습니다.',
+          error: result.error || text('meta_search_failed', '검색에 실패했습니다.'),
           actualQuery: result.actualQuery || cleanQuery,
           query: cleanQuery,
           page,
@@ -547,13 +583,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         cached: false,
       }));
     }
-  }, [apiSource, config?.api_keys, searchQuery]);
+  }, [apiSource, config?.api_keys, searchQuery, text]);
 
   const handleSearchApi = async (page = 1) => {
     const query = searchQuery.trim();
     if (!query) {
-      setStatusMessage('검색어를 입력하세요.');
-      showToast?.((config?.language || config?.lang) === 'ko' ? '검색어를 입력해주세요.' : 'Please enter a search keyword.');
+      setStatusMessage(text('t3_msg_search_keyword_required', '검색어를 입력해주세요.'));
+      showToast?.({ key: 't3_msg_search_keyword_required' });
       return;
     }
     await fetchMetadataResults({ source: apiSource, query, page });
@@ -562,7 +598,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const handleSelectApiResult = (result) => {
     applyMetadataToBatch(metadataFromApiResult(result));
     setApiSearch(prev => ({ ...prev, open: false }));
-    setStatusMessage('검색 결과를 일괄 편집창에 불러왔습니다.');
+    setStatusMessage(text('t3_msg_loaded_search_result_batch', '검색 결과를 일괄 편집창에 불러왔습니다.'));
     showToast?.({ key: 't3_msg_applied_series_tag' });
   };
 
@@ -606,7 +642,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     const query = activeItem.metadata?.Series || activeItem.metadata?.Title || filenameStem(activeItem.name);
     setSearchQuery(query);
     setIsWorking(true);
-    setStatusMessage('시리즈 자동 매칭 중...');
+    setStatusMessage(text('t3_msg_auto_matching', '시리즈 자동 매칭 중...'));
     try {
       const result = await window.electronAPI.fetchMetadata({
         apiSource,
@@ -615,21 +651,21 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         apiKeys: config?.api_keys || {},
       });
       if (result?.success === false) {
-        setStatusMessage(result.error || '자동 매칭에 실패했습니다.');
+        setStatusMessage(result.error || text('t3_msg_auto_match_failed', '자동 매칭에 실패했습니다.'));
         return;
       }
       const first = result.results?.[0];
       if (!first) {
-        setStatusMessage('자동 매칭 결과가 없습니다.');
+        setStatusMessage(text('t3_msg_auto_match_empty', '자동 매칭 결과가 없습니다.'));
         showToast?.(t('t3_msg_no_search_result'));
         return;
       }
       applyMetadataToSeries(first.metadata || {});
       setBatchMetadata(first.metadata || {});
-      setStatusMessage('시리즈 자동 매칭을 적용했습니다.');
+      setStatusMessage(text('t3_msg_auto_match_applied', '시리즈 자동 매칭을 적용했습니다.'));
       showToast?.({ key: 't3_msg_auto_match_done' });
     } catch (error) {
-      setStatusMessage(`자동 매칭 실패: ${error.message}`);
+      setStatusMessage(text('t3_msg_auto_match_failed_detail', '자동 매칭 실패: {msg}', { msg: error.message }));
     } finally {
       setIsWorking(false);
     }
@@ -673,13 +709,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       return bv - av;
     }).find(item => item.id !== activeItem.id && item.metadata && Object.keys(item.metadata).length > 0);
     if (!latest) {
-      setStatusMessage('불러올 최신권 메타데이터가 없습니다.');
-      showToast?.('불러올 최신권 메타데이터가 없습니다.');
+      setStatusMessage(text('t3_msg_load_latest_empty', '불러올 최신권 메타데이터가 없습니다.'));
+      showToast?.({ key: 't3_msg_load_latest_empty' });
       return;
     }
     setBatchMetadata({ ...(latest.metadata || {}) });
-    setStatusMessage('최신권 메타데이터를 일괄 편집창에 불러왔습니다.');
-    showToast?.('최신권 메타데이터를 일괄 편집창에 불러왔습니다.');
+    setStatusMessage(text('t3_msg_load_latest_done', '최신권 메타데이터를 일괄 편집창에 불러왔습니다.'));
+    showToast?.({ key: 't3_msg_load_latest_done' });
   };
 
   const handleSave = async (all = false) => {
@@ -846,7 +882,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     if (field.type === 'select') {
       return (
         <select className={className} value={value || ''} onChange={event => onChange(event.target.value)}>
-          {field.options.map(option => <option key={option} value={option}>{option}</option>)}
+          {field.options.map(option => <option key={option} value={option}>{optionLabel(field, option)}</option>)}
         </select>
       );
     }
@@ -869,7 +905,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const renderFieldRows = (fields) => (
     fields.map((field) => (
       <div className={`meta-form-row ${field.type === 'textarea' ? 'tall' : ''}`} key={field.id}>
-        <div className="meta-col-label">{field.label}</div>
+        <div className="meta-col-label">{fieldLabel(field)}</div>
         <div className="meta-col-my meta-field-with-stepper">
           {renderFieldInput(field, activeItem?.metadata?.[field.id] || '', value => updateActiveMetadata(field.id, value))}
           {field.type === 'number' && (
@@ -895,7 +931,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     ))
   );
 
-  const renderDualTextarea = (fieldId, label, placeholder = '입력 후 Enter...') => (
+  const renderDualTextarea = (fieldId, label, placeholder = text('enter_after_input', '입력 후 Enter...')) => (
     <div className="meta-tag-editor">
       <div className="meta-tag-label">{label}</div>
       <div className="meta-tag-columns">
@@ -924,7 +960,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         }}
         disabled={!activeItem}
       >
-        시리즈 전체 일괄 덮어쓰기
+        {t('t3_btn_apply_series_tag')}
       </button>
     </div>
   );
@@ -974,40 +1010,40 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     return (
       <div className="meta-section-stack">
         <section className="meta-section-box" ref={setRef('basic')}>
-          <div className="meta-section-title">기본 정보</div>
-          <div className="meta-column-heads"><span /> <b>원본</b><span /> <b>일괄 편집</b></div>
+          <div className="meta-section-title">{sectionLabel(SECTION_TABS[0])}</div>
+          <div className="meta-column-heads"><span /> <b>{t('t3_col_orig')}</b><span /> <b>{t('t3_col_res')}</b></div>
           {renderFieldRows(BASIC_FIELDS)}
         </section>
 
         <section className="meta-section-box" ref={setRef('creators')}>
-          <div className="meta-section-title">작가 및 제작진</div>
+          <div className="meta-section-title">{sectionLabel(SECTION_TABS[1])}</div>
           {renderFieldRows(CREATOR_FIELDS)}
         </section>
 
         <section className="meta-section-box" ref={setRef('publisher')}>
-          <div className="meta-section-title">출판 정보</div>
+          <div className="meta-section-title">{sectionLabel(SECTION_TABS[2])}</div>
           {renderFieldRows(PUBLISHER_FIELDS)}
         </section>
 
         <section className="meta-section-box" ref={setRef('tags')}>
-          <div className="meta-section-title">장르/태그/등장인물</div>
+          <div className="meta-section-title">{sectionLabel(SECTION_TABS[3])}</div>
           <div className="meta-choice-row">
-            <div className="meta-tag-label">장르</div>
-            {renderChoiceGrid('Genre', GENRE_OPTIONS)}
+            <div className="meta-tag-label">{t('t3_f_genre')}</div>
+            {renderChoiceGrid('Genre', genreOptions)}
           </div>
-          {renderDualTextarea('Genre', '장르')}
+          {renderDualTextarea('Genre', t('t3_f_genre'))}
           <div className="meta-choice-row">
-            <div className="meta-tag-label">태그</div>
-            {renderChoiceGrid('Tags', TAG_OPTIONS)}
+            <div className="meta-tag-label">{t('t3_f_tags_lbl')}</div>
+            {renderChoiceGrid('Tags', tagOptions)}
           </div>
-          {renderDualTextarea('Tags', '태그')}
-          {renderDualTextarea('Characters', '등장인물')}
-          {renderDualTextarea('Locations', '장소')}
-          {renderDualTextarea('Teams', '소속 팀')}
+          {renderDualTextarea('Tags', t('t3_f_tags_lbl'))}
+          {renderDualTextarea('Characters', t('t3_f_char'))}
+          {renderDualTextarea('Locations', t('t3_f_locations'))}
+          {renderDualTextarea('Teams', t('t3_f_teams'))}
         </section>
 
         <section className="meta-section-box" ref={setRef('other')}>
-          <div className="meta-section-title">기타 정보</div>
+          <div className="meta-section-title">{sectionLabel(SECTION_TABS[4])}</div>
           {renderFieldRows(OTHER_FIELDS)}
         </section>
       </div>
@@ -1091,7 +1127,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
       <main className="meta-right-panel">
         <div className="meta-search-bar">
-          <span className="meta-search-label">검색 API :</span>
+          <span className="meta-search-label">{t('t3_search_api')}</span>
           <select
             className="meta-api-select"
             value={apiSource}
@@ -1101,9 +1137,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
               saveConfig?.({ last_meta_api: nextApi });
             }}
           >
-            {API_SOURCES.map(source => <option key={source} value={source}>{source}</option>)}
+            {API_SOURCES.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
           </select>
-          <span className="meta-search-label">검색어 :</span>
+          <span className="meta-search-label">{t('t3_search_query')}</span>
           <input
             type="text"
             className="meta-search-input"
@@ -1111,7 +1147,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
           />
-          <button className="meta-search-btn" onClick={() => handleSearchApi(1)} disabled={isWorking || !searchQuery.trim()}><FaIcon name="search" /> 검색 (S)</button>
+          <button className="meta-search-btn" onClick={() => handleSearchApi(1)} disabled={isWorking || !searchQuery.trim()}><FaIcon name="search" /> {t('t3_btn_search')} (S)</button>
         </div>
 
         <div className="meta-tools-bar">
@@ -1122,7 +1158,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                 className={activeSection === tab.id ? 'active' : ''}
                 onClick={() => scrollToSection(tab.id)}
               >
-                {tab.label.split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}
+                {sectionLabel(tab).split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}
               </button>
             ))}
           </div>
@@ -1137,7 +1173,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
               }}
             >
               <FaIcon name="chevronLeft" size={9} />
-              <span>이전 권</span>
+              <span>{t('t3_btn_prev')}</span>
             </button>
             <button
               className="meta-nav-btn"
@@ -1148,7 +1184,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                 setSelectedFileId(siblings[index + 1]?.id || null);
               }}
             >
-              <span>다음 권</span>
+              <span>{t('t3_btn_next')}</span>
               <FaIcon name="chevronRight" size={9} />
             </button>
           </div>
@@ -1156,28 +1192,28 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             <div className="meta-top-action-buttons">
               <button className="meta-btn" onClick={handleResetActive} disabled={!activeItem}>
                 <span className="meta-tool-icon"><FaIcon name="arrowRotateLeft" size={12} /></span>
-                <span className="meta-tool-text">시리즈<br />리셋</span>
+                <span className="meta-tool-text">{t('t3_btn_reset_series').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
               <button className="meta-btn" title="D" onClick={handleLoadLatest} disabled={!activeItem}>
                 <span className="meta-tool-icon"><FaIcon name="cloudArrowDown" size={12} /></span>
-                <span className="meta-tool-text">최신권 정보<br />불러오기 (D)</span>
+                <span className="meta-tool-text">{t('t3_btn_load_latest').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)} (D)</span>
               </button>
               <button className="meta-btn" onClick={handleCopyMyToBatch} disabled={!activeItem}>
                 <span className="meta-tool-icon"><FaIcon name="copy" size={12} /></span>
-                <span className="meta-tool-text">편집창에<br />원본 복사</span>
+                <span className="meta-tool-text">{t('t3_btn_copy_orig').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
               <button className="meta-btn-primary" onClick={handleApplyBatchToActive} disabled={!activeItem}>
                 <span className="meta-tool-icon"><FaIcon name="check" size={12} /></span>
-                <span className="meta-tool-text">현재 책에<br />편집 적용</span>
+                <span className="meta-tool-text">{t('t3_btn_apply_all').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
               <button className="meta-btn-primary" title="C" onClick={handleApplyBatchToSeries} disabled={!activeItem}>
                 <span className="meta-tool-icon"><FaIcon name="layer-group" size={12} /></span>
-                <span className="meta-tool-text">시리즈 전체에<br />일괄 적용 (C)</span>
+                <span className="meta-tool-text">{t('t3_btn_apply_series').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)} (C)</span>
               </button>
             </div>
             <label className="meta-checkbox-label">
               <input type="checkbox" checked={applyEmpty} onChange={(event) => setApplyEmpty(event.target.checked)} />
-              빈 값도 덮어쓰기
+              {t('t3_apply_empty')}
             </label>
           </div>
         </div>
@@ -1204,15 +1240,15 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
         <div className="meta-bottom-bar">
           <div className="meta-bottom-left">
-            <button className="meta-btn-magic" onClick={handleAutoMatchSeries} disabled={!activeItem || isWorking}><FaIcon name="wand" /> 시리즈 자동 매칭</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Title')} disabled={!activeItem}>자동 제목 입력</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>자동 권수 입력</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Number')} disabled={!activeItem}>자동 화 입력</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('PageCount')} disabled={!activeItem}>자동 페이지 수 입력</button>
+            <button className="meta-btn-magic" onClick={handleAutoMatchSeries} disabled={!activeItem || isWorking}><FaIcon name="wand" /> {t('t3_auto_match')}</button>
+            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Title')} disabled={!activeItem}>{t('t3_auto_title')}</button>
+            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{t('t3_auto_vol')}</button>
+            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Number')} disabled={!activeItem}>{t('t3_auto_chap')}</button>
+            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('PageCount')} disabled={!activeItem}>{t('t3_auto_pages')}</button>
           </div>
           <div className="meta-bottom-right">
-            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> 저장</button>
-            <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> 모두 저장</button>
+            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')}</button>
+            <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> {t('t3_save_all')}</button>
           </div>
         </div>
 
@@ -1261,7 +1297,7 @@ function MetadataSearchDialog({
 }) {
   const dialogRef = useRef(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [dialogApi, setDialogApi] = useState(state.apiSource || apiSources[0]);
+  const [dialogApi, setDialogApi] = useState(state.apiSource || apiSources[0]?.value || '');
   const [dialogQuery, setDialogQuery] = useState(state.query || state.actualQuery || '');
   const [translatedResult, setTranslatedResult] = useState(null);
   const [showTranslated, setShowTranslated] = useState(false);
@@ -1324,7 +1360,7 @@ function MetadataSearchDialog({
   }, [rawSelected?.id, state.apiSource]);
 
   useEffect(() => {
-    setDialogApi(state.apiSource || apiSources[0]);
+    setDialogApi(state.apiSource || apiSources[0]?.value || '');
     setDialogQuery(state.query || state.actualQuery || '');
   }, [apiSources, state.actualQuery, state.apiSource, state.query]);
 
@@ -1374,11 +1410,11 @@ function MetadataSearchDialog({
     setTranslationError('');
     try {
       if (typeof window.electronAPI?.translateMetadata !== 'function') {
-        throw new Error('번역 기능을 불러오지 못했습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.');
+        throw new Error(text('meta_translate_unavailable', '번역 기능을 불러오지 못했습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
       }
       const response = await window.electronAPI.translateMetadata(rawSelected, targetLang);
       if (response === undefined || response === null) {
-        throw new Error('번역 IPC에서 응답이 없습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.');
+        throw new Error(text('meta_translate_no_response', '번역 IPC에서 응답이 없습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
       }
       if (!response?.success || !response.result) {
         throw new Error(response?.error || text('meta_translate_failed', '번역에 실패했습니다.'));
@@ -1482,7 +1518,7 @@ function MetadataSearchDialog({
           </div>
           <div className="meta-api-search-controls">
             <select value={dialogApi} onChange={event => setDialogApi(event.target.value)}>
-              {apiSources.map(source => <option key={source} value={source}>{source}</option>)}
+              {apiSources.map(source => <option key={source.value} value={source.value}>{text(source.labelKey, source.value)}</option>)}
             </select>
             <input
               value={dialogQuery}

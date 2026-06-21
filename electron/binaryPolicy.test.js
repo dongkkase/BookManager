@@ -43,6 +43,21 @@ test('공백과 한글이 포함된 실행 경로를 그대로 반환한다', ()
     }
 });
 
+test('JPEG 품질 재인코딩 도구도 bundled 경로에서 탐색한다', () => {
+    const cjpegCandidates = binaryCandidates('cjpeg', {
+        platform: 'win32',
+        projectRoot: 'C:\\BookManager',
+        pathValue: '',
+    });
+    const djpegCandidates = binaryCandidates('djpeg', {
+        platform: 'win32',
+        projectRoot: 'C:\\BookManager',
+        pathValue: '',
+    });
+    assert.match(cjpegCandidates[0], /bin[\\/]win[\\/]cjpeg\.exe$/i);
+    assert.match(djpegCandidates[0], /bin[\\/]win[\\/]djpeg\.exe$/i);
+});
+
 test('도구 누락 안내는 플랫폼별 설치 조치를 포함한다', () => {
     assert.match(missingBinaryMessage('7z', 'win32'), /bin\/win\/7za\.exe|7-Zip/);
     assert.match(missingBinaryMessage('7z', 'darwin'), /Homebrew|7-Zip/);

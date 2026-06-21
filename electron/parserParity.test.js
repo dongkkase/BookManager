@@ -5,6 +5,7 @@ import {
     extractCoreTitle,
     fixEncoding,
     formatLeafName,
+    resolveTitles,
 } from './parsers/parser.js';
 
 const PYTHON_PARSER_CORPUS = [
@@ -52,4 +53,10 @@ test('소수 권수, part, 외전 표기의 leaf 이름이 Python parser와 같�
 test('한글과 일본어 파일명은 NFC로 정규화한다', () => {
     assert.equal(fixEncoding('한글'.normalize('NFD')), '한글');
     assert.equal(fixEncoding('作品名'), '作品名');
+});
+
+test('상대 경로와 NFD 한글 파일명에서도 제목을 파일명에서 추론한다', () => {
+    const filename = './test/황천의 츠가이 1~10.zip'.normalize('NFD');
+
+    assert.deepEqual(resolveTitles(filename, '황천의 츠가이 01'), ['황천의 츠가이', '황천의 츠가이']);
 });

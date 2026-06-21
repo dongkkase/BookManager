@@ -5,6 +5,7 @@ import { filterExistingResultPaths } from '../resultLog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
 import {
+  archiveChangeBadges,
   clampStartNumber,
   moveRenamerEntry,
   refreshRenamerItem,
@@ -12,7 +13,7 @@ import {
 import '../styles/RenamerTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
-import { shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { isTextEntryTarget } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
 
 function basename(filePath) {
@@ -23,6 +24,30 @@ function replaceBasename(filePath, nextName) {
   const value = String(filePath || '');
   const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
   return separatorIndex >= 0 ? `${value.slice(0, separatorIndex + 1)}${nextName}` : nextName;
+}
+
+function shouldHandleTableNavigation(event) {
+  return !event?.defaultPrevented && !isTextEntryTarget(event?.target);
+}
+
+function scrollTableRowIntoView(container, row) {
+  if (!container || !row) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const headerHeight = Math.ceil(container.querySelector('thead')?.getBoundingClientRect().height || 0) + 1;
+  const rowTop = rowRect.top - containerRect.top + container.scrollTop;
+  const rowBottom = rowRect.bottom - containerRect.top + container.scrollTop;
+  const visibleTop = container.scrollTop + headerHeight;
+  const visibleBottom = container.scrollTop + container.clientHeight;
+
+  if (rowTop < visibleTop) {
+    container.scrollTop = Math.max(0, rowTop - headerHeight);
+    return;
+  }
+  if (rowBottom > visibleBottom) {
+    container.scrollTop = Math.max(0, rowBottom - container.clientHeight);
+  }
 }
 
 function RenamerTab({ config, saveConfig, t, showToast }) {
@@ -47,6 +72,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const [skippedFiles, setSkippedFiles] = useState([]);
   const customInputRef = useRef(null);
   const dragEntryIndexRef = useRef(-1);
+  const archiveTableRef = useRef(null);
+  const innerTableRef = useRef(null);
+  const archiveRowRefs = useRef(new Map());
+  const entryRowRefs = useRef(new Map());
 
   const patternLabels = useMemo(() => {
     const labels = t('patterns');
@@ -106,6 +135,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const activeEntry = activeEntries.find(entry => entry.id === selectedEntryId) || activeEntries[0] || null;
   const checkedCount = useMemo(() => fileList.filter(file => file.checked).length, [fileList]);
   const allChecked = fileList.length > 0 && fileList.every(file => file.checked);
+  const imageQualityLabel = config?.img_quality ?? config?.jpg_quality ?? 100;
 
   useEffect(() => {
     emitToolbarState('renamer', createToolbarState(fileList));
@@ -294,6 +324,92 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     });
   }, [selectedArchiveId]);
 
+  const selectArchiveAtIndex = useCallback((index) => {
+    if (fileList.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(index, fileList.length - 1));
+    setSelectedArchiveId(fileList[clampedIndex]?.id || null);
+  }, [fileList]);
+
+  const selectEntryAtIndex = useCallback((index) => {
+    if (activeEntries.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(index, activeEntries.length - 1));
+    setSelectedEntryId(activeEntries[clampedIndex]?.id || null);
+  }, [activeEntries]);
+
+  const handleRemoveSelectedArchive = useCallback(() => {
+    const targetArchiveId = selectedArchiveId || activeArchive?.id;
+    if (!targetArchiveId) return;
+
+    setFileList(prev => {
+      const index = prev.findIndex(file => file.id === targetArchiveId);
+      if (index < 0) return prev;
+      const next = prev.filter(file => file.id !== targetArchiveId);
+      const nextArchiveId = next[Math.min(index, next.length - 1)]?.id || null;
+      setSelectedArchiveId(nextArchiveId);
+      if (!nextArchiveId) setSelectedEntryId(null);
+      return next;
+    });
+  }, [activeArchive?.id, selectedArchiveId]);
+
+  const handleArchiveTableKeyDown = useCallback((event) => {
+    if (isWorking || !shouldHandleTableNavigation(event)) return;
+
+    const currentArchiveId = selectedArchiveId || activeArchive?.id;
+    const currentIndex = fileList.findIndex(file => file.id === currentArchiveId);
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      selectArchiveAtIndex(currentIndex < 0 ? 0 : currentIndex + 1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      selectArchiveAtIndex(currentIndex < 0 ? 0 : currentIndex - 1);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      selectArchiveAtIndex(0);
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      selectArchiveAtIndex(fileList.length - 1);
+      return;
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !event.repeat) {
+      event.preventDefault();
+      handleRemoveSelectedArchive();
+    }
+  }, [activeArchive?.id, fileList, handleRemoveSelectedArchive, isWorking, selectedArchiveId, selectArchiveAtIndex]);
+
+  const handleInnerTableKeyDown = useCallback((event) => {
+    if (isWorking || !shouldHandleTableNavigation(event)) return;
+
+    const currentEntryId = selectedEntryId || activeEntry?.id;
+    const currentIndex = activeEntries.findIndex(entry => entry.id === currentEntryId);
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      selectEntryAtIndex(currentIndex < 0 ? 0 : currentIndex + 1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      selectEntryAtIndex(currentIndex < 0 ? 0 : currentIndex - 1);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      selectEntryAtIndex(0);
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      selectEntryAtIndex(activeEntries.length - 1);
+    }
+  }, [activeEntries, activeEntry?.id, isWorking, selectedEntryId, selectEntryAtIndex]);
+
   const handleArchiveContextAction = useCallback(async (action) => {
     const archive = contextMenu?.archive;
     setContextMenu(null);
@@ -410,6 +526,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         flattenFolders: config?.flatten_folders || false,
         webp_conversion: config?.webp_conversion || false,
         img_quality: config?.img_quality ?? config?.jpg_quality ?? 100,
+        renamer_archive_compression: config?.renamer_archive_compression || 'auto',
         max_threads: config?.max_threads || 1,
         ...renameOptions,
       });
@@ -501,21 +618,14 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [analyzePaths, handleCancel, handleExecute, handleRemoveChecked, handleSelectFiles, handleSelectFolder, isWorking, toggleAllChecked]);
 
   useEffect(() => {
-    const handleKeyDown = event => {
-      if (isWorking || !shouldHandleGlobalShortcut(event)) return;
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedArchiveId) {
-        event.preventDefault();
-        setFileList(prev => {
-          const index = prev.findIndex(file => file.id === selectedArchiveId);
-          const next = prev.filter(file => file.id !== selectedArchiveId);
-          setSelectedArchiveId(next[Math.min(Math.max(index, 0), next.length - 1)]?.id || null);
-          return next;
-        });
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isWorking, selectedArchiveId]);
+    if (!selectedArchiveId) return;
+    scrollTableRowIntoView(archiveTableRef.current, archiveRowRefs.current.get(selectedArchiveId));
+  }, [selectedArchiveId]);
+
+  useEffect(() => {
+    if (!activeEntry?.id) return;
+    scrollTableRowIntoView(innerTableRef.current, entryRowRefs.current.get(activeEntry.id));
+  }, [activeArchive?.id, activeEntry?.id]);
 
   return (
     <div className="renamer-tab">
@@ -538,28 +648,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       </div>
 
       <div className="renamer-right-panel">
-        <div className="renamer-local-toolbar">
-          <button className="renamer-btn-toggle" onClick={handleSelectFolder} disabled={isWorking}><FaIcon name="folder" /> {t('add_folder')}</button>
-          <button className="renamer-btn-toggle" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>
-          <button className="renamer-btn-toggle" onClick={handleClear} disabled={isWorking || fileList.length === 0}><FaIcon name="trash" /> {t('clear_all')}</button>
-          <div className="renamer-spacer" />
-        </div>
-
         <div className="renamer-options-bar">
-          <button className={`renamer-btn-toggle ${allChecked ? 'active' : ''}`} onClick={toggleAllChecked} disabled={fileList.length === 0}>
-            <FaIcon name="checkSquare" /> {t('toggle_all')}
-          </button>
-          <button className={`renamer-btn-toggle ${capAllChecked ? 'active' : ''}`} onClick={toggleAllCap} disabled={fileList.length === 0} title={t('tt_cap_opt')}>
-            <FaIcon name="checkSquare" /> {t('btn_cap_all')} ({config?.quality || 85}%)
-          </button>
-          <button className={`renamer-btn-toggle ${exifAllChecked ? 'active' : ''}`} onClick={toggleAllExif} disabled={fileList.length === 0} title={t('tt_exif_rem')}>
-            <FaIcon name="checkSquare" /> {t('btn_exif_all')}
-          </button>
-
-          <div className="renamer-spacer" />
-
-          <label className="renamer-label">{t('tf_rename_mode')}:</label>
+          <label className="renamer-label" htmlFor="renamer-pattern-select">{t('pattern_lbl')}</label>
           <select
+            id="renamer-pattern-select"
             className="renamer-select"
             value={patternIndex}
             onChange={(event) => setPatternIndex(Number(event.target.value))}
@@ -574,24 +666,15 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
             ref={customInputRef}
             type="text"
             className="renamer-input-custom"
-            placeholder="Custom"
+            placeholder={t('custom_pattern_placeholder')}
             value={customText}
             onChange={(event) => setCustomText(event.target.value)}
             disabled={keepName || patternIndex !== 4}
           />
 
-          <label className="renamer-checkbox-label">
-            <input
-              type="checkbox"
-              checked={keepName}
-              onChange={(event) => setKeepName(event.target.checked)}
-            />
-            {t('tab2_keep_name')}
-          </label>
-
-          <label className="renamer-label">{t('tab2_start_num')}</label>
-          <button className="renamer-btn-icon" onClick={() => handleStartNumChange(-1)} disabled={keepName}>-</button>
+          <label className="renamer-label renamer-start-label" htmlFor="renamer-start-num">{t('tab2_start_num')}</label>
           <input
+            id="renamer-start-num"
             type="number"
             className="renamer-input-num"
             value={startNum}
@@ -600,7 +683,17 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
             onChange={(event) => setStartNum(clampStartNumber(event.target.value))}
             disabled={keepName}
           />
+          <button className="renamer-btn-icon" onClick={() => handleStartNumChange(-1)} disabled={keepName}>-</button>
           <button className="renamer-btn-icon" onClick={() => handleStartNumChange(1)} disabled={keepName}>+</button>
+
+          <label className="renamer-checkbox-label renamer-keep-name">
+            <input
+              type="checkbox"
+              checked={keepName}
+              onChange={(event) => setKeepName(event.target.checked)}
+            />
+            {t('tab2_keep_name')}
+          </label>
         </div>
 
         <div className="renamer-content-area">
@@ -611,143 +704,216 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
             </div>
           ) : (
             <div className="renamer-split-view">
-              <div className="renamer-table-wrapper top-table">
-                <table className="renamer-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '44%' }}>{t('col_name')}</th>
-                      <th style={{ width: '12%' }}>{t('col_page_count')}</th>
-                      <th style={{ width: '14%' }}>{t('col_size')}</th>
-                      <th style={{ width: '15%' }}>{t('col_cap_opt')}</th>
-                      <th style={{ width: '15%' }}>{t('col_exif_rem')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fileList.map((file) => (
-                      <tr
-                        key={file.id}
-                        className={activeArchive?.id === file.id ? 'selected' : ''}
-                        onClick={() => setSelectedArchiveId(file.id)}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setSelectedArchiveId(file.id);
-                          setContextMenu({ x: event.clientX, y: event.clientY, archive: file });
-                        }}
-                      >
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={file.checked}
-                            onChange={(event) => {
-                              event.stopPropagation();
-                              updateFile(file.id, current => ({ ...current, checked: !current.checked }));
-                            }}
-                          />
-                          <span className="renamer-file-name">{file.name}</span>
-                        </td>
-                        <td className="renamer-cell-center">{file.count}</td>
-                        <td className="renamer-cell-right">{Number(file.sizeMb || 0).toFixed(1)} MB</td>
-                        <td className="renamer-cell-center">
-                          <input
-                            type="checkbox"
-                            checked={file.capOpt}
-                            onChange={(event) => {
-                              event.stopPropagation();
-                              updateFile(file.id, current => ({ ...current, capOpt: !current.capOpt }));
-                            }}
-                          />
-                        </td>
-                        <td className="renamer-cell-center">
-                          <input
-                            type="checkbox"
-                            checked={file.exifOpt}
-                            onChange={(event) => {
-                              event.stopPropagation();
-                              updateFile(file.id, current => ({ ...current, exifOpt: !current.exifOpt }));
-                            }}
-                          />
-                        </td>
+              <div className="renamer-section">
+                <div className="renamer-section-title">{t('target_lbl')}</div>
+                <div className="renamer-target-actions">
+                  <button className={`renamer-btn-toggle ${allChecked ? 'active' : ''}`} onClick={toggleAllChecked} disabled={fileList.length === 0}>
+                    <FaIcon name="checkSquare" /> {t('toggle_all')}
+                  </button>
+                  <div className="renamer-spacer" />
+                  <button className={`renamer-btn-toggle renamer-batch-toggle ${capAllChecked ? 'active' : ''}`} onClick={toggleAllCap} disabled={fileList.length === 0} title={t('tt_cap_opt')}>
+                    <FaIcon name="checkSquare" /> {t('btn_cap_all')} ({imageQualityLabel}%)
+                  </button>
+                  <button className={`renamer-btn-toggle renamer-batch-toggle ${exifAllChecked ? 'active' : ''}`} onClick={toggleAllExif} disabled={fileList.length === 0} title={t('tt_exif_rem')}>
+                    <FaIcon name="checkSquare" /> {t('btn_exif_all')}
+                  </button>
+                </div>
+                <div
+                  ref={archiveTableRef}
+                  className="renamer-table-wrapper top-table"
+                  tabIndex={0}
+                  aria-label={t('target_lbl')}
+                  onKeyDown={handleArchiveTableKeyDown}
+                >
+                  <table className="renamer-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '58%' }}>{t('col_name')}</th>
+                        <th style={{ width: '8%' }}>{t('col_page_count')}</th>
+                        <th style={{ width: '10%' }}>{t('col_size')}</th>
+                        <th style={{ width: '12%' }}>{t('col_cap_opt')}</th>
+                        <th style={{ width: '12%' }}>{t('col_exif_rem')}</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {fileList.map((file) => {
+                        const changeBadges = archiveChangeBadges(file, config);
+                        const badgeTitle = changeBadges.map(badge => badge.label).join('+');
+                        return (
+                          <tr
+                            key={file.id}
+                            ref={node => {
+                              if (node) archiveRowRefs.current.set(file.id, node);
+                              else archiveRowRefs.current.delete(file.id);
+                            }}
+                            className={activeArchive?.id === file.id ? 'selected' : ''}
+                            onClick={() => {
+                              setSelectedArchiveId(file.id);
+                              archiveTableRef.current?.focus({ preventScroll: true });
+                            }}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setSelectedArchiveId(file.id);
+                              archiveTableRef.current?.focus({ preventScroll: true });
+                              setContextMenu({ x: event.clientX, y: event.clientY, archive: file });
+                            }}
+                          >
+                            <td>
+                              <div className="renamer-file-cell">
+                                <input
+                                  type="checkbox"
+                                  checked={file.checked}
+                                  aria-label={file.name}
+                                  onFocus={() => setSelectedArchiveId(file.id)}
+                                  onClick={event => event.stopPropagation()}
+                                  onChange={(event) => {
+                                    event.stopPropagation();
+                                    updateFile(file.id, current => ({ ...current, checked: !current.checked }));
+                                  }}
+                                />
+                                <span className="renamer-file-name" title={file.name}>{file.name}</span>
+                                {changeBadges.length > 0 && (
+                                  <span className="renamer-format-badges" title={badgeTitle} aria-label={badgeTitle}>
+                                    {changeBadges.map(badge => (
+                                      <span key={badge.key} className={`renamer-format-badge ${badge.key}`}>{badge.label}</span>
+                                    ))}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="renamer-cell-center">{file.count}</td>
+                            <td className="renamer-cell-center">{Number(file.sizeMb || 0).toFixed(1)} MB</td>
+                            <td className="renamer-cell-center">
+                              <input
+                                type="checkbox"
+                                checked={file.capOpt}
+                                aria-label={`${file.name} ${t('col_cap_opt')}`}
+                                onFocus={() => setSelectedArchiveId(file.id)}
+                                onClick={event => event.stopPropagation()}
+                                onChange={(event) => {
+                                  event.stopPropagation();
+                                  updateFile(file.id, current => ({ ...current, capOpt: !current.capOpt }));
+                                }}
+                              />
+                            </td>
+                            <td className="renamer-cell-center">
+                              <input
+                                type="checkbox"
+                                checked={file.exifOpt}
+                                aria-label={`${file.name} ${t('col_exif_rem')}`}
+                                onFocus={() => setSelectedArchiveId(file.id)}
+                                onClick={event => event.stopPropagation()}
+                                onChange={(event) => {
+                                  event.stopPropagation();
+                                  updateFile(file.id, current => ({ ...current, exifOpt: !current.exifOpt }));
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="renamer-table-count">{t('total_files', { count: fileList.length })}</div>
               </div>
 
-              <div className="renamer-table-wrapper bottom-table">
-                <table className="renamer-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '35%' }}>{t('tf_col_old_name')}</th>
-                      <th style={{ width: '35%' }}>{t('tf_col_new_name')}</th>
-                      <th style={{ width: '15%' }}>{t('col_size')}</th>
-                      <th style={{ width: '15%' }}>{t('col_order')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeArchive ? activeArchive.entries.map((entry, index) => (
-                      <tr
-                        key={entry.id}
-                        className={activeEntry?.id === entry.id ? 'selected' : ''}
-                        draggable
-                        onClick={() => setSelectedEntryId(entry.id)}
-                        onDragStart={() => {
-                          dragEntryIndexRef.current = index;
-                        }}
-                        onDragOver={event => event.preventDefault()}
-                        onDrop={event => {
-                          event.preventDefault();
-                          const sourceIndex = dragEntryIndexRef.current;
-                          dragEntryIndexRef.current = -1;
-                          if (sourceIndex < 0 || sourceIndex === index) return;
-                          updateFile(activeArchive.id, file => ({
-                            ...file,
-                            entries: moveRenamerEntry(file.entries, sourceIndex, index),
-                          }));
-                        }}
-                      >
-                        <td title={entry.originalPath}>{entry.oldName}</td>
-                        <td>
-                          <input
-                            className="renamer-entry-input"
-                            value={entry.newName}
-                            onChange={(event) => {
-                              const nextName = event.target.value;
-                              updateFile(activeArchive.id, file => ({
-                                ...file,
-                                entries: file.entries.map(current => current.id === entry.id ? { ...current, newName: nextName } : current),
-                              }), false);
-                            }}
-                          />
-                        </td>
-                        <td className="renamer-cell-right">{Number(entry.size_kb || 0).toFixed(1)} KB</td>
-                        <td className="renamer-cell-center">
-                          <div className="renamer-order-btns">
-                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'top')} disabled={index === 0}>⇈</button>
-                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'up')} disabled={index === 0}>↑</button>
-                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'down')} disabled={index === activeArchive.entries.length - 1}>↓</button>
-                            <button onClick={() => handleMoveEntry(activeArchive.id, index, 'bottom')} disabled={index === activeArchive.entries.length - 1}>⇊</button>
-                          </div>
-                        </td>
-                      </tr>
-                    )) : (
+              <div className="renamer-section renamer-inner-section">
+                <div className="renamer-section-title">{t('inner_lbl')}</div>
+                <div
+                  ref={innerTableRef}
+                  className="renamer-table-wrapper bottom-table"
+                  tabIndex={0}
+                  aria-label={t('inner_lbl')}
+                  onKeyDown={handleInnerTableKeyDown}
+                >
+                  <table className="renamer-table">
+                    <thead>
                       <tr>
-                        <td colSpan="4" className="renamer-empty-row">{t('t3_msg_sel')}</td>
+                        <th style={{ width: '40%' }}>{t('tf_col_old_name')}</th>
+                        <th style={{ width: '40%' }}>{t('tf_col_new_name')}</th>
+                        <th style={{ width: '8%' }}>{t('col_size')}</th>
+                        <th style={{ width: '12%' }}>{t('col_order')}</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {activeArchive ? activeArchive.entries.map((entry, index) => (
+                        <tr
+                          key={entry.id}
+                          ref={node => {
+                            if (node) entryRowRefs.current.set(entry.id, node);
+                            else entryRowRefs.current.delete(entry.id);
+                          }}
+                          className={activeEntry?.id === entry.id ? 'selected' : ''}
+                          draggable
+                          onClick={() => {
+                            setSelectedEntryId(entry.id);
+                            innerTableRef.current?.focus({ preventScroll: true });
+                          }}
+                          onDragStart={() => {
+                            dragEntryIndexRef.current = index;
+                          }}
+                          onDragOver={event => event.preventDefault()}
+                          onDrop={event => {
+                            event.preventDefault();
+                            const sourceIndex = dragEntryIndexRef.current;
+                            dragEntryIndexRef.current = -1;
+                            if (sourceIndex < 0 || sourceIndex === index) return;
+                            updateFile(activeArchive.id, file => ({
+                              ...file,
+                              entries: moveRenamerEntry(file.entries, sourceIndex, index),
+                            }));
+                          }}
+                        >
+                          <td title={entry.originalPath}>{entry.oldName}</td>
+                          <td>
+                            <input
+                              className="renamer-entry-input"
+                              value={entry.newName}
+                              aria-label={`${entry.oldName} ${t('tf_col_new_name')}`}
+                              onFocus={() => setSelectedEntryId(entry.id)}
+                              onClick={event => event.stopPropagation()}
+                              onChange={(event) => {
+                                const nextName = event.target.value;
+                                updateFile(activeArchive.id, file => ({
+                                  ...file,
+                                  entries: file.entries.map(current => current.id === entry.id ? { ...current, newName: nextName } : current),
+                                }), false);
+                              }}
+                            />
+                          </td>
+                          <td className="renamer-cell-center">{Number(entry.size_kb || 0).toFixed(1)} KB</td>
+                          <td className="renamer-cell-center">
+                            <div className="renamer-order-btns">
+                              <button type="button" aria-label={t('move_top')} onClick={() => handleMoveEntry(activeArchive.id, index, 'top')} disabled={index === 0}>
+                                <FaIcon name="anglesUp" size={10} />
+                              </button>
+                              <button type="button" aria-label={t('move_up')} onClick={() => handleMoveEntry(activeArchive.id, index, 'up')} disabled={index === 0}>
+                                <FaIcon name="angleUp" size={10} />
+                              </button>
+                              <button type="button" aria-label={t('move_down')} onClick={() => handleMoveEntry(activeArchive.id, index, 'down')} disabled={index === activeArchive.entries.length - 1}>
+                                <FaIcon name="angleDown" size={10} />
+                              </button>
+                              <button type="button" aria-label={t('move_bottom')} onClick={() => handleMoveEntry(activeArchive.id, index, 'bottom')} disabled={index === activeArchive.entries.length - 1}>
+                                <FaIcon name="anglesDown" size={10} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan="4" className="renamer-empty-row">{t('t3_msg_sel')}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        <div className="renamer-bottom-info">
-          <div>
-            {t('total_files', { count: fileList.length })} / {checkedCount} checked
-          </div>
-          <div className="renamer-progress-wrap" />
-        </div>
       </div>
       {skippedFiles.length > 0 && (
         <div className="renamer-skip-log">

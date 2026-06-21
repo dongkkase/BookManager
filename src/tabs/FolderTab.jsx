@@ -311,7 +311,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const removeProgress = window.electronAPI?.onTaskProgress?.(data => {
       if (data?.task === 'folder:scan') {
         emitStatusState('folder', {
-          message: data.message || t('folder.status.scanning') || '폴더 스캔 중...',
+          message: data.message || t('folder.status.scanning'),
           progress: data.progress ?? 0,
           phase: data.progress >= 100 ? 'idle' : 'executing',
           currentItem: data.currentFile || '',
@@ -373,7 +373,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const addLibrary = useCallback(async () => {
     try {
-      const folderPath = await window.electronAPI.selectFolder('라이브러리 폴더 선택');
+      const folderPath = await window.electronAPI.selectFolder(t('dlg_sel_dup_folder'));
       if (folderPath && saveConfig && !libraries.includes(folderPath)) {
         const nextLibraries = [...libraries, folderPath];
         await saveConfig({
@@ -1872,7 +1872,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                       setSearchQuery('');
                       searchInputRef.current?.focus();
                     }}
-                    aria-label="Clear search"
+                    aria-label={t('folder_search_clear')}
                   >
                     ×
                   </button>
@@ -1881,7 +1881,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <button
                 className="refresh-btn"
                 onClick={event => handleSmartRefresh(event.shiftKey)}
-                title="Shift+Click: Force refresh"
+                title={t('folder_refresh_force_tip')}
               >
                 {t('folder_refresh_list')}
               </button>
@@ -2367,7 +2367,7 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
   })[status] || status;
 
   const tableWidth = columnWidths.reduce((total, width) => total + width, 0);
-  const previewColumnLabels = ['이전 파일명', '새 파일명', t('tf_col_status'), t('col_path')];
+  const previewColumnLabels = [t('tf_col_old_name'), t('tf_col_new_name'), t('tf_col_status'), t('col_path')];
 
   const measureColumnTextWidth = useCallback((text) => {
     const canvas = measureColumnTextWidth.canvas || document.createElement('canvas');
@@ -2437,7 +2437,7 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
           event.stopPropagation();
           autoResizeColumn(columnIndex);
         }}
-        title="컬럼 너비 조절"
+        title={t('column_resize')}
       />
     </th>
   );
@@ -2454,45 +2454,45 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
         </div>
         <div className="multi-rename-body">
           <fieldset className="multi-rename-rules">
-            <legend>변경 규칙</legend>
+            <legend>{t('tf_rename_mode')}</legend>
             <div className="multi-rename-patterns">
               <label>
-                <span>기존 형식:</span>
+                <span>{t('tf_old_format')}</span>
                 <input value={oldPattern} onChange={event => setOldPattern(event.target.value)} disabled={executing} />
               </label>
               <label>
-                <span>새 형식:</span>
+                <span>{t('tf_new_format')}</span>
                 <input value={newPattern} onChange={event => setNewPattern(event.target.value)} disabled={executing} />
               </label>
             </div>
             <div className="multi-rename-options multi-rename-options-primary">
-              <label><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} /> 대소문자 구분</label>
-              <label><input type="checkbox" checked={regexMode} onChange={event => toggleRegexMode(event.target.checked)} /> 정규식</label>
-              <label><input type="checkbox" checked={folderNameMode} onChange={event => toggleFolderNameMode(event.target.checked)} /> 폴더명으로 이름 바꾸기</label>
+              <label><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} /> {t('tf_case_sensitive')}</label>
+              <label><input type="checkbox" checked={regexMode} onChange={event => toggleRegexMode(event.target.checked)} /> {t('tf_use_regex')}</label>
+              <label><input type="checkbox" checked={folderNameMode} onChange={event => toggleFolderNameMode(event.target.checked)} /> {t('tf_use_folder_name')}</label>
               <label>
                 <input type="checkbox" checked={padNumbersEnabled} onChange={event => setPadNumbersEnabled(event.target.checked)} />
-                숫자 자리수 맞추기:
+                {t('tf_use_padding')}
                 <input type="number" min="1" max="4" value={numberDigits} disabled={!padNumbersEnabled} onChange={event => setNumberDigits(Number(event.target.value))} />
               </label>
             </div>
             <div className="multi-rename-options multi-rename-options-sequence">
               <label>
                 <input type="checkbox" checked={addSequence} onChange={event => setAddSequence(event.target.checked)} />
-                순번 추가
+                {t('tf_rule_numbering')}
               </label>
               <label>
-                시작:
+                {t('tf_num_start')}
                 <input type="number" min="0" max="99999" value={sequenceStart} disabled={!addSequence} onChange={event => setSequenceStart(Number(event.target.value))} />
               </label>
               <label>
-                자리수:
+                {t('tf_num_digits')}
                 <input type="number" min="1" max="10" value={sequenceDigits} disabled={!addSequence} onChange={event => setSequenceDigits(Number(event.target.value))} />
               </label>
               <label>
-                위치:
+                {t('tf_num_pos')}
                 <select value={sequencePosition} disabled={!addSequence} onChange={event => setSequencePosition(event.target.value)}>
-                  <option value="before">앞(Front)</option>
-                  <option value="after">뒤(Back)</option>
+                  <option value="before">{t('tf_pos_front')}</option>
+                  <option value="after">{t('tf_pos_back')}</option>
                 </select>
               </label>
             </div>
@@ -2533,7 +2533,7 @@ function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
           {(previewing || executing) && (
             <div className="multi-rename-progress">
               <progress max="100" value={executing ? progress : undefined} />
-              <span>{executing ? `${progress}%` : '미리보기 갱신 중...'}</span>
+              <span>{executing ? `${progress}%` : t('tf_preview_updating')}</span>
             </div>
           )}
         </div>

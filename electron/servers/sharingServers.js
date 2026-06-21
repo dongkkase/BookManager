@@ -3,6 +3,7 @@ import fs from 'fs';
 import http from 'http';
 import os from 'os';
 import path from 'path';
+import { translate } from '../../src/utils/i18n.js';
 
 const ARCHIVE_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7', '.tar', '.gz']);
 const ARCHIVE_MIME_TYPES = new Map([
@@ -16,6 +17,17 @@ const ARCHIVE_MIME_TYPES = new Map([
     ['.gz', 'application/gzip'],
 ]);
 const servers = new Map();
+
+function sharingLanguage(config = {}) {
+    return ['ko', 'en', 'ja'].includes(config.language)
+        ? config.language
+        : ['ko', 'en', 'ja'].includes(config.lang) ? config.lang : 'ko';
+}
+
+function sharingText(config, key, fallback, values) {
+    const translated = translate(key, sharingLanguage(config), values);
+    return translated && translated !== key ? translated : fallback;
+}
 
 function escapeXml(value) {
     return String(value ?? '')
@@ -117,14 +129,14 @@ export function buildOpdsApp(config, log = () => {}) {
 
     app.get('/opds', (req, res) => {
         if (roots.length === 0) {
-            res.status(503).type('text/plain').send('공유할 라이브러리 폴더가 없습니다.');
+            res.status(503).type('text/plain').send(sharingText(config, 'sharing_no_libraries', '공유할 라이브러리 폴더가 없습니다.'));
             return;
         }
 
         const requestedDir = req.query.dir;
         const currentDir = resolveOpdsDirectory(requestedDir, roots);
         if (requestedDir && !currentDir) {
-            res.status(404).type('text/plain').send('폴더를 찾을 수 없습니다.');
+            res.status(404).type('text/plain').send(sharingText(config, 'sharing_folder_not_found', '폴더를 찾을 수 없습니다.'));
             return;
         }
 
@@ -134,7 +146,9 @@ export function buildOpdsApp(config, log = () => {}) {
                 .map(item => makeOpdsEntry(req, path.join(currentDir, item.name), item.isDirectory()))
             : roots.map(root => makeOpdsEntry(req, root, true));
 
-        log(`OPDS 탐색: ${currentDir ? path.basename(currentDir) : '라이브러리 루트'}`);
+        log(sharingText(config, 'sharing_opds_browse', 'OPDS 탐색: {name}', {
+            name: currentDir ? path.basename(currentDir) : sharingText(config, 'sharing_library_root', '라이브러리 루트'),
+        }));
         res.type('application/atom+xml; charset=utf-8').send(makeOpdsFeed({
             title: currentDir ? (path.basename(currentDir) || currentDir) : 'BookManager Library',
             id: currentDir || 'urn:bookmanager:opds:root',
@@ -150,11 +164,11 @@ export function buildOpdsApp(config, log = () => {}) {
             || !fs.statSync(filePath).isFile()
             || !isWithinRoot(filePath, roots)
         ) {
-            res.status(404).type('text/plain').send('파일을 찾을 수 없습니다.');
+            res.status(404).type('text/plain').send(sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
             return;
         }
 
-        log(`OPDS 다운로드: ${path.basename(filePath)}`);
+        log(sharingText(config, 'sharing_opds_download', 'OPDS 다운로드: {name}', { name: path.basename(filePath) }));
         res.type(archiveMimeType(filePath));
         res.download(filePath, path.basename(filePath));
     });
@@ -270,7 +284,7 @@ export function buildWebdavApp(config, options = {}, log = () => {}) {
             next();
             return;
         }
-        log(`WebDAV 인증 실패: ${req.ip}`, 'ERROR');
+        log(sharingText(config, 'sharing_webdav_auth_failed', 'WebDAV 인증 실패: {ip}', { ip: req.ip }), 'ERROR');
         res.setHeader('WWW-Authenticate', 'Basic realm="BookManager"');
         res.status(401).send('Authentication required');
     });
@@ -294,7 +308,7 @@ export function buildWebdavApp(config, options = {}, log = () => {}) {
 
     app.propfind('*', (req, res) => {
         if (roots.length === 0) {
-            res.status(503).send('공유할 라이브러리 폴더가 없습니다.');
+            res.status(503).send(sharingText(config, 'sharing_no_libraries', '공유할 라이브러리 폴더가 없습니다.'));
             return;
         }
 
@@ -310,7 +324,7 @@ export function buildWebdavApp(config, options = {}, log = () => {}) {
             return;
         }
 
-        log(`WebDAV 탐색: ${req.path}`);
+        log(sharingText(config, 'sharing_webdav_browse', 'WebDAV 탐색: {path}', { path: req.path }));
         res.status(207)
             .type('application/xml; charset=utf-8')
             .send(makePropfindResponse(req, roots, target, Number(depthHeader)));
@@ -332,7 +346,7 @@ export function buildWebdavApp(config, options = {}, log = () => {}) {
             return;
         }
 
-        log(`WebDAV 다운로드: ${path.basename(target.resolved)}`);
+        log(sharingText(config, 'sharing_webdav_download', 'WebDAV 다운로드: {name}', { name: path.basename(target.resolved) }));
         res.type(archiveMimeType(target.resolved));
         res.sendFile(target.resolved);
     });
@@ -360,12 +374,12 @@ export function getSharingServerStatus() {
 export async function startSharingServer(type, options = {}, config = {}, onLog = () => {}) {
     const serverType = type === 'WebDAV' ? 'WebDAV' : 'OPDS';
     if (servers.has(serverType)) {
-        throw new Error(`${serverType} 서버가 이미 실행 중입니다.`);
+        throw new Error(sharingText(config, 'sharing_server_already_running', '{server} 서버가 이미 실행 중입니다.', { server: serverType }));
     }
 
     const port = Number(options.port);
     if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-        throw new Error('포트 번호는 1024부터 65535 사이여야 합니다.');
+        throw new Error(sharingText(config, 'sharing_invalid_port', '포트 번호는 1024부터 65535 사이여야 합니다.'));
     }
 
     const log = (message, logType = 'INFO') => onLog({
@@ -388,7 +402,7 @@ export async function startSharingServer(type, options = {}, config = {}, onLog 
         onLog({
             type: 'ERROR',
             protocol: serverType,
-            message: `포트 ${port}에서 서버를 시작하지 못했습니다: ${error.message}`,
+            message: sharingText(config, 'sharing_start_failed', '포트 {port}에서 서버를 시작하지 못했습니다: {msg}', { port, msg: error.message }),
         });
         throw error;
     }
@@ -398,11 +412,11 @@ export async function startSharingServer(type, options = {}, config = {}, onLog 
     const url = serverType === 'OPDS'
         ? `http://${localIp}:${port}/opds`
         : `http://${localIp}:${port}/`;
-    log(`${serverType} 서버가 시작되었습니다: ${url}`);
+    log(sharingText(config, 'sharing_started', '{server} 서버가 시작되었습니다: {url}', { server: serverType, url }));
     return { success: true, running: true, port, localIp, url };
 }
 
-export async function stopSharingServer(type, onLog = () => {}) {
+export async function stopSharingServer(type, onLog = () => {}, config = {}) {
     const serverType = type === 'WebDAV' ? 'WebDAV' : 'OPDS';
     const entry = servers.get(serverType);
     if (!entry) return { success: true, running: false };
@@ -412,11 +426,11 @@ export async function stopSharingServer(type, onLog = () => {}) {
     onLog({
         type: 'INFO',
         protocol: serverType,
-        message: `${serverType} 서버가 중지되었습니다.`,
+        message: sharingText(config, 'sharing_stopped', '{server} 서버가 중지되었습니다.', { server: serverType }),
     });
     return { success: true, running: false };
 }
 
-export async function stopAllSharingServers(onLog = () => {}) {
-    await Promise.all([...servers.keys()].map(type => stopSharingServer(type, onLog)));
+export async function stopAllSharingServers(onLog = () => {}, config = {}) {
+    await Promise.all([...servers.keys()].map(type => stopSharingServer(type, onLog, config)));
 }

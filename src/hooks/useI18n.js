@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { setLanguage, translate, SUPPORTED_LANGUAGES } from '../utils/i18n.js';
 
-export function useI18n() {
+export function useI18n(config = null) {
   const [language, setLanguageState] = useState('ko');
   const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     const initI18n = async () => {
       try {
         const config = await window.electronAPI?.getConfig?.();
@@ -22,14 +23,16 @@ export function useI18n() {
     };
   }, []);
 
+  useEffect(() => {
+    const lang = config?.language || config?.lang;
+    if (!lang) return;
+    const nextLang = setLanguage(lang);
+    if (mountedRef.current) setLanguageState(current => current === nextLang ? current : nextLang);
+  }, [config?.language, config?.lang]);
+
   const changeLanguage = useCallback(async (lang) => {
     const nextLang = setLanguage(lang);
     if (mountedRef.current) setLanguageState(nextLang);
-    try {
-      await window.electronAPI?.saveConfig?.({ lang: nextLang, language: nextLang });
-    } catch (error) {
-      console.error('언어 저장 실패:', error);
-    }
     return nextLang;
   }, []);
 

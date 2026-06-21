@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    archiveChangeBadges,
     clampStartNumber,
     generateRenamerName,
     moveRenamerEntry,
@@ -21,6 +22,24 @@ test('WebP 변환과 내부 이름 유지가 확장자에 반영된다', () => {
     assert.equal(
         generateRenamerName({ oldName: 'cover.png' }, 0, 1, { keepName: true, webpConversion: true }),
         'cover.webp',
+    );
+});
+
+test('대상 압축 파일의 출력 포맷 변경 배지를 계산한다', () => {
+    assert.deepEqual(
+        archiveChangeBadges({ name: 'book.zip' }, { target_format: 'cbz' }),
+        [{ key: 'format', label: 'CBZ' }],
+    );
+    assert.deepEqual(
+        archiveChangeBadges({ filepath: '/books/book.cbz' }, { target_format: 'cbz' }),
+        [],
+    );
+    assert.deepEqual(
+        archiveChangeBadges({ filepath: '/books/book.zip' }, { target_format: '7z', webp_conversion: true }),
+        [
+            { key: 'format', label: '7Z' },
+            { key: 'webp', label: 'WEBP' },
+        ],
     );
 });
 

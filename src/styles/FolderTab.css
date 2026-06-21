@@ -254,6 +254,11 @@
   scroll-behavior: smooth;
 }
 
+.folder-tree-list .tree-node {
+  padding: 0;
+  border-left: 0;
+}
+
 .nav-list li {
   min-height: var(--control-height-sm);
   padding: 4px 9px;
@@ -283,14 +288,17 @@
 }
 
 .tree-node > div {
+  box-sizing: border-box;
   min-height: var(--control-height-sm);
   padding-top: 1px !important;
   padding-bottom: 1px !important;
   color: #ededed !important;
   font-size: var(--font-xs) !important;
   line-height: 1.1;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
+  padding-left: var(--folder-tree-indent, 7px) !important;
+  border-left: 2px solid transparent;
   transition: background-color 120ms ease, color 120ms ease;
 }
 
@@ -311,6 +319,16 @@
 
 .tree-node > div:hover {
   background: #383838;
+}
+
+.folder-tree-expander {
+  flex: 0 0 14px;
+  width: 14px;
+  margin-right: 4px;
+  text-align: center;
+  color: #c7c7c7;
+  font-size: var(--font-2xs);
+  line-height: 1;
 }
 
 .folder-right-panel {
@@ -516,7 +534,7 @@
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
@@ -588,7 +606,7 @@
   border-left: 1px solid #31a8ff;
   border-radius: 0;
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
   line-height: 1.15;
   pointer-events: none;
@@ -630,7 +648,7 @@
   top: 50%;
   right: 10px;
   color: #31a8ff;
-  font-size: 9px;
+  font-size: var(--font-3xs);
   line-height: 1;
   transform: translateY(-50%);
 }
@@ -678,7 +696,7 @@ body.is-reordering-table-column {
 .file-table td {
   height: var(--folder-row-height, 50px);
   max-width: 260px;
-  padding: 4px 8px;
+  padding: var(--table-cell-y) 6px;
   color: #fff;
   background: #2f2f2f;
   border-right: 1px solid #111;
@@ -688,7 +706,7 @@ body.is-reordering-table-column {
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 
@@ -1208,7 +1226,7 @@ body.is-reordering-table-column {
   padding: 14px 6px 5px;
   color: #fff;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.78) 85%, rgba(0, 0, 0, 0.54));
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
   line-height: 1.1;
   text-align: center;
@@ -1229,7 +1247,7 @@ body.is-reordering-table-column {
   background: rgba(17, 24, 31, 0.86);
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 7px;
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: 900;
   line-height: 1;
   text-shadow: 0 1px 1px #000;
@@ -1546,7 +1564,7 @@ body.is-reordering-table-column {
   border: none;
   border-radius: 0;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 400;
 }
 
@@ -1566,7 +1584,7 @@ body.is-reordering-table-column {
   flex: 0 0 auto;
   min-width: 48px;
   color: rgba(255, 255, 255, 0.7);
-  font-size: 11px;
+  font-size: var(--font-xs);
   text-align: right;
 }
 
@@ -1852,7 +1870,7 @@ body.is-reordering-table-column {
   color: #e8e8e8;
   background: #1f1f1f;
   border-bottom: none;
-  font-size: 13px;
+  font-size: var(--font-base);
   font-weight: 800;
 }
 
@@ -1870,7 +1888,7 @@ body.is-reordering-table-column {
   color: #d8f1ff;
   background: #168bd8;
   border-radius: 2px;
-  font-size: 8px;
+  font-size: var(--font-3xs);
   line-height: 1;
 }
 
@@ -1882,7 +1900,7 @@ body.is-reordering-table-column {
   flex: 1 1 auto;
   padding: 4px 10px 0;
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .multi-rename-rules {
@@ -1921,7 +1939,7 @@ body.is-reordering-table-column {
   background: #363636;
   border: 1px solid #555;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 
@@ -1995,7 +2013,7 @@ body.is-reordering-table-column {
   white-space: nowrap;
   text-overflow: ellipsis;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 
@@ -2120,7 +2138,7 @@ body.multi-rename-resizing .multi-rename-column-resizer::before {
   border-radius: 5px;
   background: #3e3e3e;
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 800;
 }
 

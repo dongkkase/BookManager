@@ -5,20 +5,40 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import { listZipEntriesFromFile } from '../core/zipArchive.js';
+import { translate } from '../../src/utils/i18n.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
-const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
+const NESTED_ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar', '.cb7', '.alz', '.egg']);
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.jpe', '.jfif', '.png', '.webp', '.bmp', '.gif', '.tif', '.tiff', '.avif', '.heic', '.heif']);
+
+function taskText(lang, key, values) {
+  return translate(key, lang || 'ko', values);
+}
 
 function naturalCompare(a, b) {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }
 
 function isArchive(filePath) {
-  return ARCHIVE_EXTS.has(path.extname(filePath).toLowerCase());
+  return ARCHIVE_EXTS.has(normalizedExt(filePath));
 }
 
 function isImage(entryPath) {
-  return IMAGE_EXTS.has(path.extname(entryPath).toLowerCase());
+  return IMAGE_EXTS.has(normalizedExt(entryPath));
+}
+
+function isNestedArchive(entryPath) {
+  return NESTED_ARCHIVE_EXTS.has(normalizedExt(entryPath));
+}
+
+function normalizedExt(filePath) {
+  const name = path.basename(String(filePath || ''))
+    .normalize('NFC')
+    .replace(/[\s"'“”‘’\u200b-\u200f\u202a-\u202e\u2060\ufeff]+$/giu, '')
+    .toLowerCase();
+  const match = name.match(/(\.[^.\\/]+)$/);
+  return match ? match[1].trim() : '';
 }
 
 function isWebpConvertible(entryPath) {
@@ -70,7 +90,9 @@ async function directUnsupportedInputs(paths) {
   for (const inputPath of paths || []) {
     try {
       const stat = await fsp.stat(inputPath);
-      if (stat.isFile() && !isArchive(inputPath)) skipped.push(path.basename(inputPath));
+      if (stat.isFile() && !isArchive(inputPath)) {
+        skipped.push(`${path.basename(inputPath)} (unsupported extension: ${normalizedExt(inputPath) || 'none'})`);
+      }
     } catch {
       skipped.push(`${path.basename(inputPath)} (not found)`);
     }
@@ -78,63 +100,30 @@ async function directUnsupportedInputs(paths) {
   return skipped;
 }
 
-function findEndOfCentralDirectory(buffer) {
-  const signature = 0x06054b50;
-  const minOffset = Math.max(0, buffer.length - 0xffff - 22);
-  for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
-    if (buffer.readUInt32LE(offset) === signature) return offset;
-  }
-  return -1;
-}
-
-function listZipEntries(buffer) {
-  const eocdOffset = findEndOfCentralDirectory(buffer);
-  if (eocdOffset < 0) return [];
-
-  const entryCount = buffer.readUInt16LE(eocdOffset + 10);
-  let centralOffset = buffer.readUInt32LE(eocdOffset + 16);
-  const entries = [];
-
-  for (let i = 0; i < entryCount; i += 1) {
-    if (centralOffset + 46 > buffer.length || buffer.readUInt32LE(centralOffset) !== 0x02014b50) break;
-    const flags = buffer.readUInt16LE(centralOffset + 8);
-    const compressedSize = buffer.readUInt32LE(centralOffset + 20);
-    const uncompressedSize = buffer.readUInt32LE(centralOffset + 24);
-    const fileNameLength = buffer.readUInt16LE(centralOffset + 28);
-    const extraLength = buffer.readUInt16LE(centralOffset + 30);
-    const commentLength = buffer.readUInt16LE(centralOffset + 32);
-    const rawName = buffer.subarray(centralOffset + 46, centralOffset + 46 + fileNameLength);
-    const name = rawName.toString(flags & 0x800 ? 'utf8' : 'utf8').normalize('NFC');
-
-    entries.push({
-      name,
-      isDir: name.endsWith('/'),
-      size: uncompressedSize || compressedSize,
-    });
-
-    centralOffset += 46 + fileNameLength + extraLength + commentLength;
-  }
-
-  return entries;
-}
-
 function runProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const captureOutput = options.captureOutput !== false;
     const child = spawn(command, args, {
       cwd: options.cwd,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', captureOutput ? 'pipe' : 'ignore', captureOutput ? 'pipe' : 'ignore'],
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', data => { stdout += data.toString(); });
-    child.stderr.on('data', data => { stderr += data.toString(); });
+    if (captureOutput) {
+      child.stdout.on('data', data => { stdout += data.toString(); });
+      child.stderr.on('data', data => { stderr += data.toString(); });
+    }
     child.on('error', reject);
     child.on('close', code => {
       if (code === 0 || code === 1) resolve({ code, stdout, stderr });
       else reject(new Error(stderr || stdout || `${command} exited with ${code}`));
     });
   });
+}
+
+function runQuietProcess(command, args, options = {}) {
+  return runProcess(command, args, { ...options, captureOutput: false });
 }
 
 async function listWith7z(filePath, sevenZExe) {
@@ -166,10 +155,14 @@ async function listWith7z(filePath, sevenZExe) {
 }
 
 async function listArchiveEntries(filePath, sevenZExe) {
-  const ext = path.extname(filePath).toLowerCase();
+  const ext = normalizedExt(filePath);
   if (ext === '.zip' || ext === '.cbz') {
     try {
-      return listZipEntries(await fsp.readFile(filePath));
+      return (await listZipEntriesFromFile(filePath)).map(entry => ({
+        name: entry.name,
+        isDir: entry.isDirectory,
+        size: entry.uncompressedSize || entry.compressedSize,
+      }));
     } catch {
       return listWith7z(filePath, sevenZExe);
     }
@@ -178,30 +171,54 @@ async function listArchiveEntries(filePath, sevenZExe) {
 }
 
 function getLeafGroups(entries) {
-  const imageEntries = entries
-    .filter(entry => !entry.isDir && isImage(entry.name))
+  const targetEntries = entries
+    .filter(entry => !entry.isDir && (isImage(entry.name) || isNestedArchive(entry.name)))
     .sort((a, b) => naturalCompare(a.name, b.name));
 
-  if (imageEntries.length === 0) return [];
+  if (targetEntries.length === 0) return [];
 
   const groups = new Map();
-  for (const entry of imageEntries) {
+  for (const entry of targetEntries) {
     const normalized = entry.name.replace(/\\/g, '/');
     const parts = normalized.split('/').filter(Boolean);
+    const nestedArchive = isNestedArchive(normalized);
     let key = 'Root_Files';
-    if (parts.length > 1) {
+
+    if (nestedArchive) {
+      key = normalized.replace(/\.[^.\\/]+$/, '') || path.basename(normalized, path.extname(normalized));
+    } else if (parts.length > 1) {
       const top = parts[0];
       const topLower = top.toLowerCase();
       const isPartFolder = /(\d+\s*부|제\s*\d+\s*부|시즌|season|part)/i.test(topLower);
       key = isPartFolder && parts.length > 2 ? `${top}/${parts[1]}` : top;
     }
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(entry.name);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        name: key,
+        images: [],
+        type: nestedArchive ? 'archive' : key === 'Root_Files' ? 'archive' : 'folder',
+        inner_path: nestedArchive ? normalized : '',
+      });
+    }
+    const group = groups.get(key);
+    group.images.push(entry.name);
+    if (nestedArchive) {
+      group.type = 'archive';
+      group.inner_path = normalized;
+    }
   }
 
-  return [...groups.entries()]
-    .sort((a, b) => naturalCompare(a[0], b[0]))
-    .map(([name, images]) => ({ name, images }));
+  return [...groups.values()].sort((a, b) => naturalCompare(a.name, b.name));
+}
+
+function describeNoImageEntries(entries = []) {
+  const extensions = [...new Set(entries
+    .filter(entry => !entry.isDir)
+    .map(entry => path.extname(entry.name).toLowerCase())
+    .filter(Boolean))]
+    .sort(naturalCompare);
+  const extensionText = extensions.length > 0 ? extensions.join(', ') : 'none';
+  return `no supported images: entries=${entries.length}, extensions=${extensionText}`;
 }
 
 function applyLangFormat(name, lang, forceUnit = '') {
@@ -237,14 +254,14 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
     const filename = path.basename(filePath);
     onProgress?.({
       progress: Math.round((index / Math.max(archives.length, 1)) * 100),
-      message: lang === 'en' ? `[${index + 1}/${archives.length}] Analyzing: ${filename}` : `[${index + 1}/${archives.length}] 구조 분석 중: ${filename}`,
+      message: taskText(lang, 'task_organizer_analyzing', { index: index + 1, total: archives.length, name: filename }),
     });
 
     try {
       const entries = await listArchiveEntries(filePath, options.sevenZExe);
       const groups = getLeafGroups(entries);
       if (groups.length === 0) {
-        skippedFiles.push(filename);
+        skippedFiles.push(`${filename} (${describeNoImageEntries(entries)})`);
         continue;
       }
 
@@ -261,8 +278,9 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
           original_path: group.name,
           original_basename: leafBaseName,
           new_name: applyLangFormat(rawName, lang),
-          type: group.name === 'Root_Files' ? 'archive' : 'folder',
-          source_ext: path.extname(filePath).toLowerCase(),
+          type: group.type || (group.name === 'Root_Files' ? 'archive' : 'folder'),
+          inner_path: group.inner_path || '',
+          source_ext: group.inner_path ? normalizedExt(group.inner_path) : normalizedExt(filePath),
           image_count: group.images.length,
           spinoff_folder: /외전|번외|side\s*story|spin[\s-]*off/i.test(group.name),
         };
@@ -285,17 +303,47 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
     }
   }
 
-  onProgress?.({ progress: 100, message: lang === 'en' ? 'Analysis Done' : '분석 완료' });
+  onProgress?.({ progress: 100, message: taskText(lang, 'task_analysis_done') });
   return { items: results, skippedFiles };
 }
 
 function targetExtFor(filePath, targetFormat) {
-  if (!targetFormat || targetFormat === 'none') return path.extname(filePath).toLowerCase();
+  if (!targetFormat || targetFormat === 'none') return normalizedExt(filePath) || path.extname(filePath).toLowerCase();
   return `.${String(targetFormat).replace(/^\./, '').toLowerCase()}`;
+}
+
+function isSameArchiveFormat(sourceExt, targetExt) {
+  const zipFamily = new Set(['.zip', '.cbz', '.cbr']);
+  if (zipFamily.has(sourceExt) && zipFamily.has(targetExt)) return true;
+  return sourceExt === targetExt;
+}
+
+function normalizeInnerArchivePath(entryPath) {
+  return String(entryPath || '').replace(/\\/g, '/').normalize('NFC');
+}
+
+function stripFirstPathComponent(entryPath) {
+  const parts = normalizeInnerArchivePath(entryPath).split('/').filter(Boolean);
+  return parts.length > 1 ? parts.slice(1).join('/') : '';
 }
 
 async function uniquePath(basePath) {
   if (!fs.existsSync(basePath)) return basePath;
+  const dir = path.dirname(basePath);
+  const ext = path.extname(basePath);
+  const stem = path.basename(basePath, ext);
+  let counter = 1;
+  while (true) {
+    const candidate = path.join(dir, `${stem}_${counter}${ext}`);
+    if (!fs.existsSync(candidate)) return candidate;
+    counter += 1;
+  }
+}
+
+async function uniqueOrganizerTargetPath(basePath, sourcePath, allowSourcePath = false) {
+  if (!fs.existsSync(basePath)) return basePath;
+  if (allowSourcePath && path.resolve(basePath) === path.resolve(sourcePath)) return basePath;
+
   const dir = path.dirname(basePath);
   const ext = path.extname(basePath);
   const stem = path.basename(basePath, ext);
@@ -363,7 +411,7 @@ async function convertImagesToWebp(rootDir, cwebpExe, quality = 85) {
         const webpPath = path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.webp`);
         const tempPath = await uniquePath(path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.tmp.webp`));
         try {
-          await runProcess(cwebpExe, [fullPath, '-o', tempPath, '-q', String(Math.max(1, Math.min(100, Number(quality) || 85)))]);
+          await runQuietProcess(cwebpExe, [fullPath, '-o', tempPath, '-q', String(Math.max(1, Math.min(100, Number(quality) || 85)))]);
           if (fs.existsSync(webpPath)) await fsp.rm(webpPath, { force: true });
           await fsp.rename(tempPath, webpPath);
           await fsp.rm(fullPath, { force: true });
@@ -395,7 +443,7 @@ async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
       if (shouldCancel?.()) throw new Error('ORGANIZER_CANCELLED');
       const destination = archivePath.slice(0, -path.extname(archivePath).length);
       await fsp.mkdir(destination, { recursive: true });
-      await runProcess(sevenZExe, ['x', archivePath, `-o${destination}`, '-y']);
+      await runQuietProcess(sevenZExe, ['x', archivePath, `-o${destination}`, '-y']);
       await fsp.rm(archivePath, { force: true });
     }
   }
@@ -424,13 +472,141 @@ async function createFlatStaging(leaf, tempBase) {
   return staging;
 }
 
+async function replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath) {
+  const holdingPath = await uniquePath(`${sourcePath}.bookmanager.tmp`);
+  await fsp.rename(sourcePath, holdingPath);
+  try {
+    if (fs.existsSync(finalPath)) await fsp.rm(finalPath, { force: true });
+    await fsp.rename(preparedArchive, finalPath);
+    await fsp.rm(holdingPath, { force: true });
+  } catch (error) {
+    await fsp.rm(finalPath, { force: true }).catch(() => {});
+    if (fs.existsSync(holdingPath)) await fsp.rename(holdingPath, sourcePath);
+    throw error;
+  }
+}
+
+async function writePreparedArchive(sourcePath, preparedArchive, finalPath, options = {}) {
+  const filename = path.basename(sourcePath);
+
+  if (options.backup_on) {
+    const backupDir = path.join(path.dirname(sourcePath), 'bak');
+    await fsp.mkdir(backupDir, { recursive: true });
+    await fsp.copyFile(sourcePath, await uniquePath(path.join(backupDir, filename)));
+  }
+
+  if (options.deleteOriginal === false) {
+    await fsp.rename(preparedArchive, finalPath);
+    return;
+  }
+
+  if (path.resolve(sourcePath) === path.resolve(finalPath)) {
+    await fsp.rm(sourcePath, { force: true });
+    await fsp.rename(preparedArchive, finalPath);
+    return;
+  }
+
+  await replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath);
+}
+
+async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options = {}) {
+  const sevenZExe = options.sevenZExe;
+  const filename = path.basename(sourcePath);
+  let tempArchive = path.join(os.tmpdir(), `BookManager_OrganizerRN_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+
+  try {
+    await fsp.copyFile(sourcePath, tempArchive);
+    for (let index = 0; index < renamePairs.length; index += 20) {
+      if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
+      const args = [];
+      for (const pair of renamePairs.slice(index, index + 20)) {
+        args.push(pair.oldPath, pair.newPath);
+      }
+      await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args]);
+    }
+
+    await writePreparedArchive(sourcePath, tempArchive, finalPath, options);
+    tempArchive = '';
+    return { success: true, message: filename, created: [finalPath] };
+  } finally {
+    if (tempArchive) await fsp.rm(tempArchive, { force: true }).catch(() => {});
+  }
+}
+
+async function copyOrganizerArchiveDirectly(sourcePath, finalPath, options = {}) {
+  const filename = path.basename(sourcePath);
+  let tempArchive = path.join(os.tmpdir(), `BookManager_OrganizerCopy_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+
+  try {
+    await fsp.copyFile(sourcePath, tempArchive);
+    await writePreparedArchive(sourcePath, tempArchive, finalPath, options);
+    tempArchive = '';
+    return { success: true, message: filename, created: [finalPath] };
+  } finally {
+    if (tempArchive) await fsp.rm(tempArchive, { force: true }).catch(() => {});
+  }
+}
+
+function canUseOrganizerDirectPath(item, sourceExt, targetExt, options = {}) {
+  const volumes = item.volumes || [];
+  return volumes.length === 1
+    && isSameArchiveFormat(sourceExt, targetExt)
+    && !(options.flatten_folders || options.flattenFolders)
+    && !(options.webp_conversion || options.webpConversion);
+}
+
+async function tryProcessOrganizerItemDirectly(item, sourceExt, targetExt, options = {}) {
+  if (!canUseOrganizerDirectPath(item, sourceExt, targetExt, options)) return null;
+
+  const sourcePath = item.filepath;
+  const volume = (item.volumes || [])[0];
+  const outDir = item.out_path || path.dirname(sourcePath);
+  const volumeName = safeName(volume?.new_name || item.clean_title || path.basename(sourcePath, path.extname(sourcePath)));
+  await fsp.mkdir(outDir, { recursive: true });
+  const finalPath = await uniqueOrganizerTargetPath(
+    path.join(outDir, `${volumeName}${targetExt}`),
+    sourcePath,
+    options.deleteOriginal !== false,
+  );
+
+  if (options.shouldCancel?.()) return { cancelled: true, message: path.basename(sourcePath), created: [] };
+
+  if (volume?.type !== 'folder') {
+    if (volume?.inner_path) return null;
+    return copyOrganizerArchiveDirectly(sourcePath, finalPath, options);
+  }
+
+  const entries = await listArchiveEntries(sourcePath, options.sevenZExe);
+  const originalPath = normalizeInnerArchivePath(volume.original_path || '');
+  if (!originalPath) return copyOrganizerArchiveDirectly(sourcePath, finalPath, options);
+
+  const prefix = originalPath.endsWith('/') ? originalPath : `${originalPath}/`;
+  const renamePairs = entries
+    .filter(entry => !entry.isDir)
+    .map(entry => {
+      const oldPath = normalizeInnerArchivePath(entry.name);
+      if (!oldPath.startsWith(prefix)) return null;
+      const newPath = stripFirstPathComponent(oldPath);
+      if (!newPath || oldPath === newPath) return null;
+      return { oldPath, newPath };
+    })
+    .filter(Boolean);
+
+  if (renamePairs.length === 0) return null;
+  return renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options);
+}
+
 async function processOrganizerItem(item, options) {
   const sevenZExe = options.sevenZExe;
   if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
 
   const sourcePath = item.filepath;
   const filename = path.basename(sourcePath);
+  const sourceExt = normalizedExt(sourcePath) || path.extname(sourcePath).toLowerCase();
   const targetExt = targetExtFor(sourcePath, options.target_format);
+  const directResult = await tryProcessOrganizerItemDirectly(item, sourceExt, targetExt, options).catch(() => null);
+  if (directResult) return directResult;
+
   const tempBase = path.join(os.tmpdir(), `BookManager_Organizer_${Date.now()}_${Math.random().toString(16).slice(2)}`);
   const created = [];
   const tempArchives = [];
@@ -439,11 +615,11 @@ async function processOrganizerItem(item, options) {
 
   try {
     if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
-    await runProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
+    await runQuietProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
     await extractNestedArchives(tempBase, sevenZExe, options.shouldCancel);
     const actualRoot = await getActualRoot(tempBase);
     const leaves = await getImageLeaves(actualRoot);
-    if (leaves.length === 0) throw new Error('이미지 파일이 없거나 압축을 풀 수 없습니다.');
+    if (leaves.length === 0) throw new Error(taskText(options.lang, 'task_no_images_or_extract_failed'));
 
     const volumes = item.volumes || [];
     const archiveType = targetExt === '.7z' ? '-t7z' : '-tzip';
@@ -471,7 +647,7 @@ async function processOrganizerItem(item, options) {
         for (const createdPath of created) await fsp.rm(createdPath, { force: true }).catch(() => {});
         return { cancelled: true, message: filename, created: [] };
       }
-      await runProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot });
+      await runQuietProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot });
       await fsp.rename(tempArchive, targetPath);
       created.push(targetPath);
     }
@@ -519,7 +695,7 @@ export async function executeOrganizer(items, options = {}, onProgress) {
     const item = targets[index];
     onProgress?.({
       progress: Math.round((index / Math.max(targets.length, 1)) * 100),
-      message: options.lang === 'en' ? `[${index + 1}/${targets.length}] Processing: ${item.name}` : `[${index + 1}/${targets.length}] 처리 중: ${item.name}`,
+      message: taskText(options.lang, 'task_processing_item', { index: index + 1, total: targets.length, name: item.name }),
     });
 
     try {
@@ -540,8 +716,6 @@ export async function executeOrganizer(items, options = {}, onProgress) {
     }
   }
 
-  if (!cancelled) {
-    onProgress?.({ progress: 100, message: options.lang === 'en' ? 'Done!' : '작업 완료!' });
-  }
+  if (!cancelled) onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
   return { stats, createdFiles, cancelled };
 }

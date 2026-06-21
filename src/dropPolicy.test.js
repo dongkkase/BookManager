@@ -10,6 +10,8 @@ test('지원 아카이브 확장자는 대소문자와 관계없이 인식한다
     for (const filePath of ['a.zip', 'a.CBZ', 'a.cbr', 'a.7z', 'a.RAR']) {
         assert.equal(isSupportedArchivePath(filePath), true);
     }
+    assert.equal(isSupportedArchivePath('/books/HERO - 아카기의 유지를 잇는 남자 1-13 .zip '), true);
+    assert.equal(isSupportedArchivePath('/books/HERO - 아카기의 유지를 잇는 남자 1-13 .zip\u200b'), true);
     assert.equal(isSupportedArchivePath('a.pdf'), false);
 });
 

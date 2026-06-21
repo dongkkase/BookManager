@@ -78,7 +78,7 @@ function requestJson(url) {
         }
       });
     });
-    req.on('timeout', () => req.destroy(new Error('요청 시간이 초과되었습니다.')));
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
   });
 }
@@ -114,7 +114,7 @@ function requestJsonGeneric(url, headers = {}, timeout = 12000) {
         }
       });
     });
-    req.on('timeout', () => req.destroy(new Error('요청 시간이 초과되었습니다.')));
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
   });
 }
@@ -161,7 +161,7 @@ function requestJsonPost(url, payload = {}, extraHeaders = {}) {
         }
       });
     });
-    req.on('timeout', () => req.destroy(new Error('요청 시간이 초과되었습니다.')));
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
     req.write(body);
     req.end();
@@ -180,7 +180,7 @@ function requestJsonWithElectronNet(url, headers = {}, timeout = 12000) {
     }
     const timer = setTimeout(() => {
       request.abort();
-      reject(new Error('요청 시간이 초과되었습니다.'));
+      reject(new Error(i18nT('request_timeout')));
     }, timeout);
     let body = '';
     request.on('response', (response) => {
@@ -222,7 +222,7 @@ function requestTextWithElectronNet(url, headers = {}, timeout = 12000) {
     }
     const timer = setTimeout(() => {
       request.abort();
-      reject(new Error('요청 시간이 초과되었습니다.'));
+      reject(new Error(i18nT('request_timeout')));
     }, timeout);
     let body = '';
     request.on('response', (response) => {
@@ -272,7 +272,7 @@ function requestTextGeneric(url, headers = {}, timeout = 12000, redirects = 3) {
         resolve(body);
       });
     });
-    req.on('timeout', () => req.destroy(new Error('요청 시간이 초과되었습니다.')));
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
   });
 }
@@ -304,7 +304,7 @@ function requestBufferGeneric(url, headers = {}, timeout = 12000, redirects = 3)
         resolve({ buffer: Buffer.concat(chunks), contentType: res.headers['content-type'] || '' });
       });
     });
-    req.on('timeout', () => req.destroy(new Error('요청 시간이 초과되었습니다.')));
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
   });
 }
@@ -765,18 +765,21 @@ function isPlausibleOriginalTitle(value = '') {
 function aiProviderError(provider, error) {
     const message = String(error?.message || error || '');
     if (/\b401\b|incorrect api key|api key not valid|invalid.*key/i.test(message)) {
-        return `${provider} API 키가 올바르지 않습니다. 환경설정에서 선택한 공급자의 유효한 API 키를 입력해주세요.`;
+        return i18nT('api_provider_invalid_key', { provider });
     }
     if (/\b429\b|rate.?limit|quota/i.test(message)) {
-        return `${provider} API 사용량 한도에 도달했습니다. 잠시 후 다시 시도하거나 API 결제·할당량을 확인해주세요.`;
+        return i18nT('api_provider_quota', { provider });
     }
     if (/\b503\b|high demand|overloaded/i.test(message)) {
-        return `${provider} API 서버에 일시적으로 요청이 폭주하고 있습니다. 잠시 후 다시 시도해주세요.`;
+        return i18nT('api_provider_overloaded', { provider });
     }
     if (/\b(500|502|504)\b/i.test(message)) {
-        return `${provider} API 서버와 통신 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.`;
+        return i18nT('api_provider_server_error', { provider });
     }
-    return `${provider} 원제 식별 실패: ${message || '응답을 처리하지 못했습니다.'}`;
+    return i18nT('api_provider_identify_failed', {
+        provider,
+        msg: message || i18nT('api_response_unhandled'),
+    });
 }
 
 async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
@@ -1001,7 +1004,7 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
         let candidates = parsed?.identified === false ? [] : normalizeTitleCandidates(parsed, targetApi);
 
         if (candidates.length === 0) {
-            throw new Error('AI가 자체 지식으로 원제를 찾지 못했습니다.');
+            throw new Error(i18nT('api_original_title_not_found'));
         }
 
         const result = {
@@ -1264,7 +1267,7 @@ async function searchAladin(query, ttbKey = '', page = 1) {
   try {
     data = JSON.parse(cleanBody);
   } catch (error) {
-    throw new Error(`알라딘 응답 파싱 실패: ${cleanBody.slice(0, 120)}`);
+    throw new Error(i18nT('api_aladin_parse_failed', { msg: cleanBody.slice(0, 120) }));
   }
   return (data.item || []).map(item => {
     const { writer, penciller } = parseAladinCreators(item.author || '');
@@ -1720,9 +1723,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 폴더 스캔 ==========
   ipcMain.handle('folder:scan', async (event, folderPath, options) => {
     try {
+      const config = configManager.getConfig() || {};
       const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
       return await scanFolder(folderPath, {
         ...(options || {}),
+        lang: options?.lang || config.language || config.lang || 'ko',
         dbPath: libraryDbPath(),
         thumbnailDir: thumbnailDir(),
         sevenZExe,
@@ -1802,25 +1807,29 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const cwebpExe = options.cwebpExe || await getBinPath('cwebp');
+    const cjpegExe = options.cjpegExe || await getBinPath('cjpeg');
+    const djpegExe = options.djpegExe || await getBinPath('djpeg');
     const pngquantExe = options.pngquantExe || await getBinPath('pngquant');
     const jpegtranExe = options.jpegtranExe || await getBinPath('jpegtran');
     try {
       return await executeRenamer(items, {
-      ...config,
-      ...options,
-      sevenZExe,
-      cwebpExe,
-      pngquantExe,
-      jpegtranExe,
-      shouldCancel: () => controller.shouldCancel(),
-      lang: options.lang || config.language || config.lang || 'ko',
-      target_format: options.target_format ?? config.target_format ?? 'none',
-      backup_on: options.backup_on ?? config.backup_on ?? false,
-      flattenFolders: options.flattenFolders ?? config.flatten_folders ?? false,
-      webp_conversion: options.webp_conversion ?? options.webpConversion ?? config.webp_conversion ?? false,
-      webpConversion: options.webpConversion ?? options.webp_conversion ?? config.webp_conversion ?? false,
-      img_quality: options.img_quality ?? config.img_quality ?? config.jpg_quality ?? 100,
-      max_threads: options.max_threads ?? config.max_threads ?? 1,
+        ...config,
+        ...options,
+        sevenZExe,
+        cwebpExe,
+        cjpegExe,
+        djpegExe,
+        pngquantExe,
+        jpegtranExe,
+        shouldCancel: () => controller.shouldCancel(),
+        lang: options.lang || config.language || config.lang || 'ko',
+        target_format: options.target_format ?? config.target_format ?? 'none',
+        backup_on: options.backup_on ?? config.backup_on ?? false,
+        flattenFolders: options.flattenFolders ?? config.flatten_folders ?? false,
+        webp_conversion: options.webp_conversion ?? options.webpConversion ?? config.webp_conversion ?? false,
+        webpConversion: options.webpConversion ?? options.webp_conversion ?? config.webp_conversion ?? false,
+        img_quality: options.img_quality ?? config.img_quality ?? config.jpg_quality ?? 100,
+        max_threads: options.max_threads ?? config.max_threads ?? 1,
       }, (progress) => {
         event.sender.send('task:progress', { task: 'renamer:execute', ...progress });
       });
@@ -1952,7 +1961,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           }
         }
       } else {
-        throw new Error(`${apiName} 검색은 지원하지 않는 API입니다.`);
+        throw new Error(i18nT('api_search_unsupported', { api: apiName }));
       }
     } catch (error) {
       metadataSearchLog('Search failed', { api: apiName, query, actualQuery, page, error: error.message || String(error) });
@@ -2051,14 +2060,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('task:extract:start', async () => {
-    return { success: false, message: '별도 추출 작업은 현재 구조 정리/내부 파일명 변경 작업에 통합되어 있습니다.' };
+    return { success: false, message: i18nT('task_extract_integrated') };
   });
 
   ipcMain.handle('task:stop', async (event, taskId) => {
     const success = cancellationRegistry.cancel(event.sender.id, String(taskId || ''));
     return {
       success,
-      message: success ? '취소 요청을 전달했습니다.' : '실행 중인 작업을 찾을 수 없습니다.',
+      message: success ? i18nT('task_cancel_sent') : i18nT('task_cancel_not_found'),
     };
   });
 
@@ -2089,11 +2098,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('server:stop', async (event, serverType) => {
+    const config = configManager.getConfig() || {};
     return stopSharingServer(serverType, log => {
         if (!event.sender.isDestroyed()) {
             event.sender.send('server:log', { ...log, status: getSharingServerStatus() });
         }
-    });
+    }, config);
   });
 
   ipcMain.handle('server:status', () => {
@@ -2280,7 +2290,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
                   tag: item.tag_name,
                   date: item.published_at ? item.published_at.slice(0, 10) : '',
                   publishedAt: item.published_at || '',
-                  body: item.body || '릴리즈 내용이 없습니다.',
+                  body: item.body || i18nT('release_no_body'),
                   url: item.html_url,
                   draft: Boolean(item.draft),
                   prerelease: Boolean(item.prerelease),
@@ -2314,7 +2324,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       },
     };
     configManager.saveConfig(nextConfig);
-    return nextConfig;
+    setLanguage(nextLang);
+    return configManager.getConfig();
   });
 
   // ========== 폰트 관련 ==========
@@ -2388,7 +2399,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const window = BrowserWindow.fromWebContents(event.sender);
     const dialogOptions = {
       type: 'question',
-      title: options.title || '추가 방식 선택',
+      title: options.title || i18nT('dialog_add_mode_title'),
       message: options.message || '',
       buttons: 'yes-no-cancel',
       defaultChoice: 'yes',
@@ -2417,7 +2428,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile'],
-      title: title || '파일 선택',
+      title: title || i18nT('dialog_select_file'),
       filters: filters || [],
     });
     return normalizeFileDialogResult(result);
@@ -2427,7 +2438,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile', 'multiSelections'],
-      title: title || '파일 선택',
+      title: title || i18nT('dialog_select_file'),
       filters: filters || [],
     });
     return normalizeFilesDialogResult(result);
@@ -2436,7 +2447,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   ipcMain.handle('dialog:saveFile', async (event, title, filters, defaultPath) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(window, {
-      title: title || '저장',
+      title: title || i18nT('dialog_save_file'),
       filters: filters || [],
       defaultPath: defaultPath || undefined,
     });
@@ -2528,7 +2539,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   ipcMain.handle('fs:rename', async (_, oldPath, newPath) => {
     try {
       if (fs.existsSync(newPath) && oldPath.toLowerCase() !== newPath.toLowerCase()) {
-        return { success: false, message: '동일한 이름의 파일/폴더가 이미 존재합니다.' };
+        return { success: false, message: i18nT('fs_path_exists') };
       }
       fs.renameSync(oldPath, newPath);
 
@@ -2550,10 +2561,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   ipcMain.handle('fs:openWithViewer', async (_, viewerPath, filePath) => {
     try {
       if (!viewerPath || !fs.existsSync(viewerPath)) {
-        return { success: false, code: 'VIEWER_NOT_FOUND', message: 'Viewer executable not found.' };
+        return { success: false, code: 'VIEWER_NOT_FOUND', message: i18nT('viewer_not_found') };
       }
       if (!filePath || !fs.existsSync(filePath)) {
-        return { success: false, code: 'FILE_NOT_FOUND', message: 'File not found.' };
+        return { success: false, code: 'FILE_NOT_FOUND', message: i18nT('fs_file_not_found') };
       }
       const child = spawn(viewerPath, [filePath], {
         detached: true,
@@ -2600,7 +2611,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           deleted.push(filePath);
         }
       } catch (err) {
-        errors.push(`${path.basename(filePath)} 삭제 실패: ${err.message}`);
+        errors.push(i18nT('fs_delete_failed', [path.basename(filePath), err.message]));
       }
     }
     return {
@@ -2617,7 +2628,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         await shell.openPath(folderPath);
         return { success: true };
       }
-      return { success: false, message: '경로를 찾을 수 없습니다.' };
+      return { success: false, message: i18nT('fs_path_not_found') };
     } catch (error) {
       return { success: false, message: error.message };
     }
@@ -2630,7 +2641,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         shell.showItemInFolder(filePath);
         return { success: true };
       }
-      return { success: false, message: '경로를 찾을 수 없습니다.' };
+      return { success: false, message: i18nT('fs_path_not_found') };
     } catch (error) {
       return { success: false, message: error.message };
     }
@@ -2758,7 +2769,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   ipcMain.handle('app:openExternal', async (_event, url) => {
     const safeUrl = normalizeExternalUrl(url);
-    if (!safeUrl) throw new Error('허용되지 않는 외부 URL입니다.');
+    if (!safeUrl) throw new Error(i18nT('external_url_blocked'));
     await shell.openExternal(safeUrl);
     return true;
   });

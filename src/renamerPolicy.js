@@ -2,6 +2,11 @@ function basename(filePath) {
     return String(filePath || '').split(/[\\/]/).pop() || '';
 }
 
+function extensionWithoutDot(filePath) {
+    const match = basename(filePath).match(/\.([^.]+)$/);
+    return match ? match[1].toLowerCase() : '';
+}
+
 function stem(filePath) {
     return basename(filePath).replace(/\.[^.]+$/, '');
 }
@@ -51,6 +56,22 @@ export function refreshRenamerItem(item, options = {}) {
         }),
     }));
     return { ...item, entries, count: entries.length };
+}
+
+export function archiveChangeBadges(item, config = {}) {
+    const badges = [];
+    const currentExtension = extensionWithoutDot(item?.filepath || item?.name);
+    const targetFormat = String(config?.target_format || config?.targetFormat || 'none')
+        .replace(/^\./, '')
+        .toLowerCase();
+
+    if (targetFormat && targetFormat !== 'none' && currentExtension !== targetFormat) {
+        badges.push({ key: 'format', label: targetFormat.toUpperCase() });
+    }
+    if (config?.webp_conversion || config?.webpConversion) {
+        badges.push({ key: 'webp', label: 'WEBP' });
+    }
+    return badges;
 }
 
 export function moveRenamerEntry(entries, sourceIndex, targetIndex) {

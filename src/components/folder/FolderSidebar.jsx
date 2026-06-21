@@ -132,10 +132,10 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const renderLibraryList = () => (
     <div className="sidebar-section">
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.libraries') || '라이브러리'}</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.libraries')}</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button title={t('tab_folder_settings')} onClick={onOpenLibrarySettings} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="gear" size={12} /></button>
-          <button title={t('folder.sidebar.add_library') || '라이브러리 추가'} onClick={onAddLibrary} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>➕</button>
+          <button title={t('folder.sidebar.add_library')} onClick={onAddLibrary} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>➕</button>
         </div>
       </div>
       <ul className="nav-list">
@@ -156,14 +156,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             <span
               onClick={(e) => { e.stopPropagation(); onRemoveLibrary && onRemoveLibrary(lib); }}
               style={{ cursor: 'pointer', color: '#ff6b6b' }}
-              title={t('folder.sidebar.remove_library') || '제거'}
+              title={t('folder.sidebar.remove_library')}
             >
               ✖
             </span>
           </li>
         )) : (
           <li style={{ color: '#888', fontStyle: 'italic', padding: '4px 8px' }}>
-            라이브러리가 없습니다
+            {t('folder.sidebar.empty_libraries')}
           </li>
         )}
       </ul>
@@ -174,10 +174,10 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const renderFavoritesList = () => (
     <div className="sidebar-section" style={{ marginTop: '10px' }}>
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.favorites') || '즐겨찾기'}</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.favorites')}</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button
-            title={t('folder.sidebar.add_favorite') || '현재 폴더 즐겨찾기에 추가'}
+            title={t('folder.sidebar.add_favorite')}
             onClick={() => selectedFolderPath && onAddFavorite && onAddFavorite(selectedFolderPath)}
             style={{ backgroundColor: 'transparent', color: selectedFolderPath ? 'gold' : 'gray', border: 'none', cursor: selectedFolderPath ? 'pointer' : 'default' }}
             disabled={!selectedFolderPath}
@@ -205,7 +205,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             <span
               onClick={(e) => { e.stopPropagation(); onRemoveFavorite && onRemoveFavorite(fav.path); }}
               style={{ cursor: 'pointer', color: '#ff6b6b' }}
-              title={t('folder.sidebar.remove_favorite') || '제거'}
+              title={t('folder.sidebar.remove_favorite')}
             >
               ✖
             </span>
@@ -214,7 +214,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
         })}
         {favorites.length === 0 && (
           <li style={{ color: '#888', fontStyle: 'italic', padding: '4px 8px' }}>
-            즐겨찾기가 없습니다
+            {t('folder.sidebar.empty_favorites')}
           </li>
         )}
       </ul>
@@ -237,7 +237,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           tabIndex={isActive ? -1 : undefined}
           className={isActive ? 'selected' : ''}
           style={{ 
-            paddingLeft: `${8 + depth * 15}px`,
+            '--folder-tree-indent': `${7 + depth * 10}px`,
             paddingTop: '4px', 
             paddingBottom: '4px',
             display: 'flex',
@@ -253,8 +253,11 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           }}
           onContextMenu={(event) => onFolderContextMenu?.(event, node.path, siblings.map(item => item.path))}
         >
-          <span style={{ width: 'var(--font-sm)', display: 'inline-block', textAlign: 'center', marginRight: '4px', fontSize: 'var(--font-2xs)' }}>
-            {node.isFolder ? (hasChildren ? (isExpanded ? '▼' : '▶') : ' ') : ' '}
+          <span
+            className="folder-tree-expander"
+            style={{ visibility: node.isFolder && hasChildren ? 'visible' : 'hidden' }}
+          >
+            {isExpanded ? '▼' : '▶'}
           </span>
           <span style={{ marginRight: '4px', display: 'inline-flex', color: node.isFolder ? '#f0b536' : '#b8c7d4' }}>
             <FaIcon name={node.isFolder ? 'folder' : 'file'} size={12} />
@@ -273,7 +276,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const renderFolderTree = () => (
     <div className="sidebar-section" style={{ marginTop: '10px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>폴더</span>
+        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.folders')}</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           {[
             ['desktop', 'folder_desktop', 'desktop'],

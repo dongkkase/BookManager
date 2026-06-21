@@ -1,16 +1,23 @@
 import fs from 'fs';
 import path from 'path';
-import zlib from 'zlib';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { LibraryDB } from '../database/library_db.js';
+import {
+  listZipEntriesFromFile,
+  readZipEntryFromFile,
+} from '../core/zipArchive.js';
+import { translate } from '../../src/utils/i18n.js';
 
 const DEFAULT_TARGET_EXTS = ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7', '.pdf', '.epub'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
-const MAX_INLINE_ZIP_BYTES = 256 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+
+function taskText(lang, key, values) {
+  return translate(key, lang || 'ko', values);
+}
 
 async function getFolderUtils() {
   const folderUtilsUrl = new URL('../../src/utils/folderUtils.js', import.meta.url);
@@ -81,66 +88,6 @@ function parseComicInfo(xml) {
       readXmlTag(xml, 'Day'),
     ].filter(Boolean).join('-'),
   };
-}
-
-function findEndOfCentralDirectory(buffer) {
-  const signature = 0x06054b50;
-  const minOffset = Math.max(0, buffer.length - 0xffff - 22);
-  for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
-    if (buffer.readUInt32LE(offset) === signature) return offset;
-  }
-  return -1;
-}
-
-function listZipEntries(buffer) {
-  const eocdOffset = findEndOfCentralDirectory(buffer);
-  if (eocdOffset < 0) return [];
-
-  const entryCount = buffer.readUInt16LE(eocdOffset + 10);
-  let centralOffset = buffer.readUInt32LE(eocdOffset + 16);
-  const entries = [];
-
-  for (let i = 0; i < entryCount; i += 1) {
-    if (centralOffset + 46 > buffer.length || buffer.readUInt32LE(centralOffset) !== 0x02014b50) break;
-
-    const flags = buffer.readUInt16LE(centralOffset + 8);
-    const method = buffer.readUInt16LE(centralOffset + 10);
-    const compressedSize = buffer.readUInt32LE(centralOffset + 20);
-    const uncompressedSize = buffer.readUInt32LE(centralOffset + 24);
-    const fileNameLength = buffer.readUInt16LE(centralOffset + 28);
-    const extraLength = buffer.readUInt16LE(centralOffset + 30);
-    const commentLength = buffer.readUInt16LE(centralOffset + 32);
-    const localHeaderOffset = buffer.readUInt32LE(centralOffset + 42);
-    const encoding = flags & 0x800 ? 'utf8' : 'utf8';
-    const name = buffer.toString(encoding, centralOffset + 46, centralOffset + 46 + fileNameLength);
-
-    entries.push({ name, method, compressedSize, uncompressedSize, localHeaderOffset });
-    centralOffset += 46 + fileNameLength + extraLength + commentLength;
-  }
-
-  return entries;
-}
-
-function readZipEntry(buffer, entry) {
-  const localOffset = entry.localHeaderOffset;
-  if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034b50) return null;
-
-  const fileNameLength = buffer.readUInt16LE(localOffset + 26);
-  const extraLength = buffer.readUInt16LE(localOffset + 28);
-  const dataStart = localOffset + 30 + fileNameLength + extraLength;
-  const dataEnd = dataStart + entry.compressedSize;
-  if (dataEnd > buffer.length || entry.compressedSize > MAX_INLINE_COVER_BYTES) return null;
-
-  const compressed = buffer.subarray(dataStart, dataEnd);
-  if (entry.method === 0) return compressed;
-  if (entry.method === 8) {
-    try {
-      return zlib.inflateRawSync(compressed);
-    } catch {
-      return null;
-    }
-  }
-  return null;
 }
 
 function getImageResolution(buffer, filename) {
@@ -237,30 +184,29 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
   try {
     let result = {};
     if (ext === '.zip' || ext === '.cbz') {
-      const maxInlineZipBytes = options.maxInlineZipBytes || MAX_INLINE_ZIP_BYTES;
-      const archiveSize = options.size || fs.statSync(filePath).size;
-      if (archiveSize > maxInlineZipBytes) {
-        result = await extractWith7Zip(filePath, options.sevenZExe);
-      } else {
-        const buffer = await fs.promises.readFile(filePath);
-        const entries = listZipEntries(buffer);
-        const comicInfoEntry = entries.find(entry => path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
-        const imageEntry = entries
-          .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.name.endsWith('/'))
-          .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
+      const entries = await listZipEntriesFromFile(filePath);
+      const comicInfoEntry = entries.find(entry => path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
+      const imageEntry = entries
+        .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.isDirectory)
+        .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
 
-        if (comicInfoEntry) {
-          result.has_metadata = true;
-          const xmlBuffer = readZipEntry(buffer, comicInfoEntry);
-          if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
-        }
-        if (imageEntry) {
-          const imageBuffer = readZipEntry(buffer, imageEntry);
-          if (imageBuffer) {
-            result.imageBuffer = imageBuffer;
-            result.imageName = imageEntry.name;
-            result.resolution = getImageResolution(imageBuffer, imageEntry.name);
-          }
+      if (comicInfoEntry) {
+        result.has_metadata = true;
+        const xmlBuffer = await readZipEntryFromFile(filePath, comicInfoEntry, {
+          maxBytes: MAX_INLINE_COVER_BYTES,
+          maxCompressedBytes: MAX_INLINE_COVER_BYTES,
+        });
+        if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
+      }
+      if (imageEntry) {
+        const imageBuffer = await readZipEntryFromFile(filePath, imageEntry, {
+          maxBytes: MAX_INLINE_COVER_BYTES,
+          maxCompressedBytes: MAX_INLINE_COVER_BYTES,
+        });
+        if (imageBuffer) {
+          result.imageBuffer = imageBuffer;
+          result.imageName = imageEntry.name;
+          result.resolution = getImageResolution(imageBuffer, imageEntry.name);
         }
       }
     } else if (['.rar', '.cbr', '.7z', '.cb7'].includes(ext)) {
@@ -390,7 +336,7 @@ function similarity(a, b) {
   return Math.max(containment, intersection / union);
 }
 
-async function buildDupCache(dupFolders, targetExts, event) {
+async function buildDupCache(dupFolders, targetExts, event, lang = 'ko') {
   const cache = [];
   const seen = new Set();
 
@@ -435,7 +381,7 @@ async function buildDupCache(dupFolders, targetExts, event) {
   if (event && cache.length) {
     event.sender.send('scan-progress', {
       progress: 85,
-      message: `중복 검사 대상 ${cache.length}개 인덱싱 완료...`,
+      message: taskText(lang, 'task_dup_index_done', { count: cache.length }),
     });
   }
 
@@ -477,14 +423,33 @@ function attachDuplicateMatches(files, dupCache) {
   });
 }
 
+async function safeGetCachedFileInfo(libraryDb, fullPath) {
+  if (!libraryDb || libraryDb.__bookManagerUnavailable) return null;
+  try {
+    return await libraryDb.getFileInfo(fullPath);
+  } catch (error) {
+    libraryDb.__bookManagerUnavailable = true;
+    console.warn(`[FolderScan] Library DB unavailable; continuing without cache: ${error.message}`);
+    return null;
+  }
+}
+
+async function safeUpsertFileInfo(libraryDb, info) {
+  if (!libraryDb || libraryDb.__bookManagerUnavailable) return;
+  try {
+    await libraryDb.upsertFileInfo(info);
+  } catch (error) {
+    libraryDb.__bookManagerUnavailable = true;
+    console.warn(`[FolderScan] Library DB update failed; continuing without cache: ${error.message}`);
+  }
+}
+
 async function createFileData(fullPath, stats, options = {}) {
   const name = path.basename(fullPath);
   const folderPath = path.dirname(fullPath);
   const ext = path.extname(name).toLowerCase();
   const filenameMeta = await extractFilenameMetadata(name);
-  const cached = options.libraryDb
-    ? await options.libraryDb.getFileInfo(fullPath)
-    : null;
+  const cached = await safeGetCachedFileInfo(options.libraryDb, fullPath);
   const cachedThumbnailExists = Boolean(
     cached?.thumb_path
     && fs.existsSync(cached.thumb_path)
@@ -507,7 +472,7 @@ async function createFileData(fullPath, stats, options = {}) {
       ...extracted,
     };
     if (options.libraryDb) {
-      await options.libraryDb.upsertFileInfo({
+      await safeUpsertFileInfo(options.libraryDb, {
         path: fullPath,
         mtime: stats.mtimeMs / 1000,
         size: stats.size,
@@ -650,6 +615,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     skipArchiveExtraction = false,
     suppressEvents = false,
     thumbnailEncoder,
+    lang = 'ko',
   } = options;
   const normalizedExts = targetExts.map(ext => ext.toLowerCase());
   const results = [];
@@ -716,7 +682,7 @@ export async function scanFolder(folderPath, options = {}, event) {
               lastTaskProgressAt = now;
               emitTaskProgress({
                 progress: Math.min(80, Math.floor((matchedCount / Math.max(scannedCount, 1)) * 80)),
-                message: `${matchedCount}개 항목 검색 중...`,
+                message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
                 currentFile: fullPath,
                 currentFileName: entry.name,
               });
@@ -741,7 +707,7 @@ export async function scanFolder(folderPath, options = {}, event) {
         if (event && !suppressEvents && scannedCount % 50 === 0) {
           event.sender.send('scan-progress', {
             progress: Math.min(80, Math.floor((matchedCount / Math.max(scannedCount, 1)) * 80)),
-            message: `${matchedCount}개 항목 검색 중...`,
+            message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
           });
         }
       }
@@ -758,17 +724,17 @@ export async function scanFolder(folderPath, options = {}, event) {
   if (enableDupCheck && dupFolders.length > 0) {
     emitTaskProgress({
       progress: 85,
-      message: `중복 검사 대상 준비 중...`,
+      message: taskText(lang, 'task_dup_prepare'),
       currentFile: '',
       currentFileName: '',
     });
-    const dupCache = await buildDupCache(dupFolders, normalizedExts, event);
+    const dupCache = await buildDupCache(dupFolders, normalizedExts, event, lang);
     files = attachDuplicateMatches(results, dupCache);
   }
 
   emitTaskProgress({
     progress: 100,
-    message: `${files.length}개 항목 검색 완료`,
+    message: taskText(lang, 'task_scan_done', { count: files.length }),
     currentFile: '',
     currentFileName: '',
   });

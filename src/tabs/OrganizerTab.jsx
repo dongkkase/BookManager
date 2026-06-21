@@ -75,6 +75,7 @@ function OrganizerTab({ config, t, showToast }) {
     setProgress(0);
     setStatusMessage(t('msg_loading_list'));
     setLastResult(null);
+    setSkippedFiles([]);
 
     try {
       const result = await window.electronAPI.analyzeOrganizer(cleanPaths, {
@@ -95,7 +96,7 @@ function OrganizerTab({ config, t, showToast }) {
       setIsAllExpanded(true);
       setSkippedFiles(prev => [...new Set([...prev, ...(result.skippedFiles || [])])]);
       if (result.skippedFiles?.length) {
-        setStatusMessage(`${t('msg_unsupported_format')} ${result.skippedFiles.join(', ')}`);
+        setStatusMessage(`${t('msg_failed')}: ${result.skippedFiles.join(', ')}`);
         const skipped = partitionSkippedFiles(result.skippedFiles);
         if (skipped.nested.length > 0) {
           await window.electronAPI?.showMessage?.({
@@ -109,7 +110,7 @@ function OrganizerTab({ config, t, showToast }) {
           await window.electronAPI?.showMessage?.({
             type: 'warning',
             title: t('dlg_warn'),
-            message: `${t('msg_unsupported_format')}${skipped.unsupported.join('\n')}`,
+            message: `${t('msg_failed')}\n${skipped.unsupported.join('\n')}`,
             language,
           });
         }
@@ -390,7 +391,7 @@ function OrganizerTab({ config, t, showToast }) {
         <button className="org-btn" onClick={handleSelectFolder} disabled={isWorking}><FaIcon name="folder" /> {t('add_folder')}</button>
         <button className="org-btn" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>
         <button className="org-btn" onClick={handleToggleExpandAll} disabled={fileList.length === 0}>
-          ↕ {language === 'ko' ? '전체 펼치기 / 접기' : language === 'ja' ? 'すべて展開 / 折りたたみ' : 'Expand / Collapse All'}
+          ↕ {t('org_expand_collapse_all')}
         </button>
         <button className="org-btn" onClick={handleBatchDefault} disabled={fileList.length === 0}>{t('batch_default')}</button>
         <button className="org-btn" onClick={handleBatchTitle} disabled={fileList.length === 0}>{t('batch_title')}</button>
@@ -453,16 +454,16 @@ function OrganizerTab({ config, t, showToast }) {
                         onClick={event => event.stopPropagation()}
                       />
                       <button type="button" onClick={() => handleOutPathChange(item.id, defaultOutputPath(item.filepath))}>
-                        {language === 'ko' ? '기본값' : language === 'ja' ? 'デフォルト' : 'Default'}
+                        {t('org_default_path')}
                       </button>
                       <button type="button" onClick={() => handleOutPathChange(item.id, titleOutputPath(item))}>
-                        {language === 'ko' ? '책제목' : language === 'ja' ? 'タイトル' : 'Title'}
+                        {t('org_title_path')}
                       </button>
                       <button type="button" onClick={() => handleBatchUnit(item.id, 'volume')}>
-                        {language === 'ja' ? '一括: 巻' : language === 'en' ? 'All: Vol' : '일괄: 권'}
+                        {t('org_batch_volume')}
                       </button>
                       <button type="button" onClick={() => handleBatchUnit(item.id, 'chapter')}>
-                        {language === 'ja' ? '一括: 話' : language === 'en' ? 'All: Ch' : '일괄: 화'}
+                        {t('org_batch_chapter')}
                       </button>
                     </div>
                     <div className="org-col-count">{item.volumes?.length || 0}</div>
@@ -509,7 +510,7 @@ function OrganizerTab({ config, t, showToast }) {
       </div>
       {skippedFiles.length > 0 && (
         <div className="org-result-errors">
-          {t('msg_unsupported_format')}
+          {t('msg_failed')}
           {skippedFiles.map(file => <div key={file}>{file}</div>)}
         </div>
       )}
