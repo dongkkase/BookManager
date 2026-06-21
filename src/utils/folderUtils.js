@@ -9,6 +9,7 @@ const RE_TRASH_2 = /(?:\[19\d{2}\]|\[20\d{2}\]|\(19\d{2}\)|\(20\d{2}\))/g;
 
 export function extractCoreTitle(name) {
   if (!name) return "";
+  name = String(name).normalize('NFC');
   let cleanName = name.replace(RE_TRASH_1, "");
   cleanName = cleanName.replace(RE_TRASH_2, "");
   // 파이썬의 핵심 로직 중 대괄호, 괄호 등 제거 (간소화)
@@ -25,6 +26,8 @@ export function extractCoreTitle(name) {
 }
 
 export function extractVolNumbers(name, seriesName = "") {
+  name = String(name || "").normalize('NFC');
+  seriesName = String(seriesName || "").normalize('NFC');
   let cleanName = name.replace(RE_TRASH_1, "");
   cleanName = cleanName.replace(RE_TRASH_2, "");
 

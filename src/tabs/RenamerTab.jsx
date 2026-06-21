@@ -15,6 +15,7 @@ import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
 import { isTextEntryTarget } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
+import noImage from '../images/noimage.png';
 
 function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
@@ -634,7 +635,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-preview-img-box">
           {coverPreview && !previewError.cover
             ? <img src={coverPreview} alt="" onError={() => setPreviewError(current => ({ ...current, cover: true }))} />
-            : <span className="renamer-no-image">{activeArchive ? t('no_preview') : t('tf_empty_no_data')}</span>}
+            : <img src={noImage} alt={activeArchive ? t('no_preview') : t('tf_empty_no_data')} className="renamer-no-image" />}
         </div>
 
         <div className="renamer-divider" />
@@ -643,7 +644,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-preview-img-box">
           {innerPreview && !previewError.inner
             ? <img src={innerPreview} alt="" onError={() => setPreviewError(current => ({ ...current, inner: true }))} />
-            : <span className="renamer-no-image">{activeEntry ? t('no_image') : t('tf_empty_no_data')}</span>}
+            : <img src={noImage} alt={activeEntry ? t('no_image') : t('tf_empty_no_data')} className="renamer-no-image" />}
         </div>
       </div>
 

@@ -32,9 +32,9 @@
 }
 
 .renamer-preview-img-box {
-    flex: 0 1 250px;
-    min-height: 130px;
-    max-height: 250px;
+    flex: 0 1 100%;
+    min-height: calc(130px * 1.2);
+    max-height: calc(250px * 1.2);
     display: flex;
     align-items: flex-start;
     justify-content: center;
@@ -154,6 +154,14 @@
 .renamer-table input[type="checkbox"] {
     width: var(--checkbox-size);
     height: var(--checkbox-size);
+    inline-size: var(--checkbox-size);
+    block-size: var(--checkbox-size);
+    min-width: var(--checkbox-size);
+    max-width: var(--checkbox-size);
+    min-height: var(--checkbox-size);
+    max-height: var(--checkbox-size);
+    aspect-ratio: 1 / 1;
+    padding: 0;
     margin: 0;
     accent-color: #41b6f3;
 }
@@ -254,7 +262,7 @@
     flex: 0 0 auto;
     color: #ffffff;
     font-weight: 900;
-    padding: 0 7px 5px;
+    padding: 5px 7px 5px;
     line-height: 1.2;
 }
 

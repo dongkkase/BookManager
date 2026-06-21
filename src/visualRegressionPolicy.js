@@ -103,6 +103,13 @@ export const VISUAL_STYLE_CONTRACTS = Object.freeze([
     fragments: [
       '.metadata-tab',
       '.meta-api-dialog',
+      '.meta-tree-toggle-all',
+      '.meta-tree-file-text',
+      '.meta-tree-file-name',
+      '.meta-tree-file-date',
+      '.meta-searchable-select',
+      '.meta-searchable-options',
+      'grid-template-columns: var(--checkbox-size, 16px) minmax(0, 1fr)',
       ':hover',
       'overflow',
     ],

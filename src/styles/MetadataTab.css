@@ -51,7 +51,7 @@
 }
 
 .meta-preview-img-box {
-  height: 350px;
+  height: 372.89px;
   background-color: #111;
   border: 0;
   border-radius: 8px;
@@ -74,6 +74,61 @@
   font-size: var(--font-base);
 }
 
+.meta-tree-toggle-all {
+  width: 100%;
+  min-height: var(--control-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 10px;
+  color: #dce6f0;
+  background-color: #303030;
+  border: 1px solid #3e3e3e;
+  border-radius: 6px;
+  font-size: var(--font-sm);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.meta-tree-toggle-all:hover:not(:disabled) {
+  background-color: #374353;
+  border-color: #4e6380;
+}
+
+.meta-tree-toggle-all.active {
+  color: #fff;
+  background-color: #2f5f83;
+  border-color: #3498db;
+}
+
+.meta-tree-toggle-all:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.meta-tree-toggle-label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.meta-tree-toggle-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-tree-toggle-count {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: var(--font-xs);
+}
+
 .meta-tree-container {
   flex: 1;
   min-height: 0;
@@ -93,7 +148,7 @@
 
 .meta-tree ul {
   list-style: none;
-  padding-left: 12px;
+  /* padding-left: 12px; */
   margin: 3px 0 7px;
 }
 
@@ -123,6 +178,7 @@
   background: transparent;
   border: 0;
   cursor: pointer;
+  user-select: none;
 }
 
 .meta-tree-chevron {
@@ -131,11 +187,11 @@
 
 .meta-tree-file {
   display: grid;
-  grid-template-columns: 14px 14px minmax(0, 1fr);
-  align-items: center;
-  gap: 4px;
-  font-weight: 700;
-  padding: 5px 7px;
+  grid-template-columns: var(--checkbox-size, 16px) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
+  font-weight: 400;
+  padding: 6px 7px;
   color: #ddd;
   cursor: pointer;
   border-radius: 4px;
@@ -144,8 +200,19 @@
   text-overflow: ellipsis;
 }
 
-.meta-tree-file input {
-  margin: 0;
+.meta-tree-file input[type="checkbox"] {
+  width: var(--checkbox-size, 16px);
+  height: var(--checkbox-size, 16px);
+  inline-size: var(--checkbox-size, 16px);
+  block-size: var(--checkbox-size, 16px);
+  min-width: var(--checkbox-size, 16px);
+  max-width: var(--checkbox-size, 16px);
+  min-height: var(--checkbox-size, 16px);
+  max-height: var(--checkbox-size, 16px);
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  justify-self: start;
+  margin: 2px 0 0;
 }
 
 .meta-tree-file:hover {
@@ -159,6 +226,42 @@
 
 .meta-tree-icon {
   font-size: var(--font-sm);
+  margin-top: 2px;
+}
+
+.meta-tree-file-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meta-tree-file-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-tree-file-date {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: var(--font-xs);
+  line-height: 1.2;
+  font-weight: 0;
+}
+
+.meta-tree-file-date span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-tree-file.selected .meta-tree-file-date {
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .meta-right-panel {
@@ -286,9 +389,9 @@
 }
 
 .meta-section-tabs button {
-  width: 48px;
+  /* width: 48px; */
   min-height: var(--control-height-lg);
-  padding: 5px 4px;
+  padding: 5px 14px;
   border: 0;
   border-right: 1px solid #43546d;
   border-radius: 0;
@@ -384,7 +487,7 @@
   display: block;
   min-width: 0;
   line-height: 1.18;
-  text-align: center;
+  text-align: left;
 }
 
 .meta-checkbox-label {
@@ -406,7 +509,7 @@
   }
 
   .meta-section-tabs button {
-    width: 46px;
+    /* width: 46px; */
   }
 
   .meta-top-action-buttons .meta-btn,
@@ -513,6 +616,78 @@ textarea.meta-input {
   background-color: #3b3b3b;
 }
 
+.meta-searchable-select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.meta-searchable-select .meta-input {
+  padding-right: 30px;
+}
+
+.meta-searchable-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.68);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.meta-searchable-options {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 4px;
+  background-color: #242424;
+  border: 1px solid #555;
+  border-radius: 6px;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.meta-searchable-option {
+  width: 100%;
+  min-height: var(--control-height);
+  display: block;
+  padding: 5px 8px;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: var(--font-sm);
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-searchable-option:hover,
+.meta-searchable-option.active {
+  background-color: #37516a;
+}
+
+.meta-searchable-option[aria-selected="true"] {
+  color: #9ad7ff;
+}
+
+.meta-searchable-empty {
+  padding: 7px 8px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
 .meta-copy-btn,
 .meta-stepper button {
   background-color: #444;
@@ -576,6 +751,14 @@ textarea.meta-input {
 .meta-checkbox-label input {
   width: var(--checkbox-size);
   height: var(--checkbox-size);
+  inline-size: var(--checkbox-size);
+  block-size: var(--checkbox-size);
+  min-width: var(--checkbox-size);
+  max-width: var(--checkbox-size);
+  min-height: var(--checkbox-size);
+  max-height: var(--checkbox-size);
+  aspect-ratio: 1 / 1;
+  padding: 0;
 }
 
 .meta-tag-editor {

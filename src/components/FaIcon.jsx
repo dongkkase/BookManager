@@ -17,6 +17,7 @@ import {
   faChild,
   faCircleCheck,
   faCircleMinus,
+  faClock,
   faCloudArrowDown,
   faCopy,
   faDesktop,
@@ -107,6 +108,7 @@ const ICONS = {
   'layer-group': faLayerGroup,
   child: faChild,
   calendar: faCalendarDays,
+  clock: faClock,
   link: faLink,
 };
 

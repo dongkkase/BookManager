@@ -48,12 +48,23 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     assertInventory('renamer', [
         ['내부 파일명 custom pattern', 'value={customText}'],
         ['내부 파일명 시작 번호', 'value={startNum}'],
+        ['내부 파일명 미리보기 noimage fallback', "import noImage from '../images/noimage.png'"],
+        ['내부 파일명 미리보기 빈 상태 이미지', 'src={noImage}'],
     ]);
     assertInventory('metadata', [
         ['메타데이터 검색어', 'value={searchQuery}'],
         ['ComicInfo 필드 정의', 'const META_FIELDS'],
         ['ComicInfo multiline 입력', "field.type === 'textarea'"],
         ['ComicInfo tag 입력', 'renderDualTextarea'],
+        ['메타데이터 아이템 수정일 표시', 'metadataModifiedDate(file)'],
+        ['메타데이터 아이템 수정일 fallback', "'No Data'"],
+        ['메타데이터 트리 전체 선택 버튼', 'className={`meta-tree-toggle-all'],
+        ['메타데이터 트리 전체 선택 카운트', 'meta-tree-toggle-count'],
+        ['메타데이터 폴더 더블클릭 직접 판정', 'GROUP_DOUBLE_CLICK_MS'],
+        ['메타데이터 폴더 더블클릭 리셋', "groupClickRef.current = { groupName: '', time: 0 }"],
+        ['메타데이터 검색형 select 필드 제한', "SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format'])"],
+        ['메타데이터 검색형 select 컴포넌트', 'function SearchableSelect'],
+        ['메타데이터 시리즈 그룹 후보 수집', 'seriesGroupOptions'],
         ['API 검색 다이얼로그 검색어', 'value={dialogQuery}'],
     ]);
     assertInventory('settings', [

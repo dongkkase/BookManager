@@ -41,8 +41,10 @@ async function getFolderUtils() {
 async function extractFilenameMetadata(name) {
   try {
     const { extractCoreTitle, extractVolNumbers } = await getFolderUtils();
-    const series = extractCoreTitle(name);
-    const vols = extractVolNumbers(name, series);
+    const normalizedName = String(name || '').normalize('NFC');
+    const stem = path.parse(normalizedName).name;
+    const series = extractCoreTitle(stem);
+    const vols = extractVolNumbers(stem, series);
     const volume = vols.length > 0 ? (vols.length === 1 ? String(vols[0]) : `${vols[0]}~${vols[vols.length - 1]}`) : '';
     return { series, volume, sorted_volume: vols[0] || null, nums: vols };
   } catch (err) {
@@ -328,7 +330,7 @@ function normalizeForCompare(text = '') {
     legend: '전설', world: '세계', sword: '검',
   };
   const stopwords = ['만화책', '만화', '코믹스', 'e북', 'ebook', '완결', '합본', '웹툰', '단행본', '시리즈', '총집편', '풀컬러', 'in', 'the', 'of', 'a', 'an', '미완'];
-  let value = text.toLowerCase();
+  let value = String(text || '').normalize('NFC').toLowerCase();
   for (const word of stopwords) {
     const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (/^[a-z]+$/.test(word)) {
@@ -338,8 +340,27 @@ function normalizeForCompare(text = '') {
     }
   }
   for (const [from, to] of Object.entries(synonyms)) value = value.replace(new RegExp(`\\b${from}\\b`, 'gi'), to);
-  const charOnly = value.replace(/[^가-힣a-z]/g, '');
-  return charOnly || value.replace(/[^가-힣a-z0-9]/g, '');
+  return value.replace(/[^가-힣a-z0-9]/g, '');
+}
+
+function normalizeFilenameForCompare(name = '') {
+  const normalizedName = String(name || '').normalize('NFC');
+  return normalizeForCompare(path.parse(normalizedName).name);
+}
+
+function filenameNumberTokens(name = '') {
+  const stem = path.parse(String(name || '').normalize('NFC')).name;
+  return (stem.match(/\d+(?:\.\d+)?/g) || []).map(value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? String(number) : value;
+  });
+}
+
+function sameFilenameNumbers(aName = '', bName = '') {
+  const aNums = filenameNumberTokens(aName);
+  const bNums = filenameNumberTokens(bName);
+  if (aNums.length !== bNums.length) return false;
+  return aNums.every((value, index) => value === bNums[index]);
 }
 
 function bigrams(text) {
@@ -349,41 +370,44 @@ function bigrams(text) {
   return values;
 }
 
+function longestSequenceMatch(a, b, aStart, aEnd, bStart, bEnd) {
+  let previous = new Array(bEnd - bStart + 1).fill(0);
+  let best = { a: aStart, b: bStart, size: 0 };
+  for (let aIndex = aStart; aIndex < aEnd; aIndex += 1) {
+    const current = new Array(bEnd - bStart + 1).fill(0);
+    for (let bIndex = bStart; bIndex < bEnd; bIndex += 1) {
+      if (a[aIndex] !== b[bIndex]) continue;
+      const relative = bIndex - bStart;
+      current[relative + 1] = previous[relative] + 1;
+      if (current[relative + 1] > best.size) {
+        best = {
+          a: aIndex - current[relative + 1] + 1,
+          b: bIndex - current[relative + 1] + 1,
+          size: current[relative + 1],
+        };
+      }
+    }
+    previous = current;
+  }
+  return best;
+}
+
+function* sequenceMatcherBlocks(a, b) {
+  function* blocks(aStart, aEnd, bStart, bEnd) {
+    const match = longestSequenceMatch(a, b, aStart, aEnd, bStart, bEnd);
+    if (match.size === 0) return;
+    yield* blocks(aStart, match.a, bStart, match.b);
+    yield match;
+    yield* blocks(match.a + match.size, aEnd, match.b + match.size, bEnd);
+  }
+
+  yield* blocks(0, a.length, 0, b.length);
+}
+
 function sequenceMatcherRatio(a, b) {
   if (!a && !b) return 1;
   if (!a || !b) return 0;
-
-  function longestMatch(aStart, aEnd, bStart, bEnd) {
-    let previous = new Array(bEnd - bStart + 1).fill(0);
-    let best = { a: aStart, b: bStart, size: 0 };
-    for (let aIndex = aStart; aIndex < aEnd; aIndex += 1) {
-      const current = new Array(bEnd - bStart + 1).fill(0);
-      for (let bIndex = bStart; bIndex < bEnd; bIndex += 1) {
-        if (a[aIndex] !== b[bIndex]) continue;
-        const relative = bIndex - bStart;
-        current[relative + 1] = previous[relative] + 1;
-        if (current[relative + 1] > best.size) {
-          best = {
-            a: aIndex - current[relative + 1] + 1,
-            b: bIndex - current[relative + 1] + 1,
-            size: current[relative + 1],
-          };
-        }
-      }
-      previous = current;
-    }
-    return best;
-  }
-
-  function matchingBlockSize(aStart, aEnd, bStart, bEnd) {
-    const match = longestMatch(aStart, aEnd, bStart, bEnd);
-    if (match.size === 0) return 0;
-    return match.size
-      + matchingBlockSize(aStart, match.a, bStart, match.b)
-      + matchingBlockSize(match.a + match.size, aEnd, match.b + match.size, bEnd);
-  }
-
-  const matches = matchingBlockSize(0, a.length, 0, b.length);
+  const matches = [...sequenceMatcherBlocks(a, b)].reduce((total, block) => total + block.size, 0);
   return (2 * matches) / (a.length + b.length);
 }
 
@@ -411,66 +435,35 @@ function similarity(a, b) {
   return score;
 }
 
-function* sequenceMatcherBlocks(a, b) {
-  function longestMatch(aStart, aEnd, bStart, bEnd) {
-    let previous = new Array(bEnd - bStart + 1).fill(0);
-    let best = { a: aStart, b: bStart, size: 0 };
-    for (let aIndex = aStart; aIndex < aEnd; aIndex += 1) {
-      const current = new Array(bEnd - bStart + 1).fill(0);
-      for (let bIndex = bStart; bIndex < bEnd; bIndex += 1) {
-        if (a[aIndex] !== b[bIndex]) continue;
-        const relative = bIndex - bStart;
-        current[relative + 1] = previous[relative] + 1;
-        if (current[relative + 1] > best.size) {
-          best = {
-            a: aIndex - current[relative + 1] + 1,
-            b: bIndex - current[relative + 1] + 1,
-            size: current[relative + 1],
-          };
-        }
-      }
-      previous = current;
-    }
-    return best;
-  }
-
-  function* blocks(aStart, aEnd, bStart, bEnd) {
-    const match = longestMatch(aStart, aEnd, bStart, bEnd);
-    if (match.size === 0) return;
-    yield* blocks(aStart, match.a, bStart, match.b);
-    yield match;
-    yield* blocks(match.a + match.size, aEnd, match.b + match.size, bEnd);
-  }
-
-  yield* blocks(0, a.length, 0, b.length);
-}
-
-function sameVolumeNumbers(aNums = [], bNums = []) {
-  if (aNums.length !== bNums.length) return false;
-  if (aNums.length === 0) return true;
-  return aNums.every((num, index) => num === bNums[index]);
-}
-
 async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options = {}) {
   const cache = [];
   const seen = new Set();
 
+  function addCandidate(record = {}) {
+    const fullPath = record.full_path || record.file_path || record.path || '';
+    if (!fullPath || seen.has(fullPath)) return;
+    const name = String(record.name || path.basename(fullPath)).normalize('NFC');
+    if (!targetExts.includes(path.extname(name).toLowerCase())) return;
+    seen.add(fullPath);
+    cache.push({
+      name,
+      path: record.path || path.dirname(fullPath),
+      full_path: fullPath,
+      size: Number(record.size) || 0,
+      compareTitle: normalizeFilenameForCompare(name),
+    });
+  }
+
   async function addFilePath(fullPath) {
     if (!fullPath || seen.has(fullPath)) return;
     if (!targetExts.includes(path.extname(fullPath).toLowerCase())) return;
-    seen.add(fullPath);
     try {
       const stats = await fs.promises.stat(fullPath);
-      const meta = await extractFilenameMetadata(path.basename(fullPath));
-      const compareTitle = normalizeForCompare(meta.series || path.parse(fullPath).name);
-      cache.push({
+      addCandidate({
         name: path.basename(fullPath),
         path: path.dirname(fullPath),
         full_path: fullPath,
         size: stats.size,
-        series: meta.series,
-        nums: meta.nums || [],
-        compareTitle,
       });
     } catch {
       // Ignore unreadable duplicate target files.
@@ -512,7 +505,7 @@ async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options
     if (indexedRows.length > 0) {
       for (const row of indexedRows) {
         throwIfTaskCancelled(options);
-        await addFilePath(row.full_path);
+        addCandidate(row);
       }
     } else {
       await scanDir(folder);
@@ -533,13 +526,22 @@ function attachDuplicateMatches(files, dupCache) {
   if (!dupCache.length) return files;
 
   return files.map(file => {
-    const compareTitle = normalizeForCompare(file.series || path.parse(file.name).name);
-    const fileNums = file.compare_nums || (file.sorted_volume ? [file.sorted_volume] : []);
+    const compareTitle = normalizeFilenameForCompare(file.name || file.full_path);
     const matches = [];
+    if (compareTitle.length < 2) {
+      return {
+        ...file,
+        duplicate_matches: [],
+        dup_count: 0,
+        max_ratio: 0,
+      };
+    }
 
+    const normalizedFilePath = path.normalize(file.full_path);
     for (const candidate of dupCache) {
-      if (path.normalize(candidate.full_path) === path.normalize(file.full_path)) continue;
-      if (!sameVolumeNumbers(fileNums, candidate.nums)) continue;
+      if (path.normalize(candidate.full_path) === normalizedFilePath) continue;
+      if (candidate.compareTitle.length < 2) continue;
+      if (!sameFilenameNumbers(file.name || file.full_path, candidate.name)) continue;
 
       const ratio = similarity(compareTitle, candidate.compareTitle);
       if (ratio >= 0.7) {
@@ -860,43 +862,46 @@ export async function scanFolder(folderPath, options = {}, event) {
     }
   }
 
+  let files = results;
   try {
     await scanDir(folderPath);
-  } finally {
-    if (!options.libraryDb) await libraryDb?.close();
-  }
 
-  let files = results;
-  if (enableDupCheck && dupFolders.length > 0) {
-    throwIfTaskCancelled(options);
+    if (enableDupCheck && dupFolders.length > 0) {
+      throwIfTaskCancelled(options);
+      emitTaskProgress({
+        progress: 85,
+        message: taskText(lang, 'task_dup_prepare'),
+        currentFile: '',
+        currentFileName: '',
+      });
+      const dupCache = await buildDupCache(dupFolders, normalizedExts, event, lang, {
+        ...options,
+        libraryDb,
+      });
+      throwIfTaskCancelled(options);
+      files = attachDuplicateMatches(results, dupCache);
+    }
+
     emitTaskProgress({
-      progress: 85,
-      message: taskText(lang, 'task_dup_prepare'),
+      progress: 100,
+      message: taskText(lang, 'task_scan_done', { count: files.length }),
       currentFile: '',
       currentFileName: '',
     });
-    const dupCache = await buildDupCache(dupFolders, normalizedExts, event, lang, options);
-    throwIfTaskCancelled(options);
-    files = attachDuplicateMatches(results, dupCache);
+
+    if (event && !suppressEvents) {
+      const cacheKey = JSON.stringify({
+        folderPath,
+        includeSubfolders,
+        enableDupCheck,
+        dupFolders: (dupFolders || []).filter(Boolean).sort(),
+        skipArchiveExtraction,
+      });
+      event.sender.send('scan-complete', { files, folderPath, cacheKey });
+    }
+
+    return files;
+  } finally {
+    if (!options.libraryDb) await libraryDb?.close();
   }
-
-  emitTaskProgress({
-    progress: 100,
-    message: taskText(lang, 'task_scan_done', { count: files.length }),
-    currentFile: '',
-    currentFileName: '',
-  });
-
-  if (event && !suppressEvents) {
-    const cacheKey = JSON.stringify({
-      folderPath,
-      includeSubfolders,
-      enableDupCheck,
-      dupFolders: (dupFolders || []).filter(Boolean).sort(),
-      skipArchiveExtraction,
-    });
-    event.sender.send('scan-complete', { files, folderPath, cacheKey });
-  }
-
-  return files;
 }

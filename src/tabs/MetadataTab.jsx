@@ -115,6 +115,9 @@ const DEFAULT_TAG_OPTIONS = [
   '우정', '배신', '삼각관계', '짝사랑',
 ];
 
+const GROUP_DOUBLE_CLICK_MS = 500;
+const SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format']);
+
 function isMetadataTextInput(target) {
   return isTextEntryTarget(target);
 }
@@ -140,6 +143,22 @@ function groupItems(items) {
     groups.get(group).push(item);
   }
   return [...groups.entries()].map(([name, children]) => ({ name, children }));
+}
+
+function metadataModifiedDate(item) {
+  const value = item?.metadata?.ComicZipModifiedDate;
+  return value && String(value).trim() ? String(value).trim() : 'No Data';
+}
+
+function uniqueSelectOptions(options = [], currentValue = '') {
+  const values = new Set();
+  for (const option of options) values.add(String(option ?? ''));
+  values.add(String(currentValue ?? ''));
+  return [...values];
+}
+
+function isSearchableSelectField(fieldId) {
+  return SEARCHABLE_SELECT_FIELDS.has(fieldId);
 }
 
 function similarity(a = '', b = '') {
@@ -175,6 +194,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const primaryShortcut = isMacPlatform() ? 'Cmd' : 'Ctrl';
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
+  const groupClickRef = useRef({ groupName: '', time: 0 });
   const language = config?.language || config?.lang || 'ko';
   const text = useCallback((key, fallback, values) => {
     const translated = t?.(key, values);
@@ -192,6 +212,16 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   }, [t]);
   const genreOptions = useMemo(() => localizedOptions('meta_genres', DEFAULT_GENRE_OPTIONS), [localizedOptions]);
   const tagOptions = useMemo(() => localizedOptions('meta_tags', DEFAULT_TAG_OPTIONS), [localizedOptions]);
+  const seriesGroupOptions = useMemo(() => {
+    const values = new Set(['']);
+    for (const item of fileList) {
+      const value = String(item.metadata?.SeriesGroup || '').trim();
+      if (value) values.add(value);
+    }
+    const batchValue = String(batchMetadata.SeriesGroup || '').trim();
+    if (batchValue) values.add(batchValue);
+    return [...values];
+  }, [batchMetadata.SeriesGroup, fileList]);
   const fieldLabel = useCallback(field => text(field.labelKey, field.label || field.id), [text]);
   const sectionLabel = useCallback(section => text(section.labelKey, section.id), [text]);
   const optionLabel = useCallback((field, option) => {
@@ -239,6 +269,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   );
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
   const checkedCount = useMemo(() => fileList.filter(item => item.checked !== false).length, [fileList]);
+  const allItemsChecked = useMemo(
+    () => fileList.length > 0 && fileList.every(item => item.checked !== false),
+    [fileList],
+  );
 
   useEffect(() => {
     emitToolbarState(
@@ -377,6 +411,33 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       return prev.map(item => ({ ...item, checked: allChecked ? false : true }));
     });
   }, []);
+
+  const toggleGroupCollapsed = useCallback((groupName) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupName)) next.delete(groupName);
+      else next.add(groupName);
+      return next;
+    });
+  }, []);
+
+  const handleGroupClick = useCallback((event, groupName) => {
+    const now = typeof event.timeStamp === 'number' ? event.timeStamp : Date.now();
+    const lastClick = groupClickRef.current;
+    const isDoubleClick = lastClick.groupName === groupName
+      && now - lastClick.time <= GROUP_DOUBLE_CLICK_MS;
+
+    setSelectedGroup(groupName);
+    setSelectedFileId(null);
+
+    if (isDoubleClick) {
+      groupClickRef.current = { groupName: '', time: 0 };
+      toggleGroupCollapsed(groupName);
+      return;
+    }
+
+    groupClickRef.current = { groupName, time: now };
+  }, [toggleGroupCollapsed]);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
@@ -880,6 +941,19 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       return <textarea className={className} rows="3" value={value || ''} onChange={event => onChange(event.target.value)} />;
     }
     if (field.type === 'select') {
+      if (isSearchableSelectField(field.id)) {
+        const options = field.id === 'SeriesGroup' ? seriesGroupOptions : field.options;
+        return (
+          <SearchableSelect
+            className={className}
+            value={value || ''}
+            options={uniqueSelectOptions(options, value)}
+            optionLabel={option => optionLabel(field, option)}
+            allowCustom={field.id === 'SeriesGroup'}
+            onChange={onChange}
+          />
+        );
+      }
       return (
         <select className={className} value={value || ''} onChange={event => onChange(event.target.value)}>
           {field.options.map(option => <option key={option} value={option}>{optionLabel(field, option)}</option>)}
@@ -1069,6 +1143,20 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           )}
         </div>
 
+        <button
+          type="button"
+          className={`meta-tree-toggle-all ${allItemsChecked ? 'active' : ''}`}
+          onClick={handleToggleAllChecked}
+          disabled={fileList.length === 0 || isWorking}
+          title={t('toggle_all')}
+        >
+          <span className="meta-tree-toggle-label">
+            <FaIcon name={allItemsChecked ? 'checkSquare' : 'square'} size={12} />
+            <span>{t('toggle_all')}</span>
+          </span>
+          <span className="meta-tree-toggle-count">{checkedCount}/{fileList.length}</span>
+        </button>
+
         <div className="meta-tree-container">
           <ul className="meta-tree">
               {groupedItems.map((dir) => {
@@ -1079,16 +1167,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                     type="button"
                     className="meta-tree-dir-button"
                     title={dir.name}
-                    onClick={() => {
-                      setSelectedGroup(dir.name);
-                      setSelectedFileId(null);
+                    onMouseDown={(event) => {
+                      if (event.detail > 1) event.preventDefault();
                     }}
-                    onDoubleClick={() => setCollapsedGroups(prev => {
-                      const next = new Set(prev);
-                      if (next.has(dir.name)) next.delete(dir.name);
-                      else next.add(dir.name);
-                      return next;
-                    })}
+                    onClick={(event) => handleGroupClick(event, dir.name)}
                   >
                     <span className="meta-tree-chevron">{collapsed ? '▸' : '▾'}</span>
                     <span className="meta-tree-icon"><FaIcon name="folder" /></span>
@@ -1113,9 +1195,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                             updateItem(file.id, item => ({ ...item, checked: !item.checked }));
                           }}
                         />
-                        <span className="meta-tree-icon"><FaIcon name="archive" /></span>
-                        {file.hasComicInfo ? '✓ ' : ''}
-                        {file.name}
+                        <span className="meta-tree-file-text">
+                          <span className="meta-tree-file-name">{file.name}</span>
+                          <span className="meta-tree-file-date">
+                            <FaIcon name="clock" size={10} />
+                            <span>{metadataModifiedDate(file)}</span>
+                          </span>
+                        </span>
                       </li>
                     ))}
                   </ul>}
@@ -1277,6 +1363,118 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         />
       )}
       </>
+      )}
+    </div>
+  );
+}
+
+function SearchableSelect({ className, value, options, optionLabel, allowCustom = false, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const currentValue = String(value ?? '');
+  const normalizedOptions = useMemo(() => uniqueSelectOptions(options, currentValue), [currentValue, options]);
+  const currentLabel = optionLabel(currentValue) || currentValue;
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return normalizedOptions;
+    return normalizedOptions.filter((option) => {
+      const optionValue = String(option || '').toLowerCase();
+      const label = String(optionLabel(option) || option || '').toLowerCase();
+      return optionValue.includes(normalizedQuery) || label.includes(normalizedQuery);
+    });
+  }, [normalizedOptions, optionLabel, query]);
+
+  useEffect(() => {
+    if (!open) setQuery(currentLabel);
+  }, [currentLabel, open]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query, normalizedOptions.length]);
+
+  const chooseOption = useCallback((option) => {
+    const nextValue = String(option ?? '');
+    onChange(nextValue);
+    setQuery(optionLabel(nextValue) || nextValue);
+    setOpen(false);
+  }, [onChange, optionLabel]);
+
+  const commitCustomValue = useCallback(() => {
+    if (!allowCustom) {
+      setQuery(currentLabel);
+      setOpen(false);
+      return;
+    }
+    onChange(query);
+    setOpen(false);
+  }, [allowCustom, currentLabel, onChange, query]);
+
+  return (
+    <div className={`meta-searchable-select ${open ? 'open' : ''}`}>
+      <input
+        type="text"
+        className={className}
+        value={open ? query : currentLabel}
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        onFocus={(event) => {
+          setQuery(currentLabel);
+          setOpen(true);
+          event.currentTarget.select();
+        }}
+        onChange={(event) => {
+          const nextQuery = event.target.value;
+          setQuery(nextQuery);
+          setOpen(true);
+          if (allowCustom) onChange(nextQuery);
+        }}
+        onBlur={commitCustomValue}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setOpen(true);
+            setActiveIndex(index => Math.min(index + 1, Math.max(filteredOptions.length - 1, 0)));
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setActiveIndex(index => Math.max(index - 1, 0));
+          } else if (event.key === 'Enter') {
+            if (open && filteredOptions[activeIndex] !== undefined) {
+              event.preventDefault();
+              chooseOption(filteredOptions[activeIndex]);
+            }
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            setQuery(currentLabel);
+            setOpen(false);
+          }
+        }}
+      />
+      <span className="meta-searchable-arrow"><FaIcon name="angleDown" size={10} /></span>
+      {open && (
+        <div className="meta-searchable-options" role="listbox">
+          {filteredOptions.length > 0 ? filteredOptions.map((option, index) => {
+            const label = optionLabel(option) || option || '-';
+            return (
+              <button
+                type="button"
+                key={`${option}-${index}`}
+                className={`meta-searchable-option ${index === activeIndex ? 'active' : ''}`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  chooseOption(option);
+                }}
+                role="option"
+                aria-selected={String(option ?? '') === currentValue}
+              >
+                {label}
+              </button>
+            );
+          }) : (
+            <div className="meta-searchable-empty">No Data</div>
+          )}
+        </div>
       )}
     </div>
   );

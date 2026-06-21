@@ -36,6 +36,9 @@ test('표, 체크박스, 아이콘 컨트롤은 공통 배율 변수를 사용�
 
     assert.match(globalStyles, /--control-height:\s*28px/);
     assert.match(globalStyles, /--checkbox-size:\s*16px/);
+    assert.match(globalStyles, /input\[type="checkbox"\][\s\S]*aspect-ratio:\s*1\s*\/\s*1/);
+    assert.match(globalStyles, /input\[type="checkbox"\][\s\S]*flex:\s*0\s+0\s+var\(--checkbox-size\)/);
+    assert.match(globalStyles, /input\[type="checkbox"\][\s\S]*padding:\s*0/);
     assert.match(folderStyles, /padding:\s*var\(--table-cell-y\)\s+6px/);
     assert.match(folderStyles, /\.view-icon-btn[\s\S]*width:\s*var\(--control-height\)/);
     assert.match(metadataStyles, /\.meta-choice input,[\s\S]*width:\s*var\(--checkbox-size\)/);

@@ -207,9 +207,22 @@ input[type="checkbox"] {
   -webkit-appearance: none;
   width: var(--checkbox-size);
   height: var(--checkbox-size);
+  inline-size: var(--checkbox-size);
+  block-size: var(--checkbox-size);
+  min-width: var(--checkbox-size);
+  max-width: var(--checkbox-size);
+  min-height: var(--checkbox-size);
+  max-height: var(--checkbox-size);
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+  flex: 0 0 var(--checkbox-size);
+  display: inline-grid;
+  place-content: center;
+  padding: 0;
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
+  line-height: 1;
   cursor: pointer;
   position: relative;
 }

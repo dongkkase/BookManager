@@ -1036,6 +1036,14 @@ body.is-resizing-panel * {
   appearance: none;
   width: var(--checkbox-size);
   height: var(--checkbox-size);
+  inline-size: var(--checkbox-size);
+  block-size: var(--checkbox-size);
+  min-width: var(--checkbox-size);
+  max-width: var(--checkbox-size);
+  min-height: var(--checkbox-size);
+  max-height: var(--checkbox-size);
+  aspect-ratio: 1 / 1;
+  padding: 0;
   border: 1px solid #9a9a9a;
   border-radius: 5px;
   margin: 0;
