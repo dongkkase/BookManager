@@ -5,8 +5,12 @@ import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
 import {
     adjacentSelectionAfterRemoval,
+    applyInferredMetadataField,
     clampMetadataNumber,
     inferMetadataFromArchiveName,
+    isDecimalMetadataField,
+    normalizeMetadataAutoNumber,
+    normalizeMetadataDecimal,
 } from '../metadataPolicy';
 import '../styles/MetadataTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
@@ -46,8 +50,8 @@ const BASIC_FIELDS = [
   { id: 'AlternateNumber', labelKey: 't3_f_alt_num', type: 'number' },
   { id: 'AlternateCount', labelKey: 't3_f_alt_count', type: 'number' },
   { id: 'Count', labelKey: 't3_f_count', type: 'number' },
-  { id: 'Volume', labelKey: 't3_f_vol', type: 'text' },
-  { id: 'Number', labelKey: 't3_f_num', type: 'text' },
+  { id: 'Volume', labelKey: 't3_f_vol', type: 'decimal' },
+  { id: 'Number', labelKey: 't3_f_num', type: 'decimal' },
   { id: 'PageCount', labelKey: 't3_f_page', type: 'number' },
   { id: 'Summary', labelKey: 't3_f_sum', type: 'textarea' },
 ];
@@ -63,21 +67,57 @@ const CREATOR_FIELDS = [
   { id: 'Translator', labelKey: 't3_f_translator', type: 'text' },
 ];
 
+const FORMAT_OPTIONS = [
+  '',
+  'Tankobon',
+  'Bunkoban',
+  'Kanzenban',
+  'Aizoban',
+  'Shinsoban',
+  'Omnibus',
+  'Deluxe',
+  'SpecialEdition',
+  'LimitedEdition',
+  'CollectorEdition',
+  'Hardcover',
+  'TradePaperback',
+  'GraphicNovel',
+  'Webtoon',
+  'WebComic',
+  'Digital',
+];
+
+const AGE_RATING_OPTIONS = [
+  '',
+  'All Ages',
+  'Kids / Children',
+  'Young Adult / Teen',
+  'Older Teen / Mature',
+  'Adult / Mature Audiences',
+];
+
+const MANGA_READING_OPTIONS = [
+  '',
+  'No',
+  'Yes',
+  'YesAndRightToLeft',
+];
+
 const PUBLISHER_FIELDS = [
   { id: 'Publisher', labelKey: 't3_f_pub', type: 'text' },
   { id: 'Imprint', labelKey: 't3_f_imp', type: 'text' },
   { id: 'Web', labelKey: 't3_f_web', type: 'textarea' },
-  { id: 'Format', labelKey: 't3_f_format', type: 'select', options: ['', 'Manga', 'Comic', 'Webtoon'] },
+  { id: 'Format', labelKey: 't3_f_format', type: 'select', options: FORMAT_OPTIONS },
   { id: 'Year', labelKey: 't3_f_year', type: 'number' },
   { id: 'Month', labelKey: 't3_f_month', type: 'number' },
   { id: 'Day', labelKey: 't3_f_day', type: 'number' },
 ];
 
 const OTHER_FIELDS = [
-  { id: 'AgeRating', labelKey: 't3_f_age', type: 'select', options: ['', 'Everyone', 'Teen', 'Mature', 'Adult'] },
+  { id: 'AgeRating', labelKey: 't3_f_age', type: 'select', options: AGE_RATING_OPTIONS },
   { id: 'CommunityRating', labelKey: 't3_f_rate', type: 'text' },
   { id: 'LanguageISO', labelKey: 't3_f_iso', type: 'text' },
-  { id: 'Manga', labelKey: 't3_f_dir', type: 'select', options: ['', 'YesAndRightToLeft', 'Yes', 'No', 'RightToLeft'] },
+  { id: 'Manga', labelKey: 't3_f_dir', type: 'select', options: MANGA_READING_OPTIONS },
   { id: 'BlackAndWhite', labelKey: 't3_f_bw', type: 'select', options: ['', 'Yes', 'No'] },
   { id: 'Notes', labelKey: 't3_f_notes', type: 'textarea' },
 ];
@@ -115,7 +155,6 @@ const DEFAULT_TAG_OPTIONS = [
   '우정', '배신', '삼각관계', '짝사랑',
 ];
 
-const GROUP_DOUBLE_CLICK_MS = 500;
 const SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format']);
 
 function isMetadataTextInput(target) {
@@ -161,6 +200,25 @@ function isSearchableSelectField(fieldId) {
   return SEARCHABLE_SELECT_FIELDS.has(fieldId);
 }
 
+function splitTagValues(value = '') {
+  return String(value || '')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function joinTagValues(values = []) {
+  const seen = new Set();
+  const tags = [];
+  for (const value of values) {
+    const tag = String(value || '').trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+  }
+  return tags.join(', ');
+}
+
 function similarity(a = '', b = '') {
   const left = String(a).toLowerCase();
   const right = String(b).toLowerCase();
@@ -194,7 +252,6 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const primaryShortcut = isMacPlatform() ? 'Cmd' : 'Ctrl';
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
-  const groupClickRef = useRef({ groupName: '', time: 0 });
   const language = config?.language || config?.lang || 'ko';
   const text = useCallback((key, fallback, values) => {
     const translated = t?.(key, values);
@@ -421,22 +478,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     });
   }, []);
 
-  const handleGroupClick = useCallback((event, groupName) => {
-    const now = typeof event.timeStamp === 'number' ? event.timeStamp : Date.now();
-    const lastClick = groupClickRef.current;
-    const isDoubleClick = lastClick.groupName === groupName
-      && now - lastClick.time <= GROUP_DOUBLE_CLICK_MS;
-
+  const handleGroupClick = useCallback((groupName) => {
     setSelectedGroup(groupName);
     setSelectedFileId(null);
-
-    if (isDoubleClick) {
-      groupClickRef.current = { groupName: '', time: 0 };
-      toggleGroupCollapsed(groupName);
-      return;
-    }
-
-    groupClickRef.current = { groupName, time: now };
+    toggleGroupCollapsed(groupName);
   }, [toggleGroupCollapsed]);
 
   useEffect(() => {
@@ -470,17 +515,14 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     showToast?.({ key: 't3_msg_applied_series_tag' });
   };
 
-  const getCommaValues = (value) => String(value || '')
-    .split(',')
-    .map(part => part.trim())
-    .filter(Boolean);
+  const getCommaValues = splitTagValues;
 
   const toggleCommaValue = (target, fieldId, option) => {
     const source = target === 'batch' ? batchMetadata : activeItem?.metadata;
     const values = new Set(getCommaValues(source?.[fieldId]));
     if (values.has(option)) values.delete(option);
     else values.add(option);
-    const nextValue = [...values].join(', ');
+    const nextValue = joinTagValues([...values]);
     if (target === 'batch') updateBatchMetadata(fieldId, nextValue);
     else updateActiveMetadata(fieldId, nextValue);
   };
@@ -672,7 +714,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     );
     return {
       ...inferred,
-      PageCount: item.pageCount ? String(item.pageCount) : '',
+      PageCount: item.pageCount ? normalizeMetadataAutoNumber(item.pageCount) : '',
     };
   };
 
@@ -683,10 +725,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       const inferred = inferTitleParts(item);
       return {
         ...item,
-        metadata: {
-          ...(item.metadata || {}),
-          [field]: inferred[field] || item.metadata?.[field] || '',
-        },
+        metadata: applyInferredMetadataField(item.metadata || {}, inferred, field),
       };
     }));
     const messageKey = {
@@ -963,13 +1002,17 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     return (
       <input
         type="text"
-        inputMode={field.type === 'number' ? 'numeric' : undefined}
+        inputMode={field.type === 'decimal' ? 'decimal' : field.type === 'number' ? 'numeric' : undefined}
         className={className}
         value={value || ''}
         onChange={event => onChange(event.target.value)}
         onBlur={event => {
-          if (field.type === 'number' && event.target.value.trim()) {
-            onChange(clampMetadataNumber(field.id, event.target.value));
+          const nextValue = event.target.value.trim();
+          if (!nextValue) return;
+          if (field.type === 'number') {
+            onChange(clampMetadataNumber(field.id, nextValue));
+          } else if (field.type === 'decimal' || isDecimalMetadataField(field.id)) {
+            onChange(normalizeMetadataDecimal(nextValue));
           }
         }}
       />
@@ -1009,17 +1052,19 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     <div className="meta-tag-editor">
       <div className="meta-tag-label">{label}</div>
       <div className="meta-tag-columns">
-        <textarea
+        <TagInput
           className="meta-input meta-tag-box"
           placeholder={placeholder}
           value={activeItem?.metadata?.[fieldId] || ''}
-          onChange={event => updateActiveMetadata(fieldId, event.target.value)}
+          onChange={value => updateActiveMetadata(fieldId, value)}
+          disabled={!activeItem}
         />
         <button className="meta-copy-btn" onClick={() => handleCopyField(fieldId)} disabled={!activeItem}>‹</button>
-        <textarea
+        <TagInput
           className="meta-input res meta-tag-box"
+          placeholder={placeholder}
           value={batchMetadata[fieldId] || ''}
-          onChange={event => updateBatchMetadata(fieldId, event.target.value)}
+          onChange={value => updateBatchMetadata(fieldId, value)}
         />
       </div>
       <button
@@ -1167,10 +1212,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                     type="button"
                     className="meta-tree-dir-button"
                     title={dir.name}
-                    onMouseDown={(event) => {
-                      if (event.detail > 1) event.preventDefault();
-                    }}
-                    onClick={(event) => handleGroupClick(event, dir.name)}
+                    onClick={() => handleGroupClick(dir.name)}
                   >
                     <span className="meta-tree-chevron">{collapsed ? '▸' : '▾'}</span>
                     <span className="meta-tree-icon"><FaIcon name="folder" /></span>
@@ -1476,6 +1518,70 @@ function SearchableSelect({ className, value, options, optionLabel, allowCustom 
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function TagInput({ className = '', value, placeholder = '', disabled = false, onChange }) {
+  const inputRef = useRef(null);
+  const [draft, setDraft] = useState('');
+  const tags = useMemo(() => splitTagValues(value), [value]);
+
+  const updateTags = useCallback((nextTags) => {
+    onChange(joinTagValues(nextTags));
+  }, [onChange]);
+
+  const commitDraft = useCallback(() => {
+    const additions = splitTagValues(draft);
+    if (additions.length === 0) return;
+    updateTags([...tags, ...additions]);
+    setDraft('');
+  }, [draft, tags, updateTags]);
+
+  const removeTag = useCallback((targetTag) => {
+    updateTags(tags.filter(tag => tag !== targetTag));
+  }, [tags, updateTags]);
+
+  return (
+    <div
+      className={`meta-tag-input ${className} ${disabled ? 'disabled' : ''}`.trim()}
+      onClick={() => inputRef.current?.focus()}
+    >
+      {tags.map(tag => (
+        <span className="meta-tag-chip" key={tag}>
+          <span className="meta-tag-chip-text">{tag}</span>
+          <button
+            type="button"
+            disabled={disabled}
+            onMouseDown={event => event.preventDefault()}
+            onClick={(event) => {
+              event.stopPropagation();
+              removeTag(tag);
+            }}
+            aria-label={`Remove ${tag}`}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        disabled={disabled}
+        placeholder={tags.length === 0 ? placeholder : ''}
+        onChange={event => setDraft(event.target.value)}
+        onBlur={commitDraft}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ',') {
+            event.preventDefault();
+            commitDraft();
+          } else if (event.key === 'Backspace' && draft === '' && tags.length > 0) {
+            event.preventDefault();
+            removeTag(tags[tags.length - 1]);
+          }
+        }}
+      />
     </div>
   );
 }

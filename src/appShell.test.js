@@ -69,6 +69,8 @@ test('마지막 탭 인덱스를 복원하고 잘못된 값은 첫 탭으로 보
     assert.equal(resolveTabId(0), 'folder');
     assert.equal(resolveTabId(3), 'metadata');
     assert.equal(resolveTabId('5'), 'releases');
+    assert.equal(resolveTabId('metadata'), 'metadata');
+    assert.equal(resolveTabId('invalid', 2), 'renamer');
     assert.equal(resolveTabId(-1), 'folder');
     assert.equal(resolveTabId(99), 'folder');
     assert.equal(resolveTabId('invalid'), 'folder');

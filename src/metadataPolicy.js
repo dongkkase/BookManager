@@ -66,9 +66,37 @@ export function inferMetadataFromArchiveName(name = '', language = 'ko') {
     return {
         Title: title,
         Series: series,
-        Volume: volumeMatch?.[1] || '',
-        Number: chapterMatch?.[1] || '',
+        Volume: normalizeMetadataAutoNumber(volumeMatch?.[1]),
+        Number: normalizeMetadataAutoNumber(chapterMatch?.[1]),
     };
+}
+
+export function normalizeMetadataAutoNumber(value = '') {
+    return normalizeMetadataDecimal(value);
+}
+
+export function normalizeMetadataDecimal(value = '') {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    const match = text.match(/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))$/);
+    if (!match) return text;
+    const integer = String(Number.parseInt(match[2] || '0', 10));
+    const sign = match[1] === '-' ? '-' : '';
+    const decimal = match[3] || match[4] ? `.${match[3] || match[4]}` : '';
+    return `${sign}${integer}${decimal}`;
+}
+
+export function isDecimalMetadataField(field) {
+    return field === 'Volume' || field === 'Number';
+}
+
+export function applyInferredMetadataField(metadata = {}, inferred = {}, field = '') {
+    const targetFields = field === 'Title' ? ['Title', 'Volume', 'Number'] : [field];
+    const next = { ...(metadata || {}) };
+    for (const targetField of targetFields) {
+        next[targetField] = inferred?.[targetField] || next[targetField] || '';
+    }
+    return next;
 }
 
 export function clampMetadataNumber(field, value) {

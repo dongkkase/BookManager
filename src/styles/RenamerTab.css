@@ -58,7 +58,7 @@
 .renamer-divider {
     height: 2px;
     flex: 0 0 2px;
-    background-color: #858585;
+    background-color: rgba(133, 133, 133, 0.3);
     margin: 10px 0 9px;
 }
 

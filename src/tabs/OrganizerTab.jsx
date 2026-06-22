@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { filterExistingResultPaths } from '../resultLog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
+import { useFileSelection } from '../hooks/useFileSelection';
 import {
   changeOrganizerUnit,
   defaultOutputPath,
@@ -16,8 +18,28 @@ import {
 import '../styles/OrganizerTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
-import { shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { isShortcutKey, shouldHandleGlobalShortcut } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
+
+function stripFilenameExtension(filename) {
+  const value = String(filename || '');
+  const index = value.lastIndexOf('.');
+  return index > 0 ? value.slice(0, index) : value;
+}
+
+function organizerVolumeRenameFile(item, volume, config) {
+  const extension = targetExtension(volume, config?.target_format || 'none');
+  const name = `${volume.new_name}${extension}`;
+  const itemKey = encodeURIComponent(String(item.id || item.filepath || item.name || 'item'));
+  const volumeKey = encodeURIComponent(String(volume.id || volume.original_path || volume.new_name || 'volume'));
+  return {
+    path: `organizer://${itemKey}/${volumeKey}__${name}`,
+    name,
+    itemId: item.id,
+    volumeId: volume.id,
+    extension,
+  };
+}
 
 function OrganizerTab({ config, t, showToast }) {
   const language = config?.language || config?.lang || 'ko';
@@ -31,13 +53,44 @@ function OrganizerTab({ config, t, showToast }) {
   const [taskPhase, setTaskPhase] = useState('idle');
   const [selectedItemId, setSelectedItemId] = useState('');
   const executeLockRef = useRef(false);
+  const tabRootRef = useRef(null);
+  const treeBodyRef = useRef(null);
+  const volumeDragSelectRef = useRef({ active: false, moved: false });
+  const volumeRubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
   const [skippedFiles, setSkippedFiles] = useState([]);
-  const [editingVolume, setEditingVolume] = useState(null);
-  const [contextMenu, setContextMenu] = useState(null);
+  const [showVolumeRenameDialog, setShowVolumeRenameDialog] = useState(false);
+  const [volumeSelectionBox, setVolumeSelectionBox] = useState(null);
   const emptyImage = useMemo(
     () => selectRandomResource(DRAG_DROP_IMAGES),
     [],
   );
+  const visibleVolumeRows = useMemo(() => fileList.flatMap(item => (
+    expandedItems.has(item.id)
+      ? (item.volumes || []).map(volume => ({
+          ...organizerVolumeRenameFile(item, volume, config),
+          item,
+          volume,
+        }))
+      : []
+  )), [config, expandedItems, fileList]);
+  const {
+    selectedFiles: selectedVolumePaths,
+    activeSelectedPath: activeVolumePath,
+    selectFile: selectVolumeRow,
+    toggleFile: toggleVolumeRow,
+    rangeSelect: rangeSelectVolumeRows,
+    clearSelection: clearVolumeSelection,
+    selectPaths: selectVolumePaths,
+  } = useFileSelection(visibleVolumeRows);
+  const selectedVolumeRows = useMemo(() => (
+    selectedVolumePaths
+      .map(path => visibleVolumeRows.find(row => row.path === path))
+      .filter(Boolean)
+  ), [selectedVolumePaths, visibleVolumeRows]);
+
+  const isOrganizerTabVisible = useCallback(() => (
+    !tabRootRef.current?.closest?.('[hidden]')
+  ), []);
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.((data) => {
@@ -176,15 +229,6 @@ function OrganizerTab({ config, t, showToast }) {
     updateItem(id, item => ({ ...item, out_path: outPath }));
   };
 
-  const handleVolumeNameChange = (itemId, volumeId, newName) => {
-    const safeValue = sanitizeOrganizerName(newName);
-    if (!safeValue) return;
-    updateItem(itemId, item => ({
-      ...item,
-      volumes: item.volumes.map(volume => volume.id === volumeId ? { ...volume, new_name: safeValue } : volume),
-    }));
-  };
-
   const handleBatchDefault = () => {
     setFileList(prev => prev.map(item => ({
       ...item,
@@ -218,6 +262,7 @@ function OrganizerTab({ config, t, showToast }) {
     setExpandedItems(new Set());
     setLastResult(null);
     setSelectedItemId('');
+    clearVolumeSelection();
     setSkippedFiles([]);
     setStatusMessage(t('status_wait'));
     setProgress(0);
@@ -249,12 +294,9 @@ function OrganizerTab({ config, t, showToast }) {
   }, [fileList, removeByIds]);
 
   const handleRemoveHighlighted = useCallback(() => {
+    if (selectedVolumePaths.length > 0) return;
     if (selectedItemId) removeByIds([selectedItemId]);
-  }, [removeByIds, selectedItemId]);
-
-  const openVolumeEditor = useCallback((itemId, volume) => {
-    setEditingVolume({ itemId, volumeId: volume.id, value: volume.new_name || '' });
-  }, []);
+  }, [removeByIds, selectedItemId, selectedVolumePaths.length]);
 
   const handleToggleAllChecked = useCallback(() => {
     setFileList(prev => {
@@ -336,6 +378,103 @@ function OrganizerTab({ config, t, showToast }) {
     await window.electronAPI?.stopTask?.('organizer');
   }, [taskPhase, t]);
 
+  const handleVolumeRowSelect = useCallback((row, event, index) => {
+    if (!row?.path) return;
+    setSelectedItemId('');
+    if (event?.shiftKey) rangeSelectVolumeRows(row.path, row, index);
+    else if (event?.metaKey || event?.ctrlKey) toggleVolumeRow(row.path, row, index);
+    else selectVolumeRow(row.path, row, index);
+  }, [rangeSelectVolumeRows, selectVolumeRow, toggleVolumeRow]);
+
+  const handleVolumeRowMouseDown = useCallback((row, event, index) => {
+    if (event.button !== 0) return;
+    treeBodyRef.current?.focus({ preventScroll: true });
+    volumeDragSelectRef.current = { active: true, moved: false };
+    handleVolumeRowSelect(row, event, index);
+  }, [handleVolumeRowSelect]);
+
+  const handleVolumeRowMouseEnter = useCallback((row, event, index) => {
+    if (!volumeDragSelectRef.current.active) return;
+    volumeDragSelectRef.current.moved = true;
+    rangeSelectVolumeRows(row.path, row, index);
+  }, [rangeSelectVolumeRows]);
+
+  const stopVolumeDragSelect = useCallback(() => {
+    volumeDragSelectRef.current = { active: false, moved: false };
+  }, []);
+
+  const updateVolumeRubberSelection = useCallback((event) => {
+    const state = volumeRubberSelectRef.current;
+    const container = treeBodyRef.current;
+    if (!state.active || !container) return;
+    const rect = container.getBoundingClientRect();
+    const left = Math.min(state.startX, event.clientX);
+    const top = Math.min(state.startY, event.clientY);
+    const right = Math.max(state.startX, event.clientX);
+    const bottom = Math.max(state.startY, event.clientY);
+    const moved = Math.abs(event.clientX - state.startX) > 3 || Math.abs(event.clientY - state.startY) > 3;
+    volumeRubberSelectRef.current.moved = moved;
+    if (!moved) return;
+    event.preventDefault();
+    setVolumeSelectionBox({
+      left: left - rect.left + container.scrollLeft,
+      top: top - rect.top + container.scrollTop,
+      width: right - left,
+      height: bottom - top,
+    });
+    const selected = Array.from(container.querySelectorAll('[data-volume-path]'))
+      .filter(element => {
+        const itemRect = element.getBoundingClientRect();
+        return itemRect.right >= left
+          && itemRect.left <= right
+          && itemRect.bottom >= top
+          && itemRect.top <= bottom;
+      })
+      .map(element => element.dataset.volumePath)
+      .filter(Boolean);
+    selectVolumePaths(selected);
+  }, [selectVolumePaths]);
+
+  const startVolumeRubberSelection = useCallback((event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('input, button, textarea, select, a')) return;
+    if (event.target.closest('.org-tree-row')) return;
+    treeBodyRef.current?.focus({ preventScroll: true });
+    setSelectedItemId('');
+    clearVolumeSelection();
+    volumeRubberSelectRef.current = {
+      active: true,
+      moved: false,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    setVolumeSelectionBox(null);
+  }, [clearVolumeSelection]);
+
+  const stopVolumeRubberSelection = useCallback(() => {
+    volumeRubberSelectRef.current = { active: false, moved: false, startX: 0, startY: 0 };
+    setVolumeSelectionBox(null);
+  }, []);
+
+  const executeVolumeMultiRename = useCallback(async rows => {
+    const renameRows = rows.filter(row => row.status === 'ok' && row.oldName !== row.newName);
+    if (renameRows.length === 0) return { success: false, successCount: 0, errors: [] };
+    const rowByPath = new Map(renameRows.map(row => [row.path, row]));
+    setFileList(prev => prev.map(item => ({
+      ...item,
+      volumes: (item.volumes || []).map(volume => {
+        const renameFile = organizerVolumeRenameFile(item, volume, config);
+        const row = rowByPath.get(renameFile.path);
+        if (!row) return volume;
+        const safeName = sanitizeOrganizerName(stripFilenameExtension(row.newName));
+        return safeName ? { ...volume, new_name: safeName } : volume;
+      }),
+    })));
+    clearVolumeSelection();
+    showToast?.(t('msg_multi_rename_done', [renameRows.length]));
+    return { success: true, successCount: renameRows.length, errors: [] };
+  }, [clearVolumeSelection, config, showToast, t]);
+
   const handleContinueToRenamer = useCallback(() => {
     const paths = lastResult?.createdFiles || [];
     if (paths.length === 0 || lastResult?.cancelled) return;
@@ -369,33 +508,34 @@ function OrganizerTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleKeyDown = event => {
-      if (isWorking || editingVolume) return;
+      if (!isOrganizerTabVisible()) return;
+      if (isWorking || showVolumeRenameDialog) return;
       if (!shouldHandleGlobalShortcut(event)) return;
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
         handleRemoveHighlighted();
+      } else if (event.shiftKey && isShortcutKey(event, 'r') && selectedVolumeRows.length > 0) {
+        event.preventDefault();
+        setShowVolumeRenameDialog(true);
       }
     };
-    const closeContextMenu = () => setContextMenu(null);
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('click', closeContextMenu);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('click', closeContextMenu);
     };
-  }, [editingVolume, handleRemoveHighlighted, isWorking]);
+  }, [handleRemoveHighlighted, isOrganizerTabVisible, isWorking, selectedVolumeRows.length, showVolumeRenameDialog]);
 
   return (
-    <div className="organizer-tab">
+    <div className="organizer-tab" ref={tabRootRef}>
       <div className="org-local-toolbar">
-        <button className="org-btn" onClick={handleSelectFolder} disabled={isWorking}><FaIcon name="folder" /> {t('add_folder')}</button>
-        <button className="org-btn" onClick={handleSelectFiles} disabled={isWorking}><FaIcon name="file" /> {t('add_file')}</button>
         <button className="org-btn" onClick={handleToggleExpandAll} disabled={fileList.length === 0}>
           ↕ {t('org_expand_collapse_all')}
         </button>
         <button className="org-btn" onClick={handleBatchDefault} disabled={fileList.length === 0}>{t('batch_default')}</button>
         <button className="org-btn" onClick={handleBatchTitle} disabled={fileList.length === 0}>{t('batch_title')}</button>
-        <button className="org-btn" onClick={handleClear} disabled={isWorking || fileList.length === 0}><FaIcon name="trash" /> {t('clear_all')}</button>
+        <button className="org-btn" onClick={() => setShowVolumeRenameDialog(true)} disabled={isWorking || selectedVolumeRows.length === 0}>
+          <FaIcon name="fileSignature" /> {t('tf_menu_rename_multi')}
+        </button>
         <div className="org-toolbar-spacer" />
       </div>
 
@@ -414,12 +554,29 @@ function OrganizerTab({ config, t, showToast }) {
               <div className="org-col-size">{t('col_org_size')}</div>
             </div>
 
-            <div className="org-tree-body">
+            <div
+              ref={treeBodyRef}
+              className="org-tree-body"
+              tabIndex={0}
+              onMouseDown={startVolumeRubberSelection}
+              onMouseMove={updateVolumeRubberSelection}
+              onMouseLeave={() => {
+                stopVolumeDragSelect();
+                stopVolumeRubberSelection();
+              }}
+              onMouseUp={() => {
+                stopVolumeDragSelect();
+                stopVolumeRubberSelection();
+              }}
+            >
               {fileList.map((item) => (
                 <div key={item.id} className={`org-tree-item-group ${selectedItemId === item.id ? 'selected' : ''}`}>
                   <div
                     className="org-tree-row org-root-row"
-                    onClick={() => setSelectedItemId(item.id)}
+                    onClick={() => {
+                      setSelectedItemId(item.id);
+                      clearVolumeSelection();
+                    }}
                   >
                     <div
                       className="org-col-name"
@@ -441,7 +598,7 @@ function OrganizerTab({ config, t, showToast }) {
                         onChange={() => handleCheck(item.id)}
                         onClick={(event) => event.stopPropagation()}
                       />
-                      <span className="org-icon"><FaIcon name="archive" /></span>
+                      <span className="org-icon"><FaIcon name="cube" /></span>
                       <span className="org-title">{item.clean_title || item.name}</span>
                       <span className="org-original-name">({item.name})</span>
                     </div>
@@ -473,24 +630,22 @@ function OrganizerTab({ config, t, showToast }) {
                   {expandedItems.has(item.id) && item.volumes.map((volume) => {
                     const extension = targetExtension(volume, config?.target_format || 'none');
                     const prefix = organizerVolumePrefix(volume);
+                    const volumeRow = organizerVolumeRenameFile(item, volume, config);
+                    const volumeIndex = visibleVolumeRows.findIndex(row => row.path === volumeRow.path);
+                    const isVolumeSelected = selectedVolumePaths.includes(volumeRow.path);
                     return (
                     <div
                       key={volume.id}
-                      className="org-tree-row org-child-row"
-                      onClick={() => setSelectedItemId(item.id)}
-                      onDoubleClick={() => openVolumeEditor(item.id, volume)}
-                      onContextMenu={event => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setSelectedItemId(item.id);
-                        setContextMenu({ x: event.clientX, y: event.clientY, itemId: item.id, volume });
-                      }}
+                      className={`org-tree-row org-child-row ${isVolumeSelected ? 'selected' : ''} ${activeVolumePath === volumeRow.path ? 'active-selection' : ''}`}
+                      data-volume-path={volumeRow.path}
+                      onMouseDown={event => handleVolumeRowMouseDown(volumeRow, event, volumeIndex)}
+                      onMouseEnter={event => handleVolumeRowMouseEnter(volumeRow, event, volumeIndex)}
                     >
                       <div className="org-col-name org-child-name">
                         <span className="org-indent">↳</span>
-                        <span className="org-icon"><FaIcon name={volume.type === 'archive' ? 'archive' : 'folder'} /></span>
+                        <span className="org-icon"><FaIcon name="file-zipper" /></span>
                         <span className="org-volume-name">{prefix}{volume.new_name}{extension}</span>
-                        <span className="org-original-name">({volume.original_basename}, {volume.image_count}p)</span>
+                        {volume.original_basename && <span className="org-original-name">({volume.original_basename})</span>}
                         {volume.spinoff_folder && <span className="org-spinoff">SPINOFF</span>}
                       </div>
                     </div>
@@ -498,6 +653,17 @@ function OrganizerTab({ config, t, showToast }) {
                   })}
                 </div>
               ))}
+              {volumeSelectionBox && (
+                <div
+                  className="org-drag-selection-box"
+                  style={{
+                    left: `${volumeSelectionBox.left}px`,
+                    top: `${volumeSelectionBox.top}px`,
+                    width: `${volumeSelectionBox.width}px`,
+                    height: `${volumeSelectionBox.height}px`,
+                  }}
+                />
+              )}
             </div>
           </div>
         )}
@@ -506,7 +672,7 @@ function OrganizerTab({ config, t, showToast }) {
       <div className="org-progress-row" />
 
       <div className="org-bottom-info">
-        {t('total_files', { count: fileList.length })} / {selectedCount} checked
+        {t('total_files', { count: fileList.length })} / {selectedCount} checked / {selectedVolumeRows.length} selected
       </div>
       {skippedFiles.length > 0 && (
         <div className="org-result-errors">
@@ -514,28 +680,12 @@ function OrganizerTab({ config, t, showToast }) {
           {skippedFiles.map(file => <div key={file}>{file}</div>)}
         </div>
       )}
-      {contextMenu && (
-        <div
-          className="org-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={event => event.stopPropagation()}
-        >
-          <button onClick={() => {
-            openVolumeEditor(contextMenu.itemId, contextMenu.volume);
-            setContextMenu(null);
-          }}>
-            {t('action_rename_file')}
-          </button>
-        </div>
-      )}
-      {editingVolume && (
-        <OrganizerFilenameDialog
-          value={editingVolume.value}
-          onClose={() => setEditingVolume(null)}
-          onConfirm={value => {
-            handleVolumeNameChange(editingVolume.itemId, editingVolume.volumeId, value);
-            setEditingVolume(null);
-          }}
+      {showVolumeRenameDialog && (
+        <MultiRenameDialog
+          files={selectedVolumeRows}
+          exists={async () => false}
+          onExecute={executeVolumeMultiRename}
+          onClose={() => setShowVolumeRenameDialog(false)}
           t={t}
         />
       )}
@@ -549,33 +699,6 @@ function OrganizerTab({ config, t, showToast }) {
           t={t}
         />
       )}
-    </div>
-  );
-}
-
-function OrganizerFilenameDialog({ value, onClose, onConfirm, t }) {
-  const [draft, setDraft] = useState(value);
-  const safeDraft = sanitizeOrganizerName(draft);
-  return (
-    <div className="org-dialog-backdrop" onMouseDown={onClose}>
-      <div className="org-filename-dialog" onMouseDown={event => event.stopPropagation()}>
-        <h3>{t('msg_rename_title')}</h3>
-        <label htmlFor="org-filename-input">{t('msg_rename_desc')}</label>
-        <input
-          id="org-filename-input"
-          autoFocus
-          value={draft}
-          onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter' && safeDraft) onConfirm(safeDraft);
-            if (event.key === 'Escape') onClose();
-          }}
-        />
-        <div>
-          <button disabled={!safeDraft} onClick={() => onConfirm(safeDraft)}>{t('btn_ok')}</button>
-          <button onClick={onClose}>{t('btn_cancel')}</button>
-        </div>
-      </div>
     </div>
   );
 }

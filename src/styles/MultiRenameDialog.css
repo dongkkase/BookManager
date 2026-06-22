@@ -1,0 +1,344 @@
+.folder-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.dialog-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dialog-titlebar button {
+  min-width: 28px;
+  min-height: 24px;
+  color: #fff;
+  background: #353535;
+  border: 1px solid #555;
+  border-radius: 3px;
+}
+
+.layout-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.file-action-dialog {
+  width: min(760px, calc(100vw - 40px));
+  max-height: min(620px, calc(100vh - 40px));
+  color: #fff;
+  background: #242424;
+  border: 1px solid #515151;
+  border-radius: 7px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.multi-rename-launch-dialog {
+  width: min(996px, calc(100vw - 12px));
+  height: min(675px, calc(100vh - 12px));
+  max-height: calc(100vh - 12px);
+  display: flex;
+  flex-direction: column;
+  background: #1f1f1f;
+  border-color: #3c3c3c;
+  border-radius: 5px;
+}
+
+.multi-rename-titlebar {
+  min-height: 31px;
+  padding: 0 8px;
+  color: #e8e8e8;
+  background: #1f1f1f;
+  border-bottom: none;
+  font-size: var(--font-base);
+  font-weight: 800;
+}
+
+.multi-rename-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.multi-rename-title-icon {
+  width: 13px;
+  height: 13px;
+  display: inline-grid;
+  place-items: center;
+  color: #d8f1ff;
+  background: #168bd8;
+  border-radius: 2px;
+  font-size: var(--font-3xs);
+  line-height: 1;
+}
+
+.multi-rename-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 4px 10px 0;
+  color: #fff;
+  font-size: var(--font-sm);
+}
+
+.multi-rename-rules {
+  min-width: 0;
+  margin: 6px 0 0;
+  padding: 16px 10px 9px;
+  border: 1px solid #4c4c4c;
+  border-radius: 5px;
+}
+
+.multi-rename-rules legend {
+  padding: 0 6px;
+  color: #fff;
+  font-weight: 800;
+}
+
+.multi-rename-patterns {
+  display: grid;
+  gap: 7px;
+}
+
+.multi-rename-patterns label {
+  display: grid;
+  grid-template-columns: 55px 1fr;
+  align-items: center;
+  gap: 5px;
+  font-weight: 800;
+}
+
+.multi-rename-patterns input,
+.multi-rename-options input[type="number"],
+.multi-rename-options select {
+  min-height: 24px;
+  padding: 2px 8px;
+  color: #fff;
+  background: #363636;
+  border: 1px solid #555;
+  border-radius: 4px;
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.multi-rename-options input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  inline-size: 18px;
+  block-size: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  min-height: 18px;
+  max-height: 18px;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  margin: 0;
+  accent-color: #0d84d8;
+}
+
+.multi-rename-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.multi-rename-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  font-weight: 800;
+}
+
+.multi-rename-options-primary {
+  margin-top: 9px;
+  padding-left: 52px;
+}
+
+.multi-rename-options-sequence {
+  margin-top: 9px;
+}
+
+.multi-rename-options input[type="number"] {
+  width: 118px;
+}
+
+.multi-rename-options-primary input[type="number"] {
+  width: 88px;
+}
+
+.multi-rename-options-sequence select {
+  width: 73px;
+}
+
+.multi-rename-preview {
+  min-height: 0;
+  overflow: auto;
+  background: #292929;
+  border: 1px solid #2f2f2f;
+  border-radius: 4px;
+}
+
+.multi-rename-preview table {
+  min-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.multi-rename-preview th,
+.multi-rename-preview td {
+  height: 29px;
+  padding: 0 6px;
+  border: none;
+  border-bottom: 1px solid #303030;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.multi-rename-preview th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 29px;
+  padding-right: 12px;
+  color: #fff;
+  background: #1f1f1f;
+  border-right: 1px solid #4a4a4a;
+  text-align: center;
+  overflow: visible;
+}
+
+.multi-rename-preview th:last-child {
+  border-right: none;
+}
+
+.multi-rename-preview th span:first-child {
+  pointer-events: none;
+}
+
+.multi-rename-column-resizer {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  bottom: 0;
+  width: 11px;
+  cursor: col-resize;
+  z-index: 2;
+  user-select: none;
+}
+
+.multi-rename-column-resizer::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  bottom: 5px;
+  width: 2px;
+  background: #777;
+  border-radius: 1px;
+}
+
+.multi-rename-column-resizer:hover {
+  background: rgba(13, 132, 216, 0.24);
+}
+
+.multi-rename-column-resizer:hover::before {
+  background: #2aa8ff;
+  box-shadow: 0 0 0 1px rgba(42, 168, 255, 0.25);
+}
+
+body.multi-rename-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.multi-rename-resizing .multi-rename-column-resizer::before {
+  background: #2aa8ff;
+}
+
+.multi-rename-preview tbody tr {
+  background: #282828;
+}
+
+.multi-rename-preview tbody tr:nth-child(even) {
+  background: #292929;
+}
+
+.multi-rename-preview tbody tr:hover {
+  background: #363636;
+}
+
+.rename-status-ok td:nth-child(3) {
+  color: #38db72;
+}
+
+.multi-rename-preview .rename-new-name-changed {
+  color: #3498db;
+}
+
+.multi-rename-preview .multi-rename-status-column {
+  text-align: center;
+}
+
+.rename-status-conflict td:nth-child(3),
+.rename-status-error td:nth-child(3) {
+  color: #ff6868;
+}
+
+.rename-status-unchanged td:nth-child(3) {
+  color: #aaa;
+}
+
+.multi-rename-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+}
+
+.multi-rename-progress progress {
+  flex: 1;
+}
+
+.multi-rename-footer {
+  flex: 0 0 46px;
+  gap: 8px;
+  padding: 5px 10px 11px;
+}
+
+.multi-rename-footer button {
+  flex: 1 1 0;
+  height: 29px;
+  border: none;
+  border-radius: 5px;
+  background: #3e3e3e;
+  color: #fff;
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.multi-rename-footer button.primary {
+  background: #0d84d8;
+}
+
+.multi-rename-footer button:disabled {
+  color: rgba(255, 255, 255, 0.55);
+  opacity: 0.7;
+}

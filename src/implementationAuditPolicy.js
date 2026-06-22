@@ -57,7 +57,7 @@ export const IMPLEMENTATION_AUDIT_TARGETS = Object.freeze([
     {
         file: 'src/tabs/OrganizerTab.jsx',
         scope: '구조 정리 UI',
-        fragments: ['OrganizerTab', 'analyzeOrganizer', 'executeOrganizer', 'handleContinueToRenamer', 'OrganizerFilenameDialog'],
+        fragments: ['OrganizerTab', 'analyzeOrganizer', 'executeOrganizer', 'handleContinueToRenamer', 'MultiRenameDialog'],
     },
     {
         file: 'src/tabs/RenamerTab.jsx',

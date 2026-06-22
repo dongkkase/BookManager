@@ -17,7 +17,7 @@ import {
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onRemoveLibrary, onAddFavorite, onRemoveFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [roots, setRoots] = useState([]);
   const [folderCache, setFolderCache] = useState({});
@@ -32,6 +32,8 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     node.focus?.({ preventScroll: true });
     node.scrollIntoView?.({ block, inline: 'nearest', behavior: 'smooth' });
   };
+
+  const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
 
   const treeRoots = useMemo(() => {
     const libraryNodes = (libraries || []).map(lib => ({
@@ -140,9 +142,27 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     <div className="sidebar-section">
       <div className="nav-header">
         <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.libraries')}</span>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <button title={t('tab_folder_settings')} onClick={onOpenLibrarySettings} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}><FaIcon name="gear" size={12} /></button>
-          <button title={t('folder.sidebar.add_library')} onClick={onAddLibrary} style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}>➕</button>
+        <div className="folder-sidebar-header-actions">
+          <button
+            type="button"
+            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
+            title={t('tab_folder_settings')}
+            aria-label={t('tab_folder_settings')}
+            data-tooltip={t('tab_folder_settings')}
+            onClick={onOpenLibrarySettings}
+          >
+            <FaIcon name="gear" size={12} />
+          </button>
+          <button
+            type="button"
+            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
+            title={t('folder.sidebar.add_library')}
+            aria-label={t('folder.sidebar.add_library')}
+            data-tooltip={t('folder.sidebar.add_library')}
+            onClick={onAddLibrary}
+          >
+            <FaIcon name="plus" size={12} />
+          </button>
         </div>
       </div>
       <ul className="nav-list">
@@ -185,14 +205,16 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
               )}
               <button
                 type="button"
-                className="library-remove-btn"
+                className="library-menu-btn folder-sidebar-tooltip-btn"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onRemoveLibrary?.(lib);
+                  onLibraryContextMenu?.(event, lib);
                 }}
-                title={t('folder.sidebar.remove_library')}
+                title={t('folder.sidebar.more_actions')}
+                aria-label={t('folder.sidebar.more_actions')}
+                data-tooltip={t('folder.sidebar.more_actions')}
               >
-                <FaIcon name="xmark" size={11} />
+                <FaIcon name="ellipsisVertical" size={12} />
               </button>
             </div>
           </li>
@@ -211,14 +233,17 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     <div className="sidebar-section" style={{ marginTop: '10px' }}>
       <div className="nav-header">
         <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.favorites')}</span>
-        <div style={{ display: 'flex', gap: '4px' }}>
+        <div className="folder-sidebar-header-actions">
           <button
+            type="button"
+            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn favorite-add-btn"
             title={t('folder.sidebar.add_favorite')}
+            aria-label={t('folder.sidebar.add_favorite')}
+            data-tooltip={t('folder.sidebar.add_favorite')}
             onClick={() => selectedFolderPath && onAddFavorite && onAddFavorite(selectedFolderPath)}
-            style={{ backgroundColor: 'transparent', color: selectedFolderPath ? 'gold' : 'gray', border: 'none', cursor: selectedFolderPath ? 'pointer' : 'default' }}
             disabled={!selectedFolderPath}
           >
-            ⭐
+            <FaIcon name="star" size={12} />
           </button>
         </div>
       </div>
@@ -238,13 +263,19 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
           >
             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={fav.path}>{fav.name}</span>
-            <span
-              onClick={(e) => { e.stopPropagation(); onRemoveFavorite && onRemoveFavorite(fav.path); }}
-              style={{ cursor: 'pointer', color: '#ff6b6b' }}
-              title={t('folder.sidebar.remove_favorite')}
+            <button
+              type="button"
+              className="favorite-menu-btn folder-sidebar-tooltip-btn"
+              onClick={(event) => {
+                event.stopPropagation();
+                onFolderContextMenu?.(event, fav.path);
+              }}
+              title={t('folder.sidebar.more_actions')}
+              aria-label={t('folder.sidebar.more_actions')}
+              data-tooltip={t('folder.sidebar.more_actions')}
             >
-              ✖
-            </span>
+              <FaIcon name="ellipsisVertical" size={12} />
+            </button>
           </li>
           );
         })}
@@ -299,7 +330,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             className="folder-tree-expander"
             style={{ visibility: node.isFolder && hasChildren ? 'visible' : 'hidden' }}
           >
-            {isExpanded ? '▼' : '▶'}
+            <FaIcon name={isExpanded ? 'angleDown' : 'chevronRight'} size={10} />
           </span>
           <span style={{ marginRight: '4px', display: 'inline-flex', color: node.isFolder ? '#f0b536' : '#b8c7d4' }}>
             <FaIcon name={node.isFolder ? 'folder' : 'file'} size={12} />
@@ -325,21 +356,27 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             ['documents', 'folder_docs', 'fileLines'],
             ['downloads', 'folder_downloads', 'download'],
             ['home', 'folder_home', 'house'],
-          ].map(([pathKey, labelKey, icon]) => (
-            <button
-              key={pathKey}
-              title={String(t(labelKey)).replace(/^⭐\s*/, '')}
-              onClick={async () => {
-                const targetPath = specialPaths[pathKey];
-                if (!targetPath) return;
-                const moved = await onSelectFolder?.(targetPath);
-                if (moved !== false) setSelectedSource('quick');
-              }}
-              style={{ backgroundColor: 'transparent', color: 'white', border: 'none', cursor: 'pointer' }}
-            >
-              <FaIcon name={icon} size={12} />
-            </button>
-          ))}
+          ].map(([pathKey, labelKey, icon]) => {
+            const label = tooltipText(t(labelKey));
+            return (
+              <button
+                key={pathKey}
+                type="button"
+                className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
+                title={label}
+                aria-label={label}
+                data-tooltip={label}
+                onClick={async () => {
+                  const targetPath = specialPaths[pathKey];
+                  if (!targetPath) return;
+                  const moved = await onSelectFolder?.(targetPath);
+                  if (moved !== false) setSelectedSource('quick');
+                }}
+              >
+                <FaIcon name={icon} size={12} />
+              </button>
+            );
+          })}
         </div>
       </div>
       <ul ref={treeListRef} className="nav-list folder-tree-list" style={{ flex: 1 }}>

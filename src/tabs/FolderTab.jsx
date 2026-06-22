@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { FaIcon } from '../components/FaIcon';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
@@ -6,6 +7,7 @@ import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
+import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { extractCoreTitle } from '../utils/folderUtils';
 import { useFolderScan } from '../hooks/useFolderScan';
 import { useFileSelection } from '../hooks/useFileSelection';
@@ -55,14 +57,6 @@ import {
 } from '../fileActionPolicy';
 import {
   buildRenameMap,
-  folderNameRenamePattern,
-  inferRenamePattern,
-  normalPatternToRegex,
-  normalReplacementToRegex,
-  previewRename,
-  regexPatternToNormal,
-  regexReplacementToNormal,
-  resolveRenamePreviewConflicts,
 } from '../multiRenamePolicy';
 import {
   findMissingVolumes,
@@ -71,7 +65,7 @@ import {
   applyConflictChoice,
   createLibraryMovePlans,
 } from '../libraryMovePolicy';
-import { hasPrimaryModifier, shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { hasPrimaryModifier, isShortcutKey, shouldHandleGlobalShortcut } from '../interactionPolicy';
 import { emitStatusState } from '../statusState';
 import '../styles/FolderTab.css';
 
@@ -129,8 +123,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const initializedDetailHeightRef = useRef(false);
   const restoredColumnLayoutRef = useRef(false);
   const restoredViewSettingsRef = useRef(false);
+  const restoredFolderPathRef = useRef(false);
   const internalFileActionRef = useRef(false);
   const watchedMtimeRef = useRef(null);
+  const lastFolderPanelRef = useRef('list');
 
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -168,8 +164,30 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [seriesMovePreview, setSeriesMovePreview] = useState(null);
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
   const [moveConflict, setMoveConflict] = useState(null);
+  const [textInputDialog, setTextInputDialog] = useState(null);
+  const textInputResolverRef = useRef(null);
+  const closeTextInputDialog = useCallback((value = null) => {
+    const resolver = textInputResolverRef.current;
+    textInputResolverRef.current = null;
+    setTextInputDialog(null);
+    resolver?.(value);
+  }, []);
+  const requestTextInput = useCallback(options => new Promise(resolve => {
+    textInputResolverRef.current?.(null);
+    textInputResolverRef.current = resolve;
+    setTextInputDialog({
+      title: options?.title || '',
+      message: options?.message || '',
+      initialValue: options?.initialValue || '',
+      inputId: options?.inputId || 'folder-text-input',
+    });
+  }), []);
   const closeTopOverlay = useCallback(() => {
     if (moveConflict) return true;
+    if (textInputDialog) {
+      closeTextInputDialog(null);
+      return true;
+    }
     if (showMultiRenameDialog) setShowMultiRenameDialog(false);
     else if (showGotoDialog) setShowGotoDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
@@ -185,6 +203,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     libraryMoveRequest,
     moveConflict,
     seriesMovePreview,
+    textInputDialog,
+    closeTextInputDialog,
     showDeleteLayoutDialog,
     showGotoDialog,
     showLayoutDialog,
@@ -616,13 +636,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
-    setSelectedFolderPath(folderPath);
+    const nextFolderPath = String(folderPath || '');
+    setSelectedFolderPath(nextFolderPath);
     clearSelection();
     setSearchQuery('');
-    const files = await scanFolder(folderPath, scanOptions);
+    if (nextFolderPath && config?.folder_last_path !== nextFolderPath) {
+      saveConfig?.({ folder_last_path: nextFolderPath }).catch(error => {
+        console.error('마지막 폴더 경로 저장 실패:', error);
+      });
+    }
+    const files = await scanFolder(nextFolderPath, scanOptions);
     const localMissing = findMissingVolumes(files || []);
-    scheduleLocalMissingToast(folderPath, localMissing);
-  }, [scanOptions, scanFolder, clearSelection, scheduleLocalMissingToast]);
+    scheduleLocalMissingToast(nextFolderPath, localMissing);
+  }, [config?.folder_last_path, scanOptions, scanFolder, clearSelection, saveConfig, scheduleLocalMissingToast]);
 
   const handleSafeFolderNavigation = useCallback(async folderPath => {
     if (!folderPath) return false;
@@ -631,6 +657,32 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     await handleFolderChange(folderPath);
     return true;
   }, [handleFolderChange]);
+
+  useEffect(() => {
+    if (!config || restoredFolderPathRef.current || scanning || preparingDuplicates) return undefined;
+    restoredFolderPathRef.current = true;
+    let cancelled = false;
+    const candidates = [
+      config.folder_last_path,
+      config.last_folder_path,
+      config.last_selected_folder_path,
+      config.last_selected_library,
+      libraries[0],
+    ].filter(Boolean);
+    const uniqueCandidates = [...new Set(candidates)];
+    if (uniqueCandidates.length === 0) return undefined;
+
+    const restoreLastFolder = async () => {
+      for (const folderPath of uniqueCandidates) {
+        if (cancelled) return;
+        if (await handleSafeFolderNavigation(folderPath)) return;
+      }
+    };
+    restoreLastFolder();
+    return () => {
+      cancelled = true;
+    };
+  }, [config, handleSafeFolderNavigation, libraries, preparingDuplicates, scanning]);
 
   const handlePathNavigation = useCallback(async targetPathValue => {
     const targetPath = String(targetPathValue || '').trim();
@@ -1101,7 +1153,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
     if (!target) return;
     const oldName = String(target).split(/[\\/]/).pop() || '';
-    const inputName = window.prompt(t('msg_rename_desc'), oldName);
+    const inputName = await requestTextInput({
+      title: t('msg_rename_title'),
+      message: t('msg_rename_desc'),
+      initialValue: oldName,
+      inputId: 'folder-file-rename-input',
+    });
     if (inputName === null) return;
     const policy = protectedRenameName(oldName, inputName);
     if (!policy.valid) {
@@ -1138,7 +1195,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     showToast?.({ key: 'msg_rename_success' });
     await handleRefresh();
     selectFile(nextPath);
-  }, [activeSelectedFile, config?.language, config?.lang, handleRefresh, runInternalFileAction, selectFile, showToast, t]);
+  }, [activeSelectedFile, config?.language, config?.lang, handleRefresh, requestTextInput, runInternalFileAction, selectFile, showToast, t]);
 
   const undoLastRename = useCallback(async () => {
     const result = await window.electronAPI?.undoRename?.();
@@ -1410,7 +1467,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const renameContextFolder = useCallback(async folderPath => {
     if (!folderPath) return;
     const oldName = basename(folderPath);
-    const input = window.prompt(t('dlg_ren_folder_msg'), oldName);
+    const input = await requestTextInput({
+      title: t('dlg_ren_folder_title'),
+      message: t('dlg_ren_folder_msg'),
+      initialValue: oldName,
+      inputId: 'folder-tree-rename-input',
+    });
     if (input === null) return;
     const nextName = input.trim();
     if (!nextName) return;
@@ -1453,7 +1515,28 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (nextSelection !== selectedFolderPath) {
       await handleFolderChange(nextSelection);
     }
-  }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
+  }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, requestTextInput, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
+
+  const isFolderTabVisible = useCallback(() => (
+    !mainAreaRef.current?.closest?.('[hidden]')
+  ), []);
+
+  const markFolderPanelFocus = useCallback(panel => {
+    lastFolderPanelRef.current = panel;
+  }, []);
+
+  const handleRenameShortcut = useCallback(async () => {
+    const activeElement = document.activeElement;
+    const isExplorerActive = lastFolderPanelRef.current === 'explorer'
+      || Boolean(activeElement?.closest?.('.folder-left-panel, .folder-sidebar'));
+    if (isExplorerActive) {
+      await renameContextFolder(selectedFolderPath);
+      return;
+    }
+    if (selectedFileObjects.length > 0) {
+      setShowMultiRenameDialog(true);
+    }
+  }, [renameContextFolder, selectedFileObjects.length, selectedFolderPath]);
 
   const deleteContextFolder = useCallback(async menu => {
     const folderPath = menu?.folderPath;
@@ -1528,6 +1611,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       await runLibraryIndexAction(menu.folderPath, false);
     } else if (action === 'optimize-library' && isLibraryContext(menu)) {
       await runLibraryIndexAction(menu.folderPath, true);
+    } else if (action === 'remove-library' && isLibraryContext(menu)) {
+      await removeLibrary(menu.folderPath);
     } else if (action === 'open-folder') {
       handleFolderChange(menu.folderPath || selectedFolderPath);
     } else if (action === 'open-explorer') {
@@ -1582,10 +1667,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, invertSelection, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, invertSelection, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, removeLibrary, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
+      if (!isFolderTabVisible()) return;
       if (event.key === 'Escape' && closeTopOverlay()) {
         event.preventDefault();
         event.stopPropagation();
@@ -1605,25 +1691,25 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       } else if (event.key === 'F5') {
         event.preventDefault();
         handleSmartRefresh(event.shiftKey);
-      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'a') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'a')) {
         event.preventDefault();
         selectAll();
-      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'i') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'i')) {
         event.preventDefault();
         invertSelection();
-      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'z') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'z')) {
         event.preventDefault();
         undoLastRename();
-      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'f') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'f')) {
         event.preventDefault();
         searchInputRef.current?.focus();
-      } else if (hasPrimaryModifier(event, navigator.platform) && event.key.toLowerCase() === 'g') {
+      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'g')) {
         event.preventDefault();
         setGotoPathDraft(selectedFolderPath);
         setShowGotoDialog(true);
-      } else if (event.shiftKey && event.key.toLowerCase() === 'r') {
+      } else if (event.shiftKey && isShortcutKey(event, 'r')) {
         event.preventDefault();
-        setShowMultiRenameDialog(true);
+        handleRenameShortcut();
       } else if (event.key === 'Escape') {
         clearSelection();
         closeContextMenu();
@@ -1658,7 +1744,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleSmartRefresh, handleViewModeChange, invertSelection, moveActiveSelection, openSelectedInExplorer, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
+  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleRenameShortcut, handleSmartRefresh, handleViewModeChange, invertSelection, isFolderTabVisible, moveActiveSelection, openSelectedInExplorer, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -1768,7 +1854,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   const handleSaveLayout = useCallback(async () => {
-    const name = window.prompt(t('dlg_save_lay_msg'))?.trim();
+    const name = (await requestTextInput({
+      title: t('menu_save_layout'),
+      message: t('dlg_save_lay_msg'),
+      initialValue: '',
+      inputId: 'folder-layout-save-input',
+    }))?.trim();
     if (!name) return;
     const currentLayouts = config?.folder_saved_layouts && typeof config.folder_saved_layouts === 'object'
       ? { ...config.folder_saved_layouts }
@@ -1791,7 +1882,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       columns: serializeColumnLayout(columnLayout),
     };
     await saveConfig?.({ folder_saved_layouts: currentLayouts });
-  }, [columnLayout, config?.folder_saved_layouts, config?.language, config?.lang, groupKey, saveConfig, sortKey, sortOrder, t]);
+  }, [columnLayout, config?.folder_saved_layouts, config?.language, config?.lang, groupKey, requestTextInput, saveConfig, sortKey, sortOrder, t]);
 
   const handleDeleteLayout = useCallback(async name => {
     if (!name || !savedLayouts.includes(name)) return;
@@ -1904,7 +1995,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       >
         {/* Left Panel */}
         {isSidebarVisible && (
-          <div className="folder-left-panel" style={{ flexBasis: `${leftPanelWidth}px`, width: `${leftPanelWidth}px` }}>
+          <div
+            className="folder-left-panel"
+            style={{ flexBasis: `${leftPanelWidth}px`, width: `${leftPanelWidth}px` }}
+            onMouseDownCapture={() => markFolderPanelFocus('explorer')}
+            onFocusCapture={() => markFolderPanelFocus('explorer')}
+          >
             <div className="left-toolbar">
               <div className="left-toolbar-row">
                 <button
@@ -1962,7 +2058,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 onClick={checkMissingVolumes} 
                 disabled={isCheckingMissing}
               >
-                {isCheckingMissing ? t('msg_analyzing') : (missingData.length > 0 ? `${t('tf_btn_check_missing')} 🔴 ${missingData.length}` : t('tf_btn_check_missing'))}
+                {isCheckingMissing ? t('msg_analyzing') : (
+                  <>
+                    <span>{t('tf_btn_check_missing')}</span>
+                    {missingData.length > 0 && (
+                      <span className="missing-count-indicator">
+                        <FaIcon name="circle" size={7} />
+                        <span>{missingData.length}</span>
+                      </span>
+                    )}
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -1982,6 +2088,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           className="folder-right-panel"
           ref={rightPanelRef}
           style={{ '--folder-right-panel-width': `${rightPanelWidth}px` }}
+          onMouseDownCapture={() => markFolderPanelFocus('list')}
+          onFocusCapture={() => markFolderPanelFocus('list')}
         >
           <div className="right-toolbar">
             <div className="right-toolbar-left">
@@ -2036,7 +2144,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               </div>
               <button
                 className="refresh-btn"
-                onClick={event => handleSmartRefresh(event.shiftKey)}
+                onClick={() => handleSmartRefresh(true)}
                 title={t('folder_refresh_force_tip')}
               >
                 {t('folder_refresh_list')}
@@ -2077,7 +2185,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'table'}
                 onClick={() => handleViewModeChange('table')}
               >
-                ☰
+                <FaIcon name="list" size={13} />
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'thumbnail' ? 'active' : ''}`}
@@ -2085,7 +2193,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'thumbnail'}
                 onClick={() => handleViewModeChange('thumbnail')}
               >
-                ▦
+                <FaIcon name="tableCells" size={13} />
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'tile' ? 'active' : ''}`}
@@ -2093,7 +2201,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'tile'}
                 onClick={() => handleViewModeChange('tile')}
               >
-                ☷
+                <FaIcon name="layers" size={13} />
               </button>
               <span className="scale-label">{t('folder_item_size')}</span>
               <input
@@ -2115,7 +2223,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <ContextMenuItem onClick={() => handleContextAction('sync-library')} label={t('setting_update_index')} />
               <ContextMenuItem onClick={() => handleContextAction('optimize-library')} label={t('menu_optimize_meta')} />
               <div className="folder-context-menu-separator" />
-              <ContextMenuItem onClick={() => handleContextAction('open-explorer')} label={`📂 ${t('action_open_exp')}`} />
+              <ContextMenuItem onClick={() => handleContextAction('open-explorer')} icon="folderOpen" label={t('action_open_exp')} />
+              <ContextMenuItem onClick={() => handleContextAction('remove-library')} label={t('folder.sidebar.remove_library')} />
             </>
           ) : contextMenu.type === 'folder' ? (
             <>
@@ -2127,10 +2236,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 )}
                 label={isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
                   ? t('action_fav_rem')
-                  : `📌 ${t('action_fav_add')}`}
+                  : t('action_fav_add')}
+                icon={isFavoriteFolder(favoriteEntries, contextMenu.folderPath) ? 'star' : 'pin'}
               />
               <div className="folder-context-menu-separator" />
-              <ContextMenuItem onClick={() => handleContextAction('open-explorer')} label={`📂 ${t('action_open_exp')}`} />
+              <ContextMenuItem onClick={() => handleContextAction('open-explorer')} icon="folderOpen" label={t('action_open_exp')} />
               <ContextMenuItem onClick={() => handleContextAction('rename-folder')} label={t('action_ren_folder')} shortcut="Shift+R" />
               {!libraries.includes(contextMenu.folderPath) && libraries.length > 0 && (
                 <ContextMenuItem onClick={() => handleContextAction('move-folder-library')} label={t('action_move_folder_to_library')} />
@@ -2157,7 +2267,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t('action_del_files')} shortcut="Del" />
               <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t('tf_menu_rename_multi')} shortcut="Shift+R" />
               <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut="Ctrl+Z" />
-              <ContextMenuItem onClick={() => handleContextAction('show-file')} label={`📂 ${t('action_open_exp')}`} />
+              <ContextMenuItem onClick={() => handleContextAction('show-file')} icon="folderOpen" label={t('action_open_exp')} />
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('select-all')} label={t('action_sel_all')} shortcut="Ctrl+A" />
               <ContextMenuItem onClick={() => handleContextAction('invert-selection')} label={t('action_inv_sel')} />
@@ -2196,7 +2306,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         />
       )}
       {showMultiRenameDialog && (
-        <MultiRenameLaunchDialog
+        <MultiRenameDialog
           files={selectedFileObjects}
           onExecute={executeMultiRename}
           onClose={() => setShowMultiRenameDialog(false)}
@@ -2209,6 +2319,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           onChange={setGotoPathDraft}
           onConfirm={() => handlePathNavigation(gotoPathDraft)}
           onClose={() => setShowGotoDialog(false)}
+          t={t}
+        />
+      )}
+      {textInputDialog && (
+        <TextInputDialog
+          {...textInputDialog}
+          onConfirm={value => closeTextInputDialog(value)}
+          onClose={() => closeTextInputDialog(null)}
           t={t}
         />
       )}
@@ -2274,9 +2392,14 @@ function ContextMenu({ x, y, children }) {
   );
 }
 
-function ContextMenuItem({ label, shortcut = '', onClick }) {
+function ContextMenuItem({ label, shortcut = '', icon = '', onClick }) {
   return (
     <button type="button" className="folder-context-menu-item" onClick={onClick}>
+      {icon && (
+        <span className="folder-context-menu-icon">
+          <FaIcon name={icon} size={12} />
+        </span>
+      )}
       <span className="folder-context-menu-label">{label}</span>
       <span className="folder-context-menu-shortcut">{shortcut}</span>
     </button>
@@ -2400,294 +2523,52 @@ function GotoPathDialog({ value, onChange, onConfirm, onClose, t }) {
   );
 }
 
-function MultiRenameLaunchDialog({ files, onExecute, onClose, t }) {
-  const inferred = useMemo(
-    () => inferRenamePattern(files.map(file => file.name || basename(file.path))),
-    [files],
-  );
-  const [oldPattern, setOldPattern] = useState(inferred.oldPattern);
-  const [newPattern, setNewPattern] = useState(inferred.newPattern);
-  const [caseSensitive, setCaseSensitive] = useState(false);
-  const [regexMode, setRegexMode] = useState(false);
-  const [folderNameMode, setFolderNameMode] = useState(false);
-  const [previousNewPattern, setPreviousNewPattern] = useState(inferred.newPattern);
-  const [padNumbersEnabled, setPadNumbersEnabled] = useState(false);
-  const [numberDigits, setNumberDigits] = useState(3);
-  const [addSequence, setAddSequence] = useState(false);
-  const [sequenceStart, setSequenceStart] = useState(1);
-  const [sequenceDigits, setSequenceDigits] = useState(3);
-  const [sequencePosition, setSequencePosition] = useState('before');
-  const [rows, setRows] = useState([]);
-  const [previewing, setPreviewing] = useState(false);
-  const [executing, setExecuting] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [columnWidths, setColumnWidths] = useState([300, 300, 80, 300]);
-  const previewGenerationRef = useRef(0);
-  const tableResizeRef = useRef(null);
+function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-text-input', onConfirm, onClose, t }) {
+  const [draft, setDraft] = useState(initialValue);
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    const generation = previewGenerationRef.current + 1;
-    previewGenerationRef.current = generation;
-    setPreviewing(true);
-    const timer = window.setTimeout(async () => {
-      const options = {
-        oldPattern,
-        newPattern,
-        caseSensitive,
-        regexMode,
-        padNumbers: padNumbersEnabled,
-        numberDigits,
-        addSequence,
-        sequenceStart,
-        sequenceDigits,
-        sequencePosition,
-      };
-      const previews = await resolveRenamePreviewConflicts(
-        files.map((file, index) => previewRename(file, options, index)),
-        targetPath => window.electronAPI?.exists?.(targetPath),
-      );
-      if (previewGenerationRef.current !== generation) return;
-      setRows(previews);
-      setPreviewing(false);
-    }, 100);
-    return () => window.clearTimeout(timer);
-  }, [
-    addSequence,
-    caseSensitive,
-    files,
-    newPattern,
-    numberDigits,
-    oldPattern,
-    padNumbersEnabled,
-    regexMode,
-    sequenceDigits,
-    sequencePosition,
-    sequenceStart,
-  ]);
-
-  const toggleRegexMode = checked => {
-    if (checked) {
-      const converted = normalPatternToRegex(oldPattern);
-      setOldPattern(converted.source.replace(/^\^|\$$/g, ''));
-      setNewPattern(normalReplacementToRegex(newPattern));
-    } else {
-      setOldPattern(regexPatternToNormal(oldPattern));
-      setNewPattern(regexReplacementToNormal(newPattern));
-    }
-    setRegexMode(checked);
-  };
-
-  const toggleFolderNameMode = checked => {
-    if (checked) {
-      setPreviousNewPattern(newPattern);
-      const firstPath = files[0]?.full_path || files[0]?.path || '';
-      const parts = firstPath.split(/[\\/]/);
-      parts.pop();
-      setNewPattern(folderNameRenamePattern(newPattern, parts.pop() || '', regexMode));
-    } else {
-      setNewPattern(previousNewPattern);
-    }
-    setFolderNameMode(checked);
-  };
-
-  const execute = async () => {
-    const targets = rows.filter(row => row.status === 'ok' && row.oldName !== row.newName);
-    if (targets.length === 0) {
-      onClose();
-      return;
-    }
-    setExecuting(true);
-    setProgress(10);
-    const result = await onExecute(targets);
-    setProgress(100);
-    setExecuting(false);
-    if ((result?.errors?.length || 0) === 0 && result?.successCount > 0) onClose();
-  };
-
-  const statusText = status => ({
-    ok: t('tf_status_ok'),
-    conflict: t('tf_status_conflict'),
-    unchanged: t('tf_status_invalid'),
-    error: t('tf_status_invalid'),
-    invalid: t('tf_status_invalid'),
-  })[status] || status;
-
-  const tableWidth = columnWidths.reduce((total, width) => total + width, 0);
-  const previewColumnLabels = [t('tf_col_old_name'), t('tf_col_new_name'), t('tf_col_status'), t('col_path')];
-
-  const measureColumnTextWidth = useCallback((text) => {
-    const canvas = measureColumnTextWidth.canvas || document.createElement('canvas');
-    measureColumnTextWidth.canvas = canvas;
-    const context = canvas.getContext('2d');
-    context.font = '800 12px sans-serif';
-    return Math.ceil(context.measureText(String(text || '')).width);
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
   }, []);
 
-  const autoResizeColumn = useCallback((columnIndex) => {
-    const values = rows.map(row => ([
-      row.oldName,
-      row.newName,
-      statusText(row.status),
-      row.path,
-    ][columnIndex]));
-    const maxTextWidth = [previewColumnLabels[columnIndex], ...values]
-      .reduce((max, value) => Math.max(max, measureColumnTextWidth(value)), 0);
-    const nextWidth = Math.min(Math.max(maxTextWidth + 28, 60), 720);
-    setColumnWidths(widths => widths.map((width, index) => (
-      index === columnIndex ? nextWidth : width
-    )));
-  }, [measureColumnTextWidth, previewColumnLabels, rows, statusText]);
-
-  const startColumnResize = (event, columnIndex) => {
+  const submit = event => {
     event.preventDefault();
-    event.stopPropagation();
-    tableResizeRef.current = {
-      columnIndex,
-      startX: event.clientX,
-      startWidth: columnWidths[columnIndex],
-    };
-    document.body.classList.add('multi-rename-resizing');
+    onConfirm(draft);
   };
-
-  useEffect(() => {
-    const handleMouseMove = event => {
-      const state = tableResizeRef.current;
-      if (!state) return;
-      event.preventDefault();
-      const delta = event.clientX - state.startX;
-      setColumnWidths(widths => widths.map((width, index) => (
-        index === state.columnIndex ? Math.max(60, state.startWidth + delta) : width
-      )));
-    };
-    const handleMouseUp = () => {
-      tableResizeRef.current = null;
-      document.body.classList.remove('multi-rename-resizing');
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.body.classList.remove('multi-rename-resizing');
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
-
-  const renderResizeHeader = (label, columnIndex, className = '') => (
-    <th className={className}>
-      <span>{label}</span>
-      <span
-        className="multi-rename-column-resizer"
-        onMouseDown={event => startColumnResize(event, columnIndex)}
-        onDoubleClick={event => {
-          event.preventDefault();
-          event.stopPropagation();
-          autoResizeColumn(columnIndex);
-        }}
-        title={t('column_resize')}
-      />
-    </th>
-  );
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="file-action-dialog multi-rename-launch-dialog" onMouseDown={event => event.stopPropagation()}>
-        <div className="dialog-titlebar multi-rename-titlebar">
-          <span className="multi-rename-title">
-            <span className="multi-rename-title-icon">▣</span>
-            {t('tf_menu_rename_multi')}
-          </span>
-          <button type="button" onClick={onClose} disabled={executing}>×</button>
+      <form
+        className="text-input-dialog"
+        onSubmit={submit}
+        onMouseDown={event => event.stopPropagation()}
+        onKeyDown={event => {
+          if (event.key === 'Escape') onClose();
+        }}
+      >
+        <div className="dialog-titlebar">
+          <span>{title}</span>
+          <button type="button" onClick={onClose}>×</button>
         </div>
-        <div className="multi-rename-body">
-          <fieldset className="multi-rename-rules">
-            <legend>{t('tf_rename_mode')}</legend>
-            <div className="multi-rename-patterns">
-              <label>
-                <span>{t('tf_old_format')}</span>
-                <input value={oldPattern} onChange={event => setOldPattern(event.target.value)} disabled={executing} />
-              </label>
-              <label>
-                <span>{t('tf_new_format')}</span>
-                <input value={newPattern} onChange={event => setNewPattern(event.target.value)} disabled={executing} />
-              </label>
-            </div>
-            <div className="multi-rename-options multi-rename-options-primary">
-              <label><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} /> {t('tf_case_sensitive')}</label>
-              <label><input type="checkbox" checked={regexMode} onChange={event => toggleRegexMode(event.target.checked)} /> {t('tf_use_regex')}</label>
-              <label><input type="checkbox" checked={folderNameMode} onChange={event => toggleFolderNameMode(event.target.checked)} /> {t('tf_use_folder_name')}</label>
-              <label>
-                <input type="checkbox" checked={padNumbersEnabled} onChange={event => setPadNumbersEnabled(event.target.checked)} />
-                {t('tf_use_padding')}
-                <input type="number" min="1" max="4" value={numberDigits} disabled={!padNumbersEnabled} onChange={event => setNumberDigits(Number(event.target.value))} />
-              </label>
-            </div>
-            <div className="multi-rename-options multi-rename-options-sequence">
-              <label>
-                <input type="checkbox" checked={addSequence} onChange={event => setAddSequence(event.target.checked)} />
-                {t('tf_rule_numbering')}
-              </label>
-              <label>
-                {t('tf_num_start')}
-                <input type="number" min="0" max="99999" value={sequenceStart} disabled={!addSequence} onChange={event => setSequenceStart(Number(event.target.value))} />
-              </label>
-              <label>
-                {t('tf_num_digits')}
-                <input type="number" min="1" max="10" value={sequenceDigits} disabled={!addSequence} onChange={event => setSequenceDigits(Number(event.target.value))} />
-              </label>
-              <label>
-                {t('tf_num_pos')}
-                <select value={sequencePosition} disabled={!addSequence} onChange={event => setSequencePosition(event.target.value)}>
-                  <option value="before">{t('tf_pos_front')}</option>
-                  <option value="after">{t('tf_pos_back')}</option>
-                </select>
-              </label>
-            </div>
-          </fieldset>
-          <div className="multi-rename-preview">
-            <table style={{ width: `${tableWidth}px` }}>
-              <colgroup>
-                <col style={{ width: `${columnWidths[0]}px` }} />
-                <col style={{ width: `${columnWidths[1]}px` }} />
-                <col style={{ width: `${columnWidths[2]}px` }} />
-                <col style={{ width: `${columnWidths[3]}px` }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  {renderResizeHeader(previewColumnLabels[0], 0)}
-                  {renderResizeHeader(previewColumnLabels[1], 1)}
-                  {renderResizeHeader(previewColumnLabels[2], 2, 'multi-rename-status-column')}
-                  {renderResizeHeader(previewColumnLabels[3], 3)}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(row => (
-                  <tr key={row.path} className={`rename-status-${row.status}`}>
-                    <td title={row.oldName}>{row.oldName}</td>
-                    <td
-                      className={row.oldName !== row.newName ? 'rename-new-name-changed' : ''}
-                      title={row.newName}
-                    >
-                      {row.newName}
-                    </td>
-                    <td className="multi-rename-status-column" title={statusText(row.status)}>{statusText(row.status)}</td>
-                    <td title={row.path}>{row.path}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(previewing || executing) && (
-            <div className="multi-rename-progress">
-              <progress max="100" value={executing ? progress : undefined} />
-              <span>{executing ? `${progress}%` : t('tf_preview_updating')}</span>
-            </div>
-          )}
+        <div className="text-input-dialog-body">
+          <label htmlFor={inputId}>{message}</label>
+          <input
+            id={inputId}
+            ref={inputRef}
+            className="text-input-dialog-input"
+            type="text"
+            value={draft}
+            onChange={event => setDraft(event.target.value)}
+          />
         </div>
-        <div className="layout-dialog-footer multi-rename-footer">
-          <button type="button" className="primary" disabled={executing || previewing || !rows.some(row => row.status === 'ok')} onClick={execute}>{t('btn_ok')}</button>
-          <button type="button" disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
+        <div className="layout-dialog-footer">
+          <button type="submit" className="text-input-confirm">{t('btn_ok')}</button>
+          <button type="button" className="text-input-cancel" onClick={onClose}>{t('btn_cancel')}</button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

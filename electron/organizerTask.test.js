@@ -136,6 +136,34 @@ test('Organizer는 ZIP 안의 내부 ZIP 묶음을 권별 항목으로 분석한
     }
 });
 
+test('Organizer는 내부 ZIP의 실제 이미지 수를 2뎁스 페이지 수로 표시한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-nested-page-count-'));
+    try {
+        const inner = path.join(root, 'Series 01.zip');
+        fs.writeFileSync(inner, Buffer.alloc(0));
+        await replaceZipEntry(inner, '001.jpg', Buffer.from('page-1'));
+        await replaceZipEntry(inner, 'sub/002.png', Buffer.from('page-2'));
+        await replaceZipEntry(inner, 'readme.txt', Buffer.from('not-image'));
+
+        const source = path.join(root, 'Series Pack.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'Series 01.zip', fs.readFileSync(inner));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].volumes.length, 1);
+        assert.equal(analyzed.items[0].volumes[0].image_count, 2);
+        assert.equal(analyzed.items[0].page_count, 2);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Organizer는 CP949 이름의 내부 ZIP으로만 구성된 실제 첨부 ZIP을 분석한다', async t => {
     const fixture = path.resolve('test/황천의 츠가이 1~10.zip'.normalize('NFD'));
     if (!fs.existsSync(fixture)) {

@@ -5,7 +5,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
-import { listZipEntriesFromFile } from '../core/zipArchive.js';
+import { listZipEntries, listZipEntriesFromFile, readZipEntryFromFile } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
@@ -162,6 +162,7 @@ async function listArchiveEntries(filePath, sevenZExe) {
         name: entry.name,
         isDir: entry.isDirectory,
         size: entry.uncompressedSize || entry.compressedSize,
+        zipEntry: entry,
       }));
     } catch {
       return listWith7z(filePath, sevenZExe);
@@ -198,6 +199,7 @@ function getLeafGroups(entries) {
         images: [],
         type: nestedArchive ? 'archive' : key === 'Root_Files' ? 'archive' : 'folder',
         inner_path: nestedArchive ? normalized : '',
+        source_entry: nestedArchive ? entry.zipEntry || null : null,
       });
     }
     const group = groups.get(key);
@@ -205,10 +207,84 @@ function getLeafGroups(entries) {
     if (nestedArchive) {
       group.type = 'archive';
       group.inner_path = normalized;
+      group.source_entry = entry.zipEntry || group.source_entry || null;
     }
   }
 
   return [...groups.values()].sort((a, b) => naturalCompare(a.name, b.name));
+}
+
+function countImageEntries(entries = []) {
+  return entries.filter(entry => !entry.isDir && !entry.isDirectory && isImage(entry.name)).length;
+}
+
+async function countNestedZipImagesFromSourceZip(sourcePath, group) {
+  const sourceExt = normalizedExt(sourcePath);
+  const nestedExt = normalizedExt(group.inner_path);
+  if (!['.zip', '.cbz'].includes(sourceExt) || !['.zip', '.cbz'].includes(nestedExt)) return null;
+  if (!group.source_entry) return null;
+  const buffer = await readZipEntryFromFile(sourcePath, group.source_entry);
+  if (!buffer) return null;
+  return countImageEntries(listZipEntries(buffer));
+}
+
+async function findExtractedArchive(rootDir, innerPath) {
+  const normalizedTarget = normalizeInnerArchivePath(innerPath);
+  const directPath = path.join(rootDir, ...normalizedTarget.split('/').filter(Boolean));
+  if (fs.existsSync(directPath)) return directPath;
+  const targetName = path.basename(normalizedTarget);
+  let found = '';
+  async function walk(currentDir) {
+    if (found) return;
+    const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && entry.name === targetName) {
+        found = fullPath;
+        return;
+      }
+    }
+  }
+  await walk(rootDir);
+  return found;
+}
+
+async function countNestedArchiveImagesWith7z(sourcePath, group, sevenZExe) {
+  if (!sevenZExe || !group.inner_path) return null;
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_NestedCount_'));
+  try {
+    await runQuietProcess(sevenZExe, ['x', sourcePath, group.inner_path, `-o${tempDir}`, '-y']);
+    const nestedPath = await findExtractedArchive(tempDir, group.inner_path);
+    if (!nestedPath) return null;
+    const entries = await listArchiveEntries(nestedPath, sevenZExe);
+    return countImageEntries(entries);
+  } catch {
+    return null;
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function resolveGroupImageCount(sourcePath, group, sevenZExe) {
+  if (!group.inner_path) return countImageEntries(group.images.map(name => ({ name, isDir: false })));
+  const directCount = await countNestedZipImagesFromSourceZip(sourcePath, group);
+  if (Number.isFinite(directCount)) return directCount;
+  const extractedCount = await countNestedArchiveImagesWith7z(sourcePath, group, sevenZExe);
+  if (Number.isFinite(extractedCount)) return extractedCount;
+  return group.images.length;
+}
+
+async function resolveGroupImageCounts(sourcePath, groups, sevenZExe) {
+  const resolved = [];
+  for (const group of groups) {
+    resolved.push({
+      ...group,
+      image_count: await resolveGroupImageCount(sourcePath, group, sevenZExe),
+    });
+  }
+  return resolved;
 }
 
 function describeNoImageEntries(entries = []) {
@@ -259,7 +335,7 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
 
     try {
       const entries = await listArchiveEntries(filePath, options.sevenZExe);
-      const groups = getLeafGroups(entries);
+      const groups = await resolveGroupImageCounts(filePath, getLeafGroups(entries), options.sevenZExe);
       if (groups.length === 0) {
         skippedFiles.push(`${filename} (${describeNoImageEntries(entries)})`);
         continue;
@@ -281,7 +357,7 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
           type: group.type || (group.name === 'Root_Files' ? 'archive' : 'folder'),
           inner_path: group.inner_path || '',
           source_ext: group.inner_path ? normalizedExt(group.inner_path) : normalizedExt(filePath),
-          image_count: group.images.length,
+          image_count: group.image_count,
           spinoff_folder: /외전|번외|side\s*story|spin[\s-]*off/i.test(group.name),
         };
       });
@@ -295,7 +371,7 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
         clean_title: cleanDisplayTitle(displayTitle),
         core_title: extractCoreTitle(coreTitle),
         size_mb: stat.size / (1024 * 1024),
-        page_count: groups.reduce((sum, group) => sum + group.images.length, 0),
+        page_count: groups.reduce((sum, group) => sum + group.image_count, 0),
         volumes,
       });
     } catch (error) {

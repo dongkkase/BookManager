@@ -191,7 +191,7 @@
   align-items: start;
   column-gap: 8px;
   font-weight: 400;
-  padding: 6px 7px;
+  padding: 4px 7px;
   color: #ddd;
   cursor: pointer;
   border-radius: 4px;
@@ -233,7 +233,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0px;
 }
 
 .meta-tree-file-name {
@@ -249,7 +249,7 @@
   align-items: center;
   gap: 4px;
   color: rgba(255, 255, 255, 0.42);
-  font-size: var(--font-xs);
+  font-size: var(--font-2xs);
   line-height: 1.2;
   font-weight: 0;
 }
@@ -783,8 +783,88 @@ textarea.meta-input {
 }
 
 .meta-tag-box {
-  height: 82px;
+  min-height: 82px;
   background-color: #151515;
+}
+
+.meta-tag-input {
+  display: flex;
+  align-items: flex-start;
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: auto;
+  padding: 10px;
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 5px;
+  box-sizing: border-box;
+  cursor: text;
+}
+
+.meta-tag-input.res {
+  background-color: #3b3b3b;
+}
+
+.meta-tag-input.disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.meta-tag-input input {
+  flex: 1 0 120px;
+  min-width: 90px;
+  min-height: 24px;
+  height: 24px;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.meta-tag-chip {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: #fff;
+  background-color: #2f80c9;
+  border-radius: 5px;
+  font-size: var(--font-xs);
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.meta-tag-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-tag-chip button {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  font: inherit;
+  font-size: var(--font-xs);
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.meta-tag-chip button:disabled {
+  cursor: default;
 }
 
 .meta-series-apply-btn {

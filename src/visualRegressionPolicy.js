@@ -109,6 +109,8 @@ export const VISUAL_STYLE_CONTRACTS = Object.freeze([
       '.meta-tree-file-date',
       '.meta-searchable-select',
       '.meta-searchable-options',
+      '.meta-tag-input',
+      '.meta-tag-chip',
       'grid-template-columns: var(--checkbox-size, 16px) minmax(0, 1fr)',
       ':hover',
       'overflow',

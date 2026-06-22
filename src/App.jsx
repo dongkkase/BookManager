@@ -163,7 +163,7 @@ function App() {
 
   useEffect(() => {
     if (!config || didRestoreTab.current) return;
-    setActiveTab(resolveTabId(config.last_tab_index));
+    setActiveTab(resolveTabId(config.last_tab_id, config.last_tab_index));
     didRestoreTab.current = true;
   }, [config]);
 
@@ -296,7 +296,7 @@ function App() {
     const tabIndex = TABS.findIndex(tab => tab.id === tabId);
     if (tabIndex < 0) return;
     setActiveTab(tabId);
-    setConfig({ last_tab_index: tabIndex }).catch(error => {
+    setConfig({ last_tab_id: tabId, last_tab_index: tabIndex }).catch(error => {
       console.error('마지막 탭 저장 실패:', error);
     });
   }, [setConfig]);
@@ -308,7 +308,7 @@ function App() {
       const tabIndex = TABS.findIndex(tab => tab.id === tabId);
       if (tabIndex < 0 || isAppLocked) return;
       setActiveTab(tabId);
-      setConfig({ last_tab_index: tabIndex }).catch(error => {
+      setConfig({ last_tab_id: tabId, last_tab_index: tabIndex }).catch(error => {
         console.error('자동 전달 탭 저장 실패:', error);
       });
       if (paths.length > 0) {
@@ -424,7 +424,7 @@ function App() {
       }
       if (effects.librariesChanged) {
         setActiveTab('folder');
-        await setConfig({ last_tab_index: 0 });
+        await setConfig({ last_tab_id: 'folder', last_tab_index: 0 });
         const folders = savedConfig?.dup_check_folders || updatedConfig.dup_check_folders || [];
         if (folders.length > 0) {
           window.electronAPI?.updateFolderIndex?.(folders, {

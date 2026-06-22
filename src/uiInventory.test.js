@@ -5,12 +5,14 @@ import test from 'node:test';
 const sources = {
     app: fs.readFileSync(new URL('./App.jsx', import.meta.url), 'utf8'),
     folder: fs.readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8'),
+    multiRenameDialog: fs.readFileSync(new URL('./components/MultiRenameDialog.jsx', import.meta.url), 'utf8'),
     fileTable: fs.readFileSync(new URL('./components/folder/FileTableView.jsx', import.meta.url), 'utf8'),
     thumbnailView: fs.readFileSync(new URL('./components/folder/ThumbnailView.jsx', import.meta.url), 'utf8'),
     tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
     metadata: fs.readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8'),
     organizer: fs.readFileSync(new URL('./tabs/OrganizerTab.jsx', import.meta.url), 'utf8'),
+    organizerCss: fs.readFileSync(new URL('./styles/OrganizerTab.css', import.meta.url), 'utf8'),
     renamer: fs.readFileSync(new URL('./tabs/RenamerTab.jsx', import.meta.url), 'utf8'),
     settings: fs.readFileSync(new URL('./components/SettingsModal.jsx', import.meta.url), 'utf8'),
     sharing: fs.readFileSync(new URL('./tabs/SharingTab.jsx', import.meta.url), 'utf8'),
@@ -33,17 +35,32 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     ]);
     assertInventory('folder', [
         ['폴더 검색', 'value={searchQuery}'],
-        ['폴더/파일 단일 이름 변경', 'window.prompt'],
-        ['여러 파일 이름 변경 기존 형식', 'value={oldPattern}'],
-        ['여러 파일 이름 변경 새 형식', 'value={newPattern}'],
+        ['폴더/파일 단일 이름 변경 내부 입력 다이얼로그', 'requestTextInput'],
+        ['폴더 이름 변경 입력 필드', 'folder-tree-rename-input'],
+        ['파일 이름 변경 입력 필드', 'folder-file-rename-input'],
+        ['폴더 탭 숨김 상태 단축키 차단', 'isFolderTabVisible'],
+        ['폴더 탭 이름 변경 단축키 분기', 'handleRenameShortcut'],
+        ['탐색기 패널 포커스 추적', "markFolderPanelFocus('explorer')"],
+        ['리스트 패널 포커스 추적', "markFolderPanelFocus('list')"],
+        ['여러 파일 이름 변경 공용 컴포넌트', '<MultiRenameDialog'],
         ['레이아웃 이름 저장', "t('dlg_save_lay_msg')"],
         ['삭제할 레이아웃 선택', 'id="layout-delete-select"'],
         ['경로로 이동', "t('fm_title')"],
-        ['경로 이동 단축키', "event.key.toLowerCase() === 'g'"],
+        ['경로 이동 단축키', "isShortcutKey(event, 'g')"],
     ]);
     assertInventory('organizer', [
         ['구조 정리 출력 경로', 'item.out_path'],
-        ['구조 정리 자식 파일명', 'id="org-filename-input"'],
+        ['구조 정리 하위 항목 다중 선택', 'useFileSelection(visibleVolumeRows)'],
+        ['구조 정리 하위 항목 다중 이름 변경', 'executeVolumeMultiRename'],
+        ['구조 정리 탭 숨김 상태 단축키 차단', 'isOrganizerTabVisible'],
+        ['구조 정리 작업 리스트 키보드 포커스', 'tabIndex={0}'],
+        ['구조 정리 1뎁스 cube 아이콘', 'name="cube"'],
+        ['구조 정리 2뎁스 file-zipper 아이콘', 'name="file-zipper"'],
+    ]);
+    assertInventory('multiRenameDialog', [
+        ['여러 파일 이름 변경 기존 형식', 'value={oldPattern}'],
+        ['여러 파일 이름 변경 새 형식', 'value={newPattern}'],
+        ['여러 파일 이름 변경 ESC 닫기', "event.key !== 'Escape'"],
     ]);
     assertInventory('renamer', [
         ['내부 파일명 custom pattern', 'value={customText}'],
@@ -56,15 +73,30 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['ComicInfo 필드 정의', 'const META_FIELDS'],
         ['ComicInfo multiline 입력', "field.type === 'textarea'"],
         ['ComicInfo tag 입력', 'renderDualTextarea'],
+        ['ComicInfo tag 칩 입력', 'function TagInput'],
+        ['ComicInfo tag 추가 정규화', 'joinTagValues'],
+        ['ComicInfo tag 칩 클래스', 'meta-tag-chip'],
+        ['메타데이터 권 소수 입력', "{ id: 'Volume', labelKey: 't3_f_vol', type: 'decimal' }"],
+        ['메타데이터 화 소수 입력', "{ id: 'Number', labelKey: 't3_f_num', type: 'decimal' }"],
+        ['메타데이터 소수 입력 모드', "field.type === 'decimal' ? 'decimal'"],
+        ['메타데이터 소수 입력 정규화', 'normalizeMetadataDecimal(nextValue)'],
+        ['메타데이터 자동 제목 권화 동시 적용', 'applyInferredMetadataField(item.metadata || {}, inferred, field)'],
         ['메타데이터 아이템 수정일 표시', 'metadataModifiedDate(file)'],
         ['메타데이터 아이템 수정일 fallback', "'No Data'"],
         ['메타데이터 트리 전체 선택 버튼', 'className={`meta-tree-toggle-all'],
         ['메타데이터 트리 전체 선택 카운트', 'meta-tree-toggle-count'],
-        ['메타데이터 폴더 더블클릭 직접 판정', 'GROUP_DOUBLE_CLICK_MS'],
-        ['메타데이터 폴더 더블클릭 리셋', "groupClickRef.current = { groupName: '', time: 0 }"],
+        ['메타데이터 폴더 원클릭 접기 펼치기', 'toggleGroupCollapsed(groupName)'],
+        ['메타데이터 폴더 원클릭 핸들러', 'onClick={() => handleGroupClick(dir.name)}'],
         ['메타데이터 검색형 select 필드 제한', "SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format'])"],
         ['메타데이터 검색형 select 컴포넌트', 'function SearchableSelect'],
         ['메타데이터 시리즈 그룹 후보 수집', 'seriesGroupOptions'],
+        ['메타데이터 포맷 Python i18n 후보', 'const FORMAT_OPTIONS'],
+        ['메타데이터 포맷 WebComic 후보', "'WebComic'"],
+        ['메타데이터 포맷 Digital 후보', "'Digital'"],
+        ['메타데이터 연령등급 Python i18n 후보', 'const AGE_RATING_OPTIONS'],
+        ['메타데이터 연령등급 Adult 후보', "'Adult / Mature Audiences'"],
+        ['메타데이터 읽기 방향 Python i18n 후보', 'const MANGA_READING_OPTIONS'],
+        ['메타데이터 읽기 방향 우좌 후보', "'YesAndRightToLeft'"],
         ['API 검색 다이얼로그 검색어', 'value={dialogQuery}'],
     ]);
     assertInventory('settings', [
@@ -75,6 +107,16 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     assertInventory('sharing', [
         ['WebDAV 아이디', 'id="webdav-id"'],
         ['WebDAV 비밀번호', 'id="webdav-password"'],
+    ]);
+});
+
+test('폴더 탭은 Electron 미지원 window.prompt 대신 내부 입력 다이얼로그를 사용한다', () => {
+    assert.doesNotMatch(sources.folder, /window\.prompt/);
+    assertInventory('folder', [
+        ['공용 텍스트 입력 다이얼로그', 'function TextInputDialog'],
+        ['텍스트 입력 다이얼로그 상태', 'textInputDialog'],
+        ['텍스트 입력 확인 콜백', 'closeTextInputDialog(value)'],
+        ['레이아웃 이름 저장 입력 필드', 'folder-layout-save-input'],
     ]);
 });
 
@@ -97,6 +139,8 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
     assertInventory('folder', [
         ['저장 레이아웃 삭제', 'id="layout-delete-select"'],
         ['라이브러리 이동 대상', 'id="library-move-select"'],
+    ]);
+    assertInventory('multiRenameDialog', [
         ['여러 파일 이름 변경 순번 위치', 'value={sequencePosition}'],
     ]);
     assertInventory('renamer', [
@@ -128,6 +172,56 @@ test('내부 파일명 변경 대상 리스트는 출력 포맷 변경 배지를
     ]);
 });
 
+test('압축 파일 구조 정리 로컬 툴바는 공통 파일 액션을 중복 노출하지 않는다', () => {
+    const start = sources.organizer.indexOf('className="org-local-toolbar"');
+    assert.notEqual(start, -1);
+    const end = sources.organizer.indexOf('<div className="org-content-area"', start);
+    const block = sources.organizer.slice(start, end);
+    assert.doesNotMatch(block, /t\('add_folder'\)/);
+    assert.doesNotMatch(block, /t\('add_file'\)/);
+    assert.doesNotMatch(block, /t\('clear_all'\)/);
+    assert.match(block, /t\('org_expand_collapse_all'\)/);
+    assert.match(block, /t\('batch_default'\)/);
+    assert.match(block, /t\('batch_title'\)/);
+});
+
+test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이름 변경을 사용한다', () => {
+    assertInventory('organizer', [
+        ['하위 항목 선택 경로', 'selectedVolumePaths.includes(volumeRow.path)'],
+        ['하위 항목 활성 선택 표시', "activeVolumePath === volumeRow.path"],
+        ['하위 항목 드래그 범위 선택', 'handleVolumeRowMouseEnter'],
+        ['하위 항목 드래그 영역 표시', 'volumeSelectionBox'],
+        ['하위 항목 드래그 영역 선택 계산', 'updateVolumeRubberSelection'],
+        ['하위 항목 드래그 영역 선택 반영', 'selectVolumePaths(selected)'],
+        ['작업 리스트 빈 영역 선택 해제', "event.target.closest('.org-tree-row')"],
+        ['작업 리스트 빈 영역 하위 선택 해제', 'clearVolumeSelection();'],
+        ['다중 이름 변경 단축키', "event.shiftKey && isShortcutKey(event, 'r')"],
+        ['하위 항목 클릭 시 작업 리스트 포커스', 'treeBodyRef.current?.focus'],
+        ['공용 이름 변경 실행 연결', 'onExecute={executeVolumeMultiRename}'],
+    ]);
+    assertInventory('organizerCss', [
+        ['하위 항목 드래그 영역 스타일', '.org-drag-selection-box'],
+    ]);
+    assert.doesNotMatch(sources.organizer, /OrganizerFilenameDialog|org-filename-input|openVolumeEditor|editingVolume|org-context-menu/);
+    assert.doesNotMatch(sources.organizer, /image_count\}p/);
+});
+
+test('여러 파일 이름 변경 UI는 공용 컴포넌트로 분리된다', () => {
+    assertInventory('multiRenameDialog', [
+        ['미리보기 컬럼 폭 상태', 'columnWidths'],
+        ['미리보기 컬럼 리사이저', 'multi-rename-column-resizer'],
+        ['미리보기 컬럼 자동 리사이즈', 'autoResizeColumn'],
+        ['미리보기 컬럼 더블클릭 자동 리사이즈', 'onDoubleClick'],
+        ['변경된 새 파일명 색상 클래스', 'rename-new-name-changed'],
+    ]);
+    assertInventory('folder', [
+        ['폴더 탭 공용 다중 이름 변경', '<MultiRenameDialog'],
+    ]);
+    assertInventory('organizer', [
+        ['구조 정리 공용 다중 이름 변경', '<MultiRenameDialog'],
+    ]);
+});
+
 test('폴더 탭 컨텍스트 메뉴는 기존 Python 메뉴 항목과 단축키를 노출한다', () => {
     assertInventory('folder', [
         ['컨텍스트 메뉴 단축키 표시', 'folder-context-menu-shortcut'],
@@ -143,8 +237,19 @@ test('폴더 탭 컨텍스트 메뉴는 기존 Python 메뉴 항목과 단축키
     ]);
 });
 
+test('리스트 패널 새로고침 버튼은 캐시를 건너뛰고 강제 스캔한다', () => {
+    assert.match(
+        sources.folder,
+        /className="refresh-btn"[\s\S]*onClick=\{\(\) => handleSmartRefresh\(true\)\}/,
+    );
+    assert.match(
+        sources.folder,
+        /event\.key === 'F5'[\s\S]*handleSmartRefresh\(event\.shiftKey\)/,
+    );
+});
+
 test('이름 바꾸기 미리보기는 컬럼 크기 조절과 변경 색상 표시를 제공한다', () => {
-    assertInventory('folder', [
+    assertInventory('multiRenameDialog', [
         ['미리보기 컬럼 폭 상태', 'columnWidths'],
         ['미리보기 컬럼 리사이저', 'multi-rename-column-resizer'],
         ['미리보기 컬럼 자동 리사이즈', 'autoResizeColumn'],

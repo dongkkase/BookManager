@@ -4,7 +4,12 @@ export const SUPPORTED_LANGUAGES = ['ko', 'en', 'ja'];
 
 const EXTRA_TRANSLATIONS = {
   ko: {
+    folder_refresh_force_tip: '현재 목록을 강제로 새로고침합니다',
     folder: {
+      sidebar: {
+        more_actions: '메뉴 열기',
+        remove_library: '라이브러리 제거',
+      },
       status: {
         no_folder: '스캔할 폴더를 선택하세요',
         scanning: '폴더 스캔 중...',
@@ -14,7 +19,12 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   en: {
+    folder_refresh_force_tip: 'Force refresh the current list',
     folder: {
+      sidebar: {
+        more_actions: 'Open menu',
+        remove_library: 'Remove Library',
+      },
       status: {
         no_folder: 'Select a folder to scan',
         scanning: 'Scanning folder...',
@@ -24,7 +34,12 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   ja: {
+    folder_refresh_force_tip: '現在のリストを強制更新します',
     folder: {
+      sidebar: {
+        more_actions: 'メニューを開く',
+        remove_library: 'ライブラリを削除',
+      },
       status: {
         no_folder: 'スキャンするフォルダを選択してください',
         scanning: 'フォルダーをスキャン中...',

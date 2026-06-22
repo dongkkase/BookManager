@@ -83,6 +83,8 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(fs.existsSync(dataConfigPath(root)), true);
         assert.equal(loaded.target_format, 'none');
         assert.equal(loaded.completion_sound, 'Default.wav');
+        assert.equal(loaded.last_tab_id, 'folder');
+        assert.equal(loaded.folder_last_path, '');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

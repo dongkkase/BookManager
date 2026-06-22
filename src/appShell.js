@@ -39,9 +39,12 @@ export function normalizeDroppedPaths(paths = []) {
     return normalized;
 }
 
-export function resolveTabId(savedIndex) {
-    const index = Number(savedIndex);
-    return Number.isInteger(index) && TABS[index] ? TABS[index].id : TABS[0].id;
+export function resolveTabId(savedTab, fallbackIndex) {
+    if (typeof savedTab === 'string' && TABS.some(tab => tab.id === savedTab)) return savedTab;
+    const index = Number(savedTab);
+    if (Number.isInteger(index) && TABS[index]) return TABS[index].id;
+    if (fallbackIndex !== undefined) return resolveTabId(fallbackIndex);
+    return TABS[0].id;
 }
 
 export function formatAppTitle(version) {
