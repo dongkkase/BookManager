@@ -232,8 +232,15 @@
   padding: 10px;
   box-sizing: border-box;
   overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.sharing-log-console * {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .sharing-log-console:focus {

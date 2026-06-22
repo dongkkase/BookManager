@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     adjacentSelectionAfterRemoval,
+    applyBatchMetadataFields,
     applyInferredMetadataField,
+    applySeriesAutoMetadata,
     clampMetadataNumber,
     cleanMetadataSummary,
     inferMetadataFromArchiveName,
@@ -63,6 +65,32 @@ test('metadata auto title applies volume and chapter together', () => {
         Title: '기존 제목',
         Number: '2',
         Volume: '',
+    });
+});
+
+test('metadata series batch apply copies batch fields then runs automatic fields', () => {
+    const copied = applyBatchMetadataFields(
+        { Title: '기존 제목', Publisher: '기존 출판사', PageCount: '10' },
+        { Title: '검색 제목', Publisher: '새 출판사', Volume: '', Number: '' },
+        ['Title', 'Publisher', 'Volume', 'Number', 'PageCount'],
+        false,
+    );
+    assert.deepEqual(copied, {
+        Title: '검색 제목',
+        Publisher: '새 출판사',
+        PageCount: '10',
+    });
+    assert.deepEqual(applySeriesAutoMetadata(copied, {
+        Title: '작품명 12권',
+        Volume: '12',
+        Number: '',
+        PageCount: '180',
+    }), {
+        Title: '작품명 12권',
+        Publisher: '새 출판사',
+        Volume: '12',
+        Number: '',
+        PageCount: '180',
     });
 });
 

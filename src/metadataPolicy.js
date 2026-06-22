@@ -99,6 +99,28 @@ export function applyInferredMetadataField(metadata = {}, inferred = {}, field =
     return next;
 }
 
+export function shouldApplyBatchMetadataValue(value, applyEmpty = false) {
+    return applyEmpty || (value !== undefined && value !== null && String(value).trim() !== '');
+}
+
+export function applyBatchMetadataFields(metadata = {}, batchMetadata = {}, fieldIds = [], applyEmpty = false) {
+    const next = { ...(metadata || {}) };
+    for (const fieldId of fieldIds) {
+        const value = batchMetadata?.[fieldId];
+        if (shouldApplyBatchMetadataValue(value, applyEmpty)) {
+            next[fieldId] = value ?? '';
+        }
+    }
+    return next;
+}
+
+export function applySeriesAutoMetadata(metadata = {}, inferred = {}) {
+    return ['Title', 'Volume', 'Number', 'PageCount'].reduce(
+        (next, field) => applyInferredMetadataField(next, inferred, field),
+        metadata,
+    );
+}
+
 export function clampMetadataNumber(field, value) {
     const number = Number.parseInt(value, 10);
     if (!Number.isFinite(number)) return '';

@@ -5,7 +5,9 @@ import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
 import {
     adjacentSelectionAfterRemoval,
+    applyBatchMetadataFields,
     applyInferredMetadataField,
+    applySeriesAutoMetadata,
     clampMetadataNumber,
     inferMetadataFromArchiveName,
     isDecimalMetadataField,
@@ -133,6 +135,7 @@ const META_FIELDS = [
   { id: 'Teams', labelKey: 't3_f_teams', type: 'text' },
   ...OTHER_FIELDS,
 ];
+const META_FIELD_IDS = META_FIELDS.map(field => field.id);
 
 const DEFAULT_GENRE_OPTIONS = [
   '액션', '모험', '코미디', '드라마', '판타지',
@@ -538,14 +541,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     }
     setFileList(prev => prev.map(item => {
       if (!activeItem || item.group !== activeItem.group) return item;
-      const metadata = { ...(item.metadata || {}) };
-      for (const field of META_FIELDS) {
-        const value = batchMetadata[field.id];
-        if (applyEmpty || (value !== undefined && value !== null && String(value).trim() !== '')) {
-          metadata[field.id] = value || '';
-        }
-      }
-      return { ...item, metadata };
+      const copiedMetadata = applyBatchMetadataFields(item.metadata || {}, batchMetadata, META_FIELD_IDS, applyEmpty);
+      const inferred = inferTitleParts(item);
+      return { ...item, metadata: applySeriesAutoMetadata(copiedMetadata, inferred) };
     }));
     showToast?.({ key: 't3_msg_applied_series_all' });
   };

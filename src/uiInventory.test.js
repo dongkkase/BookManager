@@ -16,6 +16,7 @@ const sources = {
     renamer: fs.readFileSync(new URL('./tabs/RenamerTab.jsx', import.meta.url), 'utf8'),
     settings: fs.readFileSync(new URL('./components/SettingsModal.jsx', import.meta.url), 'utf8'),
     sharing: fs.readFileSync(new URL('./tabs/SharingTab.jsx', import.meta.url), 'utf8'),
+    sharingCss: fs.readFileSync(new URL('./styles/SharingTab.css', import.meta.url), 'utf8'),
     ipcHandlers: fs.readFileSync(new URL('../electron/ipcHandlers.js', import.meta.url), 'utf8'),
 };
 
@@ -81,6 +82,8 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['메타데이터 소수 입력 모드', "field.type === 'decimal' ? 'decimal'"],
         ['메타데이터 소수 입력 정규화', 'normalizeMetadataDecimal(nextValue)'],
         ['메타데이터 자동 제목 권화 동시 적용', 'applyInferredMetadataField(item.metadata || {}, inferred, field)'],
+        ['메타데이터 시리즈 전체 일괄 복사', 'applyBatchMetadataFields(item.metadata || {}, batchMetadata, META_FIELD_IDS, applyEmpty)'],
+        ['메타데이터 시리즈 전체 자동 후처리', 'applySeriesAutoMetadata(copiedMetadata, inferred)'],
         ['메타데이터 아이템 수정일 표시', 'metadataModifiedDate(file)'],
         ['메타데이터 아이템 수정일 fallback', "'No Data'"],
         ['메타데이터 트리 전체 선택 버튼', 'className={`meta-tree-toggle-all'],
@@ -107,6 +110,9 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     assertInventory('sharing', [
         ['WebDAV 아이디', 'id="webdav-id"'],
         ['WebDAV 비밀번호', 'id="webdav-password"'],
+    ]);
+    assertInventory('sharingCss', [
+        ['서버 상태 로그 텍스트 선택', 'user-select: text'],
     ]);
 });
 

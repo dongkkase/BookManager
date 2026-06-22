@@ -2407,9 +2407,18 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             opds_port: Number(options.port) || config.opds_port || 8080,
         };
     configManager.saveConfig({ ...config, ...updates });
+    const sevenZExe = serverType === 'OPDS'
+        ? await getBinPath('7za') || await getBinPath('7z')
+        : '';
     return startSharingServer(
         serverType,
-        { ...options, port: updates.webdav_port || updates.opds_port },
+        {
+            ...options,
+            port: updates.webdav_port || updates.opds_port,
+            dbPath: libraryDbPath(),
+            thumbnailDir: thumbnailDir(),
+            sevenZExe,
+        },
         configManager.getConfig(),
         sendServerLog,
     );
