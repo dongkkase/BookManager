@@ -164,6 +164,123 @@ test('Organizer는 내부 ZIP의 실제 이미지 수를 2뎁스 페이지 수�
     }
 });
 
+test('Organizer는 macOS 압축 메타데이터 엔트리를 구조 분석에서 제외한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-macosx-'));
+    try {
+        const inner = path.join(root, '사이코 메트러 2부 01권.cbz');
+        fs.writeFileSync(inner, Buffer.alloc(0));
+        await replaceZipEntry(inner, '001.jpg', Buffer.from('page-1'));
+
+        const source = path.join(root, '사이코 메트러 2부 01권.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '__MACOSX/._사이코 메트러 2부 01권.cbz', fs.readFileSync(inner));
+        await replaceZipEntry(source, '사이코 메트러 2부 01권.cbz', fs.readFileSync(inner));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].volumes.length, 1);
+        assert.equal(analyzed.items[0].volumes[0].original_path, '사이코 메트러 2부 01권');
+        assert.equal(analyzed.items[0].volumes[0].new_name, '사이코 메트러 2부 01권');
+        assert.equal(analyzed.items[0].page_count, 1);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 제목의 부대, 부, 장 숫자를 권수로 오인하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-title-parts-'));
+    try {
+        const cases = [
+            {
+                filename: '에녹 제2부대의 배고픈 원정 밥.zip',
+                innerName: '에녹 제2부대의 배고픈 원정 밥.cbz',
+                cleanTitle: '에녹 제2부대의 배고픈 원정 밥',
+                newName: '에녹 제2부대의 배고픈 원정 밥',
+            },
+            {
+                filename: '사이코 메트러 2부 01권.zip',
+                innerName: '사이코 메트러 2부 01권.cbz',
+                cleanTitle: '사이코 메트러 2부',
+                newName: '사이코 메트러 2부 01권',
+            },
+            {
+                filename: 'Re 제로부터 시작하는 이세계 생활 제5장.zip',
+                innerName: 'Re 제로부터 시작하는 이세계 생활 제5장.cbz',
+                cleanTitle: 'Re 제로부터 시작하는 이세계 생활 제5장',
+                newName: 'Re 제로부터 시작하는 이세계 생활 제5장',
+            },
+        ];
+
+        for (const item of cases) {
+            const inner = path.join(root, item.innerName);
+            fs.writeFileSync(inner, Buffer.alloc(0));
+            await replaceZipEntry(inner, '001.jpg', Buffer.from('page-1'));
+
+            const source = path.join(root, item.filename);
+            fs.writeFileSync(source, Buffer.alloc(0));
+            await replaceZipEntry(source, item.innerName, fs.readFileSync(inner));
+
+            const analyzed = await analyzeOrganizerInputs([source], {
+                sevenZExe: '',
+                lang: 'ko',
+            });
+
+            assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+            assert.equal(analyzed.items.length, 1);
+            assert.equal(analyzed.items[0].clean_title, item.cleanTitle);
+            assert.equal(analyzed.items[0].core_title, item.cleanTitle);
+            assert.equal(analyzed.items[0].volumes.length, 1);
+            assert.equal(analyzed.items[0].volumes[0].new_name, item.newName);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 이미지 보정 suffix 숫자 대신 앞쪽 권수를 사용한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-image-suffix-'));
+    try {
+        const source = path.join(root, '프랑켄 프랑 번역본.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        const cases = [
+            ['프랑켄프랑 01_waifu2x_noise2.cbz', '프랑켄 프랑 번역본 01권'],
+            ['프랑켄프랑 05_waifu2x_noise2_scale_x0_8.cbz', '프랑켄 프랑 번역본 05권'],
+            ['프랑켄프랑 08_waifu2x_noise2_scale_x1_4.cbz', '프랑켄 프랑 번역본 08권'],
+        ];
+
+        for (const [innerName] of cases) {
+            const inner = path.join(root, innerName);
+            fs.writeFileSync(inner, Buffer.alloc(0));
+            await replaceZipEntry(inner, '001.jpg', Buffer.from('page-1'));
+            await replaceZipEntry(source, innerName, fs.readFileSync(inner));
+        }
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].clean_title, '프랑켄 프랑 번역본');
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.new_name),
+            cases.map(([, expectedName]) => expectedName),
+        );
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.extracted_name),
+            cases.map(([, expectedName]) => expectedName),
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Organizer는 CP949 이름의 내부 ZIP으로만 구성된 실제 첨부 ZIP을 분석한다', async t => {
     const fixture = path.resolve('test/황천의 츠가이 1~10.zip'.normalize('NFD'));
     if (!fs.existsSync(fixture)) {

@@ -9,7 +9,11 @@ import { useFileSelection } from '../hooks/useFileSelection';
 import {
   changeOrganizerUnit,
   defaultOutputPath,
+  filenameOutputPath,
+  organizerExtractedTitleName,
+  organizerOriginalFilenameName,
   organizerVolumePrefix,
+  preserveOrganizerExtractedTitle,
   removeOrganizerItems,
   sanitizeOrganizerName,
   targetExtension,
@@ -41,6 +45,13 @@ function organizerVolumeRenameFile(item, volume, config) {
   };
 }
 
+function hydrateOrganizerItem(item) {
+  return {
+    ...item,
+    volumes: (item.volumes || []).map(preserveOrganizerExtractedTitle),
+  };
+}
+
 function OrganizerTab({ config, t, showToast }) {
   const language = config?.language || config?.lang || 'ko';
   const [fileList, setFileList] = useState([]);
@@ -60,6 +71,8 @@ function OrganizerTab({ config, t, showToast }) {
   const [skippedFiles, setSkippedFiles] = useState([]);
   const [showVolumeRenameDialog, setShowVolumeRenameDialog] = useState(false);
   const [volumeSelectionBox, setVolumeSelectionBox] = useState(null);
+  const [openFolderMenuId, setOpenFolderMenuId] = useState('');
+  const [openBatchMenuId, setOpenBatchMenuId] = useState('');
   const emptyImage = useMemo(
     () => selectRandomResource(DRAG_DROP_IMAGES),
     [],
@@ -104,6 +117,26 @@ function OrganizerTab({ config, t, showToast }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!openFolderMenuId && !openBatchMenuId) return undefined;
+    const closeRowMenus = event => {
+      if (event.target?.closest?.('.org-row-menu-wrap')) return;
+      setOpenFolderMenuId('');
+      setOpenBatchMenuId('');
+    };
+    const closeRowMenusOnEscape = event => {
+      if (event.key !== 'Escape') return;
+      setOpenFolderMenuId('');
+      setOpenBatchMenuId('');
+    };
+    document.addEventListener('pointerdown', closeRowMenus);
+    document.addEventListener('keydown', closeRowMenusOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeRowMenus);
+      document.removeEventListener('keydown', closeRowMenusOnEscape);
+    };
+  }, [openBatchMenuId, openFolderMenuId]);
+
   const selectedCount = useMemo(() => fileList.filter(item => item.checked).length, [fileList]);
 
   useEffect(() => {
@@ -135,9 +168,9 @@ function OrganizerTab({ config, t, showToast }) {
         lang: language,
       });
       setFileList(prev => {
-        const byPath = new Map(prev.map(item => [item.filepath, item]));
+        const byPath = new Map(prev.map(item => [item.filepath, hydrateOrganizerItem(item)]));
         for (const item of result.items || []) {
-          if (!byPath.has(item.filepath)) byPath.set(item.filepath, item);
+          if (!byPath.has(item.filepath)) byPath.set(item.filepath, hydrateOrganizerItem(item));
         }
         return [...byPath.values()];
       });
@@ -229,6 +262,19 @@ function OrganizerTab({ config, t, showToast }) {
     updateItem(id, item => ({ ...item, out_path: outPath }));
   };
 
+  const handleFolderMenuAction = (item, mode) => {
+    setOpenFolderMenuId('');
+    if (mode === 'title') {
+      handleOutPathChange(item.id, titleOutputPath(item));
+      return;
+    }
+    if (mode === 'filename') {
+      handleOutPathChange(item.id, filenameOutputPath(item));
+      return;
+    }
+    handleOutPathChange(item.id, defaultOutputPath(item.filepath));
+  };
+
   const handleBatchDefault = () => {
     setFileList(prev => prev.map(item => ({
       ...item,
@@ -246,15 +292,44 @@ function OrganizerTab({ config, t, showToast }) {
   const handleBatchUnit = (itemId, unit) => {
     updateItem(itemId, item => ({
       ...item,
-      volumes: item.volumes.map(volume => ({
-        ...volume,
-        new_name: changeOrganizerUnit(
-          volume.new_name,
-          unit,
-          language,
-        ),
-      })),
+      volumes: item.volumes.map(volume => {
+        const preserved = preserveOrganizerExtractedTitle(volume);
+        return {
+          ...preserved,
+          new_name: changeOrganizerUnit(
+            preserved.new_name,
+            unit,
+            language,
+          ),
+        };
+      }),
     }));
+  };
+
+  const handleBatchVolumeNames = (itemId, mode) => {
+    updateItem(itemId, item => ({
+      ...item,
+      volumes: item.volumes.map(volume => {
+        const preserved = preserveOrganizerExtractedTitle(volume);
+        const nextName = mode === 'original'
+          ? organizerOriginalFilenameName(preserved)
+          : organizerExtractedTitleName(preserved);
+        return nextName ? { ...preserved, new_name: nextName } : preserved;
+      }),
+    }));
+  };
+
+  const handleBatchMenuAction = (itemId, action) => {
+    setOpenBatchMenuId('');
+    if (action === 'volume') {
+      handleBatchUnit(itemId, 'volume');
+      return;
+    }
+    if (action === 'chapter') {
+      handleBatchUnit(itemId, 'chapter');
+      return;
+    }
+    handleBatchVolumeNames(itemId, action);
   };
 
   const handleClear = () => {
@@ -466,8 +541,9 @@ function OrganizerTab({ config, t, showToast }) {
         const renameFile = organizerVolumeRenameFile(item, volume, config);
         const row = rowByPath.get(renameFile.path);
         if (!row) return volume;
+        const preserved = preserveOrganizerExtractedTitle(volume);
         const safeName = sanitizeOrganizerName(stripFilenameExtension(row.newName));
-        return safeName ? { ...volume, new_name: safeName } : volume;
+        return safeName ? { ...preserved, new_name: safeName } : preserved;
       }),
     })));
     clearVolumeSelection();
@@ -610,18 +686,57 @@ function OrganizerTab({ config, t, showToast }) {
                         onChange={(event) => handleOutPathChange(item.id, event.target.value)}
                         onClick={event => event.stopPropagation()}
                       />
-                      <button type="button" onClick={() => handleOutPathChange(item.id, defaultOutputPath(item.filepath))}>
-                        {t('org_default_path')}
-                      </button>
-                      <button type="button" onClick={() => handleOutPathChange(item.id, titleOutputPath(item))}>
-                        {t('org_title_path')}
-                      </button>
-                      <button type="button" onClick={() => handleBatchUnit(item.id, 'volume')}>
-                        {t('org_batch_volume')}
-                      </button>
-                      <button type="button" onClick={() => handleBatchUnit(item.id, 'chapter')}>
-                        {t('org_batch_chapter')}
-                      </button>
+                      <div className="org-row-menu-wrap org-folder-menu-wrap" onClick={event => event.stopPropagation()}>
+                        <button
+                          type="button"
+                          className={`org-row-menu-button org-folder-menu-button ${openFolderMenuId === item.id ? 'active' : ''}`}
+                          aria-haspopup="menu"
+                          aria-expanded={openFolderMenuId === item.id}
+                          onClick={() => setOpenFolderMenuId(current => (current === item.id ? '' : item.id))}
+                        >
+                          {t('org_folder_menu')} <FaIcon name="angleDown" size={9} />
+                        </button>
+                        {openFolderMenuId === item.id && (
+                          <div className="org-row-menu org-folder-menu" role="menu">
+                            <button type="button" role="menuitem" onClick={() => handleFolderMenuAction(item, 'default')}>
+                              {t('org_default_path')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleFolderMenuAction(item, 'title')}>
+                              {t('org_title_path')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleFolderMenuAction(item, 'filename')}>
+                              {t('org_filename_path')}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="org-row-menu-wrap org-batch-menu-wrap" onClick={event => event.stopPropagation()}>
+                        <button
+                          type="button"
+                          className={`org-row-menu-button org-batch-menu-button ${openBatchMenuId === item.id ? 'active' : ''}`}
+                          aria-haspopup="menu"
+                          aria-expanded={openBatchMenuId === item.id}
+                          onClick={() => setOpenBatchMenuId(current => (current === item.id ? '' : item.id))}
+                        >
+                          {t('org_batch_menu')} <FaIcon name="angleDown" size={9} />
+                        </button>
+                        {openBatchMenuId === item.id && (
+                          <div className="org-row-menu org-batch-menu" role="menu">
+                            <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'volume')}>
+                              {t('org_batch_volume')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'chapter')}>
+                              {t('org_batch_chapter')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'original')}>
+                              {t('org_batch_original_name')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'extracted')}>
+                              {t('org_batch_extracted_title')}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="org-col-count">{item.volumes?.length || 0}</div>
                     <div className="org-col-size">{Number(item.size_mb || 0).toFixed(1)} MB</div>

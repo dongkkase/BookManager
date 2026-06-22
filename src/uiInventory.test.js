@@ -10,6 +10,9 @@ const sources = {
     thumbnailView: fs.readFileSync(new URL('./components/folder/ThumbnailView.jsx', import.meta.url), 'utf8'),
     tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
+    detailPanel: fs.readFileSync(new URL('./components/folder/DetailPanel.jsx', import.meta.url), 'utf8'),
+    folderCss: fs.readFileSync(new URL('./styles/FolderTab.css', import.meta.url), 'utf8'),
+    faIcon: fs.readFileSync(new URL('./components/FaIcon.jsx', import.meta.url), 'utf8'),
     metadata: fs.readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8'),
     organizer: fs.readFileSync(new URL('./tabs/OrganizerTab.jsx', import.meta.url), 'utf8'),
     organizerCss: fs.readFileSync(new URL('./styles/OrganizerTab.css', import.meta.url), 'utf8'),
@@ -86,6 +89,8 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['메타데이터 시리즈 전체 자동 후처리', 'applySeriesAutoMetadata(copiedMetadata, inferred)'],
         ['메타데이터 아이템 수정일 표시', 'metadataModifiedDate(file)'],
         ['메타데이터 아이템 수정일 fallback', "'No Data'"],
+        ['메타데이터 파일명 중간 말줄임 분리', 'splitMetadataFileDisplayName(file.name)'],
+        ['메타데이터 파일명 끝부분 보존', 'meta-tree-file-name-tail'],
         ['메타데이터 트리 전체 선택 버튼', 'className={`meta-tree-toggle-all'],
         ['메타데이터 트리 전체 선택 카운트', 'meta-tree-toggle-count'],
         ['메타데이터 폴더 원클릭 접기 펼치기', 'toggleGroupCollapsed(groupName)'],
@@ -146,6 +151,9 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
     assertInventory('folder', [
         ['저장 레이아웃 삭제', 'id="layout-delete-select"'],
         ['라이브러리 이동 대상', 'id="library-move-select"'],
+        ['라이브러리 이동 요약', 'className="library-move-summary"'],
+        ['라이브러리 이동 옵션', 'library_move_option'],
+        ['라이브러리 이동 미리보기 개수', 'library_move_preview_count'],
     ]);
     assertInventory('multiRenameDialog', [
         ['여러 파일 이름 변경 순번 위치', 'value={sequencePosition}'],
@@ -176,6 +184,9 @@ test('내부 파일명 변경 대상 리스트는 출력 포맷 변경 배지를
     assertInventory('renamer', [
         ['대상 압축 파일 포맷 변경 배지 계산', 'archiveChangeBadges(file, config)'],
         ['대상 압축 파일 포맷 변경 배지 클래스', 'renamer-format-badge'],
+        ['대상 압축 파일 누락페이지 컬럼', "t('col_missing_pages')"],
+        ['대상 압축 파일 누락페이지 값', 'file.missingPages ||'],
+        ['대상 압축 파일 누락페이지 스타일', 'renamer-missing-pages'],
     ]);
 });
 
@@ -200,6 +211,19 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
         ['하위 항목 드래그 영역 표시', 'volumeSelectionBox'],
         ['하위 항목 드래그 영역 선택 계산', 'updateVolumeRubberSelection'],
         ['하위 항목 드래그 영역 선택 반영', 'selectVolumePaths(selected)'],
+        ['폴더명 드롭다운 메뉴 버튼', "t('org_folder_menu')"],
+        ['폴더명 드롭다운 메뉴 상태', 'openFolderMenuId === item.id'],
+        ['폴더명 파일명 항목', "t('org_filename_path')"],
+        ['폴더명 파일명 경로 적용', 'filenameOutputPath(item)'],
+        ['일괄 드롭다운 메뉴 버튼', "t('org_batch_menu')"],
+        ['일괄 드롭다운 메뉴 상태', 'openBatchMenuId === item.id'],
+        ['일괄 드롭다운 메뉴 액션', 'handleBatchMenuAction(item.id'],
+        ['일괄 기존 파일명 버튼', "t('org_batch_original_name')"],
+        ['일괄 제목추출 버튼', "t('org_batch_extracted_title')"],
+        ['분석 결과 추출명 보존', 'hydrateOrganizerItem(item)'],
+        ['일괄 기존 파일명 적용', 'organizerOriginalFilenameName(preserved)'],
+        ['일괄 제목추출 적용', 'organizerExtractedTitleName(preserved)'],
+        ['일괄 조작 전 추출명 고정', 'preserveOrganizerExtractedTitle(volume)'],
         ['작업 리스트 빈 영역 선택 해제', "event.target.closest('.org-tree-row')"],
         ['작업 리스트 빈 영역 하위 선택 해제', 'clearVolumeSelection();'],
         ['다중 이름 변경 단축키', "event.shiftKey && isShortcutKey(event, 'r')"],
@@ -208,6 +232,7 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
     ]);
     assertInventory('organizerCss', [
         ['하위 항목 드래그 영역 스타일', '.org-drag-selection-box'],
+        ['행 드롭다운 메뉴 스타일', '.org-row-menu'],
     ]);
     assert.doesNotMatch(sources.organizer, /OrganizerFilenameDialog|org-filename-input|openVolumeEditor|editingVolume|org-context-menu/);
     assert.doesNotMatch(sources.organizer, /image_count\}p/);
@@ -287,6 +312,24 @@ test('상세보기 패널은 선택 항목 내용 높이에 맞춰 자동 조절
     assertInventory('folder', [
         ['상세보기 내용 높이 변경 핸들러', 'handleDetailContentHeightChange'],
         ['상세보기 내용 높이 콜백 연결', 'onContentHeightChange={handleDetailContentHeightChange}'],
+    ]);
+});
+
+test('상세보기 패널은 링크 열기와 메타데이터 값 스타일을 제공한다', () => {
+    assertInventory('detailPanel', [
+        ['상세보기 링크 외부 열기', 'openExternalLink(value)'],
+        ['상세보기 링크 역할', 'role="link"'],
+        ['상세보기 링크 키보드 실행', "event.key !== 'Enter' && event.key !== ' '"],
+        ['상세보기 등장인물 users 아이콘', 'icon="users"'],
+    ]);
+    assertInventory('folderCss', [
+        ['상세보기 메타데이터 값 색상', 'color: rgba(255, 255, 255, 0.8);'],
+        ['상세보기 메타데이터 값 굵기', 'font-weight: normal;'],
+        ['상세보기 링크 색상', '.metadata-link-value'],
+        ['상세보기 링크 포인터', 'cursor: pointer;'],
+    ]);
+    assertInventory('faIcon', [
+        ['users 아이콘 매핑', 'users: faUsers'],
     ]);
 });
 

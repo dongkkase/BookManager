@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { replaceZipEntry } from './core/zipArchive.js';
 import {
     buildOpdsApp,
@@ -60,6 +62,15 @@ function createLibraryFixture(t) {
 
 function md5Hex(value) {
     return crypto.createHash('md5').update(String(value)).digest('hex');
+}
+
+function hasOpenSsl() {
+    try {
+        execFileSync('openssl', ['version'], { stdio: 'ignore' });
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function digestAuthHeader({ challenge, username, password, method, uri }) {
@@ -229,10 +240,41 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.doesNotMatch(pageHtml, /onclick=/);
         assert.match(pageHtml, /\/assets\/web-library\.js/);
 
+        const cssResponse = await fetch(`${baseUrl}/assets/web-library.css`);
+        const cssText = await cssResponse.text();
+        assert.equal(cssResponse.status, 200);
+        assert.match(cssText, /color-scheme: dark/);
+        assert.match(cssText, /object-fit: cover/);
+        assert.match(cssText, /aspect-ratio: 2 \/ 3/);
+        assert.match(cssText, /backdrop-filter: blur/);
+        assert.match(cssText, /content: "Download"/);
+        assert.match(cssText, /--orange: #f97316/);
+        assert.match(cssText, /\.thumb-box::before/);
+        assert.match(cssText, /linear-gradient\(180deg/);
+        assert.match(cssText, /\.card-count-tag/);
+        assert.match(cssText, /\.download-icon/);
+        assert.match(cssText, /\.web-fa-icon/);
+
         const scriptResponse = await fetch(`${baseUrl}/assets/web-library.js`);
         const scriptText = await scriptResponse.text();
         assert.equal(scriptResponse.status, 200);
         assert.match(scriptText, /addEventListener/);
+        assert.match(scriptText, /상세정보/);
+        assert.match(scriptText, /\/api\/file-meta/);
+        assert.match(scriptText, /card-download-button/);
+        assert.match(scriptText, /DOWNLOAD_ICON/);
+        assert.match(scriptText, /createDownloadIcon/);
+        assert.match(scriptText, /DETAIL_ICONS/);
+        assert.match(scriptText, /createDetailIcon/);
+        assert.match(scriptText, /appendMetadataRow\(grid, "archive", "포맷 \/ 망가\(방향\)"/);
+        assert.match(scriptText, /createCardInfoTag/);
+        assert.match(scriptText, /modal-open/);
+        assert.match(scriptText, /responseCache/);
+        assert.match(scriptText, /scrollRestoration = "manual"/);
+        assert.match(scriptText, /saveCurrentScrollState/);
+        assert.match(scriptText, /restoreScrollPosition/);
+        assert.match(scriptText, /scrollY: next\.scrollY/);
+        assert.doesNotMatch(scriptText, /makeButton\("열기"/);
         assert.doesNotMatch(scriptText, /innerHTML/);
 
         const rootList = await (await fetch(`${baseUrl}/api/list`)).json();
@@ -254,7 +296,8 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.equal(folderSearch.folders[0].name, 'Series');
 
         const fileSearch = await (await fetch(`${baseUrl}/api/search?q=Book`)).json();
-        assert.equal(fileSearch.files[0].name, 'Book 01.cbz');
+        assert.equal(fileSearch.folders[0].name, 'Series');
+        assert.equal(fileSearch.files.length, 0);
 
         const download = await fetch(`${baseUrl}/api/download?file=${encodeURIComponent(archive)}`);
         assert.equal(download.status, 200);
@@ -291,16 +334,34 @@ test('Web 서버는 DB 인덱스로 검색 결과, 메타데이터, 직접 썸�
             path: realArchive,
             title: 'DB Indexed Title',
             series: 'DB Series',
+            series_group: 'DB Group',
+            volume: '1',
+            number: '1',
             writer: 'DB Writer',
+            creators: 'DB Artist',
             publisher: 'DB Publisher',
+            imprint: 'DB Label',
             genre: 'Action',
             summary: 'DB Summary',
             rating: '4.5',
+            age_rating: '15+',
+            publish_date: '2026-01-02',
+            characters: 'Hero, Rival',
+            teams: 'Team A',
+            locations: 'Seoul',
+            story_arc: 'Arc A',
             tags: 'tag-a, tag-b',
+            notes: 'DB Notes',
+            web: 'https://example.com/book',
             thumb_path: realThumbnail,
             size: 2 * 1024 * 1024,
             ext: '.cbz',
+            resolution: '1200x1800',
             page_count: '12',
+            volume_count: '3',
+            format: 'WebComic',
+            manga: 'YesAndRightToLeft',
+            language: 'ko',
         }];
     };
     const app = buildWebApp(
@@ -321,23 +382,73 @@ test('Web 서버는 DB 인덱스로 검색 결과, 메타데이터, 직접 썸�
         assert.equal(childList.files[0].title, 'DB Indexed Title');
         assert.equal(childList.files[0].size, 2 * 1024 * 1024);
         assert.equal(childList.files[0].thumb_path, realThumbnail);
+        assert.equal(childList.files[0].has_metadata, true);
+        assert.equal(childList.files[0].format, 'WebComic');
 
         const search = await (await fetch(`${baseUrl}/api/search?q=Indexed`)).json();
         assert.equal(search.folders[0].name, 'Indexed Series');
-        assert.equal(search.files[0].title, 'DB Indexed Title');
+        assert.equal(search.files.length, 0);
+
+        const metadataSearch = await (await fetch(`${baseUrl}/api/search?q=Hero`)).json();
+        assert.equal(metadataSearch.folders[0].name, 'Indexed Series');
+        assert.equal(metadataSearch.files.length, 0);
 
         const meta = await (await fetch(`${baseUrl}/api/folder-meta?dir=${encodeURIComponent(realChild)}`)).json();
         assert.equal(meta.title, 'DB Indexed Title');
         assert.equal(meta.series, 'DB Series');
         assert.equal(meta.writer, 'DB Writer');
+        assert.equal(meta.creators, 'DB Artist');
+        assert.equal(meta.imprint, 'DB Label');
+        assert.equal(meta.format, 'WebComic');
         assert.equal(meta.summary, 'DB Summary');
         assert.equal(meta.tags, 'tag-a, tag-b');
+        assert.equal(meta.web, 'https://example.com/book');
+        assert.equal(meta.characters, 'Hero, Rival');
         assert.equal(meta.thumb_path, realThumbnail);
+
+        const fileMeta = await (await fetch(`${baseUrl}/api/file-meta?file=${encodeURIComponent(realArchive)}`)).json();
+        assert.equal(fileMeta.title, 'DB Indexed Title');
+        assert.equal(fileMeta.total_volume, '3');
+        assert.equal(fileMeta.manga, 'YesAndRightToLeft');
+        assert.equal(fileMeta.language, 'ko');
+        assert.equal(fileMeta.notes, 'DB Notes');
+        assert.equal(fileMeta.has_metadata, true);
 
         const thumbnailResponse = await fetch(`${baseUrl}/api/thumbnail?file=${encodeURIComponent(realThumbnail)}`);
         assert.equal(thumbnailResponse.status, 200);
         assert.match(thumbnailResponse.headers.get('content-type'), /image\/jpeg/);
         assert.equal(await thumbnailResponse.text(), 'thumbnail');
+    });
+});
+
+test('Web 서버 상세 메타데이터는 확장자 fallback 포맷을 표시하지 않는다', async t => {
+    const { library, child } = createLibraryFixture(t);
+    const archive = path.join(child, 'Extension Format.cbz');
+    fs.writeFileSync(archive, 'archive');
+    const realLibrary = fs.realpathSync(library);
+    const realChild = fs.realpathSync(child);
+    const realArchive = fs.realpathSync(archive);
+    const dbRowsProvider = async currentDir => {
+        if (![realLibrary, realChild].includes(currentDir)) return [];
+        return [{
+            path: realArchive,
+            title: 'Extension Format Title',
+            series: 'Extension Series',
+            ext: '.cbz',
+            format: 'ZIP',
+        }];
+    };
+    const app = buildWebApp({ dup_check_folders: [realLibrary] }, { dbRowsProvider });
+
+    await withHttpServer(app, async baseUrl => {
+        const childList = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(realChild)}`)).json();
+        assert.equal(childList.files[0].format, '');
+        assert.equal(childList.files[0].has_metadata, true);
+
+        const meta = await (await fetch(`${baseUrl}/api/file-meta?file=${encodeURIComponent(realArchive)}`)).json();
+        assert.equal(meta.title, 'Extension Format Title');
+        assert.equal(meta.format, '');
+        assert.equal(meta.has_metadata, true);
     });
 });
 
@@ -770,5 +881,50 @@ test('Web 서버 상태 URL은 브라우저 루트 주소를 반환한다', asyn
         assert.equal(getSharingServerStatus().Web.url, `http://${result.localIp}:${port}/`);
     } finally {
         await stopSharingServer('Web');
+    }
+});
+
+test('HTTPS 공유 서버는 자체 서명 인증서로 https URL과 secure 상태를 반환한다', async t => {
+    if (!hasOpenSsl()) {
+        t.skip('openssl is required to generate the self-signed certificate');
+        return;
+    }
+
+    const port = await getFreePort();
+    const certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-sharing-cert-'));
+    const logs = [];
+
+    try {
+        const result = await startSharingServer(
+            'Web',
+            { port, https: true, httpsCertDir: certDir },
+            {},
+            log => logs.push(log),
+        );
+
+        assert.equal(result.url, `https://${result.localIp}:${port}/`);
+        assert.equal(getSharingServerStatus().Web.secure, true);
+        assert.equal(getSharingServerStatus().Web.url, `https://${result.localIp}:${port}/`);
+        assert.ok(fs.existsSync(path.join(certDir, 'bookmanager-sharing.crt')));
+        assert.ok(fs.existsSync(path.join(certDir, 'bookmanager-sharing.key')));
+        assert.ok(logs.some(log => /자체 서명 인증서/.test(log.message)));
+
+        await new Promise((resolve, reject) => {
+            const req = https.get(`https://127.0.0.1:${port}/`, { rejectUnauthorized: false }, res => {
+                res.resume();
+                res.on('end', () => {
+                    try {
+                        assert.equal(res.statusCode, 200);
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            });
+            req.on('error', reject);
+        });
+    } finally {
+        await stopSharingServer('Web');
+        fs.rmSync(certDir, { recursive: true, force: true });
     }
 });

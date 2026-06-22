@@ -25,27 +25,92 @@ import {
     WEB_LIBRARY_HTML,
     WEB_LIBRARY_JS,
 } from './web/webLibraryPage.js';
+import { normalizeMetadataFormat } from '../metadataFormat.js';
 
 const execFileAsync = promisify(execFile);
 const WEB_SEARCH_LIMIT = 160;
-
+const WEB_METADATA_FIELDS = [
+    'title',
+    'series',
+    'series_group',
+    'volume',
+    'number',
+    'writer',
+    'creators',
+    'penciller',
+    'inker',
+    'colorist',
+    'letterer',
+    'cover_artist',
+    'publisher',
+    'imprint',
+    'genre',
+    'volume_count',
+    'total_volume',
+    'page_count',
+    'format',
+    'manga',
+    'language',
+    'rating',
+    'age_rating',
+    'publish_date',
+    'summary',
+    'description',
+    'characters',
+    'teams',
+    'locations',
+    'story_arc',
+    'tags',
+    'notes',
+    'web',
+    'link',
+];
+const WEB_DB_SEARCH_FIELDS = [
+    'path',
+    'title',
+    'series',
+    'series_group',
+    'volume',
+    'number',
+    'writer',
+    'creators',
+    'publisher',
+    'imprint',
+    'genre',
+    'volume_count',
+    'page_count',
+    'format',
+    'manga',
+    'language',
+    'rating',
+    'age_rating',
+    'publish_date',
+    'summary',
+    'characters',
+    'teams',
+    'locations',
+    'story_arc',
+    'tags',
+    'notes',
+    'web',
+];
 let webDbUnavailableLogged = false;
 
 function formatJsonError(res, status, message) {
     res.status(status).json({ error: message });
 }
 
+function metadataFormatFromRecord(record = {}) {
+    return normalizeMetadataFormat(record.format);
+}
+
+function metadataFieldValue(record = {}, field = '') {
+    if (field === 'format') return metadataFormatFromRecord(record);
+    return record[field];
+}
+
 function hasMetadata(record = {}) {
-    return Boolean(
-        record.title
-        || record.series
-        || record.writer
-        || record.publisher
-        || record.genre
-        || record.summary
-        || record.rating
-        || record.tags
-    );
+    return WEB_METADATA_FIELDS.some(field => String(metadataFieldValue(record, field) || '').trim());
 }
 
 function isArchivePath(filePath = '') {
@@ -83,8 +148,7 @@ async function readIndexedRows(currentDir, options = {}) {
     try {
         const prefix = currentDir.endsWith(path.sep) ? currentDir : `${currentDir}${path.sep}`;
         return db.getConnection().prepare(`
-            SELECT path, title, series, writer, publisher, genre, summary, rating, tags,
-                   thumb_path, size, ext, page_count, mtime
+            SELECT *
             FROM files
             WHERE path LIKE ?
         `).all(`${prefix}%`);
@@ -106,8 +170,51 @@ async function safeReadIndexedRows(currentDir, options = {}, log = () => {}) {
     }
 }
 
+async function searchIndexedRows(root, query, options = {}) {
+    if (!root) return null;
+    if (typeof options.dbRowsProvider === 'function') {
+        return options.dbRowsProvider(root);
+    }
+    if (!options.dbPath) return null;
+
+    const { LibraryDB } = await import('../database/library_db.js');
+    const db = new LibraryDB({ dbPath: options.dbPath });
+    try {
+        const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+        const like = `%${String(query || '').trim()}%`;
+        const searchClause = WEB_DB_SEARCH_FIELDS
+            .map(field => `COALESCE(${field}, '') LIKE ?`)
+            .join(' OR ');
+        return db.getConnection().prepare(`
+            SELECT *
+            FROM files
+            WHERE path LIKE ?
+              AND (${searchClause})
+            LIMIT ?
+        `).all(`${prefix}%`, ...WEB_DB_SEARCH_FIELDS.map(() => like), WEB_SEARCH_LIMIT * 20);
+    } finally {
+        await db.close();
+    }
+}
+
+async function safeSearchIndexedRows(root, query, options = {}, log = () => {}) {
+    try {
+        const rows = await searchIndexedRows(root, query, options);
+        return Array.isArray(rows) ? rows : null;
+    } catch (error) {
+        if (!webDbUnavailableLogged) {
+            webDbUnavailableLogged = true;
+            log(`Web indexed search unavailable: ${error.message}`, 'ERROR');
+        }
+        return null;
+    }
+}
+
 function normalizeIndexedRecord(row = {}) {
     const filePath = row.path || row.filepath || row.file_path || row.full_path || '';
+    const volumeCount = row.volume_count ?? row.total_volume ?? '';
+    const summary = row.summary ?? row.description ?? '';
+    const web = row.web ?? row.link ?? '';
     return {
         ...row,
         path: filePath ? realPathOrResolved(filePath) : '',
@@ -115,6 +222,12 @@ function normalizeIndexedRecord(row = {}) {
         size: Number(row.size) || safeStatSize(filePath),
         mtime: row.mtime || 0,
         thumb_path: row.thumb_path || row.thumbnail || '',
+        volume_count: volumeCount,
+        total_volume: volumeCount,
+        summary,
+        description: summary,
+        web,
+        link: web,
     };
 }
 
@@ -139,20 +252,97 @@ function thumbnailPathForRecord(record = {}, roots = [], options = {}) {
     return record.path || '';
 }
 
+function statMetadataForRecord(record = {}) {
+    try {
+        if (!record.path || !fs.existsSync(record.path)) return {};
+        const stats = fs.statSync(record.path);
+        return {
+            ctime: stats.ctimeMs,
+            created: new Date(stats.birthtimeMs).toISOString(),
+            modified: new Date(stats.mtimeMs).toISOString(),
+        };
+    } catch {
+        return {};
+    }
+}
+
+function metadataFromRecord(record = {}, roots = [], options = {}) {
+    const thumbPath = thumbnailPathForRecord(record, roots, options);
+    const summary = record.summary || record.description || '';
+    const web = record.web || record.link || '';
+    const format = metadataFormatFromRecord(record);
+    const stats = statMetadataForRecord(record);
+    return {
+        path: record.path || '',
+        name: record.path ? path.basename(record.path) : '',
+        title: record.title || '',
+        series: record.series || '',
+        series_group: record.series_group || '',
+        volume: record.volume || '',
+        number: record.number || '',
+        writer: record.writer || '',
+        creators: record.creators || '',
+        penciller: record.penciller || '',
+        inker: record.inker || '',
+        colorist: record.colorist || '',
+        letterer: record.letterer || '',
+        cover_artist: record.cover_artist || '',
+        publisher: record.publisher || '',
+        imprint: record.imprint || '',
+        genre: record.genre || '',
+        volume_count: record.volume_count || record.total_volume || '',
+        total_volume: record.total_volume || record.volume_count || '',
+        page_count: record.page_count || '',
+        format,
+        manga: record.manga || '',
+        language: record.language || '',
+        rating: record.rating || '',
+        age_rating: record.age_rating || '',
+        publish_date: record.publish_date || '',
+        summary,
+        description: summary,
+        characters: record.characters || '',
+        teams: record.teams || '',
+        locations: record.locations || '',
+        story_arc: record.story_arc || '',
+        tags: record.tags || '',
+        notes: record.notes || '',
+        web,
+        link: web,
+        resolution: record.resolution || '',
+        size: Number(record.size) || safeStatSize(record.path),
+        mtime: record.mtime || '',
+        ctime: stats.ctime || '',
+        created: stats.created || '',
+        modified: stats.modified || '',
+        thumb_path: thumbPath,
+        cover: thumbPath,
+        has_metadata: hasMetadata(record),
+    };
+}
+
 function fileItemFromRecord(record = {}, roots = [], options = {}) {
+    const metadata = metadataFromRecord(record, roots, options);
     return {
         path: record.path,
         name: path.basename(record.path),
         title: record.title || path.basename(record.path),
         size: Number(record.size) || safeStatSize(record.path),
-        thumb_path: thumbnailPathForRecord(record, roots, options),
+        thumb_path: metadata.thumb_path,
         series: record.series || '',
         writer: record.writer || '',
         publisher: record.publisher || '',
+        imprint: record.imprint || '',
         genre: record.genre || '',
         tags: record.tags || '',
         rating: record.rating || '',
-        summary: record.summary || '',
+        summary: metadata.summary,
+        format: metadata.format,
+        manga: record.manga || '',
+        page_count: record.page_count || '',
+        volume_count: metadata.volume_count,
+        total_volume: metadata.total_volume,
+        has_metadata: metadata.has_metadata,
     };
 }
 
@@ -337,31 +527,87 @@ function folderItemForPath(folderPath, root, record = null, roots = [], options 
     };
 }
 
+function ensureFilesystemSearchFolder(folders, folderPath, root, samplePath = '') {
+    const resolvedFolder = realPathOrResolved(folderPath);
+    if (!folders.has(resolvedFolder)) {
+        folders.set(resolvedFolder, {
+            path: resolvedFolder,
+            name: path.basename(resolvedFolder) || resolvedFolder,
+            is_library: resolvedFolder === root,
+            count: 0,
+            thumb_path: '',
+            has_subfolders: false,
+            has_metadata: false,
+        });
+    }
+    const folder = folders.get(resolvedFolder);
+    if (samplePath) {
+        folder.count += 1;
+        if (!folder.thumb_path) folder.thumb_path = samplePath;
+    }
+    return folder;
+}
+
+function metadataSearchText(record = {}) {
+    return [
+        record.path,
+        record.name,
+        path.basename(record.path || ''),
+        ...WEB_METADATA_FIELDS.map(field => metadataFieldValue(record, field)),
+    ].join(' ').toLowerCase();
+}
+
+function ensureSearchFolder(folders, folderPath, root, record = null, roots = [], options = {}, countedFolders = null) {
+    const resolvedFolder = realPathOrResolved(folderPath);
+    if (!folders.has(resolvedFolder)) {
+        folders.set(resolvedFolder, {
+            path: resolvedFolder,
+            name: path.basename(resolvedFolder) || resolvedFolder,
+            is_library: resolvedFolder === root,
+            count: 0,
+            thumb_path: '',
+            has_subfolders: false,
+            has_metadata: false,
+        });
+    }
+    const folder = folders.get(resolvedFolder);
+    if (!countedFolders || !countedFolders.has(resolvedFolder)) {
+        folder.count += 1;
+        countedFolders?.add(resolvedFolder);
+    }
+    if (record) {
+        folder.has_metadata = folder.has_metadata || hasMetadata(record);
+        if (!folder.thumb_path) folder.thumb_path = thumbnailPathForRecord(record, roots, options);
+    }
+    return folder;
+}
+
 async function searchIndexedCatalog(query, roots, options = {}, log = () => {}) {
     const lowered = query.toLowerCase();
     const folders = new Map();
-    const files = [];
 
     for (const root of roots) {
-        const rows = await safeReadIndexedRows(root, options, log);
+        const rows = await safeSearchIndexedRows(root, query, options, log);
         if (!rows) return null;
 
         for (const row of rows.map(normalizeIndexedRecord)) {
             if (!isValidWebRecord(row, roots)) continue;
             const relative = path.relative(root, row.path);
             const parts = relative.split(path.sep).filter(Boolean);
-            const fileHaystack = [
-                row.path,
-                row.title,
-                row.series,
-                row.writer,
-                row.publisher,
-                row.genre,
-                row.tags,
-            ].join(' ').toLowerCase();
+            const fileHaystack = metadataSearchText(row);
+            const countedFolders = new Set();
 
-            if (fileHaystack.includes(lowered) && files.length < WEB_SEARCH_LIMIT) {
-                files.push(fileItemFromRecord(row, roots, options));
+            if (fileHaystack.includes(lowered) && folders.size < WEB_SEARCH_LIMIT) {
+                const parentFolder = ensureSearchFolder(
+                    folders,
+                    path.dirname(row.path),
+                    root,
+                    row,
+                    roots,
+                    options,
+                    countedFolders,
+                );
+                parentFolder.has_subfolders = parentFolder.has_subfolders || parts.length > 2;
             }
 
             for (let index = 0; index < parts.length - 1; index += 1) {
@@ -369,22 +615,9 @@ async function searchIndexedCatalog(query, roots, options = {}, log = () => {}) 
                 const folderPath = path.join(root, ...parts.slice(0, index + 1));
                 const folderHaystack = `${folderName} ${folderPath}`.toLowerCase();
                 if (!folderHaystack.includes(lowered)) continue;
-                if (!folders.has(folderPath)) {
-                    folders.set(folderPath, {
-                        path: folderPath,
-                        name: folderName,
-                        is_library: false,
-                        count: 0,
-                        thumb_path: '',
-                        has_subfolders: false,
-                        has_metadata: false,
-                    });
-                }
-                const folder = folders.get(folderPath);
-                folder.count += 1;
+                const folder = ensureSearchFolder(folders, folderPath, root, row, roots, options, countedFolders);
+                folder.name = folderName;
                 folder.has_subfolders = folder.has_subfolders || index < parts.length - 2;
-                folder.has_metadata = folder.has_metadata || hasMetadata(row);
-                if (!folder.thumb_path) folder.thumb_path = thumbnailPathForRecord(row, roots, options);
             }
         }
     }
@@ -393,18 +626,17 @@ async function searchIndexedCatalog(query, roots, options = {}, log = () => {}) 
         folders: [...folders.values()]
             .sort((a, b) => naturalComparePath(a.name, b.name))
             .slice(0, WEB_SEARCH_LIMIT),
-        files: files.sort((a, b) => naturalComparePath(a.title || a.name, b.title || b.name)),
+        files: [],
     };
 }
 
 function searchFilesystemCatalog(query, roots) {
     const lowered = query.toLowerCase();
     const folders = new Map();
-    const files = [];
 
     for (const root of roots) {
         const stack = [root];
-        while (stack.length && (folders.size + files.length) < WEB_SEARCH_LIMIT * 2) {
+        while (stack.length && folders.size < WEB_SEARCH_LIMIT * 2) {
             const current = stack.pop();
             let entries = [];
             try {
@@ -416,17 +648,13 @@ function searchFilesystemCatalog(query, roots) {
                 const itemPath = path.join(current, entry.name);
                 const haystack = `${entry.name} ${itemPath}`.toLowerCase();
                 if (entry.isDirectory()) {
-                    if (haystack.includes(lowered) && !folders.has(itemPath)) {
-                        folders.set(itemPath, folderItemForPath(realPathOrResolved(itemPath), root));
+                    if (haystack.includes(lowered)) {
+                        ensureFilesystemSearchFolder(folders, itemPath, root);
                     }
                     stack.push(itemPath);
                 } else if (entry.isFile() && isArchivePath(entry.name) && haystack.includes(lowered)) {
                     const resolved = realPathOrResolved(itemPath);
-                    files.push(fileItemFromRecord({
-                        path: resolved,
-                        title: path.basename(resolved),
-                        size: safeStatSize(resolved),
-                    }, roots));
+                    ensureFilesystemSearchFolder(folders, path.dirname(resolved), root, resolved);
                 }
             }
         }
@@ -436,9 +664,7 @@ function searchFilesystemCatalog(query, roots) {
         folders: [...folders.values()]
             .sort((a, b) => naturalComparePath(a.name, b.name))
             .slice(0, WEB_SEARCH_LIMIT),
-        files: files
-            .sort((a, b) => naturalComparePath(a.title || a.name, b.title || b.name))
-            .slice(0, WEB_SEARCH_LIMIT),
+        files: [],
     };
 }
 
@@ -447,23 +673,51 @@ async function webSearch(query, roots, options = {}, log = () => {}) {
     return indexed || searchFilesystemCatalog(query, roots);
 }
 
+async function readIndexedFile(filePath, options = {}) {
+    if (!filePath) return null;
+    if (typeof options.dbRowsProvider === 'function') {
+        const rows = await options.dbRowsProvider(path.dirname(filePath));
+        return (Array.isArray(rows) ? rows : [])
+            .map(normalizeIndexedRecord)
+            .find(record => record.path === filePath) || null;
+    }
+    if (!options.dbPath) return null;
+
+    const { LibraryDB } = await import('../database/library_db.js');
+    const db = new LibraryDB({ dbPath: options.dbPath });
+    try {
+        return db.getConnection().prepare('SELECT * FROM files WHERE path = ?').get(filePath) || null;
+    } finally {
+        await db.close();
+    }
+}
+
+async function safeReadIndexedFile(filePath, options = {}, log = () => {}) {
+    try {
+        const row = await readIndexedFile(filePath, options);
+        return row ? normalizeIndexedRecord(row) : null;
+    } catch (error) {
+        if (!webDbUnavailableLogged) {
+            webDbUnavailableLogged = true;
+            log(`Web indexed metadata unavailable: ${error.message}`, 'ERROR');
+        }
+        return null;
+    }
+}
+
 async function folderMetadata(currentDir, roots, options = {}, log = () => {}) {
     const rows = await safeReadIndexedRows(currentDir, options, log);
     const row = rows
         ?.map(normalizeIndexedRecord)
         .find(record => isValidWebRecord(record, roots) && hasMetadata(record));
     if (!row) return {};
-    return {
-        title: row.title || '',
-        series: row.series || '',
-        writer: row.writer || '',
-        publisher: row.publisher || '',
-        genre: row.genre || '',
-        summary: row.summary || '',
-        rating: row.rating || '',
-        tags: row.tags || '',
-        thumb_path: thumbnailPathForRecord(row, roots, options),
-    };
+    return metadataFromRecord(row, roots, options);
+}
+
+async function fileMetadata(filePath, roots, options = {}, log = () => {}) {
+    const row = await safeReadIndexedFile(filePath, options, log);
+    if (!row || !isValidWebRecord(row, roots) || !hasMetadata(row)) return {};
+    return metadataFromRecord(row, roots, options);
 }
 
 async function readPreferredThumbnail(filePath, options = {}) {
@@ -614,6 +868,21 @@ export function buildWebApp(config, options = {}, log = () => {}) {
         } catch (error) {
             log(`Web metadata error: ${error.message}`, 'ERROR');
             formatJsonError(res, 500, 'Web metadata failed');
+        }
+    });
+
+    app.get(['/api/file-meta', '/api/file_meta'], async (req, res) => {
+        attachNoCache(res);
+        const filePath = resolveSharedArchive(req.query.file, roots);
+        if (!filePath) {
+            formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+            return;
+        }
+        try {
+            res.json(await fileMetadata(filePath, roots, options, log));
+        } catch (error) {
+            log(`Web file metadata error: ${error.message}`, 'ERROR');
+            formatJsonError(res, 500, 'Web file metadata failed');
         }
     });
 

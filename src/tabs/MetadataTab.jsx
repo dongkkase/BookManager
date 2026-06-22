@@ -14,6 +14,7 @@ import {
     normalizeMetadataAutoNumber,
     normalizeMetadataDecimal,
 } from '../metadataPolicy';
+import { splitMetadataFileDisplayName } from '../metadataFilename';
 import '../styles/MetadataTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
@@ -1217,33 +1218,39 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                     <span>{dir.name}</span>
                   </button>
                   {!collapsed && <ul>
-                    {dir.children.map((file) => (
-                      <li
-                        key={file.id}
-                        className={`meta-tree-file ${activeItem?.id === file.id ? 'selected' : ''}`}
-                        onClick={() => {
-                          setSelectedGroup('');
-                          setSelectedFileId(file.id);
-                        }}
-                        title={file.filepath}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={file.checked !== false}
-                          onChange={(event) => {
-                            event.stopPropagation();
-                            updateItem(file.id, item => ({ ...item, checked: !item.checked }));
+                    {dir.children.map((file) => {
+                      const displayName = splitMetadataFileDisplayName(file.name);
+                      return (
+                        <li
+                          key={file.id}
+                          className={`meta-tree-file ${activeItem?.id === file.id ? 'selected' : ''}`}
+                          onClick={() => {
+                            setSelectedGroup('');
+                            setSelectedFileId(file.id);
                           }}
-                        />
-                        <span className="meta-tree-file-text">
-                          <span className="meta-tree-file-name">{file.name}</span>
-                          <span className="meta-tree-file-date">
-                            <FaIcon name="clock" size={10} />
-                            <span>{metadataModifiedDate(file)}</span>
+                          title={file.filepath}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={file.checked !== false}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              updateItem(file.id, item => ({ ...item, checked: !item.checked }));
+                            }}
+                          />
+                          <span className="meta-tree-file-text">
+                            <span className="meta-tree-file-name" title={file.name}>
+                              <span className="meta-tree-file-name-head">{displayName.head}</span>
+                              <span className="meta-tree-file-name-tail">&nbsp;{displayName.tail}</span>
+                            </span>
+                            <span className="meta-tree-file-date">
+                              <FaIcon name="clock" size={10} />
+                              <span>{metadataModifiedDate(file)}</span>
+                            </span>
                           </span>
-                        </span>
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>}
                 </li>
               )})}

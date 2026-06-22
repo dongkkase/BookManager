@@ -232,6 +232,50 @@
   white-space: nowrap;
 }
 
+.org-row-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.org-path-widget .org-row-menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.org-path-widget .org-row-menu-button.active {
+  background: #5a5a5a;
+  border-color: #777;
+}
+
+.org-row-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 3px);
+  z-index: 30;
+  min-width: 150px;
+  padding: 4px;
+  background: #303030;
+  border: 1px solid #5e5e5e;
+  border-radius: 4px;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.org-path-widget .org-row-menu button {
+  display: block;
+  width: 100%;
+  min-height: var(--control-height-sm);
+  padding: 5px 8px;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 3px;
+}
+
+.org-path-widget .org-row-menu button:hover {
+  background: #484848;
+}
+
 .org-path-input,
 .org-volume-input {
   width: 100%;

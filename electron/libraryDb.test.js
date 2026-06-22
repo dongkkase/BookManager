@@ -59,6 +59,54 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
     }
 });
 
+test('files format 컬럼은 파일 확장자 값을 저장하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-format-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: '/Books/Extension.cbz',
+            ext: '.cbz',
+            title: 'Extension',
+            format: 'CBZ',
+        });
+        await library.upsertFileInfo({
+            path: '/Books/Dotted.zip',
+            ext: '.zip',
+            title: 'Dotted',
+            format: '.zip',
+        });
+        await library.upsertFileInfo({
+            path: '/Books/Epub.epub',
+            ext: '.epub',
+            title: 'Epub',
+            format: 'EPUB',
+        });
+        await library.upsertFileInfo({
+            path: '/Books/WebComic.cbz',
+            ext: '.cbz',
+            title: 'WebComic',
+            format: 'WebComic',
+        });
+
+        assert.equal((await library.getFileInfo('/Books/Extension.cbz')).format, '');
+        assert.equal((await library.getFileInfo('/Books/Dotted.zip')).format, '');
+        assert.equal((await library.getFileInfo('/Books/Epub.epub')).format, '');
+        assert.equal((await library.getFileInfo('/Books/WebComic.cbz')).format, 'WebComic');
+        await library.close();
+
+        const raw = new Database(dbPath);
+        raw.prepare('UPDATE files SET format = ? WHERE path = ?').run('RAR', '/Books/WebComic.cbz');
+        raw.close();
+
+        const reopened = new LibraryDB({ dbPath });
+        assert.equal((await reopened.getFileInfo('/Books/WebComic.cbz')).format, '');
+        await reopened.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('과도기 file_info, target_index, dup_match schema를 원본 schema로 이관한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-migrate-'));
     try {

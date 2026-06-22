@@ -408,6 +408,10 @@
     text-align: center;
 }
 
+.renamer-missing-pages {
+    color: #ffca7a;
+}
+
 .renamer-cell-right {
     text-align: right;
 }

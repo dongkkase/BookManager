@@ -2406,18 +2406,22 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     if (!normalizedServerType) {
         throw new Error(i18nT('sharing_invalid_server_type', { server: String(serverType || '') }));
     }
+    const sharingHttpsEnabled = Boolean(options.https ?? config.sharing_https_enabled);
     let updates = {
         opds_port: Number(options.port) || config.opds_port || 8080,
+        sharing_https_enabled: sharingHttpsEnabled,
     };
     if (normalizedServerType === 'Web') {
         updates = {
             web_port: Number(options.port) || config.web_port || 8082,
+            sharing_https_enabled: sharingHttpsEnabled,
         };
     } else if (normalizedServerType === 'WebDAV') {
         updates = {
             webdav_port: Number(options.port) || config.webdav_port || 8081,
             webdav_username: String(options.username ?? config.webdav_username ?? 'user').trim() || 'user',
             webdav_password: String(options.password ?? config.webdav_password ?? '1234').trim() || '1234',
+            sharing_https_enabled: sharingHttpsEnabled,
         };
     }
     configManager.saveConfig({ ...config, ...updates });
@@ -2429,6 +2433,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         {
             ...options,
             port: updates.webdav_port || updates.web_port || updates.opds_port,
+            https: sharingHttpsEnabled,
+            httpsCertDir: path.join(configManager.userDataPath, 'sharing-cert'),
             dbPath: libraryDbPath(),
             thumbnailDir: thumbnailDir(),
             sevenZExe,

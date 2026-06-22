@@ -9,6 +9,7 @@ import {
     analyzeRenamerInputs,
     executeRenamer,
     extractRenamerImage,
+    missingPageNumbersForEntries,
 } from './tasks/renamerTask.js';
 import {
     listZipEntriesFromFile,
@@ -151,6 +152,41 @@ test('내부 파일 리스트는 기존 Python natural_keys 순서로 로드한�
         const preview = await extractRenamerImage(source, analyzed.items[0].entries[0].originalPath, '');
         assert.equal(preview.success, true);
         assert.match(preview.dataUrl, /^data:image\/jpeg;base64,/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Renamer 분석은 압축 내부 파일명에서 누락 페이지를 계산한다', async () => {
+    assert.deepEqual(
+        missingPageNumbersForEntries([
+            { name: '__ridi__5.jpg' },
+            { name: '__ridi__7.jpg' },
+        ]),
+        [6],
+    );
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-missing-pages-'));
+    try {
+        const singleMissing = path.join(root, 'Single Missing.zip');
+        fs.writeFileSync(singleMissing, Buffer.alloc(0));
+        await replaceZipEntry(singleMissing, '__ridi__5.jpg', PNG_1X1);
+        await replaceZipEntry(singleMissing, '__ridi__7.jpg', PNG_1X1);
+
+        const multipleMissing = path.join(root, 'Multiple Missing.zip');
+        fs.writeFileSync(multipleMissing, Buffer.alloc(0));
+        await replaceZipEntry(multipleMissing, '황천의 츠카이 4.jpg', PNG_1X1);
+        await replaceZipEntry(multipleMissing, '황천의 츠카이 6.jpg', PNG_1X1);
+        for (let page = 7; page <= 113; page += 1) {
+            await replaceZipEntry(multipleMissing, `황천의 츠카이 ${page}.jpg`, PNG_1X1);
+        }
+        await replaceZipEntry(multipleMissing, '황천의 츠카이 115.jpg', PNG_1X1);
+
+        const analyzed = await analyzeRenamerInputs([singleMissing, multipleMissing], { sevenZExe: '' });
+        const byName = new Map(analyzed.items.map(item => [item.name, item]));
+
+        assert.equal(byName.get('Single Missing.zip')?.missingPages, '6');
+        assert.equal(byName.get('Multiple Missing.zip')?.missingPages, '5, 114');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

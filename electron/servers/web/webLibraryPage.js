@@ -1,3 +1,42 @@
+import {
+    faBookOpen,
+    faBoxArchive,
+    faBuilding,
+    faChild,
+    faDownload,
+    faFileLines,
+    faLayerGroup,
+    faLink,
+    faStar,
+    faUser,
+    faUsers,
+} from '@fortawesome/free-solid-svg-icons';
+
+function fontAwesomeIconData(iconDefinition) {
+    const pathData = iconDefinition.icon[4];
+    return {
+        width: iconDefinition.icon[0],
+        height: iconDefinition.icon[1],
+        paths: Array.isArray(pathData) ? pathData : [pathData],
+    };
+}
+
+const DOWNLOAD_ICON_WIDTH = faDownload.icon[0];
+const DOWNLOAD_ICON_HEIGHT = faDownload.icon[1];
+const DOWNLOAD_ICON_PATH = faDownload.icon[4];
+const DETAIL_ICON_DATA = {
+    archive: fontAwesomeIconData(faBoxArchive),
+    bookOpen: fontAwesomeIconData(faBookOpen),
+    building: fontAwesomeIconData(faBuilding),
+    child: fontAwesomeIconData(faChild),
+    fileLines: fontAwesomeIconData(faFileLines),
+    layers: fontAwesomeIconData(faLayerGroup),
+    link: fontAwesomeIconData(faLink),
+    star: fontAwesomeIconData(faStar),
+    user: fontAwesomeIconData(faUser),
+    users: fontAwesomeIconData(faUsers),
+};
+
 export const WEB_LIBRARY_HTML = `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -11,7 +50,6 @@ export const WEB_LIBRARY_HTML = `<!DOCTYPE html>
         <header class="app-header">
             <div>
                 <h1>BookManager Web Library</h1>
-                <p id="locationLabel">Library Root</p>
             </div>
             <form id="searchForm" class="search-form">
                 <input id="searchInput" type="search" placeholder="검색어 입력" autocomplete="off">
@@ -42,19 +80,23 @@ export const WEB_LIBRARY_HTML = `<!DOCTYPE html>
 
 export const WEB_LIBRARY_CSS = `
 :root {
-    color-scheme: light;
-    --bg: #f4f6f8;
-    --surface: #ffffff;
-    --surface-subtle: #eef2f6;
-    --border: #d8dee7;
-    --border-strong: #b8c2cf;
-    --text: #18202a;
-    --muted: #697586;
-    --primary: #2368b8;
-    --primary-hover: #1c5799;
-    --success: #1f7a4d;
-    --danger: #b42318;
-    --shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+    color-scheme: dark;
+    --bg: #151515;
+    --surface: #202020;
+    --surface-subtle: #2b2b2b;
+    --surface-raised: #252525;
+    --border: #3a3a3a;
+    --border-strong: #555555;
+    --text: #f2f2f2;
+    --muted: #a6a6a6;
+    --primary: #4f89aa;
+    --primary-hover: #61a1c5;
+    --success: #2d7d57;
+    --danger: #ff6b5f;
+    --warn: #f0b54d;
+    --orange: #f97316;
+    --orange-hover: #fb923c;
+    --shadow: 0 14px 28px rgba(0, 0, 0, 0.36);
 }
 
 * {
@@ -64,7 +106,7 @@ export const WEB_LIBRARY_CSS = `
 body {
     margin: 0;
     min-height: 100vh;
-    background: var(--bg);
+    background: radial-gradient(circle at top left, rgba(79, 137, 170, 0.12), transparent 28rem), var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 14px;
@@ -88,28 +130,31 @@ button:disabled {
     width: min(1280px, calc(100% - 32px));
     margin: 0 auto;
     padding: 24px 0 40px;
+    transition: filter 0.16s ease;
+}
+
+body.modal-open .app-shell {
+    filter: blur(2px);
 }
 
 .app-header {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     gap: 20px;
     margin-bottom: 16px;
+    padding: 14px 16px;
+    background: rgba(32, 32, 32, 0.84);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
 }
 
 h1 {
-    margin: 0 0 6px;
-    font-size: 26px;
+    margin: 0;
+    font-size: 22px;
     line-height: 1.2;
     letter-spacing: 0;
-}
-
-#locationLabel {
-    margin: 0;
-    color: var(--muted);
-    max-width: 680px;
-    overflow-wrap: anywhere;
 }
 
 .search-form {
@@ -124,7 +169,7 @@ h1 {
     height: 38px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--surface);
+    background: #181818;
     color: var(--text);
     padding: 0 12px;
 }
@@ -154,14 +199,14 @@ h1 {
 }
 
 .text-button {
-    background: var(--surface);
+    background: #242424;
     color: var(--text);
     border-color: var(--border-strong);
     font-weight: 600;
 }
 
 .text-button:hover {
-    background: var(--surface-subtle);
+    background: #303030;
     border-color: var(--border-strong);
 }
 
@@ -196,6 +241,7 @@ h1 {
 }
 
 .library-card {
+    position: relative;
     min-width: 0;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -215,8 +261,10 @@ h1 {
 }
 
 .thumb-box {
-    height: 210px;
-    background: var(--surface-subtle);
+    position: relative;
+    aspect-ratio: 2 / 3;
+    height: auto;
+    background: #111111;
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -224,10 +272,20 @@ h1 {
     overflow: hidden;
 }
 
+.thumb-box::before {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 1;
+    height: 76px;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.48), rgba(0, 0, 0, 0));
+    content: "";
+    pointer-events: none;
+}
+
 .thumb-box img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
 }
 
 .thumb-placeholder {
@@ -241,7 +299,7 @@ h1 {
     color: var(--muted);
     font-weight: 800;
     letter-spacing: 0;
-    background: #ffffff;
+    background: #242424;
 }
 
 .thumb-placeholder.folder {
@@ -287,13 +345,13 @@ h1 {
 }
 
 .action-button.secondary {
-    background: var(--surface);
+    background: #242424;
     color: var(--text);
     border-color: var(--border-strong);
 }
 
 .action-button.secondary:hover {
-    background: var(--surface-subtle);
+    background: #303030;
 }
 
 .action-button.success {
@@ -318,7 +376,8 @@ h1 {
 .loading-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.58);
+    background: rgba(0, 0, 0, 0.56);
+    backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -331,90 +390,349 @@ h1 {
     display: none;
 }
 
+.card-download-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    color: #ffffff;
+    background: var(--orange);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 6px;
+    padding: 0 8px;
+    text-decoration: none;
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    transition: width 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+    box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.5);
+}
+
+.card-download-button::before {
+    width: 0;
+    overflow: hidden;
+    content: "Download";
+    font-size: 12px;
+    font-weight: 800;
+    opacity: 0;
+    transition: width 0.16s ease, opacity 0.16s ease;
+}
+
+.card-download-button:hover {
+    width: 112px;
+    background: var(--orange-hover);
+    border-color: rgba(255, 255, 255, 0.34);
+}
+
+.card-download-button:hover::before {
+    width: 68px;
+    opacity: 1;
+}
+
+.card-count-tag {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    min-height: 22px;
+    display: inline-flex;
+    align-items: center;
+    max-width: calc(100% - 54px);
+    padding: 3px 8px;
+    color: #ffffff;
+    background: var(--orange);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.5);
+}
+
+.download-icon {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
 .modal-panel {
-    width: min(760px, 100%);
+    width: min(980px, 100%);
     max-height: min(760px, calc(100vh - 40px));
     overflow: auto;
-    background: var(--surface);
-    color: var(--text);
+    background: #111111;
+    color: #f7f7f7;
     border-radius: 8px;
-    border: 1px solid var(--border);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
-    padding: 22px;
+    padding: 0;
     position: relative;
 }
 
 .modal-close {
     position: absolute;
+    z-index: 3;
     top: 12px;
     right: 12px;
     width: 32px;
     height: 32px;
-    border: 1px solid var(--border);
+    border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 6px;
-    background: var(--surface);
-    color: var(--text);
+    background: rgba(32, 32, 32, 0.92);
+    color: #ffffff;
     font-size: 20px;
     line-height: 1;
 }
 
-.meta-layout {
-    display: grid;
-    grid-template-columns: 190px minmax(0, 1fr);
-    gap: 20px;
+.web-detail-panel {
+    position: relative;
+    min-height: 520px;
+    overflow: hidden;
+    background: #111111;
 }
 
-.meta-cover {
-    width: 100%;
-    aspect-ratio: 3 / 4;
-    background: var(--surface-subtle);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+.web-detail-bg {
+    position: absolute;
+    inset: -42px;
+    background-position: center;
+    background-size: cover;
+    filter: blur(8px);
+    opacity: 0.55;
+    transform: scale(1.08);
+}
+
+.web-detail-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(8, 8, 8, 0.94), rgba(22, 22, 22, 0.76) 44%, rgba(20, 20, 20, 0.96));
+}
+
+.web-detail-scroll {
+    position: relative;
+    z-index: 1;
+    max-height: min(760px, calc(100vh - 40px));
+    overflow: auto;
+}
+
+.web-detail-content {
+    display: flex;
+    gap: 22px;
+    padding: 22px 24px;
+}
+
+.web-detail-cover-section {
+    flex: 0 0 220px;
+    display: flex;
+    justify-content: center;
+}
+
+.web-detail-cover-stack {
+    width: 220px;
+}
+
+.web-detail-cover {
+    width: 220px;
+    aspect-ratio: 2 / 3;
+    height: auto;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    color: var(--muted);
+    color: #777777;
+    background: #303030;
+    border: 1px solid #555555;
+    border-radius: 5px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.55);
+    font-size: 12px;
     font-weight: 700;
 }
 
-.meta-cover img {
+.web-detail-cover img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
 }
 
-.meta-title {
-    margin: 0 36px 14px 0;
-    font-size: 21px;
-    line-height: 1.3;
+.web-detail-cover-caption {
+    padding-top: 8px;
+    color: #dedede;
+    font-size: 11px;
+    line-height: 1.55;
+    text-align: center;
     overflow-wrap: anywhere;
 }
 
-.meta-row {
+.web-detail-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding-top: 4px;
+}
+
+.web-detail-heading {
+    margin: 0 42px 8px 0;
+}
+
+.web-detail-series {
+    margin-bottom: 8px;
+    color: #f0b54d;
+    font-size: 14px;
+}
+
+.web-detail-title {
+    margin-bottom: 11px;
+    color: #ffffff;
+    font-size: 28px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+}
+
+.web-detail-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.web-detail-tags > span {
+    min-height: 16px;
+    padding: 2px 7px;
+    color: #e8e8e8;
+    background: #41454a;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.web-detail-info-card {
     display: grid;
-    grid-template-columns: 78px minmax(0, 1fr);
-    gap: 8px;
-    padding: 5px 0;
+    grid-template-columns: minmax(260px, 0.9fr) minmax(300px, 1.1fr);
+    min-height: 0;
+    overflow: hidden;
+    background: rgba(36, 36, 36, 0.84);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
 }
 
-.meta-row dt {
-    color: var(--muted);
-    font-weight: 700;
+.web-metadata-grid {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    align-content: start;
+    padding: 12px 16px;
 }
 
-.meta-row dd {
-    margin: 0;
+.web-metadata-label,
+.web-metadata-value {
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 12px;
+}
+
+.web-metadata-label {
+    gap: 6px;
+    color: #dddddd;
+}
+
+.web-metadata-label.link-label {
+    color: #f0b54d;
+}
+
+.web-metadata-value {
+    min-width: 0;
+    overflow: hidden;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 400;
+    text-overflow: ellipsis;
+    text-indent: 10px;
+    white-space: nowrap;
+}
+
+.web-metadata-link-value {
+    min-width: 0;
+    overflow: hidden;
+    color: #69bfff;
+    text-overflow: ellipsis;
+    text-decoration: underline;
+    text-indent: 0;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.web-detail-extra {
+    padding: 12px 16px;
+    overflow: auto;
+    color: #f2f2f2;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+}
+
+.web-detail-line {
+    display: block;
+    min-height: 28px;
+    padding: 6px 0;
+}
+
+.web-detail-line strong {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 5px;
+    color: #dddddd;
+}
+
+.web-detail-line:first-child strong {
+    color: #f0b54d;
+}
+
+.web-detail-line > span {
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 400;
     overflow-wrap: anywhere;
 }
 
-.meta-summary {
-    margin-top: 18px;
-    padding: 14px;
-    background: var(--surface-subtle);
-    border-radius: 6px;
+.web-detail-line.plain > span {
+    display: block;
+    line-height: 1.4;
     white-space: pre-wrap;
-    line-height: 1.6;
+}
+
+.web-detail-line.inline {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.web-detail-line.inline strong {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.web-fa-icon {
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+}
+
+.web-detail-line.inline > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .loading-overlay {
@@ -459,30 +777,60 @@ h1 {
     }
 
     .thumb-box {
-        height: 180px;
+        height: auto;
     }
 
-    .meta-layout {
+    .modal-panel {
+        width: min(100%, calc(100vw - 20px));
+    }
+
+    .web-detail-content {
+        flex-direction: column;
+        padding: 18px;
+    }
+
+    .web-detail-cover-section {
+        flex-basis: auto;
+    }
+
+    .web-detail-heading {
+        margin-right: 40px;
+    }
+
+    .web-detail-title {
+        font-size: 22px;
+    }
+
+    .web-detail-info-card {
         grid-template-columns: 1fr;
     }
 
-    .meta-cover {
-        max-width: 210px;
+    .web-detail-extra {
+        border-left: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
 }
 `;
 
 export const WEB_LIBRARY_JS = `
+const SVG_TAGS = new Set(["svg", "path"]);
+const DOWNLOAD_ICON = {
+    width: ${DOWNLOAD_ICON_WIDTH},
+    height: ${DOWNLOAD_ICON_HEIGHT},
+    path: ${JSON.stringify(DOWNLOAD_ICON_PATH)},
+};
+const DETAIL_ICONS = ${JSON.stringify(DETAIL_ICON_DATA)};
+
 const state = {
     currentDir: "",
     query: "",
     canZip: false,
 };
+const responseCache = new Map();
 
 const elements = {
     breadcrumbs: document.getElementById("breadcrumbs"),
     grid: document.getElementById("libraryGrid"),
-    locationLabel: document.getElementById("locationLabel"),
     modalClose: document.getElementById("modalClose"),
     modalContent: document.getElementById("modalContent"),
     modalOverlay: document.getElementById("modalOverlay"),
@@ -493,12 +841,23 @@ const elements = {
     loadingText: document.getElementById("loadingText"),
 };
 
+if ("scrollRestoration" in history) {
+    history.scrollRestoration = "manual";
+}
+
 function createElement(tag, options = {}, children = []) {
-    const node = document.createElement(tag);
+    const isSvg = SVG_TAGS.has(tag);
+    const node = isSvg
+        ? document.createElementNS("http://www.w3.org/2000/svg", tag)
+        : document.createElement(tag);
     for (const [key, value] of Object.entries(options)) {
         if (value === undefined || value === null) continue;
         if (key === "className") {
-            node.className = value;
+            if (isSvg) {
+                node.setAttribute("class", value);
+            } else {
+                node.className = value;
+            }
         } else if (key === "text") {
             node.textContent = value;
         } else if (key === "dataset") {
@@ -545,23 +904,53 @@ function queryString(values) {
     return text ? "?" + text : "";
 }
 
-async function fetchJson(url) {
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+async function fetchJson(url, options = {}) {
+    const useCache = options.useCache !== false;
+    if (useCache && responseCache.has(url)) return cloneJson(responseCache.get(url));
     const response = await fetch(url);
     if (!response.ok) {
         const text = await response.text();
         throw new Error(text || "HTTP " + response.status);
     }
-    return response.json();
+    const data = await response.json();
+    if (useCache) responseCache.set(url, data);
+    return cloneJson(data);
+}
+
+function saveCurrentScrollState() {
+    const current = history.state || {};
+    history.replaceState({
+        ...current,
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+    }, "", location.href);
 }
 
 function updateHistory(nextState, replace = false) {
     const url = queryString({ dir: nextState.dir, q: nextState.q });
-    const historyState = { dir: nextState.dir || "", q: nextState.q || "" };
+    const historyState = {
+        dir: nextState.dir || "",
+        q: nextState.q || "",
+        scrollX: Number(nextState.scrollX) || 0,
+        scrollY: Number(nextState.scrollY) || 0,
+    };
     if (replace) {
         history.replaceState(historyState, "", url || location.pathname);
     } else {
         history.pushState(historyState, "", url || location.pathname);
     }
+}
+
+function restoreScrollPosition(scrollX = 0, scrollY = 0) {
+    window.requestAnimationFrame(() => window.scrollTo({
+        top: Number(scrollY) || 0,
+        left: Number(scrollX) || 0,
+        behavior: "auto",
+    }));
 }
 
 function thumbSource(item) {
@@ -571,6 +960,49 @@ function thumbSource(item) {
 
 function makeButton(label, className = "text-button") {
     return createElement("button", { type: "button", className, text: label });
+}
+
+function createDownloadIcon() {
+    return createElement("svg", {
+        className: "download-icon",
+        viewBox: "0 0 " + DOWNLOAD_ICON.width + " " + DOWNLOAD_ICON.height,
+        "aria-hidden": "true",
+        focusable: "false",
+    }, createElement("path", { d: DOWNLOAD_ICON.path }));
+}
+
+function createDetailIcon(name) {
+    const icon = DETAIL_ICONS[name];
+    if (!icon) return null;
+    const svg = createElement("svg", {
+        className: "web-fa-icon",
+        viewBox: "0 0 " + icon.width + " " + icon.height,
+        "aria-hidden": "true",
+        focusable: "false",
+    });
+    for (const pathData of icon.paths) {
+        svg.appendChild(createElement("path", { d: pathData }));
+    }
+    return svg;
+}
+
+function makeDownloadIconLink(href, downloadName) {
+    return createElement("a", {
+        className: "card-download-button",
+        href,
+        download: downloadName,
+        "aria-label": "다운로드",
+        title: "다운로드",
+    }, createDownloadIcon());
+}
+
+function makeDownloadIconButton(label = "다운로드") {
+    return createElement("button", {
+        type: "button",
+        className: "card-download-button",
+        "aria-label": label,
+        title: label,
+    }, createDownloadIcon());
 }
 
 function renderBreadcrumb(data, mode) {
@@ -621,9 +1053,16 @@ function createThumbnail(kind, item) {
 }
 
 function folderMetaText(folder) {
-    if (folder.is_library) return "Library";
     const count = Number(folder.count) || 0;
     return count + " items";
+}
+
+function createCardInfoTag(value) {
+    return createElement("div", {
+        className: "card-count-tag",
+        title: value,
+        text: value,
+    });
 }
 
 function createFolderCard(folder) {
@@ -632,38 +1071,33 @@ function createFolderCard(folder) {
         dataset: { clickable: "true" },
     });
     card.addEventListener("click", () => loadList(folder.path, true));
+    card.appendChild(createCardInfoTag(folderMetaText(folder)));
 
     const actions = createElement("div", { className: "card-actions" });
-    const openButton = makeButton("열기", "action-button");
-    openButton.addEventListener("click", event => {
-        event.stopPropagation();
-        loadList(folder.path, true);
-    });
-    actions.appendChild(openButton);
 
     if (!folder.is_library && folder.has_metadata) {
-        const infoButton = makeButton("책 정보", "action-button secondary");
+        const infoButton = makeButton("상세정보", "action-button secondary");
         infoButton.addEventListener("click", event => {
             event.stopPropagation();
-            showMetadata(folder.path);
+            showMetadata({ dir: folder.path });
         });
         actions.appendChild(infoButton);
     }
 
     if (!folder.is_library && state.canZip && !folder.has_subfolders && Number(folder.count) > 0) {
-        const zipButton = makeButton("ZIP 다운로드", "action-button success");
+        const zipButton = makeDownloadIconButton("ZIP 다운로드");
         zipButton.addEventListener("click", event => {
             event.stopPropagation();
             downloadFolderZip(folder);
         });
-        actions.appendChild(zipButton);
+        card.appendChild(zipButton);
     }
 
-    const body = createElement("div", { className: "card-body" }, [
+    const bodyChildren = [
         createElement("div", { className: "card-title", text: folder.name || basename(folder.path) }),
-        createElement("div", { className: "card-meta", text: folderMetaText(folder) }),
-        actions,
-    ]);
+    ];
+    if (actions.childNodes.length) bodyChildren.push(actions);
+    const body = createElement("div", { className: "card-body" }, bodyChildren);
     card.append(createThumbnail("folder", folder), body);
     return card;
 }
@@ -672,24 +1106,28 @@ function createFileCard(file) {
     const title = file.title || file.name || basename(file.path);
     const card = createElement("article", { className: "library-card" });
     const actions = createElement("div", { className: "card-actions" });
-    const link = createElement("a", {
-        className: "action-button",
-        href: "/api/download?file=" + encodeURIComponent(file.path),
-        download: file.name || basename(file.path),
-        text: "다운로드",
-    });
-    actions.appendChild(link);
+    card.appendChild(createCardInfoTag(formatSize(file.size)));
+    card.appendChild(makeDownloadIconLink(
+        "/api/download?file=" + encodeURIComponent(file.path),
+        file.name || basename(file.path),
+    ));
 
-    const body = createElement("div", { className: "card-body" }, [
+    if (file.has_metadata) {
+        const infoButton = makeButton("상세정보", "action-button secondary");
+        infoButton.addEventListener("click", () => showMetadata({ file: file.path }));
+        actions.appendChild(infoButton);
+    }
+
+    const bodyChildren = [
         createElement("div", { className: "card-title", text: title }),
-        createElement("div", { className: "card-meta", text: formatSize(file.size) }),
-        actions,
-    ]);
+    ];
+    if (actions.childNodes.length) bodyChildren.push(actions);
+    const body = createElement("div", { className: "card-body" }, bodyChildren);
     card.append(createThumbnail("file", file), body);
     return card;
 }
 
-function renderList(data, mode = "list") {
+function renderList(data, mode = "list", options = {}) {
     state.canZip = Boolean(data.can_zip);
     state.currentDir = data.current_dir || "";
     const cards = [];
@@ -700,23 +1138,26 @@ function renderList(data, mode = "list") {
         cards.push(createElement("div", { className: "empty-state", text: "표시할 항목이 없습니다." }));
     }
 
-    elements.locationLabel.textContent = mode === "search"
-        ? "Search: " + state.query
-        : (data.current_dir || "Library Root");
     renderBreadcrumb(data, mode);
     elements.grid.replaceChildren(...cards);
     const folderCount = (data.folders || []).length;
     const fileCount = (data.files || []).length;
     setStatus(folderCount + " folders, " + fileCount + " files");
+    restoreScrollPosition(options.scrollX, options.scrollY);
 }
 
-async function loadList(dir = "", pushHistory = true) {
-    setLoading("목록을 불러오는 중...");
+async function loadList(dir = "", pushHistory = true, options = {}) {
+    if (pushHistory) saveCurrentScrollState();
+    const url = "/api/list" + queryString({ dir });
+    if (!responseCache.has(url)) setLoading("목록을 불러오는 중...");
     try {
         state.query = "";
         elements.searchInput.value = "";
-        const data = await fetchJson("/api/list" + queryString({ dir }));
-        renderList(data, "list");
+        const data = await fetchJson(url);
+        renderList(data, "list", {
+            scrollX: options.scrollX,
+            scrollY: options.scrollY,
+        });
         if (pushHistory) updateHistory({ dir: data.current_dir || "" });
     } catch (error) {
         setStatus(error.message, "error");
@@ -725,18 +1166,23 @@ async function loadList(dir = "", pushHistory = true) {
     }
 }
 
-async function runSearch(query, pushHistory = true) {
+async function runSearch(query, pushHistory = true, options = {}) {
     const q = String(query || "").trim();
     if (!q) {
         loadList(state.currentDir, pushHistory);
         return;
     }
-    setLoading("검색 중...");
+    if (pushHistory) saveCurrentScrollState();
+    const url = "/api/search" + queryString({ q });
+    if (!responseCache.has(url)) setLoading("검색 중...");
     try {
         state.query = q;
-        const data = await fetchJson("/api/search" + queryString({ q }));
+        const data = await fetchJson(url);
         data.current_dir = state.currentDir;
-        renderList(data, "search");
+        renderList(data, "search", {
+            scrollX: options.scrollX,
+            scrollY: options.scrollY,
+        });
         if (pushHistory) updateHistory({ q });
     } catch (error) {
         setStatus(error.message, "error");
@@ -747,58 +1193,181 @@ async function runSearch(query, pushHistory = true) {
 
 function closeModal() {
     elements.modalOverlay.hidden = true;
+    document.body.classList.remove("modal-open");
     elements.modalContent.replaceChildren();
 }
 
-function metadataValue(value) {
-    return String(value || "").trim() || "-";
+function metadataValue(value, fallback = "-") {
+    return String(value || "").trim() || fallback;
 }
 
-function appendMetadataRow(list, label, value) {
-    const term = createElement("dt", { text: label });
-    const desc = createElement("dd", { text: metadataValue(value) });
-    const row = createElement("div", { className: "meta-row" }, [term, desc]);
-    list.appendChild(row);
+function splitMetadataValues() {
+    const seen = new Set();
+    const results = [];
+    for (const value of arguments) {
+        const values = Array.isArray(value) ? value : String(value || "").split(/[;,]/);
+        for (const item of values) {
+            const text = String(item || "").trim();
+            if (!text || seen.has(text)) continue;
+            seen.add(text);
+            results.push(text);
+        }
+    }
+    return results;
 }
 
-async function showMetadata(dir) {
+function joinedMetadataValues() {
+    return splitMetadataValues.apply(null, arguments).join(", ");
+}
+
+function formatDate(value) {
+    if (!value) return "-";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function isExternalHttpLink(value = "") {
+    return /^https?:\\/\\//i.test(String(value || "").trim());
+}
+
+function createDetailLabel(icon, label) {
+    return [
+        createDetailIcon(icon),
+        createElement("span", { text: label }),
+    ];
+}
+
+function appendMetadataRow(grid, icon, label, value, type = "") {
+    const labelNode = createElement("div", {
+        className: "web-metadata-label" + (type === "link" ? " link-label" : ""),
+    }, createDetailLabel(icon, label));
+    const valueNode = createElement("div", {
+        className: "web-metadata-value",
+        title: metadataValue(value),
+    });
+    if (type === "link" && isExternalHttpLink(value)) {
+        valueNode.appendChild(createElement("a", {
+            className: "web-metadata-link-value",
+            href: String(value).trim(),
+            target: "_blank",
+            rel: "noopener noreferrer",
+            text: metadataValue(value),
+        }));
+    } else {
+        valueNode.textContent = metadataValue(value);
+    }
+    grid.append(labelNode, valueNode);
+}
+
+function createMetadataCover(meta) {
+    const cover = createElement("div", { className: "web-detail-cover" });
+    const src = thumbSource(meta);
+    if (src) {
+        const image = createElement("img", { src, alt: "" });
+        image.addEventListener("error", () => cover.replaceChildren("No Image"));
+        cover.appendChild(image);
+    } else {
+        cover.textContent = "No Image";
+    }
+    return cover;
+}
+
+function createMetadataTags(meta) {
+    const tags = splitMetadataValues(meta.tags, meta.genre);
+    return createElement("div", { className: "web-detail-tags" }, (
+        tags.length ? tags : ["-"]
+    ).map(tag => createElement("span", { text: tag })));
+}
+
+function buildMetadataPanel(meta) {
+    const coverSrc = thumbSource(meta);
+    const title = metadataValue(meta.title || meta.name || basename(meta.path));
+    const series = metadataValue(meta.series === "-" ? "" : meta.series, "시리즈 없음");
+    const creators = joinedMetadataValues(
+        meta.writer,
+        meta.penciller,
+        meta.inker,
+        meta.colorist,
+        meta.letterer,
+        meta.cover_artist,
+        meta.creators,
+    );
+    const formatManga = [meta.format, meta.manga].filter(Boolean).join(" / ");
+    const arcTeamLocation = [
+        joinedMetadataValues(meta.story_arc),
+        joinedMetadataValues(meta.teams),
+        joinedMetadataValues(meta.locations),
+    ].filter(Boolean).join(" / ");
+
+    const panel = createElement("div", { className: "web-detail-panel" });
+    if (coverSrc) {
+        const background = createElement("div", { className: "web-detail-bg" });
+        background.style.backgroundImage = "url(" + coverSrc + ")";
+        panel.appendChild(background);
+    }
+    panel.appendChild(createElement("div", { className: "web-detail-overlay" }));
+
+    const grid = createElement("div", { className: "web-metadata-grid" });
+    appendMetadataRow(grid, "user", "제작진", creators);
+    appendMetadataRow(grid, "building", "출판사", meta.publisher);
+    appendMetadataRow(grid, "fileLines", "페이지수", meta.page_count);
+    appendMetadataRow(grid, "bookOpen", "전체권수", meta.total_volume || meta.volume_count);
+    appendMetadataRow(grid, "archive", "포맷 / 망가(방향)", formatManga);
+    appendMetadataRow(grid, "star", "평점", meta.rating);
+    appendMetadataRow(grid, "child", "연령등급", meta.age_rating);
+    appendMetadataRow(grid, "link", "링크", meta.web || meta.link, "link");
+
+    const extra = createElement("section", { className: "web-detail-extra" }, [
+        createElement("div", { className: "web-detail-line plain" }, [
+            createElement("strong", {}, createDetailLabel("fileLines", "줄거리")),
+            createElement("span", { text: metadataValue(meta.description || meta.summary, "줄거리 없음") }),
+        ]),
+        createElement("div", { className: "web-detail-line inline" }, [
+            createElement("strong", {}, createDetailLabel("layers", "스토리 아크 / 팀 / 장소")),
+            createElement("span", { text: metadataValue(arcTeamLocation) }),
+        ]),
+        createElement("div", { className: "web-detail-line inline" }, [
+            createElement("strong", {}, createDetailLabel("users", "등장인물")),
+            createElement("span", { text: joinedMetadataValues(meta.characters) || "-" }),
+        ]),
+    ]);
+
+    const content = createElement("div", { className: "web-detail-content" }, [
+        createElement("div", { className: "web-detail-cover-section" }, [
+            createElement("div", { className: "web-detail-cover-stack" }, [
+                createMetadataCover(meta),
+                createElement("div", { className: "web-detail-cover-caption" }, [
+                    createElement("div", { text: "해상도: " + metadataValue(meta.resolution) + ", (" + formatSize(meta.size) + ")" }),
+                    createElement("div", { text: formatDate(meta.created || meta.ctime) }),
+                    createElement("div", { text: formatDate(meta.modified || meta.mtime) }),
+                ]),
+            ]),
+        ]),
+        createElement("div", { className: "web-detail-main" }, [
+            createElement("div", { className: "web-detail-heading" }, [
+                createElement("div", { className: "web-detail-series", text: series }),
+                createElement("h2", { id: "modalTitle", className: "web-detail-title", text: title }),
+                createMetadataTags(meta),
+            ]),
+            createElement("div", { className: "web-detail-info-card" }, [grid, extra]),
+        ]),
+    ]);
+
+    panel.appendChild(createElement("div", { className: "web-detail-scroll" }, [content]));
+    return panel;
+}
+
+async function showMetadata(target = {}) {
     setLoading("정보를 불러오는 중...");
     try {
-        const meta = await fetchJson("/api/folder-meta" + queryString({ dir }));
-        const title = metadataValue(meta.title === "-" ? "" : meta.title);
-        const cover = createElement("div", { className: "meta-cover" });
-        if (meta.thumb_path) {
-            const image = createElement("img", {
-                src: "/api/thumbnail?file=" + encodeURIComponent(meta.thumb_path),
-                alt: "",
-            });
-            image.addEventListener("error", () => cover.replaceChildren("No Image"));
-            cover.appendChild(image);
-        } else {
-            cover.textContent = "No Image";
+        const endpoint = target.file ? "/api/file-meta" : "/api/folder-meta";
+        const meta = await fetchJson(endpoint + queryString(target.file ? { file: target.file } : { dir: target.dir }));
+        if (!meta || Object.keys(meta).length === 0) {
+            throw new Error("표시할 메타데이터가 없습니다.");
         }
-
-        const list = createElement("dl");
-        appendMetadataRow(list, "시리즈", meta.series);
-        appendMetadataRow(list, "작가", meta.writer);
-        appendMetadataRow(list, "출판사", meta.publisher);
-        appendMetadataRow(list, "장르", meta.genre);
-        appendMetadataRow(list, "태그", meta.tags);
-        appendMetadataRow(list, "평점", meta.rating);
-
-        const content = createElement("div", { className: "meta-layout" }, [
-            cover,
-            createElement("div", {}, [
-                createElement("h2", { id: "modalTitle", className: "meta-title", text: title }),
-                list,
-            ]),
-        ]);
-        const summary = createElement("div", {
-            className: "meta-summary",
-            text: metadataValue(meta.summary === "-" ? "" : meta.summary),
-        });
-        elements.modalContent.replaceChildren(content, summary);
+        elements.modalContent.replaceChildren(buildMetadataPanel(meta));
         elements.modalOverlay.hidden = false;
+        document.body.classList.add("modal-open");
     } catch (error) {
         setStatus(error.message, "error");
     } finally {
@@ -834,9 +1403,15 @@ window.addEventListener("popstate", event => {
     const next = event.state || {};
     if (next.q) {
         elements.searchInput.value = next.q;
-        runSearch(next.q, false);
+        runSearch(next.q, false, {
+            scrollX: next.scrollX,
+            scrollY: next.scrollY,
+        });
     } else {
-        loadList(next.dir || "", false);
+        loadList(next.dir || "", false, {
+            scrollX: next.scrollX,
+            scrollY: next.scrollY,
+        });
     }
 });
 

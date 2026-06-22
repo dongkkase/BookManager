@@ -113,6 +113,41 @@ function safeName(name) {
     .trim() || 'Page';
 }
 
+function trailingPageNumber(entryPath = '') {
+    const normalizedPath = normalizeInnerPath(entryPath);
+    const directory = path.posix.dirname(normalizedPath);
+    const baseName = path.posix.basename(normalizedPath, path.posix.extname(normalizedPath));
+    const match = baseName.match(/(\p{Decimal_Number}+)\s*$/u);
+    if (!match) return null;
+    const asciiDigits = decimalTokenToAscii(match[1]);
+    if (asciiDigits === null) return null;
+    return {
+        groupKey: `${directory === '.' ? '' : directory}/${baseName.slice(0, match.index)}`,
+        page: Number.parseInt(asciiDigits, 10),
+    };
+}
+
+export function missingPageNumbersForEntries(entries = []) {
+    const groups = new Map();
+    for (const entry of entries) {
+        const parsed = trailingPageNumber(entry.name || entry.originalPath || entry.oldName || '');
+        if (!parsed || !Number.isFinite(parsed.page)) continue;
+        if (!groups.has(parsed.groupKey)) groups.set(parsed.groupKey, new Set());
+        groups.get(parsed.groupKey).add(parsed.page);
+    }
+
+    const missing = new Set();
+    for (const pages of groups.values()) {
+        if (pages.size < 2) continue;
+        const sorted = [...pages].sort((a, b) => a - b);
+        for (let page = sorted[0]; page <= sorted.at(-1); page += 1) {
+            if (!pages.has(page)) missing.add(page);
+        }
+    }
+
+    return [...missing].sort((a, b) => a - b);
+}
+
 function imageQuality(options = {}) {
     const value = Number(options.img_quality ?? options.jpg_quality ?? 100);
     if (!Number.isFinite(value)) return 100;
@@ -400,6 +435,7 @@ export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
         capOpt: false,
         exifOpt: true,
         count: entries.length,
+        missingPages: missingPageNumbersForEntries(entries).join(', '),
         sizeMb: stat.size / (1024 * 1024),
         entries,
       });

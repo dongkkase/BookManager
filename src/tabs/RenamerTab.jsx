@@ -729,7 +729,8 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                   <table className="renamer-table">
                     <thead>
                       <tr>
-                        <th style={{ width: '58%' }}>{t('col_name')}</th>
+                        <th style={{ width: '46%' }}>{t('col_name')}</th>
+                        <th style={{ width: '12%' }}>{t('col_missing_pages')}</th>
                         <th style={{ width: '8%' }}>{t('col_page_count')}</th>
                         <th style={{ width: '10%' }}>{t('col_size')}</th>
                         <th style={{ width: '12%' }}>{t('col_cap_opt')}</th>
@@ -783,6 +784,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                                 )}
                               </div>
                             </td>
+                            <td className="renamer-cell-center renamer-missing-pages" title={file.missingPages || ''}>{file.missingPages || ''}</td>
                             <td className="renamer-cell-center">{file.count}</td>
                             <td className="renamer-cell-center">{Number(file.sizeMb || 0).toFixed(1)} MB</td>
                             <td className="renamer-cell-center">

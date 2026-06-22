@@ -2585,49 +2585,82 @@ function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onCon
     () => createLibraryMovePlans(sources, selected, { createCurrentFolder, folderMode }),
     [createCurrentFolder, folderMode, selected, sources],
   );
+  const modeLabel = folderMode ? t('library_move_mode_folder') : t('library_move_mode_file');
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
       <div className="file-action-dialog library-move-dialog" onMouseDown={event => event.stopPropagation()}>
-        <div className="dialog-titlebar">
-          <span>{t('dlg_move_lib_title')}</span>
-          <button onClick={onClose}>×</button>
+        <div className="dialog-titlebar library-move-titlebar">
+          <span className="library-move-title"><FaIcon name="folderOpen" size={13} />{t('dlg_move_lib_title')}</span>
+          <button className="library-move-close" onClick={onClose} aria-label={t('btn_cancel')}><FaIcon name="xmark" size={13} /></button>
         </div>
-        <div className="file-action-dialog-body">
-          <label htmlFor="library-move-select">{t('lbl_select_lib')}</label>
-          <select
-            id="library-move-select"
-            value={selected}
-            onChange={event => setSelected(event.target.value)}
-          >
-            {libraries.map(library => <option key={library} value={library}>{library}</option>)}
-          </select>
+        <div className="file-action-dialog-body library-move-body">
+          <div className="library-move-summary">
+            <div className="library-move-summary-item">
+              <span>{t('library_move_count')}</span>
+              <strong>{t('library_move_count_value', [sources.length])}</strong>
+            </div>
+            <div className="library-move-summary-item">
+              <span>{t('library_move_mode')}</span>
+              <strong>{modeLabel}</strong>
+            </div>
+            <div className="library-move-summary-item">
+              <span>{t('library_move_destination')}</span>
+              <strong title={selected}>{selected || '-'}</strong>
+            </div>
+          </div>
+          <section className="library-move-section library-move-target-section">
+            <div className="library-move-section-title">
+              <label className="library-move-section-label" htmlFor="library-move-select">
+                <FaIcon name="folder" size={12} />
+                <span>{t('lbl_select_lib')}</span>
+              </label>
+            </div>
+            <select
+              id="library-move-select"
+              value={selected}
+              onChange={event => setSelected(event.target.value)}
+            >
+              {libraries.map(library => <option key={library} value={library}>{library}</option>)}
+            </select>
+          </section>
           {!folderMode && (
-            <label className="library-move-folder-option">
+            <label className="library-move-folder-option library-move-option-card">
               <input
                 type="checkbox"
                 checked={createCurrentFolder}
                 onChange={event => setCreateCurrentFolder(event.target.checked)}
               />
-              <span>{t('chk_create_folder')}</span>
+              <span className="library-move-option-text">
+                <strong>{t('library_move_option')}</strong>
+                <span>{t('chk_create_folder')}</span>
+              </span>
             </label>
           )}
-          <strong>{t('lbl_preview_move')}</strong>
-          <div className="library-move-preview">
-            <div className="library-move-preview-head">
-              <span>{t('col_source_path')}</span>
-              <span>{t('col_dest_path')}</span>
+          <section className="library-move-section library-move-preview-section">
+            <div className="library-move-section-title">
+              <strong className="library-move-section-label">
+                <FaIcon name="list" size={12} />
+                <span>{t('lbl_preview_move')}</span>
+              </strong>
+              <span className="library-move-preview-count">{t('library_move_preview_count', [plans.length])}</span>
             </div>
-            {plans.map(plan => (
-              <div className="library-move-preview-row" key={plan.src}>
-                <span title={plan.src}>{plan.src}</span>
-                <span title={plan.dest}>{plan.dest}</span>
+            <div className="library-move-preview">
+              <div className="library-move-preview-head">
+                <span>{t('col_source_path')}</span>
+                <span>{t('col_dest_path')}</span>
               </div>
-            ))}
-          </div>
+              {plans.map(plan => (
+                <div className="library-move-preview-row" key={plan.src}>
+                  <span className="library-move-path-text" title={plan.src}>{plan.src}</span>
+                  <span className="library-move-path-text" title={plan.dest}>{plan.dest}</span>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
-        <div className="layout-dialog-footer">
-          <button disabled={!selected || plans.length === 0} onClick={() => onConfirm(plans)}>{t('btn_ok')}</button>
+        <div className="layout-dialog-footer library-move-footer">
+          <button className="library-move-confirm" disabled={!selected || plans.length === 0} onClick={() => onConfirm(plans)}>{t('btn_ok')}</button>
           <button onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>

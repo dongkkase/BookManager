@@ -97,6 +97,27 @@
   font-size: var(--font-sm);
 }
 
+.sharing-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f4f4f5;
+  font-weight: bold;
+  font-size: var(--font-base);
+}
+
+.sharing-option-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.sharing-option-row input:disabled,
+.sharing-option-row input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .sharing-label {
   color: #a1a1aa;
   font-weight: bold;

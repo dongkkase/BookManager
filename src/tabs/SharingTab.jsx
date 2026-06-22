@@ -30,6 +30,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     const [webdavPwVisible, setWebdavPwVisible] = useState(false);
     const [webdavPort, setWebdavPort] = useState(config?.webdav_port || 8081);
     const [webdavRunning, setWebdavRunning] = useState(false);
+    const [httpsEnabled, setHttpsEnabled] = useState(Boolean(config?.sharing_https_enabled));
     const [busyServers, setBusyServers] = useState({});
     const [localIp, setLocalIp] = useState('127.0.0.1');
     const [logs, setLogs] = useState([
@@ -65,8 +66,10 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         setWebdavPort(config?.webdav_port || 8081);
         setWebdavId(config?.webdav_username || 'user');
         setWebdavPw(config?.webdav_password || '1234');
+        setHttpsEnabled(Boolean(config?.sharing_https_enabled));
     }, [
         config?.opds_port,
+        config?.sharing_https_enabled,
         config?.web_port,
         config?.webdav_password,
         config?.webdav_port,
@@ -87,6 +90,9 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             setOpdsRunning(Boolean(status.OPDS?.running));
             setWebRunning(Boolean(status.Web?.running));
             setWebdavRunning(Boolean(status.WebDAV?.running));
+            if (status.OPDS?.running) setHttpsEnabled(Boolean(status.OPDS.secure));
+            if (status.Web?.running) setHttpsEnabled(Boolean(status.Web.secure));
+            if (status.WebDAV?.running) setHttpsEnabled(Boolean(status.WebDAV.secure));
             if (status.OPDS?.port) setOpdsPort(status.OPDS.port);
             if (status.Web?.port) setWebPort(status.Web.port);
             if (status.WebDAV?.port) setWebdavPort(status.WebDAV.port);
@@ -132,6 +138,17 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         return nextValue;
     };
 
+    const handleHttpsChange = async event => {
+        const enabled = Boolean(event.target.checked);
+        setHttpsEnabled(enabled);
+        try {
+            await saveConfig?.({ sharing_https_enabled: enabled });
+        } catch (error) {
+            setHttpsEnabled(current => !current);
+            appendLog('ERROR', text('config_save_failed', '설정 저장 실패: {msg}', { msg: error.message }));
+        }
+    };
+
     const handleCopyUrl = async url => {
         try {
             await navigator.clipboard.writeText(url);
@@ -151,7 +168,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                 setOpdsRunning(false);
             } else {
                 const port = await savePort('opds_port', opdsPort, 8080, setOpdsPort);
-                const result = await window.electronAPI.startServer('OPDS', { port });
+                const result = await window.electronAPI.startServer('OPDS', { port, https: httpsEnabled });
                 setLocalIp(result.localIp || localIp);
                 setOpdsRunning(Boolean(result.running));
             }
@@ -172,7 +189,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                 setWebRunning(false);
             } else {
                 const port = await savePort('web_port', webPort, 8082, setWebPort);
-                const result = await window.electronAPI.startServer('Web', { port });
+                const result = await window.electronAPI.startServer('Web', { port, https: httpsEnabled });
                 setLocalIp(result.localIp || localIp);
                 setWebRunning(Boolean(result.running));
             }
@@ -199,6 +216,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                     port,
                     username,
                     password,
+                    https: httpsEnabled,
                 });
                 setLocalIp(result.localIp || localIp);
                 setWebdavRunning(Boolean(result.running));
@@ -211,14 +229,33 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         }
     };
 
-    const opdsUrl = `http://${localIp}:${opdsPort}/opds`;
-    const webUrl = `http://${localIp}:${webPort}/`;
-    const webdavUrl = `http://${localIp}:${webdavPort}/`;
+    const anyServerRunning = opdsRunning || webRunning || webdavRunning;
+    const urlScheme = httpsEnabled ? 'https' : 'http';
+    const opdsUrl = `${urlScheme}://${localIp}:${opdsPort}/opds`;
+    const webUrl = `${urlScheme}://${localIp}:${webPort}/`;
+    const webdavUrl = `${urlScheme}://${localIp}:${webdavPort}/`;
 
     return (
         <div className="sharing-tab">
             <div className="sharing-left-panel">
                 <div className="sharing-groupbox">
+                    <div className="sharing-groupbox-title">{t('tab_sharing_security_title')}</div>
+                    <div className="sharing-groupbox-content">
+                        <label className="sharing-option-row" htmlFor="sharing-https-enabled">
+                            <input
+                                id="sharing-https-enabled"
+                                type="checkbox"
+                                checked={httpsEnabled}
+                                onChange={handleHttpsChange}
+                                disabled={anyServerRunning}
+                            />
+                            <span>{t('tab_sharing_https_enabled')}</span>
+                        </label>
+                        <div className="sharing-desc">{t('tab_sharing_https_desc')}</div>
+                    </div>
+                </div>
+
+                <div className="sharing-groupbox mt-20">
                     <div className="sharing-groupbox-title">{t('tab_sharing_opds_title')}</div>
                     <div className="sharing-groupbox-content">
                         <div className="sharing-row">

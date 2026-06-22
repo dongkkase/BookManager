@@ -16,7 +16,11 @@ export function formatLibraryRelativeTime(t, isoValue = '', nowMs = Date.now()) 
     if (minutes < 60) return t('folder_library_time_minutes', [minutes]);
     const hours = Math.floor(minutes / 60);
     if (hours < 24) return t('folder_library_time_hours', [hours]);
-    return t('folder_library_time_days', [Math.floor(hours / 24)]);
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 export function isLibraryScanning(state, options = {}) {
@@ -45,17 +49,15 @@ export function libraryStatusClass(state, options = {}) {
 
 export function libraryStatusText(t, state, options = {}) {
     const status = resolveLibraryStatus(state, options);
-    if (status === 'pending') return t('folder_library_never_scanned');
-    if (status === 'scanning') return t('folder_library_scanning');
-    if (status === 'cancelled') return t('folder_library_scan_cancelled');
-    if (status === 'error') return t('folder_library_scan_failed');
-    if (!state.lastScannedAt) return t('folder_library_never_scanned');
-    const relativeTime = formatLibraryRelativeTime(t, state.lastScannedAt, options.nowMs);
-    const count = state.indexedCount || state.fileCount || 0;
-    if (status === 'needs-scan') return t('folder_library_needs_scan');
-    return count > 0
-        ? t('folder_library_scan_meta', [count, relativeTime])
-        : relativeTime;
+    const folderCount = Number(options.folderCount ?? state?.folderCount ?? 0) || 0;
+    const count = state?.indexedCount || state?.fileCount || 0;
+    let statusText = '';
+    if (status === 'pending') statusText = t('folder_library_never_scanned');
+    else if (status === 'scanning') statusText = t('folder_library_scanning');
+    else if (status === 'cancelled') statusText = t('folder_library_scan_cancelled');
+    else if (status === 'error') statusText = t('folder_library_scan_failed');
+    else statusText = formatLibraryRelativeTime(t, state.lastScannedAt, options.nowMs);
+    return t('folder_library_scan_meta', [folderCount, count, statusText]);
 }
 
 export function shouldShowLibrarySyncButton(state, options = {}) {

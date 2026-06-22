@@ -21,6 +21,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [roots, setRoots] = useState([]);
   const [folderCache, setFolderCache] = useState({});
+  const [libraryFolderCounts, setLibraryFolderCounts] = useState({});
   const [specialPaths, setSpecialPaths] = useState({});
   const [selectedSource, setSelectedSource] = useState('');
   const treeListRef = useRef(null);
@@ -71,6 +72,30 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   useEffect(() => {
     setFolderCache({});
   }, [refreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadLibraryFolderCounts = async () => {
+      const counts = {};
+      await Promise.all((libraries || []).map(async lib => {
+        const key = normalizeLibraryKey(lib);
+        counts[key] = 0;
+        try {
+          const items = await window.electronAPI?.readDir?.(lib);
+          counts[key] = Array.isArray(items)
+            ? items.filter(item => item.isDirectory).length
+            : 0;
+        } catch (error) {
+          console.error('Failed to count library folders:', error);
+        }
+      }));
+      if (!cancelled) setLibraryFolderCounts(counts);
+    };
+    loadLibraryFolderCounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [libraries, refreshToken]);
 
   const loadFolder = async (folderPath, force = false) => {
     if (!force && folderCache[folderPath]) return folderCache[folderPath];
@@ -167,7 +192,11 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
       </div>
       <ul className="nav-list">
         {libraries.length > 0 ? libraries.map((lib, idx) => {
-          const scanState = libraryScanStateMap[normalizeLibraryKey(lib)];
+          const libraryKey = normalizeLibraryKey(lib);
+          const scanState = libraryScanStateMap[libraryKey];
+          const libraryMetaText = libraryStatusText(t, scanState, {
+            folderCount: libraryFolderCounts[libraryKey] || 0,
+          });
           const isSyncing = isLibraryScanning(scanState);
           const showSyncButton = shouldShowLibrarySyncButton(scanState);
           return (
@@ -182,10 +211,10 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             }}
             onContextMenu={(event) => onLibraryContextMenu?.(event, lib)}
           >
-            <div className="library-list-main" title={lib}>
+            <div className="library-list-main" title={`${lib}\n${libraryMetaText}`}>
               <span className="library-list-name">{lib.split(/[\\/]/).pop() || lib}</span>
               <span className={`library-scan-status ${libraryStatusClass(scanState)}`}>
-                {libraryStatusText(t, scanState)}
+                {libraryMetaText}
               </span>
             </div>
             <div className="library-list-actions">

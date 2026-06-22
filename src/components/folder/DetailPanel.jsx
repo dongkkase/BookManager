@@ -25,6 +25,17 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+function isExternalHttpLink(value = '') {
+  return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function openExternalLink(value = '') {
+  const link = String(value || '').trim();
+  if (!isExternalHttpLink(link)) return;
+  if (window.getSelection?.()?.toString()) return;
+  window.electronAPI?.openExternal?.(link);
+}
+
 const DetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
   const [imageError, setImageError] = useState(false);
   const contentRef = useRef(null);
@@ -76,7 +87,7 @@ const DetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
     ['archive', `${t('col_format')} / ${t('col_manga')}`, [selectedFile.format, selectedFile.manga].filter(Boolean).join(' / ')],
     ['star', t('col_rating'), selectedFile.rating],
     ['child', t('col_age_rating'), selectedFile.age_rating],
-    ['link', t('col_web'), selectedFile.link],
+    ['link', t('col_web'), selectedFile.link, false, 'link'],
   ];
   const arcTeamLocation = [
     splitMetadataValues(selectedFile.story_arc).join(', '),
@@ -127,7 +138,7 @@ const DetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
               <section className="detail-extra">
                 <DetailLine icon="fileLines" label={t('col_summary')} value={selectedFile.description || t('info_no_summary')} plain />
                 <DetailLine icon="layers" label={t('info_arc_team_loc')} value={arcTeamLocation} inline />
-                <DetailLine icon="user" label={t('col_characters')} value={selectedFile.characters} inline />
+                <DetailLine icon="users" label={t('col_characters')} value={selectedFile.characters} inline />
               </section>
             </div>
 
@@ -153,14 +164,28 @@ const DetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
 function DetailFieldGroup({ fields }) {
   return (
     <div className="metadata-grid">
-      {fields.map(([icon, label, value, emptyWhenMissing]) => (
+      {fields.map(([icon, label, value, emptyWhenMissing, type]) => (
         <React.Fragment key={label}>
           <div className="metadata-label">
             <FaIcon name={icon} size={12} />
             <span>{label}</span>
           </div>
           <div className="metadata-value" title={formatDetailValue(value)}>
-            {emptyWhenMissing && !value ? '' : formatDetailValue(value)}
+            {type === 'link' && isExternalHttpLink(value) ? (
+              <span
+                className="metadata-link-value"
+                role="link"
+                tabIndex={0}
+                onClick={() => openExternalLink(value)}
+                onKeyDown={event => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  openExternalLink(value);
+                }}
+              >
+                {formatDetailValue(value)}
+              </span>
+            ) : emptyWhenMissing && !value ? '' : formatDetailValue(value)}
           </div>
         </React.Fragment>
       ))}

@@ -53,6 +53,20 @@ function sequenceMatcher(a, b) {
   return (2.0 * matches) / (a.length + b.length);
 }
 
+function stripKoreanStructuralNumberTokens(text) {
+    return String(text || '').replace(
+        /(?:제\s*)?\d+(?:\.\d+)?\s*(?:부(?!터)|장|편)(?=$|[\s\]\),._-]|[가-힣])/g,
+        ' '
+    );
+}
+
+function stripImageProcessingSuffix(text) {
+    const tokenPattern = '(?:waifu2x|noise\\d*|denoise\\d*|scale(?:[\\s_.-]*x?\\d+(?:[\\s_.-]\\d+)?)?|x\\d+(?:[\\s_.-]\\d+)?|upscale(?:d)?|resize(?:d)?|converted?|cleaned?|raw)';
+    return String(text || '')
+        .replace(new RegExp(`(\\d)${tokenPattern}(?=$|[\\s_.-]).*$`, 'i'), '$1')
+        .replace(new RegExp(`(?:^|[\\s_.-])${tokenPattern}(?=$|[\\s_.-]).*$`, 'i'), ' ');
+}
+
 export function cleanDisplayTitle(text) {
   let cleaned = String(text).normalize('NFC');
   cleaned = cleaned.replace(
@@ -84,7 +98,7 @@ export function cleanDisplayTitle(text) {
     /\d+(?:\.\d+)?\s*[~-]\s*\d+(?:\.\d+)?\s*(?:권|화|장|편|부)?/g,
     ' '
   );
-  cleaned = cleaned.replace(/\d+(?:\.\d+)?\s*(?:권|화|장|편|부)/g, ' ');
+  cleaned = cleaned.replace(/(?:제\s*)?\d+(?:\.\d+)?\s*(?:권|화)/g, ' ');
   cleaned = cleaned.replace(/[-_+,]+/g, ' ');
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
   return cleaned;
@@ -92,7 +106,7 @@ export function cleanDisplayTitle(text) {
 
 export function extractCoreTitle(text) {
   let cleaned = cleanDisplayTitle(String(text).normalize('NFC'));
-  const delimiterRegex = /(\d{3,4}\s*px|\d+\s*(?:권|화|부(?!터))?\s*[~-]\s*\d+|\d+\s*(?:권|화|부(?!터)|화씩)|완결|\s완(\s|$))/i;
+  const delimiterRegex = /(\d{3,4}\s*px|\d+\s*(?:권|화|부(?!터))?\s*[~-]\s*\d+|\d+\s*(?:권|화|화씩)|완결|\s완(\s|$))/i;
   const match = cleaned.match(delimiterRegex);
   if (match && match.index > 0) {
     cleaned = cleaned.slice(0, match.index);
@@ -311,10 +325,11 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
       /\d+(?:\.\d+)?\s*(?:px|p|pt|mb|gb|kb|k)(?![a-zA-Z])/gi,
       ''
     );
+    cleanForNums = stripImageProcessingSuffix(cleanForNums);
     const nums = cleanForNums.match(/\d+(?:\.\d+)?/g) || [];
     let base = reSub('^[_\-\s]+', '', parentCore);
 
-    if (nums && !isHash) {
+    if (nums.length > 0 && !isHash) {
       const targetNum = nums[nums.length - 1];
       const paddedNum = padMatch(targetNum);
       return lang === 'en'
@@ -329,9 +344,21 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
     /\d+(?:\.\d+)?\s*(?:px|p|pt|mb|gb|kb|k)(?![a-zA-Z])/gi,
     ''
   );
-  const volMatch = leafClean.match(
-    /(?:제|v|vol\.?\s*)?(\d+(?:\.\d+)?(?:[~-]\d+(?:\.\d+)?)?)\s*(권|화|장|편|부)/i
+  let volMatch = leafClean.match(
+    /(?:제\s*)?(\d+(?:\.\d+)?(?:\s*[~-]\s*\d+(?:\.\d+)?)?)\s*(권|화)(?![가-힣])/i
   );
+  if (!volMatch) {
+    const prefixedMatch = leafClean.match(
+      /\b(v|vol\.?|volume|c|ch\.?|chapter)\s*(\d+(?:\.\d+)?(?:\s*[~-]\s*\d+(?:\.\d+)?)?)/i
+    );
+    if (prefixedMatch) {
+      volMatch = [
+        prefixedMatch[0],
+        prefixedMatch[2],
+        /^(?:c|ch\.?|chapter)$/i.test(prefixedMatch[1]) ? '화' : '권',
+      ];
+    }
+  }
 
   let targetNum = null;
   let targetUnit = null;
@@ -339,6 +366,8 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
     targetNum = volMatch[1];
     targetUnit = volMatch[2];
   } else {
+    cleanForNums = stripKoreanStructuralNumberTokens(cleanForNums);
+    cleanForNums = stripImageProcessingSuffix(cleanForNums);
     const nums = cleanForNums.match(/\d+(?:\.\d+)?/g) || [];
     if (nums.length > 0) {
       targetNum = nums[nums.length - 1];
@@ -347,7 +376,7 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
         /\d+(?:\.\d+)?\s*(?:px|p|pt|mb|gb|kb|k)(?![a-zA-Z])/gi,
         ''
       );
-      const allNums = leafCleanNoPx.match(/\d+(?:\.\d+)?/g) || [];
+      const allNums = stripImageProcessingSuffix(stripKoreanStructuralNumberTokens(leafCleanNoPx)).match(/\d+(?:\.\d+)?/g) || [];
       if (allNums.length > 0) {
         targetNum = allNums[allNums.length - 1];
       }

@@ -14,6 +14,16 @@ export function titleOutputPath(item) {
     return `${base}${separator}${folderName}`;
 }
 
+export function filenameOutputPath(item) {
+    const filePath = String(item?.filepath || '');
+    const base = defaultOutputPath(filePath);
+    const separator = base.includes('\\') ? '\\' : '/';
+    const filename = filePath.slice(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1);
+    const dotIndex = filename.lastIndexOf('.');
+    const folderName = (dotIndex > 0 ? filename.slice(0, dotIndex) : filename).trim() || '파일명_수정필요';
+    return `${base}${separator}${folderName}`;
+}
+
 export function sanitizeOrganizerName(name) {
     return String(name || '')
         .replace(INVALID_FILENAME_CHARS, '_')
@@ -40,11 +50,11 @@ export function organizerVolumePrefix(volume) {
 }
 
 export function changeOrganizerUnit(name, unit, lang = 'ko') {
-    const match = String(name || '').match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?\s*([^0-9]*)$/i);
+    const match = String(name || '').match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
     if (!match) return String(name || '').trim();
     let base = match[1].trim();
     const number = match[2].trim();
-    const tail = match[3].trim();
+    const tail = (match[3] || '').trim();
     if (tail) base = `${base} ${tail}`.trim();
     const suffix = lang === 'en'
         ? (unit === 'chapter' ? 'c' : 'v')
@@ -53,6 +63,20 @@ export function changeOrganizerUnit(name, unit, lang = 'ko') {
             : (unit === 'chapter' ? '화' : '권');
     if (lang === 'en') return base ? `${base} ${suffix}${number}` : `${suffix}${number}`;
     return base ? `${base} ${number}${suffix}` : `${number}${suffix}`;
+}
+
+export function organizerOriginalFilenameName(volume) {
+    return String(volume?.original_basename || volume?.original_path || volume?.new_name || '').trim();
+}
+
+export function organizerExtractedTitleName(volume) {
+    return String(volume?.extracted_name || volume?.new_name || '').trim();
+}
+
+export function preserveOrganizerExtractedTitle(volume) {
+    const extractedName = organizerExtractedTitleName(volume);
+    if (!extractedName || volume?.extracted_name === extractedName) return volume;
+    return { ...volume, extracted_name: extractedName };
 }
 
 export function removeOrganizerItems(items, ids) {

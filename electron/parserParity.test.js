@@ -50,6 +50,48 @@ test('소수 권수, part, 외전 표기의 leaf 이름이 Python parser와 같�
     assert.equal(formatLeafName('Series', 'Side Story 3화', 0, 10, 'en'), 'Side Story Ch 03 Side Story');
 });
 
+test('제목의 부대, 부, 장 숫자는 권수로 오인하지 않는다', () => {
+    assert.equal(cleanDisplayTitle('에녹 제2부대의 배고픈 원정 밥'), '에녹 제2부대의 배고픈 원정 밥');
+    assert.equal(extractCoreTitle('에녹 제2부대의 배고픈 원정 밥'), '에녹 제2부대의 배고픈 원정 밥');
+    assert.equal(
+        formatLeafName('에녹 제2부대의 배고픈 원정 밥', '에녹 제2부대의 배고픈 원정 밥', 0, 1, 'ko'),
+        '에녹 제2부대의 배고픈 원정 밥',
+    );
+
+    assert.equal(cleanDisplayTitle('사이코 메트러 2부 01권'), '사이코 메트러 2부');
+    assert.equal(extractCoreTitle('사이코 메트러 2부 01권'), '사이코 메트러 2부');
+    assert.equal(
+        formatLeafName('사이코 메트러 2부', '사이코 메트러 2부 01권', 0, 10, 'ko'),
+        '사이코 메트러 2부 01권',
+    );
+
+    assert.equal(cleanDisplayTitle('Re 제로부터 시작하는 이세계 생활 제5장'), 'Re 제로부터 시작하는 이세계 생활 제5장');
+    assert.equal(extractCoreTitle('Re 제로부터 시작하는 이세계 생활 제5장'), 'Re 제로부터 시작하는 이세계 생활 제5장');
+    assert.equal(
+        formatLeafName('Re 제로부터 시작하는 이세계 생활 제5장', 'Re 제로부터 시작하는 이세계 생활 제5장', 0, 1, 'ko'),
+        'Re 제로부터 시작하는 이세계 생활 제5장',
+    );
+});
+
+test('이미지 보정 suffix 안의 숫자는 무단위 권수로 오인하지 않는다', () => {
+    assert.equal(
+        formatLeafName('프랑켄 프랑 번역본', '프랑켄프랑 01_waifu2x_noise2', 0, 8, 'ko'),
+        '프랑켄 프랑 번역본 01권',
+    );
+    assert.equal(
+        formatLeafName('프랑켄 프랑 번역본', '프랑켄프랑 01waifu2x_noise2', 0, 8, 'ko'),
+        '프랑켄 프랑 번역본 01권',
+    );
+    assert.equal(
+        formatLeafName('프랑켄 프랑 번역본', '프랑켄프랑 05_waifu2x_noise2_scale_x0_8', 0, 8, 'ko'),
+        '프랑켄 프랑 번역본 05권',
+    );
+    assert.equal(
+        formatLeafName('프랑켄 프랑 번역본', '프랑켄프랑 08_waifu2x_noise2_scale_x1_4', 0, 8, 'ko'),
+        '프랑켄 프랑 번역본 08권',
+    );
+});
+
 test('한글과 일본어 파일명은 NFC로 정규화한다', () => {
     assert.equal(fixEncoding('한글'.normalize('NFD')), '한글');
     assert.equal(fixEncoding('作品名'), '作品名');

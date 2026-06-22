@@ -3,6 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { resolveAppDataDir } from '../dataPaths.js';
+import {
+    FILE_EXTENSION_FORMAT_VALUES,
+    normalizeMetadataFormat,
+} from '../metadataFormat.js';
 
 const require = createRequire(import.meta.url);
 
@@ -60,6 +64,7 @@ export class LibraryDB {
         this.createTables();
         this.ensureSchemaColumns();
         this.migrateLegacyTables();
+        this.sanitizeFormatColumn();
         return this.db;
     }
 
@@ -215,6 +220,16 @@ export class LibraryDB {
         migrate();
     }
 
+    sanitizeFormatColumn() {
+        if (!this.tableExists('files') || FILE_EXTENSION_FORMAT_VALUES.length === 0) return;
+        const placeholders = FILE_EXTENSION_FORMAT_VALUES.map(() => '?').join(', ');
+        this.db.prepare(`
+            UPDATE files
+            SET format = ''
+            WHERE REPLACE(UPPER(TRIM(COALESCE(format, ''))), '.', '') IN (${placeholders})
+        `).run(...FILE_EXTENSION_FORMAT_VALUES);
+    }
+
     async initDB() {
         this.getConnection();
         return true;
@@ -240,7 +255,7 @@ export class LibraryDB {
             number: record.number ?? record.meta_chapter ?? '',
             writer: record.writer ?? record.meta_creator ?? '',
             page_count: record.page_count ?? record.pages ?? record.meta_pages ?? '',
-            format: record.format ?? '',
+            format: normalizeMetadataFormat(record.format ?? record.Format),
             thumb_path: record.thumb_path ?? record.thumbnail ?? '',
         };
     }

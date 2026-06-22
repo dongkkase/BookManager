@@ -119,6 +119,7 @@ export class ConfigManager {
       webdav_port: 8081,
       webdav_username: 'user',
       webdav_password: '1234',
+      sharing_https_enabled: false,
       pass_skip_meta: false,
       api_keys: {
         aladin: '',

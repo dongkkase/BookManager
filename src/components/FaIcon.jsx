@@ -57,6 +57,7 @@ import {
   faTowerBroadcast,
   faTrash,
   faUser,
+  faUsers,
   faWandMagicSparkles,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
@@ -113,6 +114,7 @@ const ICONS = {
   xmark: faXmark,
   check: faCheck,
   user: faUser,
+  users: faUsers,
   building: faBuilding,
   tag: faTag,
   pin: faThumbTack,

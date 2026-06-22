@@ -41,3 +41,9 @@ test('이미 표시 중인 번역 문자열을 현재 언어 문구로 다시 �
     assert.equal(translateKnownText(legacyTranslations.en.status_wait, 'ja'), legacyTranslations.ja.status_wait);
     assert.equal(translateKnownText('사용자 입력 문자열', 'en'), '사용자 입력 문자열');
 });
+
+test('폴더 리스트의 출판 레이블 라벨은 메타데이터 필드와 일치한다', () => {
+    assert.equal(legacyTranslations.ko.col_imprint, legacyTranslations.ko.t3_f_imp);
+    assert.equal(legacyTranslations.en.col_imprint, legacyTranslations.en.t3_f_imp);
+    assert.equal(legacyTranslations.ja.col_imprint, legacyTranslations.ja.t3_f_imp);
+});

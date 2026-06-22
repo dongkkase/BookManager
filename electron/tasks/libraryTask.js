@@ -21,6 +21,7 @@ import crypto from 'crypto';
 import { parseStringPromise } from 'xml2js';
 import { getLibraryDB } from '../database/library_db.js';
 import { resolveThumbnailDir } from '../dataPaths.js';
+import { normalizeMetadataFormat } from '../metadataFormat.js';
 
 class LibraryExtractWorker extends EventEmitter {
   constructor(filepaths, sevenZipPath, thumbDir = resolveThumbnailDir(process.cwd())) {
@@ -282,6 +283,7 @@ class LibraryExtractWorker extends EventEmitter {
         number: this._parseNumber(comicInfo.Number),
         writer: comicInfo.Writer ? comicInfo.Writer[0] || '' : '',
         pages: this._parseNumber(comicInfo.PageCount),
+        format: normalizeMetadataFormat(comicInfo.Format ? comicInfo.Format[0] || '' : ''),
       };
     } catch (error) {
       console.error('[XML Parse] Error:', error);

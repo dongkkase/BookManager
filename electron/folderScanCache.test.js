@@ -200,6 +200,76 @@ test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한�
     }
 });
 
+test('폴더 스캔의 포맷은 ComicInfo Format 값만 사용한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-format-'));
+    const libraryDir = path.join(root, 'library');
+    const withFormatPath = path.join(libraryDir, 'With Format.cbz');
+    const withoutFormatPath = path.join(libraryDir, 'Without Format.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(withFormatPath, Buffer.alloc(0));
+        fs.writeFileSync(withoutFormatPath, Buffer.alloc(0));
+        await replaceZipEntry(
+            withFormatPath,
+            'ComicInfo.xml',
+            '<ComicInfo><Title>With Format</Title><Format>WebComic</Format></ComicInfo>',
+        );
+        await replaceZipEntry(
+            withoutFormatPath,
+            'ComicInfo.xml',
+            '<ComicInfo><Title>Without Format</Title></ComicInfo>',
+        );
+
+        const files = await scanFolder(libraryDir, {
+            sevenZExe: '',
+        });
+        const byName = new Map(files.map(file => [file.name, file]));
+
+        assert.equal(byName.get('With Format.cbz')?.format, 'WebComic');
+        assert.equal(byName.get('Without Format.cbz')?.format, '');
+        assert.equal(byName.get('Without Format.cbz')?.ext, '.cbz');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('폴더 스캔은 확장자 fallback 캐시를 포맷 메타데이터로 표시하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-format-cache-'));
+    const libraryDir = path.join(root, 'library');
+    const archivePath = path.join(libraryDir, 'Cached Extension Format.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        const stats = fs.statSync(archivePath);
+        const libraryDb = {
+            async getFileInfo(filePath) {
+                if (filePath !== archivePath) return null;
+                return {
+                    path: archivePath,
+                    mtime: stats.mtimeMs / 1000,
+                    size: stats.size,
+                    ext: '.cbz',
+                    title: 'Cached Extension Format',
+                    format: 'ZIP',
+                };
+            },
+        };
+
+        const files = await scanFolder(libraryDir, {
+            libraryDb,
+            skipArchiveExtraction: true,
+        });
+
+        assert.equal(files.length, 1);
+        assert.equal(files[0].format, '');
+        assert.equal(files[0].ext, '.cbz');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔은 비동기 썸네일 인코더의 확장자로 썸네일을 저장한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-async-thumbnail-encoder-'));
     const libraryDir = path.join(root, 'library');

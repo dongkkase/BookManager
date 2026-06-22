@@ -45,6 +45,20 @@ function isWebpConvertible(entryPath) {
   return ['.jpg', '.jpeg', '.png', '.bmp'].includes(path.extname(entryPath).toLowerCase());
 }
 
+function isMacArchiveMetadataPath(entryPath) {
+  const parts = String(entryPath || '')
+    .replace(/\\/g, '/')
+    .normalize('NFC')
+    .split('/')
+    .filter(Boolean);
+  return parts.some(part => part === '__MACOSX' || part.startsWith('._'));
+}
+
+function isMacArchiveMetadataName(name) {
+  const normalized = String(name || '').normalize('NFC');
+  return normalized === '__MACOSX' || normalized.startsWith('._');
+}
+
 function safeName(name) {
   return String(name || '')
     .replace(/[\\/:*?"<>|]/g, '_')
@@ -156,19 +170,20 @@ async function listWith7z(filePath, sevenZExe) {
 
 async function listArchiveEntries(filePath, sevenZExe) {
   const ext = normalizedExt(filePath);
+  const withoutMacMetadata = entries => entries.filter(entry => !isMacArchiveMetadataPath(entry.name));
   if (ext === '.zip' || ext === '.cbz') {
     try {
-      return (await listZipEntriesFromFile(filePath)).map(entry => ({
+      return withoutMacMetadata((await listZipEntriesFromFile(filePath)).map(entry => ({
         name: entry.name,
         isDir: entry.isDirectory,
         size: entry.uncompressedSize || entry.compressedSize,
         zipEntry: entry,
-      }));
+      })));
     } catch {
-      return listWith7z(filePath, sevenZExe);
+      return withoutMacMetadata(await listWith7z(filePath, sevenZExe));
     }
   }
-  return listWith7z(filePath, sevenZExe);
+  return withoutMacMetadata(await listWith7z(filePath, sevenZExe));
 }
 
 function getLeafGroups(entries) {
@@ -190,7 +205,7 @@ function getLeafGroups(entries) {
     } else if (parts.length > 1) {
       const top = parts[0];
       const topLower = top.toLowerCase();
-      const isPartFolder = /(\d+\s*부|제\s*\d+\s*부|시즌|season|part)/i.test(topLower);
+      const isPartFolder = /(\d+\s*부(?![가-힣])|제\s*\d+\s*부(?![가-힣])|시즌|season|part)/i.test(topLower);
       key = isPartFolder && parts.length > 2 ? `${top}/${parts[1]}` : top;
     }
     if (!groups.has(key)) {
@@ -238,6 +253,7 @@ async function findExtractedArchive(rootDir, innerPath) {
     if (found) return;
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
+      if (isMacArchiveMetadataName(entry.name)) continue;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);
@@ -299,12 +315,12 @@ function describeNoImageEntries(entries = []) {
 
 function applyLangFormat(name, lang, forceUnit = '') {
   const isChapter = forceUnit === '화';
-  const match = String(name).match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?\s*([^0-9]*)$/i);
+  const match = String(name).match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
   if (!match) return String(name).trim();
 
   let base = match[1].trim();
   const num = match[2].trim();
-  const tail = match[3].trim();
+  const tail = (match[3] || '').trim();
   if (tail) base = `${base} ${tail}`.trim();
 
   if (lang === 'en') {
@@ -349,11 +365,13 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
         const rawName = groups.length === 1 && group.name === 'Root_Files'
           ? formatLeafName(coreTitle, firstImageName || filename, 0, 1, lang)
           : formatLeafName(coreTitle, leafBaseName, groupIndex, groups.length, lang);
+        const extractedName = applyLangFormat(rawName, lang);
         return {
           id: `${filePath}:${groupIndex}`,
           original_path: group.name,
           original_basename: leafBaseName,
-          new_name: applyLangFormat(rawName, lang),
+          extracted_name: extractedName,
+          new_name: extractedName,
           type: group.type || (group.name === 'Root_Files' ? 'archive' : 'folder'),
           inner_path: group.inner_path || '',
           source_ext: group.inner_path ? normalizedExt(group.inner_path) : normalizedExt(filePath),
@@ -462,7 +480,7 @@ async function getImageLeaves(actualRoot) {
         } else {
           const parts = rel.split(path.sep).filter(Boolean);
           const top = parts[0];
-          const isPartFolder = /(\d+\s*부|제\s*\d+\s*부|시즌|season|part)/i.test(top);
+          const isPartFolder = /(\d+\s*부(?![가-힣])|제\s*\d+\s*부(?![가-힣])|시즌|season|part)/i.test(top);
           leaves.add(path.join(actualRoot, isPartFolder && parts.length > 1 ? path.join(top, parts[1]) : top));
         }
       }
@@ -508,6 +526,7 @@ async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
     async function collect(currentDir) {
       const entries = await fsp.readdir(currentDir, { withFileTypes: true });
       for (const entry of entries) {
+        if (isMacArchiveMetadataName(entry.name)) continue;
         const fullPath = path.join(currentDir, entry.name);
         if (entry.isDirectory()) await collect(fullPath);
         else if (entry.isFile() && isArchive(fullPath)) nested.push(fullPath);
@@ -533,6 +552,7 @@ async function createFlatStaging(leaf, tempBase) {
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
     entries.sort((a, b) => naturalCompare(a.name, b.name));
     for (const entry of entries) {
+      if (isMacArchiveMetadataName(entry.name)) continue;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);

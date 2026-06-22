@@ -46,3 +46,10 @@ test('라이브러리와 즐겨찾기 리스트의 행 버튼은 삭제 대신 �
     assert.doesNotMatch(source, /className="favorite-remove-btn"/);
     assert.match(folderTabSource, /handleContextAction\('remove-library'\)/);
 });
+
+test('라이브러리 행은 폴더 수와 인덱스 상태를 함께 표시한다', () => {
+    assert.match(source, /libraryFolderCounts/);
+    assert.match(source, /items\.filter\(item => item\.isDirectory\)\.length/);
+    assert.match(source, /folderCount:\s*libraryFolderCounts\[libraryKey\]/);
+    assert.match(source, /libraryStatusText\(t,\s*scanState,\s*\{/);
+});

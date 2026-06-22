@@ -11,6 +11,7 @@ import {
   readZipEntryFromFile,
 } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
+import { normalizeMetadataFormat } from '../metadataFormat.js';
 
 const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
@@ -85,6 +86,7 @@ function parseComicInfo(xml) {
     genre: readXmlTag(xml, 'Genre'),
     page_count: readXmlTag(xml, 'PageCount'),
     total_volume: readXmlTag(xml, 'Count'),
+    format: readXmlTag(xml, 'Format'),
     description: readXmlTag(xml, 'Summary'),
     series_group: readXmlTag(xml, 'SeriesGroup') || readXmlTag(xml, 'AlternateSeries'),
     tags: readXmlTag(xml, 'Tags'),
@@ -284,7 +286,7 @@ function metadataFromCache(cached = {}) {
     age_rating: cached.age_rating || '',
     rating: cached.rating || '',
     date: cached.publish_date || '',
-    format: cached.format || '',
+    format: normalizeMetadataFormat(cached.format),
     resolution: cached.resolution || '',
     producer: cached.creators || '',
     has_metadata: hasMetadata,
@@ -632,7 +634,7 @@ async function createFileData(fullPath, stats, options = {}) {
         genre: archiveMeta.genre || '',
         volume_count: archiveMeta.total_volume || '',
         page_count: archiveMeta.page_count || '',
-        format: archiveMeta.format || ext.replace('.', '').toUpperCase(),
+        format: normalizeMetadataFormat(archiveMeta.format),
         manga: archiveMeta.manga || '',
         language: archiveMeta.language || '',
         rating: archiveMeta.rating || '',
@@ -663,7 +665,7 @@ async function createFileData(fullPath, stats, options = {}) {
     folder_path: folderPath,
     full_path: fullPath,
     ext,
-    format: ext.replace('.', '').toUpperCase(),
+    format: normalizeMetadataFormat(archiveMeta.format),
     size: stats.size,
     mtime: stats.mtimeMs,
     ctime: stats.ctimeMs,

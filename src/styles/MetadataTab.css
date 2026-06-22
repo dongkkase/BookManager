@@ -237,10 +237,23 @@
 }
 
 .meta-tree-file-name {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.meta-tree-file-name-head {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-tree-file-name-tail {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .meta-tree-file-date {
