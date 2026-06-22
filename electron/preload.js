@@ -43,11 +43,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFilePreview: (filePath) => ipcRenderer.invoke('fs:filePreview', filePath),
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),
   removeEmptyTree: (rootPath) => ipcRenderer.invoke('fs:removeEmptyTree', rootPath),
+  findLibraryMoveConflicts: (movePlans) => ipcRenderer.invoke('fs:findLibraryMoveConflicts', movePlans),
   executeLibraryMove: (movePlans) => ipcRenderer.invoke('fs:executeLibraryMove', movePlans),
   extractCoreTitle: (filename) => ipcRenderer.invoke('parser:extractCoreTitle', filename),
   
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
+  searchLibraryFiles: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryFiles', { query, libraries, options }),
   
   // 라이브러리 DB
   initLibrary: (dbPath) => ipcRenderer.invoke('library:init', dbPath),

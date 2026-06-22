@@ -36,9 +36,12 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     ]);
     assertInventory('ipcHandlers', [
         ['설정 저장 시 메인 프로세스 언어 갱신', 'setLanguage(nextLang)'],
+        ['등록 라이브러리 검색 IPC', "folder:searchLibraryFiles"],
     ]);
     assertInventory('folder', [
         ['폴더 검색', 'value={searchQuery}'],
+        ['등록 라이브러리 검색 API', 'searchLibraryFiles'],
+        ['등록 라이브러리 검색 placeholder', 'folder_search_library_ph'],
         ['폴더/파일 단일 이름 변경 내부 입력 다이얼로그', 'requestTextInput'],
         ['폴더 이름 변경 입력 필드', 'folder-tree-rename-input'],
         ['파일 이름 변경 입력 필드', 'folder-file-rename-input'],
@@ -154,9 +157,14 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
         ['라이브러리 이동 요약', 'className="library-move-summary"'],
         ['라이브러리 이동 옵션', 'library_move_option'],
         ['라이브러리 이동 미리보기 개수', 'library_move_preview_count'],
+        ['라이브러리 이동 일괄 충돌 확인', 'findLibraryMoveConflicts'],
+        ['라이브러리 이동 즉시 상태 표시', 'folder:libraryMove'],
+        ['라이브러리 이동 슬라이드 항목 표시', 'slideItemReady'],
+        ['라이브러리 이동 상태 문구', 'library_move_status_prepare'],
     ]);
     assertInventory('multiRenameDialog', [
         ['여러 파일 이름 변경 순번 위치', 'value={sequencePosition}'],
+        ['여러 파일 이름 변경 취소 버튼', 'multi-rename-cancel'],
     ]);
     assertInventory('renamer', [
         ['내부 파일명 패턴', 'value={patternIndex}'],

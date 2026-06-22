@@ -165,11 +165,12 @@
 
 .multi-rename-options-primary {
   margin-top: 9px;
-  padding-left: 52px;
+  padding-left: 59px;
 }
 
 .multi-rename-options-sequence {
   margin-top: 9px;
+  padding-left: 59px;
 }
 
 .multi-rename-options input[type="number"] {
@@ -336,6 +337,14 @@ body.multi-rename-resizing .multi-rename-column-resizer::before {
 
 .multi-rename-footer button.primary {
   background: #0d84d8;
+}
+
+.multi-rename-footer button.multi-rename-cancel {
+  background: #e74c3c;
+}
+
+.multi-rename-footer button.multi-rename-cancel:hover:not(:disabled) {
+  background: #c0392b;
 }
 
 .multi-rename-footer button:disabled {

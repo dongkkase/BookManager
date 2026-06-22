@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { t as i18nT } from './utils/i18n.js';
 
+const fsp = fs.promises;
+
 function appendRenameHistory(history, mapping) {
   if (Object.keys(mapping).length === 0) return history;
   const next = [
@@ -87,6 +89,171 @@ export function undoRename(history = []) {
   };
 }
 
+function hasFileInTree(rootPath) {
+  const entries = fs.readdirSync(rootPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      if (hasFileInTree(entryPath)) return true;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function removeTreeIfNoFiles(rootPath) {
+  if (!rootPath || !fs.existsSync(rootPath)) return false;
+  const stats = fs.statSync(rootPath);
+  if (!stats.isDirectory() || hasFileInTree(rootPath)) return false;
+  fs.rmSync(rootPath, { recursive: true, force: false });
+  return true;
+}
+
+async function pathExists(filePath) {
+  try {
+    await fsp.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function hasFileInTreeAsync(rootPath) {
+  const entries = await fsp.readdir(rootPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      if (await hasFileInTreeAsync(entryPath)) return true;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+export async function removeTreeIfNoFilesAsync(rootPath) {
+  if (!rootPath || !(await pathExists(rootPath))) return false;
+  const stats = await fsp.stat(rootPath);
+  if (!stats.isDirectory() || await hasFileInTreeAsync(rootPath)) return false;
+  await fsp.rm(rootPath, { recursive: true, force: false });
+  return true;
+}
+
+async function mapLimit(items, limit, iterator) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await iterator(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export async function findLibraryMoveConflicts(movePlans = []) {
+  const plans = Array.isArray(movePlans) ? movePlans : [];
+  const checks = await mapLimit(plans, 64, async (plan, index) => {
+    const src = plan?.src;
+    const dest = plan?.dest;
+    if (!src || !dest || path.normalize(src) === path.normalize(dest)) return null;
+    if (!await pathExists(dest)) return null;
+    return { index, src, dest };
+  });
+  return {
+    success: true,
+    conflicts: checks.filter(Boolean),
+  };
+}
+
+async function nextAvailableDestination(dest) {
+  const ext = path.extname(dest);
+  const base = dest.substring(0, dest.length - ext.length);
+  let counter = 1;
+  while (await pathExists(`${base}_${counter}${ext}`)) counter++;
+  return `${base}_${counter}${ext}`;
+}
+
+async function movePathAsync(src, dest) {
+  try {
+    await fsp.rename(src, dest);
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error;
+    const sourceStats = await fsp.stat(src);
+    if (sourceStats.isDirectory()) {
+      await fsp.cp(src, dest, { recursive: true });
+      await fsp.rm(src, { recursive: true, force: true });
+    } else {
+      await fsp.copyFile(src, dest);
+      await fsp.unlink(src);
+    }
+  }
+}
+
+export async function executeLibraryMoveAsync(movePlans = []) {
+  let successCount = 0;
+  let skippedCount = 0;
+  const errors = [];
+  const completedMoves = [];
+  const cleanupRoots = new Set();
+
+  for (const plan of movePlans) {
+    let { src, dest } = plan;
+    if (!await pathExists(src)) continue;
+
+    if (await pathExists(dest) && path.normalize(src) !== path.normalize(dest)) {
+      const choice = plan.conflictAction || 'skip';
+      if (choice === 'skip') {
+        skippedCount++;
+        continue;
+      }
+      if (choice === 'overwrite') {
+        try {
+          const destinationStats = await fsp.stat(dest);
+          if (destinationStats.isDirectory()) {
+            await fsp.rm(dest, { recursive: true, force: true });
+          } else {
+            await fsp.unlink(dest);
+          }
+        } catch (_error) {
+          errors.push(i18nT('fs_delete_existing_failed', [path.basename(dest)]));
+          continue;
+        }
+      } else if (choice === 'rename') {
+        dest = await nextAvailableDestination(dest);
+      }
+    }
+
+    try {
+      const destDir = path.dirname(dest);
+      await fsp.mkdir(destDir, { recursive: true });
+      await movePathAsync(src, dest);
+      successCount++;
+      completedMoves.push({ src, dest });
+      const cleanupRoot = plan.cleanupRoot;
+      if (cleanupRoot && path.normalize(cleanupRoot) === path.normalize(path.dirname(src))) {
+        cleanupRoots.add(cleanupRoot);
+      }
+    } catch (error) {
+      errors.push(i18nT('fs_move_failed', [path.basename(src), error.message]));
+    }
+  }
+
+  for (const cleanupRoot of cleanupRoots) {
+    await removeTreeIfNoFilesAsync(cleanupRoot).catch(() => {});
+  }
+
+  return {
+    successCount,
+    skippedCount,
+    errors,
+    completedMoves,
+  };
+}
+
 export function executeLibraryMove(movePlans = []) {
   let successCount = 0;
   let skippedCount = 0;
@@ -145,7 +312,7 @@ export function executeLibraryMove(movePlans = []) {
       const cleanupRoot = plan.cleanupRoot;
       if (cleanupRoot && path.normalize(cleanupRoot) === path.normalize(path.dirname(src))) {
         try {
-          if (fs.readdirSync(cleanupRoot).length === 0) fs.rmdirSync(cleanupRoot);
+          removeTreeIfNoFiles(cleanupRoot);
         } catch {
           // A non-empty or concurrently changed source folder is intentionally preserved.
         }

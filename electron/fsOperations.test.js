@@ -5,7 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   executeLibraryMove,
+  executeLibraryMoveAsync,
   executeMultiRename,
+  findLibraryMoveConflicts,
   undoRename,
 } from './fsOperations.js';
 
@@ -70,6 +72,110 @@ test('시리즈 폴더 이동 후 라이브러리 충돌 rename 선택은 대상
     assert.equal(fs.readFileSync(existingLibraryFile, 'utf8'), 'existing');
     assert.equal(fs.readFileSync(moved.completedMoves[0].dest, 'utf8'), 'new');
     assert.equal(fs.existsSync(path.dirname(groupedFile)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('라이브러리 이동 후 원본 폴더에 파일이 없으면 빈 하위 폴더까지 정리한다', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-cleanup-empty-'));
+  try {
+    const sourceDir = path.join(root, 'source');
+    const emptyChildDir = path.join(sourceDir, 'empty-child');
+    const libraryDir = path.join(root, 'library');
+    const sourceFile = path.join(sourceDir, 'Book 01.cbz');
+    const destinationFile = path.join(libraryDir, 'Book 01.cbz');
+    fs.mkdirSync(emptyChildDir, { recursive: true });
+    fs.writeFileSync(sourceFile, 'book');
+
+    const moved = executeLibraryMove([{
+      src: sourceFile,
+      dest: destinationFile,
+      cleanupRoot: sourceDir,
+    }]);
+
+    assert.equal(moved.successCount, 1);
+    assert.equal(fs.existsSync(destinationFile), true);
+    assert.equal(fs.existsSync(sourceDir), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('라이브러리 이동 후 원본 폴더에 파일이 남아 있으면 폴더를 보존한다', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-cleanup-preserve-'));
+  try {
+    const sourceDir = path.join(root, 'source');
+    const childDir = path.join(sourceDir, 'child');
+    const libraryDir = path.join(root, 'library');
+    const sourceFile = path.join(sourceDir, 'Book 01.cbz');
+    const remainingFile = path.join(childDir, 'Book 02.cbz');
+    const destinationFile = path.join(libraryDir, 'Book 01.cbz');
+    fs.mkdirSync(childDir, { recursive: true });
+    fs.writeFileSync(sourceFile, 'book1');
+    fs.writeFileSync(remainingFile, 'book2');
+
+    const moved = executeLibraryMove([{
+      src: sourceFile,
+      dest: destinationFile,
+      cleanupRoot: sourceDir,
+    }]);
+
+    assert.equal(moved.successCount, 1);
+    assert.equal(fs.existsSync(destinationFile), true);
+    assert.equal(fs.existsSync(sourceDir), true);
+    assert.equal(fs.readFileSync(remainingFile, 'utf8'), 'book2');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('라이브러리 이동 충돌은 일괄 확인으로 대상이 있는 항목만 반환한다', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-conflicts-'));
+  try {
+    const sourceDir = path.join(root, 'source');
+    const libraryDir = path.join(root, 'library');
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.mkdirSync(libraryDir, { recursive: true });
+    const sourceA = path.join(sourceDir, 'Book 01.cbz');
+    const sourceB = path.join(sourceDir, 'Book 02.cbz');
+    const destA = path.join(libraryDir, 'Book 01.cbz');
+    const destB = path.join(libraryDir, 'Book 02.cbz');
+    fs.writeFileSync(sourceA, 'source-a');
+    fs.writeFileSync(sourceB, 'source-b');
+    fs.writeFileSync(destA, 'dest-a');
+
+    const result = await findLibraryMoveConflicts([
+      { src: sourceA, dest: destA },
+      { src: sourceB, dest: destB },
+    ]);
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.conflicts, [{ index: 0, src: sourceA, dest: destA }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('비동기 라이브러리 이동은 메인 프로세스를 막는 동기 파일 작업 없이 이동과 정리를 수행한다', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-async-move-'));
+  try {
+    const sourceDir = path.join(root, 'source');
+    const libraryDir = path.join(root, 'library');
+    const sourceFile = path.join(sourceDir, 'Book 01.cbz');
+    const destinationFile = path.join(libraryDir, 'Book 01.cbz');
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.writeFileSync(sourceFile, 'book');
+
+    const moved = await executeLibraryMoveAsync([{
+      src: sourceFile,
+      dest: destinationFile,
+      cleanupRoot: sourceDir,
+    }]);
+
+    assert.equal(moved.successCount, 1);
+    assert.equal(fs.readFileSync(destinationFile, 'utf8'), 'book');
+    assert.equal(fs.existsSync(sourceDir), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

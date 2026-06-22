@@ -61,8 +61,10 @@ import {
   resolveThumbnailDir,
 } from './dataPaths.js';
 import {
-  executeLibraryMove,
+  executeLibraryMoveAsync,
   executeMultiRename,
+  findLibraryMoveConflicts,
+  removeTreeIfNoFilesAsync,
   undoRename,
 } from './fsOperations.js';
 
@@ -1648,6 +1650,69 @@ function isPathInsideOrEqual(childPath, parentPath) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function thumbnailUrlForSearchResult(thumbnailPath) {
+  if (!thumbnailPath || !fs.existsSync(thumbnailPath)) return '';
+  let version = '';
+  try {
+    version = `?v=${Math.round(fs.statSync(thumbnailPath).mtimeMs)}`;
+  } catch {
+    version = '';
+  }
+  return `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}${version}`;
+}
+
+function fileMtimeToMs(value) {
+  const numeric = Number(value) || 0;
+  if (!numeric) return 0;
+  return numeric > 100000000000 ? numeric : numeric * 1000;
+}
+
+function normalizeLibrarySearchFileForRenderer(row = {}) {
+  const filePath = row.path || '';
+  const mtimeMs = fileMtimeToMs(row.mtime);
+  const thumbnailPath = row.thumb_path && fs.existsSync(row.thumb_path) ? row.thumb_path : '';
+  const hasMetadata = [
+    row.title,
+    row.series,
+    row.series_group,
+    row.volume,
+    row.number,
+    row.writer,
+    row.publisher,
+    row.summary,
+    row.characters,
+    row.tags,
+  ].some(Boolean);
+  return {
+    ...row,
+    name: path.basename(filePath),
+    path: filePath,
+    full_path: filePath,
+    folder_path: filePath ? path.dirname(filePath) : '',
+    ext: row.ext || path.extname(filePath).toLowerCase(),
+    size: Number(row.size) || 0,
+    mtime: mtimeMs,
+    ctime: mtimeMs,
+    created: '',
+    modified: mtimeMs ? new Date(mtimeMs).toISOString() : '',
+    title: row.title || path.parse(filePath).name,
+    volume: row.volume || '',
+    chapter: row.number || '',
+    author: row.writer || row.creators || '',
+    producer: row.creators || row.writer || '',
+    total_volume: row.volume_count || '',
+    page_count: row.page_count || '',
+    description: row.summary || '',
+    link: row.web || '',
+    thumb_path: thumbnailPath,
+    cover: thumbnailUrlForSearchResult(thumbnailPath),
+    has_metadata: hasMetadata,
+    duplicate_matches: [],
+    dup_count: 0,
+    max_ratio: 0,
+  };
+}
+
 function createTaskCancelledError() {
   const error = new Error(i18nT('msg_cancelled'));
   error.code = 'TASK_CANCELLED';
@@ -2506,6 +2571,26 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+  ipcMain.handle('folder:searchLibraryFiles', async (_event, queryOrPayload = '', librariesArg = [], optionsArg = {}) => {
+    const payload = queryOrPayload && typeof queryOrPayload === 'object'
+      ? queryOrPayload
+      : { query: queryOrPayload, libraries: librariesArg, options: optionsArg };
+    const config = configManager.getConfig() || {};
+    const targetLibraries = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : [...(config.libraries || []), ...(config.dup_check_folders || [])])
+      .filter(Boolean)
+      .map(folder => path.resolve(folder))
+      .filter(folder => fs.existsSync(folder)))];
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const rows = await db.searchFiles(payload.query || '', targetLibraries, payload.options || {});
+      return rows.map(normalizeLibrarySearchFileForRenderer);
+    } finally {
+      await db.close();
+    }
+  });
+
   ipcMain.handle('folder:getLibraryScanStates', async (_event, folders = []) => {
     const targetFolders = [...new Set((folders || []).filter(Boolean).map(folder => path.resolve(folder)))];
     const db = new LibraryDB({ dbPath: libraryDbPath() });
@@ -3324,25 +3409,25 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('fs:removeEmptyTree', async (_, rootPath) => {
-    async function removeEmpty(currentPath) {
-      const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) await removeEmpty(path.join(currentPath, entry.name));
-      }
-      const remaining = await fs.promises.readdir(currentPath);
-      if (remaining.length === 0) await fs.promises.rmdir(currentPath);
-    }
     try {
-      if (rootPath && fs.existsSync(rootPath)) await removeEmpty(rootPath);
-      return { success: true };
+      const removed = await removeTreeIfNoFilesAsync(rootPath);
+      return { success: true, removed };
     } catch (error) {
       return { success: false, message: error.message };
     }
   });
 
+  ipcMain.handle('fs:findLibraryMoveConflicts', async (_event, movePlans) => {
+    try {
+      return await findLibraryMoveConflicts(movePlans);
+    } catch (error) {
+      return { success: false, message: error.message, conflicts: [] };
+    }
+  });
+
   // 8. 라이브러리로 파일 이동 처리 (충돌 해결 지원)
   ipcMain.handle('fs:executeLibraryMove', async (_event, movePlans) => {
-    return executeLibraryMove(movePlans);
+    return executeLibraryMoveAsync(movePlans);
   });
 
   // 9. 파일명에서 코어 시리즈명 추출

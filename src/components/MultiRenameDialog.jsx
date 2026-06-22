@@ -312,7 +312,7 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
         </div>
         <div className="layout-dialog-footer multi-rename-footer">
           <button type="button" className="primary" disabled={executing || previewing || !rows.some(row => row.status === 'ok')} onClick={execute}>{t('btn_ok')}</button>
-          <button type="button" disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
+          <button type="button" className="multi-rename-cancel" disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
     </div>

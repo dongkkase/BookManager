@@ -47,6 +47,33 @@ const LIBRARY_SCAN_STATE_COLUMNS = [
     'scan_reason',
 ];
 
+const FILE_SEARCH_COLUMNS = [
+    'path',
+    'title',
+    'series',
+    'series_group',
+    'volume',
+    'number',
+    'writer',
+    'creators',
+    'publisher',
+    'imprint',
+    'genre',
+    'format',
+    'summary',
+    'characters',
+    'teams',
+    'locations',
+    'story_arc',
+    'tags',
+    'notes',
+    'web',
+];
+
+function escapeLikeValue(value = '') {
+    return String(value).replace(/[\\%_]/g, match => `\\${match}`);
+}
+
 export class LibraryDB {
     constructor(options = {}) {
         this.dbPath = options.dbPath || path.join(options.userDataPath || defaultUserDataPath(), 'library.db');
@@ -308,6 +335,34 @@ export class LibraryDB {
                 thumb_path AS thumbnail
             FROM files WHERE path = ?`,
         ).get(filePath) || null);
+    }
+
+    async searchFiles(query, libraryPaths = [], options = {}) {
+        return this.withLock(async () => {
+            const term = String(query || '').trim();
+            const normalizedPaths = [...new Set((libraryPaths || [])
+                .filter(Boolean)
+                .map(folder => path.resolve(folder)))];
+            if (!term || normalizedPaths.length === 0) return [];
+
+            const limit = Math.max(1, Math.min(5000, Number(options.limit) || 1000));
+            const libraryClauses = normalizedPaths.map(() => "(path LIKE ? ESCAPE '\\')");
+            const searchClauses = FILE_SEARCH_COLUMNS.map(column => `LOWER(COALESCE(${column}, '')) LIKE LOWER(?) ESCAPE '\\'`);
+            const libraryParams = normalizedPaths.map(folder => `${escapeLikeValue(`${folder}${path.sep}`)}%`);
+            const searchParam = `%${escapeLikeValue(term)}%`;
+            const searchParams = FILE_SEARCH_COLUMNS.map(() => searchParam);
+
+            return this.getConnection().prepare(`
+                SELECT *
+                FROM files
+                WHERE (${libraryClauses.join(' OR ')})
+                    AND (${searchClauses.join(' OR ')})
+                ORDER BY
+                    COALESCE(NULLIF(series, ''), NULLIF(title, ''), path) COLLATE NOCASE ASC,
+                    path COLLATE NOCASE ASC
+                LIMIT ?
+            `).all(...libraryParams, ...searchParams, limit);
+        });
     }
 
     async saveTargetIndex(records = []) {

@@ -107,6 +107,53 @@ test('files format 컬럼은 파일 확장자 값을 저장하지 않는다', as
     }
 });
 
+test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타데이터와 경로만 조회한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const firstLibrary = path.join(root, 'LibraryA');
+        const secondLibrary = path.join(root, 'LibraryB');
+        const outsideLibrary = path.join(root, 'Outside');
+        fs.mkdirSync(path.join(firstLibrary, '마법 폴더'), { recursive: true });
+        fs.mkdirSync(secondLibrary, { recursive: true });
+        fs.mkdirSync(outsideLibrary, { recursive: true });
+
+        const insidePath = path.join(firstLibrary, '마법 폴더', 'Inside.cbz');
+        const secondPath = path.join(secondLibrary, 'Other.cbz');
+        const outsidePath = path.join(outsideLibrary, 'Outside.cbz');
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: insidePath,
+            title: '검색 대상',
+            series: '마법 시리즈',
+            writer: '테스트 작가',
+            summary: '등록 라이브러리 검색용 메타데이터',
+        });
+        await library.upsertFileInfo({
+            path: secondPath,
+            title: '검색 대상',
+            series: '두 번째 라이브러리',
+        });
+        await library.upsertFileInfo({
+            path: outsidePath,
+            title: '검색 대상',
+            series: '범위 밖',
+        });
+
+        const metadataRows = await library.searchFiles('검색용', [firstLibrary], { limit: 10 });
+        assert.deepEqual(metadataRows.map(row => row.path), [insidePath]);
+
+        const folderRows = await library.searchFiles('마법 폴더', [firstLibrary], { limit: 10 });
+        assert.deepEqual(folderRows.map(row => row.path), [insidePath]);
+
+        const scopedRows = await library.searchFiles('검색 대상', [firstLibrary, secondLibrary], { limit: 10 });
+        assert.deepEqual(scopedRows.map(row => row.path).sort(), [insidePath, secondPath].sort());
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('과도기 file_info, target_index, dup_match schema를 원본 schema로 이관한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-migrate-'));
     try {

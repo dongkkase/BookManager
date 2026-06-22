@@ -191,7 +191,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // --- 검색 상태 ---
   const [searchQuery, setSearchQuery] = useState('');
+  const [librarySearchResults, setLibrarySearchResults] = useState([]);
+  const [librarySearchLoading, setLibrarySearchLoading] = useState(false);
   const searchInputRef = useRef(null);
+  const librarySearchRequestRef = useRef(0);
+  const libraries = useMemo(() => (
+    [...new Set([...(config?.libraries || []), ...(config?.dup_check_folders || [])])].filter(Boolean)
+  ), [config?.libraries, config?.dup_check_folders]);
+  const normalizedSearchQuery = searchQuery.trim();
+  const isLibrarySearchActive = normalizedSearchQuery.length > 0 && libraries.length > 0;
 
   useEffect(() => {
     preparingDuplicatesRef.current = preparingDuplicates;
@@ -210,14 +218,49 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return getCachedFiles(selectedFolderPath, scanOptions) || [];
   }, [getCachedFiles, selectedFolderPath, scanOptions]);
 
+  useEffect(() => {
+    const requestId = librarySearchRequestRef.current + 1;
+    librarySearchRequestRef.current = requestId;
+    if (!isLibrarySearchActive) {
+      setLibrarySearchResults([]);
+      setLibrarySearchLoading(false);
+      return undefined;
+    }
+
+    let disposed = false;
+    setLibrarySearchResults([]);
+    setLibrarySearchLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const rows = await window.electronAPI?.searchLibraryFiles?.(normalizedSearchQuery, libraries, { limit: 3000 });
+        if (disposed || librarySearchRequestRef.current !== requestId) return;
+        setLibrarySearchResults(Array.isArray(rows) ? rows : []);
+      } catch (error) {
+        if (!disposed && librarySearchRequestRef.current === requestId) {
+          console.error('라이브러리 검색 실패:', error);
+          setLibrarySearchResults([]);
+        }
+      } finally {
+        if (!disposed && librarySearchRequestRef.current === requestId) {
+          setLibrarySearchLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [isLibrarySearchActive, libraries, normalizedSearchQuery]);
+
   // 필터링된 파일 데이터
   const filteredFileData = useMemo(() => {
-    const files = getCurrentFileData();
+    const files = isLibrarySearchActive ? librarySearchResults : getCurrentFileData();
     return filterFolderFiles(files, {
-      query: searchQuery,
+      query: isLibrarySearchActive ? '' : searchQuery,
       metadataMissingOnly,
     });
-  }, [getCurrentFileData, metadataMissingOnly, searchQuery]);
+  }, [getCurrentFileData, isLibrarySearchActive, librarySearchResults, metadataMissingOnly, searchQuery]);
   const savedLayouts = useMemo(
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
@@ -245,6 +288,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   } = useFileSelection(displayedFileData);
   const activeSelectedFile = selectedFileData();
   const itemScale = itemScales[viewMode] || 50;
+
+  useEffect(() => {
+    if (isLibrarySearchActive) clearSelection();
+  }, [clearSelection, isLibrarySearchActive, normalizedSearchQuery]);
 
   useEffect(() => {
     if (!config || restoredLayoutRef.current) return;
@@ -420,9 +467,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [t]);
 
   // --- 사이드바 상태 ---
-  const libraries = useMemo(() => (
-    [...new Set([...(config?.libraries || []), ...(config?.dup_check_folders || [])])]
-  ), [config?.libraries, config?.dup_check_folders]);
   const favoriteEntries = useMemo(() => normalizeFavorites(config || {}), [config]);
 
   const refreshLibraryScanStates = useCallback(async (targetFolders = libraries) => {
@@ -1263,13 +1307,49 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     resolve?.(choice);
   }, []);
 
-  const executeLibraryMovePlans = useCallback(async plans => {
+  const emitLibraryMoveProgress = useCallback((message, progress, itemPath = '', options = {}) => {
+    const currentItem = itemPath || folderStatusItemRef.current.currentItem || '';
+    const currentItemName = currentItem ? basename(currentItem) : folderStatusItemRef.current.currentItemName;
+    folderStatusItemRef.current = { currentItem, currentItemName };
+    emitStatusState('folder', {
+      task: 'folder:libraryMove',
+      display: 'library-slide',
+      message,
+      progress,
+      phase: options.phase || 'analyzing',
+      libraryPhase: options.libraryPhase || 'moving',
+      libraryTaskMode: 'move',
+      currentItem,
+      currentItemName,
+      slideItemReady: options.slideItemReady ?? Boolean(currentItem),
+    });
+  }, []);
+
+  const clearLibraryMoveProgress = useCallback(() => {
+    folderStatusItemRef.current = { currentItem: '', currentItemName: '' };
+    emitStatusState('folder', {
+      message: t('status_wait'),
+      progress: 0,
+      phase: 'idle',
+    });
+  }, [t]);
+
+  const executeLibraryMovePlans = useCallback(async (plans, options = {}) => {
+    options.onStage?.('conflicts', 8);
+    const conflictResponse = await window.electronAPI?.findLibraryMoveConflicts?.(plans);
+    const conflicts = conflictResponse?.success !== false && Array.isArray(conflictResponse?.conflicts)
+      ? conflictResponse.conflicts
+      : null;
     const resolvedPlans = [];
-    for (const plan of plans) {
-      if (!await window.electronAPI?.exists?.(plan.dest)) {
+    const conflictsByIndex = new Map((conflicts || []).map(conflict => [conflict.index, conflict]));
+    for (let index = 0; index < plans.length; index += 1) {
+      const plan = plans[index];
+      const conflict = conflicts ? conflictsByIndex.get(index) : await window.electronAPI?.exists?.(plan.dest);
+      if (!conflict) {
         resolvedPlans.push(plan);
         continue;
       }
+      options.onConflictWait?.(plan);
       const sourcePreview = await window.electronAPI?.getFilePreview?.(plan.src);
       const destinationPreview = await window.electronAPI?.getFilePreview?.(plan.dest);
       const choice = await requestConflictChoice({
@@ -1277,9 +1357,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         source: sourcePreview?.file || { name: basename(plan.src), path: plan.src },
         destination: destinationPreview?.file || { name: basename(plan.dest), path: plan.dest },
       });
+      options.onStage?.('conflicts', 12);
       resolvedPlans.push(applyConflictChoice(plan, choice || 'skip'));
     }
 
+    options.onStage?.('moving', 25);
     return runInternalFileAction(
       () => window.electronAPI?.executeLibraryMove?.(resolvedPlans),
     );
@@ -1298,58 +1380,102 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     const targetLibrary = plans[0]?.targetLibrary;
     if (!targetLibrary) return;
-    setLibraryMoveRequest(null);
-    await saveConfig?.({ last_selected_library: targetLibrary });
-    const folderPlan = plans.find(plan => plan.folderMode);
-    let executablePlans = plans;
-    if (folderPlan) {
-      const expanded = await window.electronAPI?.expandFolderMove?.(folderPlan.src, folderPlan.dest);
-      if (!expanded?.success) {
+    const firstMoveItem = plans[0]?.src || plans[0]?.full_path || plans[0]?.path || '';
+    emitLibraryMoveProgress(t('library_move_status_prepare'), 2, firstMoveItem);
+    try {
+      setLibraryMoveRequest(null);
+      await saveConfig?.({ last_selected_library: targetLibrary });
+      const folderPlan = plans.find(plan => plan.folderMode);
+      let executablePlans = plans;
+      if (folderPlan) {
+        const destinationExists = await window.electronAPI?.exists?.(folderPlan.dest);
+        if (destinationExists) {
+          emitLibraryMoveProgress(t('library_move_status_conflicts', [1]), 6, folderPlan.src);
+          const expanded = await window.electronAPI?.expandFolderMove?.(folderPlan.src, folderPlan.dest);
+          if (!expanded?.success) {
+            await window.electronAPI?.showMessage?.({
+              type: 'error',
+              title: t('dlg_err'),
+              message: t('dlg_err_occurred', [expanded?.message || t('msg_failed')]),
+              language: config?.language || config?.lang || 'ko',
+            });
+            return;
+          }
+          executablePlans = expanded.plans.map(plan => ({ ...plan, targetLibrary }));
+        } else {
+          executablePlans = [folderPlan];
+        }
+      }
+      const result = await executeLibraryMovePlans(executablePlans, {
+        onStage: (stage, progress) => {
+          const currentItem = executablePlans[0]?.src || firstMoveItem;
+          if (stage === 'conflicts') {
+            emitLibraryMoveProgress(t('library_move_status_conflicts', [executablePlans.length]), progress, currentItem);
+          } else if (stage === 'moving') {
+            emitLibraryMoveProgress(t('library_move_status_moving', [executablePlans.length]), progress, currentItem);
+          }
+        },
+        onConflictWait: () => {
+          clearLibraryMoveProgress();
+        },
+      });
+      if (result?.successCount > 0) {
+        emitLibraryMoveProgress(t('library_move_status_refreshing'), 70, executablePlans[0]?.src || firstMoveItem);
+        let selectedFolderRemoved = false;
+        if (folderPlan) {
+          await window.electronAPI?.removeEmptyTree?.(folderPlan.src);
+        } else if (selectedFolderPath) {
+          await window.electronAPI?.removeEmptyTree?.(selectedFolderPath);
+          selectedFolderRemoved = !(await window.electronAPI?.exists?.(selectedFolderPath));
+        }
+        showToast?.(t('msg_move_lib_done', [result.successCount]));
+        clearSelection();
+        const affectedLibraries = [...new Set([
+          targetLibrary,
+          ...libraries.filter(library => executablePlans.some(plan => (
+            plan.src === library
+            || plan.src.startsWith(`${library}/`)
+            || plan.src.startsWith(`${library}\\`)
+          ))),
+        ])];
+        emitLibraryMoveProgress(t('library_move_status_indexing'), 78, targetLibrary, {
+          libraryPhase: 'indexing',
+          slideItemReady: false,
+        });
+        await window.electronAPI?.updateFolderIndex?.(affectedLibraries, {
+          mode: 'smart',
+          priorityFolder: selectedFolderPath,
+          language: config?.language || config?.lang || 'ko',
+        });
+        await refreshLibraryScanStates(affectedLibraries);
+        emitLibraryMoveProgress(t('library_move_status_refreshing'), 94, targetLibrary);
+        if (folderPlan) {
+          await handleFolderChange(folderPlan.dest);
+        } else if (selectedFolderRemoved) {
+          const fallbackFolder = parentPath(selectedFolderPath);
+          if (fallbackFolder && await window.electronAPI?.exists?.(fallbackFolder)) {
+            await handleFolderChange(fallbackFolder);
+          } else {
+            setSelectedFolderPath('');
+            clearSelection();
+          }
+        } else {
+          await handleRefresh();
+        }
+        setTreeRefreshToken(current => current + 1);
+      }
+      if (result?.errors?.length > 0) {
         await window.electronAPI?.showMessage?.({
           type: 'error',
           title: t('dlg_err'),
-          message: t('dlg_err_occurred', [expanded?.message || t('msg_failed')]),
+          message: result?.errors?.join('\n') || t('msg_failed'),
           language: config?.language || config?.lang || 'ko',
         });
-        return;
       }
-      executablePlans = expanded.plans.map(plan => ({ ...plan, targetLibrary }));
+    } finally {
+      clearLibraryMoveProgress();
     }
-    const result = await executeLibraryMovePlans(executablePlans);
-    if (folderPlan) await window.electronAPI?.removeEmptyTree?.(folderPlan.src);
-    if (result?.successCount > 0) {
-      showToast?.(t('msg_move_lib_done', [result.successCount]));
-      clearSelection();
-      const affectedLibraries = [...new Set([
-        targetLibrary,
-        ...libraries.filter(library => executablePlans.some(plan => (
-          plan.src === library
-          || plan.src.startsWith(`${library}/`)
-          || plan.src.startsWith(`${library}\\`)
-        ))),
-      ])];
-      await window.electronAPI?.updateFolderIndex?.(affectedLibraries, {
-        mode: 'smart',
-        priorityFolder: selectedFolderPath,
-        language: config?.language || config?.lang || 'ko',
-      });
-      await refreshLibraryScanStates(affectedLibraries);
-      if (folderPlan) {
-        await handleFolderChange(folderPlan.dest);
-      } else {
-        await handleRefresh();
-      }
-      setTreeRefreshToken(current => current + 1);
-    }
-    if (result?.errors?.length > 0) {
-      await window.electronAPI?.showMessage?.({
-        type: 'error',
-        title: t('dlg_err'),
-        message: result?.errors?.join('\n') || t('msg_failed'),
-        language: config?.language || config?.lang || 'ko',
-      });
-    }
-  }, [clearSelection, config?.language, config?.lang, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedFolderPath, showToast, t]);
+  }, [clearLibraryMoveProgress, clearSelection, config?.language, config?.lang, emitLibraryMoveProgress, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedFolderPath, showToast, t]);
 
   const openLibraryMoveDialog = useCallback(async () => {
     if (libraries.length === 0) {
@@ -2102,8 +2228,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   type="text"
                   className="search-input"
                   ref={searchInputRef}
-                  placeholder={t('folder_search_ph')}
+                  placeholder={libraries.length > 0 ? t('folder_search_library_ph') : t('folder_search_ph')}
                   value={searchQuery}
+                  aria-busy={librarySearchLoading}
                   onChange={e => setSearchQuery(e.target.value)}
                 />
                 {searchQuery && (
@@ -2153,7 +2280,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
           <div className="right-bottom-bar">
             <div className="status-info">
-              {formatStatus(t, selectedFiles, filteredFileData)}
+              {librarySearchLoading && isLibrarySearchActive
+                ? t('folder_searching_libraries')
+                : formatStatus(t, selectedFiles, filteredFileData)}
             </div>
             <div className="view-controls">
               <button
@@ -2451,7 +2580,7 @@ function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
         </div>
         <div className="layout-dialog-footer">
           <button onClick={() => onDelete(selected)}>{t('btn_ok')}</button>
-          <button onClick={onClose}>{t('btn_cancel')}</button>
+          <button className="dialog-cancel-button" onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
     </div>
@@ -2571,7 +2700,7 @@ function MovePreviewDialog({ plans, onConfirm, onClose, t }) {
         </div>
         <div className="layout-dialog-footer">
           <button onClick={onConfirm}>{t('btn_ok')}</button>
-          <button onClick={onClose}>{t('btn_cancel')}</button>
+          <button className="dialog-cancel-button" onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
     </div>
@@ -2661,7 +2790,7 @@ function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onCon
         </div>
         <div className="layout-dialog-footer library-move-footer">
           <button className="library-move-confirm" disabled={!selected || plans.length === 0} onClick={() => onConfirm(plans)}>{t('btn_ok')}</button>
-          <button onClick={onClose}>{t('btn_cancel')}</button>
+          <button className="library-move-cancel" onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
     </div>

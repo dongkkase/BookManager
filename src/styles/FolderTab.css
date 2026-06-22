@@ -2290,6 +2290,16 @@ body.is-reordering-table-column {
   background: #3a7ebf;
 }
 
+.library-move-footer .library-move-cancel {
+  color: #fff;
+  background: #e74c3c;
+}
+
+.library-move-footer .library-move-cancel:hover {
+  color: #fff;
+  background: #c0392b;
+}
+
 .library-move-footer .library-move-confirm:disabled {
   color: #8f8f8f;
   background: #333;
@@ -2399,6 +2409,19 @@ body.is-reordering-table-column {
   background: transparent;
   font-size: var(--font-sm);
   font-weight: 800;
+}
+
+.layout-dialog-footer .dialog-cancel-button {
+  min-width: 76px;
+  min-height: 30px;
+  padding: 0 14px;
+  background: #e74c3c;
+  border: none;
+  border-radius: 4px;
+}
+
+.layout-dialog-footer .dialog-cancel-button:hover {
+  background: #c0392b;
 }
 
 .layout-edit-dialog .layout-dialog-footer {
