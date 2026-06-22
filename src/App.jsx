@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { TabBar } from './components/TabBar';
 import { SettingsModal } from './components/SettingsModal';
+import { AppLockOverlay } from './components/AppLockOverlay';
 import { OrganizerTab } from './tabs/OrganizerTab';
 import { RenamerTab } from './tabs/RenamerTab';
 import { MetadataTab } from './tabs/MetadataTab';
@@ -11,6 +12,7 @@ import { FaIcon } from './components/FaIcon';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
+import { useLockScanQueue } from './hooks/useLockScanQueue';
 import { translateKnownText } from './utils/i18n';
 import {
   ISSUE_URL,
@@ -28,11 +30,6 @@ import {
   toastIdentity,
 } from './toastPolicy';
 import {
-  hasMatchingLockScanItem,
-  mergeLockScanItem,
-  mergeLockScanQueueItem,
-} from './lockScanItems';
-import {
   isLibraryIndexingPhase,
   resolveEffectiveWorkingTab,
   shouldCollectLibraryScanSlideItem,
@@ -41,11 +38,8 @@ import {
 import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
 import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
-import workingAnimation from './images/rainbow cat remix.gif';
 import { fontVarsForConfig } from './fontPolicy';
 import './styles/App.css';
-
-const LIBRARY_SCAN_SLIDE_INTERVAL_MS = 900;
 
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
@@ -56,8 +50,6 @@ function App() {
   const [workingTab, setWorkingTab] = useState(null);
   const [toolbarStates, setToolbarStates] = useState({});
   const [statusStates, setStatusStates] = useState({});
-  const [lockThumbnails, setLockThumbnails] = useState([]);
-  const [lockThumbnailIndex, setLockThumbnailIndex] = useState(0);
   const [serverStatus, setServerStatus] = useState(null);
   const [updateInfo, setUpdateInfo] = useState({
     available: false,
@@ -68,10 +60,6 @@ function App() {
   const { t, language, changeLanguage } = useI18n(config);
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
-  const lockThumbnailsRef = useRef([]);
-  const libraryScanSlideActiveRef = useRef(false);
-  const lockScanQueueRef = useRef([]);
-  const lockScanQueueTimerRef = useRef(null);
   const effectiveWorkingTab = useMemo(
     () => resolveEffectiveWorkingTab(workingTab, statusStates, activeTab),
     [activeTab, statusStates, workingTab],
@@ -80,78 +68,15 @@ function App() {
   const isWorking = effectiveWorkingTab === activeTab;
   const effectiveWorkingStatus = effectiveWorkingTab ? statusStates[effectiveWorkingTab] : null;
   const isLibraryScanSlideActive = shouldUseLibraryScanSlide(effectiveWorkingTab, effectiveWorkingStatus || {});
-
-  const stopLockScanQueueTimer = useCallback(() => {
-    if (!lockScanQueueTimerRef.current) return;
-    window.clearInterval(lockScanQueueTimerRef.current);
-    lockScanQueueTimerRef.current = null;
-  }, []);
-
-  const displayLockScanItem = useCallback((item = {}) => {
-    const next = mergeLockScanItem(lockThumbnailsRef.current, item);
-    if (next === lockThumbnailsRef.current) return;
-    lockThumbnailsRef.current = next;
-    setLockThumbnails(next);
-  }, []);
-
-  const drainLockScanQueue = useCallback(() => {
-    if (!libraryScanSlideActiveRef.current) {
-      lockScanQueueRef.current = [];
-      stopLockScanQueueTimer();
-      return;
-    }
-    const [nextItem, ...restItems] = lockScanQueueRef.current;
-    if (!nextItem) {
-      stopLockScanQueueTimer();
-      return;
-    }
-    lockScanQueueRef.current = restItems;
-    displayLockScanItem(nextItem);
-    if (restItems.length === 0) stopLockScanQueueTimer();
-  }, [displayLockScanItem, stopLockScanQueueTimer]);
-
-  const startLockScanQueueTimer = useCallback(() => {
-    if (lockScanQueueTimerRef.current) return;
-    lockScanQueueTimerRef.current = window.setInterval(
-      drainLockScanQueue,
-      LIBRARY_SCAN_SLIDE_INTERVAL_MS,
-    );
-  }, [drainLockScanQueue]);
-
-  const pushLockScanItem = useCallback((item = {}) => {
-    if (!libraryScanSlideActiveRef.current) {
-      return;
-    }
-    const visibleItems = lockThumbnailsRef.current;
-    if (visibleItems.length === 0 && lockScanQueueRef.current.length === 0) {
-      displayLockScanItem(item);
-      return;
-    }
-    if (hasMatchingLockScanItem(visibleItems, item)) {
-      displayLockScanItem(item);
-      return;
-    }
-    const nextQueue = mergeLockScanQueueItem(lockScanQueueRef.current, item);
-    if (nextQueue === lockScanQueueRef.current) return;
-    lockScanQueueRef.current = nextQueue;
-    startLockScanQueueTimer();
-  }, [displayLockScanItem, startLockScanQueueTimer]);
-
-  useEffect(() => {
-    libraryScanSlideActiveRef.current = isLibraryScanSlideActive;
-    if (isLibraryScanSlideActive) return undefined;
-    lockScanQueueRef.current = [];
-    stopLockScanQueueTimer();
-    return undefined;
-  }, [isLibraryScanSlideActive, stopLockScanQueueTimer]);
-
-  useEffect(() => {
-    return () => stopLockScanQueueTimer();
-  }, [stopLockScanQueueTimer]);
-
-  useEffect(() => {
-    lockThumbnailsRef.current = lockThumbnails;
-  }, [lockThumbnails]);
+  const {
+    activateLockScanQueue,
+    lockThumbnailIndex,
+    lockThumbnails,
+    pushLockScanItem,
+  } = useLockScanQueue({
+    isAppLocked,
+    isLibraryScanSlideActive,
+  });
 
   useEffect(() => {
     window.electronAPI?.setRuntimeState?.({
@@ -187,7 +112,7 @@ function App() {
       if (!tabId) return;
       setStatusStates(current => ({ ...current, [tabId]: state }));
       if (shouldUseLibraryScanSlide(tabId, state)) {
-        libraryScanSlideActiveRef.current = true;
+        activateLockScanQueue();
       }
       if (shouldCollectLibraryScanSlideItem(tabId, state)) {
         pushLockScanItem({
@@ -198,7 +123,7 @@ function App() {
     };
     window.addEventListener('bookmanager:status-state', handleStatusState);
     return () => window.removeEventListener('bookmanager:status-state', handleStatusState);
-  }, [pushLockScanItem]);
+  }, [activateLockScanQueue, pushLockScanItem]);
 
   useEffect(() => {
     const handleThumbnailReady = (event) => {
@@ -223,29 +148,6 @@ function App() {
       if (typeof removeFolderFileReady === 'function') removeFolderFileReady();
     };
   }, [pushLockScanItem]);
-
-  useEffect(() => {
-    if (!isAppLocked) {
-      lockThumbnailsRef.current = [];
-      lockScanQueueRef.current = [];
-      stopLockScanQueueTimer();
-      setLockThumbnails([]);
-      setLockThumbnailIndex(0);
-      return undefined;
-    }
-    if (isLibraryScanSlideActive) {
-      setLockThumbnailIndex(0);
-      return undefined;
-    }
-    if (lockThumbnails.length <= 1) {
-      setLockThumbnailIndex(0);
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      setLockThumbnailIndex(current => (current + 1) % lockThumbnails.length);
-    }, 1600);
-    return () => window.clearInterval(timer);
-  }, [isAppLocked, isLibraryScanSlideActive, lockThumbnails.length, stopLockScanQueueTimer]);
 
   useEffect(() => {
     let isMounted = true;
@@ -491,7 +393,7 @@ function App() {
       : [...lockThumbnails.slice(lockThumbnailIndex), ...lockThumbnails.slice(0, lockThumbnailIndex)]
         .slice(0, Math.min(8, lockThumbnails.length)))
     : [];
-  const runningServers = ['OPDS', 'WebDAV'].filter(type => serverStatus?.[type]?.running);
+  const runningServers = ['OPDS', 'Web', 'WebDAV'].filter(type => serverStatus?.[type]?.running);
   const serverTooltip = runningServers
     .map(type => `${type}: ${serverStatus?.[type]?.url || ''}`)
     .join('\n');
@@ -574,96 +476,16 @@ function App() {
         <div className="app-tab-panel" hidden={activeTab !== 'releases'}>
           <ReleaseTab config={config} t={t} />
         </div>
-        {isAppLocked && useLibraryScanSlide && (
-          <div className="app-library-scan-slide" role="status" aria-live="polite" aria-label={lockAriaLabel}>
-            <div className={`app-library-scan-stage ${lockIsLibraryIndexing ? 'is-indexing' : ''}`}>
-              {lockIsLibraryIndexing ? (
-                <div className="app-library-indexing-visual">
-                  <img className="app-library-indexing-image" src={workingAnimation} alt="" />
-                </div>
-              ) : lockThumbnailItems.length > 0 ? (
-                <div className="app-library-scan-rail">
-                  {lockThumbnailItems.map(item => (
-                    <div
-                      className={`app-library-scan-card ${item.src ? '' : 'is-placeholder'}`}
-                      key={item.key || item.src || item.path || item.name}
-                    >
-                      {item.src ? (
-                        <img
-                          className="app-library-scan-thumbnail"
-                          src={item.src}
-                          alt=""
-                        />
-                      ) : (
-                        <div className="app-library-scan-placeholder" aria-hidden="true">
-                          <FaIcon name="bookOpen" size={24} />
-                        </div>
-                      )}
-                      {item.name && (
-                        <span className="app-library-scan-caption" title={item.path || item.name}>
-                          {item.name}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="app-library-scan-empty">
-                  <span>{lockCurrentItemName || lockMessage}</span>
-                </div>
-              )}
-            </div>
-            <div className="app-library-scan-info">
-              <span className="app-library-scan-message">{lockMessage}</span>
-              {lockCurrentItem && (
-                <span className="app-library-scan-current" title={lockCurrentItem}>
-                  {lockCurrentItemName}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-        {isAppLocked && !useLibraryScanSlide && (
-          <div className="app-lock-screen" role="status" aria-live="polite" aria-label={lockAriaLabel}>
-            {lockThumbnailItems.length > 0 ? (
-              <div className="app-lock-thumbnail-stage">
-                <div className="app-lock-thumbnail-rail">
-                  {lockThumbnailItems.map(item => (
-                    <div
-                      className={`app-lock-thumbnail-frame ${item.src ? '' : 'is-placeholder'}`}
-                      key={item.key || item.src || item.path || item.name}
-                    >
-                      {item.src ? (
-                        <img
-                          className="app-lock-thumbnail"
-                          src={item.src}
-                          alt=""
-                        />
-                      ) : (
-                        <div className="app-lock-thumbnail-placeholder" aria-hidden="true">
-                          <FaIcon name="bookOpen" size={28} />
-                        </div>
-                      )}
-                      {item.name && (
-                        <span className="app-lock-thumbnail-caption" title={item.path || item.name}>
-                          {item.name}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <img className="app-lock-working-image" src={workingAnimation} alt="" />
-            )}
-            <span>{lockMessage}</span>
-            {lockCurrentItem && (
-              <span className="app-lock-current-file" title={lockCurrentItem}>
-                {lockCurrentItemName}
-              </span>
-            )}
-          </div>
-        )}
+        <AppLockOverlay
+          isAppLocked={isAppLocked}
+          useLibraryScanSlide={useLibraryScanSlide}
+          lockIsLibraryIndexing={lockIsLibraryIndexing}
+          lockThumbnailItems={lockThumbnailItems}
+          lockAriaLabel={lockAriaLabel}
+          lockCurrentItem={lockCurrentItem}
+          lockCurrentItemName={lockCurrentItemName}
+          lockMessage={lockMessage}
+        />
       </div>
 
       <div className="app-bottom-bar">

@@ -71,8 +71,8 @@ export const IMPLEMENTATION_AUDIT_TARGETS = Object.freeze([
     },
     {
         file: 'src/tabs/SharingTab.jsx',
-        scope: 'OPDS/WebDAV UI',
-        fragments: ['SharingTab', 'opds', 'webdav', 'startServer', 'stopServer'],
+        scope: 'OPDS/Web/WebDAV UI',
+        fragments: ['SharingTab', 'opds', 'web', 'webdav', 'startServer', 'stopServer'],
     },
     {
         file: 'src/tabs/ReleaseTab.jsx',
@@ -121,8 +121,8 @@ export const IMPLEMENTATION_AUDIT_TARGETS = Object.freeze([
     },
     {
         file: 'electron/servers/sharingServers.js',
-        scope: 'OPDS/WebDAV 호환성',
-        fragments: ['buildOpdsApp', 'buildWebdavApp', 'resolveWebdavPath', 'Basic'],
+        scope: 'OPDS/Web/WebDAV 실행 관리',
+        fragments: ['buildOpdsApp', 'buildWebApp', 'buildWebdavApp', 'getSharingServerStatus', 'startSharingServer'],
     },
     {
         file: 'electron/database/library_db.js',

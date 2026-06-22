@@ -8,8 +8,10 @@ import test from 'node:test';
 import { replaceZipEntry } from './core/zipArchive.js';
 import {
     buildOpdsApp,
+    buildWebApp,
     buildWebdavApp,
     getSharingServerStatus,
+    normalizeSharingServerType,
     normalizeSharingRoots,
     resolveWebdavPath,
     startSharingServer,
@@ -35,6 +37,14 @@ async function waitForLog(logs, pattern, timeoutMs = 500) {
         await new Promise(resolve => setTimeout(resolve, 10));
     }
     assert.fail(`Expected log matching ${pattern}`);
+}
+
+async function getFreePort(host = '127.0.0.1') {
+    const probe = http.createServer();
+    await new Promise(resolve => probe.listen(0, host, resolve));
+    const port = probe.address().port;
+    await new Promise(resolve => probe.close(resolve));
+    return port;
 }
 
 function createLibraryFixture(t) {
@@ -199,6 +209,151 @@ test('OPDS 다운로드는 라이브러리 밖 경로를 차단하고 파일명�
 
         const blocked = await fetch(`${baseUrl}/download?file=${encodeURIComponent(outside)}`);
         assert.equal(blocked.status, 404);
+    });
+});
+
+test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제공한다', async t => {
+    const { tempRoot, library, child } = createLibraryFixture(t);
+    const archive = path.join(child, 'Book 01.cbz');
+    const outside = path.join(tempRoot, 'outside.cbz');
+    fs.writeFileSync(outside, 'outside');
+    const realLibrary = fs.realpathSync(library);
+    const app = buildWebApp({ dup_check_folders: [library] });
+
+    await withHttpServer(app, async baseUrl => {
+        const pageResponse = await fetch(baseUrl);
+        const pageHtml = await pageResponse.text();
+        assert.equal(pageResponse.status, 200);
+        assert.match(pageHtml, /BookManager Web Library/);
+        assert.doesNotMatch(pageHtml, /ComicZIP Web Library/);
+        assert.doesNotMatch(pageHtml, /onclick=/);
+        assert.match(pageHtml, /\/assets\/web-library\.js/);
+
+        const scriptResponse = await fetch(`${baseUrl}/assets/web-library.js`);
+        const scriptText = await scriptResponse.text();
+        assert.equal(scriptResponse.status, 200);
+        assert.match(scriptText, /addEventListener/);
+        assert.doesNotMatch(scriptText, /innerHTML/);
+
+        const rootList = await (await fetch(`${baseUrl}/api/list`)).json();
+        assert.equal(rootList.current_dir, '');
+        assert.equal(rootList.can_zip, false);
+        assert.equal(rootList.folders[0].name, 'Library A');
+        assert.equal(rootList.folders[0].is_library, true);
+
+        const childListResponse = await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(child)}`);
+        const childList = await childListResponse.json();
+        assert.equal(childListResponse.status, 200);
+        assert.equal(childList.parent_dir, realLibrary);
+        assert.equal(childList.files.length, 1);
+        assert.equal(childList.files[0].name, 'Book 01.cbz');
+        assert.equal(childList.files[0].title, 'Book 01.cbz');
+        assert.equal(childList.folders.length, 0);
+
+        const folderSearch = await (await fetch(`${baseUrl}/api/search?q=Series`)).json();
+        assert.equal(folderSearch.folders[0].name, 'Series');
+
+        const fileSearch = await (await fetch(`${baseUrl}/api/search?q=Book`)).json();
+        assert.equal(fileSearch.files[0].name, 'Book 01.cbz');
+
+        const download = await fetch(`${baseUrl}/api/download?file=${encodeURIComponent(archive)}`);
+        assert.equal(download.status, 200);
+        assert.match(download.headers.get('content-type'), /application\/x-cbz/);
+        assert.match(download.headers.get('content-disposition'), /Book 01\.cbz/);
+        assert.equal(await download.text(), 'archive');
+
+        const blocked = await fetch(`${baseUrl}/api/download?file=${encodeURIComponent(outside)}`);
+        assert.equal(blocked.status, 404);
+    });
+});
+
+test('Web 서버는 DB 인덱스로 검색 결과, 메타데이터, 직접 썸네일을 만든다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-web-db-'));
+    const library = path.join(tempRoot, 'Library A');
+    const child = path.join(library, 'Indexed Series');
+    const thumbnailDir = path.join(tempRoot, 'thumbnails');
+    const archive = path.join(child, 'Indexed 01.cbz');
+    const thumbnail = path.join(thumbnailDir, 'indexed.jpg');
+    fs.mkdirSync(child, { recursive: true });
+    fs.mkdirSync(thumbnailDir, { recursive: true });
+    fs.writeFileSync(archive, 'archive');
+    fs.writeFileSync(thumbnail, 'thumbnail');
+    const realLibrary = fs.realpathSync(library);
+    const realChild = fs.realpathSync(child);
+    const realArchive = fs.realpathSync(archive);
+    const realThumbnail = fs.realpathSync(thumbnail);
+    const realThumbnailDir = fs.realpathSync(thumbnailDir);
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const dbRowsProvider = async currentDir => {
+        if (![realLibrary, realChild].includes(currentDir)) return [];
+        return [{
+            path: realArchive,
+            title: 'DB Indexed Title',
+            series: 'DB Series',
+            writer: 'DB Writer',
+            publisher: 'DB Publisher',
+            genre: 'Action',
+            summary: 'DB Summary',
+            rating: '4.5',
+            tags: 'tag-a, tag-b',
+            thumb_path: realThumbnail,
+            size: 2 * 1024 * 1024,
+            ext: '.cbz',
+            page_count: '12',
+        }];
+    };
+    const app = buildWebApp(
+        { dup_check_folders: [realLibrary] },
+        { dbRowsProvider, thumbnailDir: realThumbnailDir },
+    );
+
+    await withHttpServer(app, async baseUrl => {
+        const libraryList = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(realLibrary)}`)).json();
+        assert.equal(libraryList.folders.length, 1);
+        assert.equal(libraryList.folders[0].name, 'Indexed Series');
+        assert.equal(libraryList.folders[0].count, 1);
+        assert.equal(libraryList.folders[0].has_metadata, true);
+        assert.equal(libraryList.folders[0].thumb_path, realThumbnail);
+
+        const childList = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(realChild)}`)).json();
+        assert.equal(childList.files.length, 1);
+        assert.equal(childList.files[0].title, 'DB Indexed Title');
+        assert.equal(childList.files[0].size, 2 * 1024 * 1024);
+        assert.equal(childList.files[0].thumb_path, realThumbnail);
+
+        const search = await (await fetch(`${baseUrl}/api/search?q=Indexed`)).json();
+        assert.equal(search.folders[0].name, 'Indexed Series');
+        assert.equal(search.files[0].title, 'DB Indexed Title');
+
+        const meta = await (await fetch(`${baseUrl}/api/folder-meta?dir=${encodeURIComponent(realChild)}`)).json();
+        assert.equal(meta.title, 'DB Indexed Title');
+        assert.equal(meta.series, 'DB Series');
+        assert.equal(meta.writer, 'DB Writer');
+        assert.equal(meta.summary, 'DB Summary');
+        assert.equal(meta.tags, 'tag-a, tag-b');
+        assert.equal(meta.thumb_path, realThumbnail);
+
+        const thumbnailResponse = await fetch(`${baseUrl}/api/thumbnail?file=${encodeURIComponent(realThumbnail)}`);
+        assert.equal(thumbnailResponse.status, 200);
+        assert.match(thumbnailResponse.headers.get('content-type'), /image\/jpeg/);
+        assert.equal(await thumbnailResponse.text(), 'thumbnail');
+    });
+});
+
+test('Web 서버는 ZIP/CBZ 표지를 썸네일로 추출한다', async t => {
+    const { library, child } = createLibraryFixture(t);
+    const archive = path.join(child, 'Book 01.cbz');
+    fs.writeFileSync(archive, Buffer.alloc(0));
+    await replaceZipEntry(archive, '002.png', Buffer.from('page-2'));
+    await replaceZipEntry(archive, 'cover.jpg', Buffer.from('cover'));
+    const app = buildWebApp({ dup_check_folders: [library] });
+
+    await withHttpServer(app, async baseUrl => {
+        const thumbnail = await fetch(`${baseUrl}/api/thumbnail?file=${encodeURIComponent(archive)}`);
+        assert.equal(thumbnail.status, 200);
+        assert.match(thumbnail.headers.get('content-type'), /image\/jpeg/);
+        assert.equal(await thumbnail.text(), 'cover');
     });
 });
 
@@ -527,6 +682,35 @@ test('공유 서버 포트는 1024부터 65535까지만 허용한다', async () 
         startSharingServer('WebDAV', { port: 65536 }, {}),
         /1024부터 65535/,
     );
+    await assert.rejects(
+        startSharingServer('Web', { port: 1023 }, {}),
+        /1024부터 65535/,
+    );
+});
+
+test('Web 서버 타입은 공백이 있어도 OPDS로 fallback하지 않는다', async () => {
+    const port = await getFreePort();
+    assert.equal(normalizeSharingServerType('Web '), 'Web');
+    assert.equal(normalizeSharingServerType(' OPDS '), 'OPDS');
+    assert.equal(normalizeSharingServerType('OPDF'), null);
+
+    try {
+        await startSharingServer('Web ', { port }, {});
+        const status = getSharingServerStatus();
+        assert.equal(status.Web.running, true);
+        assert.equal(status.OPDS.running, false);
+        assert.equal(status.Web.port, port);
+    } finally {
+        await stopAllSharingServers();
+    }
+});
+
+test('알 수 없는 공유 서버 타입은 OPDS로 시작하지 않고 거부한다', async () => {
+    await assert.rejects(
+        startSharingServer('OPDF', { port: 8082 }, {}),
+        /지원하지 않는 서버 타입/,
+    );
+    assert.equal(getSharingServerStatus().OPDS.running, false);
 });
 
 test('포트 충돌 시 서버 상태를 실행 중으로 남기지 않고 오류 로그를 전달한다', async () => {
@@ -548,32 +732,43 @@ test('포트 충돌 시 서버 상태를 실행 중으로 남기지 않고 오�
     }
 });
 
-test('OPDS와 WebDAV를 동시에 실행한 뒤 모두 중지하면 포트를 해제한다', async () => {
-    const probe = http.createServer();
-    await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
-    const firstPort = probe.address().port;
-    await new Promise(resolve => probe.close(resolve));
-    await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
-    const secondPort = probe.address().port;
-    await new Promise(resolve => probe.close(resolve));
+test('OPDS, Web, WebDAV를 동시에 실행한 뒤 모두 중지하면 포트를 해제한다', async () => {
+    const firstPort = await getFreePort();
+    const secondPort = await getFreePort();
+    const thirdPort = await getFreePort();
 
     try {
         await startSharingServer('OPDS', { port: firstPort }, {});
+        await startSharingServer('Web', { port: secondPort }, {});
         await startSharingServer('WebDAV', {
-            port: secondPort,
+            port: thirdPort,
             username: 'reader',
             password: 'secret',
         }, {});
         assert.equal(getSharingServerStatus().OPDS.running, true);
+        assert.equal(getSharingServerStatus().Web.running, true);
         assert.equal(getSharingServerStatus().WebDAV.running, true);
     } finally {
         await stopAllSharingServers();
     }
 
     assert.equal(getSharingServerStatus().OPDS.running, false);
+    assert.equal(getSharingServerStatus().Web.running, false);
     assert.equal(getSharingServerStatus().WebDAV.running, false);
 
     const rebound = http.createServer();
     await new Promise(resolve => rebound.listen(firstPort, '127.0.0.1', resolve));
     await new Promise(resolve => rebound.close(resolve));
+});
+
+test('Web 서버 상태 URL은 브라우저 루트 주소를 반환한다', async () => {
+    const port = await getFreePort();
+
+    try {
+        const result = await startSharingServer('Web', { port }, {});
+        assert.equal(result.url, `http://${result.localIp}:${port}/`);
+        assert.equal(getSharingServerStatus().Web.url, `http://${result.localIp}:${port}/`);
+    } finally {
+        await stopSharingServer('Web');
+    }
 });

@@ -9,6 +9,12 @@ import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { extractCoreTitle } from '../utils/folderUtils';
+import {
+  basename,
+  joinPath,
+  parentPath,
+  replaceBasename,
+} from '../utils/folderPath';
 import { useFolderScan } from '../hooks/useFolderScan';
 import { useFileSelection } from '../hooks/useFileSelection';
 import {
@@ -65,39 +71,10 @@ import {
   applyConflictChoice,
   createLibraryMovePlans,
 } from '../libraryMovePolicy';
+import { normalizeLibraryKey } from '../folderLibraryStatus';
 import { hasPrimaryModifier, isShortcutKey, shouldHandleGlobalShortcut } from '../interactionPolicy';
 import { emitStatusState } from '../statusState';
 import '../styles/FolderTab.css';
-
-function parentPath(filePath) {
-  const parts = String(filePath || '').split(/[\\/]/);
-  parts.pop();
-  return parts.join('/') || '';
-}
-
-function replaceBasename(filePath, nextName) {
-  const value = String(filePath || '');
-  const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
-  return separatorIndex >= 0 ? `${value.slice(0, separatorIndex + 1)}${nextName}` : nextName;
-}
-
-function basename(filePath) {
-  return String(filePath || '').split(/[\\/]/).pop() || '';
-}
-
-function normalizeLibraryKey(folderPath = '') {
-  return String(folderPath)
-    .replace(/\\/g, '/')
-    .replace(/\/+$/, '')
-    .toLowerCase();
-}
-
-function joinPath(base, ...parts) {
-  const separator = String(base || '').includes('\\') ? '\\' : '/';
-  return [String(base || '').replace(/[\\/]+$/, ''), ...parts.map(part => String(part || '').replace(/^[\\/]+|[\\/]+$/g, ''))]
-    .filter(Boolean)
-    .join(separator);
-}
 
 function FolderTab({ config, saveConfig, t, showToast }) {
   // --- 폴더 상태 ---

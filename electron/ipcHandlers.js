@@ -13,7 +13,12 @@ import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
 import { analyzeMetadataInputs, saveMetadataItems } from './tasks/metadataTask.js';
-import { getSharingServerStatus, startSharingServer, stopSharingServer } from './servers/sharingServers.js';
+import {
+  getSharingServerStatus,
+  normalizeSharingServerType,
+  startSharingServer,
+  stopSharingServer,
+} from './servers/sharingServers.js';
 import {
   createArchiveDialogOptions,
   createFolderDialogOptions,
@@ -2397,24 +2402,33 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         }
     };
     const config = configManager.getConfig() || {};
-    const updates = serverType === 'WebDAV'
-        ? {
+    const normalizedServerType = normalizeSharingServerType(serverType);
+    if (!normalizedServerType) {
+        throw new Error(i18nT('sharing_invalid_server_type', { server: String(serverType || '') }));
+    }
+    let updates = {
+        opds_port: Number(options.port) || config.opds_port || 8080,
+    };
+    if (normalizedServerType === 'Web') {
+        updates = {
+            web_port: Number(options.port) || config.web_port || 8082,
+        };
+    } else if (normalizedServerType === 'WebDAV') {
+        updates = {
             webdav_port: Number(options.port) || config.webdav_port || 8081,
             webdav_username: String(options.username ?? config.webdav_username ?? 'user').trim() || 'user',
             webdav_password: String(options.password ?? config.webdav_password ?? '1234').trim() || '1234',
-        }
-        : {
-            opds_port: Number(options.port) || config.opds_port || 8080,
         };
+    }
     configManager.saveConfig({ ...config, ...updates });
-    const sevenZExe = serverType === 'OPDS'
+    const sevenZExe = ['OPDS', 'Web'].includes(normalizedServerType)
         ? await getBinPath('7za') || await getBinPath('7z')
         : '';
     return startSharingServer(
-        serverType,
+        normalizedServerType,
         {
             ...options,
-            port: updates.webdav_port || updates.opds_port,
+            port: updates.webdav_port || updates.web_port || updates.opds_port,
             dbPath: libraryDbPath(),
             thumbnailDir: thumbnailDir(),
             sevenZExe,

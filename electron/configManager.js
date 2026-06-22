@@ -115,6 +115,7 @@ export class ConfigManager {
       folder_favorites: [],
       dup_check_folders: [],
       opds_port: 8080,
+      web_port: 8082,
       webdav_port: 8081,
       webdav_username: 'user',
       webdav_password: '1234',

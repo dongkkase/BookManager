@@ -23,12 +23,14 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     };
     const [opdsPort, setOpdsPort] = useState(config?.opds_port || 8080);
     const [opdsRunning, setOpdsRunning] = useState(false);
+    const [webPort, setWebPort] = useState(config?.web_port || 8082);
+    const [webRunning, setWebRunning] = useState(false);
     const [webdavId, setWebdavId] = useState(config?.webdav_username || 'user');
     const [webdavPw, setWebdavPw] = useState(config?.webdav_password || '1234');
     const [webdavPwVisible, setWebdavPwVisible] = useState(false);
     const [webdavPort, setWebdavPort] = useState(config?.webdav_port || 8081);
     const [webdavRunning, setWebdavRunning] = useState(false);
-    const [busyServer, setBusyServer] = useState(null);
+    const [busyServers, setBusyServers] = useState({});
     const [localIp, setLocalIp] = useState('127.0.0.1');
     const [logs, setLogs] = useState([
         { type: 'INFO', message: text('tab_sharing_log_ready', '서버 로그가 준비되었습니다.') },
@@ -44,14 +46,28 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             },
         ]);
     };
+    const isServerBusy = type => Boolean(busyServers[type]);
+    const setServerBusy = (type, busy) => {
+        setBusyServers(current => {
+            const next = { ...current };
+            if (busy) {
+                next[type] = true;
+            } else {
+                delete next[type];
+            }
+            return next;
+        });
+    };
 
     useEffect(() => {
         setOpdsPort(config?.opds_port || 8080);
+        setWebPort(config?.web_port || 8082);
         setWebdavPort(config?.webdav_port || 8081);
         setWebdavId(config?.webdav_username || 'user');
         setWebdavPw(config?.webdav_password || '1234');
     }, [
         config?.opds_port,
+        config?.web_port,
         config?.webdav_password,
         config?.webdav_port,
         config?.webdav_username,
@@ -69,8 +85,10 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             if (!status || !isMounted) return;
             setLocalIp(status.localIp || '127.0.0.1');
             setOpdsRunning(Boolean(status.OPDS?.running));
+            setWebRunning(Boolean(status.Web?.running));
             setWebdavRunning(Boolean(status.WebDAV?.running));
             if (status.OPDS?.port) setOpdsPort(status.OPDS.port);
+            if (status.Web?.port) setWebPort(status.Web.port);
             if (status.WebDAV?.port) setWebdavPort(status.WebDAV.port);
         };
 
@@ -125,8 +143,8 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     };
 
     const handleToggleOpds = async () => {
-        if (busyServer) return;
-        setBusyServer('OPDS');
+        if (isServerBusy('OPDS')) return;
+        setServerBusy('OPDS', true);
         try {
             if (opdsRunning) {
                 await window.electronAPI.stopServer('OPDS');
@@ -141,13 +159,34 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             setOpdsRunning(false);
             appendLog('ERROR', text('tab_sharing_opds_action_failed', 'OPDS 서버 처리 실패: {msg}', { msg: error.message }));
         } finally {
-            setBusyServer(null);
+            setServerBusy('OPDS', false);
+        }
+    };
+
+    const handleToggleWeb = async () => {
+        if (isServerBusy('Web')) return;
+        setServerBusy('Web', true);
+        try {
+            if (webRunning) {
+                await window.electronAPI.stopServer('Web');
+                setWebRunning(false);
+            } else {
+                const port = await savePort('web_port', webPort, 8082, setWebPort);
+                const result = await window.electronAPI.startServer('Web', { port });
+                setLocalIp(result.localIp || localIp);
+                setWebRunning(Boolean(result.running));
+            }
+        } catch (error) {
+            setWebRunning(false);
+            appendLog('ERROR', text('tab_sharing_web_action_failed', 'Web 서버 처리 실패: {msg}', { msg: error.message }));
+        } finally {
+            setServerBusy('Web', false);
         }
     };
 
     const handleToggleWebdav = async () => {
-        if (busyServer) return;
-        setBusyServer('WebDAV');
+        if (isServerBusy('WebDAV')) return;
+        setServerBusy('WebDAV', true);
         try {
             if (webdavRunning) {
                 await window.electronAPI.stopServer('WebDAV');
@@ -168,11 +207,12 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             setWebdavRunning(false);
             appendLog('ERROR', text('tab_sharing_webdav_action_failed', 'WebDAV 서버 처리 실패: {msg}', { msg: error.message }));
         } finally {
-            setBusyServer(null);
+            setServerBusy('WebDAV', false);
         }
     };
 
     const opdsUrl = `http://${localIp}:${opdsPort}/opds`;
+    const webUrl = `http://${localIp}:${webPort}/`;
     const webdavUrl = `http://${localIp}:${webdavPort}/`;
 
     return (
@@ -198,15 +238,20 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                                     }
                                 }}
                                 onBlur={() => savePort('opds_port', opdsPort, 8080, setOpdsPort)}
-                                disabled={opdsRunning || busyServer === 'OPDS'}
+                                disabled={opdsRunning || isServerBusy('OPDS')}
                             />
                             <button
+                                type="button"
                                 className={`sharing-btn-toggle ${opdsRunning ? 'running' : ''}`}
-                                onClick={handleToggleOpds}
-                                disabled={Boolean(busyServer)}
+                                onClick={event => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    handleToggleOpds();
+                                }}
+                                disabled={isServerBusy('OPDS')}
                             >
                                 <FaIcon name={opdsRunning ? 'stopCircle' : 'powerOff'} />
-                                {busyServer === 'OPDS'
+                                {isServerBusy('OPDS')
                                     ? t('tab_sharing_processing')
                                     : formatToggleLabel(t, 'OPDS', opdsRunning)}
                             </button>
@@ -215,7 +260,58 @@ function SharingTab({ config, saveConfig, t, showToast }) {
 
                         <div className="sharing-row url-row">
                             <input type="text" className="sharing-input-url" value={opdsUrl} readOnly />
-                            <button className="sharing-btn-copy" onClick={() => handleCopyUrl(opdsUrl)}>
+                            <button type="button" className="sharing-btn-copy" onClick={() => handleCopyUrl(opdsUrl)}>
+                                <FaIcon name="copy" /> {t('tab_sharing_copy')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="sharing-groupbox mt-20">
+                    <div className="sharing-groupbox-title">{t('tab_sharing_web_title')}</div>
+                    <div className="sharing-groupbox-content">
+                        <div className="sharing-desc">{t('tab_sharing_web_desc')}</div>
+
+                        <div className="sharing-row">
+                            <label className="sharing-label" htmlFor="web-port">{t('tab_sharing_port')}</label>
+                            <input
+                                id="web-port"
+                                type="number"
+                                className="sharing-input-num"
+                                min={MIN_PORT}
+                                max={MAX_PORT}
+                                value={webPort}
+                                onChange={event => {
+                                    setWebPort(event.target.value);
+                                    const value = Number(event.target.value);
+                                    if (value >= MIN_PORT && value <= MAX_PORT) {
+                                        saveConfig?.({ web_port: value }).catch(error => appendLog('ERROR', error.message));
+                                    }
+                                }}
+                                onBlur={() => savePort('web_port', webPort, 8082, setWebPort)}
+                                disabled={webRunning || isServerBusy('Web')}
+                            />
+                            <button
+                                type="button"
+                                className={`sharing-btn-toggle ${webRunning ? 'running' : ''}`}
+                                onClick={event => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    handleToggleWeb();
+                                }}
+                                disabled={isServerBusy('Web')}
+                            >
+                                <FaIcon name={webRunning ? 'stopCircle' : 'powerOff'} />
+                                {isServerBusy('Web')
+                                    ? t('tab_sharing_processing')
+                                    : formatToggleLabel(t, 'Web', webRunning)}
+                            </button>
+                            <div className="sharing-spacer" />
+                        </div>
+
+                        <div className="sharing-row url-row">
+                            <input type="text" className="sharing-input-url" value={webUrl} readOnly />
+                            <button type="button" className="sharing-btn-copy" onClick={() => handleCopyUrl(webUrl)}>
                                 <FaIcon name="copy" /> {t('tab_sharing_copy')}
                             </button>
                         </div>
@@ -289,15 +385,20 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                                     }
                                 }}
                                 onBlur={() => savePort('webdav_port', webdavPort, 8081, setWebdavPort)}
-                                disabled={webdavRunning || busyServer === 'WebDAV'}
+                                disabled={webdavRunning || isServerBusy('WebDAV')}
                             />
                             <button
+                                type="button"
                                 className={`sharing-btn-toggle ${webdavRunning ? 'running' : ''}`}
-                                onClick={handleToggleWebdav}
-                                disabled={Boolean(busyServer)}
+                                onClick={event => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    handleToggleWebdav();
+                                }}
+                                disabled={isServerBusy('WebDAV')}
                             >
                                 <FaIcon name={webdavRunning ? 'stopCircle' : 'powerOff'} />
-                                {busyServer === 'WebDAV'
+                                {isServerBusy('WebDAV')
                                     ? t('tab_sharing_processing')
                                     : formatToggleLabel(t, 'WebDAV', webdavRunning)}
                             </button>
@@ -306,7 +407,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
 
                         <div className="sharing-row url-row">
                             <input type="text" className="sharing-input-url" value={webdavUrl} readOnly />
-                            <button className="sharing-btn-copy" onClick={() => handleCopyUrl(webdavUrl)}>
+                            <button type="button" className="sharing-btn-copy" onClick={() => handleCopyUrl(webdavUrl)}>
                                 <FaIcon name="copy" /> {t('tab_sharing_copy')}
                             </button>
                         </div>

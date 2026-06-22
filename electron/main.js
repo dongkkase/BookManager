@@ -303,7 +303,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async event => {
     const status = getSharingServerStatus();
-    const hasRunningServer = status.OPDS.running || status.WebDAV.running;
+    const hasRunningServer = status.OPDS.running || status.Web.running || status.WebDAV.running;
     if (sharingServersStopped || !hasRunningServer) return;
 
     event.preventDefault();
