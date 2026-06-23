@@ -225,6 +225,27 @@ function runQuietProcess(command, args, options = {}) {
   return runProcess(command, args, { ...options, captureOutput: false });
 }
 
+async function isUsableConvertedFile(filePath, expectedExtension = '') {
+  try {
+    const stat = await fsp.stat(filePath);
+    if (stat.size <= 0) return false;
+    if (String(expectedExtension || '').toLowerCase() !== '.webp') return true;
+
+    const handle = await fsp.open(filePath, 'r');
+    try {
+      const header = Buffer.alloc(12);
+      const { bytesRead } = await handle.read(header, 0, header.length, 0);
+      return bytesRead >= 12
+        && header.toString('ascii', 0, 4) === 'RIFF'
+        && header.toString('ascii', 8, 12) === 'WEBP';
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 async function listWith7z(filePath, sevenZExe) {
   if (!sevenZExe) return [];
   const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath]);
@@ -573,6 +594,10 @@ async function optimizeExtractedImages(rootDir, item, options) {
   if (imageFiles.length === 0 || options.shouldCancel?.()) return;
 
   async function replaceWhenUseful(sourcePath, tempPath) {
+    if (!await isUsableConvertedFile(tempPath, path.extname(sourcePath).toLowerCase())) {
+      await fsp.rm(tempPath, { force: true }).catch(() => {});
+      return false;
+    }
     const [sourceStat, tempStat] = await Promise.all([fsp.stat(sourcePath), fsp.stat(tempPath)]);
     if (tempStat.size < sourceStat.size || (stripExif && tempStat.size === sourceStat.size)) {
       await fsp.rm(sourcePath, { force: true });
@@ -764,19 +789,26 @@ async function processRenamerItem(item, options) {
       if ((options.webp_conversion || options.webpConversion) && sourceExtension !== '.webp') {
         if (!options.cwebpExe) throw new Error('cwebp executable not found.');
         const convertedTempAbs = `${move.tempAbs}.webp.tmp`;
-        await runQuietProcess(options.cwebpExe, [
-          move.oldAbs,
-          '-o',
-          convertedTempAbs,
-          '-q',
-          String(imageQuality(options)),
-          ...(item.exifOpt ? ['-metadata', 'none'] : []),
-        ]);
-        const [sourceStat, convertedStat] = await Promise.all([
-          fsp.stat(move.oldAbs),
-          fsp.stat(convertedTempAbs),
-        ]);
-        if (convertedStat.size < sourceStat.size) {
+        let useConverted = false;
+        try {
+          await runQuietProcess(options.cwebpExe, [
+            move.oldAbs,
+            '-o',
+            convertedTempAbs,
+            '-q',
+            String(imageQuality(options)),
+            ...(item.exifOpt ? ['-metadata', 'none'] : []),
+          ]);
+          const [sourceStat, convertedStat] = await Promise.all([
+            fsp.stat(move.oldAbs),
+            fsp.stat(convertedTempAbs),
+          ]);
+          useConverted = convertedStat.size < sourceStat.size
+            && await isUsableConvertedFile(convertedTempAbs, '.webp');
+        } catch {
+          useConverted = false;
+        }
+        if (useConverted) {
           await fsp.rm(move.oldAbs, { force: true });
           move.tempAbs = convertedTempAbs;
         } else {

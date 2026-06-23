@@ -140,6 +140,25 @@ function runQuietProcess(command, args, options = {}) {
   return runProcess(command, args, { ...options, captureOutput: false });
 }
 
+async function isUsableConvertedWebp(filePath) {
+  try {
+    const stat = await fsp.stat(filePath);
+    if (stat.size <= 0) return false;
+    const handle = await fsp.open(filePath, 'r');
+    try {
+      const header = Buffer.alloc(12);
+      const { bytesRead } = await handle.read(header, 0, header.length, 0);
+      return bytesRead >= 12
+        && header.toString('ascii', 0, 4) === 'RIFF'
+        && header.toString('ascii', 8, 12) === 'WEBP';
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 async function listWith7z(filePath, sevenZExe) {
   if (!sevenZExe) return [];
   const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath]);
@@ -506,6 +525,10 @@ async function convertImagesToWebp(rootDir, cwebpExe, quality = 85) {
         const tempPath = await uniquePath(path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.tmp.webp`));
         try {
           await runQuietProcess(cwebpExe, [fullPath, '-o', tempPath, '-q', String(Math.max(1, Math.min(100, Number(quality) || 85)))]);
+          if (!await isUsableConvertedWebp(tempPath)) {
+            await fsp.rm(tempPath, { force: true }).catch(() => {});
+            continue;
+          }
           if (fs.existsSync(webpPath)) await fsp.rm(webpPath, { force: true });
           await fsp.rename(tempPath, webpPath);
           await fsp.rm(fullPath, { force: true });

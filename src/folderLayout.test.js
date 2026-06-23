@@ -18,8 +18,9 @@ test('최초 상하 splitter는 상세 패널 35% 비율을 사용한다', () =>
 test('저장된 splitter 값은 현재 컨테이너 범위 안으로 제한한다', () => {
     assert.equal(clampSidebarWidth(900, 1200), 520);
     assert.equal(clampSidebarWidth(100, 1200), 220);
-    assert.equal(clampDetailHeight(900, 700), 550);
-    assert.equal(clampDetailHeight(20, 700), 180);
+    assert.equal(clampDetailHeight(900, 700), 540);
+    assert.equal(clampDetailHeight(20, 700), 112);
+    assert.equal(clampDetailHeight(260, 300), 140);
 });
 
 test('저장된 splitter 값이 있으면 기본 비율보다 우선한다', () => {

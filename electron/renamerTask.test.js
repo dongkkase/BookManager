@@ -682,3 +682,69 @@ test('WebP 변환 결과가 원본보다 크면 원본 포맷을 유지한다', 
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+test('WebP 변환 결과가 0바이트이면 원본 포맷을 유지한다', async t => {
+    if (process.platform === 'win32') {
+        t.skip('shell wrapper is not available on Windows');
+        return;
+    }
+
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-webp-zero-'));
+    try {
+        const source = createArchive(sevenZExe, root, 'Webp Zero', {
+            '1.png': PNG_1X1,
+        });
+        const wrapperPath = path.join(root, 'zero-cwebp.sh');
+        fs.writeFileSync(
+            wrapperPath,
+            [
+                '#!/bin/sh',
+                'out=""',
+                'while [ "$#" -gt 0 ]; do',
+                '  if [ "$1" = "-o" ]; then',
+                '    shift',
+                '    out="$1"',
+                '  fi',
+                '  shift',
+                'done',
+                ': > "$out"',
+                'exit 0',
+                '',
+            ].join('\n'),
+        );
+        fs.chmodSync(wrapperPath, 0o755);
+
+        const analyzed = await analyzeRenamerInputs([source], {
+            sevenZExe,
+            webpConversion: true,
+        });
+        assert.equal(analyzed.items.length, 1, analyzed.skippedFiles.join('\n'));
+        analyzed.items[0].capOpt = false;
+        analyzed.items[0].exifOpt = false;
+
+        const result = await executeRenamer(analyzed.items, {
+            sevenZExe,
+            cwebpExe: wrapperPath,
+            webp_conversion: true,
+            img_quality: 80,
+            deleteOriginal: false,
+            shouldCancel: () => false,
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.equal(result.outputFiles.length, 1);
+        const listing = spawnSync(sevenZExe, ['l', '-ba', result.outputFiles[0]], { encoding: 'utf8' }).stdout;
+        assert.match(listing, /00\.png/);
+        assert.doesNotMatch(listing, /\.webp/);
+        assert.deepEqual(await readArchiveEntry(result.outputFiles[0], '00.png'), PNG_1X1);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
