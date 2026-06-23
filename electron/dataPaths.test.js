@@ -7,6 +7,7 @@ import {
     resolveAppDataDir,
     resolveConfigPath,
     resolveLibraryDbPath,
+    resolvePortableBaseDir,
     resolveRenameHistoryPath,
     resolveThumbnailDir,
 } from './dataPaths.js';
@@ -20,6 +21,18 @@ test('앱 데이터 경로는 실행 폴더의 data 하위로 고정한다', () 
     assert.equal(resolveConfigPath(executableDir), path.join(executableDir, 'data', 'config.json'));
     assert.equal(resolveRenameHistoryPath(executableDir), path.join(executableDir, 'data', 'rename_history.json'));
     assert.equal(resolveThumbnailDir(executableDir), path.join(executableDir, 'data', 'thumbnails'));
+});
+
+test('macOS .app 내부 실행 경로는 앱 번들 옆 data 폴더로 변환한다', () => {
+    const executableDir = path.join('/portable', 'BookManager.app', 'Contents', 'MacOS');
+
+    assert.equal(resolvePortableBaseDir(executableDir, 'darwin'), '/portable');
+    assert.equal(resolveAppDataDir(executableDir, 'darwin'), path.join('/portable', 'data'));
+    assert.equal(resolveLibraryDbPath(executableDir, 'darwin'), path.join('/portable', 'data', 'library.db'));
+    assert.equal(resolveApiCacheDbPath(executableDir, 'darwin'), path.join('/portable', 'data', '.api_cache.db'));
+    assert.equal(resolveConfigPath(executableDir, 'darwin'), path.join('/portable', 'data', 'config.json'));
+    assert.equal(resolveRenameHistoryPath(executableDir, 'darwin'), path.join('/portable', 'data', 'rename_history.json'));
+    assert.equal(resolveThumbnailDir(executableDir, 'darwin'), path.join('/portable', 'data', 'thumbnails'));
 });
 
 test('IPC의 DB, 캐시 파일, 썸네일 경로는 data 경로 정책을 사용한다', () => {

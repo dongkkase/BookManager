@@ -2272,7 +2272,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-orientation="horizontal"
                 onMouseDown={startVerticalResize}
               />
-              <div className="detail-panel-wrap" style={{ flexBasis: `${detailPanelHeight}px`, height: `${detailPanelHeight}px` }}>
+              <div className="detail-panel-wrap" style={{ flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}>
                 <DetailPanel selectedFile={activeSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
               </div>
             </>
@@ -2291,7 +2291,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'table'}
                 onClick={() => handleViewModeChange('table')}
               >
-                <FaIcon name="list" size={13} />
+                <span className="view-mode-glyph" aria-hidden="true">☰</span>
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'thumbnail' ? 'active' : ''}`}
@@ -2299,7 +2299,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'thumbnail'}
                 onClick={() => handleViewModeChange('thumbnail')}
               >
-                <FaIcon name="tableCells" size={13} />
+                <span className="view-mode-glyph" aria-hidden="true">▦</span>
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'tile' ? 'active' : ''}`}
@@ -2307,7 +2307,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'tile'}
                 onClick={() => handleViewModeChange('tile')}
               >
-                <FaIcon name="layers" size={13} />
+                <span className="view-mode-glyph" aria-hidden="true">☷</span>
               </button>
               <span className="scale-label">{t('folder_item_size')}</span>
               <input

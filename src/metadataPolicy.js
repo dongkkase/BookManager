@@ -5,9 +5,6 @@ export const COMIC_INFO_FIELDS = Object.freeze([
     'Number',
     'Count',
     'Volume',
-    'AlternateSeries',
-    'AlternateNumber',
-    'AlternateCount',
     'Summary',
     'Notes',
     'Web',
@@ -18,14 +15,11 @@ export const COMIC_INFO_FIELDS = Object.freeze([
     'Letterer',
     'CoverArtist',
     'Editor',
-    'Translator',
     'Publisher',
     'Imprint',
     'Genre',
     'Tags',
     'Characters',
-    'Teams',
-    'Locations',
     'PageCount',
     'LanguageISO',
     'Format',
@@ -135,6 +129,74 @@ export function cleanMetadataSummary(value = '') {
         .replace(/^\s*<책소개>\s*/i, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+}
+
+function splitMetadataTagList(value = '') {
+    return String(value || '')
+        .split(',')
+        .map(part => part.trim())
+        .filter(Boolean);
+}
+
+function joinMetadataTagList(values = []) {
+    const seen = new Set();
+    const tags = [];
+    for (const value of values) {
+        const tag = String(value || '').trim();
+        if (!tag || seen.has(tag)) continue;
+        seen.add(tag);
+        tags.push(tag);
+    }
+    return tags.join(', ');
+}
+
+export function combinedGenreTagsValue(metadata = {}) {
+    return joinMetadataTagList([
+        ...splitMetadataTagList(metadata?.Genre),
+        ...splitMetadataTagList(metadata?.Tags),
+    ]);
+}
+
+export function splitCombinedGenreTags(value = '') {
+    const tags = splitMetadataTagList(value);
+    return {
+        Genre: tags[0] || '',
+        Tags: joinMetadataTagList(tags.slice(1)),
+    };
+}
+
+export function applyCombinedGenreTagsValue(metadata = {}, value = '') {
+    return {
+        ...(metadata || {}),
+        ...splitCombinedGenreTags(value),
+    };
+}
+
+function padDatePart(value) {
+    return String(value).padStart(2, '0');
+}
+
+export function formatMetadataModifiedDate(value, fallback = 'No Data') {
+    const text = String(value ?? '').trim();
+    if (!text) return fallback;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+        return text;
+    }
+
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return text;
+
+    const kstDate = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+    return [
+        kstDate.getUTCFullYear(),
+        padDatePart(kstDate.getUTCMonth() + 1),
+        padDatePart(kstDate.getUTCDate()),
+    ].join('-')
+        + ` ${[
+            padDatePart(kstDate.getUTCHours()),
+            padDatePart(kstDate.getUTCMinutes()),
+            padDatePart(kstDate.getUTCSeconds()),
+        ].join(':')}`;
 }
 
 export function adjacentSelectionAfterRemoval(items, removedIds, selectedId) {

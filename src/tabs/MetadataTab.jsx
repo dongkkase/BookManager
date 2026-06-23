@@ -1,18 +1,24 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { BookMetadataEditor } from '../components/metadata/BookMetadataEditor';
+import { ComicMetadataEditor } from '../components/metadata/ComicMetadataEditor';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
 import {
     adjacentSelectionAfterRemoval,
     applyBatchMetadataFields,
+    applyCombinedGenreTagsValue,
     applyInferredMetadataField,
     applySeriesAutoMetadata,
     clampMetadataNumber,
+    combinedGenreTagsValue,
+    formatMetadataModifiedDate,
     inferMetadataFromArchiveName,
     isDecimalMetadataField,
     normalizeMetadataAutoNumber,
     normalizeMetadataDecimal,
+    splitCombinedGenreTags,
 } from '../metadataPolicy';
 import { splitMetadataFileDisplayName } from '../metadataFilename';
 import '../styles/MetadataTab.css';
@@ -24,119 +30,34 @@ import {
 } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
 import {
+  ALL_METADATA_API_SOURCES,
   apiSourceHasRequiredKey,
+  metadataApiSourcesForBookType,
   metadataFromApiResult,
+  normalizeMetadataApiSourceForBookType,
   requiredApiKeyForSource,
 } from '../metadataApiPolicy';
-
-const API_SOURCES = [
-  { value: '리디북스', labelKey: 'api_source_ridi' },
-  { value: '알라딘', labelKey: 'api_source_aladin' },
-  { value: 'Google Books', labelKey: 'api_source_google' },
-  { value: 'Anilist', labelKey: 'api_source_anilist' },
-  { value: 'Vine', labelKey: 'api_source_vine' },
-];
-
-const SECTION_TABS = [
-  { id: 'basic', labelKey: 't3_nav_basic' },
-  { id: 'creators', labelKey: 't3_nav_crew' },
-  { id: 'publisher', labelKey: 't3_nav_publish' },
-  { id: 'tags', labelKey: 't3_nav_genre' },
-  { id: 'other', labelKey: 't3_nav_etc' },
-];
-
-const BASIC_FIELDS = [
-  { id: 'Title', labelKey: 't3_f_title', type: 'text' },
-  { id: 'Series', labelKey: 't3_f_series', type: 'text' },
-  { id: 'SeriesGroup', labelKey: 't3_f_sgroup', type: 'select', options: [''] },
-  { id: 'AlternateSeries', labelKey: 't3_f_alt_series', type: 'text' },
-  { id: 'AlternateNumber', labelKey: 't3_f_alt_num', type: 'number' },
-  { id: 'AlternateCount', labelKey: 't3_f_alt_count', type: 'number' },
-  { id: 'Count', labelKey: 't3_f_count', type: 'number' },
-  { id: 'Volume', labelKey: 't3_f_vol', type: 'decimal' },
-  { id: 'Number', labelKey: 't3_f_num', type: 'decimal' },
-  { id: 'PageCount', labelKey: 't3_f_page', type: 'number' },
-  { id: 'Summary', labelKey: 't3_f_sum', type: 'textarea' },
-];
-
-const CREATOR_FIELDS = [
-  { id: 'Writer', labelKey: 't3_f_writer', type: 'text' },
-  { id: 'Penciller', labelKey: 't3_f_pen', type: 'text' },
-  { id: 'Inker', labelKey: 't3_f_inker', type: 'text' },
-  { id: 'Colorist', labelKey: 't3_f_color', type: 'text' },
-  { id: 'Letterer', labelKey: 't3_f_letter', type: 'text' },
-  { id: 'CoverArtist', labelKey: 't3_f_cover', type: 'text' },
-  { id: 'Editor', labelKey: 't3_f_editor', type: 'text' },
-  { id: 'Translator', labelKey: 't3_f_translator', type: 'text' },
-];
-
-const FORMAT_OPTIONS = [
-  '',
-  'Tankobon',
-  'Bunkoban',
-  'Kanzenban',
-  'Aizoban',
-  'Shinsoban',
-  'Omnibus',
-  'Deluxe',
-  'SpecialEdition',
-  'LimitedEdition',
-  'CollectorEdition',
-  'Hardcover',
-  'TradePaperback',
-  'GraphicNovel',
-  'Webtoon',
-  'WebComic',
-  'Digital',
-];
-
-const AGE_RATING_OPTIONS = [
-  '',
-  'All Ages',
-  'Kids / Children',
-  'Young Adult / Teen',
-  'Older Teen / Mature',
-  'Adult / Mature Audiences',
-];
-
-const MANGA_READING_OPTIONS = [
-  '',
-  'No',
-  'Yes',
-  'YesAndRightToLeft',
-];
-
-const PUBLISHER_FIELDS = [
-  { id: 'Publisher', labelKey: 't3_f_pub', type: 'text' },
-  { id: 'Imprint', labelKey: 't3_f_imp', type: 'text' },
-  { id: 'Web', labelKey: 't3_f_web', type: 'textarea' },
-  { id: 'Format', labelKey: 't3_f_format', type: 'select', options: FORMAT_OPTIONS },
-  { id: 'Year', labelKey: 't3_f_year', type: 'number' },
-  { id: 'Month', labelKey: 't3_f_month', type: 'number' },
-  { id: 'Day', labelKey: 't3_f_day', type: 'number' },
-];
-
-const OTHER_FIELDS = [
-  { id: 'AgeRating', labelKey: 't3_f_age', type: 'select', options: AGE_RATING_OPTIONS },
-  { id: 'CommunityRating', labelKey: 't3_f_rate', type: 'text' },
-  { id: 'LanguageISO', labelKey: 't3_f_iso', type: 'text' },
-  { id: 'Manga', labelKey: 't3_f_dir', type: 'select', options: MANGA_READING_OPTIONS },
-  { id: 'BlackAndWhite', labelKey: 't3_f_bw', type: 'select', options: ['', 'Yes', 'No'] },
-  { id: 'Notes', labelKey: 't3_f_notes', type: 'textarea' },
-];
-
-const META_FIELDS = [
-  ...BASIC_FIELDS,
-  ...CREATOR_FIELDS,
-  ...PUBLISHER_FIELDS,
-  { id: 'Genre', labelKey: 't3_f_genre', type: 'text' },
-  { id: 'Tags', labelKey: 't3_f_tags_lbl', type: 'text' },
-  { id: 'Characters', labelKey: 't3_f_char', type: 'text' },
-  { id: 'Locations', labelKey: 't3_f_locations', type: 'text' },
-  { id: 'Teams', labelKey: 't3_f_teams', type: 'text' },
-  ...OTHER_FIELDS,
-];
-const META_FIELD_IDS = META_FIELDS.map(field => field.id);
+import {
+  BOOK_BASIC_FIELDS,
+  BOOK_CREATOR_FIELDS,
+  BOOK_META_FIELD_IDS,
+  BOOK_META_FIELDS,
+  BOOK_OTHER_FIELDS,
+  BOOK_PUBLISHER_FIELDS,
+  BOOK_SEARCHABLE_SELECT_FIELDS,
+  BOOK_SECTION_TABS,
+} from '../metadata/bookMetadataFields';
+import {
+  BASIC_FIELDS,
+  CREATOR_FIELDS,
+  META_FIELD_IDS,
+  META_FIELDS,
+  OTHER_FIELDS,
+  PUBLISHER_FIELDS,
+  SEARCHABLE_SELECT_FIELDS,
+  SECTION_TABS,
+} from '../metadata/comicMetadataFields';
+import { resolveBookType } from '../metadata/metadataTypes';
 
 const DEFAULT_GENRE_OPTIONS = [
   '액션', '모험', '코미디', '드라마', '판타지',
@@ -158,8 +79,6 @@ const DEFAULT_TAG_OPTIONS = [
   '수련', '무림', '멸망 세계', '사이보그', '우주 여행',
   '우정', '배신', '삼각관계', '짝사랑',
 ];
-
-const SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format']);
 
 function isMetadataTextInput(target) {
   return isTextEntryTarget(target);
@@ -190,7 +109,7 @@ function groupItems(items) {
 
 function metadataModifiedDate(item) {
   const value = item?.metadata?.ComicZipModifiedDate;
-  return value && String(value).trim() ? String(value).trim() : 'No Data';
+  return formatMetadataModifiedDate(value, 'No Data');
 }
 
 function uniqueSelectOptions(options = [], currentValue = '') {
@@ -200,8 +119,10 @@ function uniqueSelectOptions(options = [], currentValue = '') {
   return [...values];
 }
 
-function isSearchableSelectField(fieldId) {
-  return SEARCHABLE_SELECT_FIELDS.has(fieldId);
+function isSearchableSelectField(fieldId, bookType = 'comic') {
+  return bookType === 'book'
+    ? BOOK_SEARCHABLE_SELECT_FIELDS.has(fieldId)
+    : SEARCHABLE_SELECT_FIELDS.has(fieldId);
 }
 
 function splitTagValues(value = '') {
@@ -221,6 +142,36 @@ function joinTagValues(values = []) {
     tags.push(tag);
   }
   return tags.join(', ');
+}
+
+function pickMetadataFields(metadata = {}, fieldIds = [], extraFieldIds = []) {
+  const allowed = new Set([...fieldIds, ...extraFieldIds]);
+  return Object.fromEntries(
+    Object.entries(metadata || {}).filter(([key]) => allowed.has(key)),
+  );
+}
+
+const LANGUAGE_LABELS = {
+  ko: '한국어 (ko)',
+  en: 'English (en)',
+  ja: '日本語 (ja)',
+  zh: '中文 (zh)',
+  'zh-CN': '简体中文 (zh-CN)',
+  'zh-TW': '繁體中文 (zh-TW)',
+  fr: 'Français (fr)',
+  de: 'Deutsch (de)',
+  es: 'Español (es)',
+};
+
+function languageIsoFromConfig(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized.startsWith('ko')) return 'ko';
+  if (normalized.startsWith('ja')) return 'ja';
+  if (normalized.startsWith('en')) return 'en';
+  if (normalized.startsWith('zh-cn')) return 'zh-CN';
+  if (normalized.startsWith('zh-tw')) return 'zh-TW';
+  if (normalized.startsWith('zh')) return 'zh';
+  return normalized || 'ko';
 }
 
 function similarity(a = '', b = '') {
@@ -246,23 +197,40 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const [apiSource, setApiSource] = useState(config?.last_meta_api || '리디북스');
   const [applyEmpty, setApplyEmpty] = useState(false);
   const [activeSection, setActiveSection] = useState('basic');
-  const [batchMetadata, setBatchMetadata] = useState({});
+  const [batchMetadataByFileId, setBatchMetadataByFileId] = useState({});
   const [isWorking, setIsWorking] = useState(false);
   const [statusMessage, setStatusMessage] = useState(t('status_wait'));
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
+  const [publisherOptions, setPublisherOptions] = useState([]);
   const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: config?.last_meta_api || '리디북스', query: '', cached: false });
   const [taskPhase, setTaskPhase] = useState('idle');
   const primaryShortcut = isMacPlatform() ? 'Cmd' : 'Ctrl';
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
+  const batchMetadata = useMemo(
+    () => selectedFileId ? (batchMetadataByFileId[selectedFileId] || {}) : {},
+    [batchMetadataByFileId, selectedFileId],
+  );
+  const setBatchMetadata = useCallback((updater) => {
+    if (!selectedFileId) return;
+    setBatchMetadataByFileId(prev => {
+      const current = prev[selectedFileId] || {};
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      return { ...prev, [selectedFileId]: next || {} };
+    });
+  }, [selectedFileId]);
   const language = config?.language || config?.lang || 'ko';
+  const defaultLanguageISO = useMemo(
+    () => languageIsoFromConfig(config?.language || config?.lang || 'ko'),
+    [config?.language, config?.lang],
+  );
   const text = useCallback((key, fallback, values) => {
     const translated = t?.(key, values);
     return translated && translated !== key ? translated : fallback;
   }, [t]);
   const apiSourceLabel = useCallback((source) => {
-    const entry = API_SOURCES.find(item => item.value === source);
+    const entry = ALL_METADATA_API_SOURCES.find(item => item.value === source);
     return entry ? text(entry.labelKey, entry.value) : source;
   }, [text]);
   const localizedOptions = useCallback((key, fallback) => {
@@ -273,6 +241,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   }, [t]);
   const genreOptions = useMemo(() => localizedOptions('meta_genres', DEFAULT_GENRE_OPTIONS), [localizedOptions]);
   const tagOptions = useMemo(() => localizedOptions('meta_tags', DEFAULT_TAG_OPTIONS), [localizedOptions]);
+  const combinedTagOptions = useMemo(
+    () => uniqueSelectOptions([...genreOptions, ...tagOptions], '').filter(Boolean),
+    [genreOptions, tagOptions],
+  );
   const seriesGroupOptions = useMemo(() => {
     const values = new Set(['']);
     for (const item of fileList) {
@@ -283,10 +255,25 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     if (batchValue) values.add(batchValue);
     return [...values];
   }, [batchMetadata.SeriesGroup, fileList]);
+  const publisherSelectOptions = useMemo(() => {
+    const values = new Set();
+    for (const option of publisherOptions) {
+      const value = String(option || '').trim();
+      if (value) values.add(value);
+    }
+    for (const item of fileList) {
+      const value = String(item.metadata?.Publisher || '').trim();
+      if (value) values.add(value);
+    }
+    const batchValue = String(batchMetadata.Publisher || '').trim();
+    if (batchValue) values.add(batchValue);
+    return [...values];
+  }, [batchMetadata.Publisher, fileList, publisherOptions]);
   const fieldLabel = useCallback(field => text(field.labelKey, field.label || field.id), [text]);
   const sectionLabel = useCallback(section => text(section.labelKey, section.id), [text]);
   const optionLabel = useCallback((field, option) => {
     if (!option) return '';
+    if (field.id === 'LanguageISO') return LANGUAGE_LABELS[option] || option;
     const key = field.id === 'Format'
       ? 'meta_formats'
       : field.id === 'AgeRating'
@@ -334,6 +321,40 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     () => fileList.length > 0 && fileList.every(item => item.checked !== false),
     [fileList],
   );
+  const activeBookType = useMemo(() => resolveBookType(activeItem || {}), [activeItem]);
+  const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
+  const currentApiSources = useMemo(() => metadataApiSourcesForBookType(activeBookType), [activeBookType]);
+  const currentMetadataConfig = useMemo(() => (
+    activeBookType === 'book'
+      ? {
+        sectionTabs: BOOK_SECTION_TABS,
+        metaFields: BOOK_META_FIELDS,
+        metaFieldIds: BOOK_META_FIELD_IDS,
+        fields: {
+          basic: BOOK_BASIC_FIELDS,
+          creators: BOOK_CREATOR_FIELDS,
+          publisher: BOOK_PUBLISHER_FIELDS,
+          other: BOOK_OTHER_FIELDS,
+        },
+      }
+      : {
+        sectionTabs: SECTION_TABS,
+        metaFields: META_FIELDS,
+        metaFieldIds: META_FIELD_IDS,
+        fields: {
+          basic: BASIC_FIELDS,
+          creators: CREATOR_FIELDS,
+          publisher: PUBLISHER_FIELDS,
+          other: OTHER_FIELDS,
+        },
+      }
+  ), [activeBookType]);
+  const currentSectionTabs = currentMetadataConfig.sectionTabs;
+  const currentMetaFields = currentMetadataConfig.metaFields;
+  const currentMetaFieldIds = currentMetadataConfig.metaFieldIds;
+  const currentMetadataExtraFieldIds = activeBookType === 'book'
+    ? []
+    : ['ComicZipAddedDate', 'ComicZipModifiedDate'];
 
   useEffect(() => {
     emitToolbarState(
@@ -353,6 +374,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     if (activeItem) setSearchQuery(activeItem.metadata?.Series || activeItem.metadata?.Title || activeItem.name.replace(/\.[^.]+$/, ''));
   }, [activeItem]);
+
+  useEffect(() => {
+    const nextSource = normalizeMetadataApiSourceForBookType(apiSource, activeBookType, config?.api_keys || {});
+    if (!nextSource || nextSource === apiSource) return;
+    setApiSource(nextSource);
+    saveConfig?.({ last_meta_api: nextSource });
+  }, [activeBookType, apiSource, config?.api_keys, saveConfig]);
 
   const updateItem = (id, updater) => {
     setFileList(prev => prev.map(item => item.id === id ? updater(item) : item));
@@ -386,8 +414,16 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     try {
       const result = await window.electronAPI.analyzeMetadata(cleanPaths, {
         lang: config?.language || config?.lang || 'ko',
+        languageISO: defaultLanguageISO,
       });
-      const items = result.items || [];
+      setPublisherOptions(prev => uniqueSelectOptions([...(result.publisherOptions || []), ...prev], '').filter(Boolean));
+      const items = (result.items || []).map(item => ({
+        ...item,
+        metadata: {
+          ...(item.metadata || {}),
+          LanguageISO: item.metadata?.LanguageISO || defaultLanguageISO,
+        },
+      }));
       setFileList(prev => {
         const byPath = new Map(prev.map(item => [item.filepath, item]));
         for (const item of items) byPath.set(item.filepath, item);
@@ -425,7 +461,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       setIsWorking(false);
       setTaskPhase('idle');
     }
-  }, [config?.language, config?.lang, t]);
+  }, [config?.language, config?.lang, defaultLanguageISO, t]);
 
   const handleSelectFiles = useCallback(async () => {
     const paths = await window.electronAPI.selectArchives(t('add_file'));
@@ -442,7 +478,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     setSelectedFileId(null);
     setSelectedGroup('');
     setCollapsedGroups(new Set());
-    setBatchMetadata({});
+    setBatchMetadataByFileId({});
+    setPublisherOptions([]);
     setLastResult(null);
     setStatusMessage(t('status_wait'));
     setProgress(0);
@@ -462,6 +499,11 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       const next = prev.filter(item => item.checked === false);
       setSelectedFileId(adjacentSelectionAfterRemoval(prev, removedIds, selectedFileId));
       setSelectedGroup('');
+      setBatchMetadataByFileId(batchPrev => {
+        const batchNext = { ...batchPrev };
+        for (const id of removedIds) delete batchNext[id];
+        return batchNext;
+      });
       return next;
     });
   }, [selectedFileId]);
@@ -508,7 +550,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     if (!activeItem) return;
     updateItem(activeItem.id, item => {
       const metadata = { ...(item.metadata || {}) };
-      for (const field of META_FIELDS) {
+      for (const field of currentMetaFields) {
         const value = batchMetadata[field.id];
         if (applyEmpty || (value !== undefined && value !== null && String(value).trim() !== '')) {
           metadata[field.id] = value || '';
@@ -532,7 +574,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleApplyBatchToSeries = () => {
-    const hasBatchData = META_FIELDS.some(field => {
+    const hasBatchData = currentMetaFields.some(field => {
       const value = batchMetadata[field.id];
       return applyEmpty || (value !== undefined && value !== null && String(value).trim() !== '');
     });
@@ -541,8 +583,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       return;
     }
     setFileList(prev => prev.map(item => {
-      if (!activeItem || item.group !== activeItem.group) return item;
-      const copiedMetadata = applyBatchMetadataFields(item.metadata || {}, batchMetadata, META_FIELD_IDS, applyEmpty);
+      if (!activeItem || item.group !== activeItem.group || !isSameActiveBookType(item)) return item;
+      const copiedMetadata = applyBatchMetadataFields(item.metadata || {}, batchMetadata, currentMetaFieldIds, applyEmpty);
       const inferred = inferTitleParts(item);
       return { ...item, metadata: applySeriesAutoMetadata(copiedMetadata, inferred) };
     }));
@@ -551,7 +593,11 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
   const handleCopyMyToBatch = () => {
     if (!activeItem) return;
-    setBatchMetadata({ ...(activeItem.metadata || {}) });
+    setBatchMetadata(pickMetadataFields(
+      activeItem.metadata || {},
+      currentMetaFieldIds,
+      currentMetadataExtraFieldIds,
+    ));
   };
 
   const handleResetActive = async () => {
@@ -566,19 +612,29 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     });
     if (response !== 'yes') return;
     setFileList(prev => prev.map(item => item.group === activeItem.group
+      && isSameActiveBookType(item)
       ? { ...item, metadata: { ...(item.originalMetadata || {}) } }
       : item));
     showToast?.({ key: 't3_msg_reset_series_done' });
   };
 
   const applyMetadataToBatch = (metadata = {}) => {
-    setBatchMetadata(prev => ({ ...prev, ...normalizeMetadata(metadata) }));
+    const normalized = pickMetadataFields(
+      normalizeMetadata(metadata),
+      currentMetaFieldIds,
+      currentMetadataExtraFieldIds,
+    );
+    setBatchMetadata(prev => ({ ...prev, ...normalized }));
   };
 
   const applyMetadataToSeries = (metadata = {}) => {
     if (!activeItem) return;
-    const normalized = normalizeMetadata(metadata);
-    setFileList(prev => prev.map(item => item.group === activeItem.group ? {
+    const normalized = pickMetadataFields(
+      normalizeMetadata(metadata),
+      currentMetaFieldIds,
+      currentMetadataExtraFieldIds,
+    );
+    setFileList(prev => prev.map(item => item.group === activeItem.group && isSameActiveBookType(item) ? {
       ...item,
       metadata: { ...(item.metadata || {}), ...normalized },
     } : item));
@@ -638,6 +694,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         apiSource: source,
         query: cleanQuery,
         page,
+        bookType: activeBookType,
         apiKeys: config?.api_keys || {},
       });
       if (result?.success === false) {
@@ -685,7 +742,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         cached: false,
       }));
     }
-  }, [apiSource, config?.api_keys, searchQuery, text]);
+  }, [activeBookType, apiSource, config?.api_keys, searchQuery, text]);
 
   const handleSearchApi = async (page = 1) => {
     const query = searchQuery.trim();
@@ -698,7 +755,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleSelectApiResult = (result) => {
-    applyMetadataToBatch(metadataFromApiResult(result));
+    applyMetadataToBatch(metadataFromApiResult(result, { bookType: activeBookType }));
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage(text('t3_msg_loaded_search_result_batch', '검색 결과를 일괄 편집창에 불러왔습니다.'));
     showToast?.({ key: 't3_msg_applied_series_tag' });
@@ -720,7 +777,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const applyAutoFieldToSeries = (field) => {
     if (!activeItem) return;
     setFileList(prev => prev.map(item => {
-      if (item.group !== activeItem.group) return item;
+      if (item.group !== activeItem.group || !isSameActiveBookType(item)) return item;
       const inferred = inferTitleParts(item);
       return {
         ...item,
@@ -747,6 +804,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         apiSource,
         query,
         page: 1,
+        bookType: activeBookType,
         apiKeys: config?.api_keys || {},
       });
       if (result?.success === false) {
@@ -760,7 +818,11 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         return;
       }
       applyMetadataToSeries(first.metadata || {});
-      setBatchMetadata(first.metadata || {});
+      setBatchMetadata(pickMetadataFields(
+        normalizeMetadata(first.metadata || {}),
+        currentMetaFieldIds,
+        currentMetadataExtraFieldIds,
+      ));
       setStatusMessage(text('t3_msg_auto_match_applied', '시리즈 자동 매칭을 적용했습니다.'));
       showToast?.({ key: 't3_msg_auto_match_done' });
     } catch (error) {
@@ -772,22 +834,41 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
   const resolveRidiPublishDate = useCallback(async (result) => {
     const bookId = result?.id || result?.b_id;
-    if (!bookId || result?.metadata?.PubDate || result?.PubDate) return;
-    const pubDate = await window.electronAPI?.fetchRidiPublishDate?.(bookId);
-    if (!pubDate) return;
-    const [year = '', month = '', day = ''] = String(pubDate).split('-');
+    const existingPubDate = result?.metadata?.PubDate || result?.PubDate;
+    const existingIsbn = result?.metadata?.ISBN || result?.ISBN || result?.isbn;
+    if (!bookId || (existingPubDate && existingIsbn)) return;
+
+    const detail = typeof window.electronAPI?.fetchRidiBookDetail === 'function'
+      ? await window.electronAPI.fetchRidiBookDetail(bookId)
+      : { PubDate: await window.electronAPI?.fetchRidiPublishDate?.(bookId) };
+    const pubDate = detail?.PubDate || existingPubDate || '';
+    const isbn = detail?.ISBN || existingIsbn || '';
+    if (!pubDate && !isbn) {
+      setApiSearch(prev => ({
+        ...prev,
+        results: prev.results.map(item => (
+          (item.id || item.b_id) === bookId ? { ...item, ridiDetailResolved: true } : item
+        )),
+      }));
+      return;
+    }
+    const [year = '', month = '', day = ''] = String(pubDate || '').split('-');
     setApiSearch(prev => ({
       ...prev,
       results: prev.results.map(item => (
         (item.id || item.b_id) === bookId
           ? {
               ...item,
+              ridiDetailResolved: true,
+              ISBN: isbn,
+              isbn,
               PubDate: pubDate,
               Year: year,
               Month: month ? String(Number(month)) : '',
               Day: day ? String(Number(day)) : '',
               metadata: {
                 ...(item.metadata || {}),
+                ISBN: isbn,
                 PubDate: pubDate,
                 Year: year,
                 Month: month ? String(Number(month)) : '',
@@ -801,7 +882,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
   const handleLoadLatest = () => {
     if (!activeItem) return;
-    const groupItems = fileList.filter(item => item.group === activeItem.group);
+    const groupItems = fileList.filter(item => item.group === activeItem.group && isSameActiveBookType(item));
     const latest = [...groupItems].sort((a, b) => {
       const av = Number(a.metadata?.Volume || 0);
       const bv = Number(b.metadata?.Volume || 0);
@@ -812,9 +893,23 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       showToast?.({ key: 't3_msg_load_latest_empty' });
       return;
     }
-    setBatchMetadata({ ...(latest.metadata || {}) });
+    setBatchMetadata(pickMetadataFields(
+      latest.metadata || {},
+      currentMetaFieldIds,
+      currentMetadataExtraFieldIds,
+    ));
     setStatusMessage(text('t3_msg_load_latest_done', '최신권 메타데이터를 일괄 편집창에 불러왔습니다.'));
     showToast?.({ key: 't3_msg_load_latest_done' });
+  };
+
+  const sanitizeItemForSave = (item) => {
+    const itemBookType = resolveBookType(item || {});
+    const fieldIds = itemBookType === 'book' ? BOOK_META_FIELD_IDS : META_FIELD_IDS;
+    const extraFieldIds = itemBookType === 'book' ? [] : ['ComicZipAddedDate', 'ComicZipModifiedDate'];
+    return {
+      ...item,
+      metadata: pickMetadataFields(item.metadata || {}, fieldIds, extraFieldIds),
+    };
   };
 
   const handleSave = async (all = false) => {
@@ -822,7 +917,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     const targets = all
       ? fileList.filter(item => item.checked !== false)
       : activeItem ? [{ ...activeItem, checked: true }] : [];
-    if (targets.length === 0) {
+    const saveTargets = targets.map(sanitizeItemForSave);
+    if (saveTargets.length === 0) {
       setStatusMessage(t('msg_no_targets'));
       await window.electronAPI?.showMessage?.({
         type: 'warning',
@@ -844,7 +940,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     }));
 
     try {
-      const result = await window.electronAPI.saveMetadata(targets, {
+      const result = await window.electronAPI.saveMetadata(saveTargets, {
         lang: config?.language || config?.lang || 'ko',
       });
       setLastResult(result);
@@ -979,22 +1075,27 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       return <textarea className={className} rows="3" value={value || ''} onChange={event => onChange(event.target.value)} />;
     }
     if (field.type === 'select') {
-      if (isSearchableSelectField(field.id)) {
-        const options = field.id === 'SeriesGroup' ? seriesGroupOptions : field.options;
+      if (isSearchableSelectField(field.id, activeBookType)) {
+        const options = field.id === 'SeriesGroup'
+          ? seriesGroupOptions
+          : field.id === 'Publisher'
+            ? publisherSelectOptions
+            : field.options;
         return (
           <SearchableSelect
             className={className}
             value={value || ''}
             options={uniqueSelectOptions(options, value)}
             optionLabel={option => optionLabel(field, option)}
-            allowCustom={field.id === 'SeriesGroup'}
+            allowCustom={field.id === 'SeriesGroup' || field.id === 'Publisher'}
             onChange={onChange}
           />
         );
       }
+      const options = uniqueSelectOptions(field.options, value);
       return (
         <select className={className} value={value || ''} onChange={event => onChange(event.target.value)}>
-          {field.options.map(option => <option key={option} value={option}>{optionLabel(field, option)}</option>)}
+          {options.map(option => <option key={option} value={option}>{optionLabel(field, option)}</option>)}
         </select>
       );
     }
@@ -1071,7 +1172,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         onClick={() => {
           if (!activeItem) return;
           const value = batchMetadata[fieldId] || activeItem.metadata?.[fieldId] || '';
-          setFileList(prev => prev.map(item => item.group === activeItem.group ? {
+          setFileList(prev => prev.map(item => item.group === activeItem.group && isSameActiveBookType(item) ? {
             ...item,
             metadata: { ...(item.metadata || {}), [fieldId]: value },
           } : item));
@@ -1081,6 +1182,94 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         {t('t3_btn_apply_series_tag')}
       </button>
     </div>
+  );
+
+  const updateActiveGenreTags = (value) => {
+    if (!activeItem) return;
+    updateItem(activeItem.id, item => ({
+      ...item,
+      metadata: applyCombinedGenreTagsValue(item.metadata || {}, value),
+    }));
+  };
+
+  const updateBatchGenreTags = (value) => {
+    setBatchMetadata(prev => applyCombinedGenreTagsValue(prev || {}, value));
+  };
+
+  const handleCopyGenreTags = () => {
+    if (!activeItem) return;
+    const value = combinedGenreTagsValue(batchMetadata);
+    if (!applyEmpty && !value.trim()) return;
+    updateActiveGenreTags(value);
+  };
+
+  const toggleCombinedTagValue = (option) => {
+    const values = new Set(splitTagValues(combinedGenreTagsValue(activeItem?.metadata)));
+    if (values.has(option)) values.delete(option);
+    else values.add(option);
+    updateActiveGenreTags(joinTagValues([...values]));
+  };
+
+  const renderCombinedChoiceGrid = (options) => {
+    const activeValues = new Set(splitTagValues(combinedGenreTagsValue(activeItem?.metadata)));
+    return (
+      <div className="meta-choice-grid">
+        {options.map(option => (
+          <label key={option} className="meta-choice">
+            <input
+              type="checkbox"
+              checked={activeValues.has(option)}
+              onChange={() => toggleCombinedTagValue(option)}
+              disabled={!activeItem}
+            />
+            {option}
+          </label>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCombinedGenreTags = (label, options, placeholder = text('enter_after_input', '입력 후 Enter...')) => (
+    <>
+      <div className="meta-choice-row">
+        <div className="meta-tag-label">{label}</div>
+        {renderCombinedChoiceGrid(options)}
+      </div>
+      <div className="meta-tag-editor">
+        <div className="meta-tag-label">{label}</div>
+        <div className="meta-tag-columns">
+          <TagInput
+            className="meta-input meta-tag-box"
+            placeholder={placeholder}
+            value={combinedGenreTagsValue(activeItem?.metadata)}
+            onChange={updateActiveGenreTags}
+            disabled={!activeItem}
+          />
+          <button className="meta-copy-btn" onClick={handleCopyGenreTags} disabled={!activeItem}>‹</button>
+          <TagInput
+            className="meta-input res meta-tag-box"
+            placeholder={placeholder}
+            value={combinedGenreTagsValue(batchMetadata)}
+            onChange={updateBatchGenreTags}
+          />
+        </div>
+        <button
+          className="meta-series-apply-btn"
+          onClick={() => {
+            if (!activeItem) return;
+            const value = combinedGenreTagsValue(batchMetadata) || combinedGenreTagsValue(activeItem.metadata);
+            const split = splitCombinedGenreTags(value);
+            setFileList(prev => prev.map(item => item.group === activeItem.group && isSameActiveBookType(item) ? {
+              ...item,
+              metadata: { ...(item.metadata || {}), ...split },
+            } : item));
+          }}
+          disabled={!activeItem}
+        >
+          {t('t3_btn_apply_series_tag')}
+        </button>
+      </div>
+    </>
   );
 
   const renderChoiceGrid = (fieldId, options) => {
@@ -1113,8 +1302,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const syncActiveSection = () => {
     const scroller = formScrollRef.current;
     if (!scroller) return;
-    let nextSection = SECTION_TABS[0].id;
-    for (const section of SECTION_TABS) {
+    let nextSection = currentSectionTabs[0].id;
+    for (const section of currentSectionTabs) {
       const node = sectionRefs.current[section.id];
       if (node && node.offsetTop <= scroller.scrollTop + 90) nextSection = section.id;
     }
@@ -1122,50 +1311,23 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const renderAllSections = () => {
-    const setRef = id => node => {
-      if (node) sectionRefs.current[id] = node;
+    const editorProps = {
+      fields: currentMetadataConfig.fields,
+      combinedTagOptions,
+      genreOptions,
+      renderCombinedGenreTags,
+      renderChoiceGrid,
+      renderDualTextarea,
+      renderFieldRows,
+      sectionLabel,
+      sectionRefs,
+      sectionTabs: currentSectionTabs,
+      tagOptions,
+      t,
     };
-    return (
-      <div className="meta-section-stack">
-        <section className="meta-section-box" ref={setRef('basic')}>
-          <div className="meta-section-title">{sectionLabel(SECTION_TABS[0])}</div>
-          <div className="meta-column-heads"><span /> <b>{t('t3_col_orig')}</b><span /> <b>{t('t3_col_res')}</b></div>
-          {renderFieldRows(BASIC_FIELDS)}
-        </section>
-
-        <section className="meta-section-box" ref={setRef('creators')}>
-          <div className="meta-section-title">{sectionLabel(SECTION_TABS[1])}</div>
-          {renderFieldRows(CREATOR_FIELDS)}
-        </section>
-
-        <section className="meta-section-box" ref={setRef('publisher')}>
-          <div className="meta-section-title">{sectionLabel(SECTION_TABS[2])}</div>
-          {renderFieldRows(PUBLISHER_FIELDS)}
-        </section>
-
-        <section className="meta-section-box" ref={setRef('tags')}>
-          <div className="meta-section-title">{sectionLabel(SECTION_TABS[3])}</div>
-          <div className="meta-choice-row">
-            <div className="meta-tag-label">{t('t3_f_genre')}</div>
-            {renderChoiceGrid('Genre', genreOptions)}
-          </div>
-          {renderDualTextarea('Genre', t('t3_f_genre'))}
-          <div className="meta-choice-row">
-            <div className="meta-tag-label">{t('t3_f_tags_lbl')}</div>
-            {renderChoiceGrid('Tags', tagOptions)}
-          </div>
-          {renderDualTextarea('Tags', t('t3_f_tags_lbl'))}
-          {renderDualTextarea('Characters', t('t3_f_char'))}
-          {renderDualTextarea('Locations', t('t3_f_locations'))}
-          {renderDualTextarea('Teams', t('t3_f_teams'))}
-        </section>
-
-        <section className="meta-section-box" ref={setRef('other')}>
-          <div className="meta-section-title">{sectionLabel(SECTION_TABS[4])}</div>
-          {renderFieldRows(OTHER_FIELDS)}
-        </section>
-      </div>
-    );
+    return activeBookType === 'book'
+      ? <BookMetadataEditor key={`book-${activeItem?.id || 'none'}`} {...editorProps} />
+      : <ComicMetadataEditor key={`comic-${activeItem?.id || 'none'}`} {...editorProps} />;
   };
 
   return (
@@ -1270,7 +1432,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
               saveConfig?.({ last_meta_api: nextApi });
             }}
           >
-            {API_SOURCES.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
+            {currentApiSources.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
           </select>
           <span className="meta-search-label">{t('t3_search_query')}</span>
           <input
@@ -1285,7 +1447,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
         <div className="meta-tools-bar">
           <div className="meta-section-tabs">
-            {SECTION_TABS.map(tab => (
+            {currentSectionTabs.map(tab => (
               <button
                 key={tab.id}
                 className={activeSection === tab.id ? 'active' : ''}
@@ -1375,9 +1537,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           <div className="meta-bottom-left">
             <button className="meta-btn-magic" onClick={handleAutoMatchSeries} disabled={!activeItem || isWorking}><FaIcon name="wand" /> {t('t3_auto_match')}</button>
             <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Title')} disabled={!activeItem}>{t('t3_auto_title')}</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{t('t3_auto_vol')}</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Number')} disabled={!activeItem}>{t('t3_auto_chap')}</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('PageCount')} disabled={!activeItem}>{t('t3_auto_pages')}</button>
+            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{activeBookType === 'book' ? text('t3_auto_series_number', '자동 시리즈번호 입력') : t('t3_auto_vol')}</button>
+            {activeBookType !== 'book' && (
+              <>
+                <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Number')} disabled={!activeItem}>{t('t3_auto_chap')}</button>
+                <button className="meta-btn" onClick={() => applyAutoFieldToSeries('PageCount')} disabled={!activeItem}>{t('t3_auto_pages')}</button>
+              </>
+            )}
           </div>
           <div className="meta-bottom-right">
             <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')}</button>
@@ -1397,7 +1563,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         <MetadataSearchDialog
           state={apiSearch}
           apiSource={apiSource}
-          apiSources={API_SOURCES}
+          apiSources={currentApiSources}
+          bookType={activeBookType}
           t={t}
           onClose={() => setApiSearch(prev => ({ ...prev, open: false }))}
           onSelect={handleSelectApiResult}
@@ -1594,6 +1761,7 @@ function TagInput({ className = '', value, placeholder = '', disabled = false, o
 function MetadataSearchDialog({
   state,
   apiSources,
+  bookType = 'comic',
   onClose,
   onSelect,
   onSearch,
@@ -1617,6 +1785,7 @@ function MetadataSearchDialog({
   const resolvingRidiDates = useRef(new Set());
   const rawSelected = state.results[selectedIndex];
   const selected = showTranslated && translatedResult ? translatedResult : rawSelected;
+  const canTranslateSelected = ['Anilist', 'Vine', 'Amazon'].includes(state.apiSource);
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -1674,7 +1843,9 @@ function MetadataSearchDialog({
   }, [apiSources, state.actualQuery, state.apiSource, state.query]);
 
   useEffect(() => {
-    if (state.apiSource !== '리디북스' || !selected || selected.PubDate || selected.metadata?.PubDate) return;
+    const hasPubDate = selected?.PubDate || selected?.metadata?.PubDate;
+    const hasIsbn = selected?.ISBN || selected?.isbn || selected?.metadata?.ISBN || selected?.metadata?.isbn;
+    if (state.apiSource !== '리디북스' || !selected || selected.ridiDetailResolved || (hasPubDate && hasIsbn)) return;
     const bookId = selected.id || selected.b_id;
     if (!bookId || resolvingRidiDates.current.has(bookId)) return;
     resolvingRidiDates.current.add(bookId);
@@ -1751,6 +1922,7 @@ function MetadataSearchDialog({
     metadataValue(selected, 'PubDate')
     || [metadataValue(selected, 'Year'), metadataValue(selected, 'Month'), metadataValue(selected, 'Day')].filter(Boolean).join('-')
   );
+  const selectedIsbn = selected ? metadataValue(selected, 'ISBN', 'isbn') : '';
   const selectedTags = selected
     ? String(metadataValue(selected, 'tags', 'Tags') || '')
         .split(/[,/|]/)
@@ -1895,7 +2067,7 @@ function MetadataSearchDialog({
                 <div className="meta-api-preview-content">
                   <div className="meta-api-preview-title-row">
                     <h2>{selected.title}</h2>
-                    {(state.apiSource === 'Anilist' || state.apiSource === 'Vine') && (
+                    {canTranslateSelected && (
                       <button
                         type="button"
                         className={`meta-api-translate-btn ${showTranslated ? 'original' : ''}`}
@@ -1921,6 +2093,11 @@ function MetadataSearchDialog({
                       <dl>
                         <dt>{detailLabel('user', text('meta_writer', '작가'))}</dt><dd>{renderValue(metadataValue(selected, 'author', 'Writer'))}</dd>
                         <dt>{detailLabel('building', text('meta_publisher', '출판사'))}</dt><dd>{renderValue(metadataValue(selected, 'publisher', 'Publisher'))}</dd>
+                        {(bookType === 'book' || selectedIsbn) && (
+                          <>
+                            <dt>{detailLabel('tag', text('t3_f_isbn', 'ISBN'))}</dt><dd>{renderValue(selectedIsbn)}</dd>
+                          </>
+                        )}
                         <dt>{detailLabel('tag', text('meta_genre', '장르'))}</dt><dd>{renderValue(metadataValue(selected, 'Genre'))}</dd>
                         <dt>{detailLabel('layers', text('meta_count', '전체권수'))}</dt><dd>{renderValue(metadataValue(selected, 'Count'))}</dd>
                         <dt>{detailLabel('star', text('meta_rating', '평점'))}</dt><dd>{renderValue(metadataValue(selected, 'rating', 'Rating', 'CommunityRating'), 'meta-api-rating')}</dd>

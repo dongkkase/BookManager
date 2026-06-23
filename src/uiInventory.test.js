@@ -10,10 +10,21 @@ const sources = {
     thumbnailView: fs.readFileSync(new URL('./components/folder/ThumbnailView.jsx', import.meta.url), 'utf8'),
     tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
-    detailPanel: fs.readFileSync(new URL('./components/folder/DetailPanel.jsx', import.meta.url), 'utf8'),
+    detailPanel: [
+        './components/folder/DetailPanel.jsx',
+        './components/folder/ComicDetailPanel.jsx',
+        './components/folder/BookDetailPanel.jsx',
+        './components/folder/detailPanelCommon.jsx',
+    ].map(file => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'),
     folderCss: fs.readFileSync(new URL('./styles/FolderTab.css', import.meta.url), 'utf8'),
     faIcon: fs.readFileSync(new URL('./components/FaIcon.jsx', import.meta.url), 'utf8'),
-    metadata: fs.readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8'),
+    metadata: [
+        './tabs/MetadataTab.jsx',
+        './metadata/comicMetadataFields.js',
+        './metadata/bookMetadataFields.js',
+        './components/metadata/ComicMetadataEditor.jsx',
+        './components/metadata/BookMetadataEditor.jsx',
+    ].map(file => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'),
     organizer: fs.readFileSync(new URL('./tabs/OrganizerTab.jsx', import.meta.url), 'utf8'),
     organizerCss: fs.readFileSync(new URL('./styles/OrganizerTab.css', import.meta.url), 'utf8'),
     renamer: fs.readFileSync(new URL('./tabs/RenamerTab.jsx', import.meta.url), 'utf8'),
@@ -88,7 +99,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['메타데이터 소수 입력 모드', "field.type === 'decimal' ? 'decimal'"],
         ['메타데이터 소수 입력 정규화', 'normalizeMetadataDecimal(nextValue)'],
         ['메타데이터 자동 제목 권화 동시 적용', 'applyInferredMetadataField(item.metadata || {}, inferred, field)'],
-        ['메타데이터 시리즈 전체 일괄 복사', 'applyBatchMetadataFields(item.metadata || {}, batchMetadata, META_FIELD_IDS, applyEmpty)'],
+        ['메타데이터 시리즈 전체 일괄 복사', 'applyBatchMetadataFields(item.metadata || {}, batchMetadata, currentMetaFieldIds, applyEmpty)'],
         ['메타데이터 시리즈 전체 자동 후처리', 'applySeriesAutoMetadata(copiedMetadata, inferred)'],
         ['메타데이터 아이템 수정일 표시', 'metadataModifiedDate(file)'],
         ['메타데이터 아이템 수정일 fallback', "'No Data'"],
@@ -338,6 +349,23 @@ test('상세보기 패널은 링크 열기와 메타데이터 값 스타일을 �
     ]);
     assertInventory('faIcon', [
         ['users 아이콘 매핑', 'users: faUsers'],
+    ]);
+});
+
+test('도서 상세보기 패널은 메타데이터 관리와 같은 책 항목을 표시한다', () => {
+    assertInventory('detailPanel', [
+        ['도서 상세 제목 헤딩', 'className="detail-title"'],
+        ['도서 상세 시리즈 헤딩', 'className="detail-series"'],
+        ['도서 상세 시리즈번호', "metadataText(t, 't3_f_series_number'"],
+        ['도서 상세 책설명', "metadataText(t, 't3_f_book_description'"],
+        ['도서 상세 작가', "metadataText(t, 't3_f_writer'"],
+        ['도서 상세 장르/키워드/카테고리', "metadataText(t, 't3_f_genre_keywords_categories'"],
+        ['도서 상세 태그 칩 영역', 'className="detail-tags" aria-label={tagLabel}'],
+        ['도서 상세 출판사', "metadataText(t, 't3_f_pub'"],
+        ['도서 상세 발행일', "metadataText(t, 'book_detail_publish_date'"],
+        ['도서 상세 ISBN', "metadataText(t, 't3_f_isbn'"],
+        ['도서 상세 언어 코드', "metadataText(t, 't3_f_iso'"],
+        ['도서 상세 평점', "metadataText(t, 't3_f_rating'"],
     ]);
 });
 

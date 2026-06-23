@@ -903,9 +903,10 @@ body.is-reordering-table-column {
 }
 
 .detail-panel-wrap {
-  flex: 0 1 318px;
+  flex: 0 0 318px;
   height: 318px;
   min-height: 112px;
+  max-height: 420px;
   background: #151515;
   overflow: hidden;
 }
@@ -1071,7 +1072,7 @@ body.is-reordering-table-column {
   background: rgba(36, 36, 36, 0.84);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 7px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .metadata-grid {
@@ -1129,7 +1130,7 @@ body.is-reordering-table-column {
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   color: #f2f2f2;
   font-size: var(--font-xs);
-  overflow: auto;
+  overflow: visible;
 }
 
 .detail-extra h4,
@@ -1670,6 +1671,17 @@ body.is-reordering-table-column {
 .view-icon-btn.active {
   color: #fff;
   background: var(--accent);
+}
+
+.view-mode-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  font-family: Arial, sans-serif;
+  font-size: var(--font-md);
+  line-height: 1;
 }
 
 .scale-label {

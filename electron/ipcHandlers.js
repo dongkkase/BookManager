@@ -354,6 +354,7 @@ function normalizeSearchResult(raw = {}, id = '') {
     Editor: raw.Editor || '',
     Publisher: raw.Publisher || '',
     Imprint: raw.Imprint || '',
+    ISBN: raw.ISBN || raw.isbn || '',
     Web: raw.Web || '',
     Format: raw.Format || 'Manga',
     Year: raw.Year || '',
@@ -362,8 +363,6 @@ function normalizeSearchResult(raw = {}, id = '') {
     Genre: raw.Genre || '',
     Tags: raw.Tags || '',
     Characters: raw.Characters || '',
-    Locations: raw.Locations || '',
-    Teams: raw.Teams || '',
     AgeRating: raw.AgeRating || '',
     CommunityRating: raw.CommunityRating || '',
     LanguageISO: raw.LanguageISO || '',
@@ -377,6 +376,7 @@ function normalizeSearchResult(raw = {}, id = '') {
     title: raw.Title || '',
     author: raw.Writer || raw.Penciller || '',
     publisher: raw.Publisher || '',
+    isbn: raw.ISBN || raw.isbn || '',
     coverUrl: raw.CoverUrl || '',
     summary: raw.Summary || '',
     tags: raw.Tags || raw.Genre || '',
@@ -388,6 +388,8 @@ function normalizeSearchResult(raw = {}, id = '') {
 
 const originalTitleCache = new Map();
 const ridiPublishDateCache = new Map();
+const ridiBookDetailCache = new Map();
+const googleBooksRatingCache = new Map();
 const namuSearchCache = new Map();
 const metadataTranslationCache = new Map();
 
@@ -810,8 +812,14 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
     const aiProvider = apiKeys.ai_provider === 'OpenAI' ? 'OpenAI' : 'Gemini';
     const aiKey = String(apiKeys.ai_key || '').trim();
     const cleanTitle = cleanLocalizedBookTitle(text) || String(text || '').trim();
+    const targetSearchName = targetApi === 'Vine'
+        ? 'Comic Vine'
+        : targetApi === 'Amazon'
+            ? 'Amazon'
+            : 'AniList';
+    const skipNamuWikiForOriginalTitle = targetApi === 'Amazon';
 
-    const cacheKey = `ai-title-v7:${aiProvider}:${targetApi}:${cleanTitle}`;
+    const cacheKey = `ai-title-v8:${aiProvider}:${targetApi}:${cleanTitle}`;
     if (originalTitleCache.has(cacheKey)) {
         const cached = originalTitleCache.get(cacheKey);
         const validCandidates = (cached.candidates || []).filter(isPlausibleOriginalTitle);
@@ -881,7 +889,38 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
         };
     };
 
+    const runDirectFallback = async (reasonStr) => {
+        metadataSearchLog('Original title direct fallback without NamuWiki', {
+            reason: reasonStr,
+            query: cleanTitle,
+            targetApi,
+        });
+        const candidates = [];
+        if (targetApi === 'Amazon') {
+            try {
+                const translated = await translateTextWithGoogle(cleanTitle, 'en');
+                const englishTitle = String(translated || '').replace(/\s+/g, ' ').trim();
+                if (englishTitle && !/[가-힣]/.test(englishTitle) && isPlausibleOriginalTitle(englishTitle)) {
+                    candidates.push(englishTitle);
+                }
+            } catch (error) {
+                metadataSearchLog('Amazon direct English translation fallback failed', {
+                    query: cleanTitle,
+                    error: error.message,
+                });
+            }
+        }
+        if (!candidates.includes(cleanTitle)) candidates.push(cleanTitle);
+        return {
+            candidates,
+            provider: `Direct Query (${reasonStr})`,
+            confidence: 0,
+            usedNamuWiki: false,
+        };
+    };
+
     if (!aiEnabled || !aiKey) {
+        if (skipNamuWikiForOriginalTitle) return await runDirectFallback('AI disabled or no key');
         const result = await runNamuWikiFallback('AI disabled or no key');
         const isFallbackOnly = result.candidates.length === 1 && result.candidates[0] === cleanTitle;
         if (!isFallbackOnly) originalTitleCache.set(cacheKey, result);
@@ -896,8 +935,10 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
         hasAiCredential: Boolean(aiKey),
     });
 
-    const namuEvidence = await searchNamuWikiEvidence(cleanTitle);
-    const namuContext = namuEvidence.length > 0
+    const namuEvidence = skipNamuWikiForOriginalTitle ? [] : await searchNamuWikiEvidence(cleanTitle);
+    const namuContext = skipNamuWikiForOriginalTitle
+        ? 'NamuWiki evidence was intentionally skipped for Amazon. Use model knowledge only.'
+        : namuEvidence.length > 0
         ? namuEvidence.map((item, index) => [
             `--- NamuWiki evidence ${index + 1} ---`,
             `Document title: ${item.title}`,
@@ -908,11 +949,15 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
     const prompt = [
         'You identify the original publication title of a book, manga, comic, or light novel released under a Korean localized title.',
         `The user entered only this Korean title: "${cleanTitle}".`,
-        `The resulting search terms will be sent to ${targetApi === 'Vine' ? 'Comic Vine' : 'AniList'}.`,
+        `The resulting search terms will be sent to ${targetSearchName}.`,
         '',
         'Identification procedure:',
-        '1. Inspect the supplied NamuWiki evidence first. Find the original/native title and established romanized or English title belonging to the same work.',
-        '2. If the evidence is absent or unrelated, use your reliable knowledge of published works.',
+        skipNamuWikiForOriginalTitle
+            ? '1. Use your reliable knowledge of published works to identify the original/native title and established romanized or English title.'
+            : '1. Inspect the supplied NamuWiki evidence first. Find the original/native title and established romanized or English title belonging to the same work.',
+        skipNamuWikiForOriginalTitle
+            ? '2. This request intentionally supplies no external wiki evidence.'
+            : '2. If the evidence is absent or unrelated, use your reliable knowledge of published works.',
         '3. This is entity identification, not translation. Never invent a literal translation of the Korean title.',
         '4. Do not return synopsis sentences, descriptions, quotations, character names, author names, publisher names, or furigana readings.',
         '5. Every returned value must be a concise work title usable directly as a database search query.',
@@ -923,12 +968,14 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
         '',
         targetApi === 'Anilist'
             ? 'For AniList, prefer the established romaji title as primary_search_title, followed by the native Japanese title and official English title.'
-            : 'For Comic Vine, prefer the official English publication title as primary_search_title, followed by established English aliases.',
+            : targetApi === 'Amazon'
+                ? 'For Amazon, prefer the official English publication title as primary_search_title, followed by established English aliases and romanized titles.'
+                : 'For Comic Vine, prefer the official English publication title as primary_search_title, followed by established English aliases.',
         '',
         'Return only JSON matching this shape:',
         '{"identified":true,"primary_search_title":"","native_title":"","romaji_title":"","english_title":"","aliases":[],"confidence":0.0,"evidence":"namuwiki|model_knowledge|none"}',
         '',
-        'NamuWiki evidence supplied by the application:',
+        skipNamuWikiForOriginalTitle ? 'External evidence supplied by the application:' : 'NamuWiki evidence supplied by the application:',
         namuContext,
     ].join('\n');
 
@@ -1025,7 +1072,7 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
             candidates,
             provider: aiProvider,
             confidence: Number(parsed?.confidence) || 0,
-            usedNamuWiki: parsed?.evidence === 'namuwiki',
+            usedNamuWiki: !skipNamuWikiForOriginalTitle && parsed?.evidence === 'namuwiki',
         };
         metadataSearchLog('Original title identification completed', {
             query: text,
@@ -1043,6 +1090,15 @@ async function identifyOriginalTitles(text, apiKeys = {}, targetApi = '') {
 
         return result;
     } catch (error) {
+        if (skipNamuWikiForOriginalTitle) {
+            metadataSearchLog('AI original title identification failed without NamuWiki fallback', {
+                query: text,
+                targetApi,
+                provider: aiProvider,
+                error: error.message,
+            });
+            return await runDirectFallback(`AI Error/Miss: ${error.message || 'Unknown'}`);
+        }
         metadataSearchLog('AI original title identification failed, falling back to NamuWiki parser', {
             query: text,
             targetApi,
@@ -1070,65 +1126,261 @@ function parseDateParts(value = '') {
   };
 }
 
-async function getRidiPublishDate(bookId = '') {
-  const id = String(bookId || '').trim();
-  if (!/^\d+$/.test(id)) return '';
-  if (ridiPublishDateCache.has(id)) return ridiPublishDateCache.get(id);
+function formatParsedDate(value = '') {
+  const parts = parseDateParts(value);
+  if (!parts.Year) return '';
+  return parts.Month
+    ? `${parts.Year}-${parts.Month.padStart(2, '0')}${parts.Day ? `-${parts.Day.padStart(2, '0')}` : ''}`
+    : parts.Year;
+}
 
-  const url = `https://ridibooks.com/books/${id}`;
-  const headers = {
+function ridiBookHeaders() {
+  return {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
     'Referer': 'https://ridibooks.com/',
   };
+}
 
-  let html = '';
+async function fetchRidiBookHtml(bookId = '') {
+  const id = String(bookId || '').trim();
+  if (!/^\d+$/.test(id)) return '';
+  const url = `https://ridibooks.com/books/${id}`;
+  const headers = ridiBookHeaders();
   try {
-    html = await requestTextWithElectronNet(url, headers, 10000);
+    return await requestTextWithElectronNet(url, headers, 10000);
   } catch {
     try {
-      html = await requestTextGeneric(url, headers, 10000);
+      return await requestTextGeneric(url, headers, 10000);
     } catch {
       return '';
     }
   }
+}
 
-  let pubDate = '';
-  for (const json of extractJsonLdObjects(html)) {
-    const graph = Array.isArray(json?.['@graph']) ? json['@graph'] : [json];
-    const datePublished = graph.find(entry => entry?.datePublished)?.datePublished;
-    if (datePublished) {
-      const parts = parseDateParts(datePublished);
-      if (parts.Year) {
-        pubDate = parts.Month
-          ? `${parts.Year}-${parts.Month.padStart(2, '0')}${parts.Day ? `-${parts.Day.padStart(2, '0')}` : ''}`
-          : parts.Year;
-        break;
-      }
+function findJsonValueByKey(value, keys = [], depth = 0) {
+  if (!value || depth > 6) return '';
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findJsonValueByKey(item, keys, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+
+  const normalizedKeys = new Set(keys.map(key => String(key).toLowerCase()));
+  for (const [key, entry] of Object.entries(value)) {
+    if (normalizedKeys.has(String(key).toLowerCase()) && entry !== undefined && entry !== null && typeof entry !== 'object') {
+      return String(entry);
     }
   }
+  for (const entry of Object.values(value)) {
+    const found = findJsonValueByKey(entry, keys, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
 
-  if (!pubDate) {
-    const cleanHtml = decodeHtmlEntities(html);
-    const match = cleanHtml.match(/(\d{4})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})(?:<[^>]+>|\s|&nbsp;|)*출간/i);
-    if (match) pubDate = `${match[1]}-${String(Number(match[2])).padStart(2, '0')}-${String(Number(match[3])).padStart(2, '0')}`;
+function extractRidiBookDetail(html = '') {
+  const detail = {
+    ISBN: '',
+    PubDate: '',
+    Year: '',
+    Month: '',
+    Day: '',
+  };
+
+  for (const json of extractJsonLdObjects(html)) {
+    const graph = Array.isArray(json?.['@graph']) ? json['@graph'] : [json];
+    const datePublished = graph.find(entry => entry?.datePublished)?.datePublished || findJsonValueByKey(graph, ['datePublished']);
+    if (datePublished) {
+      detail.PubDate = formatParsedDate(datePublished);
+    }
+    const isbn = normalizeIsbn(findJsonValueByKey(graph, ['isbn', 'isbn13', 'isbn10']));
+    if (isbn) {
+      detail.ISBN = isbn;
+    }
+    if (detail.PubDate && detail.ISBN) break;
   }
 
-  if (pubDate) ridiPublishDateCache.set(id, pubDate);
-  return pubDate;
+  const cleanHtml = decodeHtmlEntities(html);
+  const plain = stripHtml(cleanHtml).replace(/\s+/g, ' ').trim();
+  if (!detail.PubDate) {
+    const dateMatch =
+      plain.match(/출간(?:일|일자)?\s*[:：]?\s*(\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2})/i)
+      || plain.match(/(\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2})(?:\s|.){0,16}출간/i);
+    detail.PubDate = formatParsedDate(dateMatch?.[1] || '');
+  }
+  if (!detail.ISBN) {
+    const isbnMatch =
+      plain.match(/(?:ISBN(?:-1[03])?|전자책\s*ISBN|종이책\s*ISBN)\s*[:：]?\s*([0-9A-Za-z][0-9A-Za-z -]{6,30})/i)
+      || cleanHtml.match(/"isbn"\s*:\s*"([^"]+)"/i);
+    detail.ISBN = normalizeIsbn(isbnMatch?.[1] || '');
+  }
+
+  const date = parseDateParts(detail.PubDate);
+  detail.Year = date.Year;
+  detail.Month = date.Month;
+  detail.Day = date.Day;
+  return detail;
+}
+
+async function getRidiBookDetail(bookId = '') {
+  const id = String(bookId || '').trim();
+  if (!/^\d+$/.test(id)) return {};
+  if (ridiBookDetailCache.has(id)) return ridiBookDetailCache.get(id);
+
+  const html = await fetchRidiBookHtml(id);
+  if (!html) return {};
+  const detail = extractRidiBookDetail(html);
+  if (detail.PubDate) ridiPublishDateCache.set(id, detail.PubDate);
+  ridiBookDetailCache.set(id, detail);
+  return detail;
+}
+
+async function getRidiPublishDate(bookId = '') {
+  const id = String(bookId || '').trim();
+  if (!/^\d+$/.test(id)) return '';
+  if (ridiPublishDateCache.has(id)) return ridiPublishDateCache.get(id);
+  const detail = await getRidiBookDetail(id);
+  return detail.PubDate || '';
 }
 
 function normalizeApiSource(apiName = '') {
   const name = String(apiName).toLowerCase();
   if (name.includes('google')) return 'Google Books';
   if (name.includes('anilist')) return 'Anilist';
+  if (name.includes('amazon') || name.includes('아마존')) return 'Amazon';
   if (name.includes('알라딘') || name.includes('aladin')) return '알라딘';
   if (name.includes('vine')) return 'Vine';
   return '리디북스';
 }
 
-async function searchGoogleBooks(query, apiKey = '', page = 1) {
+function normalizeSearchBookType(value = '') {
+  const raw = String(value || '').trim().toLowerCase();
+  return ['book', 'document', 'novel', 'epub', 'pdf', 'txt'].includes(raw) ? 'book' : 'comic';
+}
+
+function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
+  const allowed = bookType === 'book'
+    ? new Set(['리디북스', '알라딘', 'Google Books', 'Amazon'])
+    : new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+  return allowed.has(apiName);
+}
+
+function pickBookIsbn(identifiers = []) {
+  if (!Array.isArray(identifiers)) return '';
+  const isbn13 = identifiers.find(item => String(item?.type || '').toUpperCase() === 'ISBN_13')?.identifier;
+  const isbn10 = identifiers.find(item => String(item?.type || '').toUpperCase() === 'ISBN_10')?.identifier;
+  return String(isbn13 || isbn10 || '').trim();
+}
+
+function normalizeIsbn(value = '') {
+  return String(value || '')
+    .replace(/(?:ISBN(?:-1[03])?|ASIN)\s*[:：]?\s*/gi, '')
+    .replace(/[^0-9A-Za-z-]/g, '')
+    .trim();
+}
+
+function normalizeStarRating(value = '') {
+  const match = String(value || '').replace(',', '.').match(/\b([0-5](?:\.\d+)?)\b/);
+  if (!match) return '';
+  const number = Number(match[1]);
+  if (!Number.isFinite(number) || number < 0 || number > 5) return '';
+  return String(number);
+}
+
+function extractGoogleBooksStarRating(html = '') {
+  const source = String(html || '');
+  const itempropMatch = /\bitemprop=["']starRating["']/i.exec(source);
+  if (!itempropMatch) return '';
+  const chunk = decodeHtmlEntities(source.slice(
+    Math.max(0, itempropMatch.index - 800),
+    itempropMatch.index + 3000,
+  ));
+  const patterns = [
+    /\bitemprop=["']ratingValue["'][^>]*(?:content|value)=["']([^"']+)["']/i,
+    /별표\s*5\s*개\s*만점에\s*([0-5](?:[.,]\d+)?)\s*개/i,
+    /만점에\s*([0-5](?:[.,]\d+)?)\s*개/i,
+    />\s*([0-5](?:[.,]\d+)?)\s*<i\b[^>]*>\s*star\s*<\/i>/i,
+    /\b(?:content|value|aria-label|title)=["'][^"']*?([0-5](?:[.,]\d+)?)\s*(?:\/\s*5|out\s+of\s+5|stars?|점|개)?[^"']*["']/i,
+    /([0-5](?:[.,]\d+)?)\s*(?:\/\s*5|out\s+of\s+5|stars?|점|개)/i,
+  ];
+  for (const pattern of patterns) {
+    const rating = normalizeStarRating(chunk.match(pattern)?.[1] || '');
+    if (rating) return rating;
+  }
+  return '';
+}
+
+async function fetchGoogleBooksStarRating(url = '') {
+  const targetUrl = String(url || '').trim();
+  if (!/^https?:\/\//i.test(targetUrl)) return '';
+  if (googleBooksRatingCache.has(targetUrl)) return googleBooksRatingCache.get(targetUrl);
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+    'Referer': 'https://books.google.com/',
+  };
+  let html = '';
+  try {
+    html = await requestTextWithElectronNet(targetUrl, headers, 10000);
+  } catch {
+    try {
+      html = await requestTextGeneric(targetUrl, headers, 10000);
+    } catch {
+      googleBooksRatingCache.set(targetUrl, '');
+      return '';
+    }
+  }
+  const rating = extractGoogleBooksStarRating(html);
+  if (googleBooksRatingCache.size > 300) googleBooksRatingCache.clear();
+  googleBooksRatingCache.set(targetUrl, rating);
+  return rating;
+}
+
+async function enrichGoogleBooksRatings(results = []) {
+  if (!Array.isArray(results) || results.length === 0) return results;
+  const next = results.map(item => ({ ...item }));
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < next.length) {
+      const index = cursor;
+      cursor += 1;
+      const item = next[index];
+      if (item?.metadata?.CommunityRating || item?.CommunityRating || item?.rating) continue;
+      const urls = [
+        ...(Array.isArray(item.GoogleDetailUrls) ? item.GoogleDetailUrls : []),
+        item.link,
+        item.Web,
+      ].filter((url, urlIndex, values) => url && values.indexOf(url) === urlIndex);
+      let rating = '';
+      for (const url of urls) {
+        rating = await fetchGoogleBooksStarRating(url);
+        if (rating) break;
+      }
+      if (!rating) continue;
+      next[index] = {
+        ...item,
+        Rating: `${rating} / 5.0`,
+        RatingScore: rating,
+        CommunityRating: rating,
+        rating,
+        metadata: {
+          ...(item.metadata || {}),
+          CommunityRating: rating,
+        },
+      };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, next.length) }, worker));
+  return next;
+}
+
+async function searchGoogleBooks(query, apiKey = '', page = 1, bookType = 'comic') {
   const startIndex = Math.max(0, (Number(page) || 1) - 1) * 20;
   const params = new URLSearchParams({
     q: query,
@@ -1137,27 +1389,34 @@ async function searchGoogleBooks(query, apiKey = '', page = 1) {
   });
   if (apiKey) params.set('key', apiKey);
   const data = await requestJsonGeneric(`https://www.googleapis.com/books/v1/volumes?${params.toString()}`);
-  return (data.items || []).map(item => {
+  const results = (data.items || []).map(item => {
     const info = item.volumeInfo || {};
     const date = parseDateParts(info.publishedDate || '');
     const categories = (info.categories || []).join(', ');
+    const isbn = pickBookIsbn(info.industryIdentifiers || []);
+    const ratingScore = info.averageRating ? String(info.averageRating) : '';
     const raw = {
       Title: info.title || '',
       Writer: (info.authors || []).join(', '),
       Publisher: info.publisher || '',
+      ISBN: isbn,
       Summary: stripHtml(info.description || ''),
       Series: info.title || '',
       Web: info.infoLink || '',
+      GoogleDetailUrls: [`https://books.google.com/books?id=${encodeURIComponent(item.id || '')}`, info.infoLink, info.previewLink, info.canonicalVolumeLink].filter(Boolean),
       CoverUrl: (info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || '').replace(/^http:/, 'https:'),
       Tags: categories,
       Genre: categories,
       LocalizedSeries: info.title || '',
       Count: '',
-      Rating: '-',
-      RatingScore: '-',
-      CommunityRating: info.averageRating ? String(info.averageRating) : '',
+      Rating: ratingScore ? `${ratingScore} / 5.0` : '-',
+      RatingScore: ratingScore,
+      CommunityRating: ratingScore,
       AgeRating: '',
       PubDate: info.publishedDate || '',
+      Format: bookType === 'book' ? 'Novel' : 'Manga',
+      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
+      LanguageISO: info.language || '',
       ...date,
       Volume: '',
       Number: '',
@@ -1166,6 +1425,7 @@ async function searchGoogleBooks(query, apiKey = '', page = 1) {
     };
     return normalizeSearchResult(raw, item.id);
   });
+  return enrichGoogleBooksRatings(results);
 }
 
 async function searchAnilist(query, page = 1) {
@@ -1250,7 +1510,7 @@ function parseAladinCreators(authorRaw = '') {
   return { writer: writers.join(', '), penciller: pencillers.join(', ') };
 }
 
-async function searchAladin(query, ttbKey = '', page = 1) {
+async function searchAladin(query, ttbKey = '', page = 1, bookType = 'comic') {
   if (!ttbKey) return [];
   const params = new URLSearchParams({
     ttbkey: ttbKey,
@@ -1288,12 +1548,14 @@ async function searchAladin(query, ttbKey = '', page = 1) {
     const date = parseDateParts(item.pubDate || '');
     const genre = String(item.categoryName || '').split('>').pop() || '';
     const rating = item.customerReviewRank ? String(item.customerReviewRank) : '';
+    const isbn = normalizeIsbn(item.isbn13 || item.isbn || '');
     const raw = {
       Title: item.title || '',
       Series: item.title || '',
       Writer: writer,
       Penciller: penciller,
       Publisher: item.publisher || '',
+      ISBN: isbn,
       Summary: stripHtml(item.description || ''),
       Genre: genre,
       Tags: genre,
@@ -1306,13 +1568,14 @@ async function searchAladin(query, ttbKey = '', page = 1) {
       CommunityRating: rating,
       AgeRating: '',
       PubDate: item.pubDate || '',
-      Format: 'Manga',
+      Format: bookType === 'book' ? 'Novel' : 'Manga',
+      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
       ...date,
       Volume: '',
       Number: '',
       Characters: '',
     };
-    return normalizeSearchResult(raw, item.itemId || item.isbn13 || item.link);
+    return normalizeSearchResult(raw, item.itemId || item.isbn13 || item.isbn || item.link);
   });
 }
 
@@ -1362,6 +1625,295 @@ async function searchVine(query, apiKey = '', page = 1) {
   });
 }
 
+function escapeRegExp(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cleanAmazonText(value = '') {
+  return stripHtml(decodeHtmlEntities(value))
+    .replace(/[\u200e\u200f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function amazonUrlFromPath(value = '') {
+  const raw = decodeHtmlEntities(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('//')) return `https:${raw}`;
+  try {
+    return new URL(raw, 'https://www.amazon.com').toString();
+  } catch {
+    return '';
+  }
+}
+
+function amazonImageUrl(value = '') {
+  const raw = decodeHtmlEntities(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('//')) return `https:${raw}`;
+  return '';
+}
+
+function amazonSearchHeaders() {
+  return {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9,ko;q=0.8',
+    'Referer': 'https://www.amazon.com/',
+  };
+}
+
+function parseAmazonRating(value = '') {
+  const text = decodeHtmlEntities(value);
+  const match =
+    text.match(/(\d+(?:\.\d+)?)\s+out\s+of\s+5/i)
+    || text.match(/(\d+(?:\.\d+)?)\s*\/\s*5/i);
+  return match ? String(match[1]) : '';
+}
+
+function extractAmazonSearchAuthor(chunk = '') {
+  const byline = chunk.match(/(?:by|저자|작성자)\s*(?:<[^>]+>|\s)*<a\b[^>]*>([\s\S]{1,200}?)<\/a>/i)?.[1];
+  if (byline) return cleanAmazonText(byline);
+
+  const names = [];
+  const linkPattern = /<a\b[^>]*class=["'][^"']*a-size-base[^"']*a-link-normal[^"']*["'][^>]*>([\s\S]{1,180}?)<\/a>/gi;
+  let match;
+  while ((match = linkPattern.exec(chunk)) !== null) {
+    const name = cleanAmazonText(match[1]);
+    if (!name || /^(paperback|hardcover|kindle|audio|mass market|spiral-bound)$/i.test(name)) continue;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names.slice(0, 3).join(', ');
+}
+
+function parseAmazonSearchHtml(html = '') {
+  const entries = [];
+  const chunks = String(html || '').split(/<div\b[^>]*data-component-type=["']s-search-result["'][^>]*>/i).slice(1);
+
+  for (const chunk of chunks) {
+    const asin =
+      chunk.match(/\bdata-asin=["']([^"']{8,16})["']/i)?.[1]
+      || chunk.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i)?.[1]
+      || '';
+    if (!asin || entries.some(item => item.AmazonAsin === asin)) continue;
+
+    const title = cleanAmazonText(
+      chunk.match(/<h2\b[\s\S]{0,1400}?<span\b[^>]*>([\s\S]{1,500}?)<\/span>/i)?.[1]
+      || chunk.match(/\baria-label=["']([^"']{2,260})["']/i)?.[1]
+      || chunk.match(/\balt=["']([^"']{2,260})["']/i)?.[1]
+      || '',
+    );
+    if (!title) continue;
+
+    const linkPattern = new RegExp(`href=["']([^"']*(?:/(?:dp|gp/product)/${escapeRegExp(asin)}|/dp/${escapeRegExp(asin)})[^"']*)["']`, 'i');
+    const link = amazonUrlFromPath(chunk.match(linkPattern)?.[1] || `/dp/${asin}`);
+    const cover = amazonImageUrl(
+      chunk.match(/<img\b[^>]*class=["'][^"']*s-image[^"']*["'][^>]*\bsrc=["']([^"']+)["']/i)?.[1]
+      || chunk.match(/\bdata-image-source-density=["']([^"']+)["']/i)?.[1]
+      || '',
+    );
+    const rating = parseAmazonRating(chunk);
+    const writer = extractAmazonSearchAuthor(chunk);
+
+    entries.push({
+      AmazonAsin: asin,
+      Title: title,
+      Series: title,
+      Writer: writer,
+      Publisher: '',
+      ISBN: '',
+      Summary: '',
+      Web: link,
+      CoverUrl: cover,
+      Genre: '',
+      Tags: '',
+      Count: '',
+      Rating: rating ? `${rating} / 5.0` : '-',
+      RatingScore: rating,
+      CommunityRating: rating,
+      AgeRating: '',
+      PubDate: '',
+      Format: 'Novel',
+      Manga: '',
+      LocalizedSeries: title,
+      Year: '',
+      Month: '',
+      Day: '',
+      Volume: '',
+      Number: '',
+      Characters: '',
+    });
+  }
+
+  return entries;
+}
+
+function normalizeAmazonJsonAuthor(author) {
+  if (Array.isArray(author)) {
+    return author.map(item => (
+      typeof item === 'object' && item ? item.name || '' : String(item || '')
+    )).filter(Boolean).join(', ');
+  }
+  if (typeof author === 'object' && author) return author.name || '';
+  return String(author || '');
+}
+
+function extractAmazonJsonLdMetadata(html = '') {
+  const objects = [];
+  for (const json of extractJsonLdObjects(html)) {
+    objects.push(...(Array.isArray(json?.['@graph']) ? json['@graph'] : [json]));
+  }
+  const entry = objects.find(item => {
+    const type = Array.isArray(item?.['@type']) ? item['@type'].join(',') : String(item?.['@type'] || '');
+    return /book|product/i.test(type) && (item?.name || item?.isbn);
+  });
+  if (!entry) return {};
+  const image = Array.isArray(entry.image) ? entry.image[0] : entry.image || '';
+  return {
+    Title: cleanAmazonText(entry.name || ''),
+    Writer: cleanAmazonText(normalizeAmazonJsonAuthor(entry.author)),
+    ISBN: normalizeIsbn(entry.isbn || ''),
+    Summary: cleanAmazonText(entry.description || ''),
+    CoverUrl: amazonImageUrl(image),
+  };
+}
+
+function extractAmazonDetailField(html = '', labels = []) {
+  const cleanHtml = decodeHtmlEntities(html).replace(/[\u200e\u200f]/g, ' ');
+  for (const label of labels) {
+    const escaped = escapeRegExp(label);
+    const patterns = [
+      new RegExp(`<th\\b[^>]*>\\s*${escaped}\\s*[:：]?\\s*<\\/th>\\s*<td\\b[^>]*>([\\s\\S]{0,700}?)<\\/td>`, 'i'),
+      new RegExp(`<span\\b[^>]*class=["'][^"']*a-text-bold[^"']*["'][^>]*>\\s*${escaped}\\s*[:：]?\\s*<\\/span>\\s*([\\s\\S]{0,260}?)(?:<br|<\\/li|<\\/span|<\\/div)`, 'i'),
+      new RegExp(`<span\\b[^>]*>\\s*${escaped}\\s*[:：]?\\s*<\\/span>\\s*<span\\b[^>]*>([\\s\\S]{0,500}?)<\\/span>`, 'i'),
+    ];
+    for (const pattern of patterns) {
+      const value = cleanAmazonText(cleanHtml.match(pattern)?.[1] || '');
+      if (value) return value;
+    }
+  }
+
+  const text = cleanAmazonText(cleanHtml);
+  const knownLabels = [
+    'Publisher',
+    'Publication date',
+    'Language',
+    'Print length',
+    'ISBN-10',
+    'ISBN-13',
+    'ASIN',
+    'Dimensions',
+    'Item Weight',
+    'Best Sellers Rank',
+    'Customer Reviews',
+  ].map(escapeRegExp).join('|');
+  for (const label of labels) {
+    const pattern = new RegExp(`${escapeRegExp(label)}\\s*[:：]?\\s*(.{1,220}?)(?=\\s+(?:${knownLabels})\\s*[:：]?|$)`, 'i');
+    const value = cleanAmazonText(text.match(pattern)?.[1] || '');
+    if (value) return value;
+  }
+  return '';
+}
+
+function languageIsoFromAmazon(value = '') {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  if (text.includes('korean') || text.includes('한국')) return 'ko';
+  if (text.includes('japanese') || text.includes('日本')) return 'ja';
+  if (text.includes('english')) return 'en';
+  if (text.includes('chinese') || text.includes('中文')) return 'zh';
+  if (text.includes('french')) return 'fr';
+  if (text.includes('german')) return 'de';
+  if (text.includes('spanish')) return 'es';
+  return '';
+}
+
+async function fetchAmazonBookDetail(url = '') {
+  if (!url) return {};
+  const headers = amazonSearchHeaders();
+  let html = '';
+  try {
+    html = await requestTextWithElectronNet(url, headers, 7000);
+  } catch {
+    try {
+      html = await requestTextGeneric(url, headers, 7000);
+    } catch {
+      return {};
+    }
+  }
+
+  const jsonMetadata = extractAmazonJsonLdMetadata(html);
+  const productTitle = cleanAmazonText(html.match(/id=["']productTitle["'][^>]*>([\s\S]{1,600}?)<\/span>/i)?.[1] || '');
+  const byline = cleanAmazonText(html.match(/id=["']bylineInfo["'][^>]*>([\s\S]{1,500}?)<\/(?:div|span)>/i)?.[1] || '');
+  const publisherRaw = extractAmazonDetailField(html, ['Publisher']);
+  const publisher = publisherRaw.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const pubDate = extractAmazonDetailField(html, ['Publication date']);
+  const date = parseDateParts(pubDate);
+  const language = extractAmazonDetailField(html, ['Language']);
+  const isbn13 = normalizeIsbn(extractAmazonDetailField(html, ['ISBN-13']));
+  const isbn10 = normalizeIsbn(extractAmazonDetailField(html, ['ISBN-10']));
+  const summary = cleanAmazonText(
+    html.match(/id=["']bookDescription_feature_div["'][^>]*>([\s\S]{1,3000}?)<\/div>\s*<\/div>/i)?.[1]
+    || html.match(/id=["']productDescription["'][^>]*>([\s\S]{1,3000}?)<\/div>/i)?.[1]
+    || '',
+  );
+
+  return {
+    ...jsonMetadata,
+    Title: productTitle || jsonMetadata.Title || '',
+    Writer: byline.replace(/^(by|저자|작성자)\s+/i, '').trim() || jsonMetadata.Writer || '',
+    Publisher: publisher,
+    ISBN: isbn13 || isbn10 || jsonMetadata.ISBN || '',
+    Summary: summary || jsonMetadata.Summary || '',
+    PubDate: pubDate,
+    LanguageISO: languageIsoFromAmazon(language),
+    ...date,
+  };
+}
+
+async function searchAmazon(query, page = 1) {
+  const params = new URLSearchParams({
+    k: query,
+    i: 'stripbooks',
+  });
+  if ((Number(page) || 1) > 1) params.set('page', String(Number(page) || 1));
+  const url = `https://www.amazon.com/s?${params.toString()}&i=stripbooks`;
+  const headers = amazonSearchHeaders();
+
+  let html = '';
+  try {
+    html = await requestTextWithElectronNet(url, headers, 12000);
+  } catch {
+    html = await requestTextGeneric(url, headers, 12000);
+  }
+
+  const rawResults = parseAmazonSearchHtml(html).slice(0, 20);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < rawResults.length) {
+      const index = cursor;
+      cursor += 1;
+      const item = rawResults[index];
+      const details = await fetchAmazonBookDetail(item.Web);
+      rawResults[index] = {
+        ...item,
+        ...Object.fromEntries(Object.entries(details).filter(([, value]) => (
+          value !== undefined && value !== null && String(value).trim() !== ''
+        ))),
+        Title: details.Title || item.Title,
+        Series: details.Title || item.Series || item.Title,
+        CoverUrl: details.CoverUrl || item.CoverUrl,
+        Web: item.Web,
+      };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, rawResults.length) }, worker));
+
+  return rawResults.map(item => normalizeSearchResult(item, item.AmazonAsin || item.Web || item.Title));
+}
+
 function decodeHtmlEntities(value = '') {
   return String(value)
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
@@ -1398,7 +1950,7 @@ function normalizeRidiImageUrl(value = '') {
   return url;
 }
 
-function parseRidibooksSearchHtml(html = '', page = 1) {
+function parseRidibooksSearchHtml(html = '', page = 1, bookType = 'comic') {
   const byId = new Map();
   const pushBook = (book) => {
     const id = String(book.id || '').trim();
@@ -1422,8 +1974,8 @@ function parseRidibooksSearchHtml(html = '', page = 1) {
       RatingScore: book.rating || '-',
       CommunityRating: book.rating || '',
       AgeRating: '',
-      Format: 'Manga',
-      Manga: 'YesAndRightToLeft',
+      Format: bookType === 'book' ? 'Novel' : 'Manga',
+      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
       LocalizedSeries: title,
       PubDate: pubDate,
       ...date,
@@ -1479,7 +2031,7 @@ function parseRidibooksSearchHtml(html = '', page = 1) {
   return [...byId.values()].slice(start, start + 20);
 }
 
-async function searchRidibooks(query, page = 1) {
+async function searchRidibooks(query, page = 1, bookType = 'comic') {
   const encodedQuery = new URLSearchParams({ q: query }).toString().slice(2);
   const params = new URLSearchParams();
   params.append('keyword', query);
@@ -1529,10 +2081,10 @@ async function searchRidibooks(query, page = 1) {
       };
       try {
         const html = await requestTextWithElectronNet(referer, htmlHeaders, 12000);
-        return parseRidibooksSearchHtml(html, page);
+        return parseRidibooksSearchHtml(html, page, bookType);
       } catch {
         const html = await requestTextGeneric(referer, htmlHeaders, 12000);
-        return parseRidibooksSearchHtml(html, page);
+        return parseRidibooksSearchHtml(html, page, bookType);
       }
     }
   }
@@ -1572,8 +2124,8 @@ async function searchRidibooks(query, page = 1) {
       RatingScore: ratingScore || '-',
       CommunityRating: ratingScore,
       AgeRating: book.is_adult_only ? '19세 이상' : String(book.age_limit || '전체 이용가'),
-      Format: 'Manga',
-      Manga: 'YesAndRightToLeft',
+      Format: bookType === 'book' ? 'Novel' : 'Manga',
+      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
       LocalizedSeries: book.title || '',
       PubDate: pubDate,
       ...date,
@@ -2232,6 +2784,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return analyzeMetadataInputs(paths, {
       ...options,
       sevenZExe,
+      dbPath: libraryDbPath(),
       lang: options.lang || configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko',
     }, (progress) => {
       event.sender.send('task:progress', { task: 'metadata:analyze', ...progress });
@@ -2248,6 +2801,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         ...config,
         ...options,
         sevenZExe,
+        dbPath: libraryDbPath(),
         shouldCancel: () => controller.shouldCancel(),
         lang: options.lang || config.language || config.lang || 'ko',
       }, (progress) => {
@@ -2262,15 +2816,26 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const config = configManager.getConfig() || {};
     const apiKeys = { ...(config.api_keys || {}), ...(options.apiKeys || {}) };
     const apiName = normalizeApiSource(options.api || options.apiName || options.source || options.apiSource);
+    const bookType = normalizeSearchBookType(options.bookType || options.mediaType || options.type);
     const query = String(options.query || '').trim();
     const page = Number(options.page || 1);
 
     if (!query) return { success: true, api: apiName, actualQuery: query, results: [] };
+    if (!isMetadataApiAllowedForBookType(apiName, bookType)) {
+      return {
+        success: false,
+        api: apiName,
+        actualQuery: query,
+        results: [],
+        error: i18nT('api_search_unsupported', { api: apiName }),
+        cached: false,
+      };
+    }
     metadataSearchLog('Search started', { api: apiName, query, page });
 
     let identification = null;
     let titleCandidates = [query];
-    if (apiName === 'Anilist' || apiName === 'Vine') {
+    if (apiName === 'Anilist' || apiName === 'Vine' || apiName === 'Amazon') {
       try {
         identification = await identifyOriginalTitles(query, apiKeys, apiName);
         titleCandidates = identification.candidates;
@@ -2302,7 +2867,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       candidates: titleCandidates,
     });
     const apiCacheDb = await openApiCacheDb(apiCacheDbPath());
-    const cacheQuery = `${query}::${titleCandidates.join('|')}::p${page}::v14`;
+    const cacheQuery = `${bookType}::${query}::${titleCandidates.join('|')}::p${page}::v16`;
     try {
       const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);
       if (cachedResults) {
@@ -2323,7 +2888,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     let results = [];
     try {
       if (apiName === 'Google Books') {
-        results = await searchGoogleBooks(query, apiKeys.google || '', page);
+        results = await searchGoogleBooks(query, apiKeys.google || '', page, bookType);
       } else if (apiName === 'Anilist') {
         for (const candidate of titleCandidates) {
           metadataSearchLog('AniList candidate request', { query, candidate, page });
@@ -2335,9 +2900,19 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           }
         }
       } else if (apiName === '리디북스') {
-        results = await searchRidibooks(query, page);
+        results = await searchRidibooks(query, page, bookType);
       } else if (apiName === '알라딘') {
-        results = await searchAladin(query, apiKeys.aladin || '', page);
+        results = await searchAladin(query, apiKeys.aladin || '', page, bookType);
+      } else if (apiName === 'Amazon') {
+        for (const candidate of titleCandidates) {
+          metadataSearchLog('Amazon candidate request', { query, candidate, page });
+          results = await searchAmazon(candidate, page);
+          metadataSearchLog('Amazon candidate response', { query, candidate, page, resultCount: results.length });
+          if (results.length > 0) {
+            actualQuery = candidate;
+            break;
+          }
+        }
       } else if (apiName === 'Vine') {
         for (const candidate of titleCandidates) {
           metadataSearchLog('Vine candidate request', { query, candidate, page });
@@ -2362,7 +2937,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         cached: false,
       };
     }
-    if (apiName === 'Anilist' || apiName === 'Vine') {
+    if (apiName === 'Anilist' || apiName === 'Vine' || apiName === 'Amazon') {
       results = results.map(result => ({ ...result, identifiedSearchQuery: actualQuery }));
     }
     results = await enrichResultImages(results);
@@ -2387,6 +2962,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return { success: true, api: apiName, actualQuery, results, cached: false };
   });
 
+  ipcMain.handle('api:ridiBookDetail', async (_event, bookId) => getRidiBookDetail(bookId));
   ipcMain.handle('api:ridiPublishDate', async (_event, bookId) => getRidiPublishDate(bookId));
 
   ipcMain.handle('api:translateMetadata', async (_event, result = {}, targetLang = 'ko') => {

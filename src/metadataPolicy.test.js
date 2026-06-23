@@ -3,13 +3,17 @@ import assert from 'node:assert/strict';
 import {
     adjacentSelectionAfterRemoval,
     applyBatchMetadataFields,
+    applyCombinedGenreTagsValue,
     applyInferredMetadataField,
     applySeriesAutoMetadata,
     clampMetadataNumber,
     cleanMetadataSummary,
+    combinedGenreTagsValue,
+    formatMetadataModifiedDate,
     inferMetadataFromArchiveName,
     normalizeMetadataAutoNumber,
     normalizeMetadataDecimal,
+    splitCombinedGenreTags,
 } from './metadataPolicy.js';
 
 test('metadata filename inference follows volume and chapter conventions', () => {
@@ -104,6 +108,33 @@ test('metadata number fields use the original bounds', () => {
 
 test('metadata summary cleanup removes the heading and excessive blank lines', () => {
     assert.equal(cleanMetadataSummary('<책소개>\n첫 줄\n\n\n\n둘째 줄'), '첫 줄\n\n둘째 줄');
+});
+
+test('metadata genre and tags can be edited as one combined tag list', () => {
+    assert.equal(combinedGenreTagsValue({
+        Genre: '판타지, 모험',
+        Tags: '모험, 마법, 왕국',
+    }), '판타지, 모험, 마법, 왕국');
+    assert.deepEqual(splitCombinedGenreTags('판타지, 모험, 마법'), {
+        Genre: '판타지',
+        Tags: '모험, 마법',
+    });
+    assert.deepEqual(applyCombinedGenreTagsValue({
+        Title: '책',
+        Genre: '기존',
+        Tags: '기존 태그',
+    }, '장르, 키워드'), {
+        Title: '책',
+        Genre: '장르',
+        Tags: '키워드',
+    });
+});
+
+test('metadata modified date displays EPUB UTC timestamps in Korean time', () => {
+    assert.equal(formatMetadataModifiedDate('2026-06-23T11:39:43Z'), '2026-06-23 20:39:43');
+    assert.equal(formatMetadataModifiedDate('2026-06-23T23:10:05Z'), '2026-06-24 08:10:05');
+    assert.equal(formatMetadataModifiedDate('2026-06-23 11:39:43'), '2026-06-23 11:39:43');
+    assert.equal(formatMetadataModifiedDate(''), 'No Data');
 });
 
 test('metadata removal selects the adjacent remaining item', () => {

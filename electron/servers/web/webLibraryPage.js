@@ -1293,11 +1293,7 @@ function buildMetadataPanel(meta) {
         meta.creators,
     );
     const formatManga = [meta.format, meta.manga].filter(Boolean).join(" / ");
-    const arcTeamLocation = [
-        joinedMetadataValues(meta.story_arc),
-        joinedMetadataValues(meta.teams),
-        joinedMetadataValues(meta.locations),
-    ].filter(Boolean).join(" / ");
+    const storyArc = joinedMetadataValues(meta.story_arc);
 
     const panel = createElement("div", { className: "web-detail-panel" });
     if (coverSrc) {
@@ -1322,10 +1318,10 @@ function buildMetadataPanel(meta) {
             createElement("strong", {}, createDetailLabel("fileLines", "줄거리")),
             createElement("span", { text: metadataValue(meta.description || meta.summary, "줄거리 없음") }),
         ]),
-        createElement("div", { className: "web-detail-line inline" }, [
-            createElement("strong", {}, createDetailLabel("layers", "스토리 아크 / 팀 / 장소")),
-            createElement("span", { text: metadataValue(arcTeamLocation) }),
-        ]),
+        storyArc ? createElement("div", { className: "web-detail-line inline" }, [
+            createElement("strong", {}, createDetailLabel("layers", "스토리 아크")),
+            createElement("span", { text: metadataValue(storyArc) }),
+        ]) : null,
         createElement("div", { className: "web-detail-line inline" }, [
             createElement("strong", {}, createDetailLabel("users", "등장인물")),
             createElement("span", { text: joinedMetadataValues(meta.characters) || "-" }),

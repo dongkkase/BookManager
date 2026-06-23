@@ -280,7 +280,9 @@ function App() {
       path: droppedPath,
       ...(await window.electronAPI?.stat?.(droppedPath)),
     })));
-    const classified = classifyDroppedEntries(entries);
+    const classified = classifyDroppedEntries(entries, {
+      includeDocuments: activeTab === 'folder' || activeTab === 'metadata',
+    });
     if (classified.unsupported.length > 0) {
       await window.electronAPI?.showMessage?.({
         type: 'warning',

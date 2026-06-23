@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // API 관련
   fetchMetadata: (options) => ipcRenderer.invoke('api:fetch', options),
   translateMetadata: (result, targetLang) => ipcRenderer.invoke('api:translateMetadata', result, targetLang),
+  fetchRidiBookDetail: (bookId) => ipcRenderer.invoke('api:ridiBookDetail', bookId),
   fetchRidiPublishDate: (bookId) => ipcRenderer.invoke('api:ridiPublishDate', bookId),
   fetchImageDataUrl: (url) => ipcRenderer.invoke('api:imageDataUrl', url),
   

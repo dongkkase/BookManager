@@ -47,7 +47,17 @@ export const IMPLEMENTATION_AUDIT_TARGETS = Object.freeze([
     {
         file: 'src/components/folder/DetailPanel.jsx',
         scope: '상세 정보',
-        fragments: ['DetailPanel', 'duplicateDetailRows', 'splitMetadataValues', 'formatSize', 'formatDate'],
+        fragments: ['DetailPanel', 'resolveBookType', 'BookDetailPanel', 'ComicDetailPanel'],
+    },
+    {
+        file: 'src/components/folder/ComicDetailPanel.jsx',
+        scope: '만화 상세 정보',
+        fragments: ['ComicDetailPanel', 'duplicateDetailRows', 'splitMetadataValues', 'formatSize', 'formatDate'],
+    },
+    {
+        file: 'src/components/folder/BookDetailPanel.jsx',
+        scope: '도서 상세 정보',
+        fragments: ['BookDetailPanel', 'duplicateDetailRows', 'splitMetadataValues', 'ISBN', 'formatDate'],
     },
     {
         file: 'src/components/folder/MissingVolumesDialog.jsx',

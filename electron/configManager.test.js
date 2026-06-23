@@ -23,9 +23,10 @@ test('config는 실행 경로의 data 폴더에 둔다', () => {
 
 test('useUserData 옵션이 있어도 config는 실행 경로의 data 폴더에 둔다', () => {
     const manager = new ConfigManager('/user/data', '/Applications/BookManager.app/Contents/MacOS', {
+        platform: 'darwin',
         useUserData: true,
     });
-    assert.equal(manager.configPath, path.join('/Applications/BookManager.app/Contents/MacOS', 'data', 'config.json'));
+    assert.equal(manager.configPath, path.join('/Applications', 'data', 'config.json'));
 });
 
 test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한다', () => {
@@ -184,6 +185,25 @@ test('userData의 기존 config.json도 data/config.json으로 복사해 읽는�
         assert.equal(loaded.language, 'ja');
         assert.equal(loaded.play_sound, false);
         assert.equal(fs.existsSync(dataConfigPath(executableDir)), true);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('macOS 앱 번들 내부 data의 기존 config도 앱 옆 data/config.json으로 복사해 읽는다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-mac-bundle-'));
+    const executableDir = path.join(root, 'BookManager.app', 'Contents', 'MacOS');
+    try {
+        fs.mkdirSync(path.join(executableDir, 'data'), { recursive: true });
+        fs.writeFileSync(path.join(executableDir, 'data', 'config.json'), JSON.stringify({
+            language: 'en',
+            target_format: 'webp',
+        }));
+        const manager = new ConfigManager(root, executableDir, { platform: 'darwin' });
+        const loaded = manager.loadConfig();
+        assert.equal(loaded.language, 'en');
+        assert.equal(loaded.target_format, 'webp');
+        assert.equal(fs.existsSync(dataConfigPath(root)), true);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

@@ -27,7 +27,7 @@ const FILE_COLUMNS = [
     'volume', 'number', 'writer', 'creators', 'publisher', 'imprint', 'genre',
     'volume_count', 'page_count', 'format', 'manga', 'language', 'rating',
     'age_rating', 'publish_date', 'summary', 'characters', 'teams', 'locations',
-    'story_arc', 'tags', 'notes', 'web', 'thumb_path',
+    'story_arc', 'tags', 'notes', 'web', 'isbn', 'book_type', 'thumb_path',
 ];
 
 const LIBRARY_SCAN_STATE_COLUMNS = [
@@ -59,6 +59,7 @@ const FILE_SEARCH_COLUMNS = [
     'publisher',
     'imprint',
     'genre',
+    'isbn',
     'format',
     'summary',
     'characters',
@@ -129,6 +130,8 @@ export class LibraryDB {
                 tags TEXT,
                 notes TEXT,
                 web TEXT,
+                isbn TEXT,
+                book_type TEXT,
                 thumb_path TEXT
             );
             CREATE TABLE IF NOT EXISTS dup_cache (
@@ -173,6 +176,17 @@ export class LibraryDB {
     }
 
     ensureSchemaColumns() {
+        const fileColumns = this.tableColumns('files');
+        const fileColumnDefinitions = {
+            isbn: 'TEXT',
+            book_type: 'TEXT',
+        };
+        for (const [column, definition] of Object.entries(fileColumnDefinitions)) {
+            if (!fileColumns.has(column)) {
+                this.db.exec(`ALTER TABLE files ADD COLUMN ${column} ${definition}`);
+            }
+        }
+
         const dupColumns = this.tableColumns('dup_target_index');
         if (!dupColumns.has('mtime')) {
             this.db.exec('ALTER TABLE dup_target_index ADD COLUMN mtime REAL DEFAULT 0');
@@ -283,6 +297,8 @@ export class LibraryDB {
             writer: record.writer ?? record.meta_creator ?? '',
             page_count: record.page_count ?? record.pages ?? record.meta_pages ?? '',
             format: normalizeMetadataFormat(record.format ?? record.Format),
+            isbn: record.isbn ?? record.ISBN ?? '',
+            book_type: record.book_type ?? record.bookType ?? '',
             thumb_path: record.thumb_path ?? record.thumbnail ?? '',
         };
     }
@@ -335,6 +351,17 @@ export class LibraryDB {
                 thumb_path AS thumbnail
             FROM files WHERE path = ?`,
         ).get(filePath) || null);
+    }
+
+    async getDistinctPublishers(limit = 500) {
+        return this.withLock(async () => this.getConnection().prepare(`
+            SELECT publisher, COUNT(*) AS count
+            FROM files
+            WHERE TRIM(COALESCE(publisher, '')) <> ''
+            GROUP BY publisher
+            ORDER BY count DESC, publisher COLLATE NOCASE ASC
+            LIMIT ?
+        `).all(Math.max(1, Math.min(5000, Number(limit) || 500))));
     }
 
     async searchFiles(query, libraryPaths = [], options = {}) {

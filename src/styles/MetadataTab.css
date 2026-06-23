@@ -21,7 +21,7 @@
   align-items: center;
   justify-content: center;
   gap: 28px;
-  color: #f5f5f5;
+  color: #aaa;
   font-size: var(--font-17);
   font-weight: 800;
   background-color: #1b1b1b;
@@ -30,7 +30,7 @@
 .meta-empty-drop img {
   width: 260px;
   max-width: 28vw;
-  opacity: 0.9;
+  opacity: 0.55;
 }
 
 .meta-left-panel {

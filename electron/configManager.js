@@ -13,9 +13,10 @@ export class ConfigManager {
   constructor(userDataPath, executableDir, options = {}) {
     this.userDataPath = userDataPath;
     this.executableDir = executableDir;
-    this.configPath = options.configPath || resolveConfigPath(executableDir);
+    this.configPath = options.configPath || resolveConfigPath(executableDir, options.platform);
     this.legacyConfigPaths = [
       executableDir ? path.join(executableDir, 'config.json') : null,
+      executableDir ? path.join(executableDir, 'data', 'config.json') : null,
       userDataPath ? path.join(userDataPath, 'config.json') : null,
     ].filter((legacyPath, index, paths) => (
       legacyPath

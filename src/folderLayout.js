@@ -4,6 +4,7 @@ export const MIN_SIDEBAR_WIDTH = 220;
 export const MAX_SIDEBAR_WIDTH = 520;
 export const MIN_CONTENT_WIDTH = 520;
 export const MIN_DETAIL_HEIGHT = 112;
+export const MAX_DETAIL_HEIGHT = 420;
 export const MIN_FILE_LIST_HEIGHT = 64;
 export const RIGHT_PANEL_FIXED_HEIGHT = 96;
 
@@ -39,6 +40,7 @@ export function clampDetailHeight(height, containerHeight) {
         (finiteNumber(containerHeight) || 700) - MIN_FILE_LIST_HEIGHT - RIGHT_PANEL_FIXED_HEIGHT,
     );
     return Math.min(
+        MAX_DETAIL_HEIGHT,
         availableHeight,
         Math.max(MIN_DETAIL_HEIGHT, Math.round(finiteNumber(height) || MIN_DETAIL_HEIGHT)),
     );

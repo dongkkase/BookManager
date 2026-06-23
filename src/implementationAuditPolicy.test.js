@@ -9,8 +9,8 @@ import {
 
 const projectRoot = path.resolve(new URL('..', import.meta.url).pathname);
 
-test('16 구현 파일 감사 대상은 체크리스트의 26개 파일을 모두 추적한다', () => {
-    assert.equal(implementationAuditTargetCount(), 26);
+test('16 구현 파일 감사 대상은 체크리스트의 28개 파일을 모두 추적한다', () => {
+    assert.equal(implementationAuditTargetCount(), 28);
 
     const files = IMPLEMENTATION_AUDIT_TARGETS.map(target => target.file);
     assert.equal(new Set(files).size, files.length);
