@@ -49,6 +49,14 @@ import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { LibraryDB } from './database/library_db.js';
 import {
+  buildCsvContent,
+  resolveCsvExportPath,
+} from './csvExport.js';
+import {
+  normalizeDirectoryPathForRead,
+  parseWindowsLogicalDiskRoots,
+} from './fsRoots.js';
+import {
   clearApiCache,
   getCachedApiResults,
   openApiCache as openApiCacheDb,
@@ -3750,12 +3758,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       try {
         const { execSync } = await import('child_process');
         const output = execSync('wmic logicaldisk get name').toString();
-        const drives = output.split('\r\r\n')
-          .map(line => line.trim())
-          .filter(line => /^[A-Z]:$/.test(line));
-        return drives;
+        const drives = parseWindowsLogicalDiskRoots(output);
+        return drives.length > 0 ? drives : ['C:\\'];
       } catch (e) {
-        return ['C:'];
+        return ['C:\\'];
       }
     } else {
       return ['/'];
@@ -3771,7 +3777,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   ipcMain.handle('fs:readDir', (_, dirPath) => {
     try {
-      const items = fs.readdirSync(dirPath, { withFileTypes: true });
+      const safeDirPath = normalizeDirectoryPathForRead(dirPath);
+      const items = fs.readdirSync(safeDirPath, { withFileTypes: true });
       return items.map(item => ({
         name: item.name,
         isDirectory: item.isDirectory(),
@@ -3940,17 +3947,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // 7. CSV 파일로 내보내기
   ipcMain.handle('fs:exportCsv', async (_, { filePath, headers, rows }) => {
     try {
-      const targetPath = path.extname(filePath).toLowerCase() === '.csv'
-        ? filePath
-        : `${filePath}.csv`;
-      let csvContent = '\uFEFF'; // UTF-8 BOM
-      csvContent += headers.map(h => `"${h.replace(/"/g, '""')}"`).join(',') + '\n';
-      for (const row of rows) {
-        csvContent += row.map(cell => {
-          const val = cell === null || cell === undefined ? '' : String(cell);
-          return `"${val.replace(/"/g, '""')}"`;
-        }).join(',') + '\n';
-      }
+      const targetPath = resolveCsvExportPath(filePath);
+      const csvContent = buildCsvContent(headers, rows);
       fs.writeFileSync(targetPath, csvContent, 'utf8');
       return { success: true, filePath: targetPath };
     } catch (error) {

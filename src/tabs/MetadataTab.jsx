@@ -108,6 +108,30 @@ function groupItems(items) {
   return [...groups.entries()].map(([name, children]) => ({ name, children }));
 }
 
+function metadataTreeNodeKey(node) {
+  if (!node) return '';
+  return node.type === 'group' ? `group:${node.groupName}` : `file:${node.id}`;
+}
+
+function metadataTreeVisibleNodes(groupedItems, collapsedGroups) {
+  return groupedItems.flatMap(group => {
+    const groupNode = { type: 'group', groupName: group.name };
+    if (collapsedGroups.has(group.name)) return [groupNode];
+    return [
+      groupNode,
+      ...group.children.map(file => ({
+        type: 'file',
+        id: file.id,
+        groupName: group.name,
+      })),
+    ];
+  });
+}
+
+function isMetadataTreeTarget(target) {
+  return Boolean(target?.closest?.('.meta-left-panel'));
+}
+
 function metadataModifiedDate(item) {
   const value = item?.metadata?.ComicZipModifiedDate;
   return formatMetadataModifiedDate(value, 'No Data');
@@ -194,6 +218,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const [selectedFileId, setSelectedFileId] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
+  const treeContainerRef = useRef(null);
+  const metadataTreeKeyboardActiveRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [apiSource, setApiSource] = useState(config?.last_meta_api || '리디북스');
   const [applyEmpty, setApplyEmpty] = useState(false);
@@ -317,6 +343,14 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     [fileList, selectedFileId]
   );
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
+  const visibleTreeNodes = useMemo(
+    () => metadataTreeVisibleNodes(groupedItems, collapsedGroups),
+    [groupedItems, collapsedGroups],
+  );
+  const selectedTreeKey = useMemo(
+    () => selectedGroup ? `group:${selectedGroup}` : selectedFileId ? `file:${selectedFileId}` : '',
+    [selectedFileId, selectedGroup],
+  );
   const checkedCount = useMemo(() => fileList.filter(item => item.checked !== false).length, [fileList]);
   const allItemsChecked = useMemo(
     () => fileList.length > 0 && fileList.every(item => item.checked !== false),
@@ -375,6 +409,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     if (activeItem) setSearchQuery(activeItem.metadata?.Series || activeItem.metadata?.Title || activeItem.name.replace(/\.[^.]+$/, ''));
   }, [activeItem]);
+
+  useEffect(() => {
+    if (!selectedTreeKey || !treeContainerRef.current) return;
+    const selectedElement = Array.from(treeContainerRef.current.querySelectorAll('[data-meta-tree-key]'))
+      .find(element => element.dataset.metaTreeKey === selectedTreeKey);
+    selectedElement?.scrollIntoView({ block: 'nearest' });
+  }, [selectedTreeKey]);
 
   useEffect(() => {
     const nextSource = normalizeMetadataApiSourceForBookType(apiSource, activeBookType, config?.api_keys || {});
@@ -525,11 +566,45 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     });
   }, []);
 
+  const setGroupCollapsed = useCallback((groupName, collapsed) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (collapsed) next.add(groupName);
+      else next.delete(groupName);
+      return next;
+    });
+  }, []);
+
+  const activateMetadataTreeKeyboard = useCallback(() => {
+    metadataTreeKeyboardActiveRef.current = true;
+  }, []);
+
+  const deactivateMetadataTreeKeyboard = useCallback(() => {
+    metadataTreeKeyboardActiveRef.current = false;
+  }, []);
+
+  const focusMetadataTree = useCallback(() => {
+    activateMetadataTreeKeyboard();
+    treeContainerRef.current?.focus({ preventScroll: true });
+  }, [activateMetadataTreeKeyboard]);
+
   const handleGroupClick = useCallback((groupName) => {
+    focusMetadataTree();
     setSelectedGroup(groupName);
     setSelectedFileId(null);
     toggleGroupCollapsed(groupName);
-  }, [toggleGroupCollapsed]);
+  }, [focusMetadataTree, toggleGroupCollapsed]);
+
+  const selectTreeNode = useCallback((node) => {
+    if (!node) return;
+    if (node.type === 'group') {
+      setSelectedGroup(node.groupName);
+      setSelectedFileId(null);
+      return;
+    }
+    setSelectedGroup('');
+    setSelectedFileId(node.id);
+  }, []);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('bookmanager:working-state', {
@@ -1017,6 +1092,63 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   }, [apiSearch.open, config?.lang, config?.language, isWorking, selectedFileId, selectedGroup, t]);
 
   useEffect(() => {
+    const handleMetadataTreeKeyDown = (event) => {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      const treeIsActive = isMetadataTreeTarget(event.target) || metadataTreeKeyboardActiveRef.current;
+      if (
+        apiSearch.open
+        || event.defaultPrevented
+        || event.repeat
+        || isWorking
+        || isMetadataTextInput(event.target)
+        || !treeIsActive
+        || event.ctrlKey
+        || event.metaKey
+        || event.altKey
+        || event.shiftKey
+      ) {
+        return;
+      }
+      if (visibleTreeNodes.length === 0) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        const currentIndex = visibleTreeNodes.findIndex(node => metadataTreeNodeKey(node) === selectedTreeKey);
+        const nextIndex = currentIndex === -1
+          ? (event.key === 'ArrowUp' ? visibleTreeNodes.length - 1 : 0)
+          : event.key === 'ArrowUp'
+            ? Math.max(0, currentIndex - 1)
+            : Math.min(visibleTreeNodes.length - 1, currentIndex + 1);
+        selectTreeNode(visibleTreeNodes[nextIndex]);
+        return;
+      }
+
+      const selectedNode = visibleTreeNodes.find(node => metadataTreeNodeKey(node) === selectedTreeKey);
+      if (!selectedNode) return;
+
+      if (event.key === 'ArrowLeft') {
+        if (selectedNode.type === 'group') {
+          setGroupCollapsed(selectedNode.groupName, true);
+        } else {
+          setSelectedGroup(selectedNode.groupName);
+          setSelectedFileId(null);
+          setGroupCollapsed(selectedNode.groupName, true);
+        }
+        return;
+      }
+
+      if (event.key === 'ArrowRight' && selectedNode.type === 'group') {
+        setGroupCollapsed(selectedNode.groupName, false);
+      }
+    };
+
+    window.addEventListener('keydown', handleMetadataTreeKeyDown, true);
+    return () => window.removeEventListener('keydown', handleMetadataTreeKeyDown, true);
+  }, [apiSearch.open, isWorking, selectTreeNode, selectedTreeKey, setGroupCollapsed, visibleTreeNodes]);
+
+  useEffect(() => {
     const handleAppAction = (event) => {
       if (event.detail?.activeTab !== 'metadata') return;
       const action = event.detail?.action;
@@ -1364,12 +1496,22 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           <span className="meta-tree-toggle-count">{checkedCount}/{fileList.length}</span>
         </button>
 
-        <div className="meta-tree-container">
+        <div
+          className="meta-tree-container"
+          ref={treeContainerRef}
+          tabIndex={0}
+          onFocus={activateMetadataTreeKeyboard}
+          onMouseDownCapture={activateMetadataTreeKeyboard}
+        >
           <ul className="meta-tree">
               {groupedItems.map((dir) => {
                 const collapsed = collapsedGroups.has(dir.name);
                 return (
-                <li key={dir.name} className={`meta-tree-dir ${selectedGroup === dir.name ? 'selected' : ''}`}>
+                <li
+                  key={dir.name}
+                  className={`meta-tree-dir ${selectedGroup === dir.name ? 'selected' : ''}`}
+                  data-meta-tree-key={`group:${dir.name}`}
+                >
                   <button
                     type="button"
                     className="meta-tree-dir-button"
@@ -1387,7 +1529,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                         <li
                           key={file.id}
                           className={`meta-tree-file ${activeItem?.id === file.id ? 'selected' : ''}`}
+                          data-meta-tree-key={`file:${file.id}`}
                           onClick={() => {
+                            focusMetadataTree();
                             setSelectedGroup('');
                             setSelectedFileId(file.id);
                           }}
@@ -1421,7 +1565,11 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         </div>
       </aside>
 
-      <main className="meta-right-panel">
+      <main
+        className="meta-right-panel"
+        onFocusCapture={deactivateMetadataTreeKeyboard}
+        onMouseDownCapture={deactivateMetadataTreeKeyboard}
+      >
         <div className="meta-search-bar">
           <span className="meta-search-label">{t('t3_search_api')}</span>
           <select

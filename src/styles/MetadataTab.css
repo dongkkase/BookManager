@@ -139,6 +139,11 @@
   padding: 8px 8px 6px;
 }
 
+.meta-tree-container:focus {
+  outline: 1px solid #4b8ed1;
+  outline-offset: -2px;
+}
+
 .meta-tree {
   list-style: none;
   padding-left: 0;

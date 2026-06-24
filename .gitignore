@@ -53,6 +53,7 @@ pnpm-debug.log*
 .env.production.local
 
 # Local application data and caches
+/BookManagerData/
 config.json
 *.db
 *.db-journal
