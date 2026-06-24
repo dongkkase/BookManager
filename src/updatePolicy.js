@@ -29,17 +29,25 @@ export function resolveUpdateInfo(currentVersion, releasesResult) {
         .map(release => ({
             version: parseVersion(release.tag || release.name)?.join('.'),
             url: release.url || '',
+            assets: Array.isArray(release.assets)
+                ? release.assets.map(asset => ({
+                    name: asset?.name || '',
+                    downloadUrl: asset?.downloadUrl || '',
+                    size: asset?.size || 0,
+                }))
+                : [],
         }))
         .filter(release => release.version);
     candidates.sort((left, right) => compareVersions(right.version, left.version));
     const latest = candidates[0];
 
     if (!latest || compareVersions(latest.version, currentVersion) <= 0) {
-        return { available: false, latestVersion: '', url: '' };
+        return { available: false, latestVersion: '', url: '', assets: [] };
     }
     return {
         available: true,
         latestVersion: latest.version,
         url: latest.url,
+        assets: latest.assets,
     };
 }

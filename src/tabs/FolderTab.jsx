@@ -72,11 +72,17 @@ import {
   createLibraryMovePlans,
 } from '../libraryMovePolicy';
 import { normalizeLibraryKey } from '../folderLibraryStatus';
-import { hasPrimaryModifier, isShortcutKey, shouldHandleGlobalShortcut } from '../interactionPolicy';
+import {
+  formatPrimaryShortcut,
+  hasPrimaryModifier,
+  isShortcutKey,
+  shouldHandleGlobalShortcut,
+} from '../interactionPolicy';
 import { emitStatusState } from '../statusState';
 import '../styles/FolderTab.css';
 
 function FolderTab({ config, saveConfig, t, showToast }) {
+  const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
   const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles, updateCachedFiles } = useFolderScan(t);
@@ -1080,12 +1086,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!filePath) return;
     if (event?.shiftKey) {
       rangeSelect(filePath, null, index);
-    } else if (event?.ctrlKey || event?.metaKey) {
+    } else if (hasPrimaryModifier(event, runtimePlatform)) {
       toggleFile(filePath, null, index);
     } else {
       selectFile(filePath, null, index);
     }
-  }, [clearSelection, rangeSelect, selectFile, toggleFile]);
+  }, [clearSelection, rangeSelect, runtimePlatform, selectFile, toggleFile]);
 
   const selectedFileObjects = useMemo(() => (
     selectedFiles.map(filePath => filteredFileData.find(file => file.path === filePath)).filter(Boolean)
@@ -1628,18 +1634,29 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     lastFolderPanelRef.current = panel;
   }, []);
 
-  const handleRenameShortcut = useCallback(async () => {
+  const isExplorerPanelActive = useCallback(() => {
     const activeElement = document.activeElement;
-    const isExplorerActive = lastFolderPanelRef.current === 'explorer'
+    return lastFolderPanelRef.current === 'explorer'
       || Boolean(activeElement?.closest?.('.folder-left-panel, .folder-sidebar'));
-    if (isExplorerActive) {
+  }, []);
+
+  const handleRefreshShortcut = useCallback(async () => {
+    if (isExplorerPanelActive()) {
+      await refreshContextFolder(selectedFolderPath);
+      return;
+    }
+    await handleSmartRefresh(true);
+  }, [handleSmartRefresh, isExplorerPanelActive, refreshContextFolder, selectedFolderPath]);
+
+  const handleRenameShortcut = useCallback(async () => {
+    if (isExplorerPanelActive()) {
       await renameContextFolder(selectedFolderPath);
       return;
     }
     if (selectedFileObjects.length > 0) {
       setShowMultiRenameDialog(true);
     }
-  }, [renameContextFolder, selectedFileObjects.length, selectedFolderPath]);
+  }, [isExplorerPanelActive, renameContextFolder, selectedFileObjects.length, selectedFolderPath]);
 
   const deleteContextFolder = useCallback(async menu => {
     const folderPath = menu?.folderPath;
@@ -1793,20 +1810,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         sendSelectedFilesToTab('metadata');
       } else if (event.key === 'F5') {
         event.preventDefault();
-        handleSmartRefresh(event.shiftKey);
-      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'a')) {
+        handleRefreshShortcut();
+      } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'a')) {
         event.preventDefault();
         selectAll();
-      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'i')) {
+      } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'i')) {
         event.preventDefault();
         invertSelection();
-      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'z')) {
+      } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'z')) {
         event.preventDefault();
         undoLastRename();
-      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'f')) {
+      } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'f')) {
         event.preventDefault();
         searchInputRef.current?.focus();
-      } else if (hasPrimaryModifier(event, navigator.platform) && isShortcutKey(event, 'g')) {
+      } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'g')) {
         event.preventDefault();
         setGotoPathDraft(selectedFolderPath);
         setShowGotoDialog(true);
@@ -1847,7 +1864,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleRenameShortcut, handleSmartRefresh, handleViewModeChange, invertSelection, isFolderTabVisible, moveActiveSelection, openSelectedInExplorer, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
+  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, moveActiveSelection, openSelectedInExplorer, runtimePlatform, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -2372,10 +2389,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t('action_del_files')} shortcut="Del" />
               <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t('tf_menu_rename_multi')} shortcut="Shift+R" />
-              <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut="Ctrl+Z" />
+              <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut={formatPrimaryShortcut('Z', runtimePlatform)} />
               <ContextMenuItem onClick={() => handleContextAction('show-file')} icon="folderOpen" label={t('action_open_exp')} />
               <div className="folder-context-menu-separator" />
-              <ContextMenuItem onClick={() => handleContextAction('select-all')} label={t('action_sel_all')} shortcut="Ctrl+A" />
+              <ContextMenuItem onClick={() => handleContextAction('select-all')} label={t('action_sel_all')} shortcut={formatPrimaryShortcut('A', runtimePlatform)} />
               <ContextMenuItem onClick={() => handleContextAction('invert-selection')} label={t('action_inv_sel')} />
               <ContextMenuItem onClick={() => handleContextAction('refresh-list')} label={t('action_refresh')} shortcut="F5" />
             </>

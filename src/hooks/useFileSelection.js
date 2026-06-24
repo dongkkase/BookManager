@@ -5,7 +5,7 @@ import { nextSelectionIndex } from '../folderSelectionState';
  * 파일 선택 상태 관리 훅
  * 
  * 파일 목록에서의 선택 상태를 관리하며,
- * 단일 선택, 다중 선택(Ctrl+클릭), 범위 선택(Shift+클릭)을 지원합니다.
+ * 단일 선택, 다중 선택(Windows/Linux Ctrl+클릭, macOS Cmd+클릭), 범위 선택(Shift+클릭)을 지원합니다.
  * 
  * 반환값:
  * - selectedFiles: 선택된 파일 경로 목록
@@ -43,7 +43,7 @@ export function useFileSelection(fileData = []) {
     selectionStartRef.current = { path: filePath, index: resolvedIndex >= 0 ? resolvedIndex : index };
   }, [fileData]);
 
-  // --- 파일 선택 토글 (Ctrl+클릭) ---
+  // --- 파일 선택 토글 (primary modifier+클릭) ---
   const toggleFile = useCallback((filePath, fileDataItem, index) => {
     const resolvedIndex = fileData.findIndex(file => file.path === filePath);
     setSelectedFiles(prev => {

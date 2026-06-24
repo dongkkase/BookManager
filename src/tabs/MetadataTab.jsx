@@ -26,6 +26,7 @@ import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
 import {
   hasPrimaryModifier as hasPlatformPrimaryModifier,
+  primaryModifierLabel,
   isTextEntryTarget,
 } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
@@ -205,7 +206,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const [publisherOptions, setPublisherOptions] = useState([]);
   const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: config?.last_meta_api || '리디북스', query: '', cached: false });
   const [taskPhase, setTaskPhase] = useState('idle');
-  const primaryShortcut = isMacPlatform() ? 'Cmd' : 'Ctrl';
+  const primaryShortcut = primaryModifierLabel(isMacPlatform() ? 'MacIntel' : 'Win32');
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
   const batchMetadata = useMemo(

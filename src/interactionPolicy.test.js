@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     dropdownVerticalPlacement,
+    formatPrimaryShortcut,
     hasPrimaryModifier,
+    primaryModifierLabel,
     isShortcutKey,
     isTextEntryTarget,
     shortcutCode,
@@ -22,6 +24,16 @@ test('Windows/Linux Ctrl과 macOS Cmd를 primary modifier로 구분한다', () =
     assert.equal(hasPrimaryModifier({ ctrlKey: true, metaKey: false }, 'Win32'), true);
     assert.equal(hasPrimaryModifier({ ctrlKey: false, metaKey: true }, 'MacIntel'), true);
     assert.equal(hasPrimaryModifier({ ctrlKey: true, metaKey: false }, 'MacIntel'), false);
+    assert.equal(hasPrimaryModifier({ ctrlKey: false, metaKey: true }, 'Win32'), false);
+    assert.equal(hasPrimaryModifier({ ctrlKey: true, metaKey: true }, 'MacIntel'), false);
+});
+
+test('primary modifier 단축키 표시는 플랫폼별로 Ctrl과 Cmd를 사용한다', () => {
+    assert.equal(primaryModifierLabel('Win32'), 'Ctrl');
+    assert.equal(primaryModifierLabel('Linux x86_64'), 'Ctrl');
+    assert.equal(primaryModifierLabel('MacIntel'), 'Cmd');
+    assert.equal(formatPrimaryShortcut('A', 'Win32'), 'Ctrl+A');
+    assert.equal(formatPrimaryShortcut('Z', 'MacIntel'), 'Cmd+Z');
 });
 
 test('알파벳 단축키는 IME 문자보다 물리 키 코드를 우선한다', () => {

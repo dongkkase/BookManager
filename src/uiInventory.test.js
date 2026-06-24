@@ -136,6 +136,16 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     ]);
 });
 
+test('상단 메뉴는 버그 신고 옆에 매뉴얼 외부 링크 버튼을 제공한다', () => {
+    assertInventory('app', [
+        ['매뉴얼 URL import', 'MANUAL_URL'],
+        ['버그 신고 버튼', "openExternal?.(ISSUE_URL)"],
+        ['매뉴얼 버튼', "openExternal?.(MANUAL_URL)"],
+        ['매뉴얼 아이콘', 'name="bookOpen"'],
+        ['매뉴얼 문구', "t('btn_manual')"],
+    ]);
+});
+
 test('폴더 탭은 Electron 미지원 window.prompt 대신 내부 입력 다이얼로그를 사용한다', () => {
     assert.doesNotMatch(sources.folder, /window\.prompt/);
     assertInventory('folder', [
@@ -232,10 +242,14 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
         ['하위 항목 드래그 영역 선택 반영', 'selectVolumePaths(selected)'],
         ['폴더명 드롭다운 메뉴 버튼', "t('org_folder_menu')"],
         ['폴더명 드롭다운 메뉴 상태', 'openFolderMenuId === item.id'],
+        ['폴더명 드롭다운 마우스 오버 열기', 'onMouseEnter={() => openFolderRowMenu(item.id)}'],
+        ['폴더명 드롭다운 마우스 아웃 닫기', 'onMouseLeave={() => closeFolderRowMenu(item.id)}'],
         ['폴더명 파일명 항목', "t('org_filename_path')"],
         ['폴더명 파일명 경로 적용', 'filenameOutputPath(item)'],
         ['일괄 드롭다운 메뉴 버튼', "t('org_batch_menu')"],
         ['일괄 드롭다운 메뉴 상태', 'openBatchMenuId === item.id'],
+        ['일괄 드롭다운 마우스 오버 열기', 'onMouseEnter={() => openBatchRowMenu(item.id)}'],
+        ['일괄 드롭다운 마우스 아웃 닫기', 'onMouseLeave={() => closeBatchRowMenu(item.id)}'],
         ['일괄 드롭다운 메뉴 액션', 'handleBatchMenuAction(item.id'],
         ['일괄 기존 파일명 버튼', "t('org_batch_original_name')"],
         ['일괄 제목추출 버튼', "t('org_batch_extracted_title')"],
@@ -252,6 +266,7 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
     assertInventory('organizerCss', [
         ['하위 항목 드래그 영역 스타일', '.org-drag-selection-box'],
         ['행 드롭다운 메뉴 스타일', '.org-row-menu'],
+        ['행 드롭다운 hover 이탈 방지 위치', 'top: 100%;'],
     ]);
     assert.doesNotMatch(sources.organizer, /OrganizerFilenameDialog|org-filename-input|openVolumeEditor|editingVolume|org-context-menu/);
     assert.doesNotMatch(sources.organizer, /image_count\}p/);
@@ -284,6 +299,8 @@ test('폴더 탭 컨텍스트 메뉴는 기존 Python 메뉴 항목과 단축키
         ['리스트 파일 강제 업데이트', "t('action_update_files')"],
         ['리스트 이름 변경 취소', "t('tf_undo_rename')"],
         ['리스트 전체 선택', "t('action_sel_all')"],
+        ['리스트 primary modifier 단축키 표시', 'formatPrimaryShortcut'],
+        ['리스트 primary modifier 선택', 'hasPrimaryModifier(event, runtimePlatform)'],
         ['리스트 새로고침 단축키', 'shortcut="F5"'],
     ]);
 });
@@ -295,7 +312,20 @@ test('리스트 패널 새로고침 버튼은 캐시를 건너뛰고 강제 스�
     );
     assert.match(
         sources.folder,
-        /event\.key === 'F5'[\s\S]*handleSmartRefresh\(event\.shiftKey\)/,
+        /event\.key === 'F5'[\s\S]*handleRefreshShortcut\(\)/,
+    );
+});
+
+test('폴더 탭 F5는 활성 패널에 맞는 새로고침을 실행한다', () => {
+    assertInventory('folder', [
+        ['F5 활성 패널 판정', 'isExplorerPanelActive'],
+        ['탐색기 패널 F5 폴더 새로고침', 'refreshContextFolder(selectedFolderPath)'],
+        ['리스트 패널 F5 강제 새로고침', 'handleSmartRefresh(true)'],
+        ['F5 단축키 핸들러', 'handleRefreshShortcut()'],
+    ]);
+    assert.match(
+        sources.folder,
+        /handleRefreshShortcut[\s\S]*isExplorerPanelActive\(\)[\s\S]*refreshContextFolder\(selectedFolderPath\)[\s\S]*handleSmartRefresh\(true\)/,
     );
 });
 
@@ -312,6 +342,18 @@ test('이름 바꾸기 미리보기는 컬럼 크기 조절과 변경 색상 표
 test('자세히 보기 테이블도 빈 영역 드래그 선택 콜백을 받는다', () => {
     assertInventory('folder', [
         ['테이블 드래그 선택 콜백 전달', 'onDragSelect={selectPaths}'],
+    ]);
+});
+
+test('파일 보기 항목은 mousedown 선택 후 click에서 다시 선택하지 않는다', () => {
+    assertInventory('fileTable', [
+        ['테이블 마우스 click 재선택 방지', 'if (e.detail > 0) return;'],
+    ]);
+    assertInventory('thumbnailView', [
+        ['썸네일 마우스 click 재선택 방지', 'if (e.detail > 0) return;'],
+    ]);
+    assertInventory('tileView', [
+        ['타일 마우스 click 재선택 방지', 'if (e.detail > 0) return;'],
     ]);
 });
 

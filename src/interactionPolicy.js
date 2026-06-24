@@ -7,11 +7,24 @@ export function isTextEntryTarget(target) {
         || tagName === 'SELECT';
 }
 
+export function isApplePlatform(platform = '') {
+    return /Mac|iPhone|iPad|iPod/i.test(platform);
+}
+
 export function hasPrimaryModifier(event, platform = '') {
-    const isMac = /Mac|iPhone|iPad|iPod/i.test(platform);
+    const isMac = isApplePlatform(platform);
     return isMac
         ? Boolean(event?.metaKey && !event?.ctrlKey)
         : Boolean(event?.ctrlKey && !event?.metaKey);
+}
+
+export function primaryModifierLabel(platform = '') {
+    return isApplePlatform(platform) ? 'Cmd' : 'Ctrl';
+}
+
+export function formatPrimaryShortcut(key, platform = '') {
+    const suffix = String(key || '').trim();
+    return suffix ? `${primaryModifierLabel(platform)}+${suffix}` : primaryModifierLabel(platform);
 }
 
 export function shortcutCode(event) {

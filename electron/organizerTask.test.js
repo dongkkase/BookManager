@@ -42,6 +42,30 @@ test('Organizer는 ZIP 구조 분석을 외부 7z 없이 수행한다', async ()
     }
 });
 
+test('Organizer는 단일 Root_Files 압축 파일의 권 이름을 원본 파일명에서 추론한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-root-files-title-'));
+    try {
+        const source = path.join(root, '「어서 와, 아빠」 01권.cbz');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'v0000.jpg', Buffer.from('page-1'));
+        await replaceZipEntry(source, '0001.jpg', Buffer.from('page-2'));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].clean_title, '「어서 와 아빠」');
+        assert.equal(analyzed.items[0].volumes.length, 1);
+        assert.equal(analyzed.items[0].volumes[0].original_path, 'Root_Files');
+        assert.equal(analyzed.items[0].volumes[0].new_name, '「어서 와 아빠」 01권');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Organizer는 단일 폴더 ZIP 정리를 압축 해제 없이 7z rn으로 처리한다', async t => {
     if (process.platform === 'win32') {
         t.skip('shell wrapper is not available on Windows');

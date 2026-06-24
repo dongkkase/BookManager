@@ -33,7 +33,7 @@ test('폴더 스캔은 썸네일 파일과 ComicInfo DB 캐시를 재사용한�
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-folder-cache-'));
     const inputDir = path.join(root, 'input');
     const libraryDir = path.join(root, 'library');
-    const dataDir = path.join(root, 'data');
+    const dataDir = path.join(root, 'BookManagerData');
     const thumbnailDir = path.join(dataDir, 'thumbnails');
     const dbPath = path.join(dataDir, 'library.db');
     const archivePath = path.join(libraryDir, 'Cached Book.cbz');

@@ -17,19 +17,47 @@ function executableName(name, platform) {
         : name;
 }
 
+function platformBinaryFolders(platform, arch) {
+    if (platform === 'win32') {
+        return ['win', `win/${arch}`, ''];
+    }
+    if (platform === 'darwin') {
+        return [`mac/${arch}`, `darwin/${arch}`, 'mac', 'darwin', ''];
+    }
+    return [`linux/${arch}`, 'linux', ''];
+}
+
+function sevenZipBinPlatformFolder(platform) {
+    if (platform === 'win32') return 'win';
+    if (platform === 'darwin') return 'mac';
+    return 'linux';
+}
+
+function appendSevenZipPackageCandidates(candidates, root, platform, arch, aliases) {
+    if (!root) return;
+    const packagePlatform = sevenZipBinPlatformFolder(platform);
+    for (const alias of aliases) {
+        candidates.push(path.join(
+            root,
+            'node_modules',
+            '7zip-bin',
+            packagePlatform,
+            arch,
+            executableName(alias, platform),
+        ));
+    }
+}
+
 export function binaryCandidates(toolName, options = {}) {
     const platform = options.platform || process.platform;
+    const arch = options.arch || process.arch;
     const aliases = TOOL_ALIASES[toolName] || [toolName];
     const roots = [
         options.resourcesPath,
         options.executableDir,
         options.projectRoot,
     ].filter(Boolean);
-    const platformFolders = platform === 'win32'
-        ? ['win', '']
-        : platform === 'darwin'
-            ? ['mac', 'darwin', '']
-            : ['linux', ''];
+    const platformFolders = platformBinaryFolders(platform, arch);
     const candidates = [];
 
     for (const root of roots) {
@@ -37,6 +65,9 @@ export function binaryCandidates(toolName, options = {}) {
             for (const alias of aliases) {
                 candidates.push(path.join(root, 'bin', folder, executableName(alias, platform)));
             }
+        }
+        if (toolName === '7za' || toolName === '7z') {
+            appendSevenZipPackageCandidates(candidates, root, platform, arch, aliases);
         }
     }
 
@@ -73,7 +104,7 @@ export function missingBinaryMessage(toolName, platform = process.platform) {
     if (toolName === '7za' || toolName === '7z') {
         return platform === 'win32'
             ? '7-Zip 실행 파일을 찾을 수 없습니다. 앱의 bin/win/7za.exe를 확인하거나 7-Zip을 설치하세요.'
-            : '7z 실행 파일을 찾을 수 없습니다. bundled 7z를 확인하거나 Homebrew 등으로 7-Zip을 설치하세요.';
+            : '7z 실행 파일을 찾을 수 없습니다. 앱의 bundled bin/mac/<arch>/7za를 확인하거나 Homebrew 등으로 7-Zip을 설치하세요.';
     }
     return `${toolName} 실행 파일을 찾을 수 없습니다. 앱의 bundled 도구 또는 시스템 설치 상태를 확인하세요.`;
 }

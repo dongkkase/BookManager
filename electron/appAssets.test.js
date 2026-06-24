@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const require = createRequire(import.meta.url);
+const { createSingleFileZip } = require('./zipWindowsPortable.cjs');
+const afterPackHook = require('./afterPack.cjs');
 const packageConfig = JSON.parse(
     fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
 );
@@ -18,20 +23,144 @@ function readPngSize(filePath) {
     };
 }
 
+function readZipEntryNames(filePath) {
+    const signature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+    const data = fs.readFileSync(filePath);
+    const names = [];
+    let offset = 0;
+    while ((offset = data.indexOf(signature, offset)) !== -1) {
+        const nameLength = data.readUInt16LE(offset + 28);
+        const extraLength = data.readUInt16LE(offset + 30);
+        const commentLength = data.readUInt16LE(offset + 32);
+        const nameStart = offset + 46;
+        names.push(data.toString('utf8', nameStart, nameStart + nameLength));
+        offset = nameStart + nameLength + extraLength + commentLength;
+    }
+    return names;
+}
+
 test('macOS 고해상도 앱 아이콘은 1024px 정사각형이다', () => {
     const iconPath = path.join(projectRoot, packageConfig.build.mac.icon);
     assert.deepEqual(readPngSize(iconPath), { width: 1024, height: 1024 });
 });
 
-test('macOS 배포본은 설치형 DMG가 아닌 universal portable ZIP이다', () => {
+test('macOS 배포본은 고정 파일명의 universal ZIP이다', () => {
     assert.deepEqual(packageConfig.build.mac.target, [{
         target: 'zip',
         arch: ['universal'],
     }]);
     assert.equal(
         packageConfig.build.mac.artifactName,
-        'BookManager-${version}-portable-${arch}.${ext}',
+        'BookManager-mac.${ext}',
     );
+});
+
+test('macOS 배포본은 Developer ID 서명과 공증 설정을 사용한다', () => {
+    assert.equal(packageConfig.devDependencies['@electron/notarize'], '^2.2.1');
+    assert.equal(packageConfig.build.afterSign, 'electron/notarize.cjs');
+    assert.equal(packageConfig.build.mac.hardenedRuntime, true);
+    assert.equal(packageConfig.build.mac.gatekeeperAssess, false);
+    assert.equal(packageConfig.build.mac.entitlements, 'electron/entitlements.mac.plist');
+    assert.equal(packageConfig.build.mac.entitlementsInherit, 'electron/entitlements.mac.plist');
+
+    const entitlements = fs.readFileSync(path.join(projectRoot, 'electron', 'entitlements.mac.plist'), 'utf8');
+    const notarizeSource = fs.readFileSync(path.join(projectRoot, 'electron', 'notarize.cjs'), 'utf8');
+
+    assert.match(entitlements, /com\.apple\.security\.cs\.allow-jit/);
+    assert.match(entitlements, /com\.apple\.security\.cs\.disable-library-validation/);
+    assert.match(notarizeSource, /@electron\/notarize/);
+    assert.match(notarizeSource, /APPLE_API_KEY/);
+    assert.match(notarizeSource, /APPLE_APP_SPECIFIC_PASSWORD/);
+    assert.match(notarizeSource, /APPLE_KEYCHAIN_PROFILE/);
+});
+
+test('macOS 배포본은 bundled 7za 리소스를 포함한다', () => {
+    assert.equal(packageConfig.devDependencies['7zip-bin'], '^5.2.0');
+    assert.equal(packageConfig.build.afterPack, 'electron/afterPack.cjs');
+    assert.deepEqual(afterPackHook.MAC_7ZA_RELATIVE_PATHS, [
+        path.join('Contents', 'Resources', 'bin', 'mac', 'x64', '7za'),
+        path.join('Contents', 'Resources', 'bin', 'mac', 'arm64', '7za'),
+    ]);
+});
+
+test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한다', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-'));
+    try {
+        const projectDir = path.join(tempDir, 'project');
+        const appOutDir = path.join(tempDir, 'out');
+        const appRoot = path.join(appOutDir, 'BookManager.app');
+        for (const relativePath of afterPackHook.MAC_7ZA_RELATIVE_PATHS) {
+            const arch = path.basename(path.dirname(relativePath));
+            const sourcePath = path.join(projectDir, 'node_modules', '7zip-bin', 'mac', arch, '7za');
+            fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+            fs.writeFileSync(sourcePath, `7za ${arch}`);
+            fs.chmodSync(sourcePath, 0o644);
+        }
+
+        await afterPackHook.afterPack({
+            electronPlatformName: 'darwin',
+            appOutDir,
+            packager: {
+                projectDir,
+                appInfo: {
+                    productFilename: 'BookManager',
+                },
+            },
+        });
+
+        for (const relativePath of afterPackHook.MAC_7ZA_RELATIVE_PATHS) {
+            const destinationPath = path.join(appRoot, relativePath);
+            const mode = fs.statSync(destinationPath).mode;
+            assert.equal(fs.readFileSync(destinationPath, 'utf8'), `7za ${path.basename(path.dirname(relativePath))}`);
+            assert.equal((mode & 0o111) !== 0, true);
+        }
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('macOS universal 임시 앱 afterPack에서는 bundled 7za를 복사하지 않는다', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-temp-'));
+    try {
+        await afterPackHook.afterPack({
+            electronPlatformName: 'darwin',
+            appOutDir: path.join(tempDir, 'mac-universal-x64-temp'),
+            packager: {
+                projectDir: tempDir,
+                appInfo: {
+                    productFilename: 'BookManager',
+                },
+            },
+        });
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('Windows 배포본은 portable exe를 단일 파일 ZIP으로 감싼다', () => {
+    assert.deepEqual(packageConfig.build.win.target, [{
+        target: 'portable',
+        arch: ['x64'],
+    }]);
+    assert.equal(
+        packageConfig.build.win.artifactName,
+        'BookManager.exe',
+    );
+    assert.equal(packageConfig.build.afterAllArtifactBuild, 'electron/zipWindowsPortable.cjs');
+});
+
+test('Windows 배포 ZIP에는 BookManager.exe만 포함한다', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-zip-'));
+    try {
+        const exePath = path.join(tempDir, 'BookManager.exe');
+        const zipPath = path.join(tempDir, 'BookManager-win.zip');
+        fs.writeFileSync(exePath, 'portable executable placeholder');
+        createSingleFileZip(exePath, zipPath, 'BookManager.exe');
+
+        assert.deepEqual(readZipEntryNames(zipPath), ['BookManager.exe']);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 test('Windows 빌드와 런타임은 ICO 앱 아이콘을 사용한다', () => {
@@ -45,6 +174,7 @@ test('Windows 빌드와 런타임은 ICO 앱 아이콘을 사용한다', () => {
 
 test('앱 번들 이름과 식별자는 BookManager 정책을 사용한다', () => {
     assert.equal(packageConfig.build.productName, 'BookManager');
+    assert.equal(packageConfig.build.executableName, 'BookManager');
     assert.equal(packageConfig.build.appId, 'com.bookmanager.app');
 });
 

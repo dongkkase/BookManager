@@ -20,7 +20,9 @@
     "electron:build:linux": "vite build && electron-builder --linux"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.2.1",
     "@vitejs/plugin-react": "^4.2.1",
+    "7zip-bin": "^5.2.0",
     "concurrently": "^8.2.2",
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
@@ -41,6 +43,10 @@
   "build": {
     "appId": "com.bookmanager.app",
     "productName": "BookManager",
+    "executableName": "BookManager",
+    "afterSign": "electron/notarize.cjs",
+    "afterPack": "electron/afterPack.cjs",
+    "afterAllArtifactBuild": "electron/zipWindowsPortable.cjs",
     "directories": {
       "output": "dist-electron"
     },
@@ -84,6 +90,7 @@
           "arch": ["x64"]
         }
       ],
+      "artifactName": "BookManager.exe",
       "icon": "src/images/app.ico"
     },
     "mac": {
@@ -93,9 +100,13 @@
           "arch": ["universal"]
         }
       ],
-      "artifactName": "BookManager-${version}-portable-${arch}.${ext}",
+      "artifactName": "BookManager-mac.${ext}",
       "icon": "src/images/app-1024.png",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist"
     },
     "linux": {
       "target": [

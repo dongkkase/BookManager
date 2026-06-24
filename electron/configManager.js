@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { resolveConfigPath } from './dataPaths.js';
+import {
+  migrateLegacyAppDataDir,
+  resolveConfigPath,
+  resolveLegacyAppDataDirs,
+} from './dataPaths.js';
 
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
 
@@ -13,10 +17,14 @@ export class ConfigManager {
   constructor(userDataPath, executableDir, options = {}) {
     this.userDataPath = userDataPath;
     this.executableDir = executableDir;
-    this.configPath = options.configPath || resolveConfigPath(executableDir, options.platform);
+    this.platform = options.platform;
+    this.env = options.env;
+    this.usesDefaultConfigPath = !options.configPath;
+    this.configPath = options.configPath || resolveConfigPath(executableDir, options.platform, options.env);
     this.legacyConfigPaths = [
       executableDir ? path.join(executableDir, 'config.json') : null,
-      executableDir ? path.join(executableDir, 'data', 'config.json') : null,
+      ...resolveLegacyAppDataDirs(executableDir, options.platform, options.env)
+        .map(legacyDir => path.join(legacyDir, 'config.json')),
       userDataPath ? path.join(userDataPath, 'config.json') : null,
     ].filter((legacyPath, index, paths) => (
       legacyPath
@@ -155,6 +163,9 @@ export class ConfigManager {
 
   loadConfig() {
     try {
+      if (this.usesDefaultConfigPath) {
+        migrateLegacyAppDataDir(this.executableDir, this.platform, this.env);
+      }
       this.migrateLegacyConfig();
       if (fs.existsSync(this.configPath)) {
         const data = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));

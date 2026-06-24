@@ -1,6 +1,7 @@
 export const APP_NAME = 'BookManager';
-export const ISSUE_URL = 'https://github.com/dongkkase/ComicZIP_Optimizer/issues';
-export const RELEASES_URL = 'https://github.com/dongkkase/ComicZIP_Optimizer/releases';
+export const ISSUE_URL = 'https://github.com/dongkkase/BookManager/issues';
+export const MANUAL_URL = 'https://github.com/dongkkase/BookManager/wiki';
+export const RELEASES_URL = 'https://github.com/dongkkase/BookManager/releases';
 
 export const TABS = Object.freeze([
     { id: 'folder', labelKey: 'tab_folders' },

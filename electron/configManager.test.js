@@ -6,6 +6,10 @@ import test from 'node:test';
 import { ConfigManager } from './configManager.js';
 
 function dataConfigPath(root) {
+    return path.join(root, 'BookManagerData', 'config.json');
+}
+
+function legacyDataConfigPath(root) {
     return path.join(root, 'data', 'config.json');
 }
 
@@ -16,17 +20,17 @@ function writeDataConfig(root, config) {
     return configPath;
 }
 
-test('config는 실행 경로의 data 폴더에 둔다', () => {
+test('config는 실행 경로의 BookManagerData 폴더에 둔다', () => {
     const manager = new ConfigManager('/user/data', '/portable/app');
-    assert.equal(manager.configPath, path.join('/portable/app', 'data', 'config.json'));
+    assert.equal(manager.configPath, path.join('/portable/app', 'BookManagerData', 'config.json'));
 });
 
-test('useUserData 옵션이 있어도 config는 실행 경로의 data 폴더에 둔다', () => {
+test('useUserData 옵션이 있어도 config는 실행 경로의 BookManagerData 폴더에 둔다', () => {
     const manager = new ConfigManager('/user/data', '/Applications/BookManager.app/Contents/MacOS', {
         platform: 'darwin',
         useUserData: true,
     });
-    assert.equal(manager.configPath, path.join('/Applications', 'data', 'config.json'));
+    assert.equal(manager.configPath, path.join('/Applications', 'BookManagerData', 'config.json'));
 });
 
 test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한다', () => {
@@ -152,7 +156,7 @@ test('언어 부분 저장은 lang과 language를 같은 값으로 동기화한�
     }
 });
 
-test('루트의 기존 config.json은 data/config.json으로 복사해 읽는다', () => {
+test('루트의 기존 config.json은 BookManagerData/config.json으로 복사해 읽는다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-legacy-'));
     try {
         fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
@@ -170,7 +174,7 @@ test('루트의 기존 config.json은 data/config.json으로 복사해 읽는다
     }
 });
 
-test('userData의 기존 config.json도 data/config.json으로 복사해 읽는다', () => {
+test('userData의 기존 config.json도 BookManagerData/config.json으로 복사해 읽는다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-userdata-'));
     const userData = path.join(root, 'userdata');
     const executableDir = path.join(root, 'app');
@@ -190,7 +194,32 @@ test('userData의 기존 config.json도 data/config.json으로 복사해 읽는�
     }
 });
 
-test('macOS 앱 번들 내부 data의 기존 config도 앱 옆 data/config.json으로 복사해 읽는다', () => {
+test('기존 data 폴더는 BookManagerData로 이동해 읽는다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-legacy-data-'));
+    try {
+        const configPath = legacyDataConfigPath(root);
+        fs.mkdirSync(path.join(root, 'data', 'thumbnails'), { recursive: true });
+        fs.writeFileSync(configPath, JSON.stringify({
+            language: 'en',
+            target_format: 'zip',
+        }));
+        fs.writeFileSync(path.join(root, 'data', 'library.db'), 'db');
+        fs.writeFileSync(path.join(root, 'data', 'thumbnails', 'cover.jpg'), 'cover');
+
+        const manager = new ConfigManager(root, root);
+        const loaded = manager.loadConfig();
+        assert.equal(loaded.language, 'en');
+        assert.equal(loaded.target_format, 'zip');
+        assert.equal(fs.existsSync(path.join(root, 'data')), false);
+        assert.equal(fs.existsSync(dataConfigPath(root)), true);
+        assert.equal(fs.readFileSync(path.join(root, 'BookManagerData', 'library.db'), 'utf8'), 'db');
+        assert.equal(fs.readFileSync(path.join(root, 'BookManagerData', 'thumbnails', 'cover.jpg'), 'utf8'), 'cover');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('macOS 앱 번들 내부 data의 기존 config도 앱 옆 BookManagerData/config.json으로 복사해 읽는다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-mac-bundle-'));
     const executableDir = path.join(root, 'BookManager.app', 'Contents', 'MacOS');
     try {

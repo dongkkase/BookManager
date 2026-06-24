@@ -68,6 +68,7 @@ const TileView = ({
 	      rubberSelectRef.current.moved = false;
 	      return;
 	    }
+	    if (e.detail > 0) return;
 	    if (!onSelect || !file.path) return;
 
 	    onSelect(file.path, e, index);

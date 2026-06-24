@@ -39,6 +39,7 @@ import {
   resolveLibrarySyncChoice,
 } from './libraryDialog.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
+import { installAppUpdate } from './updateInstaller.js';
 import {
   pathHasHiddenDirectorySegment,
   shouldSkipScanDirectoryEntry,
@@ -131,6 +132,18 @@ function requestJsonGeneric(url, headers = {}, timeout = 12000) {
     req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
   });
+}
+
+function resolveAppVersion() {
+  const fallbackVersion = app?.getVersion?.() || '3.0.0';
+  try {
+    const versionPath = path.join(app.getAppPath(), 'version.json');
+    const versionInfo = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+    const latestVersion = String(versionInfo?.latest_version || '').trim();
+    return latestVersion || fallbackVersion;
+  } catch {
+    return fallbackVersion;
+  }
 }
 
 function requestJsonPost(url, payload = {}, extraHeaders = {}) {
@@ -1590,7 +1603,7 @@ async function searchVine(query, apiKey = '', page = 1) {
     page: String(page || 1),
   });
   const data = await requestJsonGeneric(`https://comicvine.gamespot.com/api/search/?${params.toString()}`, {
-    'User-Agent': 'ComicZIP_Optimizer_App/1.0',
+    'User-Agent': 'BookManager_App/1.0',
   }, 15000);
   return (data.results || []).map(item => {
     const publisher = typeof item.publisher === 'object' && item.publisher ? item.publisher.name || '' : '';
@@ -3552,7 +3565,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 릴리즈 노트 ==========
   ipcMain.handle('releases:list', async () => {
       try {
-          const releases = await requestJson('https://api.github.com/repos/dongkkase/ComicZIP_Optimizer/releases?per_page=10');
+          const releases = await requestJson('https://api.github.com/repos/dongkkase/BookManager/releases?per_page=10');
           return releases
               .map(item => ({
                   id: item.id || item.tag_name,
@@ -3564,6 +3577,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
                   url: item.html_url,
                   draft: Boolean(item.draft),
                   prerelease: Boolean(item.prerelease),
+                  assets: Array.isArray(item.assets)
+                      ? item.assets.map(asset => ({
+                          name: asset.name || '',
+                          downloadUrl: asset.browser_download_url || '',
+                          size: asset.size || 0,
+                      }))
+                      : [],
               }))
               .sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
       } catch (error) {
@@ -4034,7 +4054,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // ========== 앱 정보 ==========
   ipcMain.handle('app:version', () => {
-    return app?.getVersion?.() || '3.0.0';
+    return resolveAppVersion();
   });
 
   ipcMain.handle('app:openExternal', async (_event, url) => {
@@ -4048,6 +4068,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     app.relaunch();
     app.quit();
     return true;
+  });
+
+  ipcMain.handle('app:installUpdate', async (_event, options = {}) => {
+    return installAppUpdate(options, { app });
   });
 
   // ========== 윈도우 관련 ==========

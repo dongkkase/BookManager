@@ -381,9 +381,17 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
       const [displayTitle, coreTitle] = resolveTitles(filePath, firstImageName);
       const volumes = groups.map((group, groupIndex) => {
         const leafBaseName = path.basename(group.name.replace(/\\/g, '/'));
-        const rawName = groups.length === 1 && group.name === 'Root_Files'
-          ? formatLeafName(coreTitle, firstImageName || filename, 0, 1, lang)
-          : formatLeafName(coreTitle, leafBaseName, groupIndex, groups.length, lang);
+        const isSingleRootFiles = groups.length === 1 && group.name === 'Root_Files';
+        const leafNameForTitle = isSingleRootFiles
+          ? filename
+          : leafBaseName;
+        const rawName = formatLeafName(
+          coreTitle,
+          leafNameForTitle,
+          isSingleRootFiles ? 0 : groupIndex,
+          isSingleRootFiles ? 1 : groups.length,
+          lang,
+        );
         const extractedName = applyLangFormat(rawName, lang);
         return {
           id: `${filePath}:${groupIndex}`,

@@ -16,6 +16,7 @@ import { useLockScanQueue } from './hooks/useLockScanQueue';
 import { translateKnownText } from './utils/i18n';
 import {
   ISSUE_URL,
+  MANUAL_URL,
   RELEASES_URL,
   TABS,
   canAcceptGlobalDrop,
@@ -47,6 +48,7 @@ function App() {
   const [settingsInitialTab, setSettingsInitialTab] = useState('basic');
   const [toast, setToast] = useState(null);
   const [appVersion, setAppVersion] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
   const [workingTab, setWorkingTab] = useState(null);
   const [toolbarStates, setToolbarStates] = useState({});
   const [statusStates, setStatusStates] = useState({});
@@ -55,6 +57,7 @@ function App() {
     available: false,
     latestVersion: '',
     url: '',
+    assets: [],
   });
   const { config, saveConfig: setConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n(config);
@@ -406,6 +409,57 @@ function App() {
   const isCancelling = activeStatus.phase === 'cancelling';
   const showProgress = lockStatus.phase !== 'idle';
   const handleVersionClick = useCallback(async () => {
+    if (updateInfo.available) {
+      const response = await window.electronAPI?.showMessage?.({
+        type: 'question',
+        title: t('msg_update_prompt_title'),
+        message: t('msg_update_install_prompt', [updateInfo.latestVersion]),
+        buttons: 'yes-no',
+        defaultChoice: 'no',
+        language,
+      });
+      if (!shouldOpenUpdatePage(response)) return;
+
+      setIsUpdating(true);
+      try {
+        const result = await window.electronAPI?.installUpdate?.({
+          latestVersion: updateInfo.latestVersion,
+          assets: updateInfo.assets || [],
+        });
+        if (!result?.success) {
+          const errorKeyByCode = {
+            NOT_PACKAGED: 'msg_update_not_packaged',
+            UNSUPPORTED_PLATFORM: 'msg_update_unsupported',
+            ASSET_NOT_FOUND: 'msg_update_asset_missing',
+            DOWNLOAD_URL_BLOCKED: 'msg_update_asset_missing',
+            TARGET_NOT_FOUND: 'msg_update_target_missing',
+            TARGET_NOT_WRITABLE: 'msg_update_target_not_writable',
+            EXTRACTED_APP_NOT_FOUND: 'msg_update_extract_missing',
+          };
+          const errorKey = errorKeyByCode[result?.code];
+          const message = errorKey
+            ? t(errorKey)
+            : t('msg_update_failed', [result?.message || result?.code || 'Unknown error']);
+          await window.electronAPI?.showMessage?.({
+            type: 'error',
+            title: t('msg_update_prompt_title'),
+            message,
+            language,
+          });
+        }
+      } catch (error) {
+        await window.electronAPI?.showMessage?.({
+          type: 'error',
+          title: t('msg_update_prompt_title'),
+          message: t('msg_update_failed', [error.message || String(error)]),
+          language,
+        });
+      } finally {
+        setIsUpdating(false);
+      }
+      return;
+    }
+
     const response = await window.electronAPI?.showMessage?.({
       type: 'question',
       title: t('msg_update_prompt_title'),
@@ -437,13 +491,16 @@ function App() {
         </div>
         <div className="top-menu-right">
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
+          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(MANUAL_URL)}><FaIcon name="bookOpen" />{t('btn_manual')}</button>
           <button
             className={`top-btn top-btn-version ${updateInfo.available ? 'update-available' : ''}`}
-            disabled={isAppLocked}
+            disabled={isAppLocked || isUpdating}
             onClick={handleVersionClick}
           >
             <FaIcon name={updateInfo.available ? 'gift' : 'circleCheck'} />
-            {updateInfo.available
+            {isUpdating
+              ? t('msg_update_downloading')
+              : updateInfo.available
               ? t('msg_update_available', [appVersion || '-', updateInfo.latestVersion])
               : t('msg_latest_version', [appVersion || '-'])}
           </button>

@@ -18,10 +18,14 @@ test('Windows 패키지의 bundled 7za.exe를 우선 탐색한다', () => {
 test('macOS는 bundled 경로와 시스템 PATH fallback을 모두 탐색한다', () => {
     const candidates = binaryCandidates('7za', {
         platform: 'darwin',
+        arch: 'arm64',
         resourcesPath: '/Applications/BookManager.app/Contents/Resources',
+        projectRoot: '/Users/me/BookManager',
         pathValue: '/custom/bin',
     });
+    assert.equal(candidates.includes('/Applications/BookManager.app/Contents/Resources/bin/mac/arm64/7za'), true);
     assert.equal(candidates.includes('/Applications/BookManager.app/Contents/Resources/bin/mac/7za'), true);
+    assert.equal(candidates.includes('/Users/me/BookManager/node_modules/7zip-bin/mac/arm64/7za'), true);
     assert.equal(candidates.includes('/custom/bin/7z'), true);
     assert.equal(candidates.includes('/opt/homebrew/bin/7z'), true);
 });
@@ -36,6 +40,24 @@ test('공백과 한글이 포함된 실행 경로를 그대로 반환한다', ()
         assert.equal(findBinaryPath('7z', {
             platform: 'darwin',
             projectRoot: root,
+            pathValue: '',
+        }), binary);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('macOS 아키텍처별 bundled 7za를 우선 반환한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), '북 매니저 arch-'));
+    try {
+        const binary = path.join(root, 'bin', 'mac', 'arm64', '7za');
+        fs.mkdirSync(path.dirname(binary), { recursive: true });
+        fs.writeFileSync(binary, '#!/bin/sh\nexit 0\n');
+        fs.chmodSync(binary, 0o755);
+        assert.equal(findBinaryPath('7za', {
+            platform: 'darwin',
+            arch: 'arm64',
+            resourcesPath: root,
             pathValue: '',
         }), binary);
     } finally {

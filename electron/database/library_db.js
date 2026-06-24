@@ -17,7 +17,7 @@ function defaultUserDataPath() {
             return resolveAppDataDir(path.dirname(electron.app.getPath('exe')));
         }
     } catch {
-        // 일반 Node 테스트에서는 프로젝트 data 경로를 사용합니다.
+        // 일반 Node 테스트에서는 프로젝트 BookManagerData 경로를 사용합니다.
     }
     return resolveAppDataDir(process.cwd());
 }

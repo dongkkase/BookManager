@@ -303,9 +303,7 @@ function createTray() {
 
 // 앱 종료 처리
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
     app.quit();
-  }
 });
 
 app.on('before-quit', async event => {

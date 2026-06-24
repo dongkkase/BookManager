@@ -130,6 +130,12 @@
   font-weight: 800;
 }
 
+.multi-rename-patterns input:disabled,
+.multi-rename-options input[type="number"]:disabled,
+.multi-rename-options select:disabled {
+  color: rgba(255,255,255,0.3);
+}
+
 .multi-rename-options input[type="checkbox"] {
   width: 18px;
   height: 18px;
@@ -178,11 +184,11 @@
 }
 
 .multi-rename-options-primary input[type="number"] {
-  width: 88px;
+  width: 104px;
 }
 
 .multi-rename-options-sequence select {
-  width: 73px;
+  width: 90px;
 }
 
 .multi-rename-preview {

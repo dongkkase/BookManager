@@ -22,7 +22,7 @@ import {
 import '../styles/OrganizerTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
-import { isShortcutKey, shouldHandleGlobalShortcut } from '../interactionPolicy';
+import { hasPrimaryModifier, isShortcutKey, shouldHandleGlobalShortcut } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
 
 function stripFilenameExtension(filename) {
@@ -53,6 +53,7 @@ function hydrateOrganizerItem(item) {
 }
 
 function OrganizerTab({ config, t, showToast }) {
+  const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
   const language = config?.language || config?.lang || 'ko';
   const [fileList, setFileList] = useState([]);
   const [expandedItems, setExpandedItems] = useState(new Set());
@@ -275,6 +276,24 @@ function OrganizerTab({ config, t, showToast }) {
     handleOutPathChange(item.id, defaultOutputPath(item.filepath));
   };
 
+  const openFolderRowMenu = useCallback((itemId) => {
+    setOpenBatchMenuId('');
+    setOpenFolderMenuId(itemId);
+  }, []);
+
+  const closeFolderRowMenu = useCallback((itemId) => {
+    setOpenFolderMenuId(current => current === itemId ? '' : current);
+  }, []);
+
+  const openBatchRowMenu = useCallback((itemId) => {
+    setOpenFolderMenuId('');
+    setOpenBatchMenuId(itemId);
+  }, []);
+
+  const closeBatchRowMenu = useCallback((itemId) => {
+    setOpenBatchMenuId(current => current === itemId ? '' : current);
+  }, []);
+
   const handleBatchDefault = () => {
     setFileList(prev => prev.map(item => ({
       ...item,
@@ -457,9 +476,9 @@ function OrganizerTab({ config, t, showToast }) {
     if (!row?.path) return;
     setSelectedItemId('');
     if (event?.shiftKey) rangeSelectVolumeRows(row.path, row, index);
-    else if (event?.metaKey || event?.ctrlKey) toggleVolumeRow(row.path, row, index);
+    else if (hasPrimaryModifier(event, runtimePlatform)) toggleVolumeRow(row.path, row, index);
     else selectVolumeRow(row.path, row, index);
-  }, [rangeSelectVolumeRows, selectVolumeRow, toggleVolumeRow]);
+  }, [rangeSelectVolumeRows, runtimePlatform, selectVolumeRow, toggleVolumeRow]);
 
   const handleVolumeRowMouseDown = useCallback((row, event, index) => {
     if (event.button !== 0) return;
@@ -686,13 +705,22 @@ function OrganizerTab({ config, t, showToast }) {
                         onChange={(event) => handleOutPathChange(item.id, event.target.value)}
                         onClick={event => event.stopPropagation()}
                       />
-                      <div className="org-row-menu-wrap org-folder-menu-wrap" onClick={event => event.stopPropagation()}>
+                      <div
+                        className="org-row-menu-wrap org-folder-menu-wrap"
+                        onMouseEnter={() => openFolderRowMenu(item.id)}
+                        onMouseLeave={() => closeFolderRowMenu(item.id)}
+                        onFocus={() => openFolderRowMenu(item.id)}
+                        onClick={event => event.stopPropagation()}
+                      >
                         <button
                           type="button"
                           className={`org-row-menu-button org-folder-menu-button ${openFolderMenuId === item.id ? 'active' : ''}`}
                           aria-haspopup="menu"
                           aria-expanded={openFolderMenuId === item.id}
-                          onClick={() => setOpenFolderMenuId(current => (current === item.id ? '' : item.id))}
+                          onClick={event => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
                         >
                           {t('org_folder_menu')} <FaIcon name="angleDown" size={9} />
                         </button>
@@ -710,13 +738,22 @@ function OrganizerTab({ config, t, showToast }) {
                           </div>
                         )}
                       </div>
-                      <div className="org-row-menu-wrap org-batch-menu-wrap" onClick={event => event.stopPropagation()}>
+                      <div
+                        className="org-row-menu-wrap org-batch-menu-wrap"
+                        onMouseEnter={() => openBatchRowMenu(item.id)}
+                        onMouseLeave={() => closeBatchRowMenu(item.id)}
+                        onFocus={() => openBatchRowMenu(item.id)}
+                        onClick={event => event.stopPropagation()}
+                      >
                         <button
                           type="button"
                           className={`org-row-menu-button org-batch-menu-button ${openBatchMenuId === item.id ? 'active' : ''}`}
                           aria-haspopup="menu"
                           aria-expanded={openBatchMenuId === item.id}
-                          onClick={() => setOpenBatchMenuId(current => (current === item.id ? '' : item.id))}
+                          onClick={event => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
                         >
                           {t('org_batch_menu')} <FaIcon name="angleDown" size={9} />
                         </button>
