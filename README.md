@@ -1,4 +1,6 @@
 # BookManager
+> **This program supports `Korean`, `English`, `Japanese`.**
+> **The program description on the wiki page is only available in `Korean`. Please use Chrome's translation feature.**
 
 BookManager는 만화책과 전자책 파일을 로컬 데스크톱에서 정리하고 관리하기 위한 Windows/macOS 지원 앱입니다.
 로컬 드라이브나 NAS에 보관된 대량의 파일을 스캔하고, 파일 구조 정리, 내부 파일명 변경, 메타데이터 편집, 공유 서버 실행을 한 화면에서 처리하는 것을 목표로 합니다.
