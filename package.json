@@ -3,15 +3,17 @@
   "version": "3.0.0",
   "type": "module",
   "description": "BookManager - ComicZIP Optimizer migrated to Electron + React",
-  "main": "electron/main.js",
+  "main": "electron/bootstrap.js",
   "author": "dongkkase",
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "test": "node --test electron/*.test.js src/*.test.js",
+    "node:rebuild": "npm rebuild better-sqlite3",
+    "test": "npm run node:rebuild && node --test electron/*.test.js src/*.test.js",
     "build": "vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
+    "electron:rebuild": "electron-builder install-app-deps",
+    "electron:dev": "npm run electron:rebuild && concurrently \"vite\" \"wait-on http://localhost:5173 && node electron/launchElectronDev.cjs\"",
     "electron:build": "vite build && electron-builder",
     "electron:build:win": "vite build && electron-builder --win",
     "electron:build:mac": "vite build && electron-builder --mac",
@@ -50,7 +52,15 @@
         "to": "src/utils",
         "filter": [
           "i18n.js",
-          "i18nData.js"
+          "i18nData.js",
+          "folderUtils.js"
+        ]
+      },
+      {
+        "from": "src/metadata",
+        "to": "src/metadata",
+        "filter": [
+          "metadataTypes.js"
         ]
       },
       "version.json"

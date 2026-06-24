@@ -13,11 +13,23 @@ import {
 import { translate } from '../../src/utils/i18n.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
 import { resolveBookType } from '../../src/metadata/metadataTypes.js';
+import { isBrokenPipeError } from '../utils/consolePipeGuard.js';
 
 const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+let folderScanStdoutBroken = false;
+
+function safeFolderScanLog(message) {
+  if (folderScanStdoutBroken) return;
+  try {
+    console.log(message);
+  } catch (error) {
+    if (!isBrokenPipeError(error)) throw error;
+    folderScanStdoutBroken = true;
+  }
+}
 
 function taskText(lang, key, values) {
   return translate(key, lang || 'ko', values);
@@ -1191,7 +1203,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     const now = Date.now();
     if (payload.progress >= 100 || now - lastTaskLogAt > 2000) {
       lastTaskLogAt = now;
-      console.log(`[FolderScan] ${Math.round(payload.progress || 0)}% matched=${matchedCount} scanned=${scannedCount} current=${payload.currentFile || folderPath}`);
+      safeFolderScanLog(`[FolderScan] ${Math.round(payload.progress || 0)}% matched=${matchedCount} scanned=${scannedCount} current=${payload.currentFile || folderPath}`);
     }
   }
 
@@ -1210,7 +1222,7 @@ export async function scanFolder(folderPath, options = {}, event) {
       file,
     });
     if (file.cover) {
-      console.log(`[FolderScan] thumbnail ready ${file.path}`);
+      safeFolderScanLog(`[FolderScan] thumbnail ready ${file.path}`);
     }
   }
 

@@ -48,15 +48,47 @@ test('앱 번들 이름과 식별자는 BookManager 정책을 사용한다', () 
     assert.equal(packageConfig.build.appId, 'com.bookmanager.app');
 });
 
-test('Electron 메인 프로세스의 i18n 모듈은 app.asar 패키징 대상에 포함한다', () => {
-    const i18nFileSet = packageConfig.build.files.find(item => (
+test('Electron 메인 프로세스가 직접 import하는 src 모듈은 app.asar 패키징 대상에 포함한다', () => {
+    const utilsFileSet = packageConfig.build.files.find(item => (
         typeof item === 'object'
         && item.from === 'src/utils'
         && item.to === 'src/utils'
     ));
-    assert.ok(i18nFileSet);
-    assert.equal(i18nFileSet.filter.includes('i18n.js'), true);
-    assert.equal(i18nFileSet.filter.includes('i18nData.js'), true);
+    const metadataFileSet = packageConfig.build.files.find(item => (
+        typeof item === 'object'
+        && item.from === 'src/metadata'
+        && item.to === 'src/metadata'
+    ));
+
+    assert.ok(utilsFileSet);
+    assert.equal(utilsFileSet.filter.includes('i18n.js'), true);
+    assert.equal(utilsFileSet.filter.includes('i18nData.js'), true);
+    assert.equal(utilsFileSet.filter.includes('folderUtils.js'), true);
+    assert.ok(metadataFileSet);
+    assert.equal(metadataFileSet.filter.includes('metadataTypes.js'), true);
+});
+
+test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () => {
+    assert.equal(packageConfig.main, 'electron/bootstrap.js');
+
+    const bootstrapSource = fs.readFileSync(path.join(projectRoot, 'electron', 'bootstrap.js'), 'utf8');
+
+    assert.match(bootstrapSource, /installConsolePipeGuard\(\)/);
+    assert.match(bootstrapSource, /await import\('\.\/main\.js'\)/);
+});
+
+test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사용한다', () => {
+    const devScript = packageConfig.scripts['electron:dev'];
+    const launcherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronDev.cjs'), 'utf8');
+
+    assert.match(packageConfig.scripts['node:rebuild'], /npm rebuild better-sqlite3/);
+    assert.match(packageConfig.scripts.test, /npm run node:rebuild/);
+    assert.match(packageConfig.scripts['electron:rebuild'], /electron-builder install-app-deps/);
+    assert.match(devScript, /npm run electron:rebuild/);
+    assert.match(devScript, /node electron\/launchElectronDev\.cjs/);
+    assert.doesNotMatch(devScript, /&& electron \. --dev/);
+    assert.match(launcherSource, /delete env\.ELECTRON_RUN_AS_NODE/);
+    assert.match(launcherSource, /spawn\(electron,\s*\['\.',\s*'--dev'\]/);
 });
 
 test('macOS 메뉴 막대 아이콘은 16px 템플릿 이미지로 생성한다', () => {

@@ -436,3 +436,48 @@ test('폴더 스캔은 파일별 준비 이벤트를 보낸다', async t => {
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+test('파일 준비 로그의 EPIPE는 폴더 스캔을 중단하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-file-ready-epipe-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const archivePath = path.join(libraryDir, 'Ready Epipe Book.cbz');
+    const events = [];
+    const event = {
+        sender: {
+            isDestroyed: () => false,
+            send: (channel, payload) => events.push({ channel, payload }),
+        },
+    };
+    const originalLog = console.log;
+    let logAttempts = 0;
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(archivePath, '001.png', PNG_1X1);
+
+        console.log = () => {
+            logAttempts += 1;
+            const error = new Error('write EPIPE');
+            error.code = 'EPIPE';
+            error.syscall = 'write';
+            throw error;
+        };
+
+        const files = await scanFolder(libraryDir, {
+            thumbnailDir,
+            sevenZExe: '',
+            reportFileReady: true,
+        }, event);
+
+        const ready = events.find(item => item.channel === 'folder:fileReady');
+        assert.equal(files.length, 1);
+        assert.equal(ready?.payload?.file?.path, archivePath);
+        assert.match(ready.payload.file.cover, /^bookmanager-thumbnail:\/\/cache\//);
+        assert.equal(logAttempts, 1);
+    } finally {
+        console.log = originalLog;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});

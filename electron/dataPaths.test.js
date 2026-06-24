@@ -35,6 +35,23 @@ test('macOS .app 내부 실행 경로는 앱 번들 옆 data 폴더로 변환한
     assert.equal(resolveThumbnailDir(executableDir, 'darwin'), path.join('/portable', 'data', 'thumbnails'));
 });
 
+test('Windows portable은 임시 추출 경로 대신 원본 exe 폴더에 data를 둔다', () => {
+    const extractedExecutableDir = path.join('C:\\Users\\Reader\\AppData\\Local\\Temp', 'BookManager');
+    const portableDir = path.join('D:\\Apps', 'BookManager');
+    const env = {
+        PORTABLE_EXECUTABLE_DIR: portableDir,
+        PORTABLE_EXECUTABLE_FILE: path.join(portableDir, 'BookManager.exe'),
+    };
+
+    assert.equal(resolvePortableBaseDir(extractedExecutableDir, 'win32', env), portableDir);
+    assert.equal(resolveAppDataDir(extractedExecutableDir, 'win32', env), path.join(portableDir, 'data'));
+    assert.equal(resolveLibraryDbPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'data', 'library.db'));
+    assert.equal(resolveApiCacheDbPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'data', '.api_cache.db'));
+    assert.equal(resolveConfigPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'data', 'config.json'));
+    assert.equal(resolveRenameHistoryPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'data', 'rename_history.json'));
+    assert.equal(resolveThumbnailDir(extractedExecutableDir, 'win32', env), path.join(portableDir, 'data', 'thumbnails'));
+});
+
 test('IPC의 DB, 캐시 파일, 썸네일 경로는 data 경로 정책을 사용한다', () => {
     const source = fs.readFileSync(new URL('./ipcHandlers.js', import.meta.url), 'utf8');
     const libraryTask = fs.readFileSync(new URL('./tasks/libraryTask.js', import.meta.url), 'utf8');

@@ -10,6 +10,9 @@ import { createExitDialogOptions, shouldProceedWithExit } from './exitPolicy.js'
 import { getSharingServerStatus, stopAllSharingServers } from './servers/sharingServers.js';
 import { findBinaryPath } from './binaryPolicy.js';
 import { resolveThumbnailDir } from './dataPaths.js';
+import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
+
+installConsolePipeGuard();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -176,6 +179,7 @@ function createMainWindow(config) {
     icon: getAppIconPath(),
     frame: true,
     titleBarStyle: 'default',
+    autoHideMenuBar: true,
     backgroundColor: '#1b1b1b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -184,6 +188,9 @@ function createMainWindow(config) {
     },
     show: false,
   });
+  if (process.platform !== 'darwin') {
+    mainWindow.setMenu(null);
+  }
   const windowOwnerId = mainWindow.webContents.id;
 
   // 개발 모드 또는 로컬 파일 로드
