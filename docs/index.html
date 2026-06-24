@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리</title>
+    <meta name="description" content="BookManager는 Windows와 macOS에서 CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. Kavita, Komga, YACReader, Panels, Calibre, KOReader 환경에 맞춰 책 파일을 관리할 수 있습니다.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리">
+    <meta property="og:description" content="CBZ, ZIP, EPUB, PDF 파일 정리, ComicInfo.xml 메타데이터 편집, 라이브러리 검색, 공유 서버를 지원하는 Windows/macOS 데스크톱 앱입니다.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/">
+    <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리">
+    <meta name="twitter:description" content="CBZ, EPUB, PDF, ComicInfo.xml 메타데이터를 관리하는 Windows/macOS용 책 파일 정리 앱입니다.">
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
+    <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "BookManager",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Windows, macOS",
+        "description": "BookManager is a Windows and macOS desktop app for organizing comic and ebook files, including CBZ, ZIP, EPUB, PDF, ComicInfo.xml metadata editing, archive structure cleanup, file renaming, library search, and sharing servers.",
+        "softwareVersion": "3.0.0",
+        "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
+        "url": "https://dongkkase.github.io/BookManager/",
+        "downloadUrl": "https://github.com/dongkkase/BookManager/releases",
+        "codeRepository": "https://github.com/dongkkase/BookManager",
+        "inLanguage": ["ko", "en", "ja"]
+    }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101214;
+            --panel: #1a1d20;
+            --panel-strong: #22262a;
+            --text: #eef3f7;
+            --muted: #aeb8c2;
+            --line: #333941;
+            --accent: #4aa3df;
+            --accent-strong: #1f7dbc;
+            --green: #55c28d;
+            --yellow: #e2b84d;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+        }
+
+        a {
+            color: inherit;
+        }
+
+        .hero {
+            min-height: 82vh;
+            display: grid;
+            align-items: end;
+            padding: 32px clamp(20px, 6vw, 72px) 72px;
+            background:
+                linear-gradient(90deg, rgba(16, 18, 20, 0.98), rgba(16, 18, 20, 0.72) 52%, rgba(16, 18, 20, 0.9)),
+                url("https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png") right 10vw center / min(42vw, 460px) auto no-repeat,
+                #101214;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .hero-inner {
+            max-width: 850px;
+        }
+
+        .eyebrow {
+            margin: 0 0 14px;
+            color: var(--green);
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(2.5rem, 7vw, 5.5rem);
+            line-height: 1.02;
+            letter-spacing: 0;
+        }
+
+        .lead {
+            max-width: 760px;
+            margin: 24px 0 0;
+            color: var(--muted);
+            font-size: clamp(1.05rem, 2vw, 1.28rem);
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 42px;
+            padding: 0 18px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--panel-strong);
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .button.primary {
+            border-color: var(--accent);
+            background: var(--accent-strong);
+        }
+
+        main {
+            padding: 56px clamp(20px, 6vw, 72px) 72px;
+        }
+
+        section {
+            max-width: 1120px;
+            margin: 0 auto 56px;
+        }
+
+        h2 {
+            margin: 0 0 18px;
+            font-size: clamp(1.6rem, 3vw, 2.2rem);
+            letter-spacing: 0;
+        }
+
+        .section-lead {
+            max-width: 850px;
+            margin: 0 0 24px;
+            color: var(--muted);
+            font-size: 1.05rem;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 14px;
+        }
+
+        .feature {
+            min-height: 160px;
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+
+        .feature h3 {
+            margin: 0 0 10px;
+            font-size: 1.05rem;
+        }
+
+        .feature p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .split {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .list-panel {
+            padding: 22px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+
+        .list-panel h3 {
+            margin: 0 0 12px;
+        }
+
+        ul {
+            margin: 0;
+            padding-left: 20px;
+            color: var(--muted);
+        }
+
+        li + li {
+            margin-top: 6px;
+        }
+
+        .keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .keyword {
+            padding: 6px 10px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            color: var(--muted);
+            background: #15181b;
+            font-size: 0.92rem;
+        }
+
+        .note {
+            color: var(--muted);
+            border-left: 3px solid var(--yellow);
+            padding-left: 14px;
+        }
+
+        footer {
+            padding: 28px clamp(20px, 6vw, 72px);
+            color: var(--muted);
+            border-top: 1px solid var(--line);
+        }
+
+        @media (max-width: 720px) {
+            .hero {
+                min-height: 76vh;
+                padding-top: 140px;
+                background:
+                    linear-gradient(180deg, rgba(16, 18, 20, 0.78), rgba(16, 18, 20, 0.98)),
+                    url("https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png") center 24px / 96px auto no-repeat,
+                    #101214;
+            }
+
+            .button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="hero">
+        <div class="hero-inner">
+            <p class="eyebrow">Windows/macOS desktop app for comics and ebooks</p>
+            <h1>BookManager</h1>
+            <p class="lead">CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. Kavita, Komga, YACReader, Panels, Calibre, KOReader 같은 서버와 뷰어에 맞춰 책 파일을 관리할 수 있습니다.</p>
+            <div class="actions">
+                <a class="button primary" href="https://github.com/dongkkase/BookManager/releases">다운로드</a>
+                <a class="button" href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
+                <a class="button" href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section>
+            <h2>만화책 파일 정리</h2>
+            <p class="section-lead">BookManager는 만화책 압축 파일을 라이브러리와 뷰어에서 읽기 좋은 형태로 정리합니다. 압축 파일 구조 정리, 평탄화, 내부 이미지 파일명 변경, 누락 페이지 확인을 지원합니다.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>CBZ/ZIP 구조 정리</h3>
+                    <p>여러 권이 들어 있는 압축 파일을 권 단위로 정리하고, 복잡한 폴더 구조를 읽기 쉬운 형태로 맞춥니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>내부 파일명 변경</h3>
+                    <p>압축 파일 안의 이미지 파일명을 일정한 규칙으로 정리해 페이지 순서 문제를 줄입니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>ComicInfo.xml 관리</h3>
+                    <p>제목, 시리즈, 권수, 작가, 출판사, 줄거리, 태그 같은 메타데이터를 ComicInfo.xml로 저장합니다.</p>
+                </article>
+            </div>
+        </section>
+
+        <section>
+            <h2>전자책 라이브러리 관리</h2>
+            <p class="section-lead">EPUB과 PDF도 라이브러리 단위로 스캔하고 검색할 수 있습니다. 표지, 제목, 작가, 출판사, ISBN, 언어, 설명 같은 정보를 정리해 여러 전자책 환경에서 활용할 수 있습니다.</p>
+            <div class="split">
+                <div class="list-panel">
+                    <h3>지원 파일</h3>
+                    <ul>
+                        <li>만화책: ZIP, CBZ, CBR, RAR, 7Z</li>
+                        <li>전자책: EPUB, PDF</li>
+                        <li>ComicInfo.xml 메타데이터 저장</li>
+                        <li>EPUB OPF 메타데이터 관리</li>
+                    </ul>
+                </div>
+                <div class="list-panel">
+                    <h3>연동하기 좋은 환경</h3>
+                    <ul>
+                        <li>Kavita, Komga, YACReader, Panels</li>
+                        <li>Calibre, Calibre-Web, KOReader</li>
+                        <li>Apple Books, Google Play Books</li>
+                        <li>OPDS, Web, WebDAV 공유</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>메타데이터 검색</h2>
+            <p class="section-lead">리디북스, 알라딘, Google Books, AniList, Comic Vine, Amazon 등 국내외 소스를 통해 책 정보를 검색하고 편집할 수 있습니다. 만화책과 전자책을 한 라이브러리 안에서 관리하는 사용자를 기준으로 설계했습니다.</p>
+            <div class="keywords" aria-label="주요 검색어">
+                <span class="keyword">만화책 파일 정리 프로그램</span>
+                <span class="keyword">CBZ 관리 프로그램</span>
+                <span class="keyword">ComicInfo.xml 편집기</span>
+                <span class="keyword">EPUB PDF 라이브러리 관리</span>
+                <span class="keyword">comic book manager</span>
+                <span class="keyword">CBZ organizer</span>
+                <span class="keyword">ebook library manager</span>
+            </div>
+        </section>
+
+        <section>
+            <h2>설치</h2>
+            <p class="section-lead">릴리즈 페이지에서 Windows 또는 macOS용 파일을 내려받아 실행합니다. macOS에서 처음 실행할 때 보안 경고가 표시되면 앱의 격리 속성을 제거한 뒤 실행할 수 있습니다.</p>
+            <p class="note">프로그램은 로컬 파일을 직접 정리하는 도구입니다. 대량 작업을 실행하기 전에는 대상 목록과 미리보기를 확인하세요.</p>
+        </section>
+    </main>
+
+    <footer>
+        <span>BookManager is released under the MIT License.</span>
+    </footer>
+</body>
+</html>
