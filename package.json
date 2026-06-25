@@ -14,6 +14,9 @@
     "preview": "vite preview",
     "electron:rebuild": "electron-builder install-app-deps",
     "electron:dev": "npm run electron:rebuild && concurrently \"vite\" \"wait-on http://localhost:5173 && node electron/launchElectronDev.cjs\"",
+    "electron:dev:unsafe": "npm run electron:rebuild && concurrently \"vite\" \"wait-on http://localhost:5173 && node electron/launchElectronDev.cjs --unsafe-dev-node\"",
+    "electron:dev:fast": "concurrently \"vite build --watch\" \"wait-on dist/index.html && node electron/launchElectronWatch.cjs\"",
+    "electron:preview": "vite build && node electron/launchElectronProd.cjs",
     "electron:build": "vite build && electron-builder",
     "electron:build:win": "vite build && electron-builder --win",
     "electron:build:mac": "vite build && electron-builder --mac",
@@ -90,6 +93,7 @@
           "arch": ["x64"]
         }
       ],
+      "signAndEditExecutable": false,
       "artifactName": "BookManager.exe",
       "icon": "src/images/app.ico"
     },

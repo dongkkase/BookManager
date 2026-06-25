@@ -65,7 +65,7 @@ body.is-resizing-panel * {
   border-radius: 6px;
   padding: 8px 12px;
   font-size: var(--font-sm);
-  font-weight: bold;
+  font-weight: 500;
   border: none;
   cursor: pointer;
   display: flex;

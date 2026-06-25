@@ -42,6 +42,13 @@ import { settingsEffects } from './settingsPolicy';
 import { fontVarsForConfig } from './fontPolicy';
 import './styles/App.css';
 
+const MemoFolderTab = React.memo(FolderTab);
+const MemoOrganizerTab = React.memo(OrganizerTab);
+const MemoRenamerTab = React.memo(RenamerTab);
+const MemoMetadataTab = React.memo(MetadataTab);
+const MemoSharingTab = React.memo(SharingTab);
+const MemoReleaseTab = React.memo(ReleaseTab);
+
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
   const [showSettings, setShowSettings] = useState(false);
@@ -63,6 +70,7 @@ function App() {
   const { t, language, changeLanguage } = useI18n(config);
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
+  const lastTabSaveTimer = useRef(null);
   const effectiveWorkingTab = useMemo(
     () => resolveEffectiveWorkingTab(workingTab, statusStates, activeTab),
     [activeTab, statusStates, workingTab],
@@ -94,6 +102,10 @@ function App() {
     setActiveTab(resolveTabId(config.last_tab_id, config.last_tab_index));
     didRestoreTab.current = true;
   }, [config]);
+
+  useEffect(() => () => {
+    if (lastTabSaveTimer.current) window.clearTimeout(lastTabSaveTimer.current);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -197,14 +209,22 @@ function App() {
     document.title = appTitle;
   }, [appTitle]);
 
+  const scheduleLastTabSave = useCallback((tabId, tabIndex, errorLabel) => {
+    if (lastTabSaveTimer.current) window.clearTimeout(lastTabSaveTimer.current);
+    lastTabSaveTimer.current = window.setTimeout(() => {
+      lastTabSaveTimer.current = null;
+      setConfig({ last_tab_id: tabId, last_tab_index: tabIndex }).catch(error => {
+        console.error(`${errorLabel} 실패:`, error);
+      });
+    }, 250);
+  }, [setConfig]);
+
   const handleTabChange = useCallback((tabId) => {
     const tabIndex = TABS.findIndex(tab => tab.id === tabId);
     if (tabIndex < 0) return;
     setActiveTab(tabId);
-    setConfig({ last_tab_id: tabId, last_tab_index: tabIndex }).catch(error => {
-      console.error('마지막 탭 저장 실패:', error);
-    });
-  }, [setConfig]);
+    scheduleLastTabSave(tabId, tabIndex, '마지막 탭 저장');
+  }, [scheduleLastTabSave]);
 
   useEffect(() => {
     const handleNavigate = (event) => {
@@ -213,9 +233,7 @@ function App() {
       const tabIndex = TABS.findIndex(tab => tab.id === tabId);
       if (tabIndex < 0 || isAppLocked) return;
       setActiveTab(tabId);
-      setConfig({ last_tab_id: tabId, last_tab_index: tabIndex }).catch(error => {
-        console.error('자동 전달 탭 저장 실패:', error);
-      });
+      scheduleLastTabSave(tabId, tabIndex, '자동 전달 탭 저장');
       if (paths.length > 0) {
         window.dispatchEvent(new CustomEvent('bookmanager:action', {
           detail: { action: 'load-paths', activeTab: tabId, paths },
@@ -224,7 +242,7 @@ function App() {
     };
     window.addEventListener('bookmanager:navigate', handleNavigate);
     return () => window.removeEventListener('bookmanager:navigate', handleNavigate);
-  }, [isAppLocked, setConfig]);
+  }, [isAppLocked, scheduleLastTabSave]);
 
   const handleSettings = useCallback(() => {
     setSettingsInitialTab('basic');
@@ -518,22 +536,22 @@ function App() {
       
       <div className="app-content">
         <div className={`app-tab-panel ${activeTab === 'folder' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'folder'}>
-          <FolderTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          <MemoFolderTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
         </div>
         <div className={`app-tab-panel ${activeTab === 'organizer' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'organizer'}>
-          <OrganizerTab config={config} t={t} showToast={showToast} />
+          <MemoOrganizerTab config={config} t={t} showToast={showToast} />
         </div>
         <div className={`app-tab-panel ${activeTab === 'renamer' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'renamer'}>
-          <RenamerTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          <MemoRenamerTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
         </div>
         <div className={`app-tab-panel ${activeTab === 'metadata' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'metadata'}>
-          <MetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          <MemoMetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
         </div>
         <div className="app-tab-panel" hidden={activeTab !== 'sharing'}>
-          <SharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          <MemoSharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
         </div>
         <div className="app-tab-panel" hidden={activeTab !== 'releases'}>
-          <ReleaseTab config={config} t={t} />
+          <MemoReleaseTab config={config} t={t} />
         </div>
         <AppLockOverlay
           isAppLocked={isAppLocked}

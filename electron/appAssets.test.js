@@ -146,6 +146,7 @@ test('Windows 배포본은 portable exe를 단일 파일 ZIP으로 감싼다', (
         packageConfig.build.win.artifactName,
         'BookManager.exe',
     );
+    assert.equal(packageConfig.build.win.signAndEditExecutable, false);
     assert.equal(packageConfig.build.afterAllArtifactBuild, 'electron/zipWindowsPortable.cjs');
 });
 
@@ -209,7 +210,11 @@ test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () 
 
 test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사용한다', () => {
     const devScript = packageConfig.scripts['electron:dev'];
+    const unsafeDevScript = packageConfig.scripts['electron:dev:unsafe'];
     const launcherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronDev.cjs'), 'utf8');
+    const fastDevScript = packageConfig.scripts['electron:dev:fast'];
+    const watchLauncherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronWatch.cjs'), 'utf8');
+    const mainSource = fs.readFileSync(path.join(projectRoot, 'electron', 'main.js'), 'utf8');
 
     assert.match(packageConfig.scripts['node:rebuild'], /npm rebuild better-sqlite3/);
     assert.match(packageConfig.scripts.test, /npm run node:rebuild/);
@@ -217,8 +222,20 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     assert.match(devScript, /npm run electron:rebuild/);
     assert.match(devScript, /node electron\/launchElectronDev\.cjs/);
     assert.doesNotMatch(devScript, /&& electron \. --dev/);
+    assert.match(unsafeDevScript, /node electron\/launchElectronDev\.cjs --unsafe-dev-node/);
     assert.match(launcherSource, /delete env\.ELECTRON_RUN_AS_NODE/);
-    assert.match(launcherSource, /spawn\(electron,\s*\['\.',\s*'--dev'\]/);
+    assert.match(launcherSource, /BOOKMANAGER_UNSAFE_DEV_NODE/);
+    assert.match(launcherSource, /electronArgs = \['\.',\s*'--dev'\]/);
+    assert.match(launcherSource, /electronArgs\.push\('--unsafe-dev-node'\)/);
+    assert.match(launcherSource, /spawn\(electron,\s*electronArgs/);
+    assert.match(mainSource, /useUnsafeDevNodeIntegration = isDev/);
+    assert.match(mainSource, /contextIsolation:\s*!useUnsafeDevNodeIntegration/);
+    assert.match(mainSource, /nodeIntegration:\s*useUnsafeDevNodeIntegration/);
+    assert.match(fastDevScript, /vite build --watch/);
+    assert.match(fastDevScript, /node electron\/launchElectronWatch\.cjs/);
+    assert.match(watchLauncherSource, /delete env\.ELECTRON_RUN_AS_NODE/);
+    assert.match(watchLauncherSource, /fs\.watch\(distDir,\s*\{\s*recursive:\s*true\s*\}/);
+    assert.match(watchLauncherSource, /spawn\(electron,\s*\['\.'\]/);
 });
 
 test('macOS 메뉴 막대 아이콘은 16px 템플릿 이미지로 생성한다', () => {

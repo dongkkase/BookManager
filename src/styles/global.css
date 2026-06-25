@@ -48,7 +48,7 @@
   --error-color: #f44336;
   
   /* 폰트 */
-  --font-primary: 'Jua', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+  --font-primary: 'Jua', 'Noto Sans KR', 'Malgun Gothic', 'Segoe UI', sans-serif;
   --font-mono: 'Consolas', 'Courier New', monospace;
   
   /* 폰트 크기 */
@@ -95,8 +95,9 @@
 /* HTML/Body */
 html {
   font-size: var(--font-base);
-  -webkit-font-smoothing: antialiased;
+  -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 body {

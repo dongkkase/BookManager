@@ -6,7 +6,6 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
 import { replaceZipEntry } from './core/zipArchive.js';
 import {
     buildOpdsApp,
@@ -62,15 +61,6 @@ function createLibraryFixture(t) {
 
 function md5Hex(value) {
     return crypto.createHash('md5').update(String(value)).digest('hex');
-}
-
-function hasOpenSsl() {
-    try {
-        execFileSync('openssl', ['version'], { stdio: 'ignore' });
-        return true;
-    } catch {
-        return false;
-    }
 }
 
 function digestAuthHeader({ challenge, username, password, method, uri }) {
@@ -885,11 +875,6 @@ test('Web 서버 상태 URL은 브라우저 루트 주소를 반환한다', asyn
 });
 
 test('HTTPS 공유 서버는 자체 서명 인증서로 https URL과 secure 상태를 반환한다', async t => {
-    if (!hasOpenSsl()) {
-        t.skip('openssl is required to generate the self-signed certificate');
-        return;
-    }
-
     const port = await getFreePort();
     const certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-sharing-cert-'));
     const logs = [];

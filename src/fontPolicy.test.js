@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fontFamilyForConfig, fontVarsForConfig } from './fontPolicy.js';
 
-test('Default 폰트는 원본 번들 폰트와 플랫폼 fallback을 제공한다', () => {
+test('Default 폰트는 Jua와 플랫폼 fallback을 제공한다', () => {
     const family = fontFamilyForConfig('Default');
     assert.match(family, /Jua/);
     assert.match(family, /Noto Sans KR/);
     assert.match(family, /Malgun Gothic/);
+    assert.match(family, /Segoe UI/);
     assert.match(family, /Yu Gothic UI/);
 });
 

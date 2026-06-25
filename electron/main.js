@@ -27,6 +27,10 @@ let sharingServersStopped = false;
 
 // 개발 모드 여부
 const isDev = process.argv.includes('--dev');
+const useUnsafeDevNodeIntegration = isDev && (
+  process.env.BOOKMANAGER_UNSAFE_DEV_NODE === '1'
+  || process.argv.includes('--unsafe-dev-node')
+);
 const APP_NAME = 'BookManager';
 const APP_ID = 'com.bookmanager.app';
 
@@ -42,6 +46,8 @@ protocol.registerSchemesAsPrivileged([{
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_ID);
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
 }
 
 // 앱 사용자 데이터 디렉토리
@@ -164,6 +170,10 @@ if (!gotTheLock) {
 }
 
 function createMainWindow(config) {
+  if (useUnsafeDevNodeIntegration) {
+    console.warn('[BookManager] Unsafe dev Node integration is enabled for this session.');
+  }
+
   const primaryDisplay = screen.getPrimaryDisplay();
   const windowState = resolveWindowState(
     config,
@@ -183,8 +193,8 @@ function createMainWindow(config) {
     backgroundColor: '#1b1b1b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
+      contextIsolation: !useUnsafeDevNodeIntegration,
+      nodeIntegration: useUnsafeDevNodeIntegration,
     },
     show: false,
   });

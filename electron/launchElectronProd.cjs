@@ -1,19 +1,10 @@
 const { spawn } = require('node:child_process');
 const electron = require('electron');
 
-const useUnsafeDevNodeIntegration = process.argv.includes('--unsafe-dev-node');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
-if (useUnsafeDevNodeIntegration) {
-    env.BOOKMANAGER_UNSAFE_DEV_NODE = '1';
-}
 
-const electronArgs = ['.', '--dev'];
-if (useUnsafeDevNodeIntegration) {
-    electronArgs.push('--unsafe-dev-node');
-}
-
-const child = spawn(electron, electronArgs, {
+const child = spawn(electron, ['.'], {
     stdio: 'inherit',
     env,
 });

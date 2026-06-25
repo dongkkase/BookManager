@@ -3,8 +3,7 @@ import http from 'http';
 import https from 'https';
 import os from 'os';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import crypto from 'crypto';
 import {
     getLocalIp,
     normalizeSharingRoots,
@@ -19,7 +18,6 @@ import {
 
 const servers = new Map();
 const SHARING_SERVER_TYPES = ['OPDS', 'Web', 'WebDAV'];
-const execFileAsync = promisify(execFile);
 
 export {
     buildOpdsApp,
@@ -85,14 +83,190 @@ function buildOpensslConfig(localIp) {
     ].join('\n');
 }
 
+function derLength(length) {
+    if (length < 0x80) return Buffer.from([length]);
+    const bytes = [];
+    let value = length;
+    while (value > 0) {
+        bytes.unshift(value & 0xff);
+        value >>= 8;
+    }
+    return Buffer.from([0x80 | bytes.length, ...bytes]);
+}
+
+function der(tag, content) {
+    return Buffer.concat([Buffer.from([tag]), derLength(content.length), content]);
+}
+
+function derSequence(...items) {
+    return der(0x30, Buffer.concat(items));
+}
+
+function derSet(...items) {
+    return der(0x31, Buffer.concat(items));
+}
+
+function derExplicit(tagNumber, content) {
+    return der(0xa0 + tagNumber, content);
+}
+
+function derInteger(value) {
+    const bytes = Buffer.isBuffer(value)
+        ? Buffer.from(value)
+        : Buffer.from([value]);
+    const normalized = bytes.length > 0 ? bytes : Buffer.from([0]);
+    return der(0x02, normalized[0] & 0x80 ? Buffer.concat([Buffer.from([0]), normalized]) : normalized);
+}
+
+function derBoolean(value) {
+    return der(0x01, Buffer.from([value ? 0xff : 0x00]));
+}
+
+function derNull() {
+    return der(0x05, Buffer.alloc(0));
+}
+
+function derBitString(bytes, unusedBits = 0) {
+    return der(0x03, Buffer.concat([Buffer.from([unusedBits]), Buffer.from(bytes)]));
+}
+
+function derOctetString(content) {
+    return der(0x04, Buffer.from(content));
+}
+
+function derUtf8String(value) {
+    return der(0x0c, Buffer.from(String(value), 'utf8'));
+}
+
+function derUtcTime(date) {
+    const year = String(date.getUTCFullYear()).slice(-2);
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hour = String(date.getUTCHours()).padStart(2, '0');
+    const minute = String(date.getUTCMinutes()).padStart(2, '0');
+    const second = String(date.getUTCSeconds()).padStart(2, '0');
+    return der(0x17, Buffer.from(`${year}${month}${day}${hour}${minute}${second}Z`, 'ascii'));
+}
+
+function derOid(oid) {
+    const parts = String(oid).split('.').map(Number);
+    const first = 40 * parts[0] + parts[1];
+    const bytes = [first];
+    for (const part of parts.slice(2)) {
+        const encoded = [part & 0x7f];
+        let value = part >> 7;
+        while (value > 0) {
+            encoded.unshift((value & 0x7f) | 0x80);
+            value >>= 7;
+        }
+        bytes.push(...encoded);
+    }
+    return der(0x06, Buffer.from(bytes));
+}
+
+function derAlgorithmIdentifier() {
+    return derSequence(derOid('1.2.840.113549.1.1.11'), derNull());
+}
+
+function derName(commonName) {
+    return derSequence(
+        derSet(
+            derSequence(
+                derOid('2.5.4.3'),
+                derUtf8String(commonName),
+            ),
+        ),
+    );
+}
+
+function ipv4ToBytes(value) {
+    if (!isValidIpv4(value)) return null;
+    return Buffer.from(String(value).split('.').map(part => Number(part)));
+}
+
+function ipv6ToBytes(value) {
+    if (value !== '::1') return null;
+    return Buffer.from('00000000000000000000000000000001', 'hex');
+}
+
+function derDnsName(value) {
+    return der(0x82, Buffer.from(String(value), 'ascii'));
+}
+
+function derIpAddress(value) {
+    const bytes = ipv4ToBytes(value) || ipv6ToBytes(value);
+    if (!bytes) return null;
+    return der(0x87, bytes);
+}
+
+function derExtension(oid, value, { critical = false } = {}) {
+    return derSequence(
+        derOid(oid),
+        ...(critical ? [derBoolean(true)] : []),
+        derOctetString(value),
+    );
+}
+
+function derSubjectAltName(localIp) {
+    const names = [
+        derDnsName('localhost'),
+        derIpAddress('127.0.0.1'),
+        derIpAddress('::1'),
+    ];
+    if (isValidIpv4(localIp) && localIp !== '127.0.0.1') {
+        names.push(derIpAddress(localIp));
+    }
+    return derSequence(...names.filter(Boolean));
+}
+
+function pemBlock(label, derBuffer) {
+    const body = derBuffer.toString('base64').match(/.{1,64}/g).join('\n');
+    return `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----\n`;
+}
+
+function createSelfSignedCertificate({ localIp, days = 825 }) {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicExponent: 0x10001,
+    });
+    const notBefore = new Date(Date.now() - 5 * 60 * 1000);
+    const notAfter = new Date(notBefore.getTime() + days * 24 * 60 * 60 * 1000);
+    const name = derName('BookManager Local Sharing');
+    const extensions = derSequence(
+        derExtension('2.5.29.19', derSequence(), { critical: true }),
+        derExtension('2.5.29.15', derBitString(Buffer.from([0xa0]), 5), { critical: true }),
+        derExtension('2.5.29.37', derSequence(derOid('1.3.6.1.5.5.7.3.1'))),
+        derExtension('2.5.29.17', derSubjectAltName(localIp)),
+    );
+    const tbsCertificate = derSequence(
+        derExplicit(0, derInteger(2)),
+        derInteger(crypto.randomBytes(16)),
+        derAlgorithmIdentifier(),
+        name,
+        derSequence(derUtcTime(notBefore), derUtcTime(notAfter)),
+        name,
+        publicKey.export({ type: 'spki', format: 'der' }),
+        derExplicit(3, extensions),
+    );
+    const signature = crypto.sign('RSA-SHA256', tbsCertificate, privateKey);
+    const certificate = derSequence(
+        tbsCertificate,
+        derAlgorithmIdentifier(),
+        derBitString(signature),
+    );
+    return {
+        certPem: pemBlock('CERTIFICATE', certificate),
+        keyPem: privateKey.export({ type: 'pkcs1', format: 'pem' }),
+    };
+}
+
 async function ensureSelfSignedCertificate(options = {}, config = {}) {
     const certDir = resolveHttpsCertDir(options, config);
     const localIp = getLocalIp();
     const certPath = path.join(certDir, 'bookmanager-sharing.crt');
     const keyPath = path.join(certDir, 'bookmanager-sharing.key');
-    const opensslConfigPath = path.join(certDir, 'openssl.cnf');
     const manifestPath = path.join(certDir, 'manifest.json');
-    const opensslConfig = buildOpensslConfig(localIp);
+    const certificateProfile = buildOpensslConfig(localIp);
     let shouldGenerate = true;
 
     try {
@@ -100,7 +274,7 @@ async function ensureSelfSignedCertificate(options = {}, config = {}) {
         shouldGenerate = !(
             fs.existsSync(certPath)
             && fs.existsSync(keyPath)
-            && manifest.opensslConfig === opensslConfig
+            && manifest.certificateProfile === certificateProfile
         );
     } catch {
         shouldGenerate = true;
@@ -116,34 +290,20 @@ async function ensureSelfSignedCertificate(options = {}, config = {}) {
     }
 
     fs.mkdirSync(certDir, { recursive: true });
-    fs.writeFileSync(opensslConfigPath, opensslConfig, 'utf-8');
     try {
-        await execFileAsync('openssl', [
-            'req',
-            '-x509',
-            '-newkey',
-            'rsa:2048',
-            '-nodes',
-            '-sha256',
-            '-days',
-            '825',
-            '-keyout',
-            keyPath,
-            '-out',
-            certPath,
-            '-config',
-            opensslConfigPath,
-        ]);
+        const { certPem, keyPem } = createSelfSignedCertificate({ localIp });
+        fs.writeFileSync(certPath, certPem, 'utf-8');
+        fs.writeFileSync(keyPath, keyPem, 'utf-8');
     } catch (error) {
         throw new Error(sharingText(
             config,
             'sharing_https_cert_failed',
-            'HTTPS 인증서 생성에 실패했습니다. openssl을 사용할 수 있는지 확인하세요: {msg}',
+            'HTTPS 인증서 생성에 실패했습니다: {msg}',
             { msg: error.message },
         ));
     }
 
-    fs.writeFileSync(manifestPath, JSON.stringify({ opensslConfig, createdAt: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(manifestPath, JSON.stringify({ certificateProfile, createdAt: new Date().toISOString() }, null, 2));
     return {
         cert: fs.readFileSync(certPath),
         key: fs.readFileSync(keyPath),

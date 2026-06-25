@@ -1,9 +1,9 @@
 export function fontFamilyForConfig(fontFamily = 'Default') {
     if (!fontFamily || fontFamily === 'Default') {
-        return "'Jua', Arial, 'Noto Sans KR', 'Malgun Gothic', 'Yu Gothic UI', 'Segoe UI Emoji', sans-serif";
+        return "'Jua', 'Noto Sans KR', 'Malgun Gothic', 'Segoe UI', 'Yu Gothic UI', 'Segoe UI Emoji', sans-serif";
     }
     const safeFamily = String(fontFamily).replace(/['\\]/g, '');
-    return `'${safeFamily}', 'Segoe UI Emoji', sans-serif`;
+    return `'${safeFamily}', 'Noto Sans KR', 'Malgun Gothic', 'Segoe UI Emoji', sans-serif`;
 }
 
 export function fontVarsForConfig(config = {}) {
