@@ -21,6 +21,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="app.png">
     <link rel="icon" type="image/png" sizes="16x16" href="app.png">
     <link rel="apple-touch-icon" href="app.png">
+    <script>document.documentElement.classList.add('js');</script>
     <script type="application/ld+json">
     {
         "@context": "https://schema.org",
@@ -140,9 +141,32 @@
 
         h1 {
             margin: 0;
-            font-size: clamp(2.5rem, 7vw, 5.5rem);
-            line-height: 1.02;
+            font-size: 5.5rem;
+            line-height: 1.18;
             letter-spacing: 0;
+        }
+
+        .animated-title {
+            display: inline-block;
+            position: relative;
+            max-width: 100%;
+            line-height: 1.18;
+            padding-bottom: 0.18em;
+            overflow: visible;
+            color: #eef3f7;
+        }
+
+        .js .text-animate {
+            opacity: 0;
+        }
+
+        .animated-title .char {
+            line-height: 1.18;
+            color: transparent;
+            background: linear-gradient(180deg, #ffffff 0%, #e5edf2 58%, #b9c8d0 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            will-change: transform;
         }
 
         .lead {
@@ -326,11 +350,33 @@
                 left: -15%;
                 
                 /* 애니메이션은 동일하게 유지 (가상 요소의 새로운 크기와 위치로 작동) */
-                animation: animateHeroBg 60s ease-in-out infinite alternate;
+                animation:
+                    moveHeroBg 60s ease-in-out infinite alternate,
+                    blurHeroBg 4s ease-in-out infinite alternate;
             }
 
             .button {
                 width: 100%;
+            }
+
+            h1 {
+                font-size: 3.4rem;
+            }
+        }
+
+        @media (max-width: 420px) {
+            h1 {
+                font-size: 2.65rem;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .hero::before {
+                animation: none;
+            }
+
+            .animated-title {
+                opacity: 1;
             }
         }
     </style>
@@ -339,7 +385,7 @@
     <header class="hero">
         <div class="hero-inner">
             <p class="eyebrow">Windows/macOS desktop app for comics and ebooks</p>
-            <h1>BookManager</h1>
+            <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
             <p class="lead">CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. Kavita, Komga, YACReader, Panels, Calibre, KOReader 같은 서버와 뷰어에 맞춰 책 파일을 관리할 수 있습니다.</p>
             <div class="actions">
                 <a class="button primary" href="https://github.com/dongkkase/BookManager/releases">다운로드</a>
@@ -358,7 +404,7 @@
 
     <main>
         <section>
-            <h2>만화책 파일 정리</h2>
+            <h2 class="text-animate">만화책 파일 정리</h2>
             <p class="section-lead">BookManager는 만화책 압축 파일을 라이브러리와 뷰어에서 읽기 좋은 형태로 정리합니다. 압축 파일 구조 정리, 평탄화, 내부 이미지 파일명 변경, 누락 페이지 확인을 지원합니다.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -377,7 +423,7 @@
         </section>
 
         <section>
-            <h2>전자책 라이브러리 관리</h2>
+            <h2 class="text-animate">전자책 라이브러리 관리</h2>
             <p class="section-lead">EPUB과 PDF도 라이브러리 단위로 스캔하고 검색할 수 있습니다. 표지, 제목, 작가, 출판사, ISBN, 언어, 설명 같은 정보를 정리해 여러 전자책 환경에서 활용할 수 있습니다.</p>
             <div class="split">
                 <div class="list-panel">
@@ -402,7 +448,7 @@
         </section>
 
         <section>
-            <h2>메타데이터 검색</h2>
+            <h2 class="text-animate">메타데이터 검색</h2>
             <p class="section-lead">리디북스, 알라딘, Google Books, AniList, Comic Vine, Amazon 등 국내외 소스를 통해 책 정보를 검색하고 편집할 수 있습니다. 만화책과 전자책을 한 라이브러리 안에서 관리하는 사용자를 기준으로 설계했습니다.</p>
             <div class="keywords" aria-label="주요 검색어">
                 <span class="keyword">만화책 파일 정리 프로그램</span>
@@ -416,12 +462,12 @@
         </section>
 
         <section>
-            <h2>지원 환경</h2>
+            <h2 class="text-animate">지원 환경</h2>
             <p class="section-lead">BookManager는 Windows와 macOS에서 사용할 수 있으며, 앱 UI는 한국어, 영어, 일본어를 지원합니다.</p>
         </section>
 
         <section>
-            <h2>설치</h2>
+            <h2 class="text-animate">설치</h2>
             <p class="section-lead">릴리즈 페이지에서 Windows 또는 macOS용 파일을 내려받아 실행합니다. 언어는 앱의 환경 설정에서 한국어, 영어, 일본어 중 선택할 수 있습니다. macOS에서 처음 실행할 때 보안 경고가 표시되면 앱의 격리 속성을 제거한 뒤 실행할 수 있습니다.</p>
             <p class="note">프로그램은 로컬 파일을 직접 정리하는 도구입니다. 대량 작업을 실행하기 전에는 대상 목록과 미리보기를 확인하세요.</p>
         </section>
@@ -430,5 +476,66 @@
     <footer>
         <span>BookManager is released under the MIT License.</span>
     </footer>
+    <script>
+        function split(el) {
+            const nodes = Array.from(el.childNodes);
+            el.innerHTML = '';
+            const chars = [];
+
+            nodes.forEach(node => {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    node.textContent.split('').forEach(ch => {
+                        const wrap = document.createElement('span');
+                        wrap.style.cssText = ch === ' '
+                            ? 'display:inline-block; overflow:hidden; vertical-align:bottom; white-space:pre; line-height:1.18; padding-bottom:0.16em; margin-bottom:-0.16em'
+                            : 'display:inline-block; overflow:hidden; vertical-align:bottom; line-height:1.18; padding-bottom:0.16em; margin-bottom:-0.16em';
+
+                        const s = document.createElement('span');
+                        s.className = 'char';
+                        s.textContent = ch;
+                        wrap.appendChild(s);
+                        el.appendChild(wrap);
+                        chars.push(s);
+                    });
+                } else if (node.nodeName === 'BR') {
+                    el.appendChild(document.createElement('br'));
+                }
+            });
+
+            return chars;
+        }
+
+        function anim_01(el) {
+            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            el.style.opacity = '1';
+            if (reduceMotion) return;
+
+            const chars = split(el);
+            chars.forEach((ch, i) => {
+                ch.style.cssText = 'display:inline-block; line-height:1.18; transform:translateY(112%); transition:none';
+                setTimeout(() => {
+                    ch.style.transition = `transform 0.55s ease ${i * 45}ms`;
+                    ch.style.transform = 'translateY(0)';
+                }, 20);
+            });
+        }
+
+        const animatedText = document.querySelectorAll('.text-animate');
+
+        if ('IntersectionObserver' in window) {
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        anim_01(entry.target);
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.3 });
+
+            animatedText.forEach(el => observer.observe(el));
+        } else {
+            animatedText.forEach(anim_01);
+        }
+    </script>
 </body>
 </html>
