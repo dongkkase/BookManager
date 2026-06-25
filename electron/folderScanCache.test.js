@@ -200,6 +200,40 @@ test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한�
     }
 });
 
+test('폴더 스캔은 표지 추출만 건너뛰고 ComicInfo는 유지할 수 있다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-skip-cover-scan-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const archivePath = path.join(libraryDir, 'Metadata Only Book.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(archivePath, '001.png', PNG_1X1);
+        await replaceZipEntry(
+            archivePath,
+            'ComicInfo.xml',
+            '<ComicInfo><Title>Metadata Only Title</Title><Series>Metadata Only Series</Series><Volume>7</Volume></ComicInfo>',
+        );
+
+        const files = await scanFolder(libraryDir, {
+            thumbnailDir,
+            sevenZExe: '',
+            skipCoverExtraction: true,
+        });
+
+        assert.equal(files.length, 1);
+        assert.equal(files[0].title, 'Metadata Only Title');
+        assert.equal(files[0].series, 'Metadata Only Series');
+        assert.equal(files[0].has_metadata, true);
+        assert.equal(files[0].cover, '');
+        assert.equal(files[0].thumb_path, '');
+        assert.equal(fs.existsSync(thumbnailDir), false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔의 포맷은 ComicInfo Format 값만 사용한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-format-'));
     const libraryDir = path.join(root, 'library');

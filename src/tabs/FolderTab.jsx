@@ -81,6 +81,16 @@ import {
 import { emitStatusState } from '../statusState';
 import '../styles/FolderTab.css';
 
+const VISIBLE_COVER_REQUEST_LIMIT = 32;
+const COVER_PREVIEW_QUEUE_LIMIT = 96;
+const COVER_PREVIEW_CONCURRENCY = 2;
+
+const isPathInsideLibrary = (filePath = '', libraryPath = '') => {
+  const pathKey = normalizeLibraryKey(filePath);
+  const libraryKey = normalizeLibraryKey(libraryPath);
+  return Boolean(pathKey && libraryKey && (pathKey === libraryKey || pathKey.startsWith(`${libraryKey}/`)));
+};
+
 function FolderTab({ config, saveConfig, t, showToast }) {
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
   // --- 폴더 상태 ---
@@ -110,6 +120,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const internalFileActionRef = useRef(false);
   const watchedMtimeRef = useRef(null);
   const lastFolderPanelRef = useRef('list');
+  const coverPreviewQueueRef = useRef([]);
+  const coverPreviewQueuedRef = useRef(new Set());
+  const coverPreviewActivePathsRef = useRef(new Set());
+  const coverPreviewAttemptedRef = useRef(new Set());
+  const coverPreviewActiveCountRef = useRef(0);
+  const coverPreviewFolderRef = useRef('');
 
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -218,6 +234,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     fastInitial: true,
   }), [includeSubfolders, enableDupCheck, config?.dup_check_folders]);
 
+  useEffect(() => {
+    coverPreviewFolderRef.current = selectedFolderPath;
+    coverPreviewQueueRef.current = [];
+    coverPreviewQueuedRef.current.clear();
+    coverPreviewActivePathsRef.current.clear();
+    coverPreviewAttemptedRef.current.clear();
+    coverPreviewActiveCountRef.current = 0;
+  }, [selectedFolderPath]);
+
   // 파일 데이터 가져오기 (캐시에서)
   const getCurrentFileData = useCallback(() => {
     if (!selectedFolderPath) return [];
@@ -267,6 +292,75 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       metadataMissingOnly,
     });
   }, [getCurrentFileData, isLibrarySearchActive, librarySearchResults, metadataMissingOnly, searchQuery]);
+
+  const pumpCoverPreviewQueue = useCallback(() => {
+    if (!selectedFolderPath || isLibrarySearchActive) return;
+    const loadPreview = window.electronAPI?.getFilePreview;
+    if (!loadPreview) return;
+
+    while (
+      coverPreviewActiveCountRef.current < COVER_PREVIEW_CONCURRENCY
+      && coverPreviewQueueRef.current.length > 0
+    ) {
+      const file = coverPreviewQueueRef.current.shift();
+      const filePath = file?.full_path || file?.path;
+      if (!filePath) continue;
+      coverPreviewActiveCountRef.current += 1;
+      coverPreviewActivePathsRef.current.add(filePath);
+      coverPreviewAttemptedRef.current.add(filePath);
+
+      loadPreview(filePath)
+        .then(result => {
+          if (coverPreviewFolderRef.current !== selectedFolderPath) return;
+          if (!result?.success || !result.file?.cover) return;
+          updateCachedFiles(selectedFolderPath, scanOptions, [{
+            ...file,
+            ...result.file,
+            path: file.path,
+            full_path: file.full_path || result.file.full_path || result.file.path,
+          }]);
+        })
+        .catch(() => {})
+        .finally(() => {
+          coverPreviewActivePathsRef.current.delete(filePath);
+          coverPreviewQueuedRef.current.delete(filePath);
+          coverPreviewActiveCountRef.current = Math.max(0, coverPreviewActiveCountRef.current - 1);
+          pumpCoverPreviewQueue();
+        });
+    }
+  }, [isLibrarySearchActive, scanOptions, selectedFolderPath, updateCachedFiles]);
+
+  const handleVisibleFilesChange = useCallback((visibleFiles = []) => {
+    if (!selectedFolderPath || isLibrarySearchActive) return;
+    const nextItems = (Array.isArray(visibleFiles) ? visibleFiles : [])
+      .filter(file => {
+        const filePath = file?.full_path || file?.path;
+        return filePath
+          && !file.cover
+          && !coverPreviewQueuedRef.current.has(filePath)
+          && !coverPreviewAttemptedRef.current.has(filePath);
+      })
+      .slice(0, VISIBLE_COVER_REQUEST_LIMIT);
+    if (nextItems.length === 0) return;
+
+    const existing = coverPreviewQueueRef.current;
+    const seen = new Set();
+    const merged = [...nextItems, ...existing]
+      .filter(file => {
+        const filePath = file?.full_path || file?.path;
+        if (!filePath || seen.has(filePath)) return false;
+        seen.add(filePath);
+        return true;
+      })
+      .slice(0, COVER_PREVIEW_QUEUE_LIMIT);
+
+    coverPreviewQueuedRef.current = new Set([
+      ...Array.from(coverPreviewActivePathsRef.current),
+      ...merged.map(file => file.full_path || file.path),
+    ]);
+    coverPreviewQueueRef.current = merged;
+    pumpCoverPreviewQueue();
+  }, [isLibrarySearchActive, pumpCoverPreviewQueue, selectedFolderPath]);
   const savedLayouts = useMemo(
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
@@ -1436,23 +1530,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         }
         showToast?.(t('msg_move_lib_done', [result.successCount]));
         clearSelection();
+        const completedMoves = Array.isArray(result.completedMoves) ? result.completedMoves : [];
         const affectedLibraries = [...new Set([
           targetLibrary,
-          ...libraries.filter(library => executablePlans.some(plan => (
-            plan.src === library
-            || plan.src.startsWith(`${library}/`)
-            || plan.src.startsWith(`${library}\\`)
+          ...libraries.filter(library => completedMoves.some(move => (
+            isPathInsideLibrary(move.src, library) || isPathInsideLibrary(move.dest, library)
           ))),
         ])];
         emitLibraryMoveProgress(t('library_move_status_indexing'), 78, targetLibrary, {
           libraryPhase: 'indexing',
           slideItemReady: false,
         });
-        await window.electronAPI?.updateFolderIndex?.(affectedLibraries, {
-          mode: 'smart',
-          priorityFolder: selectedFolderPath,
-          language: config?.language || config?.lang || 'ko',
+        const indexResult = await window.electronAPI?.applyLibraryMoveIndex?.({
+          completedMoves,
+          libraries,
         });
+        if (indexResult?.success === false) throw new Error(indexResult.message || t('msg_failed'));
         await refreshLibraryScanStates(affectedLibraries);
         emitLibraryMoveProgress(t('library_move_status_refreshing'), 94, targetLibrary);
         if (folderPlan) {
@@ -2093,6 +2186,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       onDragSelect: selectPaths,
       onContextMenu: showFileContextMenu,
       onClearSelection: clearSelection,
+      onVisibleFilesChange: handleVisibleFilesChange,
       onScroll: event => {
         viewScrollPositionsRef.current[viewMode] = event.currentTarget.scrollTop;
       },
@@ -2102,7 +2196,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 

@@ -1330,10 +1330,10 @@ body.is-reordering-table-column {
 }
 
 .thumbnail-item:hover .thumb-image {
-  box-shadow:
+  /* box-shadow:
     0 2px 0 #111,
     0 0 0 2px rgba(49, 168, 255, 0.32) inset,
-    0 0 0 1px rgba(49, 168, 255, 0.42);
+    0 0 0 1px rgba(49, 168, 255, 0.42); */
 }
 
 .thumbnail-item.active-selection .thumbnail-cover-card {
@@ -1354,9 +1354,9 @@ body.is-reordering-table-column {
   background: #1c1c1c;
   border: 1px solid #111;
   border-radius: 5px;
-  box-shadow:
+  /* box-shadow:
     0 2px 0 #111,
-    0 0 0 2px rgba(255, 255, 255, 0.08) inset;
+    0 0 0 2px rgba(255, 255, 255, 0.08) inset; */
   overflow: hidden;
 }
 

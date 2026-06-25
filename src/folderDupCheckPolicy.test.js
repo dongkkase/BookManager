@@ -14,3 +14,13 @@ test('중복 검사 토글은 라이브러리 재인덱싱을 시작하지 않�
     assert.doesNotMatch(block, /setPreparingDuplicates\(true\)/);
     assert.match(block, /enableDupCheck:\s*nextValue/);
 });
+
+test('라이브러리 이동 완료 후 전체 인덱싱 대신 이동 결과만 증분 반영한다', () => {
+    const start = source.indexOf('const moveSelectedToLibrary = useCallback');
+    assert.notEqual(start, -1);
+    const end = source.indexOf('const openLibraryMoveDialog', start);
+    const block = source.slice(start, end);
+    assert.match(block, /completedMoves/);
+    assert.match(block, /applyLibraryMoveIndex/);
+    assert.doesNotMatch(block, /updateFolderIndex/);
+});

@@ -2227,6 +2227,14 @@ function isPathInsideOrEqual(childPath, parentPath) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function findContainingLibraryPath(filePath, libraryPaths = []) {
+  if (!filePath) return '';
+  const normalizedPath = path.resolve(filePath);
+  return libraryPaths
+    .filter(libraryPath => isPathInsideOrEqual(normalizedPath, libraryPath))
+    .sort((left, right) => right.length - left.length)[0] || '';
+}
+
 function thumbnailUrlForSearchResult(thumbnailPath) {
   if (!thumbnailPath || !fs.existsSync(thumbnailPath)) return '';
   let version = '';
@@ -4042,6 +4050,86 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // 8. 라이브러리로 파일 이동 처리 (충돌 해결 지원)
   ipcMain.handle('fs:executeLibraryMove', async (_event, movePlans) => {
     return executeLibraryMoveAsync(movePlans);
+  });
+
+  ipcMain.handle('folder:applyLibraryMoveIndex', async (_event, payload = {}) => {
+    const completedMoves = Array.isArray(payload.completedMoves) ? payload.completedMoves : [];
+    if (completedMoves.length === 0) {
+      return { success: true, skipped: true, movedCount: 0 };
+    }
+
+    const config = configManager.getConfig() || {};
+    const libraryPaths = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : [...(config.libraries || []), ...(config.dup_check_folders || [])])
+      .filter(Boolean)
+      .map(folderPath => path.resolve(folderPath))
+      .filter(folderPath => fs.existsSync(folderPath)))];
+    if (libraryPaths.length === 0) {
+      return { success: true, skipped: true, movedCount: completedMoves.length };
+    }
+
+    const sourcePaths = [];
+    const sourcePrefixes = [];
+    const targetEntries = [];
+    const fileInfoMoves = [];
+    const touchedLibraries = new Set();
+
+    for (const move of completedMoves) {
+      const sourcePath = move?.src ? path.resolve(move.src) : '';
+      const destinationPath = move?.dest ? path.resolve(move.dest) : '';
+      if (!sourcePath || !destinationPath) continue;
+
+      const sourceLibrary = findContainingLibraryPath(sourcePath, libraryPaths);
+      const destinationLibrary = findContainingLibraryPath(destinationPath, libraryPaths);
+      let destinationStats = null;
+      try {
+        destinationStats = fs.statSync(destinationPath);
+      } catch {
+        destinationStats = null;
+      }
+      const recursive = destinationStats?.isDirectory?.() === true;
+
+      if (sourceLibrary) {
+        touchedLibraries.add(sourceLibrary);
+        if (recursive) sourcePrefixes.push(sourcePath);
+        else sourcePaths.push(sourcePath);
+      }
+
+      if (!destinationLibrary || !destinationStats) continue;
+      touchedLibraries.add(destinationLibrary);
+      fileInfoMoves.push({ src: sourcePath, dest: destinationPath, recursive });
+
+      const filePaths = recursive
+        ? await scanArchivePaths(destinationPath)
+        : (
+            destinationStats.isFile()
+            && INDEX_EXTENSIONS.has(path.extname(destinationPath).toLowerCase())
+              ? [destinationPath]
+              : []
+          );
+      if (filePaths.length === 0) continue;
+      targetEntries.push(...await buildArchiveIndexEntries(filePaths, destinationLibrary));
+    }
+
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const result = await db.applyLibraryMoveIndexChanges({
+        sourcePaths,
+        sourcePrefixes,
+        targetEntries,
+        fileInfoMoves,
+        touchedLibraries: [...touchedLibraries],
+      });
+      return {
+        success: true,
+        movedCount: completedMoves.length,
+        indexedCount: targetEntries.length,
+        ...result,
+      };
+    } finally {
+      await db.close();
+    }
   });
 
   // 9. 파일명에서 코어 시리즈명 추출

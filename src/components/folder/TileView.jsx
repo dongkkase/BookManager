@@ -24,6 +24,7 @@ const TileView = ({
   onContextMenu,
   onScroll,
   onClearSelection,
+  onVisibleFilesChange,
   sortKey = 'name',
   sortOrder = 'asc',
   groupKey = 'none',
@@ -66,6 +67,19 @@ const TileView = ({
 	    });
 	    return map;
 	  }, [groups]);
+    const flatItems = useMemo(() => groups.flatMap(group => group.files), [groups]);
+    const visibleCoverItems = useMemo(() => {
+        if (shouldVirtualize) return virtualFiles;
+        if (flatItems.length === 0) return [];
+        const columns = Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gap) / (minColumnWidth + gap)));
+        const firstRow = Math.max(0, Math.floor((viewport.scrollTop || 0) / rowHeight) - 2);
+        const rowCount = Math.ceil((viewport.height || 600) / rowHeight) + 4;
+        return flatItems.slice(firstRow * columns, (firstRow + rowCount) * columns);
+    }, [flatItems, gap, minColumnWidth, padding, rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, viewport.width, virtualFiles]);
+
+    useEffect(() => {
+        onVisibleFilesChange?.(visibleCoverItems);
+    }, [onVisibleFilesChange, visibleCoverItems]);
 
 	  useEffect(() => {
 	    const container = containerRef.current;

@@ -48,6 +48,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     assertInventory('ipcHandlers', [
         ['설정 저장 시 메인 프로세스 언어 갱신', 'setLanguage(nextLang)'],
         ['등록 라이브러리 검색 IPC', "folder:searchLibraryFiles"],
+        ['라이브러리 이동 증분 인덱스 IPC', "folder:applyLibraryMoveIndex"],
     ]);
     assertInventory('folder', [
         ['폴더 검색', 'value={searchQuery}'],
@@ -65,6 +66,17 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['삭제할 레이아웃 선택', 'id="layout-delete-select"'],
         ['경로로 이동', "t('fm_title')"],
         ['경로 이동 단축키', "isShortcutKey(event, 'g')"],
+        ['보이는 항목 표지 지연 로드 큐', 'handleVisibleFilesChange'],
+        ['표지 지연 로드 동시성 제한', 'COVER_PREVIEW_CONCURRENCY'],
+    ]);
+    assertInventory('fileTable', [
+        ['리스트 보이는 항목 표지 요청', 'onVisibleFilesChange?.(visibleCoverRows)'],
+    ]);
+    assertInventory('thumbnailView', [
+        ['썸네일 보이는 항목 표지 요청', 'onVisibleFilesChange?.(visibleCoverItems)'],
+    ]);
+    assertInventory('tileView', [
+        ['타일 보이는 항목 표지 요청', 'onVisibleFilesChange?.(visibleCoverItems)'],
     ]);
     assertInventory('organizer', [
         ['구조 정리 출력 경로', 'item.out_path'],

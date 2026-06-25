@@ -25,6 +25,7 @@ const FileTableView = forwardRef(({
   onSelectAll,
   onDeselectAll,
   onClearSelection,
+  onVisibleFilesChange,
   onColumnLayoutChange,
   columnLayout,
   scale = 50,
@@ -97,6 +98,18 @@ const FileTableView = forwardRef(({
         });
         return map;
     }, [groupedData]);
+    const flatRows = useMemo(() => groupedData.flatMap(group => group.files), [groupedData]);
+    const visibleCoverRows = useMemo(() => {
+        if (shouldVirtualize) return virtualVisibleRows;
+        if (flatRows.length === 0) return [];
+        const firstIndex = Math.max(0, Math.floor((scrollTop || 0) / rowHeight) - 8);
+        const visibleCount = Math.ceil((viewportHeight || 600) / rowHeight) + 16;
+        return flatRows.slice(firstIndex, firstIndex + visibleCount);
+    }, [flatRows, rowHeight, scrollTop, shouldVirtualize, viewportHeight, virtualVisibleRows]);
+
+    useEffect(() => {
+        onVisibleFilesChange?.(visibleCoverRows);
+    }, [onVisibleFilesChange, visibleCoverRows]);
 
   const formatSize = (bytes) => {
     if (!bytes || bytes === 0) return '-';

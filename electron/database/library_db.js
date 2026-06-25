@@ -547,6 +547,179 @@ export class LibraryDB {
         });
     }
 
+    async applyLibraryMoveIndexChanges(changes = {}) {
+        return this.withLock(async () => {
+            const db = this.getConnection();
+            const sourcePaths = (changes.sourcePaths || []).filter(Boolean).map(filePath => path.resolve(filePath));
+            const sourcePrefixes = (changes.sourcePrefixes || []).filter(Boolean).map(folderPath => path.resolve(folderPath));
+            const targetEntries = (changes.targetEntries || [])
+                .map(entry => {
+                    const fullPath = entry.full_path || entry.file_path || entry.path || '';
+                    const targetFolder = entry.target_folder || entry.targetFolder || '';
+                    if (!fullPath || !targetFolder) return null;
+                    return {
+                        full_path: path.resolve(fullPath),
+                        target_folder: path.resolve(targetFolder),
+                        name: entry.name || path.basename(fullPath),
+                        size: Number(entry.size) || 0,
+                        mtime: Number(entry.mtime) || 0,
+                    };
+                })
+                .filter(Boolean);
+            const fileInfoMoves = (changes.fileInfoMoves || [])
+                .map(move => ({
+                    src: move?.src ? path.resolve(move.src) : '',
+                    dest: move?.dest ? path.resolve(move.dest) : '',
+                    recursive: move?.recursive === true,
+                }))
+                .filter(move => move.src && move.dest);
+            const touchedLibraries = [...new Set([
+                ...(changes.touchedLibraries || []),
+                ...targetEntries.map(entry => entry.target_folder),
+            ].filter(Boolean).map(folderPath => path.resolve(folderPath)))];
+            const checkedAt = changes.checkedAt || new Date().toISOString();
+
+            const deleteTargetExact = db.prepare('DELETE FROM dup_target_index WHERE full_path = ?');
+            const deleteTargetPrefix = db.prepare(`
+                DELETE FROM dup_target_index
+                WHERE full_path = ? OR full_path LIKE ? ESCAPE '\\'
+            `);
+            const upsertTarget = db.prepare(`
+                INSERT INTO dup_target_index (full_path, target_folder, name, size, mtime)
+                VALUES (@full_path, @target_folder, @name, @size, @mtime)
+                ON CONFLICT(full_path) DO UPDATE SET
+                    target_folder = excluded.target_folder,
+                    name = excluded.name,
+                    size = excluded.size,
+                    mtime = excluded.mtime
+            `);
+            const selectFileExact = db.prepare('SELECT * FROM files WHERE path = ?');
+            const selectFilePrefix = db.prepare(`
+                SELECT * FROM files
+                WHERE path = ? OR path LIKE ? ESCAPE '\\'
+            `);
+            const deleteFile = db.prepare('DELETE FROM files WHERE path = ?');
+            const upsertFile = db.prepare(`
+                INSERT INTO files (${FILE_COLUMNS.join(', ')})
+                VALUES (${FILE_COLUMNS.map(column => `@${column}`).join(', ')})
+                ON CONFLICT(path) DO UPDATE SET ${FILE_COLUMNS.slice(1).map(column => `${column} = excluded.${column}`).join(', ')}
+            `);
+            const insertFileStub = db.prepare(`
+                INSERT OR IGNORE INTO files (${FILE_COLUMNS.join(', ')})
+                VALUES (${FILE_COLUMNS.map(column => `@${column}`).join(', ')})
+            `);
+            const countTargets = db.prepare('SELECT COUNT(*) AS count FROM dup_target_index WHERE target_folder = ?');
+            const selectState = db.prepare('SELECT * FROM library_scan_state WHERE library_path = ?');
+            const upsertState = db.prepare(`
+                INSERT INTO library_scan_state (${LIBRARY_SCAN_STATE_COLUMNS.join(', ')})
+                VALUES (${LIBRARY_SCAN_STATE_COLUMNS.map(column => `@${column}`).join(', ')})
+                ON CONFLICT(library_path) DO UPDATE SET ${LIBRARY_SCAN_STATE_COLUMNS.slice(1).map(column => `${column} = excluded.${column}`).join(', ')}
+            `);
+
+            const prefixLike = folderPath => `${escapeLikeValue(`${folderPath}${path.sep}`)}%`;
+            const fileStat = filePath => {
+                try {
+                    const stat = fs.statSync(filePath);
+                    return { size: stat.size, mtime: stat.mtimeMs };
+                } catch {
+                    return { size: 0, mtime: 0 };
+                }
+            };
+            const fileValues = (record = {}, filePath, stat = fileStat(filePath)) => {
+                const values = Object.fromEntries(FILE_COLUMNS.map(column => [column, record[column] ?? '']));
+                values.path = filePath;
+                values.mtime = stat.mtime;
+                values.size = stat.size;
+                values.ext = path.extname(filePath).toLowerCase();
+                if (!values.title) values.title = path.parse(filePath).name;
+                return values;
+            };
+            const stateValues = libraryPath => {
+                const previous = selectState.get(libraryPath) || {};
+                const count = Number(countTargets.get(libraryPath)?.count || 0);
+                const previousCount = beforeCounts.get(libraryPath) ?? Number(previous.indexed_count || 0);
+                const addedCount = Math.max(0, count - previousCount);
+                const removedCount = Math.max(0, previousCount - count);
+                const rootMtime = (() => {
+                    try {
+                        return fs.statSync(libraryPath).mtimeMs;
+                    } catch {
+                        return 0;
+                    }
+                })();
+                return {
+                    library_path: libraryPath,
+                    status: previous.last_scanned_at ? 'ready' : (previous.status || 'idle'),
+                    fingerprint: '',
+                    root_mtime: rootMtime,
+                    file_count: count,
+                    indexed_count: count,
+                    added_count: addedCount,
+                    updated_count: 0,
+                    removed_count: removedCount,
+                    last_scanned_at: previous.last_scanned_at || '',
+                    last_checked_at: checkedAt,
+                    last_changed_at: checkedAt,
+                    last_error: '',
+                    scan_reason: 'move',
+                };
+            };
+
+            const beforeCounts = new Map(touchedLibraries.map(libraryPath => [
+                libraryPath,
+                Number(countTargets.get(libraryPath)?.count || 0),
+            ]));
+            const result = {
+                removedTargetCount: 0,
+                savedTargetCount: 0,
+                movedFileInfoCount: 0,
+                stubbedFileInfoCount: 0,
+                libraryCount: touchedLibraries.length,
+            };
+
+            db.transaction(() => {
+                for (const filePath of sourcePaths) {
+                    result.removedTargetCount += deleteTargetExact.run(filePath).changes;
+                }
+                for (const folderPath of sourcePrefixes) {
+                    result.removedTargetCount += deleteTargetPrefix.run(folderPath, prefixLike(folderPath)).changes;
+                }
+                for (const entry of targetEntries) {
+                    result.savedTargetCount += upsertTarget.run(entry).changes;
+                }
+                for (const move of fileInfoMoves) {
+                    const rows = move.recursive
+                        ? selectFilePrefix.all(move.src, prefixLike(move.src))
+                        : [selectFileExact.get(move.src)].filter(Boolean);
+                    for (const row of rows) {
+                        const sourcePath = path.resolve(row.path);
+                        const destinationPath = move.recursive
+                            ? path.resolve(move.dest, path.relative(move.src, sourcePath))
+                            : move.dest;
+                        if (sourcePath !== destinationPath) deleteFile.run(destinationPath);
+                        deleteFile.run(row.path);
+                        upsertFile.run(fileValues(row, destinationPath));
+                        result.movedFileInfoCount += 1;
+                    }
+                }
+                for (const entry of targetEntries) {
+                    const insertResult = insertFileStub.run(fileValues({
+                        title: path.parse(entry.full_path).name,
+                    }, entry.full_path, {
+                        size: entry.size,
+                        mtime: entry.mtime,
+                    }));
+                    result.stubbedFileInfoCount += insertResult.changes;
+                }
+                for (const libraryPath of touchedLibraries) {
+                    upsertState.run(stateValues(libraryPath));
+                }
+            })();
+
+            return result;
+        });
+    }
+
     normalizeLibraryScanState(record = {}) {
         const libraryPath = record.library_path || record.libraryPath || record.path || '';
         return {

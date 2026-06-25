@@ -509,7 +509,7 @@ async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailD
   return thumbnailPath;
 }
 
-async function extractWith7Zip(filePath, sevenZExe) {
+async function extractWith7Zip(filePath, sevenZExe, options = {}) {
   if (!sevenZExe) return {};
   const { stdout } = await execFileAsync(sevenZExe, ['l', '-slt', filePath], {
     encoding: 'utf8',
@@ -536,7 +536,7 @@ async function extractWith7Zip(filePath, sevenZExe) {
     });
     Object.assign(result, parseComicInfo(extracted.stdout.toString('utf8')));
   }
-  if (imageName) {
+  if (!options.skipCoverExtraction && imageName) {
     const extracted = await execFileAsync(sevenZExe, ['e', '-so', filePath, imageName], {
       encoding: 'buffer',
       maxBuffer: MAX_INLINE_COVER_BYTES,
@@ -549,7 +549,7 @@ async function extractWith7Zip(filePath, sevenZExe) {
   return result;
 }
 
-async function extractEpubMetadata(filePath) {
+async function extractEpubMetadata(filePath, options = {}) {
   const entries = await listZipEntriesFromFile(filePath);
   const containerEntry = findArchiveEntry(entries, 'META-INF/container.xml');
   const result = {};
@@ -592,7 +592,7 @@ async function extractEpubMetadata(filePath) {
     result.format = metadata.Format || 'Novel';
   }
 
-  const coverEntry = findEpubCoverEntry(entries, opfPath, opfXml);
+  const coverEntry = options.skipCoverExtraction ? null : findEpubCoverEntry(entries, opfPath, opfXml);
   if (coverEntry) {
     const imageBuffer = await readZipEntryFromFile(filePath, coverEntry, {
       maxBytes: MAX_INLINE_COVER_BYTES,
@@ -626,7 +626,7 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
         });
         if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
       }
-      if (imageEntry) {
+      if (!options.skipCoverExtraction && imageEntry) {
         const imageBuffer = await readZipEntryFromFile(filePath, imageEntry, {
           maxBytes: MAX_INLINE_COVER_BYTES,
           maxCompressedBytes: MAX_INLINE_COVER_BYTES,
@@ -638,9 +638,9 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
         }
       }
     } else if (['.rar', '.cbr', '.7z', '.cb7'].includes(ext)) {
-      result = await extractWith7Zip(filePath, options.sevenZExe);
+      result = await extractWith7Zip(filePath, options.sevenZExe, options);
     } else if (ext === '.epub') {
-      result = await extractEpubMetadata(filePath);
+      result = await extractEpubMetadata(filePath, options);
     }
 
     if (result.imageBuffer) {
@@ -1028,6 +1028,7 @@ async function createFileData(fullPath, stats, options = {}) {
       mtime: stats.mtimeMs,
       size: stats.size,
       thumbnailEncoder: options.thumbnailEncoder,
+      skipCoverExtraction: options.skipCoverExtraction === true,
     });
     archiveMeta = {
       ...(cacheValid ? archiveMeta : {}),
@@ -1181,6 +1182,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     sevenZExe,
     force = false,
     skipArchiveExtraction = false,
+    skipCoverExtraction = false,
     suppressEvents = false,
     thumbnailEncoder,
     lang = 'ko',
@@ -1265,6 +1267,7 @@ export async function scanFolder(folderPath, options = {}, event) {
               sevenZExe,
               force,
               skipArchiveExtraction,
+              skipCoverExtraction,
               thumbnailEncoder,
             });
             throwIfTaskCancelled(options);

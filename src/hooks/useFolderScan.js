@@ -39,6 +39,25 @@ export function useFolderScan(t) {
     fileDataCacheRef.current = fileDataCache;
   }, [fileDataCache]);
 
+  const mergeFilesPreservingCover = useCallback((incomingFiles = [], currentFiles = []) => {
+    const currentByPath = new Map(
+      (Array.isArray(currentFiles) ? currentFiles : [])
+        .filter(file => file?.path)
+        .map(file => [file.path, file])
+    );
+
+    return (Array.isArray(incomingFiles) ? incomingFiles : []).map(file => {
+      const current = currentByPath.get(file?.path);
+      if (!current) return file;
+      return {
+        ...current,
+        ...file,
+        cover: file.cover || current.cover || '',
+        thumb_path: file.thumb_path || current.thumb_path || '',
+      };
+    });
+  }, []);
+
   const getCacheKey = useCallback((folderPath, options = {}) => {
     const includeSubfolders = options.includeSubfolders ?? true;
     const enableDupCheck = options.enableDupCheck ?? false;
@@ -111,6 +130,7 @@ export function useFolderScan(t) {
             ...requestOptions,
             force: false,
             skipArchiveExtraction: false,
+            skipCoverExtraction: true,
             suppressEvents: true,
             background: true,
             reportTaskProgress: false,
@@ -119,7 +139,7 @@ export function useFolderScan(t) {
             if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
             setFileDataCache(prev => ({
               ...prev,
-              [cacheKey]: files || [],
+              [cacheKey]: mergeFilesPreservingCover(files || [], prev[cacheKey] || []),
             }));
             setScanProgress(100);
             const count = files?.length || 0;
@@ -167,7 +187,7 @@ export function useFolderScan(t) {
 
     activeScansRef.current.set(cacheKey, scanPromise);
     return scanPromise;
-  }, [getCacheKey, t]);
+  }, [getCacheKey, mergeFilesPreservingCover, t]);
 
   // --- 스캔 취소 ---
   const cancelScan = useCallback(() => {
@@ -262,9 +282,12 @@ export function useFolderScan(t) {
         const index = currentFiles.findIndex(file => file.path === data.file.path);
         if (index < 0) return prev;
         const nextFiles = [...currentFiles];
+        const current = nextFiles[index];
         nextFiles[index] = {
-          ...nextFiles[index],
+          ...current,
           ...data.file,
+          cover: data.file.cover || current.cover || '',
+          thumb_path: data.file.thumb_path || current.thumb_path || '',
         };
         return {
           ...prev,
@@ -298,7 +321,7 @@ export function useFolderScan(t) {
       if (folderPath && files && cacheKey) {
         setFileDataCache(prev => ({
           ...prev,
-          [cacheKey]: files,
+          [cacheKey]: mergeFilesPreservingCover(files, prev[cacheKey] || []),
         }));
         setScanProgress(100);
         setScanning(false);
@@ -341,7 +364,7 @@ export function useFolderScan(t) {
       if (removeComplete) removeComplete();
       if (removeError) removeError();
     };
-  }, [t]);
+  }, [mergeFilesPreservingCover, t]);
 
   return {
     scanning,

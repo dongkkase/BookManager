@@ -292,6 +292,74 @@ test('대상 인덱스 증분 동기화는 추가·수정·삭제만 반영한�
     }
 });
 
+test('라이브러리 이동 인덱스 반영은 전체 교체 없이 이동한 경로만 갱신한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-move-index-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const sourceDir = path.join(root, 'source');
+        const libraryDir = path.join(root, 'library');
+        const existing = path.join(libraryDir, 'Existing.cbz');
+        const source = path.join(sourceDir, 'Moved.cbz');
+        const dest = path.join(libraryDir, 'Moved.cbz');
+        fs.mkdirSync(sourceDir, { recursive: true });
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(existing, 'existing');
+        fs.writeFileSync(source, 'moved');
+
+        const library = new LibraryDB({ dbPath });
+        const existingStat = fs.statSync(existing);
+        await library.syncTargetIndex(libraryDir, [{
+            full_path: existing,
+            target_folder: libraryDir,
+            name: path.basename(existing),
+            size: existingStat.size,
+            mtime: existingStat.mtimeMs,
+        }]);
+        await library.saveLibraryScanState({
+            library_path: libraryDir,
+            status: 'ready',
+            fingerprint: 'sha1:1:existing',
+            file_count: 1,
+            indexed_count: 1,
+            last_scanned_at: '2026-06-25T00:00:00.000Z',
+            last_checked_at: '2026-06-25T00:00:00.000Z',
+        });
+        await library.upsertFileInfo({
+            path: source,
+            title: 'Moved Title',
+            series: 'Moved Series',
+        });
+
+        fs.renameSync(source, dest);
+        const movedStat = fs.statSync(dest);
+        const result = await library.applyLibraryMoveIndexChanges({
+            targetEntries: [{
+                full_path: dest,
+                target_folder: libraryDir,
+                name: path.basename(dest),
+                size: movedStat.size,
+                mtime: movedStat.mtimeMs,
+            }],
+            fileInfoMoves: [{ src: source, dest }],
+            touchedLibraries: [libraryDir],
+        });
+
+        assert.equal(result.savedTargetCount, 1);
+        assert.equal(result.movedFileInfoCount, 1);
+        const rows = await library.getTargetIndex(libraryDir);
+        assert.deepEqual(rows.map(row => row.full_path).sort(), [existing, dest].sort());
+        assert.equal((await library.getFileInfo(dest)).series, 'Moved Series');
+        assert.equal(await library.getFileInfo(source), null);
+        const state = await library.getLibraryScanState(libraryDir);
+        assert.equal(state.status, 'ready');
+        assert.equal(state.indexed_count, 2);
+        assert.equal(state.scan_reason, 'move');
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('라이브러리 스캔 상태를 저장하고 기본 상태를 조회한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-state-'));
     try {
