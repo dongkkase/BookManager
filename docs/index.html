@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리</title>
-    <meta name="description" content="BookManager는 Windows와 macOS에서 CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. Kavita, Komga, YACReader, Panels, Calibre, KOReader 환경에 맞춰 책 파일을 관리할 수 있습니다.">
+    <meta name="description" content="BookManager는 Windows와 macOS에서 CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. 한국어, 영어, 일본어 UI를 지원합니다.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/">
     <meta property="og:type" content="website">
@@ -153,6 +153,27 @@
             flex-wrap: wrap;
             gap: 12px;
             margin-top: 30px;
+        }
+
+        .support-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 18px;
+        }
+
+        .support-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 32px;
+            padding: 0 11px;
+            border: 1px solid rgba(238, 243, 247, 0.18);
+            border-radius: 999px;
+            color: var(--muted);
+            background: rgba(16, 18, 20, 0.58);
+            backdrop-filter: blur(8px);
+            font-size: 0.9rem;
+            font-weight: 700;
         }
 
         .button {
@@ -321,6 +342,13 @@
                 <a class="button" href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
                 <a class="button" href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
             </div>
+            <div class="support-badges" aria-label="지원 운영체제 및 언어">
+                <span class="support-badge">Windows</span>
+                <span class="support-badge">macOS</span>
+                <span class="support-badge">한국어</span>
+                <span class="support-badge">English</span>
+                <span class="support-badge">日本語</span>
+            </div>
         </div>
     </header>
 
@@ -384,8 +412,13 @@
         </section>
 
         <section>
+            <h2>지원 환경</h2>
+            <p class="section-lead">BookManager는 Windows와 macOS에서 사용할 수 있으며, 앱 UI는 한국어, 영어, 일본어를 지원합니다.</p>
+        </section>
+
+        <section>
             <h2>설치</h2>
-            <p class="section-lead">릴리즈 페이지에서 Windows 또는 macOS용 파일을 내려받아 실행합니다. macOS에서 처음 실행할 때 보안 경고가 표시되면 앱의 격리 속성을 제거한 뒤 실행할 수 있습니다.</p>
+            <p class="section-lead">릴리즈 페이지에서 Windows 또는 macOS용 파일을 내려받아 실행합니다. 언어는 앱의 환경 설정에서 한국어, 영어, 일본어 중 선택할 수 있습니다. macOS에서 처음 실행할 때 보안 경고가 표시되면 앱의 격리 속성을 제거한 뒤 실행할 수 있습니다.</p>
             <p class="note">프로그램은 로컬 파일을 직접 정리하는 도구입니다. 대량 작업을 실행하기 전에는 대상 목록과 미리보기를 확인하세요.</p>
         </section>
     </main>
