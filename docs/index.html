@@ -50,6 +50,7 @@
 
         * {
             box-sizing: border-box;
+            word-break:auto-phrase;
         }
 
         body {
@@ -64,6 +65,26 @@
             color: inherit;
         }
 
+        /* 배경 이동 애니메이션 */
+        @keyframes moveHeroBg {
+            0% {
+                transform: translate(0, 0);
+            }
+            100% {
+                transform: translate(-8%, -8%);
+            }
+        }
+
+        /* 블러 효과 애니메이션 */
+        @keyframes blurHeroBg {
+            0% {
+                filter: blur(0px);
+            }
+            100% {
+                filter: blur(4px);
+            }
+        }
+
         .hero {
             min-height: 82vh;
             display: grid;
@@ -71,12 +92,33 @@
             padding: 32px clamp(20px, 6vw, 72px) 72px;
             position: relative;
             overflow: hidden;
+            border-bottom: 1px solid var(--line);
+            z-index: 1; /* 콘텐츠를 가상 요소 위에 유지 */
+            background-color: var(--bg); /* 기본 배경색 */
+        }
+
+        /* 배경 이미지 및 오버레이를 위한 가상 요소 추가 */
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -10%;
+            left: -10%;
+            width: 120%;
+            height: 120%;
             background:
                 linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
                 linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
-                url("bg.webp") center / cover no-repeat,
+                url("bg.webp"),
                 #101214;
-            border-bottom: 1px solid var(--line);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            z-index: -1;
+            
+            /* 이동 속도는 60초, 블러 속도는 10초로 별개 지정 */
+            animation: 
+                moveHeroBg 60s ease-in-out infinite alternate,
+                blurHeroBg 4s ease-in-out infinite alternate;
         }
 
         .hero-inner {
@@ -236,11 +278,30 @@
             .hero {
                 min-height: 76vh;
                 padding-top: 96px;
+                /* 기존 배경 제거 */
+                background-image: none;
+                background-color: var(--bg);
+            }
+            
+            /* 가상 요소를 모바일에 맞게 수정 */
+            .hero::before {
+                /* 모바일 그라데이션 및 이미지 복제 */
                 background:
                     linear-gradient(180deg, rgba(10, 12, 13, 0.68) 0%, rgba(10, 12, 13, 0.94) 56%, rgba(10, 12, 13, 0.98) 100%),
                     linear-gradient(90deg, rgba(10, 12, 13, 0.66), rgba(10, 12, 13, 0.34)),
-                    url("bg.webp") center top / cover no-repeat,
-                    #101214;
+                    url("bg.webp");
+                background-size: cover;
+                background-position: center top;
+                background-repeat: no-repeat;
+                
+                /* 미묘한 움직임을 위해 크기와 위치를 더 늘림 */
+                width: 130%; 
+                height: 130%;
+                top: -15%;
+                left: -15%;
+                
+                /* 애니메이션은 동일하게 유지 (가상 요소의 새로운 크기와 위치로 작동) */
+                animation: animateHeroBg 60s ease-in-out infinite alternate;
             }
 
             .button {
