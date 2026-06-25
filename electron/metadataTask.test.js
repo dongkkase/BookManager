@@ -7,6 +7,7 @@ import { spawnSync } from 'child_process';
 import {
     analyzeMetadataInputs,
     createComicInfoXml,
+    loadMetadataCover,
     metadataWriteSupport,
     parseComicInfo,
     saveMetadataItems,
@@ -90,6 +91,29 @@ test('PDF/EPUB/TXT 도서 파일도 메타데이터 작업 리스트에 포함�
         assert.equal(analyzed.items[0].bookType, 'book');
         assert.equal(analyzed.items[0].metadata.Format, 'Novel');
         assert.equal(analyzed.items[0].metadata.Manga, '');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('메타데이터 분석은 표지를 지연 로드할 수 있다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-lazy-cover-'));
+    try {
+        const source = path.join(root, '느린 표지 01.cbz');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'ComicInfo.xml', createComicInfoXml({
+            Series: '느린 표지',
+            Title: '느린 표지 01',
+        }));
+        await replaceZipEntry(source, '001.jpg', Buffer.from('cover'));
+
+        const analyzed = await analyzeMetadataInputs([source], { includeCovers: false });
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].metadata.Series, '느린 표지');
+        assert.equal(analyzed.items[0].coverDataUrl, '');
+
+        const coverDataUrl = await loadMetadataCover(source, {});
+        assert.match(coverDataUrl, /^data:image\/jpeg;base64,/);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

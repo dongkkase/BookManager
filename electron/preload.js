@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractArchiveImage: (filePath, entryPath) => ipcRenderer.invoke('renamer:extractImage', filePath, entryPath),
   executeRenamer: (items, options) => ipcRenderer.invoke('renamer:execute', items, options),
   analyzeMetadata: (paths, options) => ipcRenderer.invoke('metadata:analyze', paths, options),
+  loadMetadataCover: (filePath, options) => ipcRenderer.invoke('metadata:cover', filePath, options),
   saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
   clearApiCache: () => ipcRenderer.invoke('cache:clearApi'),
   clearDupCache: () => ipcRenderer.invoke('folder:clearDupCache'),

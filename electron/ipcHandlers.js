@@ -12,7 +12,7 @@ import { promisify } from 'util';
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
-import { analyzeMetadataInputs, saveMetadataItems } from './tasks/metadataTask.js';
+import { analyzeMetadataInputs, loadMetadataCover, saveMetadataItems } from './tasks/metadataTask.js';
 import {
   getSharingServerStatus,
   normalizeSharingServerType,
@@ -2814,6 +2814,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }, (progress) => {
       event.sender.send('task:progress', { task: 'metadata:analyze', ...progress });
     });
+  });
+
+  ipcMain.handle('metadata:cover', async (_event, filePath, options = {}) => {
+    const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
+    return loadMetadataCover(filePath, { ...options, sevenZExe });
   });
 
   ipcMain.handle('metadata:save', async (event, items, options = {}) => {

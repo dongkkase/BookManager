@@ -972,7 +972,7 @@ textarea.meta-input {
   inset: 0;
   z-index: -1;
   content: "";
-  background: rgba(0, 0, 0, 0.76);
+  background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
   animation: meta-api-backdrop-in 0.24s ease-out both;
 }

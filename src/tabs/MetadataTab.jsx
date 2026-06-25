@@ -236,6 +236,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const primaryShortcut = primaryModifierLabel(isMacPlatform() ? 'MacIntel' : 'Win32');
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
+  const coverLoadRequestsRef = useRef(new Set());
   const batchMetadata = useMemo(
     () => selectedFileId ? (batchMetadataByFileId[selectedFileId] || {}) : {},
     [batchMetadataByFileId, selectedFileId],
@@ -343,6 +344,29 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     () => fileList.find(item => item.id === selectedFileId) || null,
     [fileList, selectedFileId]
   );
+
+  useEffect(() => {
+    const filePath = activeItem?.filepath;
+    if (!filePath || activeItem.coverDataUrl || coverLoadRequestsRef.current.has(filePath)) return undefined;
+    const loadMetadataCover = window.electronAPI?.loadMetadataCover;
+    if (!loadMetadataCover) return undefined;
+
+    let cancelled = false;
+    coverLoadRequestsRef.current.add(filePath);
+    loadMetadataCover(filePath)
+      .then(coverDataUrl => {
+        if (cancelled || !coverDataUrl) return;
+        setFileList(prev => prev.map(item => (
+          item.filepath === filePath ? { ...item, coverDataUrl } : item
+        )));
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeItem?.coverDataUrl, activeItem?.filepath]);
+
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
   const visibleTreeNodes = useMemo(
     () => metadataTreeVisibleNodes(groupedItems, collapsedGroups),
@@ -467,11 +491,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     setProgress(0);
     setLastResult(null);
     setStatusMessage(t('t3_msg_analyzing'));
+    coverLoadRequestsRef.current.clear();
 
     try {
       const result = await window.electronAPI.analyzeMetadata(cleanPaths, {
         lang: config?.language || config?.lang || 'ko',
         languageISO: defaultLanguageISO,
+        includeCovers: false,
       });
       setPublisherOptions(prev => uniqueSelectOptions([...(result.publisherOptions || []), ...prev], '').filter(Boolean));
       const items = (result.items || []).map(item => ({
@@ -538,6 +564,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     setBatchMetadataByFileId({});
     setPublisherOptions([]);
     setLastResult(null);
+    coverLoadRequestsRef.current.clear();
     setStatusMessage(t('status_wait'));
     setProgress(0);
   }, [t]);
