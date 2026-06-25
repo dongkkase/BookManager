@@ -53,8 +53,9 @@ import {
   resolveCsvExportPath,
 } from './csvExport.js';
 import {
+  getDefaultWindowsDriveRoot,
+  listWindowsDriveRoots,
   normalizeDirectoryPathForRead,
-  parseWindowsLogicalDiskRoots,
 } from './fsRoots.js';
 import {
   clearApiCache,
@@ -3783,14 +3784,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 파일 시스템 ==========
   ipcMain.handle('fs:getRoots', async () => {
     if (process.platform === 'win32') {
-      try {
-        const { execSync } = await import('child_process');
-        const output = execSync('wmic logicaldisk get name').toString();
-        const drives = parseWindowsLogicalDiskRoots(output);
-        return drives.length > 0 ? drives : ['C:\\'];
-      } catch (e) {
-        return ['C:\\'];
-      }
+      const drives = listWindowsDriveRoots();
+      return drives.length > 0 ? drives : [getDefaultWindowsDriveRoot()];
     } else {
       return ['/'];
     }

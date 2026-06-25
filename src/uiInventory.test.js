@@ -300,6 +300,8 @@ test('여러 파일 이름 변경 UI는 공용 컴포넌트로 분리된다', ()
         ['미리보기 컬럼 자동 리사이즈', 'autoResizeColumn'],
         ['미리보기 컬럼 더블클릭 자동 리사이즈', 'onDoubleClick'],
         ['변경된 새 파일명 색상 클래스', 'rename-new-name-changed'],
+        ['미리보기 갱신 표시 지연 상태', 'previewProgressVisible'],
+        ['파일 객체 배경 갱신에 흔들리지 않는 미리보기 기준', 'renameFilesSignature'],
     ]);
     assertInventory('folder', [
         ['폴더 탭 공용 다중 이름 변경', '<MultiRenameDialog'],

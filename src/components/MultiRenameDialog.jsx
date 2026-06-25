@@ -17,9 +17,25 @@ function basename(filePath = '') {
 }
 
 function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
+  const renameFiles = useMemo(() => (
+    files.map(file => {
+      const fullPath = file.full_path || file.path || '';
+      return {
+        ...file,
+        name: file.name || basename(fullPath),
+        path: file.path || fullPath,
+        full_path: fullPath,
+      };
+    })
+  ), [files]);
+  const renameFilesSignature = useMemo(() => (
+    renameFiles
+      .map(file => `${file.full_path || file.path}\u001f${file.name || ''}`)
+      .join('\u001e')
+  ), [renameFiles]);
   const inferred = useMemo(
-    () => inferRenamePattern(files.map(file => file.name || basename(file.path))),
-    [files],
+    () => inferRenamePattern(renameFiles.map(file => file.name || basename(file.path))),
+    [renameFilesSignature],
   );
   const [oldPattern, setOldPattern] = useState(inferred.oldPattern);
   const [newPattern, setNewPattern] = useState(inferred.newPattern);
@@ -35,16 +51,26 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
   const [sequencePosition, setSequencePosition] = useState('before');
   const [rows, setRows] = useState([]);
   const [previewing, setPreviewing] = useState(false);
+  const [previewProgressVisible, setPreviewProgressVisible] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [columnWidths, setColumnWidths] = useState([300, 300, 80, 300]);
   const previewGenerationRef = useRef(0);
+  const existsRef = useRef(exists);
   const tableResizeRef = useRef(null);
+
+  useEffect(() => {
+    existsRef.current = exists;
+  }, [exists]);
 
   useEffect(() => {
     const generation = previewGenerationRef.current + 1;
     previewGenerationRef.current = generation;
     setPreviewing(true);
+    setPreviewProgressVisible(false);
+    const progressTimer = window.setTimeout(() => {
+      if (previewGenerationRef.current === generation) setPreviewProgressVisible(true);
+    }, 300);
     const timer = window.setTimeout(async () => {
       const options = {
         oldPattern,
@@ -59,23 +85,27 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
         sequencePosition,
       };
       const previews = await resolveRenamePreviewConflicts(
-        files.map((file, index) => previewRename(file, options, index)),
-        exists || (targetPath => window.electronAPI?.exists?.(targetPath)),
+        renameFiles.map((file, index) => previewRename(file, options, index)),
+        existsRef.current || (targetPath => window.electronAPI?.exists?.(targetPath)),
       );
       if (previewGenerationRef.current !== generation) return;
+      window.clearTimeout(progressTimer);
       setRows(previews);
       setPreviewing(false);
+      setPreviewProgressVisible(false);
     }, 100);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(progressTimer);
+    };
   }, [
     addSequence,
     caseSensitive,
-    exists,
-    files,
     newPattern,
     numberDigits,
     oldPattern,
     padNumbersEnabled,
+    renameFilesSignature,
     regexMode,
     sequenceDigits,
     sequencePosition,
@@ -303,7 +333,7 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
               </tbody>
             </table>
           </div>
-          {(previewing || executing) && (
+          {(previewProgressVisible || executing) && (
             <div className="multi-rename-progress">
               <progress max="100" value={executing ? progress : undefined} />
               <span>{executing ? `${progress}%` : t('tf_preview_updating')}</span>
