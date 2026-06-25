@@ -135,6 +135,7 @@ test('내부 파일 리스트는 기존 Python natural_keys 순서로 로드한�
         const analyzed = await analyzeRenamerInputs([source], { sevenZExe: '' });
 
         assert.equal(analyzed.items.length, 1, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items[0].exifOpt, false);
         assert.deepEqual(
             analyzed.items[0].entries.map(entry => entry.originalPath),
             [

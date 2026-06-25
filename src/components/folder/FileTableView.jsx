@@ -38,6 +38,8 @@ const FileTableView = forwardRef(({
     const [dragOverColumnKey, setDragOverColumnKey] = useState('');
     const [dragSourceColumnKey, setDragSourceColumnKey] = useState('');
     const [columnDragGhost, setColumnDragGhost] = useState(null);
+    const [scrollTop, setScrollTop] = useState(0);
+    const [viewportHeight, setViewportHeight] = useState(0);
     const rowHeight = Math.round(36 + Number(scale || 50) * 0.42);
     const coverSize = Math.round(32 + Number(scale || 50) * 0.28);
     const normalizedLayout = useMemo(() => normalizeColumnLayout(columnLayout), [columnLayout]);
@@ -71,6 +73,23 @@ const FileTableView = forwardRef(({
         () => groupFolderFiles(files, groupKey, sortKey, sortOrder),
         [files, groupKey, sortKey, sortOrder],
     );
+    const shouldVirtualize = groupKey === 'none' && groupedData.length === 1 && files.length > 1000;
+    const virtualRows = shouldVirtualize ? groupedData[0].files : [];
+    const virtualBuffer = 12;
+    const virtualStartIndex = shouldVirtualize
+        ? Math.max(0, Math.floor(scrollTop / rowHeight) - virtualBuffer)
+        : 0;
+    const virtualVisibleCount = shouldVirtualize
+        ? Math.ceil((viewportHeight || 600) / rowHeight) + (virtualBuffer * 2)
+        : 0;
+    const virtualEndIndex = shouldVirtualize
+        ? Math.min(virtualRows.length, virtualStartIndex + virtualVisibleCount)
+        : 0;
+    const virtualVisibleRows = shouldVirtualize
+        ? virtualRows.slice(virtualStartIndex, virtualEndIndex)
+        : [];
+    const virtualTopPadding = virtualStartIndex * rowHeight;
+    const virtualBottomPadding = Math.max(0, (virtualRows.length - virtualEndIndex) * rowHeight);
     const fileIndexByPath = useMemo(() => {
         const map = new Map();
         groupedData.flatMap(group => group.files).forEach((file, index) => {
@@ -226,6 +245,27 @@ const FileTableView = forwardRef(({
         };
     }, [normalizedLayout, onColumnLayoutChange]);
 
+    useEffect(() => {
+        const container = ref?.current;
+        if (!container) return undefined;
+        const updateViewportHeight = () => {
+            setViewportHeight(Math.max(0, Math.round(container.clientHeight || 0)));
+        };
+        updateViewportHeight();
+        if (typeof ResizeObserver !== 'function') {
+            window.addEventListener('resize', updateViewportHeight);
+            return () => window.removeEventListener('resize', updateViewportHeight);
+        }
+        const observer = new ResizeObserver(updateViewportHeight);
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [ref]);
+
+    const handleContainerScroll = event => {
+        setScrollTop(event.currentTarget.scrollTop || 0);
+        onScroll?.(event);
+    };
+
     const handleRowClick = (file, e, index) => {
         if (dragSelectRef.current.moved || rubberSelectRef.current.moved) {
             dragSelectRef.current.moved = false;
@@ -337,7 +377,7 @@ const FileTableView = forwardRef(({
     <div
       ref={ref}
       className="file-table-container"
-      onScroll={onScroll}
+      onScroll={handleContainerScroll}
 	      onClick={event => {
 	        if (rubberSelectRef.current.moved) {
 	          rubberSelectRef.current.moved = false;
@@ -400,7 +440,37 @@ const FileTableView = forwardRef(({
           </tr>
         </thead>
         <tbody>
-          {groupedData.map(group => (
+          {shouldVirtualize ? (
+            <>
+              {virtualTopPadding > 0 && (
+                <tr aria-hidden="true">
+                  <td colSpan={columns.length} style={{ height: `${virtualTopPadding}px`, padding: 0, border: 0 }} />
+                </tr>
+              )}
+              {virtualVisibleRows.map((file, relativeIndex) => {
+                const fileIndex = virtualStartIndex + relativeIndex;
+                return (
+                <tr
+                  key={file.path || fileIndex}
+                  data-file-path={file.path}
+                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
+                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
+                  onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
+                  onClick={(event) => handleRowClick(file, event, fileIndex)}
+                  onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
+                >
+                  {columns.map(column => renderCell(file, column))}
+                </tr>
+                );
+              })}
+              {virtualBottomPadding > 0 && (
+                <tr aria-hidden="true">
+                  <td colSpan={columns.length} style={{ height: `${virtualBottomPadding}px`, padding: 0, border: 0 }} />
+                </tr>
+              )}
+            </>
+          ) : groupedData.map(group => (
             <React.Fragment key={group.name || 'all'}>
               {group.name && (
                 <tr className="group-header-row">

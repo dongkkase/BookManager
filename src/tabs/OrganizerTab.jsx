@@ -167,6 +167,8 @@ function OrganizerTab({ config, t, showToast }) {
     try {
       const result = await window.electronAPI.analyzeOrganizer(cleanPaths, {
         lang: language,
+        fastAnalyze: true,
+        maxAnalysisThreads: config?.max_threads || 2,
       });
       setFileList(prev => {
         const byPath = new Map(prev.map(item => [item.filepath, hydrateOrganizerItem(item)]));

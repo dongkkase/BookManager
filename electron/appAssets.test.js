@@ -210,7 +210,9 @@ test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () 
 
 test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사용한다', () => {
     const devScript = packageConfig.scripts['electron:dev'];
+    const rebuildDevScript = packageConfig.scripts['electron:dev:rebuild'];
     const unsafeDevScript = packageConfig.scripts['electron:dev:unsafe'];
+    const unsafeRebuildDevScript = packageConfig.scripts['electron:dev:unsafe:rebuild'];
     const launcherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronDev.cjs'), 'utf8');
     const fastDevScript = packageConfig.scripts['electron:dev:fast'];
     const watchLauncherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronWatch.cjs'), 'utf8');
@@ -219,10 +221,15 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     assert.match(packageConfig.scripts['node:rebuild'], /npm rebuild better-sqlite3/);
     assert.match(packageConfig.scripts.test, /npm run node:rebuild/);
     assert.match(packageConfig.scripts['electron:rebuild'], /electron-builder install-app-deps/);
-    assert.match(devScript, /npm run electron:rebuild/);
+    assert.doesNotMatch(devScript, /npm run electron:rebuild/);
     assert.match(devScript, /node electron\/launchElectronDev\.cjs/);
     assert.doesNotMatch(devScript, /&& electron \. --dev/);
+    assert.match(rebuildDevScript, /npm run electron:rebuild/);
+    assert.match(rebuildDevScript, /npm run electron:dev/);
     assert.match(unsafeDevScript, /node electron\/launchElectronDev\.cjs --unsafe-dev-node/);
+    assert.doesNotMatch(unsafeDevScript, /npm run electron:rebuild/);
+    assert.match(unsafeRebuildDevScript, /npm run electron:rebuild/);
+    assert.match(unsafeRebuildDevScript, /npm run electron:dev:unsafe/);
     assert.match(launcherSource, /delete env\.ELECTRON_RUN_AS_NODE/);
     assert.match(launcherSource, /BOOKMANAGER_UNSAFE_DEV_NODE/);
     assert.match(launcherSource, /electronArgs = \['\.',\s*'--dev'\]/);

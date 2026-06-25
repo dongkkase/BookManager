@@ -33,10 +33,10 @@ import { partitionSkippedFiles } from '../notificationPolicy';
 import {
   ALL_METADATA_API_SOURCES,
   apiSourceHasRequiredKey,
+  metadataApiPreferenceKey,
   metadataApiSourcesForBookType,
   metadataFromApiResult,
-  normalizeMetadataApiSourceForBookType,
-  requiredApiKeyForSource,
+  preferredMetadataApiSource,
 } from '../metadataApiPolicy';
 import {
   BOOK_BASIC_FIELDS,
@@ -212,6 +212,7 @@ function similarity(a = '', b = '') {
 }
 
 function MetadataTab({ config, saveConfig, t, showToast }) {
+  const initialApiSource = preferredMetadataApiSource(config, 'comic');
   const dragDropImage = useMemo(() => selectRandomResource(DRAG_DROP_IMAGES), []);
   const [fileList, setFileList] = useState([]);
   const saveLockRef = useRef(false);
@@ -221,7 +222,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const treeContainerRef = useRef(null);
   const metadataTreeKeyboardActiveRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [apiSource, setApiSource] = useState(config?.last_meta_api || '리디북스');
+  const [apiSource, setApiSource] = useState(initialApiSource);
   const [applyEmpty, setApplyEmpty] = useState(false);
   const [activeSection, setActiveSection] = useState('basic');
   const [batchMetadataByFileId, setBatchMetadataByFileId] = useState({});
@@ -230,7 +231,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [publisherOptions, setPublisherOptions] = useState([]);
-  const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: config?.last_meta_api || '리디북스', query: '', cached: false });
+  const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: initialApiSource, query: '', cached: false });
   const [taskPhase, setTaskPhase] = useState('idle');
   const primaryShortcut = primaryModifierLabel(isMacPlatform() ? 'MacIntel' : 'Win32');
   const formScrollRef = useRef(null);
@@ -390,6 +391,14 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const currentMetadataExtraFieldIds = activeBookType === 'book'
     ? []
     : ['ComicZipAddedDate', 'ComicZipModifiedDate'];
+  const saveApiSourcePreference = useCallback((nextSource, bookType = activeBookType) => {
+    if (!nextSource) return;
+    setApiSource(nextSource);
+    saveConfig?.({
+      last_meta_api: nextSource,
+      [metadataApiPreferenceKey(bookType)]: nextSource,
+    });
+  }, [activeBookType, saveConfig]);
 
   useEffect(() => {
     emitToolbarState(
@@ -418,11 +427,17 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   }, [selectedTreeKey]);
 
   useEffect(() => {
-    const nextSource = normalizeMetadataApiSourceForBookType(apiSource, activeBookType, config?.api_keys || {});
-    if (!nextSource || nextSource === apiSource) return;
+    const nextSource = preferredMetadataApiSource(config, activeBookType);
+    if (!nextSource) return;
     setApiSource(nextSource);
-    saveConfig?.({ last_meta_api: nextSource });
-  }, [activeBookType, apiSource, config?.api_keys, saveConfig]);
+    setApiSearch(prev => prev.open ? prev : { ...prev, apiSource: nextSource });
+  }, [
+    activeBookType,
+    config?.api_keys,
+    config?.last_meta_api,
+    config?.preferred_meta_api_book,
+    config?.preferred_meta_api_comic,
+  ]);
 
   const updateItem = (id, updater) => {
     setFileList(prev => prev.map(item => item.id === id ? updater(item) : item));
@@ -737,7 +752,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
     const cleanQuery = String(query || '').trim();
     if (!cleanQuery) return;
-    const requiredKey = requiredApiKeyForSource(source);
+    saveApiSourcePreference(source, activeBookType);
     if (!apiSourceHasRequiredKey(source, config?.api_keys || {})) {
       setApiSearch(prev => ({
         ...prev,
@@ -818,7 +833,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         cached: false,
       }));
     }
-  }, [activeBookType, apiSource, config?.api_keys, searchQuery, text]);
+  }, [activeBookType, apiSource, config?.api_keys, saveApiSourcePreference, searchQuery, text]);
 
   const handleSearchApi = async (page = 1) => {
     const query = searchQuery.trim();
@@ -1424,6 +1439,16 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     );
   };
 
+  const renderSeparatedTagField = (fieldId, label, options, placeholder = text('enter_after_input', '입력 후 Enter...')) => (
+    <>
+      <div className="meta-choice-row">
+        <div className="meta-tag-label">{label}</div>
+        {renderChoiceGrid(fieldId, options)}
+      </div>
+      {renderDualTextarea(fieldId, label, placeholder)}
+    </>
+  );
+
   const scrollToSection = (sectionId) => {
     setActiveSection(sectionId);
     const section = sectionRefs.current[sectionId];
@@ -1452,6 +1477,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       renderChoiceGrid,
       renderDualTextarea,
       renderFieldRows,
+      renderSeparatedTagField,
       sectionLabel,
       sectionRefs,
       sectionTabs: currentSectionTabs,
@@ -1577,8 +1603,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             value={apiSource}
             onChange={(event) => {
               const nextApi = event.target.value;
-              setApiSource(nextApi);
-              saveConfig?.({ last_meta_api: nextApi });
+              saveApiSourcePreference(nextApi);
             }}
           >
             {currentApiSources.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
@@ -1922,6 +1947,7 @@ function MetadataSearchDialog({
   showToast,
 }) {
   const dialogRef = useRef(null);
+  const resultRefs = useRef([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [dialogApi, setDialogApi] = useState(state.apiSource || apiSources[0]?.value || '');
   const [dialogQuery, setDialogQuery] = useState(state.query || state.actualQuery || '');
@@ -1964,6 +1990,15 @@ function MetadataSearchDialog({
   }, []);
 
   useEffect(() => {
+    const frame = window.requestAnimationFrame?.(() => {
+      dialogRef.current?.focus?.({ preventScroll: true });
+    });
+    return () => {
+      if (frame) window.cancelAnimationFrame?.(frame);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleEscape = (event) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -1978,6 +2013,14 @@ function MetadataSearchDialog({
   useEffect(() => {
     setSelectedIndex(0);
   }, [state.apiSource, state.page, state.query]);
+
+  useEffect(() => {
+    setSelectedIndex(prev => Math.min(prev, Math.max(0, state.results.length - 1)));
+  }, [state.results.length]);
+
+  useEffect(() => {
+    resultRefs.current[selectedIndex]?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedIndex, state.results]);
 
   useEffect(() => {
     setTranslatedResult(null);
@@ -2107,25 +2150,45 @@ function MetadataSearchDialog({
     '--meta-search-min-height': `${Math.max(560, Number(minHeight) || 780)}px`,
   };
 
-  useEffect(() => {
-    const handleShortcut = (event) => {
-      if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-      if (isMetadataTextInput(event.target)) return;
-      const code = shortcutCode(event);
-      if (code === 'KeyS' && !state.loading && dialogQuery.trim()) {
-        event.preventDefault();
-        event.stopPropagation();
-        runSearch(1);
-      } else if (code === 'KeyC' && selected) {
-        event.preventDefault();
-        event.stopPropagation();
-        onSelect(selected);
-      }
-    };
+  const moveSelectedResult = useCallback((delta) => {
+    setSelectedIndex(prev => {
+      const count = state.results.length;
+      if (count === 0) return 0;
+      const current = prev < 0 || prev >= count
+        ? (delta > 0 ? -1 : count)
+        : prev;
+      return Math.max(0, Math.min(count - 1, current + delta));
+    });
+  }, [state.results.length]);
 
+  const handleShortcut = useCallback((event) => {
+    if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    const targetTag = String(event.target?.tagName || '').toUpperCase();
+    const isDialogTextInput = isMetadataTextInput(event.target) && dialogRef.current?.contains?.(event.target);
+    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && targetTag !== 'SELECT') {
+      if (state.loading || state.results.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      moveSelectedResult(event.key === 'ArrowUp' ? -1 : 1);
+      return;
+    }
+    if (isDialogTextInput) return;
+    const code = shortcutCode(event);
+    if (code === 'KeyS' && !state.loading && dialogQuery.trim()) {
+      event.preventDefault();
+      event.stopPropagation();
+      runSearch(1);
+    } else if (code === 'KeyC' && selected) {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelect(selected);
+    }
+  }, [dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, selected, state.loading, state.results.length]);
+
+  useEffect(() => {
     window.addEventListener('keydown', handleShortcut, true);
     return () => window.removeEventListener('keydown', handleShortcut, true);
-  }, [dialogApi, dialogQuery, onSearch, onSelect, selected, state.loading]);
+  }, [handleShortcut]);
 
   return (
     <div
@@ -2140,6 +2203,8 @@ function MetadataSearchDialog({
         role="dialog"
         aria-label={text('meta_search_title', '메타데이터 검색')}
         style={dialogMinimumSize}
+        tabIndex={-1}
+        onKeyDownCapture={handleShortcut}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="meta-api-dialog-header">
@@ -2180,7 +2245,12 @@ function MetadataSearchDialog({
             {state.results.map((result, index) => (
               <button
                 key={result.id || `${result.title}-${index}`}
+                ref={node => {
+                  resultRefs.current[index] = node;
+                }}
+                type="button"
                 className={`meta-api-result ${selectedIndex === index ? 'active' : ''}`}
+                aria-selected={selectedIndex === index}
                 onClick={() => setSelectedIndex(index)}
               >
                 <RemoteCoverImage src={result.coverDataUrl || result.coverUrl} className="meta-api-thumb" fallbackClassName="meta-api-no-cover" />

@@ -1245,6 +1245,16 @@ body.is-reordering-table-column {
   background: #282828;
 }
 
+.thumbnail-grid.is-virtualized,
+.tile-grid.is-virtualized {
+  display: block;
+}
+
+.folder-virtual-grid-spacer {
+  position: relative;
+  min-width: 100%;
+}
+
 .thumbnail-item {
   width: var(--thumb-item-width, 116px);
   min-height: calc(var(--thumb-image-height, 128px) + 10px);

@@ -1,6 +1,11 @@
 import React from 'react';
 import { FaIcon } from './FaIcon';
 import { normalizeSettingsConfig, safeThreadLimit, uniquePaths } from '../settingsPolicy';
+import {
+  BOOK_METADATA_API_SOURCES,
+  COMIC_METADATA_API_SOURCES,
+  normalizeMetadataApiSourceForBookType,
+} from '../metadataApiPolicy';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 
 const LANGUAGE_OPTIONS = [
@@ -48,6 +53,9 @@ function normalizeConfig(config) {
     completion_sound: 'Default.wav',
     font_family: 'Default',
     font_scale: 100,
+    last_meta_api: '리디북스',
+    preferred_meta_api_comic: '리디북스',
+    preferred_meta_api_book: '리디북스',
     metadata_search_min_width: 1050,
     metadata_search_min_height: 780,
     ...(config || {}),
@@ -104,7 +112,18 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     return value && value !== key ? value : fallback;
   };
 
+  const apiSourceLabel = (source) => label(source.labelKey, source.value);
   const formatLabels = Array.isArray(t('format_opts')) ? t('format_opts') : ['변경 안 함', 'ZIP', 'CBZ', 'CBR', '7z'];
+  const preferredComicApi = normalizeMetadataApiSourceForBookType(
+    localConfig.preferred_meta_api_comic || localConfig.last_meta_api,
+    'comic',
+    localConfig.api_keys || {},
+  );
+  const preferredBookApi = normalizeMetadataApiSourceForBookType(
+    localConfig.preferred_meta_api_book || localConfig.last_meta_api,
+    'book',
+    localConfig.api_keys || {},
+  );
 
   const handleChange = (key, value) => {
     setLocalConfig(prev => ({ ...prev, [key]: value }));
@@ -437,6 +456,35 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
           {activeTab === 'api' && (
             <div className="settings-panel">
+              <fieldset className="settings-fieldset">
+              <legend>{label('preferred_search_api_group', '자주 사용하는 검색 API')}</legend>
+              <div className="settings-row">
+                <span className="settings-label">{label('preferred_search_api_comic', '만화책')}</span>
+                <select
+                  className="settings-select"
+                  value={preferredComicApi}
+                  onChange={event => handleChange('preferred_meta_api_comic', event.target.value)}
+                >
+                  {COMIC_METADATA_API_SOURCES.map(source => (
+                    <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="settings-row">
+                <span className="settings-label">{label('preferred_search_api_book', '전자책')}</span>
+                <select
+                  className="settings-select"
+                  value={preferredBookApi}
+                  onChange={event => handleChange('preferred_meta_api_book', event.target.value)}
+                >
+                  {BOOK_METADATA_API_SOURCES.map(source => (
+                    <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="settings-help">{label('preferred_search_api_desc', '선택한 값은 메타데이터 관리의 검색 API 드롭다운 기본값으로 사용됩니다.')}</p>
+              </fieldset>
+
               <fieldset className="settings-fieldset">
               <legend>{t('ai_trans_group')}</legend>
               <label className="settings-check-row settings-inline-check-row">

@@ -18,6 +18,9 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
         max_threads: 99,
         font_scale: 77,
         dup_check_folders: ['/Books'],
+        last_meta_api: 'Google Books',
+        preferred_meta_api_comic: 'Vine',
+        preferred_meta_api_book: 'Amazon',
         api_keys: { custom_provider: 'keep-me' },
     }, 8);
 
@@ -30,7 +33,17 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.max_threads, 6);
     assert.equal(normalized.font_scale, 80);
     assert.deepEqual(normalized.libraries, ['/Books']);
+    assert.equal(normalized.preferred_meta_api_comic, 'Vine');
+    assert.equal(normalized.preferred_meta_api_book, 'Amazon');
+    assert.equal(normalized.last_meta_api, 'Google Books');
     assert.equal(normalized.api_keys.custom_provider, 'keep-me');
+});
+
+test('preferred metadata API settings inherit legacy last API where valid', () => {
+    const normalized = normalizeSettingsConfig({ last_meta_api: 'Google Books' });
+
+    assert.equal(normalized.preferred_meta_api_comic, 'Google Books');
+    assert.equal(normalized.preferred_meta_api_book, 'Google Books');
 });
 
 test('renamer archive compression setting accepts only supported modes', () => {

@@ -41,10 +41,25 @@ export function metadataApiSourcesForBookType(bookType = 'comic') {
     : COMIC_METADATA_API_SOURCES;
 }
 
+export function metadataApiPreferenceKey(bookType = 'comic') {
+  return bookType === 'book'
+    ? 'preferred_meta_api_book'
+    : 'preferred_meta_api_comic';
+}
+
 export function normalizeMetadataApiSourceForBookType(source = '', bookType = 'comic', apiKeys = {}) {
   const sources = metadataApiSourcesForBookType(bookType);
   if (sources.some(item => item.value === source)) return source;
   return sources.find(item => apiSourceHasRequiredKey(item.value, apiKeys))?.value || sources[0]?.value || '';
+}
+
+export function preferredMetadataApiSource(config = {}, bookType = 'comic') {
+  const preferenceKey = metadataApiPreferenceKey(bookType);
+  return normalizeMetadataApiSourceForBookType(
+    config?.[preferenceKey] || config?.last_meta_api || '',
+    bookType,
+    config?.api_keys || {},
+  );
 }
 
 export function metadataFromApiResult(result = {}, options = {}) {

@@ -7,14 +7,15 @@ function sectionRef(sectionRefs, id) {
 }
 
 function ComicMetadataEditor({
-    combinedTagOptions,
     fields,
-    renderCombinedGenreTags,
+    genreOptions,
     renderDualTextarea,
     renderFieldRows,
+    renderSeparatedTagField,
     sectionLabel,
     sectionRefs,
     sectionTabs,
+    tagOptions,
     t,
 }) {
     return (
@@ -37,7 +38,8 @@ function ComicMetadataEditor({
 
             <section className="meta-section-box" ref={sectionRef(sectionRefs, 'tags')}>
                 <div className="meta-section-title">{sectionLabel(sectionTabs[3])}</div>
-                {renderCombinedGenreTags(t('t3_f_genre_keywords_categories'), combinedTagOptions)}
+                {renderSeparatedTagField('Genre', t('t3_f_genre'), genreOptions)}
+                {renderSeparatedTagField('Tags', t('t3_f_tags_lbl'), tagOptions)}
                 {renderDualTextarea('Characters', t('t3_f_char'))}
             </section>
 

@@ -9,7 +9,13 @@ import { listZipEntriesFromFile, replaceZipEntry } from './core/zipArchive.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 
 function find7z() {
-    for (const candidate of ['/usr/local/bin/7z', '/opt/homebrew/bin/7z', '7z', '7za']) {
+    for (const candidate of [
+        path.resolve('bin/win/7za.exe'),
+        '/usr/local/bin/7z',
+        '/opt/homebrew/bin/7z',
+        '7z',
+        '7za',
+    ]) {
         const result = spawnSync(candidate, ['i'], { stdio: 'ignore' });
         if (!result.error) return candidate;
     }
@@ -18,6 +24,15 @@ function find7z() {
 
 function shellQuote(value) {
     return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+async function makeZipBuffer(root, filename, entries) {
+    const filePath = path.join(root, filename);
+    fs.writeFileSync(filePath, Buffer.alloc(0));
+    for (const [entryName, content] of entries) {
+        await replaceZipEntry(filePath, entryName, content);
+    }
+    return fs.readFileSync(filePath);
 }
 
 test('Organizer는 ZIP 구조 분석을 외부 7z 없이 수행한다', async () => {
@@ -37,6 +52,171 @@ test('Organizer는 ZIP 구조 분석을 외부 7z 없이 수행한다', async ()
         assert.equal(analyzed.items.length, 1);
         assert.equal(analyzed.items[0].volumes.length, 2);
         assert.equal(analyzed.items[0].page_count, 2);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 압축 파일명과 같은 최상위 래퍼 폴더를 권 그룹으로 오인하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-wrapper-folder-'));
+    try {
+        const archiveName = '그린월드 Z 번역본 1-112화 [완결] 720px.zip';
+        const source = path.join(root, archiveName);
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, `${archiveName}/GREEN WORLDZ 1화/001.jpg`, Buffer.from('page-1'));
+        await replaceZipEntry(source, `${archiveName}/GREEN WORLDZ 2화/001.jpg`, Buffer.from('page-2'));
+        await replaceZipEntry(source, `${archiveName}/GREEN WORLDZ 3화/001.jpg`, Buffer.from('page-3'));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].volumes.length, 3);
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.original_path),
+            ['GREEN WORLDZ 1화', 'GREEN WORLDZ 2화', 'GREEN WORLDZ 3화'],
+        );
+        assert.equal(analyzed.items[0].volumes.every(volume => volume.type === 'folder'), true);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 압축 파일명 래퍼 폴더 아래 권/화 폴더를 각각 별도 CBZ로 만든다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-wrapper-execute-'));
+    try {
+        const archiveName = '그린월드 Z 번역본 1-112화 [완결] 720px.zip';
+        const source = path.join(root, archiveName);
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, `${archiveName}/GREEN WORLDZ 1화/001.jpg`, Buffer.from('page-1'));
+        await replaceZipEntry(source, `${archiveName}/GREEN WORLDZ 2화/001.jpg`, Buffer.from('page-2'));
+        await replaceZipEntry(source, `${archiveName}/GREEN WORLDZ 3화/001.jpg`, Buffer.from('page-3'));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        analyzed.items[0].out_path = path.join(root, 'output');
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe,
+            target_format: 'cbz',
+            deleteOriginal: false,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.equal(result.createdFiles.length, 3);
+        assert.equal(result.createdFiles.every(filePath => filePath.endsWith('.cbz') && fs.existsSync(filePath)), true);
+        for (const filePath of result.createdFiles) {
+            const entries = await listZipEntriesFromFile(filePath);
+            assert.equal(entries.filter(entry => entry.name.endsWith('.jpg')).length, 1);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 압축 파일명과 같은 내부 ZIP 래퍼를 펼쳐 권/화 ZIP을 각각 분석한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-wrapper-zip-analyze-'));
+    try {
+        const archiveName = '그린월드 Z 번역본 1-112화 [완결] 720px.zip';
+        const leaf1 = await makeZipBuffer(root, 'leaf-1.zip', [['001.jpg', Buffer.from('page-1')]]);
+        const leaf2 = await makeZipBuffer(root, 'leaf-2.zip', [['001.jpg', Buffer.from('page-2')]]);
+        const leaf3 = await makeZipBuffer(root, 'leaf-3.zip', [['001.jpg', Buffer.from('page-3')]]);
+        const wrapper = await makeZipBuffer(root, 'wrapper.zip', [
+            ['GREEN WORLDZ 1화.zip', leaf1],
+            ['GREEN WORLDZ 2화.zip', leaf2],
+            ['GREEN WORLDZ 3화.zip', leaf3],
+        ]);
+
+        const source = path.join(root, archiveName);
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, archiveName, wrapper);
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].volumes.length, 3);
+        assert.equal(analyzed.items[0].page_count, 3);
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.original_path),
+            ['GREEN WORLDZ 1화', 'GREEN WORLDZ 2화', 'GREEN WORLDZ 3화'],
+        );
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.new_name),
+            ['GREEN WORLDZ 01화', 'GREEN WORLDZ 02화', 'GREEN WORLDZ 03화'],
+        );
+        assert.equal(analyzed.items[0].volumes.every(volume => volume.type === 'archive'), true);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 압축 파일명과 같은 내부 ZIP 래퍼의 권/화 ZIP을 각각 별도 CBZ로 만든다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-wrapper-zip-execute-'));
+    try {
+        const archiveName = '그린월드 Z 번역본 1-112화 [완결] 720px.zip';
+        const leaf1 = await makeZipBuffer(root, 'leaf-1.zip', [['001.jpg', Buffer.from('page-1')]]);
+        const leaf2 = await makeZipBuffer(root, 'leaf-2.zip', [['001.jpg', Buffer.from('page-2')]]);
+        const leaf3 = await makeZipBuffer(root, 'leaf-3.zip', [['001.jpg', Buffer.from('page-3')]]);
+        const wrapper = await makeZipBuffer(root, 'wrapper.zip', [
+            ['GREEN WORLDZ 1화.zip', leaf1],
+            ['GREEN WORLDZ 2화.zip', leaf2],
+            ['GREEN WORLDZ 3화.zip', leaf3],
+        ]);
+
+        const source = path.join(root, archiveName);
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, archiveName, wrapper);
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        analyzed.items[0].out_path = path.join(root, 'output');
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe,
+            target_format: 'cbz',
+            deleteOriginal: false,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.equal(result.createdFiles.length, 3);
+        assert.equal(result.createdFiles.every(filePath => filePath.endsWith('.cbz') && fs.existsSync(filePath)), true);
+        for (const filePath of result.createdFiles) {
+            const entries = await listZipEntriesFromFile(filePath);
+            assert.equal(entries.filter(entry => entry.name.endsWith('.jpg')).length, 1);
+        }
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

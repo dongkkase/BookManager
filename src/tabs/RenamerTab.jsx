@@ -201,6 +201,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     try {
       const result = await window.electronAPI.analyzeRenamer(cleanPaths, {
         lang: config?.language || config?.lang || 'ko',
+        maxAnalysisThreads: config?.max_threads || 2,
         ...renameOptions,
       });
 
@@ -474,6 +475,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         }
         const result = await window.electronAPI.analyzeRenamer([archive.filepath], {
           lang: config?.language || config?.lang || 'ko',
+          maxAnalysisThreads: config?.max_threads || 2,
           ...renameOptions,
         });
         const reloaded = result.items?.[0];
@@ -544,6 +546,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       if (outputFiles.length > 0) {
         const reloaded = await window.electronAPI.analyzeRenamer(outputFiles, {
           lang: config?.language || config?.lang || 'ko',
+          maxAnalysisThreads: config?.max_threads || 2,
           ...renameOptions,
         });
         const reloadedItems = (reloaded.items || []).map(item => refreshRenamerItem(item, renameOptions));

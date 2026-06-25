@@ -1,3 +1,5 @@
+import { normalizeMetadataApiSourceForBookType } from './metadataApiPolicy.js';
+
 const FORMAT_KEYS = new Set(['none', 'zip', 'cbz', 'cbr', '7z']);
 const LANGUAGE_KEYS = new Set(['ko', 'en', 'ja']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
@@ -29,6 +31,26 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
     const libraries = uniquePaths(config.libraries || [], config.dup_check_folders || []);
     const threadMax = safeThreadLimit(coreCount);
     const apiKeys = config.api_keys || {};
+    const normalizedApiKeys = {
+        ...apiKeys,
+        aladin: String(apiKeys.aladin || '').trim(),
+        vine: String(apiKeys.vine || '').trim(),
+        google: String(apiKeys.google || '').trim(),
+        ai_trans_enabled: Boolean(apiKeys.ai_trans_enabled),
+        ai_provider: AI_PROVIDERS.has(apiKeys.ai_provider) ? apiKeys.ai_provider : 'Gemini',
+        ai_key: String(apiKeys.ai_key || '').trim(),
+        tag_rules: String(apiKeys.tag_rules || ''),
+    };
+    const preferredComicApi = normalizeMetadataApiSourceForBookType(
+        config.preferred_meta_api_comic || config.last_meta_api || '',
+        'comic',
+        normalizedApiKeys,
+    );
+    const preferredBookApi = normalizeMetadataApiSourceForBookType(
+        config.preferred_meta_api_book || config.last_meta_api || '',
+        'book',
+        normalizedApiKeys,
+    );
 
     return {
         ...config,
@@ -54,16 +76,10 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         font_scale: Math.min(155, Math.max(80, Number(config.font_scale) || 100)),
         libraries,
         dup_check_folders: libraries,
-        api_keys: {
-            ...apiKeys,
-            aladin: String(apiKeys.aladin || '').trim(),
-            vine: String(apiKeys.vine || '').trim(),
-            google: String(apiKeys.google || '').trim(),
-            ai_trans_enabled: Boolean(apiKeys.ai_trans_enabled),
-            ai_provider: AI_PROVIDERS.has(apiKeys.ai_provider) ? apiKeys.ai_provider : 'Gemini',
-            ai_key: String(apiKeys.ai_key || '').trim(),
-            tag_rules: String(apiKeys.tag_rules || ''),
-        },
+        preferred_meta_api_comic: preferredComicApi,
+        preferred_meta_api_book: preferredBookApi,
+        last_meta_api: String(config.last_meta_api || preferredComicApi || preferredBookApi || '').trim(),
+        api_keys: normalizedApiKeys,
     };
 }
 

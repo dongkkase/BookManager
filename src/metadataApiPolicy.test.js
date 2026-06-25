@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   apiSourceHasRequiredKey,
+  metadataApiPreferenceKey,
   metadataApiSourcesForBookType,
   metadataFromApiResult,
   normalizeMetadataApiSourceForBookType,
+  preferredMetadataApiSource,
   requiredApiKeyForSource,
 } from './metadataApiPolicy.js';
 
@@ -37,6 +39,20 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF 도서를 분�
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'book', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('알라딘', 'book', { aladin: 'key' }), '알라딘');
   assert.equal(normalizeMetadataApiSourceForBookType('Amazon', 'comic', {}), '리디북스');
+});
+
+test('책 타입별 기본 검색 API 설정을 선택한다', () => {
+  assert.equal(metadataApiPreferenceKey('comic'), 'preferred_meta_api_comic');
+  assert.equal(metadataApiPreferenceKey('book'), 'preferred_meta_api_book');
+  assert.equal(preferredMetadataApiSource({
+    preferred_meta_api_comic: 'Vine',
+    preferred_meta_api_book: 'Amazon',
+  }, 'comic'), 'Vine');
+  assert.equal(preferredMetadataApiSource({
+    preferred_meta_api_comic: 'Vine',
+    preferred_meta_api_book: 'Amazon',
+  }, 'book'), 'Amazon');
+  assert.equal(preferredMetadataApiSource({ last_meta_api: 'Anilist' }, 'book'), '리디북스');
 });
 
 test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터로 변환한다', () => {

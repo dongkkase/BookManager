@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage } from './CoverImage';
 import { groupFolderFiles } from '../../folderViewState';
@@ -34,11 +34,31 @@ const TileView = ({
 	  const containerRef = useRef(null);
 	  const rubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
 	  const [selectionBox, setSelectionBox] = useState(null);
+	  const [viewport, setViewport] = useState({ width: 0, height: 0, scrollTop: 0 });
   const items = files.length > 0 ? files : fileData;
   const imageWidth = Math.round(72 + Number(scale || 50) * 0.58);
   const imageHeight = Math.round(imageWidth * 1.32);
   const minColumnWidth = Math.max(260, imageWidth + Math.round(180 + Number(scale || 50) * 1.4));
 	  const groups = groupFolderFiles(items, groupKey, sortKey, sortOrder);
+	  const gap = 16;
+	  const padding = 16;
+	  const rowHeight = imageHeight + 12 + gap;
+	  const shouldVirtualize = groupKey === 'none' && groups.length === 1 && items.length > 1000;
+	  const columnCount = shouldVirtualize
+	    ? Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gap) / (minColumnWidth + gap)))
+	    : 1;
+	  const columnWidth = shouldVirtualize
+	    ? Math.max(minColumnWidth, (Math.max(0, viewport.width - (padding * 2) - ((columnCount - 1) * gap)) / columnCount))
+	    : minColumnWidth;
+	  const totalRows = shouldVirtualize ? Math.ceil(groups[0].files.length / columnCount) : 0;
+	  const bufferRows = 3;
+	  const startRow = shouldVirtualize ? Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - bufferRows) : 0;
+	  const endRow = shouldVirtualize
+	    ? Math.min(totalRows, Math.ceil((viewport.scrollTop + (viewport.height || 600)) / rowHeight) + bufferRows)
+	    : 0;
+	  const virtualStartIndex = startRow * columnCount;
+	  const virtualEndIndex = shouldVirtualize ? Math.min(groups[0].files.length, endRow * columnCount) : 0;
+	  const virtualFiles = shouldVirtualize ? groups[0].files.slice(virtualStartIndex, virtualEndIndex) : [];
 	  const fileIndexByPath = useMemo(() => {
 	    const map = new Map();
 	    groups.flatMap(group => group.files).forEach((file, index) => {
@@ -46,6 +66,36 @@ const TileView = ({
 	    });
 	    return map;
 	  }, [groups]);
+
+	  useEffect(() => {
+	    const container = containerRef.current;
+	    if (!container) return undefined;
+	    const updateViewport = () => {
+	      setViewport(current => ({
+	        ...current,
+	        width: Math.max(0, Math.round(container.clientWidth || 0)),
+	        height: Math.max(0, Math.round(container.clientHeight || 0)),
+	        scrollTop: container.scrollTop || 0,
+	      }));
+	    };
+	    updateViewport();
+	    if (typeof ResizeObserver !== 'function') {
+	      window.addEventListener('resize', updateViewport);
+	      return () => window.removeEventListener('resize', updateViewport);
+	    }
+	    const observer = new ResizeObserver(updateViewport);
+	    observer.observe(container);
+	    return () => observer.disconnect();
+	  }, []);
+
+	  const handleGridScroll = event => {
+	    const nextScrollTop = event.currentTarget.scrollTop || 0;
+	    setViewport(current => current.scrollTop === nextScrollTop ? current : {
+	      ...current,
+	      scrollTop: nextScrollTop,
+	    });
+	    onScroll?.(event);
+	  };
   const formatSize = (bytes) => {
     if (!bytes || bytes === 0) return '-';
     const units = ['B', 'KB', 'MB', 'GB'];
@@ -140,8 +190,8 @@ const TileView = ({
   return (
 	    <div
 	      ref={containerRef}
-	      className="tile-grid"
-	      onScroll={onScroll}
+	      className={`tile-grid ${shouldVirtualize ? 'is-virtualized' : ''}`}
+	      onScroll={handleGridScroll}
 	      onClick={event => {
 	        if (rubberSelectRef.current.moved) {
 	          rubberSelectRef.current.moved = false;
@@ -165,7 +215,67 @@ const TileView = ({
         '--tile-min-column-width': `${minColumnWidth}px`,
       }}
     >
-      {groups.map(group => (
+      {shouldVirtualize ? (
+        <div
+          className="folder-virtual-grid-spacer"
+          style={{ height: `${Math.max(1, totalRows * rowHeight)}px` }}
+        >
+          {virtualFiles.map((file, relativeIndex) => {
+            const fileIndex = virtualStartIndex + relativeIndex;
+            const row = Math.floor(fileIndex / columnCount);
+            const column = fileIndex % columnCount;
+            return (
+	            <div
+	              key={file.path || fileIndex}
+	              data-file-path={file.path}
+	              className={`tile-item ${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
+	              style={{
+	                position: 'absolute',
+	                left: `${padding + column * (columnWidth + gap)}px`,
+	                top: `${padding + row * rowHeight}px`,
+	                width: `${columnWidth}px`,
+	              }}
+	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
+	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
+	              onClick={(event) => handleItemClick(file, event, fileIndex)}
+	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
+	            >
+              <CoverImage
+                src={file.cover}
+                alt={file.name || ''}
+                className="tile-image"
+                t={t}
+                iconSize={30}
+              />
+              <div className="tile-info">
+                <div className="tile-title">{file.title || file.name || '-'}</div>
+                <div className="tile-meta-line">
+                  {compactValues([
+                    firstValue(file.writer, file.author, file.creators),
+                    file.publisher,
+                    file.genre,
+                  ]).join(' · ') || '-'}
+                </div>
+                <div className="tile-meta-line">
+                  {compactValues([
+                    file.page_count ? `${file.page_count}p` : '',
+                  ]).join('  ·  ') || '-'}
+                  {file.rating && (
+                    <>
+                      <span className="tile-meta-separator"> · </span>
+                      <FaIcon name="star" className="tile-rating-star" size={10} /> {file.rating}
+                    </>
+                  )}
+                </div>
+                <div className="tile-summary">
+                  {firstValue(file.description, file.summary, t('info_no_summary'))}
+                </div>
+	              </div>
+	            </div>
+            );
+          })}
+        </div>
+      ) : groups.map(group => (
         <React.Fragment key={group.name || 'all'}>
           {group.name && (
             <div className="folder-view-group-header">

@@ -8,9 +8,16 @@ import {
 } from './dataPaths.js';
 
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
+const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
 
 function normalizeLanguage(value, fallback = 'ko') {
   return SUPPORTED_LANGUAGES.has(value) ? value : fallback;
+}
+
+function normalizeMetadataApiSource(value, sources, fallback = '리디북스') {
+  const source = String(value || '').trim();
+  return sources.has(source) ? source : fallback;
 }
 
 export class ConfigManager {
@@ -75,6 +82,16 @@ export class ConfigManager {
       ...(raw.dup_check_folders || []),
     ]);
     const favorites = this.normalizeFavorites(raw.favorites || raw.folder_favorites || []);
+    const preferredComicApi = normalizeMetadataApiSource(
+      raw.preferred_meta_api_comic || raw.last_meta_api || defaults.preferred_meta_api_comic,
+      COMIC_METADATA_API_SOURCES,
+      defaults.preferred_meta_api_comic,
+    );
+    const preferredBookApi = normalizeMetadataApiSource(
+      raw.preferred_meta_api_book || raw.last_meta_api || defaults.preferred_meta_api_book,
+      BOOK_METADATA_API_SOURCES,
+      defaults.preferred_meta_api_book,
+    );
     return {
       ...defaults,
       ...raw,
@@ -84,6 +101,9 @@ export class ConfigManager {
       dup_check_folders: libraries,
       favorites,
       folder_favorites: favorites,
+      preferred_meta_api_comic: preferredComicApi,
+      preferred_meta_api_book: preferredBookApi,
+      last_meta_api: String(raw.last_meta_api || preferredComicApi || defaults.last_meta_api).trim(),
       api_keys: {
         ...defaults.api_keys,
         ...(raw.api_keys || {}),
@@ -130,6 +150,9 @@ export class ConfigManager {
       webdav_password: '1234',
       sharing_https_enabled: false,
       pass_skip_meta: false,
+      last_meta_api: '리디북스',
+      preferred_meta_api_comic: '리디북스',
+      preferred_meta_api_book: '리디북스',
       api_keys: {
         aladin: '',
         vine: '',

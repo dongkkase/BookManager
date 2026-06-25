@@ -33,6 +33,8 @@ const useUnsafeDevNodeIntegration = isDev && (
 );
 const APP_NAME = 'BookManager';
 const APP_ID = 'com.bookmanager.app';
+const THUMBNAIL_MEMORY_CACHE_LIMIT = 256;
+const thumbnailMemoryCache = new Map();
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'bookmanager-thumbnail',
@@ -111,6 +113,29 @@ function mimeTypeForThumbnail(filePath) {
   return 'application/octet-stream';
 }
 
+async function readCachedThumbnail(thumbnailPath) {
+  const stat = await fs.promises.stat(thumbnailPath);
+  const cacheKey = `${thumbnailPath}:${stat.mtimeMs}:${stat.size}`;
+  const cached = thumbnailMemoryCache.get(cacheKey);
+  if (cached) {
+    thumbnailMemoryCache.delete(cacheKey);
+    thumbnailMemoryCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const data = await fs.promises.readFile(thumbnailPath);
+  const value = {
+    data,
+    mimeType: mimeTypeForThumbnail(thumbnailPath),
+  };
+  thumbnailMemoryCache.set(cacheKey, value);
+  while (thumbnailMemoryCache.size > THUMBNAIL_MEMORY_CACHE_LIMIT) {
+    const oldestKey = thumbnailMemoryCache.keys().next().value;
+    thumbnailMemoryCache.delete(oldestKey);
+  }
+  return value;
+}
+
 // 단일 인스턴스 락
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -131,16 +156,17 @@ if (!gotTheLock) {
         return new Response('Not found', { status: 404 });
       }
       const thumbnailPath = path.join(resolveThumbnailDir(getExecutableDir()), requestedName);
-      if (!fs.existsSync(thumbnailPath)) {
+      try {
+        const cached = await readCachedThumbnail(thumbnailPath);
+        return new Response(cached.data, {
+          headers: {
+            'Content-Type': cached.mimeType,
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
+        });
+      } catch {
         return new Response('Not found', { status: 404 });
       }
-      const data = await fs.promises.readFile(thumbnailPath);
-      return new Response(data, {
-        headers: {
-          'Content-Type': mimeTypeForThumbnail(thumbnailPath),
-          'Cache-Control': 'no-store',
-        },
-      });
     });
 
     const appIconPath = getAppIconPath();

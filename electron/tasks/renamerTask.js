@@ -418,13 +418,37 @@ export function refreshRenamerEntries(item, options = {}) {
   return { ...item, entries, count: entries.length };
 }
 
+function maxAnalysisWorkers(options = {}, totalCount = 1) {
+  const configured = Number(options.max_analysis_threads ?? options.maxAnalysisThreads);
+  const fallback = Math.max(1, Math.min(4, (os.cpus()?.length || 2) - 1));
+  const workerCount = Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : fallback;
+  return Math.min(Math.max(1, totalCount), workerCount);
+}
+
+async function mapWithConcurrency(items, workerCount, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
 export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
   const archives = await expandInputPaths(paths);
-  const items = [];
   const skippedFiles = await directUnsupportedInputs(paths);
+  let completed = 0;
 
-  for (let index = 0; index < archives.length; index += 1) {
-    const filePath = archives[index];
+  const results = await mapWithConcurrency(archives, maxAnalysisWorkers(options, archives.length), async (filePath, index) => {
     const name = path.basename(filePath);
     onProgress?.({
       progress: Math.round((index / Math.max(archives.length, 1)) * 100),
@@ -435,34 +459,43 @@ export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
       const stat = await fsp.stat(filePath);
       const archiveEntries = await listArchiveEntries(filePath, options.sevenZExe);
       if (archiveEntries.some(entry => entry.encrypted)) {
-        skippedFiles.push(taskText(options.lang, 'task_skip_encrypted_archive', { name }));
-        continue;
+        return { skipped: taskText(options.lang, 'task_skip_encrypted_archive', { name }) };
       }
       if (archiveEntries.some(entry => !entry.isDir && NESTED_ARCHIVE_EXTS.has(path.extname(entry.name).toLowerCase()))) {
-        skippedFiles.push(taskText(options.lang, 'task_skip_nested_archive', { name }));
-        continue;
+        return { skipped: taskText(options.lang, 'task_skip_nested_archive', { name }) };
       }
       const entries = buildEntries(filePath, archiveEntries, options);
       if (entries.length === 0) {
-        skippedFiles.push(taskText(options.lang, 'task_skip_no_supported_images', { name }));
-        continue;
+        return { skipped: taskText(options.lang, 'task_skip_no_supported_images', { name }) };
       }
 
-      items.push({
+      return { item: {
         id: filePath,
         filepath: filePath,
         name,
         checked: true,
         capOpt: false,
-        exifOpt: true,
+        exifOpt: false,
         count: entries.length,
         missingPages: missingPageNumbersForEntries(entries).join(', '),
         sizeMb: stat.size / (1024 * 1024),
         entries,
-      });
+      } };
     } catch (error) {
-      skippedFiles.push(`${name} (${error.message})`);
+      return { skipped: `${name} (${error.message})` };
+    } finally {
+      completed += 1;
+      onProgress?.({
+        progress: Math.round((completed / Math.max(archives.length, 1)) * 100),
+        message: taskText(options.lang, 'task_analyzing', { index: completed, total: archives.length, name }),
+      });
     }
+  });
+
+  const items = [];
+  for (const result of results) {
+    if (result?.item) items.push(result.item);
+    if (result?.skipped) skippedFiles.push(result.skipped);
   }
 
   onProgress?.({ progress: 100, message: taskText(options.lang, 'task_analysis_done') });

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage } from './CoverImage';
 import { groupFolderFiles } from '../../folderViewState';
@@ -34,11 +34,29 @@ const ThumbnailView = ({
 	  const containerRef = useRef(null);
 	  const rubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
 	  const [selectionBox, setSelectionBox] = useState(null);
+	  const [viewport, setViewport] = useState({ width: 0, height: 0, scrollTop: 0 });
 	  const items = files.length > 0 ? files : fileData;
   const imageWidth = Math.round(72 + Number(scale || 50) * 1.08);
   const itemWidth = imageWidth + 24;
   const imageHeight = Math.round(imageWidth * 1.42);
 	  const groups = groupFolderFiles(items, groupKey, sortKey, sortOrder);
+	  const gapX = 18;
+	  const gapY = 16;
+	  const padding = 10;
+	  const rowHeight = imageHeight + 10 + gapY;
+	  const shouldVirtualize = groupKey === 'none' && groups.length === 1 && items.length > 1000;
+	  const columnCount = shouldVirtualize
+	    ? Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gapX) / (itemWidth + gapX)))
+	    : 1;
+	  const totalRows = shouldVirtualize ? Math.ceil(groups[0].files.length / columnCount) : 0;
+	  const bufferRows = 3;
+	  const startRow = shouldVirtualize ? Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - bufferRows) : 0;
+	  const endRow = shouldVirtualize
+	    ? Math.min(totalRows, Math.ceil((viewport.scrollTop + (viewport.height || 600)) / rowHeight) + bufferRows)
+	    : 0;
+	  const virtualStartIndex = startRow * columnCount;
+	  const virtualEndIndex = shouldVirtualize ? Math.min(groups[0].files.length, endRow * columnCount) : 0;
+	  const virtualFiles = shouldVirtualize ? groups[0].files.slice(virtualStartIndex, virtualEndIndex) : [];
 	  const fileIndexByPath = useMemo(() => {
 	    const map = new Map();
 	    groups.flatMap(group => group.files).forEach((file, index) => {
@@ -46,6 +64,36 @@ const ThumbnailView = ({
 	    });
 	    return map;
 	  }, [groups]);
+
+	  useEffect(() => {
+	    const container = containerRef.current;
+	    if (!container) return undefined;
+	    const updateViewport = () => {
+	      setViewport(current => ({
+	        ...current,
+	        width: Math.max(0, Math.round(container.clientWidth || 0)),
+	        height: Math.max(0, Math.round(container.clientHeight || 0)),
+	        scrollTop: container.scrollTop || 0,
+	      }));
+	    };
+	    updateViewport();
+	    if (typeof ResizeObserver !== 'function') {
+	      window.addEventListener('resize', updateViewport);
+	      return () => window.removeEventListener('resize', updateViewport);
+	    }
+	    const observer = new ResizeObserver(updateViewport);
+	    observer.observe(container);
+	    return () => observer.disconnect();
+	  }, []);
+
+	  const handleGridScroll = event => {
+	    const nextScrollTop = event.currentTarget.scrollTop || 0;
+	    setViewport(current => current.scrollTop === nextScrollTop ? current : {
+	      ...current,
+	      scrollTop: nextScrollTop,
+	    });
+	    onScroll?.(event);
+	  };
 
 	  const handleItemClick = (file, e, index) => {
 	    if (dragSelectRef.current.moved || rubberSelectRef.current.moved) {
@@ -141,8 +189,8 @@ const ThumbnailView = ({
   return (
 	    <div
 	      ref={containerRef}
-	      className="thumbnail-grid"
-	      onScroll={onScroll}
+	      className={`thumbnail-grid ${shouldVirtualize ? 'is-virtualized' : ''}`}
+	      onScroll={handleGridScroll}
 	      onClick={event => {
 	        if (rubberSelectRef.current.moved) {
 	          rubberSelectRef.current.moved = false;
@@ -166,7 +214,51 @@ const ThumbnailView = ({
         '--thumb-image-height': `${imageHeight}px`,
       }}
     >
-      {groups.map(group => (
+      {shouldVirtualize ? (
+        <div
+          className="folder-virtual-grid-spacer"
+          style={{ height: `${Math.max(1, totalRows * rowHeight)}px` }}
+        >
+          {virtualFiles.map((file, relativeIndex) => {
+            const fileIndex = virtualStartIndex + relativeIndex;
+            const row = Math.floor(fileIndex / columnCount);
+            const column = fileIndex % columnCount;
+            return (
+	            <div
+	              key={file.path || fileIndex}
+	              data-file-path={file.path}
+	              className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
+	              style={{
+	                position: 'absolute',
+	                left: `${padding + column * (itemWidth + gapX)}px`,
+	                top: `${padding + row * rowHeight}px`,
+	              }}
+	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
+	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
+	              onClick={(event) => handleItemClick(file, event, fileIndex)}
+	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
+	            >
+              <div className="thumbnail-cover-card">
+                <CoverImage
+                  src={file.cover}
+                  alt={file.name || ''}
+                  className="thumb-image"
+                  t={t}
+                  iconSize={24}
+                />
+                {displayRating(file) && (
+                  <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>
+                )}
+                {displayPages(file) && (
+                  <span className="thumbnail-page-badge">{displayPages(file)}p</span>
+                )}
+                <span className="thumb-label">{file.name || '-'}</span>
+              </div>
+	            </div>
+            );
+          })}
+        </div>
+      ) : groups.map(group => (
         <React.Fragment key={group.name || 'all'}>
           {group.name && (
             <div className="folder-view-group-header">

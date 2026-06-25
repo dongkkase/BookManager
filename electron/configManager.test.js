@@ -90,6 +90,24 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.completion_sound, 'Default.wav');
         assert.equal(loaded.last_tab_id, 'folder');
         assert.equal(loaded.folder_last_path, '');
+        assert.equal(loaded.last_meta_api, '리디북스');
+        assert.equal(loaded.preferred_meta_api_comic, '리디북스');
+        assert.equal(loaded.preferred_meta_api_book, '리디북스');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('기존 마지막 검색 API를 책 타입별 기본 검색 API로 승계한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-meta-api-'));
+    try {
+        writeDataConfig(root, {
+            last_meta_api: 'Google Books',
+        });
+        const manager = new ConfigManager(root, root);
+        const loaded = manager.loadConfig();
+        assert.equal(loaded.preferred_meta_api_comic, 'Google Books');
+        assert.equal(loaded.preferred_meta_api_book, 'Google Books');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

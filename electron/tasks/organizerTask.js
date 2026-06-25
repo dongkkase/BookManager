@@ -5,7 +5,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
-import { listZipEntries, listZipEntriesFromFile, readZipEntryFromFile } from '../core/zipArchive.js';
+import { listZipEntries, listZipEntriesFromFile, readZipEntry, readZipEntryFromFile } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
@@ -187,17 +187,24 @@ async function listWith7z(filePath, sevenZExe) {
   });
 }
 
+function withoutMacMetadata(entries = []) {
+  return entries.filter(entry => !isMacArchiveMetadataPath(entry.name));
+}
+
+function zipEntriesToArchiveEntries(entries = []) {
+  return entries.map(entry => ({
+    name: entry.name,
+    isDir: entry.isDirectory,
+    size: entry.uncompressedSize || entry.compressedSize,
+    zipEntry: entry,
+  }));
+}
+
 async function listArchiveEntries(filePath, sevenZExe) {
   const ext = normalizedExt(filePath);
-  const withoutMacMetadata = entries => entries.filter(entry => !isMacArchiveMetadataPath(entry.name));
   if (ext === '.zip' || ext === '.cbz') {
     try {
-      return withoutMacMetadata((await listZipEntriesFromFile(filePath)).map(entry => ({
-        name: entry.name,
-        isDir: entry.isDirectory,
-        size: entry.uncompressedSize || entry.compressedSize,
-        zipEntry: entry,
-      })));
+      return withoutMacMetadata(zipEntriesToArchiveEntries(await listZipEntriesFromFile(filePath)));
     } catch {
       return withoutMacMetadata(await listWith7z(filePath, sevenZExe));
     }
@@ -205,16 +212,67 @@ async function listArchiveEntries(filePath, sevenZExe) {
   return withoutMacMetadata(await listWith7z(filePath, sevenZExe));
 }
 
-function getLeafGroups(entries) {
+function comparableArchiveName(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.normalize('NFC')
+    .replace(/[\s"'“”‘’\u200b-\u200f\u202a-\u202e\u2060\ufeff]+$/giu, '')
+    .toLowerCase() || '';
+}
+
+function stripKnownArchiveExtension(value = '') {
+  return String(value || '').replace(/\.(zip|cbz|cbr|7z|rar|cb7|alz|egg)$/i, '');
+}
+
+function isSameArchiveWrapperName(entryPath = '', sourcePath = '') {
+  const entryName = comparableArchiveName(entryPath);
+  const archiveName = comparableArchiveName(sourcePath);
+  if (!entryName || !archiveName) return false;
+  return entryName === archiveName
+    || stripKnownArchiveExtension(entryName) === stripKnownArchiveExtension(archiveName);
+}
+
+function sharedArchiveWrapperPrefix(targetEntries = [], sourcePath = '') {
+  if (!sourcePath || targetEntries.length === 0) return '';
+  const firstParts = targetEntries
+    .map(entry => String(entry.name || '').replace(/\\/g, '/').split('/').filter(Boolean))
+    .filter(parts => parts.length > 1);
+  if (firstParts.length !== targetEntries.length) return '';
+
+  const top = firstParts[0][0];
+  if (!top || firstParts.some(parts => parts[0] !== top)) return '';
+
+  const topName = comparableArchiveName(top);
+  const archiveName = comparableArchiveName(sourcePath);
+  if (!topName || !archiveName) return '';
+  if (topName === archiveName) return top;
+  if (stripKnownArchiveExtension(topName) === stripKnownArchiveExtension(archiveName)) return top;
+  return '';
+}
+
+function stripWrapperPrefix(entryPath = '', wrapperPrefix = '') {
+  const normalized = String(entryPath || '').replace(/\\/g, '/');
+  if (!wrapperPrefix) return normalized;
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts[0] !== wrapperPrefix) return normalized;
+  return parts.slice(1).join('/');
+}
+
+function getLeafGroups(entries, sourcePath = '') {
   const targetEntries = entries
     .filter(entry => !entry.isDir && (isImage(entry.name) || isNestedArchive(entry.name)))
     .sort((a, b) => naturalCompare(a.name, b.name));
 
   if (targetEntries.length === 0) return [];
 
+  const wrapperPrefix = sharedArchiveWrapperPrefix(targetEntries, sourcePath);
   const groups = new Map();
   for (const entry of targetEntries) {
-    const normalized = entry.name.replace(/\\/g, '/');
+    const originalNormalized = entry.name.replace(/\\/g, '/');
+    const normalized = stripWrapperPrefix(originalNormalized, wrapperPrefix);
     const parts = normalized.split('/').filter(Boolean);
     const nestedArchive = isNestedArchive(normalized);
     let key = 'Root_Files';
@@ -233,19 +291,43 @@ function getLeafGroups(entries) {
         images: [],
         type: nestedArchive ? 'archive' : key === 'Root_Files' ? 'archive' : 'folder',
         inner_path: nestedArchive ? normalized : '',
+        source_inner_path: nestedArchive ? originalNormalized : '',
         source_entry: nestedArchive ? entry.zipEntry || null : null,
       });
     }
     const group = groups.get(key);
-    group.images.push(entry.name);
+    group.images.push(normalized);
     if (nestedArchive) {
       group.type = 'archive';
       group.inner_path = normalized;
+      group.source_inner_path = originalNormalized;
       group.source_entry = entry.zipEntry || group.source_entry || null;
     }
   }
 
   return [...groups.values()].sort((a, b) => naturalCompare(a.name, b.name));
+}
+
+async function expandSingleNestedArchiveWrapper(sourcePath, groups = []) {
+  if (groups.length !== 1) return groups;
+  const wrapperGroup = groups[0];
+  const sourceExt = normalizedExt(sourcePath);
+  const wrapperExt = normalizedExt(wrapperGroup.inner_path);
+  if (!['.zip', '.cbz'].includes(sourceExt) || !['.zip', '.cbz'].includes(wrapperExt)) return groups;
+  if (!wrapperGroup.source_entry || !isSameArchiveWrapperName(wrapperGroup.inner_path, sourcePath)) return groups;
+
+  const wrapperBuffer = await readZipEntryFromFile(sourcePath, wrapperGroup.source_entry);
+  if (!wrapperBuffer) return groups;
+
+  const wrapperEntries = withoutMacMetadata(zipEntriesToArchiveEntries(listZipEntries(wrapperBuffer)));
+  const nestedGroups = getLeafGroups(wrapperEntries, wrapperGroup.inner_path);
+  if (nestedGroups.length <= 1) return groups;
+
+  return nestedGroups.map(group => ({
+    ...group,
+    wrapper_inner_path: wrapperGroup.source_inner_path || wrapperGroup.inner_path,
+    wrapper_source_entry: wrapperGroup.source_entry,
+  }));
 }
 
 function countImageEntries(entries = []) {
@@ -260,6 +342,29 @@ async function countNestedZipImagesFromSourceZip(sourcePath, group) {
   const buffer = await readZipEntryFromFile(sourcePath, group.source_entry);
   if (!buffer) return null;
   return countImageEntries(listZipEntries(buffer));
+}
+
+async function wrapperArchiveBuffer(sourcePath, group, cache) {
+  if (!group.wrapper_source_entry) return null;
+  const key = group.wrapper_inner_path
+    || group.wrapper_source_entry.localHeaderOffset
+    || group.wrapper_source_entry.name
+    || 'wrapper';
+  if (!cache.has(key)) {
+    cache.set(key, readZipEntryFromFile(sourcePath, group.wrapper_source_entry).catch(() => null));
+  }
+  return cache.get(key);
+}
+
+async function countNestedZipImagesFromWrapper(sourcePath, group, cache) {
+  if (!group.wrapper_source_entry || !group.source_entry) return null;
+  const nestedExt = normalizedExt(group.inner_path);
+  if (!['.zip', '.cbz'].includes(nestedExt)) return null;
+  const wrapperBuffer = await wrapperArchiveBuffer(sourcePath, group, cache);
+  if (!wrapperBuffer) return null;
+  const nestedBuffer = readZipEntry(wrapperBuffer, group.source_entry);
+  if (!nestedBuffer) return null;
+  return countImageEntries(listZipEntries(nestedBuffer));
 }
 
 async function findExtractedArchive(rootDir, innerPath) {
@@ -288,9 +393,10 @@ async function findExtractedArchive(rootDir, innerPath) {
 
 async function countNestedArchiveImagesWith7z(sourcePath, group, sevenZExe) {
   if (!sevenZExe || !group.inner_path) return null;
+  if (group.wrapper_source_entry) return null;
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_NestedCount_'));
   try {
-    await runQuietProcess(sevenZExe, ['x', sourcePath, group.inner_path, `-o${tempDir}`, '-y']);
+    await runQuietProcess(sevenZExe, ['x', sourcePath, group.source_inner_path || group.inner_path, `-o${tempDir}`, '-y']);
     const nestedPath = await findExtractedArchive(tempDir, group.inner_path);
     if (!nestedPath) return null;
     const entries = await listArchiveEntries(nestedPath, sevenZExe);
@@ -311,15 +417,55 @@ async function resolveGroupImageCount(sourcePath, group, sevenZExe) {
   return group.images.length;
 }
 
-async function resolveGroupImageCounts(sourcePath, groups, sevenZExe) {
-  const resolved = [];
-  for (const group of groups) {
-    resolved.push({
-      ...group,
-      image_count: await resolveGroupImageCount(sourcePath, group, sevenZExe),
-    });
+function maxAnalysisWorkers(options = {}, totalCount = 1) {
+  const configured = Number(options.max_analysis_threads ?? options.maxAnalysisThreads);
+  const fallback = Math.max(1, Math.min(4, (os.cpus()?.length || 2) - 1));
+  const workerCount = Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : fallback;
+  return Math.min(Math.max(1, totalCount), workerCount);
+}
+
+async function mapWithConcurrency(items, workerCount, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
   }
-  return resolved;
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
+async function resolveGroupImageCounts(sourcePath, groups, sevenZExe, options = {}) {
+  if (options.fastAnalyze || options.skipNestedImageCounts) {
+    return groups.map(group => ({
+      ...group,
+      image_count: group.inner_path
+        ? Math.max(1, group.images.length)
+        : countImageEntries(group.images.map(name => ({ name, isDir: false }))),
+    }));
+  }
+
+  const wrapperCache = new Map();
+  return mapWithConcurrency(
+    groups,
+    Math.min(2, Math.max(1, groups.length)),
+    async group => {
+      const wrapperCount = await countNestedZipImagesFromWrapper(sourcePath, group, wrapperCache);
+      return {
+        ...group,
+        image_count: Number.isFinite(wrapperCount)
+          ? wrapperCount
+          : await resolveGroupImageCount(sourcePath, group, sevenZExe),
+      };
+    },
+  );
 }
 
 function describeNoImageEntries(entries = []) {
@@ -333,13 +479,14 @@ function describeNoImageEntries(entries = []) {
 }
 
 function applyLangFormat(name, lang, forceUnit = '') {
-  const isChapter = forceUnit === '화';
-  const match = String(name).match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
+  const match = String(name).match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
   if (!match) return String(name).trim();
 
   let base = match[1].trim();
   const num = match[2].trim();
-  const tail = (match[3] || '').trim();
+  const detectedUnit = (match[3] || '').trim();
+  const tail = (match[4] || '').trim();
+  const isChapter = forceUnit === '화' || /^(화|話|c|ch\.?|chapter)$/i.test(detectedUnit);
   if (tail) base = `${base} ${tail}`.trim();
 
   if (lang === 'en') {
@@ -357,11 +504,10 @@ function applyLangFormat(name, lang, forceUnit = '') {
 export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
   const lang = options.lang || 'ko';
   const archives = await expandInputPaths(paths);
-  const results = [];
   const skippedFiles = await directUnsupportedInputs(paths);
+  let completed = 0;
 
-  for (let index = 0; index < archives.length; index += 1) {
-    const filePath = archives[index];
+  const analyzed = await mapWithConcurrency(archives, maxAnalysisWorkers(options, archives.length), async (filePath, index) => {
     const filename = path.basename(filePath);
     onProgress?.({
       progress: Math.round((index / Math.max(archives.length, 1)) * 100),
@@ -370,10 +516,10 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
 
     try {
       const entries = await listArchiveEntries(filePath, options.sevenZExe);
-      const groups = await resolveGroupImageCounts(filePath, getLeafGroups(entries), options.sevenZExe);
+      const leafGroups = await expandSingleNestedArchiveWrapper(filePath, getLeafGroups(entries, filePath));
+      const groups = await resolveGroupImageCounts(filePath, leafGroups, options.sevenZExe, options);
       if (groups.length === 0) {
-        skippedFiles.push(`${filename} (${describeNoImageEntries(entries)})`);
-        continue;
+        return { skipped: `${filename} (${describeNoImageEntries(entries)})` };
       }
 
       const stat = await fsp.stat(filePath);
@@ -407,7 +553,7 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
         };
       });
 
-      results.push({
+      return { item: {
         id: filePath,
         filepath: filePath,
         name: filename,
@@ -418,10 +564,22 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
         size_mb: stat.size / (1024 * 1024),
         page_count: groups.reduce((sum, group) => sum + group.image_count, 0),
         volumes,
-      });
+      } };
     } catch (error) {
-      skippedFiles.push(`${filename} (${error.message})`);
+      return { skipped: `${filename} (${error.message})` };
+    } finally {
+      completed += 1;
+      onProgress?.({
+        progress: Math.round((completed / Math.max(archives.length, 1)) * 100),
+        message: taskText(lang, 'task_organizer_analyzing', { index: completed, total: archives.length, name: filename }),
+      });
     }
+  });
+
+  const results = [];
+  for (const result of analyzed) {
+    if (result?.item) results.push(result.item);
+    if (result?.skipped) skippedFiles.push(result.skipped);
   }
 
   onProgress?.({ progress: 100, message: taskText(lang, 'task_analysis_done') });

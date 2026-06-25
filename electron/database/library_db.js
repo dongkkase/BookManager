@@ -89,10 +89,14 @@ export class LibraryDB {
         this.db.pragma('journal_mode = WAL');
         this.db.pragma('synchronous = NORMAL');
         this.db.pragma('foreign_keys = ON');
+        this.db.pragma('temp_store = MEMORY');
+        this.db.pragma('cache_size = -65536');
+        this.db.pragma('mmap_size = 268435456');
         this.createTables();
         this.ensureSchemaColumns();
         this.migrateLegacyTables();
         this.sanitizeFormatColumn();
+        this.db.pragma('optimize');
         return this.db;
     }
 
@@ -164,6 +168,8 @@ export class LibraryDB {
             CREATE INDEX IF NOT EXISTS idx_files_series ON files(series);
             CREATE INDEX IF NOT EXISTS idx_files_title ON files(title);
             CREATE INDEX IF NOT EXISTS idx_files_writer ON files(writer);
+            CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+            CREATE INDEX IF NOT EXISTS idx_files_path_nocase ON files(path COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_dup_target_folder ON dup_target_index(target_folder);
             CREATE INDEX IF NOT EXISTS idx_dup_target_name ON dup_target_index(name);
             CREATE INDEX IF NOT EXISTS idx_library_scan_status ON library_scan_state(status);
