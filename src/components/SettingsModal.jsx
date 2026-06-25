@@ -6,6 +6,10 @@ import {
   COMIC_METADATA_API_SOURCES,
   normalizeMetadataApiSourceForBookType,
 } from '../metadataApiPolicy';
+import {
+  bundledFontOptionsFromFaces,
+  installBundledFontFaces,
+} from '../bundledFonts';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 
 const LANGUAGE_OPTIONS = [
@@ -21,6 +25,16 @@ const RENAMER_ARCHIVE_COMPRESSION_OPTIONS = [
   { value: 'maximum', labelKey: 'renamer_archive_compression_maximum', fallback: '최대 압축' },
 ];
 const FONT_SCALES = Array.from({ length: 16 }, (_, index) => 80 + index * 5);
+const FALLBACK_SYSTEM_FONT_OPTIONS = [
+  'Malgun Gothic',
+  'Segoe UI',
+  'Yu Gothic UI',
+  'Arial',
+  'Calibri',
+  'Tahoma',
+  'Verdana',
+  'Consolas',
+];
 const DEFAULT_API_KEYS = {
   aladin: '',
   vine: '',
@@ -33,6 +47,21 @@ const DEFAULT_API_KEYS = {
 
 function safeThreadMax() {
   return safeThreadLimit(navigator.hardwareConcurrency || 4);
+}
+
+function uniqueSystemFonts(fonts = [], currentFont = '', bundledOptions = []) {
+  const bundled = new Set(bundledOptions.map(option => String(option.value || '').toLocaleLowerCase()));
+  const seen = new Set();
+  const result = [];
+  for (const font of [...fonts, currentFont]) {
+    const value = String(font || '').trim();
+    if (!value || bundled.has(value.toLocaleLowerCase())) continue;
+    const key = value.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result.sort((a, b) => a.localeCompare(b));
 }
 
 function normalizeConfig(config) {
@@ -74,6 +103,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const [maintenanceBusy, setMaintenanceBusy] = React.useState('');
   const [selectedDupFolder, setSelectedDupFolder] = React.useState('');
   const [soundOptions, setSoundOptions] = React.useState(['Default.wav']);
+  const [bundledFontFaces, setBundledFontFaces] = React.useState([]);
+  const [systemFontOptions, setSystemFontOptions] = React.useState(FALLBACK_SYSTEM_FONT_OPTIONS);
   const [showApiManual, setShowApiManual] = React.useState(false);
   const threadMax = React.useMemo(() => safeThreadMax(), []);
   const handleCancel = React.useCallback(() => {
@@ -105,6 +136,42 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     };
   }, [isOpen]);
 
+  React.useEffect(() => {
+    if (!isOpen) return undefined;
+    const listBundledFonts = window.electronAPI?.listBundledFonts;
+    if (!listBundledFonts) return undefined;
+    let cancelled = false;
+    listBundledFonts()
+      .then(fonts => {
+        if (cancelled || !Array.isArray(fonts)) return;
+        setBundledFontFaces(fonts);
+        installBundledFontFaces(fonts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return undefined;
+    const listSystemFonts = window.electronAPI?.listSystemFonts;
+    if (!listSystemFonts) return undefined;
+    let cancelled = false;
+    listSystemFonts()
+      .then(fonts => {
+        if (!cancelled && Array.isArray(fonts) && fonts.length > 0) {
+          setSystemFontOptions(uniqueSystemFonts(fonts));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSystemFontOptions(uniqueSystemFonts(FALLBACK_SYSTEM_FONT_OPTIONS));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   if (!isOpen || !localConfig) return null;
 
   const label = (key, fallback) => {
@@ -124,6 +191,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     'book',
     localConfig.api_keys || {},
   );
+  const bundledFontOptions = bundledFontOptionsFromFaces(bundledFontFaces);
+  const systemFontsForSelect = uniqueSystemFonts(systemFontOptions, localConfig.font_family, bundledFontOptions);
 
   const handleChange = (key, value) => {
     setLocalConfig(prev => ({ ...prev, [key]: value }));
@@ -329,11 +398,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               <div className="settings-row">
                 <span className="settings-label">{t('font_family_lbl')}</span>
                 <select className="settings-select" value={localConfig.font_family || 'Default'} onChange={event => handleChange('font_family', event.target.value)}>
-                  <option value="Default">Default</option>
-                  <option value="Jua">Jua</option>
-                  <option value="Noto Sans KR">Noto Sans KR</option>
-                  <option value="Segoe UI">Segoe UI</option>
-                  <option value="Arial">Arial</option>
+                  <optgroup label={label('font_group_bundled', '프로그램 포함 폰트')}>
+                    {bundledFontOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label={label('font_group_system', '시스템 폰트')}>
+                    {systemFontsForSelect.map(font => <option key={font} value={font}>{font}</option>)}
+                  </optgroup>
                 </select>
               </div>
 

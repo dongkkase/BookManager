@@ -40,6 +40,7 @@ import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
 import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
 import { fontVarsForConfig } from './fontPolicy';
+import { installBundledFontFaces } from './bundledFonts';
 import './styles/App.css';
 
 const MemoFolderTab = React.memo(FolderTab);
@@ -68,6 +69,20 @@ function App() {
   });
   const { config, saveConfig: setConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n(config);
+
+  useEffect(() => {
+    const listBundledFonts = window.electronAPI?.listBundledFonts;
+    if (!listBundledFonts) return undefined;
+    let cancelled = false;
+    listBundledFonts()
+      .then(fonts => {
+        if (!cancelled && Array.isArray(fonts)) installBundledFontFaces(fonts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
   const lastTabSaveTimer = useRef(null);

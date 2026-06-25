@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 폰트 관련
   getFontPath: (fontFilename) => ipcRenderer.invoke('font:getPath', fontFilename),
+  listBundledFonts: () => ipcRenderer.invoke('font:listBundled'),
+  listSystemFonts: () => ipcRenderer.invoke('font:listSystem'),
   
   // 바이너리 도구 관련
   getBinPath: (toolName) => ipcRenderer.invoke('bin:getPath', toolName),

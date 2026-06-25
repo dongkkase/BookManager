@@ -76,6 +76,10 @@ import {
   removeTreeIfNoFilesAsync,
   undoRename,
 } from './fsOperations.js';
+import {
+  listBundledFontFaces,
+  listSystemFontFamilies,
+} from './fontDiscovery.js';
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
@@ -3629,6 +3633,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 폰트 관련 ==========
   ipcMain.handle('font:getPath', (_, fontFilename) => {
     return getFontPath(fontFilename);
+  });
+
+  ipcMain.handle('font:listBundled', () => {
+    return listBundledFontFaces([
+      getResourcePath('src', 'fonts'),
+      path.join(getExecutableDir(), 'fonts'),
+    ]);
+  });
+
+  ipcMain.handle('font:listSystem', async () => {
+    return await listSystemFontFamilies(process.platform);
   });
 
   // ========== 바이너리 도구 관련 ==========
