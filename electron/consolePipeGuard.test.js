@@ -24,6 +24,34 @@ function createFakeStream() {
 
 function createFakeProcess() {
     const handlers = new Map();
+    const addHandler = (eventName, handler, prepend = false) => {
+        const list = handlers.get(eventName) || [];
+        if (prepend) list.unshift(handler);
+        else list.push(handler);
+        handlers.set(eventName, list);
+        return fakeProcess;
+    };
+    const fakeProcess = {
+        on(eventName, handler) {
+            return addHandler(eventName, handler);
+        },
+        prependListener(eventName, handler) {
+            return addHandler(eventName, handler, true);
+        },
+        listenerCount(eventName) {
+            return (handlers.get(eventName) || []).length;
+        },
+        emitUncaughtException(error) {
+            for (const handler of handlers.get('uncaughtException') || []) {
+                handler(error);
+            }
+        },
+    };
+    return fakeProcess;
+}
+
+function createLegacyFakeProcess() {
+    const handlers = new Map();
     return {
         on(eventName, handler) {
             handlers.set(eventName, handler);
@@ -149,4 +177,41 @@ test('uncaughtException으로 올라온 EPIPE는 프로세스 예외로 전파�
 
     fakeConsole.log('ignored after process EPIPE');
     assert.equal(logCount, 0);
+});
+
+test('다른 uncaughtException 처리기가 있으면 비-EPIPE 오류 처리를 넘긴다', () => {
+    const fakeProcess = createFakeProcess();
+    const error = createError('EINVAL', 'main process failure');
+    let observed = null;
+
+    installConsolePipeGuard({
+        console: { error() {} },
+        stdout: createFakeStream(),
+        stderr: createFakeStream(),
+        processTarget: fakeProcess,
+        stateTarget: {},
+    });
+    fakeProcess.on('uncaughtException', nextError => {
+        observed = nextError;
+    });
+
+    assert.doesNotThrow(() => fakeProcess.emitUncaughtException(error));
+    assert.equal(observed, error);
+});
+
+test('listenerCount 없는 프로세스에서는 비-EPIPE 오류를 기존처럼 전파한다', () => {
+    const fakeProcess = createLegacyFakeProcess();
+
+    installConsolePipeGuard({
+        console: { error() {} },
+        stdout: createFakeStream(),
+        stderr: createFakeStream(),
+        processTarget: fakeProcess,
+        stateTarget: {},
+    });
+
+    assert.throws(
+        () => fakeProcess.emitUncaughtException(createError('EINVAL', 'legacy failure')),
+        /legacy failure/,
+    );
 });

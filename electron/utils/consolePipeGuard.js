@@ -63,6 +63,12 @@ function attachProcessErrorHandler(processTarget, state) {
             markAllStreamsBroken(state);
             return;
         }
+        if (
+            typeof processTarget.listenerCount === 'function'
+            && processTarget.listenerCount('uncaughtException') > 1
+        ) {
+            return;
+        }
         throw error;
     };
 

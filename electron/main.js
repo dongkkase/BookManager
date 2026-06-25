@@ -9,8 +9,16 @@ import { resolveWindowState, serializeWindowState } from './windowState.js';
 import { createExitDialogOptions, shouldProceedWithExit } from './exitPolicy.js';
 import { getSharingServerStatus, stopAllSharingServers } from './servers/sharingServers.js';
 import { findBinaryPath } from './binaryPolicy.js';
-import { resolveThumbnailDir } from './dataPaths.js';
+import {
+  resolveAppDataDir,
+  resolveThumbnailDir,
+} from './dataPaths.js';
 import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
+import {
+  attachWindowSafetyHandlers,
+  createProcessFaultReporter,
+  installProcessSafetyHandlers,
+} from './processSafety.js';
 
 installConsolePipeGuard();
 
@@ -86,6 +94,19 @@ function getExecutableDir() {
   return path.join(__dirname, '..');
 }
 
+function getProcessLogPath() {
+  return path.join(resolveAppDataDir(getExecutableDir()), 'process.log');
+}
+
+const reportProcessFault = createProcessFaultReporter({
+  getLogPath: getProcessLogPath,
+});
+
+installProcessSafetyHandlers({
+  appTarget: app,
+  reportFault: reportProcessFault,
+});
+
 // 바이너리 도구 경로
 async function getBinPath(toolName) {
   return findBinaryPath(toolName, {
@@ -149,50 +170,62 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(async () => {
-    protocol.handle('bookmanager-thumbnail', async request => {
-      const requestedName = decodeURIComponent(new URL(request.url).pathname.slice(1));
-      if (!requestedName || path.basename(requestedName) !== requestedName) {
-        return new Response('Not found', { status: 404 });
-      }
-      const thumbnailPath = path.join(resolveThumbnailDir(getExecutableDir()), requestedName);
+  app.whenReady()
+    .then(initializeApp)
+    .catch(error => {
+      reportProcessFault('startup-failed', error);
       try {
-        const cached = await readCachedThumbnail(thumbnailPath);
-        return new Response(cached.data, {
-          headers: {
-            'Content-Type': cached.mimeType,
-            'Cache-Control': 'public, max-age=31536000, immutable',
-          },
-        });
+        dialog.showErrorBox(APP_NAME, error?.message || String(error));
       } catch {
-        return new Response('Not found', { status: 404 });
+        // The process fault log is the fallback if a native dialog cannot be shown.
       }
+      app.quit();
     });
+}
 
-    const appIconPath = getAppIconPath();
-    if (process.platform === 'darwin' && appIconPath) {
-      app.dock.setIcon(appIconPath);
+async function initializeApp() {
+  protocol.handle('bookmanager-thumbnail', async request => {
+    const requestedName = decodeURIComponent(new URL(request.url).pathname.slice(1));
+    if (!requestedName || path.basename(requestedName) !== requestedName) {
+      return new Response('Not found', { status: 404 });
     }
-
-    // 설정 관리자 초기화
-    configManager = new ConfigManager(getUserDataPath(), getExecutableDir(), {
-      useUserData: app.isPackaged && process.platform === 'darwin',
-    });
-    await configManager.initialize();
-
-    // i18n 초기화
-    const config = configManager.loadConfig();
-    await setupI18n(config?.lang || 'ko');
-
-    // IPC 핸들러 설정
-    ipcController = setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
-
-    // 메인 윈도우 생성
-    createMainWindow(config);
-
-    // 트레이 생성
-    createTray();
+    const thumbnailPath = path.join(resolveThumbnailDir(getExecutableDir()), requestedName);
+    try {
+      const cached = await readCachedThumbnail(thumbnailPath);
+      return new Response(cached.data, {
+        headers: {
+          'Content-Type': cached.mimeType,
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      });
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
   });
+
+  const appIconPath = getAppIconPath();
+  if (process.platform === 'darwin' && appIconPath) {
+    app.dock.setIcon(appIconPath);
+  }
+
+  // 설정 관리자 초기화
+  configManager = new ConfigManager(getUserDataPath(), getExecutableDir(), {
+    useUserData: app.isPackaged && process.platform === 'darwin',
+  });
+  await configManager.initialize();
+
+  // i18n 초기화
+  const config = configManager.loadConfig();
+  await setupI18n(config?.lang || 'ko');
+
+  // IPC 핸들러 설정
+  ipcController = setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
+
+  // 메인 윈도우 생성
+  createMainWindow(config);
+
+  // 트레이 생성
+  createTray();
 }
 
 function createMainWindow(config) {
@@ -228,6 +261,9 @@ function createMainWindow(config) {
     mainWindow.setMenu(null);
   }
   const windowOwnerId = mainWindow.webContents.id;
+  attachWindowSafetyHandlers(mainWindow, {
+    reportFault: reportProcessFault,
+  });
 
   // 개발 모드 또는 로컬 파일 로드
   if (isDev) {
