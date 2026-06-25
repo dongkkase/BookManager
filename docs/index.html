@@ -69,15 +69,20 @@
             display: grid;
             align-items: end;
             padding: 32px clamp(20px, 6vw, 72px) 72px;
+            position: relative;
+            overflow: hidden;
             background:
-                linear-gradient(90deg, rgba(16, 18, 20, 0.98), rgba(16, 18, 20, 0.72) 52%, rgba(16, 18, 20, 0.9)),
-                url("https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png") right 10vw center / min(42vw, 460px) auto no-repeat,
+                linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
+                linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
+                url("bg.webp") center / cover no-repeat,
                 #101214;
             border-bottom: 1px solid var(--line);
         }
 
         .hero-inner {
             max-width: 850px;
+            position: relative;
+            text-shadow: 0 2px 18px rgba(0, 0, 0, 0.34);
         }
 
         .eyebrow {
@@ -230,10 +235,11 @@
         @media (max-width: 720px) {
             .hero {
                 min-height: 76vh;
-                padding-top: 140px;
+                padding-top: 96px;
                 background:
-                    linear-gradient(180deg, rgba(16, 18, 20, 0.78), rgba(16, 18, 20, 0.98)),
-                    url("https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png") center 24px / 96px auto no-repeat,
+                    linear-gradient(180deg, rgba(10, 12, 13, 0.68) 0%, rgba(10, 12, 13, 0.94) 56%, rgba(10, 12, 13, 0.98) 100%),
+                    linear-gradient(90deg, rgba(10, 12, 13, 0.66), rgba(10, 12, 13, 0.34)),
+                    url("bg.webp") center top / cover no-repeat,
                     #101214;
             }
 
