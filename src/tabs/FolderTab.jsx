@@ -1036,6 +1036,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           mode: choice,
           optimizeMetadata,
           metadataOnly: optimizeMetadata && !options.showIndexingVisual,
+          forceMetadata: optimizeMetadata && options.forceMetadata !== false,
           priorityFolder: selectedFolderPath,
           language: config?.language || config?.lang || 'ko',
         },
@@ -1074,17 +1075,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       });
     }
     if (!shouldRefreshIndexedFolder) return;
-    const refreshOptions = optimizeMetadata
-      ? {
-          ...scanOptions,
-          includeSubfolders: true,
-          force: true,
-        }
-      : {
-          ...scanOptions,
-          force: true,
-        };
-    if (optimizeMetadata) setIncludeSubfolders(true);
+    const shouldResetIncludeSubfolders = options.resetIncludeSubfoldersOnComplete === true;
+    const nextIncludeSubfolders = optimizeMetadata
+      ? (shouldResetIncludeSubfolders ? false : true)
+      : includeSubfolders;
+    const refreshOptions = {
+      ...scanOptions,
+      includeSubfolders: nextIncludeSubfolders,
+      force: true,
+    };
+    if (includeSubfolders !== nextIncludeSubfolders) setIncludeSubfolders(nextIncludeSubfolders);
     setSelectedFolderPath(folderPath);
     clearSelection();
     setSearchQuery('');
@@ -1111,6 +1111,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     scanning,
     selectedFolderPath,
     showToast,
+    includeSubfolders,
     isCheckingMissing,
     t,
   ]);
@@ -1124,6 +1125,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       mode: 'smart',
       skipPrompt: true,
       showIndexingVisual: true,
+      resetIncludeSubfoldersOnComplete: true,
+      forceMetadata: false,
     });
   }, [libraries, preparingDuplicates, runLibraryIndexAction, scanning]);
 

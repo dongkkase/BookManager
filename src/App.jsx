@@ -370,6 +370,7 @@ function App() {
           window.electronAPI?.updateFolderIndex?.(folders, {
             priorityFolder: savedConfig?.last_selected_library || updatedConfig.last_selected_library,
             optimizeMetadata: true,
+            forceMetadata: false,
             mode: 'smart',
             language: nextLang,
           }).catch(error => {

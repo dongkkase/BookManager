@@ -13,3 +13,12 @@ test('metadataOnly 최적화는 기존 인덱스 목록을 사용하고 인덱�
     assert.match(source, /metadataTargetsByFolder\.set\(folder,\s*targets\)/);
     assert.match(source, /\} else \{[\s\S]*scanArchivePaths\(/);
 });
+
+test('라이브러리 메타데이터 추출은 제한된 병렬 처리와 분리된 강제 재처리 옵션을 사용한다', () => {
+    assert.match(source, /const DEFAULT_LIBRARY_METADATA_CONCURRENCY/);
+    assert.match(source, /const MAX_LIBRARY_METADATA_CONCURRENCY/);
+    assert.match(source, /const metadataConcurrency = resolveLibraryMetadataConcurrency\(options\)/);
+    assert.match(source, /await Promise\.all\([\s\S]*Array\.from\(/);
+    assert.match(source, /const forceMetadata = mode === 'force'[\s\S]*options\.forceMetadata !== false && shouldOptimizeMetadata/);
+    assert.match(source, /force:\s*forceMetadata/);
+});

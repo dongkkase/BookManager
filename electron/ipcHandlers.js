@@ -2168,10 +2168,18 @@ const LIBRARY_SCAN_VISUAL_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', 
 const LIBRARY_SCAN_PROGRESS_INTERVAL_MS = 500;
 const LIBRARY_SCAN_PROGRESS_MATCH_DELTA = 250;
 const LIBRARY_SCAN_STAT_CONCURRENCY = 16;
+const DEFAULT_LIBRARY_METADATA_CONCURRENCY = Math.max(1, Math.min(4, os.cpus()?.length || 1));
+const MAX_LIBRARY_METADATA_CONCURRENCY = 8;
 const THUMBNAIL_TARGET_WIDTH = 500;
 const THUMBNAIL_WEBP_QUALITY = 82;
 const imageDataUrlCache = new Map();
 const execFileAsync = promisify(execFile);
+
+function resolveLibraryMetadataConcurrency(options = {}) {
+  const requested = Number(options.metadataConcurrency);
+  if (!Number.isFinite(requested)) return DEFAULT_LIBRARY_METADATA_CONCURRENCY;
+  return Math.max(1, Math.min(MAX_LIBRARY_METADATA_CONCURRENCY, Math.floor(requested)));
+}
 
 function mimeFromUrl(url = '', contentType = '') {
   const cleanType = String(contentType || '').split(';')[0].trim();
@@ -2620,6 +2628,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       skipArchiveExtraction: false,
     });
     const files = [];
+    const metadataConcurrency = resolveLibraryMetadataConcurrency(options);
+    let nextIndex = 0;
+    let completedCount = 0;
     let lastProgressAt = 0;
 
     function emitProgress(index, filePath = '', forceProgress = false) {
@@ -2637,11 +2648,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       });
     }
 
-    for (let index = 0; index < filePaths.length; index += 1) {
+    async function processMetadataFile(index, filePath) {
       throwIfTaskCancelled(shouldCancel);
       if (typeof touchHeartbeat === 'function') touchHeartbeat();
-      const filePath = filePaths[index];
-      emitProgress(index, filePath, index === 0);
+      emitProgress(completedCount, filePath, index === 0);
       let file = null;
       try {
         file = await inspectFolderFile(filePath, {
@@ -2657,7 +2667,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       } catch (error) {
         if (error?.code === 'TASK_CANCELLED') throw error;
         console.warn(`[LibraryIndex] metadata extraction skipped: ${filePath}`, error.message);
-        continue;
+        completedCount += 1;
+        emitProgress(completedCount, filePath);
+        return;
       }
       throwIfTaskCancelled(shouldCancel);
       if (file) files.push(file);
@@ -2669,7 +2681,24 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           libraryPhase: 'metadata',
         });
       }
+      completedCount += 1;
+      emitProgress(completedCount, filePath);
     }
+
+    async function runMetadataWorker() {
+      while (nextIndex < filePaths.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        await processMetadataFile(index, filePaths[index]);
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(metadataConcurrency, filePaths.length) },
+        () => runMetadataWorker(),
+      ),
+    );
     emitProgress(filePaths.length, '', true);
 
     return files;
@@ -3232,6 +3261,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const mode = options.mode === 'smart' ? 'smart' : 'force';
     const shouldOptimizeMetadata = options.optimizeMetadata === true;
     const metadataOnly = shouldOptimizeMetadata && options.metadataOnly === true;
+    const forceMetadata = mode === 'force'
+      ? true
+      : options.forceMetadata !== false && shouldOptimizeMetadata;
     const lastMtimes = { ...(config.index_last_mtimes || {}) };
     const priorityFolder = options.priorityFolder
       ? path.resolve(options.priorityFolder)
@@ -3481,7 +3513,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             libraryDb: db,
             sevenZExe,
             shouldCancel,
-            force: shouldOptimizeMetadata || mode === 'force',
+            force: forceMetadata,
             lang,
             touchHeartbeat: () => queueLibraryScanHeartbeat(
               folder,
