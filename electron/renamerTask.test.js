@@ -9,7 +9,13 @@ import {
     analyzeRenamerInputs,
     executeRenamer,
     extractRenamerImage,
+    hasJpegRemovableMetadata,
     missingPageNumbersForEntries,
+    hasPngRemovableMetadata,
+    hasWebpRemovableMetadata,
+    shouldSkipLargerOptimizedArchive,
+    stripJpegRemovableMetadata,
+    stripWebpRemovableMetadata,
 } from './tasks/renamerTask.js';
 import {
     listZipEntriesFromFile,
@@ -41,6 +47,31 @@ const PNG_1X1 = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n1cAAAAASUVORK5CYII=',
     'base64',
 );
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(data.length, 0);
+    header.write(type, 4, 4, 'ascii');
+    return Buffer.concat([header, data, Buffer.alloc(4)]);
+}
+
+function webpFile(chunks) {
+    const parts = [];
+    for (const [type, data = Buffer.alloc(0)] of chunks) {
+        const header = Buffer.alloc(8);
+        header.write(type, 0, 4, 'ascii');
+        header.writeUInt32LE(data.length, 4);
+        parts.push(header, data);
+        if (data.length % 2 === 1) parts.push(Buffer.from([0]));
+    }
+
+    const body = Buffer.concat(parts);
+    const header = Buffer.alloc(12);
+    header.write('RIFF', 0, 4, 'ascii');
+    header.writeUInt32LE(4 + body.length, 4);
+    header.write('WEBP', 8, 4, 'ascii');
+    return Buffer.concat([header, body]);
+}
 
 function createArchive(sevenZExe, root, name, files) {
     const input = path.join(root, `${name}-input`);
@@ -84,6 +115,15 @@ function addExifSegment(jpeg) {
     return Buffer.concat([jpeg.subarray(0, 2), app1Header, exifPayload, jpeg.subarray(2)]);
 }
 
+function addJpegSegment(jpeg, marker, payload) {
+    const data = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
+    const header = Buffer.alloc(4);
+    header[0] = 0xff;
+    header[1] = marker;
+    header.writeUInt16BE(data.length + 2, 2);
+    return Buffer.concat([jpeg.subarray(0, 2), header, data, jpeg.subarray(2)]);
+}
+
 function createGradientJpeg(cjpegExe, quality = 100) {
     const width = 96;
     const height = 96;
@@ -116,6 +156,80 @@ async function readArchiveEntry(filePath, entryName) {
     assert.ok(buffer);
     return buffer;
 }
+
+test('이미지 메타데이터 판별은 제거 대상이 있는 파일만 처리 대상으로 표시한다', () => {
+    const jpegWithoutMetadata = Buffer.from([
+        0xff, 0xd8,
+        0xff, 0xdb, 0x00, 0x04, 0x00, 0x00,
+        0xff, 0xda,
+    ]);
+    const jpegWithExif = addExifSegment(jpegWithoutMetadata);
+    assert.equal(hasJpegRemovableMetadata(jpegWithoutMetadata), false);
+    assert.equal(hasJpegRemovableMetadata(jpegWithExif), true);
+
+    const jpegWithBandiViewComment = addJpegSegment(
+        jpegWithoutMetadata,
+        0xfe,
+        'Software: BandiView 7.27 (quality: 30)',
+    );
+    const strippedJpeg = stripJpegRemovableMetadata(jpegWithBandiViewComment);
+    assert.equal(strippedJpeg.removed, true);
+    assert.equal(strippedJpeg.buffer.includes(Buffer.from('BandiView')), false);
+    assert.equal(hasJpegRemovableMetadata(strippedJpeg.buffer), false);
+
+    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const pngWithoutMetadata = Buffer.concat([
+        pngSignature,
+        pngChunk('IHDR', Buffer.alloc(13)),
+        pngChunk('IDAT', Buffer.from([0])),
+        pngChunk('IEND'),
+    ]);
+    const pngWithText = Buffer.concat([
+        pngSignature,
+        pngChunk('IHDR', Buffer.alloc(13)),
+        pngChunk('tEXt', Buffer.from('Comment\0BookManager', 'utf8')),
+        pngChunk('IDAT', Buffer.from([0])),
+        pngChunk('IEND'),
+    ]);
+    assert.equal(hasPngRemovableMetadata(pngWithoutMetadata), false);
+    assert.equal(hasPngRemovableMetadata(pngWithText), true);
+
+    assert.equal(hasWebpRemovableMetadata(webpFile([['VP8 ', Buffer.from([0])]])), false);
+    const webpWithBandiViewExif = webpFile([
+        ['VP8X', Buffer.from([0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0])],
+        ['EXIF', Buffer.from('II*\0Software: BandiView 7.27 (quality: 30)', 'binary')],
+        ['VP8 ', Buffer.from([0])],
+    ]);
+    const strippedWebp = stripWebpRemovableMetadata(webpWithBandiViewExif);
+    assert.equal(hasWebpRemovableMetadata(webpWithBandiViewExif), true);
+    assert.equal(strippedWebp.removed, true);
+    assert.equal(strippedWebp.buffer.includes(Buffer.from('BandiView')), false);
+    assert.equal(hasWebpRemovableMetadata(strippedWebp.buffer), false);
+    assert.equal((strippedWebp.buffer[20] & 0x08), 0);
+});
+
+test('EXIF 제거 요청은 결과 아카이브가 커져도 원본 유지로 되돌리지 않는다', () => {
+    const largerPackResult = { outputSize: 1200, sourceSize: 1000 };
+
+    assert.equal(
+        shouldSkipLargerOptimizedArchive(
+            { capOpt: true, exifOpt: false },
+            {},
+            false,
+            largerPackResult,
+        ),
+        true,
+    );
+    assert.equal(
+        shouldSkipLargerOptimizedArchive(
+            { capOpt: true, exifOpt: true },
+            {},
+            false,
+            largerPackResult,
+        ),
+        false,
+    );
+});
 
 test('내부 파일 리스트는 기존 Python natural_keys 순서로 로드한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-order-'));

@@ -8,7 +8,12 @@ import {
   archiveChangeBadges,
   clampStartNumber,
   moveRenamerEntry,
+  normalizeRenamerBatchOptionsFromConfig,
+  normalizeRenamerOptionsFromConfig,
   refreshRenamerItem,
+  renamerOptionsEqual,
+  serializeRenamerBatchOptions,
+  serializeRenamerOptions,
 } from '../renamerPolicy';
 import '../styles/RenamerTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
@@ -53,13 +58,19 @@ function scrollTableRowIntoView(container, row) {
 
 function RenamerTab({ config, saveConfig, t, showToast }) {
   const dragDropImage = useMemo(() => selectRandomResource(DRAG_DROP_IMAGES), []);
+  const initialRenamerOptions = normalizeRenamerOptionsFromConfig(config);
+  const initialRenamerBatchOptions = normalizeRenamerBatchOptionsFromConfig(config);
   const [fileList, setFileList] = useState([]);
   const executeLockRef = useRef(false);
+  const applyingConfigRef = useRef(false);
+  const lastAppliedConfigOptionsRef = useRef(null);
+  const lastAppliedBatchOptionsRef = useRef(null);
   const [selectedArchiveId, setSelectedArchiveId] = useState(null);
-  const [patternIndex, setPatternIndex] = useState(Number(config?.rename_pattern_idx || 0));
-  const [customText, setCustomText] = useState(config?.custom_text || '');
-  const [keepName, setKeepName] = useState(Boolean(config?.keep_internal_name || false));
-  const [startNum, setStartNum] = useState(Number(config?.start_num || 0));
+  const [patternIndex, setPatternIndex] = useState(initialRenamerOptions.patternIndex);
+  const [customText, setCustomText] = useState(initialRenamerOptions.customText);
+  const [keepName, setKeepName] = useState(initialRenamerOptions.keepName);
+  const [startNum, setStartNum] = useState(initialRenamerOptions.startNum);
+  const [renamerBatchOptions, setRenamerBatchOptions] = useState(initialRenamerBatchOptions);
   const [isWorking, setIsWorking] = useState(false);
   const [statusMessage, setStatusMessage] = useState(t('status_wait'));
   const [progress, setProgress] = useState(0);
@@ -85,13 +96,17 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       : ['001.jpg', 'Page_001.jpg', 'Title_001.jpg', 'Title_Page_001.jpg', 'Custom_001.jpg'];
   }, [t]);
 
-  const renameOptions = useMemo(() => ({
+  const currentRenamerOptions = useMemo(() => ({
     patternIndex,
     customText,
     keepName,
     startNum,
+  }), [customText, keepName, patternIndex, startNum]);
+
+  const renameOptions = useMemo(() => ({
+    ...currentRenamerOptions,
     webpConversion: Boolean(config?.webp_conversion),
-  }), [config?.webp_conversion, patternIndex, customText, keepName, startNum]);
+  }), [config?.webp_conversion, currentRenamerOptions]);
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.((data) => {
@@ -120,13 +135,52 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [keepName, patternIndex]);
 
   useEffect(() => {
-    saveConfig?.({
-      rename_pattern_idx: patternIndex,
-      custom_text: customText,
-      keep_internal_name: keepName,
-      start_num: startNum,
-    });
-  }, [customText, keepName, patternIndex, saveConfig, startNum]);
+    if (!config) return;
+    const configOptions = normalizeRenamerOptionsFromConfig(config);
+    if (renamerOptionsEqual(lastAppliedConfigOptionsRef.current, configOptions)) return;
+    lastAppliedConfigOptionsRef.current = configOptions;
+    if (renamerOptionsEqual(currentRenamerOptions, configOptions)) return;
+
+    applyingConfigRef.current = true;
+    setPatternIndex(configOptions.patternIndex);
+    setCustomText(configOptions.customText);
+    setKeepName(configOptions.keepName);
+    setStartNum(configOptions.startNum);
+  }, [
+    config?.custom_text,
+    config?.keep_internal_name,
+    config?.rename_pattern_idx,
+    config?.start_num,
+    currentRenamerOptions,
+  ]);
+
+  useEffect(() => {
+    if (!config) return;
+    if (applyingConfigRef.current) {
+      applyingConfigRef.current = false;
+      return;
+    }
+    const configOptions = normalizeRenamerOptionsFromConfig(config);
+    if (renamerOptionsEqual(currentRenamerOptions, configOptions)) return;
+
+    saveConfig?.(serializeRenamerOptions(currentRenamerOptions));
+  }, [config, currentRenamerOptions, saveConfig]);
+
+  useEffect(() => {
+    if (!config) return;
+    const configBatchOptions = normalizeRenamerBatchOptionsFromConfig(config);
+    const lastApplied = lastAppliedBatchOptionsRef.current;
+    if (lastApplied
+      && lastApplied.capOpt === configBatchOptions.capOpt
+      && lastApplied.exifOpt === configBatchOptions.exifOpt) {
+      return;
+    }
+    lastAppliedBatchOptionsRef.current = configBatchOptions;
+    setRenamerBatchOptions(configBatchOptions);
+  }, [
+    config?.renamer_default_cap_opt,
+    config?.renamer_default_exif_opt,
+  ]);
 
   const activeArchive = useMemo(
     () => fileList.find(file => file.id === selectedArchiveId) || fileList[0] || null,
@@ -205,7 +259,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         ...renameOptions,
       });
 
-      const nextItems = (result.items || []).map(item => refreshRenamerItem(item, renameOptions));
+      const nextItems = (result.items || []).map(item => refreshRenamerItem({
+        ...item,
+        capOpt: renamerBatchOptions.capOpt,
+        exifOpt: renamerBatchOptions.exifOpt,
+      }, renameOptions));
       setFileList(prev => {
         const byPath = new Map(prev.map(item => [item.filepath, item]));
         for (const item of nextItems) {
@@ -245,7 +303,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       setIsWorking(false);
       setTaskPhase('idle');
     }
-  }, [config?.language, config?.lang, renameOptions, t]);
+  }, [config?.language, config?.lang, renameOptions, renamerBatchOptions, t]);
 
   const handleSelectFiles = useCallback(async () => {
     const paths = await window.electronAPI.selectArchives(t('add_file'));
@@ -271,14 +329,31 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     setFileList(prev => prev.map(file => ({ ...file, checked: nextChecked })));
   };
 
+  const persistRenamerBatchOptions = useCallback((updates) => {
+    const nextOptions = {
+      ...renamerBatchOptions,
+      ...updates,
+    };
+    setRenamerBatchOptions(nextOptions);
+    try {
+      Promise.resolve(saveConfig?.(serializeRenamerBatchOptions(nextOptions))).catch(error => {
+        console.error('내부 파일명 변경 일괄 설정 저장 실패:', error);
+      });
+    } catch (error) {
+      console.error('내부 파일명 변경 일괄 설정 저장 실패:', error);
+    }
+  }, [renamerBatchOptions, saveConfig]);
+
   const toggleAllCap = () => {
     const nextChecked = !capAllChecked;
     setFileList(prev => prev.map(file => ({ ...file, capOpt: nextChecked })));
+    persistRenamerBatchOptions({ capOpt: nextChecked });
   };
 
   const toggleAllExif = () => {
     const nextChecked = !exifAllChecked;
     setFileList(prev => prev.map(file => ({ ...file, exifOpt: nextChecked })));
+    persistRenamerBatchOptions({ exifOpt: nextChecked });
   };
 
   const handleMoveEntry = (archiveId, entryIndex, mode) => {

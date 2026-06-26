@@ -154,6 +154,245 @@ function imageQuality(options = {}) {
     return Math.max(1, Math.min(100, Math.round(value)));
 }
 
+function isRemovableJpegMetadataMarker(marker) {
+    return marker === 0xfe || (marker >= 0xe1 && marker <= 0xef && marker !== 0xee);
+}
+
+export function hasJpegRemovableMetadata(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 4) return false;
+    if (buffer[0] !== 0xff || buffer[1] !== 0xd8) return false;
+
+    let offset = 2;
+    while (offset + 4 <= buffer.length) {
+        while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+        if (offset >= buffer.length) return false;
+
+        const marker = buffer[offset];
+        offset += 1;
+
+        if (marker === 0xda || marker === 0xd9) return false;
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+        if (offset + 2 > buffer.length) return false;
+
+        const segmentLength = buffer.readUInt16BE(offset);
+        if (segmentLength < 2) return false;
+        const segmentEnd = offset + segmentLength;
+
+        if (isRemovableJpegMetadataMarker(marker)) {
+            return true;
+        }
+        if (segmentEnd > buffer.length) return false;
+        offset = segmentEnd;
+    }
+
+    return false;
+}
+
+export function stripJpegRemovableMetadata(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 4) return { buffer, removed: false };
+    if (buffer[0] !== 0xff || buffer[1] !== 0xd8) return { buffer, removed: false };
+
+    const parts = [buffer.subarray(0, 2)];
+    let offset = 2;
+    let removed = false;
+
+    while (offset < buffer.length) {
+        const markerStart = offset;
+        while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+        if (offset >= buffer.length) {
+            parts.push(buffer.subarray(markerStart));
+            break;
+        }
+
+        const marker = buffer[offset];
+        offset += 1;
+
+        if (marker === 0xda || marker === 0xd9) {
+            parts.push(buffer.subarray(markerStart));
+            return {
+                buffer: removed ? Buffer.concat(parts) : buffer,
+                removed,
+            };
+        }
+
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+            parts.push(buffer.subarray(markerStart, offset));
+            continue;
+        }
+
+        if (offset + 2 > buffer.length) {
+            parts.push(buffer.subarray(markerStart));
+            break;
+        }
+
+        const segmentLength = buffer.readUInt16BE(offset);
+        if (segmentLength < 2) {
+            parts.push(buffer.subarray(markerStart));
+            break;
+        }
+
+        const segmentEnd = offset + segmentLength;
+        if (segmentEnd > buffer.length) {
+            parts.push(buffer.subarray(markerStart));
+            break;
+        }
+
+        if (isRemovableJpegMetadataMarker(marker)) {
+            removed = true;
+        } else {
+            parts.push(buffer.subarray(markerStart, segmentEnd));
+        }
+        offset = segmentEnd;
+    }
+
+    return {
+        buffer: removed ? Buffer.concat(parts) : buffer,
+        removed,
+    };
+}
+
+export function hasPngRemovableMetadata(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 16) return false;
+    if (!buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+        return false;
+    }
+
+    const metadataChunks = new Set(['eXIf', 'iCCP', 'iTXt', 'tEXt', 'zTXt']);
+    let offset = 8;
+    while (offset + 12 <= buffer.length) {
+        const chunkLength = buffer.readUInt32BE(offset);
+        const chunkType = buffer.toString('ascii', offset + 4, offset + 8);
+        if (metadataChunks.has(chunkType)) return true;
+
+        const nextOffset = offset + 12 + chunkLength;
+        if (nextOffset <= offset || nextOffset > buffer.length) return false;
+        offset = nextOffset;
+    }
+
+    return false;
+}
+
+export function hasWebpRemovableMetadata(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 20) return false;
+    if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WEBP') {
+        return false;
+    }
+
+    const metadataChunks = new Set(['EXIF', 'ICCP', 'XMP ']);
+    let offset = 12;
+    while (offset + 8 <= buffer.length) {
+        const chunkType = buffer.toString('ascii', offset, offset + 4);
+        const chunkSize = buffer.readUInt32LE(offset + 4);
+        if (metadataChunks.has(chunkType)) return true;
+
+        const paddedSize = chunkSize + (chunkSize % 2);
+        const nextOffset = offset + 8 + paddedSize;
+        if (nextOffset <= offset || nextOffset > buffer.length) return false;
+        offset = nextOffset;
+    }
+
+    return false;
+}
+
+export function stripWebpRemovableMetadata(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 20) return { buffer, removed: false };
+    if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WEBP') {
+        return { buffer, removed: false };
+    }
+
+    const metadataChunks = new Set(['EXIF', 'ICCP', 'XMP ']);
+    const removedChunkTypes = new Set();
+    const chunks = [];
+    let offset = 12;
+    let removed = false;
+
+    while (offset + 8 <= buffer.length) {
+        const chunkStart = offset;
+        const chunkType = buffer.toString('ascii', offset, offset + 4);
+        const chunkSize = buffer.readUInt32LE(offset + 4);
+        const dataStart = offset + 8;
+        const dataEnd = dataStart + chunkSize;
+        if (dataEnd > buffer.length) {
+            chunks.push({
+                type: '',
+                buffer: buffer.subarray(chunkStart),
+            });
+            break;
+        }
+
+        const chunkEnd = dataEnd + (chunkSize % 2);
+        if (metadataChunks.has(chunkType)) {
+            removed = true;
+            removedChunkTypes.add(chunkType);
+        } else {
+            chunks.push({
+                type: chunkType,
+                buffer: buffer.subarray(chunkStart, chunkEnd),
+            });
+        }
+        offset = chunkEnd;
+    }
+
+    if (!removed) return { buffer, removed: false };
+
+    const parts = chunks.map(chunkInfo => {
+        if (chunkInfo.type !== 'VP8X' || chunkInfo.buffer.length < 18) return chunkInfo.buffer;
+
+        const chunk = Buffer.from(chunkInfo.buffer);
+        if (removedChunkTypes.has('ICCP')) chunk[8] &= ~0x20;
+        if (removedChunkTypes.has('EXIF')) chunk[8] &= ~0x08;
+        if (removedChunkTypes.has('XMP ')) chunk[8] &= ~0x04;
+        return chunk;
+    });
+    const body = Buffer.concat(parts);
+    const header = Buffer.from(buffer.subarray(0, 12));
+    header.writeUInt32LE(4 + body.length, 4);
+    return {
+        buffer: Buffer.concat([header, body]),
+        removed: true,
+    };
+}
+
+async function readImageMetadataProbe(filePath, maxBytes = 512 * 1024) {
+    const handle = await fsp.open(filePath, 'r');
+    try {
+        const stat = await handle.stat();
+        const buffer = Buffer.alloc(Math.min(stat.size, maxBytes));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        return bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead);
+    } finally {
+        await handle.close();
+    }
+}
+
+async function hasRemovableImageMetadata(filePath, extension) {
+    try {
+        const buffer = await readImageMetadataProbe(filePath);
+        if (extension === '.jpg' || extension === '.jpeg') return hasJpegRemovableMetadata(buffer);
+        if (extension === '.png') return hasPngRemovableMetadata(buffer);
+        if (extension === '.webp') return hasWebpRemovableMetadata(buffer);
+    } catch {
+        return true;
+    }
+    return false;
+}
+
+async function stripJpegMetadataFile(filePath) {
+    const source = await fsp.readFile(filePath);
+    const result = stripJpegRemovableMetadata(source);
+    if (!result.removed) return false;
+    await fsp.writeFile(filePath, result.buffer);
+    return true;
+}
+
+async function stripWebpMetadataFile(filePath) {
+    const source = await fsp.readFile(filePath);
+    const result = stripWebpRemovableMetadata(source);
+    if (!result.removed) return false;
+    await fsp.writeFile(filePath, result.buffer);
+    return true;
+}
+
 async function expandInputPaths(paths) {
   const archives = [];
 
@@ -547,6 +786,13 @@ function sizePreservingOptimizationEnabled(item, options = {}) {
     || Boolean(options.webp_conversion || options.webpConversion);
 }
 
+export function shouldSkipLargerOptimizedArchive(item, options, hasActualStructuralChange, packResult = {}) {
+  return sizePreservingOptimizationEnabled(item, options)
+    && !Boolean(item?.exifOpt)
+    && !hasActualStructuralChange
+    && Number(packResult.outputSize) > Number(packResult.sourceSize);
+}
+
 function renamerArchiveCompressionMode(options = {}) {
   const mode = String(options.renamer_archive_compression || options.archive_compression || 'auto');
   return RENAMER_ARCHIVE_COMPRESSION_MODES.has(mode) ? mode : 'auto';
@@ -626,13 +872,13 @@ async function optimizeExtractedImages(rootDir, item, options) {
   await collect(rootDir);
   if (imageFiles.length === 0 || options.shouldCancel?.()) return;
 
-  async function replaceWhenUseful(sourcePath, tempPath) {
+  async function replaceWhenUseful(sourcePath, tempPath, allowEqualSize = false) {
     if (!await isUsableConvertedFile(tempPath, path.extname(sourcePath).toLowerCase())) {
       await fsp.rm(tempPath, { force: true }).catch(() => {});
       return false;
     }
     const [sourceStat, tempStat] = await Promise.all([fsp.stat(sourcePath), fsp.stat(tempPath)]);
-    if (tempStat.size < sourceStat.size || (stripExif && tempStat.size === sourceStat.size)) {
+    if (tempStat.size < sourceStat.size || (allowEqualSize && tempStat.size === sourceStat.size)) {
       await fsp.rm(sourcePath, { force: true });
       await fsp.rename(tempPath, sourcePath);
       return true;
@@ -645,20 +891,31 @@ async function optimizeExtractedImages(rootDir, item, options) {
   async function processImage(fullPath) {
       if (options.shouldCancel?.()) return;
       const extension = path.extname(fullPath).toLowerCase();
+      const hasRemovableMetadata = stripExif
+        ? await hasRemovableImageMetadata(fullPath, extension)
+        : false;
+      if (!optimize && !hasRemovableMetadata) return;
+
       const tempPath = `${fullPath}.opt.tmp`;
       try {
         if (extension === '.jpg' || extension === '.jpeg') {
+          const metadataRemoved = hasRemovableMetadata
+            ? await stripJpegMetadataFile(fullPath).catch(() => false)
+            : false;
+          const metadataStillNeedsStrip = hasRemovableMetadata && !metadataRemoved;
+          if (!optimize && !metadataStillNeedsStrip) return;
+
           if (optimize && quality < 100 && options.djpegExe && options.cjpegExe) {
             const ppmPath = `${fullPath}.ppm.tmp`;
             try {
               await runProcess(options.djpegExe, ['-outfile', ppmPath, fullPath]);
               await runProcess(options.cjpegExe, ['-quality', String(quality), '-optimize', '-outfile', tempPath, ppmPath]);
               const replaced = await replaceWhenUseful(fullPath, tempPath);
-              if (!replaced && stripExif && options.jpegtranExe) {
+              if (!replaced && metadataStillNeedsStrip && options.jpegtranExe) {
                 const stripTempPath = `${fullPath}.strip.tmp`;
                 try {
-                  await runProcess(options.jpegtranExe, ['-optimize', '-copy', 'none', '-outfile', stripTempPath, fullPath]);
-                  await replaceWhenUseful(fullPath, stripTempPath);
+                  await runProcess(options.jpegtranExe, ['-copy', 'none', '-outfile', stripTempPath, fullPath]);
+                  await replaceWhenUseful(fullPath, stripTempPath, true);
                 } finally {
                   await fsp.rm(stripTempPath, { force: true }).catch(() => {});
                 }
@@ -667,22 +924,22 @@ async function optimizeExtractedImages(rootDir, item, options) {
               await fsp.rm(ppmPath, { force: true }).catch(() => {});
             }
           } else if (options.jpegtranExe) {
-            const args = ['-optimize', '-copy', stripExif ? 'none' : 'all', '-outfile', tempPath, fullPath];
+            const args = ['-optimize', '-copy', metadataStillNeedsStrip ? 'none' : 'all', '-outfile', tempPath, fullPath];
             await runProcess(options.jpegtranExe, args);
-            await replaceWhenUseful(fullPath, tempPath);
+            await replaceWhenUseful(fullPath, tempPath, metadataStillNeedsStrip);
           }
         } else if (extension === '.png' && options.pngquantExe) {
           const pngQuality = Math.max(40, quality);
           const args = ['--force', '--quality', `${pngQuality}-${pngQuality}`, '--output', tempPath];
-          if (stripExif) args.push('--strip');
+          if (hasRemovableMetadata) args.push('--strip');
           args.push(fullPath);
           await runProcess(options.pngquantExe, args);
-          await replaceWhenUseful(fullPath, tempPath);
-        } else if (extension === '.webp' && options.cwebpExe) {
-          const args = [fullPath, '-o', tempPath, '-q', String(quality)];
-          if (stripExif) args.push('-metadata', 'none');
-          await runProcess(options.cwebpExe, args);
-          await replaceWhenUseful(fullPath, tempPath);
+          await replaceWhenUseful(fullPath, tempPath, hasRemovableMetadata);
+        } else if (extension === '.webp') {
+          if (hasRemovableMetadata) {
+            const metadataRemoved = await stripWebpMetadataFile(fullPath).catch(() => false);
+            if (metadataRemoved) return;
+          }
         }
       } catch {
         await fsp.rm(tempPath, { force: true }).catch(() => {});
@@ -884,11 +1141,7 @@ async function processRenamerItem(item, options) {
       sizePreservingOptimizationEnabled(item, options),
     );
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
-    if (
-      sizePreservingOptimizationEnabled(item, options)
-      && !hasActualStructuralChange
-      && packResult.outputSize > packResult.sourceSize
-    ) {
+    if (shouldSkipLargerOptimizedArchive(item, options, hasActualStructuralChange, packResult)) {
       return {
         skipped: true,
         message: taskText(options.lang, 'task_skip_optimized_larger', {

@@ -88,3 +88,50 @@ export function clampStartNumber(value) {
     if (!Number.isFinite(parsed)) return 0;
     return Math.max(0, Math.min(999999, parsed));
 }
+
+function clampPatternIndex(value) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(4, parsed));
+}
+
+export function normalizeRenamerOptionsFromConfig(config = {}) {
+    return {
+        patternIndex: clampPatternIndex(config?.patternIndex ?? config?.rename_pattern_idx),
+        customText: String(config?.customText ?? config?.custom_text ?? ''),
+        keepName: Boolean(config?.keepName ?? config?.keep_internal_name),
+        startNum: clampStartNumber(config?.startNum ?? config?.start_num),
+    };
+}
+
+export function serializeRenamerOptions(options = {}) {
+    return {
+        rename_pattern_idx: clampPatternIndex(options.patternIndex),
+        custom_text: String(options.customText || ''),
+        keep_internal_name: Boolean(options.keepName),
+        start_num: clampStartNumber(options.startNum),
+    };
+}
+
+export function renamerOptionsEqual(left = {}, right = {}) {
+    const normalizedLeft = normalizeRenamerOptionsFromConfig(left);
+    const normalizedRight = normalizeRenamerOptionsFromConfig(right);
+    return normalizedLeft.patternIndex === normalizedRight.patternIndex
+        && normalizedLeft.customText === normalizedRight.customText
+        && normalizedLeft.keepName === normalizedRight.keepName
+        && normalizedLeft.startNum === normalizedRight.startNum;
+}
+
+export function normalizeRenamerBatchOptionsFromConfig(config = {}) {
+    return {
+        capOpt: Boolean(config?.capOpt ?? config?.renamer_default_cap_opt),
+        exifOpt: Boolean(config?.exifOpt ?? config?.renamer_default_exif_opt),
+    };
+}
+
+export function serializeRenamerBatchOptions(options = {}) {
+    return {
+        renamer_default_cap_opt: Boolean(options.capOpt),
+        renamer_default_exif_opt: Boolean(options.exifOpt),
+    };
+}

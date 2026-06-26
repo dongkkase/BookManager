@@ -136,6 +136,8 @@ export class ConfigManager {
       img_quality: 100,
       jpg_quality: 85,
       renamer_archive_compression: 'auto',
+      renamer_default_cap_opt: false,
+      renamer_default_exif_opt: false,
       max_threads: defaultThreads,
       play_sound: true,
       viewer_path: '',
