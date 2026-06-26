@@ -7,6 +7,8 @@ import {
 import {
     DetailFieldGroup,
     DetailLine,
+    detailMetadataValue,
+    detailPublicationDate,
     formatDate,
     formatSize,
     useDetailContentHeight,
@@ -15,46 +17,6 @@ import {
 function metadataText(t, key, fallback) {
     const translated = t?.(key);
     return translated && translated !== key ? translated : fallback;
-}
-
-function metadataValue(file, ...keys) {
-    const sources = [file, file?.metadata, file?.full_meta];
-    for (const source of sources) {
-        if (!source) continue;
-        for (const key of keys) {
-            const value = source[key];
-            if (value !== null && value !== undefined && String(value).trim() !== '') {
-                return value;
-            }
-        }
-    }
-    return '';
-}
-
-function publishDateParts(value = '') {
-    const match = String(value || '').trim().match(/^(\d{4})(?:[-/.](\d{1,2})(?:[-/.](\d{1,2}))?)?/);
-    return {
-        year: match?.[1] || '',
-        month: match?.[2] || '',
-        day: match?.[3] || '',
-    };
-}
-
-function twoDigitDatePart(value = '') {
-    const trimmed = String(value || '').trim();
-    if (!trimmed) return '';
-    return trimmed.padStart(2, '0');
-}
-
-function publicationDateValue(year = '', month = '', day = '', fallback = '') {
-    const normalizedYear = String(year || '').trim();
-    if (!normalizedYear) return String(fallback || '').trim();
-
-    return [
-        normalizedYear,
-        twoDigitDatePart(month),
-        twoDigitDatePart(day),
-    ].filter(Boolean).join('-');
 }
 
 const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
@@ -67,8 +29,8 @@ const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
 
     const tags = useMemo(
         () => splitMetadataValues(
-            metadataValue(selectedFile, 'genre', 'Genre'),
-            metadataValue(selectedFile, 'tags', 'Tags'),
+            detailMetadataValue(selectedFile, 'genre', 'Genre'),
+            detailMetadataValue(selectedFile, 'tags', 'Tags'),
         ),
         [selectedFile],
     );
@@ -80,26 +42,21 @@ const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
 
     const coverAvailable = selectedFile.cover && !imageError;
     const fileName = selectedFile.name || String(selectedFile.path || selectedFile.full_path || '').split(/[\\/]/).pop();
-    const title = metadataValue(selectedFile, 'title', 'Title') || selectedFile.name;
-    const series = metadataValue(selectedFile, 'series', 'Series');
-    const volume = metadataValue(selectedFile, 'volume', 'Volume');
+    const title = detailMetadataValue(selectedFile, 'title', 'Title') || selectedFile.name;
+    const series = detailMetadataValue(selectedFile, 'series', 'Series');
+    const volume = detailMetadataValue(selectedFile, 'volume', 'Volume');
     const creators = splitMetadataValues(
-        metadataValue(selectedFile, 'writer', 'Writer'),
-        metadataValue(selectedFile, 'author', 'Author'),
-        metadataValue(selectedFile, 'creators'),
-        metadataValue(selectedFile, 'producer'),
+        detailMetadataValue(selectedFile, 'writer', 'Writer'),
+        detailMetadataValue(selectedFile, 'author', 'Author'),
+        detailMetadataValue(selectedFile, 'creators'),
+        detailMetadataValue(selectedFile, 'producer'),
     ).join(', ');
-    const publishDate = metadataValue(selectedFile, 'date', 'publish_date');
-    const parsedPublishDate = publishDateParts(publishDate);
-    const year = metadataValue(selectedFile, 'year', 'Year') || parsedPublishDate.year;
-    const month = metadataValue(selectedFile, 'month', 'Month') || parsedPublishDate.month;
-    const day = metadataValue(selectedFile, 'day', 'Day') || parsedPublishDate.day;
-    const publicationDate = publicationDateValue(year, month, day, publishDate);
-    const publisher = metadataValue(selectedFile, 'publisher', 'Publisher');
-    const isbn = metadataValue(selectedFile, 'isbn', 'ISBN');
-    const language = metadataValue(selectedFile, 'language', 'LanguageISO');
-    const rating = metadataValue(selectedFile, 'rating', 'CommunityRating');
-    const summary = metadataValue(selectedFile, 'description', 'summary', 'Summary');
+    const publicationDate = detailPublicationDate(selectedFile);
+    const publisher = detailMetadataValue(selectedFile, 'publisher', 'Publisher');
+    const isbn = detailMetadataValue(selectedFile, 'isbn', 'ISBN');
+    const language = detailMetadataValue(selectedFile, 'language', 'LanguageISO');
+    const rating = detailMetadataValue(selectedFile, 'rating', 'CommunityRating');
+    const summary = detailMetadataValue(selectedFile, 'description', 'summary', 'Summary');
     const tagLabel = metadataText(t, 't3_f_genre_keywords_categories', '장르/키워드/카테고리');
     const bookFields = [
         ['fileLines', metadataText(t, 't3_f_series_number', '시리즈번호'), volume],

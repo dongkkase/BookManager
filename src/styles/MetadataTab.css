@@ -336,7 +336,7 @@
   border-radius: 4px;
   padding: 6px 8px;
   font-size: var(--font-sm);
-  font-weight: 700;
+  font-weight: 400;
   box-sizing: border-box;
 }
 
@@ -780,10 +780,19 @@ textarea.meta-input {
 }
 
 .meta-tag-editor {
+  --meta-tag-action-width: 38px;
   display: grid;
   grid-template-columns: 54px 1fr;
   gap: 12px;
   margin: 10px 0 24px;
+}
+
+.meta-tag-editor.no-label {
+  margin-top: -2px;
+}
+
+.meta-tag-editor.no-label .meta-tag-columns {
+  grid-column: 2;
 }
 
 .meta-tag-label {
@@ -796,7 +805,7 @@ textarea.meta-input {
 
 .meta-tag-columns {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 38px minmax(180px, 1fr);
+  grid-template-columns: minmax(180px, 1fr) var(--meta-tag-action-width) minmax(180px, 1fr);
   gap: 10px;
 }
 
@@ -887,13 +896,18 @@ textarea.meta-input {
 
 .meta-series-apply-btn {
   grid-column: 2;
-  background-color: #3b3b3b;
+  justify-self: start;
+  width: calc(50% - 29px);
+  min-width: 180px;
+  background-color: #383838;
   color: #fff;
-  border: 1px solid #444;
-  border-radius: 5px;
+  border: 1px solid #575757;
+  border-radius: 4px;
   min-height: var(--control-height);
+  padding: 6px 8px;
   font-size: var(--font-sm);
-  font-weight: 900;
+  font-weight: 400;
+  box-sizing: border-box;
   cursor: pointer;
 }
 

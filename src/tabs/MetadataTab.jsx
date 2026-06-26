@@ -1323,41 +1323,44 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     ))
   );
 
-  const renderDualTextarea = (fieldId, label, placeholder = text('enter_after_input', '입력 후 Enter...')) => (
-    <div className="meta-tag-editor">
-      <div className="meta-tag-label">{label}</div>
-      <div className="meta-tag-columns">
-        <TagInput
-          className="meta-input meta-tag-box"
-          placeholder={placeholder}
-          value={activeItem?.metadata?.[fieldId] || ''}
-          onChange={value => updateActiveMetadata(fieldId, value)}
+  const renderDualTextarea = (fieldId, label, placeholder = text('enter_after_input', '입력 후 Enter...'), options = {}) => {
+    const showLabel = options.showLabel !== false;
+    return (
+      <div className={`meta-tag-editor ${showLabel ? '' : 'no-label'}`.trim()}>
+        {showLabel && <div className="meta-tag-label">{label}</div>}
+        <div className="meta-tag-columns">
+          <TagInput
+            className="meta-input meta-tag-box"
+            placeholder={placeholder}
+            value={activeItem?.metadata?.[fieldId] || ''}
+            onChange={value => updateActiveMetadata(fieldId, value)}
+            disabled={!activeItem}
+          />
+          <button className="meta-copy-btn" onClick={() => handleCopyField(fieldId)} disabled={!activeItem}>‹</button>
+          <TagInput
+            className="meta-input res meta-tag-box"
+            placeholder={placeholder}
+            value={batchMetadata[fieldId] || ''}
+            onChange={value => updateBatchMetadata(fieldId, value)}
+          />
+        </div>
+        <button
+          className="meta-series-apply-btn"
+          onClick={() => {
+            if (!activeItem) return;
+            const value = batchMetadata[fieldId] || activeItem.metadata?.[fieldId] || '';
+            setFileList(prev => prev.map(item => item.group === activeItem.group && isSameActiveBookType(item) ? {
+              ...item,
+              metadata: { ...(item.metadata || {}), [fieldId]: value },
+            } : item));
+          }}
           disabled={!activeItem}
-        />
-        <button className="meta-copy-btn" onClick={() => handleCopyField(fieldId)} disabled={!activeItem}>‹</button>
-        <TagInput
-          className="meta-input res meta-tag-box"
-          placeholder={placeholder}
-          value={batchMetadata[fieldId] || ''}
-          onChange={value => updateBatchMetadata(fieldId, value)}
-        />
+        >
+          {t('t3_btn_apply_series_tag')}
+        </button>
       </div>
-      <button
-        className="meta-series-apply-btn"
-        onClick={() => {
-          if (!activeItem) return;
-          const value = batchMetadata[fieldId] || activeItem.metadata?.[fieldId] || '';
-          setFileList(prev => prev.map(item => item.group === activeItem.group && isSameActiveBookType(item) ? {
-            ...item,
-            metadata: { ...(item.metadata || {}), [fieldId]: value },
-          } : item));
-        }}
-        disabled={!activeItem}
-      >
-        {t('t3_btn_apply_series_tag')}
-      </button>
-    </div>
-  );
+    );
+  };
 
   const updateActiveGenreTags = (value) => {
     if (!activeItem) return;
@@ -1410,8 +1413,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         <div className="meta-tag-label">{label}</div>
         {renderCombinedChoiceGrid(options)}
       </div>
-      <div className="meta-tag-editor">
-        <div className="meta-tag-label">{label}</div>
+      <div className="meta-tag-editor no-label">
         <div className="meta-tag-columns">
           <TagInput
             className="meta-input meta-tag-box"
@@ -1472,7 +1474,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         <div className="meta-tag-label">{label}</div>
         {renderChoiceGrid(fieldId, options)}
       </div>
-      {renderDualTextarea(fieldId, label, placeholder)}
+      {renderDualTextarea(fieldId, label, placeholder, { showLabel: false })}
     </>
   );
 
@@ -1572,7 +1574,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                     onClick={() => handleGroupClick(dir.name)}
                   >
                     <span className="meta-tree-chevron">{collapsed ? '▸' : '▾'}</span>
-                    <span className="meta-tree-icon"><FaIcon name="folder" /></span>
+                    <span className="meta-tree-icon"><FaIcon name={collapsed ? 'folder' : 'folder-open'} /></span>
                     <span>{dir.name}</span>
                   </button>
                   {!collapsed && <ul>

@@ -536,11 +536,17 @@
 }
 
 .folder-toolbar {
-  gap: 12px;
+  gap: 7px;
 }
 
 .toolbar-dropdown {
   position: relative;
+}
+
+.toolbar-dropdown .toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .dropdown-menu {

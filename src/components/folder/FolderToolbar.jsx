@@ -4,6 +4,11 @@ import {
   FOLDER_SORT_KEYS,
 } from '../../folderToolbarState';
 import { dropdownVerticalPlacement } from '../../interactionPolicy';
+import { FaIcon } from '../FaIcon';
+
+function toolbarDropdownLabel(label = '') {
+  return String(label || '').replace(/\s*▼\s*$/u, '');
+}
 
 function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, menuClassName = '' }) {
   const ref = useRef(null);
@@ -47,7 +52,8 @@ function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, 
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        {buttonLabel}
+        <span>{toolbarDropdownLabel(buttonLabel)}</span>
+        <FaIcon name="caret-down" size={9} />
       </button>
       {open && (
         <div

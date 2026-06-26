@@ -8,6 +8,7 @@ import {
 import {
     DetailFieldGroup,
     DetailLine,
+    detailPublicationDate,
     formatDate,
     formatSize,
     useDetailContentHeight,
@@ -48,6 +49,7 @@ const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => 
         ['archive', `${t('col_format')} / ${t('col_manga')}`, [selectedFile.format, selectedFile.manga].filter(Boolean).join(' / ')],
         ['star', t('col_rating'), selectedFile.rating],
         ['child', t('col_age_rating'), selectedFile.age_rating],
+        ['calendar', t('col_pub_date'), detailPublicationDate(selectedFile)],
         ['link', t('col_web'), selectedFile.link, false, 'link'],
     ];
     return (

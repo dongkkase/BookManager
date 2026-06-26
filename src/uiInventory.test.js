@@ -419,6 +419,7 @@ test('상세보기 패널은 링크 열기와 메타데이터 값 스타일을 �
 
 test('도서 상세보기 패널은 메타데이터 관리와 같은 책 항목을 표시한다', () => {
     assertInventory('detailPanel', [
+        ['만화책 상세 출간일', "t('col_pub_date')"],
         ['도서 상세 제목 헤딩', 'className="detail-title"'],
         ['도서 상세 시리즈 헤딩', 'className="detail-series"'],
         ['도서 상세 시리즈번호', "metadataText(t, 't3_f_series_number'"],

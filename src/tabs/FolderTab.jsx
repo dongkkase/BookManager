@@ -2402,7 +2402,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'table'}
                 onClick={() => handleViewModeChange('table')}
               >
-                <span className="view-mode-glyph" aria-hidden="true"><FaIcon name="list" size={13} /></span>
+                <span className="view-mode-glyph" aria-hidden="true"><FaIcon name="bars" size={13} /></span>
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'thumbnail' ? 'active' : ''}`}
@@ -2410,7 +2410,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'thumbnail'}
                 onClick={() => handleViewModeChange('thumbnail')}
               >
-                <span className="view-mode-glyph" aria-hidden="true"><FaIcon name="tableCells" size={13} /></span>
+                <span className="view-mode-glyph" aria-hidden="true"><FaIcon name="microsoft" size={13} /></span>
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'tile' ? 'active' : ''}`}
@@ -2418,7 +2418,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-pressed={viewMode === 'tile'}
                 onClick={() => handleViewModeChange('tile')}
               >
-                <span className="view-mode-glyph" aria-hidden="true"><FaIcon name="layers" size={13} /></span>
+                <span className="view-mode-glyph" aria-hidden="true"><FaIcon name="list" size={13} /></span>
               </button>
               <span className="scale-label">{t('folder_item_size')}</span>
               <input

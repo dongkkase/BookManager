@@ -155,7 +155,7 @@ body.is-resizing-panel * {
   color: #bdbdbd;
   border: 1px solid #444;
   border-bottom: none;
-  padding: 7px 16px;
+  padding: 10px 16px;
   margin-right: 2px;
   border-top-left-radius: 3px;
   border-top-right-radius: 3px;

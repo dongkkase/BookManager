@@ -23,6 +23,55 @@ export function formatDate(value) {
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+export function detailMetadataValue(file, ...keys) {
+    const sources = [file, file?.metadata, file?.full_meta];
+    for (const source of sources) {
+        if (!source) continue;
+        for (const key of keys) {
+            const value = source[key];
+            if (value !== null && value !== undefined && String(value).trim() !== '') {
+                return value;
+            }
+        }
+    }
+    return '';
+}
+
+function publishDateParts(value = '') {
+    const match = String(value || '').trim().match(/^(\d{4})(?:[-/.](\d{1,2})(?:[-/.](\d{1,2}))?)?/);
+    return {
+        year: match?.[1] || '',
+        month: match?.[2] || '',
+        day: match?.[3] || '',
+    };
+}
+
+function twoDigitDatePart(value = '') {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return '';
+    return trimmed.padStart(2, '0');
+}
+
+export function publicationDateValue(year = '', month = '', day = '', fallback = '') {
+    const normalizedYear = String(year || '').trim();
+    if (!normalizedYear) return String(fallback || '').trim();
+
+    return [
+        normalizedYear,
+        twoDigitDatePart(month),
+        twoDigitDatePart(day),
+    ].filter(Boolean).join('-');
+}
+
+export function detailPublicationDate(file = {}) {
+    const publishDate = detailMetadataValue(file, 'date', 'publish_date', 'PubDate');
+    const parsedPublishDate = publishDateParts(publishDate);
+    const year = detailMetadataValue(file, 'year', 'Year') || parsedPublishDate.year;
+    const month = detailMetadataValue(file, 'month', 'Month') || parsedPublishDate.month;
+    const day = detailMetadataValue(file, 'day', 'Day') || parsedPublishDate.day;
+    return publicationDateValue(year, month, day, publishDate);
+}
+
 export function isExternalHttpLink(value = '') {
     return /^https?:\/\//i.test(String(value || '').trim());
 }

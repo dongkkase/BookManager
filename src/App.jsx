@@ -516,8 +516,8 @@ function App() {
     >
       <div className="top-menu-bar">
         <div className="top-menu-left">
-          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-folder')}><FaIcon name="folderOpen" />{t('add_folder')}</button>
-          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-file')}><FaIcon name="fileSignature" />{t('add_file')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-folder')}><FaIcon name="folder-plus" />{t('add_folder')}</button>
+          <button className="top-btn" disabled={!fileToolbarEnabled} onClick={() => dispatchAppAction('add-file')}><FaIcon name="file-circle-plus" />{t('add_file')}</button>
           <button className="top-btn top-btn-danger" disabled={!fileToolbarEnabled || activeToolbarState.checkedCount === 0} onClick={() => dispatchAppAction('remove-selected')}><FaIcon name="minusCircle" />{t('remove_sel')}</button>
           <button className="top-btn top-btn-danger" disabled={!fileToolbarEnabled || !activeToolbarState.hasItems} onClick={() => dispatchAppAction('clear-all')}><FaIcon name="folderMinus" />{t('clear_all')}</button>
           <button className="top-btn" disabled={!fileToolbarEnabled || !activeToolbarState.hasItems} onClick={() => dispatchAppAction('toggle-all')}><FaIcon name={activeToolbarState.allChecked ? 'checkSquare' : 'square'} />{t('toggle_all')}</button>

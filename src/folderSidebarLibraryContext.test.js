@@ -24,9 +24,9 @@ test('폴더탭 탐색기 패널의 아이콘은 이모지 대신 FontAwesome을
     assert.match(folderTabSource, /icon="folderOpen"/);
     assert.match(folderTabSource, /icon=\{isFavoriteFolder[\s\S]*\? 'star' : 'pin'\}/);
     assert.match(folderTabSource, /<FaIcon name="circle"/);
+    assert.match(folderTabSource, /<FaIcon name="bars"/);
+    assert.match(folderTabSource, /<FaIcon name="microsoft"/);
     assert.match(folderTabSource, /<FaIcon name="list"/);
-    assert.match(folderTabSource, /<FaIcon name="tableCells"/);
-    assert.match(folderTabSource, /<FaIcon name="layers"/);
 });
 
 test('폴더탭 탐색기 아이콘 버튼은 hover 툴팁 정보를 가진다', () => {
