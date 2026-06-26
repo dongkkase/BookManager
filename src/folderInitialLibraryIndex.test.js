@@ -25,7 +25,10 @@ test('라이브러리 최초 등록 자동 작업이 끝나면 하위 폴더 포
 
 test('수동 메타데이터 최적화는 인덱싱 없이 기존 인덱스 목록만 처리하도록 요청한다', () => {
     assert.match(source, /metadataOnly:\s*optimizeMetadata\s*&&\s*!options\.showIndexingVisual/);
-    assert.match(source, /forceMetadata:\s*optimizeMetadata\s*&&\s*options\.forceMetadata\s*!==\s*false/);
+    assert.match(source, /const shouldForceMetadata = optimizeMetadata && \(/);
+    assert.match(source, /typeof options\.forceMetadata === 'boolean'[\s\S]*: choice === 'force'/);
+    assert.match(source, /forceMetadata:\s*shouldForceMetadata/);
+    assert.match(source, /skipCoverExtraction:\s*optimizeMetadata && choice !== 'force' && !options\.showIndexingVisual/);
 });
 
 test('폴더 스캔 진행 이벤트는 락 상태로 올리지 않는다', () => {

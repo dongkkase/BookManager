@@ -19,6 +19,9 @@ test('라이브러리 메타데이터 추출은 제한된 병렬 처리와 분�
     assert.match(source, /const MAX_LIBRARY_METADATA_CONCURRENCY/);
     assert.match(source, /const metadataConcurrency = resolveLibraryMetadataConcurrency\(options\)/);
     assert.match(source, /await Promise\.all\([\s\S]*Array\.from\(/);
-    assert.match(source, /const forceMetadata = mode === 'force'[\s\S]*options\.forceMetadata !== false && shouldOptimizeMetadata/);
+    assert.match(source, /const forceMetadata = mode === 'force'[\s\S]*options\.forceMetadata === true/);
+    assert.match(source, /const skipMetadataCoverExtraction = options\.skipCoverExtraction === true[\s\S]*options\.skipCoverExtraction !== false/);
     assert.match(source, /force:\s*forceMetadata/);
+    assert.match(source, /skipCoverExtraction:\s*skipMetadataCoverExtraction/);
+    assert.match(source, /skipCoverExtraction,\s*[\r\n\s]*lang,/);
 });

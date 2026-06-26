@@ -2618,6 +2618,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       shouldCancel,
       force = false,
       lang = 'ko',
+      skipCoverExtraction = false,
       touchHeartbeat = null,
     } = options;
     const cacheKey = JSON.stringify({
@@ -2661,6 +2662,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           thumbnailEncoder: encodeThumbnail,
           force,
           skipArchiveExtraction: false,
+          skipCoverExtraction,
           lang,
           shouldCancel,
         });
@@ -3263,7 +3265,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const metadataOnly = shouldOptimizeMetadata && options.metadataOnly === true;
     const forceMetadata = mode === 'force'
       ? true
-      : options.forceMetadata !== false && shouldOptimizeMetadata;
+      : options.forceMetadata === true;
+    const skipMetadataCoverExtraction = options.skipCoverExtraction === true
+      || (
+        shouldOptimizeMetadata
+        && mode === 'smart'
+        && forceMetadata !== true
+        && options.skipCoverExtraction !== false
+      );
     const lastMtimes = { ...(config.index_last_mtimes || {}) };
     const priorityFolder = options.priorityFolder
       ? path.resolve(options.priorityFolder)
@@ -3514,6 +3523,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             sevenZExe,
             shouldCancel,
             force: forceMetadata,
+            skipCoverExtraction: skipMetadataCoverExtraction,
             lang,
             touchHeartbeat: () => queueLibraryScanHeartbeat(
               folder,

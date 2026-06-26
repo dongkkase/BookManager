@@ -1030,13 +1030,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setDuplicatePreparationStatus(optimizeMetadata ? t('folder_optimizing', [0, 0]) : t('dup_scan_start'));
     setDuplicatePreparationProgress(0);
     try {
+      const shouldForceMetadata = optimizeMetadata && (
+        typeof options.forceMetadata === 'boolean'
+          ? options.forceMetadata
+          : choice === 'force'
+      );
       const result = await window.electronAPI?.updateFolderIndex?.(
         [folderPath],
         {
           mode: choice,
           optimizeMetadata,
           metadataOnly: optimizeMetadata && !options.showIndexingVisual,
-          forceMetadata: optimizeMetadata && options.forceMetadata !== false,
+          forceMetadata: shouldForceMetadata,
+          skipCoverExtraction: optimizeMetadata && choice !== 'force' && !options.showIndexingVisual,
           priorityFolder: selectedFolderPath,
           language: config?.language || config?.lang || 'ko',
         },
