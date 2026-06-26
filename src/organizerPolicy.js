@@ -41,14 +41,6 @@ export function targetExtension(item, targetFormat) {
     return '.zip';
 }
 
-export function organizerVolumePrefix(volume) {
-    const parts = String(volume?.original_path || '').split(/[\\/]/).filter(Boolean);
-    if (parts.length < 2) return '';
-    const parent = parts[parts.length - 2];
-    const match = parent.match(/(\d+\s*부|제\s*\d+\s*부|시즌\s*\d+|season\s*\d+|part\s*\d+)/i);
-    return `[${(match?.[1] || parent).trim()}] `;
-}
-
 export function changeOrganizerUnit(name, unit, lang = 'ko') {
     const match = String(name || '').match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
     if (!match) return String(name || '').trim();

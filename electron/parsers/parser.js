@@ -67,6 +67,16 @@ function stripImageProcessingSuffix(text) {
         .replace(new RegExp(`(?:^|[\\s_.-])${tokenPattern}(?=$|[\\s_.-]).*$`, 'i'), ' ');
 }
 
+function stripTitleNoiseMarkers(text) {
+    return String(text || '')
+        .replace(/(?:^|[\s._-])(?:完|완결|완)(?=$|[\s._-])/g, ' ')
+        .replace(/(?:^|[\s._-])(?:복사본|사본|copy(?:\s*\d+)?)(?=$)/gi, ' ');
+}
+
+function hasStandalonePartMarker(text) {
+    return /(?:^|[\s._-])(?:제\s*)?\d+(?:\.\d+)?\s*부(?!대|터)(?=$|[\s._-])/i.test(String(text || ''));
+}
+
 export function cleanDisplayTitle(text) {
   let cleaned = String(text).normalize('NFC');
   cleaned = cleaned.replace(
@@ -100,6 +110,7 @@ export function cleanDisplayTitle(text) {
   );
   cleaned = cleaned.replace(/(?:제\s*)?\d+(?:\.\d+)?\s*(?:권|화)/g, ' ');
   cleaned = cleaned.replace(/[-_+,]+/g, ' ');
+  cleaned = stripTitleNoiseMarkers(cleaned);
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
   return cleaned;
 }
@@ -442,7 +453,11 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
     parentCoreCheck &&
     getSimilarity(leafCoreCheck, parentCoreCheck) >= 0.5
   ) {
-    baseName = reSub('^[_\-\s]+', '', parentCore);
+    if (hasStandalonePartMarker(leafCoreCheck) && !hasStandalonePartMarker(parentCoreCheck)) {
+      baseName = leafCoreCheck;
+    } else {
+      baseName = reSub('^[_\-\s]+', '', parentCore);
+    }
   } else {
     if (
       leafCoreCheck &&

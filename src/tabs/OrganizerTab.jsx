@@ -12,7 +12,6 @@ import {
   filenameOutputPath,
   organizerExtractedTitleName,
   organizerOriginalFilenameName,
-  organizerVolumePrefix,
   preserveOrganizerExtractedTitle,
   removeOrganizerItems,
   sanitizeOrganizerName,
@@ -793,7 +792,6 @@ function OrganizerTab({ config, t, showToast }) {
 
                   {expandedItems.has(item.id) && item.volumes.map((volume) => {
                     const extension = targetExtension(volume, config?.target_format || 'none');
-                    const prefix = organizerVolumePrefix(volume);
                     const volumeRow = organizerVolumeRenameFile(item, volume, config);
                     const volumeIndex = visibleVolumeRows.findIndex(row => row.path === volumeRow.path);
                     const isVolumeSelected = selectedVolumePaths.includes(volumeRow.path);
@@ -808,7 +806,7 @@ function OrganizerTab({ config, t, showToast }) {
                       <div className="org-col-name org-child-name">
                         <span className="org-indent">↳</span>
                         <span className="org-icon"><FaIcon name="file-zipper" /></span>
-                        <span className="org-volume-name">{prefix}{volume.new_name}{extension}</span>
+                        <span className="org-volume-name">{volume.new_name}{extension}</span>
                         {volume.original_basename && <span className="org-original-name">({volume.original_basename})</span>}
                         {volume.spinoff_folder && <span className="org-spinoff">SPINOFF</span>}
                       </div>

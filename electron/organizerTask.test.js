@@ -446,6 +446,36 @@ test('Organizer는 제목의 부대, 부, 장 숫자를 권수로 오인하지 �
     }
 });
 
+test('Organizer는 압축 파일명의 복사본/완료 표기를 책 제목에서 제외한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-copy-marker-'));
+    try {
+        const source = path.join(root, '[황성] 혈로행 1-2부 完 (UP) (1080px) - 복사본.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '혈로행 1부 01-23권 完/혈로행 1부 01권/001.jpg', Buffer.from('page-1'));
+        await replaceZipEntry(source, '혈로행 2부 01-14권 完/혈로행 2부 01권/001.jpg', Buffer.from('page-2'));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].clean_title, '혈로행');
+        assert.equal(analyzed.items[0].core_title, '혈로행');
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.original_path),
+            ['혈로행 1부 01-23권 完/혈로행 1부 01권', '혈로행 2부 01-14권 完/혈로행 2부 01권'],
+        );
+        assert.deepEqual(
+            analyzed.items[0].volumes.map(volume => volume.new_name),
+            ['혈로행 1부 01권', '혈로행 2부 01권'],
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Organizer는 이미지 보정 suffix 숫자 대신 앞쪽 권수를 사용한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-image-suffix-'));
     try {
