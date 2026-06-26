@@ -17,5 +17,7 @@ test('macOS와 Windows 사운드 실행은 shell 문자열 대신 인자 배열�
     const windows = createSoundCommand('win32', 'C:\\Book Manager\\wow.mp3');
     assert.equal(windows.command, 'powershell.exe');
     assert.equal(windows.env.BOOKMANAGER_SOUND_PATH, 'C:\\Book Manager\\wow.mp3');
+    assert.equal(windows.args.includes('-Sta'), true);
     assert.equal(windows.args.includes('C:\\Book Manager\\wow.mp3'), false);
+    assert.match(windows.args.join(' '), /NaturalDuration\.HasTimeSpan/);
 });

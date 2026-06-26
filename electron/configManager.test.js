@@ -95,6 +95,7 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.preferred_meta_api_book, '리디북스');
         assert.equal(loaded.renamer_default_cap_opt, false);
         assert.equal(loaded.renamer_default_exif_opt, false);
+        assert.equal(loaded.font_family, 'Noto Sans KR');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -110,6 +111,20 @@ test('기존 마지막 검색 API를 책 타입별 기본 검색 API로 승계�
         const loaded = manager.loadConfig();
         assert.equal(loaded.preferred_meta_api_comic, 'Google Books');
         assert.equal(loaded.preferred_meta_api_book, 'Google Books');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('기존 Default 글꼴 설정은 Noto Sans KR 기본값으로 정규화한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-font-default-'));
+    try {
+        writeDataConfig(root, {
+            font_family: 'Default',
+        });
+        const manager = new ConfigManager(root, root);
+        const loaded = manager.loadConfig();
+        assert.equal(loaded.font_family, 'Noto Sans KR');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

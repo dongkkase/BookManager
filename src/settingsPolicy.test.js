@@ -31,6 +31,7 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.img_quality, 100);
     assert.equal(normalized.renamer_archive_compression, 'maximum');
     assert.equal(normalized.max_threads, 6);
+    assert.equal(normalized.font_family, 'Noto Sans KR');
     assert.equal(normalized.font_scale, 80);
     assert.deepEqual(normalized.libraries, ['/Books']);
     assert.equal(normalized.preferred_meta_api_comic, 'Vine');
@@ -44,6 +45,11 @@ test('preferred metadata API settings inherit legacy last API where valid', () =
 
     assert.equal(normalized.preferred_meta_api_comic, 'Google Books');
     assert.equal(normalized.preferred_meta_api_book, 'Google Books');
+});
+
+test('Default 글꼴 설정은 Noto Sans KR 기본값으로 정규화한다', () => {
+    assert.equal(normalizeSettingsConfig({ font_family: 'Default' }).font_family, 'Noto Sans KR');
+    assert.equal(normalizeSettingsConfig({ font_family: 'Jua' }).font_family, 'Jua');
 });
 
 test('renamer archive compression setting accepts only supported modes', () => {

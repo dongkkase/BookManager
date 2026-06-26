@@ -445,10 +445,12 @@ function OrganizerTab({ config, t, showToast }) {
       }
       const success = result.stats?.success?.length || 0;
       const errors = result.stats?.error?.length || 0;
-      const message = t('msg_job_done', [success, result.stats?.skip?.length || 0, errors]);
+      const skip = result.stats?.skip?.length || 0;
+      const completed = success + skip + errors;
+      const message = t('msg_job_done', [success, skip, errors]);
       setStatusMessage(message);
       showToast?.(message);
-      if (shouldPlayCompletionSound(config, success, result.cancelled)) {
+      if (shouldPlayCompletionSound(config, completed, result.cancelled)) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {

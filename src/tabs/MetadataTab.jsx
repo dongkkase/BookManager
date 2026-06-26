@@ -1068,12 +1068,14 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       }
       const success = result.stats?.success?.length || 0;
       const errors = result.stats?.error?.length || 0;
+      const skip = result.stats?.skip?.length || 0;
+      const completed = success + skip + errors;
       const message = all
         ? t('t3_msg_save_all_done', { success_count: success, fail_count: errors })
         : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));
       setStatusMessage(message);
       showToast?.(message);
-      if (shouldPlayCompletionSound(config, success, false)) {
+      if (shouldPlayCompletionSound(config, completed, result.cancelled)) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {

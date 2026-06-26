@@ -92,11 +92,13 @@ export class ConfigManager {
       BOOK_METADATA_API_SOURCES,
       defaults.preferred_meta_api_book,
     );
+    const fontFamily = String(raw.font_family || defaults.font_family);
     return {
       ...defaults,
       ...raw,
       lang,
       language: lang,
+      font_family: fontFamily === 'Default' ? defaults.font_family : fontFamily,
       libraries,
       dup_check_folders: libraries,
       favorites,
@@ -164,7 +166,7 @@ export class ConfigManager {
         ai_key: '',
         tag_rules: '',
       },
-      font_family: 'Default',
+      font_family: 'Noto Sans KR',
       font_scale: 100,
       btn_primary: '#0078d7',
       start_num: 0,

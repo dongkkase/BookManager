@@ -181,7 +181,7 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
     assertInventory('settings', [
         ['환경설정 언어', 'LANGUAGE_OPTIONS.map'],
         ['완료 알림 소리', 'soundOptions.map'],
-        ['폰트', "localConfig.font_family || 'Default'"],
+        ['폰트', "localConfig.font_family || 'Noto Sans KR'"],
         ['폰트 배율', 'localConfig.font_scale || 100'],
         ['출력 포맷', "localConfig.target_format || 'none'"],
         ['내부 파일명 변경 재압축 강도', "localConfig.renamer_archive_compression || 'auto'"],

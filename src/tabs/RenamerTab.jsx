@@ -636,10 +636,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       const success = result.stats?.success?.length || 0;
       const skip = result.stats?.skip?.length || 0;
       const error = result.stats?.error?.length || 0;
+      const completed = success + skip + error;
       const message = t('msg_job_done', [success, skip, error]);
       setStatusMessage(message);
       showToast?.(message);
-      if (shouldPlayCompletionSound(config, success, result.cancelled)) {
+      if (shouldPlayCompletionSound(config, completed, result.cancelled)) {
         window.electronAPI?.playSound?.(config?.completion_sound || 'Default.wav');
       }
     } catch (error) {

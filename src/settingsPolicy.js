@@ -52,6 +52,8 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         normalizedApiKeys,
     );
 
+    const fontFamily = String(config.font_family || 'Noto Sans KR');
+
     return {
         ...config,
         lang,
@@ -72,7 +74,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         pass_skip_meta: Boolean(config.pass_skip_meta),
         completion_sound: String(config.completion_sound || 'Default.wav'),
         viewer_path: String(config.viewer_path || '').trim(),
-        font_family: String(config.font_family || 'Default'),
+        font_family: fontFamily === 'Default' ? 'Noto Sans KR' : fontFamily,
         font_scale: Math.min(155, Math.max(80, Number(config.font_scale) || 100)),
         libraries,
         dup_check_folders: libraries,

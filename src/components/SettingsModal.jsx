@@ -80,7 +80,7 @@ function normalizeConfig(config) {
     folder_favorites: [],
     pass_skip_meta: false,
     completion_sound: 'Default.wav',
-    font_family: 'Default',
+    font_family: 'Noto Sans KR',
     font_scale: 100,
     last_meta_api: '리디북스',
     preferred_meta_api_comic: '리디북스',
@@ -397,7 +397,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
               <div className="settings-row">
                 <span className="settings-label">{t('font_family_lbl')}</span>
-                <select className="settings-select" value={localConfig.font_family || 'Default'} onChange={event => handleChange('font_family', event.target.value)}>
+                <select className="settings-select" value={localConfig.font_family || 'Noto Sans KR'} onChange={event => handleChange('font_family', event.target.value)}>
                   <optgroup label={label('font_group_bundled', '프로그램 포함 폰트')}>
                     {bundledFontOptions.map(option => (
                       <option key={option.value} value={option.value}>{option.label}</option>
