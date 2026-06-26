@@ -457,6 +457,8 @@ test('리스트 파일 강제 업데이트는 선택 파일을 단일 파일 미
     assertInventory('folder', [
         ['파일 강제 업데이트 메뉴', "handleContextAction('update-files')"],
         ['파일 강제 업데이트 단일 파일 추출', 'getFilePreview'],
+        ['보이는 항목 표지 캐시 우선 로드', "loadPreview(filePath, { force: false })"],
+        ['파일 강제 업데이트 표지 강제 추출', "getFilePreview?.(filePath, { force: true })"],
         ['파일 강제 업데이트 캐시 반영', 'updateCachedFiles'],
     ]);
 });

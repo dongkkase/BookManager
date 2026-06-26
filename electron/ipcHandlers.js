@@ -4066,7 +4066,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('fs:filePreview', async (_, filePath) => {
+  ipcMain.handle('fs:filePreview', async (_, filePath, options = {}) => {
     try {
       if (!filePath || !fs.existsSync(filePath)) {
         return { success: false, message: 'File not found.' };
@@ -4078,7 +4078,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           dbPath: libraryDbPath(),
           thumbnailDir: thumbnailDir(),
           sevenZExe,
-          force: true,
+          force: options?.force === true,
           thumbnailEncoder: encodeThumbnail,
         }),
       };

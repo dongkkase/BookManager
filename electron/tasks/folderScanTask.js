@@ -749,6 +749,73 @@ function isValidCache(cached, stats) {
   );
 }
 
+function createQuickFileData(fullPath) {
+  const name = path.basename(fullPath);
+  const folderPath = path.dirname(fullPath);
+  const ext = path.extname(name).toLowerCase();
+  const title = path.parse(name).name;
+  const bookType = resolveBookType({ path: fullPath, ext });
+
+  return {
+    name,
+    path: fullPath,
+    folder_path: folderPath,
+    full_path: fullPath,
+    ext,
+    book_type: bookType,
+    bookType,
+    format: '',
+    size: 0,
+    mtime: 0,
+    ctime: 0,
+    created: '',
+    modified: '',
+    is_folder: false,
+    series: '',
+    title,
+    volume: '',
+    sorted_volume: null,
+    compare_nums: [],
+    chapter: '',
+    author: '',
+    writer: '',
+    penciller: '',
+    inker: '',
+    colorist: '',
+    letterer: '',
+    cover_artist: '',
+    producer: '',
+    publisher: '',
+    imprint: '',
+    genre: '',
+    total_volume: '',
+    page_count: '',
+    description: '',
+    series_group: '',
+    tags: '',
+    characters: '',
+    teams: '',
+    locations: '',
+    story_arc: '',
+    notes: '',
+    link: '',
+    isbn: '',
+    language: '',
+    manga: '',
+    age_rating: '',
+    rating: '',
+    date: '',
+    has_metadata: false,
+    resolution: '',
+    thumb_path: '',
+    cover: '',
+    cache_source: 'quick',
+    duplicate_matches: [],
+    dup_count: 0,
+    max_ratio: 0,
+  };
+}
+
 function sortEntriesForPriority(entries = []) {
   return [...entries].sort((left, right) => {
     if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
@@ -1060,6 +1127,12 @@ async function createFileData(fullPath, stats, options = {}) {
       ...extracted,
     };
     if (options.libraryDb && options.skipLibraryCache !== true) {
+      let thumbnailPathForCache = archiveMeta.thumb_path || cached?.thumb_path || '';
+      if (!thumbnailPathForCache && options.skipCoverExtraction === true) {
+        const latestCached = await safeGetCachedFileInfo(options.libraryDb, fullPath);
+        thumbnailPathForCache = latestCached?.thumb_path || '';
+      }
+      if (thumbnailPathForCache) archiveMeta.thumb_path = thumbnailPathForCache;
       await safeUpsertFileInfo(options.libraryDb, {
         path: fullPath,
         mtime: stats.mtimeMs / 1000,
@@ -1094,7 +1167,7 @@ async function createFileData(fullPath, stats, options = {}) {
         web: archiveMeta.link || '',
         isbn: archiveMeta.isbn || '',
         book_type: archiveMeta.book_type || bookType,
-        thumb_path: archiveMeta.thumb_path || '',
+        thumb_path: thumbnailPathForCache,
       });
     }
   }
@@ -1209,6 +1282,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     skipArchiveExtraction = false,
     skipCoverExtraction = false,
     skipLibraryCache = false,
+    quickListOnly = false,
     suppressEvents = false,
     thumbnailEncoder,
     lang = 'ko',
@@ -1217,9 +1291,37 @@ export async function scanFolder(folderPath, options = {}, event) {
   const results = [];
   let scannedCount = 0;
   let matchedCount = 0;
-  const libraryDb = options.libraryDb || (dbPath ? new LibraryDB({ dbPath }) : null);
+  const shouldUseLibraryDb = !quickListOnly && (skipLibraryCache !== true || enableDupCheck);
+  const libraryDb = options.libraryDb || (shouldUseLibraryDb && dbPath ? new LibraryDB({ dbPath }) : null);
   let lastTaskProgressAt = 0;
   let lastTaskLogAt = 0;
+
+  async function scanQuickList(currentPath) {
+    let entries;
+    try {
+      entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+    } catch (error) {
+      console.error(`Failed to read directory: ${currentPath}`, error);
+      return;
+    }
+
+    for (const entry of sortEntriesForPriority(entries)) {
+      throwIfTaskCancelled(options);
+      if (shouldSkipScanDirectoryEntry(entry)) continue;
+      const fullPath = path.join(currentPath, entry.name);
+
+      if (entry.isDirectory()) {
+        if (includeSubfolders) await scanQuickList(fullPath);
+      } else if (entry.isFile()) {
+        scannedCount += 1;
+        const ext = path.extname(entry.name).toLowerCase();
+        if (normalizedExts.includes(ext)) {
+          results.push(createQuickFileData(fullPath));
+          matchedCount += 1;
+        }
+      }
+    }
+  }
 
   function emitTaskProgress(payload) {
     if (!event || !options.reportTaskProgress || event.sender.isDestroyed()) return;
@@ -1319,9 +1421,13 @@ export async function scanFolder(folderPath, options = {}, event) {
 
   let files = results;
   try {
-    await scanDir(folderPath);
+    if (quickListOnly) {
+      await scanQuickList(folderPath);
+    } else {
+      await scanDir(folderPath);
+    }
 
-    if (enableDupCheck && dupFolders.length > 0) {
+    if (!quickListOnly && enableDupCheck && dupFolders.length > 0) {
       throwIfTaskCancelled(options);
       emitTaskProgress({
         progress: 85,

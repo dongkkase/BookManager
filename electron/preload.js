@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
   exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
-  getFilePreview: (filePath) => ipcRenderer.invoke('fs:filePreview', filePath),
+  getFilePreview: (filePath, options) => ipcRenderer.invoke('fs:filePreview', filePath, options),
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),
   removeEmptyTree: (rootPath) => ipcRenderer.invoke('fs:removeEmptyTree', rootPath),
   findLibraryMoveConflicts: (movePlans) => ipcRenderer.invoke('fs:findLibraryMoveConflicts', movePlans),

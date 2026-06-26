@@ -93,9 +93,18 @@ const isPathInsideLibrary = (filePath = '', libraryPath = '') => {
 
 function FolderTab({ config, saveConfig, t, showToast }) {
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'folder' } }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
   const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles, updateCachedFiles } = useFolderScan(t);
+  const selectedFolderPathRef = useRef('');
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
   const viewContainerRef = useRef(null);
@@ -235,6 +244,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }), [includeSubfolders, enableDupCheck, config?.dup_check_folders]);
 
   useEffect(() => {
+    selectedFolderPathRef.current = selectedFolderPath;
     coverPreviewFolderRef.current = selectedFolderPath;
     coverPreviewQueueRef.current = [];
     coverPreviewQueuedRef.current.clear();
@@ -309,7 +319,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       coverPreviewActivePathsRef.current.add(filePath);
       coverPreviewAttemptedRef.current.add(filePath);
 
-      loadPreview(filePath)
+      loadPreview(filePath, { force: false })
         .then(result => {
           if (coverPreviewFolderRef.current !== selectedFolderPath) return;
           if (!result?.success || !result.file?.cover) return;
@@ -758,6 +768,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
     const nextFolderPath = String(folderPath || '');
+    selectedFolderPathRef.current = nextFolderPath;
     setSelectedFolderPath(nextFolderPath);
     clearSelection();
     setSearchQuery('');
@@ -766,7 +777,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         console.error('마지막 폴더 경로 저장 실패:', error);
       });
     }
+    await window.electronAPI?.stopTask?.('folder:scan').catch(() => {});
     const files = await scanFolder(nextFolderPath, scanOptions);
+    if (selectedFolderPathRef.current !== nextFolderPath) return;
     const localMissing = findMissingVolumes(files || []);
     scheduleLocalMissingToast(nextFolderPath, localMissing);
   }, [config?.folder_last_path, scanOptions, scanFolder, clearSelection, saveConfig, scheduleLocalMissingToast]);
@@ -1379,7 +1392,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     for (const file of targets) {
       const filePath = file.full_path || file.path;
       if (!filePath) continue;
-      const result = await window.electronAPI?.getFilePreview?.(filePath);
+      const result = await window.electronAPI?.getFilePreview?.(filePath, { force: true });
       if (result?.success && result.file) {
         refreshed.push({
           ...file,
@@ -1469,8 +1482,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         continue;
       }
       options.onConflictWait?.(plan);
-      const sourcePreview = await window.electronAPI?.getFilePreview?.(plan.src);
-      const destinationPreview = await window.electronAPI?.getFilePreview?.(plan.dest);
+      const sourcePreview = await window.electronAPI?.getFilePreview?.(plan.src, { force: false });
+      const destinationPreview = await window.electronAPI?.getFilePreview?.(plan.dest, { force: false });
       const choice = await requestConflictChoice({
         plan,
         source: sourcePreview?.file || { name: basename(plan.src), path: plan.src },

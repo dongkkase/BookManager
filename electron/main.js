@@ -41,6 +41,7 @@ const useUnsafeDevNodeIntegration = isDev && (
 );
 const APP_NAME = 'BookManager';
 const APP_ID = 'com.bookmanager.app';
+const DEV_SERVER_URL = process.env.BOOKMANAGER_DEV_SERVER_URL || 'http://127.0.0.1:5173';
 const THUMBNAIL_MEMORY_CACHE_LIMIT = 256;
 const thumbnailMemoryCache = new Map();
 
@@ -267,7 +268,7 @@ function createMainWindow(config) {
 
   // 개발 모드 또는 로컬 파일 로드
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));

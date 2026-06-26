@@ -55,6 +55,14 @@ function hydrateOrganizerItem(item) {
 function OrganizerTab({ config, t, showToast }) {
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
   const language = config?.language || config?.lang || 'ko';
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'organizer' } }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const [fileList, setFileList] = useState([]);
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [isAllExpanded, setIsAllExpanded] = useState(true);

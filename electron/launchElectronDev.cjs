@@ -4,6 +4,7 @@ const electron = require('electron');
 const useUnsafeDevNodeIntegration = process.argv.includes('--unsafe-dev-node');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
+env.BOOKMANAGER_DEV_SERVER_URL = env.BOOKMANAGER_DEV_SERVER_URL || 'http://127.0.0.1:5173';
 if (useUnsafeDevNodeIntegration) {
     env.BOOKMANAGER_UNSAFE_DEV_NODE = '1';
 }

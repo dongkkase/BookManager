@@ -2,12 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { TabBar } from './components/TabBar';
 import { SettingsModal } from './components/SettingsModal';
 import { AppLockOverlay } from './components/AppLockOverlay';
-import { OrganizerTab } from './tabs/OrganizerTab';
-import { RenamerTab } from './tabs/RenamerTab';
-import { MetadataTab } from './tabs/MetadataTab';
-import { FolderTab } from './tabs/FolderTab';
-import { SharingTab } from './tabs/SharingTab';
-import { ReleaseTab } from './tabs/ReleaseTab';
 import { FaIcon } from './components/FaIcon';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
@@ -43,15 +37,26 @@ import { fontVarsForConfig } from './fontPolicy';
 import { installBundledFontFaces } from './bundledFonts';
 import './styles/App.css';
 
-const MemoFolderTab = React.memo(FolderTab);
-const MemoOrganizerTab = React.memo(OrganizerTab);
-const MemoRenamerTab = React.memo(RenamerTab);
-const MemoMetadataTab = React.memo(MetadataTab);
-const MemoSharingTab = React.memo(SharingTab);
-const MemoReleaseTab = React.memo(ReleaseTab);
+function lazyTab(loader, exportName) {
+  return React.memo(React.lazy(() => loader().then(module => ({
+    default: exportName ? module[exportName] : module.default,
+  }))));
+}
+
+const MemoFolderTab = lazyTab(() => import('./tabs/FolderTab'), 'FolderTab');
+const MemoOrganizerTab = lazyTab(() => import('./tabs/OrganizerTab'));
+const MemoRenamerTab = lazyTab(() => import('./tabs/RenamerTab'));
+const MemoMetadataTab = lazyTab(() => import('./tabs/MetadataTab'));
+const MemoSharingTab = lazyTab(() => import('./tabs/SharingTab'));
+const MemoReleaseTab = lazyTab(() => import('./tabs/ReleaseTab'));
+
+function TabLoading({ t }) {
+  return <div className="app-tab-loading">{t('msg_loading_list')}</div>;
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
+  const [loadedTabs, setLoadedTabs] = useState(() => new Set(['folder']));
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('basic');
   const [toast, setToast] = useState(null);
@@ -86,6 +91,8 @@ function App() {
   const didRestoreTab = useRef(false);
   const lastToast = useRef(null);
   const lastTabSaveTimer = useRef(null);
+  const readyTabsRef = useRef(new Set());
+  const pendingTabActionsRef = useRef(new Map());
   const effectiveWorkingTab = useMemo(
     () => resolveEffectiveWorkingTab(workingTab, statusStates, activeTab),
     [activeTab, statusStates, workingTab],
@@ -117,6 +124,48 @@ function App() {
     setActiveTab(resolveTabId(config.last_tab_id, config.last_tab_index));
     didRestoreTab.current = true;
   }, [config]);
+
+  useEffect(() => {
+    setLoadedTabs(current => {
+      if (current.has(activeTab)) return current;
+      const next = new Set(current);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
+
+  const dispatchTabAction = useCallback((tabId, detail) => {
+    if (!tabId || !detail) return;
+    if (readyTabsRef.current.has(tabId)) {
+      window.dispatchEvent(new CustomEvent('bookmanager:action', { detail }));
+      return;
+    }
+
+    const pending = pendingTabActionsRef.current.get(tabId) || [];
+    pending.push(detail);
+    pendingTabActionsRef.current.set(tabId, pending);
+    setLoadedTabs(current => {
+      if (current.has(tabId)) return current;
+      const next = new Set(current);
+      next.add(tabId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleTabReady = event => {
+      const tabId = event.detail?.tabId;
+      if (!tabId) return;
+      readyTabsRef.current.add(tabId);
+      const pending = pendingTabActionsRef.current.get(tabId) || [];
+      pendingTabActionsRef.current.delete(tabId);
+      for (const detail of pending) {
+        window.dispatchEvent(new CustomEvent('bookmanager:action', { detail }));
+      }
+    };
+    window.addEventListener('bookmanager:tab-ready', handleTabReady);
+    return () => window.removeEventListener('bookmanager:tab-ready', handleTabReady);
+  }, []);
 
   useEffect(() => () => {
     if (lastTabSaveTimer.current) window.clearTimeout(lastTabSaveTimer.current);
@@ -250,14 +299,12 @@ function App() {
       setActiveTab(tabId);
       scheduleLastTabSave(tabId, tabIndex, '자동 전달 탭 저장');
       if (paths.length > 0) {
-        window.dispatchEvent(new CustomEvent('bookmanager:action', {
-          detail: { action: 'load-paths', activeTab: tabId, paths },
-        }));
+        dispatchTabAction(tabId, { action: 'load-paths', activeTab: tabId, paths });
       }
     };
     window.addEventListener('bookmanager:navigate', handleNavigate);
     return () => window.removeEventListener('bookmanager:navigate', handleNavigate);
-  }, [isAppLocked, scheduleLastTabSave]);
+  }, [dispatchTabAction, isAppLocked, scheduleLastTabSave]);
 
   const handleSettings = useCallback(() => {
     setSettingsInitialTab('basic');
@@ -287,8 +334,8 @@ function App() {
   }, []);
 
   const dispatchAppAction = useCallback((action) => {
-    window.dispatchEvent(new CustomEvent('bookmanager:action', { detail: { action, activeTab } }));
-  }, [activeTab]);
+    dispatchTabAction(activeTab, { action, activeTab });
+  }, [activeTab, dispatchTabAction]);
 
   useEffect(() => {
     const handleWorkingState = (event) => {
@@ -337,10 +384,8 @@ function App() {
       acceptedPaths = resolveMetadataDropPaths(classified, choice);
     }
     if (acceptedPaths.length === 0) return;
-    window.dispatchEvent(new CustomEvent('bookmanager:action', {
-      detail: { action: 'drop-paths', activeTab, paths: acceptedPaths },
-    }));
-  }, [activeTab, isAppLocked, language, showToast, t]);
+    dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths });
+  }, [activeTab, dispatchTabAction, isAppLocked, language, showToast, t]);
 
   const handleSettingsClose = useCallback(async (updatedConfig) => {
     setShowSettings(false);
@@ -552,22 +597,46 @@ function App() {
       
       <div className="app-content">
         <div className={`app-tab-panel ${activeTab === 'folder' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'folder'}>
-          <MemoFolderTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          {loadedTabs.has('folder') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoFolderTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+            </React.Suspense>
+          )}
         </div>
         <div className={`app-tab-panel ${activeTab === 'organizer' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'organizer'}>
-          <MemoOrganizerTab config={config} t={t} showToast={showToast} />
+          {loadedTabs.has('organizer') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoOrganizerTab config={config} t={t} showToast={showToast} />
+            </React.Suspense>
+          )}
         </div>
         <div className={`app-tab-panel ${activeTab === 'renamer' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'renamer'}>
-          <MemoRenamerTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          {loadedTabs.has('renamer') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoRenamerTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+            </React.Suspense>
+          )}
         </div>
         <div className={`app-tab-panel ${activeTab === 'metadata' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'metadata'}>
-          <MemoMetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          {loadedTabs.has('metadata') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoMetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+            </React.Suspense>
+          )}
         </div>
         <div className="app-tab-panel" hidden={activeTab !== 'sharing'}>
-          <MemoSharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+          {loadedTabs.has('sharing') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoSharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+            </React.Suspense>
+          )}
         </div>
         <div className="app-tab-panel" hidden={activeTab !== 'releases'}>
-          <MemoReleaseTab config={config} t={t} />
+          {loadedTabs.has('releases') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoReleaseTab config={config} t={t} />
+            </React.Suspense>
+          )}
         </div>
         <AppLockOverlay
           isAppLocked={isAppLocked}

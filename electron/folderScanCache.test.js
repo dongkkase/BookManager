@@ -167,6 +167,33 @@ test('폴더 스캔 기본 대상 확장자에는 텍스트 파일이 포함된�
     }
 });
 
+test('폴더 클릭용 빠른 목록은 파일명 데이터만 먼저 반환한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-folder-quick-list-'));
+    const libraryDir = path.join(root, 'library');
+    const nestedDir = path.join(libraryDir, 'nested');
+
+    try {
+        fs.mkdirSync(nestedDir, { recursive: true });
+        fs.writeFileSync(path.join(libraryDir, 'Quick Book 01.cbz'), 'book');
+        fs.writeFileSync(path.join(nestedDir, 'Nested Book.cbz'), 'book');
+
+        const files = await scanFolder(libraryDir, {
+            quickListOnly: true,
+            includeSubfolders: false,
+            skipArchiveExtraction: true,
+            skipLibraryCache: true,
+        });
+
+        assert.deepEqual(files.map(file => file.name), ['Quick Book 01.cbz']);
+        assert.equal(files[0].cache_source, 'quick');
+        assert.equal(files[0].title, 'Quick Book 01');
+        assert.equal(files[0].size, 0);
+        assert.equal(files[0].cover, '');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-native-scan-'));
     const libraryDir = path.join(root, 'library');

@@ -57,6 +57,13 @@ function scrollTableRowIntoView(container, row) {
 }
 
 function RenamerTab({ config, saveConfig, t, showToast }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'renamer' } }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const dragDropImage = useMemo(() => selectRandomResource(DRAG_DROP_IMAGES), []);
   const initialRenamerOptions = normalizeRenamerOptionsFromConfig(config);
   const initialRenamerBatchOptions = normalizeRenamerBatchOptionsFromConfig(config);

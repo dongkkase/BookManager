@@ -106,6 +106,26 @@ export function useFolderScan(t) {
         };
 
         if (fastInitial) {
+          const initialFiles = await window.electronAPI.scanFolder(folderPath, {
+            ...requestOptions,
+            includeSubfolders: false,
+            enableDupCheck: false,
+            dupFolders: [],
+            quickListOnly: true,
+            skipArchiveExtraction: true,
+            skipLibraryCache: true,
+            suppressEvents: true,
+            reportTaskProgress: false,
+            reportFileReady: false,
+          });
+
+          if (mountedRef.current && currentFolderRef.current === folderPath) {
+            setFileDataCache(prev => ({
+              ...prev,
+              [cacheKey]: initialFiles || [],
+            }));
+          }
+
           const quickFiles = await window.electronAPI.scanFolder(folderPath, {
             ...requestOptions,
             enableDupCheck: false,
@@ -116,16 +136,18 @@ export function useFolderScan(t) {
           });
 
           if (!mountedRef.current) return quickFiles || [];
-          setFileDataCache(prev => ({
-            ...prev,
-            [cacheKey]: quickFiles || [],
-          }));
-          const quickCount = quickFiles?.length || 0;
-          setStatusMessage(
-            t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
-          );
-          setScanProgress(100);
-          setScanning(false);
+          if (currentFolderRef.current === folderPath) {
+            setFileDataCache(prev => ({
+              ...prev,
+              [cacheKey]: mergeFilesPreservingCover(quickFiles || [], prev[cacheKey] || []),
+            }));
+            const quickCount = quickFiles?.length || 0;
+            setStatusMessage(
+              t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
+            );
+            setScanProgress(100);
+            setScanning(false);
+          }
 
           window.electronAPI.scanFolder(folderPath, {
             ...requestOptions,
