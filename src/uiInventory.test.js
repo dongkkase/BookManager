@@ -384,6 +384,15 @@ test('폴더 탭은 앱 공통 하단 상태바와 중복되는 자체 상태바
     assert.equal(sources.folder.includes('className="global-status-bar"'), false);
 });
 
+test('폴더 빈 상태 이미지는 보기 영역 중앙에 고정된다', () => {
+    assertInventory('folderCss', [
+        ['폴더 빈 상태 오버레이', '.empty-folder-page'],
+        ['폴더 빈 상태 절대 배치', 'position: absolute;'],
+        ['폴더 빈 상태 전체 영역', 'inset: 0;'],
+        ['폴더 빈 상태 중앙 정렬', 'justify-content: center;'],
+    ]);
+});
+
 test('썸네일 모드는 커버 카드 오버레이 디자인을 사용한다', () => {
     assertInventory('thumbnailView', [
         ['썸네일 커버 카드 구조', 'thumbnail-cover-card'],
