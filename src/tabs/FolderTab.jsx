@@ -1219,8 +1219,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (folderPath) await window.electronAPI?.openInExplorer?.(folderPath);
   }, []);
 
-  const openSelectedInViewer = useCallback(async () => {
-    const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
+  const openFileInViewer = useCallback(async (file) => {
+    const target = typeof file === 'string' ? file : file?.full_path || file?.path;
     if (!target) return;
     if (!config?.viewer_path) {
       await window.electronAPI?.showMessage?.({
@@ -1240,7 +1240,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     }
-  }, [activeSelectedFile, config?.language, config?.lang, config?.viewer_path, t]);
+  }, [config?.language, config?.lang, config?.viewer_path, t]);
+
+  const openSelectedInViewer = useCallback(async () => {
+    await openFileInViewer(activeSelectedFile);
+  }, [activeSelectedFile, openFileInViewer]);
+
+  const handleFileOpen = useCallback(async (file, event, index) => {
+    if (!file?.path) return;
+    selectFile(file.path, null, index);
+    await openFileInViewer(file);
+  }, [openFileInViewer, selectFile]);
 
   const deleteSelectedFiles = useCallback(async () => {
     const targets = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);
@@ -2183,6 +2193,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       sortOrder,
       groupKey,
       onSelect: handleFileSelect,
+      onOpenFile: handleFileOpen,
       onDragSelect: selectPaths,
       onContextMenu: showFileContextMenu,
       onClearSelection: clearSelection,
@@ -2196,7 +2207,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 

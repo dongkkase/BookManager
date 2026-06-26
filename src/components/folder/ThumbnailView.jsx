@@ -20,6 +20,7 @@ const ThumbnailView = ({
   selectedFiles = [],
   activeSelectedPath = '',
   onSelect,
+  onOpenFile,
   onDragSelect,
   onContextMenu,
   onScroll,
@@ -120,6 +121,12 @@ const ThumbnailView = ({
 
 	    onSelect(file.path, e, index);
 	  };
+
+      const handleItemDoubleClick = (file, event, index) => {
+        if (!file?.path || dragSelectRef.current.moved || rubberSelectRef.current.moved) return;
+        event.preventDefault();
+        onOpenFile?.(file, event, index);
+      };
 
 	  const handleItemMouseDown = (file, event, index) => {
 	    if (event.button !== 0 || !onSelect || !file.path) return;
@@ -250,6 +257,7 @@ const ThumbnailView = ({
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
 	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
+                  onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className="thumbnail-cover-card">
@@ -290,6 +298,7 @@ const ThumbnailView = ({
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
 	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
+                  onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className="thumbnail-cover-card">

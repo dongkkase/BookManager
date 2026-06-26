@@ -19,6 +19,7 @@ const FileTableView = forwardRef(({
   dupFiles = [],
   onSort,
   onSelect,
+  onOpenFile,
   onDragSelect,
   onContextMenu,
   onScroll,
@@ -290,6 +291,12 @@ const FileTableView = forwardRef(({
         onSelect(file.path, e, index);
     };
 
+    const handleRowDoubleClick = (file, event, index) => {
+        if (!file?.path || dragSelectRef.current.moved || rubberSelectRef.current.moved) return;
+        event.preventDefault();
+        onOpenFile?.(file, event, index);
+    };
+
     const handleRowMouseDown = (file, event, index) => {
         if (event.button !== 0 || !onSelect || !file.path) return;
         dragSelectRef.current = { active: true, moved: false };
@@ -471,6 +478,7 @@ const FileTableView = forwardRef(({
                   onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
                   onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
                   onClick={(event) => handleRowClick(file, event, fileIndex)}
+                  onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
                   onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
                 >
                   {columns.map(column => renderCell(file, column))}
@@ -504,6 +512,7 @@ const FileTableView = forwardRef(({
 	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
 	                  onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
 	                  onClick={(event) => handleRowClick(file, event, fileIndex)}
+                      onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
 	                  onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	                >
 	                  {columns.map(column => renderCell(file, column))}
