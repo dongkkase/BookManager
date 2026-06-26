@@ -28,7 +28,7 @@ test('수동 메타데이터 최적화는 인덱싱 없이 기존 인덱스 목�
     assert.match(source, /const shouldForceMetadata = optimizeMetadata && \(/);
     assert.match(source, /typeof options\.forceMetadata === 'boolean'[\s\S]*: choice === 'force'/);
     assert.match(source, /forceMetadata:\s*shouldForceMetadata/);
-    assert.match(source, /skipCoverExtraction:\s*optimizeMetadata && choice !== 'force' && !options\.showIndexingVisual/);
+    assert.match(source, /skipCoverExtraction:\s*false/);
 });
 
 test('폴더 스캔 진행 이벤트는 락 상태로 올리지 않는다', () => {

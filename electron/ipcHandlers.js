@@ -2168,15 +2168,16 @@ const LIBRARY_SCAN_VISUAL_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', 
 const LIBRARY_SCAN_PROGRESS_INTERVAL_MS = 500;
 const LIBRARY_SCAN_PROGRESS_MATCH_DELTA = 250;
 const LIBRARY_SCAN_STAT_CONCURRENCY = 16;
-const DEFAULT_LIBRARY_METADATA_CONCURRENCY = Math.max(1, Math.min(4, os.cpus()?.length || 1));
-const MAX_LIBRARY_METADATA_CONCURRENCY = 8;
+const CPU_COUNT = os.cpus()?.length || 1;
+const DEFAULT_LIBRARY_METADATA_CONCURRENCY = Math.max(1, Math.min(Math.ceil(CPU_COUNT * 0.75), CPU_COUNT));
+const MAX_LIBRARY_METADATA_CONCURRENCY = Math.max(8, Math.min(32, Math.max(1, CPU_COUNT - 1)));
 const THUMBNAIL_TARGET_WIDTH = 500;
 const THUMBNAIL_WEBP_QUALITY = 82;
 const imageDataUrlCache = new Map();
 const execFileAsync = promisify(execFile);
 
 function resolveLibraryMetadataConcurrency(options = {}) {
-  const requested = Number(options.metadataConcurrency);
+  const requested = Number(options.metadataConcurrency ?? options.maxThreads ?? options.max_threads);
   if (!Number.isFinite(requested)) return DEFAULT_LIBRARY_METADATA_CONCURRENCY;
   return Math.max(1, Math.min(MAX_LIBRARY_METADATA_CONCURRENCY, Math.floor(requested)));
 }
@@ -2556,12 +2557,53 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
-  const encodeThumbnail = async imageBuffer => {
+  let cwebpExePromise = null;
+  const getCwebpExe = () => {
+    if (!cwebpExePromise) cwebpExePromise = getBinPath('cwebp');
+    return cwebpExePromise;
+  };
+  const encodeThumbnail = async (imageBuffer, thumbnailOptions = {}) => {
+    const cwebpExe = await getCwebpExe();
+    const sourceExt = path.extname(thumbnailOptions.imageName || '').toLowerCase();
+    const directCwebpExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff']);
+    if (cwebpExe && directCwebpExts.has(sourceExt)) {
+      const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bookmanager-thumbnail-'));
+      const inputPath = path.join(tempDir, `input${sourceExt}`);
+      const outputPath = path.join(tempDir, 'output.webp');
+      try {
+        await fs.promises.writeFile(inputPath, imageBuffer);
+        await execFileAsync(cwebpExe, [
+          inputPath,
+          '-resize',
+          String(THUMBNAIL_TARGET_WIDTH),
+          '0',
+          '-q',
+          String(THUMBNAIL_WEBP_QUALITY),
+          '-metadata',
+          'none',
+          '-mt',
+          '-quiet',
+          '-o',
+          outputPath,
+        ], {
+          windowsHide: true,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        return {
+          buffer: await fs.promises.readFile(outputPath),
+          extension: '.webp',
+        };
+      } catch (error) {
+        console.warn(`[Thumbnail] direct cwebp failed; using fallback: ${error.message}`);
+      } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
     const image = nativeImage.createFromBuffer(imageBuffer);
     if (image.isEmpty()) return null;
     const size = image.getSize();
     if (!size.width || !size.height) return null;
-    const cwebpExe = await getBinPath('cwebp');
     const targetHeight = Math.max(1, Math.round(size.height * (THUMBNAIL_TARGET_WIDTH / size.width)));
     const thumbnail = image.resize({
       width: THUMBNAIL_TARGET_WIDTH,
@@ -2590,6 +2632,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           '-metadata',
           'none',
           '-mt',
+          '-quiet',
           '-o',
           outputPath,
         ], {
@@ -2630,6 +2673,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     });
     const files = [];
     const metadataConcurrency = resolveLibraryMetadataConcurrency(options);
+    const metadataStartedAt = Date.now();
     let nextIndex = 0;
     let completedCount = 0;
     let lastProgressAt = 0;
@@ -2702,6 +2746,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       ),
     );
     emitProgress(filePaths.length, '', true);
+    const elapsedMs = Math.max(0, Date.now() - metadataStartedAt);
+    console.log(
+      `[LibraryIndex] metadata summary files=${filePaths.length} extracted=${files.length} `
+      + `force=${force} skipCover=${skipCoverExtraction} concurrency=${metadataConcurrency} `
+      + `elapsedMs=${elapsedMs} avgMs=${filePaths.length ? Math.round(elapsedMs / filePaths.length) : 0}`,
+    );
 
     return files;
   };
@@ -3266,13 +3316,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const forceMetadata = mode === 'force'
       ? true
       : options.forceMetadata === true;
-    const skipMetadataCoverExtraction = options.skipCoverExtraction === true
-      || (
-        shouldOptimizeMetadata
-        && mode === 'smart'
-        && forceMetadata !== true
-        && options.skipCoverExtraction !== false
-      );
+    const skipMetadataCoverExtraction = options.skipCoverExtraction === true;
     const lastMtimes = { ...(config.index_last_mtimes || {}) };
     const priorityFolder = options.priorityFolder
       ? path.resolve(options.priorityFolder)
@@ -3524,6 +3568,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             shouldCancel,
             force: forceMetadata,
             skipCoverExtraction: skipMetadataCoverExtraction,
+            metadataConcurrency: options.metadataConcurrency ?? options.max_threads ?? config.max_threads,
             lang,
             touchHeartbeat: () => queueLibraryScanHeartbeat(
               folder,

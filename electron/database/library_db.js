@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -9,6 +8,14 @@ import {
 } from '../metadataFormat.js';
 
 const require = createRequire(import.meta.url);
+let DatabaseConstructor = null;
+
+function getDatabaseConstructor() {
+    if (!DatabaseConstructor) {
+        DatabaseConstructor = require('better-sqlite3');
+    }
+    return DatabaseConstructor;
+}
 
 function defaultUserDataPath() {
     try {
@@ -85,6 +92,7 @@ export class LibraryDB {
     getConnection() {
         if (this.db) return this.db;
         fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+        const Database = getDatabaseConstructor();
         this.db = new Database(this.dbPath);
         this.db.pragma('journal_mode = WAL');
         this.db.pragma('synchronous = NORMAL');

@@ -234,6 +234,59 @@ test('폴더 스캔은 표지 추출만 건너뛰고 ComicInfo는 유지할 수 
     }
 });
 
+test('메타데이터 전용 스캔은 썸네일 없는 유효 캐시를 다시 추출하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-cache-no-thumb-'));
+    const libraryDir = path.join(root, 'library');
+    const thumbnailDir = path.join(root, 'thumbnails');
+    const dbPath = path.join(root, 'library.db');
+    const archivePath = path.join(libraryDir, 'Cached No Thumb.cbz');
+
+    try {
+        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.writeFileSync(archivePath, Buffer.alloc(0));
+        await replaceZipEntry(
+            archivePath,
+            'ComicInfo.xml',
+            '<ComicInfo><Title>Archive Title</Title><Series>Archive Series</Series></ComicInfo>',
+        );
+
+        const stat = fs.statSync(archivePath);
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: archivePath,
+            mtime: stat.mtimeMs / 1000,
+            size: stat.size,
+            ext: '.cbz',
+            title: 'Cached Title',
+            series: 'Cached Series',
+            thumb_path: '',
+        });
+        await library.close();
+
+        const files = await scanFolder(libraryDir, {
+            dbPath,
+            thumbnailDir,
+            sevenZExe: '',
+            skipCoverExtraction: true,
+        });
+
+        assert.equal(files.length, 1);
+        assert.equal(files[0].title, 'Cached Title');
+        assert.equal(files[0].series, 'Cached Series');
+        const updatedLibrary = new LibraryDB({ dbPath });
+        try {
+            const updated = await updatedLibrary.getFileInfo(archivePath);
+            assert.equal(updated.title, 'Cached Title');
+            assert.equal(updated.series, 'Cached Series');
+            assert.equal(updated.thumb_path, '');
+        } finally {
+            await updatedLibrary.close();
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔의 포맷은 ComicInfo Format 값만 사용한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-format-'));
     const libraryDir = path.join(root, 'library');

@@ -515,6 +515,23 @@ async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailD
 
 async function extractWith7Zip(filePath, sevenZExe, options = {}) {
   if (!sevenZExe) return {};
+  if (options.skipCoverExtraction) {
+    try {
+      const extracted = await execFileAsync(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml'], {
+        encoding: 'buffer',
+        maxBuffer: MAX_INLINE_COVER_BYTES,
+        windowsHide: true,
+      });
+      if (!extracted.stdout?.length) return {};
+      return {
+        has_metadata: true,
+        ...parseComicInfo(extracted.stdout.toString('utf8')),
+      };
+    } catch {
+      return {};
+    }
+  }
+
   const { stdout } = await execFileAsync(sevenZExe, ['l', '-slt', filePath], {
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
@@ -618,9 +635,6 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
     if (ext === '.zip' || ext === '.cbz') {
       const entries = await listZipEntriesFromFile(filePath);
       const comicInfoEntry = entries.find(entry => path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
-      const imageEntry = entries
-        .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.isDirectory)
-        .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
 
       if (comicInfoEntry) {
         result.has_metadata = true;
@@ -630,7 +644,11 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
         });
         if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
       }
-      if (!options.skipCoverExtraction && imageEntry) {
+      if (!options.skipCoverExtraction) {
+        const imageEntry = entries
+          .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.isDirectory)
+          .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
+        if (!imageEntry) return result;
         const imageBuffer = await readZipEntryFromFile(filePath, imageEntry, {
           maxBytes: MAX_INLINE_COVER_BYTES,
           maxCompressedBytes: MAX_INLINE_COVER_BYTES,
@@ -1026,8 +1044,9 @@ async function createFileData(fullPath, stats, options = {}) {
     && normalizeMetadataFormat(cached?.format) !== 'Novel';
   let archiveMeta = cacheValid ? metadataFromCache(cached) : {};
   const shouldExtractArchive = options.skipArchiveExtraction !== true;
+  const shouldRefreshMissingThumbnail = options.skipCoverExtraction !== true && !cachedThumbnailExists;
 
-  if (shouldExtractArchive && (!cacheValid || !cachedThumbnailExists || shouldRefreshEpubMetadata)) {
+  if (shouldExtractArchive && (!cacheValid || shouldRefreshMissingThumbnail || shouldRefreshEpubMetadata)) {
     const extracted = await extractArchiveMetadata(fullPath, ext, {
       sevenZExe: options.sevenZExe,
       thumbnailDir: options.thumbnailDir,

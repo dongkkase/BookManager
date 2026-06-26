@@ -1042,7 +1042,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           optimizeMetadata,
           metadataOnly: optimizeMetadata && !options.showIndexingVisual,
           forceMetadata: shouldForceMetadata,
-          skipCoverExtraction: optimizeMetadata && choice !== 'force' && !options.showIndexingVisual,
+          skipCoverExtraction: false,
           priorityFolder: selectedFolderPath,
           language: config?.language || config?.lang || 'ko',
         },
