@@ -53,3 +53,12 @@ test('라이브러리 행은 폴더 수와 인덱스 상태를 함께 표시한�
     assert.match(source, /folderCount:\s*libraryFolderCounts\[libraryKey\]/);
     assert.match(source, /libraryStatusText\(t,\s*scanState,\s*\{/);
 });
+
+test('탐색기 트리는 중복 폴더 읽기와 부드러운 자동 스크롤을 피한다', () => {
+    assert.match(source, /folderCacheRef/);
+    assert.match(source, /folderLoadPromisesRef/);
+    assert.match(source, /folderLoadPromisesRef\.current\.has\(folderPath\)/);
+    assert.match(source, /scrollIntoView\?\.\(\{\s*block,\s*inline:\s*'nearest',\s*behavior\s*\}\)/);
+    assert.match(source, /focusSelectedNode\('nearest'\)/);
+    assert.doesNotMatch(source, /behavior:\s*'smooth'/);
+});

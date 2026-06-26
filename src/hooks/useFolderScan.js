@@ -111,6 +111,7 @@ export function useFolderScan(t) {
             enableDupCheck: false,
             dupFolders: [],
             skipArchiveExtraction: true,
+            skipLibraryCache: true,
             suppressEvents: true,
           });
 

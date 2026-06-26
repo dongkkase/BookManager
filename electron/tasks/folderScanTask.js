@@ -20,6 +20,7 @@ const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 let folderScanStdoutBroken = false;
+let folderUtilsPromise = null;
 
 function safeFolderScanLog(message) {
   if (folderScanStdoutBroken) return;
@@ -48,8 +49,11 @@ function throwIfTaskCancelled(options) {
 }
 
 async function getFolderUtils() {
-  const folderUtilsUrl = new URL('../../src/utils/folderUtils.js', import.meta.url);
-  return import(folderUtilsUrl);
+  if (!folderUtilsPromise) {
+    const folderUtilsUrl = new URL('../../src/utils/folderUtils.js', import.meta.url);
+    folderUtilsPromise = import(folderUtilsUrl);
+  }
+  return folderUtilsPromise;
 }
 
 async function extractFilenameMetadata(name) {
@@ -1008,7 +1012,9 @@ async function createFileData(fullPath, stats, options = {}) {
   const ext = path.extname(name).toLowerCase();
   const bookType = resolveBookType({ path: fullPath, ext });
   const filenameMeta = await extractFilenameMetadata(name);
-  const cached = await safeGetCachedFileInfo(options.libraryDb, fullPath);
+  const cached = options.skipLibraryCache === true
+    ? null
+    : await safeGetCachedFileInfo(options.libraryDb, fullPath);
   const cachedThumbnailExists = Boolean(
     cached?.thumb_path
     && fs.existsSync(cached.thumb_path)
@@ -1034,7 +1040,7 @@ async function createFileData(fullPath, stats, options = {}) {
       ...(cacheValid ? archiveMeta : {}),
       ...extracted,
     };
-    if (options.libraryDb) {
+    if (options.libraryDb && options.skipLibraryCache !== true) {
       await safeUpsertFileInfo(options.libraryDb, {
         path: fullPath,
         mtime: stats.mtimeMs / 1000,
@@ -1183,6 +1189,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     force = false,
     skipArchiveExtraction = false,
     skipCoverExtraction = false,
+    skipLibraryCache = false,
     suppressEvents = false,
     thumbnailEncoder,
     lang = 'ko',
@@ -1268,6 +1275,7 @@ export async function scanFolder(folderPath, options = {}, event) {
               force,
               skipArchiveExtraction,
               skipCoverExtraction,
+              skipLibraryCache,
               thumbnailEncoder,
             });
             throwIfTaskCancelled(options);

@@ -3830,10 +3830,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     home: app.getPath('home'),
   }));
 
-  ipcMain.handle('fs:readDir', (_, dirPath) => {
+  ipcMain.handle('fs:readDir', async (_, dirPath) => {
     try {
       const safeDirPath = normalizeDirectoryPathForRead(dirPath);
-      const items = fs.readdirSync(safeDirPath, { withFileTypes: true });
+      const items = await fs.promises.readdir(safeDirPath, { withFileTypes: true });
       return items.map(item => ({
         name: item.name,
         isDirectory: item.isDirectory(),

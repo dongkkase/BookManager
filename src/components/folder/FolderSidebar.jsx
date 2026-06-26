@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FaIcon } from '../FaIcon';
 import {
   ancestorPathsBetween,
@@ -26,12 +26,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const [selectedSource, setSelectedSource] = useState('');
   const treeListRef = useRef(null);
   const selectedNodeRef = useRef(null);
+  const folderCacheRef = useRef({});
+  const folderLoadPromisesRef = useRef(new Map());
 
-  const focusSelectedNode = (block = 'center') => {
+  const focusSelectedNode = (block = 'nearest', behavior = 'auto') => {
     const node = selectedNodeRef.current;
     if (!node) return;
     node.focus?.({ preventScroll: true });
-    node.scrollIntoView?.({ block, inline: 'nearest', behavior: 'smooth' });
+    node.scrollIntoView?.({ block, inline: 'nearest', behavior });
   };
 
   const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
@@ -70,8 +72,13 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   }, [refreshToken]);
 
   useEffect(() => {
+    folderLoadPromisesRef.current.clear();
     setFolderCache({});
   }, [refreshToken]);
+
+  useEffect(() => {
+    folderCacheRef.current = folderCache;
+  }, [folderCache]);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,38 +104,49 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     };
   }, [libraries, refreshToken]);
 
-  const loadFolder = async (folderPath, force = false) => {
-    if (!force && folderCache[folderPath]) return folderCache[folderPath];
-    try {
-      if (window.electronAPI && window.electronAPI.readDir) {
-        const items = await window.electronAPI.readDir(folderPath);
-        const folders = items
-          .filter(i => i.isDirectory)
-          .map(i => ({
+  const loadFolder = useCallback(async (folderPath, force = false) => {
+    if (!force && folderCacheRef.current[folderPath]) return folderCacheRef.current[folderPath];
+    if (!force && folderLoadPromisesRef.current.has(folderPath)) {
+      return folderLoadPromisesRef.current.get(folderPath);
+    }
+    const promise = (async () => {
+      try {
+        if (window.electronAPI && window.electronAPI.readDir) {
+          const items = await window.electronAPI.readDir(folderPath);
+          const folders = items
+            .filter(i => i.isDirectory)
+            .map(i => ({
               name: i.name,
               path: joinTreePath(folderPath, i.name),
               isFolder: true
-          }));
-        setFolderCache(prev => ({ ...prev, [folderPath]: folders }));
-        return folders;
+            }));
+          setFolderCache(prev => ({ ...prev, [folderPath]: folders }));
+          return folders;
+        }
+      } catch (error) {
+        console.error('Failed to read dir:', error);
+        setFolderCache(prev => ({ ...prev, [folderPath]: [] }));
       }
-    } catch (error) {
-      console.error('Failed to read dir:', error);
-      setFolderCache(prev => ({ ...prev, [folderPath]: [] }));
-    }
-    return [];
-  };
+      return [];
+    })().finally(() => {
+      folderLoadPromisesRef.current.delete(folderPath);
+    });
+    folderLoadPromisesRef.current.set(folderPath, promise);
+    return promise;
+  }, []);
 
-  const toggleFolder = (path) => {
-    const next = new Set(expandedFolders);
-    if (next.has(path)) {
-      next.delete(path);
-    } else {
-      next.add(path);
-      loadFolder(path);
-    }
-    setExpandedFolders(next);
-  };
+  const toggleFolder = useCallback((path) => {
+    setExpandedFolders(current => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        loadFolder(path);
+      }
+      return next;
+    });
+  }, [loadFolder]);
 
   useEffect(() => {
     if (!selectedFolderPath || treeRoots.length === 0) return;
@@ -152,15 +170,15 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     return () => {
       cancelled = true;
     };
-  }, [selectedFolderPath, treeRoots]);
+  }, [loadFolder, selectedFolderPath, treeRoots]);
 
   useEffect(() => {
     if (!selectedFolderPath) return undefined;
     const frame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => focusSelectedNode('center'));
+      window.requestAnimationFrame(() => focusSelectedNode('nearest'));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [selectedFolderPath, expandedFolders, folderCache]);
+  }, [selectedFolderPath, expandedFolders]);
 
   // 라이브러리 목록
   const renderLibraryList = () => (
