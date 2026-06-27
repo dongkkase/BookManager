@@ -244,7 +244,7 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.match(cssText, /\.card-count-tag/);
         assert.match(cssText, /\.download-icon/);
         assert.match(cssText, /\.web-fa-icon/);
-        assert.match(cssText, /\.load-more-button/);
+        assert.match(cssText, /\.load-more-sentinel/);
 
         const scriptResponse = await fetch(`${baseUrl}/assets/web-library.js`);
         const scriptText = await scriptResponse.text();
@@ -267,6 +267,9 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.match(scriptText, /scrollY: next\.scrollY/);
         assert.match(scriptText, /loadMore/);
         assert.match(scriptText, /nextOffset/);
+        assert.match(scriptText, /queueAutoLoadMoreCheck/);
+        assert.match(scriptText, /restoreLoadedItems/);
+        assert.match(scriptText, /detailTarget/);
         assert.doesNotMatch(scriptText, /makeButton\("열기"/);
         assert.doesNotMatch(scriptText, /innerHTML/);
 

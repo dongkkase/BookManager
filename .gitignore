@@ -30,6 +30,7 @@ out/
 release/
 .vite/
 .cache/
+.electron-builder-cache/
 
 # Testing
 coverage/

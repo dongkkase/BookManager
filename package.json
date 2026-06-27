@@ -11,6 +11,7 @@
     "node:rebuild": "npm rebuild better-sqlite3",
     "test": "npm run node:rebuild && node --test electron/*.test.js src/*.test.js",
     "build": "vite build",
+    "postbuild": "node electron/runElectronBuilder.cjs --prepare-default-win-code-sign-cache",
     "preview": "vite preview",
     "electron:rebuild": "electron-builder install-app-deps",
     "electron:dev": "concurrently -k -s first \"vite\" \"wait-on http-get://127.0.0.1:5173 --timeout 30000 && node electron/launchElectronDev.cjs\"",
@@ -19,10 +20,10 @@
     "electron:dev:unsafe:rebuild": "npm run electron:rebuild && npm run electron:dev:unsafe",
     "electron:dev:fast": "concurrently \"vite build --watch\" \"wait-on dist/index.html && node electron/launchElectronWatch.cjs\"",
     "electron:preview": "vite build && node electron/launchElectronProd.cjs",
-    "electron:build": "vite build && electron-builder",
-    "electron:build:win": "vite build && electron-builder --win",
-    "electron:build:mac": "vite build && electron-builder --mac",
-    "electron:build:linux": "vite build && electron-builder --linux"
+    "electron:build": "vite build && node electron/runElectronBuilder.cjs",
+    "electron:build:win": "vite build && node electron/runElectronBuilder.cjs --win",
+    "electron:build:mac": "vite build && node electron/runElectronBuilder.cjs --mac",
+    "electron:build:linux": "vite build && node electron/runElectronBuilder.cjs --linux"
   },
   "devDependencies": {
     "@electron/notarize": "^2.2.1",

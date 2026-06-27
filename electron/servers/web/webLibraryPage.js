@@ -376,21 +376,14 @@ h1 {
     grid-column: 1 / -1;
     display: flex;
     justify-content: center;
+    min-height: 42px;
     padding: 10px 0 2px;
 }
 
-.load-more-button {
-    min-width: 180px;
-    height: 40px;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    background: #242424;
-    color: var(--text);
-    font-weight: 800;
-}
-
-.load-more-button:hover {
-    background: #303030;
+.load-more-sentinel {
+    min-height: 24px;
+    color: var(--muted);
+    font-weight: 700;
 }
 
 .modal-overlay,
@@ -849,6 +842,8 @@ const state = {
     mode: "list",
     nextOffset: null,
     pageLimit: 80,
+    isLoadingMore: false,
+    autoLoadFrame: 0,
 };
 const responseCache = new Map();
 
@@ -945,23 +940,39 @@ async function fetchJson(url, options = {}) {
     return cloneJson(data);
 }
 
+function renderedCardCount() {
+    return elements.grid.querySelectorAll(".library-card").length;
+}
+
+function createListHistoryState(overrides = {}) {
+    const mode = overrides.mode || (overrides.q ? "search" : state.mode) || "list";
+    const q = overrides.q !== undefined
+        ? String(overrides.q || "")
+        : (mode === "search" ? state.query : "");
+    const dir = overrides.dir !== undefined ? String(overrides.dir || "") : state.currentDir;
+    return {
+        view: "list",
+        mode,
+        dir,
+        q,
+        loadedCount: Number(overrides.loadedCount) || renderedCardCount(),
+        scrollX: Number(overrides.scrollX ?? window.scrollX) || 0,
+        scrollY: Number(overrides.scrollY ?? window.scrollY) || 0,
+    };
+}
+
 function saveCurrentScrollState() {
     const current = history.state || {};
-    history.replaceState({
-        ...current,
+    if (current.view === "detail") return;
+    history.replaceState(createListHistoryState({
         scrollX: window.scrollX || 0,
         scrollY: window.scrollY || 0,
-    }, "", location.href);
+    }), "", location.href);
 }
 
 function updateHistory(nextState, replace = false) {
     const url = queryString({ dir: nextState.dir, q: nextState.q });
-    const historyState = {
-        dir: nextState.dir || "",
-        q: nextState.q || "",
-        scrollX: Number(nextState.scrollX) || 0,
-        scrollY: Number(nextState.scrollY) || 0,
-    };
+    const historyState = createListHistoryState(nextState);
     if (replace) {
         history.replaceState(historyState, "", url || location.pathname);
     } else {
@@ -975,6 +986,18 @@ function restoreScrollPosition(scrollX = 0, scrollY = 0) {
         left: Number(scrollX) || 0,
         behavior: "auto",
     }));
+}
+
+async function restoreLoadedItems(mode, loadedCount) {
+    const targetCount = Number(loadedCount) || 0;
+    while (
+        targetCount > renderedCardCount()
+        && state.nextOffset !== null
+        && state.nextOffset !== undefined
+    ) {
+        const loaded = await loadMore(mode, { updateHistory: false });
+        if (!loaded) break;
+    }
 }
 
 function thumbSource(item) {
@@ -1155,19 +1178,15 @@ function removeLoadMoreRow() {
     elements.grid.querySelector(".load-more-row")?.remove();
 }
 
-function appendLoadMoreRow(mode) {
+function appendLoadMoreRow() {
     if (state.nextOffset === null || state.nextOffset === undefined) return;
-    const button = createElement("button", {
-        type: "button",
-        className: "load-more-button",
-        text: "더 보기",
+    const sentinel = createElement("div", {
+        className: "load-more-sentinel",
+        role: "status",
+        "aria-live": "polite",
+        text: state.isLoadingMore ? "불러오는 중..." : "",
     });
-    button.addEventListener("click", () => loadMore(mode));
-    elements.grid.appendChild(createElement("div", { className: "load-more-row" }, button));
-}
-
-function renderedCardCount() {
-    return elements.grid.querySelectorAll(".library-card").length;
+    elements.grid.appendChild(createElement("div", { className: "load-more-row" }, sentinel));
 }
 
 function renderList(data, mode = "list", options = {}) {
@@ -1190,7 +1209,7 @@ function renderList(data, mode = "list", options = {}) {
         renderBreadcrumb(data, mode);
         elements.grid.replaceChildren(...cards);
     }
-    appendLoadMoreRow(mode);
+    appendLoadMoreRow();
     const folderCount = (data.folders || []).length;
     const fileCount = (data.files || []).length;
     const pageTotal = Number(data.page?.total) || folderCount + fileCount;
@@ -1199,7 +1218,32 @@ function renderList(data, mode = "list", options = {}) {
         ? shownCount + " / " + pageTotal + " items"
         : folderCount + " folders, " + fileCount + " files";
     setStatus(totalText);
-    if (!options.append) restoreScrollPosition(options.scrollX, options.scrollY);
+    queueAutoLoadMoreCheck();
+    if (!options.append && !options.deferScrollRestore) restoreScrollPosition(options.scrollX, options.scrollY);
+}
+
+function isNearPageBottom() {
+    const doc = document.documentElement;
+    const scrollTop = window.scrollY || doc.scrollTop || 0;
+    const viewportHeight = window.innerHeight || doc.clientHeight || 0;
+    const scrollHeight = Math.max(doc.scrollHeight || 0, document.body.scrollHeight || 0);
+    return scrollTop + viewportHeight >= scrollHeight - 520;
+}
+
+function shouldAutoLoadMore() {
+    return !document.body.classList.contains("modal-open")
+        && !state.isLoadingMore
+        && state.nextOffset !== null
+        && state.nextOffset !== undefined
+        && isNearPageBottom();
+}
+
+function queueAutoLoadMoreCheck() {
+    if (state.autoLoadFrame) return;
+    state.autoLoadFrame = window.requestAnimationFrame(() => {
+        state.autoLoadFrame = 0;
+        if (shouldAutoLoadMore()) loadMore(state.mode);
+    });
 }
 
 async function loadList(dir = "", pushHistory = true, options = {}) {
@@ -1210,11 +1254,18 @@ async function loadList(dir = "", pushHistory = true, options = {}) {
         state.query = "";
         elements.searchInput.value = "";
         const data = await fetchJson(url);
+        const shouldRestoreLoadedItems = options.restoreLoadedCount !== undefined;
         renderList(data, "list", {
             scrollX: options.scrollX,
             scrollY: options.scrollY,
+            deferScrollRestore: shouldRestoreLoadedItems,
         });
+        if (shouldRestoreLoadedItems) {
+            await restoreLoadedItems("list", options.restoreLoadedCount);
+            restoreScrollPosition(options.scrollX, options.scrollY);
+        }
         if (pushHistory) updateHistory({ dir: data.current_dir || "" });
+        else if (options.replaceHistory) updateHistory({ dir: data.current_dir || "" }, true);
     } catch (error) {
         setStatus(error.message, "error");
     } finally {
@@ -1235,11 +1286,18 @@ async function runSearch(query, pushHistory = true, options = {}) {
         state.query = q;
         const data = await fetchJson(url);
         data.current_dir = state.currentDir;
+        const shouldRestoreLoadedItems = options.restoreLoadedCount !== undefined;
         renderList(data, "search", {
             scrollX: options.scrollX,
             scrollY: options.scrollY,
+            deferScrollRestore: shouldRestoreLoadedItems,
         });
-        if (pushHistory) updateHistory({ q });
+        if (shouldRestoreLoadedItems) {
+            await restoreLoadedItems("search", options.restoreLoadedCount);
+            restoreScrollPosition(options.scrollX, options.scrollY);
+        }
+        if (pushHistory) updateHistory({ dir: state.currentDir, q, mode: "search" });
+        else if (options.replaceHistory) updateHistory({ dir: state.currentDir, q, mode: "search" }, true);
     } catch (error) {
         setStatus(error.message, "error");
     } finally {
@@ -1247,35 +1305,56 @@ async function runSearch(query, pushHistory = true, options = {}) {
     }
 }
 
-async function loadMore(mode = state.mode) {
-    if (state.nextOffset === null || state.nextOffset === undefined) return;
+async function loadMore(mode = state.mode, options = {}) {
+    if (state.isLoadingMore) return false;
+    if (state.nextOffset === null || state.nextOffset === undefined) return false;
     const offset = state.nextOffset;
     const url = mode === "search"
         ? "/api/search" + queryString({ q: state.query, limit: state.pageLimit, offset })
         : "/api/list" + queryString({ dir: state.currentDir, limit: state.pageLimit, offset });
     const row = elements.grid.querySelector(".load-more-row");
-    const button = row?.querySelector("button");
-    if (button) {
-        button.disabled = true;
-        button.textContent = "불러오는 중...";
-    }
+    const sentinel = row?.querySelector(".load-more-sentinel");
+    state.isLoadingMore = true;
+    if (sentinel) sentinel.textContent = "불러오는 중...";
     try {
         const data = await fetchJson(url);
         if (mode === "search") data.current_dir = state.currentDir;
         renderList(data, mode, { append: true });
+        if (options.updateHistory !== false) saveCurrentScrollState();
+        return true;
     } catch (error) {
         setStatus(error.message, "error");
-        if (button) {
-            button.disabled = false;
-            button.textContent = "더 보기";
-        }
+        if (sentinel) sentinel.textContent = "";
+        return false;
+    } finally {
+        state.isLoadingMore = false;
+        elements.grid.querySelector(".load-more-sentinel")?.replaceChildren();
+        queueAutoLoadMoreCheck();
     }
 }
 
-function closeModal() {
+function pushDetailHistory(target) {
+    saveCurrentScrollState();
+    const listState = history.state || createListHistoryState();
+    history.pushState({
+        ...listState,
+        view: "detail",
+        detailTarget: { ...target },
+    }, "", location.href);
+}
+
+function hideModal() {
     elements.modalOverlay.hidden = true;
     document.body.classList.remove("modal-open");
     elements.modalContent.replaceChildren();
+}
+
+function closeModal() {
+    if ((history.state || {}).view === "detail") {
+        history.back();
+        return;
+    }
+    hideModal();
 }
 
 function metadataValue(value, fallback = "-") {
@@ -1434,7 +1513,7 @@ function buildMetadataPanel(meta) {
     return panel;
 }
 
-async function showMetadata(target = {}) {
+async function showMetadata(target = {}, options = {}) {
     setLoading("정보를 불러오는 중...");
     try {
         const endpoint = target.file ? "/api/file-meta" : "/api/folder-meta";
@@ -1445,6 +1524,7 @@ async function showMetadata(target = {}) {
         elements.modalContent.replaceChildren(buildMetadataPanel(meta));
         elements.modalOverlay.hidden = false;
         document.body.classList.add("modal-open");
+        if (options.pushHistory !== false) pushDetailHistory(target);
     } catch (error) {
         setStatus(error.message, "error");
     } finally {
@@ -1476,19 +1556,38 @@ window.addEventListener("keydown", event => {
     if (event.key === "Escape" && !elements.modalOverlay.hidden) closeModal();
 });
 
-window.addEventListener("popstate", event => {
-    const next = event.state || {};
+async function restoreListFromHistory(next = {}) {
+    const options = {
+        scrollX: next.scrollX,
+        scrollY: next.scrollY,
+        restoreLoadedCount: next.loadedCount,
+    };
     if (next.q) {
         elements.searchInput.value = next.q;
-        runSearch(next.q, false, {
-            scrollX: next.scrollX,
-            scrollY: next.scrollY,
-        });
+        state.currentDir = next.dir || "";
+        await runSearch(next.q, false, options);
     } else {
-        loadList(next.dir || "", false, {
-            scrollX: next.scrollX,
-            scrollY: next.scrollY,
-        });
+        await loadList(next.dir || "", false, options);
+    }
+}
+
+window.addEventListener("scroll", queueAutoLoadMoreCheck, { passive: true });
+window.addEventListener("wheel", queueAutoLoadMoreCheck, { passive: true });
+window.addEventListener("resize", queueAutoLoadMoreCheck);
+
+window.addEventListener("popstate", event => {
+    const next = event.state || {};
+    hideModal();
+    restoreListFromHistory(next).then(() => {
+        if (next.view === "detail" && next.detailTarget) {
+            showMetadata(next.detailTarget, { pushHistory: false });
+        }
+    });
+});
+
+window.addEventListener("beforeunload", () => {
+    if ((history.state || {}).view !== "detail") {
+        saveCurrentScrollState();
     }
 });
 
@@ -1498,8 +1597,8 @@ const initialDir = initialParams.get("dir") || "";
 updateHistory({ dir: initialDir, q: initialQuery }, true);
 if (initialQuery) {
     elements.searchInput.value = initialQuery;
-    runSearch(initialQuery, false);
+    runSearch(initialQuery, false, { replaceHistory: true });
 } else {
-    loadList(initialDir, false);
+    loadList(initialDir, false, { replaceHistory: true });
 }
 `;
