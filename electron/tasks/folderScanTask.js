@@ -18,6 +18,7 @@ import { isBrokenPipeError } from '../utils/consolePipeGuard.js';
 const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
+const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 const execFileAsync = promisify(execFile);
 let folderScanStdoutBroken = false;
 let folderUtilsPromise = null;
@@ -820,7 +821,7 @@ function sortEntriesForPriority(entries = []) {
   return [...entries].sort((left, right) => {
     if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
     if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
-    return left.name.localeCompare(right.name, 'ko', { numeric: true });
+    return KO_NUMERIC_COLLATOR.compare(left.name, right.name);
   });
 }
 
@@ -943,12 +944,13 @@ function similarity(a, b) {
 async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options = {}) {
   const cache = [];
   const seen = new Set();
+  const targetExtSet = targetExts instanceof Set ? targetExts : new Set(targetExts);
 
   function addCandidate(record = {}) {
     const fullPath = record.full_path || record.file_path || record.path || '';
     if (!fullPath || seen.has(fullPath)) return;
     const name = String(record.name || path.basename(fullPath)).normalize('NFC');
-    if (!targetExts.includes(path.extname(name).toLowerCase())) return;
+    if (!targetExtSet.has(path.extname(name).toLowerCase())) return;
     seen.add(fullPath);
     cache.push({
       name,
@@ -961,7 +963,7 @@ async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options
 
   async function addFilePath(fullPath) {
     if (!fullPath || seen.has(fullPath)) return;
-    if (!targetExts.includes(path.extname(fullPath).toLowerCase())) return;
+    if (!targetExtSet.has(path.extname(fullPath).toLowerCase())) return;
     try {
       const stats = await fs.promises.stat(fullPath);
       addCandidate({
@@ -1288,6 +1290,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     lang = 'ko',
   } = options;
   const normalizedExts = targetExts.map(ext => ext.toLowerCase());
+  const normalizedExtSet = new Set(normalizedExts);
   const results = [];
   let scannedCount = 0;
   let matchedCount = 0;
@@ -1315,7 +1318,7 @@ export async function scanFolder(folderPath, options = {}, event) {
       } else if (entry.isFile()) {
         scannedCount += 1;
         const ext = path.extname(entry.name).toLowerCase();
-        if (normalizedExts.includes(ext)) {
+        if (normalizedExtSet.has(ext)) {
           results.push(createQuickFileData(fullPath));
           matchedCount += 1;
         }
@@ -1375,7 +1378,7 @@ export async function scanFolder(folderPath, options = {}, event) {
       } else if (entry.isFile()) {
         scannedCount += 1;
         const ext = path.extname(entry.name).toLowerCase();
-        if (normalizedExts.includes(ext)) {
+        if (normalizedExtSet.has(ext)) {
           try {
             throwIfTaskCancelled(options);
             const now = Date.now();

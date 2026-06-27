@@ -11,10 +11,12 @@ import { FolderEmptyState } from './FolderEmptyState';
  */
 const FileTableView = forwardRef(({
   files = [],
+  groupedData: groupedDataProp,
   sortKey = 'name',
   sortOrder = 'asc',
   groupKey = 'none',
   selectedFiles = [],
+  selectedFileSet,
   activeSelectedPath = '',
   dupFiles = [],
   onSort,
@@ -72,8 +74,14 @@ const FileTableView = forwardRef(({
     ]), []);
 
     const groupedData = useMemo(
-        () => groupFolderFiles(files, groupKey, sortKey, sortOrder),
-        [files, groupKey, sortKey, sortOrder],
+        () => Array.isArray(groupedDataProp)
+            ? groupedDataProp
+            : groupFolderFiles(files, groupKey, sortKey, sortOrder),
+        [files, groupedDataProp, groupKey, sortKey, sortOrder],
+    );
+    const selectedFileLookup = useMemo(
+        () => selectedFileSet instanceof Set ? selectedFileSet : new Set(selectedFiles),
+        [selectedFileSet, selectedFiles],
     );
     const shouldVirtualize = groupKey === 'none' && groupedData.length === 1 && files.length > 1000;
     const virtualRows = shouldVirtualize ? groupedData[0].files : [];
@@ -473,7 +481,7 @@ const FileTableView = forwardRef(({
                 <tr
                   key={file.path || fileIndex}
                   data-file-path={file.path}
-                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                  className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
                   style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
                   onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
                   onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
@@ -507,7 +515,7 @@ const FileTableView = forwardRef(({
 	                <tr
 	                  key={file.path || index}
 	                  data-file-path={file.path}
-	                  className={`${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                      className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
 	                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
 	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
 	                  onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}

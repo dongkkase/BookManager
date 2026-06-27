@@ -372,6 +372,27 @@ h1 {
     font-weight: 700;
 }
 
+.load-more-row {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+    padding: 10px 0 2px;
+}
+
+.load-more-button {
+    min-width: 180px;
+    height: 40px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: #242424;
+    color: var(--text);
+    font-weight: 800;
+}
+
+.load-more-button:hover {
+    background: #303030;
+}
+
 .modal-overlay,
 .loading-overlay {
     position: fixed;
@@ -825,6 +846,9 @@ const state = {
     currentDir: "",
     query: "",
     canZip: false,
+    mode: "list",
+    nextOffset: null,
+    pageLimit: 80,
 };
 const responseCache = new Map();
 
@@ -1054,7 +1078,7 @@ function createThumbnail(kind, item) {
 
 function folderMetaText(folder) {
     const count = Number(folder.count) || 0;
-    return count + " items";
+    return count + (folder.count_limited ? "+ items" : " items");
 }
 
 function createCardInfoTag(value) {
@@ -1127,28 +1151,60 @@ function createFileCard(file) {
     return card;
 }
 
+function removeLoadMoreRow() {
+    elements.grid.querySelector(".load-more-row")?.remove();
+}
+
+function appendLoadMoreRow(mode) {
+    if (state.nextOffset === null || state.nextOffset === undefined) return;
+    const button = createElement("button", {
+        type: "button",
+        className: "load-more-button",
+        text: "더 보기",
+    });
+    button.addEventListener("click", () => loadMore(mode));
+    elements.grid.appendChild(createElement("div", { className: "load-more-row" }, button));
+}
+
+function renderedCardCount() {
+    return elements.grid.querySelectorAll(".library-card").length;
+}
+
 function renderList(data, mode = "list", options = {}) {
     state.canZip = Boolean(data.can_zip);
     state.currentDir = data.current_dir || "";
+    state.mode = mode;
+    state.nextOffset = data.page?.has_more ? data.page.next_offset : null;
     const cards = [];
     for (const folder of data.folders || []) cards.push(createFolderCard(folder));
     for (const file of data.files || []) cards.push(createFileCard(file));
 
-    if (!cards.length) {
+    if (!cards.length && !options.append) {
         cards.push(createElement("div", { className: "empty-state", text: "표시할 항목이 없습니다." }));
     }
 
-    renderBreadcrumb(data, mode);
-    elements.grid.replaceChildren(...cards);
+    if (options.append) {
+        removeLoadMoreRow();
+        elements.grid.append(...cards);
+    } else {
+        renderBreadcrumb(data, mode);
+        elements.grid.replaceChildren(...cards);
+    }
+    appendLoadMoreRow(mode);
     const folderCount = (data.folders || []).length;
     const fileCount = (data.files || []).length;
-    setStatus(folderCount + " folders, " + fileCount + " files");
-    restoreScrollPosition(options.scrollX, options.scrollY);
+    const pageTotal = Number(data.page?.total) || folderCount + fileCount;
+    const shownCount = Math.min(pageTotal, renderedCardCount());
+    const totalText = data.page
+        ? shownCount + " / " + pageTotal + " items"
+        : folderCount + " folders, " + fileCount + " files";
+    setStatus(totalText);
+    if (!options.append) restoreScrollPosition(options.scrollX, options.scrollY);
 }
 
 async function loadList(dir = "", pushHistory = true, options = {}) {
     if (pushHistory) saveCurrentScrollState();
-    const url = "/api/list" + queryString({ dir });
+    const url = "/api/list" + queryString({ dir, limit: state.pageLimit, offset: 0 });
     if (!responseCache.has(url)) setLoading("목록을 불러오는 중...");
     try {
         state.query = "";
@@ -1173,7 +1229,7 @@ async function runSearch(query, pushHistory = true, options = {}) {
         return;
     }
     if (pushHistory) saveCurrentScrollState();
-    const url = "/api/search" + queryString({ q });
+    const url = "/api/search" + queryString({ q, limit: state.pageLimit, offset: 0 });
     if (!responseCache.has(url)) setLoading("검색 중...");
     try {
         state.query = q;
@@ -1188,6 +1244,31 @@ async function runSearch(query, pushHistory = true, options = {}) {
         setStatus(error.message, "error");
     } finally {
         setLoading("");
+    }
+}
+
+async function loadMore(mode = state.mode) {
+    if (state.nextOffset === null || state.nextOffset === undefined) return;
+    const offset = state.nextOffset;
+    const url = mode === "search"
+        ? "/api/search" + queryString({ q: state.query, limit: state.pageLimit, offset })
+        : "/api/list" + queryString({ dir: state.currentDir, limit: state.pageLimit, offset });
+    const row = elements.grid.querySelector(".load-more-row");
+    const button = row?.querySelector("button");
+    if (button) {
+        button.disabled = true;
+        button.textContent = "불러오는 중...";
+    }
+    try {
+        const data = await fetchJson(url);
+        if (mode === "search") data.current_dir = state.currentDir;
+        renderList(data, mode, { append: true });
+    } catch (error) {
+        setStatus(error.message, "error");
+        if (button) {
+            button.disabled = false;
+            button.textContent = "더 보기";
+        }
     }
 }
 

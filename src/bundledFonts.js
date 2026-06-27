@@ -2,6 +2,17 @@ export const DEFAULT_BUNDLED_FONT_OPTIONS = [
     { value: 'Default', label: 'Default' },
 ];
 
+const BUNDLED_FONT_URLS = {
+    'Jua-Regular.ttf': new URL('./fonts/Jua-Regular.ttf', import.meta.url).href,
+    'NanumGothic-Regular.ttf': new URL('./fonts/NanumGothic-Regular.ttf', import.meta.url).href,
+    'NanumGothic-Bold.ttf': new URL('./fonts/NanumGothic-Bold.ttf', import.meta.url).href,
+    'NanumGothic-ExtraBold.ttf': new URL('./fonts/NanumGothic-ExtraBold.ttf', import.meta.url).href,
+    'NanumGothicCoding-Regular.ttf': new URL('./fonts/NanumGothicCoding-Regular.ttf', import.meta.url).href,
+    'NanumGothicCoding-Bold.ttf': new URL('./fonts/NanumGothicCoding-Bold.ttf', import.meta.url).href,
+    'NotoSansKR-Regular.ttf': new URL('./fonts/NotoSansKR-Regular.ttf', import.meta.url).href,
+    'NotoSansKR-VariableFont_wght.ttf': new URL('./fonts/NotoSansKR-VariableFont_wght.ttf', import.meta.url).href,
+};
+
 function uniqueByValue(options = []) {
     const seen = new Set();
     const result = [];
@@ -40,6 +51,16 @@ export function fileUrlFromPath(filePath = '') {
     return encodeURI(withPrefix).replace(/#/g, '%23');
 }
 
+function filenameFromPath(filePath = '') {
+    return String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || '';
+}
+
+export function fontUrlFromFace(face = {}) {
+    const filename = String(face?.filename || filenameFromPath(face?.path)).trim();
+    if (filename && BUNDLED_FONT_URLS[filename]) return BUNDLED_FONT_URLS[filename];
+    return fileUrlFromPath(face?.path);
+}
+
 export function installBundledFontFaces(fontFaces = [], documentRef = globalThis.document) {
     if (!documentRef?.head) return;
     const styleId = 'bookmanager-bundled-font-faces';
@@ -49,7 +70,7 @@ export function installBundledFontFaces(fontFaces = [], documentRef = globalThis
     const rules = (Array.isArray(fontFaces) ? fontFaces : [])
         .map(face => {
             const family = String(face?.family || '').trim();
-            const url = fileUrlFromPath(face?.path);
+            const url = fontUrlFromFace(face);
             if (!family || !url) return '';
             const weight = Number(face.weight) || 400;
             const style = face.style === 'italic' ? 'italic' : 'normal';

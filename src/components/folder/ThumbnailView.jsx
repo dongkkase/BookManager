@@ -17,7 +17,9 @@ import { FolderEmptyState } from './FolderEmptyState';
 const ThumbnailView = ({
   files = [],
   fileData = [],
+  groupedData: groupedDataProp,
   selectedFiles = [],
+  selectedFileSet,
   activeSelectedPath = '',
   onSelect,
   onOpenFile,
@@ -41,7 +43,16 @@ const ThumbnailView = ({
   const imageWidth = Math.round(72 + Number(scale || 50) * 1.08);
   const itemWidth = imageWidth + 24;
   const imageHeight = Math.round(imageWidth * 1.42);
-	  const groups = groupFolderFiles(items, groupKey, sortKey, sortOrder);
+  const groups = useMemo(
+    () => Array.isArray(groupedDataProp)
+      ? groupedDataProp
+      : groupFolderFiles(items, groupKey, sortKey, sortOrder),
+    [groupedDataProp, groupKey, items, sortKey, sortOrder],
+  );
+  const selectedFileLookup = useMemo(
+    () => selectedFileSet instanceof Set ? selectedFileSet : new Set(selectedFiles),
+    [selectedFileSet, selectedFiles],
+  );
 	  const gapX = 18;
 	  const gapY = 16;
 	  const padding = 10;
@@ -248,7 +259,7 @@ const ThumbnailView = ({
 	            <div
 	              key={file.path || fileIndex}
 	              data-file-path={file.path}
-	              className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
+                  className={`thumbnail-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              style={{
 	                position: 'absolute',
 	                left: `${padding + column * (itemWidth + gapX)}px`,
@@ -294,7 +305,7 @@ const ThumbnailView = ({
 	            <div
 	              key={file.path || index}
 	              data-file-path={file.path}
-	              className={`thumbnail-item ${selectedFiles.includes(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
+                  className={`thumbnail-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
 	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}

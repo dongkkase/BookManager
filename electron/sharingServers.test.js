@@ -244,6 +244,7 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.match(cssText, /\.card-count-tag/);
         assert.match(cssText, /\.download-icon/);
         assert.match(cssText, /\.web-fa-icon/);
+        assert.match(cssText, /\.load-more-button/);
 
         const scriptResponse = await fetch(`${baseUrl}/assets/web-library.js`);
         const scriptText = await scriptResponse.text();
@@ -264,6 +265,8 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.match(scriptText, /saveCurrentScrollState/);
         assert.match(scriptText, /restoreScrollPosition/);
         assert.match(scriptText, /scrollY: next\.scrollY/);
+        assert.match(scriptText, /loadMore/);
+        assert.match(scriptText, /nextOffset/);
         assert.doesNotMatch(scriptText, /makeButton\("열기"/);
         assert.doesNotMatch(scriptText, /innerHTML/);
 
@@ -297,6 +300,32 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
 
         const blocked = await fetch(`${baseUrl}/api/download?file=${encodeURIComponent(outside)}`);
         assert.equal(blocked.status, 404);
+    });
+});
+
+test('Web 서버 목록 API는 큰 폴더를 페이지 단위로 반환한다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-web-page-'));
+    const library = path.join(tempRoot, 'Library A');
+    fs.mkdirSync(library, { recursive: true });
+    for (let index = 1; index <= 130; index += 1) {
+        fs.writeFileSync(path.join(library, `Book ${String(index).padStart(3, '0')}.cbz`), 'archive');
+    }
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const app = buildWebApp({ dup_check_folders: [library] });
+    await withHttpServer(app, async baseUrl => {
+        const first = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(library)}&limit=50`)).json();
+        assert.equal(first.files.length, 50);
+        assert.equal(first.page.total, 130);
+        assert.equal(first.page.has_more, true);
+        assert.equal(first.page.next_offset, 50);
+        assert.equal(first.files[0].name, 'Book 001.cbz');
+
+        const last = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(library)}&limit=50&offset=100`)).json();
+        assert.equal(last.files.length, 30);
+        assert.equal(last.page.has_more, false);
+        assert.equal(last.page.next_offset, null);
+        assert.equal(last.files[0].name, 'Book 101.cbz');
     });
 });
 

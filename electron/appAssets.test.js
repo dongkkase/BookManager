@@ -146,7 +146,7 @@ test('Windows 배포본은 portable exe를 단일 파일 ZIP으로 감싼다', (
         packageConfig.build.win.artifactName,
         'BookManager.exe',
     );
-    assert.equal(packageConfig.build.win.signAndEditExecutable, false);
+    assert.equal(packageConfig.build.win.signAndEditExecutable, true);
     assert.equal(packageConfig.build.afterAllArtifactBuild, 'electron/zipWindowsPortable.cjs');
 });
 
@@ -171,6 +171,7 @@ test('Windows 빌드와 런타임은 ICO 앱 아이콘을 사용한다', () => {
     assert.equal(data.readUInt16LE(0), 0);
     assert.equal(data.readUInt16LE(2), 1);
     assert.equal(path.extname(iconPath), '.ico');
+    assert.equal(packageConfig.build.win.signAndEditExecutable, true);
 });
 
 test('앱 번들 이름과 식별자는 BookManager 정책을 사용한다', () => {

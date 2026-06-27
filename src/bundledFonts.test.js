@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
     bundledFontOptionsFromFaces,
     fileUrlFromPath,
+    fontUrlFromFace,
     installBundledFontFaces,
 } from './bundledFonts.js';
 
@@ -49,6 +50,16 @@ test('local font paths are converted to encoded file URLs', () => {
         'file:///C:/Fonts/Nanum%20Gothic%23Bold.ttf',
     );
     assert.equal(fileUrlFromPath('/tmp/Noto Sans KR.ttf'), 'file:///tmp/Noto%20Sans%20KR.ttf');
+});
+
+test('known bundled font files use app asset URLs before local file paths', () => {
+    const url = fontUrlFromFace({
+        filename: 'Jua-Regular.ttf',
+        path: 'C:\\Fonts\\Jua-Regular.ttf',
+    });
+
+    assert.match(url, /src\/fonts\/Jua-Regular\.ttf$/);
+    assert.doesNotMatch(url, /C:\/Fonts/);
 });
 
 test('bundled font faces are installed into a replaceable style element', () => {

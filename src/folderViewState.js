@@ -1,10 +1,12 @@
+const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
+
 export function sortFolderFiles(files = [], sortKey = 'name', sortOrder = 'asc') {
     return [...files].sort((a, b) => {
         const valueA = a?.[sortKey] ?? '';
         const valueB = b?.[sortKey] ?? '';
         const result = typeof valueA === 'number' && typeof valueB === 'number'
             ? valueA - valueB
-            : String(valueA).localeCompare(String(valueB), 'ko', { numeric: true });
+            : KO_NUMERIC_COLLATOR.compare(String(valueA), String(valueB));
         return sortOrder === 'desc' ? -result : result;
     });
 }
@@ -20,7 +22,7 @@ export function groupFolderFiles(files = [], groupKey = 'none', sortKey = 'name'
         groups.get(name).push(file);
     });
     return [...groups.entries()]
-        .sort(([a], [b]) => a.localeCompare(b, 'ko', { numeric: true }))
+        .sort(([a], [b]) => KO_NUMERIC_COLLATOR.compare(a, b))
         .map(([name, groupedFiles]) => ({ name, files: groupedFiles }));
 }
 

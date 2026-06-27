@@ -277,6 +277,67 @@ export function useFolderScan(t) {
 
   // --- IPC 이벤트 리스너 ---
   useEffect(() => {
+    const pendingReadyFiles = [];
+    let readyFilesFlushTimer = null;
+
+    const findReadyTargetKey = (cache, data, folderTargetKeys) => {
+      if (cache[data.cacheKey]) return data.cacheKey;
+      if (folderTargetKeys.has(data.folderPath)) return folderTargetKeys.get(data.folderPath);
+      const targetKey = Object.keys(cache).find(key => {
+        try {
+          const parsed = JSON.parse(key);
+          return parsed.folderPath === data.folderPath;
+        } catch {
+          return false;
+        }
+      });
+      folderTargetKeys.set(data.folderPath, targetKey || '');
+      return targetKey;
+    };
+
+    const flushReadyFiles = () => {
+      readyFilesFlushTimer = null;
+      const batch = pendingReadyFiles.splice(0);
+      if (batch.length === 0) return;
+      setFileDataCache(prev => {
+        const folderTargetKeys = new Map();
+        const updatesByTargetKey = new Map();
+        for (const data of batch) {
+          const targetKey = findReadyTargetKey(prev, data, folderTargetKeys);
+          if (!targetKey) continue;
+          if (!updatesByTargetKey.has(targetKey)) updatesByTargetKey.set(targetKey, new Map());
+          updatesByTargetKey.get(targetKey).set(data.file.path, data.file);
+        }
+        if (updatesByTargetKey.size === 0) return prev;
+
+        let next = prev;
+        for (const [targetKey, updatesByPath] of updatesByTargetKey.entries()) {
+          const currentFiles = prev[targetKey] || [];
+          let changed = false;
+          const nextFiles = currentFiles.map(file => {
+            const updated = updatesByPath.get(file.path);
+            if (!updated) return file;
+            changed = true;
+            return {
+              ...file,
+              ...updated,
+              cover: updated.cover || file.cover || '',
+              thumb_path: updated.thumb_path || file.thumb_path || '',
+            };
+          });
+          if (!changed) continue;
+          if (next === prev) next = { ...prev };
+          next[targetKey] = nextFiles;
+        }
+        return next;
+      });
+    };
+
+    const scheduleReadyFilesFlush = () => {
+      if (readyFilesFlushTimer) return;
+      readyFilesFlushTimer = window.setTimeout(flushReadyFiles, 80);
+    };
+
     const handleFolderFileReady = (data) => {
       if (!data?.file?.path) return;
       if (data.folderPath && currentFolderRef.current !== data.folderPath) return;
@@ -289,34 +350,8 @@ export function useFolderScan(t) {
           },
         }));
       }
-      setFileDataCache(prev => {
-        const targetKey = prev[data.cacheKey]
-          ? data.cacheKey
-          : Object.keys(prev).find(key => {
-              try {
-                const parsed = JSON.parse(key);
-                return parsed.folderPath === data.folderPath;
-              } catch {
-                return false;
-              }
-            });
-        if (!targetKey) return prev;
-        const currentFiles = prev[targetKey] || [];
-        const index = currentFiles.findIndex(file => file.path === data.file.path);
-        if (index < 0) return prev;
-        const nextFiles = [...currentFiles];
-        const current = nextFiles[index];
-        nextFiles[index] = {
-          ...current,
-          ...data.file,
-          cover: data.file.cover || current.cover || '',
-          thumb_path: data.file.thumb_path || current.thumb_path || '',
-        };
-        return {
-          ...prev,
-          [targetKey]: nextFiles,
-        };
-      });
+      pendingReadyFiles.push(data);
+      scheduleReadyFilesFlush();
     };
 
     const handleScanProgress = (data) => {
@@ -381,6 +416,7 @@ export function useFolderScan(t) {
     }
 
     return () => {
+      if (readyFilesFlushTimer) window.clearTimeout(readyFilesFlushTimer);
       if (removeFileReady) removeFileReady();
       if (removeProgress) removeProgress();
       if (removeTaskProgress) removeTaskProgress();

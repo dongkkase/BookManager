@@ -29,6 +29,10 @@ import { normalizeMetadataFormat } from '../metadataFormat.js';
 
 const execFileAsync = promisify(execFile);
 const WEB_SEARCH_LIMIT = 160;
+const WEB_DEFAULT_PAGE_LIMIT = 80;
+const WEB_MAX_PAGE_LIMIT = 200;
+const WEB_FOLDER_SUMMARY_LIMIT = 500;
+const WEB_FOLDER_SUMMARY_DIR_LIMIT = 1200;
 const WEB_METADATA_FIELDS = [
     'title',
     'series',
@@ -95,6 +99,43 @@ const WEB_DB_SEARCH_FIELDS = [
     'web',
 ];
 let webDbUnavailableLogged = false;
+
+function escapeLikeValue(value = '') {
+    return String(value).replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+function normalizeWebPagination(query = {}) {
+    const limit = Math.max(1, Math.min(WEB_MAX_PAGE_LIMIT, Number(query.limit) || WEB_DEFAULT_PAGE_LIMIT));
+    const offset = Math.max(0, Number(query.offset) || 0);
+    return { limit, offset };
+}
+
+function paginateCatalog(folders = [], files = [], pagination = {}) {
+    const limit = Math.max(1, Number(pagination.limit) || WEB_DEFAULT_PAGE_LIMIT);
+    const offset = Math.max(0, Number(pagination.offset) || 0);
+    const folderTotal = folders.length;
+    const fileTotal = files.length;
+    const total = folderTotal + fileTotal;
+    const end = offset + limit;
+    const folderStart = Math.min(offset, folderTotal);
+    const folderEnd = Math.min(end, folderTotal);
+    const fileStart = Math.max(0, offset - folderTotal);
+    const fileEnd = Math.max(0, end - folderTotal);
+
+    return {
+        folders: folders.slice(folderStart, folderEnd),
+        files: files.slice(fileStart, fileEnd),
+        page: {
+            limit,
+            offset,
+            next_offset: end < total ? end : null,
+            has_more: end < total,
+            total,
+            folder_total: folderTotal,
+            file_total: fileTotal,
+        },
+    };
+}
 
 function formatJsonError(res, status, message) {
     res.status(status).json({ error: message });
@@ -170,6 +211,52 @@ async function safeReadIndexedRows(currentDir, options = {}, log = () => {}) {
     }
 }
 
+async function readIndexedRootSummary(root, options = {}) {
+    if (!root) return null;
+    if (typeof options.dbRowsProvider === 'function') {
+        const rows = await options.dbRowsProvider(root);
+        if (!Array.isArray(rows)) return null;
+        const validRows = rows.map(normalizeIndexedRecord).filter(row => isValidWebRecord(row, [root]));
+        const first = validRows[0] || null;
+        return {
+            count: validRows.length,
+            sample_path: first ? thumbnailPathForRecord(first, [root], options) : '',
+        };
+    }
+    if (!options.dbPath) return null;
+
+    const { LibraryDB } = await import('../database/library_db.js');
+    const db = new LibraryDB({ dbPath: options.dbPath });
+    try {
+        const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+        const row = db.getConnection().prepare(`
+            SELECT
+                COUNT(*) AS count,
+                MIN(COALESCE(NULLIF(thumb_path, ''), path)) AS sample_path
+            FROM files
+            WHERE path LIKE ? ESCAPE '\\'
+        `).get(`${escapeLikeValue(prefix)}%`);
+        return {
+            count: Number(row?.count) || 0,
+            sample_path: row?.sample_path || '',
+        };
+    } finally {
+        await db.close();
+    }
+}
+
+async function safeReadIndexedRootSummary(root, options = {}, log = () => {}) {
+    try {
+        return await readIndexedRootSummary(root, options);
+    } catch (error) {
+        if (!webDbUnavailableLogged) {
+            webDbUnavailableLogged = true;
+            log(`Web indexed root summary unavailable: ${error.message}`, 'ERROR');
+        }
+        return null;
+    }
+}
+
 async function searchIndexedRows(root, query, options = {}) {
     if (!root) return null;
     if (typeof options.dbRowsProvider === 'function') {
@@ -229,6 +316,161 @@ function normalizeIndexedRecord(row = {}) {
         web,
         link: web,
     };
+}
+
+const WEB_SQL_METADATA_FIELDS = [
+    'title',
+    'series',
+    'series_group',
+    'volume',
+    'number',
+    'writer',
+    'creators',
+    'publisher',
+    'imprint',
+    'genre',
+    'volume_count',
+    'page_count',
+    'format',
+    'manga',
+    'language',
+    'rating',
+    'age_rating',
+    'publish_date',
+    'summary',
+    'characters',
+    'teams',
+    'locations',
+    'story_arc',
+    'tags',
+    'notes',
+    'web',
+];
+
+function webSqlMetadataExpression() {
+    return WEB_SQL_METADATA_FIELDS
+        .map(field => `TRIM(COALESCE(${field}, '')) <> ''`)
+        .join(' OR ');
+}
+
+async function indexedCatalogPageFromDb(currentDir, roots = [], options = {}, pagination = {}) {
+    if (!currentDir || !options.dbPath) return null;
+
+    const { LibraryDB } = await import('../database/library_db.js');
+    const db = new LibraryDB({ dbPath: options.dbPath });
+    try {
+        const base = path.resolve(currentDir);
+        const prefix = base.endsWith(path.sep) ? base : `${base}${path.sep}`;
+        const params = {
+            prefixLike: `${escapeLikeValue(prefix)}%`,
+            restStart: prefix.length + 1,
+            sep: path.sep,
+        };
+        const metadataExpression = webSqlMetadataExpression();
+        const folderSubquery = `
+            SELECT
+                folder_name,
+                COUNT(*) AS count,
+                MIN(path) AS sample_path,
+                MIN(NULLIF(thumb_path, '')) AS thumb_path,
+                MAX(CASE WHEN instr(substr(rest, instr(rest, @sep) + 1), @sep) > 0 THEN 1 ELSE 0 END) AS has_subfolders,
+                MAX(CASE WHEN ${metadataExpression} THEN 1 ELSE 0 END) AS has_metadata
+            FROM (
+                SELECT
+                    *,
+                    substr(path, @restStart) AS rest,
+                    substr(substr(path, @restStart), 1, instr(substr(path, @restStart), @sep) - 1) AS folder_name
+                FROM files
+                WHERE path LIKE @prefixLike ESCAPE '\\'
+            )
+            WHERE instr(rest, @sep) > 0
+            GROUP BY folder_name
+        `;
+        const fileWhere = `
+            path LIKE @prefixLike ESCAPE '\\'
+            AND instr(substr(path, @restStart), @sep) = 0
+        `;
+        const folderTotal = Number(db.getConnection().prepare(`
+            SELECT COUNT(*) AS total FROM (${folderSubquery})
+        `).get(params)?.total) || 0;
+        const fileTotal = Number(db.getConnection().prepare(`
+            SELECT COUNT(*) AS total FROM files WHERE ${fileWhere}
+        `).get(params)?.total) || 0;
+        const limit = Math.max(1, Number(pagination.limit) || WEB_DEFAULT_PAGE_LIMIT);
+        const offset = Math.max(0, Number(pagination.offset) || 0);
+        const folderLimit = Math.max(0, Math.min(limit, folderTotal - offset));
+        const folderOffset = Math.min(offset, folderTotal);
+        const fileOffset = Math.max(0, offset - folderTotal);
+        const fileLimit = Math.max(0, limit - folderLimit);
+
+        const folderRows = folderLimit > 0
+            ? db.getConnection().prepare(`
+                SELECT *
+                FROM (${folderSubquery})
+                ORDER BY folder_name COLLATE NOCASE ASC
+                LIMIT @limit OFFSET @offset
+            `).all({ ...params, limit: folderLimit, offset: folderOffset })
+            : [];
+        const fileRows = fileLimit > 0
+            ? db.getConnection().prepare(`
+                SELECT *
+                FROM files
+                WHERE ${fileWhere}
+                ORDER BY COALESCE(NULLIF(title, ''), path) COLLATE NOCASE ASC, path COLLATE NOCASE ASC
+                LIMIT @limit OFFSET @offset
+            `).all({ ...params, limit: fileLimit, offset: fileOffset })
+            : [];
+
+        const folders = folderRows
+            .map(row => {
+                const folderPath = realPathOrResolved(path.join(base, row.folder_name));
+                const samplePath = row.thumb_path || row.sample_path || '';
+                return {
+                    path: folderPath,
+                    name: row.folder_name,
+                    is_library: false,
+                    count: Number(row.count) || 0,
+                    thumb_path: samplePath,
+                    has_subfolders: Boolean(row.has_subfolders),
+                    has_metadata: Boolean(row.has_metadata),
+                };
+            })
+            .filter(folder => isWithinRoot(folder.path, roots));
+        const files = fileRows
+            .map(normalizeIndexedRecord)
+            .filter(row => isValidWebRecord(row, roots))
+            .map(row => fileItemFromRecord(row, roots, options));
+        const total = folderTotal + fileTotal;
+
+        return {
+            folders,
+            files,
+            source: 'database',
+            page: {
+                limit,
+                offset,
+                next_offset: offset + limit < total ? offset + limit : null,
+                has_more: offset + limit < total,
+                total,
+                folder_total: folderTotal,
+                file_total: fileTotal,
+            },
+        };
+    } finally {
+        await db.close();
+    }
+}
+
+async function safeIndexedCatalogPageFromDb(currentDir, roots = [], options = {}, pagination = {}, log = () => {}) {
+    try {
+        return await indexedCatalogPageFromDb(currentDir, roots, options, pagination);
+    } catch (error) {
+        if (!webDbUnavailableLogged) {
+            webDbUnavailableLogged = true;
+            log(`Web indexed catalog page unavailable: ${error.message}`, 'ERROR');
+        }
+        return null;
+    }
 }
 
 function isValidWebRecord(record = {}, roots = []) {
@@ -414,13 +656,18 @@ function collectArchiveFiles(currentDir, limit = 10000) {
     return results.sort(naturalComparePath);
 }
 
-function scanFolderSummary(folderPath) {
+function scanFolderSummary(folderPath, options = {}) {
+    const maxCount = Math.max(1, Number(options.maxCount) || WEB_FOLDER_SUMMARY_LIMIT);
+    const maxVisitedDirs = Math.max(1, Number(options.maxVisitedDirs) || WEB_FOLDER_SUMMARY_DIR_LIMIT);
     let hasSubfolders = false;
     let count = 0;
     let sample = '';
+    let visitedDirs = 0;
+    let limited = false;
     const stack = [folderPath];
-    while (stack.length && count < 10000) {
+    while (stack.length && count < maxCount && visitedDirs < maxVisitedDirs) {
         const dir = stack.pop();
+        visitedDirs += 1;
         let entries = [];
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -438,14 +685,26 @@ function scanFolderSummary(folderPath) {
             }
         }
     }
-    return { count, sample, hasSubfolders };
+    limited = stack.length > 0 || count >= maxCount || visitedDirs >= maxVisitedDirs;
+    return { count, sample, hasSubfolders, limited };
 }
 
-function filesystemCatalog(currentDir, roots = []) {
+function filesystemCatalog(currentDir, roots = [], pagination = {}) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true })
+        .sort((a, b) => {
+            if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return naturalComparePath(a.name, b.name);
+        })
+        .filter(item => item.isDirectory() || (item.isFile() && isArchivePath(item.name)));
+    const foldersTotal = entries.filter(item => item.isDirectory()).length;
+    const filesTotal = entries.length - foldersTotal;
+    const limit = Math.max(1, Number(pagination.limit) || WEB_DEFAULT_PAGE_LIMIT);
+    const offset = Math.max(0, Number(pagination.offset) || 0);
+    const visibleEntries = entries.slice(offset, offset + limit);
     const folders = [];
     const files = [];
 
-    for (const item of fs.readdirSync(currentDir, { withFileTypes: true })) {
+    for (const item of visibleEntries) {
         const itemPath = path.join(currentDir, item.name);
         if (item.isDirectory()) {
             const summary = scanFolderSummary(itemPath);
@@ -454,6 +713,7 @@ function filesystemCatalog(currentDir, roots = []) {
                 name: item.name,
                 is_library: false,
                 count: summary.count,
+                count_limited: summary.limited,
                 thumb_path: summary.sample,
                 has_subfolders: summary.hasSubfolders,
                 has_metadata: false,
@@ -470,48 +730,75 @@ function filesystemCatalog(currentDir, roots = []) {
     }
 
     return {
-        folders: folders.sort((a, b) => naturalComparePath(a.name, b.name)),
-        files: files.sort((a, b) => naturalComparePath(a.title || a.name, b.title || b.name)),
+        folders,
+        files,
         source: 'filesystem',
+        page: {
+            limit,
+            offset,
+            next_offset: offset + limit < entries.length ? offset + limit : null,
+            has_more: offset + limit < entries.length,
+            total: entries.length,
+            folder_total: foldersTotal,
+            file_total: filesTotal,
+        },
     };
 }
 
-async function rootCatalog(roots = [], options = {}, log = () => {}) {
+async function rootCatalog(roots = [], options = {}, log = () => {}, pagination = {}) {
+    const pagedRoots = paginateCatalog(roots.map(root => ({ root })), [], pagination);
     const folders = [];
-    for (const root of roots) {
-        const rows = await safeReadIndexedRows(root, options, log);
+    for (const item of pagedRoots.folders) {
+        const root = item.root;
+        const summaryRow = await safeReadIndexedRootSummary(root, options, log);
         let count = 0;
         let sample = '';
-        if (rows) {
-            const validRows = rows.map(normalizeIndexedRecord).filter(row => isValidWebRecord(row, roots));
-            count = validRows.length;
-            sample = validRows.length ? thumbnailPathForRecord(validRows[0], roots, options) : '';
+        let limited = false;
+        if (summaryRow) {
+            count = Number(summaryRow.count) || 0;
+            sample = summaryRow.sample_path || '';
         } else {
             const summary = scanFolderSummary(root);
             count = summary.count;
             sample = summary.sample;
+            limited = summary.limited;
         }
         folders.push({
             path: root,
             name: path.basename(root) || root,
             is_library: true,
             count,
+            count_limited: limited,
             thumb_path: sample,
             has_subfolders: true,
             has_metadata: false,
         });
     }
-    return { folders, files: [], source: 'root' };
+    return { folders, files: [], source: 'root', page: pagedRoots.page };
 }
 
-async function webCatalog(currentDir, roots, options = {}, log = () => {}) {
-    if (!currentDir) return rootCatalog(roots, options, log);
+async function webCatalog(currentDir, roots, options = {}, log = () => {}, pagination = {}) {
+    if (!currentDir) return rootCatalog(roots, options, log, pagination);
+    if (!options.dbRowsProvider) {
+        const catalogPage = await safeIndexedCatalogPageFromDb(currentDir, roots, options, pagination, log);
+        if (catalogPage && (
+            catalogPage.folders.length
+            || catalogPage.files.length
+            || catalogPage.page.total === 0
+            || pagination.offset > 0
+        )) return catalogPage;
+    }
     const rows = await safeReadIndexedRows(currentDir, options, log);
     if (rows) {
         const catalog = catalogFromRows(currentDir, rows, roots, options);
-        if (catalog.folders.length || catalog.files.length) return catalog;
+        if (catalog.folders.length || catalog.files.length) {
+            return {
+                ...paginateCatalog(catalog.folders, catalog.files, pagination),
+                source: catalog.source,
+            };
+        }
     }
-    return filesystemCatalog(currentDir, roots);
+    return filesystemCatalog(currentDir, roots, pagination);
 }
 
 function folderItemForPath(folderPath, root, record = null, roots = [], options = {}) {
@@ -800,6 +1087,7 @@ export function buildWebApp(config, options = {}, log = () => {}) {
 
     app.get('/api/list', async (req, res) => {
         attachNoCache(res);
+        const pagination = normalizeWebPagination(req.query);
         if (roots.length === 0) {
             formatJsonError(res, 503, sharingText(config, 'sharing_no_libraries', '공유할 라이브러리 폴더가 없습니다.'));
             return;
@@ -813,7 +1101,7 @@ export function buildWebApp(config, options = {}, log = () => {}) {
         }
 
         try {
-            const catalog = await webCatalog(currentDir, roots, options, log);
+            const catalog = await webCatalog(currentDir, roots, options, log, pagination);
             log(sharingText(config, 'sharing_web_browse', 'Web 탐색: {name}', {
                 name: currentDir ? path.basename(currentDir) : sharingText(config, 'sharing_library_root', '라이브러리 루트'),
             }));
@@ -823,6 +1111,7 @@ export function buildWebApp(config, options = {}, log = () => {}) {
                 can_zip: Boolean(options.sevenZExe),
                 folders: catalog.folders,
                 files: catalog.files,
+                page: catalog.page || paginateCatalog(catalog.folders, catalog.files, pagination).page,
             });
         } catch (error) {
             log(`Web catalog error: ${error.message}`, 'ERROR');
@@ -832,23 +1121,32 @@ export function buildWebApp(config, options = {}, log = () => {}) {
 
     app.get('/api/search', async (req, res) => {
         attachNoCache(res);
+        const pagination = normalizeWebPagination(req.query);
         if (roots.length === 0) {
             formatJsonError(res, 503, sharingText(config, 'sharing_no_libraries', '공유할 라이브러리 폴더가 없습니다.'));
             return;
         }
         const query = String(req.query.q || '').trim();
         if (!query) {
-            res.json({ query, can_zip: Boolean(options.sevenZExe), folders: [], files: [] });
+            res.json({
+                query,
+                can_zip: Boolean(options.sevenZExe),
+                folders: [],
+                files: [],
+                page: paginateCatalog([], [], pagination).page,
+            });
             return;
         }
         try {
             const result = await webSearch(query, roots, options, log);
+            const catalogPage = paginateCatalog(result.folders, result.files, pagination);
             log(sharingText(config, 'sharing_web_search', 'Web 검색: {query}', { query }));
             res.json({
                 query,
                 can_zip: Boolean(options.sevenZExe),
-                folders: result.folders,
-                files: result.files,
+                folders: catalogPage.folders,
+                files: catalogPage.files,
+                page: catalogPage.page,
             });
         } catch (error) {
             log(`Web search error: ${error.message}`, 'ERROR');

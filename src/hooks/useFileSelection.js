@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { nextSelectionIndex } from '../folderSelectionState';
 
 /**
@@ -24,28 +24,39 @@ export function useFileSelection(fileData = []) {
   const [lastSelectedIndex, setLastSelectedIndex] = useState(-1);
   const [activeSelectedPath, setActiveSelectedPath] = useState('');
   const selectionStartRef = useRef(null);
+  const fileLookup = useMemo(() => {
+    const byPath = new Map();
+    const indexByPath = new Map();
+    fileData.forEach((file, index) => {
+      if (!file?.path) return;
+      byPath.set(file.path, file);
+      indexByPath.set(file.path, index);
+    });
+    return { byPath, indexByPath };
+  }, [fileData]);
+  const selectedPathLookup = useMemo(() => new Set(selectedFiles), [selectedFiles]);
 
   // --- 선택된 파일 데이터 가져오기 ---
   const selectedFileData = useCallback(() => {
     if (selectedFiles.length === 0) return null;
-    const selectedPath = activeSelectedPath && selectedFiles.includes(activeSelectedPath)
+    const selectedPath = activeSelectedPath && selectedPathLookup.has(activeSelectedPath)
       ? activeSelectedPath
       : selectedFiles[selectedFiles.length - 1];
-    return fileData.find(file => file.path === selectedPath) || null;
-  }, [activeSelectedPath, selectedFiles, fileData]);
+    return fileLookup.byPath.get(selectedPath) || null;
+  }, [activeSelectedPath, selectedFiles, selectedPathLookup, fileLookup]);
 
   // --- 단일 파일 선택 ---
   const selectFile = useCallback((filePath, fileDataItem, index) => {
-    const resolvedIndex = fileData.findIndex(file => file.path === filePath);
+    const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
     setSelectedFiles([filePath]);
     setActiveSelectedPath(filePath);
     setLastSelectedIndex(resolvedIndex >= 0 ? resolvedIndex : (index ?? -1));
     selectionStartRef.current = { path: filePath, index: resolvedIndex >= 0 ? resolvedIndex : index };
-  }, [fileData]);
+  }, [fileLookup]);
 
   // --- 파일 선택 토글 (primary modifier+클릭) ---
   const toggleFile = useCallback((filePath, fileDataItem, index) => {
-    const resolvedIndex = fileData.findIndex(file => file.path === filePath);
+    const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
     setSelectedFiles(prev => {
       const exists = prev.includes(filePath);
       if (exists) {
@@ -59,7 +70,7 @@ export function useFileSelection(fileData = []) {
     });
     setLastSelectedIndex(resolvedIndex >= 0 ? resolvedIndex : (index ?? -1));
     selectionStartRef.current = { path: filePath, index: resolvedIndex >= 0 ? resolvedIndex : index };
-  }, [fileData]);
+  }, [fileLookup]);
 
   // --- 범위 선택 (Shift+클릭) ---
   const rangeSelect = useCallback((filePath, fileDataItem, index) => {
@@ -69,7 +80,7 @@ export function useFileSelection(fileData = []) {
     }
 
     const startIndex = selectionStartRef.current.index;
-    const resolvedIndex = fileData.findIndex(file => file.path === filePath);
+    const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
     const endIndex = resolvedIndex >= 0 ? resolvedIndex : index;
 
     let start, end;
@@ -92,7 +103,7 @@ export function useFileSelection(fileData = []) {
     setSelectedFiles(newSelection);
     setActiveSelectedPath(filePath);
     setLastSelectedIndex(endIndex);
-  }, [fileData, selectFile]);
+  }, [fileData, fileLookup, selectFile]);
 
   // --- 선택 초기화 ---
   const clearSelection = useCallback(() => {
@@ -121,25 +132,25 @@ export function useFileSelection(fileData = []) {
     setSelectedFiles(prev => {
       const next = allPaths.filter(path => !prev.includes(path));
       setActiveSelectedPath(next[next.length - 1] || '');
-      setLastSelectedIndex(next.length > 0 ? fileData.findIndex(file => file.path === next[next.length - 1]) : -1);
+      setLastSelectedIndex(next.length > 0 ? fileLookup.indexByPath.get(next[next.length - 1]) ?? -1 : -1);
       return next;
     });
-  }, [fileData]);
+  }, [fileData, fileLookup]);
 
   const selectPaths = useCallback((paths = []) => {
     const validPaths = paths.filter(Boolean);
     setSelectedFiles(validPaths);
     setActiveSelectedPath(validPaths[validPaths.length - 1] || '');
     const lastPath = validPaths[validPaths.length - 1];
-    const lastIndex = lastPath ? fileData.findIndex(file => file.path === lastPath) : -1;
+    const lastIndex = lastPath ? fileLookup.indexByPath.get(lastPath) ?? -1 : -1;
     setLastSelectedIndex(lastIndex);
     selectionStartRef.current = lastPath ? { path: lastPath, index: lastIndex } : null;
-  }, [fileData]);
+  }, [fileLookup]);
 
   const moveActiveSelection = useCallback((direction, extend = false) => {
     if (fileData.length === 0) return '';
     const currentIndex = activeSelectedPath
-      ? fileData.findIndex(file => file.path === activeSelectedPath)
+      ? fileLookup.indexByPath.get(activeSelectedPath) ?? -1
       : -1;
     const nextIndex = nextSelectionIndex(fileData.length, currentIndex, direction);
     const nextPath = fileData[nextIndex]?.path;
@@ -156,7 +167,7 @@ export function useFileSelection(fileData = []) {
     setActiveSelectedPath(nextPath);
     setLastSelectedIndex(nextIndex);
     return nextPath;
-  }, [activeSelectedPath, fileData]);
+  }, [activeSelectedPath, fileData, fileLookup]);
 
   // --- 선택 범위 내 여부 확인 ---
   const isInSelectionRange = useCallback((index) => {

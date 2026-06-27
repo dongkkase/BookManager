@@ -375,10 +375,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
   );
-  const displayedFileData = useMemo(
-    () => groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder)
-      .flatMap(group => group.files),
+  const groupedFileData = useMemo(
+    () => groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder),
     [filteredFileData, groupKey, sortKey, sortOrder],
+  );
+  const displayedFileData = useMemo(
+    () => groupedFileData.flatMap(group => group.files),
+    [groupedFileData],
   );
 
   // --- 선택 상태 ---
@@ -397,6 +400,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     moveActiveSelection,
   } = useFileSelection(displayedFileData);
   const activeSelectedFile = selectedFileData();
+  const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
+  const displayedFileByPath = useMemo(() => {
+    const map = new Map();
+    displayedFileData.forEach(file => {
+      if (file?.path) map.set(file.path, file);
+    });
+    return map;
+  }, [displayedFileData]);
   const itemScale = itemScales[viewMode] || 50;
 
   useEffect(() => {
@@ -1210,8 +1221,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [clearSelection, rangeSelect, runtimePlatform, selectFile, toggleFile]);
 
   const selectedFileObjects = useMemo(() => (
-    selectedFiles.map(filePath => filteredFileData.find(file => file.path === filePath)).filter(Boolean)
-  ), [filteredFileData, selectedFiles]);
+    selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(Boolean)
+  ), [displayedFileByPath, selectedFiles]);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -1383,7 +1394,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const forceUpdateSelectedFiles = useCallback(async contextFile => {
     if (!selectedFolderPath) return;
     const contextPath = contextFile?.full_path || contextFile?.path;
-    const targets = selectedFileObjects.length > 0 && (!contextPath || selectedFiles.includes(contextPath))
+    const targets = selectedFileObjects.length > 0 && (!contextPath || selectedFileSet.has(contextPath))
       ? selectedFileObjects
       : [contextFile].filter(Boolean);
     if (targets.length === 0) return;
@@ -1406,7 +1417,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       updateCachedFiles(selectedFolderPath, scanOptions, refreshed);
       showToast?.(`${t('action_update_files')} (${refreshed.length})`);
     }
-  }, [scanOptions, selectedFileObjects, selectedFiles, selectedFolderPath, showToast, t, updateCachedFiles]);
+  }, [scanOptions, selectedFileObjects, selectedFileSet, selectedFolderPath, showToast, t, updateCachedFiles]);
 
   const executeSeriesMove = useCallback(async plans => {
     const result = await runInternalFileAction(
@@ -1659,11 +1670,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const showFileContextMenu = useCallback((event, file, index) => {
     event.preventDefault();
-    if (file?.path && !selectedFiles.includes(file.path)) {
+    if (file?.path && !selectedFileSet.has(file.path)) {
       selectFile(file.path, null, index);
     }
     setContextMenu({ type: 'file', x: event.clientX, y: event.clientY, file });
-  }, [selectFile, selectedFiles]);
+  }, [selectFile, selectedFileSet]);
 
   const showFolderContextMenu = useCallback((event, folderPath, siblingPaths = []) => {
     event.preventDefault();
@@ -2209,7 +2220,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const renderViewStack = () => {
     const props = {
       fileData: filteredFileData,
+      groupedData: groupedFileData,
       selectedFiles,
+      selectedFileSet,
       activeSelectedPath,
       sortKey,
       sortOrder,
@@ -2229,7 +2242,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} selectedFiles={selectedFiles} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 
