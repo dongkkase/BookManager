@@ -6,6 +6,8 @@ import path from 'path';
 import crypto from 'crypto';
 import {
     getLocalIp,
+    listLocalIpAddresses,
+    normalizeLocalIpAddress,
     normalizeSharingRoots,
     sharingText,
 } from './shared/sharingCommon.js';
@@ -18,11 +20,13 @@ import {
 
 const servers = new Map();
 const SHARING_SERVER_TYPES = ['OPDS', 'Web', 'WebDAV'];
+let selectedLocalIp = getLocalIp();
 
 export {
     buildOpdsApp,
     buildWebApp,
     buildWebdavApp,
+    listLocalIpAddresses,
     normalizeSharingRoots,
     resolveWebdavPath,
 };
@@ -40,6 +44,19 @@ function sharingServerUrl(type, localIp, port, secure = false) {
     return type === 'OPDS'
         ? `${scheme}://${localIp}:${port}/opds`
         : `${scheme}://${localIp}:${port}/`;
+}
+
+export function normalizeSharingServerAddress(address) {
+    return normalizeLocalIpAddress(address);
+}
+
+export function getSharingNetworkAddresses() {
+    return listLocalIpAddresses();
+}
+
+export function setSharingServerAddress(address) {
+    selectedLocalIp = normalizeSharingServerAddress(address);
+    return selectedLocalIp;
 }
 
 function isValidIpv4(value) {
@@ -262,7 +279,7 @@ function createSelfSignedCertificate({ localIp, days = 825 }) {
 
 async function ensureSelfSignedCertificate(options = {}, config = {}) {
     const certDir = resolveHttpsCertDir(options, config);
-    const localIp = getLocalIp();
+    const localIp = normalizeSharingServerAddress(options.address || config.sharing_server_address || selectedLocalIp);
     const certPath = path.join(certDir, 'bookmanager-sharing.crt');
     const keyPath = path.join(certDir, 'bookmanager-sharing.key');
     const manifestPath = path.join(certDir, 'manifest.json');
@@ -313,9 +330,11 @@ async function ensureSelfSignedCertificate(options = {}, config = {}) {
 }
 
 export function getSharingServerStatus() {
-    const localIp = getLocalIp();
+    const addresses = getSharingNetworkAddresses();
+    const localIp = normalizeSharingServerAddress(selectedLocalIp);
     const status = {
         localIp,
+        addresses,
     };
     for (const type of SHARING_SERVER_TYPES) {
         const entry = servers.get(type);
@@ -354,9 +373,10 @@ export async function startSharingServer(type, options = {}, config = {}, onLog 
             ? buildWebApp(config, options, log)
             : buildOpdsApp(config, log, options);
     const secure = Boolean(options.https ?? config.sharing_https_enabled);
+    const localIp = setSharingServerAddress(options.address || config.sharing_server_address || selectedLocalIp);
     let certInfo = null;
     if (secure) {
-        certInfo = await ensureSelfSignedCertificate(options, config);
+        certInfo = await ensureSelfSignedCertificate({ ...options, address: localIp }, config);
     }
     const server = secure
         ? https.createServer({ cert: certInfo.cert, key: certInfo.key }, app)
@@ -378,7 +398,6 @@ export async function startSharingServer(type, options = {}, config = {}, onLog 
     }
 
     servers.set(serverType, { server, port, secure });
-    const localIp = getLocalIp();
     const url = sharingServerUrl(serverType, localIp, port, secure);
     log(sharingText(config, 'sharing_started', '{server} 서버가 시작되었습니다: {url}', { server: serverType, url }));
     if (secure) {

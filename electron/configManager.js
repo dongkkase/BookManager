@@ -153,6 +153,7 @@ export class ConfigManager {
       webdav_username: 'user',
       webdav_password: '1234',
       sharing_https_enabled: false,
+      sharing_server_address: '',
       pass_skip_meta: false,
       last_meta_api: '리디북스',
       preferred_meta_api_comic: '리디북스',

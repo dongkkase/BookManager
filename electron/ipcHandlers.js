@@ -14,8 +14,11 @@ import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
 import { analyzeMetadataInputs, loadMetadataCover, saveMetadataItems } from './tasks/metadataTask.js';
 import {
+  getSharingNetworkAddresses,
   getSharingServerStatus,
   normalizeSharingServerType,
+  normalizeSharingServerAddress,
+  setSharingServerAddress,
   startSharingServer,
   stopSharingServer,
 } from './servers/sharingServers.js';
@@ -3168,14 +3171,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         throw new Error(i18nT('sharing_invalid_server_type', { server: String(serverType || '') }));
     }
     const sharingHttpsEnabled = Boolean(options.https ?? config.sharing_https_enabled);
+    const sharingServerAddress = normalizeSharingServerAddress(options.address ?? config.sharing_server_address);
     let updates = {
         opds_port: Number(options.port) || config.opds_port || 8080,
         sharing_https_enabled: sharingHttpsEnabled,
+        sharing_server_address: sharingServerAddress,
     };
     if (normalizedServerType === 'Web') {
         updates = {
             web_port: Number(options.port) || config.web_port || 8082,
             sharing_https_enabled: sharingHttpsEnabled,
+            sharing_server_address: sharingServerAddress,
         };
     } else if (normalizedServerType === 'WebDAV') {
         updates = {
@@ -3183,6 +3189,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             webdav_username: String(options.username ?? config.webdav_username ?? 'user').trim() || 'user',
             webdav_password: String(options.password ?? config.webdav_password ?? '1234').trim() || '1234',
             sharing_https_enabled: sharingHttpsEnabled,
+            sharing_server_address: sharingServerAddress,
         };
     }
     configManager.saveConfig({ ...config, ...updates });
@@ -3194,6 +3201,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         {
             ...options,
             port: updates.webdav_port || updates.web_port || updates.opds_port,
+            address: sharingServerAddress,
             https: sharingHttpsEnabled,
             httpsCertDir: path.join(configManager.userDataPath, 'sharing-cert'),
             dbPath: libraryDbPath(),
@@ -3215,7 +3223,25 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('server:status', () => {
+    const config = configManager.getConfig() || {};
+    setSharingServerAddress(config.sharing_server_address);
     return getSharingServerStatus();
+  });
+
+  ipcMain.handle('server:addresses', () => {
+    return getSharingNetworkAddresses();
+  });
+
+  ipcMain.handle('server:setAddress', (_event, address) => {
+    const nextAddress = setSharingServerAddress(address);
+    configManager.saveConfig({
+        ...configManager.getConfig(),
+        sharing_server_address: nextAddress,
+    });
+    return {
+        address: nextAddress,
+        status: getSharingServerStatus(),
+    };
   });
 
   // ========== 캐시/인덱스 관리 ==========

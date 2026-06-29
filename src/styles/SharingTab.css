@@ -126,7 +126,8 @@
 
 /* Inputs */
 .sharing-input,
-.sharing-input-num {
+.sharing-input-num,
+.sharing-input-select {
   background-color: #09090b;
   color: #f4f4f5;
   border: 1px solid #27272a;
@@ -136,7 +137,8 @@
 }
 
 .sharing-input:focus,
-.sharing-input-num:focus {
+.sharing-input-num:focus,
+.sharing-input-select:focus {
   border-color: #3b82f6;
   background-color: #18181b;
   outline: none;
@@ -150,8 +152,14 @@
   width: 110px;
 }
 
+.sharing-input-select {
+  min-width: 240px;
+  max-width: 100%;
+}
+
 .sharing-input:disabled,
-.sharing-input-num:disabled {
+.sharing-input-num:disabled,
+.sharing-input-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

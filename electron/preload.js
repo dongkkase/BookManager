@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startServer: (serverType, options) => ipcRenderer.invoke('server:start', serverType, options),
   stopServer: (serverType) => ipcRenderer.invoke('server:stop', serverType),
   getServerStatus: () => ipcRenderer.invoke('server:status'),
+  getServerAddresses: () => ipcRenderer.invoke('server:addresses'),
+  setServerAddress: (address) => ipcRenderer.invoke('server:setAddress', address),
   getReleases: () => ipcRenderer.invoke('releases:list'),
   
   // API 관련

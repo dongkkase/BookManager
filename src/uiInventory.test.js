@@ -148,11 +148,13 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['태그 치환 규칙 textarea', "localConfig.api_keys?.tag_rules || ''"],
     ]);
     assertInventory('sharing', [
+        ['서버 주소 선택', 'id="sharing-server-address"'],
         ['Web 서버 포트', 'id="web-port"'],
         ['WebDAV 아이디', 'id="webdav-id"'],
         ['WebDAV 비밀번호', 'id="webdav-password"'],
     ]);
     assertInventory('sharingCss', [
+        ['서버 주소 select 스타일', '.sharing-input-select'],
         ['서버 상태 로그 텍스트 선택', 'user-select: text'],
     ]);
 });

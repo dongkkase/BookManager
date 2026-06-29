@@ -16,6 +16,11 @@ function formatToggleLabel(t, protocol, running) {
     return t(key).replace('{protocol}', protocol);
 }
 
+function formatAddressLabel(item) {
+    const name = item?.name && item.name !== item.address ? `${item.name} - ` : '';
+    return `${name}${item?.address || ''}`;
+}
+
 function SharingTab({ config, saveConfig, t, showToast }) {
     const text = (key, fallback, values) => {
         const translated = t?.(key, values);
@@ -33,6 +38,8 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     const [httpsEnabled, setHttpsEnabled] = useState(Boolean(config?.sharing_https_enabled));
     const [busyServers, setBusyServers] = useState({});
     const [localIp, setLocalIp] = useState('127.0.0.1');
+    const [serverAddress, setServerAddress] = useState(config?.sharing_server_address || '');
+    const [serverAddresses, setServerAddresses] = useState([]);
     const [logs, setLogs] = useState([
         { type: 'INFO', message: text('tab_sharing_log_ready', '서버 로그가 준비되었습니다.') },
     ]);
@@ -67,9 +74,11 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         setWebdavId(config?.webdav_username || 'user');
         setWebdavPw(config?.webdav_password || '1234');
         setHttpsEnabled(Boolean(config?.sharing_https_enabled));
+        setServerAddress(config?.sharing_server_address || '');
     }, [
         config?.opds_port,
         config?.sharing_https_enabled,
+        config?.sharing_server_address,
         config?.web_port,
         config?.webdav_password,
         config?.webdav_port,
@@ -87,6 +96,8 @@ function SharingTab({ config, saveConfig, t, showToast }) {
         const applyStatus = status => {
             if (!status || !isMounted) return;
             setLocalIp(status.localIp || '127.0.0.1');
+            setServerAddress(status.localIp || '127.0.0.1');
+            if (Array.isArray(status.addresses)) setServerAddresses(status.addresses);
             setOpdsRunning(Boolean(status.OPDS?.running));
             setWebRunning(Boolean(status.Web?.running));
             setWebdavRunning(Boolean(status.WebDAV?.running));
@@ -97,6 +108,12 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             if (status.Web?.port) setWebPort(status.Web.port);
             if (status.WebDAV?.port) setWebdavPort(status.WebDAV.port);
         };
+
+        window.electronAPI?.getServerAddresses?.()
+            .then(addresses => {
+                if (isMounted && Array.isArray(addresses)) setServerAddresses(addresses);
+            })
+            .catch(error => appendLog('ERROR', text('tab_sharing_address_failed', '서버 주소 확인 실패: {msg}', { msg: error.message })));
 
         window.electronAPI?.getServerStatus?.()
             .then(applyStatus)
@@ -115,6 +132,22 @@ function SharingTab({ config, saveConfig, t, showToast }) {
             if (typeof cleanup === 'function') cleanup();
         };
     }, []);
+
+    const handleServerAddressChange = async event => {
+        const address = event.target.value;
+        setServerAddress(address);
+        setLocalIp(address);
+        try {
+            const result = await window.electronAPI?.setServerAddress?.(address);
+            const nextAddress = result?.address || address;
+            setServerAddress(nextAddress);
+            setLocalIp(nextAddress);
+            if (Array.isArray(result?.status?.addresses)) setServerAddresses(result.status.addresses);
+            await saveConfig?.({ sharing_server_address: nextAddress });
+        } catch (error) {
+            appendLog('ERROR', text('config_save_failed', '설정 저장 실패: {msg}', { msg: error.message }));
+        }
+    };
 
     const savePort = async (key, value, fallback, setter) => {
         const nextPort = normalizePort(value, fallback);
@@ -168,8 +201,13 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                 setOpdsRunning(false);
             } else {
                 const port = await savePort('opds_port', opdsPort, 8080, setOpdsPort);
-                const result = await window.electronAPI.startServer('OPDS', { port, https: httpsEnabled });
+                const result = await window.electronAPI.startServer('OPDS', {
+                    port,
+                    https: httpsEnabled,
+                    address: serverAddress || localIp,
+                });
                 setLocalIp(result.localIp || localIp);
+                setServerAddress(result.localIp || serverAddress || localIp);
                 setOpdsRunning(Boolean(result.running));
             }
         } catch (error) {
@@ -189,8 +227,13 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                 setWebRunning(false);
             } else {
                 const port = await savePort('web_port', webPort, 8082, setWebPort);
-                const result = await window.electronAPI.startServer('Web', { port, https: httpsEnabled });
+                const result = await window.electronAPI.startServer('Web', {
+                    port,
+                    https: httpsEnabled,
+                    address: serverAddress || localIp,
+                });
                 setLocalIp(result.localIp || localIp);
+                setServerAddress(result.localIp || serverAddress || localIp);
                 setWebRunning(Boolean(result.running));
             }
         } catch (error) {
@@ -217,8 +260,10 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                     username,
                     password,
                     https: httpsEnabled,
+                    address: serverAddress || localIp,
                 });
                 setLocalIp(result.localIp || localIp);
+                setServerAddress(result.localIp || serverAddress || localIp);
                 setWebdavRunning(Boolean(result.running));
             }
         } catch (error) {
@@ -231,9 +276,13 @@ function SharingTab({ config, saveConfig, t, showToast }) {
 
     const anyServerRunning = opdsRunning || webRunning || webdavRunning;
     const urlScheme = httpsEnabled ? 'https' : 'http';
-    const opdsUrl = `${urlScheme}://${localIp}:${opdsPort}/opds`;
-    const webUrl = `${urlScheme}://${localIp}:${webPort}/`;
-    const webdavUrl = `${urlScheme}://${localIp}:${webdavPort}/`;
+    const displayIp = serverAddress || localIp;
+    const opdsUrl = `${urlScheme}://${displayIp}:${opdsPort}/opds`;
+    const webUrl = `${urlScheme}://${displayIp}:${webPort}/`;
+    const webdavUrl = `${urlScheme}://${displayIp}:${webdavPort}/`;
+    const addressOptions = serverAddresses.some(item => item.address === displayIp)
+        ? serverAddresses
+        : [{ address: displayIp, name: displayIp }, ...serverAddresses];
 
     return (
         <div className="sharing-tab">
@@ -252,6 +301,23 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                             <span>{t('tab_sharing_https_enabled')}</span>
                         </label>
                         <div className="sharing-desc">{t('tab_sharing_https_desc')}</div>
+                        <div className="sharing-row">
+                            <label className="sharing-label" htmlFor="sharing-server-address">
+                                {text('tab_sharing_server_address', '서버 주소')}
+                            </label>
+                            <select
+                                id="sharing-server-address"
+                                className="sharing-input-select"
+                                value={displayIp}
+                                onChange={handleServerAddressChange}
+                            >
+                                {addressOptions.map(item => (
+                                    <option key={item.address} value={item.address}>
+                                        {formatAddressLabel(item)}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
                 </div>
 

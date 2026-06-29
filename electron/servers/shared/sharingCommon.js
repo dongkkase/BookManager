@@ -74,13 +74,50 @@ export function isWithinRoot(targetPath, roots) {
     return roots.some(root => resolved === root || resolved.startsWith(root + path.sep));
 }
 
-export function getLocalIp() {
-    for (const items of Object.values(os.networkInterfaces())) {
+function isIpv4LinkLocal(address) {
+    return String(address || '').startsWith('169.254.');
+}
+
+export function listLocalIpAddresses() {
+    const addresses = [];
+    const seen = new Set();
+    const pushAddress = (address, name, internal = false) => {
+        if (!address || seen.has(address)) return;
+        seen.add(address);
+        addresses.push({
+            address,
+            name: name || address,
+            family: 'IPv4',
+            internal: Boolean(internal),
+            linkLocal: isIpv4LinkLocal(address),
+        });
+    };
+
+    pushAddress('127.0.0.1', 'Loopback', true);
+    for (const [name, items] of Object.entries(os.networkInterfaces())) {
         for (const item of items || []) {
-            if (item.family === 'IPv4' && !item.internal) return item.address;
+            if (item.family !== 'IPv4') continue;
+            pushAddress(item.address, name, item.internal);
         }
     }
-    return '127.0.0.1';
+    return addresses.sort((a, b) => {
+        const aScore = (a.internal ? 2 : 0) + (a.linkLocal ? 4 : 0);
+        const bScore = (b.internal ? 2 : 0) + (b.linkLocal ? 4 : 0);
+        if (aScore !== bScore) return aScore - bScore;
+        return a.address.localeCompare(b.address, undefined, { numeric: true });
+    });
+}
+
+export function getLocalIp() {
+    return listLocalIpAddresses().find(item => !item.internal && !item.linkLocal)?.address
+        || listLocalIpAddresses().find(item => !item.internal)?.address
+        || '127.0.0.1';
+}
+
+export function normalizeLocalIpAddress(value) {
+    const requested = String(value || '').trim();
+    const addresses = listLocalIpAddresses();
+    return addresses.find(item => item.address === requested)?.address || getLocalIp();
 }
 
 export function archiveMimeType(filePath) {

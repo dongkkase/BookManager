@@ -11,8 +11,10 @@ import {
     buildOpdsApp,
     buildWebApp,
     buildWebdavApp,
+    getSharingNetworkAddresses,
     getSharingServerStatus,
     normalizeSharingServerType,
+    normalizeSharingServerAddress,
     normalizeSharingRoots,
     resolveWebdavPath,
     startSharingServer,
@@ -835,6 +837,27 @@ test('Web 서버 타입은 공백이 있어도 OPDS로 fallback하지 않는다'
         assert.equal(status.Web.port, port);
     } finally {
         await stopAllSharingServers();
+    }
+});
+
+test('공유 서버 주소는 사용 가능한 IP 목록에서 선택해 상태와 URL에 반영한다', async () => {
+    const port = await getFreePort();
+    const addresses = getSharingNetworkAddresses();
+    assert.ok(addresses.some(item => item.address === '127.0.0.1'));
+    assert.equal(normalizeSharingServerAddress('127.0.0.1'), '127.0.0.1');
+    const firstUsableAddress = addresses.find(item => !item.internal && !item.linkLocal);
+    if (firstUsableAddress) {
+        assert.equal(addresses[0].address, firstUsableAddress.address);
+    }
+
+    try {
+        const result = await startSharingServer('Web', { port, address: '127.0.0.1' }, {});
+        assert.equal(result.localIp, '127.0.0.1');
+        assert.equal(result.url, `http://127.0.0.1:${port}/`);
+        assert.equal(getSharingServerStatus().localIp, '127.0.0.1');
+        assert.equal(getSharingServerStatus().Web.url, `http://127.0.0.1:${port}/`);
+    } finally {
+        await stopSharingServer('Web');
     }
 });
 
