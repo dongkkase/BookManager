@@ -18,6 +18,60 @@ import {
     replaceZipEntry,
 } from './core/zipArchive.js';
 
+function pdfObject(number, body) {
+    return {
+        number,
+        buffer: Buffer.isBuffer(body)
+            ? Buffer.concat([Buffer.from(`${number} 0 obj\n`, 'latin1'), body, Buffer.from('\nendobj\n', 'latin1')])
+            : Buffer.from(`${number} 0 obj\n${body}\nendobj\n`, 'latin1'),
+    };
+}
+
+function pdfStreamObject(number, dict, data) {
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'latin1');
+    return pdfObject(number, Buffer.concat([
+        Buffer.from(`<< ${dict} /Length ${buffer.length} >>\nstream\n`, 'latin1'),
+        buffer,
+        Buffer.from('\nendstream', 'latin1'),
+    ]));
+}
+
+function buildPdf(objects, trailer) {
+    const chunks = [Buffer.from('%PDF-1.4\n', 'latin1')];
+    const offsets = new Map([[0, 0]]);
+    for (const object of objects) {
+        offsets.set(object.number, chunks.reduce((total, chunk) => total + chunk.length, 0));
+        chunks.push(object.buffer);
+    }
+    const xrefOffset = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const size = Math.max(...objects.map(object => object.number)) + 1;
+    const xrefLines = ['xref', `0 ${size}`, '0000000000 65535 f '];
+    for (let number = 1; number < size; number += 1) {
+        xrefLines.push(`${String(offsets.get(number) || 0).padStart(10, '0')} 00000 n `);
+    }
+    chunks.push(Buffer.from([
+        xrefLines.join('\n'),
+        'trailer',
+        `<< /Size ${size} ${trailer} >>`,
+        'startxref',
+        String(xrefOffset),
+        '%%EOF',
+        '',
+    ].join('\n'), 'latin1'));
+    return Buffer.concat(chunks);
+}
+
+function createPdfFixture() {
+    return buildPdf([
+        pdfObject(1, '<< /Type /Catalog /Pages 2 0 R >>'),
+        pdfObject(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+        pdfObject(3, '<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im0 4 0 R >> >> /MediaBox [0 0 300 420] /Contents 5 0 R >>'),
+        pdfStreamObject(4, '/Type /XObject /Subtype /Image /Width 300 /Height 420 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode', 'cover'),
+        pdfStreamObject(5, '', 'q 300 0 0 420 0 0 cm /Im0 Do Q'),
+        pdfObject(6, "<< /Title (Old PDF) /Author (Old Author) /Subject (Old Subject) /Keywords (old, tag) /Creator (Old Creator) /Producer (Old Producer) /CreationDate (D:20240102030405+09'00') /ModDate (D:20240102030405+09'00') /Trapped /False >>"),
+    ], '/Root 1 0 R /Info 6 0 R');
+}
+
 function find7z() {
     for (const candidate of ['/usr/local/bin/7z', '/opt/homebrew/bin/7z', '7z', '7za']) {
         const result = spawnSync(candidate, ['i'], { stdio: 'ignore' });
@@ -76,6 +130,7 @@ test('RAR과 CBR 메타데이터 쓰기 제한을 명확히 안내한다', () =>
     assert.equal(metadataWriteSupport('book.rar').supported, false);
     assert.equal(metadataWriteSupport('BOOK.CBR').supported, false);
     assert.equal(metadataWriteSupport('book.epub').supported, true);
+    assert.equal(metadataWriteSupport('book.pdf').supported, true);
     assert.match(metadataWriteSupport('book.rar').message, /CBZ|ZIP/);
     assert.equal(metadataWriteSupport('book.cbz').supported, true);
 });
@@ -330,6 +385,75 @@ test('EPUB 메타데이터는 OPF 패키지 문서에서 분석하고 저장한�
         assert.equal(reanalyzed.items[0].metadata.Series, '새 시리즈');
         assert.equal(reanalyzed.items[0].metadata.Volume, '2');
         assert.equal(reanalyzed.items[0].metadata.CommunityRating, '4.5');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('PDF 메타데이터와 표지는 분석하고 파일 내부에 저장한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-pdf-'));
+    try {
+        const source = path.join(root, '문서 PDF.pdf');
+        fs.writeFileSync(source, createPdfFixture());
+
+        const analyzed = await analyzeMetadataInputs([source], {});
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].bookType, 'pdf');
+        assert.equal(analyzed.items[0].metadata.Title, 'Old PDF');
+        assert.equal(analyzed.items[0].metadata.Writer, 'Old Author');
+        assert.equal(analyzed.items[0].metadata.Summary, 'Old Subject');
+        assert.equal(analyzed.items[0].metadata.Genre, 'old');
+        assert.equal(analyzed.items[0].metadata.Tags, 'tag');
+        assert.equal(analyzed.items[0].metadata.Creator, 'Old Creator');
+        assert.equal(analyzed.items[0].metadata.Producer, 'Old Producer');
+        assert.equal(analyzed.items[0].metadata.Trapped, 'False');
+        assert.match(analyzed.items[0].coverDataUrl, /^data:image\/jpeg;base64,/);
+
+        analyzed.items[0].metadata = {
+            ...analyzed.items[0].metadata,
+            Title: '새 PDF 제목',
+            Writer: '새 저자',
+            Summary: '새 설명',
+            Genre: '문서',
+            Tags: '테스트, PDF',
+            Publisher: '새 출판사',
+            ISBN: '9791111111111',
+            LanguageISO: 'ko',
+            CommunityRating: '4.0',
+            Rights: '개인 이용',
+            Creator: 'BookManager Test',
+            Producer: 'BookManager PDF Writer',
+            Trapped: 'Unknown',
+            Year: '2026',
+            Month: '6',
+            Day: '29',
+        };
+        const saved = await saveMetadataItems(analyzed.items, {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const reanalyzed = await analyzeMetadataInputs([source], {});
+        const metadata = reanalyzed.items[0].metadata;
+        assert.equal(metadata.Title, '새 PDF 제목');
+        assert.equal(metadata.Writer, '새 저자');
+        assert.equal(metadata.Summary, '새 설명');
+        assert.equal(metadata.Genre, '문서');
+        assert.equal(metadata.Tags, '테스트, PDF');
+        assert.equal(metadata.Publisher, '새 출판사');
+        assert.equal(metadata.ISBN, '9791111111111');
+        assert.equal(metadata.LanguageISO, 'ko');
+        assert.equal(metadata.CommunityRating, '4.0');
+        assert.equal(metadata.Rights, '개인 이용');
+        assert.equal(metadata.Creator, 'BookManager Test');
+        assert.equal(metadata.Producer, 'BookManager PDF Writer');
+        assert.equal(metadata.Trapped, 'Unknown');
+        assert.equal(metadata.Year, '2026');
+        assert.equal(metadata.Month, '06');
+        assert.equal(metadata.Day, '29');
+        assert.match(await loadMetadataCover(source, {}), /^data:image\/jpeg;base64,/);
+        assert.match(fs.readFileSync(source, 'latin1'), /\/Type \/Metadata \/Subtype \/XML/);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

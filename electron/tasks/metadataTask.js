@@ -14,12 +14,18 @@ import {
 } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 import { BOOK_EXTENSIONS, resolveBookType } from '../../src/metadata/metadataTypes.js';
+import {
+  analyzePdfDocument,
+  extractPdfCoverImage,
+  writePdfMetadata,
+} from '../pdfMetadata.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const DOCUMENT_EXTS = BOOK_EXTENSIONS;
 const METADATA_EXTS = new Set([...ARCHIVE_EXTS, ...DOCUMENT_EXTS]);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
 const EPUB_EXT = '.epub';
+const PDF_EXT = '.pdf';
 const EPUB_PACKAGE_MIME = 'application/oebps-package+xml';
 const XML_FIELDS = [
   'Series', 'SeriesGroup', 'Title', 'Number', 'Count', 'Volume',
@@ -49,6 +55,10 @@ function isDocument(filePath) {
 
 function isEpub(filePath) {
   return path.extname(filePath).toLowerCase() === EPUB_EXT;
+}
+
+function isPdf(filePath) {
+  return path.extname(filePath).toLowerCase() === PDF_EXT;
 }
 
 function isImage(filePath) {
@@ -662,7 +672,7 @@ async function analyzeEpubFile(filePath, options = {}) {
 }
 
 export async function loadMetadataCover(filePath, options = {}) {
-  if (!filePath || (isDocument(filePath) && !isEpub(filePath))) return '';
+  if (!filePath || (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath))) return '';
   const sevenZExe = options.sevenZExe;
   if (isEpub(filePath)) {
     const epubPackage = await readEpubPackage(filePath);
@@ -671,6 +681,10 @@ export async function loadMetadataCover(filePath, options = {}) {
     if (!coverEntry) return '';
     const coverBuffer = await readZipEntryFromFile(epubPackage.filePath, coverEntry, { maxBytes: 16 * 1024 * 1024 });
     return coverBuffer ? imageDataUrl(coverBuffer, coverEntry.name) : '';
+  }
+  if (isPdf(filePath)) {
+    const cover = await extractPdfCoverImage(filePath).catch(() => null);
+    return cover?.buffer ? imageDataUrl(cover.buffer, cover.imageName) : '';
   }
 
   const entries = await listArchiveEntries(filePath, sevenZExe);
@@ -729,14 +743,14 @@ function inferMetadataFromFilename(filePath, pageCount, options = {}) {
   const title = filename.replace(/\.(zip|cbz|cbr|rar|7z)$/i, '').trim();
   const bookType = options.bookType || resolveBookType({ path: filePath });
   const languageISO = normalizeLanguageIso(options.languageISO || options.defaultLanguageISO || options.lang || 'ko');
-  if (bookType === 'book') {
+  if (bookType === 'book' || bookType === 'pdf') {
     return {
       Series: title.replace(/\s*(?:v|vol\.?|volume)?\s*\d+(?:\.\d+)?권?\s*$/i, '').trim() || title,
       Title: title,
       Volume: normalizeEpubSeriesNumber(volumeMatch?.[1] || ''),
       PageCount: pageCount ? String(pageCount) : '',
       Manga: '',
-      Format: 'Novel',
+      Format: bookType === 'pdf' ? 'PDF' : 'Novel',
       LanguageISO: languageISO,
     };
   }
@@ -774,6 +788,7 @@ function metadataFromLibraryRecord(record = {}) {
     Tags: record.tags || '',
     Summary: record.summary || '',
     Notes: record.notes || '',
+    Rights: record.notes || '',
     Web: record.web || '',
     ISBN: record.isbn || '',
     PageCount: record.page_count || '',
@@ -783,6 +798,8 @@ function metadataFromLibraryRecord(record = {}) {
     Manga: record.manga || '',
     AgeRating: record.age_rating || '',
     CommunityRating: record.rating || '',
+    Creator: record.creators || '',
+    Producer: record.creators || '',
   };
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => String(value || '').trim() !== ''),
@@ -801,7 +818,7 @@ function metadataToLibraryRecord(item = {}) {
     volume: metadata.Volume || '',
     number: metadata.Number || '',
     writer: metadata.Writer || '',
-    creators: [metadata.Writer, metadata.Editor].filter(Boolean).join(', '),
+    creators: [metadata.Creator, metadata.Producer, metadata.Writer, metadata.Editor].filter(Boolean).join(', '),
     publisher: metadata.Publisher || '',
     imprint: metadata.Imprint || '',
     genre: metadata.Genre || '',
@@ -819,7 +836,7 @@ function metadataToLibraryRecord(item = {}) {
     locations: '',
     story_arc: metadata.StoryArc || '',
     tags: metadata.Tags || '',
-    notes: metadata.Notes || '',
+    notes: metadata.Rights || metadata.Notes || '',
     web: metadata.Web || '',
     isbn: metadata.ISBN || '',
     book_type: resolveBookType({ path: filePath }),
@@ -888,12 +905,14 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
       try {
         const bookType = resolveBookType({ path: filePath });
         const epubAnalysis = isEpub(filePath) ? await analyzeEpubFile(filePath, { includeCover: includeCovers }) : null;
+        const pdfAnalysis = isPdf(filePath) ? await analyzePdfDocument(filePath, { includeCover: includeCovers }) : null;
         const entries = isDocument(filePath) ? [] : await listArchiveEntries(filePath, sevenZExe);
         const imageEntries = entries
           .filter(entry => !entry.isDir && isImage(entry.name))
           .sort((a, b) => naturalCompare(a.name, b.name));
         const comicInfoEntry = entries.find(entry => !entry.isDir && path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
-        let metadata = inferMetadataFromFilename(filePath, imageEntries.length, { bookType, languageISO: defaultLanguageISO });
+        const pageCount = pdfAnalysis?.pageCount || imageEntries.length;
+        let metadata = inferMetadataFromFilename(filePath, pageCount, { bookType, languageISO: defaultLanguageISO });
 
         if (libraryDb) {
           const cached = await libraryDb.getFileInfo(filePath).catch(() => null);
@@ -904,12 +923,19 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           metadata = { ...metadata, ...epubAnalysis.metadata };
         }
 
+        if (pdfAnalysis?.metadata) {
+          metadata = { ...metadata, ...pdfAnalysis.metadata };
+        }
+
         if (comicInfoEntry) {
           const xmlBuffer = await extractArchiveFile(filePath, comicInfoEntry.name, sevenZExe, { maxBytes: 8 * 1024 * 1024 });
           metadata = { ...metadata, ...parseComicInfo(xmlBuffer.toString('utf8')) };
         }
 
         let coverDataUrl = epubAnalysis?.coverDataUrl || '';
+        if (!coverDataUrl && pdfAnalysis?.cover?.buffer) {
+          coverDataUrl = imageDataUrl(pdfAnalysis.cover.buffer, pdfAnalysis.cover.imageName);
+        }
         if (includeCovers && imageEntries[0]) {
           try {
             const coverBuffer = await extractArchiveFile(filePath, imageEntries[0].name, sevenZExe, { maxBytes: 16 * 1024 * 1024 });
@@ -929,7 +955,8 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           bookType,
           hasComicInfo: Boolean(comicInfoEntry),
           hasEpubMetadata: Boolean(epubAnalysis?.hasMetadata),
-          pageCount: imageEntries.length,
+          hasPdfMetadata: Boolean(pdfAnalysis?.hasMetadata),
+          pageCount,
           sizeMb: stat.size / (1024 * 1024),
           coverDataUrl,
           metadata,
@@ -949,7 +976,7 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
 
 export function metadataWriteSupport(filePath, lang = 'ko') {
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === EPUB_EXT) {
+  if (ext === EPUB_EXT || ext === PDF_EXT) {
     return { supported: true, message: '' };
   }
   if (DOCUMENT_EXTS.has(ext)) {
@@ -1195,6 +1222,11 @@ async function injectEpubMetadata(filePath, metadata, lang = 'ko') {
   return true;
 }
 
+async function injectPdfMetadata(filePath, metadata) {
+  await writePdfMetadata(filePath, metadata);
+  return true;
+}
+
 async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {
   const support = metadataWriteSupport(filePath, lang);
   if (!support.supported) throw new Error(support.message);
@@ -1251,7 +1283,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
     );
     const sourceHoldingPath = `${filePath}.bookmanager.metadata.old`;
     try {
-      if (isDocument(filePath) && !isEpub(filePath)) {
+      if (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath)) {
         await persistDocumentMetadata(item, options);
         stats.success.push(item.name || path.basename(filePath));
         continue;
@@ -1265,6 +1297,8 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       await fsp.copyFile(filePath, tempArchive);
       if (isEpub(filePath)) {
         await injectEpubMetadata(tempArchive, item.metadata || {}, options.lang);
+      } else if (isPdf(filePath)) {
+        await injectPdfMetadata(tempArchive, item.metadata || {}, options.lang);
       } else {
         await injectComicInfo(tempArchive, item.metadata || {}, sevenZExe, options.lang);
       }
@@ -1298,7 +1332,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         }
         throw error;
       }
-      if (isEpub(filePath)) {
+      if (isEpub(filePath) || isPdf(filePath)) {
         await persistDocumentMetadataIfPossible(item, options).catch(() => {});
       }
       stats.success.push(item.name || path.basename(filePath));

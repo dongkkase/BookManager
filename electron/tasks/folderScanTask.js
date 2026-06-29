@@ -14,6 +14,10 @@ import { translate } from '../../src/utils/i18n.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
 import { resolveBookType } from '../../src/metadata/metadataTypes.js';
 import { isBrokenPipeError } from '../utils/consolePipeGuard.js';
+import {
+  analyzePdfDocument,
+  pdfMetadataToArchiveMetadata,
+} from '../pdfMetadata.js';
 
 const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
@@ -664,6 +668,18 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
       result = await extractWith7Zip(filePath, options.sevenZExe, options);
     } else if (ext === '.epub') {
       result = await extractEpubMetadata(filePath, options);
+    } else if (ext === '.pdf') {
+      const pdfAnalysis = await analyzePdfDocument(filePath, { includeCover: options.skipCoverExtraction !== true });
+      result = {
+        ...pdfMetadataToArchiveMetadata(pdfAnalysis.metadata || {}),
+        has_metadata: pdfAnalysis.hasMetadata,
+        page_count: pdfAnalysis.pageCount ? String(pdfAnalysis.pageCount) : '',
+      };
+      if (pdfAnalysis.cover?.buffer) {
+        result.imageBuffer = pdfAnalysis.cover.buffer;
+        result.imageName = pdfAnalysis.cover.imageName;
+        result.resolution = `${pdfAnalysis.cover.width}x${pdfAnalysis.cover.height}`;
+      }
     }
 
     if (result.imageBuffer) {
@@ -723,9 +739,15 @@ function metadataFromCache(cached = {}) {
     date: cached.publish_date || '',
     format: normalizeMetadataFormat(cached.format),
     isbn: cached.isbn || '',
-    book_type: cached.book_type || resolveBookType({ path: cached.path, ext: cached.ext }),
+    book_type: resolveBookType({ path: cached.path, ext: cached.ext, book_type: cached.book_type }),
     resolution: cached.resolution || '',
     producer: cached.creators || '',
+    creator: '',
+    trapped: '',
+    creation_date: '',
+    modified_date: '',
+    metadata_date: '',
+    pdf_version: '',
     has_metadata: hasMetadata,
     thumb_path: cached.thumb_path || '',
   };
@@ -1216,6 +1238,7 @@ async function createFileData(fullPath, stats, options = {}) {
       archiveMeta.letterer,
       archiveMeta.cover_artist,
     ].filter(Boolean).join(', '),
+    creator: archiveMeta.creator || '',
     publisher: archiveMeta.publisher || '',
     imprint: archiveMeta.imprint || '',
     genre: archiveMeta.genre || '',
@@ -1236,6 +1259,11 @@ async function createFileData(fullPath, stats, options = {}) {
     age_rating: archiveMeta.age_rating || '',
     rating: archiveMeta.rating || '',
     date: archiveMeta.date || '',
+    trapped: archiveMeta.trapped || '',
+    creation_date: archiveMeta.creation_date || '',
+    modified_date: archiveMeta.modified_date || '',
+    metadata_date: archiveMeta.metadata_date || '',
+    pdf_version: archiveMeta.pdf_version || '',
     has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
     thumb_path: thumbnailPath,

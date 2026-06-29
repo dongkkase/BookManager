@@ -51,6 +51,11 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         'book',
         normalizedApiKeys,
     );
+    const preferredPdfApi = normalizeMetadataApiSourceForBookType(
+        config.preferred_meta_api_pdf || config.last_meta_api || '',
+        'pdf',
+        normalizedApiKeys,
+    );
 
     const fontFamily = String(config.font_family || 'Noto Sans KR');
 
@@ -80,6 +85,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         dup_check_folders: libraries,
         preferred_meta_api_comic: preferredComicApi,
         preferred_meta_api_book: preferredBookApi,
+        preferred_meta_api_pdf: preferredPdfApi,
         last_meta_api: String(config.last_meta_api || preferredComicApi || preferredBookApi || '').trim(),
         api_keys: normalizedApiKeys,
     };

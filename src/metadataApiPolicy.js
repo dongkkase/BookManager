@@ -15,6 +15,10 @@ export const BOOK_METADATA_API_SOURCES = [
   { value: 'Amazon', labelKey: 'api_source_amazon' },
 ];
 
+export const PDF_METADATA_API_SOURCES = [
+  ...BOOK_METADATA_API_SOURCES,
+];
+
 export const ALL_METADATA_API_SOURCES = [
   ...COMIC_METADATA_API_SOURCES,
   ...BOOK_METADATA_API_SOURCES.filter(source => (
@@ -36,12 +40,14 @@ export function apiSourceHasRequiredKey(source, apiKeys = {}) {
 }
 
 export function metadataApiSourcesForBookType(bookType = 'comic') {
+  if (bookType === 'pdf') return PDF_METADATA_API_SOURCES;
   return bookType === 'book'
     ? BOOK_METADATA_API_SOURCES
     : COMIC_METADATA_API_SOURCES;
 }
 
 export function metadataApiPreferenceKey(bookType = 'comic') {
+  if (bookType === 'pdf') return 'preferred_meta_api_pdf';
   return bookType === 'book'
     ? 'preferred_meta_api_book'
     : 'preferred_meta_api_comic';
@@ -68,7 +74,7 @@ export function metadataFromApiResult(result = {}, options = {}) {
     ...metadata,
     Summary: cleanMetadataSummary(metadata.Summary || result.summary || ''),
   };
-  if (options.bookType !== 'book') {
+  if (options.bookType === 'comic' || !options.bookType) {
     normalized.Manga = metadata.Manga || 'YesAndRightToLeft';
   } else if (metadata.Manga) {
     normalized.Manga = metadata.Manga;

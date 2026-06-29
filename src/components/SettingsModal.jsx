@@ -4,6 +4,7 @@ import { normalizeSettingsConfig, safeThreadLimit, uniquePaths } from '../settin
 import {
   BOOK_METADATA_API_SOURCES,
   COMIC_METADATA_API_SOURCES,
+  PDF_METADATA_API_SOURCES,
   normalizeMetadataApiSourceForBookType,
 } from '../metadataApiPolicy';
 import {
@@ -85,6 +86,7 @@ function normalizeConfig(config) {
     last_meta_api: '리디북스',
     preferred_meta_api_comic: '리디북스',
     preferred_meta_api_book: '리디북스',
+    preferred_meta_api_pdf: '리디북스',
     metadata_search_min_width: 1050,
     metadata_search_min_height: 780,
     ...(config || {}),
@@ -189,6 +191,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const preferredBookApi = normalizeMetadataApiSourceForBookType(
     localConfig.preferred_meta_api_book || localConfig.last_meta_api,
     'book',
+    localConfig.api_keys || {},
+  );
+  const preferredPdfApi = normalizeMetadataApiSourceForBookType(
+    localConfig.preferred_meta_api_pdf || localConfig.last_meta_api,
+    'pdf',
     localConfig.api_keys || {},
   );
   const bundledFontOptions = bundledFontOptionsFromFaces(bundledFontFaces);
@@ -550,6 +557,18 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                   onChange={event => handleChange('preferred_meta_api_book', event.target.value)}
                 >
                   {BOOK_METADATA_API_SOURCES.map(source => (
+                    <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="settings-row">
+                <span className="settings-label">{label('preferred_search_api_pdf', 'PDF')}</span>
+                <select
+                  className="settings-select"
+                  value={preferredPdfApi}
+                  onChange={event => handleChange('preferred_meta_api_pdf', event.target.value)}
+                >
+                  {PDF_METADATA_API_SOURCES.map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>

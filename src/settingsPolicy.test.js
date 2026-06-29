@@ -21,6 +21,7 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
         last_meta_api: 'Google Books',
         preferred_meta_api_comic: 'Vine',
         preferred_meta_api_book: 'Amazon',
+        preferred_meta_api_pdf: 'Google Books',
         api_keys: { custom_provider: 'keep-me' },
     }, 8);
 
@@ -36,6 +37,7 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.deepEqual(normalized.libraries, ['/Books']);
     assert.equal(normalized.preferred_meta_api_comic, 'Vine');
     assert.equal(normalized.preferred_meta_api_book, 'Amazon');
+    assert.equal(normalized.preferred_meta_api_pdf, 'Google Books');
     assert.equal(normalized.last_meta_api, 'Google Books');
     assert.equal(normalized.api_keys.custom_provider, 'keep-me');
 });
@@ -45,6 +47,7 @@ test('preferred metadata API settings inherit legacy last API where valid', () =
 
     assert.equal(normalized.preferred_meta_api_comic, 'Google Books');
     assert.equal(normalized.preferred_meta_api_book, 'Google Books');
+    assert.equal(normalized.preferred_meta_api_pdf, 'Google Books');
 });
 
 test('Default 글꼴 설정은 Noto Sans KR 기본값으로 정규화한다', () => {

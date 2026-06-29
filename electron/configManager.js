@@ -10,6 +10,7 @@ import {
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
 const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
 const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
+const PDF_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
 
 function normalizeLanguage(value, fallback = 'ko') {
   return SUPPORTED_LANGUAGES.has(value) ? value : fallback;
@@ -92,6 +93,11 @@ export class ConfigManager {
       BOOK_METADATA_API_SOURCES,
       defaults.preferred_meta_api_book,
     );
+    const preferredPdfApi = normalizeMetadataApiSource(
+      raw.preferred_meta_api_pdf || raw.last_meta_api || defaults.preferred_meta_api_pdf,
+      PDF_METADATA_API_SOURCES,
+      defaults.preferred_meta_api_pdf,
+    );
     const fontFamily = String(raw.font_family || defaults.font_family);
     return {
       ...defaults,
@@ -105,6 +111,7 @@ export class ConfigManager {
       folder_favorites: favorites,
       preferred_meta_api_comic: preferredComicApi,
       preferred_meta_api_book: preferredBookApi,
+      preferred_meta_api_pdf: preferredPdfApi,
       last_meta_api: String(raw.last_meta_api || preferredComicApi || defaults.last_meta_api).trim(),
       api_keys: {
         ...defaults.api_keys,
@@ -158,6 +165,7 @@ export class ConfigManager {
       last_meta_api: '리디북스',
       preferred_meta_api_comic: '리디북스',
       preferred_meta_api_book: '리디북스',
+      preferred_meta_api_pdf: '리디북스',
       api_keys: {
         aladin: '',
         vine: '',

@@ -1289,11 +1289,21 @@ function normalizeApiSource(apiName = '') {
 
 function normalizeSearchBookType(value = '') {
   const raw = String(value || '').trim().toLowerCase();
-  return ['book', 'document', 'novel', 'epub', 'pdf', 'txt'].includes(raw) ? 'book' : 'comic';
+  if (raw === 'pdf') return 'pdf';
+  return ['book', 'document', 'novel', 'epub', 'txt'].includes(raw) ? 'book' : 'comic';
+}
+
+function metadataFormatForBookType(bookType = 'comic') {
+  if (bookType === 'pdf') return 'PDF';
+  return bookType === 'book' ? 'Novel' : 'Manga';
+}
+
+function mangaValueForBookType(bookType = 'comic') {
+  return bookType === 'comic' ? 'YesAndRightToLeft' : '';
 }
 
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
-  const allowed = bookType === 'book'
+  const allowed = bookType === 'book' || bookType === 'pdf'
     ? new Set(['리디북스', '알라딘', 'Google Books', 'Amazon'])
     : new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
   return allowed.has(apiName);
@@ -1443,8 +1453,8 @@ async function searchGoogleBooks(query, apiKey = '', page = 1, bookType = 'comic
       CommunityRating: ratingScore,
       AgeRating: '',
       PubDate: info.publishedDate || '',
-      Format: bookType === 'book' ? 'Novel' : 'Manga',
-      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
+      Format: metadataFormatForBookType(bookType),
+      Manga: mangaValueForBookType(bookType),
       LanguageISO: info.language || '',
       ...date,
       Volume: '',
@@ -1597,8 +1607,8 @@ async function searchAladin(query, ttbKey = '', page = 1, bookType = 'comic') {
       CommunityRating: rating,
       AgeRating: '',
       PubDate: item.pubDate || '',
-      Format: bookType === 'book' ? 'Novel' : 'Manga',
-      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
+      Format: metadataFormatForBookType(bookType),
+      Manga: mangaValueForBookType(bookType),
       ...date,
       Volume: '',
       Number: '',
@@ -2003,8 +2013,8 @@ function parseRidibooksSearchHtml(html = '', page = 1, bookType = 'comic') {
       RatingScore: book.rating || '-',
       CommunityRating: book.rating || '',
       AgeRating: '',
-      Format: bookType === 'book' ? 'Novel' : 'Manga',
-      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
+      Format: metadataFormatForBookType(bookType),
+      Manga: mangaValueForBookType(bookType),
       LocalizedSeries: title,
       PubDate: pubDate,
       ...date,
@@ -2153,8 +2163,8 @@ async function searchRidibooks(query, page = 1, bookType = 'comic') {
       RatingScore: ratingScore || '-',
       CommunityRating: ratingScore,
       AgeRating: book.is_adult_only ? '19세 이상' : String(book.age_limit || '전체 이용가'),
-      Format: bookType === 'book' ? 'Novel' : 'Manga',
-      Manga: bookType === 'book' ? '' : 'YesAndRightToLeft',
+      Format: metadataFormatForBookType(bookType),
+      Manga: mangaValueForBookType(bookType),
       LocalizedSeries: book.title || '',
       PubDate: pubDate,
       ...date,

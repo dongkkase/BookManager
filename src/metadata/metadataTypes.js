@@ -1,6 +1,7 @@
 export const METADATA_BOOK_TYPE = Object.freeze({
     COMIC: 'comic',
     BOOK: 'book',
+    PDF: 'pdf',
 });
 
 export const BOOK_EXTENSIONS = new Set(['.pdf', '.epub', '.txt']);
@@ -24,13 +25,16 @@ export function extensionFromFile(file = {}) {
 }
 
 export function resolveBookType(file = {}) {
+    const ext = extensionFromFile(file);
+    if (ext === '.pdf') return METADATA_BOOK_TYPE.PDF;
+
     const explicit = String(file.book_type || file.bookType || file.media_type || file.mediaType || '')
         .trim()
         .toLowerCase();
+    if (['pdf'].includes(explicit)) return METADATA_BOOK_TYPE.PDF;
     if (['book', 'document', 'novel'].includes(explicit)) return METADATA_BOOK_TYPE.BOOK;
     if (['comic', 'manga', 'archive'].includes(explicit)) return METADATA_BOOK_TYPE.COMIC;
 
-    const ext = extensionFromFile(file);
     if (BOOK_EXTENSIONS.has(ext)) return METADATA_BOOK_TYPE.BOOK;
     return METADATA_BOOK_TYPE.COMIC;
 }

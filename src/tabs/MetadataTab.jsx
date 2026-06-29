@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { FaIcon } from '../components/FaIcon';
 import { BookMetadataEditor } from '../components/metadata/BookMetadataEditor';
 import { ComicMetadataEditor } from '../components/metadata/ComicMetadataEditor';
+import { PdfMetadataEditor } from '../components/metadata/PdfMetadataEditor';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
@@ -48,6 +49,16 @@ import {
   BOOK_SEARCHABLE_SELECT_FIELDS,
   BOOK_SECTION_TABS,
 } from '../metadata/bookMetadataFields';
+import {
+  PDF_BASIC_FIELDS,
+  PDF_DOCUMENT_FIELDS,
+  PDF_META_FIELD_IDS,
+  PDF_META_FIELDS,
+  PDF_PUBLISHER_FIELDS,
+  PDF_RIGHTS_FIELDS,
+  PDF_SEARCHABLE_SELECT_FIELDS,
+  PDF_SECTION_TABS,
+} from '../metadata/pdfMetadataFields';
 import {
   BASIC_FIELDS,
   CREATOR_FIELDS,
@@ -133,7 +144,9 @@ function isMetadataTreeTarget(target) {
 }
 
 function metadataModifiedDate(item) {
-  const value = item?.metadata?.ComicZipModifiedDate;
+  const value = item?.metadata?.ComicZipModifiedDate
+    || item?.metadata?.PdfMetadataDate
+    || item?.metadata?.PdfModifyDate;
   return formatMetadataModifiedDate(value, 'No Data');
 }
 
@@ -145,9 +158,9 @@ function uniqueSelectOptions(options = [], currentValue = '') {
 }
 
 function isSearchableSelectField(fieldId, bookType = 'comic') {
-  return bookType === 'book'
-    ? BOOK_SEARCHABLE_SELECT_FIELDS.has(fieldId)
-    : SEARCHABLE_SELECT_FIELDS.has(fieldId);
+  if (bookType === 'pdf') return PDF_SEARCHABLE_SELECT_FIELDS.has(fieldId);
+  if (bookType === 'book') return BOOK_SEARCHABLE_SELECT_FIELDS.has(fieldId);
+  return SEARCHABLE_SELECT_FIELDS.has(fieldId);
 }
 
 function splitTagValues(value = '') {
@@ -392,7 +405,19 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
   const currentApiSources = useMemo(() => metadataApiSourcesForBookType(activeBookType), [activeBookType]);
   const currentMetadataConfig = useMemo(() => (
-    activeBookType === 'book'
+    activeBookType === 'pdf'
+      ? {
+        sectionTabs: PDF_SECTION_TABS,
+        metaFields: PDF_META_FIELDS,
+        metaFieldIds: PDF_META_FIELD_IDS,
+        fields: {
+          basic: PDF_BASIC_FIELDS,
+          publisher: PDF_PUBLISHER_FIELDS,
+          document: PDF_DOCUMENT_FIELDS,
+          rights: PDF_RIGHTS_FIELDS,
+        },
+      }
+      : activeBookType === 'book'
       ? {
         sectionTabs: BOOK_SECTION_TABS,
         metaFields: BOOK_META_FIELDS,
@@ -419,9 +444,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const currentSectionTabs = currentMetadataConfig.sectionTabs;
   const currentMetaFields = currentMetadataConfig.metaFields;
   const currentMetaFieldIds = currentMetadataConfig.metaFieldIds;
-  const currentMetadataExtraFieldIds = activeBookType === 'book'
-    ? []
-    : ['ComicZipAddedDate', 'ComicZipModifiedDate'];
+  const currentMetadataExtraFieldIds = activeBookType === 'comic'
+    ? ['ComicZipAddedDate', 'ComicZipModifiedDate']
+    : [];
   const saveApiSourcePreference = useCallback((nextSource, bookType = activeBookType) => {
     if (!nextSource) return;
     setApiSource(nextSource);
@@ -468,6 +493,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     config?.last_meta_api,
     config?.preferred_meta_api_book,
     config?.preferred_meta_api_comic,
+    config?.preferred_meta_api_pdf,
   ]);
 
   const updateItem = (id, updater) => {
@@ -1029,8 +1055,12 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
   const sanitizeItemForSave = (item) => {
     const itemBookType = resolveBookType(item || {});
-    const fieldIds = itemBookType === 'book' ? BOOK_META_FIELD_IDS : META_FIELD_IDS;
-    const extraFieldIds = itemBookType === 'book' ? [] : ['ComicZipAddedDate', 'ComicZipModifiedDate'];
+    const fieldIds = itemBookType === 'pdf'
+      ? PDF_META_FIELD_IDS
+      : itemBookType === 'book'
+        ? BOOK_META_FIELD_IDS
+        : META_FIELD_IDS;
+    const extraFieldIds = itemBookType === 'comic' ? ['ComicZipAddedDate', 'ComicZipModifiedDate'] : [];
     return {
       ...item,
       metadata: pickMetadataFields(item.metadata || {}, fieldIds, extraFieldIds),
@@ -1522,6 +1552,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       tagOptions,
       t,
     };
+    if (activeBookType === 'pdf') {
+      return <PdfMetadataEditor key={`pdf-${activeItem?.id || 'none'}`} {...editorProps} />;
+    }
     return activeBookType === 'book'
       ? <BookMetadataEditor key={`book-${activeItem?.id || 'none'}`} {...editorProps} />
       : <ComicMetadataEditor key={`comic-${activeItem?.id || 'none'}`} {...editorProps} />;
@@ -1749,8 +1782,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           <div className="meta-bottom-left">
             <button className="meta-btn-magic" onClick={handleAutoMatchSeries} disabled={!activeItem || isWorking}><FaIcon name="wand" /> {t('t3_auto_match')}</button>
             <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Title')} disabled={!activeItem}>{t('t3_auto_title')}</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{activeBookType === 'book' ? text('t3_auto_series_number', '자동 시리즈번호 입력') : t('t3_auto_vol')}</button>
-            {activeBookType !== 'book' && (
+            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{activeBookType === 'book' || activeBookType === 'pdf' ? text('t3_auto_series_number', '자동 시리즈번호 입력') : t('t3_auto_vol')}</button>
+            {activeBookType === 'comic' && (
               <>
                 <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Number')} disabled={!activeItem}>{t('t3_auto_chap')}</button>
                 <button className="meta-btn" onClick={() => applyAutoFieldToSeries('PageCount')} disabled={!activeItem}>{t('t3_auto_pages')}</button>
