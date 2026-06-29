@@ -22,6 +22,7 @@ import {
 const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
+const PDF_THUMBNAIL_CACHE_PREFIX = 'pdf-first-page-v2-';
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 const execFileAsync = promisify(execFile);
 let folderScanStdoutBroken = false;
@@ -500,10 +501,11 @@ function getImageResolution(buffer, filename) {
   return '';
 }
 
-async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailDir, thumbnailEncoder) {
+async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailDir, thumbnailEncoder, imageTransform = null) {
   if (!imageBuffer || !thumbnailDir) return '';
+  const cachePrefix = path.extname(filePath).toLowerCase() === '.pdf' ? PDF_THUMBNAIL_CACHE_PREFIX : '';
   const encoded = typeof thumbnailEncoder === 'function'
-    ? await thumbnailEncoder(imageBuffer, { imageName, filePath, mtime, thumbnailDir })
+    ? await thumbnailEncoder(imageBuffer, { imageName, filePath, mtime, thumbnailDir, imageTransform })
     : null;
   const outputBuffer = encoded?.buffer || imageBuffer;
   const hash = crypto.createHash('md5')
@@ -512,7 +514,7 @@ async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailD
   const extension = encoded?.extension || (IMAGE_EXTS.includes(path.extname(imageName).toLowerCase())
     ? path.extname(imageName).toLowerCase()
     : '.jpg');
-  const thumbnailPath = path.join(thumbnailDir, `${hash}${extension}`);
+  const thumbnailPath = path.join(thumbnailDir, `${cachePrefix}${hash}${extension}`);
   await fs.promises.mkdir(thumbnailDir, { recursive: true });
   await fs.promises.writeFile(thumbnailPath, outputBuffer);
   return thumbnailPath;
@@ -678,6 +680,7 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
       if (pdfAnalysis.cover?.buffer) {
         result.imageBuffer = pdfAnalysis.cover.buffer;
         result.imageName = pdfAnalysis.cover.imageName;
+        result.imageTransform = pdfAnalysis.cover.imageTransform || null;
         result.resolution = `${pdfAnalysis.cover.width}x${pdfAnalysis.cover.height}`;
       }
     }
@@ -690,10 +693,12 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
         options.mtime,
         options.thumbnailDir,
         options.thumbnailEncoder,
+        result.imageTransform,
       );
     }
     delete result.imageBuffer;
     delete result.imageName;
+    delete result.imageTransform;
     return result;
   } catch (error) {
     console.warn(`Failed to extract archive metadata: ${filePath}`, error.message);
@@ -770,6 +775,14 @@ function isValidCache(cached, stats) {
     && Math.abs(Number(cached.mtime) - stats.mtimeMs / 1000) < 2
     && Number(cached.size) === stats.size,
   );
+}
+
+function hasCurrentCachedThumbnail(cached, ext) {
+  if (!cached?.thumb_path || !fs.existsSync(cached.thumb_path) || fs.statSync(cached.thumb_path).size <= 0) {
+    return false;
+  }
+  if (ext !== '.pdf') return true;
+  return path.basename(cached.thumb_path).startsWith(PDF_THUMBNAIL_CACHE_PREFIX);
 }
 
 function createQuickFileData(fullPath) {
@@ -1124,12 +1137,8 @@ async function createFileData(fullPath, stats, options = {}) {
   const cached = options.skipLibraryCache === true
     ? null
     : await safeGetCachedFileInfo(options.libraryDb, fullPath);
-  const cachedThumbnailExists = Boolean(
-    cached?.thumb_path
-    && fs.existsSync(cached.thumb_path)
-    && fs.statSync(cached.thumb_path).size > 0,
-  );
   const cacheValid = options.force !== true && isValidCache(cached, stats);
+  const cachedThumbnailExists = hasCurrentCachedThumbnail(cached, ext);
   const shouldRefreshEpubMetadata = cacheValid
     && ext === '.epub'
     && normalizeMetadataFormat(cached?.format) !== 'Novel';

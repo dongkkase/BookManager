@@ -2186,8 +2186,81 @@ const DEFAULT_LIBRARY_METADATA_CONCURRENCY = Math.max(1, Math.min(Math.ceil(CPU_
 const MAX_LIBRARY_METADATA_CONCURRENCY = Math.max(8, Math.min(32, Math.max(1, CPU_COUNT - 1)));
 const THUMBNAIL_TARGET_WIDTH = 500;
 const THUMBNAIL_WEBP_QUALITY = 82;
+const JPEG2000_THUMBNAIL_EXTENSIONS = new Set(['.jp2', '.jpx', '.j2k', '.jpf']);
+const JPEG_THUMBNAIL_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 const imageDataUrlCache = new Map();
 const execFileAsync = promisify(execFile);
+
+async function decodeJpeg2000ThumbnailWithFfmpeg(imageBuffer, sourceExt, ffmpegExe) {
+  if (!ffmpegExe) return null;
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bookmanager-thumbnail-jpx-'));
+  const inputExt = JPEG2000_THUMBNAIL_EXTENSIONS.has(sourceExt) ? sourceExt : '.jp2';
+  const inputPath = path.join(tempDir, `input${inputExt}`);
+  const outputPath = path.join(tempDir, 'output.png');
+  try {
+    await fs.promises.writeFile(inputPath, imageBuffer);
+    await execFileAsync(ffmpegExe, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-i',
+      inputPath,
+      '-frames:v',
+      '1',
+      outputPath,
+    ], {
+      windowsHide: true,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return await fs.promises.readFile(outputPath);
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function runJpegtran(inputPath, outputPath, args, jpegtranExe) {
+  await execFileAsync(jpegtranExe, [
+    '-copy',
+    'none',
+    ...args,
+    '-outfile',
+    outputPath,
+    inputPath,
+  ], {
+    windowsHide: true,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+}
+
+async function transformPdfJpegThumbnail(imageBuffer, sourceExt, imageTransform, jpegtranExe) {
+  if (!jpegtranExe || !JPEG_THUMBNAIL_EXTENSIONS.has(sourceExt) || !imageTransform) return imageBuffer;
+  const crop = imageTransform.crop;
+  const rotate = Number(imageTransform.rotate) || 0;
+  if ((!crop || !crop.width || !crop.height) && !rotate) return imageBuffer;
+
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bookmanager-thumbnail-jpegtran-'));
+  let currentPath = path.join(tempDir, `input${sourceExt}`);
+  try {
+    await fs.promises.writeFile(currentPath, imageBuffer);
+    if (crop?.width > 0 && crop?.height > 0) {
+      const croppedPath = path.join(tempDir, 'cropped.jpg');
+      await runJpegtran(currentPath, croppedPath, [
+        '-crop',
+        `${Math.floor(crop.width)}x${Math.floor(crop.height)}+${Math.floor(crop.x || 0)}+${Math.floor(crop.y || 0)}`,
+      ], jpegtranExe);
+      currentPath = croppedPath;
+    }
+    if ([90, 180, 270].includes(rotate)) {
+      const rotatedPath = path.join(tempDir, 'rotated.jpg');
+      await runJpegtran(currentPath, rotatedPath, ['-rotate', String(rotate)], jpegtranExe);
+      currentPath = rotatedPath;
+    }
+    return await fs.promises.readFile(currentPath);
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 function resolveLibraryMetadataConcurrency(options = {}) {
   const requested = Number(options.metadataConcurrency ?? options.maxThreads ?? options.max_threads);
@@ -2571,13 +2644,41 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
   let cwebpExePromise = null;
+  let ffmpegExePromise = null;
+  let jpegtranExePromise = null;
   const getCwebpExe = () => {
     if (!cwebpExePromise) cwebpExePromise = getBinPath('cwebp');
     return cwebpExePromise;
   };
+  const getFfmpegExe = () => {
+    if (!ffmpegExePromise) ffmpegExePromise = getBinPath('ffmpeg');
+    return ffmpegExePromise;
+  };
+  const getJpegtranExe = () => {
+    if (!jpegtranExePromise) jpegtranExePromise = getBinPath('jpegtran');
+    return jpegtranExePromise;
+  };
   const encodeThumbnail = async (imageBuffer, thumbnailOptions = {}) => {
     const cwebpExe = await getCwebpExe();
-    const sourceExt = path.extname(thumbnailOptions.imageName || '').toLowerCase();
+    let sourceExt = path.extname(thumbnailOptions.imageName || '').toLowerCase();
+    if (JPEG2000_THUMBNAIL_EXTENSIONS.has(sourceExt)) {
+      try {
+        const pngBuffer = await decodeJpeg2000ThumbnailWithFfmpeg(imageBuffer, sourceExt, await getFfmpegExe());
+        if (pngBuffer?.length) {
+          imageBuffer = pngBuffer;
+          sourceExt = '.png';
+        }
+      } catch (error) {
+        console.warn(`[Thumbnail] ffmpeg JPEG 2000 decode failed; using fallback: ${error.message}`);
+      }
+    }
+    if (JPEG_THUMBNAIL_EXTENSIONS.has(sourceExt) && thumbnailOptions.imageTransform) {
+      try {
+        imageBuffer = await transformPdfJpegThumbnail(imageBuffer, sourceExt, thumbnailOptions.imageTransform, await getJpegtranExe());
+      } catch (error) {
+        console.warn(`[Thumbnail] PDF JPEG transform failed; using original image: ${error.message}`);
+      }
+    }
     const directCwebpExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff']);
     if (cwebpExe && directCwebpExts.has(sourceExt)) {
       const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bookmanager-thumbnail-'));

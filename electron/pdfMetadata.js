@@ -16,6 +16,20 @@ const PDF_INFO_FIELDS = [
 
 const PDF_NAME_ESCAPE = /#([0-9a-fA-F]{2})/g;
 const STREAM_SCAN_LIMIT = 220 * 1024 * 1024;
+const PDF_FILTER_ALIASES = {
+    AHx: 'ASCIIHexDecode',
+    A85: 'ASCII85Decode',
+    Fl: 'FlateDecode',
+    RL: 'RunLengthDecode',
+    DCT: 'DCTDecode',
+    JPX: 'JPXDecode',
+    CCF: 'CCITTFaxDecode',
+};
+const PDF_COLOR_SPACE_ALIASES = {
+    G: 'DeviceGray',
+    RGB: 'DeviceRGB',
+    CMYK: 'DeviceCMYK',
+};
 
 function normalizeMetadataText(value = '') {
     return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -45,6 +59,10 @@ function decodePdfName(value = '') {
 
 function isWhitespace(char = '') {
     return /\s/.test(char);
+}
+
+function isPdfDelimiter(char = '') {
+    return !char || isWhitespace(char) || /[<>\[\]\(\){}\/%]/.test(char);
 }
 
 function skipWhitespace(text = '', index = 0) {
@@ -198,6 +216,13 @@ function findObjectDictionary(text = '', objectNumber = 0, generation = 0) {
     return text.slice(dictStart, dictEnd);
 }
 
+function pdfObjectKey(refOrNumber = 0, generation = 0) {
+    if (typeof refOrNumber === 'object' && refOrNumber) {
+        return `${refOrNumber.objectNumber || 0}:${refOrNumber.generation || 0}`;
+    }
+    return `${refOrNumber || 0}:${generation || 0}`;
+}
+
 function parseTrailer(buffer) {
     const text = buffer.toString('latin1');
     const startXrefMatches = [...text.matchAll(/startxref\s+(\d+)/g)];
@@ -253,6 +278,14 @@ function parseNamesForKey(dict = '', key = '') {
         .map(match => decodePdfName(match[1]));
 }
 
+function parseNamesForAnyKey(dict = '', keys = []) {
+    for (const key of keys) {
+        const names = parseNamesForKey(dict, key);
+        if (names.length > 0) return names;
+    }
+    return [];
+}
+
 function parseNumberForKey(dict = '', key = '') {
     const keyMatch = new RegExp(`/${key}\\b`).exec(dict);
     if (!keyMatch) return 0;
@@ -260,11 +293,102 @@ function parseNumberForKey(dict = '', key = '') {
     return Number(value) || 0;
 }
 
+function parseNumberForAnyKey(dict = '', keys = []) {
+    for (const key of keys) {
+        const value = parseNumberForKey(dict, key);
+        if (value) return value;
+    }
+    return 0;
+}
+
+function parseNumberArray(raw = '') {
+    return [...String(raw || '').matchAll(/-?\d+(?:\.\d+)?/g)].map(match => Number(match[0]));
+}
+
+function parsePageBox(raw = '') {
+    const values = parseNumberArray(raw).slice(0, 4);
+    if (values.length !== 4) return null;
+    const [left, bottom, right, top] = values;
+    if (right <= left || top <= bottom) return null;
+    return { left, bottom, right, top, width: right - left, height: top - bottom };
+}
+
+function rawValueAfterKey(dict = '', key = '') {
+    const keyMatch = new RegExp(`/${key}\\b`).exec(dict);
+    if (!keyMatch) return '';
+    const index = skipWhitespace(dict, keyMatch.index + keyMatch[0].length);
+    const char = dict[index];
+    if (char === '<' && dict[index + 1] === '<') {
+        const endIndex = findMatchingDictionaryEnd(dict, index);
+        return endIndex > index ? dict.slice(index, endIndex) : '';
+    }
+    if (char === '[') {
+        const endIndex = dict.indexOf(']', index + 1);
+        return endIndex > index ? dict.slice(index, endIndex + 1) : '';
+    }
+    const ref = dict.slice(index).match(/^(\d+)\s+(\d+)\s+R\b/)?.[0] || '';
+    if (ref) return ref;
+    const name = dict.slice(index).match(/^\/[^\s<>\[\]\(\)\/%]+/)?.[0] || '';
+    if (name) return name;
+    return dict.slice(index).match(/^[^\s<>\[\]\(\)\/%]+/)?.[0] || '';
+}
+
+function rawValueAfterAnyKey(dict = '', keys = []) {
+    for (const key of keys) {
+        const value = rawValueAfterKey(dict, key);
+        if (value) return value;
+    }
+    return '';
+}
+
+function parseReference(raw = '') {
+    const match = String(raw || '').match(/\b(\d+)\s+(\d+)\s+R\b/);
+    return match ? { objectNumber: Number(match[1]), generation: Number(match[2]) || 0 } : null;
+}
+
+function parseReferenceForKey(dict = '', key = '') {
+    return parseReference(rawValueAfterKey(dict, key));
+}
+
+function parseReferenceArrayForKey(dict = '', key = '') {
+    const raw = rawValueAfterKey(dict, key);
+    if (!raw.startsWith('[')) {
+        const ref = parseReference(raw);
+        return ref ? [ref] : [];
+    }
+    return [...raw.matchAll(/\b(\d+)\s+(\d+)\s+R\b/g)]
+        .map(match => ({ objectNumber: Number(match[1]), generation: Number(match[2]) || 0 }));
+}
+
+function parseNamedReferences(dict = '') {
+    const refs = new Map();
+    for (const match of String(dict || '').matchAll(/\/([^\s<>\[\]\(\)\/%]+)\s+(\d+)\s+(\d+)\s+R\b/g)) {
+        refs.set(decodePdfName(match[1]), {
+            objectNumber: Number(match[2]),
+            generation: Number(match[3]) || 0,
+        });
+    }
+    return refs;
+}
+
 function parseColorSpace(dict = '') {
     const direct = dict.match(/\/ColorSpace\s+\/([^\s<>\[\]\(\)\/%]+)/)?.[1] || '';
     if (direct) return decodePdfName(direct);
     const array = dict.match(/\/ColorSpace\s+\[\s*\/([^\s<>\[\]\(\)\/%]+)/)?.[1] || '';
     return array ? decodePdfName(array) : '';
+}
+
+function normalizePdfFilterName(name = '') {
+    return PDF_FILTER_ALIASES[name] || name;
+}
+
+function normalizePdfColorSpaceName(name = '') {
+    return PDF_COLOR_SPACE_ALIASES[name] || name;
+}
+
+function parseInlineColorSpace(dict = '') {
+    const name = parseNamesForAnyKey(dict, ['ColorSpace', 'CS'])[0] || '';
+    return normalizePdfColorSpaceName(name);
 }
 
 function streamDataStart(text = '', streamIndex = 0) {
@@ -305,9 +429,12 @@ function findPdfStreams(buffer) {
         const dataStart = streamDataStart(text, streamIndex);
         const endStreamIndex = text.indexOf('endstream', dataStart);
         if (dictStart >= 0 && dictEnd > dictStart && endStreamIndex > dataStart) {
+            const objectHeader = [...text.slice(Math.max(0, dictStart - 128), dictStart).matchAll(/(\d+)\s+(\d+)\s+obj\b/g)].at(-1);
             streams.push({
                 dict: text.slice(dictStart, dictEnd + 2),
                 data: buffer.subarray(dataStart, endStreamIndex),
+                objectNumber: objectHeader ? Number(objectHeader[1]) : 0,
+                generation: objectHeader ? Number(objectHeader[2]) || 0 : 0,
             });
             searchIndex = endStreamIndex + 'endstream'.length;
         } else {
@@ -326,11 +453,527 @@ function inflatePdfStream(data) {
     }
 }
 
+function decodeAsciiHex(data) {
+    const clean = data.toString('latin1').replace(/>.*/, '').replace(/\s+/g, '');
+    const hex = clean.length % 2 === 0 ? clean : `${clean}0`;
+    return Buffer.from(hex, 'hex');
+}
+
+function decodeAscii85(data) {
+    const text = data.toString('latin1').replace(/^<~/, '').replace(/~>[\s\S]*$/, '').replace(/\s+/g, '');
+    const bytes = [];
+    let group = [];
+    for (const char of text) {
+        if (char === 'z' && group.length === 0) {
+            bytes.push(0, 0, 0, 0);
+            continue;
+        }
+        const code = char.charCodeAt(0);
+        if (code < 33 || code > 117) continue;
+        group.push(code - 33);
+        if (group.length === 5) {
+            let value = 0;
+            for (const digit of group) value = value * 85 + digit;
+            bytes.push((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+            group = [];
+        }
+    }
+    if (group.length > 0) {
+        const outputCount = group.length - 1;
+        while (group.length < 5) group.push(84);
+        let value = 0;
+        for (const digit of group) value = value * 85 + digit;
+        const decoded = [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+        bytes.push(...decoded.slice(0, outputCount));
+    }
+    return Buffer.from(bytes);
+}
+
+function decodeRunLength(data) {
+    const output = [];
+    for (let index = 0; index < data.length;) {
+        const length = data[index];
+        index += 1;
+        if (length === 128) break;
+        if (length <= 127) {
+            const count = length + 1;
+            output.push(...data.subarray(index, index + count));
+            index += count;
+        } else {
+            const count = 257 - length;
+            const value = data[index];
+            index += 1;
+            for (let repeat = 0; repeat < count; repeat += 1) output.push(value);
+        }
+    }
+    return Buffer.from(output);
+}
+
 function decodePdfStreamData(data, filters = []) {
-    if (filters.length === 0) return data;
-    if (filters.length === 1 && filters[0] === 'FlateDecode') return inflatePdfStream(data);
-    if (filters.length === 1 && filters[0] === 'DCTDecode') return data;
+    let output = data;
+    for (const rawFilter of filters) {
+        const filter = normalizePdfFilterName(rawFilter);
+        if (filter === 'FlateDecode' || filter === 'Fl') {
+            output = inflatePdfStream(output);
+        } else if (filter === 'ASCIIHexDecode' || filter === 'AHx') {
+            output = decodeAsciiHex(output);
+        } else if (filter === 'ASCII85Decode' || filter === 'A85') {
+            output = decodeAscii85(output);
+        } else if (filter === 'RunLengthDecode' || filter === 'RL') {
+            output = decodeRunLength(output);
+        } else if (filter === 'DCTDecode' || filter === 'DCT' || filter === 'JPXDecode' || filter === 'JBIG2Decode') {
+            return output;
+        } else {
+            return null;
+        }
+    }
+    return output;
+}
+
+function addDirectObjectDictionaries(text = '', dictionaries = new Map()) {
+    for (const match of text.matchAll(/\b(\d+)\s+(\d+)\s+obj\b/g)) {
+        const objectNumber = Number(match[1]);
+        const generation = Number(match[2]) || 0;
+        const objectEnd = text.indexOf('endobj', match.index);
+        if (objectEnd < 0) continue;
+        const dictStart = text.indexOf('<<', match.index + match[0].length);
+        if (dictStart < 0 || dictStart > objectEnd) continue;
+        const dictEnd = findMatchingDictionaryEnd(text, dictStart);
+        if (dictEnd < 0 || dictEnd > objectEnd) continue;
+        dictionaries.set(pdfObjectKey(objectNumber, generation), text.slice(dictStart, dictEnd));
+    }
+}
+
+function addObjectStreamDictionaries(streams = [], dictionaries = new Map()) {
+    for (const stream of streams) {
+        if (!/\/Type\s*\/ObjStm\b/i.test(stream.dict)) continue;
+        const first = parseNumberForKey(stream.dict, 'First');
+        const count = parseNumberForKey(stream.dict, 'N');
+        if (!first || !count) continue;
+        const filters = parseNamesForKey(stream.dict, 'Filter');
+        const decoded = decodePdfStreamData(stream.data, filters);
+        if (!decoded || decoded.length <= first) continue;
+        const text = decoded.toString('latin1');
+        const pairs = [...text.slice(0, first).matchAll(/(\d+)\s+(\d+)/g)]
+            .slice(0, count)
+            .map(match => ({
+                objectNumber: Number(match[1]),
+                offset: Number(match[2]),
+            }));
+
+        for (let index = 0; index < pairs.length; index += 1) {
+            const entry = pairs[index];
+            const nextOffset = pairs[index + 1]?.offset ?? (decoded.length - first);
+            const body = text.slice(first + entry.offset, first + nextOffset).trim();
+            if (!body.startsWith('<<')) continue;
+            const dictEnd = findMatchingDictionaryEnd(body, 0);
+            if (dictEnd < 0) continue;
+            dictionaries.set(pdfObjectKey(entry.objectNumber, 0), body.slice(0, dictEnd));
+        }
+    }
+}
+
+function buildPdfObjectDictionaryMap(buffer, streams = null) {
+    const text = buffer.toString('latin1');
+    const dictionaries = new Map();
+    addDirectObjectDictionaries(text, dictionaries);
+    addObjectStreamDictionaries(streams || findPdfStreams(buffer), dictionaries);
+    return dictionaries;
+}
+
+function isPdfPageDictionary(dict = '') {
+    return /\/Type\s*\/Page\b/i.test(dict);
+}
+
+function isPdfPagesDictionary(dict = '') {
+    return /\/Type\s*\/Pages\b/i.test(dict);
+}
+
+function pdfReferenceFromKey(key = '') {
+    const [objectNumber, generation] = String(key || '').split(':').map(value => Number(value) || 0);
+    return objectNumber ? { objectNumber, generation } : null;
+}
+
+function firstPageReferenceFromTree(rootRef = null, getDictionary = () => '', dictionaries = new Map()) {
+    const visited = new Set();
+
+    const visit = ref => {
+        if (!ref?.objectNumber) return null;
+        const key = pdfObjectKey(ref);
+        if (visited.has(key)) return null;
+        visited.add(key);
+
+        const dict = getDictionary(ref);
+        if (!dict) return null;
+        if (isPdfPageDictionary(dict)) return ref;
+        if (!isPdfPagesDictionary(dict)) return null;
+
+        const kids = parseReferenceArrayForKey(dict, 'Kids');
+        for (const kid of kids) {
+            const pageRef = visit(kid);
+            if (pageRef) return pageRef;
+        }
+        return null;
+    };
+
+    const catalogDict = rootRef ? getDictionary(rootRef) : '';
+    const pagesRef = parseReferenceForKey(catalogDict, 'Pages');
+    const treePageRef = visit(pagesRef);
+    if (treePageRef) return treePageRef;
+
+    for (const [key, dict] of dictionaries) {
+        if (isPdfPageDictionary(dict)) return pdfReferenceFromKey(key);
+    }
     return null;
+}
+
+function resolveDictionaryValue(raw = '', text = '', getDictionary = null) {
+    const direct = String(raw || '').trim();
+    if (direct.startsWith('<<')) return direct;
+    const ref = parseReference(direct);
+    return ref ? (getDictionary ? getDictionary(ref) : findObjectDictionary(text, ref.objectNumber, ref.generation)) : '';
+}
+
+function inheritedResourcesDictionary(text = '', pageRef = null, getDictionary = null) {
+    let ref = pageRef;
+    const visited = new Set();
+    while (ref?.objectNumber) {
+        const key = pdfObjectKey(ref);
+        if (visited.has(key)) return '';
+        visited.add(key);
+        const dict = getDictionary ? getDictionary(ref) : findObjectDictionary(text, ref.objectNumber, ref.generation);
+        if (!dict) return '';
+        const resources = resolveDictionaryValue(rawValueAfterKey(dict, 'Resources'), text, getDictionary);
+        if (resources) return resources;
+        ref = parseReferenceForKey(dict, 'Parent');
+    }
+    return '';
+}
+
+function inheritedRawValueForKey(text = '', pageRef = null, key = '', getDictionary = null) {
+    let ref = pageRef;
+    const visited = new Set();
+    while (ref?.objectNumber) {
+        const refKey = pdfObjectKey(ref);
+        if (visited.has(refKey)) return '';
+        visited.add(refKey);
+        const dict = getDictionary ? getDictionary(ref) : findObjectDictionary(text, ref.objectNumber, ref.generation);
+        if (!dict) return '';
+        const value = rawValueAfterKey(dict, key);
+        if (value) return value;
+        ref = parseReferenceForKey(dict, 'Parent');
+    }
+    return '';
+}
+
+function contentTextForPage(text = '', pageDict = '', streamsByObject = new Map()) {
+    const refs = parseReferenceArrayForKey(pageDict, 'Contents');
+    return contentTextForReferences(refs, streamsByObject);
+}
+
+function contentTextForReferences(refs = [], streamsByObject = new Map()) {
+    return refs
+        .map(ref => streamsByObject.get(`${ref.objectNumber}:${ref.generation}`))
+        .filter(Boolean)
+        .map(stream => {
+            const filters = parseNamesForKey(stream.dict, 'Filter');
+            const decoded = decodePdfStreamData(stream.data, filters);
+            return decoded ? decoded.toString('latin1') : '';
+        })
+        .join('\n');
+}
+
+function xObjectReferencesFromResources(text = '', resources = '', getDictionary = null) {
+    const xObjectDict = resolveDictionaryValue(rawValueAfterKey(resources, 'XObject'), text, getDictionary);
+    return parseNamedReferences(xObjectDict);
+}
+
+function inlineImageDataStart(text = '', index = 0) {
+    if (text[index] === '\r' && text[index + 1] === '\n') return index + 2;
+    if (text[index] === '\n' || text[index] === '\r' || text[index] === ' ') return index + 1;
+    return index;
+}
+
+function findInlineImageId(text = '', startIndex = 0) {
+    const pattern = /\bID\b/g;
+    pattern.lastIndex = startIndex;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+        if (!isPdfDelimiter(text[match.index - 1]) || !isWhitespace(text[match.index + 2] || '')) continue;
+        return {
+            dictEnd: match.index,
+            dataStart: inlineImageDataStart(text, match.index + 2),
+        };
+    }
+    return null;
+}
+
+function findInlineImageEnd(text = '', startIndex = 0) {
+    let searchIndex = startIndex;
+    while (searchIndex < text.length) {
+        const endIndex = text.indexOf('EI', searchIndex);
+        if (endIndex < 0) return -1;
+        if (isWhitespace(text[endIndex - 1] || '') && isPdfDelimiter(text[endIndex + 2] || '')) {
+            return endIndex;
+        }
+        searchIndex = endIndex + 2;
+    }
+    return -1;
+}
+
+function imageCandidateFromInlineImage(dict = '', data = Buffer.alloc(0)) {
+    const width = parseNumberForAnyKey(dict, ['Width', 'W']);
+    const height = parseNumberForAnyKey(dict, ['Height', 'H']);
+    const bitsPerComponent = parseNumberForAnyKey(dict, ['BitsPerComponent', 'BPC']) || 8;
+    const colorSpace = parseInlineColorSpace(dict) || 'DeviceRGB';
+    const filters = parseNamesForAnyKey(dict, ['Filter', 'F']).map(normalizePdfFilterName);
+    const decodeParms = rawValueAfterAnyKey(dict, ['DecodeParms', 'DP']);
+    const streamDict = [
+        '/Subtype /Image',
+        `/Width ${width}`,
+        `/Height ${height}`,
+        `/ColorSpace /${colorSpace}`,
+        `/BitsPerComponent ${bitsPerComponent}`,
+    ];
+    if (filters.length === 1) {
+        streamDict.push(`/Filter /${filters[0]}`);
+    } else if (filters.length > 1) {
+        streamDict.push(`/Filter [${filters.map(filter => `/${filter}`).join(' ')}]`);
+    }
+    if (decodeParms) streamDict.push(`/DecodeParms ${decodeParms}`);
+    return imageCandidateFromStream({
+        dict: `<< ${streamDict.join(' ')} >>`,
+        data,
+    });
+}
+
+function imageCandidatesFromInlineImages(contentText = '') {
+    const candidates = [];
+    const pattern = /\bBI\b/g;
+    let match;
+    while ((match = pattern.exec(contentText)) !== null) {
+        if (!isPdfDelimiter(contentText[match.index - 1]) || !isPdfDelimiter(contentText[match.index + 2])) continue;
+        const id = findInlineImageId(contentText, pattern.lastIndex);
+        if (!id) continue;
+        const endIndex = findInlineImageEnd(contentText, id.dataStart);
+        if (endIndex < 0) break;
+        let dataEnd = endIndex;
+        if (isWhitespace(contentText[dataEnd - 1] || '')) dataEnd -= 1;
+        const dict = contentText.slice(pattern.lastIndex, id.dictEnd);
+        const data = Buffer.from(contentText.slice(id.dataStart, dataEnd), 'latin1');
+        const image = imageCandidateFromInlineImage(dict, data);
+        if (image) candidates.push(image);
+        pattern.lastIndex = endIndex + 2;
+    }
+    return candidates;
+}
+
+function streamObjectKey(stream = {}) {
+    return `${stream.objectNumber || 0}:${stream.generation || 0}`;
+}
+
+function drawMatrixBeforeOperator(contentText = '', operatorIndex = 0) {
+    const previous = contentText.slice(Math.max(0, operatorIndex - 512), operatorIndex);
+    const matrixPattern = /(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+cm\b/g;
+    const match = [...previous.matchAll(matrixPattern)].at(-1);
+    return match ? {
+        a: Number(match[1]),
+        b: Number(match[2]),
+        c: Number(match[3]),
+        d: Number(match[4]),
+        e: Number(match[5]),
+        f: Number(match[6]),
+    } : null;
+}
+
+function normalizeRightAngle(value = 0) {
+    const angle = ((Math.round(Number(value) || 0) % 360) + 360) % 360;
+    return [90, 180, 270].includes(angle) ? angle : 0;
+}
+
+function pageImageTransformForDraw(image = null, page = {}, drawMatrix = null) {
+    if (!image || !page.mediaBox || !drawMatrix) return null;
+    const mediaBox = page.mediaBox;
+    const cropBox = page.cropBox || mediaBox;
+    const rotate = normalizeRightAngle(page.rotate);
+    const noCrop = Math.abs(cropBox.left - mediaBox.left) < 0.001
+        && Math.abs(cropBox.bottom - mediaBox.bottom) < 0.001
+        && Math.abs(cropBox.right - mediaBox.right) < 0.001
+        && Math.abs(cropBox.top - mediaBox.top) < 0.001;
+    if (noCrop && !rotate) return null;
+    if (Math.abs(drawMatrix.b) > 0.001 || Math.abs(drawMatrix.c) > 0.001) {
+        return rotate ? { rotate } : null;
+    }
+
+    const drawLeft = Math.min(drawMatrix.e, drawMatrix.e + drawMatrix.a);
+    const drawRight = Math.max(drawMatrix.e, drawMatrix.e + drawMatrix.a);
+    const drawBottom = Math.min(drawMatrix.f, drawMatrix.f + drawMatrix.d);
+    const drawTop = Math.max(drawMatrix.f, drawMatrix.f + drawMatrix.d);
+    const drawWidth = drawRight - drawLeft;
+    const drawHeight = drawTop - drawBottom;
+    if (drawWidth <= 0 || drawHeight <= 0) return rotate ? { rotate } : null;
+
+    const cropLeft = Math.max(cropBox.left, drawLeft);
+    const cropRight = Math.min(cropBox.right, drawRight);
+    const cropBottom = Math.max(cropBox.bottom, drawBottom);
+    const cropTop = Math.min(cropBox.top, drawTop);
+    if (cropRight <= cropLeft || cropTop <= cropBottom) return rotate ? { rotate } : null;
+
+    const pixelLeft = ((cropLeft - drawLeft) / drawWidth) * image.width;
+    const pixelRight = ((cropRight - drawLeft) / drawWidth) * image.width;
+    const pixelTop = ((drawTop - cropTop) / drawHeight) * image.height;
+    const pixelBottom = ((drawTop - cropBottom) / drawHeight) * image.height;
+    const crop = {
+        x: Math.max(0, Math.floor(pixelLeft)),
+        y: Math.max(0, Math.floor(pixelTop)),
+        width: Math.min(image.width, Math.ceil(pixelRight)) - Math.max(0, Math.floor(pixelLeft)),
+        height: Math.min(image.height, Math.ceil(pixelBottom)) - Math.max(0, Math.floor(pixelTop)),
+    };
+
+    if (crop.width <= 0 || crop.height <= 0) return rotate ? { rotate } : null;
+    const fullImageCrop = crop.x === 0 && crop.y === 0 && crop.width === image.width && crop.height === image.height;
+    return {
+        ...(fullImageCrop ? {} : { crop }),
+        ...(rotate ? { rotate } : {}),
+    };
+}
+
+function imageCandidatesFromContent(contentText = '', resources = '', text = '', streamsByObject = new Map(), getDictionary = null, visited = new Set(), depth = 0, page = {}) {
+    if (!contentText || depth > 8) return [];
+    const xObjects = xObjectReferencesFromResources(text, resources, getDictionary);
+    const candidates = imageCandidatesFromInlineImages(contentText);
+    for (const match of contentText.matchAll(/\/([^\s<>\[\]\(\)\/%]+)\s+Do\b/g)) {
+        const ref = xObjects.get(decodePdfName(match[1]));
+        const stream = ref ? streamsByObject.get(pdfObjectKey(ref)) : null;
+        if (!stream) continue;
+        const streamKey = streamObjectKey(stream);
+        if (visited.has(streamKey)) continue;
+        const image = imageCandidateFromStream(stream);
+        if (image) {
+            const imageTransform = depth === 0 ? pageImageTransformForDraw(image, page, drawMatrixBeforeOperator(contentText, match.index)) : null;
+            if (imageTransform) image.imageTransform = imageTransform;
+            candidates.push(image);
+            continue;
+        }
+        if (!/\/Subtype\s*\/Form\b/i.test(stream.dict)) continue;
+        visited.add(streamKey);
+        const filters = parseNamesForKey(stream.dict, 'Filter');
+        const decoded = decodePdfStreamData(stream.data, filters);
+        const formResources = resolveDictionaryValue(rawValueAfterKey(stream.dict, 'Resources'), text, getDictionary) || resources;
+        candidates.push(...imageCandidatesFromContent(
+            decoded ? decoded.toString('latin1') : '',
+            formResources,
+            text,
+            streamsByObject,
+            getDictionary,
+            visited,
+            depth + 1,
+            page,
+        ));
+        visited.delete(streamKey);
+    }
+    return candidates;
+}
+
+function imageCandidatesFromResources(resources = '', text = '', streamsByObject = new Map(), getDictionary = null, visited = new Set(), depth = 0) {
+    if (!resources || depth > 8) return [];
+    const xObjects = xObjectReferencesFromResources(text, resources, getDictionary);
+    const candidates = [];
+    for (const ref of xObjects.values()) {
+        const stream = streamsByObject.get(pdfObjectKey(ref));
+        if (!stream) continue;
+        const streamKey = streamObjectKey(stream);
+        if (visited.has(streamKey)) continue;
+        const image = imageCandidateFromStream(stream);
+        if (image) {
+            candidates.push(image);
+            continue;
+        }
+        if (!/\/Subtype\s*\/Form\b/i.test(stream.dict)) continue;
+        visited.add(streamKey);
+        const filters = parseNamesForKey(stream.dict, 'Filter');
+        const decoded = decodePdfStreamData(stream.data, filters);
+        const formResources = resolveDictionaryValue(rawValueAfterKey(stream.dict, 'Resources'), text, getDictionary) || resources;
+        candidates.push(...imageCandidatesFromContent(
+            decoded ? decoded.toString('latin1') : '',
+            formResources,
+            text,
+            streamsByObject,
+            getDictionary,
+            visited,
+            depth + 1,
+            {},
+        ));
+        candidates.push(...imageCandidatesFromResources(formResources, text, streamsByObject, getDictionary, visited, depth + 1));
+        visited.delete(streamKey);
+    }
+    return candidates;
+}
+
+function imageCandidateAnalysisFromFirstPage(buffer) {
+    if (!buffer?.length || buffer.length > STREAM_SCAN_LIMIT) {
+        return { cover: null, pageFound: false };
+    }
+    const trailer = parseTrailer(buffer);
+    const text = trailer.text;
+    const streams = findPdfStreams(buffer);
+    const streamsByObject = new Map(
+        streams
+            .filter(stream => stream.objectNumber)
+            .map(stream => [pdfObjectKey(stream.objectNumber, stream.generation), stream]),
+    );
+    const dictionaries = buildPdfObjectDictionaryMap(buffer, streams);
+    const getDictionary = ref => dictionaries.get(pdfObjectKey(ref)) || findObjectDictionary(text, ref.objectNumber, ref.generation);
+    const firstPageRef = firstPageReferenceFromTree(trailer.root, getDictionary, dictionaries);
+    if (!firstPageRef) {
+        return { cover: null, pageFound: false };
+    }
+    const pageDict = firstPageRef ? getDictionary(firstPageRef) : '';
+    const resources = inheritedResourcesDictionary(text, firstPageRef, getDictionary);
+    const contentText = contentTextForPage(text, pageDict, streamsByObject);
+    const mediaBox = parsePageBox(inheritedRawValueForKey(text, firstPageRef, 'MediaBox', getDictionary));
+    const cropBox = parsePageBox(inheritedRawValueForKey(text, firstPageRef, 'CropBox', getDictionary));
+    const rotate = parseNumberForKey(pageDict, 'Rotate') || Number(inheritedRawValueForKey(text, firstPageRef, 'Rotate', getDictionary)) || 0;
+    const page = { mediaBox, cropBox, rotate };
+
+    const orderedImageCandidates = imageCandidatesFromContent(contentText, resources, text, streamsByObject, getDictionary, new Set(), 0, page);
+    if (orderedImageCandidates.length > 0) {
+        return {
+            cover: orderedImageCandidates.sort((left, right) => (right.width * right.height) - (left.width * left.height))[0],
+            pageFound: true,
+        };
+    }
+
+    const resourceImageCandidates = imageCandidatesFromResources(resources, text, streamsByObject, getDictionary);
+    if (resourceImageCandidates.length > 0) {
+        return {
+            cover: resourceImageCandidates.sort((left, right) => (right.width * right.height) - (left.width * left.height))[0],
+            pageFound: true,
+        };
+    }
+
+    return { cover: null, pageFound: true };
+}
+
+function fallbackImageCandidateFromDocument(buffer) {
+    return findPdfStreams(buffer)
+        .map(imageCandidateFromStream)
+        .filter(Boolean)[0] || null;
+}
+
+function imageCandidateFromPdf(buffer) {
+    const firstPage = imageCandidateAnalysisFromFirstPage(buffer);
+    if (firstPage.cover || firstPage.pageFound) return firstPage.cover;
+    return fallbackImageCandidateFromDocument(buffer);
+}
+
+function countPdfPages(buffer) {
+    if (!buffer?.length || buffer.length > STREAM_SCAN_LIMIT) return 0;
+    const streams = findPdfStreams(buffer);
+    const dictionaries = buildPdfObjectDictionaryMap(buffer, streams);
+    const dictionaryCount = [...dictionaries.values()].filter(isPdfPageDictionary).length;
+    if (dictionaryCount > 0) return dictionaryCount;
+    return (buffer.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
 }
 
 function xmpTextContent(xml = '', tagName = '') {
@@ -582,21 +1225,39 @@ function imageCandidateFromStream(stream) {
     const width = parseNumberForKey(stream.dict, 'Width');
     const height = parseNumberForKey(stream.dict, 'Height');
     const bitsPerComponent = parseNumberForKey(stream.dict, 'BitsPerComponent') || 8;
-    const filters = parseNamesForKey(stream.dict, 'Filter');
-    const colorSpace = parseColorSpace(stream.dict) || 'DeviceRGB';
+    const filters = parseNamesForKey(stream.dict, 'Filter').map(normalizePdfFilterName);
+    const terminalFilter = filters.at(-1) || '';
+    const colorSpace = normalizePdfColorSpaceName(parseColorSpace(stream.dict) || 'DeviceRGB');
     if (width < 32 || height < 32) return null;
 
-    if (filters.length === 1 && filters[0] === 'DCTDecode') {
+    if (terminalFilter === 'DCTDecode' || terminalFilter === 'DCT') {
+        const imageData = decodePdfStreamData(stream.data, filters);
+        if (!imageData) return null;
         return {
-            buffer: stream.data,
+            buffer: imageData,
             imageName: 'pdf-cover.jpg',
             width,
             height,
         };
     }
 
-    if (filters.length === 1 && filters[0] === 'FlateDecode' && bitsPerComponent === 8 && ['DeviceRGB', 'DeviceGray'].includes(colorSpace)) {
-        let raw = inflatePdfStream(stream.data);
+    if (terminalFilter === 'JPXDecode') {
+        const imageData = decodePdfStreamData(stream.data, filters);
+        if (!imageData) return null;
+        const isJp2Container = imageData.length >= 12
+            && imageData.readUInt32BE(0) === 12
+            && imageData.toString('ascii', 4, 8) === 'jP  ';
+        return {
+            buffer: imageData,
+            imageName: isJp2Container ? 'pdf-cover.jp2' : 'pdf-cover.j2k',
+            width,
+            height,
+        };
+    }
+
+    if ((filters.length === 0 || terminalFilter === 'FlateDecode' || terminalFilter === 'Fl') && bitsPerComponent === 8 && ['DeviceRGB', 'DeviceGray'].includes(colorSpace)) {
+        let raw = filters.length === 0 ? stream.data : decodePdfStreamData(stream.data, filters);
+        if (!raw) return null;
         const colors = colorSpace === 'DeviceGray' ? 1 : 3;
         const decodeParms = stream.dict.match(/\/DecodeParms\s*<<([\s\S]*?)>>/)?.[1] || '';
         const predictor = parseNumberForKey(decodeParms, 'Predictor') || 1;
@@ -619,15 +1280,7 @@ function imageCandidateFromStream(stream) {
 
 export async function extractPdfCoverImage(filePath) {
     const buffer = await fs.readFile(filePath);
-    const candidates = findPdfStreams(buffer)
-        .map(imageCandidateFromStream)
-        .filter(Boolean)
-        .sort((left, right) => {
-            const leftScore = left.width * left.height * (left.height >= left.width ? 1.15 : 1);
-            const rightScore = right.width * right.height * (right.height >= right.width ? 1.15 : 1);
-            return rightScore - leftScore;
-        });
-    return candidates[0] || null;
+    return imageCandidateFromPdf(buffer);
 }
 
 export async function analyzePdfDocument(filePath, options = {}) {
@@ -639,11 +1292,10 @@ export async function analyzePdfDocument(filePath, options = {}) {
     const headerVersion = buffer.toString('latin1', 0, Math.min(buffer.length, 32)).match(/%PDF-(\d+\.\d+)/)?.[1] || '';
     if (headerVersion) metadata.PdfVersion = headerVersion;
     metadata.Format = 'PDF';
-    const pageCount = (buffer.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
-    const cover = options.includeCover === false ? null : findPdfStreams(buffer)
-        .map(imageCandidateFromStream)
-        .filter(Boolean)
-        .sort((left, right) => (right.width * right.height) - (left.width * left.height))[0] || null;
+    const pageCount = countPdfPages(buffer);
+    const cover = options.includeCover === false
+        ? null
+        : imageCandidateFromPdf(buffer);
     return {
         metadata: Object.fromEntries(Object.entries(metadata).filter(([, value]) => normalizeMetadataText(value))),
         cover,

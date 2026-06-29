@@ -58,10 +58,18 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
   const previewGenerationRef = useRef(0);
   const existsRef = useRef(exists);
   const tableResizeRef = useRef(null);
+  const newPatternInputRef = useRef(null);
 
   useEffect(() => {
     existsRef.current = exists;
   }, [exists]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      newPatternInputRef.current?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const generation = previewGenerationRef.current + 1;
@@ -147,7 +155,10 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
     setFolderNameMode(checked);
   };
 
+  const canExecute = !executing && !previewing && rows.some(row => row.status === 'ok');
+
   const execute = async () => {
+    if (!canExecute) return;
     const targets = rows.filter(row => row.status === 'ok' && row.oldName !== row.newName);
     if (targets.length === 0) {
       onClose();
@@ -159,6 +170,12 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
     setProgress(100);
     setExecuting(false);
     if ((result?.errors?.length || 0) === 0 && result?.successCount > 0) onClose();
+  };
+
+  const handleNewPatternKeyDown = event => {
+    if (event.key !== 'Enter' || event.nativeEvent?.isComposing) return;
+    event.preventDefault();
+    execute();
   };
 
   const statusText = status => ({
@@ -265,7 +282,13 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
               </label>
               <label>
                 <span>{t('tf_new_format')}</span>
-                <input value={newPattern} onChange={event => setNewPattern(event.target.value)} disabled={executing} />
+                <input
+                  ref={newPatternInputRef}
+                  value={newPattern}
+                  onChange={event => setNewPattern(event.target.value)}
+                  onKeyDown={handleNewPatternKeyDown}
+                  disabled={executing}
+                />
               </label>
             </div>
             <div className="multi-rename-options multi-rename-options-primary">
@@ -341,7 +364,7 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
           )}
         </div>
         <div className="layout-dialog-footer multi-rename-footer">
-          <button type="button" className="primary" disabled={executing || previewing || !rows.some(row => row.status === 'ok')} onClick={execute}>{t('btn_ok')}</button>
+          <button type="button" className="primary" disabled={!canExecute} onClick={execute}>{t('btn_ok')}</button>
           <button type="button" className="multi-rename-cancel" disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>

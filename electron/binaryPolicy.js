@@ -7,6 +7,7 @@ const TOOL_ALIASES = {
     cwebp: ['cwebp'],
     cjpeg: ['cjpeg'],
     djpeg: ['djpeg'],
+    ffmpeg: ['ffmpeg'],
     pngquant: ['pngquant'],
     jpegtran: ['jpegtran'],
 };
@@ -48,6 +49,15 @@ function appendSevenZipPackageCandidates(candidates, root, platform, arch, alias
     }
 }
 
+function appendWindowsFfmpegCandidates(candidates, platform, aliases) {
+    if (platform !== 'win32') return;
+    for (const directory of ['C:\\ffmpeg\\bin']) {
+        for (const alias of aliases) {
+            candidates.push(path.join(directory, executableName(alias, platform)));
+        }
+    }
+}
+
 export function binaryCandidates(toolName, options = {}) {
     const platform = options.platform || process.platform;
     const arch = options.arch || process.arch;
@@ -75,6 +85,10 @@ export function binaryCandidates(toolName, options = {}) {
         for (const alias of aliases) {
             candidates.push(path.join(directory, executableName(alias, platform)));
         }
+    }
+
+    if (toolName === 'ffmpeg') {
+        appendWindowsFfmpegCandidates(candidates, platform, aliases);
     }
 
     if (platform !== 'win32') {

@@ -23,11 +23,12 @@ test('macOS는 bundled 경로와 시스템 PATH fallback을 모두 탐색한다'
         projectRoot: '/Users/me/BookManager',
         pathValue: '/custom/bin',
     });
-    assert.equal(candidates.includes('/Applications/BookManager.app/Contents/Resources/bin/mac/arm64/7za'), true);
-    assert.equal(candidates.includes('/Applications/BookManager.app/Contents/Resources/bin/mac/7za'), true);
-    assert.equal(candidates.includes('/Users/me/BookManager/node_modules/7zip-bin/mac/arm64/7za'), true);
-    assert.equal(candidates.includes('/custom/bin/7z'), true);
-    assert.equal(candidates.includes('/opt/homebrew/bin/7z'), true);
+    const normalizedCandidates = candidates.map(candidate => candidate.replace(/\\/g, '/'));
+    assert.equal(normalizedCandidates.includes('/Applications/BookManager.app/Contents/Resources/bin/mac/arm64/7za'), true);
+    assert.equal(normalizedCandidates.includes('/Applications/BookManager.app/Contents/Resources/bin/mac/7za'), true);
+    assert.equal(normalizedCandidates.includes('/Users/me/BookManager/node_modules/7zip-bin/mac/arm64/7za'), true);
+    assert.equal(normalizedCandidates.includes('/custom/bin/7z'), true);
+    assert.equal(normalizedCandidates.includes('/opt/homebrew/bin/7z'), true);
 });
 
 test('공백과 한글이 포함된 실행 경로를 그대로 반환한다', () => {
@@ -78,6 +79,16 @@ test('JPEG 품질 재인코딩 도구도 bundled 경로에서 탐색한다', () 
     });
     assert.match(cjpegCandidates[0], /bin[\\/]win[\\/]cjpeg\.exe$/i);
     assert.match(djpegCandidates[0], /bin[\\/]win[\\/]djpeg\.exe$/i);
+});
+
+test('Windows ffmpeg는 PATH 이후 기본 설치 경로도 탐색한다', () => {
+    const candidates = binaryCandidates('ffmpeg', {
+        platform: 'win32',
+        projectRoot: 'C:\\BookManager',
+        pathValue: 'C:\\Tools',
+    });
+    assert.equal(candidates.includes('C:\\Tools\\ffmpeg.exe'), true);
+    assert.equal(candidates.includes('C:\\ffmpeg\\bin\\ffmpeg.exe'), true);
 });
 
 test('도구 누락 안내는 플랫폼별 설치 조치를 포함한다', () => {
