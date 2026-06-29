@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
-import { CoverImage } from './CoverImage';
+import { CoverImage, coverImageKey } from './CoverImage';
 import { groupFolderFiles } from '../../folderViewState';
 import { FolderEmptyState } from './FolderEmptyState';
 
@@ -273,6 +273,7 @@ const ThumbnailView = ({
 	            >
               <div className="thumbnail-cover-card">
                 <CoverImage
+                  key={coverImageKey(file)}
                   src={file.cover}
                   alt={file.name || ''}
                   className="thumb-image"
@@ -314,6 +315,7 @@ const ThumbnailView = ({
 	            >
               <div className="thumbnail-cover-card">
                 <CoverImage
+                  key={coverImageKey(file)}
                   src={file.cover}
                   alt={file.name || ''}
                   className="thumb-image"

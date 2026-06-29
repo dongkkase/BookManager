@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
-import { CoverImage } from './CoverImage';
+import { CoverImage, coverImageKey } from './CoverImage';
 import { groupFolderFiles } from '../../folderViewState';
 import { FolderEmptyState } from './FolderEmptyState';
 
@@ -274,6 +274,7 @@ const TileView = ({
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <CoverImage
+                key={coverImageKey(file)}
                 src={file.cover}
                 alt={file.name || ''}
                 className="tile-image"
@@ -330,6 +331,7 @@ const TileView = ({
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <CoverImage
+                key={coverImageKey(file)}
                 src={file.cover}
                 alt={file.name || ''}
                 className="tile-image"

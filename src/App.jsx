@@ -291,6 +291,12 @@ function App() {
   }, [scheduleLastTabSave]);
 
   useEffect(() => {
+    window.dispatchEvent(new CustomEvent('bookmanager:active-tab-changed', {
+      detail: { activeTab },
+    }));
+  }, [activeTab]);
+
+  useEffect(() => {
     const handleNavigate = (event) => {
       const tabId = event.detail?.tabId;
       const paths = normalizeDroppedPaths(event.detail?.paths);

@@ -1107,6 +1107,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       const errors = result.stats?.error?.length || 0;
       const skip = result.stats?.skip?.length || 0;
       const completed = success + skip + errors;
+      if (success > 0) {
+        window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', {
+          detail: {
+            paths: saveTargets.map(item => item.filepath || item.path).filter(Boolean),
+          },
+        }));
+      }
       const message = all
         ? t('t3_msg_save_all_done', { success_count: success, fail_count: errors })
         : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));

@@ -85,6 +85,16 @@ const VISIBLE_COVER_REQUEST_LIMIT = 32;
 const COVER_PREVIEW_QUEUE_LIMIT = 96;
 const COVER_PREVIEW_CONCURRENCY = 2;
 
+const coverPreviewFilePath = file => file?.full_path || file?.path || '';
+
+const coverPreviewRequestKey = file => {
+  const filePath = coverPreviewFilePath(file);
+  if (!filePath) return '';
+  const mtime = file?.mtime ?? file?.modified ?? '';
+  const size = file?.size ?? '';
+  return `${filePath}|${mtime}|${size}`;
+};
+
 const isPathInsideLibrary = (filePath = '', libraryPath = '') => {
   const pathKey = normalizeLibraryKey(filePath);
   const libraryKey = normalizeLibraryKey(libraryPath);
@@ -129,6 +139,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const internalFileActionRef = useRef(false);
   const watchedMtimeRef = useRef(null);
   const lastFolderPanelRef = useRef('list');
+  const pendingMetadataRefreshRef = useRef(false);
   const coverPreviewQueueRef = useRef([]);
   const coverPreviewQueuedRef = useRef(new Set());
   const coverPreviewActivePathsRef = useRef(new Set());
@@ -243,15 +254,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     fastInitial: true,
   }), [includeSubfolders, enableDupCheck, config?.dup_check_folders]);
 
-  useEffect(() => {
-    selectedFolderPathRef.current = selectedFolderPath;
-    coverPreviewFolderRef.current = selectedFolderPath;
+  const resetCoverPreviewQueue = useCallback(() => {
     coverPreviewQueueRef.current = [];
     coverPreviewQueuedRef.current.clear();
     coverPreviewActivePathsRef.current.clear();
     coverPreviewAttemptedRef.current.clear();
     coverPreviewActiveCountRef.current = 0;
-  }, [selectedFolderPath]);
+  }, []);
+
+  useEffect(() => {
+    selectedFolderPathRef.current = selectedFolderPath;
+    coverPreviewFolderRef.current = selectedFolderPath;
+    resetCoverPreviewQueue();
+  }, [resetCoverPreviewQueue, selectedFolderPath]);
 
   // 파일 데이터 가져오기 (캐시에서)
   const getCurrentFileData = useCallback(() => {
@@ -313,11 +328,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       && coverPreviewQueueRef.current.length > 0
     ) {
       const file = coverPreviewQueueRef.current.shift();
-      const filePath = file?.full_path || file?.path;
-      if (!filePath) continue;
+      const filePath = coverPreviewFilePath(file);
+      const requestKey = coverPreviewRequestKey(file);
+      if (!filePath || !requestKey) continue;
       coverPreviewActiveCountRef.current += 1;
-      coverPreviewActivePathsRef.current.add(filePath);
-      coverPreviewAttemptedRef.current.add(filePath);
+      coverPreviewActivePathsRef.current.add(requestKey);
+      coverPreviewAttemptedRef.current.add(requestKey);
 
       loadPreview(filePath, { force: false })
         .then(result => {
@@ -332,8 +348,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         })
         .catch(() => {})
         .finally(() => {
-          coverPreviewActivePathsRef.current.delete(filePath);
-          coverPreviewQueuedRef.current.delete(filePath);
+          coverPreviewActivePathsRef.current.delete(requestKey);
+          coverPreviewQueuedRef.current.delete(requestKey);
           coverPreviewActiveCountRef.current = Math.max(0, coverPreviewActiveCountRef.current - 1);
           pumpCoverPreviewQueue();
         });
@@ -344,11 +360,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!selectedFolderPath || isLibrarySearchActive) return;
     const nextItems = (Array.isArray(visibleFiles) ? visibleFiles : [])
       .filter(file => {
-        const filePath = file?.full_path || file?.path;
-        return filePath
+        const requestKey = coverPreviewRequestKey(file);
+        return requestKey
           && !file.cover
-          && !coverPreviewQueuedRef.current.has(filePath)
-          && !coverPreviewAttemptedRef.current.has(filePath);
+          && !coverPreviewQueuedRef.current.has(requestKey)
+          && !coverPreviewAttemptedRef.current.has(requestKey);
       })
       .slice(0, VISIBLE_COVER_REQUEST_LIMIT);
     if (nextItems.length === 0) return;
@@ -357,16 +373,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const seen = new Set();
     const merged = [...nextItems, ...existing]
       .filter(file => {
-        const filePath = file?.full_path || file?.path;
-        if (!filePath || seen.has(filePath)) return false;
-        seen.add(filePath);
+        const requestKey = coverPreviewRequestKey(file);
+        if (!requestKey || seen.has(requestKey)) return false;
+        seen.add(requestKey);
         return true;
       })
       .slice(0, COVER_PREVIEW_QUEUE_LIMIT);
 
     coverPreviewQueuedRef.current = new Set([
       ...Array.from(coverPreviewActivePathsRef.current),
-      ...merged.map(file => file.full_path || file.path),
+      ...merged.map(coverPreviewRequestKey).filter(Boolean),
     ]);
     coverPreviewQueueRef.current = merged;
     pumpCoverPreviewQueue();
@@ -879,6 +895,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (stat.mtime === watchedMtimeRef.current) return;
       watchedMtimeRef.current = stat.mtime;
       setTreeRefreshToken(current => current + 1);
+      resetCoverPreviewQueue();
       await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
     };
 
@@ -888,7 +905,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [preparingDuplicates, scanFolder, scanOptions, scanning, selectedFolderPath]);
+  }, [preparingDuplicates, resetCoverPreviewQueue, scanFolder, scanOptions, scanning, selectedFolderPath]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
@@ -928,11 +945,49 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, 0);
   }, [config?.dup_check_folders, config?.lang, config?.language, config?.libraries, filteredFileData, isCheckingMissing, missingData.length, t]);
 
+  const isFolderTabVisible = useCallback(() => (
+    !mainAreaRef.current?.closest?.('[hidden]')
+  ), []);
+
   const handleRefresh = useCallback(async () => {
     if (!selectedFolderPath) return;
+    resetCoverPreviewQueue();
     const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
     scheduleLocalMissingToast(selectedFolderPath, findMissingVolumes(files || []));
-  }, [selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
+  }, [resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
+
+  useEffect(() => {
+    const handleMetadataSaved = event => {
+      const paths = Array.isArray(event.detail?.paths) ? event.detail.paths : [];
+      if (!selectedFolderPath || paths.length === 0) return;
+      const folderKey = normalizeLibraryKey(selectedFolderPath);
+      const hasCurrentFolderFile = paths.some(filePath => {
+        const fileKey = normalizeLibraryKey(filePath);
+        const parentKey = normalizeLibraryKey(parentPath(filePath));
+        if (!folderKey || !fileKey) return false;
+        if (includeSubfolders) return fileKey === folderKey || fileKey.startsWith(`${folderKey}/`);
+        return parentKey === folderKey;
+      });
+      if (!hasCurrentFolderFile) return;
+      pendingMetadataRefreshRef.current = true;
+      if (!isFolderTabVisible()) return;
+      pendingMetadataRefreshRef.current = false;
+      handleRefresh();
+    };
+    window.addEventListener('bookmanager:metadata-saved', handleMetadataSaved);
+    return () => window.removeEventListener('bookmanager:metadata-saved', handleMetadataSaved);
+  }, [handleRefresh, includeSubfolders, isFolderTabVisible, selectedFolderPath]);
+
+  useEffect(() => {
+    const handleActiveTabChanged = event => {
+      if (event.detail?.activeTab !== 'folder') return;
+      if (!pendingMetadataRefreshRef.current) return;
+      pendingMetadataRefreshRef.current = false;
+      handleRefresh();
+    };
+    window.addEventListener('bookmanager:active-tab-changed', handleActiveTabChanged);
+    return () => window.removeEventListener('bookmanager:active-tab-changed', handleActiveTabChanged);
+  }, [handleRefresh]);
 
   const handleSmartRefresh = useCallback(async (force = false) => {
     if (!selectedFolderPath || scanning || preparingDuplicates) return;
@@ -949,12 +1004,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     clearSelection();
     if (!selectedFolderPath) return;
     const nextOptions = { ...scanOptions, includeSubfolders: nextValue, force: true };
+    resetCoverPreviewQueue();
     const files = await scanFolder(selectedFolderPath, nextOptions);
     setMissingData(findMissingVolumes(files || []));
   }, [
     clearSelection,
     includeSubfolders,
     preparingDuplicates,
+    resetCoverPreviewQueue,
     scanFolder,
     scanOptions,
     scanning,
@@ -975,6 +1032,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       dupFolders,
       force: true,
     };
+    resetCoverPreviewQueue();
     const files = await scanFolder(selectedFolderPath, nextOptions);
     setMissingData(findMissingVolumes(files || []));
   }, [
@@ -982,6 +1040,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     config?.dup_check_folders,
     enableDupCheck,
     preparingDuplicates,
+    resetCoverPreviewQueue,
     scanFolder,
     scanOptions,
     scanning,
@@ -1705,9 +1764,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!folderPath) return;
     setTreeRefreshToken(current => current + 1);
     if (folderPath === selectedFolderPath) {
+      resetCoverPreviewQueue();
       await scanFolder(folderPath, { ...scanOptions, force: true });
     }
-  }, [scanFolder, scanOptions, selectedFolderPath]);
+  }, [resetCoverPreviewQueue, scanFolder, scanOptions, selectedFolderPath]);
 
   const renameContextFolder = useCallback(async folderPath => {
     if (!folderPath) return;
@@ -1761,10 +1821,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       await handleFolderChange(nextSelection);
     }
   }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, requestTextInput, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
-
-  const isFolderTabVisible = useCallback(() => (
-    !mainAreaRef.current?.closest?.('[hidden]')
-  ), []);
 
   const markFolderPanelFocus = useCallback(panel => {
     lastFolderPanelRef.current = panel;

@@ -25,7 +25,7 @@ const PdfDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
 
     useEffect(() => {
         setImageError(false);
-    }, [selectedFile?.path]);
+    }, [selectedFile?.path, selectedFile?.cover, selectedFile?.mtime, selectedFile?.size]);
 
     const keywords = useMemo(
         () => splitMetadataValues(

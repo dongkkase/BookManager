@@ -2,7 +2,7 @@ import React, { useMemo, forwardRef, useRef, useState, useEffect } from 'react';
 import { FaIcon } from '../FaIcon';
 import { normalizeColumnLayout } from '../../folderColumnLayout';
 import { groupFolderFiles } from '../../folderViewState';
-import { CoverImage } from './CoverImage';
+import { CoverImage, coverImageKey } from './CoverImage';
 import { FolderEmptyState } from './FolderEmptyState';
 
 /**
@@ -374,6 +374,7 @@ const FileTableView = forwardRef(({
       return (
         <td key={column.key} className="cover-cell">
           <CoverImage
+            key={coverImageKey(file)}
             src={file.cover}
             alt={file.name || ''}
             className="table-cover-image"
