@@ -9,6 +9,8 @@ const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
 const UTF8_FLAG = 0x800;
 const EOCD_TAIL_BYTES = 0xffff + 22;
+const ZIP32_MAX = 0xffffffff;
+const ZIP32_MAX_ENTRIES = 0xffff;
 const LEGACY_NAME_ENCODINGS = ['euc-kr', 'shift_jis'];
 
 let crcTable = null;
@@ -127,6 +129,16 @@ function parseZip64Extra(entry, extraBuffer) {
         offset = dataEnd;
     }
     return entry;
+}
+
+function normalizeZipEntryName(name = '') {
+    return String(name).replace(/\\/g, '/').toLowerCase();
+}
+
+function zipEntryMatchesName(entryName, targetName, options = {}) {
+    return options.removeMatchingBasename === true
+        ? path.basename(entryName).toLowerCase() === path.basename(targetName).toLowerCase()
+        : normalizeZipEntryName(entryName) === normalizeZipEntryName(targetName);
 }
 
 export function listZipEntries(buffer) {
@@ -318,15 +330,16 @@ function dosTimeFromDate(date = new Date()) {
     return { dosDate, dosTime };
 }
 
-function createEntry(name, content) {
+function createEntry(name, content, options = {}) {
     const buffer = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
-    const compressed = zlib.deflateRawSync(buffer);
+    const store = options.store === true;
+    const compressed = store ? buffer : zlib.deflateRawSync(buffer);
     const { dosDate, dosTime } = dosTimeFromDate();
     return {
         name,
         nameBuffer: Buffer.from(name, 'utf8'),
         flags: UTF8_FLAG,
-        method: 8,
+        method: store ? 0 : 8,
         modTime: dosTime,
         modDate: dosDate,
         crc: crc32(buffer),
@@ -391,6 +404,73 @@ function endOfCentralDirectory(entryCount, centralSize, centralOffset) {
     return header;
 }
 
+function unsupportedZipAppend(message) {
+    const error = new Error(message);
+    error.code = 'ZIP_APPEND_UNSUPPORTED';
+    return error;
+}
+
+function canWriteZip32Entry(entry, localHeaderOffset) {
+    return entry.nameBuffer.length <= 0xffff
+        && entry.compressedSize <= ZIP32_MAX
+        && entry.uncompressedSize <= ZIP32_MAX
+        && localHeaderOffset <= ZIP32_MAX;
+}
+
+async function writeAll(handle, buffer, position) {
+    let offset = 0;
+    while (offset < buffer.length) {
+        const { bytesWritten } = await handle.write(buffer, offset, buffer.length - offset, position + offset);
+        if (bytesWritten <= 0) throw new Error('Failed to append ZIP data');
+        offset += bytesWritten;
+    }
+}
+
+export async function replaceZipEntryAppendOnly(filePath, entryName, content, options = {}) {
+    const replacement = createEntry(entryName, content, { store: true });
+    const handle = await fs.open(filePath, 'r+');
+    try {
+        const stat = await handle.stat();
+        const sourceEntries = await listZipEntriesFromFile(filePath);
+        if (!sourceEntries.length && stat.size > 0) {
+            throw unsupportedZipAppend('ZIP central directory was not found');
+        }
+
+        const entries = [];
+        for (const entry of sourceEntries) {
+            if (zipEntryMatchesName(entry.name, entryName, options)) continue;
+            if (!canWriteZip32Entry(entry, entry.localHeaderOffset)) {
+                throw unsupportedZipAppend('ZIP64 entries are not supported by append-only update');
+            }
+            entries.push(entry);
+        }
+
+        const local = localHeader(replacement, stat.size);
+        const centralOffset = stat.size + local.buffer.length + replacement.compressed.length;
+        const centralParts = [];
+        for (const entry of [...entries, replacement]) {
+            const offset = entry === replacement ? local.offset : entry.localHeaderOffset;
+            if (!canWriteZip32Entry(entry, offset)) {
+                throw unsupportedZipAppend('ZIP64 entries are not supported by append-only update');
+            }
+            centralParts.push(centralHeader(entry, offset));
+        }
+
+        const central = Buffer.concat(centralParts);
+        if (centralParts.length >= ZIP32_MAX_ENTRIES || central.length > ZIP32_MAX || centralOffset > ZIP32_MAX) {
+            throw unsupportedZipAppend('ZIP64 central directory is not supported by append-only update');
+        }
+
+        const eocd = endOfCentralDirectory(centralParts.length, central.length, centralOffset);
+        const appendBuffer = Buffer.concat([local.buffer, replacement.compressed, central, eocd]);
+        await options.beforeWrite?.();
+        await writeAll(handle, appendBuffer, stat.size);
+        return true;
+    } finally {
+        await handle.close();
+    }
+}
+
 export async function replaceZipEntry(filePath, entryName, content, options = {}) {
     const source = await fs.readFile(filePath);
     const sourceEntries = listZipEntries(source);
@@ -398,10 +478,7 @@ export async function replaceZipEntry(filePath, entryName, content, options = {}
     const entries = [];
 
     for (const entry of sourceEntries) {
-        const shouldRemove = options.removeMatchingBasename === true
-            ? path.basename(entry.name).toLowerCase() === path.basename(entryName).toLowerCase()
-            : entry.name.replace(/\\/g, '/').toLowerCase() === entryName.replace(/\\/g, '/').toLowerCase();
-        if (shouldRemove) continue;
+        if (zipEntryMatchesName(entry.name, entryName, options)) continue;
         const compressed = getZipEntryCompressedData(source, entry);
         if (!compressed) continue;
         entries.push({ ...entry, compressed });

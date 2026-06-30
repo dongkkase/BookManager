@@ -585,6 +585,37 @@ test('CBZ 메타데이터 분석과 저장은 외부 7z 없이 처리한다', as
     }
 });
 
+test('CBZ 메타데이터 저장은 변경이 없으면 압축파일을 다시 쓰지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-noop-'));
+    try {
+        const source = path.join(root, '작품명 03권.cbz');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '001.jpg', Buffer.from('cover'));
+
+        const analyzed = await analyzeMetadataInputs([source], {});
+        assert.equal(analyzed.items.length, 1);
+        analyzed.items[0].metadata.Series = '작품명';
+        analyzed.items[0].metadata.Title = '작품명 03권';
+        const firstSave = await saveMetadataItems(analyzed.items, {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+        assert.equal(firstSave.stats.success.length, 1, firstSave.stats.error.join('\n'));
+
+        const reanalyzed = await analyzeMetadataInputs([source], {});
+        const before = fs.readFileSync(source);
+        const secondSave = await saveMetadataItems(reanalyzed.items, {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+
+        assert.equal(secondSave.stats.success.length, 1, secondSave.stats.error.join('\n'));
+        assert.deepEqual(fs.readFileSync(source), before);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('메타데이터 저장은 백업 후 원본 경로를 원자적으로 교체한다', async t => {
     const sevenZExe = find7z();
     if (!sevenZExe) {

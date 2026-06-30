@@ -11,6 +11,7 @@ import {
   readZipEntry,
   readZipEntryFromFile,
   replaceZipEntry,
+  replaceZipEntryAppendOnly,
 } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 import { BOOK_EXTENSIONS, resolveBookType } from '../../src/metadata/metadataTypes.js';
@@ -1215,6 +1216,59 @@ function updateEpubPackageXml(opfXml = '', metadata = {}) {
   return updatedPackageXml.replace(new RegExp(`<${packageName}\\b[^>]*>`, 'i'), match => `${match}\n${metadataSection}`);
 }
 
+function comparableComicInfoValue(value) {
+  return String(value ?? '').trim();
+}
+
+function comicInfoMetadataMatches(existing = {}, metadata = {}) {
+  if (!comparableComicInfoValue(existing.ComicZipModifiedDate)) return false;
+
+  for (const field of XML_FIELDS) {
+    if (field === 'ComicZipModifiedDate') continue;
+    if (field === 'ComicZipAddedDate' && !comparableComicInfoValue(metadata[field])) return false;
+    if (comparableComicInfoValue(existing[field]) !== comparableComicInfoValue(metadata[field])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function readExistingComicInfoMetadata(filePath, sevenZExe) {
+  if (isZipArchive(filePath)) {
+    const entries = await listZipEntriesFromFile(filePath);
+    const comicInfoEntry = entries.find(entry => !entry.isDirectory && entry.name.replace(/\\/g, '/').toLowerCase() === 'comicinfo.xml');
+    if (!comicInfoEntry) return null;
+    const xmlBuffer = await readZipEntryFromFile(filePath, comicInfoEntry, { maxBytes: 8 * 1024 * 1024 });
+    return xmlBuffer ? parseComicInfo(xmlBuffer.toString('utf8')) : null;
+  }
+
+  if (!sevenZExe) return null;
+  try {
+    const result = await runProcess(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml']);
+    return result.buffer.length ? parseComicInfo(result.buffer.toString('utf8')) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function hasComicInfoMetadataChanges(filePath, metadata, sevenZExe) {
+  const existing = await readExistingComicInfoMetadata(filePath, sevenZExe);
+  return !existing || !comicInfoMetadataMatches(existing, metadata);
+}
+
+async function createMetadataBackup(filePath, extension, token) {
+  const backupDir = path.join(path.dirname(filePath), 'bak');
+  await fsp.mkdir(backupDir, { recursive: true });
+  let backupPath = path.join(backupDir, path.basename(filePath));
+  if (fs.existsSync(backupPath)) {
+    backupPath = path.join(
+      backupDir,
+      `${path.basename(filePath, extension)}_${token}${extension}`,
+    );
+  }
+  await fsp.copyFile(filePath, backupPath);
+}
+
 async function injectEpubMetadata(filePath, metadata, lang = 'ko') {
   const epubPackage = await readEpubPackage(filePath);
   if (!epubPackage) throw new Error(taskText(lang, 'metadata_epub_package_not_found'));
@@ -1224,6 +1278,16 @@ async function injectEpubMetadata(filePath, metadata, lang = 'ko') {
 
 async function injectPdfMetadata(filePath, metadata) {
   await writePdfMetadata(filePath, metadata);
+  return true;
+}
+
+async function injectComicInfoFastZip(filePath, metadata, options = {}) {
+  const support = metadataWriteSupport(filePath, options.lang);
+  if (!support.supported) throw new Error(support.message);
+  await replaceZipEntryAppendOnly(filePath, 'ComicInfo.xml', createComicInfoXml(metadata), {
+    removeMatchingBasename: true,
+    beforeWrite: options.beforeWrite,
+  });
   return true;
 }
 
@@ -1294,6 +1358,31 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         stats.skip.push(`${item.name || filePath} - ${support.message}`);
         continue;
       }
+
+      if (!isEpub(filePath) && !isPdf(filePath) && !(await hasComicInfoMetadataChanges(filePath, item.metadata || {}, sevenZExe))) {
+        stats.success.push(item.name || path.basename(filePath));
+        continue;
+      }
+
+      if (isZipArchive(filePath)) {
+        let backupCreated = false;
+        try {
+          await injectComicInfoFastZip(filePath, item.metadata || {}, {
+            lang: options.lang,
+            beforeWrite: async () => {
+              if (options.backup_on && !backupCreated) {
+                await createMetadataBackup(filePath, extension, token);
+                backupCreated = true;
+              }
+            },
+          });
+          stats.success.push(item.name || path.basename(filePath));
+          continue;
+        } catch (error) {
+          if (error.code !== 'ZIP_APPEND_UNSUPPORTED') throw error;
+        }
+      }
+
       await fsp.copyFile(filePath, tempArchive);
       if (isEpub(filePath)) {
         await injectEpubMetadata(tempArchive, item.metadata || {}, options.lang);
@@ -1308,16 +1397,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       }
 
       if (options.backup_on) {
-        const backupDir = path.join(path.dirname(filePath), 'bak');
-        await fsp.mkdir(backupDir, { recursive: true });
-        let backupPath = path.join(backupDir, path.basename(filePath));
-        if (fs.existsSync(backupPath)) {
-          backupPath = path.join(
-            backupDir,
-            `${path.basename(filePath, extension)}_${token}${extension}`,
-          );
-        }
-        await fsp.copyFile(filePath, backupPath);
+        await createMetadataBackup(filePath, extension, token);
       }
 
       await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
