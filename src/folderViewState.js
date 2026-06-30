@@ -1,4 +1,5 @@
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
+export const FOLDER_VIEW_VIRTUALIZE_THRESHOLD = 1000;
 
 export function sortFolderFiles(files = [], sortKey = 'name', sortOrder = 'asc') {
     return [...files].sort((a, b) => {
@@ -24,6 +25,98 @@ export function groupFolderFiles(files = [], groupKey = 'none', sortKey = 'name'
     return [...groups.entries()]
         .sort(([a], [b]) => KO_NUMERIC_COLLATOR.compare(a, b))
         .map(([name, groupedFiles]) => ({ name, files: groupedFiles }));
+}
+
+export function countGroupedFiles(groups = []) {
+    return groups.reduce((total, group) => total + (Array.isArray(group?.files) ? group.files.length : 0), 0);
+}
+
+export function shouldVirtualizeFolderItems(groups = [], threshold = FOLDER_VIEW_VIRTUALIZE_THRESHOLD) {
+    return countGroupedFiles(groups) > threshold;
+}
+
+export function buildVirtualTableRows(groups = []) {
+    const rows = [];
+    let fileIndex = 0;
+    for (const group of groups) {
+        const files = Array.isArray(group?.files) ? group.files : [];
+        if (group?.name) {
+            rows.push({
+                type: 'group',
+                key: `group:${group.name}:${rows.length}`,
+                group,
+            });
+        }
+        for (const file of files) {
+            rows.push({
+                type: 'file',
+                key: file?.path || `file:${fileIndex}`,
+                file,
+                fileIndex,
+            });
+            fileIndex += 1;
+        }
+    }
+    return rows;
+}
+
+export function buildVirtualGridLayout(groups = [], options = {}) {
+    const columnCount = Math.max(1, Number(options.columnCount) || 1);
+    const rowHeight = Math.max(1, Number(options.rowHeight) || 1);
+    const columnWidth = Math.max(1, Number(options.columnWidth) || 1);
+    const horizontalGap = Math.max(0, Number(options.horizontalGap) || 0);
+    const padding = Math.max(0, Number(options.padding) || 0);
+    const headerHeight = Math.max(1, Number(options.headerHeight) || 34);
+    const itemWidth = Math.max(1, Number(options.itemWidth) || columnWidth);
+    const rows = [];
+    let top = padding;
+    let fileIndex = 0;
+
+    for (const group of groups) {
+        const files = Array.isArray(group?.files) ? group.files : [];
+        if (group?.name) {
+            rows.push({
+                type: 'group',
+                key: `group:${group.name}:${rows.length}`,
+                group,
+                top,
+                left: padding,
+                height: headerHeight,
+            });
+            top += headerHeight;
+        }
+
+        for (let index = 0; index < files.length; index += 1) {
+            const file = files[index];
+            const row = Math.floor(index / columnCount);
+            const column = index % columnCount;
+            rows.push({
+                type: 'file',
+                key: file?.path || `file:${fileIndex}`,
+                file,
+                fileIndex,
+                top: top + row * rowHeight,
+                left: padding + column * (columnWidth + horizontalGap),
+                width: itemWidth,
+                height: rowHeight,
+            });
+            fileIndex += 1;
+        }
+        top += Math.ceil(files.length / columnCount) * rowHeight;
+    }
+
+    return {
+        rows,
+        height: Math.max(1, top + padding),
+    };
+}
+
+export function visibleVirtualRows(rows = [], scrollTop = 0, viewportHeight = 0, bufferSize = 0) {
+    const start = Math.max(0, Number(scrollTop) || 0) - Math.max(0, Number(bufferSize) || 0);
+    const end = Math.max(0, Number(scrollTop) || 0)
+        + Math.max(1, Number(viewportHeight) || 600)
+        + Math.max(0, Number(bufferSize) || 0);
+    return rows.filter(row => row.top + row.height >= start && row.top <= end);
 }
 
 export function normalizeViewScales(scales = {}) {

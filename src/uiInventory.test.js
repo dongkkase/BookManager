@@ -9,6 +9,7 @@ const sources = {
     fileTable: fs.readFileSync(new URL('./components/folder/FileTableView.jsx', import.meta.url), 'utf8'),
     thumbnailView: fs.readFileSync(new URL('./components/folder/ThumbnailView.jsx', import.meta.url), 'utf8'),
     tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
+    coverImage: fs.readFileSync(new URL('./components/folder/CoverImage.jsx', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
     detailPanel: [
         './components/folder/DetailPanel.jsx',
@@ -417,6 +418,27 @@ test('썸네일 모드는 커버 카드 오버레이 디자인을 사용한다',
     ]);
 });
 
+test('폴더 커버 이미지는 보이는 항목에만 로딩 스피너를 표시한다', () => {
+    assertInventory('coverImage', [
+        ['커버 로딩 스피너 기본 지원', 'showLoadingIndicator = true'],
+        ['커버 로딩 스피너 명시 조건', 'showLoadingIndicator && !loaded'],
+    ]);
+    assertInventory('fileTable', [
+        ['테이블 커버 스피너 가시 항목 제한', 'visibleCoverPathSet.has(file.path)'],
+    ]);
+    assertInventory('thumbnailView', [
+        ['썸네일 커버 스피너 가시 항목 제한', 'visibleCoverPathSet.has(file.path)'],
+    ]);
+    assertInventory('tileView', [
+        ['타일 커버 스피너 가시 항목 제한', 'visibleCoverPathSet.has(file.path)'],
+    ]);
+    assertInventory('folderCss', [
+        ['커버 로딩 컨테이너 상대 배치', '.folder-cover-loading'],
+        ['타일 커버 스피너 절대 배치 유지', '.tile-image .folder-cover-spinner'],
+        ['커버 로딩 스피너 지연 표시', 'folder-cover-spinner-delay'],
+    ]);
+});
+
 test('상세보기 패널은 선택 항목 내용 높이에 맞춰 자동 조절한다', () => {
     assertInventory('folder', [
         ['상세보기 내용 높이 변경 핸들러', 'handleDetailContentHeightChange'],
@@ -463,9 +485,14 @@ test('도서 상세보기 패널은 메타데이터 관리와 같은 책 항목�
 test('타일 모드는 항목 크기 변화에도 카드 레이아웃을 유지한다', () => {
     assertInventory('tileView', [
         ['타일 최소 폭은 이미지 폭 기반 계산', 'imageWidth + Math.round'],
+        ['타일 커버 카드 구조', 'tile-cover-card'],
         ['타일 이미지 높이 CSS 변수', "'--tile-image-height'"],
         ['타일 작가 출판사 장르 표시', 'tile-meta-line'],
         ['타일 줄거리 표시', 'tile-summary'],
+    ]);
+    assertInventory('folderCss', [
+        ['타일 커버 카드 겹침 레이어', '.tile-cover-card::before'],
+        ['타일 이미지 배경색', 'background: #1c1c1c;'],
     ]);
 });
 

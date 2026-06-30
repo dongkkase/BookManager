@@ -15,6 +15,8 @@ test('중복 검사 캐시는 기존 라이브러리 인덱스를 우선 사용�
     assert.match(source, /indexedRows = await options\.libraryDb\.getTargetIndex\(folder\)/);
     assert.match(source, /if \(indexedRows\.length > 0\) \{[\s\S]*addCandidate\(row\)/);
     assert.match(source, /\} else \{\s*await scanDir\(folder\);/);
+    assert.match(source, /const candidatesByNumberKey = new Map\(\)/);
+    assert.match(source, /candidatesByNumberKey\.get\(duplicateCandidateNumberKey\(file\.name \|\| file\.full_path\)\)/);
 });
 
 test('중복 검사는 DB에 등록된 파일명 기준으로 현재 폴더 파일명과 비교한다', async () => {

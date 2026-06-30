@@ -9,7 +9,7 @@ function coverImageKey(file = {}) {
   ].join('|');
 }
 
-function CoverImage({ src, alt = '', className = '', t, iconSize = 24 }) {
+function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true }) {
   const imageRef = useRef(null);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -64,7 +64,7 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24 }) {
 
   return (
     <div className={`${className} folder-cover-loading`}>
-      {!loaded && <span className="folder-cover-spinner" aria-label={t('folder_cover_img')} />}
+      {showLoadingIndicator && !loaded && <span className="folder-cover-spinner" aria-hidden="true" />}
       <img
         ref={imageRef}
         src={src}

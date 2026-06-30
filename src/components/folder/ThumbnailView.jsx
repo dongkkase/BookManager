@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage, coverImageKey } from './CoverImage';
-import { groupFolderFiles } from '../../folderViewState';
+import {
+  buildVirtualGridLayout,
+  groupFolderFiles,
+  shouldVirtualizeFolderItems,
+  visibleVirtualRows,
+} from '../../folderViewState';
 import { FolderEmptyState } from './FolderEmptyState';
 
 /**
@@ -57,19 +62,24 @@ const ThumbnailView = ({
 	  const gapY = 16;
 	  const padding = 10;
 	  const rowHeight = imageHeight + 10 + gapY;
-	  const shouldVirtualize = groupKey === 'none' && groups.length === 1 && items.length > 1000;
-	  const columnCount = shouldVirtualize
-	    ? Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gapX) / (itemWidth + gapX)))
-	    : 1;
-	  const totalRows = shouldVirtualize ? Math.ceil(groups[0].files.length / columnCount) : 0;
-	  const bufferRows = 3;
-	  const startRow = shouldVirtualize ? Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - bufferRows) : 0;
-	  const endRow = shouldVirtualize
-	    ? Math.min(totalRows, Math.ceil((viewport.scrollTop + (viewport.height || 600)) / rowHeight) + bufferRows)
-	    : 0;
-	  const virtualStartIndex = startRow * columnCount;
-	  const virtualEndIndex = shouldVirtualize ? Math.min(groups[0].files.length, endRow * columnCount) : 0;
-	  const virtualFiles = shouldVirtualize ? groups[0].files.slice(virtualStartIndex, virtualEndIndex) : [];
+	  const shouldVirtualize = shouldVirtualizeFolderItems(groups);
+	  const columnCount = Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gapX) / (itemWidth + gapX)));
+    const virtualLayout = useMemo(() => shouldVirtualize
+        ? buildVirtualGridLayout(groups, {
+            columnCount,
+            rowHeight,
+            columnWidth: itemWidth,
+            horizontalGap: gapX,
+            padding,
+            headerHeight: 36,
+            itemWidth,
+        })
+        : { rows: [], height: 1 },
+    [columnCount, gapX, groups, itemWidth, padding, rowHeight, shouldVirtualize]);
+    const virtualRows = useMemo(() => shouldVirtualize
+        ? visibleVirtualRows(virtualLayout.rows, viewport.scrollTop, viewport.height, rowHeight * 3)
+        : [],
+    [rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, virtualLayout.rows]);
 	  const fileIndexByPath = useMemo(() => {
 	    const map = new Map();
 	    groups.flatMap(group => group.files).forEach((file, index) => {
@@ -79,17 +89,22 @@ const ThumbnailView = ({
 	  }, [groups]);
     const flatItems = useMemo(() => groups.flatMap(group => group.files), [groups]);
     const visibleCoverItems = useMemo(() => {
-        if (shouldVirtualize) return virtualFiles;
+        if (shouldVirtualize) return virtualRows
+            .filter(row => row.type === 'file')
+            .map(row => row.file);
         if (flatItems.length === 0) return [];
-        const columns = Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gapX) / (itemWidth + gapX)));
         const firstRow = Math.max(0, Math.floor((viewport.scrollTop || 0) / rowHeight) - 2);
         const rowCount = Math.ceil((viewport.height || 600) / rowHeight) + 4;
-        return flatItems.slice(firstRow * columns, (firstRow + rowCount) * columns);
-    }, [flatItems, gapX, itemWidth, padding, rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, viewport.width, virtualFiles]);
+        return flatItems.slice(firstRow * columnCount, (firstRow + rowCount) * columnCount);
+    }, [columnCount, flatItems, rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, virtualRows]);
 
     useEffect(() => {
         onVisibleFilesChange?.(visibleCoverItems);
     }, [onVisibleFilesChange, visibleCoverItems]);
+    const visibleCoverPathSet = useMemo(
+        () => new Set(visibleCoverItems.map(file => file.path).filter(Boolean)),
+        [visibleCoverItems],
+    );
 
 	  useEffect(() => {
 	    const container = containerRef.current;
@@ -249,12 +264,29 @@ const ThumbnailView = ({
       {shouldVirtualize ? (
         <div
           className="folder-virtual-grid-spacer"
-          style={{ height: `${Math.max(1, totalRows * rowHeight)}px` }}
+          style={{ height: `${virtualLayout.height}px` }}
         >
-          {virtualFiles.map((file, relativeIndex) => {
-            const fileIndex = virtualStartIndex + relativeIndex;
-            const row = Math.floor(fileIndex / columnCount);
-            const column = fileIndex % columnCount;
+          {virtualRows.map(row => {
+            if (row.type === 'group') {
+              return (
+                <div
+                  key={row.key}
+                  className="folder-view-group-header"
+                  style={{
+                    position: 'absolute',
+                    left: `${padding}px`,
+                    top: `${row.top}px`,
+                    width: `calc(100% - ${padding * 2}px)`,
+                    minWidth: 0,
+                  }}
+                >
+                  <FaIcon name="folder" />
+                  {t('group_header', [row.group.name, row.group.files.length])}
+                </div>
+              );
+            }
+            const file = row.file;
+            const fileIndex = row.fileIndex;
             return (
 	            <div
 	              key={file.path || fileIndex}
@@ -262,8 +294,8 @@ const ThumbnailView = ({
                   className={`thumbnail-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              style={{
 	                position: 'absolute',
-	                left: `${padding + column * (itemWidth + gapX)}px`,
-	                top: `${padding + row * rowHeight}px`,
+	                left: `${row.left}px`,
+	                top: `${row.top}px`,
 	              }}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
 	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
@@ -279,6 +311,7 @@ const ThumbnailView = ({
                   className="thumb-image"
                   t={t}
                   iconSize={24}
+                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
                 {displayRating(file) && (
                   <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>
@@ -321,6 +354,7 @@ const ThumbnailView = ({
                   className="thumb-image"
                   t={t}
                   iconSize={24}
+                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
                 {displayRating(file) && (
                   <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>

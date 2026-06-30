@@ -897,6 +897,10 @@ function filenameNumberTokens(name = '') {
   });
 }
 
+function duplicateCandidateNumberKey(name = '') {
+  return JSON.stringify(filenameNumberTokens(name));
+}
+
 function sameFilenameNumbers(aName = '', bName = '') {
   const aNums = filenameNumberTokens(aName);
   const bNums = filenameNumberTokens(bName);
@@ -1066,6 +1070,12 @@ async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options
 
 function attachDuplicateMatches(files, dupCache) {
   if (!dupCache.length) return files;
+  const candidatesByNumberKey = new Map();
+  for (const candidate of dupCache) {
+    const key = duplicateCandidateNumberKey(candidate.name);
+    if (!candidatesByNumberKey.has(key)) candidatesByNumberKey.set(key, []);
+    candidatesByNumberKey.get(key).push(candidate);
+  }
 
   return files.map(file => {
     const compareTitle = normalizeFilenameForCompare(file.name || file.full_path);
@@ -1080,7 +1090,8 @@ function attachDuplicateMatches(files, dupCache) {
     }
 
     const normalizedFilePath = path.normalize(file.full_path);
-    for (const candidate of dupCache) {
+    const candidates = candidatesByNumberKey.get(duplicateCandidateNumberKey(file.name || file.full_path)) || [];
+    for (const candidate of candidates) {
       if (path.normalize(candidate.full_path) === normalizedFilePath) continue;
       if (candidate.compareTitle.length < 2) continue;
       if (!sameFilenameNumbers(file.name || file.full_path, candidate.name)) continue;

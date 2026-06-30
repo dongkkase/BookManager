@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage, coverImageKey } from './CoverImage';
-import { groupFolderFiles } from '../../folderViewState';
+import {
+  buildVirtualGridLayout,
+  groupFolderFiles,
+  shouldVirtualizeFolderItems,
+  visibleVirtualRows,
+} from '../../folderViewState';
 import { FolderEmptyState } from './FolderEmptyState';
 
 /**
@@ -56,22 +61,25 @@ const TileView = ({
 	  const gap = 16;
 	  const padding = 16;
 	  const rowHeight = imageHeight + 12 + gap;
-	  const shouldVirtualize = groupKey === 'none' && groups.length === 1 && items.length > 1000;
-	  const columnCount = shouldVirtualize
-	    ? Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gap) / (minColumnWidth + gap)))
-	    : 1;
-	  const columnWidth = shouldVirtualize
-	    ? Math.max(minColumnWidth, (Math.max(0, viewport.width - (padding * 2) - ((columnCount - 1) * gap)) / columnCount))
-	    : minColumnWidth;
-	  const totalRows = shouldVirtualize ? Math.ceil(groups[0].files.length / columnCount) : 0;
-	  const bufferRows = 3;
-	  const startRow = shouldVirtualize ? Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - bufferRows) : 0;
-	  const endRow = shouldVirtualize
-	    ? Math.min(totalRows, Math.ceil((viewport.scrollTop + (viewport.height || 600)) / rowHeight) + bufferRows)
-	    : 0;
-	  const virtualStartIndex = startRow * columnCount;
-	  const virtualEndIndex = shouldVirtualize ? Math.min(groups[0].files.length, endRow * columnCount) : 0;
-	  const virtualFiles = shouldVirtualize ? groups[0].files.slice(virtualStartIndex, virtualEndIndex) : [];
+	  const shouldVirtualize = shouldVirtualizeFolderItems(groups);
+	  const columnCount = Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gap) / (minColumnWidth + gap)));
+	  const columnWidth = Math.max(minColumnWidth, (Math.max(0, viewport.width - (padding * 2) - ((columnCount - 1) * gap)) / columnCount));
+    const virtualLayout = useMemo(() => shouldVirtualize
+        ? buildVirtualGridLayout(groups, {
+            columnCount,
+            rowHeight,
+            columnWidth,
+            horizontalGap: gap,
+            padding,
+            headerHeight: 36,
+            itemWidth: columnWidth,
+        })
+        : { rows: [], height: 1 },
+    [columnCount, columnWidth, gap, groups, padding, rowHeight, shouldVirtualize]);
+    const virtualRows = useMemo(() => shouldVirtualize
+        ? visibleVirtualRows(virtualLayout.rows, viewport.scrollTop, viewport.height, rowHeight * 3)
+        : [],
+    [rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, virtualLayout.rows]);
 	  const fileIndexByPath = useMemo(() => {
 	    const map = new Map();
 	    groups.flatMap(group => group.files).forEach((file, index) => {
@@ -81,17 +89,22 @@ const TileView = ({
 	  }, [groups]);
     const flatItems = useMemo(() => groups.flatMap(group => group.files), [groups]);
     const visibleCoverItems = useMemo(() => {
-        if (shouldVirtualize) return virtualFiles;
+        if (shouldVirtualize) return virtualRows
+            .filter(row => row.type === 'file')
+            .map(row => row.file);
         if (flatItems.length === 0) return [];
-        const columns = Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gap) / (minColumnWidth + gap)));
         const firstRow = Math.max(0, Math.floor((viewport.scrollTop || 0) / rowHeight) - 2);
         const rowCount = Math.ceil((viewport.height || 600) / rowHeight) + 4;
-        return flatItems.slice(firstRow * columns, (firstRow + rowCount) * columns);
-    }, [flatItems, gap, minColumnWidth, padding, rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, viewport.width, virtualFiles]);
+        return flatItems.slice(firstRow * columnCount, (firstRow + rowCount) * columnCount);
+    }, [columnCount, flatItems, rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, virtualRows]);
 
     useEffect(() => {
         onVisibleFilesChange?.(visibleCoverItems);
     }, [onVisibleFilesChange, visibleCoverItems]);
+    const visibleCoverPathSet = useMemo(
+        () => new Set(visibleCoverItems.map(file => file.path).filter(Boolean)),
+        [visibleCoverItems],
+    );
 
 	  useEffect(() => {
 	    const container = containerRef.current;
@@ -250,12 +263,29 @@ const TileView = ({
       {shouldVirtualize ? (
         <div
           className="folder-virtual-grid-spacer"
-          style={{ height: `${Math.max(1, totalRows * rowHeight)}px` }}
+          style={{ height: `${virtualLayout.height}px` }}
         >
-          {virtualFiles.map((file, relativeIndex) => {
-            const fileIndex = virtualStartIndex + relativeIndex;
-            const row = Math.floor(fileIndex / columnCount);
-            const column = fileIndex % columnCount;
+          {virtualRows.map(row => {
+            if (row.type === 'group') {
+              return (
+                <div
+                  key={row.key}
+                  className="folder-view-group-header"
+                  style={{
+                    position: 'absolute',
+                    left: `${padding}px`,
+                    top: `${row.top}px`,
+                    width: `calc(100% - ${padding * 2}px)`,
+                    minWidth: 0,
+                  }}
+                >
+                  <FaIcon name="folder" />
+                  {t('group_header', [row.group.name, row.group.files.length])}
+                </div>
+              );
+            }
+            const file = row.file;
+            const fileIndex = row.fileIndex;
             return (
 	            <div
 	              key={file.path || fileIndex}
@@ -263,9 +293,9 @@ const TileView = ({
                   className={`tile-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              style={{
 	                position: 'absolute',
-	                left: `${padding + column * (columnWidth + gap)}px`,
-	                top: `${padding + row * rowHeight}px`,
-	                width: `${columnWidth}px`,
+	                left: `${row.left}px`,
+	                top: `${row.top}px`,
+	                width: `${row.width}px`,
 	              }}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
 	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
@@ -273,14 +303,17 @@ const TileView = ({
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
-              <CoverImage
-                key={coverImageKey(file)}
-                src={file.cover}
-                alt={file.name || ''}
-                className="tile-image"
-                t={t}
-                iconSize={30}
-              />
+              <div className="tile-cover-card">
+                <CoverImage
+                  key={coverImageKey(file)}
+                  src={file.cover}
+                  alt={file.name || ''}
+                  className="tile-image"
+                  t={t}
+                  iconSize={30}
+                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                />
+              </div>
               <div className="tile-info">
                 <div className="tile-title">{file.title || file.name || '-'}</div>
                 <div className="tile-meta-line">
@@ -330,14 +363,17 @@ const TileView = ({
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
-              <CoverImage
-                key={coverImageKey(file)}
-                src={file.cover}
-                alt={file.name || ''}
-                className="tile-image"
-                t={t}
-                iconSize={30}
-              />
+              <div className="tile-cover-card">
+                <CoverImage
+                  key={coverImageKey(file)}
+                  src={file.cover}
+                  alt={file.name || ''}
+                  className="tile-image"
+                  t={t}
+                  iconSize={30}
+                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                />
+              </div>
               <div className="tile-info">
                 <div className="tile-title">{file.title || file.name || '-'}</div>
                 <div className="tile-meta-line">

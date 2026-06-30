@@ -1,5 +1,28 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
+export const FOLDER_FILE_CACHE_LIMIT = 8;
+
+export function rememberFolderFileCacheKey(order = [], cacheKey = '', limit = FOLDER_FILE_CACHE_LIMIT) {
+  if (!cacheKey) return order;
+  const nextOrder = [...order.filter(key => key !== cacheKey), cacheKey];
+  return nextOrder.slice(-Math.max(1, Number(limit) || FOLDER_FILE_CACHE_LIMIT));
+}
+
+export function trimFolderFileDataCache(cache = {}, order = [], keepKey = '') {
+  const keys = Object.keys(cache);
+  if (keys.length <= FOLDER_FILE_CACHE_LIMIT) return cache;
+  const limit = FOLDER_FILE_CACHE_LIMIT;
+  const recentKeys = keepKey
+    ? order.filter(key => key !== keepKey).slice(-(limit - 1))
+    : order.slice(-limit);
+  const keepKeys = new Set(keepKey ? [...recentKeys, keepKey] : recentKeys);
+  const next = {};
+  for (const key of keys) {
+    if (keepKeys.has(key)) next[key] = cache[key];
+  }
+  return next;
+}
+
 /**
  * 폴더 스캔 상태 관리 훅
  * 
@@ -24,6 +47,7 @@ export function useFolderScan(t) {
 
   const currentFolderRef = useRef(null);
   const fileDataCacheRef = useRef({});
+  const fileDataCacheOrderRef = useRef([]);
   const activeScansRef = useRef(new Map());
   const mountedRef = useRef(true);
 
@@ -66,6 +90,14 @@ export function useFolderScan(t) {
     return JSON.stringify({ folderPath, includeSubfolders, enableDupCheck, dupFolders, skipArchiveExtraction });
   }, []);
 
+  const touchCacheKey = useCallback(cacheKey => {
+    fileDataCacheOrderRef.current = rememberFolderFileCacheKey(fileDataCacheOrderRef.current, cacheKey);
+  }, []);
+
+  const limitCache = useCallback((cache, keepKey = '') => (
+    trimFolderFileDataCache(cache, fileDataCacheOrderRef.current, keepKey)
+  ), []);
+
   // --- 폴더 스캔 ---
   const scanFolder = useCallback(async (folderPath, options = {}) => {
     const { includeSubfolders = true, enableDupCheck = false } = options;
@@ -82,6 +114,7 @@ export function useFolderScan(t) {
 
     // 캐시에 데이터가 있다면 재사용
     if (!force && fileDataCacheRef.current[cacheKey]) {
+      touchCacheKey(cacheKey);
       return fileDataCacheRef.current[cacheKey];
     }
 
@@ -120,8 +153,9 @@ export function useFolderScan(t) {
           });
 
           if (mountedRef.current && currentFolderRef.current === folderPath) {
+            touchCacheKey(cacheKey);
             setFileDataCache(prev => ({
-              ...prev,
+              ...limitCache(prev, cacheKey),
               [cacheKey]: initialFiles || [],
             }));
           }
@@ -137,8 +171,9 @@ export function useFolderScan(t) {
 
           if (!mountedRef.current) return quickFiles || [];
           if (currentFolderRef.current === folderPath) {
+            touchCacheKey(cacheKey);
             setFileDataCache(prev => ({
-              ...prev,
+              ...limitCache(prev, cacheKey),
               [cacheKey]: mergeFilesPreservingCover(quickFiles || [], prev[cacheKey] || []),
             }));
             const quickCount = quickFiles?.length || 0;
@@ -160,8 +195,9 @@ export function useFolderScan(t) {
             reportFileReady: true,
           }).then(files => {
             if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
+            touchCacheKey(cacheKey);
             setFileDataCache(prev => ({
-              ...prev,
+              ...limitCache(prev, cacheKey),
               [cacheKey]: mergeFilesPreservingCover(files || [], prev[cacheKey] || []),
             }));
             setScanProgress(100);
@@ -185,8 +221,9 @@ export function useFolderScan(t) {
         });
 
         if (!mountedRef.current) return files || [];
+        touchCacheKey(cacheKey);
         setFileDataCache(prev => ({
-          ...prev,
+          ...limitCache(prev, cacheKey),
           [cacheKey]: files || [],
         }));
         if (!silent) {
@@ -250,9 +287,9 @@ export function useFolderScan(t) {
           return updated ? { ...file, ...updated } : file;
         });
       }
-      return next;
+      return limitCache(next, preferredKey);
     });
-  }, [getCacheKey]);
+  }, [getCacheKey, limitCache]);
 
   // --- 캐시 초기화 ---
   const clearCache = useCallback((folderPath) => {
@@ -267,10 +304,12 @@ export function useFolderScan(t) {
             delete newCache[key];
           }
         });
+        fileDataCacheOrderRef.current = fileDataCacheOrderRef.current.filter(key => newCache[key]);
         return newCache;
       });
     } else {
       // 전체 캐시 초기화
+      fileDataCacheOrderRef.current = [];
       setFileDataCache({});
     }
   }, []);
@@ -377,8 +416,9 @@ export function useFolderScan(t) {
     const handleScanComplete = (data) => {
       const { files, folderPath, cacheKey } = data || {};
       if (folderPath && files && cacheKey) {
+        touchCacheKey(cacheKey);
         setFileDataCache(prev => ({
-          ...prev,
+          ...limitCache(prev, cacheKey),
           [cacheKey]: mergeFilesPreservingCover(files, prev[cacheKey] || []),
         }));
         setScanProgress(100);
@@ -423,7 +463,7 @@ export function useFolderScan(t) {
       if (removeComplete) removeComplete();
       if (removeError) removeError();
     };
-  }, [mergeFilesPreservingCover, t]);
+  }, [limitCache, mergeFilesPreservingCover, t, touchCacheKey]);
 
   return {
     scanning,

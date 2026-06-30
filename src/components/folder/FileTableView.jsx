@@ -1,7 +1,11 @@
 import React, { useMemo, forwardRef, useRef, useState, useEffect } from 'react';
 import { FaIcon } from '../FaIcon';
 import { normalizeColumnLayout } from '../../folderColumnLayout';
-import { groupFolderFiles } from '../../folderViewState';
+import {
+    buildVirtualTableRows,
+    groupFolderFiles,
+    shouldVirtualizeFolderItems,
+} from '../../folderViewState';
 import { CoverImage, coverImageKey } from './CoverImage';
 import { FolderEmptyState } from './FolderEmptyState';
 
@@ -83,8 +87,9 @@ const FileTableView = forwardRef(({
         () => selectedFileSet instanceof Set ? selectedFileSet : new Set(selectedFiles),
         [selectedFileSet, selectedFiles],
     );
-    const shouldVirtualize = groupKey === 'none' && groupedData.length === 1 && files.length > 1000;
-    const virtualRows = shouldVirtualize ? groupedData[0].files : [];
+    const tableRows = useMemo(() => buildVirtualTableRows(groupedData), [groupedData]);
+    const shouldVirtualize = shouldVirtualizeFolderItems(groupedData);
+    const virtualRows = shouldVirtualize ? tableRows : [];
     const virtualBuffer = 12;
     const virtualStartIndex = shouldVirtualize
         ? Math.max(0, Math.floor(scrollTop / rowHeight) - virtualBuffer)
@@ -109,7 +114,9 @@ const FileTableView = forwardRef(({
     }, [groupedData]);
     const flatRows = useMemo(() => groupedData.flatMap(group => group.files), [groupedData]);
     const visibleCoverRows = useMemo(() => {
-        if (shouldVirtualize) return virtualVisibleRows;
+        if (shouldVirtualize) return virtualVisibleRows
+            .filter(row => row.type === 'file')
+            .map(row => row.file);
         if (flatRows.length === 0) return [];
         const firstIndex = Math.max(0, Math.floor((scrollTop || 0) / rowHeight) - 8);
         const visibleCount = Math.ceil((viewportHeight || 600) / rowHeight) + 16;
@@ -119,6 +126,10 @@ const FileTableView = forwardRef(({
     useEffect(() => {
         onVisibleFilesChange?.(visibleCoverRows);
     }, [onVisibleFilesChange, visibleCoverRows]);
+    const visibleCoverPathSet = useMemo(
+        () => new Set(visibleCoverRows.map(file => file.path).filter(Boolean)),
+        [visibleCoverRows],
+    );
 
   const formatSize = (bytes) => {
     if (!bytes || bytes === 0) return '-';
@@ -380,6 +391,7 @@ const FileTableView = forwardRef(({
             className="table-cover-image"
             t={t}
             iconSize={14}
+            showLoadingIndicator={visibleCoverPathSet.has(file.path)}
           />
         </td>
       );
@@ -476,8 +488,19 @@ const FileTableView = forwardRef(({
                   <td colSpan={columns.length} style={{ height: `${virtualTopPadding}px`, padding: 0, border: 0 }} />
                 </tr>
               )}
-              {virtualVisibleRows.map((file, relativeIndex) => {
-                const fileIndex = virtualStartIndex + relativeIndex;
+              {virtualVisibleRows.map((row, relativeIndex) => {
+                if (row.type === 'group') {
+                    return (
+                      <tr key={row.key || `group-${virtualStartIndex + relativeIndex}`} className="group-header-row">
+                        <td colSpan={columns.length}>
+                          <span className="group-folder-icon"><FaIcon name="folder" /></span>
+                          {t('group_header', [row.group.name, row.group.files.length])}
+                        </td>
+                      </tr>
+                    );
+                }
+                const file = row.file;
+                const fileIndex = row.fileIndex;
                 return (
                 <tr
                   key={file.path || fileIndex}
