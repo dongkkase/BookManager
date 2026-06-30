@@ -96,6 +96,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const innerTableRef = useRef(null);
   const archiveRowRefs = useRef(new Map());
   const entryRowRefs = useRef(new Map());
+  const previewRequestRef = useRef({ cover: 0, inner: 0 });
 
   const patternLabels = useMemo(() => {
     const labels = t('patterns');
@@ -132,6 +133,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     const closeMenu = () => setContextMenu(null);
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
+  }, []);
+
+  useEffect(() => () => {
+    previewRequestRef.current.cover += 1;
+    previewRequestRef.current.inner += 1;
   }, []);
 
   useEffect(() => {
@@ -196,6 +202,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   );
   const activeEntries = activeArchive?.entries || [];
   const activeEntry = activeEntries.find(entry => entry.id === selectedEntryId) || activeEntries[0] || null;
+  const coverEntry = useMemo(
+    () => activeEntries.find(entry => basename(entry.oldName).toLowerCase().startsWith('cover')) || activeEntries[0] || null,
+    [activeEntries]
+  );
   const checkedCount = useMemo(() => fileList.filter(file => file.checked).length, [fileList]);
   const allChecked = fileList.length > 0 && fileList.every(file => file.checked);
   const imageQualityLabel = config?.img_quality ?? config?.jpg_quality ?? 100;
@@ -223,16 +233,26 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   };
 
   const loadPreview = useCallback(async (target, archive, entry) => {
+    const requestId = (previewRequestRef.current[target] || 0) + 1;
+    previewRequestRef.current[target] = requestId;
+    const isCurrentRequest = () => previewRequestRef.current[target] === requestId;
+
     if (!archive?.filepath || !entry?.originalPath) {
       if (target === 'cover') setCoverPreview('');
       else setInnerPreview('');
       return;
     }
     setPreviewError(current => ({ ...current, [target]: false }));
-    const result = await window.electronAPI?.extractArchiveImage?.(
-      archive.filepath,
-      entry.originalPath,
-    );
+    let result = null;
+    try {
+      result = await window.electronAPI?.extractArchiveImage?.(
+        archive.filepath,
+        entry.originalPath,
+      );
+    } catch {
+      result = null;
+    }
+    if (!isCurrentRequest()) return;
     const dataUrl = result?.success ? result.dataUrl : '';
     if (target === 'cover') setCoverPreview(dataUrl);
     else setInnerPreview(dataUrl);
@@ -240,19 +260,21 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   useEffect(() => {
-    const cover = activeEntries.find(entry => basename(entry.oldName).toLowerCase().startsWith('cover'))
-      || activeEntries[0];
     setSelectedEntryId(current => activeEntries.some(entry => entry.id === current) ? current : activeEntries[0]?.id || null);
-    loadPreview('cover', activeArchive, cover);
-  }, [activeArchive?.id, activeEntries, loadPreview]);
+  }, [activeArchive?.id, activeEntries]);
+
+  useEffect(() => {
+    loadPreview('cover', activeArchive, coverEntry);
+  }, [activeArchive?.filepath, coverEntry?.originalPath, loadPreview]);
 
   useEffect(() => {
     loadPreview('inner', activeArchive, activeEntry);
-  }, [activeArchive, activeEntry, loadPreview]);
+  }, [activeArchive?.filepath, activeEntry?.originalPath, loadPreview]);
 
   const analyzePaths = useCallback(async (paths) => {
     const cleanPaths = [...new Set((paths || []).filter(Boolean))];
     if (cleanPaths.length === 0) return;
+    let cancelled = false;
 
     setIsWorking(true);
     setTaskPhase('analyzing');
@@ -266,6 +288,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         maxAnalysisThreads: config?.max_threads || 2,
         ...renameOptions,
       });
+      if (result?.cancelled) {
+        cancelled = true;
+        setStatusMessage(t('msg_cancelled'));
+        return;
+      }
 
       const nextItems = (result.items || []).map(item => refreshRenamerItem({
         ...item,
@@ -307,7 +334,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       showToast?.(`${t('msg_failed')}: ${error.message}`);
       setStatusMessage(`${t('msg_failed')}: ${error.message}`);
     } finally {
-      setProgress(100);
+      setProgress(cancelled ? 0 : 100);
       setIsWorking(false);
       setTaskPhase('idle');
     }
@@ -387,6 +414,8 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleClear = () => {
+    previewRequestRef.current.cover += 1;
+    previewRequestRef.current.inner += 1;
     setFileList([]);
     setSelectedArchiveId(null);
     setLastResult(null);
@@ -675,7 +704,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleCancel = useCallback(async () => {
-    if (taskPhase !== 'executing') return;
+    if (!['analyzing', 'executing'].includes(taskPhase)) return;
     setTaskPhase('cancelling');
     setStatusMessage(t('cancel_wait'));
     await window.electronAPI?.stopTask?.('renamer');

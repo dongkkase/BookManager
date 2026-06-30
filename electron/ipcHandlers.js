@@ -93,6 +93,37 @@ import {
   listSystemFontFamilies,
 } from './fontDiscovery.js';
 
+const RENAMER_PREVIEW_MAX_DIMENSION = 720;
+const RENAMER_PREVIEW_JPEG_QUALITY = 86;
+
+function createRenamerPreviewBuffer(buffer, entryPath) {
+  try {
+    if (!Buffer.isBuffer(buffer) || buffer.length === 0) return { buffer };
+    if (path.extname(entryPath).toLowerCase() === '.gif') return { buffer };
+
+    const image = nativeImage.createFromBuffer(buffer);
+    if (image.isEmpty()) return { buffer };
+
+    const size = image.getSize();
+    const maxSide = Math.max(size.width || 0, size.height || 0);
+    if (maxSide <= RENAMER_PREVIEW_MAX_DIMENSION) return { buffer };
+
+    const scale = RENAMER_PREVIEW_MAX_DIMENSION / maxSide;
+    const width = Math.max(1, Math.round(size.width * scale));
+    const height = Math.max(1, Math.round(size.height * scale));
+    const resized = image.resize({ width, height, quality: 'good' });
+    const extension = path.extname(entryPath).toLowerCase();
+    const encoded = ['.jpg', '.jpeg'].includes(extension)
+      ? { buffer: resized.toJPEG(RENAMER_PREVIEW_JPEG_QUALITY), mime: 'image/jpeg' }
+      : { buffer: resized.toPNG(), mime: 'image/png' };
+
+    if (!Buffer.isBuffer(encoded.buffer) || encoded.buffer.length === 0) return { buffer };
+    return encoded.buffer.length < buffer.length ? encoded : { buffer };
+  } catch {
+    return { buffer };
+  }
+}
+
 function requestJson(url) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
@@ -3080,19 +3111,28 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // ========== 내부 파일명 변경 ==========
   ipcMain.handle('renamer:analyze', async (event, paths, options = {}) => {
+    const taskId = 'renamer';
+    const controller = cancellationRegistry.start(event.sender.id, taskId);
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
-    return analyzeRenamerInputs(paths, {
-      ...options,
-      sevenZExe,
-      lang: options.lang || configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko',
-    }, (progress) => {
-      event.sender.send('task:progress', { task: 'renamer:analyze', ...progress });
-    });
+    try {
+      return await analyzeRenamerInputs(paths, {
+        ...options,
+        sevenZExe,
+        shouldCancel: () => controller.shouldCancel(),
+        lang: options.lang || configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko',
+      }, (progress) => {
+        event.sender.send('task:progress', { task: 'renamer:analyze', ...progress });
+      });
+    } finally {
+      cancellationRegistry.finish(event.sender.id, taskId, controller);
+    }
   });
 
   ipcMain.handle('renamer:extractImage', async (_event, filePath, entryPath) => {
     const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
-    return extractRenamerImage(filePath, entryPath, sevenZExe);
+    return extractRenamerImage(filePath, entryPath, sevenZExe, {
+      transformBuffer: createRenamerPreviewBuffer,
+    });
   });
 
   ipcMain.handle('renamer:execute', async (event, items, options = {}) => {

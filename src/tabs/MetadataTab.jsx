@@ -1543,6 +1543,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         event.preventDefault();
         event.stopPropagation();
         handleLoadLatest();
+      } else if (code === 'KeyX' && activeItem) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleApplyBatchToActive();
       } else if (code === 'KeyC' && activeItem) {
         event.preventDefault();
         event.stopPropagation();
@@ -2112,7 +2116,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
                 <span className="meta-tool-icon"><FaIcon name="copy" size={12} /></span>
                 <span className="meta-tool-text">{t('t3_btn_copy_orig').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
-              <button className="meta-btn-primary" onClick={handleApplyBatchToActive} disabled={!activeItem}>
+              <button className="meta-btn-primary" title="X" onClick={handleApplyBatchToActive} disabled={!activeItem}>
                 <span className="meta-tool-icon"><FaIcon name="check" size={12} /></span>
                 <span className="meta-tool-text">{t('t3_btn_apply_all').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
@@ -2161,8 +2165,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             )}
           </div>
           <div className="meta-bottom-right">
-            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')}</button>
-            <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> {t('t3_save_all')}</button>
+            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')} ({primaryShortcut}+S)</button>
+            <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> {t('t3_save_all')} ({primaryShortcut}+Shift+S)</button>
           </div>
         </div>
 
@@ -2622,12 +2626,16 @@ function MetadataSearchDialog({
       event.preventDefault();
       event.stopPropagation();
       runSearch(1);
+    } else if (code === 'KeyX' && onUseCover && selected && selectedCoverUrl) {
+      event.preventDefault();
+      event.stopPropagation();
+      onUseCover(selected);
     } else if (code === 'KeyC' && selected) {
       event.preventDefault();
       event.stopPropagation();
       onSelect(selected);
     }
-  }, [dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, selected, state.loading, state.results.length]);
+  }, [dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, onUseCover, selected, selectedCoverUrl, state.loading, state.results.length]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleShortcut, true);
@@ -2810,7 +2818,7 @@ function MetadataSearchDialog({
                 onClick={() => selected && onUseCover(selected)}
               >
                 <FaIcon name="cloudArrowDown" size={11} />
-                {text('btn_use_cover', '표지 사용')}
+                {text('btn_use_cover', '표지 사용(X)')}
               </button>
             )}
             <button className="primary" title="C" disabled={!selected} onClick={() => selected && onSelect(selected)}><FaIcon name="check" size={11} />{text('btn_select', '선택')} (C)</button>

@@ -25,6 +25,12 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function taskCancelledError() {
+    const error = new Error(taskText('ko', 'msg_cancelled'));
+    error.code = 'TASK_CANCELLED';
+    return error;
+}
+
 async function retryBusyFsOperation(operation, options = {}) {
     for (let attempt = 0; attempt <= BUSY_FS_RETRY_DELAYS_MS.length; attempt += 1) {
         try {
@@ -422,10 +428,11 @@ async function stripWebpMetadataFile(filePath) {
     return true;
 }
 
-async function expandInputPaths(paths) {
+async function expandInputPaths(paths, options = {}) {
   const archives = [];
 
   async function walk(currentPath) {
+    if (options.shouldCancel?.()) return;
     let stat;
     try {
       stat = await fsp.stat(currentPath);
@@ -443,11 +450,13 @@ async function expandInputPaths(paths) {
 
     const entries = await fsp.readdir(currentPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (options.shouldCancel?.()) return;
       await walk(path.join(currentPath, entry.name));
     }
   }
 
   for (const inputPath of paths || []) {
+    if (options.shouldCancel?.()) break;
     if (inputPath) await walk(inputPath);
   }
 
@@ -469,6 +478,10 @@ async function directUnsupportedInputs(paths) {
 
 function runProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    if (options.shouldCancel?.()) {
+      reject(taskCancelledError());
+      return;
+    }
     const captureOutput = options.captureOutput !== false;
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -477,12 +490,31 @@ function runProcess(command, args, options = {}) {
     });
     let stdout = '';
     let stderr = '';
+    let cancelledByRequest = false;
+    const cancelTimer = typeof options.shouldCancel === 'function'
+      ? setInterval(() => {
+        if (!options.shouldCancel()) return;
+        cancelledByRequest = true;
+        child.kill();
+      }, 100)
+      : null;
+    const clearCancelTimer = () => {
+      if (cancelTimer) clearInterval(cancelTimer);
+    };
     if (captureOutput) {
       child.stdout.on('data', data => { stdout += data.toString(); });
       child.stderr.on('data', data => { stderr += data.toString(); });
     }
-    child.on('error', reject);
+    child.on('error', error => {
+      clearCancelTimer();
+      reject(cancelledByRequest || options.shouldCancel?.() ? taskCancelledError() : error);
+    });
     child.on('close', code => {
+      clearCancelTimer();
+      if (cancelledByRequest || options.shouldCancel?.()) {
+        reject(taskCancelledError());
+        return;
+      }
       if (code === 0 || code === 1) resolve({ code, stdout, stderr });
       else reject(new Error(stderr || stdout || `${command} exited with ${code}`));
     });
@@ -514,9 +546,11 @@ async function isUsableConvertedFile(filePath, expectedExtension = '') {
   }
 }
 
-async function listWith7z(filePath, sevenZExe) {
+async function listWith7z(filePath, sevenZExe, options = {}) {
   if (!sevenZExe) return [];
-  const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath]);
+  const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath], {
+    shouldCancel: options.shouldCancel,
+  });
   const entries = [];
   let current = null;
 
@@ -554,7 +588,22 @@ function imageMime(entryPath) {
   return 'image/jpeg';
 }
 
-export async function extractRenamerImage(filePath, entryPath, sevenZExe) {
+async function previewDataUrl(buffer, entryPath, options = {}) {
+  let outputBuffer = buffer;
+  let mime = imageMime(entryPath);
+  if (typeof options.transformBuffer === 'function') {
+    const transformed = await options.transformBuffer(buffer, entryPath);
+    if (Buffer.isBuffer(transformed)) {
+      outputBuffer = transformed;
+    } else if (Buffer.isBuffer(transformed?.buffer)) {
+      outputBuffer = transformed.buffer;
+      if (transformed.mime) mime = transformed.mime;
+    }
+  }
+  return `data:${mime};base64,${outputBuffer.toString('base64')}`;
+}
+
+export async function extractRenamerImage(filePath, entryPath, sevenZExe, options = {}) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.zip' || ext === '.cbz') {
     try {
@@ -568,7 +617,7 @@ export async function extractRenamerImage(filePath, entryPath, sevenZExe) {
       }
       return {
         success: true,
-        dataUrl: `data:${imageMime(entryPath)};base64,${buffer.toString('base64')}`,
+        dataUrl: await previewDataUrl(buffer, entryPath, options),
       };
     } catch (error) {
       if (!sevenZExe) return { success: false, message: error.message };
@@ -586,21 +635,25 @@ export async function extractRenamerImage(filePath, entryPath, sevenZExe) {
     child.stdout.on('data', chunk => chunks.push(Buffer.from(chunk)));
     child.stderr.on('data', chunk => { errorText += chunk.toString(); });
     child.on('error', error => resolve({ success: false, message: error.message }));
-    child.on('close', code => {
+    child.on('close', async code => {
       const buffer = Buffer.concat(chunks);
       if (code !== 0 || buffer.length === 0) {
         resolve({ success: false, message: errorText || 'Image extraction failed.' });
         return;
       }
-      resolve({
-        success: true,
-        dataUrl: `data:${imageMime(entryPath)};base64,${buffer.toString('base64')}`,
-      });
+      try {
+        resolve({
+          success: true,
+          dataUrl: await previewDataUrl(buffer, entryPath, options),
+        });
+      } catch (error) {
+        resolve({ success: false, message: error.message });
+      }
     });
   });
 }
 
-async function listArchiveEntries(filePath, sevenZExe) {
+async function listArchiveEntries(filePath, sevenZExe, options = {}) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.zip' || ext === '.cbz') {
     try {
@@ -617,7 +670,7 @@ async function listArchiveEntries(filePath, sevenZExe) {
       if (!sevenZExe) throw error;
     }
   }
-  return listWith7z(filePath, sevenZExe);
+  return listWith7z(filePath, sevenZExe, options);
 }
 
 function padFor(totalCount) {
@@ -706,12 +759,13 @@ function maxAnalysisWorkers(options = {}, totalCount = 1) {
   return Math.min(Math.max(1, totalCount), workerCount);
 }
 
-async function mapWithConcurrency(items, workerCount, mapper) {
+async function mapWithConcurrency(items, workerCount, mapper, options = {}) {
   const results = new Array(items.length);
   let cursor = 0;
 
   async function worker() {
     while (cursor < items.length) {
+      if (options.shouldCancel?.()) return;
       const index = cursor;
       cursor += 1;
       results[index] = await mapper(items[index], index);
@@ -723,11 +777,13 @@ async function mapWithConcurrency(items, workerCount, mapper) {
 }
 
 export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
-  const archives = await expandInputPaths(paths);
+  const archives = await expandInputPaths(paths, options);
   const skippedFiles = await directUnsupportedInputs(paths);
   let completed = 0;
+  if (options.shouldCancel?.()) return { items: [], skippedFiles, cancelled: true };
 
   const results = await mapWithConcurrency(archives, maxAnalysisWorkers(options, archives.length), async (filePath, index) => {
+    if (options.shouldCancel?.()) return { cancelled: true };
     const name = path.basename(filePath);
     onProgress?.({
       progress: Math.round((index / Math.max(archives.length, 1)) * 100),
@@ -736,7 +792,9 @@ export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
 
     try {
       const stat = await fsp.stat(filePath);
-      const archiveEntries = await listArchiveEntries(filePath, options.sevenZExe);
+      if (options.shouldCancel?.()) return { cancelled: true };
+      const archiveEntries = await listArchiveEntries(filePath, options.sevenZExe, options);
+      if (options.shouldCancel?.()) return { cancelled: true };
       if (archiveEntries.some(entry => entry.encrypted)) {
         return { skipped: taskText(options.lang, 'task_skip_encrypted_archive', { name }) };
       }
@@ -769,16 +827,18 @@ export async function analyzeRenamerInputs(paths, options = {}, onProgress) {
         message: taskText(options.lang, 'task_analyzing', { index: completed, total: archives.length, name }),
       });
     }
-  });
+  }, options);
 
   const items = [];
+  let cancelled = Boolean(options.shouldCancel?.());
   for (const result of results) {
+    if (result?.cancelled) cancelled = true;
     if (result?.item) items.push(result.item);
     if (result?.skipped) skippedFiles.push(result.skipped);
   }
 
-  onProgress?.({ progress: 100, message: taskText(options.lang, 'task_analysis_done') });
-  return { items, skippedFiles };
+  if (!cancelled) onProgress?.({ progress: 100, message: taskText(options.lang, 'task_analysis_done') });
+  return { items: cancelled ? [] : items, skippedFiles, cancelled };
 }
 
 async function uniquePath(basePath) {
@@ -862,25 +922,28 @@ function archiveCompressionArgs(level = 0) {
   return [`-mx=${level}`, '-mmt=on'];
 }
 
-async function packArchive(sevenZExe, archiveType, outputPath, cwd, level = 0) {
+async function packArchive(sevenZExe, archiveType, outputPath, cwd, level = 0, options = {}) {
   await fsp.rm(outputPath, { force: true }).catch(() => {});
-  await runQuietProcess(sevenZExe, ['a', archiveType, outputPath, '*', ...archiveCompressionArgs(level)], { cwd });
+  await runQuietProcess(sevenZExe, ['a', archiveType, outputPath, '*', ...archiveCompressionArgs(level)], {
+    cwd,
+    shouldCancel: options.shouldCancel,
+  });
   return (await fsp.stat(outputPath)).size;
 }
 
-async function packArchiveWithSizeFallback(sevenZExe, archiveType, outputPath, cwd, sourcePath, mode = 'auto', shouldPreserveSize = false) {
+async function packArchiveWithSizeFallback(sevenZExe, archiveType, outputPath, cwd, sourcePath, mode = 'auto', shouldPreserveSize = false, options = {}) {
   const sourceSize = (await fsp.stat(sourcePath)).size;
   if (mode === 'maximum') {
-    const outputSize = await packArchive(sevenZExe, archiveType, outputPath, cwd, 9);
+    const outputSize = await packArchive(sevenZExe, archiveType, outputPath, cwd, 9, options);
     return { outputSize, sourceSize };
   }
 
-  let outputSize = await packArchive(sevenZExe, archiveType, outputPath, cwd, 0);
+  let outputSize = await packArchive(sevenZExe, archiveType, outputPath, cwd, 0, options);
   if (mode === 'fast' || !shouldPreserveSize || outputSize <= sourceSize) return { outputSize, sourceSize };
 
   const compressedPath = `${outputPath}.mx9.tmp`;
   try {
-    const compressedSize = await packArchive(sevenZExe, archiveType, compressedPath, cwd, 9);
+    const compressedSize = await packArchive(sevenZExe, archiveType, compressedPath, cwd, 9, options);
     if (compressedSize < outputSize) {
       await fsp.rm(outputPath, { force: true });
       await fsp.rename(compressedPath, outputPath);
@@ -968,13 +1031,19 @@ async function optimizeExtractedImages(rootDir, item, options) {
           if (optimize && quality < 100 && options.djpegExe && options.cjpegExe) {
             const ppmPath = `${fullPath}.ppm.tmp`;
             try {
-              await runProcess(options.djpegExe, ['-outfile', ppmPath, fullPath]);
-              await runProcess(options.cjpegExe, ['-quality', String(quality), '-optimize', '-outfile', tempPath, ppmPath]);
+              await runProcess(options.djpegExe, ['-outfile', ppmPath, fullPath], {
+                shouldCancel: options.shouldCancel,
+              });
+              await runProcess(options.cjpegExe, ['-quality', String(quality), '-optimize', '-outfile', tempPath, ppmPath], {
+                shouldCancel: options.shouldCancel,
+              });
               const replaced = await replaceWhenUseful(fullPath, tempPath);
               if (!replaced && metadataStillNeedsStrip && options.jpegtranExe) {
                 const stripTempPath = `${fullPath}.strip.tmp`;
                 try {
-                  await runProcess(options.jpegtranExe, ['-copy', 'none', '-outfile', stripTempPath, fullPath]);
+                  await runProcess(options.jpegtranExe, ['-copy', 'none', '-outfile', stripTempPath, fullPath], {
+                    shouldCancel: options.shouldCancel,
+                  });
                   await replaceWhenUseful(fullPath, stripTempPath, true);
                 } finally {
                   await fsp.rm(stripTempPath, { force: true }).catch(() => {});
@@ -985,7 +1054,9 @@ async function optimizeExtractedImages(rootDir, item, options) {
             }
           } else if (options.jpegtranExe) {
             const args = ['-optimize', '-copy', metadataStillNeedsStrip ? 'none' : 'all', '-outfile', tempPath, fullPath];
-            await runProcess(options.jpegtranExe, args);
+            await runProcess(options.jpegtranExe, args, {
+              shouldCancel: options.shouldCancel,
+            });
             await replaceWhenUseful(fullPath, tempPath, metadataStillNeedsStrip);
           }
         } else if (extension === '.png' && options.pngquantExe) {
@@ -993,7 +1064,9 @@ async function optimizeExtractedImages(rootDir, item, options) {
           const args = ['--force', '--quality', `${pngQuality}-${pngQuality}`, '--output', tempPath];
           if (hasRemovableMetadata) args.push('--strip');
           args.push(fullPath);
-          await runProcess(options.pngquantExe, args);
+          await runProcess(options.pngquantExe, args, {
+            shouldCancel: options.shouldCancel,
+          });
           await replaceWhenUseful(fullPath, tempPath, hasRemovableMetadata);
         } else if (extension === '.webp') {
           if (hasRemovableMetadata) {
@@ -1037,7 +1110,9 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
       for (const pair of pairs.slice(index, index + 20)) {
         args.push(pair.oldPath, pair.newPath);
       }
-      await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args]);
+      await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args], {
+        shouldCancel: options.shouldCancel,
+      });
     }
 
     if (options.backup_on) {
@@ -1118,7 +1193,9 @@ async function processRenamerItem(item, options) {
 
   try {
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
-    await runQuietProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
+    await runQuietProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y'], {
+      shouldCancel: options.shouldCancel,
+    });
 
     for (const entry of plannedEntries) {
       if (!entry.deleteChecked || !entry.originalPath) continue;
@@ -1158,14 +1235,17 @@ async function processRenamerItem(item, options) {
             '-q',
             String(imageQuality(options)),
             ...(item.exifOpt ? ['-metadata', 'none'] : []),
-          ]);
+          ], {
+            shouldCancel: options.shouldCancel,
+          });
           const [sourceStat, convertedStat] = await Promise.all([
             fsp.stat(move.oldAbs),
             fsp.stat(convertedTempAbs),
           ]);
           useConverted = convertedStat.size < sourceStat.size
             && await isUsableConvertedFile(convertedTempAbs, '.webp');
-        } catch {
+        } catch (error) {
+          if (error?.code === 'TASK_CANCELLED') throw error;
           useConverted = false;
         }
         if (useConverted) {
@@ -1210,6 +1290,7 @@ async function processRenamerItem(item, options) {
       sourcePath,
       renamerArchiveCompressionMode(options),
       sizePreservingOptimizationEnabled(item, options),
+      options,
     );
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
     if (shouldSkipLargerOptimizedArchive(item, options, hasActualStructuralChange, packResult)) {
@@ -1289,6 +1370,11 @@ export async function executeRenamer(items, options = {}, onProgress) {
       outputFiles.push(result.outputPath);
       pathMap[item.filepath] = result.outputPath;
     } catch (error) {
+      if (error?.code === 'TASK_CANCELLED') {
+        stats.skip.push(`${item.name || path.basename(item.filepath)} (Cancelled)`);
+        cancelled = true;
+        break;
+      }
       stats.error.push(`${item.name || item.filepath} - ${error.message}`);
     }
     if (options.shouldCancel?.()) {

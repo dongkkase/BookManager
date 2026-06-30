@@ -307,6 +307,46 @@ test('Renamer 분석은 압축 내부 파일명에서 누락 페이지를 계산
     }
 });
 
+test('Renamer 미리보기 추출은 선택적 버퍼 변환 결과를 반환한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-preview-transform-'));
+    try {
+        const source = path.join(root, 'Preview Transform.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'cover.png', PNG_1X1);
+
+        const preview = await extractRenamerImage(source, 'cover.png', '', {
+            transformBuffer: () => ({
+                buffer: Buffer.from('preview'),
+                mime: 'image/custom',
+            }),
+        });
+
+        assert.equal(preview.success, true);
+        assert.equal(preview.dataUrl, `data:image/custom;base64,${Buffer.from('preview').toString('base64')}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Renamer 분석 취소 요청은 부분 목록을 반환하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-analyze-cancel-'));
+    try {
+        const source = path.join(root, 'Cancel Analyze.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'cover.png', PNG_1X1);
+
+        const analyzed = await analyzeRenamerInputs([source], {
+            sevenZExe: '',
+            shouldCancel: () => true,
+        });
+
+        assert.equal(analyzed.cancelled, true);
+        assert.deepEqual(analyzed.items, []);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Renamer 분석, 이미지 미리보기, 실행 및 백업이 동작한다', async t => {
     const sevenZExe = find7z();
     if (!sevenZExe) {

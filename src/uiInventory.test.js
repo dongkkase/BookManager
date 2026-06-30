@@ -151,7 +151,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['EPUB 표지 해상도 표시', 'meta-epub-cover-resolution'],
         ['리디 표지 원본 URL 사용', 'ridiOriginalCoverUrl'],
         ['리디 표지 xxlarge 요청', 'xxlarge?dpi=xxhdpi#1'],
-        ['API 검색 결과 표지 사용 버튼', "text('btn_use_cover', '표지 사용')"],
+        ['API 검색 결과 표지 사용 버튼', "text('btn_use_cover', '표지 사용(X)')"],
     ]);
     assertInventory('settings', [
         ['뷰어 경로', "localConfig.viewer_path || ''"],
