@@ -2165,8 +2165,8 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             )}
           </div>
           <div className="meta-bottom-right">
-            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')} ({primaryShortcut}+S)</button>
-            <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> {t('t3_save_all')} ({primaryShortcut}+Shift+S)</button>
+            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')} <span>({primaryShortcut}+S)</span></button>
+            <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> {t('t3_save_all')} <span>({primaryShortcut}+Shift+S)</span></button>
           </div>
         </div>
 

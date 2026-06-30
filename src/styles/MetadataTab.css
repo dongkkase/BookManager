@@ -405,6 +405,11 @@
   font-weight: 900;
   background-color: #3a4b62;
 }
+.meta-btn-save span {
+  display: block;
+  font-size:10px;
+  font-weight:400;
+}
 
 .meta-section-tabs button {
   /* width: 48px; */
