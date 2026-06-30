@@ -630,6 +630,12 @@ textarea.meta-input {
   line-height: 1.45;
 }
 
+textarea.meta-auto-height-textarea {
+  min-height: 80px;
+  resize: none;
+  overflow: hidden;
+}
+
 .meta-input.res {
   background-color: #3b3b3b;
 }

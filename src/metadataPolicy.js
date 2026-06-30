@@ -125,10 +125,15 @@ export function clampMetadataNumber(field, value) {
 }
 
 export function cleanMetadataSummary(value = '') {
-    return String(value)
-        .replace(/^\s*<책소개>\s*/i, '')
+    let text = String(value ?? '');
+    for (let index = 0; index < 2; index += 1) {
+        text = text
+            .replace(/^(?:\r\n|\r|\n)+/, '')
+            .replace(/^<책소개>/i, '');
+    }
+    return text
         .replace(/\n{3,}/g, '\n\n')
-        .trim();
+        .replace(/^(?:\r\n|\r|\n)+/, '');
 }
 
 function splitMetadataTagList(value = '') {

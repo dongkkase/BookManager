@@ -87,7 +87,7 @@ test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터�
 
 test('도서 API 검색 결과에는 만화 읽기 방향 기본값을 넣지 않는다', () => {
   assert.deepEqual(metadataFromApiResult({
-    summary: '설명',
+    summary: '<책소개>\n설명',
     metadata: {
       Title: 'Novel',
       Writer: 'Author',

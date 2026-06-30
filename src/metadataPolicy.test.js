@@ -108,6 +108,8 @@ test('metadata number fields use the original bounds', () => {
 
 test('metadata summary cleanup removes the heading and excessive blank lines', () => {
     assert.equal(cleanMetadataSummary('<책소개>\n첫 줄\n\n\n\n둘째 줄'), '첫 줄\n\n둘째 줄');
+    assert.equal(cleanMetadataSummary('\n\r\n<책소개>\r\n첫 줄'), '첫 줄');
+    assert.equal(cleanMetadataSummary('<책소개>첫 줄\n'), '첫 줄\n');
 });
 
 test('metadata genre and tags can be edited as one combined tag list', () => {

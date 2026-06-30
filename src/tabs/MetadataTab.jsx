@@ -13,6 +13,7 @@ import {
     applyInferredMetadataField,
     applySeriesAutoMetadata,
     clampMetadataNumber,
+    cleanMetadataSummary,
     combinedGenreTagsValue,
     formatMetadataModifiedDate,
     inferMetadataFromArchiveName,
@@ -161,6 +162,26 @@ function isSearchableSelectField(fieldId, bookType = 'comic') {
   if (bookType === 'pdf') return PDF_SEARCHABLE_SELECT_FIELDS.has(fieldId);
   if (bookType === 'book') return BOOK_SEARCHABLE_SELECT_FIELDS.has(fieldId);
   return SEARCHABLE_SELECT_FIELDS.has(fieldId);
+}
+
+function AutoHeightTextarea({ className = 'meta-input', value = '', onChange }) {
+  const ref = useRef(null);
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.style.height = 'auto';
+    node.style.height = `${Math.max(80, node.scrollHeight)}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      className={`${className} meta-auto-height-textarea`}
+      value={value || ''}
+      onChange={event => onChange(event.target.value)}
+    />
+  );
 }
 
 function splitTagValues(value = '') {
@@ -787,7 +808,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     );
     setFileList(prev => prev.map(item => item.group === activeItem.group && isSameActiveBookType(item) ? {
       ...item,
-      metadata: { ...(item.metadata || {}), ...normalized },
+      metadata: applySeriesAutoMetadata(
+        { ...(item.metadata || {}), ...normalized },
+        inferTitleParts(item),
+      ),
     } : item));
   };
 
@@ -803,11 +827,17 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     return next.join(', ');
   }, [tagRules]);
 
-  const normalizeMetadata = useCallback((metadata = {}) => ({
-    ...metadata,
-    Genre: normalizeTagText(metadata.Genre),
-    Tags: normalizeTagText(metadata.Tags),
-  }), [normalizeTagText]);
+  const normalizeMetadata = useCallback((metadata = {}) => {
+    const normalized = {
+      ...metadata,
+      Genre: normalizeTagText(metadata.Genre),
+      Tags: normalizeTagText(metadata.Tags),
+    };
+    if (metadata.Summary !== undefined || metadata.summary !== undefined) {
+      normalized.Summary = cleanMetadataSummary(metadata.Summary ?? metadata.summary ?? '');
+    }
+    return normalized;
+  }, [normalizeTagText]);
 
   const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
     const cleanQuery = String(query || '').trim();
@@ -968,9 +998,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         showToast?.(t('t3_msg_no_search_result'));
         return;
       }
-      applyMetadataToSeries(first.metadata || {});
+      const firstMetadata = metadataFromApiResult(first, { bookType: activeBookType });
+      applyMetadataToSeries(firstMetadata);
       setBatchMetadata(pickMetadataFields(
-        normalizeMetadata(first.metadata || {}),
+        normalizeMetadata(firstMetadata),
         currentMetaFieldIds,
         currentMetadataExtraFieldIds,
       ));
@@ -1293,6 +1324,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
 
   const renderFieldInput = (field, value, onChange, className = 'meta-input') => {
     if (field.type === 'textarea') {
+      if (field.id === 'Summary') {
+        return <AutoHeightTextarea className={className} value={value || ''} onChange={onChange} />;
+      }
       return <textarea className={className} rows="3" value={value || ''} onChange={event => onChange(event.target.value)} />;
     }
     if (field.type === 'select') {
