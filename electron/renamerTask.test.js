@@ -347,6 +347,44 @@ test('Renamer 분석, 이미지 미리보기, 실행 및 백업이 동작한다'
     }
 });
 
+test('삭제 체크된 내부 파일은 결과 아카이브에서 제외된다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-delete-entry-'));
+    try {
+        const source = createArchive(sevenZExe, root, 'Delete Entry', {
+            'images/1.png': PNG_1X1,
+            'images/2.png': PNG_1X1,
+            'images/3.png': PNG_1X1,
+        });
+        const analyzed = await analyzeRenamerInputs([source], { sevenZExe, startNum: 1 });
+        assert.equal(analyzed.items.length, 1);
+
+        let nextNumber = 1;
+        analyzed.items[0].entries = analyzed.items[0].entries.map(entry => {
+            if (entry.oldName === '2.png') return { ...entry, deleteChecked: true, newName: '' };
+            const newName = `${String(nextNumber).padStart(3, '0')}.png`;
+            nextNumber += 1;
+            return { ...entry, newName };
+        });
+
+        const result = await executeRenamer(analyzed.items, {
+            sevenZExe,
+            flattenFolders: true,
+            shouldCancel: () => false,
+        });
+
+        assert.equal(result.stats.success.length, 1);
+        const entries = await listZipEntriesFromFile(source);
+        assert.deepEqual(entries.map(entry => entry.name).sort(), ['001.png', '002.png']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('이미지 처리 없는 ZIP 내부 이름 변경은 압축 해제 없이 7z rn을 사용한다', async t => {
     if (process.platform === 'win32') {
         t.skip('shell wrapper is not available on Windows');
@@ -376,7 +414,7 @@ test('이미지 처리 없는 ZIP 내부 이름 변경은 압축 해제 없이 7
             wrapperPath,
             [
                 '#!/bin/sh',
-                `printf '%s\\n' "$1" >> ${shellQuote(logPath)}`,
+                `printf '%s\\n%s\\n' "$1" "$2" >> ${shellQuote(logPath)}`,
                 'if [ "$1" != "rn" ]; then exit 91; fi',
                 `exec ${shellQuote(sevenZExe)} "$@"`,
                 '',
@@ -393,7 +431,10 @@ test('이미지 처리 없는 ZIP 내부 이름 변경은 압축 해제 없이 7
 
         assert.equal(result.cancelled, false);
         assert.deepEqual(result.stats.error, []);
-        assert.equal(fs.readFileSync(logPath, 'utf8').trim(), 'rn');
+        const commandLog = fs.readFileSync(logPath, 'utf8').trim().split('\n');
+        assert.equal(commandLog[0], 'rn');
+        assert.equal(path.dirname(commandLog[1]), root);
+        assert.match(path.basename(commandLog[1]), /^\.bookmanager_RenameOnly_[0-9]+_[0-9a-f]+\.zip$/);
         const outputEntries = await listZipEntriesFromFile(result.outputFiles[0]);
         assert.deepEqual(outputEntries.map(entry => entry.name), ['renamed.jpg']);
     } finally {

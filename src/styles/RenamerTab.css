@@ -359,6 +359,20 @@
     background-color: #3d88c8;
 }
 
+.renamer-table tbody tr.marked-delete td {
+    color: #b8b8b8;
+    background-color: #242424;
+}
+
+.renamer-table tbody tr.marked-delete.selected td {
+    background-color: #356783;
+}
+
+.renamer-table tbody tr.marked-delete td:nth-child(2),
+.renamer-table tbody tr.marked-delete .renamer-entry-input {
+    text-decoration: line-through;
+}
+
 .renamer-file-cell {
     display: flex;
     align-items: center;
@@ -434,6 +448,11 @@
     outline: none;
     background-color: #333333;
     border-color: #67baf2;
+}
+
+.renamer-entry-input:disabled {
+    color: #a5a5a5;
+    cursor: not-allowed;
 }
 
 .renamer-empty-row {

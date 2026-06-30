@@ -14,9 +14,38 @@ const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
 const NESTED_ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar', '.alz', '.egg']);
 const RENAMER_ARCHIVE_COMPRESSION_MODES = new Set(['auto', 'fast', 'maximum']);
+const BUSY_FS_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+const BUSY_FS_RETRY_DELAYS_MS = [100, 250, 500, 1000, 1500, 2500, 4000];
 
 function taskText(lang, key, values) {
     return translate(key, lang || 'en', values);
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function retryBusyFsOperation(operation, options = {}) {
+    for (let attempt = 0; attempt <= BUSY_FS_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+            return await operation();
+        } catch (error) {
+            const canRetry = BUSY_FS_ERROR_CODES.has(error?.code)
+                && attempt < BUSY_FS_RETRY_DELAYS_MS.length
+                && !options.shouldCancel?.();
+            if (!canRetry) throw error;
+            await delay(BUSY_FS_RETRY_DELAYS_MS[attempt]);
+        }
+    }
+    return undefined;
+}
+
+async function renameWithBusyRetry(src, dest, options = {}) {
+    return retryBusyFsOperation(() => fsp.rename(src, dest), options);
+}
+
+async function rmWithBusyRetry(targetPath, options = {}) {
+    return retryBusyFsOperation(() => fsp.rm(targetPath, options.rmOptions || { force: true }), options);
 }
 
 function decimalDigitValue(char) {
@@ -650,11 +679,22 @@ function buildEntries(filePath, archiveEntries, options = {}) {
 
 export function refreshRenamerEntries(item, options = {}) {
   const archiveStem = path.basename(item.filepath || item.name || '', path.extname(item.filepath || item.name || ''));
-  const entries = (item.entries || []).map((entry, index, source) => ({
-    ...entry,
-    newName: generateRenamedEntryName(entry, index, source.length, { ...options, archiveStem }),
-  }));
-  return { ...item, entries, count: entries.length };
+  const sourceEntries = item.entries || [];
+  const activeCount = sourceEntries.filter(entry => !entryDeleteChecked(entry)).length;
+  let activeIndex = 0;
+  const entries = sourceEntries.map((entry) => {
+    if (entryDeleteChecked(entry)) {
+      return { ...entry, newName: '' };
+    }
+
+    const nextEntry = {
+      ...entry,
+      newName: generateRenamedEntryName(entry, activeIndex, activeCount, { ...options, archiveStem }),
+    };
+    activeIndex += 1;
+    return nextEntry;
+  });
+  return { ...item, entries, count: activeCount };
 }
 
 function maxAnalysisWorkers(options = {}, totalCount = 1) {
@@ -754,6 +794,14 @@ async function uniquePath(basePath) {
   }
 }
 
+function tempArchivePathNearSource(sourcePath, prefix, finalPath) {
+  const ext = path.extname(finalPath) || path.extname(sourcePath) || '.zip';
+  return path.join(
+    path.dirname(sourcePath),
+    `.bookmanager_${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}${ext}`,
+  );
+}
+
 function targetExtFor(filePath, targetFormat) {
   if (!targetFormat || targetFormat === 'none') return path.extname(filePath).toLowerCase();
   return `.${String(targetFormat).replace(/^\./, '').toLowerCase()}`;
@@ -766,6 +814,18 @@ function targetInnerPath(entry, options = {}) {
   return dirPart && dirPart !== '.'
     ? normalizeInnerPath(path.posix.join(dirPart, filename))
     : filename;
+}
+
+function entryDeleteChecked(entry) {
+  return Boolean(entry?.deleteChecked || entry?.delete_checked || entry?.delete);
+}
+
+function archiveEntryPath(rootDir, innerPath) {
+  const root = path.resolve(rootDir);
+  const target = path.resolve(root, ...normalizeInnerPath(innerPath).split('/').filter(Boolean));
+  const relative = path.relative(root, target);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return '';
+  return target;
 }
 
 function replacePathExtension(filePath, extension) {
@@ -967,7 +1027,7 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
   const finalPath = options.deleteOriginal === false
     ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
     : path.join(path.dirname(sourcePath), outputName);
-  let tempArchive = path.join(os.tmpdir(), `BookManager_RenameOnly_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+  let tempArchive = tempArchivePathNearSource(sourcePath, 'RenameOnly', finalPath);
 
   try {
     await fsp.copyFile(sourcePath, tempArchive);
@@ -987,27 +1047,27 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
     }
 
     if (options.deleteOriginal === false) {
-      await fsp.rename(tempArchive, finalPath);
+      await renameWithBusyRetry(tempArchive, finalPath, options);
       tempArchive = '';
     } else {
       const sourceHoldingPath = `${sourcePath}.bookmanager.tmp`;
-      await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
-      await fsp.rename(sourcePath, sourceHoldingPath);
+      await rmWithBusyRetry(sourceHoldingPath, options).catch(() => {});
+      await renameWithBusyRetry(sourcePath, sourceHoldingPath, options);
       try {
-        if (fs.existsSync(finalPath)) await fsp.rm(finalPath, { force: true });
-        await fsp.rename(tempArchive, finalPath);
+        if (fs.existsSync(finalPath)) await rmWithBusyRetry(finalPath, options);
+        await renameWithBusyRetry(tempArchive, finalPath, options);
         tempArchive = '';
-        await fsp.rm(sourceHoldingPath, { force: true });
+        await rmWithBusyRetry(sourceHoldingPath, options);
       } catch (error) {
-        await fsp.rm(finalPath, { force: true }).catch(() => {});
-        if (fs.existsSync(sourceHoldingPath)) await fsp.rename(sourceHoldingPath, sourcePath);
+        await rmWithBusyRetry(finalPath, options).catch(() => {});
+        if (fs.existsSync(sourceHoldingPath)) await renameWithBusyRetry(sourceHoldingPath, sourcePath, options);
         throw error;
       }
     }
 
     return { success: true, message: filename, outputPath: finalPath };
   } finally {
-    if (tempArchive) await fsp.rm(tempArchive, { force: true }).catch(() => {});
+    if (tempArchive) await rmWithBusyRetry(tempArchive, options).catch(() => {});
   }
 }
 
@@ -1019,18 +1079,25 @@ async function processRenamerItem(item, options) {
   const filename = path.basename(sourcePath);
   const sourceExt = path.extname(sourcePath).toLowerCase();
   const targetExt = targetExtFor(sourcePath, options.target_format);
-  const plannedMoves = (item.entries || [])
+  const plannedEntries = (item.entries || [])
     .map(entry => ({
       originalPath: normalizeInnerPath(entry.originalPath),
       oldPath: normalizeInnerPath(entry.originalPath),
       newPath: targetInnerPath(entry, options),
+      deleteChecked: entryDeleteChecked(entry),
     }));
+  const hasEntryDeletes = plannedEntries.some(entry => entry.deleteChecked);
+  const plannedMoves = plannedEntries.filter(entry => !entry.deleteChecked);
+  if (plannedEntries.length > 0 && plannedMoves.length === 0) {
+    throw new Error(taskText(options.lang, 'task_error_no_remaining_entries'));
+  }
   const renamePairs = plannedMoves
     .filter(pair => pair.oldPath !== pair.newPath);
   const canRenameDirectly = ['.zip', '.cbz'].includes(sourceExt)
     && targetExt === sourceExt
     && !item.capOpt
     && !item.exifOpt
+    && !hasEntryDeletes
     && !options.flattenFolders
     && !(options.webp_conversion || options.webpConversion);
 
@@ -1053,19 +1120,22 @@ async function processRenamerItem(item, options) {
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
     await runQuietProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
 
+    for (const entry of plannedEntries) {
+      if (!entry.deleteChecked || !entry.originalPath) continue;
+      const deleteAbs = archiveEntryPath(tempBase, entry.originalPath);
+      if (!deleteAbs) continue;
+      await fsp.rm(deleteAbs, { force: true }).catch(() => {});
+    }
+
     const moves = [];
     for (let index = 0; index < plannedMoves.length; index += 1) {
       const entry = plannedMoves[index];
-      const oldAbs = path.join(tempBase, ...entry.originalPath.split('/').filter(Boolean));
+      const oldAbs = archiveEntryPath(tempBase, entry.originalPath);
       const nextInnerPath = entry.newPath;
-      const nextDirPart = path.posix.dirname(nextInnerPath);
-      const targetDir = nextDirPart && nextDirPart !== '.'
-        ? path.join(tempBase, ...nextDirPart.split('/').filter(Boolean))
-        : tempBase;
-      const targetAbs = path.join(tempBase, ...nextInnerPath.split('/').filter(Boolean));
+      const targetAbs = archiveEntryPath(tempBase, nextInnerPath);
 
-      if (!fs.existsSync(oldAbs)) continue;
-      await fsp.mkdir(targetDir, { recursive: true });
+      if (!oldAbs || !targetAbs || !fs.existsSync(oldAbs)) continue;
+      await fsp.mkdir(path.dirname(targetAbs), { recursive: true });
       moves.push({
         originalPath: entry.originalPath,
         oldAbs,
@@ -1120,6 +1190,7 @@ async function processRenamerItem(item, options) {
     await fsp.rm(holdingDir, { recursive: true, force: true });
     await removeEmptyDirs(tempBase).catch(() => {});
     const hasActualStructuralChange = targetExt !== sourceExt
+      || hasEntryDeletes
       || Boolean(options.flattenFolders)
       || moves.some(move => normalizeInnerPath(path.relative(tempBase, move.targetAbs)) !== move.originalPath);
 
@@ -1127,7 +1198,7 @@ async function processRenamerItem(item, options) {
     const finalPath = options.deleteOriginal === false
       ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
       : path.join(path.dirname(sourcePath), outputName);
-    tempArchive = path.join(os.tmpdir(), `BookManager_Renamed_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+    tempArchive = tempArchivePathNearSource(sourcePath, 'Renamed', finalPath);
 
     await optimizeExtractedImages(tempBase, item, options);
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
@@ -1160,25 +1231,26 @@ async function processRenamerItem(item, options) {
     }
 
     if (options.deleteOriginal === false) {
-      await fsp.rename(tempArchive, finalPath);
+      await renameWithBusyRetry(tempArchive, finalPath, options);
     } else {
       const sourceHoldingPath = `${sourcePath}.bookmanager.tmp`;
-      await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
-      await fsp.rename(sourcePath, sourceHoldingPath);
+      await rmWithBusyRetry(sourceHoldingPath, options).catch(() => {});
+      await renameWithBusyRetry(sourcePath, sourceHoldingPath, options);
       try {
-        if (fs.existsSync(finalPath)) await fsp.rm(finalPath, { force: true });
-        await fsp.rename(tempArchive, finalPath);
-        await fsp.rm(sourceHoldingPath, { force: true });
+        if (fs.existsSync(finalPath)) await rmWithBusyRetry(finalPath, options);
+        await renameWithBusyRetry(tempArchive, finalPath, options);
+        tempArchive = '';
+        await rmWithBusyRetry(sourceHoldingPath, options);
       } catch (error) {
-        await fsp.rm(finalPath, { force: true }).catch(() => {});
-        if (fs.existsSync(sourceHoldingPath)) await fsp.rename(sourceHoldingPath, sourcePath);
+        await rmWithBusyRetry(finalPath, options).catch(() => {});
+        if (fs.existsSync(sourceHoldingPath)) await renameWithBusyRetry(sourceHoldingPath, sourcePath, options);
         throw error;
       }
     }
 
     return { success: true, message: filename, outputPath: finalPath };
   } finally {
-    if (tempArchive) await fsp.rm(tempArchive, { force: true }).catch(() => {});
+    if (tempArchive) await rmWithBusyRetry(tempArchive, options).catch(() => {});
     await fsp.rm(tempBase, { recursive: true, force: true });
   }
 }

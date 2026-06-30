@@ -8,9 +8,11 @@ import {
     moveRenamerEntry,
     normalizeRenamerBatchOptionsFromConfig,
     normalizeRenamerOptionsFromConfig,
+    refreshRenamerItem,
     renamerOptionsEqual,
     serializeRenamerBatchOptions,
     serializeRenamerOptions,
+    toggleRenamerEntryDelete,
 } from './renamerPolicy.js';
 
 test('원본 패턴 순서대로 새 이름을 생성한다', () => {
@@ -52,6 +54,24 @@ test('드래그 순서 변경과 시작 번호 범위를 보정한다', () => {
     assert.deepEqual(moveRenamerEntry(['a', 'b', 'c'], 0, 2), ['b', 'c', 'a']);
     assert.equal(clampStartNumber(-1), 0);
     assert.equal(clampStartNumber(1000000), 999999);
+});
+
+test('삭제 체크된 내부 파일은 새 이름 순번에서 제외한다', () => {
+    const item = refreshRenamerItem({
+        filepath: '/books/Book.zip',
+        entries: [
+            { id: 'a', oldName: '001.jpg', originalPath: '001.jpg' },
+            { id: 'b', oldName: '002.jpg', originalPath: '002.jpg', deleteChecked: true },
+            { id: 'c', oldName: '003.jpg', originalPath: '003.jpg' },
+        ],
+    }, { patternIndex: 0, startNum: 1 });
+
+    assert.equal(item.count, 2);
+    assert.deepEqual(item.entries.map(entry => entry.newName), ['01.jpg', '', '02.jpg']);
+    assert.deepEqual(
+        toggleRenamerEntryDelete(item.entries, 'b').map(entry => entry.deleteChecked || false),
+        [false, false, false],
+    );
 });
 
 test('내부 파일명 변경 옵션은 저장된 설정에서 복원 가능한 형태로 정규화한다', () => {

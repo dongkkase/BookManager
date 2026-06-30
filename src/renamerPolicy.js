@@ -48,14 +48,33 @@ export function generateRenamerName(entry, index, totalCount, options = {}) {
 
 export function refreshRenamerItem(item, options = {}) {
     const archiveStem = stem(item?.filepath || item?.name);
-    const entries = (item?.entries || []).map((entry, index, source) => ({
-        ...entry,
-        newName: generateRenamerName(entry, index, source.length, {
-            ...options,
-            archiveStem,
-        }),
-    }));
-    return { ...item, entries, count: entries.length };
+    const sourceEntries = item?.entries || [];
+    const activeCount = sourceEntries.filter(entry => !entry.deleteChecked).length;
+    let activeIndex = 0;
+    const entries = sourceEntries.map((entry) => {
+        if (entry.deleteChecked) {
+            return { ...entry, newName: '' };
+        }
+
+        const nextEntry = {
+            ...entry,
+            newName: generateRenamerName(entry, activeIndex, activeCount, {
+                ...options,
+                archiveStem,
+            }),
+        };
+        activeIndex += 1;
+        return nextEntry;
+    });
+    return { ...item, entries, count: activeCount };
+}
+
+export function toggleRenamerEntryDelete(entries = [], entryId) {
+    return entries.map(entry => (
+        entry.id === entryId
+            ? { ...entry, deleteChecked: !entry.deleteChecked }
+            : entry
+    ));
 }
 
 export function archiveChangeBadges(item, config = {}) {

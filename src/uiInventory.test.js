@@ -240,6 +240,9 @@ test('내부 파일명 변경 리스트는 키보드 이동과 대상 삭제를 
         ['방향키 아래 이동', "event.key === 'ArrowDown'"],
         ['대상 압축 파일 Delete 삭제', "event.key === 'Delete'"],
         ['sticky 헤더 고려 선택 행 스크롤', 'scrollTableRowIntoView'],
+        ['내부 파일 삭제 체크박스', "t('renamer.delete_entry')"],
+        ['내부 파일 삭제 상태', 'entry.deleteChecked'],
+        ['내부 파일 삭제 토글', 'handleToggleEntryDelete'],
     ]);
 });
 

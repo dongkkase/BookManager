@@ -5,6 +5,11 @@ export const SUPPORTED_LANGUAGES = ['ko', 'en', 'ja'];
 const EXTRA_TRANSLATIONS = {
   ko: {
     folder_refresh_force_tip: '현재 목록을 강제로 새로고침합니다',
+    task_error_no_remaining_entries: '삭제 후 남는 내부 파일이 없습니다.',
+    renamer: {
+      delete_entry: '삭제',
+      delete_entry_label: '{0} 삭제 대상',
+    },
     folder: {
       sidebar: {
         more_actions: '메뉴 열기',
@@ -20,6 +25,11 @@ const EXTRA_TRANSLATIONS = {
   },
   en: {
     folder_refresh_force_tip: 'Force refresh the current list',
+    task_error_no_remaining_entries: 'No inner files remain after deletion.',
+    renamer: {
+      delete_entry: 'Delete',
+      delete_entry_label: 'Mark {0} for deletion',
+    },
     folder: {
       sidebar: {
         more_actions: 'Open menu',
@@ -35,6 +45,11 @@ const EXTRA_TRANSLATIONS = {
   },
   ja: {
     folder_refresh_force_tip: '現在のリストを強制更新します',
+    task_error_no_remaining_entries: '削除後に残る内部ファイルがありません。',
+    renamer: {
+      delete_entry: '削除',
+      delete_entry_label: '{0} を削除対象にする',
+    },
     folder: {
       sidebar: {
         more_actions: 'メニューを開く',

@@ -14,6 +14,7 @@ import {
   renamerOptionsEqual,
   serializeRenamerBatchOptions,
   serializeRenamerOptions,
+  toggleRenamerEntryDelete,
 } from '../renamerPolicy';
 import '../styles/RenamerTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
@@ -372,6 +373,13 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
       if (mode === 'bottom') targetIndex = file.entries.length - 1;
       return { ...file, entries: moveRenamerEntry(file.entries, entryIndex, targetIndex) };
     });
+  };
+
+  const handleToggleEntryDelete = (archiveId, entryId) => {
+    updateFile(archiveId, file => ({
+      ...file,
+      entries: toggleRenamerEntryDelete(file.entries, entryId),
+    }));
   };
 
   const handleStartNumChange = (delta) => {
@@ -920,10 +928,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                   <table className="renamer-table">
                     <thead>
                       <tr>
-                        <th style={{ width: '40%' }}>{t('tf_col_old_name')}</th>
-                        <th style={{ width: '40%' }}>{t('tf_col_new_name')}</th>
+                        <th style={{ width: '7%' }}>{t('renamer.delete_entry')}</th>
+                        <th style={{ width: '34%' }}>{t('tf_col_old_name')}</th>
+                        <th style={{ width: '34%' }}>{t('tf_col_new_name')}</th>
                         <th style={{ width: '8%' }}>{t('col_size')}</th>
-                        <th style={{ width: '12%' }}>{t('col_order')}</th>
+                        <th style={{ width: '17%' }}>{t('col_order')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -934,7 +943,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                             if (node) entryRowRefs.current.set(entry.id, node);
                             else entryRowRefs.current.delete(entry.id);
                           }}
-                          className={activeEntry?.id === entry.id ? 'selected' : ''}
+                          className={[
+                            activeEntry?.id === entry.id ? 'selected' : '',
+                            entry.deleteChecked ? 'marked-delete' : '',
+                          ].filter(Boolean).join(' ')}
                           draggable
                           onClick={() => {
                             setSelectedEntryId(entry.id);
@@ -955,11 +967,25 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                             }));
                           }}
                         >
+                          <td className="renamer-cell-center">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(entry.deleteChecked)}
+                              aria-label={t('renamer.delete_entry_label', [entry.oldName])}
+                              onFocus={() => setSelectedEntryId(entry.id)}
+                              onClick={event => event.stopPropagation()}
+                              onChange={(event) => {
+                                event.stopPropagation();
+                                handleToggleEntryDelete(activeArchive.id, entry.id);
+                              }}
+                            />
+                          </td>
                           <td title={entry.originalPath}>{entry.oldName}</td>
                           <td>
                             <input
                               className="renamer-entry-input"
                               value={entry.newName}
+                              disabled={Boolean(entry.deleteChecked)}
                               aria-label={`${entry.oldName} ${t('tf_col_new_name')}`}
                               onFocus={() => setSelectedEntryId(entry.id)}
                               onClick={event => event.stopPropagation()}
@@ -992,7 +1018,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                         </tr>
                       )) : (
                         <tr>
-                          <td colSpan="4" className="renamer-empty-row">{t('t3_msg_sel')}</td>
+                          <td colSpan="5" className="renamer-empty-row">{t('t3_msg_sel')}</td>
                         </tr>
                       )}
                     </tbody>
