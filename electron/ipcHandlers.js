@@ -67,6 +67,7 @@ import {
   setCachedApiResults,
 } from './database/apiCache.js';
 import {
+  resolveApiCoverCacheDir,
   resolveApiCacheDbPath,
   resolveAppDataDir,
   resolveLibraryDbPath,
@@ -320,10 +321,16 @@ function requestTextGeneric(url, headers = {}, timeout = 12000, redirects = 3) {
   });
 }
 
-function requestBufferGeneric(url, headers = {}, timeout = 12000, redirects = 3) {
+function requestBufferGeneric(url, headers = {}, timeout = 12000, redirects = 3, maxBytes = 12 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const transport = target.protocol === 'http:' ? http : https;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     const req = transport.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 BookManager',
@@ -333,22 +340,37 @@ function requestBufferGeneric(url, headers = {}, timeout = 12000, redirects = 3)
       timeout,
     }, (res) => {
       const chunks = [];
-      res.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      let totalBytes = 0;
+      const contentLength = Number(res.headers['content-length']) || 0;
+      if (maxBytes > 0 && contentLength > maxBytes) {
+        req.destroy(new Error('IMAGE_TOO_LARGE'));
+        return;
+      }
+      res.on('data', chunk => {
+        totalBytes += chunk.length;
+        if (maxBytes > 0 && totalBytes > maxBytes) {
+          req.destroy(new Error('IMAGE_TOO_LARGE'));
+          return;
+        }
+        chunks.push(Buffer.from(chunk));
+      });
       res.on('end', () => {
+        if (settled) return;
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects > 0) {
           const nextUrl = new URL(res.headers.location, url).toString();
-          requestBufferGeneric(nextUrl, headers, timeout, redirects - 1).then(resolve, reject);
+          requestBufferGeneric(nextUrl, headers, timeout, redirects - 1, maxBytes).then(resolve, reject);
           return;
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`HTTP ${res.statusCode}`));
+          fail(new Error(`HTTP ${res.statusCode}`));
           return;
         }
+        settled = true;
         resolve({ buffer: Buffer.concat(chunks), contentType: res.headers['content-type'] || '' });
       });
     });
     req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
-    req.on('error', reject);
+    req.on('error', fail);
   });
 }
 
@@ -2189,6 +2211,7 @@ const THUMBNAIL_WEBP_QUALITY = 82;
 const JPEG2000_THUMBNAIL_EXTENSIONS = new Set(['.jp2', '.jpx', '.j2k', '.jpf']);
 const JPEG_THUMBNAIL_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 const imageDataUrlCache = new Map();
+const apiCoverUrlCache = new Map();
 const execFileAsync = promisify(execFile);
 
 async function decodeJpeg2000ThumbnailWithFfmpeg(imageBuffer, sourceExt, ffmpegExe) {
@@ -2279,6 +2302,77 @@ function mimeFromUrl(url = '', contentType = '') {
   return 'image/jpeg';
 }
 
+function imageExtensionFromMime(mimeType = '') {
+  const cleanType = String(mimeType || '').split(';')[0].trim().toLowerCase();
+  if (cleanType === 'image/png') return '.png';
+  if (cleanType === 'image/webp') return '.webp';
+  if (cleanType === 'image/gif') return '.gif';
+  if (cleanType === 'image/svg+xml') return '.svg';
+  return '.jpg';
+}
+
+function stripTransientApiImageFields(result = {}) {
+  const { coverDataUrl, coverCacheUrl, ...rest } = result || {};
+  return rest;
+}
+
+function stripTransientApiImageFieldsFromResults(results = []) {
+  return (results || []).map(stripTransientApiImageFields);
+}
+
+function apiCoverCacheUrlForFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return '';
+  let version = '';
+  try {
+    version = `?v=${Math.round(fs.statSync(filePath).mtimeMs)}`;
+  } catch {
+    version = '';
+  }
+  return `bookmanager-thumbnail://api-cover/${encodeURIComponent(path.basename(filePath))}${version}`;
+}
+
+async function findApiCoverCacheFile(cacheDir, hash) {
+  try {
+    const entries = await fs.promises.readdir(cacheDir, { withFileTypes: true });
+    const match = entries.find(entry => entry.isFile() && entry.name.startsWith(`${hash}.`));
+    return match ? path.join(cacheDir, match.name) : '';
+  } catch {
+    return '';
+  }
+}
+
+function rememberApiCoverUrl(url, cacheUrl) {
+  if (!cacheUrl) return cacheUrl;
+  if (apiCoverUrlCache.size > 300) apiCoverUrlCache.clear();
+  apiCoverUrlCache.set(url, cacheUrl);
+  return cacheUrl;
+}
+
+async function fetchImageCacheUrlFromUrl(imageUrl = '', cacheDir = '') {
+  const url = String(imageUrl || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) return url;
+  if (!cacheDir) return '';
+  if (apiCoverUrlCache.has(url)) return apiCoverUrlCache.get(url);
+
+  const hash = crypto.createHash('sha1').update(url).digest('hex');
+  const cachedPath = await findApiCoverCacheFile(cacheDir, hash);
+  const cachedUrl = apiCoverCacheUrlForFile(cachedPath);
+  if (cachedUrl) return rememberApiCoverUrl(url, cachedUrl);
+
+  const imageOrigin = new URL(url).origin;
+  const isRidiImage = /ridicdn\.net|ridibooks\.com/i.test(url);
+  const { buffer, contentType } = await requestBufferGeneric(url, {
+    Referer: isRidiImage ? 'https://ridibooks.com/' : imageOrigin,
+    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+  }, 12000);
+  const mimeType = mimeFromUrl(url, contentType);
+  const filePath = path.join(cacheDir, `${hash}${imageExtensionFromMime(mimeType)}`);
+  await fs.promises.mkdir(cacheDir, { recursive: true });
+  await fs.promises.writeFile(filePath, buffer);
+  return rememberApiCoverUrl(url, apiCoverCacheUrlForFile(filePath));
+}
+
 async function fetchImageDataUrlFromUrl(imageUrl = '') {
   const url = String(imageUrl || '').trim();
   if (!url) return '';
@@ -2297,20 +2391,20 @@ async function fetchImageDataUrlFromUrl(imageUrl = '') {
   return dataUrl;
 }
 
-async function enrichResultImages(results = []) {
+async function enrichResultImages(results = [], cacheDir = '') {
   if (!Array.isArray(results) || results.length === 0) return results;
-  const next = results.map(item => ({ ...item }));
+  const next = stripTransientApiImageFieldsFromResults(results);
   let cursor = 0;
   const worker = async () => {
     while (cursor < next.length) {
       const index = cursor;
       cursor += 1;
       const coverUrl = next[index].coverUrl || next[index].CoverUrl || '';
-      if (!coverUrl || next[index].coverDataUrl) continue;
+      if (!coverUrl || next[index].coverCacheUrl) continue;
       try {
-        next[index].coverDataUrl = await fetchImageDataUrlFromUrl(coverUrl);
+        next[index].coverCacheUrl = await fetchImageCacheUrlFromUrl(coverUrl, cacheDir);
       } catch {
-        next[index].coverDataUrl = '';
+        next[index].coverCacheUrl = '';
       }
     }
   };
@@ -2642,6 +2736,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const apiCacheDbPath = () => resolveApiCacheDbPath(appDataDir());
   const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
+  const apiCoverCacheDir = () => resolveApiCoverCacheDir(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
   let cwebpExePromise = null;
   let ffmpegExePromise = null;
@@ -3113,7 +3208,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           page,
           resultCount: cachedResults.length,
         });
-        return { success: true, api: apiName, actualQuery, results: await enrichResultImages(cachedResults), cached: true };
+        return { success: true, api: apiName, actualQuery, results: await enrichResultImages(cachedResults, apiCoverCacheDir()), cached: true };
       }
     } finally {
       apiCacheDb.close();
@@ -3174,7 +3269,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     if (apiName === 'Anilist' || apiName === 'Vine' || apiName === 'Amazon') {
       results = results.map(result => ({ ...result, identifiedSearchQuery: actualQuery }));
     }
-    results = await enrichResultImages(results);
+    results = await enrichResultImages(results, apiCoverCacheDir());
     metadataSearchLog('Search completed', {
       api: apiName,
       query,
@@ -3187,7 +3282,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const writeCacheDb = await openApiCacheDb(apiCacheDbPath());
     try {
       if (Array.isArray(results) && results.length > 0) {
-        await setCachedApiResults(writeCacheDb, apiName, cacheQuery, results);
+        await setCachedApiResults(writeCacheDb, apiName, cacheQuery, stripTransientApiImageFieldsFromResults(results));
       }
     } finally {
       writeCacheDb.close();
@@ -3361,6 +3456,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     namuSearchCache.clear();
     metadataTranslationCache.clear();
     imageDataUrlCache.clear();
+    apiCoverUrlCache.clear();
     const legacyTargets = [
       path.join(resolveAppDataDir(getExecutableDir()), '.api_cache.json'),
       path.join(configManager.userDataPath, '.api_cache.json'),
@@ -3369,7 +3465,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const cacheResults = [
       clearApiCache(
         apiCacheDbPath(),
-        [thumbnailDir()],
+        [apiCoverCacheDir()],
       ),
       clearApiCache(
         path.join(configManager.userDataPath, '.api_cache.db'),

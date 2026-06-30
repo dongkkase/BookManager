@@ -75,6 +75,10 @@ export function resolveApiCacheDbPath(executableDir = process.cwd(), platform = 
     return path.join(resolveAppDataDir(executableDir, platform, env), '.api_cache.db');
 }
 
+export function resolveApiCoverCacheDir(executableDir = process.cwd(), platform = process.platform, env = process.env) {
+    return path.join(resolveAppDataDir(executableDir, platform, env), 'api_cover_cache');
+}
+
 export function resolveConfigPath(executableDir = process.cwd(), platform = process.platform, env = process.env) {
     return path.join(resolveAppDataDir(executableDir, platform, env), 'config.json');
 }

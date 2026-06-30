@@ -93,6 +93,8 @@ const DEFAULT_TAG_OPTIONS = [
   '우정', '배신', '삼각관계', '짝사랑',
 ];
 
+const METADATA_COVER_CACHE_LIMIT = 50;
+
 function isMetadataTextInput(target) {
   return isTextEntryTarget(target);
 }
@@ -208,6 +210,28 @@ function pickMetadataFields(metadata = {}, fieldIds = [], extraFieldIds = []) {
   return Object.fromEntries(
     Object.entries(metadata || {}).filter(([key]) => allowed.has(key)),
   );
+}
+
+function trimMetadataCoverCache(items = [], activeFilePath = '') {
+  const withCovers = items.filter(item => item.coverDataUrl);
+  if (withCovers.length <= METADATA_COVER_CACHE_LIMIT) return items;
+
+  const keep = new Set(
+    [...withCovers]
+      .sort((left, right) => {
+        if (left.filepath === activeFilePath) return -1;
+        if (right.filepath === activeFilePath) return 1;
+        return (right.coverLoadedAt || 0) - (left.coverLoadedAt || 0);
+      })
+      .slice(0, METADATA_COVER_CACHE_LIMIT)
+      .map(item => item.filepath),
+  );
+
+  return items.map(item => {
+    if (!item.coverDataUrl || keep.has(item.filepath)) return item;
+    const { coverDataUrl, coverLoadedAt, ...rest } = item;
+    return rest;
+  });
 }
 
 const LANGUAGE_LABELS = {
@@ -397,9 +421,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     loadMetadataCover(filePath)
       .then(coverDataUrl => {
         if (cancelled || !coverDataUrl) return;
-        setFileList(prev => prev.map(item => (
-          item.filepath === filePath ? { ...item, coverDataUrl } : item
-        )));
+        const coverLoadedAt = Date.now();
+        setFileList(prev => trimMetadataCoverCache(prev.map(item => (
+          item.filepath === filePath ? { ...item, coverDataUrl, coverLoadedAt } : item
+        )), filePath));
       })
       .catch(() => {});
 
@@ -1093,7 +1118,13 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         : META_FIELD_IDS;
     const extraFieldIds = itemBookType === 'comic' ? ['ComicZipAddedDate', 'ComicZipModifiedDate'] : [];
     return {
-      ...item,
+      id: item.id,
+      filepath: item.filepath || item.path || '',
+      path: item.path || item.filepath || '',
+      name: item.name || '',
+      checked: item.checked !== false,
+      bookType: itemBookType,
+      pageCount: item.pageCount || '',
       metadata: pickMetadataFields(item.metadata || {}, fieldIds, extraFieldIds),
     };
   };
@@ -2365,7 +2396,7 @@ function MetadataSearchDialog({
                 aria-selected={selectedIndex === index}
                 onClick={() => setSelectedIndex(index)}
               >
-                <RemoteCoverImage src={result.coverDataUrl || result.coverUrl} className="meta-api-thumb" fallbackClassName="meta-api-no-cover" />
+                <RemoteCoverImage src={result.coverCacheUrl || result.coverDataUrl || result.coverUrl} className="meta-api-thumb" fallbackClassName="meta-api-no-cover" />
                 <span className="meta-api-result-content">
                   <strong>{result.title || '-'}</strong>
                   <span className="meta-api-result-summary">{result.summary || '-'}</span>
@@ -2391,7 +2422,7 @@ function MetadataSearchDialog({
             {selected ? (
               <div className="meta-api-preview-surface">
                 <RemoteCoverImage
-                  src={selected.coverDataUrl || selected.coverUrl}
+                  src={selected.coverCacheUrl || selected.coverDataUrl || selected.coverUrl}
                   className="meta-api-preview-background"
                   fallbackClassName="meta-api-preview-background-fallback"
                 />
@@ -2419,7 +2450,7 @@ function MetadataSearchDialog({
                     {selectedTags.map(tag => <span key={tag}>{tag}</span>)}
                   </div>
                   <div className="meta-api-preview-main">
-                    <RemoteCoverImage src={selected.coverDataUrl || selected.coverUrl} className="meta-api-large-cover" fallbackClassName="meta-api-large-no-cover" size={48} />
+                    <RemoteCoverImage src={selected.coverCacheUrl || selected.coverDataUrl || selected.coverUrl} className="meta-api-large-cover" fallbackClassName="meta-api-large-no-cover" size={48} />
                     <div className="meta-api-preview-card">
                       <dl>
                         <dt>{detailLabel('user', text('meta_writer', '작가'))}</dt><dd>{renderValue(metadataValue(selected, 'author', 'Writer'))}</dd>
@@ -2490,7 +2521,7 @@ function RemoteCoverImage({ src, className, fallbackClassName, size = 18 }) {
     const url = String(src || '').trim();
     if (!url) return () => { cancelled = true; };
 
-    if (url.startsWith('data:') || url.startsWith('file:')) {
+    if (url.startsWith('data:') || url.startsWith('file:') || url.startsWith('bookmanager-thumbnail:')) {
       setImageSrc(url);
       return () => { cancelled = true; };
     }

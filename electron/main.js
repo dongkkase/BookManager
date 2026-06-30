@@ -10,6 +10,7 @@ import { createExitDialogOptions, shouldProceedWithExit } from './exitPolicy.js'
 import { getSharingServerStatus, stopAllSharingServers } from './servers/sharingServers.js';
 import { findBinaryPath } from './binaryPolicy.js';
 import {
+  resolveApiCoverCacheDir,
   resolveAppDataDir,
   resolveThumbnailDir,
 } from './dataPaths.js';
@@ -186,11 +187,15 @@ if (!gotTheLock) {
 
 async function initializeApp() {
   protocol.handle('bookmanager-thumbnail', async request => {
-    const requestedName = decodeURIComponent(new URL(request.url).pathname.slice(1));
+    const requestUrl = new URL(request.url);
+    const requestedName = decodeURIComponent(requestUrl.pathname.slice(1));
     if (!requestedName || path.basename(requestedName) !== requestedName) {
       return new Response('Not found', { status: 404 });
     }
-    const thumbnailPath = path.join(resolveThumbnailDir(getExecutableDir()), requestedName);
+    const cacheDir = requestUrl.hostname === 'api-cover'
+      ? resolveApiCoverCacheDir(getExecutableDir())
+      : resolveThumbnailDir(getExecutableDir());
+    const thumbnailPath = path.join(cacheDir, requestedName);
     try {
       const cached = await readCachedThumbnail(thumbnailPath);
       return new Response(cached.data, {
