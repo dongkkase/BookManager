@@ -619,6 +619,136 @@ function findEpubCoverEntry(entries = [], opfPath = '', opfXml = '') {
     })[0] || null;
 }
 
+function imageMimeType(innerPath = '') {
+  const ext = path.extname(innerPath).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.bmp') return 'image/bmp';
+  return 'image/jpeg';
+}
+
+function epubHrefFromEntry(opfPath = '', entryName = '') {
+  const opfDir = path.posix.dirname(normalizeArchivePath(opfPath));
+  const relative = path.posix.relative(opfDir, normalizeArchivePath(entryName));
+  return relative || path.posix.basename(entryName);
+}
+
+function manifestItemMatchesEntry(item = {}, opfPath = '', entryName = '') {
+  if (!item.href) return false;
+  return normalizeArchivePath(resolveEpubHref(opfPath, item.href)).toLowerCase()
+    === normalizeArchivePath(entryName).toLowerCase();
+}
+
+function existingManifestIds(opfXml = '') {
+  return new Set(xmlStartTags(opfXml, 'item', { allowPrefix: true })
+    .map(element => attrByLocalName(element.attrs, 'id'))
+    .filter(Boolean));
+}
+
+function uniqueManifestId(opfXml = '', preferred = 'bookmanager-cover') {
+  const ids = existingManifestIds(opfXml);
+  if (!ids.has(preferred)) return preferred;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${preferred}-${index}`;
+    if (!ids.has(candidate)) return candidate;
+  }
+  return `${preferred}-${Date.now()}`;
+}
+
+function removeCoverImageProperty(tag = '') {
+  return String(tag || '').replace(/\sproperties\s*=\s*(?:"([^"]*)"|'([^']*)')/i, (match, doubleValue, singleValue) => {
+    const quote = doubleValue !== undefined ? '"' : "'";
+    const value = doubleValue ?? singleValue ?? '';
+    const nextTokens = String(value).split(/\s+/).filter(token => token && token !== 'cover-image');
+    return nextTokens.length ? ` properties=${quote}${nextTokens.join(' ')}${quote}` : '';
+  });
+}
+
+function tagAttributeValue(tag = '', attrName = '') {
+  return attrByLocalName(parseXmlAttributes(tag), attrName);
+}
+
+function upsertTagAttribute(tag = '', attrName = '', value = '') {
+  const escapedName = escapeRegExp(attrName);
+  const attrPattern = new RegExp(`\\s${escapedName}\\s*=\\s*(?:"[^"]*"|'[^']*')`, 'i');
+  if (attrPattern.test(tag)) {
+    return tag.replace(attrPattern, ` ${attrName}="${encodeXml(value)}"`);
+  }
+  return tag.replace(/\s*\/?>$/, match => ` ${attrName}="${encodeXml(value)}"${match.trimStart()}`);
+}
+
+function addCoverImageProperty(tag = '') {
+  const current = tagAttributeValue(tag, 'properties');
+  const tokens = new Set(String(current || '').split(/\s+/).filter(Boolean));
+  tokens.add('cover-image');
+  return upsertTagAttribute(tag, 'properties', [...tokens].join(' '));
+}
+
+function updateMatchingManifestItem(opfXml = '', opfPath = '', entryName = '', targetId = '', mediaType = '') {
+  const itemName = xmlNamePattern('item', { allowPrefix: true });
+  let updated = false;
+  const nextXml = String(opfXml || '').replace(new RegExp(`<(${itemName})\\b[^>]*\\/?>`, 'gi'), tag => {
+    let nextTag = removeCoverImageProperty(tag);
+    const attrs = parseXmlAttributes(tag);
+    if (manifestItemMatchesEntry(attrs, opfPath, entryName)) {
+      nextTag = upsertTagAttribute(nextTag, 'id', targetId);
+      nextTag = upsertTagAttribute(nextTag, 'media-type', mediaType);
+      nextTag = addCoverImageProperty(nextTag);
+      updated = true;
+    }
+    return nextTag;
+  });
+  return { opfXml: nextXml, updated };
+}
+
+function removeManagedCoverMeta(opfXml = '') {
+  const metaName = xmlNamePattern('meta', { allowPrefix: true });
+  return String(opfXml || '')
+    .replace(new RegExp(`\\s*<${metaName}\\b(?=[^>]*\\bname\\s*=\\s*(?:"cover"|'cover'))[^>]*\\/\\s*>\\s*`, 'gi'), '\n')
+    .replace(new RegExp(`\\s*<(${metaName})\\b(?=[^>]*\\bname\\s*=\\s*(?:"cover"|'cover'))[^>]*>[\\s\\S]*?<\\/\\1>\\s*`, 'gi'), '\n');
+}
+
+function insertCoverMeta(opfXml = '', coverId = '') {
+  const metadataMatch = xmlElementMatches(opfXml, 'metadata', { allowPrefix: true })[0] || null;
+  const prefix = xmlElementPrefix(metadataMatch?.tagName || '');
+  const metaLine = `        <${prefix}meta name="cover" content="${encodeXml(coverId)}" />`;
+  if (!metadataMatch) return opfXml;
+  return opfXml.replace(metadataMatch.closeTag, `${metaLine}\n    ${metadataMatch.closeTag}`);
+}
+
+function insertManifestItem(opfXml = '', opfPath = '', entryName = '', targetId = '', mediaType = '') {
+  const manifestMatch = xmlElementMatches(opfXml, 'manifest', { allowPrefix: true })[0] || null;
+  const packagePrefix = xmlElementPrefix(xmlStartTags(opfXml, 'package', { allowPrefix: true })[0]?.tagName || '');
+  const manifestPrefix = xmlElementPrefix(manifestMatch?.tagName || '') || packagePrefix;
+  const href = epubHrefFromEntry(opfPath, entryName);
+  const itemLine = `        <${manifestPrefix}item id="${encodeXml(targetId)}" href="${encodeXml(href)}" media-type="${encodeXml(mediaType)}" properties="cover-image" />`;
+  if (manifestMatch) {
+    return opfXml.replace(manifestMatch.closeTag, `${itemLine}\n    ${manifestMatch.closeTag}`);
+  }
+  const packageName = xmlNamePattern('package', { allowPrefix: true });
+  return opfXml.replace(new RegExp(`</(${packageName})>`, 'i'), `    <${manifestPrefix}manifest>\n${itemLine}\n    </${manifestPrefix}manifest>\n</$1>`);
+}
+
+function updateEpubCoverReferences(opfXml = '', opfPath = '', entryName = '', mediaType = '') {
+  const manifestItems = xmlStartTags(opfXml, 'item', { allowPrefix: true }).map(element => element.attrs);
+  const existingItem = manifestItems.find(item => manifestItemMatchesEntry(item, opfPath, entryName));
+  const targetId = attrByLocalName(existingItem, 'id') || uniqueManifestId(opfXml);
+  const updatedManifest = updateMatchingManifestItem(opfXml, opfPath, entryName, targetId, mediaType);
+  const withManifestItem = updatedManifest.updated
+    ? updatedManifest.opfXml
+    : insertManifestItem(updatedManifest.opfXml, opfPath, entryName, targetId, mediaType);
+  return insertCoverMeta(removeManagedCoverMeta(withManifestItem), targetId);
+}
+
+function defaultEpubCoverEntryName(epubPackage, sourceName = '') {
+  const ext = path.extname(sourceName).toLowerCase() || '.jpg';
+  const coverEntry = findEpubCoverEntry(epubPackage.entries, epubPackage.opfPath, epubPackage.opfXml);
+  if (coverEntry && path.extname(coverEntry.name).toLowerCase() === ext) return coverEntry.name;
+  const opfDir = path.posix.dirname(normalizeArchivePath(epubPackage.opfPath));
+  return normalizeArchivePath(path.posix.join(opfDir, 'images', `bookmanager-cover${ext}`));
+}
+
 async function readEpubPackage(filePath) {
   const entries = await listZipEntriesFromFile(filePath);
   if (!entries.length) return null;
@@ -670,6 +800,41 @@ async function analyzeEpubFile(filePath, options = {}) {
     coverDataUrl,
     hasMetadata: Boolean(metadataInnerXml(epubPackage.opfXml)),
   };
+}
+
+export async function listMetadataEpubImages(filePath) {
+  const epubPackage = await readEpubPackage(filePath);
+  if (!epubPackage) return { images: [], coverEntryName: '' };
+  const coverEntry = findEpubCoverEntry(epubPackage.entries, epubPackage.opfPath, epubPackage.opfXml);
+  const images = epubPackage.entries
+    .filter(entry => !entry.isDirectory && isImage(entry.name))
+    .sort((a, b) => naturalCompare(a.name, b.name))
+    .map(entry => ({
+      name: entry.name,
+      label: path.posix.basename(entry.name),
+      size: entry.uncompressedSize || entry.size || 0,
+      isCover: coverEntry?.name === entry.name,
+    }));
+  return {
+    images,
+    coverEntryName: coverEntry?.name || '',
+  };
+}
+
+export async function loadMetadataEpubImage(filePath, entryName) {
+  const epubPackage = await readEpubPackage(filePath);
+  if (!epubPackage || !entryName) return '';
+  const entry = findArchiveEntry(epubPackage.entries, entryName);
+  if (!entry || entry.isDirectory || !isImage(entry.name)) return '';
+  const buffer = await readZipEntryFromFile(filePath, entry, { maxBytes: 16 * 1024 * 1024 });
+  return buffer ? imageDataUrl(buffer, entry.name) : '';
+}
+
+export async function loadMetadataImageFile(filePath) {
+  if (!filePath || !isImage(filePath)) return '';
+  const stat = await fsp.stat(filePath);
+  if (!stat.isFile() || stat.size > 16 * 1024 * 1024) return '';
+  return imageDataUrl(await fsp.readFile(filePath), filePath);
 }
 
 export async function loadMetadataCover(filePath, options = {}) {
@@ -1216,6 +1381,36 @@ function updateEpubPackageXml(opfXml = '', metadata = {}) {
   return updatedPackageXml.replace(new RegExp(`<${packageName}\\b[^>]*>`, 'i'), match => `${match}\n${metadataSection}`);
 }
 
+async function resolveEpubCoverChange(epubPackage, coverChange = {}) {
+  const type = coverChange?.type || coverChange?.source || '';
+  if (!type) return null;
+
+  if (type === 'entry') {
+    const entry = findArchiveEntry(epubPackage.entries, coverChange.entryName || coverChange.name || '');
+    if (!entry || entry.isDirectory || !isImage(entry.name)) return null;
+    return {
+      entryName: entry.name,
+      mediaType: imageMimeType(entry.name),
+      buffer: null,
+    };
+  }
+
+  if (type === 'file') {
+    const filePath = coverChange.filePath || coverChange.path || '';
+    if (!filePath || !isImage(filePath)) return null;
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) return null;
+    const entryName = defaultEpubCoverEntryName(epubPackage, filePath);
+    return {
+      entryName,
+      mediaType: imageMimeType(filePath),
+      buffer: await fsp.readFile(filePath),
+    };
+  }
+
+  return null;
+}
+
 function comparableComicInfoValue(value) {
   return String(value ?? '').trim();
 }
@@ -1269,10 +1464,18 @@ async function createMetadataBackup(filePath, extension, token) {
   await fsp.copyFile(filePath, backupPath);
 }
 
-async function injectEpubMetadata(filePath, metadata, lang = 'ko') {
+async function injectEpubMetadata(filePath, metadata, lang = 'ko', coverChange = null) {
   const epubPackage = await readEpubPackage(filePath);
   if (!epubPackage) throw new Error(taskText(lang, 'metadata_epub_package_not_found'));
-  await replaceZipEntry(filePath, epubPackage.opfPath, updateEpubPackageXml(epubPackage.opfXml, metadata));
+  let opfXml = updateEpubPackageXml(epubPackage.opfXml, metadata);
+  const coverAsset = await resolveEpubCoverChange(epubPackage, coverChange);
+  if (coverAsset) {
+    if (coverAsset.buffer) {
+      await replaceZipEntry(filePath, coverAsset.entryName, coverAsset.buffer);
+    }
+    opfXml = updateEpubCoverReferences(opfXml, epubPackage.opfPath, coverAsset.entryName, coverAsset.mediaType);
+  }
+  await replaceZipEntry(filePath, epubPackage.opfPath, opfXml);
   return true;
 }
 
@@ -1385,7 +1588,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
 
       await fsp.copyFile(filePath, tempArchive);
       if (isEpub(filePath)) {
-        await injectEpubMetadata(tempArchive, item.metadata || {}, options.lang);
+        await injectEpubMetadata(tempArchive, item.metadata || {}, options.lang, item.epubCoverChange || null);
       } else if (isPdf(filePath)) {
         await injectPdfMetadata(tempArchive, item.metadata || {}, options.lang);
       } else {

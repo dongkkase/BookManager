@@ -603,6 +603,122 @@
   align-items: stretch;
 }
 
+.meta-epub-cover-row {
+  align-items: start;
+  margin-bottom: 12px;
+}
+
+.meta-epub-cover-row .meta-col-label {
+  padding-top: 8px;
+}
+
+.meta-epub-cover-field {
+  grid-column: 2 / -1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.meta-epub-cover-thumb-box {
+  width: 82px;
+  height: 116px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  background-color: #111;
+  border: 1px solid #3e3e3e;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: var(--font-xs);
+  font-weight: 800;
+}
+
+.meta-epub-cover-thumb-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.meta-epub-cover-tools {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.meta-epub-cover-select {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  color: #fff;
+  background-color: #383838;
+  border: 1px solid #575757;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: var(--font-sm);
+  font-weight: 400;
+}
+
+.meta-epub-cover-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta-epub-cover-buttons button {
+  min-width: 86px;
+  min-height: var(--control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #dce6f0;
+  background-color: #3a4b62;
+  border: 1px solid #43546d;
+  border-radius: 5px;
+  padding: 0 10px;
+  font-size: var(--font-xs);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.meta-epub-cover-buttons button:disabled,
+.meta-epub-cover-select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.meta-epub-cover-status {
+  min-height: 16px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: var(--font-2xs);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-epub-cover-status.error {
+  color: #ff9b8f;
+}
+
+.meta-epub-cover-resolution {
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: var(--font-xs);
+  font-weight: 800;
+}
+
+.meta-epub-cover-resolution strong {
+  color: #dce6f0;
+  font-weight: 900;
+}
+
 .meta-col-label {
   white-space: pre-line;
   color: #fff;
@@ -1605,6 +1721,10 @@ textarea.meta-auto-height-textarea {
 
 .meta-api-action-controls button {
   width: 92px;
+}
+
+.meta-api-action-controls button.cover {
+  width: 112px;
 }
 
 .meta-api-action-controls button.primary {

@@ -141,6 +141,17 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['메타데이터 읽기 방향 Python i18n 후보', 'const MANGA_READING_OPTIONS'],
         ['메타데이터 읽기 방향 우좌 후보', "'YesAndRightToLeft'"],
         ['API 검색 다이얼로그 검색어', 'value={dialogQuery}'],
+        ['EPUB 표지 내부 이미지 목록 IPC', 'listMetadataEpubImages'],
+        ['EPUB 표지 내부 이미지 선택 IPC', 'loadMetadataEpubImage'],
+        ['EPUB 표지 로컬 이미지 선택 IPC', 'loadMetadataImageFile'],
+        ['EPUB 표지 API 캐시 IPC', 'cacheMetadataRemoteCover'],
+        ['EPUB 표지 저장 지시값', 'epubCoverChange'],
+        ['EPUB 표지 도구 클래스', 'meta-epub-cover-tools'],
+        ['EPUB 표지 기본정보 필드 주입', 'renderCoverField?.()'],
+        ['EPUB 표지 해상도 표시', 'meta-epub-cover-resolution'],
+        ['리디 표지 원본 URL 사용', 'ridiOriginalCoverUrl'],
+        ['리디 표지 xxlarge 요청', 'xxlarge?dpi=xxhdpi#1'],
+        ['API 검색 결과 표지 사용 버튼', "text('btn_use_cover', '표지 사용')"],
     ]);
     assertInventory('settings', [
         ['뷰어 경로', "localConfig.viewer_path || ''"],

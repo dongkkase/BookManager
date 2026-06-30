@@ -7,7 +7,9 @@ import { spawnSync } from 'child_process';
 import {
     analyzeMetadataInputs,
     createComicInfoXml,
+    listMetadataEpubImages,
     loadMetadataCover,
+    loadMetadataEpubImage,
     metadataWriteSupport,
     parseComicInfo,
     saveMetadataItems,
@@ -78,6 +80,36 @@ function find7z() {
         if (!result.error) return candidate;
     }
     return '';
+}
+
+async function createEpubCoverFixture(source) {
+    fs.writeFileSync(source, Buffer.alloc(0));
+    await replaceZipEntry(
+        source,
+        'META-INF/container.xml',
+        '<?xml version="1.0" encoding="UTF-8"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+    );
+    await replaceZipEntry(
+        source,
+        'OEBPS/content.opf',
+        [
+            '<?xml version="1.0" encoding="utf-8"?>',
+            '<package version="3.0" unique-identifier="pub-id" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+            '    <metadata>',
+            '        <dc:identifier id="pub-id">97800000000</dc:identifier>',
+            '        <dc:title>기존 제목</dc:title>',
+            '        <meta name="cover" content="cover-id"/>',
+            '    </metadata>',
+            '    <manifest>',
+            '        <item id="cover-id" properties="cover-image" href="images/cover.jpg" media-type="image/jpeg"/>',
+            '        <item id="alt-id" href="images/alt.png" media-type="image/png"/>',
+            '    </manifest>',
+            '    <spine/>',
+            '</package>',
+        ].join('\n'),
+    );
+    await replaceZipEntry(source, 'OEBPS/images/cover.jpg', Buffer.from('cover'));
+    await replaceZipEntry(source, 'OEBPS/images/alt.png', Buffer.from('alt cover'));
 }
 
 test('ComicInfo XML preserves supported fields and ignores removed comic fields', () => {
@@ -385,6 +417,90 @@ test('EPUB 메타데이터는 OPF 패키지 문서에서 분석하고 저장한�
         assert.equal(reanalyzed.items[0].metadata.Series, '새 시리즈');
         assert.equal(reanalyzed.items[0].metadata.Volume, '2');
         assert.equal(reanalyzed.items[0].metadata.CommunityRating, '4.5');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 표지는 내부 이미지 선택으로 OPF cover 참조를 교체한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-entry-'));
+    try {
+        const source = path.join(root, '표지 선택 EPUB.epub');
+        await createEpubCoverFixture(source);
+
+        const images = await listMetadataEpubImages(source);
+        assert.equal(images.images.length, 2);
+        assert.equal(images.coverEntryName, 'OEBPS/images/cover.jpg');
+        assert.equal(images.images.find(image => image.name === 'OEBPS/images/cover.jpg')?.isCover, true);
+        assert.match(await loadMetadataEpubImage(source, 'OEBPS/images/alt.png'), /^data:image\/png;base64,/);
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '표지 변경 제목' },
+            epubCoverChange: {
+                type: 'entry',
+                entryName: 'OEBPS/images/alt.png',
+            },
+        }], {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const buffer = fs.readFileSync(source);
+        const opfEntry = listZipEntries(buffer).find(entry => entry.name === 'OEBPS/content.opf');
+        const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const coverItem = opfXml.match(/<item\b[^>]*id="cover-id"[^>]*>/)?.[0] || '';
+        const altItem = opfXml.match(/<item\b[^>]*id="alt-id"[^>]*>/)?.[0] || '';
+        assert.match(opfXml, /<meta name="cover" content="alt-id" \/>/);
+        assert.doesNotMatch(coverItem, /cover-image/);
+        assert.match(altItem, /properties="cover-image"/);
+        assert.match(altItem, /media-type="image\/png"/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 표지는 로컬 이미지 파일을 EPUB 내부에 추가해 저장한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-file-'));
+    try {
+        const source = path.join(root, '로컬 표지 EPUB.epub');
+        const coverFile = path.join(root, 'new-cover.png');
+        await createEpubCoverFixture(source);
+        fs.writeFileSync(coverFile, Buffer.from('new cover'));
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '로컬 표지 제목' },
+            epubCoverChange: {
+                type: 'file',
+                filePath: coverFile,
+            },
+        }], {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const buffer = fs.readFileSync(source);
+        const entries = listZipEntries(buffer);
+        const coverEntry = entries.find(entry => entry.name === 'OEBPS/images/bookmanager-cover.png');
+        const opfEntry = entries.find(entry => entry.name === 'OEBPS/content.opf');
+        assert.ok(coverEntry);
+        assert.deepEqual(readZipEntry(buffer, coverEntry), Buffer.from('new cover'));
+
+        const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const coverItem = opfXml.match(/<item\b[^>]*id="cover-id"[^>]*>/)?.[0] || '';
+        const newItem = opfXml.match(/<item\b[^>]*id="bookmanager-cover"[^>]*>/)?.[0] || '';
+        assert.match(opfXml, /<meta name="cover" content="bookmanager-cover" \/>/);
+        assert.doesNotMatch(coverItem, /cover-image/);
+        assert.match(newItem, /href="images\/bookmanager-cover.png"/);
+        assert.match(newItem, /media-type="image\/png"/);
+        assert.match(newItem, /properties="cover-image"/);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

@@ -10,6 +10,7 @@ function BookMetadataEditor({
     combinedTagOptions,
     fields,
     renderCombinedGenreTags,
+    renderCoverField,
     renderFieldRows,
     sectionLabel,
     sectionRefs,
@@ -22,6 +23,7 @@ function BookMetadataEditor({
         <div className="meta-section-stack">
             <section className="meta-section-box" ref={sectionRef(sectionRefs, 'basic')}>
                 <div className="meta-section-title">{sectionLabel(tabById.basic)}</div>
+                {renderCoverField?.()}
                 <div className="meta-column-heads"><span /> <b>{t('t3_col_orig')}</b><span /> <b>{t('t3_col_res')}</b></div>
                 {renderFieldRows(fields.basic)}
             </section>

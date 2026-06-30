@@ -12,7 +12,14 @@ import { promisify } from 'util';
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
-import { analyzeMetadataInputs, loadMetadataCover, saveMetadataItems } from './tasks/metadataTask.js';
+import {
+  analyzeMetadataInputs,
+  listMetadataEpubImages,
+  loadMetadataCover,
+  loadMetadataEpubImage,
+  loadMetadataImageFile,
+  saveMetadataItems,
+} from './tasks/metadataTask.js';
 import {
   getSharingNetworkAddresses,
   getSharingServerStatus,
@@ -2331,6 +2338,20 @@ function apiCoverCacheUrlForFile(filePath) {
   return `bookmanager-thumbnail://api-cover/${encodeURIComponent(path.basename(filePath))}${version}`;
 }
 
+function apiCoverCacheFileFromProtocolUrl(imageUrl = '', cacheDir = '') {
+  if (!cacheDir) return '';
+  try {
+    const requestUrl = new URL(String(imageUrl || '').trim());
+    if (requestUrl.protocol !== 'bookmanager-thumbnail:' || requestUrl.hostname !== 'api-cover') return '';
+    const fileName = decodeURIComponent(requestUrl.pathname.slice(1));
+    if (!fileName || path.basename(fileName) !== fileName) return '';
+    const filePath = path.join(cacheDir, fileName);
+    return fs.existsSync(filePath) ? filePath : '';
+  } catch {
+    return '';
+  }
+}
+
 async function findApiCoverCacheFile(cacheDir, hash) {
   try {
     const entries = await fs.promises.readdir(cacheDir, { withFileTypes: true });
@@ -2348,17 +2369,17 @@ function rememberApiCoverUrl(url, cacheUrl) {
   return cacheUrl;
 }
 
-async function fetchImageCacheUrlFromUrl(imageUrl = '', cacheDir = '') {
+async function fetchImageCacheFileFromUrl(imageUrl = '', cacheDir = '') {
   const url = String(imageUrl || '').trim();
   if (!url) return '';
-  if (!/^https?:\/\//i.test(url)) return url;
+  const protocolFile = apiCoverCacheFileFromProtocolUrl(url, cacheDir);
+  if (protocolFile) return protocolFile;
+  if (!/^https?:\/\//i.test(url)) return '';
   if (!cacheDir) return '';
-  if (apiCoverUrlCache.has(url)) return apiCoverUrlCache.get(url);
 
   const hash = crypto.createHash('sha1').update(url).digest('hex');
   const cachedPath = await findApiCoverCacheFile(cacheDir, hash);
-  const cachedUrl = apiCoverCacheUrlForFile(cachedPath);
-  if (cachedUrl) return rememberApiCoverUrl(url, cachedUrl);
+  if (cachedPath) return cachedPath;
 
   const imageOrigin = new URL(url).origin;
   const isRidiImage = /ridicdn\.net|ridibooks\.com/i.test(url);
@@ -2370,6 +2391,15 @@ async function fetchImageCacheUrlFromUrl(imageUrl = '', cacheDir = '') {
   const filePath = path.join(cacheDir, `${hash}${imageExtensionFromMime(mimeType)}`);
   await fs.promises.mkdir(cacheDir, { recursive: true });
   await fs.promises.writeFile(filePath, buffer);
+  return filePath;
+}
+
+async function fetchImageCacheUrlFromUrl(imageUrl = '', cacheDir = '') {
+  const url = String(imageUrl || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) return url;
+  if (apiCoverUrlCache.has(url)) return apiCoverUrlCache.get(url);
+  const filePath = await fetchImageCacheFileFromUrl(url, cacheDir);
   return rememberApiCoverUrl(url, apiCoverCacheUrlForFile(filePath));
 }
 
@@ -3118,6 +3148,26 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   ipcMain.handle('metadata:cover', async (_event, filePath, options = {}) => {
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     return loadMetadataCover(filePath, { ...options, sevenZExe });
+  });
+
+  ipcMain.handle('metadata:epubImages', async (_event, filePath) => {
+    return listMetadataEpubImages(filePath);
+  });
+
+  ipcMain.handle('metadata:epubImage', async (_event, filePath, entryName) => {
+    return loadMetadataEpubImage(filePath, entryName);
+  });
+
+  ipcMain.handle('metadata:imageFile', async (_event, filePath) => {
+    return loadMetadataImageFile(filePath);
+  });
+
+  ipcMain.handle('metadata:cacheRemoteCover', async (_event, imageUrl) => {
+    const filePath = await fetchImageCacheFileFromUrl(imageUrl, apiCoverCacheDir());
+    return {
+      filePath,
+      coverCacheUrl: apiCoverCacheUrlForFile(filePath),
+    };
   });
 
   ipcMain.handle('metadata:save', async (event, items, options = {}) => {

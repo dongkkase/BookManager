@@ -229,9 +229,43 @@ function trimMetadataCoverCache(items = [], activeFilePath = '') {
 
   return items.map(item => {
     if (!item.coverDataUrl || keep.has(item.filepath)) return item;
-    const { coverDataUrl, coverLoadedAt, ...rest } = item;
+    const { coverDataUrl, coverLoadedAt, epubCoverResolution, ...rest } = item;
     return rest;
   });
+}
+
+function fileNameFromPath(filePath = '') {
+  return String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || String(filePath || '');
+}
+
+function apiResultCoverUrl(result = {}) {
+  return result?.coverUrl
+    || result?.CoverUrl
+    || result?.coverCacheUrl
+    || result?.coverDataUrl
+    || result?.metadata?.coverUrl
+    || result?.metadata?.CoverUrl
+    || result?.metadata?.coverCacheUrl
+    || result?.metadata?.coverDataUrl
+    || '';
+}
+
+function ridiOriginalCoverUrl(result = {}, fallbackUrl = '') {
+  const directId = String(result?.b_id || result?.id || result?.metadata?.b_id || result?.metadata?.id || '').match(/\d+/)?.[0];
+  const linkId = String(result?.Web || result?.link || result?.metadata?.Web || result?.metadata?.link || '').match(/\/books\/(\d+)/)?.[1];
+  const coverId = String(fallbackUrl || '').match(/\/cover\/(\d+)/)?.[1];
+  const id = directId || linkId || coverId;
+  return id ? `https://img.ridicdn.net/cover/${id}/xxlarge?dpi=xxhdpi#1` : '';
+}
+
+function apiResultCoverUrlForUse(result = {}, apiSource = '') {
+  const coverUrl = apiResultCoverUrl(result);
+  if (apiSource === '리디북스') return ridiOriginalCoverUrl(result, coverUrl) || coverUrl;
+  return coverUrl;
+}
+
+function isEpubFilePath(filePath = '') {
+  return /\.epub$/i.test(String(filePath || '').trim());
 }
 
 const LANGUAGE_LABELS = {
@@ -302,6 +336,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const formScrollRef = useRef(null);
   const sectionRefs = useRef({});
   const coverLoadRequestsRef = useRef(new Set());
+  const [epubImagesByFilePath, setEpubImagesByFilePath] = useState({});
   const batchMetadata = useMemo(
     () => selectedFileId ? (batchMetadataByFileId[selectedFileId] || {}) : {},
     [batchMetadataByFileId, selectedFileId],
@@ -448,6 +483,9 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     [fileList],
   );
   const activeBookType = useMemo(() => resolveBookType(activeItem || {}), [activeItem]);
+  const activeIsEpub = isEpubFilePath(activeItem?.filepath || activeItem?.path || activeItem?.name);
+  const activeEpubImageState = activeItem?.filepath ? epubImagesByFilePath[activeItem.filepath] || {} : {};
+  const activeEpubImages = activeEpubImageState.images || [];
   const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
   const currentApiSources = useMemo(() => metadataApiSourcesForBookType(activeBookType), [activeBookType]);
   const currentMetadataConfig = useMemo(() => (
@@ -520,6 +558,63 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     if (activeItem) setSearchQuery(activeItem.metadata?.Series || activeItem.metadata?.Title || activeItem.name.replace(/\.[^.]+$/, ''));
   }, [activeItem]);
+
+  useEffect(() => {
+    const filePath = activeItem?.filepath;
+    if (activeBookType !== 'book' || !activeIsEpub || !filePath) return undefined;
+    if (activeEpubImageState.loaded || activeEpubImageState.loading) return undefined;
+    const listMetadataEpubImages = window.electronAPI?.listMetadataEpubImages;
+    if (typeof listMetadataEpubImages !== 'function') return undefined;
+
+    let cancelled = false;
+    setEpubImagesByFilePath(prev => ({
+      ...prev,
+      [filePath]: {
+        ...(prev[filePath] || {}),
+        loading: true,
+        error: '',
+      },
+    }));
+    listMetadataEpubImages(filePath)
+      .then(result => {
+        if (cancelled) return;
+        setEpubImagesByFilePath(prev => ({
+          ...prev,
+          [filePath]: {
+            loading: false,
+            loaded: true,
+            error: '',
+            images: result?.images || [],
+            coverEntryName: result?.coverEntryName || '',
+          },
+        }));
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setEpubImagesByFilePath(prev => ({
+          ...prev,
+          [filePath]: {
+            ...(prev[filePath] || {}),
+            loading: false,
+            loaded: true,
+            error: error.message || text('meta_epub_images_failed', 'EPUB 이미지 목록을 불러오지 못했습니다.'),
+            images: [],
+            coverEntryName: '',
+          },
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeBookType,
+    activeIsEpub,
+    activeEpubImageState.loaded,
+    activeEpubImageState.loading,
+    activeItem?.filepath,
+    text,
+  ]);
 
   useEffect(() => {
     if (!selectedTreeKey || !treeContainerRef.current) return;
@@ -641,6 +736,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     setSelectedGroup('');
     setCollapsedGroups(new Set());
     setBatchMetadataByFileId({});
+    setEpubImagesByFilePath({});
     setPublisherOptions([]);
     setLastResult(null);
     coverLoadRequestsRef.current.clear();
@@ -967,6 +1063,107 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
     showToast?.({ key: 't3_msg_applied_series_tag' });
   };
 
+  const updateActiveEpubCoverChange = useCallback((coverChange, coverDataUrl = '') => {
+    if (!activeItem || activeBookType !== 'book') return;
+    const activeFilePath = activeItem.filepath || '';
+    const coverLoadedAt = coverDataUrl ? Date.now() : undefined;
+    setFileList(prev => trimMetadataCoverCache(prev.map(item => {
+      if (item.id !== activeItem.id) return item;
+      const next = { ...item };
+      if (coverChange) next.epubCoverChange = coverChange;
+      else delete next.epubCoverChange;
+      if (coverDataUrl) {
+        next.coverDataUrl = coverDataUrl;
+        next.coverLoadedAt = coverLoadedAt;
+        delete next.epubCoverResolution;
+      } else {
+        delete next.coverDataUrl;
+        delete next.coverLoadedAt;
+        delete next.epubCoverResolution;
+      }
+      return next;
+    }), activeFilePath));
+  }, [activeBookType, activeItem]);
+
+  const handleSelectEpubCoverEntry = async (entryName) => {
+    if (!activeItem || activeBookType !== 'book' || !activeIsEpub || !entryName) return;
+    const loadMetadataEpubImage = window.electronAPI?.loadMetadataEpubImage;
+    if (typeof loadMetadataEpubImage !== 'function') return;
+    try {
+      setStatusMessage(text('meta_epub_cover_loading', 'EPUB 표지를 불러오는 중...'));
+      const coverDataUrl = await loadMetadataEpubImage(activeItem.filepath, entryName);
+      if (!coverDataUrl) throw new Error(text('meta_epub_cover_empty', '선택한 이미지를 표지로 불러오지 못했습니다.'));
+      const image = activeEpubImages.find(item => item.name === entryName);
+      updateActiveEpubCoverChange({
+        type: 'entry',
+        entryName,
+        label: image?.label || fileNameFromPath(entryName),
+      }, coverDataUrl);
+      setStatusMessage(text('meta_epub_cover_entry_done', 'EPUB 내부 이미지를 새 표지로 선택했습니다.'));
+    } catch (error) {
+      const message = error.message || text('meta_epub_cover_failed', 'EPUB 표지 변경 준비에 실패했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    }
+  };
+
+  const handleSelectLocalEpubCover = async () => {
+    if (!activeItem || activeBookType !== 'book' || !activeIsEpub) return;
+    try {
+      const filePath = await window.electronAPI?.selectFile?.(
+        text('meta_epub_cover_select_file', '표지 이미지 선택'),
+        [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'] }],
+      );
+      if (!filePath) return;
+      const coverDataUrl = await window.electronAPI?.loadMetadataImageFile?.(filePath);
+      if (!coverDataUrl) throw new Error(text('meta_epub_cover_file_empty', '선택한 이미지 파일을 표지로 사용할 수 없습니다.'));
+      updateActiveEpubCoverChange({
+        type: 'file',
+        filePath,
+        label: fileNameFromPath(filePath),
+      }, coverDataUrl);
+      setStatusMessage(text('meta_epub_cover_file_done', '로컬 이미지 파일을 새 표지로 선택했습니다.'));
+    } catch (error) {
+      const message = error.message || text('meta_epub_cover_failed', 'EPUB 표지 변경 준비에 실패했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    }
+  };
+
+  const handleResetEpubCoverChange = () => {
+    if (!activeItem || activeBookType !== 'book' || !activeIsEpub) return;
+    const filePath = activeItem.filepath || '';
+    if (filePath) coverLoadRequestsRef.current.delete(filePath);
+    updateActiveEpubCoverChange(null, '');
+    setStatusMessage(text('meta_epub_cover_reset_done', 'EPUB 표지 변경을 취소했습니다.'));
+  };
+
+  const handleUseApiCoverResult = async (result) => {
+    if (!activeItem || activeBookType !== 'book' || !activeIsEpub) return;
+    const coverUrl = apiResultCoverUrl(result);
+    if (!coverUrl) {
+      setStatusMessage(text('meta_epub_cover_api_empty', '선택한 검색 결과에 사용할 표지가 없습니다.'));
+      return;
+    }
+    const originalUrl = apiResultCoverUrlForUse(result, apiSearch.apiSource);
+    try {
+      setStatusMessage(text('meta_epub_cover_api_loading', '검색 API 표지를 저장하는 중...'));
+      const cached = await window.electronAPI?.cacheMetadataRemoteCover?.(originalUrl);
+      if (!cached?.filePath) throw new Error(text('meta_epub_cover_api_failed', '검색 API 표지를 로컬 캐시에 저장하지 못했습니다.'));
+      updateActiveEpubCoverChange({
+        type: 'file',
+        filePath: cached.filePath,
+        label: result?.title || result?.metadata?.Title || fileNameFromPath(cached.filePath),
+      }, cached.coverCacheUrl || coverUrl);
+      setApiSearch(prev => ({ ...prev, open: false }));
+      setStatusMessage(text('meta_epub_cover_api_done', '검색 API 표지를 새 EPUB 표지로 선택했습니다.'));
+    } catch (error) {
+      const message = error.message || text('meta_epub_cover_api_failed', '검색 API 표지를 로컬 캐시에 저장하지 못했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    }
+  };
+
   const filenameStem = (name = '') => String(name).replace(/\.[^.]+$/, '');
 
   const inferTitleParts = (item) => {
@@ -1117,7 +1314,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         ? BOOK_META_FIELD_IDS
         : META_FIELD_IDS;
     const extraFieldIds = itemBookType === 'comic' ? ['ComicZipAddedDate', 'ComicZipModifiedDate'] : [];
-    return {
+    const payload = {
       id: item.id,
       filepath: item.filepath || item.path || '',
       path: item.path || item.filepath || '',
@@ -1127,6 +1324,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
       pageCount: item.pageCount || '',
       metadata: pickMetadataFields(item.metadata || {}, fieldIds, extraFieldIds),
     };
+    if (itemBookType === 'book' && item.epubCoverChange) {
+      payload.epubCoverChange = item.epubCoverChange;
+    }
+    return payload;
   };
 
   const handleSave = async (all = false) => {
@@ -1609,11 +1810,108 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const renderAllSections = () => {
+    const renderEpubCoverField = () => {
+      if (activeBookType !== 'book' || !activeIsEpub || !activeItem) return null;
+      const pendingCoverName = activeItem.epubCoverChange?.label
+        || activeItem.epubCoverChange?.entryName
+        || fileNameFromPath(activeItem.epubCoverChange?.filePath);
+      const coverResolution = activeItem.coverDataUrl ? activeItem.epubCoverResolution : null;
+      const handleCoverImageLoad = (event) => {
+        const { naturalWidth, naturalHeight } = event.currentTarget;
+        if (!naturalWidth || !naturalHeight) return;
+        updateItem(activeItem.id, item => {
+          if (
+            item.epubCoverResolution?.width === naturalWidth
+            && item.epubCoverResolution?.height === naturalHeight
+          ) {
+            return item;
+          }
+          return {
+            ...item,
+            epubCoverResolution: {
+              width: naturalWidth,
+              height: naturalHeight,
+            },
+          };
+        });
+      };
+      return (
+        <div className="meta-form-row meta-epub-cover-row">
+          <div className="meta-col-label">{text('meta_epub_cover_label', '표지')}</div>
+          <div className="meta-epub-cover-field">
+            <div className="meta-epub-cover-thumb-box">
+              {activeItem.coverDataUrl ? (
+                <img src={activeItem.coverDataUrl} alt="" onLoad={handleCoverImageLoad} />
+              ) : (
+                <span>{t('no_image')}</span>
+              )}
+            </div>
+            <div className="meta-epub-cover-tools">
+              <select
+                className="meta-epub-cover-select"
+                value={activeItem.epubCoverChange?.type === 'entry' ? activeItem.epubCoverChange.entryName : ''}
+                onChange={event => handleSelectEpubCoverEntry(event.target.value)}
+                disabled={isWorking || activeEpubImageState.loading || activeEpubImages.length === 0}
+              >
+                <option value="">
+                  {activeEpubImageState.loading
+                    ? text('meta_epub_images_loading', 'EPUB 이미지 로드 중...')
+                    : text('meta_epub_cover_select_internal', 'EPUB 내부 이미지 선택')}
+                </option>
+                {activeEpubImages.map(image => (
+                  <option key={image.name} value={image.name}>
+                    {image.isCover
+                      ? `${image.label} (${text('meta_epub_current_cover', '현재 표지')})`
+                      : image.label}
+                  </option>
+                ))}
+              </select>
+              <div className="meta-epub-cover-buttons">
+                <button
+                  type="button"
+                  onClick={handleSelectLocalEpubCover}
+                  disabled={isWorking}
+                  title={text('meta_epub_cover_file', '로컬 이미지 선택')}
+                >
+                  <FaIcon name="fileCirclePlus" size={11} />
+                  <span>{text('meta_epub_cover_file_short', '파일')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetEpubCoverChange}
+                  disabled={isWorking || !activeItem.epubCoverChange}
+                  title={text('meta_epub_cover_reset', '표지 변경 취소')}
+                >
+                  <FaIcon name="arrowRotateLeft" size={11} />
+                  <span>{text('meta_epub_cover_reset_short', '원본')}</span>
+                </button>
+              </div>
+              <div className={`meta-epub-cover-status ${activeEpubImageState.error ? 'error' : ''}`}>
+                {activeEpubImageState.error
+                  || (activeItem.epubCoverChange
+                    ? `${text('meta_epub_cover_pending_prefix', '저장 시 표지 변경')}: ${pendingCoverName}`
+                    : text('meta_epub_cover_original', '저장된 EPUB 표지를 사용합니다.'))}
+              </div>
+              <div className="meta-epub-cover-resolution">
+                <span>{text('meta_epub_cover_resolution', '해상도')}</span>
+                <strong>
+                  {coverResolution?.width && coverResolution?.height
+                    ? `${coverResolution.width} x ${coverResolution.height}`
+                    : text('meta_epub_cover_resolution_unknown', '확인 중')}
+                </strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     const editorProps = {
       fields: currentMetadataConfig.fields,
       combinedTagOptions,
       genreOptions,
       renderCombinedGenreTags,
+      renderCoverField: renderEpubCoverField,
       renderChoiceGrid,
       renderDualTextarea,
       renderFieldRows,
@@ -1885,6 +2183,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           t={t}
           onClose={() => setApiSearch(prev => ({ ...prev, open: false }))}
           onSelect={handleSelectApiResult}
+          onUseCover={activeBookType === 'book' && activeIsEpub ? handleUseApiCoverResult : null}
           onSearch={fetchMetadataResults}
           onResolveRidiDate={resolveRidiPublishDate}
           targetLang={config?.language || config?.lang || 'ko'}
@@ -2081,6 +2380,7 @@ function MetadataSearchDialog({
   bookType = 'comic',
   onClose,
   onSelect,
+  onUseCover,
   onSearch,
   onResolveRidiDate,
   targetLang = 'ko',
@@ -2104,6 +2404,7 @@ function MetadataSearchDialog({
   const rawSelected = state.results[selectedIndex];
   const selected = showTranslated && translatedResult ? translatedResult : rawSelected;
   const canTranslateSelected = ['Anilist', 'Vine', 'Amazon'].includes(state.apiSource);
+  const selectedCoverUrl = selected ? apiResultCoverUrl(selected) : '';
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -2502,6 +2803,16 @@ function MetadataSearchDialog({
           <div className="meta-api-cache-notice">{text('api_cache_notice', '빠른 표시를 위해 검색 결과는 7일간 캐싱됩니다.')}</div>
           <div className="meta-api-action-controls">
             <button onClick={onClose}><FaIcon name="xmark" size={11} />{text('btn_close', '닫기')}</button>
+            {onUseCover && (
+              <button
+                className="cover"
+                disabled={!selected || !selectedCoverUrl}
+                onClick={() => selected && onUseCover(selected)}
+              >
+                <FaIcon name="cloudArrowDown" size={11} />
+                {text('btn_use_cover', '표지 사용')}
+              </button>
+            )}
             <button className="primary" title="C" disabled={!selected} onClick={() => selected && onSelect(selected)}><FaIcon name="check" size={11} />{text('btn_select', '선택')} (C)</button>
           </div>
         </div>
