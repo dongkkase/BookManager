@@ -56,7 +56,6 @@ import {
   normalizeViewMode,
   normalizeViewScales,
 } from '../folderViewState';
-import { selectedFilesSize } from '../folderSelectionState';
 import {
   fileOperationErrorKind,
   protectedRenameName,
@@ -84,6 +83,7 @@ import '../styles/FolderTab.css';
 const VISIBLE_COVER_REQUEST_LIMIT = 32;
 const COVER_PREVIEW_QUEUE_LIMIT = 96;
 const COVER_PREVIEW_CONCURRENCY = 2;
+const MISSING_BACKGROUND_SCAN_DELAY_MS = 2500;
 
 const coverPreviewFilePath = file => file?.full_path || file?.path || '';
 
@@ -416,7 +416,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     moveActiveSelection,
   } = useFileSelection(displayedFileData);
   const activeSelectedFile = selectedFileData();
+  const detailSelectedFile = activeSelectedFile || null;
   const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
+  const fileSizeByPath = useMemo(() => {
+    const sizes = new Map();
+    filteredFileData.forEach(file => {
+      if (file?.path) sizes.set(file.path, Number(file.size) || 0);
+    });
+    return sizes;
+  }, [filteredFileData]);
+  const selectedFilesTotalBytes = useMemo(() => (
+    selectedFiles.reduce((total, filePath) => total + (fileSizeByPath.get(filePath) || 0), 0)
+  ), [fileSizeByPath, selectedFiles]);
   const displayedFileByPath = useMemo(() => {
     const map = new Map();
     displayedFileData.forEach(file => {
@@ -720,7 +731,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       ...(config?.dup_check_folders || []),
     ])].filter(Boolean);
     const backgroundKey = JSON.stringify(libraryFolders);
-    if (!config || missingBackgroundKeyRef.current === backgroundKey) return undefined;
+    if (!config || missingBackgroundKeyRef.current === backgroundKey || scanning || preparingDuplicates) return undefined;
     let cancelled = false;
     backgroundLibraryScanCancelRef.current = () => {
       cancelled = true;
@@ -772,13 +783,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       }
     };
 
-    const timer = window.setTimeout(analyze, 0);
+    const timer = window.setTimeout(analyze, MISSING_BACKGROUND_SCAN_DELAY_MS);
     return () => {
       cancelled = true;
       if (backgroundLibraryScanCancelRef.current) backgroundLibraryScanCancelRef.current = null;
       window.clearTimeout(timer);
     };
-  }, [config, getCurrentFileData, selectedFolderPath, showToast]);
+  }, [config, getCurrentFileData, preparingDuplicates, scanning, selectedFolderPath, showToast]);
 
   const scheduleLocalMissingToast = useCallback((folderPath, missing) => {
     if (missingLocalTimerRef.current) window.clearTimeout(missingLocalTimerRef.current);
@@ -804,17 +815,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         console.error('마지막 폴더 경로 저장 실패:', error);
       });
     }
-    await window.electronAPI?.stopTask?.('folder:scan').catch(() => {});
     const files = await scanFolder(nextFolderPath, scanOptions);
     if (selectedFolderPathRef.current !== nextFolderPath) return;
     const localMissing = findMissingVolumes(files || []);
     scheduleLocalMissingToast(nextFolderPath, localMissing);
   }, [config?.folder_last_path, scanOptions, scanFolder, clearSelection, saveConfig, scheduleLocalMissingToast]);
 
-  const handleSafeFolderNavigation = useCallback(async folderPath => {
+  const handleSafeFolderNavigation = useCallback(async (folderPath, options = {}) => {
     if (!folderPath) return false;
-    const exists = await window.electronAPI?.exists?.(folderPath);
-    if (!exists) return false;
+    if (options.skipExistsCheck !== true) {
+      const exists = await window.electronAPI?.exists?.(folderPath);
+      if (!exists) return false;
+    }
     await handleFolderChange(folderPath);
     return true;
   }, [handleFolderChange]);
@@ -2225,11 +2237,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [saveConfig]);
 
   const handleDetailContentHeightChange = useCallback(contentHeight => {
-    if (!activeSelectedFile || !contentHeight) return;
+    if (!contentHeight) return;
     const containerHeight = rightPanelRef.current?.clientHeight || 700;
     const nextHeight = clampDetailHeight(contentHeight, containerHeight);
     setDetailPanelHeight(current => Math.abs(current - nextHeight) > 2 ? nextHeight : current);
-  }, [activeSelectedFile]);
+  }, []);
 
   const handleColumnLayoutChange = useCallback((nextLayout, persist = false) => {
     const normalized = normalizeColumnLayout(nextLayout);
@@ -2486,7 +2498,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 onMouseDown={startVerticalResize}
               />
               <div className="detail-panel-wrap" style={{ flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}>
-                <DetailPanel selectedFile={activeSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
+                <DetailPanel selectedFile={detailSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
               </div>
             </>
           )}
@@ -2495,7 +2507,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <div className="status-info">
               {librarySearchLoading && isLibrarySearchActive
                 ? t('folder_searching_libraries')
-                : formatStatus(t, selectedFiles, filteredFileData)}
+                : formatStatus(t, selectedFiles, filteredFileData, selectedFilesTotalBytes)}
             </div>
             <div className="view-controls">
               <button
@@ -3062,8 +3074,8 @@ function formatBytes(bytes) {
   return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
-function formatStatus(t, selectedFiles, files) {
-  const selectedSize = formatBytes(selectedFilesSize(files, selectedFiles));
+function formatStatus(t, selectedFiles, files, selectedSizeBytes = 0) {
+  const selectedSize = formatBytes(selectedSizeBytes);
   return t('folder_status_sel', [selectedFiles.length, files.length, selectedSize]);
 }
 

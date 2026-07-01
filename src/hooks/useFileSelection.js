@@ -1,6 +1,10 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { nextSelectionIndex } from '../folderSelectionState';
 
+function samePathList(left = [], right = []) {
+  return left.length === right.length && left.every((path, index) => path === right[index]);
+}
+
 /**
  * 파일 선택 상태 관리 훅
  * 
@@ -48,10 +52,11 @@ export function useFileSelection(fileData = []) {
   // --- 단일 파일 선택 ---
   const selectFile = useCallback((filePath, fileDataItem, index) => {
     const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
-    setSelectedFiles([filePath]);
-    setActiveSelectedPath(filePath);
-    setLastSelectedIndex(resolvedIndex >= 0 ? resolvedIndex : (index ?? -1));
-    selectionStartRef.current = { path: filePath, index: resolvedIndex >= 0 ? resolvedIndex : index };
+    const nextIndex = resolvedIndex >= 0 ? resolvedIndex : (index ?? -1);
+    setSelectedFiles(prev => (prev.length === 1 && prev[0] === filePath ? prev : [filePath]));
+    setActiveSelectedPath(current => current === filePath ? current : filePath);
+    setLastSelectedIndex(current => current === nextIndex ? current : nextIndex);
+    selectionStartRef.current = { path: filePath, index: nextIndex };
   }, [fileLookup]);
 
   // --- 파일 선택 토글 (primary modifier+클릭) ---
@@ -139,11 +144,14 @@ export function useFileSelection(fileData = []) {
 
   const selectPaths = useCallback((paths = []) => {
     const validPaths = paths.filter(Boolean);
-    setSelectedFiles(validPaths);
-    setActiveSelectedPath(validPaths[validPaths.length - 1] || '');
     const lastPath = validPaths[validPaths.length - 1];
     const lastIndex = lastPath ? fileLookup.indexByPath.get(lastPath) ?? -1 : -1;
-    setLastSelectedIndex(lastIndex);
+    setSelectedFiles(prev => samePathList(prev, validPaths) ? prev : validPaths);
+    setActiveSelectedPath(current => {
+      const nextPath = lastPath || '';
+      return current === nextPath ? current : nextPath;
+    });
+    setLastSelectedIndex(current => current === lastIndex ? current : lastIndex);
     selectionStartRef.current = lastPath ? { path: lastPath, index: lastIndex } : null;
   }, [fileLookup]);
 

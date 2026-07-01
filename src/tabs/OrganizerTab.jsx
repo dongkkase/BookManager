@@ -6,6 +6,11 @@ import { filterExistingResultPaths } from '../resultLog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
 import { useFileSelection } from '../hooks/useFileSelection';
+import { useRafRubberSelection } from '../hooks/useRafRubberSelection';
+import {
+  applyImmediateSingleSelection,
+  isPlainPrimaryClick,
+} from '../selectionVisualFeedback';
 import {
   changeOrganizerUnit,
   defaultOutputPath,
@@ -74,11 +79,10 @@ function OrganizerTab({ config, t, showToast }) {
   const executeLockRef = useRef(false);
   const tabRootRef = useRef(null);
   const treeBodyRef = useRef(null);
-  const volumeDragSelectRef = useRef({ active: false, moved: false });
+  const volumeSelectionBoxRef = useRef(null);
   const volumeRubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
   const [skippedFiles, setSkippedFiles] = useState([]);
   const [showVolumeRenameDialog, setShowVolumeRenameDialog] = useState(false);
-  const [volumeSelectionBox, setVolumeSelectionBox] = useState(null);
   const [openFolderMenuId, setOpenFolderMenuId] = useState('');
   const [openBatchMenuId, setOpenBatchMenuId] = useState('');
   const emptyImage = useMemo(
@@ -491,54 +495,31 @@ function OrganizerTab({ config, t, showToast }) {
     else selectVolumeRow(row.path, row, index);
   }, [rangeSelectVolumeRows, runtimePlatform, selectVolumeRow, toggleVolumeRow]);
 
+  const getVolumeRubberContainer = useCallback(() => treeBodyRef.current, []);
+  const volumeRubberSelection = useRafRubberSelection({
+    getContainer: getVolumeRubberContainer,
+    stateRef: volumeRubberSelectRef,
+    itemSelector: '[data-volume-path]',
+    itemPath: element => element.dataset.volumePath,
+    selectionBoxRef: volumeSelectionBoxRef,
+    onSelectPaths: selectVolumePaths,
+  });
+
   const handleVolumeRowMouseDown = useCallback((row, event, index) => {
     if (event.button !== 0) return;
     treeBodyRef.current?.focus({ preventScroll: true });
-    volumeDragSelectRef.current = { active: true, moved: false };
+    volumeRubberSelection.begin();
+    volumeRubberSelectRef.current = {
+      active: true,
+      moved: false,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    if (isPlainPrimaryClick(event)) {
+      applyImmediateSingleSelection(treeBodyRef.current, event.currentTarget, '[data-volume-path]');
+    }
     handleVolumeRowSelect(row, event, index);
-  }, [handleVolumeRowSelect]);
-
-  const handleVolumeRowMouseEnter = useCallback((row, event, index) => {
-    if (!volumeDragSelectRef.current.active) return;
-    volumeDragSelectRef.current.moved = true;
-    rangeSelectVolumeRows(row.path, row, index);
-  }, [rangeSelectVolumeRows]);
-
-  const stopVolumeDragSelect = useCallback(() => {
-    volumeDragSelectRef.current = { active: false, moved: false };
-  }, []);
-
-  const updateVolumeRubberSelection = useCallback((event) => {
-    const state = volumeRubberSelectRef.current;
-    const container = treeBodyRef.current;
-    if (!state.active || !container) return;
-    const rect = container.getBoundingClientRect();
-    const left = Math.min(state.startX, event.clientX);
-    const top = Math.min(state.startY, event.clientY);
-    const right = Math.max(state.startX, event.clientX);
-    const bottom = Math.max(state.startY, event.clientY);
-    const moved = Math.abs(event.clientX - state.startX) > 3 || Math.abs(event.clientY - state.startY) > 3;
-    volumeRubberSelectRef.current.moved = moved;
-    if (!moved) return;
-    event.preventDefault();
-    setVolumeSelectionBox({
-      left: left - rect.left + container.scrollLeft,
-      top: top - rect.top + container.scrollTop,
-      width: right - left,
-      height: bottom - top,
-    });
-    const selected = Array.from(container.querySelectorAll('[data-volume-path]'))
-      .filter(element => {
-        const itemRect = element.getBoundingClientRect();
-        return itemRect.right >= left
-          && itemRect.left <= right
-          && itemRect.bottom >= top
-          && itemRect.top <= bottom;
-      })
-      .map(element => element.dataset.volumePath)
-      .filter(Boolean);
-    selectVolumePaths(selected);
-  }, [selectVolumePaths]);
+  }, [handleVolumeRowSelect, volumeRubberSelection]);
 
   const startVolumeRubberSelection = useCallback((event) => {
     if (event.button !== 0) return;
@@ -547,19 +528,19 @@ function OrganizerTab({ config, t, showToast }) {
     treeBodyRef.current?.focus({ preventScroll: true });
     setSelectedItemId('');
     clearVolumeSelection();
+    volumeRubberSelection.begin();
     volumeRubberSelectRef.current = {
       active: true,
       moved: false,
       startX: event.clientX,
       startY: event.clientY,
     };
-    setVolumeSelectionBox(null);
-  }, [clearVolumeSelection]);
+  }, [clearVolumeSelection, volumeRubberSelection]);
 
   const stopVolumeRubberSelection = useCallback(() => {
+    volumeRubberSelection.commit();
     volumeRubberSelectRef.current = { active: false, moved: false, startX: 0, startY: 0 };
-    setVolumeSelectionBox(null);
-  }, []);
+  }, [volumeRubberSelection]);
 
   const executeVolumeMultiRename = useCallback(async rows => {
     const renameRows = rows.filter(row => row.status === 'ok' && row.oldName !== row.newName);
@@ -665,13 +646,11 @@ function OrganizerTab({ config, t, showToast }) {
               className="org-tree-body"
               tabIndex={0}
               onMouseDown={startVolumeRubberSelection}
-              onMouseMove={updateVolumeRubberSelection}
+              onMouseMove={volumeRubberSelection.update}
               onMouseLeave={() => {
-                stopVolumeDragSelect();
                 stopVolumeRubberSelection();
               }}
               onMouseUp={() => {
-                stopVolumeDragSelect();
                 stopVolumeRubberSelection();
               }}
             >
@@ -801,7 +780,6 @@ function OrganizerTab({ config, t, showToast }) {
                       className={`org-tree-row org-child-row ${isVolumeSelected ? 'selected' : ''} ${activeVolumePath === volumeRow.path ? 'active-selection' : ''}`}
                       data-volume-path={volumeRow.path}
                       onMouseDown={event => handleVolumeRowMouseDown(volumeRow, event, volumeIndex)}
-                      onMouseEnter={event => handleVolumeRowMouseEnter(volumeRow, event, volumeIndex)}
                     >
                       <div className="org-col-name org-child-name">
                         <span className="org-indent">↳</span>
@@ -815,17 +793,11 @@ function OrganizerTab({ config, t, showToast }) {
                   })}
                 </div>
               ))}
-              {volumeSelectionBox && (
                 <div
+                  ref={volumeSelectionBoxRef}
                   className="org-drag-selection-box"
-                  style={{
-                    left: `${volumeSelectionBox.left}px`,
-                    top: `${volumeSelectionBox.top}px`,
-                    width: `${volumeSelectionBox.width}px`,
-                    height: `${volumeSelectionBox.height}px`,
-                  }}
+                  style={{ display: 'none' }}
                 />
-              )}
             </div>
           </div>
         )}

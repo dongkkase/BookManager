@@ -12,6 +12,10 @@ import {
   normalizeLibraryKey,
   shouldShowLibrarySyncButton,
 } from '../../folderLibraryStatus';
+import {
+  applyImmediateSingleSelection,
+  scheduleAfterNextPaint,
+} from '../../selectionVisualFeedback';
 
 /**
  * 좌측 사이드바 컴포넌트
@@ -24,10 +28,13 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   const [libraryFolderCounts, setLibraryFolderCounts] = useState({});
   const [specialPaths, setSpecialPaths] = useState({});
   const [selectedSource, setSelectedSource] = useState('');
+  const [optimisticSelectedPath, setOptimisticSelectedPath] = useState('');
+  const sidebarRef = useRef(null);
   const treeListRef = useRef(null);
   const selectedNodeRef = useRef(null);
   const folderCacheRef = useRef({});
   const folderLoadPromisesRef = useRef(new Map());
+  const pendingNavigationRef = useRef(null);
 
   const focusSelectedNode = (block = 'nearest', behavior = 'auto') => {
     const node = selectedNodeRef.current;
@@ -37,6 +44,20 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   };
 
   const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
+  const applySidebarSelection = useCallback(event => {
+    applyImmediateSingleSelection(
+      sidebarRef.current,
+      event.currentTarget,
+      '[data-folder-sidebar-path]',
+    );
+  }, []);
+  const scheduleSidebarNavigation = useCallback(callback => {
+    pendingNavigationRef.current?.();
+    pendingNavigationRef.current = scheduleAfterNextPaint(() => {
+      pendingNavigationRef.current = null;
+      callback?.();
+    });
+  }, []);
 
   const treeRoots = useMemo(() => {
     const libraryNodes = (libraries || []).map(lib => ({
@@ -49,6 +70,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     const systemRoots = roots.filter(root => !libraryPathSet.has(root.path));
     return [...libraryNodes, ...systemRoots];
   }, [libraries, roots]);
+
+  useEffect(() => {
+    setOptimisticSelectedPath('');
+  }, [selectedFolderPath]);
+
+  useEffect(() => () => {
+    pendingNavigationRef.current?.();
+  }, []);
 
   useEffect(() => {
     const fetchRoots = async () => {
@@ -217,15 +246,21 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           });
           const isSyncing = isLibraryScanning(scanState);
           const showSyncButton = shouldShowLibrarySyncButton(scanState);
+          const selectedPath = optimisticSelectedPath || selectedFolderPath;
           return (
           <li
             key={idx}
-            className={`library-list-item ${selectedSource === 'library' && (selectedLibrary === idx || selectedFolderPath === lib) ? 'selected' : ''}`}
-            onClick={() => {
+            data-folder-sidebar-path={lib}
+            className={`library-list-item ${selectedSource === 'library' && (selectedLibrary === idx || selectedPath === lib) ? 'selected' : ''}`}
+            onClick={(event) => {
+              applySidebarSelection(event);
               setSelectedSource('library');
+              setOptimisticSelectedPath(lib);
               if (onSelectLibrary) onSelectLibrary(idx);
-              if (onSelectLibraryFolder) onSelectLibraryFolder(lib);
-              else if (onSelectFolder) onSelectFolder(lib);
+              scheduleSidebarNavigation(() => {
+                if (onSelectLibraryFolder) onSelectLibraryFolder(lib);
+                else if (onSelectFolder) onSelectFolder(lib);
+              });
             }}
             onContextMenu={(event) => onLibraryContextMenu?.(event, lib)}
           >
@@ -300,11 +335,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           return (
           <li
             key={fav.path || idx}
-            className={selectedSource === 'favorite' && (selectedFavorite === idx || selectedFolderPath === fav.path) ? 'selected' : ''}
-            onClick={() => {
+            data-folder-sidebar-path={fav.path}
+            className={selectedSource === 'favorite' && (selectedFavorite === idx || (optimisticSelectedPath || selectedFolderPath) === fav.path) ? 'selected' : ''}
+            onClick={(event) => {
+              applySidebarSelection(event);
               setSelectedSource('favorite');
+              setOptimisticSelectedPath(fav.path);
               if (onSelectFavorite) onSelectFavorite(idx);
-              if (onSelectFolder) onSelectFolder(fav.path);
+              scheduleSidebarNavigation(() => onSelectFolder?.(fav.path));
             }}
             onContextMenu={(event) => onFolderContextMenu?.(event, fav.path)}
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
@@ -338,7 +376,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   // 폴더 트리 뷰 (재귀 렌더링)
   const renderTreeNode = (node, depth = 0, siblings = []) => {
     const isExpanded = expandedFolders.has(node.path);
-    const isActive = selectedFolderPath === node.path;
+    const isActive = (optimisticSelectedPath || selectedFolderPath) === node.path;
     const children = folderCache[node.path] || [];
     
     // 이 노드가 자식을 가질 가능성이 있는지 (일단 폴더면 있다고 가정, 로드 후 비어있으면 없는 것으로 표시)
@@ -348,6 +386,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
       <li key={node.path} className="tree-node">
         <div
           ref={isActive ? selectedNodeRef : null}
+          data-folder-sidebar-path={node.path}
           tabIndex={isActive ? -1 : undefined}
           className={isActive ? 'selected' : ''}
           style={{ 
@@ -360,9 +399,15 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             color: '#d1d5db',
             fontSize: 'var(--font-sm)'
           }}
-          onClick={() => {
+          onClick={(event) => {
+            applySidebarSelection(event);
             setSelectedSource('tree');
-            onSelectFolder && onSelectFolder(node.path);
+            setOptimisticSelectedPath(node.path);
+            scheduleSidebarNavigation(() => {
+              onSelectFolder?.(node.path, { source: 'tree', skipExistsCheck: true });
+            });
+          }}
+          onDoubleClick={() => {
             if (node.isFolder) toggleFolder(node.path);
           }}
           onContextMenu={(event) => {
@@ -376,6 +421,12 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           <span
             className="folder-tree-expander"
             style={{ visibility: node.isFolder && hasChildren ? 'visible' : 'hidden' }}
+            role="button"
+            aria-label={isExpanded ? '접기' : '펼치기'}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (node.isFolder) toggleFolder(node.path);
+            }}
           >
             <FaIcon name={isExpanded ? 'angleDown' : 'chevronRight'} size={10} />
           </span>
@@ -416,8 +467,11 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
                 onClick={async () => {
                   const targetPath = specialPaths[pathKey];
                   if (!targetPath) return;
-                  const moved = await onSelectFolder?.(targetPath);
-                  if (moved !== false) setSelectedSource('quick');
+                  setOptimisticSelectedPath(targetPath);
+                  scheduleSidebarNavigation(async () => {
+                    const moved = await onSelectFolder?.(targetPath);
+                    if (moved !== false) setSelectedSource('quick');
+                  });
                 }}
               >
                 <FaIcon name={icon} size={12} />
@@ -433,7 +487,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   );
 
   return (
-    <div className="folder-sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '4px' }}>
+    <div ref={sidebarRef} className="folder-sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '4px' }}>
       {renderLibraryList()}
       {renderFavoritesList()}
       {renderFolderTree()}

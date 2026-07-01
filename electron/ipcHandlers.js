@@ -3032,6 +3032,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // ========== 폴더 스캔 ==========
   ipcMain.handle('folder:scan', async (event, folderPath, options) => {
     const taskId = 'folder:scan';
+    cancellationRegistry.cancel(event.sender.id, taskId);
     const controller = cancellationRegistry.start(event.sender.id, taskId);
     try {
       const config = configManager.getConfig() || {};
@@ -4223,9 +4224,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('fs:stat', (_, filePath) => {
+  ipcMain.handle('fs:stat', async (_, filePath) => {
     try {
-      const stats = fs.statSync(filePath);
+      const stats = await fs.promises.stat(filePath);
       return {
         isFile: stats.isFile(),
         isDirectory: stats.isDirectory(),
@@ -4238,8 +4239,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('fs:exists', (_, filePath) => {
-    return fs.existsSync(filePath);
+  ipcMain.handle('fs:exists', async (_, filePath) => {
+    try {
+      await fs.promises.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
   });
 
   // ========== 파일/폴더 작업 확장 (FolderTab 지원) ==========

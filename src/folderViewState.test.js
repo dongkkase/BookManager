@@ -77,3 +77,29 @@ test('가상 그리드 레이아웃은 그룹 헤더와 파일 좌표를 유지�
         ['group', 'file', 'file'],
     );
 });
+
+test('가상 그리드 표시 행은 화면 밖 행을 건너뛰고 같은 행의 셀을 유지한다', () => {
+    const layout = buildVirtualGridLayout([{
+        name: '',
+        files: Array.from({ length: 12 }, (_, index) => ({ path: `/a/${index}.cbz` })),
+    }], {
+        columnCount: 3,
+        rowHeight: 100,
+        columnWidth: 50,
+        horizontalGap: 10,
+        padding: 0,
+        itemWidth: 50,
+    });
+
+    assert.deepEqual(
+        visibleVirtualRows(layout.rows, 150, 80, 0).map(row => row.file.path),
+        [
+            '/a/3.cbz',
+            '/a/4.cbz',
+            '/a/5.cbz',
+            '/a/6.cbz',
+            '/a/7.cbz',
+            '/a/8.cbz',
+        ],
+    );
+});

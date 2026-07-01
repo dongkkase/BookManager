@@ -90,6 +90,7 @@ export function useDetailContentHeight(selectedFile, onContentHeightChange) {
     useEffect(() => {
         if (!selectedFile || !contentRef.current) return undefined;
         const timeouts = [];
+        let frame = 0;
         const measure = () => {
             const content = contentRef.current;
             if (!content) return;
@@ -101,23 +102,29 @@ export function useDetailContentHeight(selectedFile, onContentHeightChange) {
             );
             onContentHeightChange?.(Math.ceil(contentHeight));
         };
-        const frame = window.requestAnimationFrame(measure);
-        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+        const scheduleMeasure = () => {
+            if (frame) return;
+            frame = window.requestAnimationFrame(() => {
+                frame = 0;
+                measure();
+            });
+        };
+        scheduleMeasure();
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleMeasure) : null;
         if (observer) observer.observe(contentRef.current);
         const mutationObserver = typeof MutationObserver === 'function'
-            ? new MutationObserver(measure)
+            ? new MutationObserver(scheduleMeasure)
             : null;
         mutationObserver?.observe(contentRef.current, {
             childList: true,
             subtree: true,
             characterData: true,
-            attributes: true,
         });
-        for (const delay of [50, 150, 350]) {
-            timeouts.push(window.setTimeout(measure, delay));
+        for (const delay of [120, 350]) {
+            timeouts.push(window.setTimeout(scheduleMeasure, delay));
         }
         return () => {
-            window.cancelAnimationFrame(frame);
+            if (frame) window.cancelAnimationFrame(frame);
             for (const timeout of timeouts) window.clearTimeout(timeout);
             observer?.disconnect();
             mutationObserver?.disconnect();

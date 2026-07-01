@@ -1,6 +1,84 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { resolveBookType } from '../metadata/metadataTypes.js';
+import { joinPath } from '../utils/folderPath.js';
 
 export const FOLDER_FILE_CACHE_LIMIT = 8;
+const READY_FILES_FLUSH_DELAY_MS = 180;
+const QUICK_LIST_TARGET_EXTENSIONS = new Set([
+  '.zip',
+  '.cbz',
+  '.rar',
+  '.cbr',
+  '.7z',
+  '.cb7',
+  '.pdf',
+  '.epub',
+  '.txt',
+]);
+
+function fileExtension(name = '') {
+  const value = String(name || '');
+  const index = value.lastIndexOf('.');
+  return index > 0 ? value.slice(index).toLowerCase() : '';
+}
+
+function fileTitle(name = '') {
+  const value = String(name || '');
+  const index = value.lastIndexOf('.');
+  return index > 0 ? value.slice(0, index) : value;
+}
+
+function createQuickListFile(folderPath, item) {
+  const name = String(item?.name || '');
+  const ext = fileExtension(name);
+  const filePath = joinPath(folderPath, name);
+  const bookType = resolveBookType({ path: filePath, ext });
+  return {
+    name,
+    path: filePath,
+    folder_path: folderPath,
+    full_path: filePath,
+    ext,
+    book_type: bookType,
+    bookType,
+    format: '',
+    size: 0,
+    mtime: 0,
+    ctime: 0,
+    created: '',
+    modified: '',
+    is_folder: false,
+    series: '',
+    title: fileTitle(name),
+    volume: '',
+    sorted_volume: null,
+    compare_nums: [],
+    chapter: '',
+    author: '',
+    writer: '',
+    publisher: '',
+    genre: '',
+    page_count: '',
+    description: '',
+    tags: '',
+    has_metadata: false,
+    resolution: '',
+    thumb_path: '',
+    cover: '',
+    cache_source: 'renderer-quick',
+    duplicate_matches: [],
+    dup_count: 0,
+    max_ratio: 0,
+  };
+}
+
+async function readQuickListFiles(folderPath) {
+  const items = await window.electronAPI?.readDir?.(folderPath);
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter(item => item?.isFile && QUICK_LIST_TARGET_EXTENSIONS.has(fileExtension(item.name)))
+    .map(item => createQuickListFile(folderPath, item));
+}
 
 export function rememberFolderFileCacheKey(order = [], cacheKey = '', limit = FOLDER_FILE_CACHE_LIMIT) {
   if (!cacheKey) return order;
@@ -139,18 +217,7 @@ export function useFolderScan(t) {
         };
 
         if (fastInitial) {
-          const initialFiles = await window.electronAPI.scanFolder(folderPath, {
-            ...requestOptions,
-            includeSubfolders: false,
-            enableDupCheck: false,
-            dupFolders: [],
-            quickListOnly: true,
-            skipArchiveExtraction: true,
-            skipLibraryCache: true,
-            suppressEvents: true,
-            reportTaskProgress: false,
-            reportFileReady: false,
-          });
+          const initialFiles = await readQuickListFiles(folderPath);
 
           if (mountedRef.current && currentFolderRef.current === folderPath) {
             touchCacheKey(cacheKey);
@@ -158,19 +225,28 @@ export function useFolderScan(t) {
               ...limitCache(prev, cacheKey),
               [cacheKey]: initialFiles || [],
             }));
+            const initialCount = initialFiles?.length || 0;
+            setStatusMessage(
+              t('folder.status.files_found')?.replace('{count}', initialCount) || `${initialCount}개 파일 발견`
+            );
+            setScanProgress(100);
+            setScanning(false);
           }
 
-          const quickFiles = await window.electronAPI.scanFolder(folderPath, {
-            ...requestOptions,
-            enableDupCheck: false,
-            dupFolders: [],
-            skipArchiveExtraction: true,
-            skipLibraryCache: true,
-            suppressEvents: true,
-          });
+          const refreshInBackground = async () => {
+            const quickFiles = await window.electronAPI.scanFolder(folderPath, {
+              ...requestOptions,
+              enableDupCheck: false,
+              dupFolders: [],
+              skipArchiveExtraction: true,
+              skipLibraryCache: true,
+              suppressEvents: true,
+              background: true,
+              reportTaskProgress: false,
+              reportFileReady: false,
+            });
 
-          if (!mountedRef.current) return quickFiles || [];
-          if (currentFolderRef.current === folderPath) {
+            if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
             touchCacheKey(cacheKey);
             setFileDataCache(prev => ({
               ...limitCache(prev, cacheKey),
@@ -180,36 +256,37 @@ export function useFolderScan(t) {
             setStatusMessage(
               t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
             );
-            setScanProgress(100);
-            setScanning(false);
-          }
 
-          window.electronAPI.scanFolder(folderPath, {
-            ...requestOptions,
-            force: false,
-            skipArchiveExtraction: false,
-            skipCoverExtraction: true,
-            suppressEvents: true,
-            background: true,
-            reportTaskProgress: false,
-            reportFileReady: true,
-          }).then(files => {
-            if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
-            touchCacheKey(cacheKey);
-            setFileDataCache(prev => ({
-              ...limitCache(prev, cacheKey),
-              [cacheKey]: mergeFilesPreservingCover(files || [], prev[cacheKey] || []),
-            }));
-            setScanProgress(100);
-            const count = files?.length || 0;
-            setStatusMessage(
-              t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
-            );
-          }).catch(error => {
-            console.error('폴더 메타데이터 갱신 실패:', error);
+            window.electronAPI.scanFolder(folderPath, {
+              ...requestOptions,
+              force: false,
+              skipArchiveExtraction: false,
+              skipCoverExtraction: true,
+              suppressEvents: true,
+              background: true,
+              reportTaskProgress: false,
+              reportFileReady: true,
+            }).then(files => {
+              if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
+              touchCacheKey(cacheKey);
+              setFileDataCache(prev => ({
+                ...limitCache(prev, cacheKey),
+                [cacheKey]: mergeFilesPreservingCover(files || [], prev[cacheKey] || []),
+              }));
+              const count = files?.length || 0;
+              setStatusMessage(
+                t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
+              );
+            }).catch(error => {
+              console.error('폴더 메타데이터 갱신 실패:', error);
+            });
+          };
+
+          void refreshInBackground().catch(error => {
+            console.error('폴더 빠른 메타데이터 갱신 실패:', error);
           });
 
-          return quickFiles || [];
+          return initialFiles || [];
         }
 
         const files = await window.electronAPI.scanFolder(folderPath, {
@@ -374,7 +451,7 @@ export function useFolderScan(t) {
 
     const scheduleReadyFilesFlush = () => {
       if (readyFilesFlushTimer) return;
-      readyFilesFlushTimer = window.setTimeout(flushReadyFiles, 80);
+      readyFilesFlushTimer = window.setTimeout(flushReadyFiles, READY_FILES_FLUSH_DELAY_MS);
     };
 
     const handleFolderFileReady = (data) => {

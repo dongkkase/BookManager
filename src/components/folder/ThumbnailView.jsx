@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage, coverImageKey } from './CoverImage';
 import {
@@ -7,6 +7,13 @@ import {
   shouldVirtualizeFolderItems,
   visibleVirtualRows,
 } from '../../folderViewState';
+import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
+import {
+  applyImmediateSingleSelection,
+  isPlainPrimaryClick,
+  scheduleAfterNextPaint,
+  selectionEventSnapshot,
+} from '../../selectionVisualFeedback';
 import { FolderEmptyState } from './FolderEmptyState';
 
 /**
@@ -39,10 +46,10 @@ const ThumbnailView = ({
   scale = 50,
   t
 	}) => {
-	  const dragSelectRef = useRef({ active: false, moved: false });
 	  const containerRef = useRef(null);
 	  const rubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
-	  const [selectionBox, setSelectionBox] = useState(null);
+      const selectionBoxRef = useRef(null);
+      const pendingSingleSelectRef = useRef(null);
 	  const [viewport, setViewport] = useState({ width: 0, height: 0, scrollTop: 0 });
 	  const items = files.length > 0 ? files : fileData;
   const imageWidth = Math.round(72 + Number(scale || 50) * 1.08);
@@ -127,6 +134,10 @@ const ThumbnailView = ({
 	    return () => observer.disconnect();
 	  }, []);
 
+      useEffect(() => () => {
+        pendingSingleSelectRef.current?.();
+      }, []);
+
 	  const handleGridScroll = event => {
 	    const nextScrollTop = event.currentTarget.scrollTop || 0;
 	    setViewport(current => current.scrollTop === nextScrollTop ? current : {
@@ -137,8 +148,7 @@ const ThumbnailView = ({
 	  };
 
 	  const handleItemClick = (file, e, index) => {
-	    if (dragSelectRef.current.moved || rubberSelectRef.current.moved) {
-	      dragSelectRef.current.moved = false;
+	    if (rubberSelectRef.current.moved) {
 	      rubberSelectRef.current.moved = false;
 	      return;
 	    }
@@ -146,60 +156,40 @@ const ThumbnailView = ({
 	    if (!onSelect || !file.path) return;
 
 	    onSelect(file.path, e, index);
-	  };
+      };
 
       const handleItemDoubleClick = (file, event, index) => {
-        if (!file?.path || dragSelectRef.current.moved || rubberSelectRef.current.moved) return;
+        if (!file?.path || rubberSelectRef.current.moved) return;
         event.preventDefault();
         onOpenFile?.(file, event, index);
       };
 
 	  const handleItemMouseDown = (file, event, index) => {
 	    if (event.button !== 0 || !onSelect || !file.path) return;
-	    dragSelectRef.current = { active: true, moved: false };
+        pendingSingleSelectRef.current?.();
+        pendingSingleSelectRef.current = null;
+        if (isPlainPrimaryClick(event)) {
+          applyImmediateSingleSelection(containerRef.current, event.currentTarget, '[data-file-path]');
+          const eventSnapshot = selectionEventSnapshot(event);
+          pendingSingleSelectRef.current = scheduleAfterNextPaint(() => {
+            pendingSingleSelectRef.current = null;
+            onSelect(file.path, eventSnapshot, index);
+          });
+          return;
+        }
 	    onSelect(file.path, event, index);
 	  };
 
-	  const handleItemMouseEnter = (file, event, index) => {
-	    if (!dragSelectRef.current.active || !onSelect || !file.path) return;
-	    dragSelectRef.current.moved = true;
-	    onSelect(file.path, { ...event, shiftKey: true }, index);
-	  };
-
-	  const stopDragSelect = () => {
-	    dragSelectRef.current.active = false;
-	  };
-
-	  const updateRubberSelection = (event) => {
-	    const state = rubberSelectRef.current;
-	    const container = containerRef.current;
-	    if (!state.active || !container) return;
-	    const rect = container.getBoundingClientRect();
-	    const left = Math.min(state.startX, event.clientX);
-	    const top = Math.min(state.startY, event.clientY);
-	    const right = Math.max(state.startX, event.clientX);
-	    const bottom = Math.max(state.startY, event.clientY);
-	    const moved = Math.abs(event.clientX - state.startX) > 3 || Math.abs(event.clientY - state.startY) > 3;
-	    rubberSelectRef.current.moved = moved;
-	    if (!moved) return;
-	    setSelectionBox({
-	      left: left - rect.left + container.scrollLeft,
-	      top: top - rect.top + container.scrollTop,
-	      width: right - left,
-	      height: bottom - top,
-	    });
-	    const selected = Array.from(container.querySelectorAll('[data-file-path]'))
-	      .filter(element => {
-	        const itemRect = element.getBoundingClientRect();
-	        return itemRect.right >= left
-	          && itemRect.left <= right
-	          && itemRect.bottom >= top
-	          && itemRect.top <= bottom;
-	      })
-	      .map(element => element.dataset.filePath)
-	      .filter(Boolean);
-	    onDragSelect?.(selected);
-	  };
+      const getRubberContainer = useCallback(() => containerRef.current, []);
+      const selectRubberPaths = useCallback(paths => onDragSelect?.(paths), [onDragSelect]);
+      const rubberSelection = useRafRubberSelection({
+        getContainer: getRubberContainer,
+        stateRef: rubberSelectRef,
+        itemSelector: '[data-file-path]',
+        itemPath: element => element.dataset.filePath,
+        selectionBoxRef,
+        onSelectPaths: selectRubberPaths,
+      });
 
   const displayRating = file => (
     file.rating
@@ -219,18 +209,18 @@ const ThumbnailView = ({
 
 	  const startRubberSelection = (event) => {
 	    if (event.button !== 0) return;
+        rubberSelection.begin();
 	    rubberSelectRef.current = {
 	      active: true,
 	      moved: false,
 	      startX: event.clientX,
 	      startY: event.clientY,
 	    };
-	    setSelectionBox(null);
 	  };
 
 	  const stopRubberSelection = () => {
+        rubberSelection.commit();
 	    rubberSelectRef.current.active = false;
-	    setSelectionBox(null);
 	  };
 
   return (
@@ -246,13 +236,11 @@ const ThumbnailView = ({
 	        if (event.target === event.currentTarget) onClearSelection?.();
 	      }}
 	      onMouseDown={startRubberSelection}
-	      onMouseMove={updateRubberSelection}
+	      onMouseMove={rubberSelection.update}
 	      onMouseLeave={() => {
-	        stopDragSelect();
 	        stopRubberSelection();
 	      }}
 	      onMouseUp={() => {
-	        stopDragSelect();
 	        stopRubberSelection();
 	      }}
       style={{
@@ -298,7 +286,6 @@ const ThumbnailView = ({
 	                top: `${row.top}px`,
 	              }}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
-	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
@@ -341,7 +328,6 @@ const ThumbnailView = ({
 	              data-file-path={file.path}
                   className={`thumbnail-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
-	              onMouseEnter={(event) => handleItemMouseEnter(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
@@ -372,17 +358,11 @@ const ThumbnailView = ({
 	      {items.length === 0 && (
 	        <FolderEmptyState t={t} />
 	      )}
-	      {selectionBox && (
 	        <div
+              ref={selectionBoxRef}
 	          className="folder-drag-selection-box"
-	          style={{
-	            left: `${selectionBox.left}px`,
-	            top: `${selectionBox.top}px`,
-	            width: `${selectionBox.width}px`,
-	            height: `${selectionBox.height}px`,
-	          }}
+	          style={{ display: 'none' }}
 	        />
-	      )}
 	    </div>
   );
 };

@@ -1,5 +1,5 @@
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
-export const FOLDER_VIEW_VIRTUALIZE_THRESHOLD = 1000;
+export const FOLDER_VIEW_VIRTUALIZE_THRESHOLD = 300;
 
 export function sortFolderFiles(files = [], sortKey = 'name', sortOrder = 'asc') {
     return [...files].sort((a, b) => {
@@ -116,7 +116,25 @@ export function visibleVirtualRows(rows = [], scrollTop = 0, viewportHeight = 0,
     const end = Math.max(0, Number(scrollTop) || 0)
         + Math.max(1, Number(viewportHeight) || 600)
         + Math.max(0, Number(bufferSize) || 0);
-    return rows.filter(row => row.top + row.height >= start && row.top <= end);
+    let low = 0;
+    let high = rows.length;
+    while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        const row = rows[mid] || {};
+        const bottom = (Number(row.top) || 0) + (Number(row.height) || 0);
+        if (bottom < start) low = mid + 1;
+        else high = mid;
+    }
+
+    const visible = [];
+    for (let index = low; index < rows.length; index += 1) {
+        const row = rows[index] || {};
+        const top = Number(row.top) || 0;
+        if (top > end) break;
+        const height = Number(row.height) || 0;
+        if (top + height >= start) visible.push(rows[index]);
+    }
+    return visible;
 }
 
 export function normalizeViewScales(scales = {}) {

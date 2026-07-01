@@ -1,4 +1,4 @@
-import React, { useMemo, forwardRef, useRef, useState, useEffect } from 'react';
+import React, { useMemo, forwardRef, useRef, useState, useEffect, useCallback } from 'react';
 import { FaIcon } from '../FaIcon';
 import { normalizeColumnLayout } from '../../folderColumnLayout';
 import {
@@ -6,6 +6,13 @@ import {
     groupFolderFiles,
     shouldVirtualizeFolderItems,
 } from '../../folderViewState';
+import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
+import {
+    applyImmediateSingleSelection,
+    isPlainPrimaryClick,
+    scheduleAfterNextPaint,
+    selectionEventSnapshot,
+} from '../../selectionVisualFeedback';
 import { CoverImage, coverImageKey } from './CoverImage';
 import { FolderEmptyState } from './FolderEmptyState';
 
@@ -38,11 +45,11 @@ const FileTableView = forwardRef(({
   scale = 50,
   t
     }, ref) => {
-    const dragSelectRef = useRef({ active: false, moved: false });
     const rubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
     const columnResizeRef = useRef(null);
     const headerReorderRef = useRef({ active: false, moved: false, sourceKey: '', targetKey: '', startX: 0, startY: 0 });
-    const [selectionBox, setSelectionBox] = useState(null);
+    const selectionBoxRef = useRef(null);
+    const pendingSingleSelectRef = useRef(null);
     const [dragOverColumnKey, setDragOverColumnKey] = useState('');
     const [dragSourceColumnKey, setDragSourceColumnKey] = useState('');
     const [columnDragGhost, setColumnDragGhost] = useState(null);
@@ -294,14 +301,17 @@ const FileTableView = forwardRef(({
         return () => observer.disconnect();
     }, [ref]);
 
+    useEffect(() => () => {
+        pendingSingleSelectRef.current?.();
+    }, []);
+
     const handleContainerScroll = event => {
         setScrollTop(event.currentTarget.scrollTop || 0);
         onScroll?.(event);
     };
 
     const handleRowClick = (file, e, index) => {
-        if (dragSelectRef.current.moved || rubberSelectRef.current.moved) {
-            dragSelectRef.current.moved = false;
+        if (rubberSelectRef.current.moved) {
             rubberSelectRef.current.moved = false;
             return;
         }
@@ -311,72 +321,52 @@ const FileTableView = forwardRef(({
     };
 
     const handleRowDoubleClick = (file, event, index) => {
-        if (!file?.path || dragSelectRef.current.moved || rubberSelectRef.current.moved) return;
+        if (!file?.path || rubberSelectRef.current.moved) return;
         event.preventDefault();
         onOpenFile?.(file, event, index);
     };
 
     const handleRowMouseDown = (file, event, index) => {
         if (event.button !== 0 || !onSelect || !file.path) return;
-        dragSelectRef.current = { active: true, moved: false };
+        pendingSingleSelectRef.current?.();
+        pendingSingleSelectRef.current = null;
+        if (isPlainPrimaryClick(event)) {
+            applyImmediateSingleSelection(ref?.current, event.currentTarget, '[data-file-path]');
+            const eventSnapshot = selectionEventSnapshot(event);
+            pendingSingleSelectRef.current = scheduleAfterNextPaint(() => {
+                pendingSingleSelectRef.current = null;
+                onSelect(file.path, eventSnapshot, index);
+            });
+            return;
+        }
         onSelect(file.path, event, index);
     };
 
-    const handleRowMouseEnter = (file, event, index) => {
-        if (!dragSelectRef.current.active || !onSelect || !file.path) return;
-        dragSelectRef.current.moved = true;
-        onSelect(file.path, { ...event, shiftKey: true }, index);
-    };
-
-    const stopDragSelect = () => {
-        dragSelectRef.current.active = false;
-    };
-
-    const updateRubberSelection = (event) => {
-        const state = rubberSelectRef.current;
-        const container = ref?.current;
-        if (!state.active || !container) return;
-        const rect = container.getBoundingClientRect();
-        const left = Math.min(state.startX, event.clientX);
-        const top = Math.min(state.startY, event.clientY);
-        const right = Math.max(state.startX, event.clientX);
-        const bottom = Math.max(state.startY, event.clientY);
-        const moved = Math.abs(event.clientX - state.startX) > 3 || Math.abs(event.clientY - state.startY) > 3;
-        rubberSelectRef.current.moved = moved;
-        if (!moved) return;
-        setSelectionBox({
-            left: left - rect.left + container.scrollLeft,
-            top: top - rect.top + container.scrollTop,
-            width: right - left,
-            height: bottom - top,
-        });
-        const selected = Array.from(container.querySelectorAll('[data-file-path]'))
-            .filter(element => {
-                const itemRect = element.getBoundingClientRect();
-                return itemRect.right >= left
-                    && itemRect.left <= right
-                    && itemRect.bottom >= top
-                    && itemRect.top <= bottom;
-            })
-            .map(element => element.dataset.filePath)
-            .filter(Boolean);
-        onDragSelect?.(selected);
-    };
+    const getRubberContainer = useCallback(() => ref?.current || null, [ref]);
+    const selectRubberPaths = useCallback(paths => onDragSelect?.(paths), [onDragSelect]);
+    const rubberSelection = useRafRubberSelection({
+        getContainer: getRubberContainer,
+        stateRef: rubberSelectRef,
+        itemSelector: '[data-file-path]',
+        itemPath: element => element.dataset.filePath,
+        selectionBoxRef,
+        onSelectPaths: selectRubberPaths,
+    });
 
     const startRubberSelection = (event) => {
         if (event.button !== 0 || event.target.closest('thead')) return;
+        rubberSelection.begin();
         rubberSelectRef.current = {
             active: true,
             moved: false,
             startX: event.clientX,
             startY: event.clientY,
         };
-        setSelectionBox(null);
     };
 
     const stopRubberSelection = () => {
+        rubberSelection.commit();
         rubberSelectRef.current.active = false;
-        setSelectionBox(null);
     };
 
   const renderCell = (file, column) => {
@@ -427,13 +417,11 @@ const FileTableView = forwardRef(({
 	        if (event.target === event.currentTarget) onClearSelection?.();
 	      }}
 	      onMouseDown={startRubberSelection}
-	      onMouseMove={updateRubberSelection}
+	      onMouseMove={rubberSelection.update}
 	      onMouseLeave={() => {
-	        stopDragSelect();
 	        stopRubberSelection();
 	      }}
 	      onMouseUp={() => {
-	        stopDragSelect();
 	        stopRubberSelection();
 	      }}
 	    >
@@ -508,7 +496,6 @@ const FileTableView = forwardRef(({
                   className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
                   style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
                   onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
-                  onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
                   onClick={(event) => handleRowClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
                   onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
@@ -542,7 +529,6 @@ const FileTableView = forwardRef(({
                       className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
 	                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
 	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
-	                  onMouseEnter={(event) => handleRowMouseEnter(file, event, fileIndex)}
 	                  onClick={(event) => handleRowClick(file, event, fileIndex)}
                       onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
 	                  onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
@@ -572,17 +558,11 @@ const FileTableView = forwardRef(({
 	      {files.length === 0 && (
 	        <FolderEmptyState t={t} />
 	      )}
-	      {selectionBox && (
 	        <div
+              ref={selectionBoxRef}
 	          className="folder-drag-selection-box"
-	          style={{
-	            left: `${selectionBox.left}px`,
-	            top: `${selectionBox.top}px`,
-	            width: `${selectionBox.width}px`,
-	            height: `${selectionBox.height}px`,
-	          }}
+	          style={{ display: 'none' }}
 	        />
-	      )}
 	    </div>
   );
 });

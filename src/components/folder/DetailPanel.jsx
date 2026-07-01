@@ -4,7 +4,7 @@ import { BookDetailPanel } from './BookDetailPanel';
 import { ComicDetailPanel } from './ComicDetailPanel';
 import { PdfDetailPanel } from './PdfDetailPanel';
 
-const DetailPanel = (props) => {
+const DetailPanel = React.memo((props) => {
     const selectedFile = props.selectedFile || null;
     if (resolveBookType(selectedFile) === 'pdf') {
         return <PdfDetailPanel {...props} />;
@@ -13,7 +13,7 @@ const DetailPanel = (props) => {
         return <BookDetailPanel {...props} />;
     }
     return <ComicDetailPanel {...props} />;
-};
+});
 
 export { DetailPanel };
 export default DetailPanel;

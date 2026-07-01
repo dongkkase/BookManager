@@ -1,6 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 
+const LOADED_COVER_SRC_CACHE_LIMIT = 512;
+const loadedCoverSrcSet = new Set();
+
+function isCoverSourceLoaded(src = '') {
+  return Boolean(src && loadedCoverSrcSet.has(src));
+}
+
+function rememberLoadedCoverSource(src = '') {
+  if (!src) return;
+  if (loadedCoverSrcSet.has(src)) loadedCoverSrcSet.delete(src);
+  loadedCoverSrcSet.add(src);
+  while (loadedCoverSrcSet.size > LOADED_COVER_SRC_CACHE_LIMIT) {
+    loadedCoverSrcSet.delete(loadedCoverSrcSet.keys().next().value);
+  }
+}
+
 function coverImageKey(file = {}) {
   return [
     file.cover || '',
@@ -11,11 +27,11 @@ function coverImageKey(file = {}) {
 
 function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true }) {
   const imageRef = useRef(null);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => isCoverSourceLoaded(src));
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    setLoaded(false);
+    setLoaded(isCoverSourceLoaded(src));
     setFailed(false);
   }, [src]);
 
@@ -27,8 +43,12 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
 
     const applyImageState = () => {
       if (disposed || imageRef.current !== image || !image.complete) return;
-      if (image.naturalWidth > 0) setLoaded(true);
-      else setFailed(true);
+      if (image.naturalWidth > 0) {
+        rememberLoadedCoverSource(src);
+        setLoaded(true);
+      } else {
+        setFailed(true);
+      }
     };
 
     const frameId = window.requestAnimationFrame(applyImageState);
@@ -41,7 +61,10 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
     if (typeof image.decode === 'function') {
       image.decode()
         .then(() => {
-          if (!disposed && imageRef.current === image) setLoaded(true);
+          if (!disposed && imageRef.current === image) {
+            rememberLoadedCoverSource(src);
+            setLoaded(true);
+          }
         })
         .catch(applyImageState);
     }
@@ -72,7 +95,10 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
         loading="lazy"
         className={loaded ? 'loaded' : ''}
         onLoad={event => {
-          if (event.currentTarget.naturalWidth > 0) setLoaded(true);
+          if (event.currentTarget.naturalWidth > 0) {
+            rememberLoadedCoverSource(src);
+            setLoaded(true);
+          }
         }}
         onError={() => setFailed(true)}
       />

@@ -54,6 +54,14 @@ function TabLoading({ t }) {
   return <div className="app-tab-loading">{t('msg_loading_list')}</div>;
 }
 
+function isSameStatusState(left = {}, right = {}) {
+  const keys = new Set([...Object.keys(left || {}), ...Object.keys(right || {})]);
+  for (const key of keys) {
+    if (left?.[key] !== right?.[key]) return false;
+  }
+  return true;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
   const [loadedTabs, setLoadedTabs] = useState(() => new Set(['folder']));
@@ -189,7 +197,11 @@ function App() {
     const handleStatusState = (event) => {
       const { tabId, ...state } = event.detail || {};
       if (!tabId) return;
-      setStatusStates(current => ({ ...current, [tabId]: state }));
+      setStatusStates(current => (
+        isSameStatusState(current[tabId], state)
+          ? current
+          : { ...current, [tabId]: state }
+      ));
       if (shouldUseLibraryScanSlide(tabId, state)) {
         activateLockScanQueue();
       }

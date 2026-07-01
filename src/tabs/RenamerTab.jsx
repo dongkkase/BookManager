@@ -21,6 +21,10 @@ import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
 import { isTextEntryTarget } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
+import {
+  applyImmediateSingleSelection,
+  scheduleAfterNextPaint,
+} from '../selectionVisualFeedback';
 import noImage from '../images/noimage.png';
 
 function basename(filePath) {
@@ -97,6 +101,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const archiveRowRefs = useRef(new Map());
   const entryRowRefs = useRef(new Map());
   const previewRequestRef = useRef({ cover: 0, inner: 0 });
+  const pendingArchiveSelectRef = useRef(null);
 
   const patternLabels = useMemo(() => {
     const labels = t('patterns');
@@ -138,6 +143,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   useEffect(() => () => {
     previewRequestRef.current.cover += 1;
     previewRequestRef.current.inner += 1;
+    pendingArchiveSelectRef.current?.();
   }, []);
 
   useEffect(() => {
@@ -209,6 +215,18 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const checkedCount = useMemo(() => fileList.filter(file => file.checked).length, [fileList]);
   const allChecked = fileList.length > 0 && fileList.every(file => file.checked);
   const imageQualityLabel = config?.img_quality ?? config?.jpg_quality ?? 100;
+  const selectArchive = useCallback((archiveId, defer = false) => {
+    pendingArchiveSelectRef.current?.();
+    pendingArchiveSelectRef.current = null;
+    if (!defer) {
+      setSelectedArchiveId(archiveId);
+      return;
+    }
+    pendingArchiveSelectRef.current = scheduleAfterNextPaint(() => {
+      pendingArchiveSelectRef.current = null;
+      setSelectedArchiveId(archiveId);
+    });
+  }, []);
 
   useEffect(() => {
     emitToolbarState('renamer', createToolbarState(fileList));
@@ -867,19 +885,27 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                         return (
                           <tr
                             key={file.id}
+                            data-renamer-archive-id={file.id}
                             ref={node => {
                               if (node) archiveRowRefs.current.set(file.id, node);
                               else archiveRowRefs.current.delete(file.id);
                             }}
                             className={activeArchive?.id === file.id ? 'selected' : ''}
-                            onClick={() => {
-                              setSelectedArchiveId(file.id);
+                            onMouseDown={(event) => {
+                              if (event.button !== 0) return;
+                              if (event.target.closest('input, button, textarea, select, a')) return;
+                              applyImmediateSingleSelection(archiveTableRef.current, event.currentTarget, '[data-renamer-archive-id]');
+                              archiveTableRef.current?.focus({ preventScroll: true });
+                              selectArchive(file.id, true);
+                            }}
+                            onClick={(event) => {
+                              if (event.target.closest('input, button, textarea, select, a')) return;
                               archiveTableRef.current?.focus({ preventScroll: true });
                             }}
                             onContextMenu={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
-                              setSelectedArchiveId(file.id);
+                              selectArchive(file.id);
                               archiveTableRef.current?.focus({ preventScroll: true });
                               setContextMenu({ x: event.clientX, y: event.clientY, archive: file });
                             }}

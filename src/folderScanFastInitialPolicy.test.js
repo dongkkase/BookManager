@@ -12,11 +12,15 @@ import {
 const root = path.dirname(fileURLToPath(import.meta.url));
 const hookSource = readFileSync(path.join(root, 'hooks', 'useFolderScan.js'), 'utf8');
 const taskSource = readFileSync(path.join(root, '..', 'electron', 'tasks', 'folderScanTask.js'), 'utf8');
+const ipcSource = readFileSync(path.join(root, '..', 'electron', 'ipcHandlers.js'), 'utf8');
 const folderTabSource = readFileSync(path.join(root, 'tabs', 'FolderTab.jsx'), 'utf8');
 
-test('폴더 클릭의 빠른 1차 스캔은 라이브러리 DB 캐시 조회를 건너뛴다', () => {
-    assert.match(hookSource, /quickListOnly:\s*true/);
-    assert.match(hookSource, /includeSubfolders:\s*false/);
+test('폴더 클릭의 빠른 1차 목록은 readDir로 먼저 표시하고 무거운 조회를 뒤로 미룬다', () => {
+    assert.match(hookSource, /async function readQuickListFiles/);
+    assert.match(hookSource, /window\.electronAPI\?\.readDir\?\.\(folderPath\)/);
+    assert.match(hookSource, /cache_source:\s*'renderer-quick'/);
+    assert.match(hookSource, /const refreshInBackground = async/);
+    assert.match(hookSource, /background:\s*true/);
     assert.match(hookSource, /skipArchiveExtraction:\s*true/);
     assert.match(hookSource, /skipLibraryCache:\s*true/);
     assert.match(taskSource, /const cached = options\.skipLibraryCache === true[\s\S]*await safeGetCachedFileInfo/);
@@ -29,8 +33,8 @@ test('폴더 클릭의 빠른 1차 스캔은 라이브러리 DB 캐시 조회를
     assert.match(taskSource, /folderUtilsPromise = import\(folderUtilsUrl\)/);
 });
 
-test('폴더 변경은 이전 폴더 스캔을 취소한 뒤 새 스캔을 시작한다', () => {
-    assert.match(folderTabSource, /stopTask\?\.\('folder:scan'\)/);
+test('폴더 변경은 새 스캔 시작 시 메인 프로세스에서 이전 폴더 스캔을 취소한다', () => {
+    assert.match(ipcSource, /cancellationRegistry\.cancel\(event\.sender\.id,\s*taskId\)[\s\S]*cancellationRegistry\.start\(event\.sender\.id,\s*taskId\)/);
     assert.match(folderTabSource, /await scanFolder\(nextFolderPath,\s*scanOptions\)/);
 });
 

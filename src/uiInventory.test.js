@@ -439,6 +439,15 @@ test('폴더 커버 이미지는 보이는 항목에만 로딩 스피너를 표�
     ]);
 });
 
+test('폴더 커버 이미지는 이미 로드한 썸네일을 재진입 시 즉시 표시 상태로 시작한다', () => {
+    assertInventory('coverImage', [
+        ['로드 완료 커버 URL 캐시 제한', 'LOADED_COVER_SRC_CACHE_LIMIT'],
+        ['로드 완료 커버 URL 기억', 'rememberLoadedCoverSource(src)'],
+        ['초기 로드 상태 캐시 재사용', 'useState(() => isCoverSourceLoaded(src))'],
+        ['src 변경 시 캐시 상태 적용', 'setLoaded(isCoverSourceLoaded(src))'],
+    ]);
+});
+
 test('상세보기 패널은 선택 항목 내용 높이에 맞춰 자동 조절한다', () => {
     assertInventory('folder', [
         ['상세보기 내용 높이 변경 핸들러', 'handleDetailContentHeightChange'],
