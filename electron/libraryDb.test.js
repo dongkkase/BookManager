@@ -154,6 +154,60 @@ test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타�
     }
 });
 
+test('라이브러리 폴더 인덱스는 parent_path 기준으로 직계 하위 폴더를 조회한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-folders-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryRoot = path.join(root, 'Library');
+        const firstFolder = path.join(libraryRoot, 'Series A');
+        const nestedFolder = path.join(firstFolder, 'Volume Set');
+        const secondFolder = path.join(libraryRoot, 'Series B');
+        const library = new LibraryDB({ dbPath });
+
+        await library.replaceLibraryFolders(libraryRoot, [
+            {
+                folder_path: libraryRoot,
+                parent_path: '',
+                name: 'Library',
+                child_folder_count: 2,
+                recursive_file_count: 3,
+            },
+            {
+                folder_path: firstFolder,
+                parent_path: libraryRoot,
+                name: 'Series A',
+                child_folder_count: 1,
+                direct_file_count: 2,
+                recursive_file_count: 3,
+            },
+            {
+                folder_path: nestedFolder,
+                parent_path: firstFolder,
+                name: 'Volume Set',
+                direct_file_count: 1,
+                recursive_file_count: 1,
+            },
+            {
+                folder_path: secondFolder,
+                parent_path: libraryRoot,
+                name: 'Series B',
+            },
+        ]);
+
+        assert.equal(await library.hasLibraryFolderIndex(libraryRoot), true);
+        const rootChildren = await library.getLibraryFolderChildren(libraryRoot, libraryRoot);
+        assert.deepEqual(rootChildren.map(row => row.folder_path), [firstFolder, secondFolder]);
+        assert.equal(rootChildren[0].child_folder_count, 1);
+        assert.equal(rootChildren[0].direct_file_count, 2);
+
+        const nestedChildren = await library.getLibraryFolderChildren(libraryRoot, firstFolder);
+        assert.deepEqual(nestedChildren.map(row => row.folder_path), [nestedFolder]);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('과도기 file_info, target_index, dup_match schema를 원본 schema로 이관한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-migrate-'));
     try {
@@ -298,11 +352,14 @@ test('라이브러리 이동 인덱스 반영은 전체 교체 없이 이동한 
         const dbPath = path.join(root, 'library.db');
         const sourceDir = path.join(root, 'source');
         const libraryDir = path.join(root, 'library');
-        const existing = path.join(libraryDir, 'Existing.cbz');
+        const existingFolder = path.join(libraryDir, 'Existing Series');
+        const movedFolder = path.join(libraryDir, 'Moved Series');
+        const existing = path.join(existingFolder, 'Existing.cbz');
         const source = path.join(sourceDir, 'Moved.cbz');
-        const dest = path.join(libraryDir, 'Moved.cbz');
+        const dest = path.join(movedFolder, 'Moved.cbz');
         fs.mkdirSync(sourceDir, { recursive: true });
-        fs.mkdirSync(libraryDir, { recursive: true });
+        fs.mkdirSync(existingFolder, { recursive: true });
+        fs.mkdirSync(movedFolder, { recursive: true });
         fs.writeFileSync(existing, 'existing');
         fs.writeFileSync(source, 'moved');
 
@@ -354,6 +411,8 @@ test('라이브러리 이동 인덱스 반영은 전체 교체 없이 이동한 
         assert.equal(state.status, 'ready');
         assert.equal(state.indexed_count, 2);
         assert.equal(state.scan_reason, 'move');
+        const folderRows = await library.getLibraryFolderChildren(libraryDir, libraryDir);
+        assert.deepEqual(folderRows.map(row => row.folder_path).sort(), [existingFolder, movedFolder].sort());
         await library.close();
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -464,6 +523,36 @@ test('라이브러리 인덱싱 경로 수집 완료 콜백은 대상 파일에�
 
         assert.deepEqual(paths.sort(), [visiblePath, textPath].sort());
         assert.deepEqual(matched.sort(), [visiblePath, textPath].sort());
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 인덱싱 폴더 콜백은 빈 폴더까지 방문 경로로 수집한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-folder-callback-'));
+    const libraryDir = path.join(root, 'library');
+    const emptyDir = path.join(libraryDir, 'Empty');
+    const nestedDir = path.join(libraryDir, 'Series', 'Volume');
+    const hiddenDir = path.join(libraryDir, '.yacreaderlibrary');
+
+    try {
+        fs.mkdirSync(emptyDir, { recursive: true });
+        fs.mkdirSync(nestedDir, { recursive: true });
+        fs.mkdirSync(hiddenDir, { recursive: true });
+        fs.writeFileSync(path.join(nestedDir, 'Book.cbz'), '');
+        fs.writeFileSync(path.join(hiddenDir, 'Hidden.cbz'), '');
+        const folders = [];
+
+        await scanArchivePaths(libraryDir, '', null, null, null, folderPath => {
+            folders.push(folderPath);
+        });
+
+        assert.deepEqual([...new Set(folders)].sort(), [
+            libraryDir,
+            emptyDir,
+            path.dirname(nestedDir),
+            nestedDir,
+        ].sort());
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

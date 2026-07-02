@@ -6,6 +6,7 @@ import {
     FILE_EXTENSION_FORMAT_VALUES,
     normalizeMetadataFormat,
 } from '../metadataFormat.js';
+import { buildLibraryFolderIndexRecords } from '../libraryFolderIndex.js';
 
 const require = createRequire(import.meta.url);
 let DatabaseConstructor = null;
@@ -52,6 +53,17 @@ const LIBRARY_SCAN_STATE_COLUMNS = [
     'last_changed_at',
     'last_error',
     'scan_reason',
+];
+
+const LIBRARY_FOLDER_COLUMNS = [
+    'library_path',
+    'folder_path',
+    'parent_path',
+    'name',
+    'child_folder_count',
+    'direct_file_count',
+    'recursive_file_count',
+    'last_seen_at',
 ];
 
 const FILE_SEARCH_COLUMNS = [
@@ -173,6 +185,17 @@ export class LibraryDB {
                 last_error TEXT,
                 scan_reason TEXT
             );
+            CREATE TABLE IF NOT EXISTS library_folders (
+                library_path TEXT,
+                folder_path TEXT,
+                parent_path TEXT,
+                name TEXT,
+                child_folder_count INTEGER DEFAULT 0,
+                direct_file_count INTEGER DEFAULT 0,
+                recursive_file_count INTEGER DEFAULT 0,
+                last_seen_at TEXT,
+                PRIMARY KEY (library_path, folder_path)
+            );
             CREATE INDEX IF NOT EXISTS idx_files_series ON files(series);
             CREATE INDEX IF NOT EXISTS idx_files_title ON files(title);
             CREATE INDEX IF NOT EXISTS idx_files_writer ON files(writer);
@@ -181,6 +204,8 @@ export class LibraryDB {
             CREATE INDEX IF NOT EXISTS idx_dup_target_folder ON dup_target_index(target_folder);
             CREATE INDEX IF NOT EXISTS idx_dup_target_name ON dup_target_index(name);
             CREATE INDEX IF NOT EXISTS idx_library_scan_status ON library_scan_state(status);
+            CREATE INDEX IF NOT EXISTS idx_library_folders_parent ON library_folders(library_path, parent_path, name);
+            CREATE INDEX IF NOT EXISTS idx_library_folders_path ON library_folders(folder_path);
         `);
     }
 
@@ -555,6 +580,76 @@ export class LibraryDB {
         });
     }
 
+    async replaceLibraryFolders(libraryPath, folders = []) {
+        return this.withLock(async () => {
+            const db = this.getConnection();
+            const normalizedLibraryPath = path.resolve(libraryPath);
+            const remove = db.prepare('DELETE FROM library_folders WHERE library_path = ?');
+            const insert = db.prepare(`
+                INSERT INTO library_folders (${LIBRARY_FOLDER_COLUMNS.join(', ')})
+                VALUES (${LIBRARY_FOLDER_COLUMNS.map(column => `@${column}`).join(', ')})
+            `);
+            const normalizedFolders = folders
+                .map(folder => {
+                    const folderPath = folder.folder_path || folder.folderPath || folder.path || '';
+                    if (!folderPath) return null;
+                    const normalizedFolderPath = path.resolve(folderPath);
+                    const parentPath = folder.parent_path || folder.parentPath || '';
+                    return {
+                        library_path: normalizedLibraryPath,
+                        folder_path: normalizedFolderPath,
+                        parent_path: parentPath ? path.resolve(parentPath) : '',
+                        name: folder.name || path.basename(normalizedFolderPath) || normalizedFolderPath,
+                        child_folder_count: Number(folder.child_folder_count ?? folder.childFolderCount) || 0,
+                        direct_file_count: Number(folder.direct_file_count ?? folder.directFileCount) || 0,
+                        recursive_file_count: Number(folder.recursive_file_count ?? folder.recursiveFileCount) || 0,
+                        last_seen_at: folder.last_seen_at || folder.lastSeenAt || new Date().toISOString(),
+                    };
+                })
+                .filter(Boolean);
+
+            db.transaction(() => {
+                remove.run(normalizedLibraryPath);
+                for (const folder of normalizedFolders) insert.run(folder);
+            })();
+            return { changes: normalizedFolders.length };
+        });
+    }
+
+    async hasLibraryFolderIndex(libraryPath) {
+        return this.withLock(async () => {
+            const normalizedLibraryPath = path.resolve(libraryPath);
+            const row = this.getConnection().prepare(`
+                SELECT 1
+                FROM library_folders
+                WHERE library_path = ?
+                LIMIT 1
+            `).get(normalizedLibraryPath);
+            return Boolean(row);
+        });
+    }
+
+    async getLibraryFolderChildren(libraryPath, parentPath) {
+        return this.withLock(async () => {
+            const normalizedLibraryPath = path.resolve(libraryPath);
+            const normalizedParentPath = path.resolve(parentPath || libraryPath);
+            return this.getConnection().prepare(`
+                SELECT
+                    library_path,
+                    folder_path,
+                    parent_path,
+                    name,
+                    child_folder_count,
+                    direct_file_count,
+                    recursive_file_count,
+                    last_seen_at
+                FROM library_folders
+                WHERE library_path = ? AND parent_path = ?
+                ORDER BY name COLLATE NOCASE ASC
+            `).all(normalizedLibraryPath, normalizedParentPath);
+        });
+    }
+
     async applyLibraryMoveIndexChanges(changes = {}) {
         return this.withLock(async () => {
             const db = this.getConnection();
@@ -617,6 +712,13 @@ export class LibraryDB {
                 VALUES (${FILE_COLUMNS.map(column => `@${column}`).join(', ')})
             `);
             const countTargets = db.prepare('SELECT COUNT(*) AS count FROM dup_target_index WHERE target_folder = ?');
+            const selectTargetPaths = db.prepare('SELECT full_path FROM dup_target_index WHERE target_folder = ?');
+            const selectLibraryFolders = db.prepare('SELECT folder_path FROM library_folders WHERE library_path = ?');
+            const removeLibraryFolders = db.prepare('DELETE FROM library_folders WHERE library_path = ?');
+            const insertLibraryFolder = db.prepare(`
+                INSERT INTO library_folders (${LIBRARY_FOLDER_COLUMNS.join(', ')})
+                VALUES (${LIBRARY_FOLDER_COLUMNS.map(column => `@${column}`).join(', ')})
+            `);
             const selectState = db.prepare('SELECT * FROM library_scan_state WHERE library_path = ?');
             const upsertState = db.prepare(`
                 INSERT INTO library_scan_state (${LIBRARY_SCAN_STATE_COLUMNS.join(', ')})
@@ -721,6 +823,18 @@ export class LibraryDB {
                 }
                 for (const libraryPath of touchedLibraries) {
                     upsertState.run(stateValues(libraryPath));
+                }
+                for (const libraryPath of touchedLibraries) {
+                    const existingFolders = selectLibraryFolders.all(libraryPath)
+                        .map(row => row.folder_path)
+                        .filter(folderPath => folderPath && fs.existsSync(folderPath));
+                    const targetPaths = selectTargetPaths.all(libraryPath)
+                        .map(row => row.full_path)
+                        .filter(Boolean);
+                    if (existingFolders.length === 0 && targetPaths.length === 0) continue;
+                    const folderRecords = buildLibraryFolderIndexRecords(libraryPath, existingFolders, targetPaths);
+                    removeLibraryFolders.run(libraryPath);
+                    for (const record of folderRecords) insertLibraryFolder.run(record);
                 }
             })();
 

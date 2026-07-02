@@ -59,6 +59,10 @@ import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { LibraryDB } from './database/library_db.js';
 import {
+  buildLibraryFolderIndexRecords,
+  normalizeLibraryFolderForRenderer,
+} from './libraryFolderIndex.js';
+import {
   buildCsvContent,
   resolveCsvExportPath,
 } from './csvExport.js';
@@ -2671,7 +2675,7 @@ export function normalizeLibraryScanStateForRenderer(folderPath, state = {}, exi
   };
 }
 
-export async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null, shouldCancel = null, onMatch = null) {
+export async function scanArchivePaths(rootPath, priorityFolder = '', onProgress = null, shouldCancel = null, onMatch = null, onFolder = null) {
   const results = [];
   const visitedDirs = new Set();
   let scannedCount = 0;
@@ -2706,6 +2710,7 @@ export async function scanArchivePaths(rootPath, priorityFolder = '', onProgress
     const normalizedCurrentPath = path.resolve(currentPath);
     if (visitedDirs.has(normalizedCurrentPath)) return;
     visitedDirs.add(normalizedCurrentPath);
+    if (typeof onFolder === 'function') onFolder(normalizedCurrentPath);
     reportProgress(currentPath);
     let entries;
     try {
@@ -3627,6 +3632,38 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+  ipcMain.handle('folder:getLibraryFolderChildren', async (_event, libraryPath = '', parentPath = '') => {
+    const normalizedLibraryPath = libraryPath ? path.resolve(libraryPath) : '';
+    const normalizedParentPath = parentPath ? path.resolve(parentPath) : normalizedLibraryPath;
+    if (!normalizedLibraryPath || !normalizedParentPath || !fs.existsSync(normalizedLibraryPath)) {
+      return { indexed: false, exists: false, children: [] };
+    }
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      let indexed = await db.hasLibraryFolderIndex(normalizedLibraryPath);
+      if (!indexed) {
+        const targetRows = await db.getTargetIndex(normalizedLibraryPath);
+        const targetPaths = targetRows.map(row => row.full_path || row.file_path || row.path).filter(Boolean);
+        if (targetPaths.length > 0) {
+          await db.replaceLibraryFolders(
+            normalizedLibraryPath,
+            buildLibraryFolderIndexRecords(normalizedLibraryPath, [], targetPaths),
+          );
+          indexed = true;
+        }
+      }
+      if (!indexed) return { indexed: false, exists: true, children: [] };
+      const children = await db.getLibraryFolderChildren(normalizedLibraryPath, normalizedParentPath);
+      return {
+        indexed: true,
+        exists: true,
+        children: children.map(normalizeLibraryFolderForRenderer),
+      };
+    } finally {
+      await db.close();
+    }
+  });
+
   ipcMain.handle('folder:updateIndex', async (event, folders = null, options = {}) => {
     const taskId = 'folder:updateIndex';
     const controller = cancellationRegistry.start(event.sender.id, taskId);
@@ -3733,6 +3770,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           });
           lastScanHeartbeatAt = Date.now();
           console.log(`[LibraryIndex] scanning ${index + 1}/${targetFolders.length}: ${folder}`);
+          const scannedFolderPaths = new Set();
           const filePaths = await scanArchivePaths(folder, priorityFolder, progress => {
             const message = i18nT('dup_scan_progress_live', [
               progress.scannedCount,
@@ -3763,9 +3801,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
                 currentFileName: path.basename(progress.currentPath || ''),
               });
             }
-          }, shouldCancel);
+          }, shouldCancel, null, folderPath => scannedFolderPaths.add(folderPath));
           await flushLibraryScanHeartbeat();
           throwIfTaskCancelled(shouldCancel);
+          const folderIndexRecords = buildLibraryFolderIndexRecords(folder, scannedFolderPaths, filePaths);
           const entries = await buildArchiveIndexEntries(filePaths, folder, {
             shouldCancel,
             onProgress: progress => {
@@ -3786,6 +3825,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             const scannedAt = nowIsoString();
             skippedFolders += 1;
             total += entries.length;
+            await db.replaceLibraryFolders(folder, folderIndexRecords);
             metadataTargetsByFolder.set(
               folder,
               shouldOptimizeMetadata ? entries.map(entry => entry.full_path) : [],
@@ -3826,6 +3866,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             });
           }
           const syncResult = await db.syncTargetIndex(folder, entries);
+          await db.replaceLibraryFolders(folder, folderIndexRecords);
           const changedCount = syncResult.addedCount + syncResult.updatedCount + syncResult.removedCount;
           changedTotal += changedCount;
           total += syncResult.indexedCount;

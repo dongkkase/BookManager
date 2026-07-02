@@ -3,6 +3,7 @@ import { FaIcon } from '../FaIcon';
 import {
   ancestorPathsBetween,
   chooseTreeRoot,
+  isSameOrDescendantPath,
   joinTreePath,
 } from '../../folderTreeState';
 import {
@@ -71,6 +72,40 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     return [...libraryNodes, ...systemRoots];
   }, [libraries, roots]);
 
+  const findContainingLibraryRoot = useCallback(folderPath => (
+    (libraries || [])
+      .filter(lib => isSameOrDescendantPath(folderPath, lib))
+      .sort((left, right) => String(right).length - String(left).length)[0] || ''
+  ), [libraries]);
+
+  const readLiveFolderChildren = useCallback(async folderPath => {
+    if (!window.electronAPI?.readDir) return [];
+    const items = await window.electronAPI.readDir(folderPath);
+    return (Array.isArray(items) ? items : [])
+      .filter(i => i.isDirectory)
+      .map(i => ({
+        name: i.name,
+        path: joinTreePath(folderPath, i.name),
+        isFolder: true,
+      }));
+  }, []);
+
+  const readIndexedLibraryFolderChildren = useCallback(async folderPath => {
+    const libraryRoot = findContainingLibraryRoot(folderPath);
+    if (!libraryRoot || !window.electronAPI?.getLibraryFolderChildren) return null;
+    const result = await window.electronAPI.getLibraryFolderChildren(libraryRoot, folderPath);
+    if (!result?.indexed) return null;
+    return (Array.isArray(result.children) ? result.children : []).map(child => ({
+      name: child.name,
+      path: child.path,
+      isFolder: true,
+      isIndexedLibraryFolder: true,
+      childFolderCount: Number(child.childFolderCount) || 0,
+      directFileCount: Number(child.directFileCount) || 0,
+      recursiveFileCount: Number(child.recursiveFileCount) || 0,
+    }));
+  }, [findContainingLibraryRoot]);
+
   useEffect(() => {
     setOptimisticSelectedPath('');
   }, [selectedFolderPath]);
@@ -117,10 +152,13 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
         const key = normalizeLibraryKey(lib);
         counts[key] = 0;
         try {
-          const items = await window.electronAPI?.readDir?.(lib);
-          counts[key] = Array.isArray(items)
-            ? items.filter(item => item.isDirectory).length
-            : 0;
+          const indexedChildren = await readIndexedLibraryFolderChildren(lib);
+          if (indexedChildren) {
+            counts[key] = indexedChildren.length;
+            return;
+          }
+          const liveChildren = await readLiveFolderChildren(lib);
+          counts[key] = liveChildren.length;
         } catch (error) {
           console.error('Failed to count library folders:', error);
         }
@@ -131,7 +169,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     return () => {
       cancelled = true;
     };
-  }, [libraries, refreshToken]);
+  }, [libraries, readIndexedLibraryFolderChildren, readLiveFolderChildren, refreshToken]);
 
   const loadFolder = useCallback(async (folderPath, force = false) => {
     if (!force && folderCacheRef.current[folderPath]) return folderCacheRef.current[folderPath];
@@ -140,18 +178,10 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     }
     const promise = (async () => {
       try {
-        if (window.electronAPI && window.electronAPI.readDir) {
-          const items = await window.electronAPI.readDir(folderPath);
-          const folders = items
-            .filter(i => i.isDirectory)
-            .map(i => ({
-              name: i.name,
-              path: joinTreePath(folderPath, i.name),
-              isFolder: true
-            }));
-          setFolderCache(prev => ({ ...prev, [folderPath]: folders }));
-          return folders;
-        }
+        const indexedFolders = await readIndexedLibraryFolderChildren(folderPath);
+        const folders = indexedFolders || await readLiveFolderChildren(folderPath);
+        setFolderCache(prev => ({ ...prev, [folderPath]: folders }));
+        return folders;
       } catch (error) {
         console.error('Failed to read dir:', error);
         setFolderCache(prev => ({ ...prev, [folderPath]: [] }));
@@ -162,7 +192,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     });
     folderLoadPromisesRef.current.set(folderPath, promise);
     return promise;
-  }, []);
+  }, [readIndexedLibraryFolderChildren, readLiveFolderChildren]);
 
   const toggleFolder = useCallback((path) => {
     setExpandedFolders(current => {
@@ -380,7 +410,9 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
     const children = folderCache[node.path] || [];
     
     // 이 노드가 자식을 가질 가능성이 있는지 (일단 폴더면 있다고 가정, 로드 후 비어있으면 없는 것으로 표시)
-    const hasChildren = folderCache[node.path] ? children.length > 0 : true;
+    const hasChildren = folderCache[node.path]
+      ? children.length > 0
+      : node.childFolderCount !== undefined ? node.childFolderCount > 0 : true;
 
     return (
       <li key={node.path} className="tree-node">
@@ -404,7 +436,7 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
             setSelectedSource('tree');
             setOptimisticSelectedPath(node.path);
             scheduleSidebarNavigation(() => {
-              onSelectFolder?.(node.path, { source: 'tree', skipExistsCheck: true });
+              onSelectFolder?.(node.path, { source: 'tree' });
             });
           }}
           onDoubleClick={() => {

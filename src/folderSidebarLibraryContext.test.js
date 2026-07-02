@@ -49,9 +49,19 @@ test('라이브러리와 즐겨찾기 리스트의 행 버튼은 삭제 대신 �
 
 test('라이브러리 행은 폴더 수와 인덱스 상태를 함께 표시한다', () => {
     assert.match(source, /libraryFolderCounts/);
-    assert.match(source, /items\.filter\(item => item\.isDirectory\)\.length/);
+    assert.match(source, /const indexedChildren = await readIndexedLibraryFolderChildren\(lib\)/);
+    assert.match(source, /const liveChildren = await readLiveFolderChildren\(lib\)/);
     assert.match(source, /folderCount:\s*libraryFolderCounts\[libraryKey\]/);
     assert.match(source, /libraryStatusText\(t,\s*scanState,\s*\{/);
+});
+
+test('탐색기 트리는 라이브러리 폴더를 DB 인덱스로 먼저 읽고 없을 때 파일 시스템으로 대체한다', () => {
+    assert.match(source, /getLibraryFolderChildren/);
+    assert.match(source, /const indexedFolders = await readIndexedLibraryFolderChildren\(folderPath\)/);
+    assert.match(source, /const folders = indexedFolders \|\| await readLiveFolderChildren\(folderPath\)/);
+    assert.match(source, /node\.childFolderCount !== undefined \? node\.childFolderCount > 0 : true/);
+    assert.match(source, /onSelectFolder\?\.\(node\.path,\s*\{\s*source:\s*'tree'\s*\}\)/);
+    assert.doesNotMatch(source, /skipExistsCheck:\s*true/);
 });
 
 test('탐색기 트리는 중복 폴더 읽기와 부드러운 자동 스크롤을 피한다', () => {
