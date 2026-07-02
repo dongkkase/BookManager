@@ -1,0 +1,585 @@
+.viewer-app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #101010;
+  color: #f2f2f2;
+  font-family: var(--font-primary);
+}
+
+.viewer-toolbar {
+  flex: 0 0 42px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  background: #202020;
+  border-bottom: 1px solid #3d3d3d;
+  overflow: visible;
+}
+
+.viewer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.viewer-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.viewer-title small {
+  flex: 0 0 auto;
+  color: #bdbdbd;
+  font-size: 11px;
+}
+
+.viewer-tool-group {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: visible;
+}
+
+.viewer-tool-button {
+  width: 30px;
+  height: 28px;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  background: #2a2a2a;
+  color: #eeeeee;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.viewer-tool-button:hover:not(:disabled),
+.viewer-tool-button.is-active {
+  background: #3b3b3b;
+  border-color: #6a6a6a;
+}
+
+.viewer-tool-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.viewer-zoom {
+  width: 44px;
+  text-align: center;
+  color: #d0d0d0;
+  font-size: 12px;
+}
+
+.viewer-dropdown {
+  position: relative;
+  min-width: 0;
+}
+
+.viewer-dropdown.is-toolbar {
+  flex: 0 0 112px;
+}
+
+.viewer-dropdown.is-toolbar.is-wide {
+  flex-basis: 158px;
+}
+
+.viewer-dropdown-button {
+  width: 100%;
+  height: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  background: #242424;
+  color: #eeeeee;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.viewer-dropdown-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.viewer-dropdown.is-open .viewer-dropdown-button,
+.viewer-dropdown-button:hover {
+  background: #343434;
+  border-color: #6a6a6a;
+}
+
+.viewer-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 45;
+  width: max(100%, 190px);
+  max-height: 300px;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  background: #242424;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.48);
+}
+
+.viewer-dropdown-option {
+  width: 100%;
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #eeeeee;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.viewer-dropdown-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.viewer-dropdown-option:hover,
+.viewer-dropdown-option.is-selected {
+  background: #3a3a3a;
+}
+
+.viewer-settings-panel .viewer-dropdown {
+  width: 100%;
+}
+
+.viewer-settings-panel .viewer-dropdown-menu {
+  width: 100%;
+  max-height: 360px;
+}
+
+.viewer-content {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: #111111;
+}
+
+.viewer-content.is-reader-paged {
+  overflow: hidden;
+}
+
+.viewer-state {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #bdbdbd;
+  font-size: 14px;
+}
+
+.viewer-error {
+  color: #ff9b9b;
+  padding: 24px;
+  text-align: center;
+}
+
+.viewer-comic-stage {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+}
+
+.viewer-comic-stage.is-actual {
+  align-items: flex-start;
+}
+
+.viewer-comic-stage.is-spread .viewer-comic-image {
+  max-height: calc(100vh - 70px);
+  max-width: 48%;
+}
+
+.viewer-comic-image {
+  display: block;
+  max-height: calc(100vh - 70px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.55);
+}
+
+.viewer-comic-image.view-fit {
+  max-width: 100%;
+}
+
+.viewer-comic-image.view-width {
+  max-width: min(100%, 1280px);
+}
+
+.viewer-comic-image.view-actual {
+  max-width: none;
+  max-height: none;
+}
+
+.viewer-comic-placeholder {
+  width: min(100%, 420px);
+  min-height: min(72vh, 720px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #454545;
+  color: #9e9e9e;
+  background: #191919;
+  font-size: 12px;
+}
+
+.viewer-comic-placeholder.is-error {
+  padding: 18px;
+  color: #ffb4b4;
+  border-color: #6b3535;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.viewer-comic-scroll {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0 24px;
+}
+
+.viewer-comic-scroll .viewer-comic-image {
+  max-height: none;
+  max-width: min(100%, 1280px);
+  box-shadow: none;
+}
+
+.viewer-reader-stage {
+  height: 100%;
+  min-height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  gap: 10px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.viewer-reader-stage.is-spread .viewer-text-page {
+  flex: 0 1 680px;
+  max-width: 680px;
+}
+
+.viewer-document-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #262626;
+}
+
+.viewer-pdf-stage {
+  width: 100%;
+  height: 100%;
+  background: #2b2b2b;
+}
+
+.viewer-text-page {
+  max-width: 900px;
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 36px 42px 80px;
+  overflow: hidden;
+  background: var(--viewer-reader-bg, #181818);
+  color: var(--viewer-reader-fg, #ededed);
+  line-height: var(--viewer-reader-line-height, 1.8);
+  font-family: var(--viewer-reader-font, var(--font-primary));
+  font-size: var(--viewer-reader-size, 14px);
+}
+
+.viewer-text-page.is-scroll {
+  height: auto;
+  min-height: auto;
+  margin-top: 0;
+  margin-bottom: 0;
+  overflow: visible;
+}
+
+.viewer-text-page pre {
+  white-space: pre-wrap;
+  word-break: var(--viewer-reader-word-break, keep-all);
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.viewer-epub-chapter {
+  padding-bottom: 28px;
+  margin-bottom: 28px;
+  border-bottom: 1px solid #303030;
+}
+
+.viewer-epub-chapter h2 {
+  font-size: 18px;
+  margin-bottom: 14px;
+  color: currentColor;
+}
+
+.viewer-bookmark-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.viewer-bookmark-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 260px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  background: #242424;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.viewer-bookmark-menu button,
+.viewer-bookmark-editor-row button,
+.viewer-modal-header button,
+.viewer-settings-header button,
+.viewer-step-row button,
+.viewer-settings-reset {
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  background: #2d2d2d;
+  color: #eeeeee;
+  cursor: pointer;
+}
+
+.viewer-bookmark-menu button {
+  width: 100%;
+  min-height: 28px;
+  margin-bottom: 4px;
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.viewer-bookmark-menu button:hover,
+.viewer-bookmark-editor-row button:hover,
+.viewer-modal-header button:hover,
+.viewer-settings-header button:hover,
+.viewer-step-row button:hover,
+.viewer-settings-reset:hover {
+  background: #3a3a3a;
+}
+
+.viewer-bookmark-list {
+  max-height: 240px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #3d3d3d;
+  overflow: auto;
+}
+
+.viewer-bookmark-list button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-settings-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 25;
+  width: min(340px, 92vw);
+  height: 100vh;
+  padding: 16px;
+  border-left: 1px solid #454545;
+  background: #232323;
+  color: #eeeeee;
+  transform: translateX(100%);
+  transition: transform 160ms ease;
+  box-shadow: -12px 0 28px rgba(0, 0, 0, 0.38);
+}
+
+.viewer-settings-panel.is-open {
+  transform: translateX(0);
+}
+
+.viewer-settings-header,
+.viewer-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.viewer-settings-header h2,
+.viewer-modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.viewer-settings-panel label {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: #cfcfcf;
+}
+
+.viewer-theme-preview {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -4px 0 14px;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  font-size: 18px;
+}
+
+.viewer-step-row {
+  display: grid;
+  grid-template-columns: 1fr 34px 64px 34px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.viewer-step-row strong {
+  text-align: center;
+  font-weight: 600;
+}
+
+.viewer-step-row button {
+  height: 30px;
+}
+
+.viewer-settings-reset {
+  width: 100%;
+  height: 32px;
+}
+
+.viewer-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.56);
+}
+
+.viewer-modal {
+  width: min(560px, 92vw);
+  max-height: 78vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  background: #242424;
+  color: #eeeeee;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48);
+}
+
+.viewer-modal-header {
+  flex: 0 0 auto;
+  padding: 14px 16px 0;
+}
+
+.viewer-bookmark-editor-list {
+  min-height: 180px;
+  overflow: auto;
+  padding: 0 16px 16px;
+}
+
+.viewer-bookmark-editor-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.viewer-bookmark-editor-row strong,
+.viewer-bookmark-editor-row span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-bookmark-editor-row span {
+  margin-top: 3px;
+  color: #bdbdbd;
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .viewer-toolbar {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .viewer-title small {
+    display: none;
+  }
+
+  .viewer-tool-button {
+    width: 28px;
+  }
+
+  .viewer-dropdown.is-toolbar {
+    flex-basis: 98px;
+  }
+
+  .viewer-dropdown.is-toolbar.is-wide {
+    flex-basis: 124px;
+  }
+
+  .viewer-text-page {
+    padding: 24px 18px 64px;
+  }
+
+  .viewer-reader-stage {
+    padding: 0;
+  }
+}

@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openInExplorer: (folderPath) => ipcRenderer.invoke('fs:openInExplorer', folderPath),
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
+  openInternalViewer: (filePath) => ipcRenderer.invoke('viewer:open', filePath),
   exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
   getFilePreview: (filePath, options) => ipcRenderer.invoke('fs:filePreview', filePath, options),
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),
@@ -52,6 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
   searchLibraryFiles: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryFiles', { query, libraries, options }),
+  getLibraryFolderChildren: (libraryPath, parentPath) => ipcRenderer.invoke('folder:getLibraryFolderChildren', libraryPath, parentPath),
   
   // 라이브러리 DB
   initLibrary: (dbPath) => ipcRenderer.invoke('library:init', dbPath),

@@ -7,6 +7,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const distDir = path.join(projectRoot, 'dist');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
+env.BOOKMANAGER_DEV_LOAD_DIST = '1';
 
 let child = null;
 let restartTimer = null;
@@ -14,7 +15,7 @@ let restarting = false;
 let shuttingDown = false;
 
 function spawnElectron() {
-    child = spawn(electron, ['.'], {
+    child = spawn(electron, ['.', '--dev'], {
         stdio: 'inherit',
         env,
     });

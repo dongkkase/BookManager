@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { setupIPCHandlers } from './ipcHandlers.js';
+import { setupViewerWindowManager } from './viewerWindow.js';
 import { ConfigManager } from './configManager.js';
 import { setupI18n, t as i18nT } from './utils/i18n.js';
 import { resolveWindowState, serializeWindowState } from './windowState.js';
@@ -30,6 +31,7 @@ let mainWindow = null;
 let tray = null;
 let configManager = null;
 let ipcController = null;
+let viewerController = null;
 let allowWindowClose = false;
 let isShowingExitDialog = false;
 let sharingServersStopped = false;
@@ -40,20 +42,42 @@ const useUnsafeDevNodeIntegration = isDev && (
   process.env.BOOKMANAGER_UNSAFE_DEV_NODE === '1'
   || process.argv.includes('--unsafe-dev-node')
 );
+const useDevServer = isDev && process.env.BOOKMANAGER_DEV_LOAD_DIST !== '1';
 const APP_NAME = 'BookManager';
 const APP_ID = 'com.bookmanager.app';
 const DEV_SERVER_URL = process.env.BOOKMANAGER_DEV_SERVER_URL || 'http://127.0.0.1:5173';
+const DIST_INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
 const THUMBNAIL_MEMORY_CACHE_LIMIT = 256;
 const thumbnailMemoryCache = new Map();
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: 'bookmanager-thumbnail',
-  privileges: {
-    standard: true,
-    secure: true,
-    supportFetchAPI: true,
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'bookmanager-thumbnail',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+    },
   },
-}]);
+  {
+    scheme: 'bookmanager-document',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+  {
+    scheme: 'bookmanager-comic',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+]);
 
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
@@ -226,6 +250,14 @@ async function initializeApp() {
 
   // IPC 핸들러 설정
   ipcController = setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
+  viewerController = setupViewerWindowManager({
+    isDev: useDevServer,
+    devServerUrl: DEV_SERVER_URL,
+    distIndexPath: DIST_INDEX_PATH,
+    preloadPath: path.join(__dirname, 'viewerPreload.cjs'),
+    getIconPath: getAppIconPath,
+    getSevenZPath: async () => await getBinPath('7za') || await getBinPath('7z'),
+  });
 
   // 메인 윈도우 생성
   createMainWindow(config);
@@ -273,17 +305,33 @@ function createMainWindow(config) {
 
   // 개발 모드 또는 로컬 파일 로드
   if (isDev) {
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {
+      console.error(`[BookManager] Main window failed to load ${validatedUrl}: ${errorCode} ${errorDescription}`);
+    });
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log('[BookManager] Main window loaded.');
+    });
+  }
+
+  if (useDevServer) {
     mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    mainWindow.loadFile(DIST_INDEX_PATH);
+  }
+
+  if (isDev) {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.openDevTools();
   }
 
   mainWindow.once('ready-to-show', () => {
     if (windowState.isMaximized) {
       mainWindow.maximize();
     }
-    mainWindow.show();
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
   });
 
   mainWindow.on('close', async (event) => {
@@ -319,6 +367,10 @@ function createMainWindow(config) {
 
   mainWindow.on('closed', () => {
     ipcController?.clear(windowOwnerId);
+    const viewerWindow = viewerController?.getWindow?.();
+    if (viewerWindow && !viewerWindow.isDestroyed()) {
+      viewerWindow.close();
+    }
     mainWindow = null;
     allowWindowClose = false;
   });

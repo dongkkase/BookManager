@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openInExplorer: (folderPath) => ipcRenderer.invoke('fs:openInExplorer', folderPath),
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
+  openInternalViewer: (filePath) => ipcRenderer.invoke('viewer:open', filePath),
   exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
   getFilePreview: (filePath, options) => ipcRenderer.invoke('fs:filePreview', filePath, options),
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),

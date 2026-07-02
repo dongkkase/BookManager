@@ -214,6 +214,7 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     const rebuildDevScript = packageConfig.scripts['electron:dev:rebuild'];
     const unsafeDevScript = packageConfig.scripts['electron:dev:unsafe'];
     const unsafeRebuildDevScript = packageConfig.scripts['electron:dev:unsafe:rebuild'];
+    const devRunnerSource = fs.readFileSync(path.join(projectRoot, 'electron', 'runElectronDev.cjs'), 'utf8');
     const launcherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronDev.cjs'), 'utf8');
     const fastDevScript = packageConfig.scripts['electron:dev:fast'];
     const watchLauncherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronWatch.cjs'), 'utf8');
@@ -223,17 +224,38 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     assert.match(packageConfig.scripts.test, /npm run node:rebuild/);
     assert.match(packageConfig.scripts['electron:rebuild'], /electron-builder install-app-deps/);
     assert.doesNotMatch(devScript, /npm run electron:rebuild/);
-    assert.match(devScript, /concurrently -k -s first/);
-    assert.match(devScript, /http-get:\/\/127\.0\.0\.1:5173/);
-    assert.match(devScript, /node electron\/launchElectronDev\.cjs/);
+    assert.match(devScript, /node electron\/runElectronDev\.cjs --dist-watch/);
+    assert.doesNotMatch(devScript, /wait-on/);
     assert.doesNotMatch(devScript, /&& electron \. --dev/);
     assert.match(rebuildDevScript, /npm run electron:rebuild/);
     assert.match(rebuildDevScript, /npm run electron:dev/);
-    assert.match(unsafeDevScript, /http-get:\/\/127\.0\.0\.1:5173/);
-    assert.match(unsafeDevScript, /node electron\/launchElectronDev\.cjs --unsafe-dev-node/);
+    assert.match(unsafeDevScript, /node electron\/runElectronDev\.cjs --dist-watch --unsafe-dev-node/);
+    assert.doesNotMatch(unsafeDevScript, /wait-on/);
     assert.doesNotMatch(unsafeDevScript, /npm run electron:rebuild/);
     assert.match(unsafeRebuildDevScript, /npm run electron:rebuild/);
     assert.match(unsafeRebuildDevScript, /npm run electron:dev:unsafe/);
+    assert.match(devRunnerSource, /useDistWatch/);
+    assert.match(devRunnerSource, /startDistWatch/);
+    assert.match(devRunnerSource, /build\(\{/);
+    assert.match(devRunnerSource, /BOOKMANAGER_DEV_LOAD_DIST/);
+    assert.match(devRunnerSource, /restartElectron/);
+    assert.match(devRunnerSource, /closeBuildWatcher/);
+    assert.match(devRunnerSource, /createServer/);
+    assert.match(devRunnerSource, /await viteServer\.listen\(\)/);
+    assert.match(devRunnerSource, /viteServer\.printUrls\(\)/);
+    assert.match(devRunnerSource, /strictPort:\s*false/);
+    assert.match(devRunnerSource, /Cache-Control':\s*'no-store'/);
+    assert.match(devRunnerSource, /resolveActiveDevServerUrl/);
+    assert.match(devRunnerSource, /BOOKMANAGER_DEV_SERVER_URL:\s*activeDevServerUrl\.href/);
+    assert.match(devRunnerSource, /stopExistingDevElectronInstances/);
+    assert.match(devRunnerSource, /BOOKMANAGER_DEV_ELECTRON_PATH/);
+    assert.match(devRunnerSource, /Get-CimInstance Win32_Process/);
+    assert.match(devRunnerSource, /taskkill\.exe/);
+    assert.match(devRunnerSource, /await server\.close\(\)/);
+    assert.doesNotMatch(devRunnerSource, /http\.get\(devServerUrl/);
+    assert.doesNotMatch(devRunnerSource, /shell:\s*process\.platform === 'win32'/);
+    assert.match(devRunnerSource, /startElectron\(\)/);
+    assert.match(devRunnerSource, /launchElectronDev\.cjs/);
     assert.match(launcherSource, /delete env\.ELECTRON_RUN_AS_NODE/);
     assert.match(launcherSource, /BOOKMANAGER_DEV_SERVER_URL/);
     assert.match(launcherSource, /BOOKMANAGER_UNSAFE_DEV_NODE/);
@@ -241,15 +263,22 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     assert.match(launcherSource, /electronArgs\.push\('--unsafe-dev-node'\)/);
     assert.match(launcherSource, /spawn\(electron,\s*electronArgs/);
     assert.match(mainSource, /useUnsafeDevNodeIntegration = isDev/);
+    assert.match(mainSource, /BOOKMANAGER_DEV_LOAD_DIST/);
+    assert.match(mainSource, /useDevServer/);
     assert.match(mainSource, /DEV_SERVER_URL/);
     assert.match(mainSource, /loadURL\(DEV_SERVER_URL\)/);
+    assert.match(mainSource, /loadFile\(DIST_INDEX_PATH\)/);
+    assert.match(mainSource, /Main window loaded\./);
+    assert.match(mainSource, /mainWindow\.show\(\)/);
+    assert.match(mainSource, /mainWindow\.focus\(\)/);
     assert.match(mainSource, /contextIsolation:\s*!useUnsafeDevNodeIntegration/);
     assert.match(mainSource, /nodeIntegration:\s*useUnsafeDevNodeIntegration/);
     assert.match(fastDevScript, /vite build --watch/);
     assert.match(fastDevScript, /node electron\/launchElectronWatch\.cjs/);
     assert.match(watchLauncherSource, /delete env\.ELECTRON_RUN_AS_NODE/);
+    assert.match(watchLauncherSource, /BOOKMANAGER_DEV_LOAD_DIST/);
     assert.match(watchLauncherSource, /fs\.watch\(distDir,\s*\{\s*recursive:\s*true\s*\}/);
-    assert.match(watchLauncherSource, /spawn\(electron,\s*\['\.'\]/);
+    assert.match(watchLauncherSource, /spawn\(electron,\s*\['\.',\s*'--dev'\]/);
 });
 
 test('macOS 메뉴 막대 아이콘은 16px 템플릿 이미지로 생성한다', () => {
@@ -274,5 +303,9 @@ test('저장된 썸네일은 제한된 전용 프로토콜로 제공한다', () 
 test('렌더러 CSP는 전용 썸네일 프로토콜 이미지를 허용한다', () => {
     const indexSource = fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
 
+    assert.match(indexSource, /script-src[^;]*'unsafe-inline'/);
+    assert.match(indexSource, /connect-src[^;]*ws:\/\/127\.0\.0\.1:\*/);
+    assert.match(indexSource, /connect-src[^;]*ws:\/\/localhost:\*/);
     assert.match(indexSource, /img-src[^;]*bookmanager-thumbnail:/);
+    assert.match(indexSource, /img-src[^;]*bookmanager-comic:/);
 });

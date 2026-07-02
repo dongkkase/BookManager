@@ -1359,24 +1359,32 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const openFileInViewer = useCallback(async (file) => {
     const target = typeof file === 'string' ? file : file?.full_path || file?.path;
     if (!target) return;
-    if (!config?.viewer_path) {
+    let internalResult = null;
+    try {
+      internalResult = await window.electronAPI?.openInternalViewer?.(target);
+    } catch (error) {
+      internalResult = { success: false, message: error.message || String(error) };
+    }
+    if (internalResult?.success) return;
+
+    if (config?.viewer_path) {
+      const externalResult = await window.electronAPI?.openWithViewer?.(config.viewer_path, target);
+      if (externalResult?.success) return;
       await window.electronAPI?.showMessage?.({
-        type: 'warning',
-        title: t('dlg_warn'),
-        message: t('dlg_warn_viewer'),
+        type: 'error',
+        title: t('dlg_err'),
+        message: externalResult?.message || internalResult?.message || t('msg_failed'),
         language: config?.language || config?.lang || 'ko',
       });
       return;
     }
-    const result = await window.electronAPI?.openWithViewer?.(config.viewer_path, target);
-    if (!result?.success) {
-      await window.electronAPI?.showMessage?.({
-        type: 'error',
-        title: t('dlg_err'),
-        message: result?.message || t('msg_failed'),
-        language: config?.language || config?.lang || 'ko',
-      });
-    }
+
+    await window.electronAPI?.showMessage?.({
+      type: 'error',
+      title: t('dlg_err'),
+      message: internalResult?.message || t('msg_failed'),
+      language: config?.language || config?.lang || 'ko',
+    });
   }, [config?.language, config?.lang, config?.viewer_path, t]);
 
   const openSelectedInViewer = useCallback(async () => {
