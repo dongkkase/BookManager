@@ -101,6 +101,25 @@ const isPathInsideLibrary = (filePath = '', libraryPath = '') => {
   return Boolean(pathKey && libraryKey && (pathKey === libraryKey || pathKey.startsWith(`${libraryKey}/`)));
 };
 
+function createFolderResizeGuide(axis, position) {
+  if (typeof document === 'undefined') return null;
+  const guide = document.createElement('div');
+  guide.className = `folder-resize-guide is-${axis}`;
+  document.body.appendChild(guide);
+  updateFolderResizeGuide(guide, axis, position);
+  return guide;
+}
+
+function updateFolderResizeGuide(guide, axis, position) {
+  if (!guide) return;
+  const rounded = Math.round(Number(position) || 0);
+  if (axis === 'x') {
+    guide.style.transform = `translate3d(${rounded}px, 0, 0)`;
+  } else {
+    guide.style.transform = `translate3d(0, ${rounded}px, 0)`;
+  }
+}
+
 function FolderTab({ config, saveConfig, t, showToast }) {
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
 
@@ -118,6 +137,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
   const viewContainerRef = useRef(null);
+  const panelResizingRef = useRef(false);
   const viewScrollPositionsRef = useRef({ table: 0, tile: 0, thumbnail: 0 });
   const hasShownMissingToastRef = useRef(false);
   const missingBackgroundKeyRef = useRef('');
@@ -488,13 +508,27 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     initializedDetailHeightRef.current = true;
   }, [activeSelectedFile]);
 
-  useEffect(() => {
+  const updateRightPanelWidth = useCallback(() => {
     const panel = rightPanelRef.current;
-    if (!panel) return undefined;
+    if (!panel) return;
+    const width = Math.max(320, Math.round(panel.clientWidth || 900));
+    setRightPanelWidth(current => current === width ? current : width);
+  }, []);
+
+  const updateViewContainerWidth = useCallback(() => {
+    const container = viewContainerRef.current;
+    if (!container) return;
+    const width = Math.max(320, Math.round(container.clientWidth || 900));
+    setViewContainerWidth(current => current === width ? current : width);
+  }, []);
+
+  useEffect(() => {
     const updateWidth = () => {
-      setRightPanelWidth(Math.max(320, Math.round(panel.clientWidth || 900)));
+      if (!panelResizingRef.current) updateRightPanelWidth();
     };
     updateWidth();
+    const panel = rightPanelRef.current;
+    if (!panel) return undefined;
     if (typeof ResizeObserver !== 'function') {
       window.addEventListener('resize', updateWidth);
       return () => window.removeEventListener('resize', updateWidth);
@@ -502,16 +536,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const observer = new ResizeObserver(updateWidth);
     observer.observe(panel);
     return () => observer.disconnect();
-  }, [isSidebarVisible]);
+  }, [isSidebarVisible, updateRightPanelWidth]);
 
   useEffect(() => {
-    const container = viewContainerRef.current;
-    if (!container) return undefined;
     const updateWidth = () => {
-      const width = Math.max(320, Math.round(container.clientWidth || 900));
-      setViewContainerWidth(current => current === width ? current : width);
+      if (!panelResizingRef.current) updateViewContainerWidth();
     };
     updateWidth();
+    const container = viewContainerRef.current;
+    if (!container) return undefined;
     if (typeof ResizeObserver !== 'function') {
       window.addEventListener('resize', updateWidth);
       return () => window.removeEventListener('resize', updateWidth);
@@ -519,7 +552,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const observer = new ResizeObserver(updateWidth);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [isSidebarVisible, viewMode]);
+  }, [isSidebarVisible, updateViewContainerWidth, viewMode]);
 
   useEffect(() => {
     const removeProgress = window.electronAPI?.onTaskProgress?.(data => {
@@ -2109,60 +2142,119 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   ]);
 
   const startHorizontalResize = useCallback((event) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = leftPanelWidth;
     const containerWidth = mainAreaRef.current?.clientWidth || 1200;
+    const containerLeft = mainAreaRef.current?.getBoundingClientRect?.().left || 0;
+    const guide = createFolderResizeGuide('x', containerLeft + startWidth);
+    let frameId = 0;
+    let pendingGuidePosition = containerLeft + startWidth;
+
+    const scheduleWidth = width => {
+      pendingGuidePosition = containerLeft + width;
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        updateFolderResizeGuide(guide, 'x', pendingGuidePosition);
+      });
+    };
+
+    const cleanup = () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+      guide?.remove();
+      panelResizingRef.current = false;
+      document.body.classList.remove('is-resizing-panel', 'is-resizing-folder-horizontal');
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
 
     const handleMove = (moveEvent) => {
+      moveEvent.preventDefault();
       const nextWidth = startWidth + moveEvent.clientX - startX;
-      setLeftPanelWidth(clampSidebarWidth(nextWidth, containerWidth));
+      scheduleWidth(clampSidebarWidth(nextWidth, containerWidth));
     };
 
     const handleUp = (upEvent) => {
       const nextWidth = startWidth + upEvent.clientX - startX;
       const savedWidth = clampSidebarWidth(nextWidth, containerWidth);
-      setLeftPanelWidth(savedWidth);
+      cleanup();
+      setLeftPanelWidth(current => current === savedWidth ? current : savedWidth);
+      window.requestAnimationFrame(() => {
+        updateRightPanelWidth();
+        updateViewContainerWidth();
+      });
       saveConfig?.({ folder_left_panel_width: savedWidth }).catch(error => {
         console.error('폴더 좌우 splitter 저장 실패:', error);
       });
-      document.body.classList.remove('is-resizing-panel');
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
     };
 
-    document.body.classList.add('is-resizing-panel');
+    panelResizingRef.current = true;
+    document.body.classList.add('is-resizing-panel', 'is-resizing-folder-horizontal');
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
-  }, [leftPanelWidth, saveConfig]);
+  }, [leftPanelWidth, saveConfig, updateRightPanelWidth, updateViewContainerWidth]);
 
   const startVerticalResize = useCallback((event) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = detailPanelHeight;
     const containerHeight = rightPanelRef.current?.clientHeight || 700;
+    const rightPanelRect = rightPanelRef.current?.getBoundingClientRect?.();
+    const bottomBarHeight = rightPanelRef.current?.querySelector?.('.right-bottom-bar')?.getBoundingClientRect?.().height || 0;
+    const detailBottom = (rightPanelRect?.bottom || window.innerHeight) - bottomBarHeight;
+    const guide = createFolderResizeGuide('y', detailBottom - startHeight);
+    let frameId = 0;
+    let pendingGuidePosition = detailBottom - startHeight;
+
+    const scheduleHeight = height => {
+      pendingGuidePosition = detailBottom - height;
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        updateFolderResizeGuide(guide, 'y', pendingGuidePosition);
+      });
+    };
+
+    const cleanup = () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+      guide?.remove();
+      panelResizingRef.current = false;
+      document.body.classList.remove('is-resizing-panel', 'is-resizing-folder-vertical');
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
 
     const handleMove = (moveEvent) => {
+      moveEvent.preventDefault();
       const nextHeight = startHeight - (moveEvent.clientY - startY);
-      setDetailPanelHeight(clampDetailHeight(nextHeight, containerHeight));
+      scheduleHeight(clampDetailHeight(nextHeight, containerHeight));
     };
 
     const handleUp = (upEvent) => {
       const nextHeight = startHeight - (upEvent.clientY - startY);
       const savedHeight = clampDetailHeight(nextHeight, containerHeight);
-      setDetailPanelHeight(savedHeight);
+      cleanup();
+      setDetailPanelHeight(current => current === savedHeight ? current : savedHeight);
+      window.requestAnimationFrame(updateViewContainerWidth);
       saveConfig?.({ folder_detail_panel_height: savedHeight }).catch(error => {
         console.error('폴더 상하 splitter 저장 실패:', error);
       });
-      document.body.classList.remove('is-resizing-panel');
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
     };
 
-    document.body.classList.add('is-resizing-panel');
+    panelResizingRef.current = true;
+    document.body.classList.add('is-resizing-panel', 'is-resizing-folder-vertical');
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
-  }, [detailPanelHeight, saveConfig]);
+  }, [detailPanelHeight, saveConfig, updateViewContainerWidth]);
 
   const handleSort = useCallback((key, toggleSameKey = true) => {
     if (sortKey === key && toggleSameKey) {
@@ -2497,7 +2589,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 aria-orientation="horizontal"
                 onMouseDown={startVerticalResize}
               />
-              <div className="detail-panel-wrap" style={{ flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}>
+              <div
+                className="detail-panel-wrap"
+                style={{ flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}
+              >
                 <DetailPanel selectedFile={detailSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
               </div>
             </>

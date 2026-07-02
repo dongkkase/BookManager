@@ -488,6 +488,49 @@
   z-index: 20;
 }
 
+body.is-resizing-panel {
+  user-select: none;
+}
+
+body.is-resizing-folder-horizontal,
+body.is-resizing-folder-horizontal .folder-tab {
+  cursor: col-resize;
+}
+
+body.is-resizing-folder-vertical,
+body.is-resizing-folder-vertical .folder-tab {
+  cursor: row-resize;
+}
+
+body.is-resizing-panel .folder-left-panel,
+body.is-resizing-panel .folder-right-panel,
+body.is-resizing-panel .view-container,
+body.is-resizing-panel .detail-panel-wrap {
+  pointer-events: none;
+}
+
+.folder-resize-guide {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 0 10px rgba(49, 168, 255, 0.45);
+}
+
+.folder-resize-guide.is-x {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+}
+
+.folder-resize-guide.is-y {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+
 .folder-resizer-vertical {
   width: 8px;
   cursor: col-resize;

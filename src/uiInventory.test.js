@@ -369,6 +369,26 @@ test('폴더 탭 F5는 활성 패널에 맞는 새로고침을 실행한다', ()
     );
 });
 
+test('폴더 탭 패널 splitter는 드래그 중 React 상태 갱신을 프레임 단위로 제한한다', () => {
+    assertInventory('folder', [
+        ['패널 리사이즈 가이드 생성', 'createFolderResizeGuide'],
+        ['패널 리사이즈 가이드 이동', 'updateFolderResizeGuide'],
+        ['패널 리사이즈 가이드 제거', 'guide?.remove()'],
+        ['패널 리사이즈 중 측정 업데이트 보류', 'panelResizingRef'],
+        ['리사이즈 중 ResizeObserver 상태 갱신 차단', 'if (!panelResizingRef.current) updateRightPanelWidth()'],
+        ['패널 리사이즈 프레임 예약', 'window.requestAnimationFrame'],
+        ['좌우 splitter 종료 시 상태 커밋', 'setLeftPanelWidth(current => current === savedWidth ? current : savedWidth)'],
+        ['상하 splitter 종료 시 상태 커밋', 'setDetailPanelHeight(current => current === savedHeight ? current : savedHeight)'],
+    ]);
+    assertInventory('folderCss', [
+        ['패널 리사이즈 중 선택 방지', 'body.is-resizing-panel'],
+        ['좌우 패널 리사이즈 커서', 'body.is-resizing-folder-horizontal'],
+        ['상하 패널 리사이즈 커서', 'body.is-resizing-folder-vertical'],
+        ['패널 리사이즈 중 포인터 이벤트 차단', 'pointer-events: none'],
+        ['패널 리사이즈 가이드 스타일', '.folder-resize-guide'],
+    ]);
+});
+
 test('이름 바꾸기 미리보기는 컬럼 크기 조절과 변경 색상 표시를 제공한다', () => {
     assertInventory('multiRenameDialog', [
         ['미리보기 컬럼 폭 상태', 'columnWidths'],
