@@ -234,6 +234,12 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:getEpubText', async (_event, sessionId) => (
         sessions.getEpubText(sessionId)
     ));
+    ipcMain.handle('viewer:toggleFullscreen', async event => {
+        const targetWindow = BrowserWindow.fromWebContents(event.sender);
+        if (!targetWindow || targetWindow.isDestroyed()) return { success: false };
+        targetWindow.setFullScreen(!targetWindow.isFullScreen());
+        return { success: true, fullscreen: targetWindow.isFullScreen() };
+    });
 
     return {
         openViewer,

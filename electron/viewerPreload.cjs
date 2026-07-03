@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   getEpubText: sessionId => ipcRenderer.invoke('viewer:getEpubText', sessionId),
   listBundledFonts: () => ipcRenderer.invoke('font:listBundled'),
   listSystemFonts: () => ipcRenderer.invoke('font:listSystem'),
+  toggleFullscreen: () => ipcRenderer.invoke('viewer:toggleFullscreen'),
   closeWindow: () => ipcRenderer.send('window:close'),
   onLoadSession: callback => {
     const handler = (_event, session) => callback(session);

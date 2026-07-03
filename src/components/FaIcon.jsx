@@ -5,8 +5,12 @@ import {
 } from '@fortawesome/free-brands-svg-icons';
 import {
   faAngleDown,
+  faAngleLeft,
+  faAngleRight,
   faAngleUp,
   faAnglesDown,
+  faAnglesLeft,
+  faAnglesRight,
   faAnglesUp,
   faArrowRotateLeft,
   faBars,
@@ -73,12 +77,20 @@ import {
 
 const ICONS = {
   angleDown: faAngleDown,
+  angleLeft: faAngleLeft,
+  angleRight: faAngleRight,
   angleUp: faAngleUp,
   anglesDown: faAnglesDown,
+  anglesLeft: faAnglesLeft,
+  anglesRight: faAnglesRight,
   anglesUp: faAnglesUp,
   'angle-down': faAngleDown,
+  'angle-left': faAngleLeft,
+  'angle-right': faAngleRight,
   'angle-up': faAngleUp,
   'angles-down': faAnglesDown,
+  'angles-left': faAnglesLeft,
+  'angles-right': faAnglesRight,
   'angles-up': faAnglesUp,
   folder: faFolder,
   folderOpen: faFolderOpen,

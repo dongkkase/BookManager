@@ -14,6 +14,7 @@ const mainSource = readFileSync(path.join(root, 'main.js'), 'utf8');
 const folderTabSource = readFileSync(path.join(projectRoot, 'src', 'tabs', 'FolderTab.jsx'), 'utf8');
 const appEntrySource = readFileSync(path.join(projectRoot, 'src', 'main.jsx'), 'utf8');
 const viewerAppSource = readFileSync(path.join(projectRoot, 'src', 'ViewerApp.jsx'), 'utf8');
+const viewerStyleSource = readFileSync(path.join(projectRoot, 'src', 'styles', 'viewer.css'), 'utf8');
 const indexSource = readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
 
 test('내부 뷰어는 모달이 아니라 단일 BrowserWindow를 재사용한다', () => {
@@ -59,6 +60,20 @@ test('뷰어 창은 F12와 Ctrl+Shift+I로 개발자 도구를 토글한다', ()
     assert.match(viewerWindowSource, /closeDevTools\(\)/);
 });
 
+test('뷰어는 Enter와 본문 더블클릭으로 창 전체화면을 토글한다', () => {
+    assert.match(viewerWindowSource, /ipcMain\.handle\('viewer:toggleFullscreen'/);
+    assert.match(viewerWindowSource, /BrowserWindow\.fromWebContents\(event\.sender\)/);
+    assert.match(viewerWindowSource, /setFullScreen\(!targetWindow\.isFullScreen\(\)\)/);
+    assert.match(viewerPreloadSource, /toggleFullscreen:\s*\(\) => ipcRenderer\.invoke\('viewer:toggleFullscreen'\)/);
+    assert.match(viewerAppSource, /const toggleFullscreen = useCallback/);
+    assert.match(viewerAppSource, /window\.viewerAPI\?\.toggleFullscreen\?\.\(\)/);
+    assert.match(viewerAppSource, /const isViewerInteractiveTarget = useCallback/);
+    assert.match(viewerAppSource, /'input', 'select', 'textarea', 'button', 'a'/);
+    assert.match(viewerAppSource, /event\.key === 'Enter' && !event\.repeat/);
+    assert.match(viewerAppSource, /onDoubleClick=\{handleContentDoubleClick\}/);
+    assert.match(viewerAppSource, /\.viewer-toolbar, \.viewer-slide-nav/);
+});
+
 test('뷰어 preload는 세션과 포맷별 읽기 API만 노출한다', () => {
     assert.match(viewerPreloadSource, /contextBridge\.exposeInMainWorld\('viewerAPI'/);
     assert.match(viewerPreloadSource, /listComicPages/);
@@ -67,14 +82,138 @@ test('뷰어 preload는 세션과 포맷별 읽기 API만 노출한다', () => {
     assert.match(viewerPreloadSource, /getText/);
     assert.match(viewerPreloadSource, /getEpubText/);
     assert.match(viewerPreloadSource, /openAdjacent/);
+    assert.match(viewerPreloadSource, /toggleFullscreen/);
     assert.doesNotMatch(viewerPreloadSource, /deleteFiles|renameFile|saveConfig/);
 });
 
-test('뷰어 툴바는 커스텀 드롭다운과 책갈피 아이콘을 사용한다', () => {
+test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다', () => {
     assert.match(viewerAppSource, /function ViewerDropdown/);
     assert.doesNotMatch(viewerAppSource, /<select/);
     assert.match(viewerAppSource, /icon="bookmark"/);
+    assert.match(viewerAppSource, /icon="anglesLeft"/);
+    assert.match(viewerAppSource, /icon="anglesRight"/);
+    assert.match(viewerAppSource, /icon="angleLeft"/);
+    assert.match(viewerAppSource, /icon="angleRight"/);
+    assert.match(viewerAppSource, /fit_width_or_height\.svg/);
+    assert.match(viewerAppSource, /\{ id: 'height', label: '높이 맞춤', key: '7'/);
+    assert.match(viewerAppSource, /function fitScaleForViewMode/);
+    assert.match(viewerAppSource, /function scaledPageSizeForViewMode/);
+    assert.match(viewerAppSource, /viewMode === 'height'[\s\S]*?\? heightScale/);
+    assert.match(viewerStyleSource, /\.viewer-comic-image\.view-height/);
+    assert.match(viewerAppSource, /const \[pageSizes, setPageSizes\] = useState\(\{\}\)/);
+    assert.match(viewerAppSource, /const getComicImageStyle = \(page, pageSlots = 1\) =>/);
+    assert.match(viewerAppSource, /baseWidth:\s*size\.width/);
+    assert.match(viewerAppSource, /baseHeight:\s*size\.height/);
+    assert.match(viewerAppSource, /naturalWidth[\s\S]*?naturalHeight/);
+    assert.match(viewerStyleSource, /\.viewer-comic-image\.view-width\s*\{[^}]*max-width:\s*none[^}]*max-height:\s*none/);
+    assert.match(viewerAppSource, /show_full_size\.svg/);
+    assert.match(viewerAppSource, /fit_to_page\.svg/);
+    assert.match(viewerAppSource, /plus_minus\.svg/);
+    assert.match(viewerAppSource, /read_mode_one_page\.svg/);
+    assert.match(viewerAppSource, /read_mode_double_page\.svg/);
+    assert.match(viewerAppSource, /read_mode_scroll\.svg/);
+    assert.match(viewerAppSource, /left_read\.svg/);
+    assert.match(viewerAppSource, /readingDirection === 'rtl' \? \[next, current\] : \[current, next\]/);
+    assert.match(viewerAppSource, /active=\{readingDirection === 'rtl'\}/);
+    assert.doesNotMatch(viewerAppSource, /active=\{readingDirection === 'ltr'\}/);
+    assert.match(viewerAppSource, /slide_navigation\.svg/);
+    assert.match(viewerStyleSource, /\.viewer-toolbar[\s\S]*?z-index:\s*60/);
+    assert.match(viewerStyleSource, /\.viewer-tool-group\s*\{[^}]*overflow:\s*visible/);
+    assert.match(viewerStyleSource, /\.viewer-tool-cluster/);
+    assert.match(viewerStyleSource, /\.viewer-tool-button\.is-active[\s\S]*?background:\s*#3498db/);
+    assert.match(viewerAppSource, /const supportsSettingsButton = session\?\.type === 'comic' \|\| isReaderDocument/);
+    assert.match(viewerAppSource, /const settingsButtonTitle = session\?\.type === 'comic' \? '만화책 설정' : '읽기 설정'/);
+    assert.match(viewerAppSource, /aria-label="파일 이동"[\s\S]*?aria-label="페이지 이동"[\s\S]*?aria-label="화면맞춤"[\s\S]*?aria-label="확대\/축소"[\s\S]*?aria-label="읽기모드"[\s\S]*?aria-label="읽기방향"[\s\S]*?aria-label="슬라이드 탐색 바"[\s\S]*?aria-label="Cover"[\s\S]*?aria-label="책갈피"[\s\S]*?aria-label="설정"/);
+    assert.match(viewerAppSource, /aria-label="파일 이동"[\s\S]*?title="이전파일 \(\[\)"[\s\S]*?title="다음파일 \(\]\)"/);
+    assert.match(viewerAppSource, /aria-label="페이지 이동"[\s\S]*?title="이전장"[\s\S]*?title="다음장"/);
+    assert.doesNotMatch(viewerAppSource, /aria-label="파일 및 페이지 이동"/);
+    assert.doesNotMatch(viewerAppSource, /aria-label="보기 및 설정"/);
+    assert.doesNotMatch(viewerAppSource, /aria-label="만화책 옵션"/);
+    assert.match(viewerStyleSource, /\.viewer-tool-icon-image/);
+    assert.match(viewerStyleSource, /\.viewer-dropdown-menu[\s\S]*?z-index:\s*80/);
+    assert.match(viewerStyleSource, /\.viewer-bookmark-menu[\s\S]*?z-index:\s*80/);
+    assert.doesNotMatch(viewerStyleSource, /\.viewer-tool-group\s*\{[^}]*overflow-x:\s*auto/);
+    assert.doesNotMatch(viewerAppSource, />이전파일<\/ToolbarButton>/);
+    assert.doesNotMatch(viewerAppSource, />이전장<\/ToolbarButton>/);
+    assert.doesNotMatch(viewerAppSource, />다음장<\/ToolbarButton>/);
+    assert.doesNotMatch(viewerAppSource, />다음파일<\/ToolbarButton>/);
+    assert.match(viewerAppSource, /const supportsFlowControls = session\?\.type === 'comic' \|\| session\?\.type === 'pdf'/);
+    assert.match(viewerAppSource, /const supportsViewControls = session\?\.type === 'comic' \|\| session\?\.type === 'pdf'/);
+    assert.match(viewerAppSource, /const supportsZoomControls = session\?\.type === 'comic' \|\| session\?\.type === 'pdf' \|\| isReaderDocument/);
+    assert.match(viewerAppSource, /const readerFontSize = readerSettings\.fontSize \* \(\(Number\(zoom\) \|\| 100\) \/ 100\)/);
+    assert.match(viewerAppSource, /'--viewer-reader-size': `\$\{readerFontSize\}px`/);
+    assert.match(viewerAppSource, /const ZOOM_MIN = 10/);
+    assert.match(viewerAppSource, /const ZOOM_MAX = 500/);
+    assert.match(viewerAppSource, /const ZOOM_STEP = 10/);
+    assert.match(viewerAppSource, /function ZoomControl/);
+    assert.match(viewerAppSource, /const adjustZoom = useCallback/);
+    assert.match(viewerAppSource, /const setZoomValue = useCallback/);
+    assert.match(viewerAppSource, /clamp\(\(Number\(current\) \|\| 100\) \+ delta, ZOOM_MIN, ZOOM_MAX\)/);
+    assert.match(viewerAppSource, /const handleZoomWheel = useCallback/);
+    assert.match(viewerAppSource, /onWheel=\{handleZoomWheel\}/);
+    assert.match(viewerStyleSource, /\.viewer-zoom-menu/);
+    assert.match(viewerStyleSource, /\.viewer-zoom-range/);
+    assert.doesNotMatch(viewerAppSource, /<ToolbarButton[^>]+icon="(?:chevronLeft|chevronRight|angleUp|angleDown)"/);
     assert.doesNotMatch(viewerAppSource, /title="닫기 \(Esc\)"/);
+});
+
+test('하단 페이지 네비게이션은 모든 뷰어 형식에서 사용할 수 있다', () => {
+    assert.match(viewerAppSource, /function PdfThumbnailCanvas/);
+    assert.match(viewerAppSource, /function ComicSlideThumb/);
+    assert.match(viewerAppSource, /function ReaderSlideThumb/);
+    assert.match(viewerAppSource, /const goPageIndex = useCallback/);
+    assert.match(viewerAppSource, /const handleSlideNavWheel = useCallback/);
+    assert.match(viewerAppSource, /event\.currentTarget\.scrollBy\(\{ left: wheelDelta, behavior: 'auto' \}\)/);
+    assert.match(viewerAppSource, /const slideNavAvailable = Boolean\(session && pageCount > 0 && \(session\.type !== 'pdf' \|\| pdfDocument\)\)/);
+    assert.match(viewerAppSource, /const renderSlideThumbs = \(\) =>/);
+    assert.match(viewerAppSource, /onWheel=\{handleSlideNavWheel\}/);
+    assert.match(viewerAppSource, /slideNavOpen,\s*\.\.\.patch/s);
+    assert.match(viewerAppSource, /setSlideNavOpen\(saved\.slideNavOpen !== false\)/);
+    assert.match(viewerAppSource, /\[flowMode, pageIndex, readerSettings, readingDirection, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, zoom\]/);
+    assert.match(viewerAppSource, /session\?\.type === 'comic'/);
+    assert.match(viewerAppSource, /session\?\.type === 'epub' \|\| session\?\.type === 'text'/);
+    assert.match(viewerAppSource, /loadComicPage\(index, \{ force: true \}\)/);
+    assert.match(viewerStyleSource, /viewer-slide-thumb\.is-comic/);
+    assert.match(viewerStyleSource, /viewer-slide-thumb\.is-reader/);
+    assert.match(viewerStyleSource, /viewer-slide-thumb-reader-preview/);
+});
+
+test('확대된 이미지와 PDF 캔버스는 드래그로 스크롤 이동할 수 있다', () => {
+    assert.match(viewerAppSource, /const dragPanRef = useRef/);
+    assert.match(viewerAppSource, /const isDragPanTarget = useCallback/);
+    assert.match(viewerAppSource, /closest\?\.\('\.viewer-comic-image, \.viewer-pdf-canvas-wrap'\)/);
+    assert.match(viewerAppSource, /const handleDragPanPointerDown = useCallback/);
+    assert.match(viewerAppSource, /node\.scrollWidth > node\.clientWidth \+ 1/);
+    assert.match(viewerAppSource, /node\.scrollHeight > node\.clientHeight \+ 1/);
+    assert.match(viewerAppSource, /node\.setPointerCapture\?\.\(event\.pointerId\)/);
+    assert.match(viewerAppSource, /node\.scrollLeft = state\.scrollLeft - \(event\.clientX - state\.startX\)/);
+    assert.match(viewerAppSource, /node\.scrollTop = state\.scrollTop - \(event\.clientY - state\.startY\)/);
+    assert.match(viewerAppSource, /onPointerDown=\{handleDragPanPointerDown\}/);
+    assert.match(viewerAppSource, /onPointerMove=\{handleDragPanPointerMove\}/);
+    assert.match(viewerAppSource, /onPointerUp=\{endDragPan\}/);
+    assert.match(viewerStyleSource, /\.viewer-content\.is-drag-panning/);
+    assert.match(viewerStyleSource, /\.viewer-comic-image[\s\S]*?cursor:\s*grab/);
+    assert.match(viewerStyleSource, /\.viewer-pdf-canvas-wrap[\s\S]*?cursor:\s*grab/);
+});
+
+test('두장보기모드는 두 페이지가 있을 때 가운데로 붙여서 배치한다', () => {
+    assert.match(viewerAppSource, /has-spread-pair/);
+    assert.match(viewerAppSource, /viewer-spread-pair/);
+    assert.match(viewerAppSource, /const stageGap = 0/);
+    assert.match(viewerAppSource, /const pageSlots = hasSpreadPair \? 2 : 1/);
+    assert.match(viewerAppSource, /const horizontalInset = slots > 1 \? 24 : 64/);
+    assert.match(viewerAppSource, /const availableWidth = Math\.max\(220,\s*\(\(Number\(containerWidth\) \|\| 900\) - horizontalInset\) \/ slots\)/);
+    assert.match(viewerStyleSource, /viewer-spread-pair[\s\S]*?gap:\s*0/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair[\s\S]*?gap:\s*0/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-image[\s\S]*?flex:\s*0 1 auto/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-image:first-child[\s\S]*?object-position:\s*right center/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-image:last-child[\s\S]*?object-position:\s*left center/);
+    assert.match(viewerStyleSource, /viewer-reader-stage\.is-spread\.has-spread-pair[\s\S]*?gap:\s*0/);
+    assert.match(viewerStyleSource, /viewer-reader-stage\.is-spread\.has-spread-pair \.viewer-spread-pair[\s\S]*?align-items:\s*stretch/);
+    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread[\s\S]*?gap:\s*0/);
+    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread\.has-spread-pair \.viewer-pdf-canvas-wrap[\s\S]*?max-width:\s*100%/);
+    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread\.has-spread-pair \.viewer-pdf-page[\s\S]*?flex:\s*0 1 auto/);
+    assert.doesNotMatch(viewerStyleSource, /viewer-pdf-stage\.is-spread\.has-spread-pair \.viewer-pdf-page[\s\S]*?flex:\s*0 0 50%/);
 });
 
 test('뷰어 인접권 버튼은 사용 가능할 때만 동작한다', () => {
@@ -110,19 +249,43 @@ test('뷰어 세션은 만화책, PDF, EPUB, TXT 형식을 분기한다', () => 
     assert.match(viewerSessionSource, /getEpubText/);
 });
 
-test('PDF 뷰어는 blob iframe과 내부 문서 URL fetch를 사용한다', () => {
-    assert.match(viewerAppSource, /<iframe/);
+test('PDF 뷰어는 PDF.js로 페이지를 직접 렌더링하고 책갈피 페이지를 추적한다', () => {
+    assert.match(viewerAppSource, /import \* as pdfjsLib from 'pdfjs-dist'/);
+    assert.match(viewerAppSource, /pdf\.worker\.mjs\?url/);
+    assert.match(viewerAppSource, /GlobalWorkerOptions\.workerSrc/);
+    assert.match(viewerAppSource, /function PdfPageCanvas/);
+    assert.match(viewerAppSource, /function PdfThumbnailCanvas/);
+    assert.match(viewerAppSource, /pdfjsLib\.getDocument/);
+    assert.match(viewerAppSource, /<canvas ref=\{canvasRef\}/);
+    assert.match(viewerAppSource, /viewer-pdf-canvas-wrap is-\$\{status\}/);
+    assert.match(viewerAppSource, /viewer-slide-nav/);
+    assert.match(viewerAppSource, /viewer-slide-strip/);
+    assert.match(viewerAppSource, /viewer-slide-thumb/);
+    assert.match(viewerAppSource, /data-pdf-page-index/);
     assert.match(viewerAppSource, /fetch\(result\.documentUrl/);
-    assert.match(viewerAppSource, /URL\.createObjectURL/);
-    assert.match(viewerAppSource, /URL\.revokeObjectURL/);
-    assert.match(viewerAppSource, /documentBlobUrlRef/);
-    assert.match(indexSource, /frame-src[^;]*blob:/);
+    assert.match(viewerAppSource, /scrollPdfPageIntoView/);
+    assert.match(viewerAppSource, /session\?\.type === 'pdf' && pdfPageCount > 0/);
+    assert.match(viewerAppSource, /session\.type === 'comic' \|\| session\.type === 'pdf'/);
+    assert.match(indexSource, /worker-src[^;]*'self'[^;]*blob:[^;]*file:/);
     assert.match(indexSource, /connect-src[^;]*bookmanager-document:/);
-    assert.match(viewerAppSource, /nextAnimationFrame/);
     assert.match(viewerAppSource, /loadSequenceRef/);
-    assert.match(viewerAppSource, /setDocumentFrameKey/);
-    assert.match(viewerAppSource, /setDocumentUrl\(blobUrl\)/);
+    assert.match(viewerStyleSource, /viewer-pdf-canvas-wrap\.is-loading/);
+    assert.match(viewerStyleSource, /viewer-pdf-canvas-wrap:not\(\.is-ready\) canvas/);
+    assert.match(viewerStyleSource, /visibility:\s*hidden/);
+    assert.doesNotMatch(viewerStyleSource, /viewer-pdf-canvas-wrap:not\(\.is-ready\) canvas[\s\S]*?(?:width|height):\s*0\s*!important/);
+    assert.match(viewerAppSource, /const \[pageSize,\s*setPageSize\] = useState\(null\)/);
+    assert.match(viewerAppSource, /setPageSize\(nextPageSize\)/);
+    assert.match(viewerStyleSource, /viewer-pdf-canvas-wrap\.is-ready canvas[\s\S]*?background:\s*#ffffff/);
+    assert.match(viewerStyleSource, /viewer-app\.has-slide-nav-open \.viewer-content/);
+    assert.match(viewerStyleSource, /viewer-slide-nav\.is-open::before/);
+    assert.match(viewerStyleSource, /viewer-slide-nav\.is-open::after/);
+    assert.doesNotMatch(viewerStyleSource, /viewer-pdf-page\.is-active\s+\.viewer-pdf-canvas-wrap[\s\S]*?outline/);
+    assert.doesNotMatch(viewerAppSource, /<iframe/);
     assert.doesNotMatch(viewerAppSource, /<embed/);
+    assert.doesNotMatch(viewerAppSource, /URL\.createObjectURL/);
+    assert.doesNotMatch(viewerAppSource, /URL\.revokeObjectURL/);
+    assert.doesNotMatch(viewerAppSource, /documentBlobUrlRef/);
+    assert.doesNotMatch(viewerAppSource, /setDocumentFrameKey/);
     assert.doesNotMatch(viewerAppSource, /setDocumentUrl\(result\.fileUrl/);
     assert.doesNotMatch(viewerSessionSource, /fileUrl/);
     assert.doesNotMatch(viewerSessionSource, /MAX_DOCUMENT_DATA_URL_BYTES/);

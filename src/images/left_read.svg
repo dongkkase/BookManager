@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="color:#fff">
+  <defs>
+    <clipPath id="book-shape" clipPathUnits="userSpaceOnUse">
+      <path d="M0.8 3.1C0.8 1.83 1.83 0.8 3.1 0.8h6.25c.86 0 1.55.69 1.55 1.55v19.3c0 .86-.69 1.55-1.55 1.55H3.1c-1.27 0-2.3-1.03-2.3-2.3V3.1Z" />
+      <path d="M13.1 2.35c0-.86.69-1.55 1.55-1.55h6.25c1.27 0 2.3 1.03 2.3 2.3v17.8c0 1.27-1.03 2.3-2.3 2.3h-6.25c-.86 0-1.55-.69-1.55-1.55V2.35Z" />
+    </clipPath>
+  </defs>
+
+  <path
+    clip-path="url(#book-shape)"
+    fill="currentColor"
+    fill-rule="evenodd"
+    d="M0 0H24V24H0Z M8.4 7.15 3.55 12l4.85 4.85c.42.42 1.15.12 1.15-.48V14.1h8.05c.58 0 1.05-.47 1.05-1.05v-2.1c0-.58-.47-1.05-1.05-1.05H9.55V7.63c0-.6-.73-.9-1.15-.48Z"
+  />
+</svg>
