@@ -257,6 +257,8 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.match(scriptText, /card-download-button/);
         assert.match(scriptText, /DOWNLOAD_ICON/);
         assert.match(scriptText, /createDownloadIcon/);
+        assert.match(scriptText, /makeViewerLink/);
+        assert.match(scriptText, /webViewer=1/);
         assert.match(scriptText, /DETAIL_ICONS/);
         assert.match(scriptText, /createDetailIcon/);
         assert.match(scriptText, /appendMetadataRow\(grid, "archive", "포맷 \/ 망가\(방향\)"/);
@@ -285,10 +287,26 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         const childList = await childListResponse.json();
         assert.equal(childListResponse.status, 200);
         assert.equal(childList.parent_dir, realLibrary);
-        assert.equal(childList.files.length, 1);
+        assert.equal(childList.files.length, 2);
         assert.equal(childList.files[0].name, 'Book 01.cbz');
         assert.equal(childList.files[0].title, 'Book 01.cbz');
+        assert.equal(childList.files[0].viewable, true);
+        assert.match(childList.files[0].viewer_url, /\/viewer\?viewer=1&webViewer=1&file=/);
+        assert.equal(childList.files[1].name, 'ignore.txt');
+        assert.equal(childList.files[1].viewable, true);
         assert.equal(childList.folders.length, 0);
+
+        const viewerPage = await fetch(`${baseUrl}${childList.files[1].viewer_url}`);
+        const viewerHtml = await viewerPage.text();
+        assert.equal(viewerPage.status, 200);
+        assert.match(viewerHtml, /id="root"/);
+
+        const textSession = await (await fetch(`${baseUrl}/api/viewer/session?file=${encodeURIComponent(path.join(child, 'ignore.txt'))}`)).json();
+        assert.equal(textSession.type, 'text');
+        assert.equal(textSession.webViewer, true);
+
+        const textPayload = await (await fetch(`${baseUrl}/api/viewer/text/${encodeURIComponent(textSession.id)}`)).json();
+        assert.equal(textPayload.text, 'ignore');
 
         const folderSearch = await (await fetch(`${baseUrl}/api/search?q=Series`)).json();
         assert.equal(folderSearch.folders[0].name, 'Series');
@@ -302,6 +320,11 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
         assert.match(download.headers.get('content-type'), /application\/x-cbz/);
         assert.match(download.headers.get('content-disposition'), /Book 01\.cbz/);
         assert.equal(await download.text(), 'archive');
+
+        const textDownload = await fetch(`${baseUrl}/api/download?file=${encodeURIComponent(path.join(child, 'ignore.txt'))}`);
+        assert.equal(textDownload.status, 200);
+        assert.match(textDownload.headers.get('content-disposition'), /ignore\.txt/);
+        assert.equal(await textDownload.text(), 'ignore');
 
         const blocked = await fetch(`${baseUrl}/api/download?file=${encodeURIComponent(outside)}`);
         assert.equal(blocked.status, 404);

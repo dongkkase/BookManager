@@ -1052,6 +1052,18 @@ function makeDownloadIconButton(label = "다운로드") {
     }, createDownloadIcon());
 }
 
+function makeViewerLink(file) {
+    const href = file.viewer_url || ("/viewer?viewer=1&webViewer=1&file=" + encodeURIComponent(file.path));
+    return createElement("a", {
+        className: "action-button",
+        href,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        title: "뷰어로 보기",
+        text: "보기",
+    });
+}
+
 function renderBreadcrumb(data, mode) {
     const nodes = [];
     const home = makeButton("Home");
@@ -1158,6 +1170,10 @@ function createFileCard(file) {
         "/api/download?file=" + encodeURIComponent(file.path),
         file.name || basename(file.path),
     ));
+
+    if (file.viewable) {
+        actions.appendChild(makeViewerLink(file));
+    }
 
     if (file.has_metadata) {
         const infoButton = makeButton("상세정보", "action-button secondary");

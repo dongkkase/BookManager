@@ -196,6 +196,128 @@ function saveJson(key, value) {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
+function isWebViewerMode() {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('webViewer') === '1' || params.get('viewerApi') === 'web';
+}
+
+function fetchWebViewerJson(url, options = {}) {
+  return fetch(url, { cache: 'no-store', ...options }).then(async response => {
+    if (response.ok) return response.json();
+    let message = `Request failed: ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body?.error) message = body.error;
+    } catch {
+      try {
+        const text = await response.text();
+        if (text) message = text;
+      } catch {
+        message = `Request failed: ${response.status}`;
+      }
+    }
+    throw new Error(message);
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Blob conversion failed.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function createWebViewerAPI() {
+  const params = new URLSearchParams(window.location.search);
+  let currentFilePath = params.get('file') || params.get('path') || '';
+  let currentSession = null;
+  let currentSessionPromise = null;
+
+  const sessionQuery = () => {
+    if (!currentFilePath) throw new Error('Viewer file path is required.');
+    return `/api/viewer/session?file=${encodeURIComponent(currentFilePath)}`;
+  };
+
+  const ensureCurrentSession = async () => {
+    if (currentSession) return currentSession;
+    if (!currentSessionPromise) {
+      currentSessionPromise = fetchWebViewerJson(sessionQuery()).then(session => {
+        currentSession = session;
+        return session;
+      });
+    }
+    return currentSessionPromise;
+  };
+
+  const fullscreenState = () => ({ fullscreen: Boolean(document.fullscreenElement) });
+
+  return {
+    getConfig: async () => {
+      const browserLanguage = (navigator.language || 'ko').split('-')[0];
+      return { language: ['ko', 'en', 'ja'].includes(browserLanguage) ? browserLanguage : 'ko' };
+    },
+    onConfigChange: () => () => {},
+    getFullscreenState: async () => fullscreenState(),
+    onFullscreenChange: callback => {
+      const handler = () => callback?.(fullscreenState());
+      document.addEventListener('fullscreenchange', handler);
+      return () => document.removeEventListener('fullscreenchange', handler);
+    },
+    toggleFullscreen: async () => {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen?.();
+      } else {
+        await document.documentElement.requestFullscreen?.();
+      }
+      return fullscreenState();
+    },
+    closeWindow: () => {
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.close();
+      }
+    },
+    getCurrentSession: ensureCurrentSession,
+    onLoadSession: () => () => {},
+    listBundledFonts: async () => [],
+    listSystemFonts: async () => [],
+    openAdjacent: async (sessionId, direction) => {
+      const result = await fetchWebViewerJson(`/api/viewer/adjacent/${encodeURIComponent(sessionId)}?direction=${encodeURIComponent(direction)}`);
+      currentSession = result.session || result;
+      currentSessionPromise = Promise.resolve(currentSession);
+      if (currentSession?.filePath) {
+        currentFilePath = currentSession.filePath;
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('file', currentFilePath);
+        window.history.replaceState(null, '', nextUrl);
+      }
+      return { session: currentSession };
+    },
+    listComicPages: sessionId => fetchWebViewerJson(`/api/viewer/comic-pages/${encodeURIComponent(sessionId)}`),
+    getComicPage: async (sessionId, entryName) => {
+      const response = await fetch(`/api/viewer/comic-page/${encodeURIComponent(sessionId)}?entry=${encodeURIComponent(entryName)}`, {
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error(`Comic page failed: ${response.status}`);
+      return {
+        name: entryName,
+        dataUrl: await blobToDataUrl(await response.blob()),
+      };
+    },
+    getDocumentData: sessionId => fetchWebViewerJson(`/api/viewer/document-data/${encodeURIComponent(sessionId)}`),
+    getEpubText: sessionId => fetchWebViewerJson(`/api/viewer/epub/${encodeURIComponent(sessionId)}`),
+    getText: (sessionId, options = {}) => fetchWebViewerJson(`/api/viewer/text/${encodeURIComponent(sessionId)}?encoding=${encodeURIComponent(options.encoding || 'auto')}`),
+  };
+}
+
+if (typeof window !== 'undefined' && !window.viewerAPI && isWebViewerMode()) {
+  window.viewerAPI = createWebViewerAPI();
+}
+
 function normalizeViewerBackgroundSettings(settings = {}) {
   const color = VIEWER_BACKGROUND_COLORS.some(item => item.color === settings.color)
     ? settings.color

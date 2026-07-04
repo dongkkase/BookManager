@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
@@ -241,6 +242,61 @@ test('Organizer는 단일 Root_Files 압축 파일의 권 이름을 원본 파�
         assert.equal(analyzed.items[0].volumes.length, 1);
         assert.equal(analyzed.items[0].volumes[0].original_path, 'Root_Files');
         assert.equal(analyzed.items[0].volumes[0].new_name, '「어서 와 아빠」 01권');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 다른 디바이스 경로로 완료 아카이브를 복사 fallback으로 이동한다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-exdev-'));
+    try {
+        const source = path.join(root, 'Cross Device 01.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'Cross Device 01/001.jpg', Buffer.from('page-1'));
+        await replaceZipEntry(source, 'Cross Device 02/001.jpg', Buffer.from('page-2'));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        analyzed.items[0].out_path = path.join(root, 'network-share');
+
+        let exdevFallbackUsed = false;
+        const renameFile = async (src, dest) => {
+            if (path.basename(src).startsWith('BookManager_Done_')) {
+                exdevFallbackUsed = true;
+                const error = new Error('cross-device link not permitted');
+                error.code = 'EXDEV';
+                throw error;
+            }
+            await fsp.rename(src, dest);
+        };
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe,
+            target_format: 'cbz',
+            deleteOriginal: false,
+            shouldCancel: () => false,
+            renameFile,
+            lang: 'ko',
+        });
+
+        assert.equal(exdevFallbackUsed, true);
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.equal(result.createdFiles.length, 2);
+        assert.equal(fs.existsSync(source), true);
+        for (const filePath of result.createdFiles) {
+            assert.equal(fs.existsSync(filePath), true);
+            const entries = await listZipEntriesFromFile(filePath);
+            assert.equal(entries.some(entry => entry.name === '001.jpg'), true);
+        }
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

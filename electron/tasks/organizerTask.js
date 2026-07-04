@@ -757,12 +757,31 @@ async function createFlatStaging(leaf, tempBase) {
   return staging;
 }
 
-async function replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath) {
+async function movePreparedFile(sourcePath, finalPath, options = {}) {
+  const renameFile = options.renameFile || fsp.rename;
+  const copyFile = options.copyFile || fsp.copyFile;
+  try {
+    await renameFile(sourcePath, finalPath);
+    return;
+  } catch (error) {
+    if (error?.code !== 'EXDEV') throw error;
+  }
+
+  try {
+    await copyFile(sourcePath, finalPath);
+  } catch (copyError) {
+    await fsp.rm(finalPath, { force: true }).catch(() => {});
+    throw copyError;
+  }
+  await fsp.rm(sourcePath, { force: true }).catch(() => {});
+}
+
+async function replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath, options = {}) {
   const holdingPath = await uniquePath(`${sourcePath}.bookmanager.tmp`);
   await fsp.rename(sourcePath, holdingPath);
   try {
     if (fs.existsSync(finalPath)) await fsp.rm(finalPath, { force: true });
-    await fsp.rename(preparedArchive, finalPath);
+    await movePreparedFile(preparedArchive, finalPath, options);
     await fsp.rm(holdingPath, { force: true });
   } catch (error) {
     await fsp.rm(finalPath, { force: true }).catch(() => {});
@@ -781,17 +800,16 @@ async function writePreparedArchive(sourcePath, preparedArchive, finalPath, opti
   }
 
   if (options.deleteOriginal === false) {
-    await fsp.rename(preparedArchive, finalPath);
+    await movePreparedFile(preparedArchive, finalPath, options);
     return;
   }
 
   if (path.resolve(sourcePath) === path.resolve(finalPath)) {
-    await fsp.rm(sourcePath, { force: true });
-    await fsp.rename(preparedArchive, finalPath);
+    await replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath, options);
     return;
   }
 
-  await replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath);
+  await replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath, options);
 }
 
 async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options = {}) {
@@ -933,7 +951,7 @@ async function processOrganizerItem(item, options) {
         return { cancelled: true, message: filename, created: [] };
       }
       await runQuietProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot });
-      await fsp.rename(tempArchive, targetPath);
+      await movePreparedFile(tempArchive, targetPath, options);
       created.push(targetPath);
     }
 

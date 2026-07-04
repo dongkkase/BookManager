@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
 import {
     ARCHIVE_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -15,7 +16,6 @@ import {
     normalizeSharingRoots,
     readArchiveImage,
     realPathOrResolved,
-    resolveSharedArchive,
     resolveSharedDownload,
     safeStatSize,
     sharingText,
@@ -26,13 +26,33 @@ import {
     WEB_LIBRARY_JS,
 } from './web/webLibraryPage.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
+import { ViewerSessionManager } from '../viewerSessions.js';
 
 const execFileAsync = promisify(execFile);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const WEB_SEARCH_LIMIT = 160;
 const WEB_DEFAULT_PAGE_LIMIT = 80;
 const WEB_MAX_PAGE_LIMIT = 200;
 const WEB_FOLDER_SUMMARY_LIMIT = 500;
 const WEB_FOLDER_SUMMARY_DIR_LIMIT = 1200;
+const WEB_VIEWER_DIST_DIR = path.resolve(__dirname, '..', '..', 'dist');
+const WEB_VIEWER_INDEX_PATH = path.join(WEB_VIEWER_DIST_DIR, 'index.html');
+const WEB_VIEWER_ASSET_DIR = path.join(WEB_VIEWER_DIST_DIR, 'assets');
+const WEB_VIEWER_EXTENSIONS = new Set([
+    '.zip',
+    '.cbz',
+    '.rar',
+    '.cbr',
+    '.7z',
+    '.cb7',
+    '.pdf',
+    '.epub',
+    '.txt',
+    '.text',
+    '.log',
+    '.md',
+]);
 const WEB_METADATA_FIELDS = [
     'title',
     'series',
@@ -155,11 +175,30 @@ function hasMetadata(record = {}) {
 }
 
 function isArchivePath(filePath = '') {
-    return ARCHIVE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+    const extension = path.extname(filePath).toLowerCase();
+    return ARCHIVE_EXTENSIONS.has(extension) || WEB_VIEWER_EXTENSIONS.has(extension);
+}
+
+function isWebViewerPath(filePath = '') {
+    return WEB_VIEWER_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 function isImagePath(filePath = '') {
     return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+function resolveSharedWebFile(queryValue, roots) {
+    if (!queryValue) return null;
+    const requested = path.resolve(String(queryValue));
+    if (
+        !fs.existsSync(requested)
+        || !fs.statSync(requested).isFile()
+        || !isArchivePath(requested)
+        || !isWithinRoot(requested, roots)
+    ) {
+        return null;
+    }
+    return realPathOrResolved(requested);
 }
 
 function resolveWebDirectory(queryValue, roots) {
@@ -565,6 +604,7 @@ function metadataFromRecord(record = {}, roots = [], options = {}) {
 
 function fileItemFromRecord(record = {}, roots = [], options = {}) {
     const metadata = metadataFromRecord(record, roots, options);
+    const viewable = isWebViewerPath(record.path);
     return {
         path: record.path,
         name: path.basename(record.path),
@@ -585,6 +625,8 @@ function fileItemFromRecord(record = {}, roots = [], options = {}) {
         volume_count: metadata.volume_count,
         total_volume: metadata.total_volume,
         has_metadata: metadata.has_metadata,
+        viewable,
+        viewer_url: viewable ? `/viewer?viewer=1&webViewer=1&file=${encodeURIComponent(record.path)}` : '',
     };
 }
 
@@ -1065,9 +1107,103 @@ function attachNoCache(res) {
     res.setHeader('Cache-Control', 'no-store');
 }
 
+function webViewerSessionPayload(session) {
+    return {
+        ...session,
+        webViewer: true,
+    };
+}
+
+function webViewerDocumentMime(filePath = '') {
+    const extension = path.extname(filePath).toLowerCase();
+    if (extension === '.pdf') return 'application/pdf';
+    if (extension === '.epub') return 'application/epub+zip';
+    return 'application/octet-stream';
+}
+
+function webViewerComicPageUrl(sessionId, entryName) {
+    return `/api/viewer/comic-page/${encodeURIComponent(sessionId)}?entry=${encodeURIComponent(entryName)}`;
+}
+
+function webViewerDocumentUrl(session) {
+    return `/api/viewer/document/${encodeURIComponent(session.id)}/${encodeURIComponent(session.fileName)}`;
+}
+
+function normalizeWebViewerAssetPath(assetName = '') {
+    return String(assetName || '').replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function webViewerEpubAssetUrl(sessionId, assetName) {
+    return `/api/viewer/epub-asset/${encodeURIComponent(sessionId)}?asset=${encodeURIComponent(normalizeWebViewerAssetPath(assetName))}`;
+}
+
+function webViewerEpubAssetProtocolUrl(sessionId, assetName) {
+    const assetPath = normalizeWebViewerAssetPath(assetName)
+        .split('/')
+        .filter(Boolean)
+        .map(part => encodeURIComponent(part))
+        .join('/');
+    return `bookmanager-document://session/${encodeURIComponent(sessionId)}/asset/${assetPath}`;
+}
+
+function protocolAssetPathFromEpubSrc(src = '') {
+    try {
+        const url = new URL(src);
+        if (url.protocol !== 'bookmanager-document:' || url.hostname !== 'session') return '';
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        if (pathParts[1] !== 'asset') return '';
+        return pathParts.slice(2).map(part => decodeURIComponent(part)).join('/');
+    } catch {
+        return '';
+    }
+}
+
+function rewriteEpubAssetUrlsForWeb(value, sessionId) {
+    if (Array.isArray(value)) {
+        return value.map(item => rewriteEpubAssetUrlsForWeb(item, sessionId));
+    }
+    if (!value || typeof value !== 'object') return value;
+    const next = {};
+    for (const [key, childValue] of Object.entries(value)) {
+        if (key === 'src' && typeof childValue === 'string') {
+            const assetPath = protocolAssetPathFromEpubSrc(childValue);
+            next[key] = assetPath ? webViewerEpubAssetUrl(sessionId, assetPath) : childValue;
+        } else {
+            next[key] = rewriteEpubAssetUrlsForWeb(childValue, sessionId);
+        }
+    }
+    return next;
+}
+
+function sendWebViewerIndex(res) {
+    if (!fs.existsSync(WEB_VIEWER_INDEX_PATH)) {
+        res.status(503)
+            .set('Content-Type', 'text/html; charset=utf-8')
+            .send('<!doctype html><html lang="ko"><body>BookManager viewer build files were not found.</body></html>');
+        return;
+    }
+    res.set('Content-Type', 'text/html; charset=utf-8').send(fs.readFileSync(WEB_VIEWER_INDEX_PATH, 'utf8'));
+}
+
+function sendViewerApiError(res, error, fallback = 'Viewer request failed') {
+    const message = error?.message || fallback;
+    if (/not found/i.test(message)) {
+        formatJsonError(res, 404, message);
+        return;
+    }
+    if (/unsupported|not a/i.test(message)) {
+        formatJsonError(res, 400, message);
+        return;
+    }
+    formatJsonError(res, 500, message);
+}
+
 export function buildWebApp(config, options = {}, log = () => {}) {
     const app = express();
     const roots = normalizeSharingRoots(config);
+    const viewerSessions = new ViewerSessionManager({
+        getSevenZPath: async () => options.sevenZExe || '',
+    });
 
     app.get('/', (_req, res) => {
         res.set('Content-Type', 'text/html; charset=utf-8').send(WEB_LIBRARY_HTML);
@@ -1083,6 +1219,149 @@ export function buildWebApp(config, options = {}, log = () => {}) {
 
     app.get('/assets/web-library.js', (_req, res) => {
         res.set('Content-Type', 'application/javascript; charset=utf-8').send(WEB_LIBRARY_JS);
+    });
+
+    if (fs.existsSync(WEB_VIEWER_ASSET_DIR)) {
+        app.use('/assets', express.static(WEB_VIEWER_ASSET_DIR, {
+            fallthrough: true,
+            index: false,
+            maxAge: '1d',
+        }));
+    }
+
+    app.get(['/viewer', '/viewer/', '/viewer/index.html'], (_req, res) => {
+        sendWebViewerIndex(res);
+    });
+
+    app.get('/api/viewer/session', (req, res) => {
+        attachNoCache(res);
+        const filePath = resolveSharedWebFile(req.query.file, roots);
+        if (!filePath || !isWebViewerPath(filePath)) {
+            formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+            return;
+        }
+        try {
+            const session = viewerSessions.create(filePath);
+            log(sharingText(config, 'sharing_web_browse', 'Web 탐색: {name}', { name: path.basename(filePath) }));
+            res.json(webViewerSessionPayload(session));
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/adjacent/:sessionId', (req, res) => {
+        attachNoCache(res);
+        try {
+            const session = viewerSessions.createAdjacent(req.params.sessionId, req.query.direction);
+            if (!isWithinRoot(session.filePath, roots) || !isWebViewerPath(session.filePath)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            res.json({ session: webViewerSessionPayload(session) });
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/comic-pages/:sessionId', async (req, res) => {
+        attachNoCache(res);
+        try {
+            const result = await viewerSessions.listComicPages(req.params.sessionId);
+            res.json({
+                ...result,
+                pages: (result.pages || []).map(page => ({
+                    ...page,
+                    pageUrl: webViewerComicPageUrl(req.params.sessionId, page.name),
+                })),
+            });
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/comic-page/:sessionId', async (req, res) => {
+        const entryName = String(req.query.entry || '');
+        if (!entryName) {
+            formatJsonError(res, 400, 'Comic page entry is required.');
+            return;
+        }
+        try {
+            const page = await viewerSessions.getComicPageData(req.params.sessionId, entryName);
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.type(page.mime).send(page.buffer);
+        } catch (error) {
+            sendViewerApiError(res, error, 'Comic page failed');
+        }
+    });
+
+    app.get('/api/viewer/document-data/:sessionId', (req, res) => {
+        attachNoCache(res);
+        try {
+            const session = viewerSessions.get(req.params.sessionId);
+            if (session.type !== 'pdf' && session.type !== 'epub') {
+                formatJsonError(res, 400, 'This file is not a document.');
+                return;
+            }
+            res.json({
+                mime: webViewerDocumentMime(session.filePath),
+                documentUrl: webViewerDocumentUrl(session),
+            });
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/document/:sessionId/:fileName', (req, res) => {
+        try {
+            const session = viewerSessions.get(req.params.sessionId);
+            if (session.type !== 'pdf' && session.type !== 'epub') {
+                formatJsonError(res, 400, 'This file is not a document.');
+                return;
+            }
+            res.setHeader('Cache-Control', 'private, max-age=0');
+            res.type(webViewerDocumentMime(session.filePath));
+            res.sendFile(session.filePath);
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/epub/:sessionId', async (req, res) => {
+        attachNoCache(res);
+        try {
+            const result = await viewerSessions.getEpubText(req.params.sessionId);
+            res.json(rewriteEpubAssetUrlsForWeb(result, req.params.sessionId));
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/epub-asset/:sessionId', async (req, res) => {
+        const assetName = normalizeWebViewerAssetPath(req.query.asset || '');
+        if (!assetName) {
+            formatJsonError(res, 400, 'EPUB asset is required.');
+            return;
+        }
+        try {
+            const asset = await viewerSessions.getDocumentAssetFromRequest(webViewerEpubAssetProtocolUrl(req.params.sessionId, assetName));
+            if (!asset) {
+                formatJsonError(res, 404, 'EPUB asset not found.');
+                return;
+            }
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.type(asset.mime).send(asset.buffer);
+        } catch (error) {
+            sendViewerApiError(res, error, 'EPUB asset failed');
+        }
+    });
+
+    app.get('/api/viewer/text/:sessionId', async (req, res) => {
+        attachNoCache(res);
+        try {
+            res.json(await viewerSessions.getText(req.params.sessionId, { encoding: req.query.encoding || 'auto' }));
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
     });
 
     app.get('/api/list', async (req, res) => {
@@ -1171,7 +1450,7 @@ export function buildWebApp(config, options = {}, log = () => {}) {
 
     app.get(['/api/file-meta', '/api/file_meta'], async (req, res) => {
         attachNoCache(res);
-        const filePath = resolveSharedArchive(req.query.file, roots);
+        const filePath = resolveSharedWebFile(req.query.file, roots);
         if (!filePath) {
             formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
             return;
@@ -1185,7 +1464,7 @@ export function buildWebApp(config, options = {}, log = () => {}) {
     });
 
     app.get('/api/download', (req, res) => {
-        const filePath = resolveSharedArchive(req.query.file, roots);
+        const filePath = resolveSharedWebFile(req.query.file, roots);
         if (!filePath) {
             formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
             return;
