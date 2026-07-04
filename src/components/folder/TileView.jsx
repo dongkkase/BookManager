@@ -15,6 +15,7 @@ import {
   selectionEventSnapshot,
 } from '../../selectionVisualFeedback';
 import { FolderEmptyState } from './FolderEmptyState';
+import { ViewerStatusBadgeRow } from './ViewerStatusBadges';
 
 /**
  * TileView - 타일 뷰 컴포넌트
@@ -161,6 +162,12 @@ const TileView = ({
   const compactValues = values => values
     .map(value => String(value || '').trim())
     .filter(Boolean);
+  const displayPages = file => firstValue(
+    file.page_count,
+    file.pages,
+    file.metadata?.page_count,
+    file.full_meta?.page_count,
+  );
 
 	  const handleItemClick = (file, e, index) => {
 	    if (rubberSelectRef.current.moved) {
@@ -300,6 +307,11 @@ const TileView = ({
                   iconSize={30}
                   showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
+                <ViewerStatusBadgeRow
+                  file={file}
+                  t={t}
+                  className="tile-status-row"
+                />
               </div>
               <div className="tile-info">
                 <div className="tile-title">{file.title || file.name || '-'}</div>
@@ -312,7 +324,7 @@ const TileView = ({
                 </div>
                 <div className="tile-meta-line">
                   {compactValues([
-                    file.page_count ? `${file.page_count}p` : '',
+                    displayPages(file) ? `${displayPages(file)}p` : '',
                   ]).join('  ·  ') || '-'}
                   {file.rating && (
                     <>
@@ -359,6 +371,11 @@ const TileView = ({
                   iconSize={30}
                   showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
+                <ViewerStatusBadgeRow
+                  file={file}
+                  t={t}
+                  className="tile-status-row"
+                />
               </div>
               <div className="tile-info">
                 <div className="tile-title">{file.title || file.name || '-'}</div>
@@ -371,7 +388,7 @@ const TileView = ({
                 </div>
                 <div className="tile-meta-line">
                   {compactValues([
-                    file.page_count ? `${file.page_count}p` : '',
+                    displayPages(file) ? `${displayPages(file)}p` : '',
                   ]).join('  ·  ') || '-'}
                   {file.rating && (
                     <>

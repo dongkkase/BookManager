@@ -5,8 +5,10 @@ import {
     splitMetadataValues,
 } from '../../detailPanelState';
 import {
+    DetailCoverFrame,
     DetailFieldGroup,
     DetailLine,
+    DetailPanelStatusBadges,
     detailMetadataValue,
     detailPublicationDate,
     formatDate,
@@ -72,23 +74,26 @@ const PdfDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
         <div className="folder-detail-panel pdf-detail-panel">
             {coverAvailable && <div className="folder-detail-bg" style={{ backgroundImage: `url(${selectedFile.cover})` }} />}
             <div className="folder-detail-overlay" />
+            <DetailPanelStatusBadges selectedFile={selectedFile} t={t} />
             <div className="folder-detail-scroll" ref={scrollRef}>
                 <div className="folder-detail-content" ref={contentRef}>
                     <div className="detail-cover-section">
                         <div className="detail-cover-stack">
-                            {coverAvailable ? (
-                                <img
-                                    src={selectedFile.cover}
-                                    alt={selectedFile.name || ''}
-                                    className="detail-cover-image"
-                                    onError={() => setImageError(true)}
-                                />
-                            ) : (
-                                <div className="detail-cover-placeholder" title={t('folder_no_cover')}>
-                                    <FaIcon name="fileSignature" size={42} />
-                                    <span>{t('folder_no_cover')}</span>
-                                </div>
-                            )}
+                            <DetailCoverFrame>
+                                {coverAvailable ? (
+                                    <img
+                                        src={selectedFile.cover}
+                                        alt={selectedFile.name || ''}
+                                        className="detail-cover-image"
+                                        onError={() => setImageError(true)}
+                                    />
+                                ) : (
+                                    <div className="detail-cover-placeholder" title={t('folder_no_cover')}>
+                                        <FaIcon name="fileSignature" size={42} />
+                                        <span>{t('folder_no_cover')}</span>
+                                    </div>
+                                )}
+                            </DetailCoverFrame>
                             <div className="detail-cover-caption">
                                 <div>{fileName || '-'} ({formatSize(selectedFile.size)})</div>
                                 <div>{formatDate(selectedFile.created || selectedFile.ctime)}</div>

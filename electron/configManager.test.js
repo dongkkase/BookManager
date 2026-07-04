@@ -97,6 +97,17 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.renamer_default_cap_opt, false);
         assert.equal(loaded.renamer_default_exif_opt, false);
         assert.equal(loaded.font_family, 'Noto Sans KR');
+        assert.deepEqual(loaded.viewer_paths, {
+            comic: '',
+            epub: '',
+            pdf: '',
+            text: '',
+        });
+        assert.equal(loaded.viewer_x, null);
+        assert.equal(loaded.viewer_y, null);
+        assert.equal(loaded.viewer_width, 1280);
+        assert.equal(loaded.viewer_height, 860);
+        assert.equal(loaded.viewer_is_maximized, false);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -158,11 +169,23 @@ test('연속 부분 저장은 이전 변경과 임시 파일 정리를 유지한
         manager.loadConfig();
         manager.updateConfig({ width: 1400 });
         manager.updateConfig({ height: 900 });
+        manager.updateConfig({ viewer_width: 1440, viewer_height: 920, viewer_x: 30, viewer_y: 40, viewer_is_maximized: true });
+        manager.updateConfig({ viewer_paths: { comic: 'C:/Tools/comic.exe' } });
+        manager.updateConfig({ viewer_paths: { pdf: 'C:/Tools/pdf.exe' } });
         manager.updateConfig({ folder_view_mode: 'tile' });
         const configPath = dataConfigPath(root);
         const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(saved.width, 1400);
         assert.equal(saved.height, 900);
+        assert.equal(saved.viewer_width, 1440);
+        assert.equal(saved.viewer_height, 920);
+        assert.equal(saved.viewer_x, 30);
+        assert.equal(saved.viewer_y, 40);
+        assert.equal(saved.viewer_is_maximized, true);
+        assert.equal(saved.viewer_paths.comic, 'C:/Tools/comic.exe');
+        assert.equal(saved.viewer_paths.pdf, 'C:/Tools/pdf.exe');
+        assert.equal(saved.viewer_paths.epub, '');
+        assert.equal(saved.viewer_paths.text, '');
         assert.equal(saved.folder_view_mode, 'tile');
         assert.deepEqual(fs.readdirSync(path.dirname(configPath)).filter(name => name.endsWith('.tmp')), []);
     } finally {

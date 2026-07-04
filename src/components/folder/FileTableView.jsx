@@ -15,6 +15,16 @@ import {
 } from '../../selectionVisualFeedback';
 import { CoverImage, coverImageKey } from './CoverImage';
 import { FolderEmptyState } from './FolderEmptyState';
+import {
+    ViewerBookmarkStatusIcon,
+    ViewerReadingStatusIcon,
+} from './ViewerStatusBadges';
+
+const STATUS_COLUMN_KEYS = new Set(['viewer_reading_status', 'viewer_bookmark_status']);
+const HEADER_ICON_BY_COLUMN = {
+    viewer_reading_status: 'book',
+    viewer_bookmark_status: 'bookmark',
+};
 
 /**
  * FileTableView - 파일 테이블 뷰 컴포넌트
@@ -82,6 +92,8 @@ const FileTableView = forwardRef(({
         'total_volume',
         'page_count',
         'format',
+        'viewer_reading_status',
+        'viewer_bookmark_status',
     ]), []);
 
     const groupedData = useMemo(
@@ -369,8 +381,28 @@ const FileTableView = forwardRef(({
         rubberSelectRef.current.active = false;
     };
 
+  const renderHeaderLabel = column => {
+    const icon = HEADER_ICON_BY_COLUMN[column.key];
+    if (!icon) return column.label;
+    return <FaIcon name={icon} size={12} title={column.label} />;
+  };
+
   const renderCell = (file, column) => {
     const className = centeredColumnKeys.has(column.key) ? 'center-cell' : undefined;
+    if (column.key === 'viewer_reading_status') {
+      return (
+        <td key={column.key} className="center-cell folder-status-cell">
+          <ViewerReadingStatusIcon file={file} t={t} />
+        </td>
+      );
+    }
+    if (column.key === 'viewer_bookmark_status') {
+      return (
+        <td key={column.key} className="center-cell folder-status-cell">
+          <ViewerBookmarkStatusIcon file={file} t={t} />
+        </td>
+      );
+    }
     if (column.key === 'cover') {
       return (
         <td key={column.key} className="cover-cell">
@@ -437,7 +469,8 @@ const FileTableView = forwardRef(({
               <th
                 key={col.key}
                 data-column-key={col.key}
-                className={`${col.sortable ? 'sortable' : ''} ${centeredColumnKeys.has(col.key) ? 'center-column' : ''} ${sortKey === col.key ? 'active-sort' : ''} ${dragSourceColumnKey === col.key ? 'drag-source' : ''} ${dragOverColumnKey === col.key ? 'drag-over' : ''}`}
+                className={`${col.sortable ? 'sortable' : ''} ${centeredColumnKeys.has(col.key) ? 'center-column' : ''} ${STATUS_COLUMN_KEYS.has(col.key) ? 'status-column' : ''} ${sortKey === col.key ? 'active-sort' : ''} ${dragSourceColumnKey === col.key ? 'drag-source' : ''} ${dragOverColumnKey === col.key ? 'drag-over' : ''}`}
+                title={col.label}
                 onClick={() => {
                   if (headerReorderRef.current.moved) {
                     headerReorderRef.current.moved = false;
@@ -453,7 +486,7 @@ const FileTableView = forwardRef(({
                 >
                   <FaIcon name="grip-vertical" size={10} />
                 </span>
-                <span className="file-table-header-label">{col.label}</span>
+                <span className="file-table-header-label">{renderHeaderLabel(col)}</span>
                 {sortKey === col.key && (
                   <span className="file-table-sort-icon" aria-hidden="true">
                     {sortOrder === 'asc' ? '▲' : '▼'}

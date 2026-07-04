@@ -1,11 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
-import { BrowserWindow, ipcMain, protocol } from 'electron';
+import { BrowserWindow, ipcMain, protocol, screen } from 'electron';
 import { ViewerSessionManager } from './viewerSessions.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
+const VIEWER_DEFAULT_WIDTH = 1280;
+const VIEWER_DEFAULT_HEIGHT = 860;
+const VIEWER_MIN_WIDTH = 820;
+const VIEWER_MIN_HEIGHT = 560;
 
 function isDevToolsShortcut(input = {}) {
     const key = String(input.key || '').toLowerCase();
@@ -18,6 +22,74 @@ function toggleDevTools(webContents) {
         return;
     }
     webContents.openDevTools({ mode: 'detach' });
+}
+
+function toFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function clampViewerSize(value, minimum, fallback, maximum) {
+    const number = toFiniteNumber(value) ?? fallback;
+    return Math.min(Math.max(Math.round(number), minimum), Math.max(minimum, maximum));
+}
+
+function viewerBoundsIntersectWorkArea(bounds, workArea) {
+    const right = bounds.x + bounds.width;
+    const bottom = bounds.y + bounds.height;
+    const workRight = workArea.x + workArea.width;
+    const workBottom = workArea.y + workArea.height;
+
+    return right > workArea.x
+        && bounds.x < workRight
+        && bottom > workArea.y
+        && bounds.y < workBottom;
+}
+
+function resolveViewerWindowState(config = {}, displays = [], primaryWorkArea = {}) {
+    const workArea = {
+        x: toFiniteNumber(primaryWorkArea.x) ?? 0,
+        y: toFiniteNumber(primaryWorkArea.y) ?? 0,
+        width: Math.max(1, Math.round(toFiniteNumber(primaryWorkArea.width) ?? VIEWER_DEFAULT_WIDTH)),
+        height: Math.max(1, Math.round(toFiniteNumber(primaryWorkArea.height) ?? VIEWER_DEFAULT_HEIGHT)),
+    };
+    const maxWidth = Math.max(VIEWER_MIN_WIDTH, workArea.width);
+    const maxHeight = Math.max(VIEWER_MIN_HEIGHT, workArea.height);
+    const width = clampViewerSize(config.viewer_width, VIEWER_MIN_WIDTH, VIEWER_DEFAULT_WIDTH, maxWidth);
+    const height = clampViewerSize(config.viewer_height, VIEWER_MIN_HEIGHT, VIEWER_DEFAULT_HEIGHT, maxHeight);
+    const savedX = toFiniteNumber(config.viewer_x);
+    const savedY = toFiniteNumber(config.viewer_y);
+    const savedBounds = savedX === null || savedY === null
+        ? null
+        : { x: Math.round(savedX), y: Math.round(savedY), width, height };
+    const availableWorkAreas = displays
+        .map(display => display?.workArea)
+        .filter(Boolean);
+    const isVisible = savedBounds
+        && availableWorkAreas.some(displayWorkArea => viewerBoundsIntersectWorkArea(savedBounds, displayWorkArea));
+
+    return {
+        bounds: isVisible ? savedBounds : {
+            x: Math.round(workArea.x + Math.max(0, (workArea.width - width) / 2)),
+            y: Math.round(workArea.y + Math.max(0, (workArea.height - height) / 2)),
+            width,
+            height,
+        },
+        minWidth: VIEWER_MIN_WIDTH,
+        minHeight: VIEWER_MIN_HEIGHT,
+        isMaximized: Boolean(config.viewer_is_maximized),
+    };
+}
+
+function serializeViewerWindowState(window) {
+    const bounds = window.getNormalBounds();
+    return {
+        viewer_x: bounds.x,
+        viewer_y: bounds.y,
+        viewer_width: bounds.width,
+        viewer_height: bounds.height,
+        viewer_is_maximized: window.isMaximized(),
+    };
 }
 
 function parseByteRange(rangeHeader = '', size = 0) {
@@ -84,9 +156,18 @@ function registerDocumentProtocol(sessions) {
     if (documentProtocolRegistered) return;
     documentProtocolRegistered = true;
     protocol.handle('bookmanager-document', async request => {
-        const document = sessions.resolveDocumentRequest(request.url);
-        if (!document) return new Response('Not found', { status: 404 });
         try {
+            const asset = await sessions.getDocumentAssetFromRequest(request.url);
+            if (asset) {
+                return new Response(new Uint8Array(asset.buffer), {
+                    headers: {
+                        'Content-Type': asset.mime,
+                        'Cache-Control': 'private, max-age=3600',
+                    },
+                });
+            }
+            const document = sessions.resolveDocumentRequest(request.url);
+            if (!document) return new Response('Not found', { status: 404 });
             return await createDocumentResponse(request, document);
         } catch {
             return new Response('Not found', { status: 404 });
@@ -121,6 +202,7 @@ export function setupViewerWindowManager(options = {}) {
         preloadPath = '',
         getIconPath = () => undefined,
         getSevenZPath = async () => '',
+        configManager = null,
     } = options;
 
     const sessions = new ViewerSessionManager({ getSevenZPath });
@@ -128,6 +210,7 @@ export function setupViewerWindowManager(options = {}) {
     registerComicProtocol(sessions);
     let viewerWindow = null;
     let pendingSession = null;
+    let viewerWindowStateSaveTimer = null;
 
     const viewerUrl = () => `${devServerUrl}?viewer=1`;
 
@@ -145,13 +228,18 @@ export function setupViewerWindowManager(options = {}) {
 
     const ensureViewerWindow = () => {
         if (viewerWindow && !viewerWindow.isDestroyed()) return viewerWindow;
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const windowState = resolveViewerWindowState(
+            configManager?.getConfig?.() || {},
+            screen.getAllDisplays(),
+            primaryDisplay.workArea,
+        );
 
         viewerWindow = new BrowserWindow({
-            width: 1280,
-            height: 860,
-            minWidth: 820,
-            minHeight: 560,
-            title: 'BookManager Viewer',
+            ...windowState.bounds,
+            minWidth: windowState.minWidth,
+            minHeight: windowState.minHeight,
+            title: 'BookManagerViewer',
             icon: getIconPath(),
             autoHideMenuBar: true,
             backgroundColor: '#111111',
@@ -165,6 +253,25 @@ export function setupViewerWindowManager(options = {}) {
             show: false,
         });
 
+        const sendFullscreenState = () => {
+            if (!viewerWindow || viewerWindow.isDestroyed()) return;
+            viewerWindow.webContents.send('viewer:fullscreen-change', {
+                fullscreen: viewerWindow.isFullScreen(),
+            });
+        };
+        const saveViewerWindowState = () => {
+            if (!viewerWindow || viewerWindow.isDestroyed() || !configManager) return;
+            configManager.updateConfig(serializeViewerWindowState(viewerWindow));
+        };
+        const scheduleViewerWindowStateSave = () => {
+            if (!configManager) return;
+            if (viewerWindowStateSaveTimer) clearTimeout(viewerWindowStateSaveTimer);
+            viewerWindowStateSaveTimer = setTimeout(() => {
+                viewerWindowStateSaveTimer = null;
+                saveViewerWindowState();
+            }, 400);
+        };
+
         if (process.platform !== 'darwin') {
             viewerWindow.setMenu(null);
         }
@@ -175,13 +282,28 @@ export function setupViewerWindowManager(options = {}) {
             toggleDevTools(viewerWindow.webContents);
         });
         viewerWindow.once('ready-to-show', () => {
+            if (windowState.isMaximized) {
+                viewerWindow?.maximize();
+            }
             viewerWindow?.show();
         });
         viewerWindow.webContents.on('did-finish-load', () => {
             sendSession(pendingSession || sessions.current());
+            sendFullscreenState();
             pendingSession = null;
         });
+        viewerWindow.on('enter-full-screen', sendFullscreenState);
+        viewerWindow.on('leave-full-screen', sendFullscreenState);
+        viewerWindow.on('resize', scheduleViewerWindowStateSave);
+        viewerWindow.on('move', scheduleViewerWindowStateSave);
+        viewerWindow.on('maximize', scheduleViewerWindowStateSave);
+        viewerWindow.on('unmaximize', scheduleViewerWindowStateSave);
+        viewerWindow.on('close', saveViewerWindowState);
         viewerWindow.on('closed', () => {
+            if (viewerWindowStateSaveTimer) {
+                clearTimeout(viewerWindowStateSaveTimer);
+                viewerWindowStateSaveTimer = null;
+            }
             viewerWindow = null;
             pendingSession = null;
         });
@@ -198,7 +320,7 @@ export function setupViewerWindowManager(options = {}) {
     const openViewer = async filePath => {
         const session = sessions.create(filePath);
         const window = ensureViewerWindow();
-        window.setTitle(`BookManager Viewer - ${path.basename(session.filePath)}`);
+        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
         if (window.isMinimized()) window.restore();
         window.show();
         window.focus();
@@ -209,7 +331,7 @@ export function setupViewerWindowManager(options = {}) {
     const openAdjacentViewer = async (sessionId, direction) => {
         const session = sessions.createAdjacent(sessionId, direction);
         const window = ensureViewerWindow();
-        window.setTitle(`BookManager Viewer - ${path.basename(session.filePath)}`);
+        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
         if (window.isMinimized()) window.restore();
         window.show();
         window.focus();
@@ -234,10 +356,24 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:getEpubText', async (_event, sessionId) => (
         sessions.getEpubText(sessionId)
     ));
+    ipcMain.handle('viewer:getConfig', async () => {
+        const config = configManager?.getConfig?.() || {};
+        const language = config.language || config.lang || 'ko';
+        return {
+            lang: language,
+            language,
+        };
+    });
     ipcMain.handle('viewer:toggleFullscreen', async event => {
         const targetWindow = BrowserWindow.fromWebContents(event.sender);
         if (!targetWindow || targetWindow.isDestroyed()) return { success: false };
-        targetWindow.setFullScreen(!targetWindow.isFullScreen());
+        const nextFullscreen = !targetWindow.isFullScreen();
+        targetWindow.setFullScreen(nextFullscreen);
+        return { success: true, fullscreen: nextFullscreen };
+    });
+    ipcMain.handle('viewer:getFullscreenState', async event => {
+        const targetWindow = BrowserWindow.fromWebContents(event.sender);
+        if (!targetWindow || targetWindow.isDestroyed()) return { success: false, fullscreen: false };
         return { success: true, fullscreen: targetWindow.isFullScreen() };
     });
 

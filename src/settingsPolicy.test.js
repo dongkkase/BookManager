@@ -17,6 +17,13 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
         renamer_archive_compression: 'maximum',
         max_threads: 99,
         font_scale: 77,
+        viewer_path: ' C:/Tools/viewer.exe ',
+        viewer_paths: {
+            comic: ' C:/Tools/comic.exe ',
+            epub: ' C:/Tools/epub.exe ',
+            pdf: ' C:/Tools/pdf.exe ',
+            unknown: 'ignored',
+        },
         dup_check_folders: ['/Books'],
         last_meta_api: 'Google Books',
         preferred_meta_api_comic: 'Vine',
@@ -34,6 +41,13 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.max_threads, 6);
     assert.equal(normalized.font_family, 'Noto Sans KR');
     assert.equal(normalized.font_scale, 80);
+    assert.equal(normalized.viewer_path, 'C:/Tools/viewer.exe');
+    assert.deepEqual(normalized.viewer_paths, {
+        comic: 'C:/Tools/comic.exe',
+        epub: 'C:/Tools/epub.exe',
+        pdf: 'C:/Tools/pdf.exe',
+        text: '',
+    });
     assert.deepEqual(normalized.libraries, ['/Books']);
     assert.equal(normalized.preferred_meta_api_comic, 'Vine');
     assert.equal(normalized.preferred_meta_api_book, 'Amazon');

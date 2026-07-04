@@ -12,7 +12,7 @@ const source = fs.readFileSync(
 test('화면에서 사용하는 Font Awesome 의미 아이콘을 모두 등록한다', () => {
     const required = [
         'angleDown', 'angleUp', 'anglesDown', 'anglesUp', 'archive', 'bars',
-        'arrowRotateLeft', 'bookOpen', 'bug', 'check', 'checkSquare',
+        'arrowRotateLeft', 'book', 'bookmark', 'bookOpen', 'bug', 'check', 'checkSquare',
         'caret-down', 'chevronLeft', 'chevronRight', 'circle', 'circleCheck', 'clock', 'cloudArrowDown',
         'copy', 'cube', 'ellipsisVertical', 'eye', 'eyeSlash', 'file', 'file-circle-plus', 'fileSignature', 'file-zipper', 'floppy',
         'folder', 'folder-open', 'folder-plus', 'folderMinus', 'folderOpen', 'gear', 'gift', 'language',

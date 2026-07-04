@@ -1,4 +1,6 @@
 export const FOLDER_COLUMNS = [
+    { key: 'viewer_reading_status', labelKey: 'col_viewer_reading_status', width: 56, visible: true, sortable: false, insertWhenMissing: 'start' },
+    { key: 'viewer_bookmark_status', labelKey: 'col_viewer_bookmark_status', width: 56, visible: true, sortable: false, insertWhenMissing: 'start' },
     { key: 'cover', labelKey: 'col_cover', width: 60, visible: true, sortable: false },
     { key: 'dup_count', labelKey: 'folder_dup_check_off', width: 80, visible: true },
     { key: 'resolution', labelKey: 'col_res', width: 100, visible: true },
@@ -32,8 +34,13 @@ export function normalizeColumnLayout(layout) {
     if (!Array.isArray(layout)) return defaults;
     const incoming = new Map(layout.map(column => [column?.key, column]));
     const orderedKeys = layout.map(column => column?.key).filter(key => defaults.some(column => column.key === key));
-    const missingKeys = defaults.map(column => column.key).filter(key => !orderedKeys.includes(key));
-    return [...orderedKeys, ...missingKeys].map(key => {
+    const missingStartKeys = defaults
+        .filter(column => !orderedKeys.includes(column.key) && column.insertWhenMissing === 'start')
+        .map(column => column.key);
+    const missingEndKeys = defaults
+        .filter(column => !orderedKeys.includes(column.key) && column.insertWhenMissing !== 'start')
+        .map(column => column.key);
+    return [...missingStartKeys, ...orderedKeys, ...missingEndKeys].map(key => {
         const fallback = defaults.find(column => column.key === key);
         const saved = incoming.get(key) || {};
         return {

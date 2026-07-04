@@ -4,6 +4,7 @@ import {
     formatDetailValue,
     splitMetadataValues,
 } from '../../detailPanelState';
+import { ViewerDetailStatusBadges } from './ViewerStatusBadges';
 
 export function formatSize(bytes) {
     if (!bytes) return '-';
@@ -163,6 +164,24 @@ export function DetailFieldGroup({ fields }) {
                 </React.Fragment>
             ))}
         </div>
+    );
+}
+
+export function DetailCoverFrame({ children }) {
+    return (
+        <div className="detail-cover-frame">
+            {children}
+        </div>
+    );
+}
+
+export function DetailPanelStatusBadges({ selectedFile, t }) {
+    return (
+        <ViewerDetailStatusBadges
+            file={selectedFile}
+            t={t}
+            className="detail-panel-status-row"
+        />
     );
 }
 

@@ -4,6 +4,7 @@ const FORMAT_KEYS = new Set(['none', 'zip', 'cbz', 'cbr', '7z']);
 const LANGUAGE_KEYS = new Set(['ko', 'en', 'ja']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
 const RENAMER_ARCHIVE_COMPRESSION_KEYS = new Set(['auto', 'fast', 'maximum']);
+const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
 
 export function safeThreadLimit(coreCount = 4) {
     const cores = Math.max(1, Number(coreCount) || 4);
@@ -22,6 +23,14 @@ export function uniquePaths(...groups) {
         result.push(path);
     }
     return result;
+}
+
+export function normalizeViewerPaths(value = {}) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return VIEWER_PROGRAM_TYPES.reduce((result, type) => {
+        result[type] = String(source[type] || '').trim();
+        return result;
+    }, {});
 }
 
 export function normalizeSettingsConfig(config = {}, coreCount = 4) {
@@ -79,6 +88,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         pass_skip_meta: Boolean(config.pass_skip_meta),
         completion_sound: String(config.completion_sound || 'Default.wav'),
         viewer_path: String(config.viewer_path || '').trim(),
+        viewer_paths: normalizeViewerPaths(config.viewer_paths),
         font_family: fontFamily === 'Default' ? 'Noto Sans KR' : fontFamily,
         font_scale: Math.min(155, Math.max(80, Number(config.font_scale) || 100)),
         libraries,

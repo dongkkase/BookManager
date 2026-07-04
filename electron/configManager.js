@@ -11,6 +11,7 @@ const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
 const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
 const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
 const PDF_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
+const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
 
 function normalizeLanguage(value, fallback = 'ko') {
   return SUPPORTED_LANGUAGES.has(value) ? value : fallback;
@@ -74,6 +75,14 @@ export class ConfigManager {
     return result;
   }
 
+  normalizeViewerPaths(value = {}) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return VIEWER_PROGRAM_TYPES.reduce((result, type) => {
+      result[type] = String(source[type] || '').trim();
+      return result;
+    }, {});
+  }
+
   normalizeConfig(data = {}) {
     const defaults = this.getDefaultConfig();
     const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
@@ -104,6 +113,8 @@ export class ConfigManager {
       ...raw,
       lang,
       language: lang,
+      viewer_path: String(raw.viewer_path || defaults.viewer_path).trim(),
+      viewer_paths: this.normalizeViewerPaths(raw.viewer_paths || defaults.viewer_paths),
       font_family: fontFamily === 'Default' ? defaults.font_family : fontFamily,
       libraries,
       dup_check_folders: libraries,
@@ -150,6 +161,12 @@ export class ConfigManager {
       max_threads: defaultThreads,
       play_sound: true,
       viewer_path: '',
+      viewer_paths: {
+        comic: '',
+        epub: '',
+        pdf: '',
+        text: '',
+      },
       libraries: [],
       favorites: [],
       folder_favorites: [],
@@ -183,6 +200,11 @@ export class ConfigManager {
       width: 1200,
       height: 800,
       is_maximized: false,
+      viewer_x: null,
+      viewer_y: null,
+      viewer_width: 1280,
+      viewer_height: 860,
+      viewer_is_maximized: false,
       last_tab_id: 'folder',
       last_tab_index: 0,
       folder_left_panel_width: null,
@@ -251,6 +273,10 @@ export class ConfigManager {
           lang: requestedLang,
           language: requestedLang,
         } : {}),
+        viewer_paths: {
+          ...(this.config?.viewer_paths || {}),
+          ...(configData?.viewer_paths || {}),
+        },
         api_keys: {
           ...(this.config?.api_keys || {}),
           ...(configData?.api_keys || {}),

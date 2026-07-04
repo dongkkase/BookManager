@@ -4093,7 +4093,16 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     };
     configManager.saveConfig(nextConfig);
     setLanguage(nextLang);
-    return configManager.getConfig();
+    const savedConfig = configManager.getConfig();
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send('viewer:config-change', {
+          lang: savedConfig.lang,
+          language: savedConfig.language,
+        });
+      }
+    });
+    return savedConfig;
   });
 
   // ========== 폰트 관련 ==========

@@ -15,6 +15,7 @@ import {
   selectionEventSnapshot,
 } from '../../selectionVisualFeedback';
 import { FolderEmptyState } from './FolderEmptyState';
+import { ViewerStatusBadgeRow } from './ViewerStatusBadges';
 
 /**
  * ThumbnailView - 썸네일 그리드 뷰 컴포넌트
@@ -303,9 +304,12 @@ const ThumbnailView = ({
                 {displayRating(file) && (
                   <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>
                 )}
-                {displayPages(file) && (
-                  <span className="thumbnail-page-badge">{displayPages(file)}p</span>
-                )}
+                <ViewerStatusBadgeRow
+                  file={file}
+                  t={t}
+                  pageText={displayPages(file) ? `${displayPages(file)}p` : ''}
+                  className="thumbnail-status-row"
+                />
                 <span className="thumb-label">{file.name || '-'}</span>
               </div>
 	            </div>
@@ -345,9 +349,12 @@ const ThumbnailView = ({
                 {displayRating(file) && (
                   <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>
                 )}
-                {displayPages(file) && (
-                  <span className="thumbnail-page-badge">{displayPages(file)}p</span>
-                )}
+                <ViewerStatusBadgeRow
+                  file={file}
+                  t={t}
+                  pageText={displayPages(file) ? `${displayPages(file)}p` : ''}
+                  className="thumbnail-status-row"
+                />
                 <span className="thumb-label">{file.name || '-'}</span>
               </div>
 	            </div>

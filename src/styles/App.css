@@ -955,6 +955,19 @@ body.is-resizing-panel * {
   font-size: var(--font-sm);
 }
 
+.settings-viewer-label {
+  display: grid;
+  gap: 3px;
+  align-content: center;
+}
+
+.settings-viewer-label small {
+  color: #bfc7d0;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .settings-select,
 .settings-input,
 .settings-textarea {

@@ -17,7 +17,10 @@ test('폴더 탭 파일 더블 클릭은 클릭한 파일을 뷰어로 연다', 
     const block = folderTabSource.slice(start, end);
 
     assert.match(block, /const target = typeof file === 'string' \? file : file\?\.full_path \|\| file\?\.path/);
-    assert.match(block, /openWithViewer\?\.\(config\.viewer_path,\s*target\)/);
+    assert.match(block, /const explicitViewerPath = typeSpecificViewerPath\(config,\s*target\)/);
+    assert.match(block, /openWithViewer\?\.\(explicitViewerPath,\s*target\)/);
+    assert.doesNotMatch(block, /const defaultViewerPath = configuredViewerPath\(config\?\.viewer_path\)/);
+    assert.doesNotMatch(block, /openWithViewer\?\.\(defaultViewerPath,\s*target\)/);
     assert.match(block, /const handleFileOpen = useCallback/);
     assert.match(block, /selectFile\(file\.path,\s*null,\s*index\)/);
     assert.match(folderTabSource, /onOpenFile:\s*handleFileOpen/);

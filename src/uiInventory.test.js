@@ -155,7 +155,8 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['API 검색 결과 표지 사용 버튼', "text('btn_use_cover', '표지 사용(X)')"],
     ]);
     assertInventory('settings', [
-        ['뷰어 경로', "localConfig.viewer_path || ''"],
+        ['형식별 뷰어 경로', "localConfig.viewer_paths?.[option.key] || ''"],
+        ['코믹 뷰어 연결 확장자 안내', 'viewer_type_comic_extensions'],
         ['API secret key', 'renderSecretInput'],
         ['태그 치환 규칙 textarea', "localConfig.api_keys?.tag_rules || ''"],
     ]);

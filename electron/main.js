@@ -257,6 +257,7 @@ async function initializeApp() {
     preloadPath: path.join(__dirname, 'viewerPreload.cjs'),
     getIconPath: getAppIconPath,
     getSevenZPath: async () => await getBinPath('7za') || await getBinPath('7z'),
+    configManager,
   });
 
   // 메인 윈도우 생성

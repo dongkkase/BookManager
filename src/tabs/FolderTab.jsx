@@ -52,6 +52,13 @@ import {
   serializeColumnLayout,
 } from '../folderColumnLayout';
 import {
+  attachViewerStatus,
+  createViewerStatusReader,
+  isViewerStatusStorageKey,
+  viewerBookmarkStatusText,
+  viewerReadingStatusText,
+} from '../viewerStatusState';
+import {
   groupFolderFiles,
   normalizeViewMode,
   normalizeViewScales,
@@ -84,6 +91,12 @@ const VISIBLE_COVER_REQUEST_LIMIT = 32;
 const COVER_PREVIEW_QUEUE_LIMIT = 96;
 const COVER_PREVIEW_CONCURRENCY = 2;
 const MISSING_BACKGROUND_SCAN_DELAY_MS = 2500;
+const EXTERNAL_VIEWER_EXTENSIONS = {
+  comic: new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']),
+  epub: new Set(['.epub']),
+  pdf: new Set(['.pdf']),
+  text: new Set(['.txt', '.text', '.log', '.md']),
+};
 
 const coverPreviewFilePath = file => file?.full_path || file?.path || '';
 
@@ -100,6 +113,30 @@ const isPathInsideLibrary = (filePath = '', libraryPath = '') => {
   const libraryKey = normalizeLibraryKey(libraryPath);
   return Boolean(pathKey && libraryKey && (pathKey === libraryKey || pathKey.startsWith(`${libraryKey}/`)));
 };
+
+const fileExtension = (filePath = '') => {
+  const fileName = String(filePath || '').split(/[\\/]/).pop() || '';
+  const match = fileName.toLowerCase().match(/\.[^.]+$/);
+  return match ? match[0] : '';
+};
+
+const viewerTypeForFile = (filePath = '') => {
+  const extension = fileExtension(filePath);
+  if (!extension) return '';
+  for (const [viewerType, extensions] of Object.entries(EXTERNAL_VIEWER_EXTENSIONS)) {
+    if (extensions.has(extension)) return viewerType;
+  }
+  return '';
+};
+
+const configuredViewerPath = (viewerPath = '') => String(viewerPath || '').trim();
+
+const typeSpecificViewerPath = (config, filePath) => {
+  const viewerType = viewerTypeForFile(filePath);
+  return viewerType ? configuredViewerPath(config?.viewer_paths?.[viewerType]) : '';
+};
+
+const viewerErrorMessage = result => result?.message || result?.error || '';
 
 function createFolderResizeGuide(axis, position) {
   if (typeof document === 'undefined') return null;
@@ -204,6 +241,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
   const [moveConflict, setMoveConflict] = useState(null);
   const [textInputDialog, setTextInputDialog] = useState(null);
+  const [viewerStatusVersion, setViewerStatusVersion] = useState(0);
   const textInputResolverRef = useRef(null);
   const closeTextInputDialog = useCallback((value = null) => {
     const resolver = textInputResolverRef.current;
@@ -329,14 +367,33 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     };
   }, [isLibrarySearchActive, libraries, normalizedSearchQuery]);
 
+  useEffect(() => {
+    const refreshViewerStatus = () => {
+      setViewerStatusVersion(version => version + 1);
+    };
+    const handleStorage = event => {
+      if (isViewerStatusStorageKey(event.key)) refreshViewerStatus();
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('focus', refreshViewerStatus);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', refreshViewerStatus);
+    };
+  }, []);
+
   // 필터링된 파일 데이터
-  const filteredFileData = useMemo(() => {
+  const filteredRawFileData = useMemo(() => {
     const files = isLibrarySearchActive ? librarySearchResults : getCurrentFileData();
     return filterFolderFiles(files, {
       query: isLibrarySearchActive ? '' : searchQuery,
       metadataMissingOnly,
     });
   }, [getCurrentFileData, isLibrarySearchActive, librarySearchResults, metadataMissingOnly, searchQuery]);
+  const filteredFileData = useMemo(() => {
+    const reader = createViewerStatusReader();
+    return filteredRawFileData.map(file => attachViewerStatus(file, reader));
+  }, [filteredRawFileData, viewerStatusVersion]);
 
   const pumpCoverPreviewQueue = useCallback(() => {
     if (!selectedFolderPath || isLibrarySearchActive) return;
@@ -1359,6 +1416,24 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const openFileInViewer = useCallback(async (file) => {
     const target = typeof file === 'string' ? file : file?.full_path || file?.path;
     if (!target) return;
+    const explicitViewerPath = typeSpecificViewerPath(config, target);
+    let explicitViewerResult = null;
+    if (explicitViewerPath) {
+      try {
+        explicitViewerResult = await window.electronAPI?.openWithViewer?.(explicitViewerPath, target);
+      } catch (error) {
+        explicitViewerResult = { success: false, message: error.message || String(error) };
+      }
+      if (explicitViewerResult?.success) return;
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: viewerErrorMessage(explicitViewerResult) || t('msg_failed'),
+        language: config?.language || config?.lang || 'ko',
+      });
+      return;
+    }
+
     let internalResult = null;
     try {
       internalResult = await window.electronAPI?.openInternalViewer?.(target);
@@ -1367,25 +1442,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     if (internalResult?.success) return;
 
-    if (config?.viewer_path) {
-      const externalResult = await window.electronAPI?.openWithViewer?.(config.viewer_path, target);
-      if (externalResult?.success) return;
-      await window.electronAPI?.showMessage?.({
-        type: 'error',
-        title: t('dlg_err'),
-        message: externalResult?.message || internalResult?.message || t('msg_failed'),
-        language: config?.language || config?.lang || 'ko',
-      });
-      return;
-    }
-
     await window.electronAPI?.showMessage?.({
       type: 'error',
       title: t('dlg_err'),
-      message: internalResult?.message || t('msg_failed'),
+      message: viewerErrorMessage(internalResult) || t('msg_failed'),
       language: config?.language || config?.lang || 'ko',
     });
-  }, [config?.language, config?.lang, config?.viewer_path, t]);
+  }, [config, t]);
 
   const openSelectedInViewer = useCallback(async () => {
     await openFileInViewer(activeSelectedFile);
@@ -2373,6 +2436,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (column.key === 'folder_path') return file.folder_path || parentPath(file.full_path || file.path);
       if (column.key === 'author') return file.author || file.writer || '';
       if (column.key === 'cover') return file.cover ? t('folder_cover_img') : '';
+      if (column.key === 'viewer_reading_status') return viewerReadingStatusText(file.viewerStatus, t);
+      if (column.key === 'viewer_bookmark_status') return viewerBookmarkStatusText(file.viewerStatus, t);
       return file[column.key] ?? '';
     }));
     const result = await window.electronAPI?.exportCsv?.(filePath, headers, rows);

@@ -308,4 +308,5 @@ test('렌더러 CSP는 전용 썸네일 프로토콜 이미지를 허용한다',
     assert.match(indexSource, /connect-src[^;]*ws:\/\/localhost:\*/);
     assert.match(indexSource, /img-src[^;]*bookmanager-thumbnail:/);
     assert.match(indexSource, /img-src[^;]*bookmanager-comic:/);
+    assert.match(indexSource, /img-src[^;]*bookmanager-document:/);
 });

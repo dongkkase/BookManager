@@ -25,6 +25,12 @@ const RENAMER_ARCHIVE_COMPRESSION_OPTIONS = [
   { value: 'fast', labelKey: 'renamer_archive_compression_fast', fallback: '빠름' },
   { value: 'maximum', labelKey: 'renamer_archive_compression_maximum', fallback: '최대 압축' },
 ];
+const VIEWER_PROGRAM_TYPES = [
+  { key: 'comic', labelKey: 'viewer_type_comic', fallback: '코믹:', descriptionKey: 'viewer_type_comic_extensions', descriptionFallback: '연결 파일: ZIP, CBZ, CBR, RAR, 7Z, CB7' },
+  { key: 'epub', labelKey: 'viewer_type_epub', fallback: 'EPUB:' },
+  { key: 'pdf', labelKey: 'viewer_type_pdf', fallback: 'PDF:' },
+  { key: 'text', labelKey: 'viewer_type_text', fallback: 'TXT:' },
+];
 const FONT_SCALES = Array.from({ length: 16 }, (_, index) => 80 + index * 5);
 const FALLBACK_SYSTEM_FONT_OPTIONS = [
   'Malgun Gothic',
@@ -77,6 +83,12 @@ function normalizeConfig(config) {
     max_threads: Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 0.5)),
     play_sound: true,
     viewer_path: '',
+    viewer_paths: {
+      comic: '',
+      epub: '',
+      pdf: '',
+      text: '',
+    },
     favorites: [],
     folder_favorites: [],
     pass_skip_meta: false,
@@ -226,9 +238,29 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     onClose?.(nextConfig);
   };
 
-  const handleSelectViewer = async () => {
-    const filePath = await window.electronAPI?.selectFile?.(label('viewer_lbl', '뷰어 프로그램'), []);
-    if (filePath) handleChange('viewer_path', filePath);
+  const updateViewerPath = (viewerType, filePath) => {
+    if (!viewerType) return;
+    setLocalConfig(prev => ({
+      ...prev,
+      viewer_paths: {
+        ...(prev.viewer_paths || {}),
+        [viewerType]: filePath || '',
+      },
+    }));
+  };
+
+  const handleSelectViewer = async (viewerType) => {
+    const option = VIEWER_PROGRAM_TYPES.find(item => item.key === viewerType);
+    if (!option) return;
+    const title = option
+      ? `${label('viewer_lbl', '뷰어 프로그램')} ${label(option.labelKey, option.fallback)}`
+      : label('viewer_lbl', '뷰어 프로그램');
+    const filePath = await window.electronAPI?.selectFile?.(title, []);
+    if (filePath) updateViewerPath(viewerType, filePath);
+  };
+
+  const handleClearViewer = (viewerType) => {
+    updateViewerPath(viewerType, '');
   };
 
   const handleAddDupFolder = async () => {
@@ -481,13 +513,32 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
               <div className="settings-separator" />
 
-              <div className="settings-row">
-                <span className="settings-label">{label('viewer_lbl', '뷰어 프로그램:')}</span>
-                <div className="settings-path-row">
-                  <input className="settings-input" value={localConfig.viewer_path || ''} placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')} readOnly />
-                  <button className="settings-action-btn" onClick={handleSelectViewer}>{label('btn_find', '찾기')}</button>
+              {VIEWER_PROGRAM_TYPES.map(option => (
+                <div className="settings-row" key={option.key}>
+                  <span className="settings-label settings-viewer-label">
+                    <span>{label(option.labelKey, option.fallback)}</span>
+                    {option.descriptionKey ? (
+                      <small>{label(option.descriptionKey, option.descriptionFallback)}</small>
+                    ) : null}
+                  </span>
+                  <div className="settings-path-row">
+                    <input
+                      className="settings-input"
+                      value={localConfig.viewer_paths?.[option.key] || ''}
+                      placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')}
+                      readOnly
+                    />
+                    <button className="settings-action-btn" onClick={() => handleSelectViewer(option.key)}>{label('btn_find', '찾기')}</button>
+                    <button
+                      className="settings-action-btn"
+                      onClick={() => handleClearViewer(option.key)}
+                      disabled={!localConfig.viewer_paths?.[option.key]}
+                    >
+                      {label('btn_remove', '삭제')}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ))}
               </fieldset>
             </div>
           )}
