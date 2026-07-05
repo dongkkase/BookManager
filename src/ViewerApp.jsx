@@ -827,6 +827,9 @@ function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, pa
   return {
     type: block.type || 'text',
     text,
+    src: block.src,
+    alt: block.alt,
+    name: block.name,
     tagName: block.tagName,
     style: block.style,
     className: block.className,
@@ -1032,13 +1035,13 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '', ex
     return (
       <img
         key={key}
+        {...(node.attributes || {})}
+        {...anchorProps}
+        {...extraProps}
         className={viewerClassName(extraClassName, 'viewer-reader-html-image', previewable && 'is-previewable', node.className)}
         src={src}
         alt={node.alt || ''}
         style={node.style || undefined}
-        {...(node.attributes || {})}
-        {...anchorProps}
-        {...extraProps}
         title={previewable ? previewLabel : undefined}
         role={previewable ? 'button' : undefined}
         tabIndex={previewable ? 0 : undefined}
@@ -4897,11 +4900,11 @@ function ViewerApp() {
             {...measureProps}
           >
             <img
+              {...(block.attributes || {})}
               className={viewerClassName(block.className, imagePreviewAllowed && 'is-previewable')}
               src={block.src}
               alt={blockAlt}
               title={imagePreviewAllowed ? viewerText('viewer.common.image_preview', '이미지 크게 보기') : undefined}
-              {...(block.attributes || {})}
               role={imagePreviewAllowed ? 'button' : undefined}
               tabIndex={imagePreviewAllowed ? 0 : undefined}
               aria-label={imagePreviewAllowed ? viewerText('viewer.common.image_preview', '이미지 크게 보기') : undefined}

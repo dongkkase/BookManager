@@ -2353,6 +2353,42 @@ function imageExtensionFromMime(mimeType = '') {
   return '.jpg';
 }
 
+function isEpubCoverCompatibleImage(filePath = '') {
+  return ['.jpg', '.jpeg', '.png'].includes(path.extname(filePath).toLowerCase());
+}
+
+function normalizeApiCoverImageBuffer(buffer, mimeType = '') {
+  const cleanType = String(mimeType || '').split(';')[0].trim().toLowerCase();
+  if (cleanType === 'image/jpeg' || cleanType === 'image/png') {
+    return { buffer, mimeType: cleanType };
+  }
+
+  try {
+    const image = nativeImage.createFromBuffer(buffer);
+    if (!image.isEmpty()) {
+      const pngBuffer = image.toPNG();
+      if (Buffer.isBuffer(pngBuffer) && pngBuffer.length > 0) {
+        return { buffer: pngBuffer, mimeType: 'image/png' };
+      }
+    }
+  } catch {
+    // 원본 버퍼를 유지합니다.
+  }
+
+  return { buffer, mimeType };
+}
+
+function normalizeEpubCoverImageBuffer(buffer, sourcePath = '', mediaType = '') {
+  const normalized = normalizeApiCoverImageBuffer(
+    buffer,
+    mediaType || imageMimeTypeFromPath(sourcePath),
+  );
+  return {
+    ...normalized,
+    extension: imageExtensionFromMime(normalized.mimeType),
+  };
+}
+
 function stripTransientApiImageFields(result = {}) {
   const { coverDataUrl, coverCacheUrl, ...rest } = result || {};
   return rest;
@@ -2390,11 +2426,36 @@ function apiCoverCacheFileFromProtocolUrl(imageUrl = '', cacheDir = '') {
 async function findApiCoverCacheFile(cacheDir, hash) {
   try {
     const entries = await fs.promises.readdir(cacheDir, { withFileTypes: true });
-    const match = entries.find(entry => entry.isFile() && entry.name.startsWith(`${hash}.`));
+    const files = entries.filter(entry => entry.isFile() && entry.name.startsWith(`${hash}.`));
+    const match = files.find(entry => isEpubCoverCompatibleImage(entry.name)) || files[0];
     return match ? path.join(cacheDir, match.name) : '';
   } catch {
     return '';
   }
+}
+
+async function ensureApiCoverCompatibleCacheFile(filePath = '', cacheDir = '', hash = '') {
+  if (!filePath || isEpubCoverCompatibleImage(filePath)) return filePath;
+  try {
+    const sourceBuffer = await fs.promises.readFile(filePath);
+    const normalized = normalizeApiCoverImageBuffer(sourceBuffer, imageMimeTypeFromPath(filePath));
+    if (!Buffer.isBuffer(normalized.buffer) || normalized.mimeType !== 'image/png') return filePath;
+    const outputPath = path.join(cacheDir, `${hash}.png`);
+    await fs.promises.writeFile(outputPath, normalized.buffer);
+    return outputPath;
+  } catch {
+    return filePath;
+  }
+}
+
+function imageMimeTypeFromPath(filePath = '') {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.svg') return 'image/svg+xml';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  return '';
 }
 
 function rememberApiCoverUrl(url, cacheUrl) {
@@ -2414,18 +2475,20 @@ async function fetchImageCacheFileFromUrl(imageUrl = '', cacheDir = '') {
 
   const hash = crypto.createHash('sha1').update(url).digest('hex');
   const cachedPath = await findApiCoverCacheFile(cacheDir, hash);
-  if (cachedPath) return cachedPath;
+  if (cachedPath) return ensureApiCoverCompatibleCacheFile(cachedPath, cacheDir, hash);
 
   const imageOrigin = new URL(url).origin;
   const isRidiImage = /ridicdn\.net|ridibooks\.com/i.test(url);
   const { buffer, contentType } = await requestBufferGeneric(url, {
     Referer: isRidiImage ? 'https://ridibooks.com/' : imageOrigin,
+    Accept: 'image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5',
     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
   }, 12000);
   const mimeType = mimeFromUrl(url, contentType);
-  const filePath = path.join(cacheDir, `${hash}${imageExtensionFromMime(mimeType)}`);
+  const normalized = normalizeApiCoverImageBuffer(buffer, mimeType);
+  const filePath = path.join(cacheDir, `${hash}${imageExtensionFromMime(normalized.mimeType)}`);
   await fs.promises.mkdir(cacheDir, { recursive: true });
-  await fs.promises.writeFile(filePath, buffer);
+  await fs.promises.writeFile(filePath, normalized.buffer);
   return filePath;
 }
 
@@ -3227,6 +3290,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         ...options,
         sevenZExe,
         dbPath: libraryDbPath(),
+        normalizeEpubCoverImage: normalizeEpubCoverImageBuffer,
         shouldCancel: () => controller.shouldCancel(),
         lang: options.lang || config.language || config.lang || 'ko',
       }, (progress) => {

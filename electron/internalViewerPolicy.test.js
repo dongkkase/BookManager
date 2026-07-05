@@ -272,6 +272,8 @@ test('EPUB CSS는 안전한 스타일 객체로만 뷰어에 전달된다', () =
     assert.match(viewerAppSource, /currentPageBlocks/);
     assert.match(viewerAppSource, /addPackedBlock/);
     assert.match(viewerAppSource, /addSplittableTextBlock/);
+    assert.match(viewerAppSource, /src: block\.src/);
+    assert.match(viewerAppSource, /alt: block\.alt/);
     assert.match(viewerAppSource, /currentPageBlocks\.some\(pageBlock => pageBlock\.hasImage\)/);
     assert.match(viewerAppSource, /if \(currentPageBlocks\.length === 0 && lineCost > metrics\.lineBudget\)/);
     assert.match(viewerAppSource, /currentPageBlocks\.length > 0 && lineCost > remainingLines && remainingLines >= 1/);

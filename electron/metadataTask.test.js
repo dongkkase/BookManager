@@ -112,6 +112,55 @@ async function createEpubCoverFixture(source) {
     await replaceZipEntry(source, 'OEBPS/images/alt.png', Buffer.from('alt cover'));
 }
 
+async function createEpubWebpCoverWithJpegAlternateFixture(source) {
+    fs.writeFileSync(source, Buffer.alloc(0));
+    await replaceZipEntry(
+        source,
+        'META-INF/container.xml',
+        '<?xml version="1.0" encoding="UTF-8"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+    );
+    await replaceZipEntry(
+        source,
+        'OEBPS/content.opf',
+        [
+            '<?xml version="1.0" encoding="utf-8"?>',
+            '<package version="3.0" unique-identifier="pub-id" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+            '    <metadata>',
+            '        <dc:identifier id="pub-id">97800000000</dc:identifier>',
+            '        <dc:title>기존 제목</dc:title>',
+            '        <meta name="cover" content="bookmanager-cover" />',
+            '    </metadata>',
+            '    <manifest>',
+            '        <item id="bookmanager-cover" href="images/bookmanager-cover.webp" media-type="image/webp" properties="cover-image" />',
+            '        <item id="bookmanager-cover-2" href="images/bookmanager-cover.jpg" media-type="image/jpeg" />',
+            '        <item id="bookmanager-cover-page" href="bookmanager-cover.xhtml" media-type="application/xhtml+xml" />',
+            '    </manifest>',
+            '    <spine>',
+            '        <itemref idref="bookmanager-cover-page" linear="yes" />',
+            '    </spine>',
+            '    <guide>',
+            '        <reference type="cover" title="Cover" href="bookmanager-cover.xhtml" />',
+            '    </guide>',
+            '</package>',
+        ].join('\n'),
+    );
+    await replaceZipEntry(
+        source,
+        'OEBPS/bookmanager-cover.xhtml',
+        [
+            '<?xml version="1.0" encoding="utf-8"?>',
+            '<html xmlns="http://www.w3.org/1999/xhtml">',
+            '<body>',
+            '    <img src="images/bookmanager-cover.webp" alt="Cover" />',
+            '</body>',
+            '</html>',
+            '',
+        ].join('\n'),
+    );
+    await replaceZipEntry(source, 'OEBPS/images/bookmanager-cover.webp', Buffer.from('webp cover'));
+    await replaceZipEntry(source, 'OEBPS/images/bookmanager-cover.jpg', Buffer.from('jpg cover'));
+}
+
 test('ComicInfo XML preserves supported fields and ignores removed comic fields', () => {
     const xml = createComicInfoXml({
         Series: 'A & B',
@@ -450,14 +499,22 @@ test('EPUB 표지는 내부 이미지 선택으로 OPF cover 참조를 교체한
         assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
 
         const buffer = fs.readFileSync(source);
-        const opfEntry = listZipEntries(buffer).find(entry => entry.name === 'OEBPS/content.opf');
+        const entries = listZipEntries(buffer);
+        const opfEntry = entries.find(entry => entry.name === 'OEBPS/content.opf');
+        const coverPageEntry = entries.find(entry => entry.name === 'OEBPS/bookmanager-cover.xhtml');
+        assert.ok(coverPageEntry);
         const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const coverPageXml = readZipEntry(buffer, coverPageEntry).toString('utf8');
         const coverItem = opfXml.match(/<item\b[^>]*id="cover-id"[^>]*>/)?.[0] || '';
         const altItem = opfXml.match(/<item\b[^>]*id="alt-id"[^>]*>/)?.[0] || '';
+        assert.match(coverPageXml, /<img src="images\/alt.png" alt="Cover" \/>/);
         assert.match(opfXml, /<meta name="cover" content="alt-id" \/>/);
         assert.doesNotMatch(coverItem, /cover-image/);
         assert.match(altItem, /properties="cover-image"/);
         assert.match(altItem, /media-type="image\/png"/);
+        assert.match(opfXml, /<item id="bookmanager-cover-page" href="bookmanager-cover.xhtml" media-type="application\/xhtml\+xml" \/>/);
+        assert.match(opfXml, /<spine>\s*<itemref idref="bookmanager-cover-page" linear="yes" \/>/);
+        assert.match(opfXml, /<guide>\s*<reference type="cover" title="Cover" href="bookmanager-cover.xhtml" \/>/);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -488,19 +545,164 @@ test('EPUB 표지는 로컬 이미지 파일을 EPUB 내부에 추가해 저장�
 
         const buffer = fs.readFileSync(source);
         const entries = listZipEntries(buffer);
-        const coverEntry = entries.find(entry => entry.name === 'OEBPS/images/bookmanager-cover.png');
+        const coverEntry = entries.find(entry => entry.name === 'OEBPS/images/cover.png');
+        const coverPageEntry = entries.find(entry => entry.name === 'OEBPS/bookmanager-cover.xhtml');
         const opfEntry = entries.find(entry => entry.name === 'OEBPS/content.opf');
         assert.ok(coverEntry);
+        assert.ok(coverPageEntry);
         assert.deepEqual(readZipEntry(buffer, coverEntry), Buffer.from('new cover'));
 
         const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const coverPageXml = readZipEntry(buffer, coverPageEntry).toString('utf8');
         const coverItem = opfXml.match(/<item\b[^>]*id="cover-id"[^>]*>/)?.[0] || '';
-        const newItem = opfXml.match(/<item\b[^>]*id="bookmanager-cover"[^>]*>/)?.[0] || '';
-        assert.match(opfXml, /<meta name="cover" content="bookmanager-cover" \/>/);
+        const newItem = opfXml.match(/<item\b[^>]*id="cover-image"[^>]*>/)?.[0] || '';
+        assert.match(coverPageXml, /<img src="images\/cover.png" alt="Cover" \/>/);
+        assert.match(opfXml, /<meta name="cover" content="cover-image" \/>/);
         assert.doesNotMatch(coverItem, /cover-image/);
-        assert.match(newItem, /href="images\/bookmanager-cover.png"/);
+        assert.match(newItem, /href="images\/cover.png"/);
         assert.match(newItem, /media-type="image\/png"/);
         assert.match(newItem, /properties="cover-image"/);
+        assert.match(opfXml, /<item id="bookmanager-cover-page" href="bookmanager-cover.xhtml" media-type="application\/xhtml\+xml" \/>/);
+        assert.match(opfXml, /<spine>\s*<itemref idref="bookmanager-cover-page" linear="yes" \/>/);
+        assert.match(opfXml, /<guide>\s*<reference type="cover" title="Cover" href="bookmanager-cover.xhtml" \/>/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 표지는 저장 직전에 외부 뷰어 호환 이미지로 정규화할 수 있다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-normalize-'));
+    try {
+        const source = path.join(root, '정규화 표지 EPUB.epub');
+        const coverFile = path.join(root, 'new-cover.webp');
+        await createEpubCoverFixture(source);
+        fs.writeFileSync(coverFile, Buffer.from('webp cover'));
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '정규화 표지 제목' },
+            epubCoverChange: {
+                type: 'file',
+                filePath: coverFile,
+            },
+        }], {
+            backup_on: false,
+            shouldCancel: () => false,
+            async normalizeEpubCoverImage(buffer, sourcePath, mediaType) {
+                assert.equal(buffer.toString('utf8'), 'webp cover');
+                assert.equal(path.basename(sourcePath), 'new-cover.webp');
+                assert.equal(mediaType, 'image/webp');
+                return {
+                    buffer: Buffer.from('png cover'),
+                    mediaType: 'image/png',
+                    extension: '.png',
+                };
+            },
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const buffer = fs.readFileSync(source);
+        const entries = listZipEntries(buffer);
+        const coverEntry = entries.find(entry => entry.name === 'OEBPS/images/cover.png');
+        const opfEntry = entries.find(entry => entry.name === 'OEBPS/content.opf');
+        assert.ok(coverEntry);
+        assert.deepEqual(readZipEntry(buffer, coverEntry), Buffer.from('png cover'));
+
+        const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const newItem = opfXml.match(/<item\b[^>]*id="cover-image"[^>]*>/)?.[0] || '';
+        assert.match(newItem, /href="images\/cover.png"/);
+        assert.match(newItem, /media-type="image\/png"/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 저장은 기존 WebP 표지의 JPEG 대체 파일을 외부 뷰어 표지로 지정한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-alternate-'));
+    try {
+        const source = path.join(root, 'WebP 표지 EPUB.epub');
+        await createEpubWebpCoverWithJpegAlternateFixture(source);
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '대체 표지 제목' },
+        }], {
+            backup_on: false,
+            shouldCancel: () => false,
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const buffer = fs.readFileSync(source);
+        const entries = listZipEntries(buffer);
+        const opfEntry = entries.find(entry => entry.name === 'OEBPS/content.opf');
+        const coverPageEntry = entries.find(entry => entry.name === 'OEBPS/bookmanager-cover.xhtml');
+        assert.ok(opfEntry);
+        assert.ok(coverPageEntry);
+        assert.equal(entries.some(entry => entry.name === 'OEBPS/images/cover.png'), false);
+
+        const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const coverPageXml = readZipEntry(buffer, coverPageEntry).toString('utf8');
+        const webpItem = opfXml.match(/<item\b[^>]*id="bookmanager-cover"[^>]*>/)?.[0] || '';
+        const jpegItem = opfXml.match(/<item\b[^>]*id="bookmanager-cover-2"[^>]*>/)?.[0] || '';
+        assert.match(opfXml, /<meta name="cover" content="bookmanager-cover-2" \/>/);
+        assert.doesNotMatch(webpItem, /cover-image/);
+        assert.match(jpegItem, /properties="cover-image"/);
+        assert.match(jpegItem, /media-type="image\/jpeg"/);
+        assert.match(coverPageXml, /<img src="images\/bookmanager-cover\.jpg" alt="Cover" \/>/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 저장은 기존 WebP 표지를 정규화할 수 있으면 JPEG 대체 파일보다 정규화 이미지를 우선한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-existing-normalize-'));
+    try {
+        const source = path.join(root, '기존 WebP 표지 EPUB.epub');
+        await createEpubWebpCoverWithJpegAlternateFixture(source);
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '정규화 우선 제목' },
+        }], {
+            backup_on: false,
+            shouldCancel: () => false,
+            async normalizeEpubCoverImage(buffer, sourcePath, mediaType) {
+                assert.equal(buffer.toString('utf8'), 'webp cover');
+                assert.equal(sourcePath, 'OEBPS/images/bookmanager-cover.webp');
+                assert.equal(mediaType, 'image/webp');
+                return {
+                    buffer: Buffer.from('normalized png cover'),
+                    mediaType: 'image/png',
+                    extension: '.png',
+                };
+            },
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const buffer = fs.readFileSync(source);
+        const entries = listZipEntries(buffer);
+        const normalizedCoverEntry = entries.find(entry => entry.name === 'OEBPS/images/cover.png');
+        const opfEntry = entries.find(entry => entry.name === 'OEBPS/content.opf');
+        const coverPageEntry = entries.find(entry => entry.name === 'OEBPS/bookmanager-cover.xhtml');
+        assert.ok(normalizedCoverEntry);
+        assert.deepEqual(readZipEntry(buffer, normalizedCoverEntry), Buffer.from('normalized png cover'));
+
+        const opfXml = readZipEntry(buffer, opfEntry).toString('utf8');
+        const coverPageXml = readZipEntry(buffer, coverPageEntry).toString('utf8');
+        const jpegItem = opfXml.match(/<item\b[^>]*id="bookmanager-cover-2"[^>]*>/)?.[0] || '';
+        const normalizedItem = opfXml.match(/<item\b[^>]*id="cover-image"[^>]*>/)?.[0] || '';
+        assert.match(opfXml, /<meta name="cover" content="cover-image" \/>/);
+        assert.doesNotMatch(jpegItem, /cover-image/);
+        assert.match(normalizedItem, /href="images\/cover.png"/);
+        assert.match(normalizedItem, /media-type="image\/png"/);
+        assert.match(normalizedItem, /properties="cover-image"/);
+        assert.match(coverPageXml, /<img src="images\/cover.png" alt="Cover" \/>/);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

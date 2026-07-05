@@ -1624,7 +1624,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           )}
         </div>
         <div className="meta-col-btn">
-          <button className="meta-copy-btn" onClick={() => handleCopyField(field.id)} disabled={!activeItem}>‹</button>
+          <button className="meta-copy-btn" onClick={() => handleCopyField(field.id)} disabled={!activeItem}><FaIcon name="angle-left" size={12} /></button>
         </div>
         <div className="meta-col-res meta-field-with-stepper">
           {renderFieldInput(field, batchMetadata[field.id] || '', value => updateBatchMetadata(field.id, value), 'meta-input res')}
@@ -1652,7 +1652,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             onChange={value => updateActiveMetadata(fieldId, value)}
             disabled={!activeItem}
           />
-          <button className="meta-copy-btn" onClick={() => handleCopyField(fieldId)} disabled={!activeItem}>‹</button>
+          <button className="meta-copy-btn" onClick={() => handleCopyField(fieldId)} disabled={!activeItem}><FaIcon name="angle-left" size={12} /></button>
           <TagInput
             className="meta-input res meta-tag-box"
             placeholder={placeholder}
@@ -1738,7 +1738,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
             onChange={updateActiveGenreTags}
             disabled={!activeItem}
           />
-          <button className="meta-copy-btn" onClick={handleCopyGenreTags} disabled={!activeItem}>‹</button>
+          <button className="meta-copy-btn" onClick={handleCopyGenreTags} disabled={!activeItem}><FaIcon name="angle-left" size={12} /></button>
           <TagInput
             className="meta-input res meta-tag-box"
             placeholder={placeholder}

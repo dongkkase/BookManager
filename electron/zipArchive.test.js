@@ -6,11 +6,12 @@ import path from 'path';
 
 import { crc32, listZipEntries, readZipEntry, replaceZipEntry, replaceZipEntryAppendOnly } from './core/zipArchive.js';
 
-function createStoredZipWithRawName(nameBuffer, content = Buffer.from('page')) {
+function createStoredZipWithRawName(nameBuffer, content = Buffer.from('page'), options = {}) {
+    const flags = options.flags || 0;
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(flags, 6);
     localHeader.writeUInt16LE(0, 8);
     localHeader.writeUInt32LE(crc32(content), 14);
     localHeader.writeUInt32LE(content.length, 18);
@@ -22,7 +23,7 @@ function createStoredZipWithRawName(nameBuffer, content = Buffer.from('page')) {
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4);
     centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(flags, 8);
     centralHeader.writeUInt16LE(0, 10);
     centralHeader.writeUInt32LE(crc32(content), 16);
     centralHeader.writeUInt32LE(content.length, 20);
@@ -47,6 +48,52 @@ test('ZIP 엔트리명이 CP949로 저장된 경우 한글 이름으로 디코�
 
     assert.equal(entries.length, 1);
     assert.equal(entries[0].name, '황천의 츠가이 01.zip');
+});
+
+test('ZIP 교체 저장은 data descriptor 플래그를 남기지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-zip-flags-'));
+    try {
+        const source = path.join(root, 'sample.epub');
+        fs.writeFileSync(source, createStoredZipWithRawName(Buffer.from('OEBPS/images/cover.jpg'), Buffer.from('cover'), {
+            flags: 0x08,
+        }));
+
+        await replaceZipEntry(source, 'OEBPS/content.opf', '<package/>');
+
+        const buffer = fs.readFileSync(source);
+        const entries = listZipEntries(buffer);
+        const coverEntry = entries.find(entry => entry.name === 'OEBPS/images/cover.jpg');
+
+        assert.ok(coverEntry);
+        const localFlags = buffer.readUInt16LE(coverEntry.localHeaderOffset + 6);
+        assert.equal(coverEntry.flags & 0x08, 0);
+        assert.equal(localFlags & 0x08, 0);
+        assert.equal(readZipEntry(buffer, coverEntry).toString('utf8'), 'cover');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 교체 저장은 mimetype을 첫 번째 무압축 엔트리로 보장한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-epub-mimetype-'));
+    try {
+        const source = path.join(root, 'sample.epub');
+        fs.writeFileSync(source, createStoredZipWithRawName(Buffer.from('OEBPS/content.opf'), Buffer.from('<package/>')));
+
+        await replaceZipEntry(source, 'OEBPS/images/cover.jpg', Buffer.from('cover'));
+
+        const buffer = fs.readFileSync(source);
+        const entries = listZipEntries(buffer);
+        const mimetypeEntry = entries[0];
+
+        assert.equal(mimetypeEntry.name, 'mimetype');
+        assert.equal(mimetypeEntry.method, 0);
+        assert.equal(mimetypeEntry.flags, 0);
+        assert.equal(mimetypeEntry.localHeaderOffset, 0);
+        assert.equal(readZipEntry(buffer, mimetypeEntry).toString('utf8'), 'application/epub+zip');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });
 
 test('ZIP append-only 교체는 기존 데이터를 유지하고 새 엔트리를 마지막 디렉터리에 반영한다', async () => {

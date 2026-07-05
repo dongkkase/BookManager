@@ -8,6 +8,8 @@ const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
 const UTF8_FLAG = 0x800;
+const DATA_DESCRIPTOR_FLAG = 0x08;
+const EPUB_MIMETYPE = 'application/epub+zip';
 const EOCD_TAIL_BYTES = 0xffff + 22;
 const ZIP32_MAX = 0xffffffff;
 const ZIP32_MAX_ENTRIES = 0xffff;
@@ -338,7 +340,7 @@ function createEntry(name, content, options = {}) {
     return {
         name,
         nameBuffer: Buffer.from(name, 'utf8'),
-        flags: UTF8_FLAG,
+        flags: options.flags ?? UTF8_FLAG,
         method: store ? 0 : 8,
         modTime: dosTime,
         modDate: dosDate,
@@ -350,11 +352,24 @@ function createEntry(name, content, options = {}) {
     };
 }
 
+function normalizeEpubEntries(filePath, entries) {
+    if (path.extname(filePath).toLowerCase() !== '.epub') return entries;
+    const mimetypeEntry = createEntry('mimetype', EPUB_MIMETYPE, {
+        store: true,
+        flags: 0,
+    });
+    return [
+        mimetypeEntry,
+        ...entries.filter(entry => normalizeZipEntryName(entry.name) !== 'mimetype'),
+    ];
+}
+
 function localHeader(entry, offset) {
     const header = Buffer.alloc(30);
+    const flags = entry.flags & ~DATA_DESCRIPTOR_FLAG;
     header.writeUInt32LE(LOCAL_SIGNATURE, 0);
     header.writeUInt16LE(20, 4);
-    header.writeUInt16LE(entry.flags, 6);
+    header.writeUInt16LE(flags, 6);
     header.writeUInt16LE(entry.method, 8);
     header.writeUInt16LE(entry.modTime, 10);
     header.writeUInt16LE(entry.modDate, 12);
@@ -371,10 +386,11 @@ function localHeader(entry, offset) {
 
 function centralHeader(entry, offset) {
     const header = Buffer.alloc(46);
+    const flags = entry.flags & ~DATA_DESCRIPTOR_FLAG;
     header.writeUInt32LE(CENTRAL_SIGNATURE, 0);
     header.writeUInt16LE(20, 4);
     header.writeUInt16LE(20, 6);
-    header.writeUInt16LE(entry.flags, 8);
+    header.writeUInt16LE(flags, 8);
     header.writeUInt16LE(entry.method, 10);
     header.writeUInt16LE(entry.modTime, 12);
     header.writeUInt16LE(entry.modDate, 14);
@@ -484,11 +500,12 @@ export async function replaceZipEntry(filePath, entryName, content, options = {}
         entries.push({ ...entry, compressed });
     }
     entries.push(replacement);
+    const outputEntries = normalizeEpubEntries(filePath, entries);
 
     const localParts = [];
     const centralParts = [];
     let offset = 0;
-    for (const entry of entries) {
+    for (const entry of outputEntries) {
         const local = localHeader(entry, offset);
         localParts.push(local.buffer, entry.compressed);
         centralParts.push(centralHeader(entry, local.offset));
@@ -496,6 +513,6 @@ export async function replaceZipEntry(filePath, entryName, content, options = {}
     }
     const centralOffset = offset;
     const central = Buffer.concat(centralParts);
-    const eocd = endOfCentralDirectory(entries.length, central.length, centralOffset);
+    const eocd = endOfCentralDirectory(outputEntries.length, central.length, centralOffset);
     await fs.writeFile(filePath, Buffer.concat([...localParts, central, eocd]));
 }
