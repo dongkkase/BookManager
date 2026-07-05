@@ -3,6 +3,7 @@
 > **The program description on the wiki page is only available in `Korean`. Please use Chrome's translation feature.**
 
 <kbd>![image](https://raw.githubusercontent.com/dongkkase/BookManager/main/demo/demo1.gif)</kbd>
+<kbd>![image](https://raw.githubusercontent.com/dongkkase/BookManager/main/demo/demo2.gif)</kbd>
 
 BookManager는 CBZ, ZIP, EPUB, PDF 같은 만화책과 전자책 파일을 로컬 데스크톱에서 정리하고 관리하기 위한 Windows/macOS 지원 앱입니다.
 Kavita, Komga, YACReader, Panels 같은 만화 관리 서버와 Calibre, KOReader, Apple Books, Google Play Books 같은 전자책 환경에서 쓰기 좋도록 압축 파일 구조 정리, 내부 이미지 파일명 변경, ComicInfo.xml 메타데이터 편집, 라이브러리 검색을 한 화면에서 처리하는 것을 목표로 합니다.
@@ -26,10 +27,11 @@ Kavita, Komga, YACReader, Panels 같은 만화 관리 서버와 Calibre, KOReade
 ## 주요 기능
 
 - 라이브러리 폴더 등록, 스캔, 검색, 썸네일 및 메타데이터 캐시 관리
-- ZIP, CBZ, CBR, RAR, 7Z 기반 만화책 압축 파일의 구조 정리 및 평탄화
+- ZIP, CBZ, CBR, RAR, 7Z 기반 만화책 압축 파일의 구조 정리, 평탄화
 - 압축 파일 내부 이미지 파일명 일괄 변경, 패턴 미리보기, 누락 페이지 확인
 - EPUB, PDF 파일의 라이브러리 관리 및 메타데이터 관리
 - ComicInfo.xml 기반 메타데이터 조회, 편집, 저장
+- 내장 뷰어에서 만화책, EPUB, PDF, TXT 지원
 - OPDS, Web, WebDAV 공유 서버 실행
 
 ## 만화책 파일 관리
