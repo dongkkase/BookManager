@@ -60,10 +60,11 @@ test('뷰어 창은 같은 React 번들의 전용 viewer 모드로 로드된다'
     assert.match(indexSource, /font-src[^;]*bookmanager-document:/);
 });
 
-test('뷰어 창은 F12와 Ctrl+Shift+I로 개발자 도구를 토글한다', () => {
+test('뷰어 창은 F12와 Ctrl/Cmd+Shift+I로 개발자 도구를 토글한다', () => {
     assert.match(viewerWindowSource, /before-input-event/);
     assert.match(viewerWindowSource, /key === 'f12'/);
-    assert.match(viewerWindowSource, /input\.control && input\.shift && key === 'i'/);
+    assert.match(viewerWindowSource, /process\.platform === 'darwin' \? input\.meta : input\.control/);
+    assert.match(viewerWindowSource, /primaryModifier && input\.shift && key === 'i'/);
     assert.match(viewerWindowSource, /isDevToolsOpened\(\)/);
     assert.match(viewerWindowSource, /openDevTools\(\{\s*mode:\s*'detach'\s*\}\)/);
     assert.match(viewerWindowSource, /closeDevTools\(\)/);
@@ -430,7 +431,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerStyleSource, /\.viewer-help-close:hover\s*\{[\s\S]*?transform:\s*translateY\(-1px\)/);
     assert.match(viewerAppSource, /viewer\.help\.shortcut_page_group/);
     assert.match(viewerAppSource, /viewer\.help\.shortcut_swipe/);
-    assert.match(viewerAppSource, /viewer\.help\.shortcut_zoom_ctrl_wheel/);
+    assert.match(viewerAppSource, /`\$\{viewerShortcutLabel\(\['Mod'\]\)\}\+\$\{viewerText\('viewer\.help\.shortcut_wheel_key'/);
     assert.match(viewerAppSource, /viewer\.help\.shortcut_zoom_left_wheel/);
     assert.match(viewerAppSource, /viewer\.help\.shortcut_zoom_right_wheel/);
     assert.match(viewerAppSource, /viewer\.help\.shortcut_fit_group/);
@@ -684,7 +685,9 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /const restoreScrollZoomAnchor = useCallback/);
     assert.match(viewerAppSource, /node\.scrollTop = clamp\(\(anchor\.ratioY \* nextScrollHeight\) - anchor\.offsetY, 0, maxScrollTop\)/);
     assert.match(viewerAppSource, /const adjustZoomAtPoint = useCallback/);
-    assert.match(viewerAppSource, /const zoomByWheelCombination = event\.ctrlKey \|\| Boolean\(activeWheelButtons & WHEEL_ZOOM_BUTTON_MASK\)/);
+    assert.match(viewerAppSource, /function isShortcutModifierEvent\(event = \{\}\)/);
+    assert.match(viewerAppSource, /return event\.ctrlKey \|\| event\.metaKey/);
+    assert.match(viewerAppSource, /const zoomByWheelCombination = isShortcutModifierEvent\(event\) \|\| Boolean\(activeWheelButtons & WHEEL_ZOOM_BUTTON_MASK\)/);
     assert.match(viewerAppSource, /adjustZoomAtPoint\(wheelDelta < 0 \? ZOOM_STEP : -ZOOM_STEP, event\)/);
     assert.match(viewerAppSource, /if \(activeWheelButtons & 2\) suppressContextMenuRef\.current = true/);
     assert.match(viewerAppSource, /if \(suppressContextMenuRef\.current\)/);
@@ -719,7 +722,7 @@ test('하단 페이지 네비게이션은 모든 뷰어 형식에서 사용할 �
     assert.match(viewerStyleSource, /viewer-slide-thumb-reader-preview/);
 });
 
-test('Ctrl+F는 목차 및 검색 패널을 열고 검색 입력에 포커스한다', () => {
+test('Ctrl/Cmd+F는 목차 및 검색 패널을 열고 검색 입력에 포커스한다', () => {
     assert.match(viewerAppSource, /const navigationSearchInputRef = useRef\(null\)/);
     assert.match(viewerAppSource, /function ViewerNavigationPanel/);
     assert.match(viewerAppSource, /searchInputRef/);
@@ -730,6 +733,7 @@ test('Ctrl+F는 목차 및 검색 패널을 열고 검색 입력에 포커스한
     assert.match(viewerAppSource, /navigationSearchInputRef\.current\?\.focus\?\.\(\)/);
     assert.match(viewerAppSource, /navigationSearchInputRef\.current\?\.select\?\.\(\)/);
     assert.match(viewerAppSource, /event\.key\.toLowerCase\(\) === 'f'/);
+    assert.match(viewerAppSource, /isShortcutModifierEvent\(event\) && !event\.altKey && event\.key\.toLowerCase\(\) === 'f'/);
     assert.match(viewerAppSource, /openNavigationSearch\(\)/);
     assert.match(viewerAppSource, /const openNavigationToc = useCallback/);
     assert.match(viewerAppSource, /setNavigationTab\('toc'\)/);

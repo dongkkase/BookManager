@@ -38,6 +38,10 @@ function viewerShortcutLabel(keys) {
     .join(isMac ? '' : '+');
 }
 
+function isShortcutModifierEvent(event = {}) {
+  return event.ctrlKey || event.metaKey;
+}
+
 const VIEW_MODES = [
   { id: 'width', label: '가로 맞춤', labelKey: 'viewer.fit.width', key: '7', iconSrc: fitWidthOrHeightIcon },
   { id: 'height', label: '높이 맞춤', labelKey: 'viewer.fit.height', key: '8', iconSrc: fitWidthOrHeightIcon, rotate: 90 },
@@ -1617,7 +1621,7 @@ function ViewerHelpModal({ open, onClose }) {
     {
       keys: [
         '+ / -',
-        viewerText('viewer.help.shortcut_zoom_ctrl_wheel', 'Ctrl+마우스 휠'),
+        `${viewerShortcutLabel(['Mod'])}+${viewerText('viewer.help.shortcut_wheel_key', '마우스 휠')}`,
         viewerText('viewer.help.shortcut_zoom_left_wheel', '좌클릭+마우스 휠'),
         viewerText('viewer.help.shortcut_zoom_right_wheel', '우클릭+마우스 휠'),
       ],
@@ -4334,7 +4338,7 @@ function ViewerApp() {
     if (!wheelDelta) return;
     const eventButtons = Number(event.buttons) || 0;
     const activeWheelButtons = eventButtons || wheelButtonStateRef.current;
-    const zoomByWheelCombination = event.ctrlKey || Boolean(activeWheelButtons & WHEEL_ZOOM_BUTTON_MASK);
+    const zoomByWheelCombination = isShortcutModifierEvent(event) || Boolean(activeWheelButtons & WHEEL_ZOOM_BUTTON_MASK);
     if (zoomByWheelCombination) {
       event.preventDefault();
       event.stopPropagation();
@@ -4606,7 +4610,7 @@ function ViewerApp() {
 
   useEffect(() => {
     const handler = event => {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
+      if (isShortcutModifierEvent(event) && !event.altKey && event.key.toLowerCase() === 'f') {
         if (openNavigationSearch()) {
           event.preventDefault();
           event.stopPropagation();

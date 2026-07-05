@@ -14,7 +14,8 @@ const VIEWER_MIN_HEIGHT = 560;
 
 function isDevToolsShortcut(input = {}) {
     const key = String(input.key || '').toLowerCase();
-    return key === 'f12' || (input.control && input.shift && key === 'i');
+    const primaryModifier = process.platform === 'darwin' ? input.meta : input.control;
+    return key === 'f12' || (primaryModifier && input.shift && key === 'i');
 }
 
 function toggleDevTools(webContents) {
