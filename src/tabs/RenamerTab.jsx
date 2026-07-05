@@ -475,20 +475,25 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     setSelectedEntryId(activeEntries[clampedIndex]?.id || null);
   }, [activeEntries]);
 
-  const handleRemoveSelectedArchive = useCallback(() => {
-    const targetArchiveId = selectedArchiveId || activeArchive?.id;
+  const handleRemoveArchive = useCallback((targetArchiveId) => {
     if (!targetArchiveId) return;
-
     setFileList(prev => {
       const index = prev.findIndex(file => file.id === targetArchiveId);
       if (index < 0) return prev;
       const next = prev.filter(file => file.id !== targetArchiveId);
-      const nextArchiveId = next[Math.min(index, next.length - 1)]?.id || null;
-      setSelectedArchiveId(nextArchiveId);
-      if (!nextArchiveId) setSelectedEntryId(null);
+      const currentArchiveId = selectedArchiveId || prev[0]?.id || null;
+      if (currentArchiveId === targetArchiveId || !next.some(file => file.id === currentArchiveId)) {
+        const nextArchiveId = next[Math.min(index, next.length - 1)]?.id || null;
+        setSelectedArchiveId(nextArchiveId);
+        if (!nextArchiveId) setSelectedEntryId(null);
+      }
       return next;
     });
-  }, [activeArchive?.id, selectedArchiveId]);
+  }, [selectedArchiveId]);
+
+  const handleRemoveSelectedArchive = useCallback(() => {
+    handleRemoveArchive(selectedArchiveId || activeArchive?.id);
+  }, [activeArchive?.id, handleRemoveArchive, selectedArchiveId]);
 
   const handleArchiveTableKeyDown = useCallback((event) => {
     if (isWorking || !shouldHandleTableNavigation(event)) return;
@@ -870,12 +875,13 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                   <table className="renamer-table">
                     <thead>
                       <tr>
-                        <th style={{ width: '46%' }}>{t('col_name')}</th>
+                        <th style={{ width: '38%' }}>{t('col_name')}</th>
                         <th style={{ width: '12%' }}>{t('col_missing_pages')}</th>
                         <th style={{ width: '8%' }}>{t('col_page_count')}</th>
                         <th style={{ width: '10%' }}>{t('col_size')}</th>
                         <th style={{ width: '12%' }}>{t('col_cap_opt')}</th>
                         <th style={{ width: '12%' }}>{t('col_exif_rem')}</th>
+                        <th style={{ width: '8%' }}>{t('btn_remove')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -961,6 +967,22 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
                                   updateFile(file.id, current => ({ ...current, exifOpt: !current.exifOpt }));
                                 }}
                               />
+                            </td>
+                            <td className="renamer-cell-center">
+                              <button
+                                type="button"
+                                className="renamer-archive-delete-btn"
+                                title={t('btn_remove')}
+                                aria-label={`${file.name} ${t('btn_remove')}`}
+                                disabled={isWorking}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  archiveTableRef.current?.focus({ preventScroll: true });
+                                  handleRemoveArchive(file.id);
+                                }}
+                              >
+                                <FaIcon name="trash" size={11} />
+                              </button>
                             </td>
                           </tr>
                         );

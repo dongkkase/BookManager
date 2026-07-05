@@ -87,7 +87,7 @@
   flex: 0 0 auto;
   min-height: var(--control-height);
   display: grid;
-  grid-template-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 92px 100px;
+  grid-template-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 92px 100px 64px;
   align-items: center;
   color: #dbeeee;
   background: #262626;
@@ -128,9 +128,14 @@
   background: #31566f;
 }
 
+.org-tree-item-group.active-selection > .org-root-row {
+  outline: 1px solid #4aa8e7;
+  outline-offset: -1px;
+}
+
 .org-tree-row {
   display: grid;
-  grid-template-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 92px 100px;
+  grid-template-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 92px 100px 64px;
   align-items: center;
   min-height: calc(var(--control-height) + var(--table-cell-y));
   color: #fff;
@@ -171,6 +176,7 @@
 .org-col-path,
 .org-col-count,
 .org-col-size,
+.org-col-actions,
 .org-child-name {
   min-width: 0;
   display: flex;
@@ -184,6 +190,30 @@
 .org-col-size {
   justify-content: flex-end;
   color: #f3f3f3;
+}
+
+.org-col-actions {
+  justify-content: center;
+  color: #f3f3f3;
+}
+
+.org-delete-row-btn {
+  width: 28px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #ffd6d0;
+  background: #3a2929;
+  border: 1px solid #654040;
+  border-radius: 3px;
+}
+
+.org-delete-row-btn:hover:not(:disabled) {
+  color: #fff;
+  background: #6b3333;
+  border-color: #9a5555;
 }
 
 .org-expand-icon {

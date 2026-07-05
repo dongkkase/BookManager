@@ -76,6 +76,7 @@ function OrganizerTab({ config, t, showToast }) {
   const [lastResult, setLastResult] = useState(null);
   const [taskPhase, setTaskPhase] = useState('idle');
   const [selectedItemId, setSelectedItemId] = useState('');
+  const [selectedItemIds, setSelectedItemIds] = useState([]);
   const executeLockRef = useRef(false);
   const tabRootRef = useRef(null);
   const treeBodyRef = useRef(null);
@@ -112,6 +113,7 @@ function OrganizerTab({ config, t, showToast }) {
       .map(path => visibleVolumeRows.find(row => row.path === path))
       .filter(Boolean)
   ), [selectedVolumePaths, visibleVolumeRows]);
+  const selectedRowCount = selectedItemIds.length + selectedVolumeRows.length;
 
   const isOrganizerTabVisible = useCallback(() => (
     !tabRootRef.current?.closest?.('[hidden]')
@@ -369,6 +371,7 @@ function OrganizerTab({ config, t, showToast }) {
     setExpandedItems(new Set());
     setLastResult(null);
     setSelectedItemId('');
+    setSelectedItemIds([]);
     clearVolumeSelection();
     setSkippedFiles([]);
     setStatusMessage(t('status_wait'));
@@ -384,17 +387,21 @@ function OrganizerTab({ config, t, showToast }) {
   }, [isWorking, t]);
 
   const removeByIds = useCallback((ids) => {
+    const targetIds = (ids || []).filter(Boolean);
+    if (targetIds.length === 0) return;
+    clearVolumeSelection();
     setFileList(prev => {
-      const result = removeOrganizerItems(prev, ids);
+      const result = removeOrganizerItems(prev, targetIds);
       setSelectedItemId(result.nextSelectedId);
+      setSelectedItemIds(result.nextSelectedId ? [result.nextSelectedId] : []);
       setExpandedItems(current => {
         const next = new Set(current);
-        ids.forEach(id => next.delete(id));
+        targetIds.forEach(id => next.delete(id));
         return next;
       });
       return result.items;
     });
-  }, []);
+  }, [clearVolumeSelection]);
 
   const handleRemoveChecked = useCallback(() => {
     removeByIds(fileList.filter(item => item.checked).map(item => item.id));
@@ -402,8 +409,97 @@ function OrganizerTab({ config, t, showToast }) {
 
   const handleRemoveHighlighted = useCallback(() => {
     if (selectedVolumePaths.length > 0) return;
-    if (selectedItemId) removeByIds([selectedItemId]);
-  }, [removeByIds, selectedItemId, selectedVolumePaths.length]);
+    const targetIds = selectedItemIds.length > 0 ? selectedItemIds : [selectedItemId].filter(Boolean);
+    removeByIds(targetIds);
+  }, [removeByIds, selectedItemId, selectedItemIds, selectedVolumePaths.length]);
+
+  const handleSelectItemRow = useCallback((itemId) => {
+    treeBodyRef.current?.focus({ preventScroll: true });
+    setSelectedItemId(itemId);
+    setSelectedItemIds([itemId]);
+    clearVolumeSelection();
+  }, [clearVolumeSelection]);
+
+  const handleToggleItemRow = useCallback((itemId) => {
+    treeBodyRef.current?.focus({ preventScroll: true });
+    clearVolumeSelection();
+    setSelectedItemIds(prev => {
+      const exists = prev.includes(itemId);
+      const next = exists ? prev.filter(id => id !== itemId) : [...prev, itemId];
+      setSelectedItemId(exists ? (next[next.length - 1] || '') : itemId);
+      return next;
+    });
+  }, [clearVolumeSelection]);
+
+  const handleSelectAllItemRows = useCallback(() => {
+    const itemIds = fileList.map(item => item.id).filter(Boolean);
+    treeBodyRef.current?.focus({ preventScroll: true });
+    setSelectedItemId(itemIds[itemIds.length - 1] || '');
+    setSelectedItemIds(itemIds);
+    clearVolumeSelection();
+  }, [clearVolumeSelection, fileList]);
+
+  const scrollActiveItemIntoView = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      treeBodyRef.current
+        ?.querySelector('.org-tree-item-group.active-selection > .org-root-row')
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+  }, []);
+
+  const selectItemAtIndex = useCallback((index) => {
+    if (fileList.length === 0) return false;
+    const clampedIndex = Math.max(0, Math.min(index, fileList.length - 1));
+    const itemId = fileList[clampedIndex]?.id;
+    if (!itemId) return false;
+    handleSelectItemRow(itemId);
+    return true;
+  }, [fileList, handleSelectItemRow]);
+
+  const moveItemSelection = useCallback((direction) => {
+    const currentIndex = selectedItemId
+      ? fileList.findIndex(item => item.id === selectedItemId)
+      : -1;
+    const moved = selectItemAtIndex(currentIndex + direction);
+    if (moved) scrollActiveItemIntoView();
+    return moved;
+  }, [fileList, scrollActiveItemIntoView, selectItemAtIndex, selectedItemId]);
+
+  const selectEdgeItem = useCallback((edge) => {
+    const moved = selectItemAtIndex(edge === 'end' ? fileList.length - 1 : 0);
+    if (moved) scrollActiveItemIntoView();
+    return moved;
+  }, [fileList.length, scrollActiveItemIntoView, selectItemAtIndex]);
+
+  const setSelectedItemsExpanded = useCallback((expanded) => {
+    const targetIds = selectedItemIds.length > 0 ? selectedItemIds : [selectedItemId].filter(Boolean);
+    if (targetIds.length === 0) return false;
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      targetIds.forEach(id => {
+        if (expanded) next.add(id);
+        else next.delete(id);
+      });
+      return next;
+    });
+    if (!expanded) setIsAllExpanded(false);
+    return true;
+  }, [selectedItemId, selectedItemIds]);
+
+  const handleRootRowMouseDown = useCallback((itemId, event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('input, button, textarea, select, a')) return;
+    treeBodyRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const handleRootRowClick = useCallback((itemId, event) => {
+    if (event.target.closest('input, button, textarea, select, a')) return;
+    if (hasPrimaryModifier(event, runtimePlatform)) {
+      handleToggleItemRow(itemId);
+      return;
+    }
+    handleSelectItemRow(itemId);
+  }, [handleSelectItemRow, handleToggleItemRow, runtimePlatform]);
 
   const handleToggleAllChecked = useCallback(() => {
     setFileList(prev => {
@@ -490,6 +586,7 @@ function OrganizerTab({ config, t, showToast }) {
   const handleVolumeRowSelect = useCallback((row, event, index) => {
     if (!row?.path) return;
     setSelectedItemId('');
+    setSelectedItemIds([]);
     if (event?.shiftKey) rangeSelectVolumeRows(row.path, row, index);
     else if (hasPrimaryModifier(event, runtimePlatform)) toggleVolumeRow(row.path, row, index);
     else selectVolumeRow(row.path, row, index);
@@ -527,6 +624,7 @@ function OrganizerTab({ config, t, showToast }) {
     if (event.target.closest('.org-tree-row')) return;
     treeBodyRef.current?.focus({ preventScroll: true });
     setSelectedItemId('');
+    setSelectedItemIds([]);
     clearVolumeSelection();
     volumeRubberSelection.begin();
     volumeRubberSelectRef.current = {
@@ -593,24 +691,56 @@ function OrganizerTab({ config, t, showToast }) {
     return () => window.removeEventListener('bookmanager:action', handleAppAction);
   }, [analyzePaths, handleCancel, handleExecute, handleRemoveChecked, handleSelectFiles, handleSelectFolder, handleToggleAllChecked, isWorking]);
 
+  const handleOrganizerKeyDown = useCallback((event) => {
+    if (isWorking || showVolumeRenameDialog) return false;
+    if (!shouldHandleGlobalShortcut(event)) return false;
+    if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'a')) {
+      event.preventDefault();
+      handleSelectAllItemRows();
+      return true;
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      moveItemSelection(event.key === 'ArrowUp' ? -1 : 1);
+      return true;
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      if (!setSelectedItemsExpanded(event.key === 'ArrowRight')) return false;
+      event.preventDefault();
+      return true;
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === 'Home' || event.key === 'End')) {
+      event.preventDefault();
+      selectEdgeItem(event.key === 'End' ? 'end' : 'start');
+      return true;
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      handleRemoveHighlighted();
+      return true;
+    }
+    if (event.shiftKey && isShortcutKey(event, 'r') && selectedVolumeRows.length > 0) {
+      event.preventDefault();
+      setShowVolumeRenameDialog(true);
+      return true;
+    }
+    return false;
+  }, [handleRemoveHighlighted, handleSelectAllItemRows, isWorking, moveItemSelection, runtimePlatform, selectEdgeItem, selectedVolumeRows.length, setSelectedItemsExpanded, showVolumeRenameDialog]);
+
+  const handleTreeBodyKeyDown = useCallback((event) => {
+    if (handleOrganizerKeyDown(event)) event.stopPropagation();
+  }, [handleOrganizerKeyDown]);
+
   useEffect(() => {
     const handleKeyDown = event => {
       if (!isOrganizerTabVisible()) return;
-      if (isWorking || showVolumeRenameDialog) return;
-      if (!shouldHandleGlobalShortcut(event)) return;
-      if (event.key === 'Delete' || event.key === 'Backspace') {
-        event.preventDefault();
-        handleRemoveHighlighted();
-      } else if (event.shiftKey && isShortcutKey(event, 'r') && selectedVolumeRows.length > 0) {
-        event.preventDefault();
-        setShowVolumeRenameDialog(true);
-      }
+      handleOrganizerKeyDown(event);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleRemoveHighlighted, isOrganizerTabVisible, isWorking, selectedVolumeRows.length, showVolumeRenameDialog]);
+  }, [handleOrganizerKeyDown, isOrganizerTabVisible]);
 
   return (
     <div className="organizer-tab" ref={tabRootRef}>
@@ -639,12 +769,14 @@ function OrganizerTab({ config, t, showToast }) {
               <div className="org-col-path">{t('col_org_path')}</div>
               <div className="org-col-count">{t('col_org_count')}</div>
               <div className="org-col-size">{t('col_org_size')}</div>
+              <div className="org-col-actions">{t('btn_remove')}</div>
             </div>
 
             <div
               ref={treeBodyRef}
               className="org-tree-body"
               tabIndex={0}
+              onKeyDown={handleTreeBodyKeyDown}
               onMouseDown={startVolumeRubberSelection}
               onMouseMove={volumeRubberSelection.update}
               onMouseLeave={() => {
@@ -655,20 +787,21 @@ function OrganizerTab({ config, t, showToast }) {
               }}
             >
               {fileList.map((item) => (
-                <div key={item.id} className={`org-tree-item-group ${selectedItemId === item.id ? 'selected' : ''}`}>
+                <div key={item.id} className={`org-tree-item-group ${selectedItemIds.includes(item.id) ? 'selected' : ''} ${selectedItemId === item.id ? 'active-selection' : ''}`}>
                   <div
                     className="org-tree-row org-root-row"
-                    onClick={() => {
-                      setSelectedItemId(item.id);
-                      clearVolumeSelection();
-                    }}
+                    onMouseDown={event => handleRootRowMouseDown(item.id, event)}
+                    onClick={event => handleRootRowClick(item.id, event)}
                   >
                     <div
                       className="org-col-name"
                       role="button"
                       tabIndex={0}
                       aria-expanded={expandedItems.has(item.id)}
-                      onClick={() => handleToggleExpand(item.id)}
+                      onClick={event => {
+                        if (hasPrimaryModifier(event, runtimePlatform)) return;
+                        handleToggleExpand(item.id);
+                      }}
                       onKeyDown={event => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
@@ -767,6 +900,20 @@ function OrganizerTab({ config, t, showToast }) {
                     </div>
                     <div className="org-col-count">{item.volumes?.length || 0}</div>
                     <div className="org-col-size">{Number(item.size_mb || 0).toFixed(1)} MB</div>
+                    <div className="org-col-actions">
+                      <button
+                        type="button"
+                        className="org-delete-row-btn"
+                        title={t('btn_remove')}
+                        aria-label={`${item.name || item.clean_title || ''} ${t('btn_remove')}`.trim()}
+                        onClick={event => {
+                          event.stopPropagation();
+                          removeByIds([item.id]);
+                        }}
+                      >
+                        <FaIcon name="trash" size={12} />
+                      </button>
+                    </div>
                   </div>
 
                   {expandedItems.has(item.id) && item.volumes.map((volume) => {
@@ -806,7 +953,7 @@ function OrganizerTab({ config, t, showToast }) {
       <div className="org-progress-row" />
 
       <div className="org-bottom-info">
-        {t('total_files', { count: fileList.length })} / {selectedCount} checked / {selectedVolumeRows.length} selected
+        {t('total_files', { count: fileList.length })} / {selectedCount} checked / {selectedRowCount} selected
       </div>
       {skippedFiles.length > 0 && (
         <div className="org-result-errors">
