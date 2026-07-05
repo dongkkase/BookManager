@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   getConfig: () => ipcRenderer.invoke('viewer:getConfig'),
   listBundledFonts: () => ipcRenderer.invoke('font:listBundled'),
   listSystemFonts: () => ipcRenderer.invoke('font:listSystem'),
+  openExternal: url => ipcRenderer.invoke('viewer:openExternal', url),
   toggleFullscreen: () => ipcRenderer.invoke('viewer:toggleFullscreen'),
   getFullscreenState: () => ipcRenderer.invoke('viewer:getFullscreenState'),
   closeWindow: () => ipcRenderer.send('window:close'),

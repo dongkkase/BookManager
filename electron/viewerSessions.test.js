@@ -6,6 +6,16 @@ import test from 'node:test';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { replaceZipEntry } from './core/zipArchive.js';
 
+function pngHeader(width, height) {
+    const buffer = Buffer.alloc(24);
+    buffer[0] = 0x89;
+    buffer.write('PNG', 1, 'ascii');
+    buffer.write('IHDR', 12, 'ascii');
+    buffer.writeUInt32BE(width, 16);
+    buffer.writeUInt32BE(height, 20);
+    return buffer;
+}
+
 test('뷰어 세션은 같은 폴더의 이전권/다음권 가능 여부를 계산한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-adjacent-'));
     try {
@@ -129,7 +139,15 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
         await replaceZipEntry(
             epubPath,
             'OEBPS/chap2.xhtml',
-            `<html><body><p>다음 장입니다.</p></body></html>`,
+            `<html><body>
+                <p>다음 장입니다.</p>
+                <table summary="등급표">
+                    <tbody>
+                        <tr><td colspan="3" rowspan="2" valign="top">마법부 등급</td><th scope="col">위험도</th></tr>
+                        <tr><td>XXXXX</td></tr>
+                    </tbody>
+                </table>
+            </body></html>`,
         );
         await replaceZipEntry(
             epubPath,
@@ -148,7 +166,7 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
             `h1 { text-align: center; margin: 0 0 18px; padding: 6px; }`,
         );
         await replaceZipEntry(epubPath, 'OEBPS/images/cover.png', Buffer.from('cover'));
-        await replaceZipEntry(epubPath, 'OEBPS/images/logo.png', Buffer.from('logo'));
+        await replaceZipEntry(epubPath, 'OEBPS/images/logo.png', pngHeader(32, 48));
         await replaceZipEntry(epubPath, 'OEBPS/images/illus.png', Buffer.from('illus'));
 
         const manager = new ViewerSessionManager();
@@ -219,6 +237,8 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
         const logoImageNode = logoNode.children.find(node => node.tagName === 'img');
         assert.equal(logoNode.className, 'img_center');
         assert.equal(logoImageNode.className, 'logo-mark');
+        assert.equal(logoImageNode.naturalWidth, 32);
+        assert.equal(logoImageNode.naturalHeight, 48);
         assert.equal(logoNode.style.textAlign, 'center');
         assert.equal(logoNode.style.margin, '0 auto');
         assert.equal(logoNode.style.padding, '4px');
@@ -252,10 +272,246 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
         assert.equal(imageNode.style.marginTop, '8px');
         assert.equal(imageNode.style.width, '50%');
         assert.equal(result.chapters[2].title, '삽화 장면');
+        const tableBlock = result.chapters[2].blocks.find(block => block.tagName === 'table');
+        const tableNode = tableBlock.nodes[0];
+        const tableCell = tableNode.children[0].children[0].children[0];
+        const tableHeading = tableNode.children[0].children[0].children[1];
+        assert.equal(tableNode.attributes.summary, '등급표');
+        assert.equal(tableCell.attributes.colSpan, 3);
+        assert.equal(tableCell.attributes.rowSpan, 2);
+        assert.equal(tableCell.attributes.valign, 'top');
+        assert.equal(tableHeading.attributes.scope, 'col');
 
         const asset = await manager.getDocumentAssetFromRequest(imageNode.src);
         assert.equal(asset.mime, 'image/png');
         assert.equal(asset.buffer.toString(), 'illus');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 뷰어 세션은 파일명만 남은 표지 페이지를 이미지로 복구한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-epub-cover-'));
+    try {
+        const epubPath = path.join(root, 'FilenameCover.epub');
+        fs.writeFileSync(epubPath, Buffer.alloc(0));
+        await replaceZipEntry(
+            epubPath,
+            'META-INF/container.xml',
+            `<?xml version="1.0"?>
+            <container>
+                <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" />
+                </rootfiles>
+            </container>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/content.opf',
+            `<package>
+                <metadata><meta name="cover" content="cover-image" /></metadata>
+                <manifest>
+                    <item id="cover-image" href="images/bookmanager-cover.webp" media-type="image/webp" />
+                    <item id="cover-wrapper" href="cover.xhtml" media-type="application/xhtml+xml" />
+                    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="cover-wrapper" />
+                    <itemref idref="chap1" />
+                </spine>
+            </package>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/cover.xhtml',
+            `<html>
+                <head><title>표지</title></head>
+                <body><p>bookmanager-cover.webp</p></body>
+            </html>`,
+        );
+        await replaceZipEntry(epubPath, 'OEBPS/chap1.xhtml', '<html><body><p>본문입니다.</p></body></html>');
+        await replaceZipEntry(epubPath, 'OEBPS/images/bookmanager-cover.webp', Buffer.from('cover'));
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(epubPath);
+        const result = await manager.getEpubText(session.id);
+
+        assert.equal(result.chapters[0].title, '표지');
+        assert.equal(result.chapters[0].text, '');
+        assert.equal(result.chapters[0].blocks[0].type, 'image');
+        assert.match(result.chapters[0].blocks[0].src, /\/asset\/OEBPS\/images\/bookmanager-cover\.webp$/);
+        assert.equal(result.chapters[0].blocks[0].alt, 'bookmanager-cover.webp');
+        assert.equal(result.chapters[1].text, '본문입니다.');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 뷰어 세션은 HTML 주석을 제거하고 컨테이너 문단을 개별 블록으로 나눈다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-epub-comments-'));
+    try {
+        const epubPath = path.join(root, 'Comments.epub');
+        fs.writeFileSync(epubPath, Buffer.alloc(0));
+        await replaceZipEntry(
+            epubPath,
+            'META-INF/container.xml',
+            `<?xml version="1.0"?>
+            <container>
+                <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" />
+                </rootfiles>
+            </container>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/content.opf',
+            `<package>
+                <manifest>
+                    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="img1" href="images/scene.jpg" media-type="image/jpeg" />
+                </manifest>
+                <spine>
+                    <itemref idref="chap1" />
+                </spine>
+            </package>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/chap1.xhtml',
+            `<html>
+                <body>
+                    <div class="chapter-wrap">
+                        <p>첫 문단입니다.</p>
+                        <!-- 편집용 주석은 표시하지 않아야 한다. -->
+                        <p>둘째 문단입니다.<!-- 인라인 주석 --></p>
+                        <p class="image"><img src="images/scene.jpg" alt="삽화" /></p>
+                        <p>셋째 문단입니다.</p>
+                    </div>
+                </body>
+            </html>`,
+        );
+        await replaceZipEntry(epubPath, 'OEBPS/images/scene.jpg', Buffer.from('image'));
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(epubPath);
+        const result = await manager.getEpubText(session.id);
+        const blocks = result.chapters[0].blocks;
+
+        assert.equal(blocks.some(block => block.tagName === 'div' && block.className === 'chapter-wrap'), false);
+        assert.deepEqual(blocks.map(block => block.text), [
+            '첫 문단입니다.',
+            '둘째 문단입니다.',
+            '',
+            '셋째 문단입니다.',
+        ]);
+        assert.equal(blocks.some(block => /<!--|-->|!-/.test(block.text || '')), false);
+        const imageBlock = blocks.find(block => block.hasImage);
+        assert.equal(imageBlock.tagName, 'p');
+        assert.equal(imageBlock.className, 'image');
+        assert.equal(imageBlock.nodes[0].children[0].name, 'OEBPS/images/scene.jpg');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 뷰어 세션은 내부 링크, hr, 포함 폰트를 읽기 데이터로 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-epub-links-fonts-'));
+    try {
+        const epubPath = path.join(root, 'LinksFonts.epub');
+        fs.writeFileSync(epubPath, Buffer.alloc(0));
+        await replaceZipEntry(
+            epubPath,
+            'META-INF/container.xml',
+            `<?xml version="1.0"?>
+            <container>
+                <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" />
+                </rootfiles>
+            </container>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/content.opf',
+            `<package>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="style" href="styles/book.css" media-type="text/css" />
+                    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="font1" href="fonts/BookSerif-Regular.ttf" media-type="font/ttf" />
+                    <item id="hidden-img" href="images/hidden.png" media-type="image/png" />
+                </manifest>
+                <spine>
+                    <itemref idref="chap1" />
+                </spine>
+            </package>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/nav.xhtml',
+            `<nav><ol>
+                <li><a href="chap1.xhtml#start">시작</a></li>
+                <li><a href="chap1.xhtml#note1">각주</a></li>
+            </ol></nav>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/chap1.xhtml',
+            `<html>
+                <head><link rel="stylesheet" href="styles/book.css" /></head>
+                <body>
+                    <p id="start">본문입니다. <a href="#note1">각주로 이동</a> <a href="https://example.com/help">외부 링크</a></p>
+                    <hr />
+                    <p><img class="hidden-image" src="images/hidden.png" alt="" /></p>
+                    <p id="note1">각주 내용입니다.</p>
+                </body>
+            </html>`,
+        );
+        await replaceZipEntry(
+            epubPath,
+            'OEBPS/styles/book.css',
+            `@font-face {
+                font-family: 'Book Serif';
+                src: url("../fonts/BookSerif-Regular.ttf") format("truetype");
+                font-weight: 400;
+                font-style: normal;
+            }
+            .hidden-image { display: none; width: 12px; }`,
+        );
+        await replaceZipEntry(epubPath, 'OEBPS/fonts/BookSerif-Regular.ttf', Buffer.from('font-data'));
+        await replaceZipEntry(epubPath, 'OEBPS/images/hidden.png', Buffer.from('hidden-image'));
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(epubPath);
+        const result = await manager.getEpubText(session.id);
+        const blocks = result.chapters[0].blocks;
+
+        assert.equal(result.toc.length, 2);
+        assert.equal(result.toc[0].anchor, 'start');
+        assert.equal(result.toc[1].anchor, 'note1');
+        const startBlock = blocks.find(block => block.anchors?.includes('start'));
+        const linkNode = startBlock.nodes[0].children.find(node => node.tagName === 'a' && node.targetEntryName);
+        const externalLinkNode = startBlock.nodes[0].children.find(node => node.tagName === 'a' && node.externalHref);
+        assert.equal(linkNode.targetEntryName, 'OEBPS/chap1.xhtml');
+        assert.equal(linkNode.targetAnchor, 'note1');
+        assert.equal(externalLinkNode.externalHref, 'https://example.com/help');
+        assert.equal(blocks.some(block => block.tagName === 'hr'), true);
+        assert.equal(blocks.some(block => block.anchors?.includes('note1')), true);
+        const hiddenImageBlock = blocks.find(block => block.hasImage);
+        const hiddenImageNode = hiddenImageBlock.nodes[0].children.find(node => node.tagName === 'img');
+        assert.equal(hiddenImageNode.alt, '');
+        assert.equal(hiddenImageNode.style.display, undefined);
+        assert.equal(hiddenImageNode.style.width, '12px');
+
+        const bookFont = result.fonts.find(font => font.family === 'Book Serif');
+        assert.ok(bookFont);
+        assert.equal(bookFont.entryName, 'OEBPS/fonts/BookSerif-Regular.ttf');
+        assert.equal(bookFont.format, 'truetype');
+        assert.match(result.stylesheet, /@font-face/);
+        assert.match(result.stylesheet, /font-family: 'Book Serif'/);
+        assert.match(result.stylesheet, /bookmanager-document:\/\/session\/[^/]+\/asset\/OEBPS\/fonts\/BookSerif-Regular\.ttf/);
+        const fontAsset = await manager.getDocumentAssetFromRequest(bookFont.src);
+        assert.equal(fontAsset.mime, 'font/ttf');
+        assert.equal(fontAsset.buffer.toString(), 'font-data');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

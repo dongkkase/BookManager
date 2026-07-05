@@ -1,8 +1,9 @@
 import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
-import { BrowserWindow, ipcMain, protocol, screen } from 'electron';
+import { BrowserWindow, dialog, ipcMain, protocol, screen, shell } from 'electron';
 import { ViewerSessionManager } from './viewerSessions.js';
+import { normalizeExternalUrl } from './externalUrlPolicy.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -363,6 +364,24 @@ export function setupViewerWindowManager(options = {}) {
             lang: language,
             language,
         };
+    });
+    ipcMain.handle('viewer:openExternal', async (event, url) => {
+        const safeUrl = normalizeExternalUrl(url);
+        if (!safeUrl) throw new Error('External URL was blocked.');
+        const targetWindow = BrowserWindow.fromWebContents(event.sender) || viewerWindow;
+        const result = await dialog.showMessageBox(targetWindow, {
+            type: 'question',
+            buttons: ['열기', '취소'],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+            title: '외부 링크 열기',
+            message: '브라우저에서 외부 링크를 열까요?',
+            detail: safeUrl,
+        });
+        if (result.response !== 0) return { success: false, canceled: true };
+        await shell.openExternal(safeUrl);
+        return { success: true };
     });
     ipcMain.handle('viewer:toggleFullscreen', async event => {
         const targetWindow = BrowserWindow.fromWebContents(event.sender);

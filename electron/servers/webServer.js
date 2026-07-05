@@ -1158,10 +1158,21 @@ function protocolAssetPathFromEpubSrc(src = '') {
     }
 }
 
+function rewriteEpubAssetUrlStringForWeb(value = '', sessionId = '') {
+    return String(value || '').replace(
+        /bookmanager-document:\/\/session\/[^/'")\s]+\/asset\/([^'")\s]+)/g,
+        (_match, assetPath) => webViewerEpubAssetUrl(
+            sessionId,
+            String(assetPath || '').split('/').map(part => decodeURIComponent(part)).join('/'),
+        ),
+    );
+}
+
 function rewriteEpubAssetUrlsForWeb(value, sessionId) {
     if (Array.isArray(value)) {
         return value.map(item => rewriteEpubAssetUrlsForWeb(item, sessionId));
     }
+    if (typeof value === 'string') return rewriteEpubAssetUrlStringForWeb(value, sessionId);
     if (!value || typeof value !== 'object') return value;
     const next = {};
     for (const [key, childValue] of Object.entries(value)) {

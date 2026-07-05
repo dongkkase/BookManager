@@ -10,6 +10,7 @@ import { missingBinaryMessage } from './binaryPolicy.js';
 
 const COMIC_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.svg']);
+const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
 const PDF_EXTENSIONS = new Set(['.pdf']);
 const EPUB_EXTENSIONS = new Set(['.epub']);
 const TEXT_EXTENSIONS = new Set(['.txt', '.text', '.log', '.md']);
@@ -92,8 +93,9 @@ const EPUB_ALLOWED_HTML_TAGS = new Set([
 ]);
 const EPUB_BLOCK_HTML_TAGS = new Set([
     'article', 'blockquote', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'h1', 'h2',
-    'h3', 'h4', 'h5', 'h6', 'li', 'ol', 'p', 'pre', 'section', 'table', 'ul',
+    'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p', 'pre', 'section', 'table', 'ul',
 ]);
+const EPUB_CONTAINER_HTML_TAGS = new Set(['article', 'div', 'section']);
 const EPUB_VOID_HTML_TAGS = new Set(['br', 'hr', 'img']);
 
 function normalizeInnerPath(entryPath = '') {
@@ -111,6 +113,10 @@ function isImageEntry(entryPath = '') {
     return IMAGE_EXTENSIONS.has(path.extname(entryPath).toLowerCase());
 }
 
+function isFontEntry(entryPath = '') {
+    return FONT_EXTENSIONS.has(path.extname(entryPath).toLowerCase());
+}
+
 function imageMime(entryPath = '') {
     const extension = path.extname(entryPath).toLowerCase();
     if (extension === '.png') return 'image/png';
@@ -119,6 +125,99 @@ function imageMime(entryPath = '') {
     if (extension === '.bmp') return 'image/bmp';
     if (extension === '.svg') return 'image/svg+xml';
     return 'image/jpeg';
+}
+
+function validImageDimensions(width, height) {
+    const parsedWidth = Math.round(Number(width) || 0);
+    const parsedHeight = Math.round(Number(height) || 0);
+    if (parsedWidth < 1 || parsedHeight < 1 || parsedWidth > 100000 || parsedHeight > 100000) return null;
+    return { width: parsedWidth, height: parsedHeight };
+}
+
+function readUInt24LE(buffer, offset) {
+    if (!Buffer.isBuffer(buffer) || offset + 3 > buffer.length) return 0;
+    return buffer[offset] + (buffer[offset + 1] << 8) + (buffer[offset + 2] << 16);
+}
+
+function imageDimensionsFromSvg(buffer) {
+    const source = buffer.toString('utf8', 0, Math.min(buffer.length, 4096));
+    const tag = source.match(/<svg\b[^>]*>/i)?.[0] || '';
+    const width = tag.match(/\bwidth\s*=\s*(["'])([\d.]+)(?:px)?\1/i)?.[2];
+    const height = tag.match(/\bheight\s*=\s*(["'])([\d.]+)(?:px)?\1/i)?.[2];
+    const directDimensions = validImageDimensions(width, height);
+    if (directDimensions) return directDimensions;
+    const viewBox = tag.match(/\bviewBox\s*=\s*(["'])([-\d.\s]+)\1/i)?.[2]
+        ?.trim()
+        .split(/\s+/)
+        .map(Number);
+    if (viewBox?.length === 4) return validImageDimensions(viewBox[2], viewBox[3]);
+    return null;
+}
+
+function imageDimensionsFromBuffer(buffer, entryName = '') {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 10) return null;
+    const extension = path.extname(entryName).toLowerCase();
+    if (extension === '.png' && buffer.length >= 24 && buffer.toString('ascii', 1, 4) === 'PNG') {
+        return validImageDimensions(buffer.readUInt32BE(16), buffer.readUInt32BE(20));
+    }
+    if ((extension === '.gif' || buffer.toString('ascii', 0, 3) === 'GIF') && buffer.length >= 10) {
+        return validImageDimensions(buffer.readUInt16LE(6), buffer.readUInt16LE(8));
+    }
+    if (extension === '.bmp' && buffer.length >= 26 && buffer.toString('ascii', 0, 2) === 'BM') {
+        return validImageDimensions(buffer.readInt32LE(18), Math.abs(buffer.readInt32LE(22)));
+    }
+    if ((extension === '.jpg' || extension === '.jpeg' || (buffer[0] === 0xff && buffer[1] === 0xd8)) && buffer.length >= 4) {
+        let offset = 2;
+        while (offset + 9 < buffer.length) {
+            if (buffer[offset] !== 0xff) {
+                offset += 1;
+                continue;
+            }
+            const marker = buffer[offset + 1];
+            const segmentLength = buffer.readUInt16BE(offset + 2);
+            if (segmentLength < 2) break;
+            if (
+                (marker >= 0xc0 && marker <= 0xc3)
+                || (marker >= 0xc5 && marker <= 0xc7)
+                || (marker >= 0xc9 && marker <= 0xcb)
+                || (marker >= 0xcd && marker <= 0xcf)
+            ) {
+                return validImageDimensions(buffer.readUInt16BE(offset + 7), buffer.readUInt16BE(offset + 5));
+            }
+            offset += 2 + segmentLength;
+        }
+    }
+    if (extension === '.webp' && buffer.length >= 30 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') {
+        const chunkType = buffer.toString('ascii', 12, 16);
+        if (chunkType === 'VP8X' && buffer.length >= 30) {
+            return validImageDimensions(readUInt24LE(buffer, 24) + 1, readUInt24LE(buffer, 27) + 1);
+        }
+        if (chunkType === 'VP8L' && buffer.length >= 25 && buffer[20] === 0x2f) {
+            const bits = buffer.readUInt32LE(21);
+            return validImageDimensions((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1);
+        }
+        if (chunkType === 'VP8 ' && buffer.length >= 30) {
+            return validImageDimensions(buffer.readUInt16LE(26) & 0x3fff, buffer.readUInt16LE(28) & 0x3fff);
+        }
+    }
+    if (extension === '.svg') return imageDimensionsFromSvg(buffer);
+    return null;
+}
+
+function fontMime(entryPath = '') {
+    const extension = path.extname(entryPath).toLowerCase();
+    if (extension === '.otf') return 'font/otf';
+    if (extension === '.woff') return 'font/woff';
+    if (extension === '.woff2') return 'font/woff2';
+    return 'font/ttf';
+}
+
+function fontFormat(entryPath = '') {
+    const extension = path.extname(entryPath).toLowerCase();
+    if (extension === '.otf') return 'opentype';
+    if (extension === '.woff') return 'woff';
+    if (extension === '.woff2') return 'woff2';
+    return 'truetype';
 }
 
 function documentMime(filePath = '') {
@@ -157,8 +256,93 @@ function bufferToDataUrl(buffer, mime) {
     return `data:${mime};base64,${buffer.toString('base64')}`;
 }
 
+function stripEpubHtmlComments(html = '') {
+    return String(html || '').replace(/<!--[\s\S]*?-->/g, '');
+}
+
+function sanitizeEpubIdentifier(value = '') {
+    return decodeXmlEntities(String(value || '')).trim().replace(/\s+/g, ' ').slice(0, 160);
+}
+
+function sanitizeEpubAttributeText(value = '', maxLength = 240) {
+    return decodeXmlEntities(String(value || ''))
+        .replace(/[\u0000-\u001f\u007f<>]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, maxLength);
+}
+
+function sanitizePositiveIntegerAttribute(value = '', min = 1, max = 100) {
+    const number = Number.parseInt(String(value || '').trim(), 10);
+    return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : undefined;
+}
+
+function sanitizeEpubTableAlign(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^(?:left|right|center|justify|char)$/.test(normalized) ? normalized : '';
+}
+
+function sanitizeEpubTableVerticalAlign(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^(?:baseline|top|middle|bottom)$/.test(normalized) ? normalized : '';
+}
+
+function sanitizeEpubFontFamilyName(value = '') {
+    const family = decodeXmlEntities(String(value || ''))
+        .replace(/^["']|["']$/g, '')
+        .replace(/[<>;{}]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return family && family.length <= 120 ? family : '';
+}
+
+function fontFamilyFromEpubFilename(entryName = '') {
+    return sanitizeEpubFontFamilyName(path.posix.basename(String(entryName || ''), path.extname(String(entryName || '')))
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b(?:regular|bold|italic|oblique|medium|light|thin|black|semibold|extrabold|variablefont)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim());
+}
+
+function cssString(value = '') {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function decodeEpubUrl(value = '') {
+    const decodedEntities = decodeXmlEntities(String(value || '').trim());
+    try {
+        return decodeURI(decodedEntities);
+    } catch {
+        return decodedEntities;
+    }
+}
+
+function sanitizeEpubExternalHref(value = '') {
+    try {
+        const url = new URL(String(value || '').trim());
+        return (url.protocol === 'http:' || url.protocol === 'https:') ? url.toString() : '';
+    } catch {
+        return '';
+    }
+}
+
+function parseEpubInternalHref(baseEntryName = '', href = '') {
+    const decodedHref = decodeEpubUrl(href);
+    if (!decodedHref || /^(?:https?|mailto|tel|javascript|data|file):/i.test(decodedHref)) return null;
+    const [pathPartWithQuery = '', fragmentPart = ''] = decodedHref.split('#');
+    const pathPart = pathPartWithQuery.split('?')[0];
+    const entryName = pathPart
+        ? resolveEpubHref(baseEntryName, pathPart)
+        : normalizeInnerPath(baseEntryName);
+    if (!entryName) return null;
+    return {
+        entryName,
+        anchor: sanitizeEpubIdentifier(fragmentPart),
+    };
+}
+
 function stripHtmlToText(html = '') {
-    return String(html || '')
+    return stripEpubHtmlComments(html)
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
         .replace(/<br\b[^>]*\/?>/gi, '\n')
@@ -205,6 +389,114 @@ function sanitizeEpubClassName(value = '') {
         .map(name => name.trim())
         .filter(name => /^[\p{L}\p{N}_:-][\p{L}\p{N}_:.-]{0,127}$/u.test(name));
     return Array.from(new Set(classNames)).slice(0, 32).join(' ');
+}
+
+function imageHrefCandidatesFromAttrs(attrs = {}) {
+    const candidates = [
+        attrs.src,
+        attrs.href,
+        attrs['xlink:href'],
+        attrs['data-src'],
+        attrs['data-original'],
+        attrs['data-href'],
+        attrs['data-lazy-src'],
+    ];
+    const srcset = String(attrs.srcset || attrs['data-srcset'] || '').trim();
+    if (srcset) {
+        for (const part of srcset.split(',')) {
+            const href = part.trim().split(/\s+/)[0];
+            if (href) candidates.push(href);
+        }
+    }
+    return candidates
+        .map(value => String(value || '').trim())
+        .flatMap(value => {
+            const decoded = decodeEpubUrl(value);
+            return decoded && decoded !== value ? [value, decoded] : [value];
+        })
+        .filter(Boolean);
+}
+
+function findImageEntryForHref(entryName = '', attrs = {}, entries = []) {
+    const candidates = imageHrefCandidatesFromAttrs(attrs);
+    for (const href of candidates) {
+        const resolvedEntryName = resolveEpubHref(entryName, href);
+        const imageEntry = findArchiveEntry(entries, resolvedEntryName);
+        if (imageEntry && isImageEntry(imageEntry.name)) return imageEntry;
+    }
+    for (const href of candidates) {
+        const basename = path.posix.basename(decodeXmlEntities(href).split('#')[0].split('?')[0]);
+        if (!basename) continue;
+        const normalizedBasename = basename.toLowerCase();
+        const imageEntry = entries.find(entry => (
+            !entry.isDir
+            && isImageEntry(entry.name)
+            && path.posix.basename(normalizeInnerPath(entry.name)).toLowerCase() === normalizedBasename
+        ));
+        if (imageEntry) return imageEntry;
+    }
+    return null;
+}
+
+function safeEpubHtmlAttributes(tagName = '', attrs = {}) {
+    const props = {};
+    const normalizedTagName = String(tagName || '').toLowerCase();
+    if (normalizedTagName === 'td' || normalizedTagName === 'th') {
+        const colSpan = sanitizePositiveIntegerAttribute(attrs.colspan, 1, 100);
+        const rowSpan = sanitizePositiveIntegerAttribute(attrs.rowspan, 1, 100);
+        if (colSpan && colSpan > 1) props.colSpan = colSpan;
+        if (rowSpan && rowSpan > 1) props.rowSpan = rowSpan;
+        const headers = sanitizeEpubAttributeText(attrs.headers || '', 240);
+        const scope = sanitizeEpubAttributeText(attrs.scope || '', 32).toLowerCase();
+        const align = sanitizeEpubTableAlign(attrs.align || '');
+        const valign = sanitizeEpubTableVerticalAlign(attrs.valign || '');
+        if (headers) props.headers = headers;
+        if (/^(?:row|col|rowgroup|colgroup)$/.test(scope)) props.scope = scope;
+        if (align) props.align = align;
+        if (valign) props.valign = valign;
+    }
+    if (normalizedTagName === 'table') {
+        const summary = sanitizeEpubAttributeText(attrs.summary || '', 500);
+        if (summary) props.summary = summary;
+    }
+    return Object.keys(props).length > 0 ? props : undefined;
+}
+
+function removeHiddenDisplayForEpubImages(nodes = []) {
+    let containsImage = false;
+    for (const node of nodes) {
+        if (!node || node.type !== 'element') continue;
+        const childContainsImage = removeHiddenDisplayForEpubImages(node.children || []);
+        const isImageNode = node.tagName === 'img';
+        if (isImageNode || childContainsImage) {
+            containsImage = true;
+            if (node.style?.display === 'none') {
+                const nextStyle = { ...node.style };
+                delete nextStyle.display;
+                node.style = Object.keys(nextStyle).length > 0 ? nextStyle : undefined;
+            }
+        }
+    }
+    return containsImage;
+}
+
+function sanitizeEpubSizeAttribute(value = '') {
+    const normalized = String(value || '').trim();
+    if (!normalized) return '';
+    if (/^\d+(?:\.\d+)?$/.test(normalized)) return `${normalized}px`;
+    return sanitizeCssLengthValue(normalized, { allowAuto: true });
+}
+
+function epubStyleWithSizeAttributes(tagName = '', attrs = {}, style = undefined) {
+    const normalizedTagName = String(tagName || '').toLowerCase();
+    if (!['img', 'table', 'td', 'th'].includes(normalizedTagName)) return style;
+    const width = sanitizeEpubSizeAttribute(attrs.width || '');
+    const height = sanitizeEpubSizeAttribute(attrs.height || '');
+    if (!width && !height) return style;
+    const nextStyle = { ...(style || {}) };
+    if (width && !nextStyle.width) nextStyle.width = width;
+    if (height && !nextStyle.height) nextStyle.height = height;
+    return nextStyle;
 }
 
 function normalizeCssValue(value = '') {
@@ -372,6 +664,121 @@ function extractEpubCssImports(cssText = '') {
     return { css, imports };
 }
 
+function cssDeclarationMap(cssText = '') {
+    const declarations = new Map();
+    for (const rawDeclaration of String(cssText || '').split(';')) {
+        const separatorIndex = rawDeclaration.indexOf(':');
+        if (separatorIndex <= 0) continue;
+        const property = rawDeclaration.slice(0, separatorIndex).trim().toLowerCase();
+        const value = rawDeclaration.slice(separatorIndex + 1).trim();
+        if (property && value) declarations.set(property, value);
+    }
+    return declarations;
+}
+
+function sanitizeEpubFontWeight(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^(?:normal|bold|bolder|lighter|[1-9]00)$/.test(normalized) ? normalized : 'normal';
+}
+
+function sanitizeEpubFontStyle(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^(?:normal|italic|oblique)$/.test(normalized) ? normalized : 'normal';
+}
+
+function epubFontSrcUrls(value = '') {
+    const urls = [];
+    const source = String(value || '');
+    for (const match of source.matchAll(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^"')]+))\s*\)/gi)) {
+        const href = String(match[1] || match[2] || match[3] || '').trim();
+        if (href) urls.push(href);
+    }
+    return urls;
+}
+
+function extractEpubFontFacesFromCss(cssText = '', baseEntryName = '', entries = [], session) {
+    const faces = [];
+    const source = String(cssText || '').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const match of source.matchAll(/@font-face\s*\{([^{}]*)\}/gi)) {
+        const declarations = cssDeclarationMap(match[1]);
+        const srcUrls = epubFontSrcUrls(declarations.get('src') || '');
+        if (srcUrls.length < 1) continue;
+        const family = sanitizeEpubFontFamilyName(String(declarations.get('font-family') || '').split(',')[0]);
+        for (const href of srcUrls) {
+            const entryName = resolveEpubHref(baseEntryName, href);
+            const fontEntry = findArchiveEntry(entries, entryName);
+            if (!fontEntry || !isFontEntry(fontEntry.name)) continue;
+            faces.push({
+                family: family || fontFamilyFromEpubFilename(fontEntry.name),
+                entryName: fontEntry.name,
+                src: epubAssetProtocolUrl(session, fontEntry.name),
+                format: fontFormat(fontEntry.name),
+                weight: sanitizeEpubFontWeight(declarations.get('font-weight') || ''),
+                style: sanitizeEpubFontStyle(declarations.get('font-style') || ''),
+            });
+        }
+    }
+    return faces.filter(face => face.family && face.entryName);
+}
+
+function addUniqueEpubFontFaces(target = new Map(), faces = []) {
+    for (const face of faces) {
+        const key = `${normalizeInnerPath(face.entryName).toLowerCase()}|${face.family}|${face.weight}|${face.style}`;
+        if (!target.has(key)) target.set(key, face);
+    }
+}
+
+async function readEpubFontFacesFromStylesheets(session, filePath = '', entries = []) {
+    const fontFaceMap = new Map();
+    const stylesheetEntries = entries
+        .filter(entry => !entry.isDir && /\.css$/i.test(entry.name))
+        .slice(0, 200);
+    for (const entry of stylesheetEntries) {
+        try {
+            const cssBuffer = await extractArchiveEntry(filePath, entry.name, '', {
+                maxBytes: MAX_EPUB_STYLESHEET_BYTES,
+            });
+            addUniqueEpubFontFaces(
+                fontFaceMap,
+                extractEpubFontFacesFromCss(cssBuffer.toString('utf8'), entry.name, entries, session),
+            );
+        } catch {
+            // 읽을 수 없는 스타일시트는 EPUB 본문 표시를 막지 않습니다.
+        }
+    }
+    for (const entry of entries.filter(item => !item.isDir && isFontEntry(item.name)).slice(0, 200)) {
+        const normalizedFontEntryName = normalizeInnerPath(entry.name).toLowerCase();
+        const alreadyDeclared = Array.from(fontFaceMap.values()).some(face => (
+            normalizeInnerPath(face.entryName).toLowerCase() === normalizedFontEntryName
+        ));
+        if (alreadyDeclared) continue;
+        addUniqueEpubFontFaces(fontFaceMap, [{
+            family: fontFamilyFromEpubFilename(entry.name),
+            entryName: entry.name,
+            src: epubAssetProtocolUrl(session, entry.name),
+            format: fontFormat(entry.name),
+            weight: 'normal',
+            style: 'normal',
+        }]);
+    }
+    return Array.from(fontFaceMap.values()).slice(0, 80);
+}
+
+function epubFontFaceStylesheet(fontFaces = []) {
+    return fontFaces
+        .filter(face => face.family && face.src)
+        .map(face => [
+            '@font-face {',
+            `  font-family: '${cssString(face.family)}';`,
+            `  src: url('${cssString(face.src)}') format('${cssString(face.format || 'truetype')}');`,
+            `  font-weight: ${sanitizeEpubFontWeight(face.weight || '')};`,
+            `  font-style: ${sanitizeEpubFontStyle(face.style || '')};`,
+            '  font-display: swap;',
+            '}',
+        ].join('\n'))
+        .join('\n');
+}
+
 function sanitizeEpubCssDeclarationBlockForStylesheet(cssText = '') {
     const declarations = [];
     for (const rawDeclaration of String(cssText || '').split(';')) {
@@ -476,7 +883,7 @@ function normalizeEpubTagName(tagName = '') {
 }
 
 function epubBodyHtmlFromDocument(html = '') {
-    const source = String(html || '')
+    const source = stripEpubHtmlComments(html)
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
         .replace(/<head[\s\S]*?<\/head>/gi, '')
@@ -513,12 +920,23 @@ function epubNodesContainImage(nodes = []) {
     });
 }
 
-function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries = [], cssRules = [], imageEntryNames = []) {
+function epubAnchorsFromNodes(nodes = []) {
+    const anchors = [];
+    const collect = node => {
+        if (!node) return;
+        if (node.id) anchors.push(node.id);
+        (node.children || []).forEach(collect);
+    };
+    nodes.forEach(collect);
+    return Array.from(new Set(anchors));
+}
+
+function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries = [], cssRules = [], imageEntryNames = [], imageDimensionByEntryName = new Map()) {
     const root = { tagName: 'root', children: [] };
     const stack = [root];
     const tokenPattern = /<\/?[\w:-]+(?:\s+[^<>]*)?\s*\/?>|[^<]+/g;
 
-    for (const match of String(fragment || '').matchAll(tokenPattern)) {
+    for (const match of stripEpubHtmlComments(fragment).matchAll(tokenPattern)) {
         const token = match[0];
         const currentParent = stack[stack.length - 1];
         if (!token.startsWith('<')) {
@@ -543,31 +961,49 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
         if (!EPUB_ALLOWED_HTML_TAGS.has(tagName)) continue;
 
         const attrs = tagAttributes(token);
-        const style = epubStyleForElement(tagName, attrs, cssRules);
+        const style = epubStyleWithSizeAttributes(tagName, attrs, epubStyleForElement(tagName, attrs, cssRules));
         const className = sanitizeEpubClassName(attrs.class || '');
+        const anchorId = sanitizeEpubIdentifier(attrs.id || attrs.name || '');
+        const safeAttributes = safeEpubHtmlAttributes(tagName, attrs);
         if (tagName === 'img') {
-            const resolvedEntryName = resolveEpubHref(entryName, attrs.src || attrs.href || attrs['xlink:href'] || '');
-            const imageEntry = findArchiveEntry(entries, resolvedEntryName);
+            const imageEntry = findImageEntryForHref(entryName, attrs, entries);
             if (!imageEntry || !isImageEntry(imageEntry.name)) continue;
             imageEntryNames.push(imageEntry.name);
+            const imageDimensions = imageDimensionByEntryName.get(normalizeInnerPath(imageEntry.name).toLowerCase());
             currentParent.children.push({
                 type: 'element',
                 tagName,
                 src: epubAssetProtocolUrl(session, imageEntry.name),
-                alt: attrs.alt || path.posix.basename(imageEntry.name),
+                alt: Object.prototype.hasOwnProperty.call(attrs, 'alt') ? attrs.alt : path.posix.basename(imageEntry.name),
                 name: imageEntry.name,
+                naturalWidth: imageDimensions?.width || undefined,
+                naturalHeight: imageDimensions?.height || undefined,
                 style,
                 className,
+                id: anchorId || undefined,
+                attributes: safeAttributes,
                 children: [],
             });
             continue;
         }
 
+        const target = tagName === 'a'
+            ? parseEpubInternalHref(entryName, attrs.href || attrs['xlink:href'] || '')
+            : null;
+        const externalHref = tagName === 'a' && !target
+            ? sanitizeEpubExternalHref(attrs.href || attrs['xlink:href'] || '')
+            : '';
         const node = {
             type: 'element',
             tagName,
             style,
             className,
+            id: anchorId || undefined,
+            href: tagName === 'a' ? (attrs.href || attrs['xlink:href'] || '') : undefined,
+            targetEntryName: target?.entryName || undefined,
+            targetAnchor: target?.anchor || undefined,
+            externalHref: externalHref || undefined,
+            attributes: safeAttributes,
             children: [],
         };
         currentParent.children.push(node);
@@ -577,6 +1013,13 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
     }
 
     return root.children;
+}
+
+function epubNodeHasBlockChildren(node = {}) {
+    return (node.children || []).some(child => (
+        child?.type === 'element'
+        && EPUB_BLOCK_HTML_TAGS.has(child.tagName)
+    ));
 }
 
 function epubBlocksFromNodes(nodes = []) {
@@ -591,6 +1034,7 @@ function epubBlocksFromNodes(nodes = []) {
                 text,
                 nodes: inlineNodes,
                 hasImage: epubNodesContainImage(inlineNodes),
+                anchors: epubAnchorsFromNodes(inlineNodes),
             });
         }
         inlineNodes = [];
@@ -604,16 +1048,24 @@ function epubBlocksFromNodes(nodes = []) {
                 src: node.src,
                 alt: node.alt,
                 name: node.name,
+                naturalWidth: node.naturalWidth,
+                naturalHeight: node.naturalHeight,
                 style: node.style,
                 className: node.className,
+                attributes: node.attributes,
+                anchors: epubAnchorsFromNodes([node]),
             });
             continue;
         }
         if (node?.type === 'element' && EPUB_BLOCK_HTML_TAGS.has(node.tagName)) {
             flushInlineNodes();
+            if (EPUB_CONTAINER_HTML_TAGS.has(node.tagName) && epubNodeHasBlockChildren(node)) {
+                blocks.push(...epubBlocksFromNodes(node.children));
+                continue;
+            }
             const text = textFromEpubNodes([node]);
             const hasImage = epubNodesContainImage([node]);
-            if (text || hasImage) {
+            if (text || hasImage || node.tagName === 'hr') {
                 blocks.push({
                     type: 'html',
                     text,
@@ -622,6 +1074,7 @@ function epubBlocksFromNodes(nodes = []) {
                     className: node.className,
                     nodes: [node],
                     hasImage,
+                    anchors: epubAnchorsFromNodes([node]),
                 });
             }
             continue;
@@ -715,7 +1168,7 @@ function xmlStartTags(xml = '', tagName = '') {
 function resolveEpubHref(baseEntryName = '', href = '') {
     const trimmedHref = String(href || '').trim();
     if (!trimmedHref || /^[a-z]+:/i.test(trimmedHref)) return '';
-    const cleanHref = decodeXmlEntities(trimmedHref).split('#')[0].split('?')[0];
+    const cleanHref = decodeEpubUrl(trimmedHref).split('#')[0].split('?')[0];
     if (!cleanHref) return '';
     if (cleanHref.startsWith('/')) return normalizeInnerPath(cleanHref);
     const baseDir = path.posix.dirname(normalizeInnerPath(baseEntryName));
@@ -771,20 +1224,25 @@ function parseEpubNavEntries(html = '', navEntryName = '') {
     const seen = new Set();
     const linkPattern = /<a\b[^>]*href\s*=\s*(["'])([\s\S]*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
     for (const match of String(html || '').matchAll(linkPattern)) {
-        const entryName = resolveEpubHref(navEntryName, match[2]);
+        const target = parseEpubInternalHref(navEntryName, match[2]);
+        const entryName = target?.entryName || '';
         const title = htmlFragmentText(match[3]);
-        const key = entryName.toLowerCase();
+        const key = `${entryName.toLowerCase()}#${target?.anchor || ''}`;
         if (entryName && title && !seen.has(key)) {
             seen.add(key);
-            entries.push({ entryName, title });
+            entries.push({ entryName, anchor: target?.anchor || '', title });
         }
     }
     return entries;
 }
 
 function parseEpubNavTitles(html = '', navEntryName = '') {
-    return new Map(parseEpubNavEntries(html, navEntryName)
-        .map(entry => [entry.entryName.toLowerCase(), entry.title]));
+    const titles = new Map();
+    for (const entry of parseEpubNavEntries(html, navEntryName)) {
+        const key = entry.entryName.toLowerCase();
+        if (!titles.has(key)) titles.set(key, entry.title);
+    }
+    return titles;
 }
 
 function parseEpubNcxEntries(xml = '', ncxEntryName = '') {
@@ -795,20 +1253,25 @@ function parseEpubNcxEntries(xml = '', ncxEntryName = '') {
         const navPoint = navPointMatch[0];
         const contentMatch = navPoint.match(/<content\b[^>]*src\s*=\s*(["'])([\s\S]*?)\1/i);
         const titleMatch = navPoint.match(/<text\b[^>]*>([\s\S]*?)<\/text>/i);
-        const entryName = resolveEpubHref(ncxEntryName, contentMatch?.[2] || '');
+        const target = parseEpubInternalHref(ncxEntryName, contentMatch?.[2] || '');
+        const entryName = target?.entryName || '';
         const title = htmlFragmentText(titleMatch?.[1] || '');
-        const key = entryName.toLowerCase();
+        const key = `${entryName.toLowerCase()}#${target?.anchor || ''}`;
         if (entryName && title && !seen.has(key)) {
             seen.add(key);
-            entries.push({ entryName, title });
+            entries.push({ entryName, anchor: target?.anchor || '', title });
         }
     }
     return entries;
 }
 
 function parseEpubNcxTitles(xml = '', ncxEntryName = '') {
-    return new Map(parseEpubNcxEntries(xml, ncxEntryName)
-        .map(entry => [entry.entryName.toLowerCase(), entry.title]));
+    const titles = new Map();
+    for (const entry of parseEpubNcxEntries(xml, ncxEntryName)) {
+        const key = entry.entryName.toLowerCase();
+        if (!titles.has(key)) titles.set(key, entry.title);
+    }
+    return titles;
 }
 
 function findEpubCoverManifestItem(manifest) {
@@ -827,10 +1290,59 @@ function findEpubCoverMetaId(opfXml = '') {
     return coverMeta?.content || '';
 }
 
-function epubReaderBlocksFromHtml(html = '', entryName = '', session, entries = [], cssRules = []) {
+function epubImageBlockFromEntry(session, imageEntry, dimensions, alt = '') {
+    return {
+        type: 'image',
+        src: epubAssetProtocolUrl(session, imageEntry.name),
+        alt: alt || path.posix.basename(imageEntry.name),
+        name: imageEntry.name,
+        naturalWidth: dimensions?.width || undefined,
+        naturalHeight: dimensions?.height || undefined,
+    };
+}
+
+function epubTextLooksLikeImageFilename(text = '') {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    return /^[^\s<>:"|?*]+\.(?:jpe?g|png|webp|gif|bmp|svg)$/i.test(path.posix.basename(normalized));
+}
+
+function findEpubImageEntryForFilenameText(text = '', entries = []) {
+    if (!epubTextLooksLikeImageFilename(text)) return null;
+    const basename = path.posix.basename(String(text || '').trim()).toLowerCase();
+    return entries.find(entry => (
+        !entry.isDir
+        && isImageEntry(entry.name)
+        && path.posix.basename(normalizeInnerPath(entry.name)).toLowerCase() === basename
+    )) || null;
+}
+
+function repairEpubFilenameOnlyCoverPage(results = [], coverEntry, entries = [], session, imageDimensionByEntryName = new Map()) {
+    if (!Array.isArray(results) || results.length < 1) return;
+    const firstChapter = results[0];
+    if (!firstChapter || firstChapter.blocks?.some(block => block.type === 'image' || block.hasImage)) return;
+    const text = String(firstChapter.text || '').replace(/\s+/g, ' ').trim();
+    const filenameEntry = findEpubImageEntryForFilenameText(text, entries);
+    const normalizedCoverName = coverEntry ? normalizeInnerPath(coverEntry.name).toLowerCase() : '';
+    const normalizedFilenameName = filenameEntry ? normalizeInnerPath(filenameEntry.name).toLowerCase() : '';
+    const imageEntry = normalizedCoverName && normalizedCoverName === normalizedFilenameName
+        ? coverEntry
+        : filenameEntry;
+    if (!imageEntry) return;
+    const title = String(firstChapter.title || '').trim();
+    const isLikelyCoverPage = results.length === 1
+        || /^(?:표지|cover|front cover|cover.xhtml|cover.html|cover.htm)$/i.test(title)
+        || /(?:^|\/)cover\.(?:xhtml|html|htm)$/i.test(firstChapter.name || '');
+    if (!isLikelyCoverPage) return;
+    const dimensions = imageDimensionByEntryName.get(normalizeInnerPath(imageEntry.name).toLowerCase());
+    firstChapter.text = '';
+    firstChapter.blocks = [epubImageBlockFromEntry(session, imageEntry, dimensions)];
+}
+
+function epubReaderBlocksFromHtml(html = '', entryName = '', session, entries = [], cssRules = [], imageDimensionByEntryName = new Map()) {
     const imageEntryNames = [];
     const bodyHtml = epubBodyHtmlFromDocument(html);
-    const nodes = parseSafeEpubHtmlNodes(bodyHtml, entryName, session, entries, cssRules, imageEntryNames);
+    const nodes = parseSafeEpubHtmlNodes(bodyHtml, entryName, session, entries, cssRules, imageEntryNames, imageDimensionByEntryName);
+    removeHiddenDisplayForEpubImages(nodes);
     const blocks = epubBlocksFromNodes(nodes);
     const fallbackText = blocks.length > 0 ? '' : stripHtmlToText(bodyHtml);
     return {
@@ -995,6 +1507,25 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
     return run7z(sevenZExe, ['x', '-so', filePath, normalizedEntryName], {
         maxBuffer: options.maxBytes || 500 * 1024 * 1024,
     });
+}
+
+async function readEpubImageDimensionMap(filePath = '', entries = []) {
+    const imageDimensionByEntryName = new Map();
+    const imageEntries = entries
+        .filter(entry => !entry.isDir && !entry.encrypted && isImageEntry(entry.name) && (!entry.size || entry.size <= 8 * 1024 * 1024))
+        .slice(0, 600);
+    for (const entry of imageEntries) {
+        try {
+            const buffer = await extractArchiveEntry(filePath, entry.name, '', {
+                maxBytes: 8 * 1024 * 1024,
+            });
+            const dimensions = imageDimensionsFromBuffer(buffer, entry.name);
+            if (dimensions) imageDimensionByEntryName.set(normalizeInnerPath(entry.name).toLowerCase(), dimensions);
+        } catch {
+            // Image dimensions are an optimization for reader pagination.
+        }
+    }
+    return imageDimensionByEntryName;
 }
 
 function sameViewerPath(left = '', right = '') {
@@ -1192,13 +1723,14 @@ export class ViewerSessionManager {
         const sessionId = decodeURIComponent(pathParts[0] || '');
         const entryName = decodeURIComponent(pathParts.slice(2).join('/') || '');
         const session = this.sessions.get(sessionId);
-        if (!session || session.type !== 'epub' || !entryName || !isImageEntry(entryName)) return null;
+        const assetIsFont = isFontEntry(entryName);
+        if (!session || session.type !== 'epub' || !entryName || (!isImageEntry(entryName) && !assetIsFont)) return null;
         const buffer = await extractArchiveEntry(session.filePath, entryName, '', {
-            maxBytes: 32 * 1024 * 1024,
+            maxBytes: assetIsFont ? 64 * 1024 * 1024 : 32 * 1024 * 1024,
         });
         return {
             name: entryName,
-            mime: imageMime(entryName),
+            mime: assetIsFont ? fontMime(entryName) : imageMime(entryName),
             buffer,
         };
     }
@@ -1275,9 +1807,9 @@ export class ViewerSessionManager {
         const tocTitleByEntryName = new Map();
         const tocEntries = [];
         const appendTocEntries = entriesToAppend => {
-            const seen = new Set(tocEntries.map(entry => normalizeInnerPath(entry.entryName).toLowerCase()));
+            const seen = new Set(tocEntries.map(entry => `${normalizeInnerPath(entry.entryName).toLowerCase()}#${entry.anchor || ''}`));
             for (const entry of entriesToAppend) {
-                const key = normalizeInnerPath(entry.entryName).toLowerCase();
+                const key = `${normalizeInnerPath(entry.entryName).toLowerCase()}#${entry.anchor || ''}`;
                 if (!key || seen.has(key)) continue;
                 seen.add(key);
                 tocEntries.push(entry);
@@ -1315,14 +1847,21 @@ export class ViewerSessionManager {
         const referencedImageNames = new Set();
         const stylesheetCache = new Map();
         const stylesheetTexts = new Set();
+        const fontFaceMap = new Map();
+        const imageDimensionByEntryName = await readEpubImageDimensionMap(session.filePath, entries);
+        addUniqueEpubFontFaces(fontFaceMap, await readEpubFontFacesFromStylesheets(session, session.filePath, entries));
         for (const entry of chapters) {
             const buffer = await extractArchiveEntry(session.filePath, entry.name, '', {
                 maxBytes: MAX_EPUB_CHAPTER_BYTES,
             });
             const html = buffer.toString('utf8');
+            addUniqueEpubFontFaces(
+                fontFaceMap,
+                extractEpubFontFacesFromCss(extractEpubInlineCss(html), entry.name, entries, session),
+            );
             const css = await readEpubCssRulesForHtml(html, entry.name, session.filePath, entries, stylesheetCache);
             if (css.stylesheet) stylesheetTexts.add(css.stylesheet);
-            const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(html, entry.name, session, entries, css.rules);
+            const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(html, entry.name, session, entries, css.rules, imageDimensionByEntryName);
             for (const imageEntryName of imageEntryNames) {
                 referencedImageNames.add(normalizeInnerPath(imageEntryName).toLowerCase());
             }
@@ -1343,17 +1882,18 @@ export class ViewerSessionManager {
         const coverMetaId = findEpubCoverMetaId(opfXml);
         const coverItem = (coverMetaId && manifest.get(coverMetaId)) || findEpubCoverManifestItem(manifest);
         const coverEntry = coverItem?.entryName ? findArchiveEntry(entries, coverItem.entryName) : null;
-        if (coverEntry && isImageEntry(coverEntry.name) && !referencedImageNames.has(normalizeInnerPath(coverEntry.name).toLowerCase())) {
+        repairEpubFilenameOnlyCoverPage(results, coverEntry, entries, session, imageDimensionByEntryName);
+        const normalizedCoverEntryName = coverEntry ? normalizeInnerPath(coverEntry.name).toLowerCase() : '';
+        const coverAlreadyInResults = normalizedCoverEntryName && results.some(chapter => (
+            (chapter.blocks || []).some(block => normalizeInnerPath(block.name || '').toLowerCase() === normalizedCoverEntryName)
+        ));
+        if (coverEntry && isImageEntry(coverEntry.name) && !coverAlreadyInResults && !referencedImageNames.has(normalizedCoverEntryName)) {
+            const coverDimensions = imageDimensionByEntryName.get(normalizeInnerPath(coverEntry.name).toLowerCase());
             results.unshift({
                 name: coverEntry.name,
                 title: '표지',
                 text: '',
-                blocks: [{
-                    type: 'image',
-                    src: epubAssetProtocolUrl(session, coverEntry.name),
-                    alt: path.posix.basename(coverEntry.name),
-                    name: coverEntry.name,
-                }],
+                blocks: [epubImageBlockFromEntry(session, coverEntry, coverDimensions)],
             });
         }
         const normalizedChapters = results.map((chapter, index) => ({
@@ -1367,18 +1907,23 @@ export class ViewerSessionManager {
                 id: `epub-toc-${index}`,
                 title: entry.title,
                 entryName: entry.entryName,
+                anchor: entry.anchor || '',
                 chapterIndex: chapterIndexByEntryName.get(normalizeInnerPath(entry.entryName).toLowerCase()),
             }))
             .filter(entry => Number.isInteger(entry.chapterIndex));
+        const fonts = Array.from(fontFaceMap.values());
+        const fontStylesheet = epubFontFaceStylesheet(fonts);
         return {
             metadata,
-            stylesheet: Array.from(stylesheetTexts).join('\n'),
+            fonts,
+            stylesheet: [fontStylesheet, ...Array.from(stylesheetTexts)].filter(Boolean).join('\n'),
             toc: toc.length > 0
                 ? toc
                 : normalizedChapters.map((chapter, index) => ({
                     id: `epub-chapter-${index}`,
                     title: chapter.title || chapter.name || `Page ${index + 1}`,
                     entryName: chapter.name,
+                    anchor: '',
                     chapterIndex: index,
                 })),
             chapters: normalizedChapters,

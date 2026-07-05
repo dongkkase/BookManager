@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { FaIcon } from './components/FaIcon';
@@ -74,6 +74,11 @@ const DEFAULT_READER_SETTINGS = {
   wrapMode: 'word',
   pageEffect: 'none',
 };
+const DEFAULT_FONT_GROUPS = {
+  epub: [],
+  bundled: ['Noto Sans KR', 'Nanum Gothic', 'Nanum Gothic Coding', 'Jua'],
+  system: ['Malgun Gothic', 'Segoe UI'],
+};
 const DEFAULT_VIEWER_BACKGROUND = {
   mode: 'solid',
   color: '#111111',
@@ -121,6 +126,7 @@ const VISIBILITY_OPTIONS = [
 const ZOOM_MIN = 10;
 const ZOOM_MAX = 500;
 const ZOOM_STEP = 10;
+const WHEEL_ZOOM_BUTTON_MASK = 1 | 2;
 const READER_ALLOWED_HTML_TAGS = new Set([
   'a', 'abbr', 'article', 'b', 'blockquote', 'br', 'caption', 'cite', 'code', 'dd', 'div',
   'dl', 'dt', 'em', 'figcaption', 'figure', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr',
@@ -137,8 +143,21 @@ const READER_FONT_SCALE_MIN = 50;
 const READER_FONT_SCALE_MAX = 200;
 const READER_MIXED_IMAGE_HEIGHT_RATIO = 0.62;
 const READER_MIXED_IMAGE_LINE_RATIO = 0.58;
+const READER_INLINE_IMAGE_LINE_RATIO = 0.18;
 const READER_PAGE_TURN_DURATION = 680;
 const DOCUMENT_PAGE_TURN_DURATION = 360;
+const READER_FOOTER_SPACE = 56;
+const READER_PAGE_BOTTOM_GUARD = 28;
+const READER_PAGE_FIT_SCALE_MIN = 0.58;
+const READER_PAGE_FIT_SCALE_DEFAULT = 1.16;
+const READER_PAGE_FIT_SCALE_MAX = 1.42;
+const READER_PAGE_FIT_SCALE_STEP = 0.88;
+const READER_PAGE_FIT_SCALE_RECOVERY_STEP = 1.08;
+const READER_RENDER_OVERFLOW_TOLERANCE = 3;
+const READER_RENDER_UNDERFILL_THRESHOLD = 0.82;
+const SWIPE_MIN_DISTANCE = 64;
+const SWIPE_AXIS_LOCK_RATIO = 1.35;
+const SWIPE_MAX_DURATION = 900;
 const READER_TITLE_ONLY_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
 function clamp(value, min, max) {
@@ -158,6 +177,18 @@ function fitScaleForViewMode(viewMode, widthScale, heightScale) {
     : viewMode === 'fit'
       ? Math.min(widthScale, heightScale)
       : widthScale;
+}
+
+function getPageEffectDirection(targetIndex, currentIndex) {
+  return targetIndex > currentIndex ? 'next' : 'previous';
+}
+
+function invertPageEffectDirection(direction) {
+  return direction === 'next' ? 'previous' : 'next';
+}
+
+function getReadingAdjustedPageEffectDirection(direction, readingDirection) {
+  return readingDirection === 'rtl' ? invertPageEffectDirection(direction) : direction;
 }
 
 function scaledPageSizeForViewMode({ viewMode, baseWidth, baseHeight, availableWidth, availableHeight, zoom }) {
@@ -311,6 +342,15 @@ function createWebViewerAPI() {
     getDocumentData: sessionId => fetchWebViewerJson(`/api/viewer/document-data/${encodeURIComponent(sessionId)}`),
     getEpubText: sessionId => fetchWebViewerJson(`/api/viewer/epub/${encodeURIComponent(sessionId)}`),
     getText: (sessionId, options = {}) => fetchWebViewerJson(`/api/viewer/text/${encodeURIComponent(sessionId)}?encoding=${encodeURIComponent(options.encoding || 'auto')}`),
+    openExternal: async url => {
+      const safeUrl = String(url || '').trim();
+      if (!/^https?:\/\//i.test(safeUrl)) throw new Error('External URL was blocked.');
+      if (!window.confirm(viewerText('viewer.link.open_external_confirm', '브라우저에서 외부 링크를 열까요?', { url: safeUrl }))) {
+        return { success: false, canceled: true };
+      }
+      window.open(safeUrl, '_blank', 'noopener,noreferrer');
+      return { success: true };
+    },
   };
 }
 
@@ -399,6 +439,55 @@ function normalizeReaderSettings(settings = {}) {
     wrapMode: WRAP_OPTIONS.some(item => item.id === merged.wrapMode) ? merged.wrapMode : DEFAULT_READER_SETTINGS.wrapMode,
     pageEffect: PAGE_EFFECT_OPTIONS.some(item => item.id === merged.pageEffect) ? merged.pageEffect : DEFAULT_READER_SETTINGS.pageEffect,
   };
+}
+
+function uniqueFontNames(values = []) {
+  return Array.from(new Set(
+    values
+      .map(value => String(value?.family || value?.name || value || '').trim())
+      .filter(Boolean),
+  ));
+}
+
+function normalizeFontGroups(groups = {}) {
+  return {
+    epub: uniqueFontNames(groups.epub || []),
+    bundled: uniqueFontNames([...(groups.bundled || []), ...DEFAULT_FONT_GROUPS.bundled]),
+    system: uniqueFontNames([...(groups.system || []), ...DEFAULT_FONT_GROUPS.system]),
+  };
+}
+
+function fontOptionsFromGroups(fontGroups = {}, sessionType = '') {
+  const normalizedGroups = normalizeFontGroups(fontGroups);
+  const groups = [
+    sessionType === 'epub'
+      ? { id: 'epub', label: 'EPUB 폰트', labelKey: 'viewer.settings.font_group_epub', fonts: normalizedGroups.epub }
+      : null,
+    { id: 'bundled', label: '프로그램 제공 폰트', labelKey: 'viewer.settings.font_group_bundled', fonts: normalizedGroups.bundled },
+    { id: 'system', label: '시스템 폰트', labelKey: 'viewer.settings.font_group_system', fonts: normalizedGroups.system },
+  ].filter(Boolean);
+  const options = [];
+  const seenFonts = new Set();
+  groups.forEach(group => {
+    const fonts = group.fonts.filter(font => !seenFonts.has(font));
+    if (fonts.length < 1) return;
+    options.push({ id: `group:${group.id}`, kind: 'group', label: group.label, labelKey: group.labelKey });
+    fonts.forEach(font => {
+      seenFonts.add(font);
+      options.push({ id: font, label: font });
+    });
+  });
+  return options;
+}
+
+function normalizeEpubEntryPath(value = '') {
+  return String(value || '').replace(/\\/g, '/').replace(/^\/+/, '').normalize('NFC').toLowerCase();
+}
+
+function epubTargetKey(entryName = '', anchor = '') {
+  const normalizedEntryName = normalizeEpubEntryPath(entryName);
+  const normalizedAnchor = String(anchor || '').trim();
+  return normalizedEntryName ? `${normalizedEntryName}#${normalizedAnchor}` : '';
 }
 
 function immersiveGradientForPage(pageIndex = 0) {
@@ -584,6 +673,7 @@ function readerPaginationMetrics(options = {}) {
   const charsPerLine = Math.max(12, Math.floor(Number(settings.charsPerLine) || 60));
   const titleLines = Math.max(0, Math.floor(Number(settings.titleLines) || 0));
   const paragraphLineCost = Math.max(0, Number(settings.paragraphLineCost) || 0);
+  const hasWidowLineTolerance = Object.prototype.hasOwnProperty.call(settings, 'widowLineTolerance');
   const linesPerPage = Math.max(
     8,
     Math.floor(Number(settings.linesPerPage) || Math.ceil(maxChars / charsPerLine)),
@@ -593,7 +683,13 @@ function readerPaginationMetrics(options = {}) {
     lineBudget: Math.max(6, linesPerPage - titleLines),
     paragraphLineCost,
     mediaLineCost: Math.max(4, Math.ceil(Math.max(6, linesPerPage - titleLines) * READER_MIXED_IMAGE_LINE_RATIO)),
-    widowLineTolerance: Math.max(2, Math.min(3, Math.floor(linesPerPage * 0.1))),
+    lineAdvance: Math.max(10, Number(settings.lineAdvance) || 18),
+    pageWidth: Math.max(160, Number(settings.pageWidth) || 560),
+    fontSize: Math.max(10, Number(settings.fontSize) || 16),
+    mixedImageMaxHeight: Math.max(0, Number(settings.mixedImageMaxHeight) || 0),
+    widowLineTolerance: hasWidowLineTolerance
+      ? Math.max(0, Math.floor(Number(settings.widowLineTolerance) || 0))
+      : Math.max(2, Math.min(3, Math.floor(linesPerPage * 0.1))),
     wrapMode: settings.wrapMode || 'word',
   };
 }
@@ -616,9 +712,100 @@ function estimateReaderBlockLineCost(text = '', metrics = {}) {
   return Math.max(1, usedLines);
 }
 
-function estimateReaderMediaLineCost(metrics = {}) {
+function readerCssLengthToPixels(value = '', basePx = 0, fontPx = 16) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || /^(?:auto|none|inherit|initial|unset)$/.test(normalized)) return 0;
+  const match = normalized.match(/^(\d+(?:\.\d+)?)(%|px|em|rem|pt|pc|cm|mm|in|vh|vw|vmin|vmax)?$/);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const unit = match[2] || 'px';
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (unit === '%') return basePx > 0 ? (basePx * amount) / 100 : 0;
+  if (unit === 'em' || unit === 'rem') return amount * fontPx;
+  if (unit === 'pt') return amount * (4 / 3);
+  if (unit === 'pc') return amount * 16;
+  if (unit === 'cm') return amount * 37.795;
+  if (unit === 'mm') return amount * 3.7795;
+  if (unit === 'in') return amount * 96;
+  if (['vh', 'vw', 'vmin', 'vmax'].includes(unit)) return 0;
+  return amount;
+}
+
+function readerImageNodesFromBlock(block = {}) {
+  const imageNodes = [];
+  const visit = node => {
+    if (!node) return;
+    if (node.tagName === 'img' || node.src) imageNodes.push(node);
+    (node.children || []).forEach(visit);
+  };
+  if (block.type === 'image' || block.src) imageNodes.push(block);
+  (block.nodes || []).forEach(visit);
+  return imageNodes;
+}
+
+function cloneReaderNodeWithImagesOnly(node) {
+  if (!node) return null;
+  if (node.tagName === 'img' || node.src) {
+    return {
+      ...node,
+      children: [],
+    };
+  }
+  const children = (node.children || [])
+    .map(cloneReaderNodeWithImagesOnly)
+    .filter(Boolean);
+  if (children.length < 1) return null;
+  return {
+    ...node,
+    children,
+  };
+}
+
+function readerImageOnlyNodesFromBlock(block = {}) {
+  if (!Array.isArray(block.nodes)) return [];
+  return block.nodes
+    .map(cloneReaderNodeWithImagesOnly)
+    .filter(Boolean);
+}
+
+function estimateReaderImageNodeLineCost(node = {}, metrics = {}, defaultLineCost = 0) {
+  const lineAdvance = Math.max(10, Number(metrics.lineAdvance) || 18);
+  const pageWidth = Math.max(160, Number(metrics.pageWidth) || 560);
+  const maxHeightPx = Math.max(lineAdvance * 3, Number(metrics.mixedImageMaxHeight) || (lineAdvance * 12));
+  const style = node.style || {};
+  const fontPx = Math.max(10, Number(metrics.fontSize) || 16);
+  const explicitHeight = readerCssLengthToPixels(style.height || style.maxHeight || '', maxHeightPx, fontPx);
+  const explicitWidth = readerCssLengthToPixels(style.width || style.maxWidth || '', pageWidth, fontPx);
+  const naturalWidth = Math.max(0, Number(node.naturalWidth) || Number(node.attributes?.['data-epub-image-width']) || 0);
+  const naturalHeight = Math.max(0, Number(node.naturalHeight) || Number(node.attributes?.['data-epub-image-height']) || 0);
+  const widthConstrainedHeight = naturalWidth > 0 && naturalHeight > 0
+    ? (naturalHeight * Math.min(pageWidth, explicitWidth || naturalWidth)) / naturalWidth
+    : 0;
+  const estimatedHeight = explicitHeight || widthConstrainedHeight || explicitWidth;
+  if (!estimatedHeight) return defaultLineCost;
+  return Math.max(2, Math.ceil(Math.min(estimatedHeight, maxHeightPx) / lineAdvance) + 1);
+}
+
+function estimateReaderInlineImageLineCost(block = {}, metrics = {}) {
+  const lineBudget = Math.max(6, Number(metrics.lineBudget) || 12);
+  const defaultCost = Math.max(3, Math.ceil(lineBudget * READER_INLINE_IMAGE_LINE_RATIO));
+  const maxInlineCost = Math.max(defaultCost, Math.ceil(lineBudget * 0.3));
+  const imageCosts = readerImageNodesFromBlock(block)
+    .map(node => estimateReaderImageNodeLineCost(node, metrics, 0))
+    .filter(cost => cost > 0);
+  const imageCost = imageCosts.length > 0 ? Math.max(...imageCosts) : defaultCost;
+  return clamp(imageCost, 3, maxInlineCost);
+}
+
+function estimateReaderMediaLineCost(metrics = {}, block = {}) {
   const lineBudget = Math.max(6, Number(metrics.lineBudget) || 12);
   const mediaLineCost = Math.ceil(Number(metrics.mediaLineCost) || (lineBudget * READER_MIXED_IMAGE_LINE_RATIO));
+  const explicitImageCosts = readerImageNodesFromBlock(block)
+    .map(node => estimateReaderImageNodeLineCost(node, metrics, 0))
+    .filter(cost => cost > 0);
+  if (explicitImageCosts.length > 0) {
+    return clamp(Math.max(...explicitImageCosts), 3, Math.max(4, lineBudget - 3));
+  }
   return Math.max(4, Math.min(Math.max(4, lineBudget - 3), mediaLineCost));
 }
 
@@ -644,6 +831,8 @@ function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, pa
     style: block.style,
     className: block.className,
     nodes: preserveNodes ? block.nodes : undefined,
+    attributes: block.attributes,
+    anchors: block.anchors,
     hasImage: block.hasImage || block.type === 'image',
     mediaOnly: block.mediaOnly || false,
     ...patch,
@@ -751,6 +940,49 @@ function firstImageSrcFromReaderBlocks(blocks = []) {
   return '';
 }
 
+function readerPageNodeHasRenderedOverflow(pageNode, textDirection = 'horizontal') {
+  return readerPageNodeRenderUsage(pageNode, textDirection).overflow;
+}
+
+function readerPageNodeRenderUsage(pageNode, textDirection = 'horizontal') {
+  const body = pageNode?.querySelector?.('.viewer-reader-page-body');
+  if (!body) return { fillRatio: 1, overflow: false };
+  const tolerance = READER_RENDER_OVERFLOW_TOLERANCE;
+  const bodyRect = body.getBoundingClientRect?.();
+  if (!bodyRect || bodyRect.width <= 0 || bodyRect.height <= 0) {
+    return { fillRatio: 1, overflow: false };
+  }
+  const contentRects = [...body.querySelectorAll('*')]
+    .filter(node => !(node.matches?.('[data-epub-anchor]:empty')))
+    .map(node => node.getBoundingClientRect?.())
+    .filter(rect => rect && rect.width > 1 && rect.height > 1);
+  const scrollOverflow = textDirection === 'vertical'
+    ? body.scrollWidth > body.clientWidth + tolerance
+    : body.scrollHeight > body.clientHeight + tolerance;
+  if (contentRects.length < 1) return { fillRatio: 0, overflow: scrollOverflow };
+  if (textDirection === 'vertical') {
+    const minLeft = Math.min(...contentRects.map(rect => rect.left));
+    const maxRight = Math.max(...contentRects.map(rect => rect.right));
+    const contentWidth = Math.max(0, bodyRect.right - minLeft);
+    return {
+      fillRatio: clamp(contentWidth / Math.max(1, bodyRect.width), 0, 2),
+      overflow: scrollOverflow || minLeft < bodyRect.left - tolerance || maxRight > bodyRect.right + tolerance,
+    };
+  }
+  const maxBottom = Math.max(...contentRects.map(rect => rect.bottom));
+  const minTop = Math.min(...contentRects.map(rect => rect.top));
+  const contentHeight = Math.max(0, maxBottom - bodyRect.top);
+  return {
+    fillRatio: clamp(contentHeight / Math.max(1, bodyRect.height), 0, 2),
+    overflow: scrollOverflow || minTop < bodyRect.top - tolerance || maxBottom > bodyRect.bottom + tolerance,
+  };
+}
+
+function visibleRenderedEpubPages(rootNode) {
+  return [...(rootNode?.querySelectorAll?.('.viewer-text-page.is-epub-reader:not(.is-scroll)') || [])]
+    .filter(pageNode => !pageNode.closest?.('.viewer-reader-turn-layer'));
+}
+
 function viewerClassName(...values) {
   return values
     .flatMap(value => String(value || '').split(/\s+/))
@@ -773,7 +1005,7 @@ function handleReaderImagePreviewKeyDown(event, image) {
   openReaderImagePreview(event, image);
 }
 
-function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '') {
+function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '', extraProps = {}) {
   if (!node) return null;
   if (node.type === 'text') {
     return renderMarkedText(node.text || '', markContext.pageIndex, markContext.highlights || [], markContext.activeSearch);
@@ -782,13 +1014,14 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '') {
   if (!READER_ALLOWED_HTML_TAGS.has(tagName)) {
     return (node.children || []).map((child, index) => renderEpubHtmlNode(child, `${key}-${index}`, markContext));
   }
+  const anchorProps = node.id ? { 'data-epub-anchor': node.id } : {};
   if (tagName === 'br') return <br key={key} />;
   if (tagName === 'hr') {
-    return <hr key={key} className={viewerClassName(extraClassName, 'viewer-reader-html-rule', node.className)} />;
+    return <hr key={key} className={viewerClassName(extraClassName, 'viewer-reader-html-rule', node.className)} {...anchorProps} {...extraProps} />;
   }
   if (tagName === 'img') {
     const src = String(node.src || '');
-    if (!src.startsWith('bookmanager-document://')) return null;
+    if (!src.startsWith('bookmanager-document://') && !src.startsWith('/api/viewer/epub-asset/')) return null;
     const previewable = Boolean(markContext.imagePreviewAllowed && !readerStylePreventsImageExpansion(node.style));
     const previewLabel = viewerText('viewer.common.image_preview', '이미지 크게 보기');
     const previewImage = {
@@ -803,6 +1036,9 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '') {
         src={src}
         alt={node.alt || ''}
         style={node.style || undefined}
+        {...(node.attributes || {})}
+        {...anchorProps}
+        {...extraProps}
         title={previewable ? previewLabel : undefined}
         role={previewable ? 'button' : undefined}
         tabIndex={previewable ? 0 : undefined}
@@ -816,13 +1052,41 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '') {
     ...markContext,
     imagePreviewAllowed: Boolean(markContext.imagePreviewAllowed && !readerStylePreventsImageExpansion(node.style)),
   };
+  const isInternalLink = tagName === 'a' && node.targetEntryName;
+  const isExternalLink = tagName === 'a' && node.externalHref;
+  const props = {
+    key,
+    className: viewerClassName(
+      extraClassName,
+      `viewer-reader-html-node viewer-reader-html-${tagName}`,
+      (isInternalLink || isExternalLink) && 'viewer-reader-html-link',
+      node.className,
+    ),
+    style: node.style || undefined,
+    ...(node.attributes || {}),
+    ...anchorProps,
+    ...extraProps,
+  };
+  if (isInternalLink) {
+    props.href = node.targetAnchor ? `#${node.targetAnchor}` : '#';
+    props.onClick = event => {
+      event.preventDefault();
+      markContext.onInternalLink?.({
+        entryName: node.targetEntryName,
+        anchor: node.targetAnchor || '',
+      });
+    };
+  } else if (isExternalLink) {
+    props.href = node.externalHref;
+    props.rel = 'noreferrer';
+    props.onClick = event => {
+      event.preventDefault();
+      markContext.onExternalLink?.(node.externalHref);
+    };
+  }
   return React.createElement(
     tagName,
-    {
-      key,
-      className: viewerClassName(extraClassName, `viewer-reader-html-node viewer-reader-html-${tagName}`, node.className),
-      style: node.style || undefined,
-    },
+    props,
     (node.children || []).map((child, index) => renderEpubHtmlNode(child, `${key}-${index}`, childMarkContext)),
   );
 }
@@ -844,9 +1108,11 @@ function readerSizeValuePreventsImageExpansion(value, propertyName = '') {
   const unit = match[2] || 'px';
   if (!Number.isFinite(amount)) return false;
   if (unit === '%') {
+    if ((propertyName === 'width' || propertyName === 'height') && amount >= 95) return false;
     if (propertyName === 'maxWidth' || propertyName === 'maxHeight') return amount < 95;
     return amount < 95;
   }
+  if (['vh', 'vw', 'vmin', 'vmax'].includes(unit) && amount >= 70) return false;
   return amount > 0;
 }
 
@@ -873,6 +1139,87 @@ function isReaderStandaloneImagePage(blocks = []) {
   if (mediaBlocks.length !== 1) return false;
   if (readerBlockPreventsImageExpansion(mediaBlocks[0])) return false;
   return blocks.every(block => block === mediaBlocks[0] || isReaderTitleOnlyBlock(block));
+}
+
+function readerMeasureBlocksFromPages(pages = []) {
+  const blocks = [];
+  pages.forEach((page, pageIndex) => {
+    normalizeReaderBlocks(page).forEach((block, blockIndex) => {
+      blocks.push({
+        ...block,
+        readerMeasureMeta: {
+          pageIndex,
+          blockIndex,
+          name: page.name,
+          chapterIndex: page.chapterIndex,
+          title: page.title,
+        },
+      });
+    });
+  });
+  return blocks;
+}
+
+function cleanReaderMeasureBlock(block = {}) {
+  const { readerMeasureMeta: _readerMeasureMeta, ...cleanBlock } = block;
+  return cleanBlock;
+}
+
+function buildMeasuredReaderPages(blocks = [], measurements = [], options = {}) {
+  const pageContentHeight = Math.max(80, Number(options.pageContentHeight) || 0);
+  const pages = [];
+  let currentPage = null;
+  let usedHeight = 0;
+
+  const flushPage = () => {
+    if (!currentPage || currentPage.blocks.length < 1) return;
+    pages.push({
+      ...currentPage,
+      text: currentPage.blocks.map(block => block.text || '').filter(Boolean).join('\n\n'),
+      hasImage: currentPage.blocks.some(block => block.hasImage),
+      standaloneImage: isReaderStandaloneImagePage(currentPage.blocks),
+    });
+    currentPage = null;
+    usedHeight = 0;
+  };
+
+  const startPage = meta => {
+    currentPage = {
+      blocks: [],
+      name: meta.name,
+      chapterIndex: Number.isInteger(meta.chapterIndex) ? meta.chapterIndex : undefined,
+      title: meta.title || '',
+    };
+    usedHeight = 0;
+  };
+
+  measurements.forEach(measurement => {
+    const block = blocks[measurement.index];
+    if (!block) return;
+    const meta = block.readerMeasureMeta || {};
+    const cleanBlock = cleanReaderMeasureBlock(block);
+    const normalizedChapterIndex = Number.isInteger(meta.chapterIndex) ? meta.chapterIndex : undefined;
+    const sameChapter = currentPage
+      && currentPage.name === meta.name
+      && currentPage.chapterIndex === normalizedChapterIndex;
+    if (!sameChapter) {
+      flushPage();
+      startPage(meta);
+    }
+    const firstHeight = Math.max(1, Number(measurement.firstHeight) || Number(measurement.outerHeight) || 1);
+    const outerHeight = Math.max(firstHeight, Number(measurement.outerHeight) || firstHeight);
+    let nextHeight = currentPage.blocks.length > 0 ? outerHeight : firstHeight;
+    if (currentPage.blocks.length > 0 && usedHeight + nextHeight > pageContentHeight) {
+      flushPage();
+      startPage(meta);
+      nextHeight = firstHeight;
+    }
+    currentPage.blocks.push(cleanBlock);
+    usedHeight += nextHeight;
+  });
+
+  flushPage();
+  return pages;
 }
 
 function paginateReaderChapter(chapter = {}, options = {}) {
@@ -980,18 +1327,25 @@ function paginateReaderChapter(chapter = {}, options = {}) {
       }, block.alt || '', {
         hasImage: true,
         mediaOnly: true,
-        lineCost: estimateReaderMediaLineCost(metrics),
+        lineCost: estimateReaderMediaLineCost(metrics, block),
       });
       continue;
     }
     const rawText = String(block?.text || '');
     const hasPreservedBlankText = rawText.includes('\u00a0') && !rawText.replace(/[\s\u00a0]+/g, '');
     const text = hasPreservedBlankText ? '\u00a0' : rawText.trim();
+    if (!text && String(block?.tagName || '').toLowerCase() === 'hr') {
+      addPackedBlock(block, '', {
+        preserveNodes: true,
+        lineCost: 1,
+      });
+      continue;
+    }
     if (!text && Array.isArray(block?.nodes) && block.hasImage) {
       addPackedBlock(block, '', {
         hasImage: true,
         mediaOnly: true,
-        lineCost: estimateReaderMediaLineCost(metrics),
+        lineCost: estimateReaderMediaLineCost(metrics, block),
       });
       continue;
     }
@@ -1005,12 +1359,46 @@ function paginateReaderChapter(chapter = {}, options = {}) {
     }
     const preserveNodes = Array.isArray(block?.nodes);
     if (block.hasImage) {
+      const imageOnlyNodes = readerImageOnlyNodesFromBlock(block);
+      const imageOnlyBlock = imageOnlyNodes.length > 0
+        ? {
+            ...block,
+            text: '',
+            nodes: imageOnlyNodes,
+            hasImage: true,
+            mediaOnly: true,
+          }
+        : null;
+      const textOnlyBlock = {
+        ...block,
+        hasImage: false,
+        mediaOnly: false,
+        nodes: undefined,
+      };
+      const textLineCost = estimateReaderBlockLineCost(text, metrics);
+      const mediaLineCost = imageOnlyBlock ? estimateReaderMediaLineCost(metrics, imageOnlyBlock) : 0;
+      if (
+        imageOnlyBlock
+        && text
+        && (
+          mediaLineCost >= Math.ceil(metrics.lineBudget * 0.32)
+          || textLineCost + mediaLineCost > metrics.lineBudget
+        )
+      ) {
+        addSplittableTextBlock(textOnlyBlock, text, false);
+        addPackedBlock(imageOnlyBlock, '', {
+          hasImage: true,
+          mediaOnly: true,
+          lineCost: mediaLineCost,
+        });
+        continue;
+      }
       addPackedBlock(block, text, {
         hasImage: true,
         mediaOnly: !text,
         lineCost: Math.min(
           metrics.lineBudget,
-          estimateReaderMediaLineCost(metrics) + estimateReaderBlockLineCost(text, metrics),
+          estimateReaderInlineImageLineCost(block, metrics) + estimateReaderBlockLineCost(text, metrics),
         ),
         preserveNodes,
       });
@@ -1065,7 +1453,8 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
 function ViewerDropdown({ value, options, onChange, title = '', className = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
-  const selected = options.find(option => option.id === value) || options[0] || { id: '', label: '' };
+  const selectableOptions = options.filter(option => option.kind !== 'group');
+  const selected = selectableOptions.find(option => option.id === value) || selectableOptions[0] || { id: '', label: '' };
   const selectedLabel = viewerText(selected.labelKey, selected.label);
 
   useEffect(() => {
@@ -1100,20 +1489,26 @@ function ViewerDropdown({ value, options, onChange, title = '', className = '' }
       {open && (
         <div className="viewer-dropdown-menu" role="listbox">
           {options.map(option => (
-            <button
-              key={option.id}
-              type="button"
-              className={`viewer-dropdown-option ${option.id === selected.id ? 'is-selected' : ''}`}
-              role="option"
-              aria-selected={option.id === selected.id}
-              onClick={() => {
-                onChange(option.id);
-                setOpen(false);
-              }}
-            >
-              <span>{viewerText(option.labelKey, option.label)}</span>
-              {option.id === selected.id ? <FaIcon name="check" size={11} /> : null}
-            </button>
+            option.kind === 'group' ? (
+              <div key={option.id} className="viewer-dropdown-group">
+                {viewerText(option.labelKey, option.label)}
+              </div>
+            ) : (
+              <button
+                key={option.id}
+                type="button"
+                className={`viewer-dropdown-option ${option.id === selected.id ? 'is-selected' : ''}`}
+                role="option"
+                aria-selected={option.id === selected.id}
+                onClick={() => {
+                  onChange(option.id);
+                  setOpen(false);
+                }}
+              >
+                <span>{viewerText(option.labelKey, option.label)}</span>
+                {option.id === selected.id ? <FaIcon name="check" size={11} /> : null}
+              </button>
+            )
           ))}
         </div>
       )}
@@ -1147,8 +1542,11 @@ function ZoomControl({ zoom, onZoomChange, onReset, onWheel }) {
         title={viewerText('viewer.zoom.title', '확대/축소')}
         iconSrc={plusMinusIcon}
         active={open}
+        className="viewer-zoom-button"
         onClick={() => setOpen(current => !current)}
-      />
+      >
+        {`${zoom}%`}
+      </ToolbarButton>
       {open && (
         <div className="viewer-zoom-menu" role="dialog" aria-label={viewerText('viewer.zoom.dialog', '확대/축소 조절')}>
           <span className="viewer-zoom-value">{zoom}%</span>
@@ -1209,23 +1607,24 @@ function ViewerHelpModal({ open, onClose }) {
 
   const shortcutRows = [
     { key: '[ / ]', description: viewerText('viewer.help.shortcut_file', '이전파일과 다음파일로 이동합니다.') },
-    { key: '← / →', description: viewerText('viewer.help.shortcut_page', '이전장과 다음장으로 이동합니다.') },
-    { key: '↑ / ↓', description: viewerText('viewer.help.shortcut_page_vertical', '이전장과 다음장으로 이동합니다.') },
-    { key: 'PageUp / PageDown', description: viewerText('viewer.help.shortcut_page_step', '이전장과 다음장으로 이동합니다.') },
-    { key: 'Home / End', description: viewerText('viewer.help.shortcut_home_end', '첫 페이지와 마지막 페이지로 이동합니다.') },
+    { keys: ['← / →', '↑ / ↓', 'PageUp / PageDown'], description: viewerText('viewer.help.shortcut_page_group', '이전장과 다음장으로 이동합니다.') },
     { key: viewerText('viewer.help.shortcut_wheel_key', '마우스 휠'), description: viewerText('viewer.help.shortcut_wheel', '한장보기와 두장보기에서는 페이지를 넘기고, 스크롤모드에서는 본문을 스크롤합니다.') },
-    { key: '+ / -', description: viewerText('viewer.help.shortcut_zoom', '확대/축소 배율을 조절합니다.') },
-    { key: '0', description: viewerText('viewer.help.shortcut_actual_size', '원본 크기로 표시하고 배율을 100%로 되돌립니다.') },
-    { key: '7', description: viewerText('viewer.help.shortcut_fit_width', '가로 맞춤으로 전환합니다.') },
-    { key: '8', description: viewerText('viewer.help.shortcut_fit_height', '높이 맞춤으로 전환합니다.') },
-    { key: '9', description: viewerText('viewer.help.shortcut_fit_page', '전체 크기 맞춤으로 전환합니다.') },
+    { key: viewerText('viewer.help.shortcut_swipe_key', '스와이프'), description: viewerText('viewer.help.shortcut_swipe', '터치 화면에서 좌우로 스와이프해 이전장과 다음장으로 이동합니다.') },
+    { key: 'Home / End', description: viewerText('viewer.help.shortcut_home_end', '첫 페이지와 마지막 페이지로 이동합니다.') },
+    {
+      keys: [
+        '+ / -',
+        viewerText('viewer.help.shortcut_zoom_ctrl_wheel', 'Ctrl+마우스 휠'),
+        viewerText('viewer.help.shortcut_zoom_left_wheel', '좌클릭+마우스 휠'),
+        viewerText('viewer.help.shortcut_zoom_right_wheel', '우클릭+마우스 휠'),
+      ],
+      description: viewerText('viewer.help.shortcut_zoom', '확대/축소 배율을 조절합니다. 스크롤모드에서는 마우스 위치를 기준으로 확대/축소합니다.'),
+    },
+    { keys: ['0', '7', '8', '9'], description: viewerText('viewer.help.shortcut_fit_group', '원본 크기, 가로 맞춤, 높이 맞춤, 전체 크기 맞춤으로 전환합니다.') },
     { key: 'B', description: viewerText('viewer.help.shortcut_bookmark', '현재 페이지를 책갈피로 추가합니다.') },
-    { key: viewerShortcutLabel(['Mod', 'F']), description: viewerText('viewer.help.shortcut_search', '목차 및 검색 패널을 열고 검색 입력에 포커스를 둡니다.') },
-    { key: 'L', description: viewerText('viewer.help.shortcut_toc', '목차 패널을 엽니다.') },
-    { key: 'Enter', description: viewerText('viewer.help.shortcut_enter', '뷰어 본문에서 전체화면을 전환합니다.') },
-    { key: 'F11', description: viewerText('viewer.help.shortcut_f11', '뷰어 창 전체화면을 전환합니다.') },
+    { keys: [viewerShortcutLabel(['Mod', 'F']), 'L'], description: viewerText('viewer.help.shortcut_navigation_group', '목차 및 검색 패널을 열고 검색 입력 또는 목차 탭으로 이동합니다.') },
+    { keys: ['Enter', 'F11', viewerText('viewer.help.shortcut_double_click_key', '더블클릭')], description: viewerText('viewer.help.shortcut_fullscreen_group', '뷰어 본문 또는 창 전체화면을 전환합니다.') },
     { key: 'Esc', description: viewerText('viewer.help.shortcut_escape', '뷰어 창을 닫습니다.') },
-    { key: viewerText('viewer.help.shortcut_double_click_key', '더블클릭'), description: viewerText('viewer.help.shortcut_double_click', '본문을 더블클릭하면 전체화면을 전환합니다.') },
   ];
   const toolbarRows = [
     { icon: 'anglesLeft', title: viewerText('viewer.toolbar.previous_file', '이전파일 ({shortcut})', { shortcut: '[' }), description: viewerText('viewer.help.toolbar_previous_file', '현재 파일과 같은 목록에서 이전 파일을 엽니다.') },
@@ -1301,9 +1700,13 @@ function ViewerHelpModal({ open, onClose }) {
   const renderRows = rows => (
     <div className="viewer-help-list">
       {rows.map(row => (
-        <div key={`${row.title || row.key}-${row.description}`} className="viewer-help-row">
+        <div key={`${row.title || row.key || row.keys?.join('|')}-${row.description}`} className="viewer-help-row">
           <div className="viewer-help-row-title">
-            {row.key ? <kbd>{row.key}</kbd> : <span className="viewer-help-toolbar-icon">{renderHelpIcon(row)}</span>}
+            {row.keys ? (
+              <span className="viewer-help-shortcut-keys">
+                {row.keys.map(key => <kbd key={key}>{key}</kbd>)}
+              </span>
+            ) : row.key ? <kbd>{row.key}</kbd> : <span className="viewer-help-toolbar-icon">{renderHelpIcon(row)}</span>}
             {row.title ? <strong>{row.title}</strong> : null}
           </div>
           <p>{row.description}</p>
@@ -1822,7 +2225,7 @@ function ViewerNavigationPanel({
               className={`viewer-navigation-list-item ${activeTocId === item.id ? 'is-active' : ''}`.trim()}
               style={{ '--viewer-nav-depth': item.depth || 0 }}
               aria-current={activeTocId === item.id ? 'page' : undefined}
-              onClick={() => onTocClick(item.pageIndex)}
+              onClick={() => onTocClick(item)}
             >
               <span>{item.title}</span>
               <small>{Number(item.pageIndex) + 1}p</small>
@@ -1883,7 +2286,7 @@ function ComicPageFrame({
   const ambientCanvasRef = useRef(null);
 
   const paintAmbient = useCallback(image => {
-    paintAmbientCanvasFromSource(ambientCanvasRef.current, image);
+    return paintAmbientCanvasFromSource(ambientCanvasRef.current, image);
   }, []);
 
   useEffect(() => {
@@ -1900,7 +2303,9 @@ function ComicPageFrame({
       className={`viewer-comic-page-frame view-${viewMode}`}
       style={frameStyle}
     >
-      <canvas ref={ambientCanvasRef} className="viewer-ambient-canvas" aria-hidden="true" />
+      <span className="viewer-ambient-clip" aria-hidden="true">
+        <canvas ref={ambientCanvasRef} className="viewer-ambient-canvas" />
+      </span>
       <img
         ref={imageRef}
         className={imageClassName}
@@ -1966,7 +2371,7 @@ function ReaderSettingsPanel({
   open,
   sessionType,
   settings,
-  fonts,
+  fontGroups,
   backgroundSettings,
   onBackgroundChange,
   onChange,
@@ -1974,7 +2379,7 @@ function ReaderSettingsPanel({
   onClose,
 }) {
   const theme = THEMES.find(item => item.id === settings.theme) || THEMES[0];
-  const fontOptions = fonts.map(font => ({ id: font, label: font }));
+  const fontOptions = fontOptionsFromGroups(fontGroups, sessionType);
   const showReaderSettings = sessionType === 'epub' || sessionType === 'text';
   const showComicSettings = sessionType === 'comic';
   const showPdfSettings = sessionType === 'pdf';
@@ -2214,6 +2619,7 @@ function ViewerApp() {
   const [epubToc, setEpubToc] = useState([]);
   const [epubMetadata, setEpubMetadata] = useState({});
   const [epubStylesheet, setEpubStylesheet] = useState('');
+  const [measuredEpubPagination, setMeasuredEpubPagination] = useState(null);
   const [pdfToc, setPdfToc] = useState([]);
   const [flowMode, setFlowMode] = useState('single');
   const [viewMode, setViewMode] = useState('fit');
@@ -2262,15 +2668,17 @@ function ViewerApp() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewerLanguage, setViewerLanguage] = useState(getCurrentLanguage());
   const [slideNavOpen, setSlideNavOpen] = useState(true);
-  const [fonts, setFonts] = useState(['Noto Sans KR', 'NanumGothic', 'Malgun Gothic', 'Segoe UI']);
+  const [fontGroups, setFontGroups] = useState(() => normalizeFontGroups(DEFAULT_FONT_GROUPS));
   const [scrollPercent, setScrollPercent] = useState(0);
   const [readerViewport, setReaderViewport] = useState({ width: 900, height: 700 });
+  const [readerPageFitScale, setReaderPageFitScale] = useState(READER_PAGE_FIT_SCALE_DEFAULT);
   const [toolbarHeight, setToolbarHeight] = useState(42);
   const [loading, setLoading] = useState(false);
   const [adjacentLoading, setAdjacentLoading] = useState(false);
   const [error, setError] = useState('');
   const toolbarRef = useRef(null);
   const scrollRef = useRef(null);
+  const readerMeasureRef = useRef(null);
   const pageIndexRef = useRef(0);
   const visibleReaderIndexRef = useRef(0);
   const loadingPagesRef = useRef(new Set());
@@ -2295,6 +2703,11 @@ function ViewerApp() {
     scrollLeft: 0,
     scrollTop: 0,
   });
+  const swipeGestureRef = useRef(null);
+  const wheelButtonStateRef = useRef(0);
+  const suppressContextMenuRef = useRef(false);
+  const scrollZoomAnchorSequenceRef = useRef(0);
+  const scrollRestoreTokenRef = useRef(0);
 
   const restoreViewerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -2326,7 +2739,7 @@ function ViewerApp() {
     const verticalPadding = Number(readerSettings.verticalPadding) || 0;
     const paragraphSpacing = Number(readerSettings.paragraphSpacing) || 0;
     const letterSpacing = Number(readerSettings.letterSpacing) || 0;
-    const footerSpace = readerSettings.showFooter ? 44 : 0;
+    const footerSpace = readerSettings.showFooter ? READER_FOOTER_SPACE : 0;
     const isVerticalText = readerSettings.textDirection === 'vertical';
     const pageOuterPadding = horizontalPadding * 2;
     const stageWidth = Math.max(280, (Number(readerViewport.width) || 900) - (READER_STAGE_PADDING * 2));
@@ -2341,7 +2754,8 @@ function ViewerApp() {
       ? readerFontSize
       : readerFontSize * 0.62) + letterSpacing;
     const lineAdvance = readerFontSize * lineHeight;
-    const availableHeight = Math.max(220, readerViewport.height - (READER_STAGE_PADDING * 2) - (verticalPadding * 2) - footerSpace);
+    const pageFrameHeight = Math.max(260, (Number(readerViewport.height) || 700) - (READER_STAGE_PADDING * 2));
+    const availableHeight = Math.max(220, pageFrameHeight - (verticalPadding * 2) - footerSpace - READER_PAGE_BOTTOM_GUARD);
     const mixedImageMaxHeight = Math.max(140, Math.floor(availableHeight * READER_MIXED_IMAGE_HEIGHT_RATIO));
     const charsPerLine = isVerticalText
       ? Math.max(12, Math.floor(availableHeight / Math.max(6, charAdvance)))
@@ -2349,10 +2763,11 @@ function ViewerApp() {
     const linesPerPage = isVerticalText
       ? Math.max(8, Math.floor(pageWidth / Math.max(10, lineAdvance)))
       : Math.max(8, Math.floor(availableHeight / Math.max(10, lineAdvance)));
-    const pageSafetyRatio = viewMode === 'height' ? 0.96 : 0.98;
-    const safeLinesPerPage = Math.max(8, Math.floor(linesPerPage * pageSafetyRatio));
-    const maxCharRatio = viewMode === 'height' ? 0.93 : 0.96;
-    const widowLineTolerance = Math.max(2, Math.min(3, Math.floor(linesPerPage * 0.1)));
+    const pageSafetyRatio = viewMode === 'height' ? 0.94 : 0.96;
+    const renderFitScale = session?.type === 'epub' ? readerPageFitScale : 1;
+    const safeLinesPerPage = Math.max(6, Math.floor(linesPerPage * pageSafetyRatio * renderFitScale));
+    const maxCharRatio = (viewMode === 'height' ? 0.9 : 0.94) * renderFitScale;
+    const widowLineTolerance = 0;
     return {
       charsPerLine,
       linesPerPage: safeLinesPerPage,
@@ -2360,6 +2775,11 @@ function ViewerApp() {
       paragraphLineCost: paragraphSpacing / Math.max(10, lineAdvance),
       mediaLineCost: Math.max(4, Math.ceil(safeLinesPerPage * READER_MIXED_IMAGE_LINE_RATIO)),
       mixedImageMaxHeight,
+      lineAdvance,
+      pageWidth,
+      pageFrameWidth,
+      pageFrameHeight,
+      fontSize: readerFontSize,
       widowLineTolerance,
       wrapMode: readerSettings.wrapMode,
     };
@@ -2374,13 +2794,14 @@ function ViewerApp() {
     readerSettings.textDirection,
     readerSettings.verticalPadding,
     readerSettings.wrapMode,
+    readerPageFitScale,
     readerViewport.height,
     readerViewport.width,
     session?.type,
     viewMode,
   ]);
   const textPages = useMemo(() => paginateText(textContent, readerPageMetrics), [readerPageMetrics, textContent]);
-  const epubPages = useMemo(() => (
+  const estimatedEpubPages = useMemo(() => (
     epubChapters.flatMap((chapter, chapterIndex) => paginateReaderChapter({
       ...chapter,
       chapterIndex,
@@ -2389,6 +2810,74 @@ function ViewerApp() {
       titleLines: readerSettings.showHeader ? (viewMode === 'height' ? 2 : 1) : 0,
     }))
   ), [epubChapters, readerPageMetrics, readerSettings.showHeader, viewMode]);
+  const epubMeasurementBlocks = useMemo(
+    () => readerMeasureBlocksFromPages(estimatedEpubPages),
+    [estimatedEpubPages],
+  );
+  const epubMeasurementKey = useMemo(() => [
+    session?.id || '',
+    session?.filePath || '',
+    estimatedEpubPages.length,
+    epubMeasurementBlocks.length,
+    flowMode,
+    viewMode,
+    zoom,
+    readerViewport.width,
+    readerViewport.height,
+    readerSettings.fontFamily,
+    readerSettings.fontScale,
+    readerSettings.horizontalPadding,
+    readerSettings.letterSpacing,
+    readerSettings.lineHeightPercent,
+    readerSettings.paragraphSpacing,
+    readerSettings.showFooter,
+    readerSettings.showHeader,
+    readerSettings.textAlign,
+    readerSettings.textDirection,
+    readerSettings.verticalPadding,
+    readerSettings.wrapMode,
+  ].join('|'), [
+    estimatedEpubPages.length,
+    epubMeasurementBlocks.length,
+    flowMode,
+    readerSettings.fontFamily,
+    readerSettings.fontScale,
+    readerSettings.horizontalPadding,
+    readerSettings.letterSpacing,
+    readerSettings.lineHeightPercent,
+    readerSettings.paragraphSpacing,
+    readerSettings.showFooter,
+    readerSettings.showHeader,
+    readerSettings.textAlign,
+    readerSettings.textDirection,
+    readerSettings.verticalPadding,
+    readerSettings.wrapMode,
+    readerViewport.height,
+    readerViewport.width,
+    session?.filePath,
+    session?.id,
+    viewMode,
+    zoom,
+  ]);
+  const epubMeasurementReady = measuredEpubPagination?.key === epubMeasurementKey
+    && Array.isArray(measuredEpubPagination.pages)
+    && measuredEpubPagination.pages.length > 0;
+  const epubPages = epubMeasurementReady ? measuredEpubPagination.pages : estimatedEpubPages;
+  const epubPageIndexByTarget = useMemo(() => {
+    const pageIndexByTarget = new Map();
+    epubPages.forEach((page, index) => {
+      const entryName = page.name || '';
+      const entryKey = epubTargetKey(entryName, '');
+      if (entryKey && !pageIndexByTarget.has(entryKey)) pageIndexByTarget.set(entryKey, index);
+      (page.blocks || []).forEach(block => {
+        (block.anchors || []).forEach(anchor => {
+          const key = epubTargetKey(entryName, anchor);
+          if (key && !pageIndexByTarget.has(key)) pageIndexByTarget.set(key, index);
+        });
+      });
+    });
+    return pageIndexByTarget;
+  }, [epubPages]);
   const flowItems = session?.type === 'comic'
     ? pages
     : session?.type === 'epub'
@@ -2447,6 +2936,43 @@ function ViewerApp() {
   const adjustZoom = useCallback(delta => {
     setZoom(current => clamp((Number(current) || 100) + delta, ZOOM_MIN, ZOOM_MAX));
   }, []);
+  const createScrollZoomAnchor = useCallback(event => {
+    if (flowMode !== 'scroll') return null;
+    const node = scrollRef.current;
+    if (!node || !Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) return null;
+    const rect = node.getBoundingClientRect();
+    const offsetX = clamp(event.clientX - rect.left, 0, Math.max(0, node.clientWidth));
+    const offsetY = clamp(event.clientY - rect.top, 0, Math.max(0, node.clientHeight));
+    return {
+      offsetX,
+      offsetY,
+      ratioX: (node.scrollLeft + offsetX) / Math.max(1, node.scrollWidth),
+      ratioY: (node.scrollTop + offsetY) / Math.max(1, node.scrollHeight),
+    };
+  }, [flowMode]);
+  const restoreScrollZoomAnchor = useCallback(anchor => {
+    if (!anchor) return;
+    const sequence = scrollZoomAnchorSequenceRef.current + 1;
+    scrollZoomAnchorSequenceRef.current = sequence;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (scrollZoomAnchorSequenceRef.current !== sequence) return;
+        const node = scrollRef.current;
+        if (!node) return;
+        const nextScrollWidth = Math.max(1, node.scrollWidth);
+        const nextScrollHeight = Math.max(1, node.scrollHeight);
+        const maxScrollLeft = Math.max(0, nextScrollWidth - node.clientWidth);
+        const maxScrollTop = Math.max(0, nextScrollHeight - node.clientHeight);
+        node.scrollLeft = clamp((anchor.ratioX * nextScrollWidth) - anchor.offsetX, 0, maxScrollLeft);
+        node.scrollTop = clamp((anchor.ratioY * nextScrollHeight) - anchor.offsetY, 0, maxScrollTop);
+      });
+    });
+  }, []);
+  const adjustZoomAtPoint = useCallback((delta, event) => {
+    const anchor = createScrollZoomAnchor(event);
+    adjustZoom(delta);
+    restoreScrollZoomAnchor(anchor);
+  }, [adjustZoom, createScrollZoomAnchor, restoreScrollZoomAnchor]);
   const handleZoomWheel = useCallback(event => {
     event.preventDefault();
     event.stopPropagation();
@@ -2529,6 +3055,42 @@ function ViewerApp() {
     saveJson(viewerPrefsKey(session), viewerPrefs);
   }, [flowMode, pageCount, pageIndex, readerSettings, readingDirection, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
 
+  const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {
+    if (!session || flowMode !== 'scroll') return;
+    const currentState = readJson(storageKey(session, 'state'), {});
+    saveJson(storageKey(session, 'state'), {
+      ...currentState,
+      pageIndex: clamp(Number(nextPageIndex) || 0, 0, Math.max(0, pageCount - 1)),
+      scrollPercent: clamp(Number(nextScrollPercent) || 0, 0, 100),
+      pageCount,
+    });
+  }, [flowMode, pageCount, session]);
+
+  const restoreSavedScrollPosition = useCallback((targetSession, rawScrollPercent) => {
+    const targetPercent = clamp(Number(rawScrollPercent) || 0, 0, 100);
+    if (!targetSession || targetPercent <= 0) return;
+    const restoreToken = scrollRestoreTokenRef.current + 1;
+    scrollRestoreTokenRef.current = restoreToken;
+    const applyRestore = attempt => {
+      if (scrollRestoreTokenRef.current !== restoreToken) return;
+      const node = scrollRef.current;
+      if (!node) {
+        if (attempt < 24) window.requestAnimationFrame(() => applyRestore(attempt + 1));
+        return;
+      }
+      const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+      if (maxScrollTop <= 0 && attempt < 24) {
+        window.requestAnimationFrame(() => applyRestore(attempt + 1));
+        return;
+      }
+      node.scrollTop = (maxScrollTop * targetPercent) / 100;
+      if (attempt < 6) {
+        window.requestAnimationFrame(() => applyRestore(attempt + 1));
+      }
+    };
+    window.requestAnimationFrame(() => applyRestore(0));
+  }, []);
+
   const clearDocumentFrame = useCallback(() => {
     documentAbortRef.current?.abort();
     documentAbortRef.current = null;
@@ -2558,7 +3120,7 @@ function ViewerApp() {
     const isBookPageTurn = readerSettings.pageEffect === 'page';
     const effectDuration = isBookPageTurn ? READER_PAGE_TURN_DURATION : 190;
     setReaderPageTurn(current => ({
-      direction: targetIndex > currentIndex ? 'next' : 'previous',
+      direction: getPageEffectDirection(targetIndex, currentIndex),
       sequence: current.sequence + 1,
       active: true,
       fromIndex: currentIndex,
@@ -2587,9 +3149,11 @@ function ViewerApp() {
       loadComicPageRef.current(targetIndex);
       loadComicPageRef.current(targetIndex + 1);
     }
+    const pageEffectDirection = getPageEffectDirection(targetIndex, currentIndex);
+    const visualEffectDirection = getReadingAdjustedPageEffectDirection(pageEffectDirection, readingDirection);
     const effectDuration = isBookPageTurn ? DOCUMENT_PAGE_TURN_DURATION : 190;
     setComicPageEffect(current => ({
-      direction: targetIndex > currentIndex ? 'next' : 'previous',
+      direction: visualEffectDirection,
       sequence: current.sequence + 1,
       active: true,
       fromIndex: currentIndex,
@@ -2616,7 +3180,7 @@ function ViewerApp() {
     const isBookPageTurn = readerSettings.pageEffect === 'page';
     const effectDuration = isBookPageTurn ? DOCUMENT_PAGE_TURN_DURATION : 190;
     setPdfPageEffect(current => ({
-      direction: targetIndex > currentIndex ? 'next' : 'previous',
+      direction: getPageEffectDirection(targetIndex, currentIndex),
       sequence: current.sequence + 1,
       active: true,
       fromIndex: currentIndex,
@@ -2631,7 +3195,7 @@ function ViewerApp() {
       pdfEffectTimerRef.current = null;
     }, effectDuration);
     return isBookPageTurn;
-  }, [flowMode, pageIndex, readerSettings.pageEffect, session?.type]);
+  }, [flowMode, pageIndex, readerSettings.pageEffect, readingDirection, session?.type]);
 
   const scrollPdfPageIntoView = useCallback(index => {
     const targetIndex = Math.max(0, Number(index) || 0);
@@ -2729,6 +3293,8 @@ function ViewerApp() {
     setEpubToc([]);
     setEpubMetadata({});
     setEpubStylesheet('');
+    setMeasuredEpubPagination(null);
+    setFontGroups(current => normalizeFontGroups({ ...current, epub: [] }));
     setPdfToc([]);
     setHighlights([]);
     setComicSinglePageNames([]);
@@ -2764,6 +3330,7 @@ function ViewerApp() {
     setPdfPageEffect({ direction: 'next', sequence: 0, active: false, fromIndex: 0, toIndex: 0 });
     visibleReaderIndexRef.current = 0;
     loadingPagesRef.current.clear();
+    scrollRestoreTokenRef.current += 1;
     scrollRef.current?.scrollTo?.({ top: 0 });
 
     const savedFileState = readJson(storageKey(nextSession, 'state'), {});
@@ -2824,6 +3391,16 @@ function ViewerApp() {
       } else if (nextSession.type === 'epub') {
         const result = await window.viewerAPI.getEpubText(nextSession.id);
         if (!isCurrentLoad()) return;
+        const epubFontNames = uniqueFontNames(Array.isArray(result.fonts) ? result.fonts : []);
+        setFontGroups(current => normalizeFontGroups({ ...current, epub: epubFontNames }));
+        const savedReaderSettings = normalizeReaderSettings(savedPrefs.readerSettings || {});
+        const savedFontFamily = String(savedPrefs.readerSettings?.fontFamily || '').trim();
+        if (epubFontNames.length > 0 && (!savedFontFamily || savedFontFamily === DEFAULT_READER_SETTINGS.fontFamily)) {
+          setReaderSettings(normalizeReaderSettings({
+            ...savedReaderSettings,
+            fontFamily: epubFontNames[0],
+          }));
+        }
         setEpubChapters(Array.isArray(result.chapters) ? result.chapters : []);
         setEpubToc(Array.isArray(result.toc) ? result.toc : []);
         setEpubMetadata(result.metadata && typeof result.metadata === 'object' ? result.metadata : {});
@@ -2835,13 +3412,9 @@ function ViewerApp() {
       } else {
         setError(viewerText('viewer.common.unsupported_format', '지원하지 않는 형식입니다.'));
       }
-      window.requestAnimationFrame(() => {
-        const savedScrollPercent = Number(savedFileState.scrollPercent) || 0;
-        const node = scrollRef.current;
-        if (node && savedPrefs.flowMode === 'scroll' && savedScrollPercent > 0) {
-          node.scrollTop = ((node.scrollHeight - node.clientHeight) * savedScrollPercent) / 100;
-        }
-      });
+      if (savedPrefs.flowMode === 'scroll') {
+        restoreSavedScrollPosition(nextSession, savedFileState.scrollPercent);
+      }
     } catch (loadError) {
       if (isCurrentLoad() && loadError?.name !== 'AbortError') {
         setError(loadError.message || String(loadError));
@@ -2850,7 +3423,7 @@ function ViewerApp() {
       if (isCurrentLoad()) documentAbortRef.current = null;
       if (isCurrentLoad()) setLoading(false);
     }
-  }, [clearDocumentFrame, setPageIndexSynced]);
+  }, [clearDocumentFrame, restoreSavedScrollPosition, setPageIndexSynced]);
 
   const loadComicPage = useCallback(async (index, options = {}) => {
     if (!session || session.type !== 'comic' || index < 0 || index >= pages.length) return;
@@ -2886,7 +3459,11 @@ function ViewerApp() {
       window.viewerAPI?.listSystemFonts?.().then(system => {
         const bundledNames = (bundled || []).map(font => font.family || font.name || font).filter(Boolean);
         const systemNames = (system || []).map(font => font.family || font.name || font).filter(Boolean);
-        setFonts(current => [...new Set([...bundledNames, ...systemNames, ...current])].slice(0, 300));
+        setFontGroups(current => normalizeFontGroups({
+          ...current,
+          bundled: uniqueFontNames([...bundledNames, ...(current.bundled || [])]).slice(0, 120),
+          system: uniqueFontNames([...systemNames, ...(current.system || [])]).slice(0, 240),
+        }));
       }).catch(() => {});
     }).catch(() => {});
     return () => unsubscribe?.();
@@ -2995,6 +3572,162 @@ function ViewerApp() {
       window.removeEventListener('resize', updateViewport);
     };
   }, [session?.type]);
+
+  useEffect(() => {
+    setReaderPageFitScale(READER_PAGE_FIT_SCALE_DEFAULT);
+  }, [
+    epubChapters,
+    flowMode,
+    readerSettings.fontFamily,
+    readerSettings.fontScale,
+    readerSettings.horizontalPadding,
+    readerSettings.letterSpacing,
+    readerSettings.lineHeightPercent,
+    readerSettings.paragraphSpacing,
+    readerSettings.showFooter,
+    readerSettings.showHeader,
+    readerSettings.textAlign,
+    readerSettings.textDirection,
+    readerSettings.verticalPadding,
+    readerSettings.wrapMode,
+    readerViewport.height,
+    readerViewport.width,
+    session?.id,
+    session?.type,
+    viewMode,
+    zoom,
+  ]);
+
+  useEffect(() => {
+    if (measuredEpubPagination?.key && measuredEpubPagination.key !== epubMeasurementKey) {
+      setMeasuredEpubPagination(null);
+    }
+  }, [epubMeasurementKey, measuredEpubPagination?.key]);
+
+  useLayoutEffect(() => {
+    if (
+      session?.type !== 'epub'
+      || flowMode === 'scroll'
+      || epubMeasurementReady
+      || epubMeasurementBlocks.length < 1
+    ) {
+      return undefined;
+    }
+    let canceled = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const measureActualReaderBlocks = () => {
+      if (canceled) return;
+      const root = readerMeasureRef.current;
+      const body = root?.querySelector?.('.viewer-reader-page-body');
+      if (!root || !body) return;
+      const bodyRect = body.getBoundingClientRect?.();
+      if (!bodyRect || bodyRect.height <= 0) return;
+      const headerNode = root.querySelector('[data-reader-measure-header]');
+      const headerRect = headerNode?.getBoundingClientRect?.();
+      const headerStyle = headerNode ? window.getComputedStyle(headerNode) : null;
+      const headerHeight = headerRect
+        ? headerRect.height
+          + (Number.parseFloat(headerStyle?.marginTop || '0') || 0)
+          + (Number.parseFloat(headerStyle?.marginBottom || '0') || 0)
+        : 0;
+      const pageContentHeight = Math.max(
+        readerPageMetrics.lineAdvance * 4,
+        bodyRect.height - headerHeight - READER_PAGE_BOTTOM_GUARD,
+      );
+      const measurements = [...root.querySelectorAll('[data-reader-measure-block-index]')]
+        .map(node => {
+          const index = Number(node.dataset.readerMeasureBlockIndex);
+          const rect = node.getBoundingClientRect?.();
+          if (!Number.isInteger(index) || !rect || rect.height <= 0) return null;
+          const style = window.getComputedStyle(node);
+          const marginTop = Number.parseFloat(style.marginTop || '0') || 0;
+          const marginBottom = Number.parseFloat(style.marginBottom || '0') || 0;
+          return {
+            index,
+            firstHeight: rect.height + marginBottom,
+            outerHeight: rect.height + marginTop + marginBottom,
+          };
+        })
+        .filter(Boolean)
+        .sort((left, right) => left.index - right.index);
+      if (measurements.length < 1) return;
+      const nextPages = buildMeasuredReaderPages(epubMeasurementBlocks, measurements, { pageContentHeight });
+      if (nextPages.length < 1) return;
+      setMeasuredEpubPagination(current => {
+        if (current?.key === epubMeasurementKey && current.pages?.length === nextPages.length) return current;
+        return { key: epubMeasurementKey, pages: nextPages };
+      });
+    };
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(measureActualReaderBlocks);
+    });
+    return () => {
+      canceled = true;
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [
+    epubMeasurementBlocks,
+    epubMeasurementKey,
+    epubMeasurementReady,
+    flowMode,
+    readerPageMetrics.lineAdvance,
+    session?.type,
+  ]);
+
+  useLayoutEffect(() => {
+    if (session?.type !== 'epub' || flowMode === 'scroll' || epubMeasurementReady || epubPages.length < 1) return undefined;
+    let canceled = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const measureRenderedPages = () => {
+      if (canceled) return;
+      const renderedPages = visibleRenderedEpubPages(scrollRef.current);
+      if (renderedPages.length < 1) return;
+      const pageUsages = renderedPages.map(pageNode => ({
+        pageNode,
+        sourceIndex: Number(pageNode.dataset.readerPageIndex),
+        usage: readerPageNodeRenderUsage(pageNode, readerSettings.textDirection),
+      }));
+      const hasOverflow = pageUsages.some(entry => entry.usage.overflow);
+      const hasRecoverableUnderfill = !hasOverflow && readerPageFitScale < READER_PAGE_FIT_SCALE_MAX && pageUsages.some(entry => {
+        if (!Number.isInteger(entry.sourceIndex)) return false;
+        if (entry.usage.fillRatio >= READER_RENDER_UNDERFILL_THRESHOLD) return false;
+        const page = epubPages[entry.sourceIndex];
+        const nextPage = epubPages[entry.sourceIndex + 1];
+        if (!page || !nextPage || page.standaloneImage) return false;
+        if (page.chapterIndex != null && nextPage.chapterIndex != null) {
+          return page.chapterIndex === nextPage.chapterIndex;
+        }
+        return Boolean(page.name && nextPage.name && page.name === nextPage.name);
+      });
+      if (!hasOverflow && !hasRecoverableUnderfill) return;
+      setReaderPageFitScale(current => {
+        if (hasOverflow) {
+          const nextScale = Math.max(READER_PAGE_FIT_SCALE_MIN, Number((current * READER_PAGE_FIT_SCALE_STEP).toFixed(3)));
+          return nextScale < current ? nextScale : current;
+        }
+        const nextScale = Math.min(READER_PAGE_FIT_SCALE_MAX, Number((current * READER_PAGE_FIT_SCALE_RECOVERY_STEP).toFixed(3)));
+        return nextScale > current ? nextScale : current;
+      });
+    };
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(measureRenderedPages);
+    });
+    return () => {
+      canceled = true;
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [
+    epubPages,
+    epubMeasurementReady,
+    flowMode,
+    readerPageFitScale,
+    readerSettings.textDirection,
+    session?.type,
+  ]);
 
   useEffect(() => {
     if (pageCount > 0 && pageIndex >= pageCount) {
@@ -3239,7 +3972,10 @@ function ViewerApp() {
         .map((item, index) => ({
           id: item.id || `epub-toc-${index}`,
           title: item.title || `Page ${index + 1}`,
-          pageIndex: pageIndexByChapterIndex.get(item.chapterIndex),
+          entryName: item.entryName || '',
+          anchor: item.anchor || '',
+          pageIndex: epubPageIndexByTarget.get(epubTargetKey(item.entryName, item.anchor || ''))
+            ?? pageIndexByChapterIndex.get(item.chapterIndex),
           depth: item.depth || 0,
         }))
         .filter(item => Number.isInteger(item.pageIndex));
@@ -3260,7 +3996,7 @@ function ViewerApp() {
         .slice(0, 80);
     }
     return [];
-  }, [epubChapters, epubPages, epubToc, pdfToc, session?.type, textPages]);
+  }, [epubChapters, epubPageIndexByTarget, epubPages, epubToc, pdfToc, session?.type, textPages]);
 
   const activeTocId = useMemo(() => {
     if (tocItems.length === 0) return '';
@@ -3340,10 +4076,36 @@ function ViewerApp() {
     }
   }, [epubPages, pdfDocument, pdfPageCount, session, textPages]);
 
-  const goNavigationPage = useCallback(targetPageIndex => {
-    const resolvedPageIndex = clamp(Number(targetPageIndex) || 0, 0, Math.max(0, pageCount - 1));
+  const goEpubInternalTarget = useCallback(target => {
+    if (session?.type !== 'epub' || !target) return;
+    const entryName = target.entryName || '';
+    const anchor = target.anchor || '';
+    const targetKey = epubTargetKey(entryName, anchor);
+    const entryKey = epubTargetKey(entryName, '');
+    const resolvedPageIndex = epubPageIndexByTarget.get(targetKey) ?? epubPageIndexByTarget.get(entryKey);
+    if (!Number.isInteger(resolvedPageIndex)) return;
     goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex));
-  }, [goPageIndex, pageCount, resolveSpreadNavigationIndex]);
+    if (flowMode !== 'scroll' || !anchor) return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const escapedAnchor = String(anchor).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const anchorNode = scrollRef.current?.querySelector?.(`[data-epub-anchor="${escapedAnchor}"]`);
+        anchorNode?.scrollIntoView?.({ block: 'start' });
+      });
+    });
+  }, [epubPageIndexByTarget, flowMode, goPageIndex, resolveSpreadNavigationIndex, session?.type]);
+
+  const goNavigationPage = useCallback(targetPageIndex => {
+    if (session?.type === 'epub' && targetPageIndex && typeof targetPageIndex === 'object' && targetPageIndex.entryName) {
+      goEpubInternalTarget(targetPageIndex);
+      return;
+    }
+    const rawPageIndex = targetPageIndex && typeof targetPageIndex === 'object'
+      ? targetPageIndex.pageIndex
+      : targetPageIndex;
+    const resolvedPageIndex = clamp(Number(rawPageIndex) || 0, 0, Math.max(0, pageCount - 1));
+    goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex));
+  }, [goEpubInternalTarget, goPageIndex, pageCount, resolveSpreadNavigationIndex, session?.type]);
 
   const goSlideNavPage = useCallback(targetPageIndex => {
     const resolvedPageIndex = clamp(Number(targetPageIndex) || 0, 0, Math.max(0, pageCount - 1));
@@ -3430,6 +4192,22 @@ function ViewerApp() {
     });
   }, []);
 
+  const openExternalLink = useCallback(async url => {
+    const safeUrl = String(url || '').trim();
+    if (!/^https?:\/\//i.test(safeUrl)) return;
+    try {
+      if (typeof window.viewerAPI?.openExternal === 'function') {
+        await window.viewerAPI.openExternal(safeUrl);
+        return;
+      }
+      if (window.confirm(viewerText('viewer.link.open_external_confirm', '브라우저에서 외부 링크를 열까요?', { url: safeUrl }))) {
+        window.open(safeUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      showViewerToast(viewerText('viewer.link.open_external_failed', '외부 링크를 열 수 없습니다.'));
+    }
+  }, [showViewerToast]);
+
   const isViewerInteractiveTarget = useCallback(target => {
     const targetName = target?.tagName?.toLowerCase();
     if (['input', 'select', 'textarea', 'button', 'a'].includes(targetName)) return true;
@@ -3449,6 +4227,11 @@ function ViewerApp() {
   }, []);
 
   const handleContentContextMenu = useCallback(event => {
+    if (suppressContextMenuRef.current) {
+      suppressContextMenuRef.current = false;
+      event.preventDefault();
+      return;
+    }
     if (isViewerInteractiveTarget(event.target)) return;
     if (session?.type === 'comic' && flowMode === 'spread') {
       const pageNode = event.target?.closest?.('[data-page-index]');
@@ -3495,6 +4278,7 @@ function ViewerApp() {
     if (!node) return;
     const max = Math.max(1, node.scrollHeight - node.clientHeight);
     const percent = clamp((node.scrollTop / max) * 100, 0, 100);
+    let nextVisiblePageIndex = pageIndexRef.current;
     setScrollPercent(percent);
     if (session?.type === 'pdf' && pdfPageCount > 0) {
       const pageNodes = [...node.querySelectorAll('[data-pdf-page-index]')];
@@ -3505,17 +4289,24 @@ function ViewerApp() {
         return rect.top <= probeY && rect.bottom >= probeY;
       }) || pageNodes.find(pageNode => pageNode.getBoundingClientRect().bottom > viewportTop + 48);
       const index = Number(visiblePage?.getAttribute('data-pdf-page-index'));
-      if (Number.isFinite(index)) setPageIndexSynced(clamp(index, 0, Math.max(0, pdfPageCount - 1)));
+      if (Number.isFinite(index)) {
+        nextVisiblePageIndex = clamp(index, 0, Math.max(0, pdfPageCount - 1));
+        setPageIndexSynced(nextVisiblePageIndex);
+      }
     } else if (flowMode === 'scroll' && session?.type === 'comic' && pages.length > 0) {
       const imageNodes = [...node.querySelectorAll('[data-page-index]')];
       const firstVisible = imageNodes.find(img => img.getBoundingClientRect().bottom > 48);
       const index = Number(firstVisible?.getAttribute('data-page-index'));
-      if (Number.isFinite(index)) setPageIndexSynced(index);
+      if (Number.isFinite(index)) {
+        nextVisiblePageIndex = index;
+        setPageIndexSynced(index);
+      }
     } else if (flowMode === 'scroll' && (session?.type === 'epub' || session?.type === 'text')) {
       const readerNodes = [...node.querySelectorAll('[data-reader-index]')];
       const firstVisible = readerNodes.find(section => section.getBoundingClientRect().bottom > 48);
       const index = Number(firstVisible?.getAttribute('data-reader-index'));
       if (Number.isFinite(index)) {
+        nextVisiblePageIndex = index;
         visibleReaderIndexRef.current = index;
         setPageIndexSynced(index);
       }
@@ -3530,14 +4321,28 @@ function ViewerApp() {
         lastPageHintRef.current = '';
       }
     }
+    if (flowMode === 'scroll') {
+      persistScrollState(percent, nextVisiblePageIndex);
+    }
   };
 
   const handleWheel = event => {
+    const wheelDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    if (!wheelDelta) return;
+    const eventButtons = Number(event.buttons) || 0;
+    const activeWheelButtons = eventButtons || wheelButtonStateRef.current;
+    const zoomByWheelCombination = event.ctrlKey || Boolean(activeWheelButtons & WHEEL_ZOOM_BUTTON_MASK);
+    if (zoomByWheelCombination) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (activeWheelButtons & 2) suppressContextMenuRef.current = true;
+      adjustZoomAtPoint(wheelDelta < 0 ? ZOOM_STEP : -ZOOM_STEP, event);
+      return;
+    }
     if (flowMode === 'scroll') return;
     event.preventDefault();
     event.stopPropagation();
     resetPageModeScroll();
-    const wheelDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
     if (wheelDelta > 0) movePage(1);
     else if (wheelDelta < 0) movePage(-1);
     window.requestAnimationFrame(resetPageModeScroll);
@@ -3606,6 +4411,195 @@ function ViewerApp() {
     node.scrollTop = state.scrollTop - (event.clientY - state.startY);
     event.preventDefault();
   }, []);
+
+  const releaseSwipePointerCapture = useCallback(event => {
+    if (event?.pointerId == null) return;
+    try {
+      if (event.currentTarget?.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Pointer capture can already be released by the browser.
+    }
+  }, []);
+
+  const cancelSwipeGesture = useCallback(event => {
+    const state = swipeGestureRef.current;
+    if (!state || state.pointerId !== event?.pointerId) return;
+    swipeGestureRef.current = null;
+    releaseSwipePointerCapture(event);
+  }, [releaseSwipePointerCapture]);
+
+  const handleSwipePointerDown = useCallback(event => {
+    if (!event.isPrimary) return;
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    if (swipeGestureRef.current?.active) return;
+    if (dragPanRef.current.active || isViewerInteractiveTarget(event.target)) return;
+    if (pageCount <= 1 && !hasNextBook) return;
+    if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox) return;
+    swipeGestureRef.current = {
+      active: true,
+      source: 'pointer',
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startedAt: window.performance?.now?.() || Date.now(),
+      cancelled: false,
+    };
+    try {
+      event.currentTarget?.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Some embedded surfaces reject capture; swipe can still finish if pointerup reaches the content.
+    }
+  }, [bookmarkEditorOpen, bookmarkMenuOpen, hasNextBook, helpOpen, imageLightbox, isViewerInteractiveTarget, navigationPanelOpen, pageCount, selectionMenu, settingsOpen]);
+
+  const handleSwipePointerMove = useCallback(event => {
+    const state = swipeGestureRef.current;
+    if (!state?.active || state.source !== 'pointer' || state.pointerId !== event.pointerId) return;
+    if (dragPanRef.current.active) {
+      state.cancelled = true;
+      return;
+    }
+    const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    if (absY >= SWIPE_MIN_DISTANCE && absY > absX) {
+      state.cancelled = true;
+      return;
+    }
+    if (absX >= 12 && absX > absY * SWIPE_AXIS_LOCK_RATIO) {
+      event.preventDefault();
+    }
+  }, []);
+
+  const handleSwipePointerUp = useCallback(event => {
+    const state = swipeGestureRef.current;
+    if (!state?.active || state.source !== 'pointer' || state.pointerId !== event.pointerId) return;
+    swipeGestureRef.current = null;
+    releaseSwipePointerCapture(event);
+    const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    const elapsed = (window.performance?.now?.() || Date.now()) - state.startedAt;
+    if (state.cancelled || dragPanRef.current.active) return;
+    if (elapsed > SWIPE_MAX_DURATION) return;
+    if (absX < SWIPE_MIN_DISTANCE || absX <= absY * SWIPE_AXIS_LOCK_RATIO) return;
+    event.preventDefault();
+    event.stopPropagation();
+    resetPageModeScroll();
+    const visualDelta = dx < 0 ? 1 : -1;
+    const navigationDelta = readingDirection === 'rtl' ? -visualDelta : visualDelta;
+    movePage(navigationDelta);
+    window.requestAnimationFrame(resetPageModeScroll);
+  }, [movePage, readingDirection, releaseSwipePointerCapture, resetPageModeScroll]);
+
+  const handleTouchSwipeStart = useCallback(event => {
+    if (event.touches.length !== 1) return;
+    if (swipeGestureRef.current?.active) return;
+    if (dragPanRef.current.active || isViewerInteractiveTarget(event.target)) return;
+    if (pageCount <= 1 && !hasNextBook) return;
+    if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox) return;
+    const touch = event.touches[0];
+    swipeGestureRef.current = {
+      active: true,
+      source: 'touch',
+      touchId: touch.identifier,
+      pointerId: `touch:${touch.identifier}`,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startedAt: window.performance?.now?.() || Date.now(),
+      cancelled: false,
+    };
+  }, [bookmarkEditorOpen, bookmarkMenuOpen, hasNextBook, helpOpen, imageLightbox, isViewerInteractiveTarget, navigationPanelOpen, pageCount, selectionMenu, settingsOpen]);
+
+  const handleTouchSwipeMove = useCallback(event => {
+    const state = swipeGestureRef.current;
+    if (!state?.active || state.source !== 'touch') return;
+    if (event.touches.length !== 1 || dragPanRef.current.active) {
+      state.cancelled = true;
+      return;
+    }
+    const touch = [...event.touches].find(item => item.identifier === state.touchId);
+    if (!touch) {
+      state.cancelled = true;
+      return;
+    }
+    const dx = touch.clientX - state.startX;
+    const dy = touch.clientY - state.startY;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    if (absY >= SWIPE_MIN_DISTANCE && absY > absX) {
+      state.cancelled = true;
+      return;
+    }
+    if (absX >= 12 && absX > absY * SWIPE_AXIS_LOCK_RATIO && event.cancelable) {
+      event.preventDefault();
+    }
+  }, []);
+
+  const handleTouchSwipeEnd = useCallback(event => {
+    const state = swipeGestureRef.current;
+    if (!state?.active || state.source !== 'touch') return;
+    const changedTouches = [...event.changedTouches];
+    const touch = changedTouches.find(item => item.identifier === state.touchId) || changedTouches[0];
+    if (!touch) return;
+    swipeGestureRef.current = null;
+    const dx = touch.clientX - state.startX;
+    const dy = touch.clientY - state.startY;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    const elapsed = (window.performance?.now?.() || Date.now()) - state.startedAt;
+    if (state.cancelled || dragPanRef.current.active) return;
+    if (elapsed > SWIPE_MAX_DURATION) return;
+    if (absX < SWIPE_MIN_DISTANCE || absX <= absY * SWIPE_AXIS_LOCK_RATIO) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopPropagation();
+    resetPageModeScroll();
+    const visualDelta = dx < 0 ? 1 : -1;
+    const navigationDelta = readingDirection === 'rtl' ? -visualDelta : visualDelta;
+    movePage(navigationDelta);
+    window.requestAnimationFrame(resetPageModeScroll);
+  }, [movePage, readingDirection, resetPageModeScroll]);
+
+  const handleTouchSwipeCancel = useCallback(() => {
+    const state = swipeGestureRef.current;
+    if (state?.source !== 'touch') return;
+    swipeGestureRef.current = null;
+  }, []);
+
+  const handleContentPointerDown = useCallback(event => {
+    if (event.pointerType === 'mouse') {
+      wheelButtonStateRef.current = Number(event.buttons) || 0;
+    }
+    handleDragPanPointerDown(event);
+    handleSwipePointerDown(event);
+  }, [handleDragPanPointerDown, handleSwipePointerDown]);
+
+  const handleContentPointerMove = useCallback(event => {
+    if (event.pointerType === 'mouse') {
+      wheelButtonStateRef.current = Number(event.buttons) || 0;
+    }
+    handleDragPanPointerMove(event);
+    handleSwipePointerMove(event);
+  }, [handleDragPanPointerMove, handleSwipePointerMove]);
+
+  const handleContentPointerUp = useCallback(event => {
+    if (event.pointerType === 'mouse') {
+      wheelButtonStateRef.current = Number(event.buttons) || 0;
+    }
+    handleSwipePointerUp(event);
+    endDragPan(event);
+  }, [endDragPan, handleSwipePointerUp]);
+
+  const handleContentPointerCancel = useCallback(event => {
+    if (event?.pointerType === 'mouse') {
+      wheelButtonStateRef.current = 0;
+    }
+    cancelSwipeGesture(event);
+    endDragPan(event);
+  }, [cancelSwipeGesture, endDragPan]);
 
   useEffect(() => {
     const handler = event => {
@@ -3870,7 +4864,7 @@ function ViewerApp() {
     '--viewer-reader-padding-x': `${readerSettings.horizontalPadding}px`,
     '--viewer-reader-paragraph-spacing': `${readerSettings.paragraphSpacing}px`,
     '--viewer-reader-mixed-image-max-height': `${readerPageMetrics.mixedImageMaxHeight || 280}px`,
-    '--viewer-reader-footer-space': readerSettings.showFooter ? '44px' : '0px',
+    '--viewer-reader-footer-space': `${readerSettings.showFooter ? READER_FOOTER_SPACE : 0}px`,
     '--viewer-reader-footer-display': readerSettings.showFooter ? 'block' : 'none',
     '--viewer-reader-text-align': readerSettings.textAlign,
     '--viewer-reader-writing-mode': readerSettings.textDirection === 'vertical' ? 'vertical-rl' : 'horizontal-tb',
@@ -3879,8 +4873,12 @@ function ViewerApp() {
     ...(session?.type === 'epub' && viewMode === 'width' ? { maxWidth: 'none' } : {}),
   };
 
-  const renderReaderPageBody = (item, sourceIndex = pageIndex) => (
+  const renderReaderPageBody = (item, sourceIndex = pageIndex, options = {}) => (
     normalizeReaderBlocks(item).map((block, index) => {
+      const measureBlockIndex = Number.isInteger(options.measureBlockIndex) ? options.measureBlockIndex : null;
+      const measureProps = measureBlockIndex !== null
+        ? { 'data-reader-measure-block-index': measureBlockIndex }
+        : {};
       const imagePreviewAllowed = Boolean(session?.type === 'epub' && block.hasImage && !readerBlockPreventsImageExpansion(block));
       const htmlBlockClassName = viewerClassName(
         'viewer-reader-html-block',
@@ -3889,18 +4887,21 @@ function ViewerApp() {
         imagePreviewAllowed && 'has-previewable-image',
       );
       if (block?.type === 'image' && block.src) {
-        const previewImage = { src: block.src, alt: block.alt || item.title || '', onOpen: openImageLightbox };
+        const blockAlt = Object.prototype.hasOwnProperty.call(block, 'alt') ? block.alt || '' : item.title || '';
+        const previewImage = { src: block.src, alt: blockAlt, onOpen: openImageLightbox };
         return (
           <figure
             key={`${block.src}-${index}`}
             className={viewerClassName('viewer-epub-image', imagePreviewAllowed && 'is-previewable')}
             style={block.style || undefined}
+            {...measureProps}
           >
             <img
               className={viewerClassName(block.className, imagePreviewAllowed && 'is-previewable')}
               src={block.src}
-              alt={block.alt || item.title || ''}
+              alt={blockAlt}
               title={imagePreviewAllowed ? viewerText('viewer.common.image_preview', '이미지 크게 보기') : undefined}
+              {...(block.attributes || {})}
               role={imagePreviewAllowed ? 'button' : undefined}
               tabIndex={imagePreviewAllowed ? 0 : undefined}
               aria-label={imagePreviewAllowed ? viewerText('viewer.common.image_preview', '이미지 크게 보기') : undefined}
@@ -3920,16 +4921,20 @@ function ViewerApp() {
             activeSearch,
             imagePreviewAllowed,
             onImagePreview: openImageLightbox,
-          }, htmlBlockClassName);
+            onInternalLink: goEpubInternalTarget,
+            onExternalLink: openExternalLink,
+          }, htmlBlockClassName, measureProps);
         }
         return (
-          <div key={`html-${index}`} className={htmlBlockClassName}>
+          <div key={`html-${index}`} className={htmlBlockClassName} {...measureProps}>
             {block.nodes.map((node, nodeIndex) => renderEpubHtmlNode(node, `${index}-${nodeIndex}`, {
               pageIndex: sourceIndex,
               highlights,
               activeSearch,
               imagePreviewAllowed,
               onImagePreview: openImageLightbox,
+              onInternalLink: goEpubInternalTarget,
+              onExternalLink: openExternalLink,
             }))}
           </div>
         );
@@ -3940,6 +4945,7 @@ function ViewerApp() {
           key={`text-${index}`}
           className={viewerClassName('viewer-reader-text-block', block.className)}
           style={block.style || undefined}
+          {...measureProps}
         >
           {(paragraphs.length > 0 ? paragraphs : ['']).map((paragraph, paragraphIndex) => (
             <p key={`${index}-${paragraphIndex}`}>
@@ -3950,6 +4956,38 @@ function ViewerApp() {
       );
     })
   );
+
+  const renderReaderMeasurementStage = () => {
+    if (
+      session?.type !== 'epub'
+      || flowMode === 'scroll'
+      || epubMeasurementReady
+      || epubMeasurementBlocks.length < 1
+    ) {
+      return null;
+    }
+    const measurementStyle = {
+      ...readerStyle,
+      width: `${readerPageMetrics.pageFrameWidth || 640}px`,
+      height: `${readerPageMetrics.pageFrameHeight || 760}px`,
+      maxWidth: 'none',
+    };
+    const headerTitle = epubMeasurementBlocks.find(block => block.readerMeasureMeta?.title)?.readerMeasureMeta?.title || '';
+    return (
+      <div ref={readerMeasureRef} className="viewer-reader-measure-stage" aria-hidden="true">
+        <article className="viewer-text-page viewer-reader-scope is-epub-reader" style={measurementStyle}>
+          <div className="viewer-reader-page-body">
+            {readerSettings.showHeader && headerTitle ? <h2 data-reader-measure-header="true">{headerTitle}</h2> : null}
+            {epubMeasurementBlocks.map((block, index) => (
+              <React.Fragment key={`measure-${index}`}>
+                {renderReaderPageBody({ blocks: [block] }, 0, { measureBlockIndex: index })}
+              </React.Fragment>
+            ))}
+          </div>
+        </article>
+      </div>
+    );
+  };
 
   const renderReaderPages = items => {
     const readerTypeClassName = session?.type === 'epub' ? 'is-epub-reader' : 'is-text-reader';
@@ -3994,8 +5032,10 @@ function ViewerApp() {
         data-reader-page-index={sourceIndex}
         style={readerStyle}
       >
-        {readerSettings.showHeader && item.title ? <h2>{item.title}</h2> : null}
-        {renderReaderPageBody(item, sourceIndex)}
+        <div className="viewer-reader-page-body">
+          {readerSettings.showHeader && item.title ? <h2>{item.title}</h2> : null}
+          {renderReaderPageBody(item, sourceIndex)}
+        </div>
         {readerSettings.showFooter ? <div className="viewer-reader-page-number">{sourceIndex + 1}</div> : null}
       </article>
     );
@@ -4218,9 +5258,9 @@ function ViewerApp() {
           key={`${session?.id || 'pdf-thumb'}-${index}`}
           pdfDocument={pdfDocument}
           pageNumber={index + 1}
-          active={index === pageIndex}
-          onClick={() => goSlideNavPage(index)}
-        />
+            active={index === pageIndex}
+            onClick={runToolbarAction(() => goSlideNavPage(index))}
+          />
       ));
     }
     if (session?.type === 'comic') {
@@ -4235,7 +5275,7 @@ function ViewerApp() {
             active={index === pageIndex}
             src={src}
             hasFallbackSrc={Boolean(fallbackSrc)}
-            onClick={() => goSlideNavPage(index)}
+            onClick={runToolbarAction(() => goSlideNavPage(index))}
             onFallback={() => loadComicPage(index, { force: true })}
           />
         );
@@ -4249,7 +5289,7 @@ function ViewerApp() {
           item={item}
           pageNumber={index + 1}
           active={index === pageIndex}
-          onClick={() => goSlideNavPage(index)}
+          onClick={runToolbarAction(() => goSlideNavPage(index))}
         />
       ));
     }
@@ -4425,14 +5465,19 @@ function ViewerApp() {
         onWheel={handleWheel}
         onContextMenu={handleContentContextMenu}
         onDoubleClick={handleContentDoubleClick}
-        onPointerDown={handleDragPanPointerDown}
-        onPointerMove={handleDragPanPointerMove}
-        onPointerUp={endDragPan}
-        onPointerCancel={endDragPan}
-        onLostPointerCapture={endDragPan}
+        onPointerDown={handleContentPointerDown}
+        onPointerMove={handleContentPointerMove}
+        onPointerUp={handleContentPointerUp}
+        onPointerCancel={handleContentPointerCancel}
+        onLostPointerCapture={handleContentPointerCancel}
+        onTouchStart={handleTouchSwipeStart}
+        onTouchMove={handleTouchSwipeMove}
+        onTouchEnd={handleTouchSwipeEnd}
+        onTouchCancel={handleTouchSwipeCancel}
       >
         {renderContent()}
       </main>
+      {renderReaderMeasurementStage()}
       {viewerToast && (
         <div className="viewer-toast-layer" aria-live="polite" aria-atomic="true">
           <div key={viewerToast.id} className="viewer-toast" role="status">
@@ -4452,7 +5497,7 @@ function ViewerApp() {
               ? viewerText('viewer.navigation.close_page_nav', '페이지 네비게이션 닫기')
               : viewerText('viewer.navigation.open_page_nav', '페이지 네비게이션 열기')}
             aria-expanded={slideNavOpen}
-            onClick={() => setSlideNavOpen(current => !current)}
+            onClick={runToolbarAction(() => setSlideNavOpen(current => !current))}
           >
             <FaIcon name={slideNavOpen ? 'angleDown' : 'angleUp'} />
           </button>
@@ -4483,7 +5528,7 @@ function ViewerApp() {
           highlights={highlights}
           searchResults={bookSearchResults}
           searchLoading={bookSearchLoading}
-          onClose={() => setNavigationPanelOpen(false)}
+          onClose={runToolbarAction(() => setNavigationPanelOpen(false))}
           onTocClick={goNavigationPage}
           onHighlightClick={goHighlight}
           onHighlightDelete={deleteHighlight}
@@ -4513,12 +5558,12 @@ function ViewerApp() {
         open={settingsOpen}
         sessionType={session?.type}
         settings={readerSettings}
-        fonts={fonts}
+        fontGroups={fontGroups}
         backgroundSettings={viewerBackground}
         onBackgroundChange={updateViewerBackground}
         onChange={updateReaderSettings}
         onReset={() => setReaderSettings(normalizeReaderSettings())}
-        onClose={() => setSettingsOpen(false)}
+        onClose={runToolbarAction(() => setSettingsOpen(false))}
       />
       {bookmarkEditorOpen && (
         <BookmarkEditor
