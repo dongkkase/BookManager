@@ -10,8 +10,6 @@ import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
 import {
     applyImmediateSingleSelection,
     isPlainPrimaryClick,
-    scheduleAfterNextPaint,
-    selectionEventSnapshot,
 } from '../../selectionVisualFeedback';
 import { CoverImage, coverImageKey } from './CoverImage';
 import { FolderEmptyState } from './FolderEmptyState';
@@ -59,7 +57,6 @@ const FileTableView = forwardRef(({
     const columnResizeRef = useRef(null);
     const headerReorderRef = useRef({ active: false, moved: false, sourceKey: '', targetKey: '', startX: 0, startY: 0 });
     const selectionBoxRef = useRef(null);
-    const pendingSingleSelectRef = useRef(null);
     const [dragOverColumnKey, setDragOverColumnKey] = useState('');
     const [dragSourceColumnKey, setDragSourceColumnKey] = useState('');
     const [columnDragGhost, setColumnDragGhost] = useState(null);
@@ -313,10 +310,6 @@ const FileTableView = forwardRef(({
         return () => observer.disconnect();
     }, [ref]);
 
-    useEffect(() => () => {
-        pendingSingleSelectRef.current?.();
-    }, []);
-
     const handleContainerScroll = event => {
         setScrollTop(event.currentTarget.scrollTop || 0);
         onScroll?.(event);
@@ -340,17 +333,14 @@ const FileTableView = forwardRef(({
 
     const handleRowMouseDown = (file, event, index) => {
         if (event.button !== 0 || !onSelect || !file.path) return;
-        pendingSingleSelectRef.current?.();
-        pendingSingleSelectRef.current = null;
         if (isPlainPrimaryClick(event)) {
             applyImmediateSingleSelection(ref?.current, event.currentTarget, '[data-file-path]');
-            const eventSnapshot = selectionEventSnapshot(event);
-            pendingSingleSelectRef.current = scheduleAfterNextPaint(() => {
-                pendingSingleSelectRef.current = null;
-                onSelect(file.path, eventSnapshot, index);
-            });
-            return;
         }
+    };
+
+    const handleRowMouseUp = (file, event, index) => {
+        if (event.button !== 0 || !onSelect || !file.path) return;
+        if (rubberSelectRef.current.moved) return;
         onSelect(file.path, event, index);
     };
 
@@ -529,6 +519,7 @@ const FileTableView = forwardRef(({
                   className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
                   style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
                   onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
+                  onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}
                   onClick={(event) => handleRowClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
                   onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
@@ -562,6 +553,7 @@ const FileTableView = forwardRef(({
                       className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
 	                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
 	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
+                      onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}
 	                  onClick={(event) => handleRowClick(file, event, fileIndex)}
                       onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
 	                  onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}

@@ -2318,11 +2318,13 @@ function ComicPageFrame({
         className={imageClassName}
         src={src}
         alt={page.basename}
+        draggable={false}
         style={imageStyle}
         onLoad={event => {
           paintAmbient(event.currentTarget);
           onImageLoad(event);
         }}
+        onDragStart={event => event.preventDefault()}
         onError={onImageError}
       />
     </div>

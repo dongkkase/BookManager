@@ -409,14 +409,17 @@ test('자세히 보기 테이블도 빈 영역 드래그 선택 콜백을 받는
     ]);
 });
 
-test('파일 보기 항목은 mousedown 선택 후 click에서 다시 선택하지 않는다', () => {
+test('파일 보기 항목은 mouseup에서 선택 상태를 확정한다', () => {
     assertInventory('fileTable', [
+        ['테이블 mouseup 선택 확정', 'onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}'],
         ['테이블 마우스 click 재선택 방지', 'if (e.detail > 0) return;'],
     ]);
     assertInventory('thumbnailView', [
+        ['썸네일 mouseup 선택 확정', 'onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}'],
         ['썸네일 마우스 click 재선택 방지', 'if (e.detail > 0) return;'],
     ]);
     assertInventory('tileView', [
+        ['타일 mouseup 선택 확정', 'onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}'],
         ['타일 마우스 click 재선택 방지', 'if (e.detail > 0) return;'],
     ]);
 });

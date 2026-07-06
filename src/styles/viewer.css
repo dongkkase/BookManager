@@ -623,6 +623,8 @@
   object-fit: contain;
   box-shadow: 0 1px 10px rgba(0, 0, 0, 0.55);
   cursor: grab;
+  -webkit-user-drag: none;
+  user-select: none;
   image-rendering: -webkit-optimize-contrast;
   image-rendering: crisp-edges;
   object-fit: cover;

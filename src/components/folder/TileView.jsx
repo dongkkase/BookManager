@@ -11,8 +11,6 @@ import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
 import {
   applyImmediateSingleSelection,
   isPlainPrimaryClick,
-  scheduleAfterNextPaint,
-  selectionEventSnapshot,
 } from '../../selectionVisualFeedback';
 import { FolderEmptyState } from './FolderEmptyState';
 import { ViewerStatusBadgeRow } from './ViewerStatusBadges';
@@ -50,7 +48,6 @@ const TileView = ({
 	  const containerRef = useRef(null);
 	  const rubberSelectRef = useRef({ active: false, moved: false, startX: 0, startY: 0 });
       const selectionBoxRef = useRef(null);
-      const pendingSingleSelectRef = useRef(null);
 	  const [viewport, setViewport] = useState({ width: 0, height: 0, scrollTop: 0 });
   const items = files.length > 0 ? files : fileData;
   const imageWidth = Math.round(72 + Number(scale || 50) * 0.58);
@@ -135,10 +132,6 @@ const TileView = ({
 	    return () => observer.disconnect();
 	  }, []);
 
-      useEffect(() => () => {
-        pendingSingleSelectRef.current?.();
-      }, []);
-
 	  const handleGridScroll = event => {
 	    const nextScrollTop = event.currentTarget.scrollTop || 0;
 	    setViewport(current => current.scrollTop === nextScrollTop ? current : {
@@ -188,17 +181,14 @@ const TileView = ({
 
 	  const handleItemMouseDown = (file, event, index) => {
 	    if (event.button !== 0 || !onSelect || !file.path) return;
-        pendingSingleSelectRef.current?.();
-        pendingSingleSelectRef.current = null;
         if (isPlainPrimaryClick(event)) {
           applyImmediateSingleSelection(containerRef.current, event.currentTarget, '[data-file-path]');
-          const eventSnapshot = selectionEventSnapshot(event);
-          pendingSingleSelectRef.current = scheduleAfterNextPaint(() => {
-            pendingSingleSelectRef.current = null;
-            onSelect(file.path, eventSnapshot, index);
-          });
-          return;
         }
+	  };
+
+      const handleItemMouseUp = (file, event, index) => {
+        if (event.button !== 0 || !onSelect || !file.path) return;
+        if (rubberSelectRef.current.moved) return;
 	    onSelect(file.path, event, index);
 	  };
 
@@ -293,6 +283,7 @@ const TileView = ({
 	                width: `${row.width}px`,
 	              }}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
+                  onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
@@ -357,6 +348,7 @@ const TileView = ({
 	              data-file-path={file.path}
                   className={`tile-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
+                  onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
