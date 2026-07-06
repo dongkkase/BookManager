@@ -46,6 +46,47 @@
   background: #202020;
   border-bottom: 1px solid #3d3d3d;
   overflow: visible;
+  transform: translateY(0);
+  transition:
+    transform 180ms ease,
+    opacity 160ms ease,
+    margin-bottom 180ms ease,
+    box-shadow 180ms ease;
+  will-change: transform, opacity, margin-bottom;
+}
+
+.viewer-app.is-toolbar-unpinned .viewer-toolbar {
+  margin-bottom: calc(0px - var(--viewer-toolbar-height, 42px));
+}
+
+.viewer-app.is-toolbar-hidden .viewer-toolbar {
+  transform: translateY(calc(-100% - 2px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.viewer-app.is-toolbar-peek .viewer-toolbar {
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.48);
+}
+
+.viewer-toolbar-hover-zone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 59;
+  height: 18px;
+  pointer-events: auto;
+  background: transparent;
+}
+
+.viewer-toolbar-toggle-cluster {
+  flex: 0 0 auto;
+}
+
+.viewer-toolbar-toggle .viewer-tool-icon-image {
+  width: 17px;
+  height: 17px;
 }
 
 .viewer-title {
@@ -1904,6 +1945,11 @@
   transform: translateX(0);
 }
 
+.viewer-app.is-toolbar-unpinned .viewer-navigation-panel {
+  top: 0;
+  height: 100vh;
+}
+
 .viewer-navigation-header {
   position: relative;
   display: grid;
@@ -2184,6 +2230,11 @@
 
 .viewer-settings-panel.is-open {
   transform: translateX(0);
+}
+
+.viewer-app.is-toolbar-unpinned .viewer-settings-panel {
+  top: 0;
+  height: 100vh;
 }
 
 .viewer-settings-header,

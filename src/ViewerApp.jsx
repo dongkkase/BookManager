@@ -14,6 +14,7 @@ import readModeScrollIcon from './images/read_mode_scroll.svg';
 import showFullSizeIcon from './images/show_full_size.svg';
 import listSearchIcon from './images/list_search.svg';
 import slideNavigationIcon from './images/slide_navigation.svg';
+import toolbarIcon from './images/toolbar.svg';
 import { getCurrentLanguage, setLanguage, translate } from './utils/i18n';
 import './styles/viewer.css';
 
@@ -2677,6 +2678,8 @@ function ViewerApp() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewerLanguage, setViewerLanguage] = useState(getCurrentLanguage());
   const [slideNavOpen, setSlideNavOpen] = useState(true);
+  const [toolbarPinnedOpen, setToolbarPinnedOpen] = useState(true);
+  const [toolbarPeekOpen, setToolbarPeekOpen] = useState(false);
   const [fontGroups, setFontGroups] = useState(() => normalizeFontGroups(DEFAULT_FONT_GROUPS));
   const [scrollPercent, setScrollPercent] = useState(0);
   const [readerViewport, setReaderViewport] = useState({ width: 900, height: 700 });
@@ -2701,6 +2704,7 @@ function ViewerApp() {
   const comicEffectTimerRef = useRef(null);
   const pdfEffectTimerRef = useRef(null);
   const viewerToastTimerRef = useRef(null);
+  const toolbarPeekTimerRef = useRef(null);
   const lastPageHintRef = useRef('');
   const loadComicPageRef = useRef(null);
   const navigationSearchInputRef = useRef(null);
@@ -2723,6 +2727,38 @@ function ViewerApp() {
       scrollRef.current?.focus?.({ preventScroll: true });
     });
   }, []);
+
+  const clearToolbarPeekTimer = useCallback(() => {
+    if (!toolbarPeekTimerRef.current) return;
+    window.clearTimeout(toolbarPeekTimerRef.current);
+    toolbarPeekTimerRef.current = null;
+  }, []);
+
+  const showToolbarPeek = useCallback(() => {
+    if (toolbarPinnedOpen) return;
+    clearToolbarPeekTimer();
+    setToolbarPeekOpen(true);
+  }, [clearToolbarPeekTimer, toolbarPinnedOpen]);
+
+  const scheduleToolbarPeekClose = useCallback((delay = 900) => {
+    if (toolbarPinnedOpen) return;
+    clearToolbarPeekTimer();
+    toolbarPeekTimerRef.current = window.setTimeout(() => {
+      toolbarPeekTimerRef.current = null;
+      setToolbarPeekOpen(false);
+    }, delay);
+  }, [clearToolbarPeekTimer, toolbarPinnedOpen]);
+
+  const toggleToolbarPinned = useCallback(() => {
+    clearToolbarPeekTimer();
+    setToolbarPeekOpen(false);
+    setToolbarPinnedOpen(current => !current);
+    restoreViewerFocus();
+  }, [clearToolbarPeekTimer, restoreViewerFocus]);
+
+  useEffect(() => () => {
+    clearToolbarPeekTimer();
+  }, [clearToolbarPeekTimer]);
 
   const setPageIndexSynced = useCallback(nextIndex => {
     const normalizedIndex = Math.max(0, Number(nextIndex) || 0);
@@ -4629,7 +4665,11 @@ function ViewerApp() {
         || imageLightbox
       );
       if (shortcutsBlockedByOverlay || isViewerShortcutBlockedTarget(event.target)) return;
-      if (event.key === 'F11') {
+      if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) toggleToolbarPinned();
+      } else if (event.key === 'F11') {
         event.preventDefault();
         toggleFullscreen();
       } else if (event.key === 'Enter' && !event.repeat) {
@@ -4687,7 +4727,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goPdfPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, setPageIndexSynced, settingsOpen, toggleFullscreen]);
+  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goPdfPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, setPageIndexSynced, settingsOpen, toggleFullscreen, toggleToolbarPinned]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -5242,7 +5282,11 @@ function ViewerApp() {
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
   const slideNavAvailable = Boolean(session && pageCount > 0 && (session.type !== 'pdf' || pdfDocument));
   const backgroundMode = supportsBackgroundSettings ? viewerBackground.mode : 'solid';
-  const appClassName = `viewer-app is-background-${backgroundMode} lang-${viewerLanguage} ${slideNavAvailable && slideNavOpen ? 'has-slide-nav-open' : ''}`.trim();
+  const toolbarVisible = toolbarPinnedOpen || toolbarPeekOpen;
+  const toolbarToggleTitle = toolbarPinnedOpen
+    ? viewerText('viewer.toolbar.hide_toolbar', '툴바 숨기기 (Tab)')
+    : viewerText('viewer.toolbar.show_toolbar', '툴바 표시 (Tab)');
+  const appClassName = `viewer-app is-background-${backgroundMode} lang-${viewerLanguage} ${slideNavAvailable && slideNavOpen ? 'has-slide-nav-open' : ''} ${toolbarPinnedOpen ? 'is-toolbar-pinned' : 'is-toolbar-unpinned'} ${toolbarVisible ? 'is-toolbar-visible' : 'is-toolbar-hidden'} ${toolbarPeekOpen && !toolbarPinnedOpen ? 'is-toolbar-peek' : ''}`.trim();
   const appStyle = {
     '--viewer-background-solid': viewerBackground.color,
     '--viewer-content-bg': viewerBackground.color,
@@ -5314,7 +5358,29 @@ function ViewerApp() {
           aria-hidden="true"
         />
       )}
-      <header ref={toolbarRef} className="viewer-toolbar">
+      {!toolbarPinnedOpen && (
+        <div
+          className="viewer-toolbar-hover-zone"
+          aria-hidden="true"
+          onPointerEnter={showToolbarPeek}
+          onPointerLeave={() => scheduleToolbarPeekClose()}
+        />
+      )}
+      <header
+        ref={toolbarRef}
+        className="viewer-toolbar"
+        onPointerEnter={showToolbarPeek}
+        onPointerLeave={() => scheduleToolbarPeekClose()}
+      >
+        <div className="viewer-tool-cluster viewer-toolbar-toggle-cluster" aria-label={viewerText('viewer.toolbar.visibility_group', '툴바 표시')}>
+          <ToolbarButton
+            title={toolbarToggleTitle}
+            iconSrc={toolbarIcon}
+            active={toolbarVisible}
+            className="viewer-toolbar-toggle"
+            onClick={toggleToolbarPinned}
+          />
+        </div>
         <div className="viewer-title" title={session?.filePath || ''}>
           <span>{session?.fileName || 'BookManagerViewer'}</span>
           <small>{progressText}</small>

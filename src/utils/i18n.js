@@ -50,6 +50,9 @@ const EXTRA_TRANSLATIONS = {
       },
       toolbar: {
         file_navigation: '파일 이동',
+        visibility_group: '툴바 표시',
+        hide_toolbar: '툴바 숨기기 (Tab)',
+        show_toolbar: '툴바 표시 (Tab)',
         previous_file: '이전파일 ({shortcut})',
         next_file: '다음파일 ({shortcut})',
         page_navigation: '페이지 이동',
@@ -314,6 +317,9 @@ const EXTRA_TRANSLATIONS = {
       },
       toolbar: {
         file_navigation: 'File navigation',
+        visibility_group: 'Toolbar visibility',
+        hide_toolbar: 'Hide toolbar (Tab)',
+        show_toolbar: 'Show toolbar (Tab)',
         previous_file: 'Previous file ({shortcut})',
         next_file: 'Next file ({shortcut})',
         page_navigation: 'Page navigation',
@@ -578,6 +584,9 @@ const EXTRA_TRANSLATIONS = {
       },
       toolbar: {
         file_navigation: 'ファイル移動',
+        visibility_group: 'ツールバー表示',
+        hide_toolbar: 'ツールバーを隠す (Tab)',
+        show_toolbar: 'ツールバーを表示 (Tab)',
         previous_file: '前のファイル ({shortcut})',
         next_file: '次のファイル ({shortcut})',
         page_navigation: 'ページ移動',
