@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { FaIcon } from './components/FaIcon';
@@ -149,8 +150,6 @@ const READER_FONT_SCALE_MAX = 200;
 const READER_MIXED_IMAGE_HEIGHT_RATIO = 0.62;
 const READER_MIXED_IMAGE_LINE_RATIO = 0.58;
 const READER_INLINE_IMAGE_LINE_RATIO = 0.18;
-const READER_PAGE_TURN_DURATION = 680;
-const DOCUMENT_PAGE_TURN_DURATION = 360;
 const READER_FOOTER_SPACE = 56;
 const READER_PAGE_BOTTOM_GUARD = 28;
 const READER_PAGE_FIT_SCALE_MIN = 0.58;
@@ -164,6 +163,21 @@ const SWIPE_MIN_DISTANCE = 64;
 const SWIPE_AXIS_LOCK_RATIO = 1.35;
 const SWIPE_MAX_DURATION = 900;
 const READER_TITLE_ONLY_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const SNAPSHOT_PAGE_TURN_DURATION = 820;
+const SNAPSHOT_PAGE_TURN_DRAG_THRESHOLD = 12;
+const SNAPSHOT_PAGE_TURN_COMMIT_PROGRESS = 0.42;
+const SNAPSHOT_PAGE_TURN_MIN_VELOCITY = 0.55;
+const EMPTY_PAGE_TURN = {
+  format: '',
+  effect: 'none',
+  direction: 'next',
+  sequence: 0,
+  active: false,
+  interactive: false,
+  fromIndex: 0,
+  toIndex: 0,
+  progress: 0,
+};
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -196,6 +210,13 @@ function getReadingAdjustedPageEffectDirection(direction, readingDirection) {
   return readingDirection === 'rtl' ? invertPageEffectDirection(direction) : direction;
 }
 
+function easeSnapshotTurnProgress(progress) {
+  const value = clamp(Number(progress) || 0, 0, 1);
+  return value < 0.5
+    ? 4 * value * value * value
+    : 1 - Math.pow(-2 * value + 2, 3) / 2;
+}
+
 function scaledPageSizeForViewMode({ viewMode, baseWidth, baseHeight, availableWidth, availableHeight, zoom }) {
   const widthScale = Math.max(0.02, Number(availableWidth) || 1) / Math.max(1, Number(baseWidth) || 1);
   const heightScale = Math.max(0.02, Number(availableHeight) || 1) / Math.max(1, Number(baseHeight) || 1);
@@ -206,6 +227,507 @@ function scaledPageSizeForViewMode({ viewMode, baseWidth, baseHeight, availableW
     width: Math.max(1, Math.floor((Number(baseWidth) || 1) * scale)),
     height: Math.max(1, Math.floor((Number(baseHeight) || 1) * scale)),
   };
+}
+
+function dragPanOverflowStateForTarget(node, panTarget) {
+  if (!node || !panTarget) return { canPanX: false, canPanY: false };
+  const targetRect = panTarget.getBoundingClientRect?.();
+  const viewportRect = node.getBoundingClientRect?.();
+  if (!targetRect || !viewportRect) return { canPanX: false, canPanY: false };
+  return {
+    canPanX: targetRect.width > viewportRect.width + 1 && node.scrollWidth > node.clientWidth + 1,
+    canPanY: targetRect.height > viewportRect.height + 1 && node.scrollHeight > node.clientHeight + 1,
+  };
+}
+
+function zoomAnchorSelectorForTarget(target) {
+  const anchorNode = target?.closest?.('[data-page-index], [data-pdf-page-index], [data-reader-page-index], [data-reader-index]');
+  if (!anchorNode) return null;
+  const attributeName = ['data-page-index', 'data-pdf-page-index', 'data-reader-page-index', 'data-reader-index']
+    .find(name => anchorNode.hasAttribute?.(name));
+  const value = attributeName ? anchorNode.getAttribute?.(attributeName) : null;
+  if (value == null) return null;
+  const escapedValue = String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `[${attributeName}="${escapedValue}"]`;
+}
+
+const PAGE_BUFFER_MAX_TEXTURE_SIZE = 1536;
+const PAGE_BUFFER_READY_FRAMES = 36;
+
+function nextPageBufferFrame() {
+  return new Promise(resolve => window.requestAnimationFrame(resolve));
+}
+
+function pageBufferSourceNode(root) {
+  if (!root) return null;
+  return root.querySelector?.('.viewer-pdf-canvas, .viewer-comic-image, .viewer-text-page')
+    || root.firstElementChild
+    || root;
+}
+
+function pageBufferElementSize(element, fallbackRoot) {
+  const rect = element?.getBoundingClientRect?.();
+  const fallbackRect = fallbackRoot?.getBoundingClientRect?.();
+  const width = Math.max(1, Math.round(rect?.width || fallbackRect?.width || element?.naturalWidth || element?.width || 1));
+  const height = Math.max(1, Math.round(rect?.height || fallbackRect?.height || element?.naturalHeight || element?.height || 1));
+  return { width, height };
+}
+
+function createPageBufferCanvas(width, height) {
+  const maxSide = Math.max(width, height, 1);
+  const deviceScale = Math.min(window.devicePixelRatio || 1, 2);
+  const textureScale = Math.min(deviceScale, PAGE_BUFFER_MAX_TEXTURE_SIZE / maxSide);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * textureScale));
+  canvas.height = Math.max(1, Math.round(height * textureScale));
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  return { canvas, textureScale };
+}
+
+function drawReplacedElementToPageBuffer(context, source, width, height, textureScale) {
+  const naturalWidth = source instanceof HTMLCanvasElement ? source.width : source.naturalWidth;
+  const naturalHeight = source instanceof HTMLCanvasElement ? source.height : source.naturalHeight;
+  if (!naturalWidth || !naturalHeight) return false;
+  const computed = window.getComputedStyle(source);
+  const objectFit = computed.objectFit || 'contain';
+  const sourceRatio = naturalWidth / naturalHeight;
+  const targetRatio = width / height;
+  let drawWidth = width;
+  let drawHeight = height;
+  if (objectFit === 'cover' ? sourceRatio > targetRatio : sourceRatio < targetRatio) {
+    drawHeight = height;
+    drawWidth = height * sourceRatio;
+  } else {
+    drawWidth = width;
+    drawHeight = width / sourceRatio;
+  }
+  const drawX = (width - drawWidth) / 2;
+  const drawY = (height - drawHeight) / 2;
+  context.drawImage(
+    source,
+    Math.round(drawX * textureScale),
+    Math.round(drawY * textureScale),
+    Math.round(drawWidth * textureScale),
+    Math.round(drawHeight * textureScale),
+  );
+  return true;
+}
+
+function inlinePageBufferStyles(source, clone) {
+  if (!source || !clone || source.nodeType !== Node.ELEMENT_NODE || clone.nodeType !== Node.ELEMENT_NODE) return;
+  const computed = window.getComputedStyle(source);
+  for (let index = 0; index < computed.length; index += 1) {
+    const propertyName = computed[index];
+    clone.style.setProperty(propertyName, computed.getPropertyValue(propertyName), computed.getPropertyPriority(propertyName));
+  }
+  clone.removeAttribute('id');
+  const sourceChildren = Array.from(source.children || []);
+  const cloneChildren = Array.from(clone.children || []);
+  sourceChildren.forEach((child, index) => inlinePageBufferStyles(child, cloneChildren[index]));
+}
+
+async function drawDomElementToPageBuffer(context, source, width, height, textureScale) {
+  const clone = source.cloneNode(true);
+  inlinePageBufferStyles(source, clone);
+  clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+  clone.style.width = `${width}px`;
+  clone.style.height = `${height}px`;
+  clone.style.margin = '0';
+  clone.style.transform = 'none';
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject x="0" y="0" width="100%" height="100%">${serialized}</foreignObject>`,
+    '</svg>',
+  ].join('');
+  const image = new Image();
+  const loaded = new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = reject;
+  });
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await loaded;
+  context.drawImage(image, 0, 0, Math.round(width * textureScale), Math.round(height * textureScale));
+  return true;
+}
+
+function samplePageBufferColor(canvas) {
+  if (!canvas?.width || !canvas?.height) return [18, 18, 18];
+  const sampleCanvas = document.createElement('canvas');
+  const size = 24;
+  sampleCanvas.width = size;
+  sampleCanvas.height = size;
+  const context = sampleCanvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return [18, 18, 18];
+  context.drawImage(canvas, 0, 0, size, size);
+  const data = context.getImageData(0, 0, size, size).data;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3] / 255;
+    if (alpha <= 0.05) continue;
+    red += data[index] * alpha;
+    green += data[index + 1] * alpha;
+    blue += data[index + 2] * alpha;
+    count += alpha;
+  }
+  if (count <= 0) return [18, 18, 18];
+  return [
+    Math.round(red / count),
+    Math.round(green / count),
+    Math.round(blue / count),
+  ];
+}
+
+function lerpPageBufferColor(fromColor, toColor, progress) {
+  const amount = clamp(Number(progress) || 0, 0, 1);
+  const from = Array.isArray(fromColor) ? fromColor : [18, 18, 18];
+  const to = Array.isArray(toColor) ? toColor : from;
+  return [0, 1, 2].map(index => Math.round((from[index] || 0) + (((to[index] || 0) - (from[index] || 0)) * amount)));
+}
+
+function pageBufferColorToCss(color, alpha = 0.42) {
+  const [red, green, blue] = Array.isArray(color) ? color : [18, 18, 18];
+  return `rgba(${clamp(red, 0, 255)}, ${clamp(green, 0, 255)}, ${clamp(blue, 0, 255)}, ${clamp(alpha, 0, 1)})`;
+}
+
+async function waitForPageBufferReady(root) {
+  for (let frame = 0; frame < PAGE_BUFFER_READY_FRAMES; frame += 1) {
+    const source = pageBufferSourceNode(root);
+    const images = Array.from(root?.querySelectorAll?.('img') || []);
+    const pendingImage = images.some(image => !image.complete || image.naturalWidth <= 0);
+    const pdfWrap = root?.querySelector?.('.viewer-pdf-canvas-wrap');
+    const pendingPdf = pdfWrap && !pdfWrap.classList.contains('is-ready');
+    const canvas = root?.querySelector?.('canvas.viewer-pdf-canvas');
+    const pendingCanvas = canvas && (!canvas.width || !canvas.height);
+    if (source && !pendingImage && !pendingPdf && !pendingCanvas) return source;
+    await nextPageBufferFrame();
+  }
+  return pageBufferSourceNode(root);
+}
+
+async function capturePageBuffer(root) {
+  const source = await waitForPageBufferReady(root);
+  const { width, height } = pageBufferElementSize(source, root);
+  const { canvas, textureScale } = createPageBufferCanvas(width, height);
+  const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true });
+  if (!context) return null;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = window.getComputedStyle(source || root).backgroundColor || '#181818';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  try {
+    if (source instanceof HTMLCanvasElement || source instanceof HTMLImageElement) {
+      drawReplacedElementToPageBuffer(context, source, width, height, textureScale);
+    } else {
+      await drawDomElementToPageBuffer(context, source || root, width, height, textureScale);
+    }
+  } catch {
+    context.fillStyle = '#181818';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  return {
+    canvas,
+    width,
+    height,
+    color: samplePageBufferColor(canvas),
+  };
+}
+
+function normalizeReactFlipBookPages({ currentPages, targetPages, front, back, reveal, spread, direction }) {
+  const blank = <div className="viewer-page-turn-blank" />;
+  const currentFallback = (Array.isArray(currentPages) ? currentPages : []).find(Boolean);
+  const targetFallback = (Array.isArray(targetPages) ? targetPages : []).find(Boolean);
+  const current = [front || currentFallback || blank];
+  const target = [back || reveal || targetFallback || blank];
+  const orderedPages = direction === 'previous'
+    ? [...target, ...current]
+    : [...current, ...target];
+  const startPage = direction === 'previous' ? target.length : 0;
+  return {
+    current,
+    target,
+    orderedPages,
+    startPage,
+  };
+}
+
+function pageBufferSnapshotToDataUrl(snapshot) {
+  try {
+    return snapshot?.canvas?.toDataURL?.('image/png') || '';
+  } catch {
+    return '';
+  }
+}
+
+function pageFlipPointForProgress(pageFlip, direction, progress) {
+  const bounds = pageFlip?.getBoundsRect?.();
+  if (!bounds) return null;
+  const amount = clamp(Number(progress) || 0, 0, 1);
+  const turnWidth = Math.max(1, Number(bounds.pageWidth) || 1);
+  const turnHeight = Math.max(1, Number(bounds.height) || 1);
+  const top = Number(bounds.top) || 0;
+  const left = Number(bounds.left) || 0;
+  const y = top + clamp(turnHeight * (0.08 + (amount * 0.78)), 4, Math.max(4, turnHeight - 4));
+  if (direction === 'previous') {
+    return {
+      start: { x: left + 8, y },
+      current: { x: left + 8 + (turnWidth * 1.9 * amount), y },
+    };
+  }
+  const right = left + (Number(bounds.width) || turnWidth * 2);
+  return {
+    start: { x: right - 8, y },
+    current: { x: right - 8 - (turnWidth * 1.9 * amount), y },
+  };
+}
+
+function ReactFlipBookTurnSurface({
+  sequence,
+  direction,
+  progress,
+  interactive = false,
+  spread = false,
+  pageClassName = '',
+  front,
+  back,
+  reveal,
+  currentPages,
+  targetPages,
+  onAmbientSample,
+}) {
+  const flipBookRef = useRef(null);
+  const frontBufferRef = useRef(null);
+  const targetBufferRef = useRef(null);
+  const userFoldStartedRef = useRef(false);
+  const autoFlipStartedRef = useRef(false);
+  const pageSetsRef = useRef(null);
+  const [pageSize, setPageSize] = useState(null);
+  const [snapshotPages, setSnapshotPages] = useState(null);
+  const [initialized, setInitialized] = useState(false);
+  if (pageSetsRef.current?.sequence !== sequence) {
+    pageSetsRef.current = {
+      sequence,
+      pageSets: normalizeReactFlipBookPages({
+        currentPages,
+        targetPages,
+        front,
+        back,
+        reveal,
+        spread,
+        direction,
+      }),
+    };
+  }
+  const pageSets = pageSetsRef.current.pageSets;
+
+  useLayoutEffect(() => {
+    let cancelled = false;
+    setPageSize(null);
+    setSnapshotPages(null);
+    setInitialized(false);
+    userFoldStartedRef.current = false;
+    autoFlipStartedRef.current = false;
+    const capture = async () => {
+      await nextPageBufferFrame();
+      const [frontSnapshot, targetSnapshot] = await Promise.all([
+        capturePageBuffer(frontBufferRef.current),
+        capturePageBuffer(targetBufferRef.current),
+      ]);
+      if (cancelled) return;
+      const fallbackSize = frontBufferRef.current
+        ? pageBufferElementSize(frontBufferRef.current, frontBufferRef.current)
+        : { width: 1, height: 1 };
+      const width = Math.max(1, Math.round(frontSnapshot?.width || fallbackSize.width || 1));
+      const height = Math.max(1, Math.round(frontSnapshot?.height || fallbackSize.height || 1));
+      const frontDataUrl = pageBufferSnapshotToDataUrl(frontSnapshot);
+      const targetDataUrl = pageBufferSnapshotToDataUrl(targetSnapshot || frontSnapshot);
+      setPageSize({ width, height });
+      setSnapshotPages({
+        current: { src: frontDataUrl, width, height },
+        target: { src: targetDataUrl || frontDataUrl, width, height },
+      });
+      onAmbientSample?.({
+        sequence,
+        fromColor: frontSnapshot?.color || [18, 18, 18],
+        toColor: targetSnapshot?.color || frontSnapshot?.color || [18, 18, 18],
+      });
+    };
+    capture().catch(() => {
+      if (!cancelled) setPageSize({ width: 1, height: 1 });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [onAmbientSample, sequence]);
+
+  useEffect(() => {
+    if (!initialized || !pageSize || interactive || autoFlipStartedRef.current) return;
+    autoFlipStartedRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      if (direction === 'previous') {
+        flipBookRef.current?.flipPrev?.();
+        return;
+      }
+      flipBookRef.current?.flipNext?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [direction, initialized, interactive, pageSize]);
+
+  useEffect(() => {
+    if (!initialized || !pageSize || !interactive) return;
+    const pageFlip = flipBookRef.current?.pageFlip?.();
+    const points = pageFlipPointForProgress(pageFlip, direction, progress);
+    if (!pageFlip || !points) return;
+    if (!userFoldStartedRef.current) {
+      pageFlip.startUserTouch?.(points.start);
+      userFoldStartedRef.current = true;
+    }
+    pageFlip.userMove?.(points.current, false);
+  }, [direction, initialized, interactive, pageSize, progress]);
+
+  useEffect(() => {
+    if (!initialized || !pageSize || interactive || !userFoldStartedRef.current) return;
+    const pageFlip = flipBookRef.current?.pageFlip?.();
+    const points = pageFlipPointForProgress(pageFlip, direction, progress);
+    if (!pageFlip || !points) return;
+    pageFlip.userMove?.(points.current, false);
+    if (progress <= 0.02 || progress >= 0.98) {
+      pageFlip.userStop?.(points.current, progress < 0.5);
+      userFoldStartedRef.current = false;
+    }
+  }, [direction, initialized, interactive, pageSize, progress]);
+
+  const surfaceStyle = pageSize
+    ? {
+      '--viewer-turn-buffer-width': `${pageSize.width}px`,
+      '--viewer-turn-buffer-height': `${pageSize.height}px`,
+      '--viewer-turn-surface-width': `${pageSize.width * (spread ? 2 : 1)}px`,
+      '--viewer-turn-surface-height': `${pageSize.height}px`,
+    }
+    : undefined;
+
+  const bookStyle = useMemo(() => (pageSize
+    ? {
+      width: `${pageSize.width}px`,
+      height: `${pageSize.height}px`,
+    }
+    : undefined), [pageSize]);
+
+  const handleFlipBookInit = useCallback(() => {
+    setInitialized(true);
+  }, []);
+
+  const bookPageElements = useMemo(() => {
+    if (!snapshotPages?.current?.src || !snapshotPages?.target?.src) return [];
+    const currentSnapshot = snapshotPages.current;
+    const targetSnapshot = snapshotPages.target;
+    const orderedSnapshots = direction === 'previous'
+      ? [targetSnapshot, currentSnapshot]
+      : [currentSnapshot, targetSnapshot];
+    return orderedSnapshots.map((snapshot, index) => (
+      <div key={`flipbook-page-${sequence}-${index}`} className={`viewer-react-flipbook-page ${pageClassName}`.trim()}>
+        <img
+          className="viewer-react-flipbook-snapshot"
+          src={snapshot.src}
+          alt=""
+          draggable={false}
+        />
+      </div>
+    ));
+  }, [direction, pageClassName, sequence, snapshotPages]);
+
+  return (
+    <div className={`viewer-react-flipbook-turn-surface ${pageSize ? 'is-ready' : 'is-preparing'}`.trim()} style={surfaceStyle}>
+      {!pageSize || bookPageElements.length < 2 ? (
+        <div className={`viewer-react-flipbook-preparing ${spread ? 'is-spread' : 'is-single'}`.trim()}>
+        </div>
+      ) : (
+        <ReactFlipBook
+          key={`react-flipbook-${sequence}-${direction}-${pageSize.width}x${pageSize.height}`}
+          ref={flipBookRef}
+          className="viewer-react-flipbook"
+          style={bookStyle}
+          width={pageSize.width}
+          height={pageSize.height}
+          size="fixed"
+          startPage={pageSets.startPage}
+          flippingTime={SNAPSHOT_PAGE_TURN_DURATION}
+          usePortrait
+          autoSize={false}
+          showCover={false}
+          drawShadow
+          maxShadowOpacity={0.62}
+          mobileScrollSupport={false}
+          clickEventForward={false}
+          useMouseEvents={false}
+          showPageCorners={false}
+          disableFlipByClick
+          enableKeyboardNav={false}
+          onInit={handleFlipBookInit}
+        >
+          {bookPageElements}
+        </ReactFlipBook>
+      )}
+      <div className="viewer-page-buffer" aria-hidden="true">
+        <div ref={frontBufferRef} className="viewer-page-buffer-item is-front">
+          {pageSets.current[0] || <div className="viewer-page-turn-blank" />}
+        </div>
+        <div ref={targetBufferRef} className="viewer-page-buffer-item is-target">
+          {pageSets.target[0] || <div className="viewer-page-turn-blank" />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReactFlipBookTurnLayer({
+  className = '',
+  pageClassName = '',
+  direction = 'next',
+  sequence = 0,
+  progress = 0,
+  interactive = false,
+  spread = false,
+  front,
+  back,
+  reveal,
+  currentPages,
+  targetPages,
+  onAmbientSample,
+}) {
+  const turnProgress = clamp(Number(progress) || 0, 0, 1);
+  const turnStyle = {
+    '--viewer-turn-progress': turnProgress,
+  };
+
+  return (
+    <div
+      className={`${className} viewer-react-flipbook-turn-layer is-${spread ? 'spread' : 'single'} is-${direction} ${interactive ? 'is-interactive' : 'is-animated'}`.trim()}
+      style={turnStyle}
+      data-turn-sequence={sequence}
+      aria-hidden="true"
+    >
+      <div className={`viewer-react-flipbook-turn-book is-${spread ? 'spread' : 'single'} is-${direction}`}>
+        <ReactFlipBookTurnSurface
+          sequence={sequence}
+          direction={direction}
+          progress={turnProgress}
+          interactive={interactive}
+          spread={spread}
+          pageClassName={pageClassName}
+          front={front}
+          back={back}
+          reveal={reveal}
+          currentPages={currentPages}
+          targetPages={targetPages}
+          onAmbientSample={onAmbientSample}
+        />
+      </div>
+    </div>
+  );
 }
 
 function storageKey(session, suffix) {
@@ -988,7 +1510,7 @@ function readerPageNodeRenderUsage(pageNode, textDirection = 'horizontal') {
 
 function visibleRenderedEpubPages(rootNode) {
   return [...(rootNode?.querySelectorAll?.('.viewer-text-page.is-epub-reader:not(.is-scroll)') || [])]
-    .filter(pageNode => !pageNode.closest?.('.viewer-reader-turn-layer'));
+    .filter(pageNode => !pageNode.closest?.('.viewer-react-flipbook-turn-layer'));
 }
 
 function viewerClassName(...values) {
@@ -2638,27 +3160,8 @@ function ViewerApp() {
   const [spreadCoverFirst, setSpreadCoverFirst] = useState(true);
   const [readerSettings, setReaderSettings] = useState(normalizeReaderSettings());
   const [viewerBackground, setViewerBackground] = useState(normalizeViewerBackgroundSettings());
-  const [readerPageTurn, setReaderPageTurn] = useState({
-    direction: 'next',
-    sequence: 0,
-    active: false,
-    fromIndex: 0,
-    toIndex: 0,
-  });
-  const [comicPageEffect, setComicPageEffect] = useState({
-    direction: 'next',
-    sequence: 0,
-    active: false,
-    fromIndex: 0,
-    toIndex: 0,
-  });
-  const [pdfPageEffect, setPdfPageEffect] = useState({
-    direction: 'next',
-    sequence: 0,
-    active: false,
-    fromIndex: 0,
-    toIndex: 0,
-  });
+  const [pageTurn, setPageTurn] = useState(EMPTY_PAGE_TURN);
+  const [pageTurnAmbientSample, setPageTurnAmbientSample] = useState(null);
   const [bookmarks, setBookmarks] = useState([]);
   const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false);
   const [bookmarkEditorOpen, setBookmarkEditorOpen] = useState(false);
@@ -2700,9 +3203,11 @@ function ViewerApp() {
   const pdfDocumentRef = useRef(null);
   const pdfLoadingTaskRef = useRef(null);
   const pdfPendingScrollRef = useRef(null);
-  const readerTurnTimerRef = useRef(null);
-  const comicEffectTimerRef = useRef(null);
-  const pdfEffectTimerRef = useRef(null);
+  const pageTurnRef = useRef(EMPTY_PAGE_TURN);
+  const pageTurnTimerRef = useRef(null);
+  const pageTurnFrameRef = useRef(0);
+  const pageTurnPrepareRef = useRef(0);
+  const pageTurnDragRef = useRef(null);
   const viewerToastTimerRef = useRef(null);
   const toolbarPeekTimerRef = useRef(null);
   const lastPageHintRef = useRef('');
@@ -2769,6 +3274,20 @@ function ViewerApp() {
   useEffect(() => {
     pageIndexRef.current = pageIndex;
   }, [pageIndex]);
+
+  useEffect(() => {
+    pageTurnRef.current = pageTurn;
+  }, [pageTurn]);
+
+  const handlePageTurnAmbientSample = useCallback(sample => {
+    if (!sample || sample.sequence == null) return;
+    setPageTurnAmbientSample(sample);
+  }, []);
+
+  useEffect(() => {
+    if (pageTurn.active && pageTurn.effect === 'page') return;
+    setPageTurnAmbientSample(null);
+  }, [pageTurn.active, pageTurn.effect]);
 
   const isReaderDocument = session?.type === 'epub' || session?.type === 'text';
   const supportsNavigationPanel = session?.type === 'epub' || session?.type === 'pdf' || session?.type === 'text';
@@ -2982,36 +3501,61 @@ function ViewerApp() {
     setZoom(current => clamp((Number(current) || 100) + delta, ZOOM_MIN, ZOOM_MAX));
   }, []);
   const createScrollZoomAnchor = useCallback(event => {
-    if (flowMode !== 'scroll') return null;
     const node = scrollRef.current;
     if (!node || !Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) return null;
     const rect = node.getBoundingClientRect();
     const offsetX = clamp(event.clientX - rect.left, 0, Math.max(0, node.clientWidth));
     const offsetY = clamp(event.clientY - rect.top, 0, Math.max(0, node.clientHeight));
+    const targetSelector = zoomAnchorSelectorForTarget(event.target);
+    const targetNode = targetSelector ? node.querySelector?.(targetSelector) : null;
+    const targetRect = targetNode?.getBoundingClientRect?.();
     return {
       offsetX,
       offsetY,
       ratioX: (node.scrollLeft + offsetX) / Math.max(1, node.scrollWidth),
       ratioY: (node.scrollTop + offsetY) / Math.max(1, node.scrollHeight),
+      target: targetSelector && targetRect
+        ? {
+          selector: targetSelector,
+          ratioX: clamp((event.clientX - targetRect.left) / Math.max(1, targetRect.width), 0, 1),
+          ratioY: clamp((event.clientY - targetRect.top) / Math.max(1, targetRect.height), 0, 1),
+        }
+        : null,
     };
-  }, [flowMode]);
+  }, []);
   const restoreScrollZoomAnchor = useCallback(anchor => {
     if (!anchor) return;
     const sequence = scrollZoomAnchorSequenceRef.current + 1;
     scrollZoomAnchorSequenceRef.current = sequence;
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (scrollZoomAnchorSequenceRef.current !== sequence) return;
-        const node = scrollRef.current;
-        if (!node) return;
-        const nextScrollWidth = Math.max(1, node.scrollWidth);
-        const nextScrollHeight = Math.max(1, node.scrollHeight);
-        const maxScrollLeft = Math.max(0, nextScrollWidth - node.clientWidth);
-        const maxScrollTop = Math.max(0, nextScrollHeight - node.clientHeight);
+    const applyAnchor = attempt => {
+      if (scrollZoomAnchorSequenceRef.current !== sequence) return;
+      const node = scrollRef.current;
+      if (!node) return;
+      const nextScrollWidth = Math.max(1, node.scrollWidth);
+      const nextScrollHeight = Math.max(1, node.scrollHeight);
+      const maxScrollLeft = Math.max(0, nextScrollWidth - node.clientWidth);
+      const maxScrollTop = Math.max(0, nextScrollHeight - node.clientHeight);
+      const viewportRect = node.getBoundingClientRect();
+      const targetNode = anchor.target?.selector ? node.querySelector?.(anchor.target.selector) : null;
+      const targetRect = targetNode?.getBoundingClientRect?.();
+      if (targetRect && targetRect.width > 0 && targetRect.height > 0) {
+        node.scrollLeft = clamp(
+          node.scrollLeft + targetRect.left - viewportRect.left + (anchor.target.ratioX * targetRect.width) - anchor.offsetX,
+          0,
+          maxScrollLeft
+        );
+        node.scrollTop = clamp(
+          node.scrollTop + targetRect.top - viewportRect.top + (anchor.target.ratioY * targetRect.height) - anchor.offsetY,
+          0,
+          maxScrollTop
+        );
+      } else {
         node.scrollLeft = clamp((anchor.ratioX * nextScrollWidth) - anchor.offsetX, 0, maxScrollLeft);
         node.scrollTop = clamp((anchor.ratioY * nextScrollHeight) - anchor.offsetY, 0, maxScrollTop);
-      });
-    });
+      }
+      if (attempt < 8) window.requestAnimationFrame(() => applyAnchor(attempt + 1));
+    };
+    window.requestAnimationFrame(() => applyAnchor(0));
   }, []);
   const adjustZoomAtPoint = useCallback((delta, event) => {
     const anchor = createScrollZoomAnchor(event);
@@ -3155,92 +3699,216 @@ function ViewerApp() {
     node.scrollLeft = 0;
   }, []);
 
-  const triggerReaderPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
-    if (!isReaderDocument || flowMode === 'scroll' || readerSettings.pageEffect === 'none') return false;
-    if (targetIndex === currentIndex) return false;
-    if (readerTurnTimerRef.current) {
-      window.clearTimeout(readerTurnTimerRef.current);
-      readerTurnTimerRef.current = null;
+  const rememberComicPageImageSize = useCallback((pageName, naturalWidth, naturalHeight) => {
+    const width = Math.max(1, Number(naturalWidth) || 0);
+    const height = Math.max(1, Number(naturalHeight) || 0);
+    if (!pageName || width <= 1 || height <= 1) return;
+    const ratio = width / height;
+    setPageRatios(prev => (prev[pageName] === ratio ? prev : {
+      ...prev,
+      [pageName]: ratio,
+    }));
+    setPageSizes(prev => {
+      const current = prev[pageName];
+      if (current?.width === width && current?.height === height) return prev;
+      return {
+        ...prev,
+        [pageName]: { width, height },
+      };
+    });
+  }, []);
+
+  const preloadComicPageImageSize = useCallback(page => new Promise(resolve => {
+    if (!page?.name) {
+      resolve(false);
+      return;
     }
-    const isBookPageTurn = readerSettings.pageEffect === 'page';
-    const effectDuration = isBookPageTurn ? READER_PAGE_TURN_DURATION : 190;
-    setReaderPageTurn(current => ({
-      direction: getPageEffectDirection(targetIndex, currentIndex),
+    if (pageSizes[page.name]?.width > 1 && pageSizes[page.name]?.height > 1) {
+      resolve(true);
+      return;
+    }
+    const src = pageData[page.name] || page.pageUrl;
+    if (!src) {
+      resolve(false);
+      return;
+    }
+    const image = new Image();
+    let settled = false;
+    const finish = success => {
+      if (settled) return;
+      settled = true;
+      if (success && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        rememberComicPageImageSize(page.name, image.naturalWidth, image.naturalHeight);
+      }
+      resolve(Boolean(success));
+    };
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+    image.decoding = 'async';
+    image.src = src;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+      return;
+    }
+    image.decode?.().then(() => finish(true)).catch(() => {
+      if (image.complete && image.naturalWidth > 0) finish(true);
+    });
+  }), [pageData, pageSizes, rememberComicPageImageSize]);
+
+  const preloadComicTurnImageSizes = useCallback(async indexes => {
+    const uniquePages = [];
+    const seen = new Set();
+    indexes.forEach(index => {
+      const page = pages[index];
+      if (!page?.name || seen.has(page.name)) return;
+      seen.add(page.name);
+      uniquePages.push(page);
+    });
+    if (uniquePages.length < 1) return;
+    await Promise.all(uniquePages.map(page => preloadComicPageImageSize(page)));
+  }, [pages, preloadComicPageImageSize]);
+
+  const clearPageTurnRuntime = useCallback(() => {
+    if (pageTurnTimerRef.current) {
+      window.clearTimeout(pageTurnTimerRef.current);
+      pageTurnTimerRef.current = null;
+    }
+    if (pageTurnFrameRef.current) {
+      window.cancelAnimationFrame(pageTurnFrameRef.current);
+      pageTurnFrameRef.current = 0;
+    }
+    pageTurnDragRef.current = null;
+  }, []);
+
+  const finishSnapshotPageTurn = useCallback((onComplete, nextState = EMPTY_PAGE_TURN) => {
+    if (typeof onComplete === 'function') onComplete();
+    window.requestAnimationFrame(() => {
+      setPageTurn(current => current.active ? { ...nextState, sequence: current.sequence } : current);
+    });
+  }, []);
+
+  const startSnapshotPageTurn = useCallback(({
+    format,
+    targetIndex,
+    currentIndex,
+    direction,
+    onComplete,
+    interactive = false,
+    initialProgress = 0,
+  }) => {
+    clearPageTurnRuntime();
+    const fromIndex = clamp(Number(currentIndex) || 0, 0, Math.max(0, pageCount - 1));
+    const toIndex = clamp(Number(targetIndex) || 0, 0, Math.max(0, pageCount - 1));
+    const normalizedDirection = direction || getReadingAdjustedPageEffectDirection(
+      getPageEffectDirection(toIndex, fromIndex),
+      format === 'comic' ? readingDirection : 'ltr'
+    );
+    const turnSequence = pageTurnRef.current.sequence + 1;
+    const nextTurn = {
+      format,
+      effect: 'page',
+      direction: normalizedDirection,
+      sequence: turnSequence,
+      active: true,
+      interactive,
+      fromIndex,
+      toIndex,
+      progress: clamp(Number(initialProgress) || 0, 0, 1),
+    };
+    setPageTurn(nextTurn);
+    pageTurnRef.current = nextTurn;
+    if (interactive) return true;
+    const startProgress = clamp(Number(initialProgress) || 0, 0, 1);
+    const duration = Math.max(160, SNAPSHOT_PAGE_TURN_DURATION * (1 - startProgress));
+    const startedAt = performance.now();
+    const animate = now => {
+      const rawProgress = clamp((now - startedAt) / duration, 0, 1);
+      const progress = startProgress + ((1 - startProgress) * easeSnapshotTurnProgress(rawProgress));
+      setPageTurn(current => {
+        if (!current.active || current.sequence !== turnSequence) return current;
+        const nextTurn = { ...current, progress, interactive: false };
+        pageTurnRef.current = nextTurn;
+        return nextTurn;
+      });
+      if (rawProgress < 1) {
+        pageTurnFrameRef.current = window.requestAnimationFrame(animate);
+        return;
+      }
+      pageTurnFrameRef.current = 0;
+      finishSnapshotPageTurn(onComplete);
+    };
+    pageTurnFrameRef.current = window.requestAnimationFrame(animate);
+    return true;
+  }, [clearPageTurnRuntime, finishSnapshotPageTurn, pageCount, readingDirection]);
+
+  const triggerTimedPageEffect = useCallback((format, targetIndex, currentIndex, onComplete, direction) => {
+    if (flowMode === 'scroll' || readerSettings.pageEffect === 'none' || targetIndex === currentIndex) return false;
+    pageTurnPrepareRef.current += 1;
+    if (readerSettings.pageEffect === 'page') {
+      return startSnapshotPageTurn({
+        format,
+        targetIndex,
+        currentIndex,
+        direction,
+        onComplete,
+      });
+    }
+    clearPageTurnRuntime();
+    setPageTurn(current => ({
+      format,
+      effect: readerSettings.pageEffect,
+      direction: direction || getPageEffectDirection(targetIndex, currentIndex),
       sequence: current.sequence + 1,
       active: true,
+      interactive: false,
       fromIndex: currentIndex,
       toIndex: targetIndex,
+      progress: 1,
     }));
-    readerTurnTimerRef.current = window.setTimeout(() => {
-      if (isBookPageTurn && typeof onComplete === 'function') onComplete();
-      setReaderPageTurn(current => ({
-        ...current,
-        active: false,
-      }));
-      readerTurnTimerRef.current = null;
-    }, effectDuration);
-    return isBookPageTurn;
-  }, [flowMode, isReaderDocument, pageIndex, readerSettings.pageEffect]);
+    pageTurnTimerRef.current = window.setTimeout(() => {
+      setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
+      pageTurnTimerRef.current = null;
+    }, 190);
+    return false;
+  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, startSnapshotPageTurn]);
+
+  const triggerReaderPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
+    if (!isReaderDocument) return false;
+    return triggerTimedPageEffect('reader', targetIndex, currentIndex, onComplete);
+  }, [isReaderDocument, pageIndex, triggerTimedPageEffect]);
 
   const triggerComicPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
-    if (session?.type !== 'comic' || flowMode === 'scroll' || readerSettings.pageEffect === 'none') return false;
-    if (targetIndex === currentIndex) return false;
-    if (comicEffectTimerRef.current) {
-      window.clearTimeout(comicEffectTimerRef.current);
-      comicEffectTimerRef.current = null;
-    }
-    const isBookPageTurn = readerSettings.pageEffect === 'page';
-    if (isBookPageTurn && typeof loadComicPageRef.current === 'function') {
+    if (session?.type !== 'comic') return false;
+    const pageEffectDirection = getPageEffectDirection(targetIndex, currentIndex);
+    const visualEffectDirection = getReadingAdjustedPageEffectDirection(pageEffectDirection, readingDirection);
+    if (readerSettings.pageEffect === 'page' && typeof loadComicPageRef.current === 'function') {
       loadComicPageRef.current(targetIndex);
       loadComicPageRef.current(targetIndex + 1);
     }
-    const pageEffectDirection = getPageEffectDirection(targetIndex, currentIndex);
-    const visualEffectDirection = getReadingAdjustedPageEffectDirection(pageEffectDirection, readingDirection);
-    const effectDuration = isBookPageTurn ? DOCUMENT_PAGE_TURN_DURATION : 190;
-    setComicPageEffect(current => ({
-      direction: visualEffectDirection,
-      sequence: current.sequence + 1,
-      active: true,
-      fromIndex: currentIndex,
-      toIndex: targetIndex,
-    }));
-    comicEffectTimerRef.current = window.setTimeout(() => {
-      if (isBookPageTurn && typeof onComplete === 'function') onComplete();
-      setComicPageEffect(current => ({
-        ...current,
-        active: false,
-      }));
-      comicEffectTimerRef.current = null;
-    }, effectDuration);
-    return isBookPageTurn;
-  }, [flowMode, pageIndex, readerSettings.pageEffect, session?.type]);
+    if (readerSettings.pageEffect !== 'page') {
+      return triggerTimedPageEffect('comic', targetIndex, currentIndex, onComplete, visualEffectDirection);
+    }
+    pageTurnPrepareRef.current += 1;
+    const prepareSequence = pageTurnPrepareRef.current;
+    preloadComicTurnImageSizes([currentIndex, currentIndex + 1, targetIndex, targetIndex + 1])
+      .catch(() => {})
+      .finally(() => {
+        if (pageTurnPrepareRef.current !== prepareSequence) return;
+        startSnapshotPageTurn({
+          format: 'comic',
+          targetIndex,
+          currentIndex,
+          direction: visualEffectDirection,
+          onComplete,
+        });
+      });
+    return true;
+  }, [pageIndex, preloadComicTurnImageSizes, readerSettings.pageEffect, readingDirection, session?.type, startSnapshotPageTurn, triggerTimedPageEffect]);
 
   const triggerPdfPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
-    if (session?.type !== 'pdf' || flowMode === 'scroll' || readerSettings.pageEffect === 'none') return false;
-    if (targetIndex === currentIndex) return false;
-    if (pdfEffectTimerRef.current) {
-      window.clearTimeout(pdfEffectTimerRef.current);
-      pdfEffectTimerRef.current = null;
-    }
-    const isBookPageTurn = readerSettings.pageEffect === 'page';
-    const effectDuration = isBookPageTurn ? DOCUMENT_PAGE_TURN_DURATION : 190;
-    setPdfPageEffect(current => ({
-      direction: getPageEffectDirection(targetIndex, currentIndex),
-      sequence: current.sequence + 1,
-      active: true,
-      fromIndex: currentIndex,
-      toIndex: targetIndex,
-    }));
-    pdfEffectTimerRef.current = window.setTimeout(() => {
-      if (isBookPageTurn && typeof onComplete === 'function') onComplete();
-      setPdfPageEffect(current => ({
-        ...current,
-        active: false,
-      }));
-      pdfEffectTimerRef.current = null;
-    }, effectDuration);
-    return isBookPageTurn;
-  }, [flowMode, pageIndex, readerSettings.pageEffect, readingDirection, session?.type]);
+    if (session?.type !== 'pdf') return false;
+    return triggerTimedPageEffect('pdf', targetIndex, currentIndex, onComplete, getPageEffectDirection(targetIndex, currentIndex));
+  }, [pageIndex, session?.type, triggerTimedPageEffect]);
 
   const scrollPdfPageIntoView = useCallback(index => {
     const targetIndex = Math.max(0, Number(index) || 0);
@@ -3304,22 +3972,11 @@ function ViewerApp() {
   }, [flowMode, goPdfPage, pageCount, session?.type, setPageIndexSynced, triggerComicPageEffect, triggerReaderPageEffect]);
 
   useEffect(() => {
-    if (session?.type === 'comic' && flowMode !== 'scroll' && readerSettings.pageEffect !== 'none') return;
-    if (comicEffectTimerRef.current) {
-      window.clearTimeout(comicEffectTimerRef.current);
-      comicEffectTimerRef.current = null;
-    }
-    setComicPageEffect(current => current.active ? { ...current, active: false } : current);
-  }, [flowMode, readerSettings.pageEffect, session?.type]);
-
-  useEffect(() => {
-    if (session?.type === 'pdf' && flowMode !== 'scroll' && readerSettings.pageEffect !== 'none') return;
-    if (pdfEffectTimerRef.current) {
-      window.clearTimeout(pdfEffectTimerRef.current);
-      pdfEffectTimerRef.current = null;
-    }
-    setPdfPageEffect(current => current.active ? { ...current, active: false } : current);
-  }, [flowMode, readerSettings.pageEffect, session?.type]);
+    if (flowMode !== 'scroll' && readerSettings.pageEffect !== 'none') return;
+    pageTurnPrepareRef.current += 1;
+    clearPageTurnRuntime();
+    setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
+  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, session?.type]);
 
   const loadSession = useCallback(async nextSession => {
     if (!nextSession) return;
@@ -3358,21 +4015,9 @@ function ViewerApp() {
     setError('');
     setLoading(true);
     setScrollPercent(0);
-    if (readerTurnTimerRef.current) {
-      window.clearTimeout(readerTurnTimerRef.current);
-      readerTurnTimerRef.current = null;
-    }
-    if (comicEffectTimerRef.current) {
-      window.clearTimeout(comicEffectTimerRef.current);
-      comicEffectTimerRef.current = null;
-    }
-    if (pdfEffectTimerRef.current) {
-      window.clearTimeout(pdfEffectTimerRef.current);
-      pdfEffectTimerRef.current = null;
-    }
-    setReaderPageTurn({ direction: 'next', sequence: 0, active: false, fromIndex: 0, toIndex: 0 });
-    setComicPageEffect({ direction: 'next', sequence: 0, active: false, fromIndex: 0, toIndex: 0 });
-    setPdfPageEffect({ direction: 'next', sequence: 0, active: false, fromIndex: 0, toIndex: 0 });
+    pageTurnPrepareRef.current += 1;
+    clearPageTurnRuntime();
+    setPageTurn(EMPTY_PAGE_TURN);
     visibleReaderIndexRef.current = 0;
     loadingPagesRef.current.clear();
     scrollRestoreTokenRef.current += 1;
@@ -3468,7 +4113,7 @@ function ViewerApp() {
       if (isCurrentLoad()) documentAbortRef.current = null;
       if (isCurrentLoad()) setLoading(false);
     }
-  }, [clearDocumentFrame, restoreSavedScrollPosition, setPageIndexSynced]);
+  }, [clearDocumentFrame, clearPageTurnRuntime, restoreSavedScrollPosition, setPageIndexSynced]);
 
   const loadComicPage = useCallback(async (index, options = {}) => {
     if (!session || session.type !== 'comic' || index < 0 || index >= pages.length) return;
@@ -3515,24 +4160,14 @@ function ViewerApp() {
   }, [loadSession]);
 
   useEffect(() => () => {
-    if (readerTurnTimerRef.current) {
-      window.clearTimeout(readerTurnTimerRef.current);
-      readerTurnTimerRef.current = null;
-    }
-    if (comicEffectTimerRef.current) {
-      window.clearTimeout(comicEffectTimerRef.current);
-      comicEffectTimerRef.current = null;
-    }
-    if (pdfEffectTimerRef.current) {
-      window.clearTimeout(pdfEffectTimerRef.current);
-      pdfEffectTimerRef.current = null;
-    }
+    pageTurnPrepareRef.current += 1;
+    clearPageTurnRuntime();
     if (viewerToastTimerRef.current) {
       window.clearTimeout(viewerToastTimerRef.current);
       viewerToastTimerRef.current = null;
     }
     clearDocumentFrame();
-  }, [clearDocumentFrame]);
+  }, [clearDocumentFrame, clearPageTurnRuntime]);
 
   useEffect(() => {
     if (session?.type !== 'pdf' || !pdfDocument || pdfPageCount <= 0) return;
@@ -3888,6 +4523,175 @@ function ViewerApp() {
     }
     return targetIndex;
   }, [flowMode, getStepSizeForIndex, pageCount, session?.type]);
+
+  const pageTurnFormat = session?.type === 'comic'
+    ? 'comic'
+    : session?.type === 'pdf'
+      ? 'pdf'
+      : isReaderDocument
+        ? 'reader'
+        : '';
+
+  const resolvePageMoveTarget = useCallback((delta, currentIndex = pageIndexRef.current) => {
+    if (!session || flowMode === 'scroll' || pageCount <= 0 || !delta) return null;
+    const normalizedCurrentIndex = clamp(Number(currentIndex) || 0, 0, Math.max(0, pageCount - 1));
+    if (delta > 0 && isForwardBoundaryIndex(normalizedCurrentIndex)) return null;
+    if (session.type === 'pdf') {
+      const size = flowMode === 'spread' ? 2 : 1;
+      const targetIndex = clamp(normalizedCurrentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+      return targetIndex === normalizedCurrentIndex ? null : targetIndex;
+    }
+    const size = flowMode === 'spread' ? getStepSizeForIndex(normalizedCurrentIndex) : 1;
+    const targetIndex = clamp(normalizedCurrentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+    return targetIndex === normalizedCurrentIndex ? null : targetIndex;
+  }, [flowMode, getStepSizeForIndex, isForwardBoundaryIndex, pageCount, session]);
+
+  const commitPageTurnTarget = useCallback((format, targetIndex) => {
+    const normalizedTargetIndex = clamp(Number(targetIndex) || 0, 0, Math.max(0, pageCount - 1));
+    setPageIndexSynced(normalizedTargetIndex);
+    if (format === 'reader') visibleReaderIndexRef.current = normalizedTargetIndex;
+    if (flowMode === 'scroll') return;
+    resetPageModeScroll();
+    window.requestAnimationFrame(resetPageModeScroll);
+  }, [flowMode, pageCount, resetPageModeScroll, setPageIndexSynced]);
+
+  const animatePageTurnToProgress = useCallback((targetProgress, onComplete) => {
+    const startTurn = pageTurnRef.current;
+    if (!startTurn.active) return;
+    clearPageTurnRuntime();
+    const startProgress = clamp(Number(startTurn.progress) || 0, 0, 1);
+    const endProgress = clamp(Number(targetProgress) || 0, 0, 1);
+    const distance = Math.abs(endProgress - startProgress);
+    const duration = Math.max(120, SNAPSHOT_PAGE_TURN_DURATION * Math.max(0.18, distance));
+    const startedAt = performance.now();
+    const sequence = startTurn.sequence;
+    const animate = now => {
+      const rawProgress = clamp((now - startedAt) / duration, 0, 1);
+      const easedProgress = easeSnapshotTurnProgress(rawProgress);
+      const progress = startProgress + ((endProgress - startProgress) * easedProgress);
+      setPageTurn(current => {
+        if (!current.active || current.sequence !== sequence) return current;
+        const nextTurn = { ...current, progress, interactive: false };
+        pageTurnRef.current = nextTurn;
+        return nextTurn;
+      });
+      if (rawProgress < 1) {
+        pageTurnFrameRef.current = window.requestAnimationFrame(animate);
+        return;
+      }
+      pageTurnFrameRef.current = 0;
+      if (endProgress >= 1) {
+        finishSnapshotPageTurn(onComplete);
+        return;
+      }
+      setPageTurn(current => current.active && current.sequence === sequence
+        ? { ...EMPTY_PAGE_TURN, sequence: current.sequence }
+        : current);
+    };
+    pageTurnFrameRef.current = window.requestAnimationFrame(animate);
+  }, [clearPageTurnRuntime, finishSnapshotPageTurn]);
+
+  const beginSnapshotPageTurnDrag = useCallback(event => {
+    if (!pageTurnFormat || flowMode === 'scroll' || readerSettings.pageEffect !== 'page') return false;
+    if (event.pointerType === 'mouse' && event.button !== 0) return false;
+    if (pageTurnRef.current.active || dragPanRef.current.active) return false;
+    const node = scrollRef.current;
+    const rect = node?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    pageTurnDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastTime: performance.now(),
+      width: Math.max(1, rect.width),
+      active: false,
+      format: pageTurnFormat,
+      currentIndex: clamp(pageIndexRef.current, 0, Math.max(0, pageCount - 1)),
+      targetIndex: null,
+      direction: 'next',
+      navigationDelta: 0,
+      velocity: 0,
+    };
+    return true;
+  }, [flowMode, pageCount, pageTurnFormat, readerSettings.pageEffect]);
+
+  const updateSnapshotPageTurnDrag = useCallback(event => {
+    const dragState = pageTurnDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return false;
+    const dx = event.clientX - dragState.startX;
+    const dy = event.clientY - dragState.startY;
+    if (!dragState.active && Math.abs(dx) < SNAPSHOT_PAGE_TURN_DRAG_THRESHOLD) return true;
+    if (!dragState.active && Math.abs(dy) > Math.abs(dx) * 1.15) {
+      pageTurnDragRef.current = null;
+      return false;
+    }
+    const now = performance.now();
+    const elapsed = Math.max(1, now - dragState.lastTime);
+    dragState.velocity = (event.clientX - dragState.lastX) / elapsed;
+    dragState.lastX = event.clientX;
+    dragState.lastTime = now;
+    const visualDelta = dx < 0 ? 1 : -1;
+    const navigationDelta = readingDirection === 'rtl' ? -visualDelta : visualDelta;
+    const targetIndex = resolvePageMoveTarget(navigationDelta, dragState.currentIndex);
+    if (targetIndex == null) {
+      pageTurnDragRef.current = null;
+      return false;
+    }
+    const direction = visualDelta > 0 ? 'next' : 'previous';
+    const progress = clamp((Math.abs(dx) - SNAPSHOT_PAGE_TURN_DRAG_THRESHOLD) / Math.max(120, dragState.width * 0.58), 0, 0.98);
+    if (!dragState.active || dragState.targetIndex !== targetIndex || dragState.direction !== direction) {
+      const sequence = pageTurnRef.current.sequence + 1;
+      const nextTurn = {
+        format: dragState.format,
+        effect: 'page',
+        direction,
+        sequence,
+        active: true,
+        interactive: true,
+        fromIndex: dragState.currentIndex,
+        toIndex: targetIndex,
+        progress,
+      };
+      setPageTurn(nextTurn);
+      pageTurnRef.current = nextTurn;
+      dragState.active = true;
+      dragState.targetIndex = targetIndex;
+      dragState.direction = direction;
+      dragState.navigationDelta = navigationDelta;
+    } else {
+      setPageTurn(current => {
+        if (!current.active || current.sequence !== pageTurnRef.current.sequence) return current;
+        const nextTurn = { ...current, progress, interactive: true };
+        pageTurnRef.current = nextTurn;
+        return nextTurn;
+      });
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, [readingDirection, resolvePageMoveTarget]);
+
+  const endSnapshotPageTurnDrag = useCallback(event => {
+    const dragState = pageTurnDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return false;
+    pageTurnDragRef.current = null;
+    if (!dragState.active || !pageTurnRef.current.active) return false;
+    const currentTurn = pageTurnRef.current;
+    const velocityMatchesDirection = dragState.direction === 'next'
+      ? dragState.velocity < -SNAPSHOT_PAGE_TURN_MIN_VELOCITY
+      : dragState.velocity > SNAPSHOT_PAGE_TURN_MIN_VELOCITY;
+    const shouldCommit = currentTurn.progress >= SNAPSHOT_PAGE_TURN_COMMIT_PROGRESS || velocityMatchesDirection;
+    if (shouldCommit) {
+      pageIndexRef.current = currentTurn.toIndex;
+      animatePageTurnToProgress(1, () => commitPageTurnTarget(currentTurn.format, currentTurn.toIndex));
+    } else {
+      animatePageTurnToProgress(0);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, [animatePageTurnToProgress, commitPageTurnTarget]);
 
   const movePage = useCallback(delta => {
     const currentIndex = clamp(pageIndexRef.current, 0, Math.max(0, pageCount - 1));
@@ -4409,11 +5213,13 @@ function ViewerApp() {
     toggleFullscreen();
   }, [isViewerInteractiveTarget, toggleFullscreen]);
 
-  const isDragPanTarget = useCallback(target => {
-    if (!(session?.type === 'comic' || session?.type === 'pdf')) return false;
-    if (target?.closest?.('.viewer-pdf-text-layer')) return false;
-    return Boolean(target?.closest?.('.viewer-comic-image, .viewer-pdf-canvas-wrap'));
+  const getDragPanTarget = useCallback(target => {
+    if (!(session?.type === 'comic' || session?.type === 'pdf')) return null;
+    if (target?.closest?.('.viewer-pdf-text-layer')) return null;
+    return target?.closest?.('.viewer-comic-image, .viewer-pdf-canvas-wrap') || null;
   }, [session?.type]);
+
+  const isDragPanTarget = useCallback(target => Boolean(getDragPanTarget(target)), [getDragPanTarget]);
 
   const endDragPan = useCallback(event => {
     const state = dragPanRef.current;
@@ -4431,8 +5237,8 @@ function ViewerApp() {
     if (event.button !== 0 || !isDragPanTarget(event.target)) return;
     const node = scrollRef.current;
     if (!node) return;
-    const canPanX = node.scrollWidth > node.clientWidth + 1;
-    const canPanY = node.scrollHeight > node.clientHeight + 1;
+    const panTarget = getDragPanTarget(event.target);
+    const { canPanX, canPanY } = dragPanOverflowStateForTarget(node, panTarget);
     if (!canPanX && !canPanY) return;
     dragPanRef.current = {
       active: true,
@@ -4445,7 +5251,7 @@ function ViewerApp() {
     node.classList.add('is-drag-panning');
     node.setPointerCapture?.(event.pointerId);
     event.preventDefault();
-  }, [isDragPanTarget]);
+  }, [getDragPanTarget, isDragPanTarget]);
 
   const handleDragPanPointerMove = useCallback(event => {
     const state = dragPanRef.current;
@@ -4619,32 +5425,62 @@ function ViewerApp() {
       wheelButtonStateRef.current = Number(event.buttons) || 0;
     }
     handleDragPanPointerDown(event);
+    if (!dragPanRef.current.active
+      && !isViewerInteractiveTarget(event.target)
+      && !helpOpen
+      && !bookmarkEditorOpen
+      && !bookmarkMenuOpen
+      && !settingsOpen
+      && !navigationPanelOpen
+      && !selectionMenu
+      && !imageLightbox
+      && beginSnapshotPageTurnDrag(event)) {
+      try {
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+      } catch {
+        // Some embedded surfaces reject capture; the turn can still finish on pointerup.
+      }
+      return;
+    }
     handleSwipePointerDown(event);
-  }, [handleDragPanPointerDown, handleSwipePointerDown]);
+  }, [beginSnapshotPageTurnDrag, bookmarkEditorOpen, bookmarkMenuOpen, handleDragPanPointerDown, handleSwipePointerDown, helpOpen, imageLightbox, isViewerInteractiveTarget, navigationPanelOpen, selectionMenu, settingsOpen]);
 
   const handleContentPointerMove = useCallback(event => {
     if (event.pointerType === 'mouse') {
       wheelButtonStateRef.current = Number(event.buttons) || 0;
     }
     handleDragPanPointerMove(event);
+    if (updateSnapshotPageTurnDrag(event)) return;
     handleSwipePointerMove(event);
-  }, [handleDragPanPointerMove, handleSwipePointerMove]);
+  }, [handleDragPanPointerMove, handleSwipePointerMove, updateSnapshotPageTurnDrag]);
 
   const handleContentPointerUp = useCallback(event => {
     if (event.pointerType === 'mouse') {
       wheelButtonStateRef.current = Number(event.buttons) || 0;
     }
+    if (endSnapshotPageTurnDrag(event)) {
+      try {
+        event.currentTarget?.releasePointerCapture?.(event.pointerId);
+      } catch {
+        // Pointer capture can already be released by the browser.
+      }
+      return;
+    }
     handleSwipePointerUp(event);
     endDragPan(event);
-  }, [endDragPan, handleSwipePointerUp]);
+  }, [endDragPan, endSnapshotPageTurnDrag, handleSwipePointerUp]);
 
   const handleContentPointerCancel = useCallback(event => {
     if (event?.pointerType === 'mouse') {
       wheelButtonStateRef.current = 0;
     }
+    if (pageTurnDragRef.current?.pointerId === event?.pointerId) {
+      pageTurnDragRef.current = null;
+      if (pageTurnRef.current.active && pageTurnRef.current.interactive) animatePageTurnToProgress(0);
+    }
     cancelSwipeGesture(event);
     endDragPan(event);
-  }, [cancelSwipeGesture, endDragPan]);
+  }, [animatePageTurnToProgress, cancelSwipeGesture, endDragPan]);
 
   useEffect(() => {
     const handler = event => {
@@ -4766,15 +5602,15 @@ function ViewerApp() {
       flex: '0 0 auto',
     };
   };
-  const renderComicImage = (page, fallbackIndex = 0, pageSlots = 1) => {
+  const renderComicImage = (page, fallbackIndex = 0, pageSlots = 1, options = {}) => {
     const index = Number.isFinite(page?.index) ? page.index : fallbackIndex;
     const src = pageData[page.name] || page?.pageUrl;
     const pageError = pageErrors[page.name];
-    const frameSizeStyle = getComicImageStyle(page, pageSlots);
+    const frameSizeStyle = options.frameStyle || getComicImageStyle(page, pageSlots);
     const frameStyle = frameSizeStyle;
-    const fittedImageStyle = frameSizeStyle
-      ? { width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none' }
-      : undefined;
+    const fittedImageStyle = options.imageStyle || (frameSizeStyle
+      ? { width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', objectFit: options.objectFit || 'cover' }
+      : undefined);
     if (pageError && !pageData[page.name]) {
       return (
         <div key={page.name} className="viewer-comic-placeholder is-error" data-page-index={index}>
@@ -4801,17 +5637,7 @@ function ViewerApp() {
         imageStyle={fittedImageStyle}
         onImageLoad={event => {
           const { naturalWidth, naturalHeight } = event.currentTarget;
-          setPageRatios(prev => ({
-            ...prev,
-            [page.name]: naturalWidth / Math.max(1, naturalHeight),
-          }));
-          setPageSizes(prev => ({
-            ...prev,
-            [page.name]: {
-              width: Math.max(1, naturalWidth),
-              height: Math.max(1, naturalHeight),
-            },
-          }));
+          rememberComicPageImageSize(page.name, naturalWidth, naturalHeight);
         }}
         onImageError={() => {
           if (page?.pageUrl && !pageData[page.name]) {
@@ -4837,15 +5663,15 @@ function ViewerApp() {
         </div>
       );
     }
-    const isComicBookTurnActive = comicPageEffect.active && readerSettings.pageEffect === 'page';
-    const turnFromIndex = clamp(Number(comicPageEffect.fromIndex) || 0, 0, Math.max(0, pageCount - 1));
-    const turnToIndex = clamp(Number(comicPageEffect.toIndex) || 0, 0, Math.max(0, pageCount - 1));
-    const displayStartIndex = isComicBookTurnActive ? turnToIndex : pageIndex;
-    const displayComicPages = isComicBookTurnActive ? getComicSpreadPagesForIndex(turnToIndex) : comicSpreadPages;
+    const isComicBookTurnActive = pageTurn.active && pageTurn.effect === 'page' && pageTurn.format === 'comic';
+    const turnFromIndex = clamp(Number(pageTurn.fromIndex) || 0, 0, Math.max(0, pageCount - 1));
+    const turnToIndex = clamp(Number(pageTurn.toIndex) || 0, 0, Math.max(0, pageCount - 1));
+    const displayStartIndex = isComicBookTurnActive ? turnFromIndex : pageIndex;
+    const displayComicPages = isComicBookTurnActive ? getComicSpreadPagesForIndex(turnFromIndex) : comicSpreadPages;
     const hasSpreadPair = flowMode === 'spread' && displayComicPages.length > 1;
     const pageSlots = hasSpreadPair ? 2 : 1;
-    const comicEffectClassName = comicPageEffect.active && readerSettings.pageEffect !== 'none'
-      ? `has-page-effect effect-${readerSettings.pageEffect} effect-${comicPageEffect.direction}`
+    const comicEffectClassName = pageTurn.active && pageTurn.format === 'comic' && pageTurn.effect !== 'none'
+      ? `has-page-effect effect-${pageTurn.effect} effect-${pageTurn.direction}`
       : '';
     const comicStageClassName = `viewer-comic-stage is-${viewMode} ${flowMode === 'spread' ? 'is-spread' : ''} ${hasSpreadPair ? 'has-spread-pair' : ''} ${comicEffectClassName}`.trim();
     const comicPages = displayComicPages.map((page, index) => renderComicImage(page, Number.isFinite(page?.index) ? page.index : displayStartIndex + index, pageSlots));
@@ -4853,45 +5679,49 @@ function ViewerApp() {
       if (!isComicBookTurnActive) return null;
       const turnComicPages = getComicSpreadPagesForIndex(turnFromIndex);
       if (turnComicPages.length < 1) return null;
-      const turnHasSpreadPair = flowMode === 'spread' && turnComicPages.length > 1;
-      const turnPageSlots = turnHasSpreadPair ? 2 : 1;
-      const turnLeafOffset = turnHasSpreadPair && comicPageEffect.direction === 'next'
+      const targetComicPages = flowMode === 'spread' ? getComicSpreadPagesForIndex(turnToIndex) : [];
+      const turnUsesSpreadLayout = flowMode === 'spread' && (turnComicPages.length > 1 || targetComicPages.length > 1);
+      const turnPageSlots = turnUsesSpreadLayout ? 2 : 1;
+      const getRenderedComicPageIndex = (page, fallbackIndex) => {
+        if (Number.isFinite(page?.index)) return page.index;
+        const listedIndex = page ? pages.indexOf(page) : -1;
+        return listedIndex >= 0 ? listedIndex : fallbackIndex;
+      };
+      const turnLeafOffset = turnComicPages.length > 1 && pageTurn.direction === 'next'
         ? turnComicPages.length - 1
         : 0;
       const turnLeafPage = turnComicPages[turnLeafOffset];
-      const turnLeafIndex = Number.isFinite(turnLeafPage?.index)
-        ? turnLeafPage.index
-        : turnFromIndex + turnLeafOffset;
-      const renderTurnCard = () => (
-        <div className="viewer-comic-turn-card">
-          {renderComicImage(turnLeafPage, turnLeafIndex, turnPageSlots)}
-        </div>
+      const turnLeafIndex = getRenderedComicPageIndex(turnLeafPage, turnFromIndex + turnLeafOffset);
+      const turnBackPage = pages[turnToIndex];
+      const turnBackIndex = getRenderedComicPageIndex(turnBackPage, turnToIndex);
+      const renderTurnComicPage = (page, fallbackIndex) => (
+        page ? renderComicImage(page, getRenderedComicPageIndex(page, fallbackIndex), turnPageSlots) : null
       );
-      const renderEmptySlot = position => (
-        <div key={`empty-${position}`} className="viewer-comic-turn-slot is-empty" aria-hidden="true" />
-      );
-      const renderActiveSlot = position => (
-        <div key={`active-${position}`} className="viewer-comic-turn-slot is-active">
-          {renderTurnCard()}
-        </div>
-      );
+      const currentTurnPages = turnUsesSpreadLayout
+        ? turnComicPages.map((page, index) => renderTurnComicPage(page, turnFromIndex + index))
+        : [renderTurnComicPage(turnLeafPage, turnLeafIndex)];
+      const targetTurnPages = turnUsesSpreadLayout
+        ? targetComicPages.map((page, index) => renderTurnComicPage(page, turnToIndex + index))
+        : [renderTurnComicPage(turnBackPage, turnBackIndex)];
+      const targetLeafOffset = turnUsesSpreadLayout && pageTurn.direction === 'previous'
+        ? Math.max(0, targetTurnPages.length - 1)
+        : 0;
       return (
-        <div
-          key={`comic-turn-${comicPageEffect.sequence}`}
-          className={`viewer-comic-turn-layer is-${turnHasSpreadPair ? 'spread' : 'single'} is-leaf-${comicPageEffect.direction}`}
-          aria-hidden="true"
-        >
-          {turnHasSpreadPair ? (
-            <div className={`viewer-comic-turn-spread is-leaf-${comicPageEffect.direction}`}>
-              {comicPageEffect.direction === 'previous' ? renderActiveSlot('left') : renderEmptySlot('left')}
-              {comicPageEffect.direction === 'previous' ? renderEmptySlot('right') : renderActiveSlot('right')}
-            </div>
-          ) : (
-            <div className="viewer-comic-turn-single">
-              {renderTurnCard()}
-            </div>
-          )}
-        </div>
+        <ReactFlipBookTurnLayer
+          key={`comic-turn-${pageTurn.sequence}`}
+          className="viewer-comic-flipbook-turn"
+          pageClassName="is-comic"
+          direction={pageTurn.direction}
+          sequence={pageTurn.sequence}
+          progress={pageTurn.progress}
+          interactive={pageTurn.interactive}
+          spread={turnUsesSpreadLayout}
+          onAmbientSample={handlePageTurnAmbientSample}
+          front={currentTurnPages[turnUsesSpreadLayout ? turnLeafOffset : 0]}
+          back={targetTurnPages[targetLeafOffset]}
+          currentPages={currentTurnPages}
+          targetPages={targetTurnPages}
+        />
       );
     };
     return (
@@ -5051,27 +5881,20 @@ function ViewerApp() {
         </article>
       );
     }
-    const turnFromIndex = clamp(Number(readerPageTurn.fromIndex) || 0, 0, Math.max(0, items.length - 1));
-    const turnToIndex = clamp(Number(readerPageTurn.toIndex) || 0, 0, Math.max(0, items.length - 1));
-    const isBookTurnActive = readerPageTurn.active && readerSettings.pageEffect === 'page';
-    const basePageIndexes = (() => {
-      if (!isBookTurnActive) {
-        return flowMode === 'spread'
-          ? [pageIndex, pageIndex + 1]
-          : [pageIndex];
-      }
-      if (flowMode !== 'spread') return [turnToIndex];
-      if (readerPageTurn.direction === 'previous') {
-        return [turnToIndex, turnFromIndex + 1];
-      }
-      return [turnFromIndex, turnToIndex + 1];
-    })();
+    const isReaderTurn = pageTurn.format === 'reader';
+    const turnFromIndex = clamp(Number(pageTurn.fromIndex) || 0, 0, Math.max(0, items.length - 1));
+    const turnToIndex = clamp(Number(pageTurn.toIndex) || 0, 0, Math.max(0, items.length - 1));
+    const isBookTurnActive = pageTurn.active && pageTurn.effect === 'page' && isReaderTurn;
+    const displayStartIndex = isBookTurnActive ? turnFromIndex : pageIndex;
+    const basePageIndexes = flowMode === 'spread'
+      ? [displayStartIndex, displayStartIndex + 1]
+      : [displayStartIndex];
     const displayPageEntries = basePageIndexes
       .filter(index => index >= 0 && index < items.length)
       .map((sourceIndex, index) => ({ item: items[sourceIndex], sourceIndex, slotIndex: index }));
     const hasSpreadPair = flowMode === 'spread' && displayPageEntries.length > 1;
-    const readerEffectClassName = readerPageTurn.active && readerSettings.pageEffect !== 'none'
-      ? `has-page-effect effect-${readerSettings.pageEffect} effect-${readerPageTurn.direction}`
+    const readerEffectClassName = pageTurn.active && isReaderTurn && pageTurn.effect !== 'none'
+      ? `has-page-effect effect-${pageTurn.effect} effect-${pageTurn.direction}`
       : '';
     const readerStageClassName = `viewer-reader-stage is-${viewMode} ${flowMode === 'spread' ? 'is-spread' : ''} ${hasSpreadPair ? 'has-spread-pair' : ''} ${readerEffectClassName}`.trim();
     const renderReaderArticle = (item, index, sourceIndex, extraClassName = '') => (
@@ -5092,69 +5915,59 @@ function ViewerApp() {
     const turnSpreadItems = flowMode === 'spread'
       ? [items[turnFromIndex], items[turnFromIndex + 1]].filter(Boolean)
       : [items[turnFromIndex]].filter(Boolean);
-    const turnLeafOffset = flowMode === 'spread' && readerPageTurn.direction === 'next'
+    const targetSpreadItems = flowMode === 'spread'
+      ? [items[turnToIndex], items[turnToIndex + 1]].filter(Boolean)
+      : [items[turnToIndex]].filter(Boolean);
+    const turnUsesSpreadLayout = flowMode === 'spread' && (turnSpreadItems.length > 1 || targetSpreadItems.length > 1);
+    const turnLeafOffset = flowMode === 'spread' && pageTurn.direction === 'next'
       ? Math.max(0, turnSpreadItems.length - 1)
       : 0;
-    const turnLeafItem = readerPageTurn.active && readerSettings.pageEffect === 'page'
+    const turnLeafItem = isBookTurnActive
       ? turnSpreadItems[turnLeafOffset]
       : null;
     const turnLeafIndex = turnFromIndex + turnLeafOffset;
-    const turnBackIndex = flowMode === 'spread' && readerPageTurn.direction === 'previous'
-      ? Math.min(turnToIndex + 1, Math.max(0, items.length - 1))
-      : turnToIndex;
-    const turnBackItem = turnLeafItem ? items[turnBackIndex] : null;
-    const renderTurnCard = () => {
-      const frontArticle = renderReaderArticle(turnLeafItem, 0, turnLeafIndex, 'is-turning-page is-turn-front');
-      const backArticle = turnBackItem
-        ? renderReaderArticle(turnBackItem, 1, turnBackIndex, 'is-turning-page is-turn-back')
-        : null;
-      return (
-        <div className="viewer-reader-turn-card" style={readerStyle}>
-          <div className="viewer-reader-turn-face is-front">
-            {frontArticle}
-          </div>
-          <div className={`viewer-reader-turn-face is-back ${backArticle ? '' : 'is-blank'}`.trim()}>
-            {backArticle || <div className="viewer-reader-turn-paper" />}
-          </div>
-        </div>
-      );
-    };
+    const turnBackItem = turnLeafItem ? items[turnToIndex] : null;
+    const currentTurnPages = turnUsesSpreadLayout
+      ? turnSpreadItems.map((item, index) => renderReaderArticle(item, index, turnFromIndex + index, 'is-turning-page is-turn-front'))
+      : [
+        turnLeafItem
+          ? renderReaderArticle(turnLeafItem, 0, turnLeafIndex, 'is-turning-page is-turn-front')
+          : null,
+      ];
+    const targetTurnPages = turnUsesSpreadLayout
+      ? targetSpreadItems.map((item, index) => renderReaderArticle(item, index, turnToIndex + index, 'is-turning-page is-turn-back'))
+      : [
+        turnBackItem
+          ? renderReaderArticle(turnBackItem, 1, turnToIndex, 'is-turning-page is-turn-back')
+          : <div className="viewer-react-flipbook-turn-paper" />,
+      ];
+    const targetLeafOffset = turnUsesSpreadLayout && pageTurn.direction === 'previous'
+      ? Math.max(0, targetTurnPages.length - 1)
+      : 0;
     const renderTurnLeaf = () => {
       if (!turnLeafItem) return null;
-      if (flowMode !== 'spread') {
-        return (
-          <div className="viewer-reader-turn-single">
-            {renderTurnCard()}
-          </div>
-        );
-      }
-      const renderEmptySlot = position => (
-        <div key={`empty-${position}`} className="viewer-reader-turn-slot is-empty" aria-hidden="true" />
-      );
-      const renderActiveSlot = position => (
-        <div key={`active-${position}`} className="viewer-reader-turn-slot is-active">
-          {renderTurnCard()}
-        </div>
-      );
       return (
-        <div className={`viewer-reader-turn-spread is-leaf-${readerPageTurn.direction}`}>
-          {readerPageTurn.direction === 'previous' ? renderActiveSlot('left') : renderEmptySlot('left')}
-          {readerPageTurn.direction === 'previous' ? renderEmptySlot('right') : renderActiveSlot('right')}
-        </div>
+        <ReactFlipBookTurnLayer
+          key={`reader-turn-${pageTurn.sequence}`}
+          className="viewer-reader-flipbook-turn"
+          pageClassName="is-reader"
+          direction={pageTurn.direction}
+          sequence={pageTurn.sequence}
+          progress={pageTurn.progress}
+          interactive={pageTurn.interactive}
+          spread={turnUsesSpreadLayout}
+          onAmbientSample={handlePageTurnAmbientSample}
+          front={currentTurnPages[turnUsesSpreadLayout ? turnLeafOffset : 0]}
+          back={targetTurnPages[targetLeafOffset]}
+          currentPages={currentTurnPages}
+          targetPages={targetTurnPages}
+        />
       );
     };
     return (
       <div className={readerStageClassName}>
         {hasSpreadPair ? <div className="viewer-spread-pair">{readerPages}</div> : readerPages}
-        {turnLeafItem ? (
-          <div
-            key={`turn-${readerPageTurn.sequence}`}
-            className={`viewer-reader-turn-layer is-${flowMode === 'spread' ? 'spread' : 'single'}-leaf is-leaf-${readerPageTurn.direction}`}
-            aria-hidden="true"
-          >
-            {renderTurnLeaf()}
-          </div>
-        ) : null}
+        {renderTurnLeaf()}
       </div>
     );
   };
@@ -5175,15 +5988,16 @@ function ViewerApp() {
       if (flowMode === 'spread') return [targetIndex, targetIndex + 1].filter(pageNumberIndex => pageNumberIndex >= 0 && pageNumberIndex < pdfPageCount);
       return [targetIndex].filter(pageNumberIndex => pageNumberIndex >= 0 && pageNumberIndex < pdfPageCount);
     };
-    const isPdfBookTurnActive = pdfPageEffect.active && readerSettings.pageEffect === 'page';
-    const turnFromIndex = clamp(Number(pdfPageEffect.fromIndex) || 0, 0, Math.max(0, pdfPageCount - 1));
-    const turnToIndex = clamp(Number(pdfPageEffect.toIndex) || 0, 0, Math.max(0, pdfPageCount - 1));
-    const displayStartIndex = isPdfBookTurnActive ? turnToIndex : pageIndex;
+    const isPdfTurn = pageTurn.format === 'pdf';
+    const isPdfBookTurnActive = pageTurn.active && pageTurn.effect === 'page' && isPdfTurn;
+    const turnFromIndex = clamp(Number(pageTurn.fromIndex) || 0, 0, Math.max(0, pdfPageCount - 1));
+    const turnToIndex = clamp(Number(pageTurn.toIndex) || 0, 0, Math.max(0, pdfPageCount - 1));
+    const displayStartIndex = isPdfBookTurnActive ? turnFromIndex : pageIndex;
     const pageIndexes = getPdfPageIndexesForIndex(displayStartIndex);
     const hasSpreadPair = flowMode === 'spread' && pageIndexes.length > 1;
     const pageSlots = hasSpreadPair ? 2 : 1;
-    const pdfEffectClassName = pdfPageEffect.active && readerSettings.pageEffect !== 'none'
-      ? `has-page-effect effect-${readerSettings.pageEffect} effect-${pdfPageEffect.direction}`
+    const pdfEffectClassName = pageTurn.active && isPdfTurn && pageTurn.effect !== 'none'
+      ? `has-page-effect effect-${pageTurn.effect} effect-${pageTurn.direction}`
       : '';
     const pdfStageClassName = `viewer-pdf-stage is-${flowMode} is-${viewMode} ${hasSpreadPair ? 'has-spread-pair' : ''} ${pdfEffectClassName}`.trim();
     const renderPdfPage = (index, slots, keyPrefix = 'page', activeIndex = displayStartIndex, forceActive = false) => (
@@ -5204,42 +6018,38 @@ function ViewerApp() {
       if (!isPdfBookTurnActive) return null;
       const turnPageIndexes = getPdfPageIndexesForIndex(turnFromIndex);
       if (turnPageIndexes.length < 1) return null;
-      const turnHasSpreadPair = flowMode === 'spread' && turnPageIndexes.length > 1;
-      const turnPageSlots = turnHasSpreadPair ? 2 : 1;
-      const turnLeafOffset = turnHasSpreadPair && pdfPageEffect.direction === 'next'
+      const targetPageIndexes = getPdfPageIndexesForIndex(turnToIndex);
+      const turnUsesSpreadLayout = flowMode === 'spread' && (turnPageIndexes.length > 1 || targetPageIndexes.length > 1);
+      const turnPageSlots = turnUsesSpreadLayout ? 2 : 1;
+      const turnLeafOffset = turnPageIndexes.length > 1 && pageTurn.direction === 'next'
         ? turnPageIndexes.length - 1
         : 0;
       const turnLeafIndex = turnPageIndexes[turnLeafOffset];
-      const renderTurnCard = () => (
-        <div className="viewer-pdf-turn-card">
-          {renderPdfPage(turnLeafIndex, turnPageSlots, 'turn', turnLeafIndex, true)}
-        </div>
-      );
-      const renderEmptySlot = position => (
-        <div key={`empty-${position}`} className="viewer-pdf-turn-slot is-empty" aria-hidden="true" />
-      );
-      const renderActiveSlot = position => (
-        <div key={`active-${position}`} className="viewer-pdf-turn-slot is-active">
-          {renderTurnCard()}
-        </div>
-      );
+      const currentTurnPages = turnUsesSpreadLayout
+        ? turnPageIndexes.map(index => renderPdfPage(index, turnPageSlots, 'turn-current', index, true))
+        : [renderPdfPage(turnLeafIndex, turnPageSlots, 'turn-front', turnLeafIndex, true)];
+      const targetTurnPages = turnUsesSpreadLayout
+        ? targetPageIndexes.map(index => renderPdfPage(index, turnPageSlots, 'turn-target', index, true))
+        : [renderPdfPage(turnToIndex, turnPageSlots, 'turn-back', turnToIndex, true)];
+      const targetLeafOffset = turnUsesSpreadLayout && pageTurn.direction === 'previous'
+        ? Math.max(0, targetTurnPages.length - 1)
+        : 0;
       return (
-        <div
-          key={`pdf-turn-${pdfPageEffect.sequence}`}
-          className={`viewer-pdf-turn-layer is-${turnHasSpreadPair ? 'spread' : 'single'} is-leaf-${pdfPageEffect.direction}`}
-          aria-hidden="true"
-        >
-          {turnHasSpreadPair ? (
-            <div className={`viewer-pdf-turn-spread is-leaf-${pdfPageEffect.direction}`}>
-              {pdfPageEffect.direction === 'previous' ? renderActiveSlot('left') : renderEmptySlot('left')}
-              {pdfPageEffect.direction === 'previous' ? renderEmptySlot('right') : renderActiveSlot('right')}
-            </div>
-          ) : (
-            <div className="viewer-pdf-turn-single">
-              {renderTurnCard()}
-            </div>
-          )}
-        </div>
+        <ReactFlipBookTurnLayer
+          key={`pdf-turn-${pageTurn.sequence}`}
+          className="viewer-pdf-flipbook-turn"
+          pageClassName="is-pdf"
+          direction={pageTurn.direction}
+          sequence={pageTurn.sequence}
+          progress={pageTurn.progress}
+          interactive={pageTurn.interactive}
+          spread={turnUsesSpreadLayout}
+          onAmbientSample={handlePageTurnAmbientSample}
+          front={currentTurnPages[turnUsesSpreadLayout ? turnLeafOffset : 0]}
+          back={targetTurnPages[targetLeafOffset]}
+          currentPages={currentTurnPages}
+          targetPages={targetTurnPages}
+        />
       );
     };
     return (
@@ -5292,9 +6102,24 @@ function ViewerApp() {
     '--viewer-content-bg': viewerBackground.color,
     '--viewer-toolbar-height': `${toolbarHeight}px`,
   };
+  const pageTurnAmbientProgress = pageTurn.active && pageTurn.effect === 'page'
+    ? clamp(Number(pageTurn.progress) || 0, 0, 1)
+    : 0;
+  const ambientBackdropBaseIndex = pageTurnAmbientProgress > 0
+    ? clamp(Number(pageTurn.fromIndex) || 0, 0, Math.max(0, pageCount - 1))
+    : pageIndex;
+  const ambientBackdropTargetIndex = pageTurnAmbientProgress > 0
+    ? clamp(Number(pageTurn.toIndex) || 0, 0, Math.max(0, pageCount - 1))
+    : pageIndex;
+  const pageTurnAmbientTextureColor = pageTurnAmbientSample?.sequence === pageTurn.sequence
+    ? lerpPageBufferColor(pageTurnAmbientSample.fromColor, pageTurnAmbientSample.toColor, pageTurnAmbientProgress)
+    : null;
   const ambientBackdropStyle = backgroundMode === 'immersive'
     ? {
-      backgroundImage: immersiveGradientForPage(pageIndex),
+      backgroundImage: immersiveGradientForPage(ambientBackdropBaseIndex),
+      '--viewer-ambient-next-gradient': immersiveGradientForPage(ambientBackdropTargetIndex),
+      '--viewer-ambient-turn-progress': pageTurnAmbientProgress,
+      '--viewer-ambient-turn-texture-color': pageBufferColorToCss(pageTurnAmbientTextureColor, pageTurnAmbientProgress > 0 ? 0.42 : 0),
     }
     : undefined;
   const isPageMode = flowMode !== 'scroll';

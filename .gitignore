@@ -109,3 +109,5 @@ Thumbs.db
 
 .rooignore
 .clineignore
+
+tmp-*

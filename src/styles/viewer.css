@@ -24,10 +24,25 @@
   filter: saturate(1.18);
 }
 
+.viewer-ambient-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at center, var(--viewer-ambient-turn-texture-color, rgba(0, 0, 0, 0)), transparent 68%),
+    var(--viewer-ambient-next-gradient, none);
+  background-position: center;
+  background-size: cover;
+  opacity: var(--viewer-ambient-turn-progress, 0);
+  transition: opacity 80ms linear;
+}
+
 .viewer-ambient-backdrop::after {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 1;
   background:
     radial-gradient(circle at center, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.42)),
     linear-gradient(180deg, rgba(12, 12, 12, 0.22), rgba(12, 12, 12, 0.6));
@@ -559,11 +574,12 @@
   animation: viewer-comic-slide-previous 180ms ease-out both;
 }
 
-.viewer-comic-stage.effect-page .viewer-comic-turn-card {
-  transform-style: preserve-3d;
+.viewer-comic-stage.effect-page {
+  perspective: 2400px;
+  perspective-origin: center center;
 }
 
-.viewer-comic-turn-layer {
+.viewer-react-flipbook-turn-layer {
   position: absolute;
   inset: 12px;
   z-index: 5;
@@ -572,58 +588,191 @@
   justify-content: center;
   min-width: 0;
   pointer-events: none;
-  transform-style: preserve-3d;
+  contain: layout paint style;
+  isolation: isolate;
+  --viewer-turn-progress: 0;
 }
 
-.viewer-comic-turn-single,
-.viewer-comic-turn-spread {
+.viewer-react-flipbook-turn-book {
   width: 100%;
   height: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  transform-style: preserve-3d;
+  overflow: visible;
 }
 
-.viewer-comic-turn-spread {
-  gap: 0;
-}
-
-.viewer-comic-turn-slot {
-  flex: 0 1 50%;
-  max-width: 50%;
-  height: 100%;
+.viewer-react-flipbook-turn-surface {
+  position: relative;
+  width: var(--viewer-turn-surface-width, 100%);
+  height: var(--viewer-turn-surface-height, 100%);
+  max-width: 100%;
+  max-height: 100%;
+  display: grid;
+  align-items: center;
+  justify-items: center;
   min-width: 0;
+  pointer-events: none;
+  contain: layout paint style;
+  overflow: visible;
+}
+
+.viewer-react-flipbook,
+.viewer-react-flipbook-preparing {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: visible;
+}
+
+.viewer-react-flipbook-turn-layer.is-spread.is-next .viewer-react-flipbook,
+.viewer-react-flipbook-turn-layer.is-spread.is-next .viewer-react-flipbook-preparing {
+  justify-self: end;
+}
+
+.viewer-react-flipbook-turn-layer.is-spread.is-previous .viewer-react-flipbook,
+.viewer-react-flipbook-turn-layer.is-spread.is-previous .viewer-react-flipbook-preparing {
+  justify-self: start;
+}
+
+.viewer-react-flipbook {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.viewer-react-flipbook > div,
+.viewer-react-flipbook .stf__parent,
+.viewer-react-flipbook .stf__wrapper,
+.viewer-react-flipbook .stf__block {
+  overflow: visible !important;
+}
+
+.viewer-react-flipbook-preparing {
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
+  gap: 0;
+}
+
+.viewer-react-flipbook-page {
+  width: var(--viewer-turn-buffer-width, 100%);
+  height: var(--viewer-turn-buffer-height, 100%);
+  max-width: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+  backface-visibility: hidden;
   transform-style: preserve-3d;
 }
 
-.viewer-comic-turn-slot.is-empty {
-  visibility: hidden;
+.viewer-react-flipbook-snapshot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
-.viewer-comic-turn-card {
+.viewer-page-buffer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout paint style;
+}
+
+.viewer-page-buffer-item {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
-  transform: translate3d(0, 0, 0);
-  will-change: opacity, transform;
 }
 
-.viewer-comic-stage.effect-page.effect-next .viewer-comic-turn-card {
-  transform-origin: left center;
-  animation: viewer-comic-page-next 360ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+.viewer-page-turn-blank,
+.viewer-react-flipbook-turn-paper {
+  width: 100%;
+  height: 100%;
+  background: var(--viewer-reader-bg, #181818);
 }
 
-.viewer-comic-stage.effect-page.effect-previous .viewer-comic-turn-card {
-  transform-origin: right center;
-  animation: viewer-comic-page-previous 360ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+.viewer-reader-flipbook-turn {
+  inset: var(--viewer-reader-stage-padding);
+  align-items: stretch;
+}
+
+.viewer-reader-flipbook-turn .viewer-react-flipbook-turn-book,
+.viewer-reader-flipbook-turn .viewer-react-flipbook-turn-surface,
+.viewer-reader-flipbook-turn .viewer-react-flipbook-page,
+.viewer-reader-flipbook-turn .viewer-page-buffer-item {
+  height: 100%;
+}
+
+.viewer-reader-flipbook-turn.is-single .viewer-react-flipbook-turn-surface {
+  width: min(100%, 900px);
+}
+
+.viewer-reader-flipbook-turn.is-spread .viewer-react-flipbook-turn-surface {
+  max-width: min(100%, 1360px);
+}
+
+.viewer-reader-flipbook-turn .viewer-text-page {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.viewer-reader-flipbook-turn .viewer-react-flipbook-turn-paper {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent 22%, rgba(0, 0, 0, 0.08) 100%),
+    var(--viewer-reader-bg, #181818);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.viewer-reader-stage.is-width .viewer-reader-flipbook-turn.is-single .viewer-react-flipbook-turn-surface {
+  max-width: none;
+  width: 100%;
+}
+
+.viewer-comic-flipbook-turn .viewer-react-flipbook-turn-surface,
+.viewer-pdf-flipbook-turn .viewer-react-flipbook-turn-surface,
+.viewer-comic-flipbook-turn .viewer-react-flipbook-page,
+.viewer-pdf-flipbook-turn .viewer-react-flipbook-page {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.viewer-comic-flipbook-turn .viewer-comic-page-frame,
+.viewer-pdf-flipbook-turn .viewer-pdf-page {
+  flex: 0 0 auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.viewer-pdf-flipbook-turn .viewer-pdf-page-number {
+  display: none;
 }
 
 .viewer-ambient-clip {
@@ -773,38 +922,6 @@
   }
 }
 
-@keyframes viewer-comic-page-next {
-  from {
-    opacity: 1;
-    transform: rotateY(0deg) translate3d(0, 0, 0);
-  }
-
-  48% {
-    opacity: 0.92;
-  }
-
-  to {
-    opacity: 0;
-    transform: rotateY(-96deg) translate3d(-18px, 0, 0);
-  }
-}
-
-@keyframes viewer-comic-page-previous {
-  from {
-    opacity: 1;
-    transform: rotateY(0deg) translate3d(0, 0, 0);
-  }
-
-  48% {
-    opacity: 0.92;
-  }
-
-  to {
-    opacity: 0;
-    transform: rotateY(96deg) translate3d(18px, 0, 0);
-  }
-}
-
 .viewer-reader-stage {
   --viewer-reader-stage-padding: 14px;
   position: relative;
@@ -865,173 +982,6 @@
   perspective-origin: center center;
 }
 
-.viewer-reader-turn-layer {
-  position: absolute;
-  inset: var(--viewer-reader-stage-padding);
-  z-index: 5;
-  display: flex;
-  align-items: stretch;
-  pointer-events: none;
-  transform-style: preserve-3d;
-  contain: layout paint style;
-  isolation: isolate;
-}
-
-.viewer-reader-turn-layer.is-single-leaf {
-  justify-content: center;
-}
-
-.viewer-reader-turn-single,
-.viewer-reader-turn-spread {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-  transform-style: preserve-3d;
-}
-
-.viewer-reader-turn-slot {
-  height: 100%;
-  min-width: 0;
-  display: flex;
-  flex: 0 1 680px;
-  max-width: 680px;
-}
-
-.viewer-reader-turn-slot.is-empty {
-  visibility: hidden;
-}
-
-.viewer-reader-turn-card {
-  position: relative;
-  height: 100%;
-  min-width: 0;
-  flex: 0 1 900px;
-  max-width: 900px;
-  transform: translate3d(0, 0, 0);
-  transform-style: preserve-3d;
-  will-change: transform;
-  contain: layout paint style;
-}
-
-.viewer-reader-turn-card::before,
-.viewer-reader-turn-card::after {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  opacity: 0;
-}
-
-.viewer-reader-turn-card::before {
-  inset: 0;
-  z-index: 5;
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.54), transparent 24%, rgba(255, 255, 255, 0.2) 46%, rgba(0, 0, 0, 0.58)),
-    radial-gradient(ellipse at 0 50%, rgba(255, 255, 255, 0.22), transparent 44%);
-}
-
-.viewer-reader-turn-card::after {
-  top: 0;
-  bottom: 0;
-  z-index: 6;
-  width: 18px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.46), rgba(0, 0, 0, 0.28), transparent);
-}
-
-.viewer-reader-turn-single .viewer-reader-turn-card {
-  flex: 0 1 900px;
-  max-width: 900px;
-}
-
-.viewer-reader-turn-slot .viewer-reader-turn-card {
-  flex: 1 1 auto;
-  width: 100%;
-  max-width: none;
-}
-
-.viewer-reader-turn-face {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: var(--viewer-reader-bg, #181818);
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  transform: translate3d(0, 0, 0);
-  transform-style: preserve-3d;
-  contain: layout paint style;
-}
-
-.viewer-reader-turn-face.is-back {
-  transform: rotateY(180deg) translate3d(0, 0, 0);
-}
-
-.viewer-reader-turn-face.is-blank {
-  background: var(--viewer-reader-bg, #181818);
-}
-
-.viewer-reader-turn-face .viewer-text-page {
-  width: 100%;
-  max-width: none;
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
-  transform: translate3d(0, 0, 0);
-  transform-style: preserve-3d;
-  contain: layout paint style;
-}
-
-.viewer-reader-turn-paper {
-  width: 100%;
-  height: 100%;
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent 22%, rgba(0, 0, 0, 0.08) 100%),
-    var(--viewer-reader-bg, #181818);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-.viewer-reader-stage.effect-page.effect-next .viewer-reader-turn-card {
-  transform-origin: left center;
-  animation: viewer-reader-page-next 680ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-reader-stage.effect-page.effect-previous .viewer-reader-turn-card {
-  transform-origin: right center;
-  animation: viewer-reader-page-previous 680ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-reader-stage.effect-page.effect-next .viewer-reader-turn-card::before {
-  animation: viewer-reader-page-shadow-next 680ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-reader-stage.effect-page.effect-previous .viewer-reader-turn-card::before {
-  transform: scaleX(-1);
-  animation: viewer-reader-page-shadow-previous 680ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-reader-stage.effect-page.effect-next .viewer-reader-turn-card::after {
-  left: 0;
-  animation: viewer-reader-page-edge-next 680ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-reader-stage.effect-page.effect-previous .viewer-reader-turn-card::after {
-  right: 0;
-  transform: scaleX(-1);
-  animation: viewer-reader-page-edge-previous 680ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-reader-stage.is-width .viewer-reader-turn-single .viewer-reader-turn-card {
-  flex-basis: 100%;
-  max-width: none;
-}
-
-.viewer-reader-stage.is-width .viewer-reader-turn-slot {
-  flex-basis: 50%;
-  max-width: none;
-}
-
 @keyframes viewer-reader-slide-next {
   from {
     opacity: 0.35;
@@ -1053,106 +1003,6 @@
   to {
     opacity: 1;
     transform: translateX(0);
-  }
-}
-
-@keyframes viewer-reader-page-next {
-  from {
-    transform: rotateY(0deg) translate3d(0, 0, 0);
-  }
-
-  to {
-    transform: rotateY(-180deg) translate3d(0, 0, 0);
-  }
-}
-
-@keyframes viewer-reader-page-previous {
-  from {
-    transform: rotateY(0deg) translate3d(0, 0, 0);
-  }
-
-  to {
-    transform: rotateY(180deg) translate3d(0, 0, 0);
-  }
-}
-
-@keyframes viewer-reader-page-shadow-next {
-  from {
-    opacity: 0;
-  }
-
-  28% {
-    opacity: 0.34;
-  }
-
-  56% {
-    opacity: 0.82;
-  }
-
-  78% {
-    opacity: 0.42;
-  }
-
-  to {
-    opacity: 0.06;
-  }
-}
-
-@keyframes viewer-reader-page-shadow-previous {
-  from {
-    opacity: 0;
-  }
-
-  28% {
-    opacity: 0.34;
-  }
-
-  56% {
-    opacity: 0.82;
-  }
-
-  78% {
-    opacity: 0.42;
-  }
-
-  to {
-    opacity: 0.06;
-  }
-}
-
-@keyframes viewer-reader-page-edge-next {
-  from {
-    opacity: 0.1;
-  }
-
-  42% {
-    opacity: 0.82;
-  }
-
-  72% {
-    opacity: 0.4;
-  }
-
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes viewer-reader-page-edge-previous {
-  from {
-    opacity: 0.1;
-  }
-
-  42% {
-    opacity: 0.82;
-  }
-
-  72% {
-    opacity: 0.4;
-  }
-
-  to {
-    opacity: 0;
   }
 }
 
@@ -1187,79 +1037,9 @@
   animation: viewer-pdf-slide-previous 180ms ease-out both;
 }
 
-.viewer-pdf-stage.effect-page .viewer-pdf-turn-card {
-  transform-style: preserve-3d;
-}
-
-.viewer-pdf-turn-layer {
-  position: absolute;
-  inset: 12px;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  pointer-events: none;
-  transform-style: preserve-3d;
-}
-
-.viewer-pdf-turn-single,
-.viewer-pdf-turn-spread {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transform-style: preserve-3d;
-}
-
-.viewer-pdf-turn-spread {
-  gap: 0;
-}
-
-.viewer-pdf-turn-slot {
-  flex: 0 1 50%;
-  max-width: 50%;
-  height: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transform-style: preserve-3d;
-}
-
-.viewer-pdf-turn-slot.is-empty {
-  visibility: hidden;
-}
-
-.viewer-pdf-turn-card {
-  max-width: 100%;
-  max-height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  transform: translate3d(0, 0, 0);
-  will-change: opacity, transform;
-}
-
-.viewer-pdf-stage.is-spread.has-spread-pair .viewer-pdf-turn-card .viewer-pdf-page {
-  max-width: 100%;
-}
-
-.viewer-pdf-turn-card .viewer-pdf-page-number {
-  display: none;
-}
-
-.viewer-pdf-stage.effect-page.effect-next .viewer-pdf-turn-card {
-  transform-origin: left center;
-  animation: viewer-pdf-page-next 360ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-.viewer-pdf-stage.effect-page.effect-previous .viewer-pdf-turn-card {
-  transform-origin: right center;
-  animation: viewer-pdf-page-previous 360ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+.viewer-pdf-stage.effect-page {
+  perspective: 2400px;
+  perspective-origin: center center;
 }
 
 .viewer-pdf-stage.is-single,
@@ -1426,38 +1206,6 @@
   to {
     opacity: 1;
     transform: translateX(0);
-  }
-}
-
-@keyframes viewer-pdf-page-next {
-  from {
-    opacity: 1;
-    transform: rotateY(0deg) translate3d(0, 0, 0);
-  }
-
-  48% {
-    opacity: 0.92;
-  }
-
-  to {
-    opacity: 0;
-    transform: rotateY(-96deg) translate3d(-18px, 0, 0);
-  }
-}
-
-@keyframes viewer-pdf-page-previous {
-  from {
-    opacity: 1;
-    transform: rotateY(0deg) translate3d(0, 0, 0);
-  }
-
-  48% {
-    opacity: 0.92;
-  }
-
-  to {
-    opacity: 0;
-    transform: rotateY(96deg) translate3d(18px, 0, 0);
   }
 }
 
