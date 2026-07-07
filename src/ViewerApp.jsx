@@ -462,6 +462,20 @@ function pageBufferSnapshotToDataUrl(snapshot) {
   }
 }
 
+function runReactFlipBookTurn(flipBook, direction) {
+  const pageFlip = flipBook?.pageFlip?.();
+  const targetPage = direction === 'previous' ? 0 : 1;
+  if (pageFlip?.flip) {
+    pageFlip.flip(targetPage);
+    return;
+  }
+  if (direction === 'previous') {
+    flipBook?.flipPrev?.();
+    return;
+  }
+  flipBook?.flipNext?.();
+}
+
 function pageFlipPointForProgress(pageFlip, direction, progress) {
   const bounds = pageFlip?.getBoundsRect?.();
   if (!bounds) return null;
@@ -567,11 +581,7 @@ function ReactFlipBookTurnSurface({
     if (!initialized || !pageSize || interactive || autoFlipStartedRef.current) return;
     autoFlipStartedRef.current = true;
     const frame = window.requestAnimationFrame(() => {
-      if (direction === 'previous') {
-        flipBookRef.current?.flipPrev?.();
-        return;
-      }
-      flipBookRef.current?.flipNext?.();
+      runReactFlipBookTurn(flipBookRef.current, direction);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [direction, initialized, interactive, pageSize]);
@@ -3799,6 +3809,7 @@ function ViewerApp() {
     clearPageTurnRuntime();
     const fromIndex = clamp(Number(currentIndex) || 0, 0, Math.max(0, pageCount - 1));
     const toIndex = clamp(Number(targetIndex) || 0, 0, Math.max(0, pageCount - 1));
+    if (toIndex === fromIndex) return false;
     const normalizedDirection = direction || getReadingAdjustedPageEffectDirection(
       getPageEffectDirection(toIndex, fromIndex),
       format === 'comic' ? readingDirection : 'ltr'
@@ -3879,6 +3890,7 @@ function ViewerApp() {
 
   const triggerComicPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
     if (session?.type !== 'comic') return false;
+    if (targetIndex === currentIndex) return false;
     const pageEffectDirection = getPageEffectDirection(targetIndex, currentIndex);
     const visualEffectDirection = getReadingAdjustedPageEffectDirection(pageEffectDirection, readingDirection);
     if (readerSettings.pageEffect === 'page' && typeof loadComicPageRef.current === 'function') {
@@ -4702,6 +4714,7 @@ function ViewerApp() {
     if (session?.type === 'pdf') {
       const size = flowMode === 'spread' ? 2 : 1;
       const nextIndex = clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+      if (nextIndex === currentIndex) return;
       goPdfPage(nextIndex);
       return;
     }
@@ -4724,6 +4737,7 @@ function ViewerApp() {
     }
     const size = flowMode === 'spread' ? getStepSizeForIndex(currentIndex) : 1;
     const nextIndex = clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+    if (nextIndex === currentIndex) return;
     pageIndexRef.current = nextIndex;
     const commitPageIndex = () => {
       setPageIndexSynced(nextIndex);

@@ -575,13 +575,16 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /function ReactFlipBookTurnSurface/);
     assert.match(viewerAppSource, /function normalizeReactFlipBookPages/);
     assert.match(viewerAppSource, /function pageBufferSnapshotToDataUrl/);
+    assert.match(viewerAppSource, /function runReactFlipBookTurn/);
     assert.match(viewerAppSource, /function pageFlipPointForProgress/);
     assert.match(viewerAppSource, /PAGE_BUFFER_MAX_TEXTURE_SIZE = 1536/);
     assert.match(viewerAppSource, /function capturePageBuffer/);
     assert.match(viewerAppSource, /function drawDomElementToPageBuffer/);
-    assert.match(viewerAppSource, /flipBookRef\.current\?\.flipNext\?\.\(\)/);
-    assert.match(viewerAppSource, /flipBookRef\.current\?\.flipPrev\?\.\(\)/);
-    assert.match(viewerAppSource, /flipBookRef\.current\?\.pageFlip\?\.\(\)/);
+    assert.match(viewerAppSource, /const targetPage = direction === 'previous' \? 0 : 1/);
+    assert.match(viewerAppSource, /pageFlip\.flip\(targetPage\)/);
+    assert.match(viewerAppSource, /flipBook\?\.flipNext\?\.\(\)/);
+    assert.match(viewerAppSource, /flipBook\?\.flipPrev\?\.\(\)/);
+    assert.match(viewerAppSource, /runReactFlipBookTurn\(flipBookRef\.current, direction\)/);
     assert.match(viewerAppSource, /pageFlip\.startUserTouch\?\.\(points\.start\)/);
     assert.match(viewerAppSource, /pageFlip\.userMove\?\.\(points\.current, false\)/);
     assert.match(viewerAppSource, /pageFlip\.userStop\?\.\(points\.current, progress < 0\.5\)/);
@@ -615,6 +618,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.doesNotMatch(viewerAppSource, /function createPageTurnRenderer/);
     assert.doesNotMatch(viewerAppSource, /function drawPageTurnRenderer/);
     assert.match(viewerAppSource, /const startSnapshotPageTurn = useCallback/);
+    assert.match(viewerAppSource, /if \(toIndex === fromIndex\) return false/);
     assert.match(viewerAppSource, /const animatePageTurnToProgress = useCallback/);
     assert.match(viewerAppSource, /const beginSnapshotPageTurnDrag = useCallback/);
     assert.match(viewerAppSource, /const updateSnapshotPageTurnDrag = useCallback/);
@@ -644,6 +648,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /const visualEffectDirection = getReadingAdjustedPageEffectDirection\(pageEffectDirection, readingDirection\)/);
     assert.match(viewerAppSource, /direction: visualEffectDirection/);
     assert.match(viewerAppSource, /triggerComicPageEffect\(targetIndex, currentIndex/);
+    assert.match(viewerAppSource, /if \(targetIndex === currentIndex\) return false/);
     assert.match(viewerAppSource, /triggerComicPageEffect\(nextIndex, currentIndex/);
     assert.match(viewerAppSource, /triggerPdfPageEffect\(targetIndex, currentIndex, commitPdfPage\)/);
     assert.match(viewerAppSource, /const displayStartIndex = isComicBookTurnActive \? turnFromIndex : pageIndex/);
