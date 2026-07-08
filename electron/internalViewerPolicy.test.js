@@ -590,6 +590,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /onPageChange=\{handlePageChange\}/);
     assert.match(viewerAppSource, /maxShadowOpacity=\{0\.52\}/);
     assert.match(viewerAppSource, /className=\{viewerClassName\([\s\S]*?'viewer-flipbook-page'/);
+    assert.match(viewerAppSource, /className=\{viewerClassName\('viewer-flipbook-page-inner', `is-\$\{entry\.side\}-page`\)\}/);
     assert.match(viewerAppSource, /entry\.blank\s*\? <div className="viewer-flipbook-blank-page" \/>/);
     assert.match(viewerAppSource, /showCover=\{false\}/);
     assert.match(viewerAppSource, /if \(readerSettings\.pageEffect === 'page'\) \{[\s\S]*?return false;/);
@@ -657,10 +658,15 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerStyleSource, /\.viewer-flipbook-stage\s*\{[\s\S]*?perspective:\s*2400px/);
     assert.match(viewerStyleSource, /\.viewer-flipbook\s*\{[\s\S]*?pointer-events:\s*auto/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-page\s*\{[\s\S]*?overflow:\s*hidden/);
-    assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-left-page\s*\{[\s\S]*?justify-content:\s*flex-end/);
-    assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-right-page\s*\{[\s\S]*?justify-content:\s*flex-start/);
-    assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-blank\s*\{[\s\S]*?pointer-events:\s*none/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-page-inner\s*\{[\s\S]*?display:\s*flex;[\s\S]*?overflow:\s*hidden/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-page-inner\.is-left-page\s*\{[\s\S]*?justify-content:\s*flex-end/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-page-inner\.is-right-page\s*\{[\s\S]*?justify-content:\s*flex-start/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-blank\s*\{[\s\S]*?opacity:\s*0 !important;[\s\S]*?pointer-events:\s*none/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-blank-page/);
+    assert.match(viewerStyleSource, /\.viewer-comic-stage\.is-spread:not\(\.viewer-flipbook-stage\) \.viewer-comic-image\s*\{[\s\S]*?max-width:\s*48%/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-stage\.viewer-comic-stage\.is-spread \.viewer-comic-image\s*\{[\s\S]*?max-width:\s*100%;[\s\S]*?max-height:\s*100%/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-page \.viewer-comic-page-frame\s*\{[\s\S]*?overflow:\s*hidden/);
+    assert.match(viewerStyleSource, /\.viewer-flipbook-page \.viewer-ambient-clip\s*\{[\s\S]*?overflow:\s*hidden/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-left-page \.viewer-comic-image\s*\{[\s\S]*?object-position:\s*right center/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-right-page \.viewer-comic-image\s*\{[\s\S]*?object-position:\s*left center/);
     assert.doesNotMatch(viewerStyleSource, /has-page-effect\.effect-page > [\s\S]*?visibility:\s*hidden/);

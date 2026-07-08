@@ -357,9 +357,11 @@ function ViewerFlipBook({
       data-flipbook-index={entry.bookIndex}
       data-source-page-index={entry.sourceIndex ?? ''}
     >
-      {entry.blank
-        ? <div className="viewer-flipbook-blank-page" />
-        : renderPage?.(entry.sourceIndex, entry)}
+      <div className={viewerClassName('viewer-flipbook-page-inner', `is-${entry.side}-page`)}>
+        {entry.blank
+          ? <div className="viewer-flipbook-blank-page" />
+          : renderPage?.(entry.sourceIndex, entry)}
+      </div>
     </div>
   ));
   if (normalizedPageCount <= 0 || pageElements.length < 1) return null;
