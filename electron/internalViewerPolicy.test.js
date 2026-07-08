@@ -146,6 +146,8 @@ test('뷰어 공통 UI 문구는 다국어 키를 통해 표시한다', () => {
     assert.match(viewerAppSource, /import \{ getCurrentLanguage, setLanguage, translate \} from '\.\/utils\/i18n'/);
     assert.match(viewerWindowSource, /ipcMain\.handle\('viewer:getConfig'/);
     assert.match(viewerWindowSource, /const language = config\.language \|\| config\.lang \|\| 'ko'/);
+    assert.match(viewerWindowSource, /hasTtsOpenAiKey/);
+    assert.match(viewerWindowSource, /hasTtsGoogleKey/);
     assert.match(viewerAppSource, /const \[viewerLanguage, setViewerLanguage\] = useState\(getCurrentLanguage\(\)\)/);
     assert.match(viewerAppSource, /window\.viewerAPI\?\.getConfig\?\.\(\)/);
     assert.match(viewerAppSource, /window\.viewerAPI\?\.onConfigChange\?\./);

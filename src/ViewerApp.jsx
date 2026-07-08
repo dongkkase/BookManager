@@ -113,9 +113,36 @@ const DEFAULT_VIEWER_BACKGROUND = {
   color: '#111111',
 };
 const VIEWER_TTS_SETTINGS_KEY = 'bookmanager-viewer-tts-settings';
+const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
+const OPENAI_TTS_MAX_INPUT_LENGTH = 4000;
+const OPENAI_TTS_VOICES = [
+  { id: 'marin', label: 'Marin' },
+  { id: 'cedar', label: 'Cedar' },
+  { id: 'alloy', label: 'Alloy' },
+  { id: 'ash', label: 'Ash' },
+  { id: 'ballad', label: 'Ballad' },
+  { id: 'coral', label: 'Coral' },
+  { id: 'echo', label: 'Echo' },
+  { id: 'fable', label: 'Fable' },
+  { id: 'nova', label: 'Nova' },
+  { id: 'onyx', label: 'Onyx' },
+  { id: 'sage', label: 'Sage' },
+  { id: 'shimmer', label: 'Shimmer' },
+  { id: 'verse', label: 'Verse' },
+];
+const OPENAI_TTS_VOICE_IDS = new Set(OPENAI_TTS_VOICES.map(voice => voice.id));
+const GOOGLE_TTS_VOICES = [
+  { id: 'ko-KR', label: 'Google 한국어', labelKey: 'viewer.tts.google_voice_ko' },
+  { id: 'en-US', label: 'Google 영어(미국)', labelKey: 'viewer.tts.google_voice_en' },
+  { id: 'ja-JP', label: 'Google 일본어', labelKey: 'viewer.tts.google_voice_ja' },
+];
+const GOOGLE_TTS_VOICE_IDS = new Set(GOOGLE_TTS_VOICES.map(voice => voice.id));
 const DEFAULT_TTS_SETTINGS = {
+  engine: 'system',
   rate: 1,
   voiceURI: '',
+  openaiVoice: 'marin',
+  googleVoice: 'ko-KR',
   autoAdvance: false,
 };
 const VIEWER_BACKGROUND_COLORS = [
@@ -231,9 +258,19 @@ function fitScaleForViewMode(viewMode, widthScale, heightScale) {
 }
 
 function normalizeTtsSettings(settings = {}) {
+  const openaiVoice = String(settings.openaiVoice || DEFAULT_TTS_SETTINGS.openaiVoice).trim();
+  const googleVoice = String(settings.googleVoice || DEFAULT_TTS_SETTINGS.googleVoice).trim();
+  const engine = settings.engine === 'openai'
+    ? 'openai'
+    : settings.engine === 'google'
+      ? 'google'
+      : 'system';
   return {
+    engine,
     rate: clampNumber(settings.rate, 0.5, 2, DEFAULT_TTS_SETTINGS.rate),
     voiceURI: String(settings.voiceURI || ''),
+    openaiVoice: OPENAI_TTS_VOICE_IDS.has(openaiVoice) ? openaiVoice : DEFAULT_TTS_SETTINGS.openaiVoice,
+    googleVoice: GOOGLE_TTS_VOICE_IDS.has(googleVoice) ? googleVoice : DEFAULT_TTS_SETTINGS.googleVoice,
     autoAdvance: settings.autoAdvance === true,
   };
 }
@@ -244,6 +281,193 @@ function normalizeTtsText(text = '') {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function splitTtsTextIntoChunks(text = '', maxLength = OPENAI_TTS_MAX_INPUT_LENGTH) {
+  const source = normalizeTtsText(text);
+  if (!source) return [];
+  if (source.length <= maxLength) return [source];
+
+  const chunks = [];
+  let remaining = source;
+  const delimiters = ['\n\n', '\n', '. ', '! ', '? ', '。', '！', '？', '다. ', '요. '];
+
+  while (remaining.length > maxLength) {
+    const slice = remaining.slice(0, maxLength);
+    let cutIndex = -1;
+    let cutLength = 0;
+    for (const delimiter of delimiters) {
+      const index = slice.lastIndexOf(delimiter);
+      if (index > Math.floor(maxLength * 0.55) && index + delimiter.length > cutIndex + cutLength) {
+        cutIndex = index;
+        cutLength = delimiter.length;
+      }
+    }
+    const cut = cutIndex >= 0 ? cutIndex + cutLength : maxLength;
+    const chunk = remaining.slice(0, cut).trim();
+    if (chunk) chunks.push(chunk);
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+let detachedRemoteTtsAudio = null;
+let detachedRemoteTtsToken = 0;
+let detachedRemoteTtsCancel = null;
+
+function isRemoteTtsEngine(engine) {
+  return engine === 'openai' || engine === 'google';
+}
+
+function getRemoteTtsApi(engine) {
+  return engine === 'google'
+    ? window.viewerAPI?.createGoogleTts
+    : window.viewerAPI?.createOpenAiTts;
+}
+
+function remoteTtsPayload(engine, text, settings) {
+  if (engine === 'google') {
+    return {
+      text,
+      voice: settings.googleVoice,
+      speed: settings.rate,
+    };
+  }
+  return {
+    text,
+    model: OPENAI_TTS_MODEL,
+    voice: settings.openaiVoice,
+    speed: settings.rate,
+  };
+}
+
+function remoteTtsFallbackCode(engine) {
+  return engine === 'google' ? 'GOOGLE_TTS_ERROR' : 'OPENAI_TTS_ERROR';
+}
+
+function stopDetachedRemoteTtsAudio() {
+  detachedRemoteTtsCancel?.();
+  const audio = detachedRemoteTtsAudio;
+  if (audio) {
+    audio.pause?.();
+    audio.removeAttribute?.('src');
+    audio.src = '';
+    audio.load?.();
+  }
+  detachedRemoteTtsAudio = null;
+  detachedRemoteTtsCancel = null;
+}
+
+function playDetachedRemoteTtsAudio(dataUrl, token, engine) {
+  return new Promise((resolve, reject) => {
+    if (typeof Audio !== 'function') {
+      reject(Object.assign(new Error('Remote TTS is not available.'), {
+        code: engine === 'google' ? 'GOOGLE_TTS_UNSUPPORTED' : 'OPENAI_TTS_UNSUPPORTED',
+      }));
+      return;
+    }
+    const audio = new Audio(dataUrl);
+    let settled = false;
+    const cleanup = () => {
+      audio.onended = null;
+      audio.onerror = null;
+      if (detachedRemoteTtsCancel === cancel) detachedRemoteTtsCancel = null;
+    };
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cancel = () => finish('cancelled');
+    detachedRemoteTtsAudio = audio;
+    detachedRemoteTtsCancel = cancel;
+    audio.onended = () => finish('ended');
+    audio.onerror = () => fail(Object.assign(new Error('Remote TTS audio playback failed.'), {
+      code: engine === 'google' ? 'GOOGLE_TTS_AUDIO_ERROR' : 'OPENAI_TTS_AUDIO_ERROR',
+    }));
+    const playPromise = audio.play();
+    if (playPromise?.then) {
+      playPromise.catch(fail);
+    }
+    if (detachedRemoteTtsToken !== token) finish('cancelled');
+  });
+}
+
+function remoteTtsToastMessage(error, engine = 'openai') {
+  if (engine === 'google') {
+    if (error?.code === 'GOOGLE_TTS_KEY_MISSING') {
+      return viewerText('viewer.tts.google_key_missing', '환경설정 > TTS API Key 설정에서 Google TTS API Key를 입력하세요.');
+    }
+    if (error?.code === 'GOOGLE_TTS_INVALID_KEY') {
+      return viewerText('viewer.tts.google_invalid_key', 'Google TTS API Key가 올바르지 않거나 Cloud Text-to-Speech 권한이 없습니다.');
+    }
+    if (error?.code === 'GOOGLE_TTS_QUOTA') {
+      return viewerText('viewer.tts.google_quota', 'Google TTS 사용량 한도에 도달했습니다. 결제 또는 사용량 제한을 확인하세요.');
+    }
+    if (error?.code === 'GOOGLE_TTS_UNSUPPORTED') {
+      return viewerText('viewer.tts.google_unsupported', '현재 뷰어에서는 Google TTS를 사용할 수 없습니다.');
+    }
+    const googleMessage = String(error?.message || '').trim();
+    if (googleMessage) {
+      return viewerText('viewer.tts.google_error_detail', 'Google TTS 오류: {message}', { message: googleMessage });
+    }
+    return viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.');
+  }
+  if (error?.code === 'OPENAI_TTS_KEY_MISSING') {
+    return viewerText('viewer.tts.openai_key_missing', '환경설정 > TTS API Key 설정에서 OpenAI TTS API Key를 입력하세요.');
+  }
+  if (error?.code === 'OPENAI_TTS_INVALID_KEY') {
+    return viewerText('viewer.tts.openai_invalid_key', 'OpenAI TTS API Key가 올바르지 않습니다.');
+  }
+  if (error?.code === 'OPENAI_TTS_QUOTA') {
+    return viewerText('viewer.tts.openai_quota', 'OpenAI TTS 사용량 한도에 도달했습니다. 결제 또는 사용량 제한을 확인하세요.');
+  }
+  if (error?.code === 'OPENAI_TTS_UNSUPPORTED') {
+    return viewerText('viewer.tts.openai_unsupported', '현재 뷰어에서는 OpenAI TTS를 사용할 수 없습니다.');
+  }
+  const message = String(error?.message || '').trim();
+  if (message) {
+    return viewerText('viewer.tts.openai_error_detail', 'OpenAI TTS 오류: {message}', { message });
+  }
+  return viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.');
+}
+
+async function speakDetachedRemoteTts(text, settings, onToast) {
+  const createRemoteTts = getRemoteTtsApi(settings.engine);
+  if (typeof createRemoteTts !== 'function') {
+    onToast?.(remoteTtsToastMessage({ code: settings.engine === 'google' ? 'GOOGLE_TTS_UNSUPPORTED' : 'OPENAI_TTS_UNSUPPORTED' }, settings.engine));
+    return;
+  }
+  const chunks = splitTtsTextIntoChunks(text);
+  if (chunks.length === 0) {
+    onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
+    return;
+  }
+  detachedRemoteTtsToken += 1;
+  const token = detachedRemoteTtsToken;
+  stopDetachedRemoteTtsAudio();
+  try {
+    for (const chunk of chunks) {
+      if (detachedRemoteTtsToken !== token) return;
+      const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunk, settings));
+      if (detachedRemoteTtsToken !== token) return;
+      if (!result?.success || !result.dataUrl) {
+        throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), { code: result?.code || remoteTtsFallbackCode(settings.engine) });
+      }
+      const playbackResult = await playDetachedRemoteTtsAudio(result.dataUrl, token, settings.engine);
+      if (playbackResult === 'cancelled') return;
+    }
+  } catch (error) {
+    if (detachedRemoteTtsToken === token) onToast?.(remoteTtsToastMessage(error, settings.engine));
+  }
 }
 
 function readerItemTtsText(item = {}) {
@@ -644,6 +868,16 @@ function createWebViewerAPI() {
     getDocumentData: sessionId => fetchWebViewerJson(`/api/viewer/document-data/${encodeURIComponent(sessionId)}`),
     getEpubText: sessionId => fetchWebViewerJson(`/api/viewer/epub/${encodeURIComponent(sessionId)}`),
     getText: (sessionId, options = {}) => fetchWebViewerJson(`/api/viewer/text/${encodeURIComponent(sessionId)}?encoding=${encodeURIComponent(options.encoding || 'auto')}`),
+    createOpenAiTts: async () => ({
+      success: false,
+      code: 'OPENAI_TTS_UNSUPPORTED',
+      error: 'OpenAI TTS is not available in web viewer mode.',
+    }),
+    createGoogleTts: async () => ({
+      success: false,
+      code: 'GOOGLE_TTS_UNSUPPORTED',
+      error: 'Google TTS is not available in web viewer mode.',
+    }),
     openExternal: async url => {
       const safeUrl = String(url || '').trim();
       if (!/^https?:\/\//i.test(safeUrl)) throw new Error('External URL was blocked.');
@@ -1843,12 +2077,13 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
   );
 }
 
-function ViewerDropdown({ value, options, onChange, title = '', className = '' }) {
+function ViewerDropdown({ value, options, onChange, title = '', className = '', buttonIcon = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
-  const selectableOptions = options.filter(option => option.kind !== 'group');
-  const selected = selectableOptions.find(option => option.id === value) || selectableOptions[0] || { id: '', label: '' };
+  const selectableOptions = options.filter(option => option.kind !== 'group' && option.kind !== 'notice' && option.disabled !== true);
+  const selected = options.find(option => option.id === value && option.kind !== 'group') || selectableOptions[0] || { id: '', label: '' };
   const selectedLabel = viewerText(selected.labelKey, selected.label);
+  const buttonTitle = title || selectedLabel;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -1870,20 +2105,25 @@ function ViewerDropdown({ value, options, onChange, title = '', className = '' }
     <div className={`viewer-dropdown ${open ? 'is-open' : ''} ${className}`.trim()} ref={rootRef}>
       <button
         type="button"
-        className="viewer-dropdown-button"
-        title={title || selectedLabel}
+        className={`viewer-dropdown-button ${buttonIcon ? 'is-icon-only' : ''}`.trim()}
+        title={buttonTitle}
+        aria-label={buttonTitle}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
       >
-        <span>{selectedLabel}</span>
-        <FaIcon name="caretDown" size={11} />
+        {buttonIcon ? <FaIcon name={buttonIcon} /> : <span>{selectedLabel}</span>}
+        <FaIcon name="caretDown" size={buttonIcon ? 8 : 11} />
       </button>
       {open && (
         <div className="viewer-dropdown-menu" role="listbox">
           {options.map(option => (
             option.kind === 'group' ? (
               <div key={option.id} className="viewer-dropdown-group">
+                {viewerText(option.labelKey, option.label)}
+              </div>
+            ) : option.kind === 'notice' ? (
+              <div key={option.id} className="viewer-dropdown-notice" role="presentation">
                 {viewerText(option.labelKey, option.label)}
               </div>
             ) : (
@@ -1893,7 +2133,9 @@ function ViewerDropdown({ value, options, onChange, title = '', className = '' }
                 className={`viewer-dropdown-option ${option.id === selected.id ? 'is-selected' : ''}`}
                 role="option"
                 aria-selected={option.id === selected.id}
+                disabled={option.disabled === true}
                 onClick={() => {
+                  if (option.disabled === true) return;
                   onChange(option.id);
                   setOpen(false);
                 }}
@@ -1966,13 +2208,21 @@ function ZoomControl({ zoom, onZoomChange, onReset, onWheel }) {
 function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onToast }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
+  const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
+  const [openAiState, setOpenAiState] = useState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
   const [open, setOpen] = useState(false);
+  const [rateOpen, setRateOpen] = useState(false);
   const [pendingPlayAfterPageMove, setPendingPlayAfterPageMove] = useState(false);
   const suppressEndRef = useRef(false);
   const previousSpeechTextRef = useRef('');
   const previousTtsPageRef = useRef(null);
+  const openAiRunRef = useRef(0);
+  const openAiAudioRef = useRef(null);
+  const openAiPlaybackCancelRef = useRef(null);
   const speechText = normalizeTtsText(text);
-  const pageLabel = pageCount > 0 ? `${pageIndex + 1} / ${pageCount}` : '-';
+  const isOpenAiEngine = settings.engine === 'openai';
+  const isGoogleEngine = settings.engine === 'google';
+  const isRemoteEngine = isRemoteTtsEngine(settings.engine);
   const updateSettings = useCallback(patch => {
     setSettings(current => normalizeTtsSettings({ ...current, ...patch }));
   }, []);
@@ -1994,6 +2244,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     markTextAsSpoken: true,
     markBackgroundColor: 'rgba(52, 152, 219, 0.28)',
     onEnd: () => {
+      if (settings.engine !== 'system') return;
       if (suppressEndRef.current || !settings.autoAdvance || pageIndex >= pageCount - 1) return;
       setPendingPlayAfterPageMove(true);
       onMovePage?.(1);
@@ -2004,13 +2255,91 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   });
   const voices = state.voices?.length > 0 ? state.voices : availableVoices;
   const hasText = speechText.length > 0;
-  const isActivelyPlaying = state.isPlaying && !state.isPaused;
+  const isOpenAiLoading = openAiState.status === 'loading';
+  const isOpenAiPlaying = openAiState.status === 'playing';
+  const isOpenAiPaused = openAiState.status === 'paused';
+  const isActivelyPlaying = isRemoteEngine ? (isOpenAiLoading || isOpenAiPlaying) : state.isPlaying && !state.isPaused;
+  const isTtsActive = isRemoteEngine ? openAiState.status !== 'idle' : state.isPlaying || state.isPaused;
   const canMovePrevious = pageIndex > 0;
   const canMoveNext = pageIndex < pageCount - 1;
-
+  const hasOpenAiTtsApiKey = ttsApiKeyState.openai;
+  const hasGoogleTtsApiKey = ttsApiKeyState.google;
+  const apiKeyRequiredOption = useCallback(id => ({
+    id,
+    kind: 'notice',
+    label: viewerText('viewer.tts.api_key_required', 'api key 설정이 필요합니다'),
+  }), [language]);
+  const openAiVoiceOptions = useMemo(() => (
+    hasOpenAiTtsApiKey
+      ? OPENAI_TTS_VOICES.map(voice => ({
+        id: `openai:${voice.id}`,
+        label: voice.label,
+      }))
+      : [apiKeyRequiredOption(`openai:${settings.openaiVoice}`)]
+  ), [apiKeyRequiredOption, hasOpenAiTtsApiKey, settings.openaiVoice]);
+  const googleVoiceOptions = useMemo(() => (
+    hasGoogleTtsApiKey
+      ? GOOGLE_TTS_VOICES.map(voice => ({
+        id: `google:${voice.id}`,
+        label: viewerText(voice.labelKey, voice.label),
+      }))
+      : [apiKeyRequiredOption(`google:${settings.googleVoice}`)]
+  ), [apiKeyRequiredOption, hasGoogleTtsApiKey, language, settings.googleVoice]);
+  const systemVoiceOptions = useMemo(() => [
+    { id: 'system:', label: viewerText('viewer.tts.system_voice', '시스템 기본 음성') },
+    ...voices.map(voice => ({
+      id: `system:${voice.voiceURI || voice.name}`,
+      label: `${voice.name} (${voice.lang})`,
+    })),
+  ], [language, voices]);
+  const combinedVoiceOptions = useMemo(() => [
+    { id: 'system-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_system', '시스템 음성') },
+    ...systemVoiceOptions,
+    { id: 'openai-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_openai', 'OpenAI 음성') },
+    ...openAiVoiceOptions,
+    { id: 'google-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_google', 'Google 음성') },
+    ...googleVoiceOptions,
+  ], [googleVoiceOptions, language, openAiVoiceOptions, systemVoiceOptions]);
+  const activeVoiceValue = isOpenAiEngine
+    ? `openai:${settings.openaiVoice}`
+    : isGoogleEngine
+      ? `google:${settings.googleVoice}`
+      : `system:${settings.voiceURI}`;
+  const remoteTtsProgressLabel = openAiState.totalChunks > 1
+    ? viewerText(isGoogleEngine ? 'viewer.tts.google_loading_chunks' : 'viewer.tts.openai_loading_chunks', isGoogleEngine ? 'Google 생성 중 {current}/{total}' : 'OpenAI 생성 중 {current}/{total}', {
+      current: openAiState.currentChunk,
+      total: openAiState.totalChunks,
+    })
+    : viewerText(isGoogleEngine ? 'viewer.tts.google_loading' : 'viewer.tts.openai_loading', isGoogleEngine ? 'Google 생성 중' : 'OpenAI 생성 중');
   useEffect(() => {
     saveJson(VIEWER_TTS_SETTINGS_KEY, settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (!open) setRateOpen(false);
+  }, [open]);
+
+  useEffect(() => {
+    let mounted = true;
+    const applyTtsApiKeys = config => {
+      const apiKeys = config?.api_keys || {};
+      const hasOpenAiFlag = typeof config?.hasTtsOpenAiKey === 'boolean';
+      const hasGoogleFlag = typeof config?.hasTtsGoogleKey === 'boolean';
+      const next = {
+        openai: hasOpenAiFlag ? config.hasTtsOpenAiKey : Boolean(String(apiKeys.tts_openai_key || '').trim()),
+        google: hasGoogleFlag ? config.hasTtsGoogleKey : Boolean(String(apiKeys.tts_google_key || '').trim()),
+      };
+      if (mounted) setTtsApiKeyState(next);
+    };
+    window.viewerAPI?.getConfig?.()
+      .then(applyTtsApiKeys)
+      .catch(() => {});
+    const unsubscribe = window.viewerAPI?.onConfigChange?.(applyTtsApiKeys);
+    return () => {
+      mounted = false;
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     const synth = window.speechSynthesis;
@@ -2021,15 +2350,6 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     return () => synth.removeEventListener?.('voiceschanged', updateVoices);
   }, []);
 
-  useEffect(() => {
-    if (!pendingPlayAfterPageMove || !hasText) return undefined;
-    const timer = window.setTimeout(() => {
-      setPendingPlayAfterPageMove(false);
-      play();
-    }, 80);
-    return () => window.clearTimeout(timer);
-  }, [hasText, pendingPlayAfterPageMove, play, speechText]);
-
   const stopWithoutAutoAdvance = useCallback(() => {
     suppressEndRef.current = true;
     stop();
@@ -2037,6 +2357,190 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
       suppressEndRef.current = false;
     }, 0);
   }, [stop]);
+
+  const stopOpenAiSpeech = useCallback((options = {}) => {
+    openAiRunRef.current += 1;
+    openAiPlaybackCancelRef.current?.();
+    const audio = openAiAudioRef.current;
+    if (audio) {
+      audio.pause?.();
+      audio.removeAttribute?.('src');
+      audio.src = '';
+      audio.load?.();
+    }
+    openAiAudioRef.current = null;
+    if (!options.skipState) {
+      setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
+    }
+  }, []);
+
+  const playOpenAiAudioDataUrl = useCallback((dataUrl, runId, engine) => new Promise((resolve, reject) => {
+    if (typeof Audio !== 'function') {
+      reject(Object.assign(new Error('Remote TTS is not available.'), {
+        code: engine === 'google' ? 'GOOGLE_TTS_UNSUPPORTED' : 'OPENAI_TTS_UNSUPPORTED',
+      }));
+      return;
+    }
+    const audio = new Audio(dataUrl);
+    let settled = false;
+    const cleanup = () => {
+      audio.onplaying = null;
+      audio.onpause = null;
+      audio.onended = null;
+      audio.onerror = null;
+      if (openAiPlaybackCancelRef.current === cancel) openAiPlaybackCancelRef.current = null;
+    };
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cancel = () => finish('cancelled');
+    openAiPlaybackCancelRef.current = cancel;
+    openAiAudioRef.current = audio;
+    audio.onplaying = () => {
+      if (openAiRunRef.current === runId) {
+        setOpenAiState(current => ({ ...current, status: 'playing' }));
+      }
+    };
+    audio.onpause = () => {
+      if (!audio.ended && openAiRunRef.current === runId) {
+        setOpenAiState(current => ({ ...current, status: 'paused' }));
+      }
+    };
+    audio.onended = () => finish('ended');
+    audio.onerror = () => fail(Object.assign(new Error('Remote TTS audio playback failed.'), {
+      code: engine === 'google' ? 'GOOGLE_TTS_AUDIO_ERROR' : 'OPENAI_TTS_AUDIO_ERROR',
+    }));
+    const playPromise = audio.play();
+    if (playPromise?.then) {
+      playPromise
+        .then(() => {
+          if (openAiRunRef.current === runId) {
+            setOpenAiState(current => ({ ...current, status: 'playing' }));
+          }
+        })
+        .catch(fail);
+    } else if (openAiRunRef.current === runId) {
+      setOpenAiState(current => ({ ...current, status: 'playing' }));
+    }
+  }), []);
+
+  const openAiTtsErrorMessage = useCallback(error => remoteTtsToastMessage(error, settings.engine), [language, settings.engine]);
+
+  const playOpenAiSpeech = useCallback(async () => {
+    if (!hasText) {
+      onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
+      return;
+    }
+    const createRemoteTts = getRemoteTtsApi(settings.engine);
+    if (typeof createRemoteTts !== 'function') {
+      onToast?.(remoteTtsToastMessage({ code: settings.engine === 'google' ? 'GOOGLE_TTS_UNSUPPORTED' : 'OPENAI_TTS_UNSUPPORTED' }, settings.engine));
+      return;
+    }
+    const chunks = splitTtsTextIntoChunks(speechText);
+    if (chunks.length === 0) {
+      onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
+      return;
+    }
+    stopOpenAiSpeech();
+    const runId = openAiRunRef.current + 1;
+    openAiRunRef.current = runId;
+    setOpenAiState({ status: 'loading', currentChunk: 1, totalChunks: chunks.length });
+    try {
+      for (let index = 0; index < chunks.length; index += 1) {
+        if (openAiRunRef.current !== runId) return;
+        setOpenAiState({ status: 'loading', currentChunk: index + 1, totalChunks: chunks.length });
+        const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunks[index], settings));
+        if (openAiRunRef.current !== runId) return;
+        if (!result?.success || !result.dataUrl) {
+          throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), { code: result?.code || remoteTtsFallbackCode(settings.engine) });
+        }
+        const playbackResult = await playOpenAiAudioDataUrl(result.dataUrl, runId, settings.engine);
+        if (playbackResult === 'cancelled' || openAiRunRef.current !== runId) return;
+      }
+      if (openAiRunRef.current !== runId) return;
+      openAiAudioRef.current = null;
+      setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
+      if (settings.autoAdvance && pageIndex < pageCount - 1) {
+        setPendingPlayAfterPageMove(true);
+        onMovePage?.(1);
+      }
+    } catch (error) {
+      if (openAiRunRef.current !== runId) return;
+      openAiAudioRef.current = null;
+      setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
+      onToast?.(openAiTtsErrorMessage(error));
+    }
+  }, [hasText, onMovePage, onToast, openAiTtsErrorMessage, pageCount, pageIndex, playOpenAiAudioDataUrl, settings, speechText, stopOpenAiSpeech]);
+
+  const resumeOpenAiSpeech = useCallback(() => {
+    const audio = openAiAudioRef.current;
+    if (!audio) {
+      void playOpenAiSpeech();
+      return;
+    }
+    const playPromise = audio.play?.();
+    if (playPromise?.then) {
+      playPromise
+        .then(() => setOpenAiState(current => ({ ...current, status: 'playing' })))
+        .catch(error => onToast?.(openAiTtsErrorMessage(error)));
+    } else {
+      setOpenAiState(current => ({ ...current, status: 'playing' }));
+    }
+  }, [onToast, openAiTtsErrorMessage, playOpenAiSpeech]);
+
+  const pauseOpenAiSpeech = useCallback(() => {
+    const audio = openAiAudioRef.current;
+    if (audio && !audio.paused) {
+      audio.pause();
+      setOpenAiState(current => ({ ...current, status: 'paused' }));
+    }
+  }, []);
+
+  const playCurrentTts = useCallback(() => {
+    if (isRemoteTtsEngine(settings.engine)) {
+      void playOpenAiSpeech();
+      return;
+    }
+    play();
+  }, [play, playOpenAiSpeech, settings.engine]);
+
+  const stopCurrentTtsWithoutAutoAdvance = useCallback(() => {
+    if (isRemoteTtsEngine(settings.engine)) {
+      stopOpenAiSpeech();
+      return;
+    }
+    stopWithoutAutoAdvance();
+  }, [settings.engine, stopOpenAiSpeech, stopWithoutAutoAdvance]);
+
+  useEffect(() => {
+    if (!pendingPlayAfterPageMove || !hasText) return undefined;
+    const timer = window.setTimeout(() => {
+      setPendingPlayAfterPageMove(false);
+      playCurrentTts();
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [hasText, pendingPlayAfterPageMove, playCurrentTts, speechText]);
+
+  useEffect(() => {
+    if (isRemoteTtsEngine(settings.engine)) {
+      if (state.isPlaying || state.isPaused) stopWithoutAutoAdvance();
+      return;
+    }
+    if (openAiState.status !== 'idle') stopOpenAiSpeech();
+  }, [openAiState.status, settings.engine, state.isPaused, state.isPlaying, stopOpenAiSpeech, stopWithoutAutoAdvance]);
+
+  useEffect(() => () => {
+    stopOpenAiSpeech({ skipState: true });
+  }, [stopOpenAiSpeech]);
 
   useEffect(() => {
     const previousText = previousSpeechTextRef.current;
@@ -2046,15 +2550,28 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     previousTtsPageRef.current = pageIndex;
     if (!hasPreviousTarget || pendingPlayAfterPageMove) return;
     if (previousText === speechText && previousPageIndex === pageIndex) return;
-    if (!(state.isPlaying || state.isPaused)) return;
-    const shouldRestart = state.isPlaying && !state.isPaused;
+    if (!isTtsActive) return;
+    const shouldRestart = isActivelyPlaying;
     setPendingPlayAfterPageMove(shouldRestart);
-    stopWithoutAutoAdvance();
-  }, [pageIndex, pendingPlayAfterPageMove, speechText, state.isPaused, state.isPlaying, stopWithoutAutoAdvance]);
+    stopCurrentTtsWithoutAutoAdvance();
+  }, [isActivelyPlaying, isTtsActive, pageIndex, pendingPlayAfterPageMove, speechText, stopCurrentTtsWithoutAutoAdvance]);
 
   const handlePlayPause = useCallback(() => {
     if (!hasText) {
       onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
+      return;
+    }
+    if (isRemoteEngine) {
+      if (isOpenAiLoading) return;
+      if (isOpenAiPlaying) {
+        pauseOpenAiSpeech();
+        return;
+      }
+      if (isOpenAiPaused) {
+        resumeOpenAiSpeech();
+        return;
+      }
+      void playOpenAiSpeech();
       return;
     }
     if (isActivelyPlaying) {
@@ -2062,7 +2579,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
       return;
     }
     play();
-  }, [hasText, isActivelyPlaying, onToast, pause, play]);
+  }, [hasText, isActivelyPlaying, isOpenAiLoading, isOpenAiPaused, isOpenAiPlaying, isRemoteEngine, onToast, pause, pauseOpenAiSpeech, play, playOpenAiSpeech, resumeOpenAiSpeech]);
 
   const handleTtsKeyDown = useCallback(event => {
     if (event.key === 'Escape') {
@@ -2070,7 +2587,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
       setOpen(false);
       return;
     }
-    if (isPlainSpaceKeyEvent(event) && !event.target?.closest?.('.viewer-dropdown-menu')) {
+    if (isPlainSpaceKeyEvent(event) && !event.target?.closest?.('.viewer-dropdown-menu, .viewer-tts-rate-popover')) {
       stopKeyboardShortcutEvent(event);
       handlePlayPause();
       return;
@@ -2088,26 +2605,19 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
 
   const handleStop = useCallback(() => {
     setPendingPlayAfterPageMove(false);
-    stopWithoutAutoAdvance();
-  }, [stopWithoutAutoAdvance]);
+    stopCurrentTtsWithoutAutoAdvance();
+  }, [stopCurrentTtsWithoutAutoAdvance]);
 
   const handleMove = useCallback(direction => {
     const shouldContinue = isActivelyPlaying;
     setPendingPlayAfterPageMove(shouldContinue);
-    stopWithoutAutoAdvance();
+    stopCurrentTtsWithoutAutoAdvance();
     onMovePage?.(direction);
-  }, [isActivelyPlaying, onMovePage, stopWithoutAutoAdvance]);
+  }, [isActivelyPlaying, onMovePage, stopCurrentTtsWithoutAutoAdvance]);
 
   const playTitle = isActivelyPlaying
     ? viewerText('viewer.tts.pause', 'TTS 일시정지')
     : viewerText('viewer.tts.play', 'TTS 재생');
-  const voiceOptions = useMemo(() => [
-    { id: '', label: viewerText('viewer.tts.system_voice', '시스템 기본 음성') },
-    ...voices.map(voice => ({
-      id: voice.voiceURI || voice.name,
-      label: `${voice.name} (${voice.lang})`,
-    })),
-  ], [language, voices]);
 
   return (
     <div className={`viewer-tts-control ${open ? 'is-open' : ''}`}>
@@ -2132,10 +2642,6 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
           aria-label={viewerText('viewer.tts.settings', 'TTS 설정')}
           onKeyDown={handleTtsKeyDown}
         >
-          <div className="viewer-tts-status">
-            <strong>{viewerText('viewer.tts.title', 'TTS')}</strong>
-            <span>{pageLabel}</span>
-          </div>
           <div className="viewer-tts-actions" aria-label={viewerText('viewer.tts.group', 'TTS')}>
             <button
               type="button"
@@ -2149,10 +2655,10 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
             </button>
             <button
               type="button"
-              className={`viewer-tts-action ${state.isPlaying ? 'is-active' : ''}`}
+              className={`viewer-tts-action ${isActivelyPlaying ? 'is-active' : ''}`}
               title={playTitle}
               aria-label={playTitle}
-              disabled={!hasText}
+              disabled={!hasText || isOpenAiLoading}
               onClick={handlePlayPause}
             >
               <FaIcon name={isActivelyPlaying ? 'pause' : 'play'} />
@@ -2162,7 +2668,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
               className="viewer-tts-action"
               title={viewerText('viewer.tts.stop', 'TTS 정지')}
               aria-label={viewerText('viewer.tts.stop', 'TTS 정지')}
-              disabled={!state.isPlaying && !state.isPaused}
+              disabled={!isTtsActive}
               onClick={handleStop}
             >
               <FaIcon name="stopCircle" />
@@ -2177,37 +2683,69 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
             >
               <FaIcon name="angleRight" />
             </button>
-          </div>
-          <label className="viewer-tts-field is-rate">
-            <span>{viewerText('viewer.tts.rate', '속도')}</span>
-            <input
-              type="range"
-              min="0.5"
-              max="2"
-              step="0.1"
-              value={settings.rate}
-              onChange={event => updateSettings({ rate: Number(event.target.value) })}
-            />
-            <output>{settings.rate.toFixed(1)}x</output>
-          </label>
-          <label className="viewer-tts-field is-voice">
-            <span>{viewerText('viewer.tts.voice', '음성')}</span>
+            <div className={`viewer-tts-rate-control ${rateOpen ? 'is-open' : ''}`}>
+              <button
+                type="button"
+                className={`viewer-tts-action ${rateOpen ? 'is-active' : ''}`}
+                title={viewerText('viewer.tts.rate', '속도')}
+                aria-label={viewerText('viewer.tts.rate', '속도')}
+                aria-haspopup="dialog"
+                aria-expanded={rateOpen}
+                onClick={() => setRateOpen(current => !current)}
+              >
+                <FaIcon name="clock" />
+              </button>
+              {rateOpen && (
+                <div className="viewer-tts-rate-popover" role="dialog" aria-label={viewerText('viewer.tts.rate', '속도')}>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.1"
+                    value={settings.rate}
+                    title={viewerText('viewer.tts.rate', '속도')}
+                    aria-label={viewerText('viewer.tts.rate', '속도')}
+                    onChange={event => updateSettings({ rate: Number(event.target.value) })}
+                  />
+                  <output>{settings.rate.toFixed(1)}x</output>
+                </div>
+              )}
+            </div>
             <ViewerDropdown
-              value={settings.voiceURI}
-              options={voiceOptions}
+              value={activeVoiceValue}
+              options={combinedVoiceOptions}
               title={viewerText('viewer.tts.voice', '음성')}
               className="viewer-tts-voice-dropdown"
-              onChange={voiceURI => updateSettings({ voiceURI })}
+              buttonIcon="language"
+              onChange={voice => {
+                stopCurrentTtsWithoutAutoAdvance();
+                setRateOpen(false);
+                if (voice.startsWith('openai:')) {
+                  updateSettings({ engine: 'openai', openaiVoice: voice.slice('openai:'.length) });
+                } else if (voice.startsWith('google:')) {
+                  updateSettings({ engine: 'google', googleVoice: voice.slice('google:'.length) });
+                } else {
+                  updateSettings({ engine: 'system', voiceURI: voice.slice('system:'.length) });
+                }
+              }}
             />
-          </label>
-          <label className="viewer-tts-check">
-            <input
-              type="checkbox"
-              checked={settings.autoAdvance}
-              onChange={event => updateSettings({ autoAdvance: event.target.checked })}
-            />
-            <span>{viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}</span>
-          </label>
+            <button
+              type="button"
+              className={`viewer-tts-action ${settings.autoAdvance ? 'is-active' : ''}`}
+              title={viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}
+              aria-label={viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}
+              aria-pressed={settings.autoAdvance}
+              onClick={() => updateSettings({ autoAdvance: !settings.autoAdvance })}
+            >
+              <FaIcon name="anglesRight" />
+            </button>
+          </div>
+          {isRemoteEngine && isOpenAiLoading && (
+            <div className="viewer-tts-progress" role="status" aria-live="polite">
+              <FaIcon name="spinner" className="viewer-tts-progress-spinner" />
+              <span>{remoteTtsProgressLabel}</span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2386,7 +2924,6 @@ function ViewerHelpModal({ open, onClose }) {
   ];
   const contextRows = [
     { title: viewerText('viewer.help.context_open_title', '컨텍스트 메뉴 열기'), description: viewerText('viewer.help.context_open', '텍스트를 드래그하면 선택이 끝난 지점에 플로팅 툴바가 나옵니다. 만화책 두장보기에서는 페이지를 우클릭하면 컨텍스트 메뉴가 나옵니다.') },
-    { title: viewerText('viewer.context.add_highlight', '하이라이트 추가'), description: viewerText('viewer.help.context_highlight', '선택한 텍스트를 하이라이트로 저장하고, 책 안 검색, 사전 검색, 번역, 선택 영역 TTS를 실행합니다.') },
     { title: viewerText('viewer.context.comic_single_page', '이 페이지를 단독장으로 분리'), description: viewerText('viewer.help.context_comic_single_page', '만화책 두장보기에서 순서가 어긋난 페이지를 단독 페이지로 분리해 이후 펼침 흐름을 다시 맞춥니다.') },
   ];
   const tabs = [
@@ -5048,19 +5585,26 @@ function ViewerApp() {
     void openLookupWindow(url, title);
   }, [openLookupWindow, selectionMenu?.text, viewerLanguage]);
 
-  const speakSelectionText = useCallback(() => {
+  const speakSelectionText = useCallback(async () => {
     const text = normalizeTtsText(selectionMenu?.text);
     if (!text) {
       showViewerToast(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
     }
     try {
+      const settings = normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS));
+      if (isRemoteTtsEngine(settings.engine)) {
+        window.speechSynthesis?.cancel?.();
+        await speakDetachedRemoteTts(text, settings, showViewerToast);
+        setSelectionMenu(null);
+        clearNativeSelection();
+        return;
+      }
       const synth = window.speechSynthesis;
       if (!synth || typeof window.SpeechSynthesisUtterance !== 'function') {
         showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
         return;
       }
-      const settings = normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS));
       const voices = synth.getVoices?.() || [];
       const selectedVoice = voices.find(voice => voice.voiceURI === settings.voiceURI || voice.name === settings.voiceURI);
       const utterance = new window.SpeechSynthesisUtterance(text);

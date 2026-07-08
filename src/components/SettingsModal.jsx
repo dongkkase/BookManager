@@ -56,6 +56,7 @@ const DEFAULT_API_KEYS = {
   ai_provider: 'Gemini',
   ai_key: '',
   tts_openai_key: '',
+  tts_google_key: '',
   tag_rules: '',
 };
 
@@ -445,6 +446,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
           <button className={activeTab === 'basic' ? 'active' : ''} onClick={() => setActiveTab('basic')}>{label('tab_basic', '기본 설정')}</button>
           <button className={activeTab === 'folder' ? 'active' : ''} onClick={() => setActiveTab('folder')}>{label('tab_folder_settings', '폴더 탭 설정')}</button>
           <button className={activeTab === 'api' ? 'active' : ''} onClick={() => setActiveTab('api')}>{label('tab_api', 'API 검색 설정')}</button>
+          <button className={activeTab === 'ttsApi' ? 'active' : ''} onClick={() => setActiveTab('ttsApi')}>{label('tab_tts_api_key', 'TTS API Key 설정')}</button>
         </div>
 
         <div className="modal-body settings-modal-body">
@@ -778,15 +780,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               <p className="settings-help">{t('ai_notice')}</p>
               </fieldset>
 
-              <fieldset className="settings-fieldset">
-              <legend>{label('tts_api_group', 'TTS API')}</legend>
-              <div className="settings-row">
-                <span className="settings-label">{label('tts_openai_api_key', 'OpenAI TTS API Key')}</span>
-                {renderSecretInput('tts_openai_key', 'OpenAI API Key (sk-...)')}
-              </div>
-              <p className="settings-help">{label('tts_api_notice', 'OpenAI TTS에서만 사용하는 키입니다. AI 원제 검색 API Key와 별도로 저장됩니다.')}</p>
-              </fieldset>
-
               <div className="settings-api-manual-row">
                 <button className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}><FaIcon name="bookOpen" />{label('btn_api_manual', 'API 발급 매뉴얼')}</button>
               </div>
@@ -819,6 +812,23 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                   {maintenanceBusy === 'api-cache' ? label('cache_clearing', '초기화 중...') : label('btn_clear_cache', '검색 캐시 비우기')}
                 </button>
               </div>
+              </fieldset>
+            </div>
+          )}
+
+          {activeTab === 'ttsApi' && (
+            <div className="settings-panel">
+              <fieldset className="settings-fieldset">
+              <legend>{label('tts_api_group', 'TTS API')}</legend>
+              <div className="settings-row">
+                <span className="settings-label">{label('tts_openai_api_key', 'OpenAI TTS API Key')}</span>
+                {renderSecretInput('tts_openai_key', 'OpenAI API Key (sk-...)')}
+              </div>
+              <div className="settings-row">
+                <span className="settings-label">{label('tts_google_api_key', 'Google TTS API Key')}</span>
+                {renderSecretInput('tts_google_key', 'Google Cloud API Key')}
+              </div>
+              <p className="settings-help">{label('tts_api_notice', 'TTS에서만 사용하는 키입니다. AI 원제 검색 API Key와 별도로 저장됩니다.')}</p>
               </fieldset>
             </div>
           )}

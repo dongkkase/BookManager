@@ -362,9 +362,12 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:getConfig', async () => {
         const config = configManager?.getConfig?.() || {};
         const language = config.language || config.lang || 'ko';
+        const apiKeys = config.api_keys || {};
         return {
             lang: language,
             language,
+            hasTtsOpenAiKey: Boolean(String(apiKeys.tts_openai_key || '').trim()),
+            hasTtsGoogleKey: Boolean(String(apiKeys.tts_google_key || '').trim()),
         };
     });
     ipcMain.handle('viewer:openExternal', async (event, url) => {

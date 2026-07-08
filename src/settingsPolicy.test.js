@@ -31,7 +31,11 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
         preferred_meta_api_comic: 'Vine',
         preferred_meta_api_book: 'Amazon',
         preferred_meta_api_pdf: 'Google Books',
-        api_keys: { custom_provider: 'keep-me' },
+        api_keys: {
+            custom_provider: 'keep-me',
+            tts_openai_key: ' sk-openai ',
+            tts_google_key: ' google-tts ',
+        },
     }, 8);
 
     assert.equal(normalized.language, 'ja');
@@ -57,6 +61,8 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.preferred_meta_api_pdf, 'Google Books');
     assert.equal(normalized.last_meta_api, 'Google Books');
     assert.equal(normalized.api_keys.custom_provider, 'keep-me');
+    assert.equal(normalized.api_keys.tts_openai_key, 'sk-openai');
+    assert.equal(normalized.api_keys.tts_google_key, 'google-tts');
 });
 
 test('library entries preserve alias, group, and display order while syncing path arrays', () => {

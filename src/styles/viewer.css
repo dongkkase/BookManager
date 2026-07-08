@@ -319,19 +319,19 @@
 .viewer-tts-menu {
   position: fixed;
   top: calc(var(--viewer-toolbar-height, 42px) + 10px);
-  left: 12px;
-  right: 12px;
+  left: 50%;
+  right: auto;
   z-index: 120;
-  width: min(900px, calc(100vw - 24px));
+  width: max-content;
+  max-width: calc(100vw - 24px);
   box-sizing: border-box;
-  margin: 0 auto;
+  transform: translateX(-50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 8px;
-  overflow-x: auto;
-  overflow-y: visible;
-  padding: 8px 10px;
+  overflow: visible;
+  padding: 7px;
   color: #ededed;
   background: #1f1f1f;
   border: 1px solid #555;
@@ -339,29 +339,12 @@
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
 }
 
-.viewer-tts-status {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 7px;
-  padding-right: 8px;
-  border-right: 1px solid #3f3f3f;
-  color: #cfd8df;
-  font-size: calc(12px * var(--font-scale, 1));
-  white-space: nowrap;
-}
-
-.viewer-tts-status strong {
-  color: #fff;
-  font-size: 13px;
-}
-
 .viewer-tts-actions {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(4, 30px);
+  grid-template-columns: repeat(7, 30px);
   gap: 4px;
+  align-items: center;
 }
 
 .viewer-tts-action {
@@ -397,73 +380,91 @@
   cursor: default;
 }
 
-.viewer-tts-field {
+.viewer-tts-rate-control {
+  position: relative;
+  width: 30px;
+  height: 30px;
+}
+
+.viewer-tts-rate-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 140;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  font-size: calc(12px * var(--font-scale, 1));
+  gap: 8px;
+  padding: 10px 8px 8px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #242424;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
+  transform: translateX(-50%);
+}
+
+.viewer-tts-rate-popover input[type="range"] {
+  width: 24px;
+  height: 112px;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  accent-color: #3498db;
+}
+
+.viewer-tts-rate-popover output {
+  color: #cfd8df;
+  font-size: 12px;
+  line-height: 1;
   white-space: nowrap;
 }
 
-.viewer-tts-field.is-rate {
-  flex: 1 1 170px;
-  min-width: 150px;
-  max-width: 210px;
+.viewer-tts-actions .viewer-dropdown {
+  width: 30px;
 }
 
-.viewer-tts-field.is-voice {
-  flex: 1 1 220px;
-  min-width: 170px;
-  max-width: 260px;
+.viewer-tts-actions .viewer-dropdown-button {
+  width: 30px;
+  height: 30px;
+  background: #2b2b2b;
+  border-color: #4d4d4d;
 }
 
-.viewer-tts-field .viewer-dropdown {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.viewer-tts-field .viewer-dropdown-menu {
-  position: fixed;
-  top: calc(var(--viewer-toolbar-height, 42px) + 58px);
+.viewer-tts-actions .viewer-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
   left: 50%;
   z-index: 130;
   width: min(320px, calc(100vw - 32px));
   transform: translateX(-50%);
 }
 
-.viewer-tts-field .viewer-dropdown-button {
-  height: 28px;
-  background: #2d2d2d;
-  border-color: #555;
-}
-
-.viewer-tts-field input[type="range"] {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.viewer-tts-field output {
-  flex: 0 0 34px;
-  text-align: right;
-  color: #cfd8df;
-  font-size: 12px;
-}
-
-.viewer-tts-check {
-  flex: 0 1 190px;
-  min-width: 150px;
+.viewer-tts-progress {
+  width: 100%;
+  min-height: 18px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #d9d9d9;
+  justify-content: center;
+  gap: 7px;
+  padding-top: 2px;
+  color: #cfd8df;
   font-size: 12px;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
-.viewer-tts-check span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.viewer-tts-progress-spinner {
+  color: #7fc3f1;
+  animation: viewerTtsSpin 0.9s linear infinite;
+}
+
+@keyframes viewerTtsSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .viewer-dropdown {
@@ -493,6 +494,13 @@
   color: #eeeeee;
   font-size: 12px;
   cursor: pointer;
+}
+
+.viewer-dropdown-button.is-icon-only {
+  grid-template-columns: 1fr auto;
+  gap: 2px;
+  justify-items: center;
+  padding: 0 4px;
 }
 
 .viewer-dropdown-button span {
@@ -545,6 +553,14 @@
   font-size: 11px;
   font-weight: 700;
   line-height: 1.2;
+  text-align: left;
+}
+
+.viewer-dropdown-notice {
+  padding: 7px;
+  color: #d6c992;
+  font-size: 12px;
+  line-height: 1.35;
   text-align: left;
 }
 

@@ -241,6 +241,7 @@ export class ConfigManager {
         ai_provider: 'Gemini',
         ai_key: '',
         tts_openai_key: '',
+        tts_google_key: '',
         tag_rules: '',
       },
       font_family: 'Noto Sans KR',

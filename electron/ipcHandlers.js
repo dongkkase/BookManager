@@ -99,6 +99,42 @@ import {
 
 const RENAMER_PREVIEW_MAX_DIMENSION = 720;
 const RENAMER_PREVIEW_JPEG_QUALITY = 86;
+const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
+const OPENAI_TTS_FALLBACK_MODEL = 'tts-1';
+const OPENAI_TTS_INPUT_MAX_LENGTH = 4096;
+const OPENAI_TTS_VOICES = new Set([
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'fable',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+]);
+const OPENAI_TTS_FALLBACK_VOICES = new Set([
+  'alloy',
+  'ash',
+  'coral',
+  'echo',
+  'fable',
+  'onyx',
+  'nova',
+  'sage',
+  'shimmer',
+]);
+const GOOGLE_TTS_INPUT_MAX_LENGTH = 5000;
+const GOOGLE_TTS_DEFAULT_VOICE = 'ko-KR';
+const GOOGLE_TTS_VOICES = new Map([
+  ['ko-KR', { languageCode: 'ko-KR' }],
+  ['en-US', { languageCode: 'en-US' }],
+  ['ja-JP', { languageCode: 'ja-JP' }],
+]);
 
 function createRenamerPreviewBuffer(buffer, entryPath) {
   try {
@@ -245,6 +281,64 @@ function requestJsonPost(url, payload = {}, extraHeaders = {}) {
         } catch (error) {
           reject(error);
         }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function requestBufferPost(url, payload = {}, extraHeaders = {}, timeout = 30000, maxBytes = 24 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const body = JSON.stringify(payload);
+    const req = https.request({
+      hostname: target.hostname,
+      path: `${target.pathname}${target.search}`,
+      method: 'POST',
+      headers: {
+        'User-Agent': 'BookManager',
+        'Accept': 'audio/mpeg,application/json',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...extraHeaders,
+      },
+      timeout,
+    }, (res) => {
+      const chunks = [];
+      let totalBytes = 0;
+      const contentLength = Number(res.headers['content-length']) || 0;
+      if (maxBytes > 0 && contentLength > maxBytes) {
+        req.destroy(new Error('RESPONSE_TOO_LARGE'));
+        return;
+      }
+      res.on('data', chunk => {
+        totalBytes += chunk.length;
+        if (maxBytes > 0 && totalBytes > maxBytes) {
+          req.destroy(new Error('RESPONSE_TOO_LARGE'));
+          return;
+        }
+        chunks.push(Buffer.from(chunk));
+      });
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let apiMessage = '';
+          try {
+            const parsed = JSON.parse(buffer.toString('utf8'));
+            apiMessage = parsed?.error?.message || parsed?.message || '';
+          } catch {
+            apiMessage = buffer.toString('utf8').replace(/\s+/g, ' ').trim().slice(0, 300);
+          }
+          const error = new Error(`HTTP ${res.statusCode}${apiMessage ? `: ${apiMessage}` : ''}`);
+          error.statusCode = res.statusCode;
+          error.responseBody = buffer.toString('utf8');
+          reject(error);
+          return;
+        }
+        resolve({ buffer, contentType: res.headers['content-type'] || '' });
       });
     });
     req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
@@ -2501,6 +2595,178 @@ async function fetchImageCacheUrlFromUrl(imageUrl = '', cacheDir = '') {
   return rememberApiCoverUrl(url, apiCoverCacheUrlForFile(filePath));
 }
 
+function normalizeOpenAiTtsOptions(options = {}) {
+  const input = String(options.text || options.input || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!input) {
+    throw Object.assign(new Error('No text to read.'), { code: 'OPENAI_TTS_NO_TEXT' });
+  }
+  if (input.length > OPENAI_TTS_INPUT_MAX_LENGTH) {
+    throw Object.assign(new Error('OpenAI TTS input is too long.'), { code: 'OPENAI_TTS_TEXT_TOO_LONG' });
+  }
+  const voice = String(options.voice || 'marin').trim().toLowerCase();
+  const speed = Number(options.speed);
+  return {
+    model: OPENAI_TTS_MODEL,
+    input,
+    voice: OPENAI_TTS_VOICES.has(voice) ? voice : 'marin',
+    response_format: 'mp3',
+    speed: Number.isFinite(speed) ? Math.max(0.25, Math.min(4, speed)) : 1,
+  };
+}
+
+function audioMimeFromContentType(contentType = '') {
+  const cleanType = String(contentType || '').split(';')[0].trim().toLowerCase();
+  return cleanType.startsWith('audio/') ? cleanType : 'audio/mpeg';
+}
+
+async function createOpenAiTtsDataUrl(options = {}, apiKeys = {}) {
+  const apiKey = String(apiKeys.tts_openai_key || '').trim();
+  if (!apiKey) {
+    throw Object.assign(new Error('OpenAI TTS API key is missing.'), { code: 'OPENAI_TTS_KEY_MISSING' });
+  }
+  const payload = normalizeOpenAiTtsOptions(options);
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  let response;
+  let usedPayload = payload;
+  try {
+    response = await requestBufferPost('https://api.openai.com/v1/audio/speech', payload, headers);
+  } catch (error) {
+    const message = String(error.message || '').toLowerCase();
+    const canRetryWithFallback = [400, 404].includes(error.statusCode)
+      && /model|voice|unsupported|not found|invalid/.test(message);
+    if (!canRetryWithFallback) throw error;
+    usedPayload = {
+      ...payload,
+      model: OPENAI_TTS_FALLBACK_MODEL,
+      voice: OPENAI_TTS_FALLBACK_VOICES.has(payload.voice) ? payload.voice : 'alloy',
+    };
+    response = await requestBufferPost('https://api.openai.com/v1/audio/speech', usedPayload, headers);
+  }
+  const { buffer, contentType } = response;
+  const mimeType = audioMimeFromContentType(contentType);
+  return {
+    success: true,
+    model: usedPayload.model,
+    voice: usedPayload.voice,
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`,
+  };
+}
+
+function sanitizeOpenAiTtsErrorMessage(message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
+    .slice(0, 240);
+}
+
+function normalizeOpenAiTtsError(error = {}) {
+  if (error.code === 'OPENAI_TTS_KEY_MISSING' || error.code === 'OPENAI_TTS_NO_TEXT' || error.code === 'OPENAI_TTS_TEXT_TOO_LONG') {
+    return {
+      code: error.code,
+      error: sanitizeOpenAiTtsErrorMessage(error.message),
+    };
+  }
+  if (error.statusCode === 401 || error.statusCode === 403) {
+    return {
+      code: 'OPENAI_TTS_INVALID_KEY',
+      error: 'OpenAI TTS API key is invalid or does not have access.',
+    };
+  }
+  if (error.statusCode === 429) {
+    return {
+      code: 'OPENAI_TTS_QUOTA',
+      error: sanitizeOpenAiTtsErrorMessage(error.message) || 'OpenAI TTS quota or rate limit reached.',
+    };
+  }
+  return {
+    code: error.code || 'OPENAI_TTS_ERROR',
+    error: sanitizeOpenAiTtsErrorMessage(error.message || String(error)),
+  };
+}
+
+function normalizeGoogleTtsOptions(options = {}) {
+  const input = String(options.text || options.input || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!input) {
+    throw Object.assign(new Error('No text to read.'), { code: 'GOOGLE_TTS_NO_TEXT' });
+  }
+  if (input.length > GOOGLE_TTS_INPUT_MAX_LENGTH) {
+    throw Object.assign(new Error('Google TTS input is too long.'), { code: 'GOOGLE_TTS_TEXT_TOO_LONG' });
+  }
+  const voiceId = String(options.voice || GOOGLE_TTS_DEFAULT_VOICE).trim();
+  const voice = GOOGLE_TTS_VOICES.get(voiceId) || GOOGLE_TTS_VOICES.get(GOOGLE_TTS_DEFAULT_VOICE);
+  const speed = Number(options.speed);
+  return {
+    input: { text: input },
+    voice,
+    audioConfig: {
+      audioEncoding: 'MP3',
+      speakingRate: Number.isFinite(speed) ? Math.max(0.25, Math.min(4, speed)) : 1,
+    },
+  };
+}
+
+async function createGoogleTtsDataUrl(options = {}, apiKeys = {}) {
+  const apiKey = String(apiKeys.tts_google_key || '').trim();
+  if (!apiKey) {
+    throw Object.assign(new Error('Google TTS API key is missing.'), { code: 'GOOGLE_TTS_KEY_MISSING' });
+  }
+  const payload = normalizeGoogleTtsOptions(options);
+  const data = await requestJsonPost(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(apiKey)}`, payload);
+  const audioContent = String(data?.audioContent || '').trim();
+  if (!audioContent) {
+    throw Object.assign(new Error('Google TTS response did not include audio content.'), { code: 'GOOGLE_TTS_EMPTY_AUDIO' });
+  }
+  return {
+    success: true,
+    voice: payload.voice.languageCode,
+    mimeType: 'audio/mpeg',
+    dataUrl: `data:audio/mpeg;base64,${audioContent}`,
+  };
+}
+
+function sanitizeGoogleTtsErrorMessage(message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text
+    .replace(/AIza[0-9A-Za-z_-]+/g, 'AIza***')
+    .slice(0, 240);
+}
+
+function normalizeGoogleTtsError(error = {}) {
+  if (error.code === 'GOOGLE_TTS_KEY_MISSING' || error.code === 'GOOGLE_TTS_NO_TEXT' || error.code === 'GOOGLE_TTS_TEXT_TOO_LONG') {
+    return {
+      code: error.code,
+      error: sanitizeGoogleTtsErrorMessage(error.message),
+    };
+  }
+  if (error.statusCode === 400 || error.statusCode === 401 || error.statusCode === 403) {
+    return {
+      code: 'GOOGLE_TTS_INVALID_KEY',
+      error: sanitizeGoogleTtsErrorMessage(error.message) || 'Google TTS API key is invalid or Cloud Text-to-Speech is not enabled.',
+    };
+  }
+  if (error.statusCode === 429) {
+    return {
+      code: 'GOOGLE_TTS_QUOTA',
+      error: sanitizeGoogleTtsErrorMessage(error.message) || 'Google TTS quota or rate limit reached.',
+    };
+  }
+  return {
+    code: error.code || 'GOOGLE_TTS_ERROR',
+    error: sanitizeGoogleTtsErrorMessage(error.message || String(error)),
+  };
+}
+
 async function fetchImageDataUrlFromUrl(imageUrl = '') {
   const url = String(imageUrl || '').trim();
   if (!url) return '';
@@ -3483,6 +3749,34 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+  ipcMain.handle('api:openaiTts', async (_event, options = {}) => {
+    const config = configManager.getConfig() || {};
+    try {
+      return await createOpenAiTtsDataUrl(options, config.api_keys || {});
+    } catch (error) {
+      const normalized = normalizeOpenAiTtsError(error);
+      return {
+        success: false,
+        code: normalized.code,
+        error: normalized.error,
+      };
+    }
+  });
+
+  ipcMain.handle('api:googleTts', async (_event, options = {}) => {
+    const config = configManager.getConfig() || {};
+    try {
+      return await createGoogleTtsDataUrl(options, config.api_keys || {});
+    } catch (error) {
+      const normalized = normalizeGoogleTtsError(error);
+      return {
+        success: false,
+        code: normalized.code,
+        error: normalized.error,
+      };
+    }
+  });
+
   ipcMain.handle('api:imageDataUrl', async (_event, imageUrl) => {
     const url = String(imageUrl || '').trim();
     if (!url) return '';
@@ -4158,11 +4452,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     configManager.saveConfig(nextConfig);
     setLanguage(nextLang);
     const savedConfig = configManager.getConfig();
+    const savedApiKeys = savedConfig.api_keys || {};
     BrowserWindow.getAllWindows().forEach(window => {
       if (!window.isDestroyed()) {
         window.webContents.send('viewer:config-change', {
           lang: savedConfig.lang,
           language: savedConfig.language,
+          hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
+          hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
         });
       }
     });

@@ -121,6 +121,8 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         ai_trans_enabled: Boolean(apiKeys.ai_trans_enabled),
         ai_provider: AI_PROVIDERS.has(apiKeys.ai_provider) ? apiKeys.ai_provider : 'Gemini',
         ai_key: String(apiKeys.ai_key || '').trim(),
+        tts_openai_key: String(apiKeys.tts_openai_key || '').trim(),
+        tts_google_key: String(apiKeys.tts_google_key || '').trim(),
         tag_rules: String(apiKeys.tag_rules || ''),
     };
     const preferredComicApi = normalizeMetadataApiSourceForBookType(

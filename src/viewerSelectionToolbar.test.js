@@ -33,6 +33,9 @@ test('선택 툴바는 요청된 텍스트 액션을 제공한다', () => {
     assert.match(viewerSource, /www\.deepl\.com\/translator#auto/);
     assert.match(viewerSource, /void openLookupWindow\(url, title\)/);
     assert.match(viewerSource, /const speakSelectionText = useCallback/);
+    assert.match(viewerSource, /function speakDetachedRemoteTts/);
+    assert.match(viewerSource, /isRemoteTtsEngine\(settings\.engine\)/);
+    assert.match(viewerSource, /await speakDetachedRemoteTts\(text, settings, showViewerToast\)/);
     assert.match(viewerSource, /new window\.SpeechSynthesisUtterance\(text\)/);
 });
 
@@ -82,6 +85,13 @@ test('선택 툴바 스타일과 다국어 문구를 제공한다', () => {
             assert.notEqual(translate(key, language), key, `${language}:${key}`);
         }
     }
+});
+
+test('뷰어 매뉴얼 컨텍스트 메뉴 탭은 하이라이트 항목을 별도로 안내하지 않는다', () => {
+    const contextRowsSource = viewerSource.match(/const contextRows = \[[\s\S]*?\n  \];/)?.[0] || '';
+    assert.match(contextRowsSource, /viewer\.help\.context_open/);
+    assert.match(contextRowsSource, /viewer\.context\.comic_single_page/);
+    assert.doesNotMatch(contextRowsSource, /viewer\.context\.add_highlight|viewer\.help\.context_highlight/);
 });
 
 test('선택 사전과 번역은 외부 브라우저 대신 우측 슬라이드 패널을 사용한다', () => {

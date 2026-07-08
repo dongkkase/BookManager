@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   getText: (sessionId, options) => ipcRenderer.invoke('viewer:getText', sessionId, options),
   getEpubText: sessionId => ipcRenderer.invoke('viewer:getEpubText', sessionId),
   getConfig: () => ipcRenderer.invoke('viewer:getConfig'),
+  createOpenAiTts: options => ipcRenderer.invoke('api:openaiTts', options),
+  createGoogleTts: options => ipcRenderer.invoke('api:googleTts', options),
   listBundledFonts: () => ipcRenderer.invoke('font:listBundled'),
   listSystemFonts: () => ipcRenderer.invoke('font:listSystem'),
   openExternal: url => ipcRenderer.invoke('viewer:openExternal', url),
