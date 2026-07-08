@@ -35,7 +35,7 @@
   background-position: center;
   background-size: cover;
   opacity: var(--viewer-ambient-turn-progress, 0);
-  transition: opacity 80ms linear;
+  transition: opacity var(--viewer-ambient-turn-duration, 80ms) linear;
 }
 
 .viewer-ambient-backdrop::after {
@@ -597,18 +597,24 @@
 
 .viewer-flipbook {
   flex: 0 0 auto;
-  max-width: 100%;
-  max-height: 100%;
+  max-width: none;
+  max-height: none;
   z-index: 2;
   pointer-events: auto;
+}
+
+.viewer-flipbook-scale {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
 }
 
 .viewer-flipbook > div,
 .viewer-flipbook .stf__parent,
 .viewer-flipbook .stf__wrapper,
 .viewer-flipbook .stf__block {
-  max-width: 100%;
-  max-height: 100%;
+  max-width: none;
+  max-height: none;
   overflow: visible !important;
 }
 
@@ -626,9 +632,11 @@
   background: transparent !important;
   backface-visibility: hidden;
   transform-style: preserve-3d;
+  isolation: isolate;
 }
 
 .viewer-flipbook-page-inner {
+  position: relative;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
@@ -637,6 +645,7 @@
   justify-content: center;
   min-width: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .viewer-flipbook-page-inner.is-left-page {
@@ -672,7 +681,7 @@
 
 .viewer-flipbook-page .viewer-comic-page-frame {
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .viewer-flipbook-stage.viewer-comic-stage.is-spread .viewer-comic-image {
@@ -708,7 +717,7 @@
 }
 
 .viewer-flipbook-page .viewer-ambient-clip {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .viewer-ambient-clip {
@@ -973,6 +982,13 @@
   animation: viewer-pdf-slide-previous 180ms ease-out both;
 }
 
+.viewer-comic-stage.effect-fade .viewer-comic-page-frame,
+.viewer-comic-stage.effect-fade .viewer-comic-placeholder,
+.viewer-reader-stage.effect-fade .viewer-text-page,
+.viewer-pdf-stage.effect-fade .viewer-pdf-page {
+  animation: viewer-page-fade 180ms ease-out both;
+}
+
 .viewer-pdf-stage.effect-page {
   perspective: 2400px;
   perspective-origin: center center;
@@ -1142,6 +1158,16 @@
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@keyframes viewer-page-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
@@ -2040,6 +2066,12 @@
   background: #1d1d1d;
 }
 
+.viewer-segmented-buttons.is-wrapped {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: #3d3d3d;
+}
+
 .viewer-segmented-buttons button {
   min-width: 0;
   height: 32px;
@@ -2053,6 +2085,11 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.viewer-segmented-buttons.is-wrapped button {
+  border-right: 0;
+  background: #1d1d1d;
 }
 
 .viewer-segmented-buttons button:last-child {

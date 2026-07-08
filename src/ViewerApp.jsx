@@ -114,6 +114,7 @@ const WRAP_OPTIONS = [
 const PAGE_EFFECT_OPTIONS = [
   { id: 'none', label: '효과없음', labelKey: 'viewer.option.effect_none' },
   { id: 'slide', label: '슬라이드', labelKey: 'viewer.option.effect_slide' },
+  { id: 'fade', label: '페이드', labelKey: 'viewer.option.effect_fade' },
   { id: 'page', label: '책 넘김', labelKey: 'viewer.option.effect_page' },
 ];
 const TEXT_ALIGN_OPTIONS = [
@@ -164,6 +165,10 @@ const SWIPE_AXIS_LOCK_RATIO = 1.35;
 const SWIPE_MAX_DURATION = 900;
 const READER_TITLE_ONLY_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 const BOOK_PAGE_TURN_DURATION = 720;
+const PAGE_EFFECT_DURATIONS = {
+  slide: 180,
+  fade: 180,
+};
 const EMPTY_PAGE_TURN = {
   format: '',
   effect: 'none',
@@ -173,6 +178,7 @@ const EMPTY_PAGE_TURN = {
   fromIndex: 0,
   toIndex: 0,
   progress: 0,
+  duration: 0,
 };
 
 function clamp(value, min, max) {
@@ -317,14 +323,22 @@ function ViewerFlipBook({
   readingDirection = 'ltr',
   pageSize,
   getStepSizeForIndex,
+  navigationKey = 0,
+  visualScale = 1,
+  renderKey,
   renderPage,
   onPageIndexChange,
 }) {
+  const flipBookRef = useRef(null);
+  const lastNavigationKeyRef = useRef(navigationKey);
+  const renderPageRef = useRef(renderPage);
+  renderPageRef.current = renderPage;
   const normalizedPageCount = Math.max(0, Number(pageCount) || 0);
   const normalizedPageSize = {
     width: Math.max(1, Math.round(Number(pageSize?.width) || 1)),
     height: Math.max(1, Math.round(Number(pageSize?.height) || 1)),
   };
+  const normalizedVisualScale = Math.max(0.02, Number(visualScale) || 1);
   const model = useMemo(() => buildFlipBookPageModel({
     pageCount: normalizedPageCount,
     spread,
@@ -333,10 +347,25 @@ function ViewerFlipBook({
   }), [getStepSizeForIndex, normalizedPageCount, readingDirection, spread]);
   const currentSourceIndex = clamp(Number(currentPageIndex) || 0, 0, Math.max(0, normalizedPageCount - 1));
   const currentBookIndex = model.pageToBookIndex.get(currentSourceIndex) ?? 0;
+  const bookPixelWidth = normalizedPageSize.width * (spread ? 2 : 1);
+  const bookPixelHeight = normalizedPageSize.height;
+  const scaledBookPixelWidth = bookPixelWidth * normalizedVisualScale;
+  const scaledBookPixelHeight = bookPixelHeight * normalizedVisualScale;
   const bookStyle = useMemo(() => ({
-    width: `${normalizedPageSize.width * (spread ? 2 : 1)}px`,
-    height: `${normalizedPageSize.height}px`,
-  }), [normalizedPageSize.height, normalizedPageSize.width, spread]);
+    width: `${bookPixelWidth}px`,
+    height: `${bookPixelHeight}px`,
+  }), [bookPixelHeight, bookPixelWidth]);
+  const scaleStyle = useMemo(() => ({
+    width: `${bookPixelWidth}px`,
+    height: `${bookPixelHeight}px`,
+    transform: normalizedVisualScale === 1 ? undefined : `scale(${normalizedVisualScale})`,
+    transformOrigin: 'center center',
+    willChange: normalizedVisualScale === 1 ? undefined : 'transform',
+  }), [bookPixelHeight, bookPixelWidth, normalizedVisualScale]);
+  const stageStyle = useMemo(() => ({
+    minWidth: `${Math.ceil(scaledBookPixelWidth) + 24}px`,
+    minHeight: `${Math.ceil(scaledBookPixelHeight) + 24}px`,
+  }), [scaledBookPixelHeight, scaledBookPixelWidth]);
   const handlePageChange = useCallback(bookIndex => {
     if (typeof onPageIndexChange !== 'function') return;
     const normalizedBookIndex = Math.max(0, Number(bookIndex) || 0);
@@ -345,7 +374,16 @@ function ViewerFlipBook({
       ?? model.bookToPageIndex.get(fallbackBookIndex);
     if (Number.isInteger(nextPageIndex)) onPageIndexChange(nextPageIndex);
   }, [model, onPageIndexChange, spread]);
-  const pageElements = model.entries.map(entry => (
+  useEffect(() => {
+    if (lastNavigationKeyRef.current === navigationKey) return undefined;
+    lastNavigationKeyRef.current = navigationKey;
+    const frame = window.requestAnimationFrame(() => {
+      flipBookRef.current?.flip?.(currentBookIndex);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentBookIndex, navigationKey]);
+  const pageRenderDependency = renderKey ?? renderPage;
+  const pageElements = useMemo(() => model.entries.map(entry => (
     <div
       key={`flipbook-page-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
       className={viewerClassName(
@@ -360,38 +398,50 @@ function ViewerFlipBook({
       <div className={viewerClassName('viewer-flipbook-page-inner', `is-${entry.side}-page`)}>
         {entry.blank
           ? <div className="viewer-flipbook-blank-page" />
-          : renderPage?.(entry.sourceIndex, entry)}
+          : renderPageRef.current?.(entry.sourceIndex, entry)}
       </div>
     </div>
-  ));
+  )), [
+    model.entries,
+    normalizedPageSize.height,
+    normalizedPageSize.width,
+    pageClassName,
+    pageRenderDependency,
+  ]);
   if (normalizedPageCount <= 0 || pageElements.length < 1) return null;
   return (
-    <div className={viewerClassName(className, 'viewer-flipbook-stage', spread ? 'is-spread' : 'is-single')}>
-      <ReactFlipBook
-        key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}`}
-        className="viewer-flipbook"
-        style={bookStyle}
-        width={normalizedPageSize.width}
-        height={normalizedPageSize.height}
-        size="fixed"
-        startPage={currentBookIndex}
-        currentPage={currentBookIndex}
-        flippingTime={BOOK_PAGE_TURN_DURATION}
-        usePortrait={!spread}
-        autoSize={false}
-        showCover={false}
-        drawShadow
-        maxShadowOpacity={0.52}
-        mobileScrollSupport={false}
-        clickEventForward={false}
-        useMouseEvents={false}
-        showPageCorners={false}
-        disableFlipByClick
-        enableKeyboardNav={false}
-        onPageChange={handlePageChange}
-      >
-        {pageElements}
-      </ReactFlipBook>
+    <div
+      className={viewerClassName(className, 'viewer-flipbook-stage', spread ? 'is-spread' : 'is-single')}
+      style={stageStyle}
+    >
+      <div className="viewer-flipbook-scale" style={scaleStyle}>
+        <ReactFlipBook
+          ref={flipBookRef}
+          key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}`}
+          className="viewer-flipbook"
+          style={bookStyle}
+          width={normalizedPageSize.width}
+          height={normalizedPageSize.height}
+          size="fixed"
+          startPage={currentBookIndex}
+          currentPage={currentBookIndex}
+          flippingTime={BOOK_PAGE_TURN_DURATION}
+          usePortrait={!spread}
+          autoSize={false}
+          showCover={false}
+          drawShadow
+          maxShadowOpacity={0.52}
+          mobileScrollSupport={false}
+          clickEventForward={false}
+          useMouseEvents={false}
+          showPageCorners={false}
+          disableFlipByClick
+          enableKeyboardNav={false}
+          onPageChange={handlePageChange}
+        >
+          {pageElements}
+        </ReactFlipBook>
+      </div>
     </div>
   );
 }
@@ -1858,7 +1908,7 @@ function ViewerHelpModal({ open, onClose }) {
     { title: viewerText('viewer.settings.hide_header', '머릿글 숨기기'), description: viewerText('viewer.help.settings_header', '페이지 상단 제목 표시 여부를 조절합니다.') },
     { title: viewerText('viewer.settings.hide_footer', '바닥글 숨기기'), description: viewerText('viewer.help.settings_footer', '페이지 번호 표시 여부를 조절합니다.') },
     { title: viewerText('viewer.settings.wrap', '줄바꿈'), description: viewerText('viewer.help.settings_wrap', '텍스트 줄바꿈 기준을 단어 또는 글자 단위로 선택합니다.') },
-    { title: viewerText('viewer.settings.page_effect', '넘김효과'), description: viewerText('viewer.help.settings_page_effect', '페이지 이동 시 효과없음, 슬라이드, 책 넘김 효과를 선택합니다.') },
+    { title: viewerText('viewer.settings.page_effect', '넘김효과'), description: viewerText('viewer.help.settings_page_effect', '페이지 이동 시 효과없음, 슬라이드, 페이드, 책 넘김 효과를 선택합니다.') },
   ];
   const navigationRows = [
     { title: viewerText('viewer.navigation.toc', '목차'), description: viewerText('viewer.help.navigation_toc', '파일에 포함된 목차를 표시하고 항목을 클릭하면 해당 위치로 이동합니다.') },
@@ -2539,11 +2589,12 @@ function ReaderRangeSetting({ label, value, min, max, step = 1, unit = '', onCha
 }
 
 function ReaderSegmentedSetting({ label, value, options, onChange }) {
+  const shouldWrap = options.length > 4;
   return (
     <div className="viewer-setting-field">
       <span>{label}</span>
       <div
-        className="viewer-segmented-buttons"
+        className={`viewer-segmented-buttons ${shouldWrap ? 'is-wrapped' : ''}`.trim()}
         role="radiogroup"
         aria-label={label}
         style={{ '--viewer-segment-count': options.length }}
@@ -2827,6 +2878,7 @@ function ViewerApp() {
   const [readerSettings, setReaderSettings] = useState(normalizeReaderSettings());
   const [viewerBackground, setViewerBackground] = useState(normalizeViewerBackgroundSettings());
   const [pageTurn, setPageTurn] = useState(EMPTY_PAGE_TURN);
+  const [pageJumpSequence, setPageJumpSequence] = useState(0);
   const [bookmarks, setBookmarks] = useState([]);
   const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false);
   const [bookmarkEditorOpen, setBookmarkEditorOpen] = useState(false);
@@ -3136,7 +3188,20 @@ function ViewerApp() {
     ));
   }, [hasNextBook, showViewerToast, viewerLanguage]);
   const updateReaderSettings = patch => {
+    if (patch?.pageEffect === 'page') {
+      setFlowMode('spread');
+      showViewerToast(viewerText(
+        'viewer.toast.page_turn_effect_notice',
+        '책넘김 효과는 두장보기모드만 지원하며, 엠비라이트 효과가 비활성화됩니다'
+      ));
+    }
     setReaderSettings(current => normalizeReaderSettings({ ...current, ...patch }));
+  };
+  const updateFlowMode = nextFlowMode => {
+    setFlowMode(nextFlowMode);
+    if (nextFlowMode !== 'spread' && readerSettings.pageEffect === 'page') {
+      setReaderSettings(current => normalizeReaderSettings({ ...current, pageEffect: 'slide' }));
+    }
   };
   const updateViewerBackground = patch => {
     setViewerBackground(current => normalizeViewerBackgroundSettings({ ...current, ...patch }));
@@ -3346,6 +3411,13 @@ function ViewerApp() {
     node.scrollLeft = 0;
   }, []);
 
+  useEffect(() => {
+    if (readerSettings.pageEffect !== 'page' || flowMode === 'spread') return;
+    setFlowMode('spread');
+    resetPageModeScroll();
+    window.requestAnimationFrame(resetPageModeScroll);
+  }, [flowMode, readerSettings.pageEffect, resetPageModeScroll]);
+
   const rememberComicPageImageSize = useCallback((pageName, naturalWidth, naturalHeight) => {
     const width = Math.max(1, Number(naturalWidth) || 0);
     const height = Math.max(1, Number(naturalHeight) || 0);
@@ -3380,6 +3452,7 @@ function ViewerApp() {
       return false;
     }
     clearPageTurnRuntime();
+    const duration = PAGE_EFFECT_DURATIONS[readerSettings.pageEffect] || 190;
     setPageTurn(current => ({
       format,
       effect: readerSettings.pageEffect,
@@ -3389,11 +3462,12 @@ function ViewerApp() {
       fromIndex: currentIndex,
       toIndex: targetIndex,
       progress: 1,
+      duration,
     }));
     pageTurnTimerRef.current = window.setTimeout(() => {
       setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
       pageTurnTimerRef.current = null;
-    }, 190);
+    }, duration);
     return false;
   }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect]);
 
@@ -4881,15 +4955,24 @@ function ViewerApp() {
         event.preventDefault();
         addBookmark();
       } else if (event.key === 'Home') {
-        if (session?.type === 'pdf') goPdfPage(0);
-        else setPageIndexSynced(0);
-        if (session?.type !== 'pdf') scrollRef.current?.scrollTo?.({ top: 0 });
+        event.preventDefault();
+        event.stopPropagation();
+        setPageJumpSequence(current => current + 1);
+        goNavigationPage(0);
+        if (flowMode === 'scroll') {
+          window.requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ top: 0, left: 0 }));
+        }
       } else if (event.key === 'End') {
+        event.preventDefault();
+        event.stopPropagation();
         const lastPageIndex = Math.max(0, pageCount - 1);
-        if (session?.type === 'pdf') goPdfPage(lastPageIndex);
-        else {
-          setPageIndexSynced(lastPageIndex);
-          if (flowMode === 'scroll') scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight });
+        setPageJumpSequence(current => current + 1);
+        goNavigationPage(lastPageIndex);
+        if (flowMode === 'scroll') {
+          window.requestAnimationFrame(() => {
+            const node = scrollRef.current;
+            node?.scrollTo?.({ top: node.scrollHeight, left: 0 });
+          });
         }
       } else if (event.key === 'Escape') {
         window.viewerAPI?.closeWindow?.();
@@ -4897,7 +4980,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goPdfPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, setPageIndexSynced, settingsOpen, toggleFullscreen, toggleToolbarPinned]);
+  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -4914,7 +4997,7 @@ function ViewerApp() {
   const comicSpreadPages = useMemo(() => getComicSpreadPagesForIndex(pageIndex), [getComicSpreadPagesForIndex, pageIndex]);
 
   const imageClassName = `viewer-comic-image view-${viewMode}`;
-  const getComicImageStyle = (page, pageSlots = 1) => {
+  const getComicImageStyle = (page, pageSlots = 1, renderZoom = zoom) => {
     const size = pageSizes[page?.name];
     if (!size) return undefined;
     const slots = Math.max(1, Number(pageSlots) || 1);
@@ -4926,7 +5009,7 @@ function ViewerApp() {
       baseHeight: size.height,
       availableWidth,
       availableHeight,
-      zoom,
+      zoom: renderZoom,
     });
     return {
       width: `${scaledSize.width}px`,
@@ -4934,6 +5017,24 @@ function ViewerApp() {
       maxWidth: 'none',
       maxHeight: 'none',
       flex: '0 0 auto',
+    };
+  };
+  const getComicFlipBookPageSize = (pageSlots = 2, renderZoom = zoom) => {
+    const fallbackSize = getFlipBookPageSize(pageSlots, 160);
+    const stepSize = Math.max(1, Number(getStepSizeForIndex(pageIndex)) || 1);
+    const visibleIndexes = Array.from({ length: stepSize }, (_, offset) => pageIndex + offset)
+      .filter(index => index >= 0 && index < pages.length);
+    const renderedSizes = visibleIndexes
+      .map(index => getComicImageStyle(pages[index], pageSlots, renderZoom))
+      .map(style => ({
+        width: Number.parseFloat(style?.width || ''),
+        height: Number.parseFloat(style?.height || ''),
+      }))
+      .filter(size => Number.isFinite(size.width) && Number.isFinite(size.height));
+    if (renderedSizes.length < 1) return fallbackSize;
+    return {
+      width: Math.max(fallbackSize.width, ...renderedSizes.map(size => Math.ceil(size.width))),
+      height: Math.max(fallbackSize.height, ...renderedSizes.map(size => Math.ceil(size.height))),
     };
   };
   const renderComicImage = (page, fallbackIndex = 0, pageSlots = 1, options = {}) => {
@@ -4997,14 +5098,24 @@ function ViewerApp() {
         </div>
       );
     }
-    const isBookPageEffect = readerSettings.pageEffect === 'page';
+    const isBookPageEffect = readerSettings.pageEffect === 'page' && flowMode === 'spread';
     if (isBookPageEffect) {
       const spread = flowMode === 'spread';
       const pageSlots = spread ? 2 : 1;
-      const pageSize = getFlipBookPageSize(pageSlots, 160);
+      const flipBookRenderZoom = 100;
+      const pageSize = getComicFlipBookPageSize(pageSlots, flipBookRenderZoom);
+      const flipBookVisualScale = Math.max(0.02, (Number(zoom) || 100) / 100);
+      const comicFlipBookRenderKey = [
+        pageSize.width,
+        pageSize.height,
+        pages.length,
+        Object.keys(pageData).length,
+        Object.keys(pageErrors).length,
+        Object.keys(pageSizes).length,
+      ].join('|');
       return (
         <ViewerFlipBook
-          bookKey={`comic-${session?.id || session?.filePath || 'comic'}-${viewMode}-${zoom}-${spreadCoverFirst}-${comicSinglePageNames.join('|')}`}
+          bookKey={`comic-${session?.id || session?.filePath || 'comic'}-${viewMode}-${spreadCoverFirst}-${comicSinglePageNames.join('|')}`}
           className={`viewer-comic-stage is-${viewMode}`.trim()}
           pageClassName="is-comic"
           pageCount={pageCount}
@@ -5013,13 +5124,16 @@ function ViewerApp() {
           readingDirection={readingDirection}
           pageSize={pageSize}
           getStepSizeForIndex={getStepSizeForIndex}
+          navigationKey={pageJumpSequence}
+          visualScale={flipBookVisualScale}
+          renderKey={comicFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
           renderPage={(sourceIndex, entry) => {
             const page = pages[sourceIndex];
             return page ? renderComicImage(page, sourceIndex, pageSlots, {
               objectFit: 'contain',
               frameStyle: {
-                ...getComicImageStyle(page, pageSlots),
+                ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
                 maxWidth: '100%',
                 maxHeight: '100%',
               },
@@ -5208,20 +5322,21 @@ function ViewerApp() {
       </article>
     );
     const spread = flowMode === 'spread';
-    if (readerSettings.pageEffect === 'page') {
+    if (readerSettings.pageEffect === 'page' && spread) {
       const pageSize = {
         width: Math.max(180, Math.round(readerPageMetrics.pageFrameWidth || getFlipBookPageSize(spread ? 2 : 1).width)),
         height: Math.max(260, Math.round(readerPageMetrics.pageFrameHeight || getFlipBookPageSize(spread ? 2 : 1).height)),
       };
       return (
         <ViewerFlipBook
-          bookKey={`reader-${session?.id || session?.filePath || session?.type || 'reader'}-${viewMode}-${zoom}-${readerSettings.fontFamily}-${readerSettings.fontScale}`}
+          bookKey={`reader-${session?.id || session?.filePath || session?.type || 'reader'}-${viewMode}-${readerSettings.fontFamily}-${readerSettings.fontScale}`}
           className={`viewer-reader-stage is-${viewMode}`.trim()}
           pageClassName="is-reader"
           pageCount={items.length}
           currentPageIndex={pageIndex}
           spread={spread}
           pageSize={pageSize}
+          navigationKey={pageJumpSequence}
           onPageIndexChange={handleFlipBookPageIndexChange}
           renderPage={(sourceIndex, entry) => renderReaderArticle(items[sourceIndex], entry.leafOffset, sourceIndex)}
         />
@@ -5271,7 +5386,7 @@ function ViewerApp() {
       ? `has-page-effect effect-${pageTurn.effect} effect-${pageTurn.direction}`
       : '';
     const pdfStageClassName = `viewer-pdf-stage is-${flowMode} is-${viewMode} ${hasSpreadPair ? 'has-spread-pair' : ''} ${pdfEffectClassName}`.trim();
-    const renderPdfPage = (index, slots, keyPrefix = 'page', activeIndex = displayStartIndex, forceActive = false) => (
+    const renderPdfPage = (index, slots, keyPrefix = 'page', activeIndex = displayStartIndex, forceActive = false, renderZoom = zoom) => (
       <PdfPageCanvas
         key={`${session?.id || 'pdf'}-${keyPrefix}-${index}`}
         pdfDocument={pdfDocument}
@@ -5280,23 +5395,35 @@ function ViewerApp() {
         containerHeight={readerViewport.height}
         pageSlots={slots}
         viewMode={viewMode}
-        zoom={zoom}
+        zoom={renderZoom}
         active={forceActive || (keyPrefix !== 'flipbook' && flowMode !== 'scroll') || index === activeIndex}
       />
     );
-    if (readerSettings.pageEffect === 'page' && flowMode !== 'scroll') {
+    if (readerSettings.pageEffect === 'page' && flowMode === 'spread') {
       const spread = flowMode === 'spread';
       const slots = spread ? 2 : 1;
       const pageSize = getFlipBookPageSize(slots, 180);
+      const flipBookVisualScale = Math.max(0.02, (Number(zoom) || 100) / 100);
+      const flipBookRenderZoom = 100;
+      const pdfFlipBookRenderKey = [
+        pageIndex,
+        pdfPageCount,
+        readerViewport.width,
+        readerViewport.height,
+        viewMode,
+      ].join('|');
       return (
         <ViewerFlipBook
-          bookKey={`pdf-${session?.id || session?.filePath || 'pdf'}-${viewMode}-${zoom}`}
+          bookKey={`pdf-${session?.id || session?.filePath || 'pdf'}-${viewMode}`}
           className={`viewer-pdf-stage is-${flowMode} is-${viewMode}`.trim()}
           pageClassName="is-pdf"
           pageCount={pdfPageCount}
           currentPageIndex={pageIndex}
           spread={spread}
           pageSize={pageSize}
+          navigationKey={pageJumpSequence}
+          visualScale={flipBookVisualScale}
+          renderKey={pdfFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
           renderPage={sourceIndex => renderPdfPage(
             sourceIndex,
@@ -5304,6 +5431,7 @@ function ViewerApp() {
             'flipbook',
             pageIndex,
             Math.abs(sourceIndex - pageIndex) <= slots + 1,
+            flipBookRenderZoom,
           )}
         />
       );
@@ -5347,7 +5475,9 @@ function ViewerApp() {
     : flowMode !== 'scroll' && pageIndex <= 0;
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
   const slideNavAvailable = Boolean(session && pageCount > 0 && (session.type !== 'pdf' || pdfDocument));
-  const backgroundMode = supportsBackgroundSettings ? viewerBackground.mode : 'solid';
+  const backgroundMode = supportsBackgroundSettings && readerSettings.pageEffect !== 'page'
+    ? viewerBackground.mode
+    : 'solid';
   const toolbarVisible = toolbarPinnedOpen || toolbarPeekOpen;
   const toolbarToggleTitle = toolbarPinnedOpen
     ? viewerText('viewer.toolbar.hide_toolbar', '툴바 숨기기 (Tab)')
@@ -5358,12 +5488,17 @@ function ViewerApp() {
     '--viewer-content-bg': viewerBackground.color,
     '--viewer-toolbar-height': `${toolbarHeight}px`,
   };
+  const ambientTurnActive = backgroundMode === 'immersive'
+    && pageTurn.active
+    && pageTurn.effect !== 'none'
+    && pageTurn.effect !== 'page';
   const ambientBackdropStyle = backgroundMode === 'immersive'
     ? {
-      backgroundImage: immersiveGradientForPage(pageIndex),
-      '--viewer-ambient-next-gradient': 'none',
-      '--viewer-ambient-turn-progress': 0,
+      backgroundImage: immersiveGradientForPage(ambientTurnActive ? pageTurn.fromIndex : pageIndex),
+      '--viewer-ambient-next-gradient': ambientTurnActive ? immersiveGradientForPage(pageTurn.toIndex) : 'none',
+      '--viewer-ambient-turn-progress': ambientTurnActive ? 1 : 0,
       '--viewer-ambient-turn-texture-color': 'rgba(0, 0, 0, 0)',
+      '--viewer-ambient-turn-duration': `${ambientTurnActive ? pageTurn.duration || 180 : 80}ms`,
     }
     : undefined;
   const isPageMode = flowMode !== 'scroll';
@@ -5508,7 +5643,7 @@ function ViewerApp() {
                   title={viewerText(option.labelKey, option.label)}
                   iconSrc={option.iconSrc}
                   active={flowMode === option.id}
-                  onClick={runToolbarAction(() => setFlowMode(option.id))}
+                  onClick={runToolbarAction(() => updateFlowMode(option.id))}
                 />
               ))}
             </div>

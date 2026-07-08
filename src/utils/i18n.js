@@ -132,6 +132,7 @@ const EXTRA_TRANSLATIONS = {
         wrap_char: '글자단위',
         effect_none: '효과없음',
         effect_slide: '슬라이드',
+        effect_fade: '페이드',
         effect_page: '책 넘김',
         align_left: '왼쪽 맞춤',
         align_justify: '양쪽 맞춤',
@@ -148,6 +149,7 @@ const EXTRA_TRANSLATIONS = {
       },
       toast: {
         next_book_hint: '마지막 페이지입니다. 다음장 입력을 한 번 더 하면 다음 파일이 열립니다.',
+        page_turn_effect_notice: '책넘김 효과는 두장보기모드만 지원하며, 엠비라이트 효과가 비활성화됩니다',
       },
       settings: {
         viewer: '뷰어 설정',
@@ -250,7 +252,7 @@ const EXTRA_TRANSLATIONS = {
         settings_header: '페이지 상단 제목 표시 여부를 조절합니다.',
         settings_footer: '페이지 번호 표시 여부를 조절합니다.',
         settings_wrap: '텍스트 줄바꿈 기준을 단어 또는 글자 단위로 선택합니다.',
-        settings_page_effect: '페이지 이동 시 효과없음, 슬라이드, 책 넘김 효과를 선택합니다. 만화책은 읽기방향에 따라 슬라이드와 책 넘김 방향이 반전됩니다.',
+        settings_page_effect: '페이지 이동 시 효과없음, 슬라이드, 페이드, 책 넘김 효과를 선택합니다. 만화책은 읽기방향에 따라 좌우 방향 효과가 반전됩니다.',
         navigation_toc: '파일에 포함된 목차를 표시하고 항목을 클릭하면 해당 위치로 이동합니다.',
         navigation_search: '검색어를 입력하고 Enter를 누르면 정확히 일치하는 문자열을 찾습니다.',
         navigation_results: '검색 결과는 앞뒤 문맥과 함께 표시되며 클릭하면 해당 페이지로 이동합니다.',
@@ -399,6 +401,7 @@ const EXTRA_TRANSLATIONS = {
         wrap_char: 'By character',
         effect_none: 'None',
         effect_slide: 'Slide',
+        effect_fade: 'Fade',
         effect_page: 'Page turn',
         align_left: 'Left',
         align_justify: 'Justify',
@@ -415,6 +418,7 @@ const EXTRA_TRANSLATIONS = {
       },
       toast: {
         next_book_hint: 'This is the last page. Press Next page once more to open the next file.',
+        page_turn_effect_notice: 'Page turn is only supported in two-page mode, and Ambilight will be disabled.',
       },
       settings: {
         viewer: 'Viewer settings',
@@ -517,7 +521,7 @@ const EXTRA_TRANSLATIONS = {
         settings_header: 'Control whether page titles are shown at the top.',
         settings_footer: 'Control whether page numbers are shown.',
         settings_wrap: 'Choose word-based or character-based line wrapping.',
-        settings_page_effect: 'Choose no effect, slide, or page-turn effect for page movement. For comics, slide and page-turn directions follow the reading direction.',
+        settings_page_effect: 'Choose none, slide, fade, or page turn for page movement. For comics, horizontal effects follow the reading direction.',
         navigation_toc: 'Show the file table of contents and click an item to move there.',
         navigation_search: 'Enter a query and press Enter to find exact text matches.',
         navigation_results: 'Search results show surrounding context and move to the page when clicked.',
@@ -666,6 +670,7 @@ const EXTRA_TRANSLATIONS = {
         wrap_char: '文字単位',
         effect_none: '効果なし',
         effect_slide: 'スライド',
+        effect_fade: 'フェード',
         effect_page: 'ページめくり',
         align_left: '左揃え',
         align_justify: '両端揃え',
@@ -682,6 +687,7 @@ const EXTRA_TRANSLATIONS = {
       },
       toast: {
         next_book_hint: '最後のページです。もう一度「次のページ」を押すと次のファイルを開きます。',
+        page_turn_effect_notice: 'ページめくり効果は2ページ表示でのみ使用でき、アンビライト効果は無効になります。',
       },
       settings: {
         viewer: 'ビューア設定',
@@ -784,7 +790,7 @@ const EXTRA_TRANSLATIONS = {
         settings_header: 'ページ上部のタイトル表示を調整します。',
         settings_footer: 'ページ番号の表示を調整します。',
         settings_wrap: 'テキストの改行基準を単語単位または文字単位で選択します。',
-        settings_page_effect: 'ページ移動時の効果なし、スライド、ページめくり効果を選択します。コミックでは読む方向に合わせてスライドとページめくりの方向が反転します。',
+        settings_page_effect: 'ページ移動時の効果なし、スライド、フェード、ページめくり効果を選択します。コミックでは読む方向に合わせて左右方向の効果が反転します。',
         navigation_toc: 'ファイルに含まれる目次を表示し、項目をクリックするとその位置へ移動します。',
         navigation_search: '検索語を入力してEnterを押すと完全一致する文字列を探します。',
         navigation_results: '検索結果は前後の文脈とともに表示され、クリックすると該当ページへ移動します。',
