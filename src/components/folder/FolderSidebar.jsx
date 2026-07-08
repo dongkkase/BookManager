@@ -18,12 +18,27 @@ import {
   scheduleAfterNextPaint,
 } from '../../selectionVisualFeedback';
 
+const libraryPathKey = value => String(value || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+const fallbackLibraryName = value => String(value || '').split(/[\\/]/).filter(Boolean).pop() || value;
+const SIDEBAR_COLLAPSE_STORAGE_KEY = 'bookmanager.folderSidebar.collapsedSections';
+
+function readStoredSidebarCollapseState() {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
   const [roots, setRoots] = useState([]);
   const [folderCache, setFolderCache] = useState({});
   const [libraryFolderCounts, setLibraryFolderCounts] = useState({});
@@ -45,6 +60,61 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   };
 
   const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
+  const libraryItems = useMemo(() => {
+    const metaByPath = new Map((libraryEntries || [])
+      .filter(entry => entry?.path)
+      .map(entry => [libraryPathKey(entry.path), entry]));
+    return (libraries || []).map((libraryPath, index) => {
+      const meta = metaByPath.get(libraryPathKey(libraryPath)) || {};
+      return {
+        path: libraryPath,
+        index,
+        name: meta.alias || fallbackLibraryName(libraryPath),
+        group: meta.group || '',
+      };
+    });
+  }, [libraries, libraryEntries]);
+  const groupedLibraryItems = useMemo(() => {
+    const groups = [];
+    const groupMap = new Map();
+    for (const item of libraryItems) {
+      const groupKey = item.group || '';
+      if (!groupMap.has(groupKey)) {
+        const group = { key: groupKey, label: item.group, items: [] };
+        groupMap.set(groupKey, group);
+        groups.push(group);
+      }
+      groupMap.get(groupKey).items.push(item);
+    }
+    return groups;
+  }, [libraryItems]);
+  const isSectionCollapsed = useCallback(sectionKey => Boolean(collapsedSections[sectionKey]), [collapsedSections]);
+  const toggleSidebarSection = useCallback(sectionKey => {
+    setCollapsedSections(current => ({
+      ...current,
+      [sectionKey]: !current[sectionKey],
+    }));
+  }, []);
+  const sectionToggleLabel = useCallback((sectionLabel, collapsed) => (
+    t(collapsed ? 'folder.sidebar.expand_section' : 'folder.sidebar.collapse_section', [sectionLabel])
+  ), [t]);
+  const renderSectionToggle = useCallback((sectionKey, sectionLabel) => {
+    const collapsed = isSectionCollapsed(sectionKey);
+    const label = sectionToggleLabel(sectionLabel, collapsed);
+    return (
+      <button
+        type="button"
+        className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn sidebar-section-toggle-btn"
+        title={label}
+        aria-label={label}
+        aria-expanded={!collapsed}
+        data-tooltip={label}
+        onClick={() => toggleSidebarSection(sectionKey)}
+      >
+        <FaIcon name={collapsed ? 'chevronRight' : 'angleDown'} size={10} />
+      </button>
+    );
+  }, [isSectionCollapsed, sectionToggleLabel, toggleSidebarSection]);
   const applySidebarSelection = useCallback(event => {
     applyImmediateSingleSelection(
       sidebarRef.current,
@@ -61,16 +131,16 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   }, []);
 
   const treeRoots = useMemo(() => {
-    const libraryNodes = (libraries || []).map(lib => ({
-      name: lib.split(/[\\/]/).pop() || lib,
-      path: lib,
+    const libraryNodes = libraryItems.map(item => ({
+      name: item.name,
+      path: item.path,
       isFolder: true,
       isLibraryRoot: true,
     }));
     const libraryPathSet = new Set(libraryNodes.map(node => node.path));
     const systemRoots = roots.filter(root => !libraryPathSet.has(root.path));
     return [...libraryNodes, ...systemRoots];
-  }, [libraries, roots]);
+  }, [libraryItems, roots]);
 
   const findContainingLibraryRoot = useCallback(folderPath => (
     (libraries || [])
@@ -113,6 +183,15 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   useEffect(() => () => {
     pendingNavigationRef.current?.();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSE_STORAGE_KEY, JSON.stringify(collapsedSections));
+    } catch {
+      // Ignore storage failures; the sidebar can still operate with in-memory state.
+    }
+  }, [collapsedSections]);
 
   useEffect(() => {
     const fetchRoots = async () => {
@@ -240,168 +319,191 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   }, [selectedFolderPath, expandedFolders]);
 
   // 라이브러리 목록
-  const renderLibraryList = () => (
-    <div className="sidebar-section">
-      <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.libraries')}</span>
-        <div className="folder-sidebar-header-actions">
-          <button
-            type="button"
-            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
-            title={t('tab_folder_settings')}
-            aria-label={t('tab_folder_settings')}
-            data-tooltip={t('tab_folder_settings')}
-            onClick={onOpenLibrarySettings}
-          >
-            <FaIcon name="gear" size={12} />
-          </button>
-          <button
-            type="button"
-            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
-            title={t('folder.sidebar.add_library')}
-            aria-label={t('folder.sidebar.add_library')}
-            data-tooltip={t('folder.sidebar.add_library')}
-            onClick={onAddLibrary}
-          >
-            <FaIcon name="plus" size={12} />
-          </button>
-        </div>
-      </div>
-      <ul className="nav-list">
-        {libraries.length > 0 ? libraries.map((lib, idx) => {
-          const libraryKey = normalizeLibraryKey(lib);
-          const scanState = libraryScanStateMap[libraryKey];
-          const libraryMetaText = libraryStatusText(t, scanState, {
-            folderCount: libraryFolderCounts[libraryKey] || 0,
-          });
-          const isSyncing = isLibraryScanning(scanState);
-          const showSyncButton = shouldShowLibrarySyncButton(scanState);
-          const selectedPath = optimisticSelectedPath || selectedFolderPath;
-          return (
-          <li
-            key={idx}
-            data-folder-sidebar-path={lib}
-            className={`library-list-item ${selectedSource === 'library' && (selectedLibrary === idx || selectedPath === lib) ? 'selected' : ''}`}
-            onClick={(event) => {
-              applySidebarSelection(event);
-              setSelectedSource('library');
-              setOptimisticSelectedPath(lib);
-              if (onSelectLibrary) onSelectLibrary(idx);
-              scheduleSidebarNavigation(() => {
-                if (onSelectLibraryFolder) onSelectLibraryFolder(lib);
-                else if (onSelectFolder) onSelectFolder(lib);
-              });
-            }}
-            onContextMenu={(event) => onLibraryContextMenu?.(event, lib)}
-          >
-            <div className="library-list-main" title={`${lib}\n${libraryMetaText}`}>
-              <span className="library-list-name">{lib.split(/[\\/]/).pop() || lib}</span>
-              <span className={`library-scan-status ${libraryStatusClass(scanState)}`}>
-                {libraryMetaText}
-              </span>
-            </div>
-            <div className="library-list-actions">
-              {showSyncButton && (
-                <button
-                  type="button"
-                  className="library-sync-btn"
-                  disabled={isSyncing}
-                  title={t('folder_library_manual_scan')}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSyncLibrary?.(lib, false);
-                  }}
-                >
-                  <FaIcon name="arrowRotateLeft" size={11} />
-                </button>
-              )}
-              <button
-                type="button"
-                className="library-menu-btn folder-sidebar-tooltip-btn"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onLibraryContextMenu?.(event, lib);
-                }}
-                title={t('folder.sidebar.more_actions')}
-                aria-label={t('folder.sidebar.more_actions')}
-                data-tooltip={t('folder.sidebar.more_actions')}
-              >
-                <FaIcon name="ellipsisVertical" size={12} />
-              </button>
-            </div>
-          </li>
-          );
-        }) : (
-          <li style={{ color: '#888', fontStyle: 'italic', padding: '4px 8px' }}>
-            {t('folder.sidebar.empty_libraries')}
-          </li>
-        )}
-      </ul>
-    </div>
-  );
-
-  // 즐겨찾기 목록
-  const renderFavoritesList = () => (
-    <div className="sidebar-section" style={{ marginTop: '10px' }}>
-      <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.favorites')}</span>
-        <div className="folder-sidebar-header-actions">
-          <button
-            type="button"
-            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn favorite-add-btn"
-            title={t('folder.sidebar.add_favorite')}
-            aria-label={t('folder.sidebar.add_favorite')}
-            data-tooltip={t('folder.sidebar.add_favorite')}
-            onClick={() => selectedFolderPath && onAddFavorite && onAddFavorite(selectedFolderPath)}
-            disabled={!selectedFolderPath}
-          >
-            <FaIcon name="star" size={12} />
-          </button>
-        </div>
-      </div>
-      <ul className="nav-list">
-        {favorites.map((favorite, idx) => {
-          const fav = typeof favorite === 'string' ? { name: favorite.split(/[\\/]/).pop() || favorite, path: favorite } : favorite;
-          return (
-          <li
-            key={fav.path || idx}
-            data-folder-sidebar-path={fav.path}
-            className={selectedSource === 'favorite' && (selectedFavorite === idx || (optimisticSelectedPath || selectedFolderPath) === fav.path) ? 'selected' : ''}
-            onClick={(event) => {
-              applySidebarSelection(event);
-              setSelectedSource('favorite');
-              setOptimisticSelectedPath(fav.path);
-              if (onSelectFavorite) onSelectFavorite(idx);
-              scheduleSidebarNavigation(() => onSelectFolder?.(fav.path));
-            }}
-            onContextMenu={(event) => onFolderContextMenu?.(event, fav.path)}
-            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-          >
-            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={fav.path}>{fav.name}</span>
+  const renderLibraryList = () => {
+    const sectionLabel = t('folder.sidebar.libraries');
+    const collapsed = isSectionCollapsed('libraries');
+    return (
+      <div className={`sidebar-section sidebar-section-library ${collapsed ? 'is-collapsed' : ''}`}>
+        <div className="nav-header">
+          <span className="nav-header-title">{sectionLabel}</span>
+          <div className="folder-sidebar-header-actions">
+            {renderSectionToggle('libraries', sectionLabel)}
             <button
               type="button"
-              className="favorite-menu-btn folder-sidebar-tooltip-btn"
-              onClick={(event) => {
-                event.stopPropagation();
-                onFolderContextMenu?.(event, fav.path);
-              }}
-              title={t('folder.sidebar.more_actions')}
-              aria-label={t('folder.sidebar.more_actions')}
-              data-tooltip={t('folder.sidebar.more_actions')}
+              className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
+              title={t('tab_folder_settings')}
+              aria-label={t('tab_folder_settings')}
+              data-tooltip={t('tab_folder_settings')}
+              onClick={onOpenLibrarySettings}
             >
-              <FaIcon name="ellipsisVertical" size={12} />
+              <FaIcon name="gear" size={12} />
             </button>
-          </li>
-          );
-        })}
-        {favorites.length === 0 && (
-          <li style={{ color: '#888', fontStyle: 'italic', padding: '4px 8px' }}>
-            {t('folder.sidebar.empty_favorites')}
-          </li>
+            <button
+              type="button"
+              className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
+              title={t('folder.sidebar.add_library')}
+              aria-label={t('folder.sidebar.add_library')}
+              data-tooltip={t('folder.sidebar.add_library')}
+              onClick={onAddLibrary}
+            >
+              <FaIcon name="plus" size={12} />
+            </button>
+          </div>
+        </div>
+        {!collapsed && (
+          <ul className="nav-list">
+            {libraryItems.length > 0 ? groupedLibraryItems.map(group => (
+              <React.Fragment key={group.key || '__ungrouped'}>
+                {group.label ? (
+                  <li className="library-group-header" aria-hidden="true">{group.label}</li>
+                ) : null}
+                {group.items.map(item => {
+                  const lib = item.path;
+                  const idx = item.index;
+                  const libraryKey = normalizeLibraryKey(lib);
+                  const scanState = libraryScanStateMap[libraryKey];
+                  const libraryMetaText = libraryStatusText(t, scanState, {
+                    folderCount: libraryFolderCounts[libraryKey] || 0,
+                  });
+                  const isSyncing = isLibraryScanning(scanState);
+                  const showSyncButton = shouldShowLibrarySyncButton(scanState);
+                  const selectedPath = optimisticSelectedPath || selectedFolderPath;
+                  const isGroupedLibrary = Boolean(group.label);
+                  return (
+                    <li
+                      key={lib}
+                      data-folder-sidebar-path={lib}
+                      className={`library-list-item ${isGroupedLibrary ? 'is-grouped' : ''} ${selectedSource === 'library' && (selectedLibrary === idx || selectedPath === lib) ? 'selected' : ''}`}
+                      onClick={(event) => {
+                        applySidebarSelection(event);
+                        setSelectedSource('library');
+                        setOptimisticSelectedPath(lib);
+                        if (onSelectLibrary) onSelectLibrary(idx);
+                        scheduleSidebarNavigation(() => {
+                          if (onSelectLibraryFolder) onSelectLibraryFolder(lib);
+                          else if (onSelectFolder) onSelectFolder(lib);
+                        });
+                      }}
+                      onContextMenu={(event) => onLibraryContextMenu?.(event, lib)}
+                    >
+                      <div className="library-list-main" title={`${lib}\n${libraryMetaText}`}>
+                        <span className="library-list-name">{item.name}</span>
+                        <span className={`library-scan-status ${libraryStatusClass(scanState)}`}>
+                          {libraryMetaText}
+                        </span>
+                      </div>
+                      <div className="library-list-actions">
+                        {showSyncButton && (
+                          <button
+                            type="button"
+                            className="library-sync-btn"
+                            disabled={isSyncing}
+                            title={t('folder_library_manual_scan')}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSyncLibrary?.(lib, false);
+                            }}
+                          >
+                            <FaIcon name="arrowRotateLeft" size={11} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="library-menu-btn folder-sidebar-tooltip-btn"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onLibraryContextMenu?.(event, lib);
+                          }}
+                          title={t('folder.sidebar.more_actions')}
+                          aria-label={t('folder.sidebar.more_actions')}
+                          data-tooltip={t('folder.sidebar.more_actions')}
+                        >
+                          <FaIcon name="ellipsisVertical" size={12} />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </React.Fragment>
+            )) : (
+              <li className="sidebar-empty-list">
+                {t('folder.sidebar.empty_libraries')}
+              </li>
+            )}
+          </ul>
         )}
-      </ul>
-    </div>
-  );
+      </div>
+    );
+  };
+
+  // 즐겨찾기 목록
+  const renderFavoritesList = () => {
+    const sectionLabel = t('folder.sidebar.favorites');
+    const collapsed = isSectionCollapsed('favorites');
+    return (
+      <div className={`sidebar-section sidebar-section-favorites ${collapsed ? 'is-collapsed' : ''}`}>
+        <div className="nav-header">
+          <span className="nav-header-title">{sectionLabel}</span>
+          <div className="folder-sidebar-header-actions">
+            {renderSectionToggle('favorites', sectionLabel)}
+            <button
+              type="button"
+              className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn favorite-add-btn"
+              title={t('folder.sidebar.add_favorite')}
+              aria-label={t('folder.sidebar.add_favorite')}
+              data-tooltip={t('folder.sidebar.add_favorite')}
+              onClick={() => selectedFolderPath && onAddFavorite && onAddFavorite(selectedFolderPath)}
+              disabled={!selectedFolderPath}
+            >
+              <FaIcon name="star" size={12} />
+            </button>
+          </div>
+        </div>
+        {!collapsed && (
+          <ul className="nav-list">
+            {favorites.map((favorite, idx) => {
+              const fav = typeof favorite === 'string' ? { name: favorite.split(/[\\/]/).pop() || favorite, path: favorite } : favorite;
+              return (
+                <li
+                  key={fav.path || idx}
+                  data-folder-sidebar-path={fav.path}
+                  className={selectedSource === 'favorite' && (selectedFavorite === idx || (optimisticSelectedPath || selectedFolderPath) === fav.path) ? 'selected' : ''}
+                  onClick={(event) => {
+                    applySidebarSelection(event);
+                    setSelectedSource('favorite');
+                    setOptimisticSelectedPath(fav.path);
+                    if (onSelectFavorite) onSelectFavorite(idx);
+                    scheduleSidebarNavigation(() => onSelectFolder?.(fav.path));
+                  }}
+                  onContextMenu={(event) => onFolderContextMenu?.(event, fav.path)}
+                >
+                  <span className="favorite-list-name" title={fav.path}>{fav.name}</span>
+                  <button
+                    type="button"
+                    className="favorite-menu-btn folder-sidebar-tooltip-btn"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onFolderContextMenu?.(event, fav.path);
+                    }}
+                    title={t('folder.sidebar.more_actions')}
+                    aria-label={t('folder.sidebar.more_actions')}
+                    data-tooltip={t('folder.sidebar.more_actions')}
+                  >
+                    <FaIcon name="ellipsisVertical" size={12} />
+                  </button>
+                </li>
+              );
+            })}
+            {favorites.length === 0 && (
+              <li className="sidebar-empty-list">
+                {t('folder.sidebar.empty_favorites')}
+              </li>
+            )}
+          </ul>
+        )}
+      </div>
+    );
+  };
 
   // 폴더 트리 뷰 (재귀 렌더링)
   const renderTreeNode = (node, depth = 0, siblings = []) => {
@@ -477,10 +579,10 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
   };
 
   const renderFolderTree = () => (
-    <div className="sidebar-section" style={{ marginTop: '10px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="sidebar-section sidebar-section-folders">
       <div className="nav-header">
-        <span style={{ color: 'white', fontWeight: 'bold', fontSize: 'var(--font-base)' }}>{t('folder.sidebar.folders')}</span>
-        <div style={{ display: 'flex', gap: '4px' }}>
+        <span className="nav-header-title">{t('folder.sidebar.folders')}</span>
+        <div className="folder-sidebar-header-actions">
           {[
             ['desktop', 'folder_desktop', 'desktop'],
             ['documents', 'folder_docs', 'fileLines'],
@@ -512,14 +614,14 @@ function FolderSidebar({ t, libraries = [], favorites = [], selectedLibrary, onS
           })}
         </div>
       </div>
-      <ul ref={treeListRef} className="nav-list folder-tree-list" style={{ flex: 1 }}>
+      <ul ref={treeListRef} className="nav-list folder-tree-list">
         {treeRoots.map(node => renderTreeNode(node, 0, treeRoots))}
       </ul>
     </div>
   );
 
   return (
-    <div ref={sidebarRef} className="folder-sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '4px' }}>
+    <div ref={sidebarRef} className="folder-sidebar">
       {renderLibraryList()}
       {renderFavoritesList()}
       {renderFolderTree()}

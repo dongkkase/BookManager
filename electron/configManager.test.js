@@ -73,8 +73,45 @@ test('경로 목록과 즐겨찾기는 형식을 유지하며 중복을 제거�
         const loaded = manager.loadConfig();
         assert.deepEqual(loaded.libraries, ['/Books/', '/Comics', '/Manga']);
         assert.deepEqual(loaded.dup_check_folders, loaded.libraries);
+        assert.deepEqual(loaded.library_entries, [
+            { path: '/Books/', alias: '', group: '' },
+            { path: '/Comics', alias: '', group: '' },
+            { path: '/Manga', alias: '', group: '' },
+        ]);
         assert.deepEqual(loaded.favorites, ['/Books/A', { name: 'B', path: '/Books/B' }]);
         assert.deepEqual(loaded.folder_favorites, loaded.favorites);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 별칭, 그룹, 표기 순서를 저장하고 기존 경로 업데이트와 동기화한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-library-meta-'));
+    try {
+        writeDataConfig(root, {
+            library_entries: [
+                { path: '/Comics', alias: 'Comics NAS', group: 'NAS' },
+                { path: '/Books', alias: 'Bookshelf', group: 'Local' },
+            ],
+        });
+        const manager = new ConfigManager(root, root);
+        const loaded = manager.loadConfig();
+        assert.deepEqual(loaded.libraries, ['/Comics', '/Books']);
+        assert.deepEqual(loaded.library_entries, [
+            { path: '/Comics', alias: 'Comics NAS', group: 'NAS' },
+            { path: '/Books', alias: 'Bookshelf', group: 'Local' },
+        ]);
+
+        manager.updateConfig({
+            libraries: ['/Books', '/Manga'],
+            dup_check_folders: ['/Books', '/Manga'],
+        });
+        const saved = JSON.parse(fs.readFileSync(dataConfigPath(root), 'utf8'));
+        assert.deepEqual(saved.libraries, ['/Books', '/Manga']);
+        assert.deepEqual(saved.library_entries, [
+            { path: '/Books', alias: 'Bookshelf', group: 'Local' },
+            { path: '/Manga', alias: '', group: '' },
+        ]);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

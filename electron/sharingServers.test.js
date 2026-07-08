@@ -13,6 +13,7 @@ import {
     buildWebdavApp,
     getSharingNetworkAddresses,
     getSharingServerStatus,
+    normalizeSharingRootEntries,
     normalizeSharingServerType,
     normalizeSharingServerAddress,
     normalizeSharingRoots,
@@ -354,6 +355,55 @@ test('Web 서버 목록 API는 큰 폴더를 페이지 단위로 반환한다', 
         assert.equal(last.page.has_more, false);
         assert.equal(last.page.next_offset, null);
         assert.equal(last.files[0].name, 'Book 101.cbz');
+    });
+});
+
+test('공유 서버 루트는 라이브러리 별칭, 그룹, 표기 순서를 반영한다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-sharing-library-meta-'));
+    const first = path.join(tempRoot, 'A', 'Books');
+    const second = path.join(tempRoot, 'B', 'Comics');
+    fs.mkdirSync(first, { recursive: true });
+    fs.mkdirSync(second, { recursive: true });
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const config = {
+        library_entries: [
+            { path: second, alias: 'Second Alias', group: 'NAS' },
+            { path: first, alias: 'First Alias', group: 'Local' },
+        ],
+    };
+    const entries = normalizeSharingRootEntries(config);
+    assert.deepEqual(entries.map(entry => entry.name), ['Second Alias', 'First Alias']);
+    assert.deepEqual(entries.map(entry => entry.group), ['NAS', 'Local']);
+
+    await withHttpServer(buildWebApp(config), async baseUrl => {
+        const rootList = await (await fetch(`${baseUrl}/api/list`)).json();
+        assert.equal(rootList.folders[0].name, 'Second Alias');
+        assert.equal(rootList.folders[0].group, 'NAS');
+        assert.equal(rootList.folders[1].name, 'First Alias');
+
+        const libraryList = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(entries[0].root)}`)).json();
+        assert.equal(libraryList.current_name, 'Second Alias');
+    });
+
+    await withHttpServer(buildOpdsApp(config), async baseUrl => {
+        const rootXml = await (await fetch(`${baseUrl}/opds`)).text();
+        assert.ok(rootXml.indexOf('Second Alias') < rootXml.indexOf('First Alias'));
+    });
+
+    const auth = `Basic ${Buffer.from('reader:secret').toString('base64')}`;
+    await withHttpServer(buildWebdavApp(
+        config,
+        { username: 'reader', password: 'secret' },
+    ), async baseUrl => {
+        const depthOne = await fetch(baseUrl, {
+            method: 'PROPFIND',
+            headers: { Authorization: auth, Depth: '1' },
+        });
+        const xml = await depthOne.text();
+        assert.equal(depthOne.status, 207);
+        assert.match(xml, /<d:href>\/Second%20Alias\/<\/d:href>/);
+        assert.match(xml, /<d:displayname>Second Alias<\/d:displayname>/);
     });
 });
 

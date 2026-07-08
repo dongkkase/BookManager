@@ -8,6 +8,7 @@ import {
     getLocalIp,
     listLocalIpAddresses,
     normalizeLocalIpAddress,
+    normalizeSharingRootEntries,
     normalizeSharingRoots,
     sharingText,
 } from './shared/sharingCommon.js';
@@ -27,6 +28,7 @@ export {
     buildWebApp,
     buildWebdavApp,
     listLocalIpAddresses,
+    normalizeSharingRootEntries,
     normalizeSharingRoots,
     resolveWebdavPath,
 };

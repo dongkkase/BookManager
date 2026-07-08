@@ -15,14 +15,86 @@ export function uniquePaths(...groups) {
     const seen = new Set();
     const result = [];
     for (const value of groups.flat()) {
-        const path = String(value || '').trim();
+        const pathValue = typeof value === 'string' ? value : value?.path;
+        const path = String(pathValue || '').trim();
         if (!path) continue;
-        const key = path.replace(/[\\/]+$/, '').toLowerCase();
+        const key = libraryPathKey(path);
         if (seen.has(key)) continue;
         seen.add(key);
         result.push(path);
     }
     return result;
+}
+
+export function libraryPathKey(value = '') {
+    return String(value || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+}
+
+function libraryEntryFromValue(value) {
+    const pathValue = typeof value === 'string' ? value : value?.path;
+    const entryPath = String(pathValue || '').trim();
+    if (!entryPath) return null;
+    return {
+        path: entryPath,
+        alias: typeof value === 'string' ? '' : String(value?.alias || '').trim(),
+        group: typeof value === 'string' ? '' : String(value?.group || '').trim(),
+    };
+}
+
+function collectLibraryEntryMeta(values = []) {
+    const metadata = new Map();
+    for (const value of Array.isArray(values) ? values : []) {
+        const entry = libraryEntryFromValue(value);
+        if (!entry) continue;
+        const key = libraryPathKey(entry.path);
+        const previous = metadata.get(key) || { path: entry.path, alias: '', group: '' };
+        metadata.set(key, {
+            path: previous.path || entry.path,
+            alias: previous.alias || entry.alias,
+            group: previous.group || entry.group,
+        });
+    }
+    return metadata;
+}
+
+export function normalizeLibraryEntries(config = {}) {
+    const source = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+    const pathValues = [
+        ...(source.libraries || []),
+        ...(source.dup_check_folders || []),
+    ];
+    const metadataValues = [
+        ...(source.library_entries || []),
+        ...pathValues,
+    ];
+    const metadata = collectLibraryEntryMeta(metadataValues);
+    const paths = uniquePaths(pathValues);
+    const orderedPaths = paths.length > 0
+        ? paths
+        : uniquePaths(source.library_entries || []);
+
+    return orderedPaths.map(entryPath => {
+        const meta = metadata.get(libraryPathKey(entryPath));
+        return {
+            path: entryPath,
+            alias: meta?.alias || '',
+            group: meta?.group || '',
+        };
+    });
+}
+
+export function syncLibraryConfig(config = {}, entries = []) {
+    const normalizedEntries = normalizeLibraryEntries({
+        library_entries: entries,
+        libraries: entries,
+    });
+    const libraries = normalizedEntries.map(entry => entry.path);
+    return {
+        ...config,
+        library_entries: normalizedEntries,
+        libraries,
+        dup_check_folders: libraries,
+    };
 }
 
 export function normalizeViewerPaths(value = {}) {
@@ -37,7 +109,8 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
     const lang = LANGUAGE_KEYS.has(config.language)
         ? config.language
         : LANGUAGE_KEYS.has(config.lang) ? config.lang : 'ko';
-    const libraries = uniquePaths(config.libraries || [], config.dup_check_folders || []);
+    const libraryEntries = normalizeLibraryEntries(config);
+    const libraries = libraryEntries.map(entry => entry.path);
     const threadMax = safeThreadLimit(coreCount);
     const apiKeys = config.api_keys || {};
     const normalizedApiKeys = {
@@ -91,6 +164,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         viewer_paths: normalizeViewerPaths(config.viewer_paths),
         font_family: fontFamily === 'Default' ? 'Noto Sans KR' : fontFamily,
         font_scale: Math.min(155, Math.max(80, Number(config.font_scale) || 100)),
+        library_entries: libraryEntries,
         libraries,
         dup_check_folders: libraries,
         preferred_meta_api_comic: preferredComicApi,
@@ -104,11 +178,14 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
 export function settingsEffects(previous = {}, next = {}) {
     const taskResetKeys = ['target_format', 'webp_conversion', 'img_quality'];
     const changed = key => JSON.stringify(previous?.[key]) !== JSON.stringify(next?.[key]);
+    const libraryPathSetSignature = config => uniquePaths(config?.libraries || [], config?.dup_check_folders || [])
+        .map(libraryPathKey)
+        .sort()
+        .join('\n');
 
     return {
         resetTaskTabs: taskResetKeys.some(changed),
         restartRecommended: false,
-        librariesChanged: JSON.stringify(uniquePaths(previous.libraries || [], previous.dup_check_folders || []))
-            !== JSON.stringify(uniquePaths(next.libraries || [], next.dup_check_folders || [])),
+        librariesChanged: libraryPathSetSignature(previous) !== libraryPathSetSignature(next),
     };
 }

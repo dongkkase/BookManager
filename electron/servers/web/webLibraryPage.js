@@ -1082,7 +1082,11 @@ function renderBreadcrumb(data, mode) {
             up.addEventListener("click", () => loadList(data.parent_dir || "", true));
             nodes.push(up);
         }
-        nodes.push(createElement("span", { className: "breadcrumb-path", text: data.current_dir }));
+        nodes.push(createElement("span", {
+            className: "breadcrumb-path",
+            title: data.current_dir,
+            text: data.current_name || data.current_dir,
+        }));
     } else {
         nodes.push(createElement("span", { className: "breadcrumb-path", text: "Library Root" }));
     }
@@ -1113,7 +1117,8 @@ function createThumbnail(kind, item) {
 
 function folderMetaText(folder) {
     const count = Number(folder.count) || 0;
-    return count + (folder.count_limited ? "+ items" : " items");
+    const countText = count + (folder.count_limited ? "+ items" : " items");
+    return folder.group ? folder.group + " · " + countText : countText;
 }
 
 function createCardInfoTag(value) {

@@ -11,6 +11,14 @@ const EXTRA_TRANSLATIONS = {
     viewer_status_bookmarks: '책갈피 {0}개',
     folder_refresh_force_tip: '현재 목록을 강제로 새로고침합니다',
     task_error_no_remaining_entries: '삭제 후 남는 내부 파일이 없습니다.',
+    settings_library_alias: '별칭',
+    settings_library_group: '그룹',
+    settings_library_path: '경로',
+    settings_library_alias_ph: '공유 서버에 표시할 이름',
+    settings_library_group_ph: '예: NAS, 로컬, 작업용',
+    settings_library_move_up: '위로 이동',
+    settings_library_move_down: '아래로 이동',
+    settings_library_edit: '수정',
     renamer: {
       delete_entry: '삭제',
       delete_entry_label: '{0} 삭제 대상',
@@ -19,6 +27,8 @@ const EXTRA_TRANSLATIONS = {
       sidebar: {
         more_actions: '메뉴 열기',
         remove_library: '라이브러리 제거',
+        collapse_section: '{0} 접기',
+        expand_section: '{0} 펼치기',
       },
       status: {
         no_folder: '스캔할 폴더를 선택하세요',
@@ -280,6 +290,14 @@ const EXTRA_TRANSLATIONS = {
     viewer_status_bookmarks: '{0} bookmarks',
     folder_refresh_force_tip: 'Force refresh the current list',
     task_error_no_remaining_entries: 'No inner files remain after deletion.',
+    settings_library_alias: 'Alias',
+    settings_library_group: 'Group',
+    settings_library_path: 'Path',
+    settings_library_alias_ph: 'Name shown on sharing servers',
+    settings_library_group_ph: 'Example: NAS, Local, Work',
+    settings_library_move_up: 'Move up',
+    settings_library_move_down: 'Move down',
+    settings_library_edit: 'Edit',
     renamer: {
       delete_entry: 'Delete',
       delete_entry_label: 'Mark {0} for deletion',
@@ -288,6 +306,8 @@ const EXTRA_TRANSLATIONS = {
       sidebar: {
         more_actions: 'Open menu',
         remove_library: 'Remove Library',
+        collapse_section: 'Collapse {0}',
+        expand_section: 'Expand {0}',
       },
       status: {
         no_folder: 'Select a folder to scan',
@@ -549,6 +569,14 @@ const EXTRA_TRANSLATIONS = {
     viewer_status_bookmarks: 'しおり {0} 件',
     folder_refresh_force_tip: '現在のリストを強制更新します',
     task_error_no_remaining_entries: '削除後に残る内部ファイルがありません。',
+    settings_library_alias: '別名',
+    settings_library_group: 'グループ',
+    settings_library_path: 'パス',
+    settings_library_alias_ph: '共有サーバーに表示する名前',
+    settings_library_group_ph: '例: NAS、ローカル、作業用',
+    settings_library_move_up: '上へ移動',
+    settings_library_move_down: '下へ移動',
+    settings_library_edit: '編集',
     renamer: {
       delete_entry: '削除',
       delete_entry_label: '{0} を削除対象にする',
@@ -557,6 +585,8 @@ const EXTRA_TRANSLATIONS = {
       sidebar: {
         more_actions: 'メニューを開く',
         remove_library: 'ライブラリを削除',
+        collapse_section: '{0} を折りたたむ',
+        expand_section: '{0} を展開',
       },
       status: {
         no_folder: 'スキャンするフォルダを選択してください',

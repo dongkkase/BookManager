@@ -52,21 +52,79 @@ export function realPathOrResolved(targetPath) {
 }
 
 export function normalizeSharingRoots(config = {}) {
-    const candidates = [
+    return normalizeSharingRootEntries(config).map(entry => entry.root);
+}
+
+function sharingLibraryPathKey(value = '') {
+    return String(value || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+}
+
+function sharingLibraryEntryFromValue(value) {
+    const rawPath = typeof value === 'string' ? value : value?.path;
+    const entryPath = String(rawPath || '').trim();
+    if (!entryPath) return null;
+    return {
+        path: entryPath,
+        alias: typeof value === 'string' ? '' : String(value?.alias || '').trim(),
+        group: typeof value === 'string' ? '' : String(value?.group || '').trim(),
+    };
+}
+
+function normalizeSharingLibraryEntries(config = {}) {
+    const pathValues = [
         ...(config.libraries || []),
         ...(config.dup_check_folders || []),
     ];
-    const seen = new Set();
-
-    return candidates
-        .map(item => (typeof item === 'string' ? item : item?.path))
-        .filter(Boolean)
-        .map(realPathOrResolved)
-        .filter(root => {
-            if (seen.has(root) || !fs.existsSync(root)) return false;
-            seen.add(root);
-            return true;
+    const metadataValues = [
+        ...(config.library_entries || []),
+        ...pathValues,
+    ];
+    const metadata = new Map();
+    for (const value of metadataValues) {
+        const entry = sharingLibraryEntryFromValue(value);
+        if (!entry) continue;
+        const key = sharingLibraryPathKey(entry.path);
+        const previous = metadata.get(key) || { path: entry.path, alias: '', group: '' };
+        metadata.set(key, {
+            path: previous.path || entry.path,
+            alias: previous.alias || entry.alias,
+            group: previous.group || entry.group,
         });
+    }
+
+    const sourceValues = pathValues.length > 0 ? pathValues : config.library_entries || [];
+    const seen = new Set();
+    const entries = [];
+    for (const value of sourceValues) {
+        const entry = sharingLibraryEntryFromValue(value);
+        if (!entry) continue;
+        const key = sharingLibraryPathKey(entry.path);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const meta = metadata.get(key);
+        entries.push({
+            path: entry.path,
+            alias: meta?.alias || '',
+            group: meta?.group || '',
+        });
+    }
+    return entries;
+}
+
+export function normalizeSharingRootEntries(config = {}) {
+    const seen = new Set();
+    const entries = [];
+    for (const entry of normalizeSharingLibraryEntries(config)) {
+        const root = realPathOrResolved(entry.path);
+        if (seen.has(root) || !fs.existsSync(root)) continue;
+        seen.add(root);
+        entries.push({
+            ...entry,
+            root,
+            name: entry.alias || path.basename(root) || root,
+        });
+    }
+    return entries;
 }
 
 export function isWithinRoot(targetPath, roots) {

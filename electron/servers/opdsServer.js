@@ -11,7 +11,7 @@ import {
     imageMimeType,
     isWithinRoot,
     naturalComparePath,
-    normalizeSharingRoots,
+    normalizeSharingRootEntries,
     readArchiveImage,
     realPathOrResolved,
     resolveSharedArchive,
@@ -263,23 +263,24 @@ function filesystemCatalog(currentDir) {
     };
 }
 
-async function rootCatalog(roots, options = {}, log = () => {}) {
+async function rootCatalog(rootEntries, roots, options = {}, log = () => {}) {
     const folders = [];
-    for (const root of roots) {
+    for (const entry of rootEntries) {
+        const root = entry.root;
         const rows = await safeReadIndexedRows(root, options, log);
         const catalog = rows ? indexedCatalogFromRows(root, rows, roots) : null;
         const sample = catalog?.files?.[0] || null;
         folders.push({
             path: root,
-            title: root,
+            title: entry.name || root,
             sample,
         });
     }
     return { folders, files: [], source: 'root' };
 }
 
-async function opdsCatalog(currentDir, roots, options = {}, log = () => {}) {
-    if (!currentDir) return rootCatalog(roots, options, log);
+async function opdsCatalog(currentDir, roots, rootEntries, options = {}, log = () => {}) {
+    if (!currentDir) return rootCatalog(rootEntries, roots, options, log);
     const rows = await safeReadIndexedRows(currentDir, options, log);
     if (rows) {
         const catalog = indexedCatalogFromRows(currentDir, rows, roots);
@@ -305,7 +306,8 @@ function catalogEntries(catalog, roots, options, updatedIso) {
 
 export function buildOpdsApp(config, log = () => {}, options = {}) {
     const app = express();
-    const roots = normalizeSharingRoots(config);
+    const rootEntries = normalizeSharingRootEntries(config);
+    const roots = rootEntries.map(entry => entry.root);
 
     app.get('/', (_req, res) => res.redirect('/opds'));
 
@@ -324,7 +326,7 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
 
         try {
             const updatedIso = new Date().toISOString();
-            const catalog = await opdsCatalog(currentDir, roots, options, log);
+            const catalog = await opdsCatalog(currentDir, roots, rootEntries, options, log);
             const entries = catalogEntries(catalog, roots, options, updatedIso);
 
             log(sharingText(config, 'sharing_opds_browse', 'OPDS 탐색: {name}', {

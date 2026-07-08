@@ -1,6 +1,12 @@
 import React from 'react';
 import { FaIcon } from './FaIcon';
-import { normalizeSettingsConfig, safeThreadLimit, uniquePaths } from '../settingsPolicy';
+import {
+  libraryPathKey,
+  normalizeLibraryEntries,
+  normalizeSettingsConfig,
+  safeThreadLimit,
+  syncLibraryConfig,
+} from '../settingsPolicy';
 import {
   BOOK_METADATA_API_SOURCES,
   COMIC_METADATA_API_SOURCES,
@@ -69,6 +75,11 @@ function uniqueSystemFonts(fonts = [], currentFont = '', bundledOptions = []) {
     result.push(value);
   }
   return result.sort((a, b) => a.localeCompare(b));
+}
+
+function libraryFallbackName(folderPath = '') {
+  const parts = String(folderPath || '').split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || folderPath;
 }
 
 function normalizeConfig(config) {
@@ -263,22 +274,50 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     updateViewerPath(viewerType, '');
   };
 
-  const handleAddDupFolder = async () => {
-    const folderPath = await window.electronAPI?.selectFolder?.(label('dlg_sel_dup_folder', '라이브러리 폴더 선택'));
-    if (!folderPath) return;
+  const libraryEntries = normalizeLibraryEntries(localConfig);
+  const selectedLibraryEntry = libraryEntries.find(entry => entry.path === selectedDupFolder) || null;
+
+  const updateLibraryEntries = (updater) => {
     setLocalConfig(prev => {
-      const folders = uniquePaths(prev.libraries || [], prev.dup_check_folders || [], [folderPath]);
-      return { ...prev, libraries: folders, dup_check_folders: folders };
+      const entries = normalizeLibraryEntries(prev);
+      const nextEntries = typeof updater === 'function' ? updater(entries) : updater;
+      return syncLibraryConfig(prev, nextEntries);
     });
   };
 
+  const handleAddDupFolder = async () => {
+    const folderPath = await window.electronAPI?.selectFolder?.(label('dlg_sel_dup_folder', '라이브러리 폴더 선택'));
+    if (!folderPath) return;
+    updateLibraryEntries(entries => {
+      if (entries.some(entry => libraryPathKey(entry.path) === libraryPathKey(folderPath))) return entries;
+      return [...entries, { path: folderPath, alias: '', group: '' }];
+    });
+    setSelectedDupFolder(folderPath);
+  };
+
   const handleRemoveDupFolder = (folderPath) => {
-    setLocalConfig(prev => ({
-      ...prev,
-      libraries: (prev.libraries || []).filter(folder => folder !== folderPath),
-      dup_check_folders: (prev.dup_check_folders || []).filter(folder => folder !== folderPath),
-    }));
-    setSelectedDupFolder('');
+    if (!folderPath) return;
+    updateLibraryEntries(entries => entries.filter(entry => entry.path !== folderPath));
+    setSelectedDupFolder(current => current === folderPath ? '' : current);
+  };
+
+  const handleMoveLibrary = (folderPath, direction) => {
+    updateLibraryEntries(entries => {
+      const index = entries.findIndex(entry => entry.path === folderPath);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= entries.length) return entries;
+      const nextEntries = [...entries];
+      [nextEntries[index], nextEntries[nextIndex]] = [nextEntries[nextIndex], nextEntries[index]];
+      return nextEntries;
+    });
+  };
+
+  const handleLibraryEntryChange = (folderPath, key, value) => {
+    updateLibraryEntries(entries => entries.map(entry => (
+      entry.path === folderPath
+        ? { ...entry, [key]: value }
+        : entry
+    )));
   };
 
   const handleClearDupCache = async () => {
@@ -545,26 +584,113 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
           {activeTab === 'folder' && (
             <div className="settings-panel">
-              <fieldset className="settings-fieldset">
+              <fieldset className="settings-fieldset settings-library-fieldset">
               <legend>{t('grp_dup_folders_title')}</legend>
               <p className="settings-help">{t('dup_folder_desc')}</p>
-              <div className="settings-list">
-                {(localConfig.dup_check_folders || []).length === 0 ? (
+              <div className="settings-library-toolbar">
+                <button className="settings-action-btn settings-blue-btn" onClick={handleAddDupFolder}>
+                  <FaIcon name="folderPlus" />{label('btn_add', '추가')}
+                </button>
+              </div>
+              <div className="settings-list settings-library-list">
+                {libraryEntries.length === 0 ? (
                   <div className="settings-empty-list">{t('tf_empty_no_data')}</div>
-                ) : localConfig.dup_check_folders.map(folder => (
+                ) : libraryEntries.map((entry, index) => (
                   <div
-                    className={`settings-list-item ${selectedDupFolder === folder ? 'active' : ''}`}
-                    key={folder}
-                    onClick={() => setSelectedDupFolder(folder)}
+                    className={`settings-list-item settings-library-list-item ${selectedDupFolder === entry.path ? 'active' : ''}`}
+                    key={entry.path}
+                    onClick={() => setSelectedDupFolder(entry.path)}
                   >
-                    <span title={folder}>{folder}</span>
+                    <div className="settings-library-list-main">
+                      <div className="settings-library-list-head">
+                        <span className="settings-library-list-title" title={entry.path}>
+                          {entry.alias || libraryFallbackName(entry.path)}
+                        </span>
+                        {entry.group ? (
+                          <span className="settings-library-list-group" title={entry.group}>{entry.group}</span>
+                        ) : null}
+                      </div>
+                      <span className="settings-library-list-path" title={entry.path}>{entry.path}</span>
+                    </div>
+                    <div className="settings-library-row-actions">
+                      <button
+                        type="button"
+                        aria-label={label('settings_library_move_up', '위로 이동')}
+                        title={label('settings_library_move_up', '위로 이동')}
+                        disabled={index === 0}
+                        onClick={event => {
+                          event.stopPropagation();
+                          handleMoveLibrary(entry.path, -1);
+                        }}
+                      >
+                        <FaIcon name="angleUp" size={11} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={label('settings_library_move_down', '아래로 이동')}
+                        title={label('settings_library_move_down', '아래로 이동')}
+                        disabled={index === libraryEntries.length - 1}
+                        onClick={event => {
+                          event.stopPropagation();
+                          handleMoveLibrary(entry.path, 1);
+                        }}
+                      >
+                        <FaIcon name="angleDown" size={11} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={label('settings_library_edit', '수정')}
+                        title={label('settings_library_edit', '수정')}
+                        onClick={event => {
+                          event.stopPropagation();
+                          setSelectedDupFolder(entry.path);
+                        }}
+                      >
+                        <FaIcon name="edit" size={11} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={label('btn_remove', '삭제')}
+                        title={label('btn_remove', '삭제')}
+                        onClick={event => {
+                          event.stopPropagation();
+                          handleRemoveDupFolder(entry.path);
+                        }}
+                      >
+                        <FaIcon name="trash" size={11} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
-              <div className="settings-list-actions">
-                <button className="settings-action-btn" onClick={handleAddDupFolder}>{label('btn_add', '추가')}</button>
-                <button className="settings-action-btn" onClick={() => handleRemoveDupFolder(selectedDupFolder)} disabled={!selectedDupFolder}>{label('btn_remove', '삭제')}</button>
-              </div>
+              {selectedLibraryEntry && (
+                <div className="settings-library-editor">
+                  <div className="settings-library-editor-fields">
+                    <label>
+                      <span>{label('settings_library_alias', '별칭')}</span>
+                      <input
+                        className="settings-input"
+                        value={selectedLibraryEntry.alias}
+                        placeholder={label('settings_library_alias_ph', '공유 서버에 표시할 이름')}
+                        onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'alias', event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span>{label('settings_library_group', '그룹')}</span>
+                      <input
+                        className="settings-input"
+                        value={selectedLibraryEntry.group}
+                        placeholder={label('settings_library_group_ph', '예: NAS, 로컬, 작업용')}
+                        onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'group', event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="settings-library-editor-path" title={selectedLibraryEntry.path}>
+                    <span>{label('settings_library_path', '경로')}</span>
+                    <strong>{selectedLibraryEntry.path}</strong>
+                  </div>
+                </div>
+              )}
               </fieldset>
               <fieldset className="settings-fieldset">
               <legend>{label('settings_maintenance_title', '인덱스 및 캐시 관리')}</legend>

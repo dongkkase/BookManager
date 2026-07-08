@@ -13,7 +13,7 @@ import {
     imageMimeType,
     isWithinRoot,
     naturalComparePath,
-    normalizeSharingRoots,
+    normalizeSharingRootEntries,
     readArchiveImage,
     realPathOrResolved,
     resolveSharedDownload,
@@ -214,6 +214,16 @@ function parentDirectory(currentDir, roots) {
     if (!root || currentDir === root) return '';
     const parent = path.dirname(currentDir);
     return isWithinRoot(parent, roots) ? parent : '';
+}
+
+function rootEntryForPath(targetPath, rootEntries = []) {
+    return rootEntries.find(entry => entry.root === targetPath) || null;
+}
+
+function webDirectoryDisplayName(targetPath, rootEntries = []) {
+    if (!targetPath) return '';
+    const rootEntry = rootEntryForPath(targetPath, rootEntries);
+    return rootEntry?.name || path.basename(targetPath) || targetPath;
 }
 
 async function readIndexedRows(currentDir, options = {}) {
@@ -787,8 +797,8 @@ function filesystemCatalog(currentDir, roots = [], pagination = {}) {
     };
 }
 
-async function rootCatalog(roots = [], options = {}, log = () => {}, pagination = {}) {
-    const pagedRoots = paginateCatalog(roots.map(root => ({ root })), [], pagination);
+async function rootCatalog(rootEntries = [], options = {}, log = () => {}, pagination = {}) {
+    const pagedRoots = paginateCatalog(rootEntries, [], pagination);
     const folders = [];
     for (const item of pagedRoots.folders) {
         const root = item.root;
@@ -807,7 +817,8 @@ async function rootCatalog(roots = [], options = {}, log = () => {}, pagination 
         }
         folders.push({
             path: root,
-            name: path.basename(root) || root,
+            name: item.name || path.basename(root) || root,
+            group: item.group || '',
             is_library: true,
             count,
             count_limited: limited,
@@ -819,8 +830,8 @@ async function rootCatalog(roots = [], options = {}, log = () => {}, pagination 
     return { folders, files: [], source: 'root', page: pagedRoots.page };
 }
 
-async function webCatalog(currentDir, roots, options = {}, log = () => {}, pagination = {}) {
-    if (!currentDir) return rootCatalog(roots, options, log, pagination);
+async function webCatalog(currentDir, roots, rootEntries = [], options = {}, log = () => {}, pagination = {}) {
+    if (!currentDir) return rootCatalog(rootEntries, options, log, pagination);
     if (!options.dbRowsProvider) {
         const catalogPage = await safeIndexedCatalogPageFromDb(currentDir, roots, options, pagination, log);
         if (catalogPage && (
@@ -1211,7 +1222,8 @@ function sendViewerApiError(res, error, fallback = 'Viewer request failed') {
 
 export function buildWebApp(config, options = {}, log = () => {}) {
     const app = express();
-    const roots = normalizeSharingRoots(config);
+    const rootEntries = normalizeSharingRootEntries(config);
+    const roots = rootEntries.map(entry => entry.root);
     const viewerSessions = new ViewerSessionManager({
         getSevenZPath: async () => options.sevenZExe || '',
     });
@@ -1391,12 +1403,13 @@ export function buildWebApp(config, options = {}, log = () => {}) {
         }
 
         try {
-            const catalog = await webCatalog(currentDir, roots, options, log, pagination);
+            const catalog = await webCatalog(currentDir, roots, rootEntries, options, log, pagination);
             log(sharingText(config, 'sharing_web_browse', 'Web 탐색: {name}', {
                 name: currentDir ? path.basename(currentDir) : sharingText(config, 'sharing_library_root', '라이브러리 루트'),
             }));
             res.json({
                 current_dir: currentDir || '',
+                current_name: webDirectoryDisplayName(currentDir, rootEntries),
                 parent_dir: parentDirectory(currentDir, roots),
                 can_zip: Boolean(options.sevenZExe),
                 folders: catalog.folders,

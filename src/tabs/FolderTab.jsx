@@ -79,6 +79,10 @@ import {
 } from '../libraryMovePolicy';
 import { normalizeLibraryKey } from '../folderLibraryStatus';
 import {
+  normalizeLibraryEntries,
+  syncLibraryConfig,
+} from '../settingsPolicy';
+import {
   formatPrimaryShortcut,
   hasPrimaryModifier,
   isShortcutKey,
@@ -295,9 +299,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [librarySearchLoading, setLibrarySearchLoading] = useState(false);
   const searchInputRef = useRef(null);
   const librarySearchRequestRef = useRef(0);
-  const libraries = useMemo(() => (
-    [...new Set([...(config?.libraries || []), ...(config?.dup_check_folders || [])])].filter(Boolean)
-  ), [config?.libraries, config?.dup_check_folders]);
+  const libraryEntries = useMemo(() => normalizeLibraryEntries(config || {}), [config]);
+  const libraries = useMemo(() => libraryEntries.map(entry => entry.path), [libraryEntries]);
   const normalizedSearchQuery = searchQuery.trim();
   const isLibrarySearchActive = normalizedSearchQuery.length > 0 && libraries.length > 0;
 
@@ -775,27 +778,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     try {
       const folderPath = await window.electronAPI.selectFolder(t('dlg_sel_dup_folder'));
       if (folderPath && saveConfig && !libraries.includes(folderPath)) {
-        const nextLibraries = [...libraries, folderPath];
-        await saveConfig({
-          libraries: nextLibraries,
-          dup_check_folders: nextLibraries,
-        });
+        await saveConfig(syncLibraryConfig({}, [
+          ...libraryEntries,
+          { path: folderPath, alias: '', group: '' },
+        ]));
         pendingInitialLibraryIndexRef.current = folderPath;
       }
     } catch (e) {
       console.error(e);
     }
-  }, [libraries, saveConfig]);
+  }, [libraries, libraryEntries, saveConfig]);
 
   const removeLibrary = useCallback(async (path) => {
     if (saveConfig) {
-      const nextLibraries = libraries.filter(l => l !== path);
-      await saveConfig({
-        libraries: nextLibraries,
-        dup_check_folders: nextLibraries,
-      });
+      await saveConfig(syncLibraryConfig({}, libraryEntries.filter(entry => entry.path !== path)));
     }
-  }, [libraries, saveConfig]);
+  }, [libraryEntries, saveConfig]);
 
   const addFavorite = useCallback(async (path) => {
     if (saveConfig) {
@@ -1927,6 +1925,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if ((config?.dup_check_folders || []).includes(folderPath)) {
       configPatch.dup_check_folders = config.dup_check_folders.map(path => path === folderPath ? nextPath : path);
     }
+    if (libraryEntries.some(entry => entry.path === folderPath)) {
+      Object.assign(configPatch, syncLibraryConfig({}, libraryEntries.map(entry => (
+        entry.path === folderPath ? { ...entry, path: nextPath } : entry
+      ))));
+    }
     if (Object.keys(configPatch).length > 0) {
       await saveConfig?.(configPatch);
     }
@@ -1936,7 +1939,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (nextSelection !== selectedFolderPath) {
       await handleFolderChange(nextSelection);
     }
-  }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, requestTextInput, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
+  }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, libraryEntries, requestTextInput, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
 
   const markFolderPanelFocus = useCallback(panel => {
     lastFolderPanelRef.current = panel;
@@ -2527,6 +2530,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <div className="sidebar-container">
               <FolderSidebar
                 libraries={libraries}
+                libraryEntries={libraryEntries}
                 favorites={favoriteEntries}
                 selectedFolderPath={selectedFolderPath}
                 onSelectFolder={handleSafeFolderNavigation}

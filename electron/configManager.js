@@ -50,12 +50,55 @@ export class ConfigManager {
       const rawPath = typeof value === 'string' ? value : value?.path;
       const normalized = String(rawPath || '').trim();
       if (!normalized) continue;
-      const key = normalized.replace(/[\\/]+$/, '').toLowerCase();
+      const key = this.libraryPathKey(normalized);
       if (seen.has(key)) continue;
       seen.add(key);
       result.push(normalized);
     }
     return result;
+  }
+
+  libraryPathKey(value = '') {
+    return String(value || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+  }
+
+  libraryEntryFromValue(value) {
+    const rawPath = typeof value === 'string' ? value : value?.path;
+    const normalizedPath = String(rawPath || '').trim();
+    if (!normalizedPath) return null;
+    return {
+      path: normalizedPath,
+      alias: typeof value === 'string' ? '' : String(value?.alias || '').trim(),
+      group: typeof value === 'string' ? '' : String(value?.group || '').trim(),
+    };
+  }
+
+  normalizeLibraryEntries(values = [], pathValues = []) {
+    const metadata = new Map();
+    for (const value of Array.isArray(values) ? values : []) {
+      const entry = this.libraryEntryFromValue(value);
+      if (!entry) continue;
+      const key = this.libraryPathKey(entry.path);
+      const previous = metadata.get(key) || { path: entry.path, alias: '', group: '' };
+      metadata.set(key, {
+        path: previous.path || entry.path,
+        alias: previous.alias || entry.alias,
+        group: previous.group || entry.group,
+      });
+    }
+
+    const normalizedPathValues = this.normalizePathList(pathValues);
+    const orderedPaths = normalizedPathValues.length > 0
+      ? normalizedPathValues
+      : this.normalizePathList(values);
+    return orderedPaths.map(entryPath => {
+      const meta = metadata.get(this.libraryPathKey(entryPath));
+      return {
+        path: entryPath,
+        alias: meta?.alias || '',
+        group: meta?.group || '',
+      };
+    });
   }
 
   normalizeFavorites(values = []) {
@@ -87,10 +130,15 @@ export class ConfigManager {
     const defaults = this.getDefaultConfig();
     const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
     const lang = normalizeLanguage(raw.language || raw.lang, defaults.language);
-    const libraries = this.normalizePathList([
+    const rawLibraryPaths = [
       ...(raw.libraries || []),
       ...(raw.dup_check_folders || []),
-    ]);
+    ];
+    const libraryEntries = this.normalizeLibraryEntries([
+      ...(raw.library_entries || []),
+      ...rawLibraryPaths,
+    ], rawLibraryPaths);
+    const libraries = libraryEntries.map(entry => entry.path);
     const favorites = this.normalizeFavorites(raw.favorites || raw.folder_favorites || []);
     const preferredComicApi = normalizeMetadataApiSource(
       raw.preferred_meta_api_comic || raw.last_meta_api || defaults.preferred_meta_api_comic,
@@ -116,6 +164,7 @@ export class ConfigManager {
       viewer_path: String(raw.viewer_path || defaults.viewer_path).trim(),
       viewer_paths: this.normalizeViewerPaths(raw.viewer_paths || defaults.viewer_paths),
       font_family: fontFamily === 'Default' ? defaults.font_family : fontFamily,
+      library_entries: libraryEntries,
       libraries,
       dup_check_folders: libraries,
       favorites,
@@ -170,6 +219,7 @@ export class ConfigManager {
       libraries: [],
       favorites: [],
       folder_favorites: [],
+      library_entries: [],
       dup_check_folders: [],
       opds_port: 8080,
       web_port: 8082,
@@ -266,9 +316,21 @@ export class ConfigManager {
   saveConfig(configData) {
     try {
       const requestedLang = configData?.language || configData?.lang;
+      const hasLibraryPathUpdate = Object.prototype.hasOwnProperty.call(configData || {}, 'libraries')
+        || Object.prototype.hasOwnProperty.call(configData || {}, 'dup_check_folders');
+      const hasLibraryEntryUpdate = Object.prototype.hasOwnProperty.call(configData || {}, 'library_entries');
       const nextConfig = this.normalizeConfig({
         ...(this.config || {}),
         ...(configData || {}),
+        ...(hasLibraryPathUpdate && !hasLibraryEntryUpdate ? {
+          library_entries: this.normalizeLibraryEntries(
+            this.config?.library_entries || [],
+            [
+              ...(configData?.libraries || []),
+              ...(configData?.dup_check_folders || []),
+            ],
+          ),
+        } : {}),
         ...(requestedLang ? {
           lang: requestedLang,
           language: requestedLang,

@@ -9,7 +9,7 @@ import {
     httpDate,
     isWithinRoot,
     naturalComparePath,
-    normalizeSharingRoots,
+    normalizeSharingRootEntries,
     realPathOrResolved,
     sharingText,
     webdavDownloadMimeType,
@@ -211,10 +211,12 @@ function sanitizeWebdavShareName(name = '', fallback = 'Library') {
     return String(name || fallback).replace(/[\\/:*?"<>|]/g, '_').trim() || fallback;
 }
 
-function buildWebdavShares(roots = []) {
+function buildWebdavShares(roots = [], rootEntries = []) {
     const used = new Set();
+    const entriesByRoot = new Map(rootEntries.map(entry => [entry.root, entry]));
     return roots.map((root, index) => {
-        const baseName = sanitizeWebdavShareName(path.basename(root) || `Library_${index + 1}`, `Library_${index + 1}`);
+        const entry = entriesByRoot.get(root) || {};
+        const baseName = sanitizeWebdavShareName(entry.name || path.basename(root) || `Library_${index + 1}`, `Library_${index + 1}`);
         let name = baseName;
         let counter = 1;
         while (used.has(name)) {
@@ -226,6 +228,7 @@ function buildWebdavShares(roots = []) {
             root,
             rootIndex: index,
             name,
+            group: entry.group || '',
             href: `/${encodeURIComponent(name)}/`,
         };
     });
@@ -549,8 +552,9 @@ function attachWebdavRequestLog(req, res, config, log) {
 
 export function buildWebdavApp(config, options = {}, log = () => {}) {
     const app = express();
-    const roots = normalizeSharingRoots(config);
-    const shares = buildWebdavShares(roots);
+    const rootEntries = normalizeSharingRootEntries(config);
+    const roots = rootEntries.map(entry => entry.root);
+    const shares = buildWebdavShares(roots, rootEntries);
     const username = String(options.username || 'user').trim() || 'user';
     const password = String(options.password || '1234').trim() || '1234';
     const digestNonces = new Map();

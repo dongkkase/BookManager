@@ -154,6 +154,9 @@
 }
 
 .folder-sidebar {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   padding: 0 !important;
   gap: 8px;
   min-width: 0;
@@ -161,9 +164,29 @@
 }
 
 .sidebar-section {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+
+.sidebar-section-library {
+  flex: 3 1 0;
+}
+
+.sidebar-section-favorites {
+  flex: 3 1 0;
+}
+
+.sidebar-section-folders {
+  flex: 4 1 0;
+}
+
+.sidebar-section.is-collapsed {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .nav-header {
@@ -175,6 +198,16 @@
   color: var(--muted);
   font-size: var(--font-xs);
   font-weight: 800;
+}
+
+.nav-header-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: var(--font-base);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-header button {
@@ -198,8 +231,17 @@
   min-width: 0;
 }
 
+.sidebar-section-library > .nav-list,
+.sidebar-section-favorites > .nav-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .folder-tree-list {
+  flex: 1 1 auto;
   overflow: auto;
+  overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
 
@@ -225,11 +267,32 @@
   text-overflow: ellipsis;
 }
 
+.sidebar-empty-list {
+  color: #888 !important;
+  font-style: italic;
+  padding: 4px 8px !important;
+}
+
 .library-list-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
+}
+
+.library-list-item.is-grouped {
+  padding-left: calc(15px + 1ch);
+}
+
+.nav-list li.library-group-header {
+  min-height: 20px;
+  padding: 7px 9px 3px;
+  color: #9fb0bc;
+  border-left-color: transparent;
+  cursor: default;
+  font-size: var(--font-2xs);
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
 .library-list-main {
@@ -287,6 +350,14 @@
   display: flex;
   gap: 4px;
   align-items: center;
+}
+
+.sidebar-section-toggle-btn {
+  color: #aebfc8 !important;
+}
+
+.sidebar-section.is-collapsed .sidebar-section-toggle-btn {
+  color: #dce8ee !important;
 }
 
 .folder-sidebar-icon-btn,
@@ -383,6 +454,20 @@
 
 .favorite-add-btn:not(:disabled) {
   color: #ffd75e;
+}
+
+.sidebar-section-favorites .nav-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.favorite-list-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-sync-btn,
