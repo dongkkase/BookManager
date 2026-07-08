@@ -579,89 +579,42 @@
   perspective-origin: center center;
 }
 
-.viewer-react-flipbook-turn-layer {
-  position: absolute;
-  inset: 12px;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  pointer-events: none;
-  contain: layout paint style;
-  isolation: isolate;
-  --viewer-turn-progress: 0;
-}
-
-.viewer-react-flipbook-turn-book {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: visible;
-}
-
-.viewer-react-flipbook-turn-surface {
+.viewer-flipbook-stage {
   position: relative;
-  width: var(--viewer-turn-surface-width, 100%);
-  height: var(--viewer-turn-surface-height, 100%);
-  max-width: 100%;
-  max-height: 100%;
-  display: grid;
-  align-items: center;
-  justify-items: center;
-  min-width: 0;
-  pointer-events: none;
-  contain: layout paint style;
-  overflow: visible;
-}
-
-.viewer-react-flipbook,
-.viewer-react-flipbook-preparing {
-  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 12px;
+  overflow: hidden;
+  perspective: 2400px;
+  perspective-origin: center center;
+}
+
+.viewer-flipbook {
+  flex: 0 0 auto;
   max-width: 100%;
   max-height: 100%;
-  overflow: visible;
-}
-
-.viewer-react-flipbook-turn-layer.is-spread.is-next .viewer-react-flipbook,
-.viewer-react-flipbook-turn-layer.is-spread.is-next .viewer-react-flipbook-preparing {
-  justify-self: end;
-}
-
-.viewer-react-flipbook-turn-layer.is-spread.is-previous .viewer-react-flipbook,
-.viewer-react-flipbook-turn-layer.is-spread.is-previous .viewer-react-flipbook-preparing {
-  justify-self: start;
-}
-
-.viewer-react-flipbook {
   z-index: 2;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
-.viewer-react-flipbook > div,
-.viewer-react-flipbook .stf__parent,
-.viewer-react-flipbook .stf__wrapper,
-.viewer-react-flipbook .stf__block {
+.viewer-flipbook > div,
+.viewer-flipbook .stf__parent,
+.viewer-flipbook .stf__wrapper,
+.viewer-flipbook .stf__block {
+  max-width: 100%;
+  max-height: 100%;
   overflow: visible !important;
 }
 
-.viewer-react-flipbook-preparing {
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  gap: 0;
-}
-
-.viewer-react-flipbook-page {
-  width: var(--viewer-turn-buffer-width, 100%);
-  height: var(--viewer-turn-buffer-height, 100%);
+.viewer-flipbook-page {
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   box-sizing: border-box;
@@ -675,68 +628,52 @@
   transform-style: preserve-3d;
 }
 
-.viewer-react-flipbook-snapshot {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
-  user-select: none;
-  -webkit-user-drag: none;
+.viewer-flipbook-page.is-left-page {
+  justify-content: flex-end;
 }
 
-.viewer-page-buffer {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  display: grid;
-  align-items: center;
-  justify-items: center;
-  overflow: hidden;
-  visibility: hidden;
+.viewer-flipbook-page.is-right-page {
+  justify-content: flex-start;
+}
+
+.viewer-flipbook-page.is-single-page {
+  justify-content: center;
+}
+
+.viewer-flipbook-page.is-blank {
   pointer-events: none;
-  contain: layout paint style;
 }
 
-.viewer-page-buffer-item {
-  grid-area: 1 / 1;
+.viewer-flipbook-blank-page {
   width: 100%;
   height: 100%;
+  background: transparent;
+}
+
+.viewer-flipbook-page .viewer-comic-page-frame,
+.viewer-flipbook-page .viewer-pdf-page,
+.viewer-flipbook-page .viewer-text-page {
+  flex: 0 0 auto;
   max-width: 100%;
   max-height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
 }
 
-.viewer-page-turn-blank,
-.viewer-react-flipbook-turn-paper {
-  width: 100%;
-  height: 100%;
-  background: var(--viewer-reader-bg, #181818);
+.viewer-flipbook-page .viewer-comic-image {
+  box-shadow: none;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
-.viewer-reader-flipbook-turn {
-  inset: var(--viewer-reader-stage-padding);
-  align-items: stretch;
+.viewer-flipbook-page.is-left-page .viewer-comic-image {
+  object-position: right center;
 }
 
-.viewer-reader-flipbook-turn .viewer-react-flipbook-turn-book,
-.viewer-reader-flipbook-turn .viewer-react-flipbook-turn-surface,
-.viewer-reader-flipbook-turn .viewer-react-flipbook-page,
-.viewer-reader-flipbook-turn .viewer-page-buffer-item {
-  height: 100%;
+.viewer-flipbook-page.is-right-page .viewer-comic-image {
+  object-position: left center;
 }
 
-.viewer-reader-flipbook-turn.is-single .viewer-react-flipbook-turn-surface {
-  width: min(100%, 900px);
-}
-
-.viewer-reader-flipbook-turn.is-spread .viewer-react-flipbook-turn-surface {
-  max-width: min(100%, 1360px);
-}
-
-.viewer-reader-flipbook-turn .viewer-text-page {
+.viewer-flipbook-page .viewer-text-page {
   width: 100%;
   max-width: none;
   height: 100%;
@@ -744,34 +681,7 @@
   overflow: hidden;
 }
 
-.viewer-reader-flipbook-turn .viewer-react-flipbook-turn-paper {
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent 22%, rgba(0, 0, 0, 0.08) 100%),
-    var(--viewer-reader-bg, #181818);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-.viewer-reader-stage.is-width .viewer-reader-flipbook-turn.is-single .viewer-react-flipbook-turn-surface {
-  max-width: none;
-  width: 100%;
-}
-
-.viewer-comic-flipbook-turn .viewer-react-flipbook-turn-surface,
-.viewer-pdf-flipbook-turn .viewer-react-flipbook-turn-surface,
-.viewer-comic-flipbook-turn .viewer-react-flipbook-page,
-.viewer-pdf-flipbook-turn .viewer-react-flipbook-page {
-  max-width: 100%;
-  max-height: 100%;
-}
-
-.viewer-comic-flipbook-turn .viewer-comic-page-frame,
-.viewer-pdf-flipbook-turn .viewer-pdf-page {
-  flex: 0 0 auto;
-  max-width: 100%;
-  max-height: 100%;
-}
-
-.viewer-pdf-flipbook-turn .viewer-pdf-page-number {
+.viewer-flipbook-page .viewer-pdf-page-number {
   display: none;
 }
 
