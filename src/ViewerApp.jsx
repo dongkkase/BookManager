@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
@@ -88,6 +89,12 @@ const DEFAULT_FONT_GROUPS = {
 const DEFAULT_VIEWER_BACKGROUND = {
   mode: 'solid',
   color: '#111111',
+};
+const VIEWER_TTS_SETTINGS_KEY = 'bookmanager-viewer-tts-settings';
+const DEFAULT_TTS_SETTINGS = {
+  rate: 1,
+  voiceURI: '',
+  autoAdvance: false,
 };
 const VIEWER_BACKGROUND_COLORS = [
   { id: 'charcoal', label: '차콜', labelKey: 'viewer.background_color.charcoal', color: '#111111' },
@@ -198,6 +205,36 @@ function fitScaleForViewMode(viewMode, widthScale, heightScale) {
     : viewMode === 'fit'
       ? Math.min(widthScale, heightScale)
       : widthScale;
+}
+
+function normalizeTtsSettings(settings = {}) {
+  return {
+    rate: clampNumber(settings.rate, 0.5, 2, DEFAULT_TTS_SETTINGS.rate),
+    voiceURI: String(settings.voiceURI || ''),
+    autoAdvance: settings.autoAdvance === true,
+  };
+}
+
+function normalizeTtsText(text = '') {
+  return String(text || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function readerItemTtsText(item = {}) {
+  if (typeof item === 'string') return normalizeTtsText(item);
+  const parts = [];
+  if (item.title) parts.push(item.title);
+  if (Array.isArray(item.blocks) && item.blocks.length > 0) {
+    item.blocks.forEach(block => {
+      if (block?.text) parts.push(block.text);
+    });
+  } else if (item.text) {
+    parts.push(item.text);
+  }
+  return normalizeTtsText(parts.join('\n\n'));
 }
 
 function getPageEffectDirection(targetIndex, currentIndex) {
@@ -1816,6 +1853,214 @@ function ZoomControl({ zoom, onZoomChange, onReset, onWheel }) {
   );
 }
 
+function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onToast }) {
+  const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
+  const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
+  const [open, setOpen] = useState(false);
+  const [pendingPlayAfterPageMove, setPendingPlayAfterPageMove] = useState(false);
+  const rootRef = useRef(null);
+  const suppressEndRef = useRef(false);
+  const previousSpeechTextRef = useRef('');
+  const speechText = normalizeTtsText(text);
+  const pageLabel = pageCount > 0 ? `${pageIndex + 1} / ${pageCount}` : '-';
+  const updateSettings = useCallback(patch => {
+    setSettings(current => normalizeTtsSettings({ ...current, ...patch }));
+  }, []);
+  const selectedVoice = useMemo(() => {
+    return availableVoices.find(voice => voice.voiceURI === settings.voiceURI || voice.name === settings.voiceURI) || undefined;
+  }, [availableVoices, settings.voiceURI]);
+
+  const {
+    state,
+    play,
+    stop,
+    pause,
+  } = useTts({
+    children: speechText || ' ',
+    lang: selectedVoice?.lang || language,
+    voice: selectedVoice,
+    rate: settings.rate,
+    volume: 1,
+    markTextAsSpoken: true,
+    markBackgroundColor: 'rgba(52, 152, 219, 0.28)',
+    onEnd: () => {
+      if (suppressEndRef.current || !settings.autoAdvance || pageIndex >= pageCount - 1) return;
+      setPendingPlayAfterPageMove(true);
+      onMovePage?.(1);
+    },
+    onError: message => {
+      onToast?.(message || viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
+    },
+  });
+  const voices = state.voices?.length > 0 ? state.voices : availableVoices;
+  const hasText = speechText.length > 0;
+  const isActivelyPlaying = state.isPlaying && !state.isPaused;
+  const canMovePrevious = pageIndex > 0;
+  const canMoveNext = pageIndex < pageCount - 1;
+
+  useEffect(() => {
+    saveJson(VIEWER_TTS_SETTINGS_KEY, settings);
+  }, [settings]);
+
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    if (!synth?.getVoices) return undefined;
+    const updateVoices = () => setAvailableVoices(synth.getVoices() || []);
+    updateVoices();
+    synth.addEventListener?.('voiceschanged', updateVoices);
+    return () => synth.removeEventListener?.('voiceschanged', updateVoices);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingPlayAfterPageMove || !hasText) return undefined;
+    const timer = window.setTimeout(() => {
+      setPendingPlayAfterPageMove(false);
+      play();
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [hasText, pendingPlayAfterPageMove, play, speechText]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = event => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  const stopWithoutAutoAdvance = useCallback(() => {
+    suppressEndRef.current = true;
+    stop();
+    window.setTimeout(() => {
+      suppressEndRef.current = false;
+    }, 0);
+  }, [stop]);
+
+  useEffect(() => {
+    const previousText = previousSpeechTextRef.current;
+    previousSpeechTextRef.current = speechText;
+    if (!previousText || previousText === speechText || pendingPlayAfterPageMove) return;
+    if (state.isPlaying || state.isPaused) stopWithoutAutoAdvance();
+  }, [pendingPlayAfterPageMove, speechText, state.isPaused, state.isPlaying, stopWithoutAutoAdvance]);
+
+  const handlePlayPause = useCallback(() => {
+    if (!hasText) {
+      onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
+      return;
+    }
+    if (isActivelyPlaying) {
+      pause();
+      return;
+    }
+    play();
+  }, [hasText, isActivelyPlaying, onToast, pause, play]);
+
+  const handleStop = useCallback(() => {
+    setPendingPlayAfterPageMove(false);
+    stopWithoutAutoAdvance();
+  }, [stopWithoutAutoAdvance]);
+
+  const handleMove = useCallback(direction => {
+    const shouldContinue = isActivelyPlaying;
+    setPendingPlayAfterPageMove(shouldContinue);
+    stopWithoutAutoAdvance();
+    onMovePage?.(direction);
+  }, [isActivelyPlaying, onMovePage, stopWithoutAutoAdvance]);
+
+  const playTitle = isActivelyPlaying
+    ? viewerText('viewer.tts.pause', 'TTS 일시정지')
+    : viewerText('viewer.tts.play', 'TTS 재생');
+
+  return (
+    <div className={`viewer-tts-control ${open ? 'is-open' : ''}`} ref={rootRef}>
+      <ToolbarButton
+        title={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
+        icon="angleLeft"
+        disabled={!canMovePrevious}
+        onClick={() => handleMove(-1)}
+      />
+      <ToolbarButton
+        title={playTitle}
+        icon={isActivelyPlaying ? 'pause' : 'play'}
+        active={state.isPlaying}
+        disabled={!hasText}
+        onClick={handlePlayPause}
+      />
+      <ToolbarButton
+        title={viewerText('viewer.tts.stop', 'TTS 정지')}
+        icon="stopCircle"
+        disabled={!state.isPlaying && !state.isPaused}
+        onClick={handleStop}
+      />
+      <ToolbarButton
+        title={viewerText('viewer.tts.next', '다음 페이지 읽기')}
+        icon="angleRight"
+        disabled={!canMoveNext}
+        onClick={() => handleMove(1)}
+      />
+      <ToolbarButton
+        title={viewerText('viewer.tts.settings', 'TTS 설정')}
+        icon="gear"
+        active={open}
+        className="viewer-tts-menu-button"
+        onClick={() => setOpen(current => !current)}
+      >
+        {settings.rate.toFixed(1)}x
+      </ToolbarButton>
+      {open && (
+        <div className="viewer-tts-menu" role="dialog" aria-label={viewerText('viewer.tts.settings', 'TTS 설정')}>
+          <div className="viewer-tts-status">
+            <strong>{viewerText('viewer.tts.title', 'TTS')}</strong>
+            <span>{pageLabel}</span>
+          </div>
+          <label className="viewer-tts-field">
+            <span>{viewerText('viewer.tts.rate', '속도')}</span>
+            <input
+              type="range"
+              min="0.5"
+              max="2"
+              step="0.1"
+              value={settings.rate}
+              onChange={event => updateSettings({ rate: Number(event.target.value) })}
+            />
+            <output>{settings.rate.toFixed(1)}x</output>
+          </label>
+          <label className="viewer-tts-field">
+            <span>{viewerText('viewer.tts.voice', '음성')}</span>
+            <select
+              value={settings.voiceURI}
+              onChange={event => updateSettings({ voiceURI: event.target.value })}
+            >
+              <option value="">{viewerText('viewer.tts.system_voice', '시스템 기본 음성')}</option>
+              {voices.map(voice => (
+                <option key={voice.voiceURI || voice.name} value={voice.voiceURI || voice.name}>
+                  {voice.name} ({voice.lang})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="viewer-tts-check">
+            <input
+              type="checkbox"
+              checked={settings.autoAdvance}
+              onChange={event => updateSettings({ autoAdvance: event.target.checked })}
+            />
+            <span>{viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}</span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BookmarkEditor({ bookmarks, onClose, onDelete }) {
   return (
     <div className="viewer-modal-backdrop" onMouseDown={onClose}>
@@ -3149,6 +3394,15 @@ function ViewerApp() {
         ? textPages.map(text => ({ text }))
         : [];
   const pageCount = session?.type === 'pdf' ? pdfPageCount : flowItems.length;
+  const currentTtsText = useMemo(() => {
+    if (!isReaderDocument || flowItems.length < 1) return '';
+    const indexes = flowMode === 'spread' ? [pageIndex, pageIndex + 1] : [pageIndex];
+    return normalizeTtsText(indexes
+      .filter(index => index >= 0 && index < flowItems.length)
+      .map(index => readerItemTtsText(flowItems[index]))
+      .filter(Boolean)
+      .join('\n\n'));
+  }, [flowItems, flowMode, isReaderDocument, pageIndex]);
   const currentPercent = flowMode === 'scroll'
     ? Math.round(scrollPercent)
     : pageCount > 0
@@ -5646,6 +5900,18 @@ function ViewerApp() {
                   onClick={runToolbarAction(() => updateFlowMode(option.id))}
                 />
               ))}
+            </div>
+          )}
+          {isReaderDocument && (
+            <div className="viewer-tool-cluster viewer-tts-cluster" aria-label={viewerText('viewer.tts.group', 'TTS')}>
+              <ViewerTtsControls
+                text={currentTtsText}
+                pageIndex={pageIndex}
+                pageCount={pageCount}
+                language={viewerLanguage}
+                onMovePage={movePage}
+                onToast={showViewerToast}
+              />
             </div>
           )}
           {session?.type === 'comic' && (
