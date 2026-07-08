@@ -118,6 +118,11 @@ test('TTS 메뉴는 음성 드롭다운 안에서 시스템, OpenAI, Google 음�
     assert.match(ipcHandlersSource, /tts_google_key/);
     assert.match(ipcHandlersSource, /requestBufferPost\('https:\/\/api\.openai\.com\/v1\/audio\/speech'/);
     assert.match(ipcHandlersSource, /texttospeech\.googleapis\.com\/v1\/text:synthesize/);
+    assert.match(ipcHandlersSource, /GOOGLE_TTS_OAUTH_SCOPE = 'https:\/\/www\.googleapis\.com\/auth\/cloud-platform'/);
+    assert.match(ipcHandlersSource, /requestFormPost\(credential\.tokenUri/);
+    assert.match(ipcHandlersSource, /Authorization:\s*`Bearer \$\{accessToken\}`/);
+    assert.match(ipcHandlersSource, /GOOGLE_TTS_OAUTH_REQUIRED/);
+    assert.match(ipcHandlersSource, /GOOGLE_TTS_CREDENTIAL_INVALID/);
     assert.match(ipcHandlersSource, /OPENAI_TTS_FALLBACK_MODEL = 'tts-1'/);
     assert.match(ipcHandlersSource, /normalizeOpenAiTtsError/);
     assert.match(ipcHandlersSource, /normalizeGoogleTtsError/);
@@ -139,6 +144,8 @@ test('TTS 메뉴는 음성 드롭다운 안에서 시스템, OpenAI, Google 음�
             'viewer.tts.google_loading',
             'viewer.tts.google_key_missing',
             'viewer.tts.google_invalid_key',
+            'viewer.tts.google_oauth_required',
+            'viewer.tts.google_auth_failed',
             'viewer.tts.google_quota',
             'viewer.tts.google_error_detail',
             'viewer.tts.google_unsupported',

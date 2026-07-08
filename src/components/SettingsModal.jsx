@@ -825,10 +825,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                 {renderSecretInput('tts_openai_key', 'OpenAI API Key (sk-...)')}
               </div>
               <div className="settings-row">
-                <span className="settings-label">{label('tts_google_api_key', 'Google TTS API Key')}</span>
-                {renderSecretInput('tts_google_key', 'Google Cloud API Key')}
+                <span className="settings-label">{label('tts_google_api_key', 'Google TTS 인증 정보')}</span>
+                {renderSecretInput('tts_google_key', 'Google service account JSON or JSON file path')}
               </div>
-              <p className="settings-help">{label('tts_api_notice', 'TTS에서만 사용하는 키입니다. AI 원제 검색 API Key와 별도로 저장됩니다.')}</p>
+              <p className="settings-help">{label('tts_google_credential_notice', 'Google Cloud TTS는 API key가 아니라 서비스 계정 JSON 또는 JSON 파일 경로가 필요합니다.')}</p>
+              <p className="settings-help">{label('tts_api_notice', 'TTS에서만 사용하는 인증 정보입니다. AI 원제 검색 API Key와 별도로 저장됩니다.')}</p>
               </fieldset>
             </div>
           )}

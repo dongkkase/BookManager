@@ -404,10 +404,16 @@ function playDetachedRemoteTtsAudio(dataUrl, token, engine) {
 function remoteTtsToastMessage(error, engine = 'openai') {
   if (engine === 'google') {
     if (error?.code === 'GOOGLE_TTS_KEY_MISSING') {
-      return viewerText('viewer.tts.google_key_missing', '환경설정 > TTS API Key 설정에서 Google TTS API Key를 입력하세요.');
+      return viewerText('viewer.tts.google_key_missing', '환경설정 > TTS API Key 설정에서 Google TTS 인증 정보를 입력하세요.');
     }
     if (error?.code === 'GOOGLE_TTS_INVALID_KEY') {
-      return viewerText('viewer.tts.google_invalid_key', 'Google TTS API Key가 올바르지 않거나 Cloud Text-to-Speech 권한이 없습니다.');
+      return viewerText('viewer.tts.google_invalid_key', 'Google TTS 인증 정보가 올바르지 않거나 Cloud Text-to-Speech 권한이 없습니다.');
+    }
+    if (error?.code === 'GOOGLE_TTS_OAUTH_REQUIRED') {
+      return viewerText('viewer.tts.google_oauth_required', 'Google Cloud TTS는 API key만으로 재생할 수 없습니다. 환경설정 > TTS API Key 설정에 서비스 계정 JSON 또는 JSON 파일 경로를 입력하세요.');
+    }
+    if (error?.code === 'GOOGLE_TTS_CREDENTIAL_INVALID' || error?.code === 'GOOGLE_TTS_AUTH_FAILED') {
+      return viewerText('viewer.tts.google_auth_failed', 'Google TTS 서비스 계정 인증에 실패했습니다. 서비스 계정 JSON과 Cloud Text-to-Speech 권한을 확인하세요.');
     }
     if (error?.code === 'GOOGLE_TTS_QUOTA') {
       return viewerText('viewer.tts.google_quota', 'Google TTS 사용량 한도에 도달했습니다. 결제 또는 사용량 제한을 확인하세요.');

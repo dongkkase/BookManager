@@ -135,6 +135,9 @@ const GOOGLE_TTS_VOICES = new Map([
   ['en-US', { languageCode: 'en-US' }],
   ['ja-JP', { languageCode: 'ja-JP' }],
 ]);
+const GOOGLE_TTS_OAUTH_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+const GOOGLE_TTS_TOKEN_URI = 'https://oauth2.googleapis.com/token';
+const googleTtsAccessTokenCache = new Map();
 
 function createRenamerPreviewBuffer(buffer, entryPath) {
   try {
@@ -267,6 +270,55 @@ function requestJsonPost(url, payload = {}, extraHeaders = {}) {
           try {
             const parsed = JSON.parse(responseBody);
             apiMessage = parsed?.error?.message || parsed?.message || '';
+          } catch {
+            apiMessage = responseBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+          }
+          const error = new Error(`HTTP ${res.statusCode}${apiMessage ? `: ${apiMessage}` : ''}`);
+          error.statusCode = res.statusCode;
+          error.responseBody = responseBody;
+          reject(error);
+          return;
+        }
+        try {
+          resolve(JSON.parse(responseBody));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function requestFormPost(url, form = {}, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const body = new URLSearchParams(form).toString();
+    const req = https.request({
+      hostname: target.hostname,
+      path: `${target.pathname}${target.search}`,
+      method: 'POST',
+      headers: {
+        'User-Agent': 'BookManager',
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+        ...extraHeaders,
+      },
+      timeout: 12000,
+    }, (res) => {
+      let responseBody = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { responseBody += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let apiMessage = '';
+          try {
+            const parsed = JSON.parse(responseBody);
+            apiMessage = parsed?.error_description || parsed?.error?.message || parsed?.error || parsed?.message || '';
           } catch {
             apiMessage = responseBody.replace(/\s+/g, ' ').trim().slice(0, 300);
           }
@@ -2715,13 +2767,151 @@ function normalizeGoogleTtsOptions(options = {}) {
   };
 }
 
-async function createGoogleTtsDataUrl(options = {}, apiKeys = {}) {
-  const apiKey = String(apiKeys.tts_google_key || '').trim();
-  if (!apiKey) {
-    throw Object.assign(new Error('Google TTS API key is missing.'), { code: 'GOOGLE_TTS_KEY_MISSING' });
+function base64UrlEncode(value) {
+  const source = Buffer.isBuffer(value) ? value : (typeof value === 'string' ? value : JSON.stringify(value));
+  return Buffer.from(source)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function parseGoogleTtsCredentialJson(jsonText = '') {
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    throw Object.assign(new Error('Google TTS credential JSON is invalid.'), { code: 'GOOGLE_TTS_CREDENTIAL_INVALID' });
   }
+}
+
+function readGoogleTtsCredentialFile(filePath = '') {
+  const normalizedPath = String(filePath || '').trim().replace(/^["']|["']$/g, '');
+  if (!normalizedPath) return '';
+  try {
+    if (fs.existsSync(normalizedPath) && fs.statSync(normalizedPath).isFile()) {
+      return fs.readFileSync(normalizedPath, 'utf8');
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function decodeGoogleTtsCredentialJson(value = '') {
+  const text = String(value || '').trim();
+  if (text.startsWith('{')) return text;
+
+  try {
+    const decoded = Buffer.from(text, 'base64').toString('utf8').trim();
+    if (decoded.startsWith('{')) return decoded;
+  } catch {
+    // Ignore non-base64 API key strings and continue with file path handling.
+  }
+
+  return readGoogleTtsCredentialFile(text);
+}
+
+function resolveGoogleTtsCredential(value = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    throw Object.assign(new Error('Google TTS credential is missing.'), { code: 'GOOGLE_TTS_KEY_MISSING' });
+  }
+
+  const jsonText = decodeGoogleTtsCredentialJson(text);
+  if (!jsonText) {
+    throw Object.assign(new Error('Google Cloud TTS requires OAuth credentials. Paste service account JSON or a JSON file path.'), {
+      code: 'GOOGLE_TTS_OAUTH_REQUIRED',
+    });
+  }
+
+  const credential = parseGoogleTtsCredentialJson(jsonText);
+  const clientEmail = String(credential?.client_email || '').trim();
+  const privateKey = String(credential?.private_key || '').replace(/\\n/g, '\n').trim();
+  const tokenUri = String(credential?.token_uri || GOOGLE_TTS_TOKEN_URI).trim();
+  if (!clientEmail || !privateKey) {
+    throw Object.assign(new Error('Google TTS service account JSON must include client_email and private_key.'), {
+      code: 'GOOGLE_TTS_CREDENTIAL_INVALID',
+    });
+  }
+  return {
+    clientEmail,
+    privateKey,
+    privateKeyId: String(credential?.private_key_id || '').trim(),
+    tokenUri: tokenUri || GOOGLE_TTS_TOKEN_URI,
+  };
+}
+
+function createGoogleServiceAccountJwt(credential = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: 'RS256',
+    typ: 'JWT',
+    ...(credential.privateKeyId ? { kid: credential.privateKeyId } : {}),
+  };
+  const claim = {
+    iss: credential.clientEmail,
+    scope: GOOGLE_TTS_OAUTH_SCOPE,
+    aud: credential.tokenUri,
+    iat: now,
+    exp: now + 3600,
+  };
+  const signingInput = `${base64UrlEncode(header)}.${base64UrlEncode(claim)}`;
+  try {
+    const signer = crypto.createSign('RSA-SHA256');
+    signer.update(signingInput);
+    signer.end();
+    return `${signingInput}.${base64UrlEncode(signer.sign(credential.privateKey))}`;
+  } catch {
+    throw Object.assign(new Error('Google TTS service account private key is invalid.'), {
+      code: 'GOOGLE_TTS_CREDENTIAL_INVALID',
+    });
+  }
+}
+
+async function getGoogleServiceAccountAccessToken(credential = {}) {
+  const keyFingerprint = crypto
+    .createHash('sha256')
+    .update(credential.privateKey)
+    .digest('hex')
+    .slice(0, 16);
+  const cacheKey = `${credential.clientEmail}:${credential.privateKeyId}:${keyFingerprint}`;
+  const cached = googleTtsAccessTokenCache.get(cacheKey);
+  if (cached?.accessToken && cached.expiresAt > Date.now() + 60000) {
+    return cached.accessToken;
+  }
+
+  let tokenData;
+  try {
+    tokenData = await requestFormPost(credential.tokenUri, {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: createGoogleServiceAccountJwt(credential),
+    });
+  } catch (error) {
+    error.code = error.code || 'GOOGLE_TTS_AUTH_FAILED';
+    throw error;
+  }
+  const accessToken = String(tokenData?.access_token || '').trim();
+  if (!accessToken) {
+    throw Object.assign(new Error('Google TTS access token response did not include an access token.'), {
+      code: 'GOOGLE_TTS_AUTH_FAILED',
+    });
+  }
+
+  const expiresIn = Number(tokenData?.expires_in);
+  googleTtsAccessTokenCache.set(cacheKey, {
+    accessToken,
+    expiresAt: Date.now() + (Number.isFinite(expiresIn) ? expiresIn : 3600) * 1000,
+  });
+  return accessToken;
+}
+
+async function createGoogleTtsDataUrl(options = {}, apiKeys = {}) {
+  const credential = resolveGoogleTtsCredential(apiKeys.tts_google_key);
   const payload = normalizeGoogleTtsOptions(options);
-  const data = await requestJsonPost(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(apiKey)}`, payload);
+  const accessToken = await getGoogleServiceAccountAccessToken(credential);
+  const data = await requestJsonPost('https://texttospeech.googleapis.com/v1/text:synthesize', payload, {
+    Authorization: `Bearer ${accessToken}`,
+  });
   const audioContent = String(data?.audioContent || '').trim();
   if (!audioContent) {
     throw Object.assign(new Error('Google TTS response did not include audio content.'), { code: 'GOOGLE_TTS_EMPTY_AUDIO' });
@@ -2735,24 +2925,35 @@ async function createGoogleTtsDataUrl(options = {}, apiKeys = {}) {
 }
 
 function sanitizeGoogleTtsErrorMessage(message = '') {
-  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  const text = String(message || '')
+    .replace(/-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/g, 'PRIVATE_KEY***')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!text) return '';
   return text
     .replace(/AIza[0-9A-Za-z_-]+/g, 'AIza***')
+    .replace(/ya29\.[0-9A-Za-z._-]+/g, 'ya29.***')
     .slice(0, 240);
 }
 
 function normalizeGoogleTtsError(error = {}) {
-  if (error.code === 'GOOGLE_TTS_KEY_MISSING' || error.code === 'GOOGLE_TTS_NO_TEXT' || error.code === 'GOOGLE_TTS_TEXT_TOO_LONG') {
+  if (
+    error.code === 'GOOGLE_TTS_KEY_MISSING'
+    || error.code === 'GOOGLE_TTS_NO_TEXT'
+    || error.code === 'GOOGLE_TTS_TEXT_TOO_LONG'
+    || error.code === 'GOOGLE_TTS_OAUTH_REQUIRED'
+    || error.code === 'GOOGLE_TTS_CREDENTIAL_INVALID'
+    || error.code === 'GOOGLE_TTS_AUTH_FAILED'
+  ) {
     return {
       code: error.code,
       error: sanitizeGoogleTtsErrorMessage(error.message),
     };
   }
-  if (error.statusCode === 400 || error.statusCode === 401 || error.statusCode === 403) {
+  if (error.statusCode === 401 || error.statusCode === 403) {
     return {
-      code: 'GOOGLE_TTS_INVALID_KEY',
-      error: sanitizeGoogleTtsErrorMessage(error.message) || 'Google TTS API key is invalid or Cloud Text-to-Speech is not enabled.',
+      code: 'GOOGLE_TTS_AUTH_FAILED',
+      error: sanitizeGoogleTtsErrorMessage(error.message) || 'Google TTS credentials are invalid or Cloud Text-to-Speech access is not enabled.',
     };
   }
   if (error.statusCode === 429) {

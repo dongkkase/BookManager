@@ -161,7 +161,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['TTS API key 탭', "activeTab === 'ttsApi'"],
         ['TTS API key 탭 문구', 'tab_tts_api_key'],
         ['TTS 전용 OpenAI API key', "renderSecretInput('tts_openai_key'"],
-        ['TTS 전용 Google API key', "renderSecretInput('tts_google_key'"],
+        ['TTS 전용 Google 인증 정보', "renderSecretInput('tts_google_key'"],
         ['태그 치환 규칙 textarea', "localConfig.api_keys?.tag_rules || ''"],
     ]);
     assertInventory('sharing', [
