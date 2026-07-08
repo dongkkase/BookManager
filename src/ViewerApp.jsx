@@ -64,6 +64,14 @@ const THEMES = [
   { id: 'white', label: '화이트', bg: '#f7f7f7', fg: '#202020' },
   { id: 'green', label: '그린', bg: '#dfeedd', fg: '#162018' },
 ];
+const DEFAULT_HIGHLIGHT_COLOR = 'yellow';
+const HIGHLIGHT_COLORS = [
+  { id: 'yellow', label: '노랑', labelKey: 'viewer.context.highlight_color_yellow' },
+  { id: 'green', label: '초록', labelKey: 'viewer.context.highlight_color_green' },
+  { id: 'blue', label: '파랑', labelKey: 'viewer.context.highlight_color_blue' },
+  { id: 'pink', label: '분홍', labelKey: 'viewer.context.highlight_color_pink' },
+  { id: 'purple', label: '보라', labelKey: 'viewer.context.highlight_color_purple' },
+];
 const DEFAULT_READER_SETTINGS = {
   theme: 'dark',
   fontFamily: 'Noto Sans KR',
@@ -1251,17 +1259,23 @@ function selectionQueryText(text = '', maxLength = 1800) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function normalizeHighlightColor(color) {
+  const value = String(color || '').trim();
+  return HIGHLIGHT_COLORS.some(item => item.id === value) ? value : DEFAULT_HIGHLIGHT_COLOR;
+}
+
 function renderMarkedText(text = '', pageIndex = 0, highlights = [], activeSearch = null) {
   const source = normalizeReaderDisplayText(text);
   const ranges = [];
   highlights
     .filter(item => Number(item.pageIndex) === pageIndex && item.text)
     .forEach(item => {
+      const color = normalizeHighlightColor(item.color);
       collectExactMatches(source, item.text).forEach(index => {
         ranges.push({
           start: index,
           end: index + item.text.length,
-          className: 'viewer-text-highlight',
+          className: `viewer-text-highlight is-${color}`,
           title: item.text,
         });
       });
@@ -2882,7 +2896,10 @@ function ViewerNavigationPanel({
           highlights.length > 0 ? highlights.map(highlight => (
             <div key={highlight.id} className="viewer-navigation-list-row">
               <button type="button" className="viewer-navigation-list-item" onClick={() => onHighlightClick(highlight)}>
-                <span>{highlight.snippet || highlight.text}</span>
+                <span className="viewer-navigation-highlight-label">
+                  <i className={`viewer-highlight-swatch is-${normalizeHighlightColor(highlight.color)}`} aria-hidden="true" />
+                  {highlight.snippet || highlight.text}
+                </span>
                 <small>{Number(highlight.pageIndex) + 1}p</small>
               </button>
               <button
@@ -4832,13 +4849,14 @@ function ViewerApp() {
     saveJson(storageKey(session, 'highlights'), nextHighlights);
   }, [session]);
 
-  const addHighlightFromSelection = useCallback(() => {
+  const addHighlightFromSelection = useCallback((color = DEFAULT_HIGHLIGHT_COLOR) => {
     if (!session || !selectionMenu?.text) return;
     const highlight = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       text: selectionMenu.text,
       pageIndex: selectionMenu.pageIndex,
       snippet: selectionMenu.snippet || selectionMenu.text,
+      color: normalizeHighlightColor(color),
       createdAt: new Date().toLocaleString(),
     };
     saveHighlights([highlight, ...highlights].slice(0, 300));
@@ -6414,15 +6432,31 @@ function ViewerApp() {
               event.stopPropagation();
             }}
           >
-            <button
-              type="button"
-              className="viewer-selection-tool"
-              title={viewerText('viewer.context.add_highlight', '하이라이트 추가')}
-              onClick={addHighlightFromSelection}
-            >
-              <FaIcon name="pen" />
-              <span>{viewerText('viewer.context.add_highlight_short', '하이라이트')}</span>
-            </button>
+            <div className="viewer-selection-menu">
+              <button
+                type="button"
+                className="viewer-selection-tool"
+                title={viewerText('viewer.context.add_highlight', '하이라이트 추가')}
+                aria-haspopup="menu"
+              >
+                <FaIcon name="pen" />
+                <span>{viewerText('viewer.context.add_highlight_short', '하이라이트')}</span>
+                <FaIcon name="angleDown" size={9} />
+              </button>
+              <div className="viewer-selection-menu-list is-highlight-colors" role="menu">
+                {HIGHLIGHT_COLORS.map(color => (
+                  <button
+                    key={color.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => addHighlightFromSelection(color.id)}
+                  >
+                    <span className={`viewer-highlight-swatch is-${color.id}`} aria-hidden="true" />
+                    {viewerText(color.labelKey, color.label)}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               type="button"
               className="viewer-selection-tool"

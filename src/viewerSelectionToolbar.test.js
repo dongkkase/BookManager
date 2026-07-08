@@ -36,6 +36,33 @@ test('선택 툴바는 요청된 텍스트 액션을 제공한다', () => {
     assert.match(viewerSource, /new window\.SpeechSynthesisUtterance\(text\)/);
 });
 
+test('하이라이트는 색상을 선택해 저장하고 표시한다', () => {
+    assert.match(viewerSource, /const DEFAULT_HIGHLIGHT_COLOR = 'yellow'/);
+    assert.match(viewerSource, /const HIGHLIGHT_COLORS = \[/);
+    assert.match(viewerSource, /function normalizeHighlightColor/);
+    assert.match(viewerSource, /color: normalizeHighlightColor\(color\)/);
+    assert.match(viewerSource, /className: `viewer-text-highlight is-\$\{color\}`/);
+    assert.match(viewerSource, /className=\{`viewer-highlight-swatch is-\$\{color\.id\}`\}/);
+    assert.match(viewerSource, /className=\{`viewer-highlight-swatch is-\$\{normalizeHighlightColor\(highlight\.color\)\}`\}/);
+    assert.match(viewerCss, /\.viewer-text-highlight\.is-yellow/);
+    assert.match(viewerCss, /\.viewer-text-highlight\.is-green/);
+    assert.match(viewerCss, /\.viewer-text-highlight\.is-blue/);
+    assert.match(viewerCss, /\.viewer-text-highlight\.is-pink/);
+    assert.match(viewerCss, /\.viewer-text-highlight\.is-purple/);
+    assert.match(viewerCss, /\.viewer-selection-menu-list\.is-highlight-colors button/);
+    for (const language of ['ko', 'en', 'ja']) {
+        for (const key of [
+            'viewer.context.highlight_color_yellow',
+            'viewer.context.highlight_color_green',
+            'viewer.context.highlight_color_blue',
+            'viewer.context.highlight_color_pink',
+            'viewer.context.highlight_color_purple',
+        ]) {
+            assert.notEqual(translate(key, language), key, `${language}:${key}`);
+        }
+    }
+});
+
 test('선택 툴바 스타일과 다국어 문구를 제공한다', () => {
     assert.match(viewerCss, /\.viewer-selection-toolbar \{/);
     assert.match(viewerCss, /\.viewer-selection-menu-list \{/);
