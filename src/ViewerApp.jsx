@@ -45,6 +45,20 @@ function isShortcutModifierEvent(event = {}) {
   return event.ctrlKey || event.metaKey;
 }
 
+function isPlainSpaceKeyEvent(event = {}) {
+  return !event.ctrlKey
+    && !event.metaKey
+    && !event.altKey
+    && (event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar');
+}
+
+function stopKeyboardShortcutEvent(event) {
+  event.preventDefault?.();
+  event.stopPropagation?.();
+  event.stopImmediatePropagation?.();
+  event.nativeEvent?.stopImmediatePropagation?.();
+}
+
 const VIEW_MODES = [
   { id: 'width', label: '가로 맞춤', labelKey: 'viewer.fit.width', key: '7', iconSrc: fitWidthOrHeightIcon },
   { id: 'height', label: '높이 맞춤', labelKey: 'viewer.fit.height', key: '8', iconSrc: fitWidthOrHeightIcon, rotate: 90 },
@@ -235,7 +249,6 @@ function normalizeTtsText(text = '') {
 function readerItemTtsText(item = {}) {
   if (typeof item === 'string') return normalizeTtsText(item);
   const parts = [];
-  if (item.title) parts.push(item.title);
   if (Array.isArray(item.blocks) && item.blocks.length > 0) {
     item.blocks.forEach(block => {
       if (block?.text) parts.push(block.text);
@@ -1955,9 +1968,9 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [open, setOpen] = useState(false);
   const [pendingPlayAfterPageMove, setPendingPlayAfterPageMove] = useState(false);
-  const rootRef = useRef(null);
   const suppressEndRef = useRef(false);
   const previousSpeechTextRef = useRef('');
+  const previousTtsPageRef = useRef(null);
   const speechText = normalizeTtsText(text);
   const pageLabel = pageCount > 0 ? `${pageIndex + 1} / ${pageCount}` : '-';
   const updateSettings = useCallback(patch => {
@@ -2017,22 +2030,6 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     return () => window.clearTimeout(timer);
   }, [hasText, pendingPlayAfterPageMove, play, speechText]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const handlePointerDown = event => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
-    };
-    const handleKeyDown = event => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
-
   const stopWithoutAutoAdvance = useCallback(() => {
     suppressEndRef.current = true;
     stop();
@@ -2043,10 +2040,17 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
 
   useEffect(() => {
     const previousText = previousSpeechTextRef.current;
+    const previousPageIndex = previousTtsPageRef.current;
+    const hasPreviousTarget = previousPageIndex != null || previousText;
     previousSpeechTextRef.current = speechText;
-    if (!previousText || previousText === speechText || pendingPlayAfterPageMove) return;
-    if (state.isPlaying || state.isPaused) stopWithoutAutoAdvance();
-  }, [pendingPlayAfterPageMove, speechText, state.isPaused, state.isPlaying, stopWithoutAutoAdvance]);
+    previousTtsPageRef.current = pageIndex;
+    if (!hasPreviousTarget || pendingPlayAfterPageMove) return;
+    if (previousText === speechText && previousPageIndex === pageIndex) return;
+    if (!(state.isPlaying || state.isPaused)) return;
+    const shouldRestart = state.isPlaying && !state.isPaused;
+    setPendingPlayAfterPageMove(shouldRestart);
+    stopWithoutAutoAdvance();
+  }, [pageIndex, pendingPlayAfterPageMove, speechText, state.isPaused, state.isPlaying, stopWithoutAutoAdvance]);
 
   const handlePlayPause = useCallback(() => {
     if (!hasText) {
@@ -2059,6 +2063,28 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     }
     play();
   }, [hasText, isActivelyPlaying, onToast, pause, play]);
+
+  const handleTtsKeyDown = useCallback(event => {
+    if (event.key === 'Escape') {
+      stopKeyboardShortcutEvent(event);
+      setOpen(false);
+      return;
+    }
+    if (isPlainSpaceKeyEvent(event) && !event.target?.closest?.('.viewer-dropdown-menu')) {
+      stopKeyboardShortcutEvent(event);
+      handlePlayPause();
+      return;
+    }
+    event.stopPropagation?.();
+  }, [handlePlayPause]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    document.addEventListener('keydown', handleTtsKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleTtsKeyDown);
+    };
+  }, [handleTtsKeyDown, open]);
 
   const handleStop = useCallback(() => {
     setPendingPlayAfterPageMove(false);
@@ -2084,48 +2110,75 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   ], [language, voices]);
 
   return (
-    <div className={`viewer-tts-control ${open ? 'is-open' : ''}`} ref={rootRef}>
-      <ToolbarButton
-        title={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
-        icon="angleLeft"
-        disabled={!canMovePrevious}
-        onClick={() => handleMove(-1)}
-      />
-      <ToolbarButton
-        title={playTitle}
-        icon={isActivelyPlaying ? 'pause' : 'play'}
-        active={state.isPlaying}
-        disabled={!hasText}
-        onClick={handlePlayPause}
-      />
-      <ToolbarButton
-        title={viewerText('viewer.tts.stop', 'TTS 정지')}
-        icon="stopCircle"
-        disabled={!state.isPlaying && !state.isPaused}
-        onClick={handleStop}
-      />
-      <ToolbarButton
-        title={viewerText('viewer.tts.next', '다음 페이지 읽기')}
-        icon="angleRight"
-        disabled={!canMoveNext}
-        onClick={() => handleMove(1)}
-      />
-      <ToolbarButton
-        title={viewerText('viewer.tts.settings', 'TTS 설정')}
-        icon="gear"
-        active={open}
-        className="viewer-tts-menu-button"
+    <div className={`viewer-tts-control ${open ? 'is-open' : ''}`}>
+      <button
+        type="button"
+        className={`viewer-tool-button has-text viewer-tts-toggle-button ${open ? 'is-active' : ''}`}
+        title={viewerText('viewer.tts.menu', 'TTS 메뉴')}
+        aria-label={viewerText('viewer.tts.menu', 'TTS 메뉴')}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onMouseDown={event => {
+          if (event.button === 0) event.preventDefault();
+        }}
         onClick={() => setOpen(current => !current)}
       >
-        {settings.rate.toFixed(1)}x
-      </ToolbarButton>
+        <span>{viewerText('viewer.tts.title', 'TTS')}</span>
+      </button>
       {open && (
-        <div className="viewer-tts-menu" role="dialog" aria-label={viewerText('viewer.tts.settings', 'TTS 설정')}>
+        <div
+          className="viewer-tts-menu"
+          role="dialog"
+          aria-label={viewerText('viewer.tts.settings', 'TTS 설정')}
+          onKeyDown={handleTtsKeyDown}
+        >
           <div className="viewer-tts-status">
             <strong>{viewerText('viewer.tts.title', 'TTS')}</strong>
             <span>{pageLabel}</span>
           </div>
-          <label className="viewer-tts-field">
+          <div className="viewer-tts-actions" aria-label={viewerText('viewer.tts.group', 'TTS')}>
+            <button
+              type="button"
+              className="viewer-tts-action"
+              title={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
+              aria-label={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
+              disabled={!canMovePrevious}
+              onClick={() => handleMove(-1)}
+            >
+              <FaIcon name="angleLeft" />
+            </button>
+            <button
+              type="button"
+              className={`viewer-tts-action ${state.isPlaying ? 'is-active' : ''}`}
+              title={playTitle}
+              aria-label={playTitle}
+              disabled={!hasText}
+              onClick={handlePlayPause}
+            >
+              <FaIcon name={isActivelyPlaying ? 'pause' : 'play'} />
+            </button>
+            <button
+              type="button"
+              className="viewer-tts-action"
+              title={viewerText('viewer.tts.stop', 'TTS 정지')}
+              aria-label={viewerText('viewer.tts.stop', 'TTS 정지')}
+              disabled={!state.isPlaying && !state.isPaused}
+              onClick={handleStop}
+            >
+              <FaIcon name="stopCircle" />
+            </button>
+            <button
+              type="button"
+              className="viewer-tts-action"
+              title={viewerText('viewer.tts.next', '다음 페이지 읽기')}
+              aria-label={viewerText('viewer.tts.next', '다음 페이지 읽기')}
+              disabled={!canMoveNext}
+              onClick={() => handleMove(1)}
+            >
+              <FaIcon name="angleRight" />
+            </button>
+          </div>
+          <label className="viewer-tts-field is-rate">
             <span>{viewerText('viewer.tts.rate', '속도')}</span>
             <input
               type="range"
@@ -2137,7 +2190,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
             />
             <output>{settings.rate.toFixed(1)}x</output>
           </label>
-          <label className="viewer-tts-field">
+          <label className="viewer-tts-field is-voice">
             <span>{viewerText('viewer.tts.voice', '음성')}</span>
             <ViewerDropdown
               value={settings.voiceURI}
@@ -2299,6 +2352,7 @@ function ViewerHelpModal({ open, onClose }) {
     { iconSrc: readModeOnePageIcon, title: viewerText('viewer.read_mode.single', '한장보기모드'), description: viewerText('viewer.help.toolbar_single', '한 페이지씩 읽습니다.') },
     { iconSrc: readModeDoublePageIcon, title: viewerText('viewer.read_mode.spread', '두장보기모드'), description: viewerText('viewer.help.toolbar_spread', '두 페이지를 펼침 형태로 읽습니다.') },
     { iconSrc: readModeScrollIcon, title: viewerText('viewer.read_mode.scroll', '스크롤모드'), description: viewerText('viewer.help.toolbar_scroll', '문서를 세로로 이어서 스크롤합니다.') },
+    { text: 'TTS', title: viewerText('viewer.tts.title', 'TTS'), description: viewerText('viewer.help.toolbar_tts', 'EPUB/TXT에서 TTS 플로팅 메뉴를 열어 현재 페이지 본문을 읽습니다. 메뉴가 열린 동안 Space로 재생/일시정지를 전환하고, 다음/이전 페이지로 이동하면 새 페이지 본문부터 다시 읽습니다. 페이지 말머리는 읽지 않습니다.') },
     { iconSrc: leftReadIcon, title: viewerText('viewer.toolbar.reading_direction_group', '읽기방향'), description: viewerText('viewer.help.toolbar_direction', '만화책의 좌우 읽기 방향을 전환합니다.') },
     { iconSrc: slideNavigationIcon, title: viewerText('viewer.toolbar.slide_nav_group', '슬라이드 탐색 바'), description: viewerText('viewer.help.toolbar_slide_nav', '하단 페이지 슬라이드 탐색 바를 표시하거나 숨깁니다.') },
     { text: 'Cover', title: viewerText('viewer.toolbar.cover_group', 'Cover'), description: viewerText('viewer.help.toolbar_cover', '만화책 두장보기에서 첫 장을 단독 표지로 처리합니다.') },
@@ -5031,7 +5085,7 @@ function ViewerApp() {
     if (['input', 'select', 'textarea', 'button', 'a'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu'
+      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu'
     ));
   }, []);
 
@@ -5040,7 +5094,7 @@ function ViewerApp() {
     if (['input', 'select', 'textarea'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu'
+      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu'
     ));
   }, []);
 
@@ -5488,6 +5542,7 @@ function ViewerApp() {
         || selectionMenu
         || imageLightbox
         || lookupPanel
+        || document.querySelector('.viewer-tts-menu')
       );
       if (shortcutsBlockedByOverlay || isViewerShortcutBlockedTarget(event.target)) return;
       if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {

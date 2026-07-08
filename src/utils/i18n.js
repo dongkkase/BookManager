@@ -67,6 +67,7 @@ const EXTRA_TRANSLATIONS = {
       tts: {
         group: 'TTS',
         title: 'TTS',
+        menu: 'TTS 메뉴',
         play: 'TTS 재생',
         pause: 'TTS 일시정지',
         stop: 'TTS 정지',
@@ -282,6 +283,7 @@ const EXTRA_TRANSLATIONS = {
         toolbar_single: '한 페이지씩 읽습니다.',
         toolbar_spread: '두 페이지를 펼침 형태로 읽습니다.',
         toolbar_scroll: '문서를 세로로 이어서 스크롤합니다.',
+        toolbar_tts: 'EPUB/TXT에서 TTS 플로팅 메뉴를 열어 현재 페이지 본문을 읽습니다. 메뉴가 열린 동안 Space로 재생/일시정지를 전환하고, 다음/이전 페이지로 이동하면 새 페이지 본문부터 다시 읽습니다. 페이지 말머리는 읽지 않습니다.',
         toolbar_direction: '만화책의 좌우 읽기 방향을 전환합니다.',
         toolbar_slide_nav: '하단 페이지 슬라이드 탐색 바를 표시하거나 숨깁니다.',
         toolbar_cover: '만화책 두장보기에서 첫 장을 단독 표지로 처리합니다.',
@@ -387,6 +389,7 @@ const EXTRA_TRANSLATIONS = {
       tts: {
         group: 'TTS',
         title: 'TTS',
+        menu: 'TTS menu',
         play: 'Play TTS',
         pause: 'Pause TTS',
         stop: 'Stop TTS',
@@ -602,6 +605,7 @@ const EXTRA_TRANSLATIONS = {
         toolbar_single: 'Read one page at a time.',
         toolbar_spread: 'Read two pages as a spread.',
         toolbar_scroll: 'Read the document as a vertical scroll.',
+        toolbar_tts: 'In EPUB/TXT, open the TTS floating menu to read the current page body. While the menu is open, press Space to toggle play/pause; moving to the previous or next page restarts from the new page body. Page headers are skipped.',
         toolbar_direction: 'Switch comic reading direction.',
         toolbar_slide_nav: 'Show or hide the bottom slide navigation bar.',
         toolbar_cover: 'Treat the first comic page as a standalone cover in two-page mode.',
@@ -707,6 +711,7 @@ const EXTRA_TRANSLATIONS = {
       tts: {
         group: 'TTS',
         title: 'TTS',
+        menu: 'TTSメニュー',
         play: 'TTSを再生',
         pause: 'TTSを一時停止',
         stop: 'TTSを停止',
@@ -922,6 +927,7 @@ const EXTRA_TRANSLATIONS = {
         toolbar_single: '1ページずつ読みます。',
         toolbar_spread: '2ページを見開きで読みます。',
         toolbar_scroll: '文書を縦に連続してスクロールします。',
+        toolbar_tts: 'EPUB/TXTでTTSフローティングメニューを開き、現在ページの本文を読み上げます。メニューが開いている間はSpaceで再生/一時停止を切り替え、前後のページへ移動すると新しいページ本文から読み直します。ページのヘッダーは読み上げません。',
         toolbar_direction: 'コミックの左右の読む方向を切り替えます。',
         toolbar_slide_nav: '下部のスライドナビゲーションバーを表示または非表示にします。',
         toolbar_cover: 'コミックの2ページ表示で最初のページを単独の表紙として扱います。',

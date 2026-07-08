@@ -134,6 +134,7 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.renamer_default_cap_opt, false);
         assert.equal(loaded.renamer_default_exif_opt, false);
         assert.equal(loaded.font_family, 'Noto Sans KR');
+        assert.equal(loaded.api_keys.tts_openai_key, '');
         assert.deepEqual(loaded.viewer_paths, {
             comic: '',
             epub: '',

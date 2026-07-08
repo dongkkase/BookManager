@@ -55,6 +55,7 @@ const DEFAULT_API_KEYS = {
   ai_trans_enabled: false,
   ai_provider: 'Gemini',
   ai_key: '',
+  tts_openai_key: '',
   tag_rules: '',
 };
 
@@ -775,6 +776,15 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                 )}
               </div>
               <p className="settings-help">{t('ai_notice')}</p>
+              </fieldset>
+
+              <fieldset className="settings-fieldset">
+              <legend>{label('tts_api_group', 'TTS API')}</legend>
+              <div className="settings-row">
+                <span className="settings-label">{label('tts_openai_api_key', 'OpenAI TTS API Key')}</span>
+                {renderSecretInput('tts_openai_key', 'OpenAI API Key (sk-...)')}
+              </div>
+              <p className="settings-help">{label('tts_api_notice', 'OpenAI TTS에서만 사용하는 키입니다. AI 원제 검색 API Key와 별도로 저장됩니다.')}</p>
               </fieldset>
 
               <div className="settings-api-manual-row">
