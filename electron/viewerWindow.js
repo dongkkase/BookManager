@@ -251,6 +251,7 @@ export function setupViewerWindowManager(options = {}) {
                 nodeIntegration: false,
                 sandbox: false,
                 plugins: true,
+                webviewTag: true,
             },
             show: false,
         });

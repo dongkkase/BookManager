@@ -180,7 +180,7 @@ test('뷰어 공통 UI 문구는 다국어 키를 통해 표시한다', () => {
     assert.match(i18nSource, /toast:\s*\{[\s\S]*?next_book_hint: 'This is the last page\./);
     assert.match(i18nSource, /toast:\s*\{[\s\S]*?next_book_hint: '最後のページです。/);
     assert.match(i18nSource, /help:\s*\{[\s\S]*?title: '뷰어 사용법'[\s\S]*?tab_shortcuts: '단축키'/);
-    assert.match(i18nSource, /context_open: '페이지에서 우클릭하거나, 텍스트를 드래그하여 우클릭시 컨텍스트 메뉴가 나옵니다\.'/);
+    assert.match(i18nSource, /context_open: '텍스트를 드래그하면 선택이 끝난 지점에 플로팅 툴바가 나옵니다\./);
     assert.doesNotMatch(i18nSource, /context_select_title/);
     assert.doesNotMatch(i18nSource, /context_right_click_title/);
     assert.match(i18nSource, /help:\s*\{[\s\S]*?title: 'Viewer Help'[\s\S]*?tab_shortcuts: 'Shortcuts'/);
@@ -352,7 +352,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /viewMode === 'height'[\s\S]*?\? heightScale/);
     assert.match(viewerStyleSource, /\.viewer-comic-image\.view-height/);
     assert.match(viewerAppSource, /const \[pageSizes, setPageSizes\] = useState\(\{\}\)/);
-    assert.match(viewerAppSource, /const getComicImageStyle = \(page, pageSlots = 1\) =>/);
+    assert.match(viewerAppSource, /const getComicImageStyle = \(page, pageSlots = 1(?:, renderZoom = zoom)?\) =>/);
     assert.match(viewerAppSource, /baseWidth:\s*size\.width/);
     assert.match(viewerAppSource, /baseHeight:\s*size\.height/);
     assert.match(viewerAppSource, /naturalWidth[\s\S]*?naturalHeight/);

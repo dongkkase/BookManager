@@ -25,5 +25,5 @@ test('TTS 컨트롤은 리더 문서에서만 표시되고 현재 페이지 텍�
 test('TTS 메뉴 스타일은 툴바 안에서 독립 팝업으로 배치된다', () => {
     assert.match(viewerCss, /\.viewer-tts-control \{/);
     assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*position:\s*absolute/);
-    assert.match(viewerCss, /\.viewer-tts-field select \{/);
+    assert.match(viewerCss, /\.viewer-tts-field \.viewer-dropdown \{/);
 });

@@ -176,6 +176,7 @@ const PAGE_EFFECT_DURATIONS = {
   slide: 180,
   fade: 180,
 };
+const TEXT_SELECTION_PAGE_SELECTOR = '[data-reader-page-index], [data-reader-index], [data-pdf-page-index]';
 const EMPTY_PAGE_TURN = {
   format: '',
   effect: 'none',
@@ -1168,6 +1169,88 @@ function collectExactMatches(text = '', query = '') {
   return matches;
 }
 
+function elementFromDomNode(node) {
+  if (!node) return null;
+  if (node.nodeType === 1) return node;
+  return node.parentElement || null;
+}
+
+function closestSelectionPageNode(selection, target) {
+  const targetElement = elementFromDomNode(target);
+  const focusElement = elementFromDomNode(selection?.focusNode);
+  const anchorElement = elementFromDomNode(selection?.anchorNode);
+  return focusElement?.closest?.(TEXT_SELECTION_PAGE_SELECTOR)
+    || targetElement?.closest?.(TEXT_SELECTION_PAGE_SELECTOR)
+    || anchorElement?.closest?.(TEXT_SELECTION_PAGE_SELECTOR)
+    || null;
+}
+
+function pageIndexFromSelectionNode(pageNode, fallbackIndex = 0) {
+  const rawPageIndex = pageNode?.getAttribute?.('data-reader-page-index')
+    ?? pageNode?.getAttribute?.('data-reader-index')
+    ?? pageNode?.getAttribute?.('data-pdf-page-index');
+  const pageIndex = Number(rawPageIndex);
+  return Number.isFinite(pageIndex) ? pageIndex : fallbackIndex;
+}
+
+function isUsableClientRect(rect) {
+  return rect
+    && Number.isFinite(rect.left)
+    && Number.isFinite(rect.top)
+    && Number.isFinite(rect.right)
+    && Number.isFinite(rect.bottom);
+}
+
+function selectionFocusPoint(selection, fallbackPoint) {
+  if (typeof document !== 'undefined' && selection?.focusNode && document.createRange) {
+    try {
+      const range = document.createRange();
+      const focusNode = selection.focusNode;
+      const focusLength = focusNode.nodeType === 3
+        ? focusNode.length
+        : focusNode.childNodes?.length || 0;
+      const focusOffset = clamp(Number(selection.focusOffset) || 0, 0, focusLength);
+      range.setStart(focusNode, focusOffset);
+      range.collapse(true);
+      const rect = range.getClientRects?.()[0] || range.getBoundingClientRect?.();
+      range.detach?.();
+      if (isUsableClientRect(rect)) {
+        return { x: rect.left, y: rect.top };
+      }
+    } catch {
+      // Fall through to selection range or pointer position.
+    }
+  }
+  if (selection?.rangeCount > 0) {
+    try {
+      const range = selection.getRangeAt(selection.rangeCount - 1);
+      const rects = [...(range.getClientRects?.() || [])].filter(isUsableClientRect);
+      const rect = rects[rects.length - 1] || range.getBoundingClientRect?.();
+      if (isUsableClientRect(rect)) {
+        return { x: rect.right, y: rect.top };
+      }
+    } catch {
+      // Fall through to pointer position.
+    }
+  }
+  return fallbackPoint;
+}
+
+function selectionToolbarPosition(point = {}) {
+  const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
+  const margin = 10;
+  const toolbarWidth = Math.min(520, Math.max(260, viewportWidth - (margin * 2)));
+  const x = clamp(Number(point.x) || viewportWidth / 2, margin + (toolbarWidth / 2), viewportWidth - margin - (toolbarWidth / 2));
+  const y = clamp(Number(point.y) || viewportHeight / 2, margin, viewportHeight - margin);
+  const placement = y < 72 && viewportHeight - y > 96 ? 'below' : 'above';
+  return { x, y, placement };
+}
+
+function selectionQueryText(text = '', maxLength = 1800) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
 function renderMarkedText(text = '', pageIndex = 0, highlights = [], activeSearch = null) {
   const source = normalizeReaderDisplayText(text);
   const ranges = [];
@@ -1978,6 +2061,13 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   const playTitle = isActivelyPlaying
     ? viewerText('viewer.tts.pause', 'TTS 일시정지')
     : viewerText('viewer.tts.play', 'TTS 재생');
+  const voiceOptions = useMemo(() => [
+    { id: '', label: viewerText('viewer.tts.system_voice', '시스템 기본 음성') },
+    ...voices.map(voice => ({
+      id: voice.voiceURI || voice.name,
+      label: `${voice.name} (${voice.lang})`,
+    })),
+  ], [language, voices]);
 
   return (
     <div className={`viewer-tts-control ${open ? 'is-open' : ''}`} ref={rootRef}>
@@ -2035,17 +2125,13 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
           </label>
           <label className="viewer-tts-field">
             <span>{viewerText('viewer.tts.voice', '음성')}</span>
-            <select
+            <ViewerDropdown
               value={settings.voiceURI}
-              onChange={event => updateSettings({ voiceURI: event.target.value })}
-            >
-              <option value="">{viewerText('viewer.tts.system_voice', '시스템 기본 음성')}</option>
-              {voices.map(voice => (
-                <option key={voice.voiceURI || voice.name} value={voice.voiceURI || voice.name}>
-                  {voice.name} ({voice.lang})
-                </option>
-              ))}
-            </select>
+              options={voiceOptions}
+              title={viewerText('viewer.tts.voice', '음성')}
+              className="viewer-tts-voice-dropdown"
+              onChange={voiceURI => updateSettings({ voiceURI })}
+            />
           </label>
           <label className="viewer-tts-check">
             <input
@@ -2084,6 +2170,75 @@ function BookmarkEditor({ bookmarks, onClose, onDelete }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function ViewerLookupPanel({ lookup, onClose }) {
+  const webviewRef = useRef(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!lookup?.url) return undefined;
+    setLoading(true);
+    setFailed(false);
+    const webview = webviewRef.current;
+    if (!webview) return undefined;
+    const handleStart = () => {
+      setLoading(true);
+      setFailed(false);
+    };
+    const handleStop = () => {
+      setLoading(false);
+    };
+    const handleFail = event => {
+      if (event?.errorCode === -3) return;
+      setLoading(false);
+      setFailed(true);
+    };
+    webview.addEventListener('did-start-loading', handleStart);
+    webview.addEventListener('did-stop-loading', handleStop);
+    webview.addEventListener('did-fail-load', handleFail);
+    return () => {
+      webview.removeEventListener('did-start-loading', handleStart);
+      webview.removeEventListener('did-stop-loading', handleStop);
+      webview.removeEventListener('did-fail-load', handleFail);
+    };
+  }, [lookup?.url]);
+
+  if (!lookup?.url) return null;
+
+  return (
+    <aside
+      className="viewer-lookup-panel"
+      role="complementary"
+      aria-label={lookup.title || viewerText('viewer.lookup.title', '검색')}
+    >
+      <div className="viewer-lookup-header">
+        <h2>{lookup.title || viewerText('viewer.lookup.title', '검색')}</h2>
+        <button type="button" onClick={onClose} aria-label={viewerText('viewer.common.close', '닫기')}>
+          <FaIcon name="xmark" />
+        </button>
+      </div>
+      <div className="viewer-lookup-body">
+        {loading && (
+          <div className="viewer-lookup-status">
+            {viewerText('viewer.lookup.loading', '검색 창을 여는 중입니다.')}
+          </div>
+        )}
+        {failed && (
+          <div className="viewer-lookup-status is-error">
+            {viewerText('viewer.lookup.open_failed', '검색 창을 열 수 없습니다.')}
+          </div>
+        )}
+        <webview
+          ref={webviewRef}
+          className="viewer-lookup-webview"
+          src={lookup.url}
+          partition="persist:bookmanager-lookup"
+        />
+      </div>
+    </aside>
   );
 }
 
@@ -2162,8 +2317,8 @@ function ViewerHelpModal({ open, onClose }) {
     { title: viewerText('viewer.navigation.highlights', '하이라이트'), description: viewerText('viewer.help.navigation_highlights', '본문에서 추가한 하이라이트를 확인하고 이동하거나 삭제합니다.') },
   ];
   const contextRows = [
-    { title: viewerText('viewer.help.context_open_title', '컨텍스트 메뉴 열기'), description: viewerText('viewer.help.context_open', '페이지에서 우클릭하거나, 텍스트를 드래그하여 우클릭시 컨텍스트 메뉴가 나옵니다.') },
-    { title: viewerText('viewer.context.add_highlight', '하이라이트 추가'), description: viewerText('viewer.help.context_highlight', '선택한 텍스트를 하이라이트로 저장하고 목차 및 검색 패널의 하이라이트 탭에서 확인합니다.') },
+    { title: viewerText('viewer.help.context_open_title', '컨텍스트 메뉴 열기'), description: viewerText('viewer.help.context_open', '텍스트를 드래그하면 선택이 끝난 지점에 플로팅 툴바가 나옵니다. 만화책 두장보기에서는 페이지를 우클릭하면 컨텍스트 메뉴가 나옵니다.') },
+    { title: viewerText('viewer.context.add_highlight', '하이라이트 추가'), description: viewerText('viewer.help.context_highlight', '선택한 텍스트를 하이라이트로 저장하고, 책 안 검색, 사전 검색, 번역, 선택 영역 TTS를 실행합니다.') },
     { title: viewerText('viewer.context.comic_single_page', '이 페이지를 단독장으로 분리'), description: viewerText('viewer.help.context_comic_single_page', '만화책 두장보기에서 순서가 어긋난 페이지를 단독 페이지로 분리해 이후 펼침 흐름을 다시 맞춥니다.') },
   ];
   const tabs = [
@@ -3137,6 +3292,7 @@ function ViewerApp() {
   const [bookSearchLoading, setBookSearchLoading] = useState(false);
   const [activeSearch, setActiveSearch] = useState(null);
   const [imageLightbox, setImageLightbox] = useState(null);
+  const [lookupPanel, setLookupPanel] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [viewerToast, setViewerToast] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -3184,6 +3340,7 @@ function ViewerApp() {
   const suppressContextMenuRef = useRef(false);
   const scrollZoomAnchorSequenceRef = useRef(0);
   const scrollRestoreTokenRef = useRef(0);
+  const textSelectionPointerRef = useRef(null);
 
   const restoreViewerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -3441,6 +3598,9 @@ function ViewerApp() {
       '마지막 페이지입니다. 다음장 입력을 한 번 더 하면 다음 파일이 열립니다.'
     ));
   }, [hasNextBook, showViewerToast, viewerLanguage]);
+  const clearNativeSelection = useCallback(() => {
+    window.getSelection?.()?.removeAllRanges?.();
+  }, []);
   const updateReaderSettings = patch => {
     if (patch?.pageEffect === 'page') {
       setFlowMode('spread');
@@ -4253,7 +4413,7 @@ function ViewerApp() {
   useEffect(() => {
     if (!selectionMenu) return undefined;
     const closeSelectionMenu = event => {
-      if (event.target?.closest?.('.viewer-context-menu')) return;
+      if (event.target?.closest?.('.viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel')) return;
       setSelectionMenu(null);
     };
     document.addEventListener('pointerdown', closeSelectionMenu);
@@ -4268,6 +4428,15 @@ function ViewerApp() {
     document.addEventListener('keydown', handleImageLightboxKeyDown);
     return () => document.removeEventListener('keydown', handleImageLightboxKeyDown);
   }, [imageLightbox]);
+
+  useEffect(() => {
+    if (!lookupPanel) return undefined;
+    const handleLookupKeyDown = event => {
+      if (event.key === 'Escape') setLookupPanel(null);
+    };
+    document.addEventListener('keydown', handleLookupKeyDown);
+    return () => document.removeEventListener('keydown', handleLookupKeyDown);
+  }, [lookupPanel]);
 
   useEffect(() => {
     if (!session || session.type !== 'comic' || pages.length === 0) return;
@@ -4676,8 +4845,22 @@ function ViewerApp() {
     setNavigationTab('highlights');
     setNavigationPanelOpen(true);
     setSelectionMenu(null);
-    window.getSelection?.()?.removeAllRanges?.();
-  }, [highlights, saveHighlights, selectionMenu, session]);
+    clearNativeSelection();
+  }, [clearNativeSelection, highlights, saveHighlights, selectionMenu, session]);
+
+  const searchBookFromSelection = useCallback(() => {
+    const text = selectionQueryText(selectionMenu?.text);
+    if (!text || !supportsNavigationPanel) return;
+    setNavigationPanelOpen(true);
+    setNavigationTab('search');
+    void performBookSearch(text);
+    setSelectionMenu(null);
+    clearNativeSelection();
+    window.requestAnimationFrame(() => {
+      navigationSearchInputRef.current?.focus?.();
+      navigationSearchInputRef.current?.select?.();
+    });
+  }, [clearNativeSelection, performBookSearch, selectionMenu?.text, supportsNavigationPanel]);
 
   const toggleComicSinglePageFromSelection = useCallback(() => {
     if (!session || session.type !== 'comic' || selectionMenu?.kind !== 'comic-flow') return;
@@ -4749,12 +4932,88 @@ function ViewerApp() {
     }
   }, [showViewerToast]);
 
+  const openLookupWindow = useCallback((url, title) => {
+    const safeUrl = String(url || '').trim();
+    if (!/^https?:\/\//i.test(safeUrl)) return;
+    if (isWebViewerMode()) {
+      window.open(
+        safeUrl,
+        `bookmanager-lookup-${Date.now()}`,
+        'popup=yes,width=920,height=680,noopener,noreferrer'
+      )?.focus?.();
+      return;
+    }
+    setLookupPanel({
+      url: safeUrl,
+      title: title || viewerText('viewer.lookup.title', '검색'),
+    });
+  }, [viewerLanguage]);
+
+  const openSelectionDictionary = useCallback(provider => {
+    const text = selectionQueryText(selectionMenu?.text);
+    if (!text) return;
+    const encodedText = encodeURIComponent(text);
+    const url = provider === 'naver'
+      ? `https://dict.naver.com/search.dict?query=${encodedText}`
+      : `https://www.google.com/search?q=${encodeURIComponent(`define:${text}`)}`;
+    const title = provider === 'naver'
+      ? viewerText('viewer.context.dictionary_naver', 'Naver 사전')
+      : viewerText('viewer.context.dictionary_google', 'Google 사전');
+    void openLookupWindow(url, title);
+  }, [openLookupWindow, selectionMenu?.text, viewerLanguage]);
+
+  const openSelectionTranslation = useCallback(provider => {
+    const text = selectionQueryText(selectionMenu?.text);
+    if (!text) return;
+    const targetLanguage = ['ko', 'en', 'ja'].includes(viewerLanguage) ? viewerLanguage : 'ko';
+    const encodedText = encodeURIComponent(text);
+    const url = provider === 'deepl'
+      ? `https://www.deepl.com/translator#auto/${targetLanguage}/${encodedText}`
+      : `https://translate.google.com/?sl=auto&tl=${targetLanguage}&text=${encodedText}&op=translate`;
+    const title = provider === 'deepl'
+      ? viewerText('viewer.context.translate_deepl', 'DeepL 번역')
+      : viewerText('viewer.context.translate_google', 'Google 번역');
+    void openLookupWindow(url, title);
+  }, [openLookupWindow, selectionMenu?.text, viewerLanguage]);
+
+  const speakSelectionText = useCallback(() => {
+    const text = normalizeTtsText(selectionMenu?.text);
+    if (!text) {
+      showViewerToast(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
+      return;
+    }
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth || typeof window.SpeechSynthesisUtterance !== 'function') {
+        showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
+        return;
+      }
+      const settings = normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS));
+      const voices = synth.getVoices?.() || [];
+      const selectedVoice = voices.find(voice => voice.voiceURI === settings.voiceURI || voice.name === settings.voiceURI);
+      const utterance = new window.SpeechSynthesisUtterance(text);
+      if (selectedVoice) utterance.voice = selectedVoice;
+      utterance.lang = selectedVoice?.lang || viewerLanguage;
+      utterance.rate = settings.rate;
+      utterance.volume = 1;
+      utterance.onerror = () => {
+        showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
+      };
+      synth.cancel?.();
+      synth.speak(utterance);
+      setSelectionMenu(null);
+      clearNativeSelection();
+    } catch {
+      showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
+    }
+  }, [clearNativeSelection, selectionMenu?.text, showViewerToast, viewerLanguage]);
+
   const isViewerInteractiveTarget = useCallback(target => {
     const targetName = target?.tagName?.toLowerCase();
     if (['input', 'select', 'textarea', 'button', 'a'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-zoom-menu'
+      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu'
     ));
   }, []);
 
@@ -4763,9 +5022,38 @@ function ViewerApp() {
     if (['input', 'select', 'textarea'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-zoom-menu'
+      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu'
     ));
   }, []);
+
+  const showTextSelectionToolbar = useCallback(({ clientX, clientY, target } = {}) => {
+    if (!(session?.type === 'epub' || session?.type === 'text' || session?.type === 'pdf')) return false;
+    if (isViewerInteractiveTarget(target)) return false;
+    const selection = window.getSelection?.();
+    const selectedText = String(selection?.toString?.() || '').replace(/\s+/g, ' ').trim();
+    if (!selection || !selectedText || selection.rangeCount < 1) {
+      setSelectionMenu(current => current?.kind === 'text-selection' ? null : current);
+      return false;
+    }
+    const anchorElement = elementFromDomNode(selection.anchorNode);
+    const focusElement = elementFromDomNode(selection.focusNode);
+    const viewerNode = scrollRef.current;
+    if (!viewerNode || (!viewerNode.contains(anchorElement) && !viewerNode.contains(focusElement))) return false;
+    const pageNode = closestSelectionPageNode(selection, target);
+    const selectedPageIndex = pageIndexFromSelectionNode(pageNode, pageIndex);
+    const point = selectionFocusPoint(selection, { x: clientX, y: clientY });
+    const position = selectionToolbarPosition(point);
+    setSelectionMenu({
+      kind: 'text-selection',
+      x: position.x,
+      y: position.y,
+      placement: position.placement,
+      text: selectedText,
+      pageIndex: clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1)),
+      snippet: selectedText.slice(0, 120),
+    });
+    return true;
+  }, [isViewerInteractiveTarget, pageCount, pageIndex, session?.type]);
 
   const handleContentContextMenu = useCallback(event => {
     if (suppressContextMenuRef.current) {
@@ -4798,21 +5086,12 @@ function ViewerApp() {
       return;
     }
     event.preventDefault();
-    const pageNode = event.target?.closest?.('[data-reader-page-index], [data-reader-index], [data-pdf-page-index]');
-    const rawPageIndex = pageNode?.getAttribute?.('data-reader-page-index')
-      ?? pageNode?.getAttribute?.('data-reader-index')
-      ?? pageNode?.getAttribute?.('data-pdf-page-index');
-    const selectedPageIndex = Number.isFinite(Number(rawPageIndex))
-      ? Number(rawPageIndex)
-      : pageIndex;
-    setSelectionMenu({
-      x: event.clientX,
-      y: event.clientY,
-      text: selectedText,
-      pageIndex: clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1)),
-      snippet: selectedText.slice(0, 120),
+    showTextSelectionToolbar({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      target: event.target,
     });
-  }, [flowMode, isComicSinglePage, isViewerInteractiveTarget, pageCount, pageIndex, pages, session?.type]);
+  }, [flowMode, isComicSinglePage, isViewerInteractiveTarget, pageCount, pages, session?.type, showTextSelectionToolbar]);
 
   const handleScroll = () => {
     const node = scrollRef.current;
@@ -4979,7 +5258,7 @@ function ViewerApp() {
     if (swipeGestureRef.current?.active) return;
     if (dragPanRef.current.active || isViewerInteractiveTarget(event.target)) return;
     if (pageCount <= 1 && !hasNextBook) return;
-    if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox) return;
+    if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox || lookupPanel) return;
     swipeGestureRef.current = {
       active: true,
       source: 'pointer',
@@ -4994,7 +5273,7 @@ function ViewerApp() {
     } catch {
       // Some embedded surfaces reject capture; swipe can still finish if pointerup reaches the content.
     }
-  }, [bookmarkEditorOpen, bookmarkMenuOpen, hasNextBook, helpOpen, imageLightbox, isViewerInteractiveTarget, navigationPanelOpen, pageCount, selectionMenu, settingsOpen]);
+  }, [bookmarkEditorOpen, bookmarkMenuOpen, hasNextBook, helpOpen, imageLightbox, isViewerInteractiveTarget, lookupPanel, navigationPanelOpen, pageCount, selectionMenu, settingsOpen]);
 
   const handleSwipePointerMove = useCallback(event => {
     const state = swipeGestureRef.current;
@@ -5043,7 +5322,7 @@ function ViewerApp() {
     if (swipeGestureRef.current?.active) return;
     if (dragPanRef.current.active || isViewerInteractiveTarget(event.target)) return;
     if (pageCount <= 1 && !hasNextBook) return;
-    if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox) return;
+    if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox || lookupPanel) return;
     const touch = event.touches[0];
     swipeGestureRef.current = {
       active: true,
@@ -5055,7 +5334,7 @@ function ViewerApp() {
       startedAt: window.performance?.now?.() || Date.now(),
       cancelled: false,
     };
-  }, [bookmarkEditorOpen, bookmarkMenuOpen, hasNextBook, helpOpen, imageLightbox, isViewerInteractiveTarget, navigationPanelOpen, pageCount, selectionMenu, settingsOpen]);
+  }, [bookmarkEditorOpen, bookmarkMenuOpen, hasNextBook, helpOpen, imageLightbox, isViewerInteractiveTarget, lookupPanel, navigationPanelOpen, pageCount, selectionMenu, settingsOpen]);
 
   const handleTouchSwipeMove = useCallback(event => {
     const state = swipeGestureRef.current;
@@ -5116,6 +5395,14 @@ function ViewerApp() {
     if (event.pointerType === 'mouse') {
       wheelButtonStateRef.current = Number(event.buttons) || 0;
     }
+    textSelectionPointerRef.current = event.button === 0
+      ? {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        target: event.target,
+      }
+      : null;
     handleDragPanPointerDown(event);
     handleSwipePointerDown(event);
   }, [handleDragPanPointerDown, handleSwipePointerDown]);
@@ -5132,20 +5419,41 @@ function ViewerApp() {
     if (event.pointerType === 'mouse') {
       wheelButtonStateRef.current = Number(event.buttons) || 0;
     }
+    const selectionPointer = textSelectionPointerRef.current;
+    textSelectionPointerRef.current = null;
     handleSwipePointerUp(event);
     endDragPan(event);
-  }, [endDragPan, handleSwipePointerUp]);
+    if (!selectionPointer || selectionPointer.pointerId !== event.pointerId) return;
+    const movedX = Math.abs(event.clientX - selectionPointer.startX);
+    const movedY = Math.abs(event.clientY - selectionPointer.startY);
+    if (movedX < 4 && movedY < 4) return;
+    const target = event.target || selectionPointer.target;
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    window.requestAnimationFrame(() => {
+      showTextSelectionToolbar({ clientX, clientY, target });
+    });
+  }, [endDragPan, handleSwipePointerUp, showTextSelectionToolbar]);
 
   const handleContentPointerCancel = useCallback(event => {
     if (event?.pointerType === 'mouse') {
       wheelButtonStateRef.current = 0;
     }
+    textSelectionPointerRef.current = null;
     cancelSwipeGesture(event);
     endDragPan(event);
   }, [cancelSwipeGesture, endDragPan]);
 
   useEffect(() => {
     const handler = event => {
+      if (event.key === 'Escape' && (settingsOpen || navigationPanelOpen || helpOpen)) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSettingsOpen(false);
+        setNavigationPanelOpen(false);
+        setHelpOpen(false);
+        return;
+      }
       if (isShortcutModifierEvent(event) && !event.altKey && event.key.toLowerCase() === 'f') {
         if (openNavigationSearch()) {
           event.preventDefault();
@@ -5161,6 +5469,7 @@ function ViewerApp() {
         || navigationPanelOpen
         || selectionMenu
         || imageLightbox
+        || lookupPanel
       );
       if (shortcutsBlockedByOverlay || isViewerShortcutBlockedTarget(event.target)) return;
       if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -5234,7 +5543,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned]);
+  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -6081,22 +6390,101 @@ function ViewerApp() {
         />
       )}
       {selectionMenu && (
-        <div
-          className="viewer-context-menu"
-          style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
-          onMouseDown={event => event.stopPropagation()}
-        >
-          {selectionMenu.kind === 'comic-flow' ? (
+        selectionMenu.kind === 'comic-flow' ? (
+          <div
+            className="viewer-context-menu"
+            style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
+            onMouseDown={event => event.stopPropagation()}
+          >
             <button type="button" onClick={toggleComicSinglePageFromSelection}>
               {selectionMenu.isSinglePage
                 ? viewerText('viewer.context.comic_single_page_clear', '단독장 분리 해제')
                 : viewerText('viewer.context.comic_single_page', '이 페이지를 단독장으로 분리')}
             </button>
-          ) : (
-            <button type="button" onClick={addHighlightFromSelection}>{viewerText('viewer.context.add_highlight', '하이라이트 추가')}</button>
-          )}
-        </div>
+          </div>
+        ) : selectionMenu.kind === 'text-selection' ? (
+          <div
+            className={`viewer-selection-toolbar is-${selectionMenu.placement || 'above'}`}
+            style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
+            role="toolbar"
+            aria-label={viewerText('viewer.context.selection_toolbar', '선택 텍스트 도구')}
+            onPointerDown={event => event.stopPropagation()}
+            onMouseDown={event => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            <button
+              type="button"
+              className="viewer-selection-tool"
+              title={viewerText('viewer.context.add_highlight', '하이라이트 추가')}
+              onClick={addHighlightFromSelection}
+            >
+              <FaIcon name="pen" />
+              <span>{viewerText('viewer.context.add_highlight_short', '하이라이트')}</span>
+            </button>
+            <button
+              type="button"
+              className="viewer-selection-tool"
+              title={viewerText('viewer.context.search_in_book', '이 책에서 검색')}
+              onClick={searchBookFromSelection}
+            >
+              <FaIcon name="search" />
+              <span>{viewerText('viewer.context.search_in_book_short', '책 검색')}</span>
+            </button>
+            <div className="viewer-selection-menu">
+              <button
+                type="button"
+                className="viewer-selection-tool"
+                title={viewerText('viewer.context.dictionary_search', '사전 검색')}
+                aria-haspopup="menu"
+              >
+                <FaIcon name="bookOpen" />
+                <span>{viewerText('viewer.context.dictionary_search_short', '사전')}</span>
+                <FaIcon name="angleDown" size={9} />
+              </button>
+              <div className="viewer-selection-menu-list" role="menu">
+                <button type="button" role="menuitem" onClick={() => openSelectionDictionary('google')}>
+                  {viewerText('viewer.context.dictionary_google', 'Google 사전')}
+                </button>
+                <button type="button" role="menuitem" onClick={() => openSelectionDictionary('naver')}>
+                  {viewerText('viewer.context.dictionary_naver', 'Naver 사전')}
+                </button>
+              </div>
+            </div>
+            <div className="viewer-selection-menu">
+              <button
+                type="button"
+                className="viewer-selection-tool"
+                title={viewerText('viewer.context.translate', '번역')}
+                aria-haspopup="menu"
+              >
+                <FaIcon name="language" />
+                <span>{viewerText('viewer.context.translate_short', '번역')}</span>
+                <FaIcon name="angleDown" size={9} />
+              </button>
+              <div className="viewer-selection-menu-list" role="menu">
+                <button type="button" role="menuitem" onClick={() => openSelectionTranslation('google')}>
+                  {viewerText('viewer.context.translate_google', 'Google 번역')}
+                </button>
+                <button type="button" role="menuitem" onClick={() => openSelectionTranslation('deepl')}>
+                  {viewerText('viewer.context.translate_deepl', 'DeepL 번역')}
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="viewer-selection-tool"
+              title={viewerText('viewer.context.tts_selection', '선택 영역 TTS 읽기')}
+              onClick={speakSelectionText}
+            >
+              <FaIcon name="play" />
+              <span>{viewerText('viewer.context.tts_selection_short', 'TTS')}</span>
+            </button>
+          </div>
+        ) : null
       )}
+      <ViewerLookupPanel lookup={lookupPanel} onClose={() => setLookupPanel(null)} />
       <ImageLightbox image={imageLightbox} onClose={() => setImageLightbox(null)} />
       <ViewerHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ReaderSettingsPanel
