@@ -1,5 +1,31 @@
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 export const FOLDER_VIEW_VIRTUALIZE_THRESHOLD = 300;
+const UNCATEGORIZED_GROUP_NAME = '미분류';
+
+function firstGroupValue(...values) {
+    for (const value of values) {
+        if (Array.isArray(value)) {
+            const joined = value.map(item => String(item || '').trim()).filter(Boolean).join(', ');
+            if (joined) return joined;
+            continue;
+        }
+        const text = String(value || '').trim();
+        if (text) return text;
+    }
+    return '';
+}
+
+function folderFileGroupValue(file = {}, groupKey = '', fallbackGroupName = UNCATEGORIZED_GROUP_NAME) {
+    if (groupKey === 'author') {
+        return firstGroupValue(file.author, file.writer, file.creators);
+    }
+    if (groupKey === 'author_series') {
+        const author = firstGroupValue(file.author, file.writer, file.creators) || fallbackGroupName;
+        const series = firstGroupValue(file.series) || fallbackGroupName;
+        return `${author} / ${series}`;
+    }
+    return firstGroupValue(file?.[groupKey]);
+}
 
 export function sortFolderFiles(files = [], sortKey = 'name', sortOrder = 'asc') {
     return [...files].sort((a, b) => {
@@ -12,13 +38,14 @@ export function sortFolderFiles(files = [], sortKey = 'name', sortOrder = 'asc')
     });
 }
 
-export function groupFolderFiles(files = [], groupKey = 'none', sortKey = 'name', sortOrder = 'asc') {
+export function groupFolderFiles(files = [], groupKey = 'none', sortKey = 'name', sortOrder = 'asc', options = {}) {
     const sorted = sortFolderFiles(files, sortKey, sortOrder);
     if (!groupKey || groupKey === 'none') return [{ name: '', files: sorted }];
+    const fallbackGroupName = String(options.fallbackGroupName || UNCATEGORIZED_GROUP_NAME);
 
     const groups = new Map();
     sorted.forEach(file => {
-        const name = String(file?.[groupKey] || '미분류');
+        const name = folderFileGroupValue(file, groupKey, fallbackGroupName) || fallbackGroupName;
         if (!groups.has(name)) groups.set(name, []);
         groups.get(name).push(file);
     });

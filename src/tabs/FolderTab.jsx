@@ -472,8 +472,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     [config?.folder_saved_layouts],
   );
   const groupedFileData = useMemo(
-    () => groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder),
-    [filteredFileData, groupKey, sortKey, sortOrder],
+    () => groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder, {
+      fallbackGroupName: t('folder_group_uncategorized'),
+    }),
+    [filteredFileData, groupKey, sortKey, sortOrder, t],
   );
   const displayedFileData = useMemo(
     () => groupedFileData.flatMap(group => group.files),

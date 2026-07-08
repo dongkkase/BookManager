@@ -20,6 +20,22 @@ test('모든 보기 모드는 동일한 정렬과 그룹 순서를 사용한다'
     assert.deepEqual(groups[0].files.map(file => file.name), ['1.cbz', '2.cbz']);
 });
 
+test('작가와 시리즈를 조합해 그룹화한다', () => {
+    const groups = groupFolderFiles([
+        { name: '1.cbz', author: '작가 A', series: '시리즈 1' },
+        { name: '2.cbz', writer: '작가 A', series: '시리즈 1' },
+        { name: '3.cbz', creators: ['작가 B'], series: '시리즈 1' },
+        { name: '4.cbz', series: '시리즈 2' },
+    ], 'author_series', 'name', 'asc', { fallbackGroupName: '분류 없음' });
+
+    assert.deepEqual(groups.map(group => group.name), [
+        '분류 없음 / 시리즈 2',
+        '작가 A / 시리즈 1',
+        '작가 B / 시리즈 1',
+    ]);
+    assert.deepEqual(groups[1].files.map(file => file.name), ['1.cbz', '2.cbz']);
+});
+
 test('보기 모드와 보기별 크기를 안전한 값으로 복원한다', () => {
     assert.equal(normalizeViewMode('invalid'), 'table');
     assert.deepEqual(normalizeViewScales({ table: 5, tile: 120, thumbnail: 70 }), {

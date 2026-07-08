@@ -56,8 +56,10 @@ const ThumbnailView = ({
   const groups = useMemo(
     () => Array.isArray(groupedDataProp)
       ? groupedDataProp
-      : groupFolderFiles(items, groupKey, sortKey, sortOrder),
-    [groupedDataProp, groupKey, items, sortKey, sortOrder],
+      : groupFolderFiles(items, groupKey, sortKey, sortOrder, {
+          fallbackGroupName: t('folder_group_uncategorized'),
+        }),
+    [groupedDataProp, groupKey, items, sortKey, sortOrder, t],
   );
   const selectedFileLookup = useMemo(
     () => selectedFileSet instanceof Set ? selectedFileSet : new Set(selectedFiles),

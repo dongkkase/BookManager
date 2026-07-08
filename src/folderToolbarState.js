@@ -3,6 +3,7 @@ export const FOLDER_GROUP_KEYS = [
     'folder_path',
     'ext',
     'series',
+    'author_series',
     'title',
     'author',
     'publisher',

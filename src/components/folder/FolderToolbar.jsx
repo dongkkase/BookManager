@@ -93,6 +93,7 @@ function FolderToolbar({
     folder_path: t('menu_folder'),
     ext: t('col_ext'),
     series: t('col_series'),
+    author_series: `${t('col_writer')} + ${t('col_series')}`,
     title: t('col_title'),
     author: t('col_writer'),
     publisher: t('col_publisher'),

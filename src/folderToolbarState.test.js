@@ -9,7 +9,7 @@ import {
 } from './folderToolbarState.js';
 
 test('그룹과 정렬 항목은 원본 순서를 유지한다', () => {
-    assert.deepEqual(FOLDER_GROUP_KEYS.slice(0, 4), ['none', 'folder_path', 'ext', 'series']);
+    assert.deepEqual(FOLDER_GROUP_KEYS.slice(0, 5), ['none', 'folder_path', 'ext', 'series', 'author_series']);
     assert.deepEqual(FOLDER_SORT_KEYS, ['name', 'size', 'modified', 'ext', 'series', 'title', 'author']);
 });
 

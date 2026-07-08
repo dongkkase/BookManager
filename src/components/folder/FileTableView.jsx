@@ -96,8 +96,10 @@ const FileTableView = forwardRef(({
     const groupedData = useMemo(
         () => Array.isArray(groupedDataProp)
             ? groupedDataProp
-            : groupFolderFiles(files, groupKey, sortKey, sortOrder),
-        [files, groupedDataProp, groupKey, sortKey, sortOrder],
+            : groupFolderFiles(files, groupKey, sortKey, sortOrder, {
+                fallbackGroupName: t('folder_group_uncategorized'),
+            }),
+        [files, groupedDataProp, groupKey, sortKey, sortOrder, t],
     );
     const selectedFileLookup = useMemo(
         () => selectedFileSet instanceof Set ? selectedFileSet : new Set(selectedFiles),
