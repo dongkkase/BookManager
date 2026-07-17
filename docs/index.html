@@ -30,10 +30,12 @@
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows, macOS",
         "description": "BookManager is a Windows and macOS desktop app for organizing comic and ebook files, including CBZ, ZIP, EPUB, PDF, ComicInfo.xml metadata editing, archive structure cleanup, file renaming, library search, and sharing servers.",
-        "softwareVersion": "3.0.0",
         "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
         "url": "https://dongkkase.github.io/BookManager/",
-        "downloadUrl": "https://github.com/dongkkase/BookManager/releases",
+        "downloadUrl": [
+            "https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-mac.zip",
+            "https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-win.zip"
+        ],
         "codeRepository": "https://github.com/dongkkase/BookManager",
         "inLanguage": ["ko", "en", "ja"]
     }
@@ -223,6 +225,19 @@
             background: var(--accent-strong);
         }
 
+        .button-icon {
+            display: block;
+            width: 1.2em;
+            height: 1.2em;
+            margin-right: 8px;
+        }
+
+        .button-version {
+            margin-left: 8px;
+            color: rgba(238, 243, 247, 0.78);
+            font-size: 0.92em;
+        }
+
         main {
             padding: 56px clamp(20px, 6vw, 72px) 72px;
         }
@@ -243,6 +258,164 @@
             margin: 0 0 24px;
             color: var(--muted);
             font-size: 1.05rem;
+        }
+
+        .demo-section {
+            max-width: 1180px;
+        }
+
+        .demo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: end;
+            gap: 24px;
+            margin-bottom: 20px;
+        }
+
+        .demo-header .section-lead {
+            margin-bottom: 0;
+        }
+
+        .demo-count {
+            flex: 0 0 auto;
+            color: var(--muted);
+            font-size: 0.94rem;
+            font-weight: 700;
+        }
+
+        .demo-slider {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #121416;
+            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.3);
+        }
+
+        .demo-viewport {
+            position: relative;
+            aspect-ratio: 1469 / 1054;
+            background: #0b0d0f;
+        }
+
+        .demo-slide {
+            position: absolute;
+            inset: 0;
+            margin: 0;
+            opacity: 0;
+            transition: opacity 0.55s ease;
+            pointer-events: none;
+        }
+
+        .demo-slide.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .demo-slide img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .demo-caption {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: end;
+            gap: 18px;
+            padding: 56px 22px 20px;
+            background: linear-gradient(180deg, rgba(16, 18, 20, 0) 0%, rgba(16, 18, 20, 0.82) 62%, rgba(16, 18, 20, 0.94) 100%);
+        }
+
+        .demo-caption strong {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 1.05rem;
+        }
+
+        .demo-caption span {
+            display: block;
+            max-width: 680px;
+            color: var(--muted);
+            font-size: 0.94rem;
+        }
+
+        .demo-badge {
+            flex: 0 0 auto;
+            min-height: 30px;
+            padding: 4px 10px;
+            border: 1px solid rgba(238, 243, 247, 0.2);
+            border-radius: 999px;
+            color: var(--text);
+            background: rgba(34, 38, 42, 0.86);
+            font-size: 0.82rem;
+            font-style: normal;
+            font-weight: 800;
+        }
+
+        .demo-control {
+            position: absolute;
+            top: 50%;
+            z-index: 2;
+            width: 42px;
+            height: 42px;
+            border: 1px solid rgba(238, 243, 247, 0.2);
+            border-radius: 6px;
+            color: var(--text);
+            background: rgba(16, 18, 20, 0.76);
+            font-size: 1.7rem;
+            line-height: 1;
+            transform: translateY(-50%);
+            cursor: pointer;
+        }
+
+        .demo-control:hover,
+        .demo-control:focus-visible {
+            border-color: var(--accent);
+            background: rgba(31, 125, 188, 0.86);
+            outline: none;
+        }
+
+        .demo-control.prev {
+            left: 14px;
+        }
+
+        .demo-control.next {
+            right: 14px;
+        }
+
+        .demo-dots {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            padding: 14px 18px 16px;
+            background: #15181b;
+            border-top: 1px solid var(--line);
+        }
+
+        .demo-dot {
+            width: 10px;
+            height: 10px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            background: rgba(238, 243, 247, 0.32);
+            cursor: pointer;
+        }
+
+        .demo-dot.active {
+            background: var(--accent);
+        }
+
+        .demo-dot:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 3px;
         }
 
         .feature-grid {
@@ -359,6 +532,31 @@
                 width: 100%;
             }
 
+            .demo-header,
+            .demo-caption {
+                display: block;
+            }
+
+            .demo-count {
+                margin-top: 10px;
+            }
+
+            .demo-caption {
+                padding: 42px 16px 16px;
+            }
+
+            .demo-badge {
+                display: inline-flex;
+                align-items: center;
+                margin-top: 12px;
+            }
+
+            .demo-control {
+                width: 36px;
+                height: 36px;
+                font-size: 1.45rem;
+            }
+
             h1 {
                 font-size: 3.4rem;
             }
@@ -388,7 +586,16 @@
             <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
             <p class="lead">CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. Kavita, Komga, YACReader, Panels, Calibre, KOReader 같은 서버와 뷰어에 맞춰 책 파일을 관리할 수 있습니다.</p>
             <div class="actions">
-                <a class="button primary" href="https://github.com/dongkkase/BookManager/releases">다운로드</a>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-mac.zip" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
+                    <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
+                    <span>다운로드</span>
+                    <span class="button-version" data-release-version>최신 버전</span>
+                </a>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-win.zip" data-platform="win" aria-label="Windows 최신 버전 다운로드">
+                    <img class="button-icon" src="icon_windows.svg" alt="" aria-hidden="true">
+                    <span>다운로드</span>
+                    <span class="button-version" data-release-version>최신 버전</span>
+                </a>
                 <a class="button" href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
                 <a class="button" href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
             </div>
@@ -403,6 +610,96 @@
     </header>
 
     <main>
+        <section class="demo-section" aria-labelledby="demo-title">
+            <div class="demo-header">
+                <div>
+                    <h2 id="demo-title" class="text-animate">화면 미리보기</h2>
+                    <p class="section-lead">라이브러리 관리, 압축 파일 정리, 메타데이터 편집, 공유 서버, 내장 뷰어 화면을 실제 앱 이미지로 확인할 수 있습니다.</p>
+                </div>
+                <span class="demo-count" data-demo-count>1 / 9</span>
+            </div>
+            <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 이미지">
+                <div class="demo-viewport">
+                    <figure class="demo-slide active" aria-hidden="false">
+                        <img src="demo/demo0.png" alt="BookManager 라이브러리 브라우저 화면" loading="eager">
+                        <figcaption class="demo-caption">
+                            <span><strong>라이브러리 브라우저</strong>표지, 메타데이터, 폴더 라이브러리를 한 화면에서 확인합니다.</span>
+                            <em class="demo-badge">관리 프로그램</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo1.png" alt="BookManager 압축 구조 정리 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>압축 구조 정리</strong>권 단위 출력 경로와 압축 파일 구조를 미리 확인합니다.</span>
+                            <em class="demo-badge">관리 프로그램</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo2.png" alt="BookManager 내부 파일명 정리 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>내부 파일명 정리</strong>페이지 순서, 누락 페이지, 이미지 압축 옵션을 함께 점검합니다.</span>
+                            <em class="demo-badge">관리 프로그램</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo3.png" alt="BookManager 메타데이터 편집 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>메타데이터 편집</strong>권별 정보와 시리즈 일괄 편집 값을 나란히 관리합니다.</span>
+                            <em class="demo-badge">관리 프로그램</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo4.png" alt="BookManager 메타데이터 검색 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>메타데이터 검색</strong>외부 검색 결과를 비교하고 선택한 정보를 적용합니다.</span>
+                            <em class="demo-badge">관리 프로그램</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo5.png" alt="BookManager 공유 서버 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>공유 서버</strong>OPDS, Web, WebDAV 주소와 서버 상태를 관리합니다.</span>
+                            <em class="demo-badge">관리 프로그램</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo6.png" alt="BookManager 만화 뷰어 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>만화 뷰어</strong>양면 보기와 확대 비율을 조정하며 CBZ 파일을 읽습니다.</span>
+                            <em class="demo-badge">뷰어</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo7.png" alt="BookManager PDF 뷰어 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>PDF 뷰어</strong>PDF 페이지를 책처럼 넘기며 열람합니다.</span>
+                            <em class="demo-badge">뷰어</em>
+                        </figcaption>
+                    </figure>
+                    <figure class="demo-slide" aria-hidden="true">
+                        <img src="demo/demo8.png" alt="BookManager EPUB 뷰어 설정 화면" loading="lazy">
+                        <figcaption class="demo-caption">
+                            <span><strong>EPUB 뷰어</strong>목차, 검색, TTS, 테마 설정을 열람 화면에서 조정합니다.</span>
+                            <em class="demo-badge">뷰어</em>
+                        </figcaption>
+                    </figure>
+                    <button class="demo-control prev" type="button" data-demo-prev aria-label="이전 데모 이미지">&lsaquo;</button>
+                    <button class="demo-control next" type="button" data-demo-next aria-label="다음 데모 이미지">&rsaquo;</button>
+                </div>
+                <div class="demo-dots" aria-label="데모 이미지 선택">
+                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="데모 이미지 1"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="데모 이미지 2"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="데모 이미지 3"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="데모 이미지 4"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="데모 이미지 5"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="데모 이미지 6"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="데모 이미지 7"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="데모 이미지 8"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="데모 이미지 9"></button>
+                </div>
+            </div>
+        </section>
+
         <section>
             <h2 class="text-animate">만화책 파일 정리</h2>
             <p class="section-lead">BookManager는 만화책 압축 파일을 라이브러리와 뷰어에서 읽기 좋은 형태로 정리합니다. 압축 파일 구조 정리, 평탄화, 내부 이미지 파일명 변경, 누락 페이지 확인을 지원합니다.</p>
@@ -529,6 +826,111 @@
         }
 
         const animatedText = document.querySelectorAll('.text-animate');
+        const releaseApiUrl = 'https://api.github.com/repos/dongkkase/BookManager/releases/latest';
+
+        function assetForPlatform(assets, platform) {
+            const candidates = Array.isArray(assets) ? assets : [];
+            const targetName = platform === 'mac' ? 'bookmanager-mac.zip' : 'bookmanager-win.zip';
+            return candidates.find(asset => {
+                const name = String(asset?.name || '').toLowerCase();
+                return name === targetName;
+            });
+        }
+
+        async function updateDownloadButtons() {
+            const buttons = document.querySelectorAll('.download-button');
+            if (!buttons.length || !window.fetch) return;
+
+            try {
+                const response = await fetch(releaseApiUrl, {
+                    headers: { Accept: 'application/vnd.github+json' },
+                });
+                if (!response.ok) return;
+
+                const release = await response.json();
+                const version = release?.tag_name || release?.name;
+                buttons.forEach(button => {
+                    const platform = button.dataset.platform;
+                    const asset = assetForPlatform(release?.assets, platform);
+                    if (asset?.browser_download_url) {
+                        button.href = asset.browser_download_url;
+                    }
+                    if (version) {
+                        const versionEl = button.querySelector('[data-release-version]');
+                        if (versionEl) versionEl.textContent = version;
+                        button.setAttribute('aria-label', `${platform === 'mac' ? 'macOS' : 'Windows'} ${version} 다운로드`);
+                    }
+                });
+            } catch (error) {
+                // 기본 latest/download 링크를 그대로 사용합니다.
+            }
+        }
+
+        function initDemoSlider() {
+            const slider = document.querySelector('[data-demo-slider]');
+            if (!slider) return;
+
+            const slides = Array.from(slider.querySelectorAll('.demo-slide'));
+            if (!slides.length) return;
+
+            const dots = Array.from(slider.querySelectorAll('[data-demo-dot]'));
+            const count = document.querySelector('[data-demo-count]');
+            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            let currentIndex = 0;
+            let timer = null;
+
+            function showSlide(index) {
+                currentIndex = (index + slides.length) % slides.length;
+                slides.forEach((slide, slideIndex) => {
+                    const active = slideIndex === currentIndex;
+                    slide.classList.toggle('active', active);
+                    slide.setAttribute('aria-hidden', active ? 'false' : 'true');
+                });
+                dots.forEach((dot, dotIndex) => {
+                    const active = dotIndex === currentIndex;
+                    dot.classList.toggle('active', active);
+                    dot.setAttribute('aria-current', active ? 'true' : 'false');
+                });
+                if (count) {
+                    count.textContent = `${currentIndex + 1} / ${slides.length}`;
+                }
+            }
+
+            function stopTimer() {
+                if (!timer) return;
+                clearInterval(timer);
+                timer = null;
+            }
+
+            function startTimer() {
+                stopTimer();
+                if (reduceMotion || slides.length < 2) return;
+                timer = setInterval(() => showSlide(currentIndex + 1), 4500);
+            }
+
+            slider.querySelector('[data-demo-prev]')?.addEventListener('click', () => {
+                showSlide(currentIndex - 1);
+                startTimer();
+            });
+            slider.querySelector('[data-demo-next]')?.addEventListener('click', () => {
+                showSlide(currentIndex + 1);
+                startTimer();
+            });
+            dots.forEach(dot => {
+                dot.addEventListener('click', () => {
+                    showSlide(Number(dot.dataset.demoDot || 0));
+                    startTimer();
+                });
+            });
+
+            slider.addEventListener('mouseenter', stopTimer);
+            slider.addEventListener('mouseleave', startTimer);
+            slider.addEventListener('focusin', stopTimer);
+            slider.addEventListener('focusout', startTimer);
+
+            showSlide(0);
+            startTimer();
+        }
 
         if ('IntersectionObserver' in window) {
             const observer = new IntersectionObserver((entries) => {
@@ -544,6 +946,9 @@
         } else {
             animatedText.forEach(anim_01);
         }
+
+        updateDownloadButtons();
+        initDemoSlider();
     </script>
 </body>
 </html>
