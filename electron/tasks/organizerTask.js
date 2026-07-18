@@ -736,7 +736,6 @@ async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
 async function createFlatStaging(leaf, tempBase) {
   const staging = path.join(tempBase, `flat_${Math.random().toString(16).slice(2)}`);
   await fsp.mkdir(staging, { recursive: true });
-  let index = 0;
   async function walk(currentDir) {
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
     entries.sort((a, b) => naturalCompare(a.name, b.name));
@@ -746,9 +745,7 @@ async function createFlatStaging(leaf, tempBase) {
       if (entry.isDirectory()) {
         await walk(fullPath);
       } else if (entry.isFile() && isImage(entry.name)) {
-        index += 1;
-        const extension = path.extname(entry.name).toLowerCase();
-        const target = path.join(staging, `${String(index).padStart(5, '0')}${extension}`);
+        const target = await uniquePath(path.join(staging, entry.name));
         await fsp.copyFile(fullPath, target);
       }
     }

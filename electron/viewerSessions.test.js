@@ -16,6 +16,25 @@ function pngHeader(width, height) {
     return buffer;
 }
 
+test('TXT 뷰어 세션은 24MB를 초과하는 파일을 읽는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-large-text-'));
+    try {
+        const textPath = path.join(root, 'large.txt');
+        const text = `${'가'.repeat(8 * 1024 * 1024)}끝`;
+        fs.writeFileSync(textPath, text, 'utf8');
+        assert.equal(fs.statSync(textPath).size > 24 * 1024 * 1024, true);
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(textPath);
+        const result = await manager.getText(session.id, { encoding: 'utf-8' });
+
+        assert.equal(result.text.length, text.length);
+        assert.equal(result.text.endsWith('끝'), true);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('뷰어 세션은 같은 폴더의 이전권/다음권 가능 여부를 계산한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-adjacent-'));
     try {

@@ -216,6 +216,7 @@ const READER_PAGE_FIT_SCALE_STEP = 0.88;
 const READER_PAGE_FIT_SCALE_RECOVERY_STEP = 1.08;
 const READER_RENDER_OVERFLOW_TOLERANCE = 3;
 const READER_RENDER_UNDERFILL_THRESHOLD = 0.82;
+const READER_SLIDE_WINDOW_RADIUS = 80;
 const SWIPE_MIN_DISTANCE = 64;
 const SWIPE_AXIS_LOCK_RATIO = 1.35;
 const SWIPE_MAX_DURATION = 900;
@@ -4080,6 +4081,7 @@ function ViewerApp() {
     viewMode,
   ]);
   const textPages = useMemo(() => paginateText(textContent, readerPageMetrics), [readerPageMetrics, textContent]);
+  const textReaderItems = useMemo(() => textPages.map(text => ({ text })), [textPages]);
   const estimatedEpubPages = useMemo(() => (
     epubChapters.flatMap((chapter, chapterIndex) => paginateReaderChapter({
       ...chapter,
@@ -4162,7 +4164,7 @@ function ViewerApp() {
     : session?.type === 'epub'
       ? epubPages
       : session?.type === 'text'
-        ? textPages.map(text => ({ text }))
+        ? textReaderItems
         : [];
   const pageCount = session?.type === 'pdf' ? pdfPageCount : flowItems.length;
   const currentTtsText = useMemo(() => {
@@ -5379,7 +5381,7 @@ function ViewerApp() {
       } else if (session.type === 'epub' || session.type === 'text') {
         const readerItems = session.type === 'epub'
           ? epubPages
-          : textPages.map(text => ({ text }));
+          : textReaderItems;
         readerItems.forEach((item, index) => {
           const text = plainTextFromReaderItem(item).replace(/\s+/g, ' ').trim();
           collectExactMatches(text, trimmedQuery).forEach(matchIndex => {
@@ -5398,7 +5400,7 @@ function ViewerApp() {
     } finally {
       setBookSearchLoading(false);
     }
-  }, [epubPages, pdfDocument, pdfPageCount, session, textPages]);
+  }, [epubPages, pdfDocument, pdfPageCount, session, textReaderItems]);
 
   const goEpubInternalTarget = useCallback(target => {
     if (session?.type !== 'epub' || !target) return;
@@ -6636,7 +6638,7 @@ function ViewerApp() {
     if (loading && (session.type === 'text' || session.type === 'epub')) return <div className="viewer-state">{viewerText('viewer.common.loading', 'Loading...')}</div>;
     if (session.type === 'comic') return renderComic();
     if (session.type === 'pdf') return renderPdf();
-    if (session.type === 'text') return renderReaderPages(textPages.map(text => ({ text })));
+    if (session.type === 'text') return renderReaderPages(textReaderItems);
     if (session.type === 'epub') return renderReaderPages(epubPages);
     return <div className="viewer-state">{viewerText('viewer.common.unsupported', 'Unsupported')}</div>;
   };
@@ -6725,11 +6727,23 @@ function ViewerApp() {
       });
     }
     if (session?.type === 'epub' || session?.type === 'text') {
-      const readerItems = session.type === 'epub' ? epubPages : textPages.map(text => ({ text }));
-      return readerItems.map((item, index) => (
+      const readerItems = session.type === 'epub' ? epubPages : textReaderItems;
+      const startIndex = session.type === 'text'
+        ? Math.max(0, pageIndex - READER_SLIDE_WINDOW_RADIUS)
+        : 0;
+      const endIndex = session.type === 'text'
+        ? Math.min(readerItems.length, pageIndex + READER_SLIDE_WINDOW_RADIUS + 1)
+        : readerItems.length;
+      const visibleIndexes = Array.from(
+        { length: Math.max(0, endIndex - startIndex) },
+        (_, offset) => startIndex + offset,
+      );
+      if (session.type === 'text' && startIndex > 0) visibleIndexes.unshift(0);
+      if (session.type === 'text' && endIndex < readerItems.length) visibleIndexes.push(readerItems.length - 1);
+      return [...new Set(visibleIndexes)].map(index => (
         <ReaderSlideThumb
           key={`${session.id || session.filePath || 'reader'}-${index}`}
-          item={item}
+          item={readerItems[index]}
           pageNumber={index + 1}
           active={index === pageIndex}
           onClick={runToolbarAction(() => goSlideNavPage(index))}

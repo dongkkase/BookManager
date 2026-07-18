@@ -20,7 +20,6 @@ const SUPPORTED_VIEWER_EXTENSIONS = new Set([
     ...EPUB_EXTENSIONS,
     ...TEXT_EXTENSIONS,
 ]);
-const MAX_TEXT_BYTES = 24 * 1024 * 1024;
 const MAX_EPUB_CHAPTER_BYTES = 8 * 1024 * 1024;
 const MAX_EPUB_STYLESHEET_BYTES = 1024 * 1024;
 const MAX_VIEWER_SESSIONS = 16;
@@ -1753,8 +1752,6 @@ export class ViewerSessionManager {
     async getText(sessionId, options = {}) {
         const session = this.get(sessionId);
         if (session.type !== 'text') throw new Error('This file is not a text document.');
-        const stat = await fsp.stat(session.filePath);
-        if (stat.size > MAX_TEXT_BYTES) throw new Error('Text file is too large.');
         const buffer = await fsp.readFile(session.filePath);
         return {
             encoding: options.encoding || 'auto',

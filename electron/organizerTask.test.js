@@ -638,6 +638,49 @@ test('Organizer는 다중 leaf를 개별 아카이브로 만들고 백업한다'
     }
 });
 
+test('Organizer 평탄화는 이미지 파일명을 유지한다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-flat-names-'));
+    try {
+        const input = path.join(root, 'input');
+        fs.mkdirSync(path.join(input, 'Pages'), { recursive: true });
+        fs.writeFileSync(path.join(input, 'Pages', 'Cover Image.JPG'), Buffer.from('cover'));
+        fs.writeFileSync(path.join(input, 'Pages', 'page_01.png'), Buffer.from('page'));
+        const source = path.join(root, 'Book.zip');
+        const packed = spawnSync(sevenZExe, ['a', '-tzip', source, '*'], {
+            cwd: input,
+            stdio: 'ignore',
+        });
+        assert.equal(packed.status, 0);
+
+        const analyzed = await analyzeOrganizerInputs([source], { sevenZExe, lang: 'ko' });
+        const output = path.join(root, 'output');
+        analyzed.items[0].out_path = output;
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe,
+            target_format: 'cbz',
+            flatten_folders: true,
+            deleteOriginal: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.stats.error.length, 0, result.stats.error.join('\n'));
+        const entries = await listZipEntriesFromFile(result.createdFiles[0]);
+        assert.deepEqual(
+            entries.filter(entry => !entry.isDir).map(entry => entry.name).sort(),
+            ['Cover Image.JPG', 'page_01.png'],
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Organizer 취소는 원본을 보존하고 결과를 만들지 않는다', async t => {
     const sevenZExe = find7z();
     if (!sevenZExe) {
