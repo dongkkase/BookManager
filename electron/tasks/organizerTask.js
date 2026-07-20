@@ -743,6 +743,7 @@ async function createFlatStaging(leaf, tempBase) {
       if (isMacArchiveMetadataName(entry.name)) continue;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
+        if (path.resolve(fullPath) === path.resolve(staging)) continue;
         await walk(fullPath);
       } else if (entry.isFile() && isImage(entry.name)) {
         const target = await uniquePath(path.join(staging, entry.name));
