@@ -783,10 +783,70 @@
   pointer-events: auto;
 }
 
+.viewer-flipbook > div:first-child:not(.stf__parent) {
+  visibility: hidden;
+}
+
 .viewer-flipbook-scale {
   flex: 0 0 auto;
   position: relative;
   z-index: 2;
+}
+
+.viewer-flipbook-ambient-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.viewer-flipbook-ambient-fade-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  overflow: visible;
+  opacity: 0;
+  transition: opacity var(--viewer-flipbook-ambient-fade-duration, 720ms) ease-in-out;
+  will-change: opacity;
+}
+
+.viewer-flipbook-ambient-fade-layer.is-visible {
+  opacity: 1;
+}
+
+.viewer-flipbook-ambient-slot {
+  flex: 1 0 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: visible;
+}
+
+.viewer-flipbook-ambient-slot.is-left-page {
+  justify-content: flex-end;
+}
+
+.viewer-flipbook-ambient-slot.is-right-page {
+  justify-content: flex-start;
+}
+
+.viewer-flipbook-ambient-frame {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.viewer-flipbook-ambient-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .viewer-flipbook > div,
@@ -926,6 +986,10 @@
 
 .viewer-app.is-background-immersive .viewer-ambient-canvas {
   opacity: 0.78;
+}
+
+.viewer-app.is-background-immersive .viewer-flipbook-page.is-comic .viewer-ambient-canvas {
+  opacity: 0;
 }
 
 .viewer-comic-image {

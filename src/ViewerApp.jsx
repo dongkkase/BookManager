@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
-import { buildFlipBookStructureKey } from './viewerFlipBook';
+import { buildFlipBookStructureKey, getFlipBookCurrentGroupEntries } from './viewerFlipBook';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
 import fullScreenIcon from './images/full_screen.svg';
@@ -223,6 +223,7 @@ const SWIPE_AXIS_LOCK_RATIO = 1.35;
 const SWIPE_MAX_DURATION = 900;
 const READER_TITLE_ONLY_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 const BOOK_PAGE_TURN_DURATION = 720;
+const BOOK_AMBIENT_FADE_CLEANUP_BUFFER = 80;
 const PAGE_EFFECT_DURATIONS = {
   slide: 180,
   fade: 180,
@@ -604,6 +605,92 @@ function buildFlipBookPageModel({ pageCount, spread, readingDirection = 'ltr', g
   return { entries, pageToBookIndex, bookToPageIndex };
 }
 
+function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
+  const enabled = typeof renderPage === 'function' && entries.length > 0;
+  const groupKey = buildFlipBookStructureKey(entries);
+  const renderPageRef = useRef(renderPage);
+  const layerIdRef = useRef(0);
+  const activeGroupKeyRef = useRef(enabled ? groupKey : '');
+  const [layers, setLayers] = useState(() => enabled ? [{
+    id: 0,
+    groupKey,
+    entries,
+    visible: true,
+  }] : []);
+  renderPageRef.current = renderPage;
+
+  useEffect(() => {
+    if (!enabled) {
+      activeGroupKeyRef.current = '';
+      setLayers([]);
+      return undefined;
+    }
+    if (activeGroupKeyRef.current === groupKey) return undefined;
+
+    activeGroupKeyRef.current = groupKey;
+    layerIdRef.current += 1;
+    const nextLayerId = layerIdRef.current;
+    setLayers(current => [
+      ...current.map(layer => ({ ...layer, visible: false })),
+      { id: nextLayerId, groupKey, entries, visible: false },
+    ]);
+
+    let revealFrame = 0;
+    const mountFrame = window.requestAnimationFrame(() => {
+      revealFrame = window.requestAnimationFrame(() => {
+        setLayers(current => current.map(layer => ({
+          ...layer,
+          visible: layer.id === nextLayerId,
+        })));
+      });
+    });
+    const cleanupTimer = window.setTimeout(() => {
+      setLayers(current => current.filter(layer => layer.id === nextLayerId));
+    }, BOOK_PAGE_TURN_DURATION + BOOK_AMBIENT_FADE_CLEANUP_BUFFER);
+
+    return () => {
+      window.cancelAnimationFrame(mountFrame);
+      if (revealFrame) window.cancelAnimationFrame(revealFrame);
+      window.clearTimeout(cleanupTimer);
+    };
+  }, [enabled, groupKey]);
+
+  if (!enabled || layers.length < 1) return null;
+  return (
+    <div
+      className="viewer-flipbook-ambient-layer"
+      style={{
+        ...bookStyle,
+        '--viewer-flipbook-ambient-fade-duration': `${BOOK_PAGE_TURN_DURATION}ms`,
+      }}
+      aria-hidden="true"
+    >
+      {layers.map(layer => (
+        <div
+          key={`flipbook-ambient-layer-${layer.id}-${layer.groupKey}`}
+          className={viewerClassName(
+            'viewer-flipbook-ambient-fade-layer',
+            layer.visible && 'is-visible',
+          )}
+        >
+          {layer.entries.map(entry => (
+            <div
+              key={`flipbook-ambient-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
+              className={viewerClassName(
+                'viewer-flipbook-ambient-slot',
+                entry.blank && 'is-blank',
+                `is-${entry.side}-page`,
+              )}
+            >
+              {entry.blank ? null : renderPageRef.current?.(entry.sourceIndex, entry)}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ViewerFlipBook({
   bookKey,
   className = '',
@@ -617,6 +704,7 @@ function ViewerFlipBook({
   navigationKey = 0,
   visualScale = 1,
   renderKey,
+  renderAmbientPage,
   renderPage,
   onPageIndexChange,
 }) {
@@ -676,6 +764,10 @@ function ViewerFlipBook({
     return () => window.cancelAnimationFrame(frame);
   }, [currentBookIndex, navigationKey]);
   const pageRenderDependency = renderKey ?? renderPage;
+  const ambientEntries = useMemo(
+    () => getFlipBookCurrentGroupEntries(model.entries, currentBookIndex),
+    [currentBookIndex, model.entries],
+  );
   const pageElements = useMemo(() => model.entries.map(entry => (
     <div
       key={`flipbook-page-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
@@ -708,6 +800,11 @@ function ViewerFlipBook({
       style={stageStyle}
     >
       <div className="viewer-flipbook-scale" style={scaleStyle}>
+        <FadingFlipBookAmbientLayer
+          bookStyle={bookStyle}
+          entries={ambientEntries}
+          renderPage={renderAmbientPage}
+        />
         <ReactFlipBook
           ref={flipBookRef}
           key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}-${structureKey}`}
@@ -3588,6 +3685,36 @@ function ComicPageFrame({
   );
 }
 
+function ComicFlipBookAmbientPage({ src, frameStyle }) {
+  const imageRef = useRef(null);
+  const ambientCanvasRef = useRef(null);
+
+  const paintAmbient = useCallback(image => {
+    return paintAmbientCanvasFromSource(ambientCanvasRef.current, image);
+  }, []);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      paintAmbient(image);
+    }
+  }, [paintAmbient, src]);
+
+  return (
+    <div className="viewer-flipbook-ambient-frame" style={frameStyle}>
+      <canvas ref={ambientCanvasRef} className="viewer-ambient-canvas viewer-flipbook-ambient-canvas" />
+      <img
+        ref={imageRef}
+        className="viewer-flipbook-ambient-source"
+        src={src}
+        alt=""
+        draggable={false}
+        onLoad={event => paintAmbient(event.currentTarget)}
+      />
+    </div>
+  );
+}
+
 function ReaderRangeSetting({ label, value, min, max, step = 1, unit = '', onChange }) {
   const numericValue = clampNumber(value, min, max, min);
   return (
@@ -4225,7 +4352,7 @@ function ViewerApp() {
       setFlowMode('spread');
       showViewerToast(viewerText(
         'viewer.toast.page_turn_effect_notice',
-        '책넘김 효과는 두장보기모드만 지원하며, 엠비라이트 효과가 비활성화됩니다'
+        '책넘김 효과는 두장보기모드에서 적용되며, 몰입형 배경과 함께 사용할 수 있습니다.'
       ));
     }
     setReaderSettings(current => normalizeReaderSettings({ ...current, ...patch }));
@@ -6319,6 +6446,21 @@ function ViewerApp() {
           visualScale={flipBookVisualScale}
           renderKey={comicFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
+          renderAmbientPage={backgroundMode === 'immersive' ? sourceIndex => {
+            const page = pages[sourceIndex];
+            const src = page ? (pageData[page.name] || page?.pageUrl) : '';
+            if (!page || !src) return null;
+            return (
+              <ComicFlipBookAmbientPage
+                src={src}
+                frameStyle={{
+                  ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                }}
+              />
+            );
+          } : undefined}
           renderPage={(sourceIndex, entry) => {
             const page = pages[sourceIndex];
             return page ? renderComicImage(page, sourceIndex, pageSlots, {
@@ -6666,7 +6808,7 @@ function ViewerApp() {
     : flowMode !== 'scroll' && pageIndex <= 0;
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
   const slideNavAvailable = Boolean(session && pageCount > 0 && (session.type !== 'pdf' || pdfDocument));
-  const backgroundMode = supportsBackgroundSettings && readerSettings.pageEffect !== 'page'
+  const backgroundMode = supportsBackgroundSettings
     ? viewerBackground.mode
     : 'solid';
   const toolbarVisible = toolbarPinnedOpen || toolbarPeekOpen;

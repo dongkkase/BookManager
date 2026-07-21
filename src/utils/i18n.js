@@ -228,7 +228,7 @@ const EXTRA_TRANSLATIONS = {
       },
       toast: {
         next_book_hint: '마지막 페이지입니다. 다음장 입력을 한 번 더 하면 다음 파일이 열립니다.',
-        page_turn_effect_notice: '책넘김 효과는 두장보기모드만 지원하며, 엠비라이트 효과가 비활성화됩니다',
+        page_turn_effect_notice: '책넘김 효과는 두장보기모드에서 적용되며, 몰입형 배경과 함께 사용할 수 있습니다.',
       },
       settings: {
         viewer: '뷰어 설정',
@@ -577,7 +577,7 @@ const EXTRA_TRANSLATIONS = {
       },
       toast: {
         next_book_hint: 'This is the last page. Press Next page once more to open the next file.',
-        page_turn_effect_notice: 'Page turn is only supported in two-page mode, and Ambilight will be disabled.',
+        page_turn_effect_notice: 'Page turn is applied in two-page mode and can be used with the immersive background.',
       },
       settings: {
         viewer: 'Viewer settings',
@@ -926,7 +926,7 @@ const EXTRA_TRANSLATIONS = {
       },
       toast: {
         next_book_hint: '最後のページです。もう一度「次のページ」を押すと次のファイルを開きます。',
-        page_turn_effect_notice: 'ページめくり効果は2ページ表示でのみ使用でき、アンビライト効果は無効になります。',
+        page_turn_effect_notice: 'ページめくり効果は2ページ表示で適用され、没入型背景と併用できます。',
       },
       settings: {
         viewer: 'ビューア設定',
