@@ -799,6 +799,7 @@
   z-index: 1;
   pointer-events: none;
   overflow: visible;
+  isolation: isolate;
 }
 
 .viewer-flipbook-ambient-fade-layer {
@@ -810,6 +811,7 @@
   overflow: visible;
   opacity: 0;
   transition: opacity var(--viewer-flipbook-ambient-fade-duration, 720ms) ease-in-out;
+  mix-blend-mode: plus-lighter;
   will-change: opacity;
 }
 

@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
-import { buildFlipBookStructureKey, getFlipBookCurrentGroupEntries } from './viewerFlipBook';
+import { buildFlipBookStructureKey, finishAndTurnFlipBookToPage, getFlipBookCurrentGroupEntries } from './viewerFlipBook';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
 import fullScreenIcon from './images/full_screen.svg';
@@ -631,7 +631,7 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
     layerIdRef.current += 1;
     const nextLayerId = layerIdRef.current;
     setLayers(current => [
-      ...current.map(layer => ({ ...layer, visible: false })),
+      ...current,
       { id: nextLayerId, groupKey, entries, visible: false },
     ]);
 
@@ -701,7 +701,7 @@ function ViewerFlipBook({
   readingDirection = 'ltr',
   pageSize,
   getStepSizeForIndex,
-  navigationKey = 0,
+  absoluteNavigationKey = 0,
   visualScale = 1,
   renderKey,
   renderAmbientPage,
@@ -709,7 +709,8 @@ function ViewerFlipBook({
   onPageIndexChange,
 }) {
   const flipBookRef = useRef(null);
-  const lastNavigationKeyRef = useRef(navigationKey);
+  const lastAbsoluteNavigationKeyRef = useRef(absoluteNavigationKey);
+  const absoluteTargetBookIndexRef = useRef(null);
   const renderPageRef = useRef(renderPage);
   renderPageRef.current = renderPage;
   const normalizedPageCount = Math.max(0, Number(pageCount) || 0);
@@ -750,19 +751,25 @@ function ViewerFlipBook({
   const handlePageChange = useCallback(bookIndex => {
     if (typeof onPageIndexChange !== 'function') return;
     const normalizedBookIndex = Math.max(0, Number(bookIndex) || 0);
+    if (absoluteTargetBookIndexRef.current != null) {
+      if (normalizedBookIndex !== absoluteTargetBookIndexRef.current) return;
+      absoluteTargetBookIndexRef.current = null;
+    }
     const fallbackBookIndex = spread ? normalizedBookIndex - (normalizedBookIndex % 2) : normalizedBookIndex;
     const nextPageIndex = model.bookToPageIndex.get(normalizedBookIndex)
       ?? model.bookToPageIndex.get(fallbackBookIndex);
     if (Number.isInteger(nextPageIndex)) onPageIndexChange(nextPageIndex);
   }, [model, onPageIndexChange, spread]);
-  useEffect(() => {
-    if (lastNavigationKeyRef.current === navigationKey) return undefined;
-    lastNavigationKeyRef.current = navigationKey;
-    const frame = window.requestAnimationFrame(() => {
-      flipBookRef.current?.flip?.(currentBookIndex);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [currentBookIndex, navigationKey]);
+  useLayoutEffect(() => {
+    if (lastAbsoluteNavigationKeyRef.current === absoluteNavigationKey) return;
+    lastAbsoluteNavigationKeyRef.current = absoluteNavigationKey;
+    const pageFlip = flipBookRef.current?.pageFlip?.();
+    if (!pageFlip) return;
+    absoluteTargetBookIndexRef.current = currentBookIndex;
+    if (!finishAndTurnFlipBookToPage(pageFlip, currentBookIndex)) {
+      absoluteTargetBookIndexRef.current = null;
+    }
+  }, [absoluteNavigationKey, currentBookIndex]);
   const pageRenderDependency = renderKey ?? renderPage;
   const ambientEntries = useMemo(
     () => getFlipBookCurrentGroupEntries(model.entries, currentBookIndex),
@@ -4023,7 +4030,7 @@ function ViewerApp() {
   const [readerSettings, setReaderSettings] = useState(normalizeReaderSettings());
   const [viewerBackground, setViewerBackground] = useState(normalizeViewerBackgroundSettings());
   const [pageTurn, setPageTurn] = useState(EMPTY_PAGE_TURN);
-  const [pageJumpSequence, setPageJumpSequence] = useState(0);
+  const [absolutePageJumpSequence, setAbsolutePageJumpSequence] = useState(0);
   const [bookmarks, setBookmarks] = useState([]);
   const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false);
   const [bookmarkEditorOpen, setBookmarkEditorOpen] = useState(false);
@@ -6275,7 +6282,7 @@ function ViewerApp() {
       } else if (event.key === 'Home') {
         event.preventDefault();
         event.stopPropagation();
-        setPageJumpSequence(current => current + 1);
+        setAbsolutePageJumpSequence(current => current + 1);
         goNavigationPage(0);
         if (flowMode === 'scroll') {
           window.requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ top: 0, left: 0 }));
@@ -6284,7 +6291,7 @@ function ViewerApp() {
         event.preventDefault();
         event.stopPropagation();
         const lastPageIndex = Math.max(0, pageCount - 1);
-        setPageJumpSequence(current => current + 1);
+        setAbsolutePageJumpSequence(current => current + 1);
         goNavigationPage(lastPageIndex);
         if (flowMode === 'scroll') {
           window.requestAnimationFrame(() => {
@@ -6442,7 +6449,7 @@ function ViewerApp() {
           readingDirection={readingDirection}
           pageSize={pageSize}
           getStepSizeForIndex={getStepSizeForIndex}
-          navigationKey={pageJumpSequence}
+          absoluteNavigationKey={absolutePageJumpSequence}
           visualScale={flipBookVisualScale}
           renderKey={comicFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
@@ -6669,7 +6676,7 @@ function ViewerApp() {
           currentPageIndex={pageIndex}
           spread={spread}
           pageSize={pageSize}
-          navigationKey={pageJumpSequence}
+          absoluteNavigationKey={absolutePageJumpSequence}
           onPageIndexChange={handleFlipBookPageIndexChange}
           renderPage={(sourceIndex, entry) => renderReaderArticle(items[sourceIndex], entry.leafOffset, sourceIndex)}
         />
@@ -6754,7 +6761,7 @@ function ViewerApp() {
           currentPageIndex={pageIndex}
           spread={spread}
           pageSize={pageSize}
-          navigationKey={pageJumpSequence}
+          absoluteNavigationKey={absolutePageJumpSequence}
           visualScale={flipBookVisualScale}
           renderKey={pdfFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
@@ -6825,9 +6832,13 @@ function ViewerApp() {
     && pageTurn.active
     && pageTurn.effect !== 'none'
     && pageTurn.effect !== 'page';
+  const flipBookAmbientActive = backgroundMode === 'immersive'
+    && session?.type === 'comic'
+    && flowMode === 'spread'
+    && readerSettings.pageEffect === 'page';
   const ambientBackdropStyle = backgroundMode === 'immersive'
     ? {
-      backgroundImage: immersiveGradientForPage(ambientTurnActive ? pageTurn.fromIndex : pageIndex),
+      backgroundImage: immersiveGradientForPage(flipBookAmbientActive ? 0 : ambientTurnActive ? pageTurn.fromIndex : pageIndex),
       '--viewer-ambient-next-gradient': ambientTurnActive ? immersiveGradientForPage(pageTurn.toIndex) : 'none',
       '--viewer-ambient-turn-progress': ambientTurnActive ? 1 : 0,
       '--viewer-ambient-turn-texture-color': 'rgba(0, 0, 0, 0)',

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { buildFlipBookStructureKey, getFlipBookCurrentGroupEntries } from './viewerFlipBook.js';
+import {
+    buildFlipBookStructureKey,
+    finishAndTurnFlipBookToPage,
+    getFlipBookCurrentGroupEntries,
+} from './viewerFlipBook.js';
 
 const viewerSource = fs.readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
 const i18nSource = fs.readFileSync(new URL('./utils/i18n.js', import.meta.url), 'utf8');
@@ -60,6 +64,19 @@ test('플립북 ambient 레이어는 현재 펼침면의 페이지만 선택한�
     );
 });
 
+test('절대 페이지 이동은 진행 중인 애니메이션을 끝낸 뒤 목표 펼침면을 선택한다', () => {
+    const calls = [];
+    const pageFlip = {
+        getRender: () => ({
+            finishAnimation: () => calls.push('finish'),
+        }),
+        turnToPage: index => calls.push(`turn:${index}`),
+    };
+
+    assert.equal(finishAndTurnFlipBookToPage(pageFlip, 0), true);
+    assert.deepEqual(calls, ['finish', 'turn:0']);
+});
+
 test('몰입형 배경은 책넘김 효과와 함께 유지된다', () => {
     assert.match(
         viewerSource,
@@ -89,10 +106,33 @@ test('책넘김 몰입형 배경은 플립 변형 밖의 독립 레이어에서 
     assert.match(viewerCss, /\.viewer-app\.is-background-immersive \.viewer-flipbook-page\.is-comic \.viewer-ambient-canvas \{\s*opacity:\s*0;/);
 });
 
-test('책넘김 시 이전 배경과 새 배경이 책넘김 시간에 맞춰 교차 페이드된다', () => {
-    assert.match(viewerSource, /current\.map\(layer => \(\{ \.\.\.layer, visible: false \}\)\)/);
+test('책넘김 시 이전 배경과 새 배경은 같은 프레임에서 밝기 저하 없이 교차 페이드된다', () => {
+    assert.match(viewerSource, /setLayers\(current => \[\s*\.\.\.current,\s*\{ id: nextLayerId, groupKey, entries, visible: false \},\s*\]\)/);
     assert.match(viewerSource, /visible:\s*layer\.id === nextLayerId/);
     assert.match(viewerSource, /BOOK_PAGE_TURN_DURATION \+ BOOK_AMBIENT_FADE_CLEANUP_BUFFER/);
+    assert.match(viewerCss, /\.viewer-flipbook-ambient-layer \{[\s\S]*isolation:\s*isolate;/);
     assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer \{[\s\S]*transition:\s*opacity var\(--viewer-flipbook-ambient-fade-duration, 720ms\) ease-in-out;/);
+    assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer \{[\s\S]*mix-blend-mode:\s*plus-lighter;/);
     assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer\.is-visible \{\s*opacity:\s*1;/);
+});
+
+test('책넘김 전용 몰입형 배경에서는 하단 그라데이션이 페이지마다 다시 전환되지 않는다', () => {
+    assert.match(
+        viewerSource,
+        /const flipBookAmbientActive = backgroundMode === 'immersive'[\s\S]*?session\?\.type === 'comic'[\s\S]*?flowMode === 'spread'[\s\S]*?readerSettings\.pageEffect === 'page';/,
+    );
+    assert.match(
+        viewerSource,
+        /backgroundImage: immersiveGradientForPage\(flipBookAmbientActive \? 0 : ambientTurnActive \? pageTurn\.fromIndex : pageIndex\)/,
+    );
+});
+
+test('두장보기 Home과 End 이동은 진행 중인 애니메이션을 끝내고 목표 펼침면으로 즉시 이동한다', () => {
+    assert.match(viewerSource, /const \[absolutePageJumpSequence, setAbsolutePageJumpSequence\] = useState\(0\)/);
+    assert.match(viewerSource, /absoluteTargetBookIndexRef\.current = currentBookIndex/);
+    assert.match(viewerSource, /finishAndTurnFlipBookToPage\(pageFlip, currentBookIndex\)/);
+    assert.match(viewerSource, /if \(normalizedBookIndex !== absoluteTargetBookIndexRef\.current\) return/);
+    assert.doesNotMatch(viewerSource, /flipBookRef\.current\?\.flip\?\.\(currentBookIndex\)/);
+    assert.match(viewerSource, /event\.key === 'Home'[\s\S]*?goNavigationPage\(0\)/);
+    assert.match(viewerSource, /event\.key === 'End'[\s\S]*?goNavigationPage\(lastPageIndex\)/);
 });

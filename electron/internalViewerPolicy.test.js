@@ -458,9 +458,10 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerStyleSource, /\.viewer-ambient-backdrop::before[\s\S]*?var\(--viewer-ambient-turn-texture-color, rgba\(0, 0, 0, 0\)\)/);
     assert.match(viewerStyleSource, /\.viewer-ambient-backdrop::before[\s\S]*?var\(--viewer-ambient-next-gradient, none\)/);
     assert.match(viewerStyleSource, /\.viewer-ambient-backdrop::before[\s\S]*?opacity:\s*var\(--viewer-ambient-turn-progress, 0\)/);
-    assert.match(viewerAppSource, /backgroundImage: immersiveGradientForPage\(pageIndex\)/);
-    assert.match(viewerAppSource, /'--viewer-ambient-next-gradient': 'none'/);
-    assert.match(viewerAppSource, /'--viewer-ambient-turn-progress': 0/);
+    assert.match(viewerAppSource, /const flipBookAmbientActive = backgroundMode === 'immersive'[\s\S]*?readerSettings\.pageEffect === 'page';/);
+    assert.match(viewerAppSource, /backgroundImage: immersiveGradientForPage\(flipBookAmbientActive \? 0 : ambientTurnActive \? pageTurn\.fromIndex : pageIndex\)/);
+    assert.match(viewerAppSource, /'--viewer-ambient-next-gradient': ambientTurnActive \? immersiveGradientForPage\(pageTurn\.toIndex\) : 'none'/);
+    assert.match(viewerAppSource, /'--viewer-ambient-turn-progress': ambientTurnActive \? 1 : 0/);
     assert.match(viewerAppSource, /'--viewer-ambient-turn-texture-color': 'rgba\(0, 0, 0, 0\)'/);
     assert.doesNotMatch(viewerStyleSource, /\.viewer-ambient-backdrop\.has-image/);
     assert.match(viewerStyleSource, /\.viewer-ambient-clip\s*\{[\s\S]*?overflow:\s*visible/);
