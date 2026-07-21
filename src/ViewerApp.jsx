@@ -4,6 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
+import { buildFlipBookStructureKey } from './viewerFlipBook';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
 import fullScreenIcon from './images/full_screen.svg';
@@ -635,6 +636,8 @@ function ViewerFlipBook({
     readingDirection,
     getStepSizeForIndex,
   }), [getStepSizeForIndex, normalizedPageCount, readingDirection, spread]);
+  // page-flip moves these nodes under its own wrapper, so leaf changes require a fresh React boundary.
+  const structureKey = useMemo(() => buildFlipBookStructureKey(model.entries), [model.entries]);
   const currentSourceIndex = clamp(Number(currentPageIndex) || 0, 0, Math.max(0, normalizedPageCount - 1));
   const currentBookIndex = model.pageToBookIndex.get(currentSourceIndex) ?? 0;
   const bookPixelWidth = normalizedPageSize.width * (spread ? 2 : 1);
@@ -707,7 +710,7 @@ function ViewerFlipBook({
       <div className="viewer-flipbook-scale" style={scaleStyle}>
         <ReactFlipBook
           ref={flipBookRef}
-          key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}`}
+          key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}-${structureKey}`}
           className="viewer-flipbook"
           style={bookStyle}
           width={normalizedPageSize.width}
