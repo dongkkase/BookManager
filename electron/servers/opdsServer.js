@@ -3,7 +3,6 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import {
-    ARCHIVE_EXTENSIONS,
     ARCHIVE_MIME_TYPES,
     archiveImageEntries,
     downloadMimeType,
@@ -22,6 +21,28 @@ import {
 
 let opdsDbUnavailableLogged = false;
 
+const OPDS_PUBLICATION_MIME_TYPES = new Map([
+    ...ARCHIVE_MIME_TYPES,
+    ['.pdf', 'application/pdf'],
+    ['.txt', 'text/plain'],
+    ['.text', 'text/plain'],
+    ['.mp3', 'audio/mpeg'],
+    ['.m4b', 'audio/mp4'],
+    ['.m4a', 'audio/mp4'],
+    ['.flac', 'audio/flac'],
+]);
+const OPDS_PUBLICATION_EXTENSIONS = new Set(OPDS_PUBLICATION_MIME_TYPES.keys());
+const OPDS_PAGE_STREAM_EXTENSIONS = new Set([
+    '.zip',
+    '.cbz',
+    '.rar',
+    '.cbr',
+    '.7z',
+    '.cb7',
+    '.tar',
+    '.gz',
+]);
+
 function stableOpdsId(value) {
     return `urn:bookmanager:opds:${crypto.createHash('sha1').update(String(value || '')).digest('hex')}`;
 }
@@ -32,9 +53,22 @@ function asExtension(value = '') {
     return raw.startsWith('.') ? raw : `.${raw}`;
 }
 
-function archiveMimeTypeForRecord(record = {}) {
-    return ARCHIVE_MIME_TYPES.get(asExtension(record.ext) || path.extname(record.path || '').toLowerCase())
-        || 'application/zip';
+function publicationExtension(record = {}) {
+    return asExtension(record.ext) || path.extname(record.path || '').toLowerCase();
+}
+
+function publicationMimeTypeForRecord(record = {}) {
+    return OPDS_PUBLICATION_MIME_TYPES.get(publicationExtension(record))
+        || 'application/octet-stream';
+}
+
+function publicationFormatForRecord(record = {}) {
+    const extension = publicationExtension(record);
+    if (extension === '.epub') return 'EPUB';
+    if (extension === '.pdf') return 'PDF';
+    if (extension === '.txt' || extension === '.text') return 'Text';
+    if (['.mp3', '.m4b', '.m4a', '.flac'].includes(extension)) return 'Audiobook';
+    return 'Archive';
 }
 
 function formatSizeMb(size) {
@@ -77,20 +111,27 @@ function makeOpdsFileEntry(record, { updatedIso, roots, options }) {
     const title = record.title || path.basename(filePath);
     const summary = record.summary || '';
     const writer = record.writer || 'Unknown';
-    const mimeType = archiveMimeTypeForRecord(record);
-    const size = record.size || safeStatSize(filePath);
+    const mimeType = publicationMimeTypeForRecord(record);
+    const publicationFormat = publicationFormatForRecord(record);
+    const supportsPageStream = OPDS_PAGE_STREAM_EXTENSIONS.has(publicationExtension(record));
+    const size = record.size ?? safeStatSize(filePath);
     const extent = formatSizeMb(size);
     const pageCount = numericPageCount(record.page_count);
     const encodedPath = encodeURIComponent(filePath);
     const downloadUrl = `/download?file=${encodedPath}`;
     const streamUrl = `/page?file=${encodedPath}&page_num={pageNumber}`;
     const thumbnailHref = thumbnailHrefForRecord(record, roots, options);
-    const acquisitionLink = pageCount !== '0'
+    const thumbnailLinks = thumbnailHref ? `
+    <link rel="http://opds-spec.org/image/thumbnail" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />
+    <link rel="http://opds-spec.org/image" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />` : '';
+    const acquisitionLink = supportsPageStream && pageCount !== '0'
         ? `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://opds-spec.org/acquisition/open-access" type="${escapeXml(mimeType)}" href="${escapeXml(downloadUrl)}" p5:count="${escapeXml(pageCount)}" />`
         : `<link rel="http://opds-spec.org/acquisition/open-access" type="${escapeXml(mimeType)}" href="${escapeXml(downloadUrl)}" />`;
-    const streamLink = pageCount !== '0'
-        ? `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="${escapeXml(streamUrl)}" p5:count="${escapeXml(pageCount)}" />`
-        : `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="${escapeXml(streamUrl)}" />`;
+    const streamLink = supportsPageStream
+        ? pageCount !== '0'
+            ? `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="${escapeXml(streamUrl)}" p5:count="${escapeXml(pageCount)}" />`
+            : `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="${escapeXml(streamUrl)}" />`
+        : '';
 
     return `  <entry>
     <updated>${escapeXml(updatedIso)}</updated>
@@ -98,10 +139,8 @@ function makeOpdsFileEntry(record, { updatedIso, roots, options }) {
     <title>${escapeXml(`⭘ ${title}`)}</title>
     <summary>${escapeXml(`File Type: ${mimeType} - ${extent} Summary: ${summary}`)}</summary>
     <extent xmlns="http://purl.org/dc/terms/">${escapeXml(extent)}</extent>
-    <format xmlns="http://purl.org/dc/terms/format">Archive</format>
-    <content type="text">${escapeXml(mimeType)}</content>
-    <link rel="http://opds-spec.org/image/thumbnail" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />
-    <link rel="http://opds-spec.org/image" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />
+    <format xmlns="http://purl.org/dc/terms/format">${escapeXml(publicationFormat)}</format>
+    <content type="text">${escapeXml(mimeType)}</content>${thumbnailLinks}
     ${acquisitionLink}
     ${streamLink}
     <author><name>${escapeXml(writer)}</name></author>
@@ -124,7 +163,9 @@ function thumbnailHrefForRecord(record = {}, roots = [], options = {}) {
     ) {
         return `/download?file=${encodeURIComponent(thumbnailPath)}`;
     }
-    return `/thumbnail?file=${encodeURIComponent(record.path)}`;
+    return OPDS_PAGE_STREAM_EXTENSIONS.has(publicationExtension(record))
+        ? `/thumbnail?file=${encodeURIComponent(record.path)}`
+        : '';
 }
 
 function opdsNavigationLinks(currentDir, roots) {
@@ -142,31 +183,120 @@ function opdsNavigationLinks(currentDir, roots) {
     return links;
 }
 
-async function readIndexedRows(currentDir, options = {}) {
+function escapeLikeValue(value = '') {
+    return String(value).replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+function isPathInsideRootWithoutIo(targetPath, roots) {
+    const resolved = path.resolve(targetPath);
+    return roots.some(root => {
+        const relative = path.relative(root, resolved);
+        return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    });
+}
+
+function normalizeStoredRecord(row = {}) {
+    const filePath = row.path || row.filepath || row.file_path || row.full_path || '';
+    const size = Number(row.size);
+    return {
+        ...row,
+        path: filePath ? path.resolve(filePath) : '',
+        ext: row.ext || path.extname(filePath).toLowerCase(),
+        size: Number.isFinite(size) ? size : 0,
+        mtime: row.mtime || 0,
+        thumb_path: row.thumb_path || row.thumbnail || '',
+    };
+}
+
+function isStoredCatalogFile(record, roots) {
+    return Boolean(
+        record.path
+        && OPDS_PUBLICATION_EXTENSIONS.has(path.extname(record.path).toLowerCase())
+        && isPathInsideRootWithoutIo(record.path, roots)
+    );
+}
+
+function mergeCatalogs(indexedCatalog, filesystemCatalogResult) {
+    const folders = new Map(filesystemCatalogResult.folders.map(folder => [path.resolve(folder.path), folder]));
+    const files = new Map(filesystemCatalogResult.files.map(file => [path.resolve(file.path), file]));
+    for (const folder of indexedCatalog.folders) folders.set(path.resolve(folder.path), folder);
+    for (const file of indexedCatalog.files) files.set(path.resolve(file.path), file);
+    return {
+        folders: [...folders.values()].sort((a, b) => naturalComparePath(a.title, b.title)),
+        files: [...files.values()].sort((a, b) => naturalComparePath(
+            a.title || path.basename(a.path),
+            b.title || path.basename(b.path),
+        )),
+        source: 'database',
+    };
+}
+
+async function readIndexedCatalog(currentDir, roots, options = {}) {
     if (!currentDir) return null;
     if (typeof options.dbRowsProvider === 'function') {
-        return options.dbRowsProvider(currentDir);
+        const rows = await options.dbRowsProvider(currentDir);
+        if (!Array.isArray(rows)) return null;
+        const catalog = indexedCatalogFromRows(currentDir, rows, roots);
+        return catalog.folders.length || catalog.files.length ? catalog : null;
     }
     if (!options.dbPath) return null;
 
     const { LibraryDB } = await import('../database/library_db.js');
     const db = new LibraryDB({ dbPath: options.dbPath });
     try {
+        const libraryRoot = roots.find(root => {
+            const relative = path.relative(root, currentDir);
+            return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+        });
+        if (!libraryRoot) return null;
+
+        const connection = db.getConnection();
+        const hasCurrentFolderIndex = connection.prepare(`
+            SELECT 1
+            FROM library_folders
+            WHERE library_path = ? AND folder_path = ?
+            LIMIT 1
+        `).get(libraryRoot, currentDir);
+        if (!hasCurrentFolderIndex) return null;
+
+        const folders = connection.prepare(`
+            SELECT folder_path, name
+            FROM library_folders
+            WHERE library_path = ? AND parent_path = ?
+            ORDER BY name COLLATE NOCASE ASC
+        `).all(libraryRoot, currentDir).map(row => ({
+            path: path.resolve(row.folder_path),
+            title: row.name || path.basename(row.folder_path),
+            sample: null,
+        })).filter(folder => isPathInsideRootWithoutIo(folder.path, roots));
         const prefix = currentDir.endsWith(path.sep) ? currentDir : `${currentDir}${path.sep}`;
-        return db.getConnection().prepare(`
+        const files = connection.prepare(`
             SELECT path, title, summary, writer, mtime, thumb_path, size, ext, page_count
             FROM files
-            WHERE path LIKE ?
-        `).all(`${prefix}%`);
+            WHERE path LIKE ? ESCAPE '\\'
+              AND instr(substr(path, ?), ?) = 0
+        `).all(
+            `${escapeLikeValue(prefix)}%`,
+            prefix.length + 1,
+            path.sep,
+        ).map(normalizeStoredRecord).filter(record => isStoredCatalogFile(record, roots));
+
+        files.sort((a, b) => naturalComparePath(
+            a.title || path.basename(a.path),
+            b.title || path.basename(b.path),
+        ));
+        return mergeCatalogs(
+            { folders, files, source: 'database' },
+            await filesystemCatalog(currentDir),
+        );
     } finally {
         await db.close();
     }
 }
 
-async function safeReadIndexedRows(currentDir, options = {}, log = () => {}) {
+async function safeReadIndexedCatalog(currentDir, roots, options = {}, log = () => {}) {
     try {
-        const rows = await readIndexedRows(currentDir, options);
-        return Array.isArray(rows) ? rows : null;
+        return await readIndexedCatalog(currentDir, roots, options);
     } catch (error) {
         if (!opdsDbUnavailableLogged) {
             opdsDbUnavailableLogged = true;
@@ -193,7 +323,7 @@ function isValidCatalogFile(record, roots) {
         record.path
         && fs.existsSync(record.path)
         && fs.statSync(record.path).isFile()
-        && ARCHIVE_EXTENSIONS.has(path.extname(record.path).toLowerCase())
+        && OPDS_PUBLICATION_EXTENSIONS.has(path.extname(record.path).toLowerCase())
         && isWithinRoot(record.path, roots)
     );
 }
@@ -234,23 +364,23 @@ function indexedCatalogFromRows(currentDir, rows = [], roots = []) {
     };
 }
 
-function filesystemCatalog(currentDir) {
+async function filesystemCatalog(currentDir) {
     const folders = [];
     const files = [];
-    for (const item of fs.readdirSync(currentDir, { withFileTypes: true })) {
+    const items = await fs.promises.readdir(currentDir, { withFileTypes: true });
+    for (const item of items) {
         const itemPath = path.join(currentDir, item.name);
         if (item.isDirectory()) {
             folders.push({ path: itemPath, title: item.name, sample: null });
-        } else if (item.isFile() && ARCHIVE_EXTENSIONS.has(path.extname(item.name).toLowerCase())) {
-            const stats = fs.statSync(itemPath);
+        } else if (item.isFile() && OPDS_PUBLICATION_EXTENSIONS.has(path.extname(item.name).toLowerCase())) {
             files.push({
                 path: itemPath,
                 title: path.basename(itemPath),
                 summary: '',
                 writer: 'Unknown',
-                mtime: stats.mtimeMs,
+                mtime: 0,
                 thumb_path: '',
-                size: stats.size,
+                size: 0,
                 ext: path.extname(itemPath).toLowerCase(),
                 page_count: '',
             });
@@ -263,29 +393,42 @@ function filesystemCatalog(currentDir) {
     };
 }
 
-async function rootCatalog(rootEntries, roots, options = {}, log = () => {}) {
-    const folders = [];
-    for (const entry of rootEntries) {
-        const root = entry.root;
-        const rows = await safeReadIndexedRows(root, options, log);
-        const catalog = rows ? indexedCatalogFromRows(root, rows, roots) : null;
-        const sample = catalog?.files?.[0] || null;
-        folders.push({
-            path: root,
-            title: entry.name || root,
-            sample,
-        });
+function resolveOpdsDownload(queryValue, roots, options = {}) {
+    if (!queryValue) return null;
+    const requested = path.resolve(String(queryValue));
+    const extension = path.extname(requested).toLowerCase();
+    if (
+        OPDS_PUBLICATION_EXTENSIONS.has(extension)
+        && fs.existsSync(requested)
+        && fs.statSync(requested).isFile()
+        && isWithinRoot(requested, roots)
+    ) {
+        return realPathOrResolved(requested);
     }
-    return { folders, files: [], source: 'root' };
+    return resolveSharedDownload(queryValue, roots, options);
+}
+
+function opdsDownloadMimeType(filePath) {
+    const mimeType = OPDS_PUBLICATION_MIME_TYPES.get(path.extname(filePath).toLowerCase());
+    return mimeType || downloadMimeType(filePath);
+}
+
+function rootCatalog(rootEntries) {
+    return {
+        folders: rootEntries.map(entry => ({
+            path: entry.root,
+            title: entry.name || entry.root,
+            sample: null,
+        })),
+        files: [],
+        source: 'root',
+    };
 }
 
 async function opdsCatalog(currentDir, roots, rootEntries, options = {}, log = () => {}) {
-    if (!currentDir) return rootCatalog(rootEntries, roots, options, log);
-    const rows = await safeReadIndexedRows(currentDir, options, log);
-    if (rows) {
-        const catalog = indexedCatalogFromRows(currentDir, rows, roots);
-        if (catalog.folders.length || catalog.files.length) return catalog;
-    }
+    if (!currentDir) return rootCatalog(rootEntries);
+    const catalog = await safeReadIndexedCatalog(currentDir, roots, options, log);
+    if (catalog) return catalog;
     return filesystemCatalog(currentDir);
 }
 
@@ -346,14 +489,14 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
     });
 
     app.get('/download', (req, res) => {
-        const filePath = resolveSharedDownload(req.query.file, roots, options);
+        const filePath = resolveOpdsDownload(req.query.file, roots, options);
         if (!filePath) {
             res.status(404).type('text/plain').send(sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
             return;
         }
 
         log(sharingText(config, 'sharing_opds_download', 'OPDS 다운로드: {name}', { name: path.basename(filePath) }));
-        res.type(downloadMimeType(filePath));
+        res.type(opdsDownloadMimeType(filePath));
         res.download(filePath, path.basename(filePath));
     });
 

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { replaceZipEntry } from './core/zipArchive.js';
+import { LibraryDB } from './database/library_db.js';
 import {
     buildOpdsApp,
     buildWebApp,
@@ -99,7 +100,113 @@ test('OPDS 루트는 등록 라이브러리를 표시하고 하위 폴더와 아
         assert.match(childXml, /<content type="text">application\/x-cbz<\/content>/);
         assert.match(childXml, /href="\/download\?file=/);
         assert.doesNotMatch(childXml, /href="http:\/\/127\.0\.0\.1/);
-        assert.doesNotMatch(childXml, /ignore\.txt/);
+        assert.match(childXml, /ignore\.txt/);
+        assert.match(childXml, /text\/plain/);
+    });
+});
+
+test('OPDS는 EPUB, PDF, 텍스트와 오디오북 파일을 피드와 다운로드로 제공한다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-opds-publications-'));
+    const library = path.join(tempRoot, 'Library');
+    fs.mkdirSync(library, { recursive: true });
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const publications = [
+        { name: 'Novel.epub', mimeType: 'application/epub+zip', format: 'EPUB' },
+        { name: 'Document.pdf', mimeType: 'application/pdf', format: 'PDF' },
+        { name: 'Notes.txt', mimeType: 'text/plain', format: 'Text' },
+        { name: 'Transcript.text', mimeType: 'text/plain', format: 'Text' },
+        { name: 'Audio.mp3', mimeType: 'audio/mpeg', format: 'Audiobook' },
+        { name: 'AudioBook.m4b', mimeType: 'audio/mp4', format: 'Audiobook' },
+        { name: 'Recording.m4a', mimeType: 'audio/mp4', format: 'Audiobook' },
+        { name: 'Lossless.flac', mimeType: 'audio/flac', format: 'Audiobook' },
+    ];
+    for (const publication of publications) {
+        fs.writeFileSync(path.join(library, publication.name), publication.name);
+    }
+
+    await withHttpServer(buildOpdsApp({ dup_check_folders: [library] }), async baseUrl => {
+        const feedResponse = await fetch(`${baseUrl}/opds?dir=${encodeURIComponent(library)}`);
+        const feedXml = await feedResponse.text();
+        assert.equal(feedResponse.status, 200);
+        for (const publication of publications) {
+            assert.match(feedXml, new RegExp(publication.name.replace('.', '\\.')));
+            assert.match(feedXml, new RegExp(`type="${publication.mimeType.replace('+', '\\+')}"`));
+            assert.match(feedXml, new RegExp(`>${publication.format}<\\/format>`));
+
+            const filePath = path.join(library, publication.name);
+            const downloadResponse = await fetch(`${baseUrl}/download?file=${encodeURIComponent(filePath)}`);
+            assert.equal(downloadResponse.status, 200);
+            assert.equal(downloadResponse.headers.get('content-type')?.split(';')[0], publication.mimeType);
+            assert.equal(await downloadResponse.text(), publication.name);
+        }
+        assert.doesNotMatch(feedXml, /vaemendis\.net\/opds-pse\/stream/);
+        assert.doesNotMatch(feedXml, /\/thumbnail\?file=/);
+    });
+});
+
+test('OPDS 루트 피드는 라이브러리의 전체 DB 인덱스를 조회하지 않는다', async t => {
+    const { library } = createLibraryFixture(t);
+    let providerCallCount = 0;
+    const app = buildOpdsApp(
+        { dup_check_folders: [library] },
+        () => {},
+        {
+            dbRowsProvider: async () => {
+                providerCallCount += 1;
+                return [];
+            },
+        },
+    );
+
+    await withHttpServer(app, async baseUrl => {
+        const response = await fetch(`${baseUrl}/opds`);
+        assert.equal(response.status, 200);
+        assert.match(await response.text(), /Library A/);
+        assert.equal(providerCallCount, 0);
+    });
+});
+
+test('OPDS DB 탐색은 직계 하위 폴더와 현재 폴더 파일만 조회한다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-opds-direct-db-'));
+    const library = path.join(tempRoot, 'Library');
+    const child = path.join(library, 'Series');
+    const directArchive = path.join(library, 'Direct.cbz');
+    const nestedArchive = path.join(child, 'Nested.cbz');
+    const unindexedAudio = path.join(library, 'Unindexed.m4b');
+    const dbPath = path.join(tempRoot, 'library.db');
+    fs.mkdirSync(child, { recursive: true });
+    fs.writeFileSync(directArchive, 'direct');
+    fs.writeFileSync(nestedArchive, 'nested');
+    fs.writeFileSync(unindexedAudio, 'audio');
+    const realLibrary = fs.realpathSync(library);
+    const realChild = fs.realpathSync(child);
+    const realDirectArchive = fs.realpathSync(directArchive);
+    const realNestedArchive = fs.realpathSync(nestedArchive);
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const db = new LibraryDB({ dbPath });
+    await db.replaceLibraryFolders(realLibrary, [
+        { folder_path: realLibrary, parent_path: '', name: 'Library' },
+        { folder_path: realChild, parent_path: realLibrary, name: 'Series' },
+    ]);
+    await db.upsertFileInfo({ path: realDirectArchive, title: 'Direct DB Title', size: 6, ext: '.cbz' });
+    await db.upsertFileInfo({ path: realNestedArchive, title: 'Nested DB Title', size: 6, ext: '.cbz' });
+    await db.close();
+
+    await withHttpServer(buildOpdsApp(
+        { dup_check_folders: [realLibrary] },
+        () => {},
+        { dbPath },
+    ), async baseUrl => {
+        const response = await fetch(`${baseUrl}/opds?dir=${encodeURIComponent(realLibrary)}`);
+        const xml = await response.text();
+        assert.equal(response.status, 200);
+        assert.match(xml, /Series/);
+        assert.match(xml, /Direct DB Title/);
+        assert.match(xml, /Unindexed\.m4b/);
+        assert.match(xml, /audio\/mp4/);
+        assert.doesNotMatch(xml, /Nested DB Title/);
     });
 });
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   apiSourceHasRequiredKey,
+  cleanApiSeriesName,
   metadataApiPreferenceKey,
   metadataApiSourcesForBookType,
   metadataFromApiResult,
@@ -83,6 +84,55 @@ test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터�
     Summary: '## 작품 소개\n설명',
     Manga: 'YesAndRightToLeft',
   });
+});
+
+test('API 검색 결과 적용 시 시리즈명 끝의 권수와 화수를 제거한다', () => {
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '던전밥 12권',
+      Series: '던전밥 12권',
+      Volume: '12',
+    },
+  }, { bookType: 'book' }), {
+    Title: '던전밥 12권',
+    Series: '던전밥',
+    Volume: '12',
+    Summary: '',
+  });
+
+  assert.equal(cleanApiSeriesName('나 혼자만 레벨업 180화'), '나 혼자만 레벨업');
+  assert.equal(cleanApiSeriesName('작품명 1권~10권 [완결]'), '작품명');
+  assert.equal(cleanApiSeriesName('작품명 12권 34화'), '작품명');
+  assert.equal(cleanApiSeriesName('Example Series, Vol. 3'), 'Example Series');
+  assert.equal(cleanApiSeriesName('Example Series Chapter 27'), 'Example Series');
+});
+
+test('API 검색어와 일치하는 시리즈명 뒤의 단위 없는 권수도 제거한다', () => {
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '0.5인분의 연인 1',
+      Series: '0.5인분의 연인 1',
+      Count: '4',
+      Volume: '1',
+    },
+  }, {
+    bookType: 'comic',
+    query: '0.5인분의 연인',
+  }), {
+    Title: '0.5인분의 연인 1',
+    Series: '0.5인분의 연인',
+    Count: '4',
+    Volume: '1',
+    Summary: '',
+    Manga: 'YesAndRightToLeft',
+  });
+});
+
+test('API 시리즈명 정제는 작품명 자체의 숫자와 구두점을 보존한다', () => {
+  assert.equal(cleanApiSeriesName('20세기 소년'), '20세기 소년');
+  assert.equal(cleanApiSeriesName('3월의 라이온'), '3월의 라이온');
+  assert.equal(cleanApiSeriesName('86 -에이티식스-'), '86 -에이티식스-');
+  assert.equal(cleanApiSeriesName('아이실드 21'), '아이실드 21');
 });
 
 test('도서 API 검색 결과에는 만화 읽기 방향 기본값을 넣지 않는다', () => {

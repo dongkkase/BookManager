@@ -1057,7 +1057,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleSelectApiResult = (result) => {
-    applyMetadataToBatch(metadataFromApiResult(result, { bookType: activeBookType }));
+    applyMetadataToBatch(metadataFromApiResult(result, {
+      bookType: activeBookType,
+      query: apiSearch.query || searchQuery,
+    }));
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage(text('t3_msg_loaded_search_result_batch', '검색 결과를 일괄 편집창에 불러왔습니다.'));
     showToast?.({ key: 't3_msg_applied_series_tag' });
@@ -1220,7 +1223,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         showToast?.(t('t3_msg_no_search_result'));
         return;
       }
-      const firstMetadata = metadataFromApiResult(first, { bookType: activeBookType });
+      const firstMetadata = metadataFromApiResult(first, { bookType: activeBookType, query });
       applyMetadataToSeries(firstMetadata);
       setBatchMetadata(pickMetadataFields(
         normalizeMetadata(firstMetadata),
