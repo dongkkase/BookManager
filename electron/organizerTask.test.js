@@ -23,6 +23,18 @@ function find7z() {
     return '';
 }
 
+function findBundled7z() {
+    const platformDir = process.platform === 'darwin'
+        ? 'mac'
+        : process.platform === 'win32'
+            ? 'win'
+            : process.platform;
+    const executable = process.platform === 'win32' ? '7za.exe' : '7za';
+    const candidate = path.resolve('node_modules/7zip-bin', platformDir, process.arch, executable);
+    const result = spawnSync(candidate, ['i'], { stdio: 'ignore' });
+    return result.error ? '' : candidate;
+}
+
 function shellQuote(value) {
     return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
@@ -126,6 +138,51 @@ test('Organizer는 압축 파일명 래퍼 폴더 아래 권/화 폴더를 각�
             const entries = await listZipEntriesFromFile(filePath);
             assert.equal(entries.filter(entry => entry.name.endsWith('.jpg')).length, 1);
         }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 번들 7z로 한글과 별표가 포함된 ZIP 파일명을 처리한다', async t => {
+    if (process.platform !== 'darwin') {
+        t.skip('macOS bundled 7z regression test');
+        return;
+    }
+
+    const sevenZExe = findBundled7z();
+    if (!sevenZExe) {
+        t.skip('bundled 7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-unicode-path-'));
+    try {
+        const source = path.join(root, '이세계*착각*헌터_1-100화 (토끼버전).zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '이세계 착각 헌터 01/001.jpg', Buffer.from('page-1'));
+        await replaceZipEntry(source, '이세계 착각 헌터 02/001.jpg', Buffer.from('page-2'));
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        analyzed.items[0].out_path = path.join(root, 'output');
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe,
+            target_format: 'cbz',
+            deleteOriginal: false,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.equal(result.createdFiles.length, 2);
+        assert.equal(result.createdFiles.every(filePath => fs.existsSync(filePath)), true);
+        assert.equal(fs.existsSync(source), true);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

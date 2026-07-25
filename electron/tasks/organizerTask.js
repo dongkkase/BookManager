@@ -140,6 +140,29 @@ function runQuietProcess(command, args, options = {}) {
   return runProcess(command, args, { ...options, captureOutput: false });
 }
 
+function needsSevenZipArchiveAlias(filePath) {
+  if (process.platform !== 'darwin') return false;
+  return !/^[\x20-\x7e]+$/.test(String(filePath || '')) || /[*?]/.test(String(filePath || ''));
+}
+
+async function withSevenZipArchivePath(filePath, operation) {
+  if (!needsSevenZipArchiveAlias(filePath)) return operation(filePath);
+
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_7z_'));
+  const ext = normalizedExt(filePath) || '.archive';
+  const aliasPath = path.join(tempDir, `archive${ext}`);
+  try {
+    try {
+      await fsp.link(filePath, aliasPath);
+    } catch {
+      await fsp.copyFile(filePath, aliasPath);
+    }
+    return await operation(aliasPath);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function isUsableConvertedWebp(filePath) {
   try {
     const stat = await fsp.stat(filePath);
@@ -161,7 +184,10 @@ async function isUsableConvertedWebp(filePath) {
 
 async function listWith7z(filePath, sevenZExe) {
   if (!sevenZExe) return [];
-  const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath]);
+  const { stdout } = await withSevenZipArchivePath(
+    filePath,
+    archivePath => runProcess(sevenZExe, ['l', '-slt', archivePath]),
+  );
   const entries = [];
   let current = null;
   for (const line of stdout.split(/\r?\n/)) {
@@ -396,7 +422,10 @@ async function countNestedArchiveImagesWith7z(sourcePath, group, sevenZExe) {
   if (group.wrapper_source_entry) return null;
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_NestedCount_'));
   try {
-    await runQuietProcess(sevenZExe, ['x', sourcePath, group.source_inner_path || group.inner_path, `-o${tempDir}`, '-y']);
+    await withSevenZipArchivePath(
+      sourcePath,
+      archivePath => runQuietProcess(sevenZExe, ['x', archivePath, group.source_inner_path || group.inner_path, `-o${tempDir}`, '-y']),
+    );
     const nestedPath = await findExtractedArchive(tempDir, group.inner_path);
     if (!nestedPath) return null;
     const entries = await listArchiveEntries(nestedPath, sevenZExe);
@@ -727,7 +756,10 @@ async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
       if (shouldCancel?.()) throw new Error('ORGANIZER_CANCELLED');
       const destination = archivePath.slice(0, -path.extname(archivePath).length);
       await fsp.mkdir(destination, { recursive: true });
-      await runQuietProcess(sevenZExe, ['x', archivePath, `-o${destination}`, '-y']);
+      await withSevenZipArchivePath(
+        archivePath,
+        safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y']),
+      );
       await fsp.rm(archivePath, { force: true });
     }
   }
@@ -813,7 +845,7 @@ async function writePreparedArchive(sourcePath, preparedArchive, finalPath, opti
 async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options = {}) {
   const sevenZExe = options.sevenZExe;
   const filename = path.basename(sourcePath);
-  let tempArchive = path.join(os.tmpdir(), `BookManager_OrganizerRN_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+  let tempArchive = path.join(os.tmpdir(), `BookManager_OrganizerRN_${Date.now()}_${Math.random().toString(16).slice(2)}${path.extname(finalPath)}`);
 
   try {
     await fsp.copyFile(sourcePath, tempArchive);
@@ -916,7 +948,10 @@ async function processOrganizerItem(item, options) {
 
   try {
     if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
-    await runQuietProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y']);
+    await withSevenZipArchivePath(
+      sourcePath,
+      archivePath => runQuietProcess(sevenZExe, ['x', archivePath, `-o${tempBase}`, '-y']),
+    );
     await extractNestedArchives(tempBase, sevenZExe, options.shouldCancel);
     const actualRoot = await getActualRoot(tempBase);
     const leaves = await getImageLeaves(actualRoot);
@@ -935,7 +970,7 @@ async function processOrganizerItem(item, options) {
       const outDir = item.out_path || path.dirname(sourcePath);
       await fsp.mkdir(outDir, { recursive: true });
       const targetPath = await uniquePath(path.join(outDir, `${volumeName}${targetExt}`));
-      const tempArchive = path.join(os.tmpdir(), `BookManager_Done_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(targetPath)}`);
+      const tempArchive = path.join(os.tmpdir(), `BookManager_Done_${Date.now()}_${Math.random().toString(16).slice(2)}${targetExt}`);
       tempArchives.push(tempArchive);
 
       if (options.webp_conversion || options.webpConversion) {
