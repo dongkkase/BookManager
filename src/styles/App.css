@@ -79,6 +79,13 @@ body.is-resizing-panel * {
   background-color: #4a4a4a;
 }
 
+.top-btn-icon {
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+  padding: 0;
+  justify-content: center;
+}
+
 .top-btn-danger {
   background-color: #d32f2f;
   border: none;

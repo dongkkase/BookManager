@@ -14,7 +14,7 @@ test('화면에서 사용하는 Font Awesome 의미 아이콘을 모두 등록�
         'angleDown', 'angleUp', 'anglesDown', 'anglesUp', 'archive', 'bars',
         'arrowRotateLeft', 'book', 'bookmark', 'bookOpen', 'bug', 'check', 'checkSquare',
         'caret-down', 'chevronLeft', 'chevronRight', 'circle', 'circleCheck', 'clock', 'cloudArrowDown',
-        'copy', 'cube', 'ellipsisVertical', 'eye', 'eyeSlash', 'file', 'file-circle-plus', 'fileSignature', 'file-zipper', 'floppy',
+        'copy', 'cube', 'discord', 'ellipsisVertical', 'eye', 'eyeSlash', 'file', 'file-circle-plus', 'fileSignature', 'file-zipper', 'floppy',
         'folder', 'folder-open', 'folder-plus', 'folderMinus', 'folderOpen', 'gear', 'gift', 'language',
         'layer-group', 'list', 'microsoft', 'minusCircle', 'pin', 'plus', 'powerOff', 'rocket', 'search',
         'square', 'star', 'stopCircle', 'tableCells', 'thumbtack', 'towerBroadcast', 'trash', 'wand',

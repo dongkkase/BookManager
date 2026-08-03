@@ -3,6 +3,7 @@ import test from 'node:test';
 import { legacyTranslations } from './utils/i18nData.js';
 import {
     APP_NAME,
+    DISCORD_URL,
     ISSUE_URL,
     MANUAL_URL,
     TABS,
@@ -38,6 +39,10 @@ test('앱 제목은 버전을 제외한 BookManager 이름만 사용한다', () 
 
 test('버그 신고 URL은 원본 저장소 이슈 주소를 유지한다', () => {
     assert.equal(ISSUE_URL, 'https://github.com/dongkkase/BookManager/issues');
+});
+
+test('Discord URL은 공식 초대 주소를 사용한다', () => {
+    assert.equal(DISCORD_URL, 'https://discord.gg/ND6gpPZHD');
 });
 
 test('매뉴얼 URL은 원본 저장소 Wiki 주소를 사용한다', () => {

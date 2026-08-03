@@ -1,6 +1,7 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
+  faDiscord,
   faMicrosoft,
 } from '@fortawesome/free-brands-svg-icons';
 import {
@@ -170,6 +171,7 @@ const ICONS = {
   clock: faClock,
   link: faLink,
   list: faList,
+  discord: faDiscord,
   microsoft: faMicrosoft,
   fileZipper: faFileZipper,
   'file-zipper': faFileZipper,

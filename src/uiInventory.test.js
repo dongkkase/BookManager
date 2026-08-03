@@ -176,14 +176,26 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     ]);
 });
 
-test('상단 메뉴는 버그 신고 옆에 매뉴얼 외부 링크 버튼을 제공한다', () => {
+test('상단 메뉴는 외부 링크와 아이콘 전용 환경 설정 버튼을 제공한다', () => {
     assertInventory('app', [
+        ['Discord URL import', 'DISCORD_URL'],
+        ['Discord 버튼', "openExternal?.(DISCORD_URL)"],
+        ['Discord 아이콘', 'name="discord"'],
+        ['Discord 아이콘 전용 버튼', 'className="top-btn top-btn-icon"'],
         ['매뉴얼 URL import', 'MANUAL_URL'],
         ['버그 신고 버튼', "openExternal?.(ISSUE_URL)"],
         ['매뉴얼 버튼', "openExternal?.(MANUAL_URL)"],
         ['매뉴얼 아이콘', 'name="bookOpen"'],
         ['매뉴얼 문구', "t('btn_manual')"],
+        ['환경 설정 아이콘 전용 버튼', 'className="top-btn top-btn-icon top-btn-settings"'],
+        ['환경 설정 아이콘', 'name="gear"'],
+        ['환경 설정 접근성 이름', "aria-label={t('settings_btn')}"],
     ]);
+    assert.doesNotMatch(sources.app, /<FaIcon name="gear" \/>\{t\('settings_btn'\)\}/);
+    assert.ok(
+        sources.app.indexOf('openExternal?.(DISCORD_URL)') < sources.app.indexOf('openExternal?.(ISSUE_URL)'),
+        'Discord 버튼은 버그 신고 버튼 왼쪽에 있어야 합니다.',
+    );
 });
 
 test('폴더 탭은 Electron 미지원 window.prompt 대신 내부 입력 다이얼로그를 사용한다', () => {

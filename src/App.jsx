@@ -9,6 +9,7 @@ import { useI18n } from './hooks/useI18n';
 import { useLockScanQueue } from './hooks/useLockScanQueue';
 import { translateKnownText } from './utils/i18n';
 import {
+  DISCORD_URL,
   ISSUE_URL,
   MANUAL_URL,
   RELEASES_URL,
@@ -587,6 +588,14 @@ function App() {
           <button className="top-btn" disabled={!fileToolbarEnabled || !activeToolbarState.hasItems} onClick={() => dispatchAppAction('toggle-all')}><FaIcon name={activeToolbarState.allChecked ? 'checkSquare' : 'square'} />{t('toggle_all')}</button>
         </div>
         <div className="top-menu-right">
+          <button
+            className="top-btn top-btn-icon"
+            title="Discord"
+            aria-label="Discord"
+            onClick={() => window.electronAPI?.openExternal?.(DISCORD_URL)}
+          >
+            <FaIcon name="discord" />
+          </button>
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(MANUAL_URL)}><FaIcon name="bookOpen" />{t('btn_manual')}</button>
           <button
@@ -601,7 +610,15 @@ function App() {
               ? t('msg_update_available', [appVersion || '-', updateInfo.latestVersion])
               : t('msg_latest_version', [appVersion || '-'])}
           </button>
-          <button className="top-btn top-btn-settings" disabled={isAppLocked} onClick={handleSettings}><FaIcon name="gear" />{t('settings_btn')}</button>
+          <button
+            className="top-btn top-btn-icon top-btn-settings"
+            title={t('settings_btn')}
+            aria-label={t('settings_btn')}
+            disabled={isAppLocked}
+            onClick={handleSettings}
+          >
+            <FaIcon name="gear" />
+          </button>
         </div>
       </div>
       
