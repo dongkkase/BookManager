@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "node:rebuild": "npm rebuild better-sqlite3",
-    "test": "npm run node:rebuild && node --test electron/*.test.js src/*.test.js",
+    "test": "node electron/runNodeTests.cjs",
     "build": "vite build",
     "postbuild": "node electron/runElectronBuilder.cjs --prepare-default-win-code-sign-cache",
     "preview": "vite preview",

@@ -60,6 +60,8 @@ body.is-resizing-panel * {
 }
 
 .top-btn {
+  box-sizing: border-box;
+  height: var(--control-height-lg);
   background-color: #3f3f3f;
   color: white;
   border-radius: 6px;

@@ -113,14 +113,25 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
     const libraries = libraryEntries.map(entry => entry.path);
     const threadMax = safeThreadLimit(coreCount);
     const apiKeys = config.api_keys || {};
+    const aiProvider = AI_PROVIDERS.has(apiKeys.ai_provider) ? apiKeys.ai_provider : 'Gemini';
+    const legacyAiKey = String(apiKeys.ai_key || '').trim();
+    const hasProviderAiKeys = Object.prototype.hasOwnProperty.call(apiKeys, 'ai_gemini_key')
+        || Object.prototype.hasOwnProperty.call(apiKeys, 'ai_openai_key');
+    const aiGeminiKey = String(
+        apiKeys.ai_gemini_key || (!hasProviderAiKeys && aiProvider === 'Gemini' ? legacyAiKey : '')
+    ).trim();
+    const aiOpenAiKey = String(
+        apiKeys.ai_openai_key || (!hasProviderAiKeys && aiProvider === 'OpenAI' ? legacyAiKey : '')
+    ).trim();
     const normalizedApiKeys = {
         ...apiKeys,
         aladin: String(apiKeys.aladin || '').trim(),
         vine: String(apiKeys.vine || '').trim(),
         google: String(apiKeys.google || '').trim(),
-        ai_trans_enabled: Boolean(apiKeys.ai_trans_enabled),
-        ai_provider: AI_PROVIDERS.has(apiKeys.ai_provider) ? apiKeys.ai_provider : 'Gemini',
-        ai_key: String(apiKeys.ai_key || '').trim(),
+        ai_provider: aiProvider,
+        ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
+        ai_gemini_key: aiGeminiKey,
+        ai_openai_key: aiOpenAiKey,
         tts_openai_key: String(apiKeys.tts_openai_key || '').trim(),
         tts_google_key: String(apiKeys.tts_google_key || '').trim(),
         tag_rules: String(apiKeys.tag_rules || ''),

@@ -2185,9 +2185,10 @@ function MetadataTab({ config, t, showToast }) {
           onUseCover={activeBookType === 'book' && activeIsEpub ? handleUseApiCoverResult : null}
           onSearch={fetchMetadataResults}
           onResolveRidiDate={resolveRidiPublishDate}
-          targetLang={config?.language || config?.lang || 'ko'}
           minWidth={config?.metadata_search_min_width}
           minHeight={config?.metadata_search_min_height}
+          sourceFilePath={activeItem?.filepath || ''}
+          sourceCoverDataUrl={activeItem?.coverDataUrl || ''}
           showToast={showToast}
         />
       )}
@@ -2382,9 +2383,10 @@ function MetadataSearchDialog({
   onUseCover,
   onSearch,
   onResolveRidiDate,
-  targetLang = 'ko',
   minWidth = 1050,
   minHeight = 780,
+  sourceFilePath = '',
+  sourceCoverDataUrl = '',
   t,
   showToast,
 }) {
@@ -2399,10 +2401,14 @@ function MetadataSearchDialog({
   const [translationError, setTranslationError] = useState('');
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheError, setCacheError] = useState('');
+  const [aiTitleCandidates, setAiTitleCandidates] = useState([]);
+  const [aiTitleLoading, setAiTitleLoading] = useState(false);
+  const [aiTitleError, setAiTitleError] = useState('');
+  const [aiTitleMenuOpen, setAiTitleMenuOpen] = useState(false);
+  const [aiTitleActiveIndex, setAiTitleActiveIndex] = useState(0);
   const resolvingRidiDates = useRef(new Set());
   const rawSelected = state.results[selectedIndex];
   const selected = showTranslated && translatedResult ? translatedResult : rawSelected;
-  const canTranslateSelected = ['Anilist', 'Vine', 'Amazon'].includes(state.apiSource);
   const selectedCoverUrl = selected ? apiResultCoverUrl(selected) : '';
 
   useLayoutEffect(() => {
@@ -2446,12 +2452,23 @@ function MetadataSearchDialog({
       if (event.key !== 'Escape') return;
       event.preventDefault();
       event.stopPropagation();
+      if (aiTitleMenuOpen) {
+        setAiTitleMenuOpen(false);
+        return;
+      }
       onClose();
     };
 
     window.addEventListener('keydown', handleEscape, true);
     return () => window.removeEventListener('keydown', handleEscape, true);
-  }, [onClose]);
+  }, [aiTitleMenuOpen, onClose]);
+
+  useEffect(() => {
+    setAiTitleCandidates([]);
+    setAiTitleError('');
+    setAiTitleMenuOpen(false);
+    setAiTitleActiveIndex(0);
+  }, [sourceFilePath]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -2487,8 +2504,8 @@ function MetadataSearchDialog({
     Promise.resolve(onResolveRidiDate?.(selected)).finally(() => resolvingRidiDates.current.delete(bookId));
   }, [onResolveRidiDate, selected, state.apiSource]);
 
-  const runSearch = (page = 1) => {
-    onSearch({ source: dialogApi, query: dialogQuery, page });
+  const runSearch = (page = 1, query = dialogQuery) => {
+    onSearch({ source: dialogApi, query, page });
   };
 
   const clearSearchCache = async () => {
@@ -2527,7 +2544,7 @@ function MetadataSearchDialog({
       if (typeof window.electronAPI?.translateMetadata !== 'function') {
         throw new Error(text('meta_translate_unavailable', '번역 기능을 불러오지 못했습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
       }
-      const response = await window.electronAPI.translateMetadata(rawSelected, targetLang);
+      const response = await window.electronAPI.translateMetadata(rawSelected);
       if (response === undefined || response === null) {
         throw new Error(text('meta_translate_no_response', '번역 IPC에서 응답이 없습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
       }
@@ -2546,6 +2563,73 @@ function MetadataSearchDialog({
   const text = (key, fallback, values) => {
     const translated = t?.(key, values);
     return translated && translated !== key ? translated : fallback;
+  };
+
+  const aiTitleKindLabel = (kind) => ({
+    native: text('meta_ai_title_native', '원제'),
+    english: text('meta_ai_title_english', '영문명'),
+    korean: text('meta_ai_title_korean', '한글명'),
+  })[kind] || kind;
+
+  const selectAiTitleCandidate = (candidate) => {
+    if (!candidate?.query) return;
+    setDialogQuery(candidate.query);
+    setAiTitleMenuOpen(false);
+    setAiTitleError('');
+    runSearch(1, candidate.query);
+  };
+
+  const identifyCoverTitles = async () => {
+    if (aiTitleLoading) return;
+    setAiTitleLoading(true);
+    setAiTitleError('');
+    setAiTitleMenuOpen(false);
+    try {
+      const identify = window.electronAPI?.identifyMetadataCoverTitles;
+      if (typeof identify !== 'function') {
+        throw new Error(text('meta_ai_title_unavailable', 'AI 원제 찾기 기능을 불러오지 못했습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
+      }
+      const response = await identify({
+        filePath: sourceFilePath,
+        coverDataUrl: sourceCoverDataUrl,
+      });
+      if (!response?.success) {
+        throw new Error(response?.error || text('meta_ai_title_failed', '표지에서 제목을 찾지 못했습니다.'));
+      }
+      const candidates = Array.isArray(response.candidates)
+        ? response.candidates.filter(candidate => candidate?.query)
+        : [];
+      if (candidates.length === 0) {
+        throw new Error(text('meta_ai_title_empty', '선택할 수 있는 제목 후보가 없습니다.'));
+      }
+      setAiTitleCandidates(candidates);
+      setAiTitleActiveIndex(0);
+      setAiTitleMenuOpen(true);
+    } catch (error) {
+      setAiTitleCandidates([]);
+      setAiTitleError(error.message || text('meta_ai_title_failed', '표지에서 제목을 찾지 못했습니다.'));
+    } finally {
+      setAiTitleLoading(false);
+    }
+  };
+
+  const handleAiTitleInputKeyDown = (event) => {
+    if (aiTitleMenuOpen && aiTitleCandidates.length > 0) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        setAiTitleActiveIndex(prev => (
+          (prev + delta + aiTitleCandidates.length) % aiTitleCandidates.length
+        ));
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        selectAiTitleCandidate(aiTitleCandidates[aiTitleActiveIndex]);
+        return;
+      }
+    }
+    if (event.key === 'Enter') runSearch(1);
   };
 
   const metadataValue = (item, key, ...aliases) => {
@@ -2608,6 +2692,7 @@ function MetadataSearchDialog({
     if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     const targetTag = String(event.target?.tagName || '').toUpperCase();
     const isDialogTextInput = isMetadataTextInput(event.target) && dialogRef.current?.contains?.(event.target);
+    if (event.target?.dataset?.aiTitleInput === 'true') return;
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && targetTag !== 'SELECT') {
       if (state.loading || state.results.length === 0) return;
       event.preventDefault();
@@ -2659,16 +2744,72 @@ function MetadataSearchDialog({
             <div className="meta-api-dialog-query">{state.actualQuery}</div>
           </div>
           <div className="meta-api-search-controls">
+            <button
+              type="button"
+              className="meta-ai-title-btn"
+              title={text('meta_ai_title_tip', '선택한 책의 표지를 AI로 분석해 원제·영문명·한글명을 찾습니다.')}
+              onClick={identifyCoverTitles}
+              disabled={state.loading || aiTitleLoading || !sourceFilePath}
+            >
+              <FaIcon name="wand" />
+              {aiTitleLoading
+                ? text('meta_ai_title_finding', '찾는 중...')
+                : text('meta_ai_title_find', 'AI 원제 찾기')}
+            </button>
             <select value={dialogApi} onChange={event => setDialogApi(event.target.value)}>
               {apiSources.map(source => <option key={source.value} value={source.value}>{text(source.labelKey, source.value)}</option>)}
             </select>
-            <input
-              value={dialogQuery}
-              onChange={event => setDialogQuery(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter') runSearch(1);
+            <div
+              className="meta-ai-title-combobox"
+              onBlur={event => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setAiTitleMenuOpen(false);
               }}
-            />
+            >
+              <input
+                className="meta-ai-title-input"
+                data-ai-title-input="true"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={aiTitleMenuOpen}
+                aria-controls="meta-ai-title-options"
+                aria-activedescendant={aiTitleMenuOpen ? `meta-ai-title-option-${aiTitleActiveIndex}` : undefined}
+                value={dialogQuery}
+                onFocus={() => {
+                  if (aiTitleCandidates.length > 0) setAiTitleMenuOpen(true);
+                }}
+                onChange={event => {
+                  setDialogQuery(event.target.value);
+                  setAiTitleMenuOpen(false);
+                }}
+                onKeyDown={handleAiTitleInputKeyDown}
+              />
+              {aiTitleMenuOpen && aiTitleCandidates.length > 0 && (
+                <div
+                  id="meta-ai-title-options"
+                  className="meta-ai-title-options"
+                  role="listbox"
+                  aria-label={text('meta_ai_title_options', 'AI 제목 후보')}
+                >
+                  {aiTitleCandidates.map((candidate, index) => (
+                    <button
+                      key={`${candidate.kind}:${candidate.query}`}
+                      id={`meta-ai-title-option-${index}`}
+                      type="button"
+                      className={`meta-ai-title-option ${index === aiTitleActiveIndex ? 'active' : ''}`}
+                      role="option"
+                      aria-selected={index === aiTitleActiveIndex}
+                      onMouseDown={event => event.preventDefault()}
+                      onMouseEnter={() => setAiTitleActiveIndex(index)}
+                      onClick={() => selectAiTitleCandidate(candidate)}
+                    >
+                      <span>{aiTitleKindLabel(candidate.kind)}</span>
+                      <strong>{candidate.title}</strong>
+                      {candidate.author && <small>({candidate.author})</small>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button onClick={() => runSearch(1)} disabled={state.loading || !dialogQuery.trim()}><FaIcon name="search" /> {text('btn_search', '검색')} (S)</button>
             <button
               type="button"
@@ -2682,6 +2823,7 @@ function MetadataSearchDialog({
             </button>
           </div>
         </div>
+        {aiTitleError && <div className="meta-api-header-error">{aiTitleError}</div>}
         {cacheError && <div className="meta-api-header-error">{cacheError}</div>}
         <div className="meta-api-dialog-body">
           <div className="meta-api-results-panel">
@@ -2733,21 +2875,19 @@ function MetadataSearchDialog({
                 <div className="meta-api-preview-content">
                   <div className="meta-api-preview-title-row">
                     <h2>{selected.title}</h2>
-                    {canTranslateSelected && (
-                      <button
-                        type="button"
-                        className={`meta-api-translate-btn ${showTranslated ? 'original' : ''}`}
-                        disabled={translating}
-                        onClick={toggleTranslation}
-                      >
-                        <FaIcon name={showTranslated ? 'chevronLeft' : 'language'} size={12} />
-                        {translating
-                          ? text('btn_translating', '번역 중...')
-                          : showTranslated
-                            ? text('btn_original_web', '원문')
-                            : text('btn_translate_web', '번역')}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className={`meta-api-translate-btn ${showTranslated ? 'original' : ''}`}
+                      disabled={translating}
+                      onClick={toggleTranslation}
+                    >
+                      <FaIcon name={showTranslated ? 'chevronLeft' : 'language'} size={12} />
+                      {translating
+                        ? text('btn_translating', '번역 중...')
+                        : showTranslated
+                          ? text('btn_original_web', '원문')
+                          : text('btn_translate_web', '번역')}
+                    </button>
                   </div>
                   {translationError && <div className="meta-api-translation-error">{translationError}</div>}
                   <div className="meta-api-preview-tags">

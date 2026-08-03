@@ -52,7 +52,6 @@ const DEFAULT_API_KEYS = {
   aladin: '',
   vine: '',
   google: '',
-  ai_trans_enabled: false,
   ai_provider: 'Gemini',
   ai_key: '',
   tts_openai_key: '',
@@ -225,6 +224,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   );
   const bundledFontOptions = bundledFontOptionsFromFaces(bundledFontFaces);
   const systemFontsForSelect = uniqueSystemFonts(systemFontOptions, localConfig.font_family, bundledFontOptions);
+  const aiProvider = localConfig.api_keys?.ai_provider === 'OpenAI' ? 'OpenAI' : 'Gemini';
+  const aiKeyField = aiProvider === 'OpenAI' ? 'ai_openai_key' : 'ai_gemini_key';
 
   const handleChange = (key, value) => {
     setLocalConfig(prev => ({ ...prev, [key]: value }));
@@ -757,14 +758,10 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               </fieldset>
 
               <fieldset className="settings-fieldset">
-              <legend>{t('ai_trans_group')}</legend>
-              <label className="settings-check-row settings-inline-check-row">
-                <input type="checkbox" checked={Boolean(localConfig.api_keys?.ai_trans_enabled)} onChange={event => handleApiChange('ai_trans_enabled', event.target.checked)} />
-                <span><strong>{t('ai_trans_enable')}</strong></span>
-              </label>
+              <legend>{t('ai_cover_search_group')}</legend>
               <div className="settings-row">
                 <span className="settings-label">{t('ai_provider')}</span>
-                <select className="settings-select" value={localConfig.api_keys?.ai_provider || 'Gemini'} onChange={event => handleApiChange('ai_provider', event.target.value)} disabled={!localConfig.api_keys?.ai_trans_enabled}>
+                <select className="settings-select" value={aiProvider} onChange={event => handleApiChange('ai_provider', event.target.value)}>
                   <option value="Gemini">Gemini</option>
                   <option value="OpenAI">OpenAI</option>
                 </select>
@@ -772,12 +769,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
               <div className="settings-row">
                 <span className="settings-label">{t('ai_api_key')}</span>
                 {renderSecretInput(
-                  'ai_key',
-                  localConfig.api_keys?.ai_provider === 'OpenAI' ? 'OpenAI API Key (sk-...)' : 'Gemini API Key (AIza...)',
-                  !localConfig.api_keys?.ai_trans_enabled,
+                  aiKeyField,
+                  aiProvider === 'OpenAI' ? 'OpenAI API Key (sk-...)' : 'Gemini API Key (AIza...)'
                 )}
               </div>
-              <p className="settings-help">{t('ai_notice')}</p>
+              <p className="settings-help">{t('ai_cover_search_notice')}</p>
               </fieldset>
 
               <div className="settings-api-manual-row">
@@ -829,7 +825,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                 {renderSecretInput('tts_google_key', 'Google service account JSON or JSON file path')}
               </div>
               <p className="settings-help">{label('tts_google_credential_notice', 'Google Cloud TTS는 API key가 아니라 서비스 계정 JSON 또는 JSON 파일 경로가 필요합니다.')}</p>
-              <p className="settings-help">{label('tts_api_notice', 'TTS에서만 사용하는 인증 정보입니다. AI 원제 검색 API Key와 별도로 저장됩니다.')}</p>
+              <p className="settings-help">{label('tts_api_notice', 'TTS에서만 사용하는 인증 정보입니다. AI 표지 제목 검색 API Key와 별도로 저장됩니다.')}</p>
               </fieldset>
             </div>
           )}

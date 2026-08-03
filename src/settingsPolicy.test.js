@@ -65,6 +65,42 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.api_keys.tts_google_key, 'google-tts');
 });
 
+test('AI 표지 검색 키는 제공자별로 저장하고 기존 ai_key를 선택된 제공자 키로 이전한다', () => {
+    const migrated = normalizeSettingsConfig({
+        api_keys: {
+            ai_provider: 'OpenAI',
+            ai_key: ' sk-legacy ',
+        },
+    });
+    assert.equal(migrated.api_keys.ai_openai_key, 'sk-legacy');
+    assert.equal(migrated.api_keys.ai_gemini_key, '');
+    assert.equal(migrated.api_keys.ai_key, 'sk-legacy');
+
+    const separated = normalizeSettingsConfig({
+        api_keys: {
+            ai_provider: 'Gemini',
+            ai_key: 'legacy-ignored',
+            ai_gemini_key: ' AIza-gemini ',
+            ai_openai_key: ' sk-openai ',
+        },
+    });
+    assert.equal(separated.api_keys.ai_gemini_key, 'AIza-gemini');
+    assert.equal(separated.api_keys.ai_openai_key, 'sk-openai');
+    assert.equal(separated.api_keys.ai_key, 'AIza-gemini');
+
+    const switchedWithoutOpenAiKey = normalizeSettingsConfig({
+        api_keys: {
+            ai_provider: 'OpenAI',
+            ai_key: 'AIza-legacy-active-key',
+            ai_gemini_key: 'AIza-gemini',
+            ai_openai_key: '',
+        },
+    });
+    assert.equal(switchedWithoutOpenAiKey.api_keys.ai_gemini_key, 'AIza-gemini');
+    assert.equal(switchedWithoutOpenAiKey.api_keys.ai_openai_key, '');
+    assert.equal(switchedWithoutOpenAiKey.api_keys.ai_key, '');
+});
+
 test('library entries preserve alias, group, and display order while syncing path arrays', () => {
     const normalized = normalizeSettingsConfig({
         library_entries: [

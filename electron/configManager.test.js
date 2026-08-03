@@ -134,6 +134,8 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.renamer_default_cap_opt, false);
         assert.equal(loaded.renamer_default_exif_opt, false);
         assert.equal(loaded.font_family, 'Noto Sans KR');
+        assert.equal(loaded.api_keys.ai_gemini_key, '');
+        assert.equal(loaded.api_keys.ai_openai_key, '');
         assert.equal(loaded.api_keys.tts_openai_key, '');
         assert.equal(loaded.api_keys.tts_google_key, '');
         assert.deepEqual(loaded.viewer_paths, {
@@ -147,6 +149,26 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.viewer_width, 1280);
         assert.equal(loaded.viewer_height, 860);
         assert.equal(loaded.viewer_is_maximized, false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('기존 AI 표지 검색 키를 선택된 제공자 전용 키로 이전한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-ai-key-'));
+    try {
+        writeDataConfig(root, {
+            api_keys: {
+                ai_provider: 'OpenAI',
+                ai_key: 'sk-legacy',
+            },
+        });
+        const manager = new ConfigManager(root, root);
+        const loaded = manager.loadConfig();
+        assert.equal(loaded.api_keys.ai_provider, 'OpenAI');
+        assert.equal(loaded.api_keys.ai_openai_key, 'sk-legacy');
+        assert.equal(loaded.api_keys.ai_gemini_key, '');
+        assert.equal(loaded.api_keys.ai_key, 'sk-legacy');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

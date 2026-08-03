@@ -11,6 +11,7 @@ const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
 const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
 const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
 const PDF_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
+const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
 const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
 
 function normalizeLanguage(value, fallback = 'ko') {
@@ -156,6 +157,23 @@ export class ConfigManager {
       defaults.preferred_meta_api_pdf,
     );
     const fontFamily = String(raw.font_family || defaults.font_family);
+    const rawApiKeys = raw.api_keys && typeof raw.api_keys === 'object' && !Array.isArray(raw.api_keys)
+      ? raw.api_keys
+      : {};
+    const mergedApiKeys = {
+      ...defaults.api_keys,
+      ...rawApiKeys,
+    };
+    const aiProvider = AI_PROVIDERS.has(mergedApiKeys.ai_provider) ? mergedApiKeys.ai_provider : 'Gemini';
+    const legacyAiKey = String(mergedApiKeys.ai_key || '').trim();
+    const hasProviderAiKeys = Object.prototype.hasOwnProperty.call(rawApiKeys, 'ai_gemini_key')
+      || Object.prototype.hasOwnProperty.call(rawApiKeys, 'ai_openai_key');
+    const aiGeminiKey = String(
+      mergedApiKeys.ai_gemini_key || (!hasProviderAiKeys && aiProvider === 'Gemini' ? legacyAiKey : '')
+    ).trim();
+    const aiOpenAiKey = String(
+      mergedApiKeys.ai_openai_key || (!hasProviderAiKeys && aiProvider === 'OpenAI' ? legacyAiKey : '')
+    ).trim();
     return {
       ...defaults,
       ...raw,
@@ -174,8 +192,11 @@ export class ConfigManager {
       preferred_meta_api_pdf: preferredPdfApi,
       last_meta_api: String(raw.last_meta_api || preferredComicApi || defaults.last_meta_api).trim(),
       api_keys: {
-        ...defaults.api_keys,
-        ...(raw.api_keys || {}),
+        ...mergedApiKeys,
+        ai_provider: aiProvider,
+        ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
+        ai_gemini_key: aiGeminiKey,
+        ai_openai_key: aiOpenAiKey,
       },
     };
   }
@@ -237,9 +258,10 @@ export class ConfigManager {
         aladin: '',
         vine: '',
         google: '',
-        ai_trans_enabled: false,
         ai_provider: 'Gemini',
         ai_key: '',
+        ai_gemini_key: '',
+        ai_openai_key: '',
         tts_openai_key: '',
         tts_google_key: '',
         tag_rules: '',

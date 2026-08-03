@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const sources = {
     app: fs.readFileSync(new URL('./App.jsx', import.meta.url), 'utf8'),
+    appCss: fs.readFileSync(new URL('./styles/App.css', import.meta.url), 'utf8'),
     folder: fs.readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8'),
     multiRenameDialog: fs.readFileSync(new URL('./components/MultiRenameDialog.jsx', import.meta.url), 'utf8'),
     fileTable: fs.readFileSync(new URL('./components/folder/FileTableView.jsx', import.meta.url), 'utf8'),
@@ -196,6 +197,10 @@ test('상단 메뉴는 외부 링크와 아이콘 전용 환경 설정 버튼을
         sources.app.indexOf('openExternal?.(DISCORD_URL)') < sources.app.indexOf('openExternal?.(ISSUE_URL)'),
         'Discord 버튼은 버그 신고 버튼 왼쪽에 있어야 합니다.',
     );
+    assert.match(
+        sources.appCss,
+        /\.top-btn\s*\{[\s\S]*?box-sizing: border-box;[\s\S]*?height: var\(--control-height-lg\);/,
+    );
 });
 
 test('폴더 탭은 Electron 미지원 window.prompt 대신 내부 입력 다이얼로그를 사용한다', () => {
@@ -216,7 +221,7 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
         ['폰트 배율', 'localConfig.font_scale || 100'],
         ['출력 포맷', "localConfig.target_format || 'none'"],
         ['내부 파일명 변경 재압축 강도', "localConfig.renamer_archive_compression || 'auto'"],
-        ['AI provider', "localConfig.api_keys?.ai_provider || 'Gemini'"],
+        ['AI provider', 'value={aiProvider}'],
     ]);
     assertInventory('folderToolbar', [
         ['폴더 그룹 기준', 'groupLabels'],

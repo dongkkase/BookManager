@@ -14,6 +14,8 @@ import {
 
 const metadataTabSource = readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
+const ipcSource = readFileSync(new URL('../electron/ipcHandlers.js', import.meta.url), 'utf8');
+const preloadSource = readFileSync(new URL('../electron/preload.js', import.meta.url), 'utf8');
 
 test('API source별 필수 키 요구 여부를 판정한다', () => {
   assert.equal(requiredApiKeyForSource('알라딘'), 'aladin');
@@ -79,6 +81,19 @@ test('메타데이터 관리의 검색 API 선택은 환경 설정 기본값을 
   assert.match(metadataTabSource, /const selectApiSource = useCallback[\s\S]*?setApiSource\(nextSource\)/);
   assert.doesNotMatch(metadataTabSource, /saveApiSourcePreference|metadataApiPreferenceKey|saveConfig/);
   assert.doesNotMatch(appSource, /<MemoMetadataTab[^>]*saveConfig=/);
+});
+
+test('모든 메타데이터 검색 서비스 결과에 번역 버튼을 표시한다', () => {
+  assert.match(metadataTabSource, /className=\{`meta-api-translate-btn/);
+  assert.doesNotMatch(metadataTabSource, /canTranslateSelected/);
+  assert.doesNotMatch(metadataTabSource, /\['Anilist', 'Vine', 'Amazon'\]\.includes/);
+});
+
+test('메타데이터 번역 대상 언어는 환경설정 값을 메인 프로세스에서 사용한다', () => {
+  assert.match(preloadSource, /translateMetadata: \(result\) => ipcRenderer\.invoke\('api:translateMetadata', result\)/);
+  assert.match(ipcSource, /ipcMain\.handle\('api:translateMetadata', async \(_event, result = \{\}\) => \{/);
+  assert.match(ipcSource, /const targetLang = config\.language \|\| config\.lang \|\| 'ko'/);
+  assert.doesNotMatch(metadataTabSource, /translateMetadata\(rawSelected, targetLang\)/);
 });
 
 test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터로 변환한다', () => {
