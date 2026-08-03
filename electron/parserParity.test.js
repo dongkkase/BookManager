@@ -43,6 +43,17 @@ test('대표 파일명 corpus의 표시 제목과 코어 시리즈명이 Python 
     }
 });
 
+test('쉼표는 표시 제목과 코어 시리즈명에 보존한다', () => {
+    const filename = '작품명, 새로운 이야기 01권.cbz';
+
+    assert.equal(cleanDisplayTitle(filename), '작품명, 새로운 이야기');
+    assert.equal(extractCoreTitle(filename), '작품명, 새로운 이야기');
+    assert.equal(
+        formatLeafName('작품명, 새로운 이야기', '작품명, 새로운 이야기 01권', 0, 10, 'ko'),
+        '작품명, 새로운 이야기 01권',
+    );
+});
+
 test('소수 권수, part, 외전 표기의 leaf 이름이 Python parser와 같다', () => {
     assert.equal(formatLeafName('작품명', '작품명 2.5권', 0, 10, 'ko'), '작품명 02.5권');
     assert.equal(formatLeafName('Series', 'Part 2', 0, 10, 'en'), 'Series v02');

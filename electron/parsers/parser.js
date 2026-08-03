@@ -109,7 +109,7 @@ export function cleanDisplayTitle(text) {
     ' '
   );
   cleaned = cleaned.replace(/(?:제\s*)?\d+(?:\.\d+)?\s*(?:권|화)/g, ' ');
-  cleaned = cleaned.replace(/[-_+,]+/g, ' ');
+  cleaned = cleaned.replace(/[-_+]+/g, ' ');
   cleaned = stripTitleNoiseMarkers(cleaned);
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
   return cleaned;
@@ -137,7 +137,7 @@ export function extractCoreTitle(text) {
   cleaned = cleaned.replace(/번외편?|외전|스핀오프|특별편?|합본/g, '');
   cleaned = cleaned.replace(/권\~/gi, '');
   cleaned = cleaned.replace(/\d+\s*[~-]\s*\d+/g, ' ');
-  cleaned = cleaned.replace(/[：:—\-\/,]/g, ' ');
+  cleaned = cleaned.replace(/[：:—\-\/]/g, ' ');
   cleaned = cleaned.replace(/\d+\s*(?:권|화)/g, ' ');
   cleaned = cleaned.replace(/완결[!?.~]*/g, ' ');
   cleaned = cleaned.replace(/\s+(완|화|권)[!?.~]*(?=\s|$)/g, ' ');

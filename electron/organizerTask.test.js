@@ -280,7 +280,7 @@ test('Organizer는 압축 파일명과 같은 내부 ZIP 래퍼의 권/화 ZIP�
     }
 });
 
-test('Organizer는 단일 Root_Files 압축 파일의 권 이름을 원본 파일명에서 추론한다', async () => {
+test('Organizer는 단일 Root_Files 압축 파일의 권 이름과 쉼표를 원본 파일명에서 보존한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-root-files-title-'));
     try {
         const source = path.join(root, '「어서 와, 아빠」 01권.cbz');
@@ -295,10 +295,10 @@ test('Organizer는 단일 Root_Files 압축 파일의 권 이름을 원본 파�
 
         assert.equal(analyzed.skippedFiles.length, 0, analyzed.skippedFiles.join('\n'));
         assert.equal(analyzed.items.length, 1);
-        assert.equal(analyzed.items[0].clean_title, '「어서 와 아빠」');
+        assert.equal(analyzed.items[0].clean_title, '「어서 와, 아빠」');
         assert.equal(analyzed.items[0].volumes.length, 1);
         assert.equal(analyzed.items[0].volumes[0].original_path, 'Root_Files');
-        assert.equal(analyzed.items[0].volumes[0].new_name, '「어서 와 아빠」 01권');
+        assert.equal(analyzed.items[0].volumes[0].new_name, '「어서 와, 아빠」 01권');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
