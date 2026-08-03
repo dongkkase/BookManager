@@ -272,6 +272,29 @@ test('내부 파일 리스트는 기존 Python natural_keys 순서로 로드한�
     }
 });
 
+test('내부 파일 리스트는 JFIF를 JPEG 이미지로 분석하고 확장자를 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-jfif-'));
+    try {
+        const source = path.join(root, 'JFIF Support.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '001.JFIF', Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+        const analyzed = await analyzeRenamerInputs([source], { sevenZExe: '' });
+
+        assert.equal(analyzed.items.length, 1, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items[0].entries.length, 1);
+        assert.equal(analyzed.items[0].entries[0].originalPath, '001.JFIF');
+        assert.equal(analyzed.items[0].entries[0].newName, '00.JFIF');
+        assert.equal(analyzed.items[0].entries[0].ext, '.jfif');
+
+        const preview = await extractRenamerImage(source, '001.JFIF', '');
+        assert.equal(preview.success, true);
+        assert.match(preview.dataUrl, /^data:image\/jpeg;base64,/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('Renamer 분석은 압축 내부 파일명에서 누락 페이지를 계산한다', async () => {
     assert.deepEqual(
         missingPageNumbersForEntries([

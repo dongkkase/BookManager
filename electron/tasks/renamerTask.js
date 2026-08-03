@@ -11,7 +11,8 @@ import {
 import { translate } from '../../src/utils/i18n.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
-const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
+const JPEG_EXTS = new Set(['.jpg', '.jpeg', '.jfif']);
+const IMAGE_EXTS = new Set([...JPEG_EXTS, '.png', '.webp', '.bmp', '.gif']);
 const NESTED_ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar', '.alz', '.egg']);
 const RENAMER_ARCHIVE_COMPRESSION_MODES = new Set(['auto', 'fast', 'maximum']);
 const BUSY_FS_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
@@ -403,7 +404,7 @@ async function readImageMetadataProbe(filePath, maxBytes = 512 * 1024) {
 async function hasRemovableImageMetadata(filePath, extension) {
     try {
         const buffer = await readImageMetadataProbe(filePath);
-        if (extension === '.jpg' || extension === '.jpeg') return hasJpegRemovableMetadata(buffer);
+        if (JPEG_EXTS.has(extension)) return hasJpegRemovableMetadata(buffer);
         if (extension === '.png') return hasPngRemovableMetadata(buffer);
         if (extension === '.webp') return hasWebpRemovableMetadata(buffer);
     } catch {
@@ -1021,7 +1022,7 @@ async function optimizeExtractedImages(rootDir, item, options) {
 
       const tempPath = `${fullPath}.opt.tmp`;
       try {
-        if (extension === '.jpg' || extension === '.jpeg') {
+        if (JPEG_EXTS.has(extension)) {
           const metadataRemoved = hasRemovableMetadata
             ? await stripJpegMetadataFile(fullPath).catch(() => false)
             : false;
