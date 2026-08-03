@@ -655,7 +655,7 @@ function App() {
         <div className={`app-tab-panel ${activeTab === 'metadata' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'metadata'}>
           {loadedTabs.has('metadata') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
-              <MemoMetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+              <MemoMetadataTab config={config} t={t} showToast={showToast} />
             </React.Suspense>
           )}
         </div>

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   apiSourceHasRequiredKey,
@@ -10,6 +11,9 @@ import {
   preferredMetadataApiSource,
   requiredApiKeyForSource,
 } from './metadataApiPolicy.js';
+
+const metadataTabSource = readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
 
 test('API source별 필수 키 요구 여부를 판정한다', () => {
   assert.equal(requiredApiKeyForSource('알라딘'), 'aladin');
@@ -69,6 +73,12 @@ test('책 타입별 기본 검색 API 설정을 선택한다', () => {
     preferred_meta_api_pdf: 'Google Books',
   }, 'pdf'), 'Google Books');
   assert.equal(preferredMetadataApiSource({ last_meta_api: 'Anilist' }, 'book'), '리디북스');
+});
+
+test('메타데이터 관리의 검색 API 선택은 환경 설정 기본값을 저장하지 않는다', () => {
+  assert.match(metadataTabSource, /const selectApiSource = useCallback[\s\S]*?setApiSource\(nextSource\)/);
+  assert.doesNotMatch(metadataTabSource, /saveApiSourcePreference|metadataApiPreferenceKey|saveConfig/);
+  assert.doesNotMatch(appSource, /<MemoMetadataTab[^>]*saveConfig=/);
 });
 
 test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터로 변환한다', () => {

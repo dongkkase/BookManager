@@ -35,7 +35,6 @@ import { partitionSkippedFiles } from '../notificationPolicy';
 import {
   ALL_METADATA_API_SOURCES,
   apiSourceHasRequiredKey,
-  metadataApiPreferenceKey,
   metadataApiSourcesForBookType,
   metadataFromApiResult,
   preferredMetadataApiSource,
@@ -303,7 +302,7 @@ function similarity(a = '', b = '') {
   return hits / Math.max(leftSet.size, rightSet.size, 1);
 }
 
-function MetadataTab({ config, saveConfig, t, showToast }) {
+function MetadataTab({ config, t, showToast }) {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'metadata' } }));
@@ -531,14 +530,10 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const currentMetadataExtraFieldIds = activeBookType === 'comic'
     ? ['ComicZipAddedDate', 'ComicZipModifiedDate']
     : [];
-  const saveApiSourcePreference = useCallback((nextSource, bookType = activeBookType) => {
+  const selectApiSource = useCallback((nextSource) => {
     if (!nextSource) return;
     setApiSource(nextSource);
-    saveConfig?.({
-      last_meta_api: nextSource,
-      [metadataApiPreferenceKey(bookType)]: nextSource,
-    });
-  }, [activeBookType, saveConfig]);
+  }, []);
 
   useEffect(() => {
     emitToolbarState(
@@ -963,7 +958,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
   const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
     const cleanQuery = String(query || '').trim();
     if (!cleanQuery) return;
-    saveApiSourcePreference(source, activeBookType);
+    selectApiSource(source);
     if (!apiSourceHasRequiredKey(source, config?.api_keys || {})) {
       setApiSearch(prev => ({
         ...prev,
@@ -1044,7 +1039,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
         cached: false,
       }));
     }
-  }, [activeBookType, apiSource, config?.api_keys, saveApiSourcePreference, searchQuery, text]);
+  }, [activeBookType, apiSource, config?.api_keys, searchQuery, selectApiSource, text]);
 
   const handleSearchApi = async (page = 1) => {
     const query = searchQuery.trim();
@@ -2049,10 +2044,7 @@ function MetadataTab({ config, saveConfig, t, showToast }) {
           <select
             className="meta-api-select"
             value={apiSource}
-            onChange={(event) => {
-              const nextApi = event.target.value;
-              saveApiSourcePreference(nextApi);
-            }}
+            onChange={(event) => selectApiSource(event.target.value)}
           >
             {currentApiSources.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
           </select>

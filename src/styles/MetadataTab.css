@@ -1114,6 +1114,8 @@ textarea.meta-auto-height-textarea {
   z-index: -1;
   content: "";
   background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   pointer-events: none;
   animation: meta-api-backdrop-in 0.24s ease-out both;
 }

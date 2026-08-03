@@ -754,6 +754,8 @@ body.is-resizing-panel * {
   width: 100%;
   height: 100%;
   background-color: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
   justify-content: center;
