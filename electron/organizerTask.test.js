@@ -304,7 +304,7 @@ test('Organizer는 단일 Root_Files 압축 파일의 권 이름과 쉼표를 �
     }
 });
 
-test('Organizer는 다른 디바이스 경로로 완료 아카이브를 복사 fallback으로 이동한다', async t => {
+test('Organizer는 출력 폴더의 임시 아카이브를 복사 fallback으로 이동한다', async t => {
     const sevenZExe = find7z();
     if (!sevenZExe) {
         t.skip('7z executable is not available');
@@ -325,8 +325,10 @@ test('Organizer는 다른 디바이스 경로로 완료 아카이브를 복사 f
         analyzed.items[0].out_path = path.join(root, 'network-share');
 
         let exdevFallbackUsed = false;
+        let outputLocalTempUsed = false;
         const renameFile = async (src, dest) => {
-            if (path.basename(src).startsWith('BookManager_Done_')) {
+            if (path.basename(src).includes('.bookmanager-done-')) {
+                outputLocalTempUsed = path.dirname(src) === path.dirname(dest);
                 exdevFallbackUsed = true;
                 const error = new Error('cross-device link not permitted');
                 error.code = 'EXDEV';
@@ -345,6 +347,7 @@ test('Organizer는 다른 디바이스 경로로 완료 아카이브를 복사 f
         });
 
         assert.equal(exdevFallbackUsed, true);
+        assert.equal(outputLocalTempUsed, true);
         assert.equal(result.cancelled, false);
         assert.deepEqual(result.stats.error, []);
         assert.equal(result.createdFiles.length, 2);
@@ -420,6 +423,101 @@ test('Organizer는 단일 폴더 ZIP 정리를 압축 해제 없이 7z rn으로 
 
         const outputEntries = await listZipEntriesFromFile(result.createdFiles[0]);
         assert.deepEqual(outputEntries.map(entry => entry.name), ['001.jpg']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 내용 변경이 없는 단일 압축파일을 복사하지 않고 이름만 변경한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-outer-rename-'));
+    try {
+        const source = path.join(root, 'Original 01.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '001.jpg', Buffer.from('page-1'));
+        const original = fs.readFileSync(source);
+
+        const analyzed = await analyzeOrganizerInputs([source], {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        analyzed.items[0].volumes[0].new_name = 'Renamed 01';
+
+        let copyCount = 0;
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe: 'unused-7z',
+            target_format: 'zip',
+            deleteOriginal: true,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            copyFile: async (...args) => {
+                copyCount += 1;
+                return fsp.copyFile(...args);
+            },
+            lang: 'ko',
+        });
+
+        const output = path.join(root, 'Renamed 01.zip');
+        assert.equal(copyCount, 0);
+        assert.deepEqual(result.stats.error, []);
+        assert.deepEqual(result.createdFiles, [output]);
+        assert.equal(fs.existsSync(source), false);
+        assert.deepEqual(fs.readFileSync(output), original);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer 병렬 실행은 같은 출력 이름을 충돌 없이 선점한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-parallel-'));
+    try {
+        const sources = [];
+        for (const name of ['Input A.zip', 'Input B.zip']) {
+            const source = path.join(root, name);
+            fs.writeFileSync(source, Buffer.alloc(0));
+            await replaceZipEntry(source, '001.jpg', Buffer.from(name));
+            sources.push(source);
+        }
+
+        const analyzed = await analyzeOrganizerInputs(sources, {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        const outputDir = path.join(root, 'output');
+        for (const item of analyzed.items) {
+            item.out_path = outputDir;
+            item.volumes[0].new_name = 'Shared Name';
+        }
+
+        let activeCopies = 0;
+        let maxActiveCopies = 0;
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe: 'unused-7z',
+            target_format: 'cbz',
+            deleteOriginal: false,
+            max_threads: 2,
+            shouldCancel: () => false,
+            copyFile: async (...args) => {
+                activeCopies += 1;
+                maxActiveCopies = Math.max(maxActiveCopies, activeCopies);
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 25));
+                    return await fsp.copyFile(...args);
+                } finally {
+                    activeCopies -= 1;
+                }
+            },
+            lang: 'ko',
+        });
+
+        assert.equal(maxActiveCopies, 2);
+        assert.deepEqual(result.stats.error, []);
+        assert.deepEqual(
+            result.createdFiles.map(filePath => path.basename(filePath)).sort(),
+            ['Shared Name.cbz', 'Shared Name_1.cbz'],
+        );
+        assert.equal(result.createdFiles.every(filePath => fs.existsSync(filePath)), true);
+        assert.equal(sources.every(source => fs.existsSync(source)), true);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -718,16 +816,27 @@ test('Organizer 평탄화는 이미지 파일명을 유지한다', async t => {
         const analyzed = await analyzeOrganizerInputs([source], { sevenZExe, lang: 'ko' });
         const output = path.join(root, 'output');
         analyzed.items[0].out_path = output;
+        let fallbackCopies = 0;
         const result = await executeOrganizer(analyzed.items, {
             sevenZExe,
             target_format: 'cbz',
             flatten_folders: true,
             deleteOriginal: false,
             shouldCancel: () => false,
+            linkFile: async () => {
+                const error = new Error('hard links are unavailable');
+                error.code = 'EPERM';
+                throw error;
+            },
+            flatCopyFile: async (...args) => {
+                fallbackCopies += 1;
+                return fsp.copyFile(...args);
+            },
             lang: 'ko',
         });
 
         assert.equal(result.stats.error.length, 0, result.stats.error.join('\n'));
+        assert.equal(fallbackCopies, 2);
         const entries = await listZipEntriesFromFile(result.createdFiles[0]);
         assert.deepEqual(
             entries.filter(entry => !entry.isDir).map(entry => entry.name).sort(),
@@ -760,16 +869,22 @@ test('Organizer 평탄화는 루트 이미지를 임시 폴더에서 다시 복�
 
         const analyzed = await analyzeOrganizerInputs([source], { sevenZExe, lang: 'ko' });
         analyzed.items[0].out_path = path.join(root, 'output');
+        let linkedImages = 0;
         const result = await executeOrganizer(analyzed.items, {
             sevenZExe,
             target_format: 'cbz',
             flatten_folders: true,
             deleteOriginal: false,
             shouldCancel: () => false,
+            linkFile: async (...args) => {
+                linkedImages += 1;
+                return fsp.link(...args);
+            },
             lang: 'ko',
         });
 
         assert.equal(result.stats.error.length, 0, result.stats.error.join('\n'));
+        assert.equal(linkedImages, 2);
         const entries = await listZipEntriesFromFile(result.createdFiles[0]);
         assert.deepEqual(
             entries.filter(entry => !entry.isDir).map(entry => entry.name).sort(),

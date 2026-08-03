@@ -635,22 +635,65 @@ function stripFirstPathComponent(entryPath) {
   return parts.length > 1 ? parts.slice(1).join('/') : '';
 }
 
-async function uniquePath(basePath) {
-  if (!fs.existsSync(basePath)) return basePath;
+function reservationKey(filePath) {
+  const resolved = path.resolve(filePath).normalize('NFC');
+  return process.platform === 'win32' || process.platform === 'darwin'
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
+function reservePath(filePath, reservedPaths) {
+  if (!reservedPaths) return;
+  reservedPaths.add(reservationKey(filePath));
+}
+
+function releasePath(filePath, reservedPaths) {
+  if (!reservedPaths) return;
+  reservedPaths.delete(reservationKey(filePath));
+}
+
+function releasePaths(filePaths, reservedPaths) {
+  for (const filePath of filePaths || []) {
+    releasePath(filePath, reservedPaths);
+  }
+}
+
+function pathIsReserved(filePath, reservedPaths) {
+  return Boolean(reservedPaths?.has(reservationKey(filePath)));
+}
+
+async function uniquePath(basePath, reservedPaths) {
+  if (!fs.existsSync(basePath) && !pathIsReserved(basePath, reservedPaths)) {
+    reservePath(basePath, reservedPaths);
+    return basePath;
+  }
   const dir = path.dirname(basePath);
   const ext = path.extname(basePath);
   const stem = path.basename(basePath, ext);
   let counter = 1;
   while (true) {
     const candidate = path.join(dir, `${stem}_${counter}${ext}`);
-    if (!fs.existsSync(candidate)) return candidate;
+    if (!fs.existsSync(candidate) && !pathIsReserved(candidate, reservedPaths)) {
+      reservePath(candidate, reservedPaths);
+      return candidate;
+    }
     counter += 1;
   }
 }
 
-async function uniqueOrganizerTargetPath(basePath, sourcePath, allowSourcePath = false) {
-  if (!fs.existsSync(basePath)) return basePath;
-  if (allowSourcePath && path.resolve(basePath) === path.resolve(sourcePath)) return basePath;
+async function uniqueOrganizerTargetPath(basePath, sourcePath, allowSourcePath = false, reservedPaths) {
+  if (!fs.existsSync(basePath) && !pathIsReserved(basePath, reservedPaths)) {
+    reservePath(basePath, reservedPaths);
+    return basePath;
+  }
+  if (
+    allowSourcePath
+    && path.resolve(basePath) === path.resolve(sourcePath)
+    && !pathIsReserved(basePath, reservedPaths)
+  ) {
+    reservePath(basePath, reservedPaths);
+    return basePath;
+  }
 
   const dir = path.dirname(basePath);
   const ext = path.extname(basePath);
@@ -658,9 +701,21 @@ async function uniqueOrganizerTargetPath(basePath, sourcePath, allowSourcePath =
   let counter = 1;
   while (true) {
     const candidate = path.join(dir, `${stem}_${counter}${ext}`);
-    if (!fs.existsSync(candidate)) return candidate;
+    if (!fs.existsSync(candidate) && !pathIsReserved(candidate, reservedPaths)) {
+      reservePath(candidate, reservedPaths);
+      return candidate;
+    }
     counter += 1;
   }
+}
+
+async function outputLocalTempArchivePath(finalPath, label = 'output') {
+  const outDir = path.dirname(finalPath);
+  await fsp.mkdir(outDir, { recursive: true });
+  return uniquePath(path.join(
+    outDir,
+    `.bookmanager-${label}-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.partial`,
+  ));
 }
 
 async function getActualRoot(dir) {
@@ -738,35 +793,52 @@ async function convertImagesToWebp(rootDir, cwebpExe, quality = 85) {
   return converted;
 }
 
-async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
-  while (true) {
-    const nested = [];
-    async function collect(currentDir) {
-      const entries = await fsp.readdir(currentDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (isMacArchiveMetadataName(entry.name)) continue;
-        const fullPath = path.join(currentDir, entry.name);
-        if (entry.isDirectory()) await collect(fullPath);
-        else if (entry.isFile() && isArchive(fullPath)) nested.push(fullPath);
-      }
+async function collectNestedArchives(rootDir) {
+  const nested = [];
+  async function collect(currentDir) {
+    const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    entries.sort((a, b) => naturalCompare(a.name, b.name));
+    for (const entry of entries) {
+      if (isMacArchiveMetadataName(entry.name)) continue;
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) await collect(fullPath);
+      else if (entry.isFile() && isArchive(fullPath)) nested.push(fullPath);
     }
-    await collect(rootDir);
-    if (nested.length === 0) return;
-    for (const archivePath of nested) {
-      if (shouldCancel?.()) throw new Error('ORGANIZER_CANCELLED');
-      const destination = archivePath.slice(0, -path.extname(archivePath).length);
-      await fsp.mkdir(destination, { recursive: true });
-      await withSevenZipArchivePath(
-        archivePath,
-        safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y']),
-      );
-      await fsp.rm(archivePath, { force: true });
+  }
+  await collect(rootDir);
+  return nested;
+}
+
+async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
+  const queue = await collectNestedArchives(rootDir);
+  const queued = new Set(queue.map(reservationKey));
+
+  for (let index = 0; index < queue.length; index += 1) {
+    if (shouldCancel?.()) throw new Error('ORGANIZER_CANCELLED');
+    const archivePath = queue[index];
+    if (!fs.existsSync(archivePath)) continue;
+    const destination = archivePath.slice(0, -path.extname(archivePath).length);
+    await fsp.mkdir(destination, { recursive: true });
+    await withSevenZipArchivePath(
+      archivePath,
+      safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y']),
+    );
+    await fsp.rm(archivePath, { force: true });
+
+    const discovered = await collectNestedArchives(destination);
+    for (const nestedPath of discovered) {
+      const key = reservationKey(nestedPath);
+      if (queued.has(key)) continue;
+      queued.add(key);
+      queue.push(nestedPath);
     }
   }
 }
 
-async function createFlatStaging(leaf, tempBase) {
+async function createFlatStaging(leaf, tempBase, options = {}) {
   const staging = path.join(tempBase, `flat_${Math.random().toString(16).slice(2)}`);
+  const linkFile = options.linkFile || fsp.link;
+  const copyFile = options.flatCopyFile || fsp.copyFile;
   await fsp.mkdir(staging, { recursive: true });
   async function walk(currentDir) {
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
@@ -779,7 +851,11 @@ async function createFlatStaging(leaf, tempBase) {
         await walk(fullPath);
       } else if (entry.isFile() && isImage(entry.name)) {
         const target = await uniquePath(path.join(staging, entry.name));
-        await fsp.copyFile(fullPath, target);
+        try {
+          await linkFile(fullPath, target);
+        } catch {
+          await copyFile(fullPath, target);
+        }
       }
     }
   }
@@ -845,7 +921,7 @@ async function writePreparedArchive(sourcePath, preparedArchive, finalPath, opti
 async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options = {}) {
   const sevenZExe = options.sevenZExe;
   const filename = path.basename(sourcePath);
-  let tempArchive = path.join(os.tmpdir(), `BookManager_OrganizerRN_${Date.now()}_${Math.random().toString(16).slice(2)}${path.extname(finalPath)}`);
+  let tempArchive = await outputLocalTempArchivePath(finalPath, 'rename');
 
   try {
     await fsp.copyFile(sourcePath, tempArchive);
@@ -868,12 +944,43 @@ async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath
 
 async function copyOrganizerArchiveDirectly(sourcePath, finalPath, options = {}) {
   const filename = path.basename(sourcePath);
-  let tempArchive = path.join(os.tmpdir(), `BookManager_OrganizerCopy_${Date.now()}_${Math.random().toString(16).slice(2)}_${path.basename(finalPath)}`);
+  const renameFile = options.renameFile || fsp.rename;
+  const copyFile = options.copyFile || fsp.copyFile;
 
+  if (options.backup_on) {
+    const backupDir = path.join(path.dirname(sourcePath), 'bak');
+    await fsp.mkdir(backupDir, { recursive: true });
+    await copyFile(sourcePath, await uniquePath(path.join(backupDir, filename)));
+  }
+
+  if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
+
+  if (options.deleteOriginal !== false) {
+    if (path.resolve(sourcePath) === path.resolve(finalPath)) {
+      return { success: true, message: filename, created: [finalPath] };
+    }
+    try {
+      await renameFile(sourcePath, finalPath);
+      return { success: true, message: filename, created: [finalPath] };
+    } catch (error) {
+      if (error?.code !== 'EXDEV') throw error;
+    }
+  }
+
+  let tempArchive = await outputLocalTempArchivePath(finalPath, 'copy');
   try {
-    await fsp.copyFile(sourcePath, tempArchive);
-    await writePreparedArchive(sourcePath, tempArchive, finalPath, options);
+    await copyFile(sourcePath, tempArchive);
+    if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
+    await movePreparedFile(tempArchive, finalPath, options);
     tempArchive = '';
+    if (options.deleteOriginal !== false) {
+      try {
+        await fsp.rm(sourcePath, { force: true });
+      } catch (error) {
+        await fsp.rm(finalPath, { force: true }).catch(() => {});
+        throw error;
+      }
+    }
     return { success: true, message: filename, created: [finalPath] };
   } finally {
     if (tempArchive) await fsp.rm(tempArchive, { force: true }).catch(() => {});
@@ -900,33 +1007,54 @@ async function tryProcessOrganizerItemDirectly(item, sourceExt, targetExt, optio
     path.join(outDir, `${volumeName}${targetExt}`),
     sourcePath,
     options.deleteOriginal !== false,
+    options.reservedOutputPaths,
   );
 
-  if (options.shouldCancel?.()) return { cancelled: true, message: path.basename(sourcePath), created: [] };
-
-  if (volume?.type !== 'folder') {
-    if (volume?.inner_path) return null;
-    return copyOrganizerArchiveDirectly(sourcePath, finalPath, options);
+  if (options.shouldCancel?.()) {
+    releasePath(finalPath, options.reservedOutputPaths);
+    return { cancelled: true, message: path.basename(sourcePath), created: [] };
   }
 
-  const entries = await listArchiveEntries(sourcePath, options.sevenZExe);
-  const originalPath = normalizeInnerArchivePath(volume.original_path || '');
-  if (!originalPath) return copyOrganizerArchiveDirectly(sourcePath, finalPath, options);
+  try {
+    if (volume?.type !== 'folder') {
+      if (volume?.inner_path) {
+        releasePath(finalPath, options.reservedOutputPaths);
+        return null;
+      }
+      const result = await copyOrganizerArchiveDirectly(sourcePath, finalPath, options);
+      if (result.cancelled) releasePath(finalPath, options.reservedOutputPaths);
+      return result;
+    }
 
-  const prefix = originalPath.endsWith('/') ? originalPath : `${originalPath}/`;
-  const renamePairs = entries
-    .filter(entry => !entry.isDir)
-    .map(entry => {
-      const oldPath = normalizeInnerArchivePath(entry.name);
-      if (!oldPath.startsWith(prefix)) return null;
-      const newPath = stripFirstPathComponent(oldPath);
-      if (!newPath || oldPath === newPath) return null;
-      return { oldPath, newPath };
-    })
-    .filter(Boolean);
+    const entries = await listArchiveEntries(sourcePath, options.sevenZExe);
+    const originalPath = normalizeInnerArchivePath(volume.original_path || '');
+    if (!originalPath) {
+      const result = await copyOrganizerArchiveDirectly(sourcePath, finalPath, options);
+      if (result.cancelled) releasePath(finalPath, options.reservedOutputPaths);
+      return result;
+    }
 
-  if (renamePairs.length === 0) return null;
-  return renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options);
+    const prefix = originalPath.endsWith('/') ? originalPath : `${originalPath}/`;
+    const renamePairs = entries
+      .filter(entry => !entry.isDir)
+      .map(entry => {
+        const oldPath = normalizeInnerArchivePath(entry.name);
+        if (!oldPath.startsWith(prefix)) return null;
+        const newPath = stripFirstPathComponent(oldPath);
+        if (!newPath || oldPath === newPath) return null;
+        return { oldPath, newPath };
+      })
+      .filter(Boolean);
+
+    if (renamePairs.length === 0) {
+      releasePath(finalPath, options.reservedOutputPaths);
+      return null;
+    }
+    return await renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options);
+  } catch (error) {
+    releasePath(finalPath, options.reservedOutputPaths);
+    throw error;
+  }
 }
 
 async function processOrganizerItem(item, options) {
@@ -943,6 +1071,7 @@ async function processOrganizerItem(item, options) {
   const tempBase = path.join(os.tmpdir(), `BookManager_Organizer_${Date.now()}_${Math.random().toString(16).slice(2)}`);
   const created = [];
   const tempArchives = [];
+  const reservedTargets = [];
 
   await fsp.mkdir(tempBase, { recursive: true });
 
@@ -969,18 +1098,23 @@ async function processOrganizerItem(item, options) {
       const volumeName = safeName(volumes[index]?.new_name || `${item.clean_title || path.basename(sourcePath, path.extname(sourcePath))} ${String(index + 1).padStart(2, '0')}권`);
       const outDir = item.out_path || path.dirname(sourcePath);
       await fsp.mkdir(outDir, { recursive: true });
-      const targetPath = await uniquePath(path.join(outDir, `${volumeName}${targetExt}`));
-      const tempArchive = path.join(os.tmpdir(), `BookManager_Done_${Date.now()}_${Math.random().toString(16).slice(2)}${targetExt}`);
+      const targetPath = await uniquePath(
+        path.join(outDir, `${volumeName}${targetExt}`),
+        options.reservedOutputPaths,
+      );
+      reservedTargets.push(targetPath);
+      const tempArchive = await outputLocalTempArchivePath(targetPath, 'done');
       tempArchives.push(tempArchive);
 
       if (options.webp_conversion || options.webpConversion) {
         await convertImagesToWebp(leaf, options.cwebpExe, options.img_quality ?? options.jpg_quality ?? 85);
       }
       const packRoot = options.flatten_folders || options.flattenFolders
-        ? await createFlatStaging(leaf, tempBase)
+        ? await createFlatStaging(leaf, tempBase, options)
         : leaf;
       if (options.shouldCancel?.()) {
         for (const createdPath of created) await fsp.rm(createdPath, { force: true }).catch(() => {});
+        releasePaths(reservedTargets, options.reservedOutputPaths);
         return { cancelled: true, message: filename, created: [] };
       }
       await runQuietProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot });
@@ -990,6 +1124,7 @@ async function processOrganizerItem(item, options) {
 
     if (options.shouldCancel?.()) {
       for (const createdPath of created) await fsp.rm(createdPath, { force: true }).catch(() => {});
+      releasePaths(reservedTargets, options.reservedOutputPaths);
       return { cancelled: true, message: filename, created: [] };
     }
 
@@ -1008,6 +1143,7 @@ async function processOrganizerItem(item, options) {
     for (const createdPath of created) {
       await fsp.rm(createdPath, { force: true }).catch(() => {});
     }
+    releasePaths(reservedTargets, options.reservedOutputPaths);
     throw error;
   } finally {
     for (const tempArchive of tempArchives) {
@@ -1017,39 +1153,73 @@ async function processOrganizerItem(item, options) {
   }
 }
 
+function maxExecutionWorkers(options = {}, totalCount = 1) {
+  const configured = Math.max(1, Math.floor(Number(options.max_threads ?? options.maxThreads) || 1));
+  return Math.min(Math.max(1, totalCount), configured, 2);
+}
+
 export async function executeOrganizer(items, options = {}, onProgress) {
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], skip: [], error: [] };
   const createdFiles = [];
   let cancelled = false;
+  let completed = 0;
+  const externalShouldCancel = options.shouldCancel;
+  const workerOptions = {
+    ...options,
+    reservedOutputPaths: new Set(),
+    shouldCancel: () => cancelled || externalShouldCancel?.(),
+  };
 
-  for (let index = 0; index < targets.length; index += 1) {
-    if (options.shouldCancel?.()) {
-      cancelled = true;
-      break;
-    }
-    const item = targets[index];
-    onProgress?.({
-      progress: Math.round((index / Math.max(targets.length, 1)) * 100),
-      message: taskText(options.lang, 'task_processing_item', { index: index + 1, total: targets.length, name: item.name }),
-    });
-
-    try {
-      const result = await processOrganizerItem(item, options);
-      if (result.cancelled) {
-        stats.skip.push(`${item.name || path.basename(item.filepath)} (Cancelled)`);
+  const results = await mapWithConcurrency(
+    targets,
+    maxExecutionWorkers(options, targets.length),
+    async (item, index) => {
+      if (workerOptions.shouldCancel()) {
         cancelled = true;
-        break;
+        return { index, item, notStarted: true };
       }
-      stats.success.push(result.message);
-      createdFiles.push(...result.created);
-    } catch (error) {
-      stats.error.push(`${item.name || item.filepath} - ${error.message}`);
+      onProgress?.({
+        progress: Math.round((completed / Math.max(targets.length, 1)) * 100),
+        message: taskText(options.lang, 'task_processing_item', { index: index + 1, total: targets.length, name: item.name }),
+      });
+
+      try {
+        const result = await processOrganizerItem(item, workerOptions);
+        if (result.cancelled) {
+          cancelled = true;
+          return { index, item, cancelled: true };
+        }
+        return { index, item, result };
+      } catch (error) {
+        if (error?.message === 'ORGANIZER_CANCELLED' || workerOptions.shouldCancel()) {
+          cancelled = true;
+          return { index, item, cancelled: true };
+        }
+        return { index, item, error };
+      } finally {
+        completed += 1;
+        onProgress?.({
+          progress: Math.round((completed / Math.max(targets.length, 1)) * 100),
+          message: taskText(options.lang, 'task_processing_item', { index: index + 1, total: targets.length, name: item.name }),
+        });
+      }
+    },
+  );
+
+  for (const outcome of results) {
+    if (!outcome || outcome.notStarted) continue;
+    const item = outcome.item;
+    if (outcome.cancelled) {
+      stats.skip.push(`${item.name || path.basename(item.filepath)} (Cancelled)`);
+      continue;
     }
-    if (options.shouldCancel?.()) {
-      cancelled = true;
-      break;
+    if (outcome.error) {
+      stats.error.push(`${item.name || item.filepath} - ${outcome.error.message}`);
+      continue;
     }
+    stats.success.push(outcome.result.message);
+    createdFiles.push(...outcome.result.created);
   }
 
   if (!cancelled) onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
