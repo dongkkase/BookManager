@@ -1381,6 +1381,33 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
   }, [clearSelection, rangeSelect, runtimePlatform, selectFile, toggleFile]);
 
+  const ensureActiveSelectionVisible = useCallback(() => {
+    if (!activeSelectedPath) return;
+    const container = viewContainerRef.current;
+    if (!container) return;
+    const targetPath = String(activeSelectedPath);
+    const activeElement = Array.from(container.querySelectorAll('[data-file-path]'))
+      .find(element => String(element?.dataset?.filePath || '') === targetPath);
+    if (!activeElement) return;
+    activeElement.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+    });
+  }, [activeSelectedPath]);
+
+  useEffect(() => {
+    if (!activeSelectedPath) return;
+    let frame = 0;
+    let nestedFrame = 0;
+    frame = window.requestAnimationFrame(() => {
+      nestedFrame = window.requestAnimationFrame(ensureActiveSelectionVisible);
+    });
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      if (nestedFrame) window.cancelAnimationFrame(nestedFrame);
+    };
+  }, [activeSelectedPath, detailPanelHeight, ensureActiveSelectionVisible, viewMode]);
+
   const selectedFileObjects = useMemo(() => (
     selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(Boolean)
   ), [displayedFileByPath, selectedFiles]);
