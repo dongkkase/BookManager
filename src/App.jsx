@@ -589,16 +589,6 @@ function App() {
         </div>
         <div className="top-menu-right">
           <button
-            className="top-btn top-btn-icon"
-            title="Discord"
-            aria-label="Discord"
-            onClick={() => window.electronAPI?.openExternal?.(DISCORD_URL)}
-          >
-            <FaIcon name="discord" />
-          </button>
-          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
-          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(MANUAL_URL)}><FaIcon name="bookOpen" />{t('btn_manual')}</button>
-          <button
             className={`top-btn top-btn-version ${updateInfo.available ? 'update-available' : ''}`}
             disabled={isAppLocked || isUpdating}
             onClick={handleVersionClick}
@@ -610,6 +600,16 @@ function App() {
               ? t('msg_update_available', [appVersion || '-', updateInfo.latestVersion])
               : t('msg_latest_version', [appVersion || '-'])}
           </button>
+          <button
+            className="top-btn top-btn-icon"
+            title="Discord"
+            aria-label="Discord"
+            onClick={() => window.electronAPI?.openExternal?.(DISCORD_URL)}
+          >
+            <FaIcon name="discord" />
+          </button>
+          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
+          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(MANUAL_URL)}><FaIcon name="bookOpen" />{t('btn_manual')}</button>
           <button
             className="top-btn top-btn-icon top-btn-settings"
             title={t('settings_btn')}
