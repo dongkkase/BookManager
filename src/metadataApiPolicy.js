@@ -74,6 +74,20 @@ const API_SERIES_VOLUME_SUFFIX_PATTERNS = [
   /\s*(?:vol(?:ume)?|v|ch(?:apter)?|ep(?:isode)?)\.?\s*#?\s*\d+(?:\.\d+)?(?:\s*[~\-–]\s*\d+(?:\.\d+)?)?\s*$/iu,
 ];
 const API_SERIES_TRAILING_QUALIFIER_PATTERN = /\s*(?:[\[(（【]\s*)?(?:완결|完結|complete(?:d)?|전자책|e-?book)\s*(?:[\])）】])?\s*$/iu;
+const API_LEADING_PREFIX_PATTERN = /^\s*(?:\[[^\]]*\]|\([^)]*\)|【[^】]*】|（[^）]*）|〈[^〉]*〉)\s*/u;
+
+function cleanApiDecorativePrefix(value = '') {
+  let text = String(value || '').normalize('NFC').trim();
+  if (!text) return '';
+
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(API_LEADING_PREFIX_PATTERN, '').trim();
+  } while (text && previous !== text);
+
+  return text;
+}
 
 function comparableApiSeriesName(value = '') {
   return String(value || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
@@ -115,7 +129,15 @@ export function metadataFromApiResult(result = {}, options = {}) {
     ...metadata,
     Summary: cleanMetadataSummary(metadata.Summary || result.summary || ''),
   };
-  if (metadata.Series) normalized.Series = cleanApiSeriesName(metadata.Series, { query: options.query });
+  if (metadata.Title) {
+    normalized.Title = cleanApiDecorativePrefix(metadata.Title);
+  }
+  if (metadata.Series) {
+    normalized.Series = cleanApiSeriesName(
+      cleanApiDecorativePrefix(metadata.Series),
+      { query: options.query },
+    );
+  }
   if (options.bookType === 'comic' || !options.bookType) {
     normalized.Manga = metadata.Manga || 'YesAndRightToLeft';
   } else if (metadata.Manga) {

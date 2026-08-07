@@ -3108,6 +3108,22 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   let cwebpExePromise = null;
   let ffmpegExePromise = null;
   let jpegtranExePromise = null;
+  const clearApiCacheSafe = (dbPath, imageDirectories = []) => {
+    try {
+      return clearApiCache(dbPath, imageDirectories);
+    } catch (error) {
+      console.warn(`[ApiCache] clearApiCache failed: ${error.message}`);
+      return { deletedRows: 0, deletedFiles: 0 };
+    }
+  };
+  const openApiCacheDbSafe = () => {
+    try {
+      return openApiCacheDb(apiCacheDbPath());
+    } catch (error) {
+      console.warn(`[ApiCache] Could not open API cache DB; continuing without cache: ${error.message}`);
+      return null;
+    }
+  };
   const getCwebpExe = () => {
     if (!cwebpExePromise) cwebpExePromise = getBinPath('cwebp');
     return cwebpExePromise;
@@ -3601,23 +3617,31 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       query,
       page,
     });
-    const apiCacheDb = await openApiCacheDb(apiCacheDbPath());
+    const apiCacheDb = openApiCacheDbSafe();
     const cacheQuery = `${bookType}::${query}::p${page}::v17`;
     try {
-      const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);
-      if (cachedResults) {
-        actualQuery = cachedResults[0]?.identifiedSearchQuery || actualQuery;
-        metadataSearchLog('Search cache hit', {
-          api: apiName,
-          query,
-          actualQuery,
-          page,
-          resultCount: cachedResults.length,
-        });
-        return { success: true, api: apiName, actualQuery, results: await enrichResultImages(cachedResults, apiCoverCacheDir()), cached: true };
+      if (apiCacheDb) {
+        const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);
+        if (cachedResults) {
+          actualQuery = cachedResults[0]?.identifiedSearchQuery || actualQuery;
+          metadataSearchLog('Search cache hit', {
+            api: apiName,
+            query,
+            actualQuery,
+            page,
+            resultCount: cachedResults.length,
+          });
+          return {
+            success: true,
+            api: apiName,
+            actualQuery,
+            results: await enrichResultImages(cachedResults, apiCoverCacheDir()),
+            cached: true,
+          };
+        }
       }
     } finally {
-      apiCacheDb.close();
+      if (apiCacheDb) apiCacheDb.close();
     }
 
     let results = [];
@@ -3661,13 +3685,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       cached: false,
     });
 
-    const writeCacheDb = await openApiCacheDb(apiCacheDbPath());
+    const writeCacheDb = openApiCacheDbSafe();
     try {
-      if (Array.isArray(results) && results.length > 0) {
+      if (writeCacheDb && Array.isArray(results) && results.length > 0) {
         await setCachedApiResults(writeCacheDb, apiName, cacheQuery, stripTransientApiImageFieldsFromResults(results));
       }
     } finally {
-      writeCacheDb.close();
+      if (writeCacheDb) writeCacheDb.close();
     }
 
     return { success: true, api: apiName, actualQuery, results, cached: false };
@@ -3872,15 +3896,15 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       path.join(getExecutableDir(), '.api_cache.json'),
     ];
     const cacheResults = [
-      clearApiCache(
+      clearApiCacheSafe(
         apiCacheDbPath(),
         [apiCoverCacheDir()],
       ),
-      clearApiCache(
+      clearApiCacheSafe(
         path.join(configManager.userDataPath, '.api_cache.db'),
         [path.join(configManager.userDataPath, 'api_cover_cache')],
       ),
-      clearApiCache(
+      clearApiCacheSafe(
         path.join(getExecutableDir(), '.api_cache.db'),
         [path.join(getExecutableDir(), 'api_cover_cache')],
       ),

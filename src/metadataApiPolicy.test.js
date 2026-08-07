@@ -111,6 +111,43 @@ test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터�
   });
 });
 
+test('API 검색 결과 제목은 앞쪽 불필요한 태그를 제거한다', () => {
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '[코믹] 변경의 팔라딘',
+    },
+  }).Title, '변경의 팔라딘');
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '(미즈) 변경의 팔라딘',
+    },
+  }).Title, '변경의 팔라딘');
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '[특별 세트] [기간한정] 변경의 팔라딘',
+    },
+  }).Title, '변경의 팔라딘');
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '【한정 판매】 변경의 팔라딘',
+    },
+  }).Title, '변경의 팔라딘');
+});
+
+test('API 검색 결과를 적용할 때 제목과 시리즈의 선행 태그가 함께 제거된다', () => {
+  assert.deepEqual(metadataFromApiResult({
+    metadata: {
+      Title: '[코믹] [미즈] 변경의 팔라딘',
+      Series: '[특별 세트] [기간한정] 변경의 팔라딘',
+    },
+  }), {
+    Title: '변경의 팔라딘',
+    Series: '변경의 팔라딘',
+    Summary: '',
+    Manga: 'YesAndRightToLeft',
+  });
+});
+
 test('API 검색 결과 적용 시 시리즈명 끝의 권수와 화수를 제거한다', () => {
   assert.deepEqual(metadataFromApiResult({
     metadata: {
