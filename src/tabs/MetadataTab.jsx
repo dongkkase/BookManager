@@ -2064,6 +2064,12 @@ function MetadataTab({ config, t, showToast }) {
             placeholder={t('t3_search_ph')}
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing || event.shiftKey) return;
+              if (!searchQuery.trim() || isWorking) return;
+              event.preventDefault();
+              handleSearchApi(1);
+            }}
           />
           <button className="meta-search-btn" onClick={() => handleSearchApi(1)} disabled={isWorking || !searchQuery.trim()}><FaIcon name="search" /> {t('t3_btn_search')} (S)</button>
         </div>
