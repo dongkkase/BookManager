@@ -102,6 +102,71 @@ body.is-resizing-panel * {
   justify-content: center;
 }
 
+.top-btn-store {
+  gap: 6px;
+  background-color: #2f89d3;
+  font-size:var(--font-lg)
+}
+
+.top-btn-store.top-btn:hover:not(:disabled){background-color: #2f89d3;}
+
+.top-store-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.top-store-icon {
+  width: 1.5em;
+  height: 1.5em;
+  display: block;
+  margin:0 -2px;
+}
+
+.top-btn-store {
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    /* 기존 버튼 스타일 유지 (배경색, 폰트 등) */
+}
+
+.top-btn-store:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(56, 152, 255, 0.4);
+}
+
+/* Shine (빛 반사) 애니메이션 효과 */
+.top-btn-store::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(
+        to right, 
+        rgba(255,255,255,0) 0%, 
+        rgba(255,255,255,0.3) 50%, 
+        rgba(255,255,255,0) 100%
+    );
+    transform: skewX(-25deg);
+}
+
+.top-btn-store:hover::after {
+    left: 125%;
+    transition: left 0.6s ease;
+}
+
+/* 호버 시 내부 아이콘 바운스 효과 */
+.top-btn-store:hover .top-store-icons > .top-store-icon {
+    animation: icon-bounce 0.4s ease;
+}
+
+@keyframes icon-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+}
+
 .top-btn-danger {
   background-color: #d32f2f;
   border: none;
@@ -165,12 +230,34 @@ body.is-resizing-panel * {
   display: flex;
   align-items: flex-end;
   background-color: #1b1b1b;
+  padding: 0;
+  margin-top: 0;
+  overflow-x: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.tab-bar-row {
+  display: flex;
+  align-items: flex-end;
+  background-color: #1b1b1b;
   padding: 0 7px;
   margin-top: 0;
   border-bottom: 1px solid #444;
-  overflow-x: auto;
   flex: 0 0 auto;
 }
+
+.tab-bar-row .tab-bar-container {
+  flex: 1 1 auto;
+}
+
+.top-bar-store-action {
+  margin-left: auto;
+  margin-right: 3px;
+  margin-bottom: 4px;
+}
+
+
 
 .tab-item {
   min-width: 92px;

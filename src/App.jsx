@@ -10,6 +10,7 @@ import { useLockScanQueue } from './hooks/useLockScanQueue';
 import { translateKnownText } from './utils/i18n';
 import {
   DISCORD_URL,
+  READIVE_URL,
   ISSUE_URL,
   MANUAL_URL,
   RELEASES_URL,
@@ -20,6 +21,8 @@ import {
   normalizeDroppedPaths,
   resolveTabId,
 } from './appShell';
+import readiveAppleIcon from '../docs/icon_apple.svg';
+import readiveGooglePlayIcon from '../docs/icon_googleplay.svg';
 import {
   createToastDescriptor,
   shouldShowToast,
@@ -622,13 +625,27 @@ function App() {
         </div>
       </div>
       
-      <TabBar 
-        tabs={translatedTabs}
-        activeTab={activeTab} 
-        onTabChange={handleTabChange} 
-        disabled={isAppLocked}
-        t={t}
-      />
+      <div className="tab-bar-row">
+        <TabBar
+          tabs={translatedTabs}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          disabled={isAppLocked}
+          t={t}
+        />
+        <button
+          className="top-btn top-btn-store top-bar-store-action"
+          title="Readive"
+          aria-label="Readive"
+          onClick={() => window.electronAPI?.openExternal?.(READIVE_URL)}
+        >
+          <span className="top-store-icons" aria-hidden="true">
+            <img className="top-store-icon" src={readiveAppleIcon} alt="" />
+            <img className="top-store-icon" src={readiveGooglePlayIcon} alt="" />
+          </span>
+          Readive
+        </button>
+      </div>
       
       <div className="app-content">
         <div className={`app-tab-panel ${activeTab === 'folder' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'folder'}>
