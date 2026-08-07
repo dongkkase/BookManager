@@ -318,6 +318,7 @@ function MetadataTab({ config, t, showToast }) {
   const [selectedGroup, setSelectedGroup] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
   const treeContainerRef = useRef(null);
+  const apiSearchInputRef = useRef(null);
   const metadataTreeKeyboardActiveRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [apiSource, setApiSource] = useState(initialApiSource);
@@ -1518,6 +1519,13 @@ function MetadataTab({ config, t, showToast }) {
     const handleShortcut = (event) => {
       if (apiSearch.open || event.defaultPrevented || event.repeat) return;
       const code = shortcutCode(event);
+      if (hasPrimaryModifier(event) && !event.altKey && code === 'KeyF') {
+        event.preventDefault();
+        event.stopPropagation();
+        apiSearchInputRef.current?.focus();
+        return;
+      }
+
       const isSaveShortcut = hasPrimaryModifier(event) && !event.altKey;
 
       if (isSaveShortcut && code === 'KeyS') {
@@ -2050,6 +2058,7 @@ function MetadataTab({ config, t, showToast }) {
           </select>
           <span className="meta-search-label">{t('t3_search_query')}</span>
           <input
+            ref={apiSearchInputRef}
             type="text"
             className="meta-search-input"
             placeholder={t('t3_search_ph')}
@@ -2406,6 +2415,7 @@ function MetadataSearchDialog({
   const [aiTitleError, setAiTitleError] = useState('');
   const [aiTitleMenuOpen, setAiTitleMenuOpen] = useState(false);
   const [aiTitleActiveIndex, setAiTitleActiveIndex] = useState(0);
+  const dialogQueryInputRef = useRef(null);
   const resolvingRidiDates = useRef(new Set());
   const rawSelected = state.results[selectedIndex];
   const selected = showTranslated && translatedResult ? translatedResult : rawSelected;
@@ -2689,8 +2699,15 @@ function MetadataSearchDialog({
   }, [state.results.length]);
 
   const handleShortcut = useCallback((event) => {
-    if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (event.defaultPrevented || event.repeat) return;
     const targetTag = String(event.target?.tagName || '').toUpperCase();
+    const code = shortcutCode(event);
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && code === 'KeyF') {
+      event.preventDefault();
+      event.stopPropagation();
+      dialogQueryInputRef.current?.focus?.();
+      return;
+    }
     const isDialogTextInput = isMetadataTextInput(event.target) && dialogRef.current?.contains?.(event.target);
     if (event.target?.dataset?.aiTitleInput === 'true') return;
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && targetTag !== 'SELECT') {
@@ -2701,7 +2718,6 @@ function MetadataSearchDialog({
       return;
     }
     if (isDialogTextInput) return;
-    const code = shortcutCode(event);
     if (code === 'KeyS' && !state.loading && dialogQuery.trim()) {
       event.preventDefault();
       event.stopPropagation();
@@ -2766,6 +2782,7 @@ function MetadataSearchDialog({
               }}
             >
               <input
+                ref={dialogQueryInputRef}
                 className="meta-ai-title-input"
                 data-ai-title-input="true"
                 role="combobox"
