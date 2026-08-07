@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Readive - 모바일 만화·전자책·오디오북 리더</title>
+    <meta name="description" content="Readive는 기기와 원격 소스의 책·문서·오디오를 정리하고 읽는 모바일 전용 리더 앱입니다. BookManager 뷰어 UX를 모바일로 확장해 iOS, iPadOS, Android에서 사용할 수 있습니다.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Readive - 모바일 만화·전자책·오디오북 리더">
+    <meta property="og:description" content="기기 파일, SMB/OPDS/FTP/HTTPS를 연결하고 모바일에서 만화·전자책·오디오북을 읽는 앱. BookManager 내장 뷰어 UX를 모바일 환경으로 확장했습니다.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/">
+    <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/readive/main/src/images/app-1024.png">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Readive - 모바일 만화·전자책·오디오북 리더">
+    <meta name="twitter:description" content="모바일에서 읽기 위한 도서 리더 앱. 로컬/원격 소스를 연결해 책 보관함을 만들고 다양하게 읽을 수 있습니다.">
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/readive/main/src/images/app-1024.png">
+    <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
+    <link rel="icon" type="image/x-icon" href="app.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="app.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="app.png">
+    <link rel="apple-touch-icon" href="app.png">    
+    <script>document.documentElement.classList.add('js');</script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101214;
+            --panel: #1a1d20;
+            --panel-strong: #22262a;
+            --text: #eef3f7;
+            --muted: #aeb8c2;
+            --line: #333941;
+            --accent: #4aa3df;
+            --accent-strong: #1f7dbc;
+            --green: #55c28d;
+            --yellow: #e2b84d;
+        }
+
+        * {
+            box-sizing: border-box;
+            word-break: auto-phrase;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+        }
+
+        a {
+            color: inherit;
+        }
+
+        .site-top-nav {
+            position: fixed;
+            top: 14px;
+            right: 14px;
+            z-index: 10;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .site-top-link {
+            min-height: 32px;
+            padding: 8px 12px;
+            border: 1px solid rgba(238, 243, 247, 0.26);
+            border-radius: 999px;
+            background: rgba(16, 18, 20, 0.65);
+            color: rgba(238, 243, 247, 0.86);
+            text-decoration: none;
+            font-size: 0.86rem;
+            font-weight: 700;
+            backdrop-filter: blur(8px);
+        }
+
+        .site-top-link:hover,
+        .site-top-link:focus-visible {
+            border-color: var(--accent);
+            color: #ffffff;
+            outline: none;
+        }
+
+        .site-top-link[aria-current="page"] {
+            border-color: var(--accent);
+            background: rgba(31, 125, 188, 0.24);
+            color: #ffffff;
+        }
+
+        .hero {
+            min-height: 82vh;
+            display: grid;
+            align-items: end;
+            padding: 32px clamp(20px, 6vw, 72px) 72px;
+            position: relative;
+            overflow: hidden;
+            border-bottom: 1px solid var(--line);
+            z-index: 1; /* 콘텐츠를 가상 요소 위에 유지 */
+            background-color: var(--bg); /* 기본 배경색 */
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -10%;
+            left: -10%;
+            width: 120%;
+            height: 120%;
+            background:
+                linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
+                linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
+                url("../bg.webp"),
+                #101214;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            z-index: -1;
+            
+            /* 이동 속도는 60초, 블러 속도는 10초로 별개 지정 */
+            animation: 
+                moveHeroBg 60s ease-in-out infinite alternate,
+                blurHeroBg 4s ease-in-out infinite alternate;
+        }
+
+        .hero-inner {
+            max-width: 900px;
+            position: relative;
+            text-shadow: 0 2px 18px rgba(0, 0, 0, 0.34);
+        }
+
+        .hero-media {
+            position: relative;
+            max-width: 360px;
+            width: 100%;
+            margin: 0 auto;
+            border-radius: 0;
+            overflow: hidden;
+            border: none;
+            aspect-ratio: 9 / 16;
+            background: #0b0d0f;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+        }
+
+        .hero-preview {
+            position: relative;
+            isolation: isolate;
+            max-width: none;
+            margin: 0 calc(-1 * clamp(20px, 6vw, 72px)) 56px;
+            width: auto;
+            overflow: hidden;
+        }
+
+        .hero-preview-bg {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+            background: #101214;
+        }
+
+        .hero-preview-bg-layer {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+            opacity: 1;
+            transition: opacity 1s ease;
+            filter: blur(25px);
+            transform: scale(1.08);
+            will-change: opacity;
+            pointer-events: none;
+        }
+
+        .hero-preview-bg-layer.is-fade {
+            opacity: 0;
+        }
+
+        .hero-preview-bg-layer.is-fade.is-active {
+            opacity: 1;
+        }
+
+        .hero-preview > .hero-media {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-preview .hero-media {
+            max-width: min(100%, var(--hero-preview-max-width, 1376px));
+            width: 100%;
+            border-radius: 0;
+            border: none;
+            aspect-ratio: var(--hero-preview-aspect-ratio, 16 / 9);
+        }
+
+        .hero-slide {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 1s ease;
+            pointer-events: none;
+        }
+
+        .hero-slide.is-active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .hero-media-controls {
+            position: absolute;
+            inset: 0;
+            display: block;
+            align-items: center;
+            pointer-events: none;
+        }
+
+        .hero-slide-nav,
+        .hero-slide-dot {
+            border: 0;
+            margin: 0;
+            padding: 0;
+            color: var(--text);
+            cursor: pointer;
+            pointer-events: auto;
+        }
+
+        .hero-slide-nav {
+            width: 68px;
+            height: 68px;
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            border-radius: 999px;
+            background: rgba(16, 18, 20, 0.84);
+            border: 1px solid rgba(238, 243, 247, 0.3);
+            font-size: 2.16rem;
+            line-height: 1;
+            font-weight: 700;
+        }
+
+        .hero-slide-nav[data-hero-prev] {
+            left: 12px;
+        }
+
+        .hero-slide-nav[data-hero-next] {
+            right: 12px;
+        }
+
+        .hero-slide-nav:hover,
+        .hero-slide-nav:focus-visible,
+        .hero-slide-dot:hover,
+        .hero-slide-dot:focus-visible {
+            border-color: var(--accent);
+            outline: none;
+        }
+
+        .hero-slide-nav:hover,
+        .hero-slide-nav:focus-visible {
+            background: var(--accent-strong);
+        }
+
+        .hero-slide-dots {
+            position: absolute;
+            left: 50%;
+            bottom: 12px;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .hero-slide-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(238, 243, 247, 0.45);
+            border: 1px solid transparent;
+        }
+
+        .hero-slide-dot.is-active {
+            width: 20px;
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .eyebrow {
+            margin: 0 0 14px;
+            color: var(--green);
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(2.6rem, 6.4vw, 4.5rem);
+            line-height: 1.15;
+            letter-spacing: -0.02em;
+        }
+
+        .lead {
+            max-width: 760px;
+            margin: 24px 0 0;
+            color: var(--muted);
+            font-size: clamp(1.05rem, 2vw, 1.28rem);
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 26px;
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 42px;
+            padding: 0 18px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--panel-strong);
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .button-icon {
+            display: block;
+            width: 1.2em;
+            height: 1.2em;
+            margin-right: 8px;
+        }
+
+        .button.primary {
+            border-color: var(--accent);
+            background: var(--accent-strong);
+        }
+
+        .support-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 18px;
+        }
+
+        .support-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 32px;
+            padding: 0 11px;
+            border: 1px solid rgba(238, 243, 247, 0.18);
+            border-radius: 999px;
+            color: var(--muted);
+            background: rgba(16, 18, 20, 0.58);
+            backdrop-filter: blur(8px);
+            font-size: 0.88rem;
+            font-weight: 700;
+        }
+
+        main {
+            padding: 0px clamp(20px, 6vw, 72px) 72px;
+        }
+
+        section {
+            max-width: 1120px;
+            margin: 0 auto 56px;
+        }
+
+        h2 {
+            margin: 0 0 14px;
+            font-size: clamp(1.5rem, 3vw, 2rem);
+        }
+
+        .section-lead {
+            max-width: 950px;
+            margin: 0 0 22px;
+            color: var(--muted);
+            font-size: 1.05rem;
+        }
+
+        .split,
+        .feature-grid,
+        .screen-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+
+        .feature,
+        .list-panel,
+        .screen-card {
+            min-height: 120px;
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--muted);
+        }
+
+        .feature h3,
+        .list-panel h3,
+        .screen-card h3 {
+            margin: 0 0 10px;
+            color: var(--text);
+            font-size: 1.05rem;
+        }
+
+        .feature p,
+        .list-panel p,
+        .screen-card p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .screen-media {
+            margin-top: 12px;
+            border-radius: 8px;
+            border: 1px solid #2f353b;
+            overflow: hidden;
+            background: #0b0d0f;
+        }
+
+        .screen-media img {
+            display: block;
+            width: 100%;
+            height: auto;
+            object-fit: cover;
+        }
+
+        ul {
+            margin: 0;
+            padding-left: 20px;
+            color: var(--muted);
+        }
+
+        li + li {
+            margin-top: 6px;
+        }
+
+        .note {
+            color: var(--muted);
+            border-left: 3px solid var(--yellow);
+            padding-left: 14px;
+        }
+
+        footer {
+            padding: 28px clamp(20px, 6vw, 72px);
+            color: var(--muted);
+            border-top: 1px solid var(--line);
+        }
+
+        @media (max-width: 760px) {
+            .site-top-nav {
+                top: 10px;
+                right: 10px;
+            }
+
+            .site-top-link {
+                font-size: 0.8rem;
+                padding: 6px 10px;
+            }
+
+            .hero {
+                min-height: 88vh;
+                padding-top: 88px;
+            }
+
+            .hero-media {
+                max-width: 100%;
+                width: 100%;
+                margin-top: 0;
+            }
+
+            .button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
+        <a class="site-top-link" href="../">BookManager</a>
+        <a class="site-top-link" href="./" aria-current="page">Readive</a>
+    </nav>
+
+    <header class="hero">
+        <div class="hero-inner">
+            <p class="eyebrow">Readive for iOS · Android</p>
+            <h1>Readive</h1>
+            <p class="lead">
+                BookManager의 뷰어 경험을 기반으로, 모바일에서 책을 보관하고 다양한 소스에서 불러와 읽을 수 있도록 만든 리더 앱입니다.
+                로컬 파일 관리, SMB/OPDS/FTP/HTTPS 연결, 오디오북 재생, 통계 관리까지 한 화면에서 처리합니다.
+            </p>
+            <div class="actions">
+                <a class="button primary" href="#" data-coming-soon-label="출시 준비중입니다">
+                    <img class="button-icon" src="../icon_apple.svg" alt="" aria-hidden="true">
+                    App Store
+                </a>
+                <a class="button primary" href="#" data-coming-soon-label="출시 준비중입니다">
+                    <img class="button-icon" src="../icon_googleplay.svg" alt="" aria-hidden="true">
+                    Google Play
+                </a>
+                <a class="button" href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer" aria-label="Discord 참여">
+                    <img class="button-icon" src="../icon_discord.svg" alt="" aria-hidden="true">
+                    디스코드에 참여하기
+                </a>
+            </div>
+            <div class="support-badges" aria-label="지원 플랫폼 및 언어">
+                <span class="support-badge">iOS</span>
+                <span class="support-badge">Android</span>
+                <span class="support-badge">다국어</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero-preview">
+            <div class="hero-preview-bg" aria-hidden="true">
+                <img class="hero-preview-bg-layer" src="01-home-res.png" alt="" aria-hidden="true" data-hero-bg-current>
+                <img class="hero-preview-bg-layer is-fade" src="" alt="" aria-hidden="true" data-hero-bg-fade>
+            </div>
+            <div class="hero-media" aria-label="Readive 미리보기 이미지">
+                <img class="hero-slide is-active" src="01-home-res.png" alt="Readive 모바일 홈 화면" width="1376" height="768" data-hero-slide>
+                <img class="hero-slide" src="02-library-res.png" alt="Readive 모바일 보관함 화면" width="1376" height="768" data-hero-slide>
+                <img class="hero-slide" src="03-image-reader-res.png" alt="Readive 모바일 만화 뷰어" width="1376" height="768" data-hero-slide>
+                <div class="hero-media-controls">
+                    <button class="hero-slide-nav" type="button" data-hero-prev aria-label="이전 화면">‹</button>
+                    <div class="hero-slide-dots" aria-label="슬라이드 번호">
+                        <button class="hero-slide-dot is-active" type="button" data-hero-dot data-hero-index="0" aria-label="1번 화면" aria-current="true"></button>
+                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="1" aria-label="2번 화면" aria-current="false"></button>
+                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="2" aria-label="3번 화면" aria-current="false"></button>
+                    </div>
+                    <button class="hero-slide-nav" type="button" data-hero-next aria-label="다음 화면">›</button>
+                </div>
+            </div>
+        </section>
+
+        <!--
+        <section>
+            <h2>어떤 앱인가요?</h2>
+            <p class="section-lead">
+                Readive는 만화·전자책·문서·오디오북을 모바일에서 효율적으로 열람하도록 만든 읽기 앱입니다.
+                앱 안의 보관함에 항목을 모으면 마지막 읽은 위치, 북마크, 통계를 기반으로 이어 읽기를 이어갈 수 있습니다.
+            </p>
+            <div class="split">
+                <article class="list-panel">
+                    <h3>BookManager와의 연계성</h3>
+                    <p>
+                        BookManager의 내장 뷰어 UX를 기준으로, 터치 제스처와 휴대기기 화면 특성에 맞춰 읽기 흐름을 재구성했습니다.
+                        PC에서 정리한 파일도 Readive 보관함에서 이어서 읽을 수 있습니다.
+                    </p>
+                </article>
+                <article class="list-panel">
+                    <h3>핵심 사용자 흐름</h3>
+                    <p>
+                        파일 가져오기 → 보관함 등록 → 읽기 모드 선택 → 이어보기/검색/통계 확인으로 이어지는 흐름으로 설계되어,
+                        장시간 읽기에도 동작이 단순합니다.
+                    </p>
+                </article>
+            </div>
+        </section>
+
+        <section>
+            <h2>주요 기능</h2>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>로컬/원격 소스 연결</h3>
+                    <p>기기 파일, SMB, FTP, OPDS, HTTPS 원격 소스와 연동해 책 목록을 탐색하고 다운로드를 관리합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>형식 지원</h3>
+                    <p>CBZ·ZIP·CBR·RAR·CB7·7z·CBT·TAR 만화, EPUB, PDF, TXT/Markdown, 오디오 파일을 한 앱에서 처리합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>유연한 읽기 설정</h3>
+                    <p>한 페이지/두 페이지/스크롤, 방향/회전, 확대·축소 설정으로 단말 특성에 맞춰 가독성을 조절합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>독서 보조 기능</h3>
+                    <p>오디오북 백그라운드 재생, 재생 속도, 수면 타이머, 북마크, 읽기 기록을 제공합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>오프라인까지 이어지는 읽기</h3>
+                    <p>네트워크 기능을 끈 상태에서도 기기에 저장된 콘텐츠로 오프라인 읽기를 유지할 수 있습니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>추가 준비 기능</h3>
+                    <p>현재 로컬 정리·OCR 번역·사전 연동 기능을 단계적으로 확장 중입니다.</p>
+                </article>
+            </div>
+        </section>
+
+        -->
+    </main>
+
+    <footer>
+        <span>Readive is developed by dongkkase.</span>
+    </footer>
+    <script>
+        function handleComingSoonClick(event) {
+            event.preventDefault();
+            const target = event.currentTarget;
+            const message = target.getAttribute('data-coming-soon-label') || '현재 준비중입니다';
+            alert(message);
+        }
+
+        document.querySelectorAll('[data-coming-soon-label]').forEach(anchor => {
+            anchor.addEventListener('click', handleComingSoonClick);
+        });
+
+        const heroSlides = [...document.querySelectorAll('[data-hero-slide]')];
+            const heroDots = [...document.querySelectorAll('[data-hero-dot]')];
+        const heroPrevButton = document.querySelector('[data-hero-prev]');
+        const heroNextButton = document.querySelector('[data-hero-next]');
+        const heroMedia = document.querySelector('.hero-preview .hero-media');
+        const heroBackgroundCurrent = document.querySelector('[data-hero-bg-current]');
+        const heroBackgroundFade = document.querySelector('[data-hero-bg-fade]');
+        let heroBackgroundFadeTimer = null;
+        const heroReferenceSlide = heroSlides[0];
+        let heroSlideIndex = 0;
+        let heroSlideTimer = null;
+
+        function setHeroMediaSize() {
+            if (!heroMedia || !heroReferenceSlide) {
+                return;
+            }
+
+            const width = heroReferenceSlide.naturalWidth;
+            const height = heroReferenceSlide.naturalHeight;
+            if (width > 0 && height > 0) {
+                heroMedia.style.setProperty('--hero-preview-max-width', `${width}px`);
+                heroMedia.style.setProperty('--hero-preview-aspect-ratio', `${width} / ${height}`);
+            }
+        }
+
+        function setHeroSlide(nextIndex) {
+            if (heroSlides.length === 0) {
+                return;
+            }
+
+            const normalizedIndex = (nextIndex + heroSlides.length) % heroSlides.length;
+            heroSlideIndex = normalizedIndex;
+
+            heroSlides.forEach((slide, index) => {
+                slide.classList.toggle('is-active', index === heroSlideIndex);
+            });
+
+            heroDots.forEach((dot, index) => {
+                const isActive = index === heroSlideIndex;
+                dot.classList.toggle('is-active', isActive);
+                dot.setAttribute('aria-current', isActive ? 'true' : 'false');
+            });
+
+            const currentSlide = heroSlides[heroSlideIndex];
+            if (currentSlide) {
+                setHeroBackground(currentSlide.src);
+            }
+        }
+
+        function setHeroBackground(src) {
+            if (!heroBackgroundCurrent || !heroBackgroundFade || !src) {
+                return;
+            }
+
+            if (heroBackgroundCurrent.src === src) {
+                return;
+            }
+
+            const image = new Image();
+            image.onload = () => {
+                if (heroBackgroundFadeTimer !== null) {
+                    clearTimeout(heroBackgroundFadeTimer);
+                }
+
+                heroBackgroundFade.src = src;
+                heroBackgroundFade.classList.add('is-fade');
+                requestAnimationFrame(() => {
+                    heroBackgroundFade.classList.add('is-active');
+                });
+
+                heroBackgroundFadeTimer = window.setTimeout(() => {
+                    heroBackgroundCurrent.src = src;
+                    heroBackgroundFade.classList.remove('is-active');
+                    heroBackgroundFade.src = '';
+                    heroBackgroundFadeTimer = null;
+                }, 1000);
+            };
+
+            image.onerror = () => {
+                heroBackgroundFade.classList.remove('is-active');
+                heroBackgroundFade.src = '';
+            };
+
+            image.src = src;
+        }
+
+        function showNextHeroSlide() {
+            setHeroSlide(heroSlideIndex + 1);
+        }
+
+        function startHeroSlideAutoPlay() {
+            stopHeroSlideAutoPlay();
+            heroSlideTimer = window.setInterval(showNextHeroSlide, 5000);
+        }
+
+        function stopHeroSlideAutoPlay() {
+            if (heroSlideTimer !== null) {
+                clearInterval(heroSlideTimer);
+                heroSlideTimer = null;
+            }
+        }
+
+        heroPrevButton?.addEventListener('click', () => {
+            setHeroSlide(heroSlideIndex - 1);
+            startHeroSlideAutoPlay();
+        });
+
+        heroNextButton?.addEventListener('click', () => {
+            setHeroSlide(heroSlideIndex + 1);
+            startHeroSlideAutoPlay();
+        });
+
+        heroDots.forEach(dot => {
+            dot.addEventListener('click', () => {
+                const index = parseInt(dot.getAttribute('data-hero-index'), 10);
+                if (Number.isNaN(index)) {
+                    return;
+                }
+                setHeroSlide(index);
+                startHeroSlideAutoPlay();
+            });
+        });
+
+        if (heroSlides.length > 0) {
+            setHeroMediaSize();
+            setHeroSlide(0);
+            const initialSlide = heroSlides[0];
+            if (initialSlide) {
+                setHeroBackground(initialSlide.src);
+            }
+            startHeroSlideAutoPlay();
+            if (heroReferenceSlide && !heroReferenceSlide.complete) {
+                heroReferenceSlide.addEventListener('load', setHeroMediaSize, { once: true });
+            }
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    stopHeroSlideAutoPlay();
+                } else {
+                    startHeroSlideAutoPlay();
+                }
+            });
+        }
+    </script>
+</body>
+</html>

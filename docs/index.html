@@ -141,6 +141,43 @@
             font-weight: 700;
         }
 
+        .site-top-nav {
+            position: fixed;
+            top: 14px;
+            right: 14px;
+            z-index: 10;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .site-top-link {
+            min-height: 32px;
+            padding: 8px 12px;
+            border: 1px solid rgba(238, 243, 247, 0.26);
+            border-radius: 999px;
+            background: rgba(16, 18, 20, 0.65);
+            color: rgba(238, 243, 247, 0.86);
+            text-decoration: none;
+            font-size: 0.86rem;
+            font-weight: 700;
+            backdrop-filter: blur(8px);
+        }
+
+        .site-top-link:hover,
+        .site-top-link:focus-visible {
+            border-color: var(--accent);
+            color: #ffffff;
+            outline: none;
+        }
+
+        .site-top-link[aria-current="page"] {
+            border-color: var(--accent);
+            background: rgba(31, 125, 188, 0.24);
+            color: #ffffff;
+        }
+
         h1 {
             margin: 0;
             font-size: 5.5rem;
@@ -497,6 +534,18 @@
         }
 
         @media (max-width: 720px) {
+            .site-top-nav {
+                top: 10px;
+                right: 10px;
+                left: 10px;
+                justify-content: flex-end;
+            }
+
+            .site-top-link {
+                font-size: 0.8rem;
+                padding: 6px 10px;
+            }
+
             .hero {
                 min-height: 76vh;
                 padding-top: 96px;
@@ -580,6 +629,10 @@
     </style>
 </head>
 <body>
+    <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
+        <a class="site-top-link" href="./" aria-current="page">BookManager</a>
+        <a class="site-top-link" href="readive/">Readive</a>
+    </nav>
     <header class="hero">
         <div class="hero-inner">
             <p class="eyebrow">Windows/macOS desktop app for comics and ebooks</p>
@@ -595,6 +648,10 @@
                     <img class="button-icon" src="icon_windows.svg" alt="" aria-hidden="true">
                     <span>다운로드</span>
                     <span class="button-version" data-release-version>최신 버전</span>
+                </a>
+                <a class="button" href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer" aria-label="Discord 참여">
+                    <img class="button-icon" src="icon_discord.svg" alt="" aria-hidden="true">
+                    디스코드에 참여하기
                 </a>
                 <a class="button" href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
                 <a class="button" href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
