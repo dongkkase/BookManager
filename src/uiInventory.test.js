@@ -201,6 +201,14 @@ test('상단 메뉴는 외부 링크와 아이콘 전용 환경 설정 버튼을
         sources.appCss,
         /\.top-btn\s*\{[\s\S]*?box-sizing: border-box;[\s\S]*?height: var\(--control-height-lg\);/,
     );
+    assert.match(
+        sources.appCss,
+        /\.top-menu-right\s*\{[\s\S]*?height: var\(--control-height-lg\);/,
+    );
+    assert.match(
+        sources.appCss,
+        /\.top-menu-right > \.top-btn\s*\{[\s\S]*?height: var\(--control-height-lg\);[\s\S]*?min-height: var\(--control-height-lg\);[\s\S]*?max-height: var\(--control-height-lg\);/,
+    );
 });
 
 test('폴더 탭은 Electron 미지원 window.prompt 대신 내부 입력 다이얼로그를 사용한다', () => {

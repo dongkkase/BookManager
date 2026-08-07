@@ -59,6 +59,20 @@ body.is-resizing-panel * {
   flex: 0 0 auto;
 }
 
+.top-menu-right {
+  height: var(--control-height-lg);
+}
+
+.top-menu-right > .top-btn {
+  box-sizing: border-box;
+  height: var(--control-height-lg);
+  min-height: var(--control-height-lg);
+  max-height: var(--control-height-lg);
+  padding-block: 0;
+  margin-block: 0;
+  align-self: center;
+}
+
 .top-btn {
   box-sizing: border-box;
   height: var(--control-height-lg);
