@@ -59,6 +59,7 @@ import {
   viewerReadingStatusText,
 } from '../viewerStatusState';
 import {
+  MAX_VIEW_SCALE_BY_MODE,
   groupFolderFiles,
   normalizeViewMode,
   normalizeViewScales,
@@ -518,6 +519,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return map;
   }, [displayedFileData]);
   const itemScale = itemScales[viewMode] || 50;
+  const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
   useEffect(() => {
     if (isLibrarySearchActive) clearSelection();
@@ -2740,7 +2742,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 type="range"
                 className="scale-slider"
                 min="10"
-                max="100"
+                max={scaleMax}
                 value={itemScale}
                 onChange={e => setItemScales(prev => ({ ...prev, [viewMode]: Number(e.target.value) }))}
               />

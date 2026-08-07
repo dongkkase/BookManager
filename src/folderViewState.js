@@ -1,6 +1,18 @@
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 export const FOLDER_VIEW_VIRTUALIZE_THRESHOLD = 300;
 const UNCATEGORIZED_GROUP_NAME = '미분류';
+export const MAX_VIEW_SCALE_BY_MODE = {
+    table: 100,
+    tile: 150,
+    thumbnail: 150,
+};
+const MIN_VIEW_SCALE = 10;
+const DEFAULT_VIEW_SCALE = 50;
+
+function normalizeViewScale(scale, mode = 'table') {
+    const maxScale = MAX_VIEW_SCALE_BY_MODE[mode] || MAX_VIEW_SCALE_BY_MODE.table;
+    return Math.max(MIN_VIEW_SCALE, Math.min(maxScale, Number(scale) || DEFAULT_VIEW_SCALE));
+}
 
 function firstGroupValue(...values) {
     for (const value of values) {
@@ -166,9 +178,9 @@ export function visibleVirtualRows(rows = [], scrollTop = 0, viewportHeight = 0,
 
 export function normalizeViewScales(scales = {}) {
     return {
-        table: Math.max(10, Math.min(100, Number(scales.table) || 50)),
-        tile: Math.max(10, Math.min(100, Number(scales.tile) || 50)),
-        thumbnail: Math.max(10, Math.min(100, Number(scales.thumbnail) || 50)),
+        table: normalizeViewScale(scales.table, 'table'),
+        tile: normalizeViewScale(scales.tile, 'tile'),
+        thumbnail: normalizeViewScale(scales.thumbnail, 'thumbnail'),
     };
 }
 

@@ -40,8 +40,13 @@ test('보기 모드와 보기별 크기를 안전한 값으로 복원한다', ()
     assert.equal(normalizeViewMode('invalid'), 'table');
     assert.deepEqual(normalizeViewScales({ table: 5, tile: 120, thumbnail: 70 }), {
         table: 10,
-        tile: 100,
+        tile: 120,
         thumbnail: 70,
+    });
+    assert.deepEqual(normalizeViewScales({ table: 5, tile: 170, thumbnail: 170 }), {
+        table: 10,
+        tile: 150,
+        thumbnail: 150,
     });
 });
 
