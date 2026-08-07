@@ -1658,7 +1658,7 @@ body.is-reordering-table-column {
   position: absolute;
   z-index: 5;
   top: 8px;
-  right: 8px;
+  right: 27px;
   gap: 6px;
 }
 
