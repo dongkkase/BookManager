@@ -1872,6 +1872,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
               }
             },
           });
+          await persistDocumentMetadataIfPossible(item, options).catch(() => {});
           stats.success.push(item.name || path.basename(filePath));
           continue;
         } catch (error) {
@@ -1908,9 +1909,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         }
         throw error;
       }
-      if (isEpub(filePath) || isPdf(filePath)) {
-        await persistDocumentMetadataIfPossible(item, options).catch(() => {});
-      }
+      await persistDocumentMetadataIfPossible(item, options).catch(() => {});
       stats.success.push(item.name || path.basename(filePath));
     } catch (error) {
       stats.error.push(`${item.name || filePath} - ${error.message}`);

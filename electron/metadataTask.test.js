@@ -934,6 +934,47 @@ test('CBZ 메타데이터 저장은 변경이 없으면 압축파일을 다시 �
     }
 });
 
+test('CBZ 메타데이터 저장은 라이브러리 캐시를 갱신한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-cache-'));
+    try {
+        const source = path.join(root, '시리즈캐시.cbz');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, '001.jpg', Buffer.from('cover'));
+        await replaceZipEntry(source, 'ComicInfo.xml', createComicInfoXml({
+            Series: '기존 작품',
+            Title: '기존 제목',
+        }));
+
+        const analyzed = await analyzeMetadataInputs([source], {});
+        assert.equal(analyzed.items.length, 1);
+        analyzed.items[0].metadata.Series = '변경된 작품';
+        analyzed.items[0].metadata.Title = '변경된 제목';
+        analyzed.items[0].metadata.SeriesGroup = '테스트 그룹';
+
+        const persistedRecords = [];
+        const saved = await saveMetadataItems(analyzed.items, {
+            backup_on: false,
+            shouldCancel: () => false,
+            libraryDb: {
+                async getFileInfo() {
+                    return null;
+                },
+                async upsertFileInfo(record) {
+                    persistedRecords.push(record);
+                },
+            },
+        });
+
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+        assert.equal(persistedRecords.length, 1);
+        assert.equal(persistedRecords[0].series_group, '테스트 그룹');
+        assert.equal(persistedRecords[0].series, '변경된 작품');
+        assert.equal(persistedRecords[0].title, '변경된 제목');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('메타데이터 저장은 백업 후 원본 경로를 원자적으로 교체한다', async t => {
     const sevenZExe = find7z();
     if (!sevenZExe) {
