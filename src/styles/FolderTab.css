@@ -2184,6 +2184,8 @@ body.is-reordering-table-column {
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .dialog-titlebar {
