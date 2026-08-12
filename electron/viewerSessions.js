@@ -2,6 +2,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import { spawn } from 'child_process';
+import { decodeHTMLStrict } from 'entities';
 import {
     listZipEntriesFromFile,
     readZipEntryFromFile,
@@ -260,11 +261,11 @@ function stripEpubHtmlComments(html = '') {
 }
 
 function sanitizeEpubIdentifier(value = '') {
-    return decodeXmlEntities(String(value || '')).trim().replace(/\s+/g, ' ').slice(0, 160);
+    return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 160);
 }
 
 function sanitizeEpubAttributeText(value = '', maxLength = 240) {
-    return decodeXmlEntities(String(value || ''))
+    return String(value || '')
         .replace(/[\u0000-\u001f\u007f<>]/g, '')
         .replace(/\s+/g, ' ')
         .trim()
@@ -287,7 +288,7 @@ function sanitizeEpubTableVerticalAlign(value = '') {
 }
 
 function sanitizeEpubFontFamilyName(value = '') {
-    const family = decodeXmlEntities(String(value || ''))
+    const family = String(value || '')
         .replace(/^["']|["']$/g, '')
         .replace(/[<>;{}]/g, '')
         .replace(/\s+/g, ' ')
@@ -307,12 +308,12 @@ function cssString(value = '') {
     return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-function decodeEpubUrl(value = '') {
-    const decodedEntities = decodeXmlEntities(String(value || '').trim());
+function decodeEpubUri(value = '') {
+    const normalized = String(value || '').trim();
     try {
-        return decodeURI(decodedEntities);
+        return decodeURI(normalized);
     } catch {
-        return decodedEntities;
+        return normalized;
     }
 }
 
@@ -326,7 +327,7 @@ function sanitizeEpubExternalHref(value = '') {
 }
 
 function parseEpubInternalHref(baseEntryName = '', href = '') {
-    const decodedHref = decodeEpubUrl(href);
+    const decodedHref = decodeEpubUri(href);
     if (!decodedHref || /^(?:https?|mailto|tel|javascript|data|file):/i.test(decodedHref)) return null;
     const [pathPartWithQuery = '', fragmentPart = ''] = decodedHref.split('#');
     const pathPart = pathPartWithQuery.split('?')[0];
@@ -341,42 +342,29 @@ function parseEpubInternalHref(baseEntryName = '', href = '') {
 }
 
 function stripHtmlToText(html = '') {
-    return stripEpubHtmlComments(html)
+    const text = stripEpubHtmlComments(html)
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
         .replace(/<br\b[^>]*\/?>/gi, '\n')
         .replace(/<\/(p|div|section|article|h[1-6]|li|br)>/gi, '\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+        .replace(/<[^>]+>/g, '');
+    return decodeEpubEntities(text)
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
 
-function decodeXmlEntities(value = '') {
-    return String(value || '')
-        .replace(/&#x([0-9a-f]+);/gi, (_match, hex) => String.fromCodePoint(parseInt(hex, 16)))
-        .replace(/&#(\d+);/g, (_match, decimal) => String.fromCodePoint(parseInt(decimal, 10)))
-        .replace(/&nbsp;/g, '\u00a0')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'");
+function decodeEpubEntities(value = '') {
+    return decodeHTMLStrict(String(value || ''));
 }
 
 function htmlFragmentText(value = '') {
-    return decodeXmlEntities(stripHtmlToText(value)).replace(/\s+/g, ' ').trim();
+    return stripHtmlToText(value).replace(/\s+/g, ' ').trim();
 }
 
 function tagAttributes(tag = '') {
     const attrs = {};
     String(tag || '').replace(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g, (_match, name, doubleQuoted, singleQuoted, unquoted) => {
-        attrs[String(name || '').toLowerCase()] = decodeXmlEntities(doubleQuoted ?? singleQuoted ?? unquoted ?? '');
+        attrs[String(name || '').toLowerCase()] = decodeEpubEntities(doubleQuoted ?? singleQuoted ?? unquoted ?? '');
         return _match;
     });
     return attrs;
@@ -410,7 +398,7 @@ function imageHrefCandidatesFromAttrs(attrs = {}) {
     return candidates
         .map(value => String(value || '').trim())
         .flatMap(value => {
-            const decoded = decodeEpubUrl(value);
+            const decoded = decodeEpubUri(value);
             return decoded && decoded !== value ? [value, decoded] : [value];
         })
         .filter(Boolean);
@@ -424,7 +412,7 @@ function findImageEntryForHref(entryName = '', attrs = {}, entries = []) {
         if (imageEntry && isImageEntry(imageEntry.name)) return imageEntry;
     }
     for (const href of candidates) {
-        const basename = path.posix.basename(decodeXmlEntities(href).split('#')[0].split('?')[0]);
+        const basename = path.posix.basename(String(href || '').split('#')[0].split('?')[0]);
         if (!basename) continue;
         const normalizedBasename = basename.toLowerCase();
         const imageEntry = entries.find(entry => (
@@ -893,7 +881,7 @@ function epubBodyHtmlFromDocument(html = '') {
 }
 
 function normalizeEpubTextNode(value = '') {
-    const decoded = decodeXmlEntities(value);
+    const decoded = decodeEpubEntities(value);
     if (/\u00a0/.test(decoded) && !decoded.replace(/[\s\u00a0]+/g, '')) return '\u00a0';
     const text = decoded.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ');
     return text.trim() ? text : '';
@@ -1167,7 +1155,7 @@ function xmlStartTags(xml = '', tagName = '') {
 function resolveEpubHref(baseEntryName = '', href = '') {
     const trimmedHref = String(href || '').trim();
     if (!trimmedHref || /^[a-z]+:/i.test(trimmedHref)) return '';
-    const cleanHref = decodeEpubUrl(trimmedHref).split('#')[0].split('?')[0];
+    const cleanHref = decodeEpubUri(trimmedHref).split('#')[0].split('?')[0];
     if (!cleanHref) return '';
     if (cleanHref.startsWith('/')) return normalizeInnerPath(cleanHref);
     const baseDir = path.posix.dirname(normalizeInnerPath(baseEntryName));
@@ -1223,7 +1211,7 @@ function parseEpubNavEntries(html = '', navEntryName = '') {
     const seen = new Set();
     const linkPattern = /<a\b[^>]*href\s*=\s*(["'])([\s\S]*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
     for (const match of String(html || '').matchAll(linkPattern)) {
-        const target = parseEpubInternalHref(navEntryName, match[2]);
+        const target = parseEpubInternalHref(navEntryName, decodeEpubEntities(match[2]));
         const entryName = target?.entryName || '';
         const title = htmlFragmentText(match[3]);
         const key = `${entryName.toLowerCase()}#${target?.anchor || ''}`;
@@ -1252,7 +1240,7 @@ function parseEpubNcxEntries(xml = '', ncxEntryName = '') {
         const navPoint = navPointMatch[0];
         const contentMatch = navPoint.match(/<content\b[^>]*src\s*=\s*(["'])([\s\S]*?)\1/i);
         const titleMatch = navPoint.match(/<text\b[^>]*>([\s\S]*?)<\/text>/i);
-        const target = parseEpubInternalHref(ncxEntryName, contentMatch?.[2] || '');
+        const target = parseEpubInternalHref(ncxEntryName, decodeEpubEntities(contentMatch?.[2] || ''));
         const entryName = target?.entryName || '';
         const title = htmlFragmentText(titleMatch?.[1] || '');
         const key = `${entryName.toLowerCase()}#${target?.anchor || ''}`;
@@ -1770,7 +1758,7 @@ export class ViewerSessionManager {
             const containerBuffer = await extractArchiveEntry(session.filePath, containerEntry.name, '', {
                 maxBytes: 1024 * 1024,
             });
-            opfPath = decodeXmlEntities(
+            opfPath = decodeEpubEntities(
                 containerBuffer.toString('utf8').match(/full-path\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || '',
             );
         }

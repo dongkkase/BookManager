@@ -229,7 +229,9 @@ test('EPUB CSS는 안전한 스타일 객체로만 뷰어에 전달된다', () =
     assert.match(viewerSessionSource, /colSpan/);
     assert.match(viewerSessionSource, /rowSpan/);
     assert.match(viewerSessionSource, /findImageEntryForHref/);
-    assert.match(viewerSessionSource, /decodeEpubUrl/);
+    assert.match(viewerSessionSource, /import \{ decodeHTMLStrict \} from 'entities'/);
+    assert.match(viewerSessionSource, /function decodeEpubEntities/);
+    assert.match(viewerSessionSource, /function decodeEpubUri/);
     assert.match(viewerSessionSource, /removeHiddenDisplayForEpubImages/);
     assert.match(viewerSessionSource, /FONT_EXTENSIONS/);
     assert.match(viewerSessionSource, /fontMime/);

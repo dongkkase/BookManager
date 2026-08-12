@@ -42,6 +42,7 @@
     "@fortawesome/react-fontawesome": "^3.3.1",
     "@vuvandinh203/react-flipbook": "^1.0.2",
     "better-sqlite3": "^9.4.3",
+    "entities": "^6.0.1",
     "express": "^4.18.2",
     "node-7z": "^3.0.0",
     "pdfjs-dist": "^4.10.38",

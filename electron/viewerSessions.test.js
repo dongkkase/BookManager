@@ -88,7 +88,11 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
             epubPath,
             'OEBPS/content.opf',
             `<package>
-                <metadata><meta name="cover" content="cover-image" /></metadata>
+                <metadata>
+                    <dc:title>&ldquo;샘플&rdquo; &amp;ldquo;</dc:title>
+                    <dc:creator>Caf&eacute;</dc:creator>
+                    <meta name="cover" content="cover-image" />
+                </metadata>
                 <manifest>
                     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
                     <item id="cover-image" href="images/cover.png" media-type="image/png" properties="cover-image" />
@@ -124,7 +128,7 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
             epubPath,
             'OEBPS/nav.xhtml',
             `<nav><ol>
-                <li><a href="chap1.xhtml">프롤로그</a></li>
+                <li><a href="chap1.xhtml">&ldquo;프롤로그&rdquo;</a></li>
                 <li><a href="chap2.xhtml">삽화 장면</a></li>
             </ol></nav>`,
         );
@@ -140,12 +144,13 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
                 </head>
                 <body>
                     <div class="img_center" style="width: 8%; margin: 0 auto;">
-                        <img class="logo-mark" src="images/logo.png" alt="문장" />
+                        <img class="logo-mark" src="images/logo.png" alt="&ldquo;문장&rdquo; &amp;ldquo;" />
                     </div>
                     <h1>Section0001.xhtml</h1>
                     <p>&nbsp;</p>
                     <p>&#160;</p>
                     <p class="lead"><strong>본문입니다.</strong></p>
+                    <p class="entities">&ldquo;인용&rdquo; &lsquo;작은따옴표&rsquo; &hellip; &mdash; &copy; &eacute; &#x1F600; &#x110000; &amp;ldquo; &lt;script&gt;</p>
                     <p class="line-breaks">첫 줄<br/>둘째 줄<br />셋째 줄</p>
                     <p class="normal">보통입니다.</p>
                     <p class="inline-note" style="letter-spacing: 2px; white-space: pre-wrap; writing-mode: vertical-rl; background-image: url(javascript:alert(1));"><span>인라인입니다.</span></p>
@@ -203,7 +208,10 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
         const coverAsset = await manager.getDocumentAssetFromRequest(coverImageNode.src);
         assert.equal(coverAsset.mime, 'image/png');
         assert.equal(coverAsset.buffer.toString(), 'cover');
-        assert.equal(result.chapters[1].title, '프롤로그');
+        assert.equal(result.metadata.title, '“샘플” &ldquo;');
+        assert.equal(result.metadata.author, 'Café');
+        assert.equal(result.chapters[1].title, '“프롤로그”');
+        assert.equal(result.toc[0].title, '“프롤로그”');
         assert.equal(result.chapters[1].blocks.some(block => block.hasImage), true);
         assert.match(result.stylesheet, /\.viewer-reader-scope h1 \{ text-align: center; margin: 0 0 18px; padding: 6px; \}/);
         assert.match(result.stylesheet, /\.viewer-reader-scope \.lead \{ text-align: center; margin-bottom: 12px; font-size: 21px; padding: 14px; \}/);
@@ -231,6 +239,10 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
             padding: '14px',
         });
         assert.equal(leadBlock.nodes[0].children[0].tagName, 'strong');
+        const entityBlock = result.chapters[1].blocks.find(block => block.className === 'entities');
+        assert.equal(entityBlock.text, '“인용” ‘작은따옴표’ … — © é 😀 � &ldquo; <script>');
+        assert.equal(entityBlock.nodes[0].children[0].text, '“인용” ‘작은따옴표’ … — © é 😀 � &ldquo; <script>');
+        assert.equal(entityBlock.nodes[0].children.some(node => node.tagName === 'script'), false);
         const lineBreakBlock = result.chapters[1].blocks.find(block => block.className === 'line-breaks');
         assert.equal(lineBreakBlock.text, '첫 줄\n둘째 줄\n셋째 줄');
         assert.doesNotMatch(lineBreakBlock.text, /br\/>/);
@@ -256,6 +268,7 @@ test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이�
         const logoImageNode = logoNode.children.find(node => node.tagName === 'img');
         assert.equal(logoNode.className, 'img_center');
         assert.equal(logoImageNode.className, 'logo-mark');
+        assert.equal(logoImageNode.alt, '“문장” &ldquo;');
         assert.equal(logoImageNode.naturalWidth, 32);
         assert.equal(logoImageNode.naturalHeight, 48);
         assert.equal(logoNode.style.textAlign, 'center');
