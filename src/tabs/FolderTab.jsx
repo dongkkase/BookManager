@@ -95,6 +95,7 @@ import '../styles/FolderTab.css';
 const VISIBLE_COVER_REQUEST_LIMIT = 32;
 const COVER_PREVIEW_QUEUE_LIMIT = 96;
 const COVER_PREVIEW_CONCURRENCY = 2;
+const LIBRARY_SEARCH_RESULT_LIMIT = 3000;
 const MISSING_BACKGROUND_SCAN_DELAY_MS = 2500;
 const EXTERNAL_VIEWER_EXTENSIONS = {
   comic: new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']),
@@ -161,6 +162,154 @@ function updateFolderResizeGuide(guide, axis, position) {
     guide.style.transform = `translate3d(0, ${rounded}px, 0)`;
   }
 }
+
+function SlidingSearchPlaceholder({ text }) {
+  const viewportRef = useRef(null);
+  const textRef = useRef(null);
+  const [overflowDistance, setOverflowDistance] = useState(0);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const textNode = textRef.current;
+    if (!viewport || !textNode) return undefined;
+
+    let active = true;
+    let frameId = null;
+    const measureOverflow = () => {
+      frameId = null;
+      if (!active) return;
+      const nextDistance = Math.max(0, Math.ceil(textNode.scrollWidth - viewport.clientWidth));
+      setOverflowDistance(current => current === nextDistance ? current : nextDistance);
+    };
+    const scheduleMeasure = () => {
+      if (!active) return;
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measureOverflow);
+    };
+
+    scheduleMeasure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleMeasure) : null;
+    if (observer) {
+      observer.observe(viewport);
+      observer.observe(textNode);
+    } else {
+      window.addEventListener('resize', scheduleMeasure);
+    }
+    document.fonts?.ready?.then(scheduleMeasure);
+
+    return () => {
+      active = false;
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      observer?.disconnect();
+      window.removeEventListener('resize', scheduleMeasure);
+    };
+  }, [text]);
+
+  const animationDuration = Math.max(7, 3 + overflowDistance / 22);
+  return (
+    <span
+      className={`search-placeholder-viewport ${overflowDistance > 0 ? 'is-overflowing' : ''}`}
+      ref={viewportRef}
+      aria-hidden="true"
+      style={{
+        '--search-placeholder-offset': `${-overflowDistance}px`,
+        '--search-placeholder-duration': `${animationDuration.toFixed(2)}s`,
+      }}
+    >
+      <span className="search-placeholder-text" ref={textRef}>{text}</span>
+    </span>
+  );
+}
+
+const FolderSearchInput = React.memo(function FolderSearchInput({
+    inputRef,
+    onApplyQuery,
+    onClearQuery,
+    searchPlaceholder,
+    librarySearchLoading,
+    clearLabel,
+    searchLabel,
+}) {
+    const [searchQuery, setSearchQuery] = useState('');
+    const isComposingRef = useRef(false);
+
+    const submitSearch = () => {
+        if (isComposingRef.current) return;
+        const inputValue = inputRef.current?.value ?? searchQuery;
+        onApplyQuery(inputValue.trim());
+    };
+
+    const handleSubmit = event => {
+        event.preventDefault();
+        submitSearch();
+    };
+
+    const handleKeyDown = event => {
+        if (event.key !== 'Enter') return;
+        if (
+            event.nativeEvent?.isComposing
+            || event.nativeEvent?.keyCode === 229
+            || isComposingRef.current
+        ) {
+            event.preventDefault();
+        }
+    };
+
+    const clearSearch = () => {
+        isComposingRef.current = false;
+        setSearchQuery('');
+        onClearQuery();
+        inputRef.current?.focus();
+    };
+
+    return (
+        <form
+            className="search-input-wrap"
+            role="search"
+            aria-label={searchLabel}
+            onSubmit={handleSubmit}
+        >
+            <input
+                type="text"
+                className="search-input"
+                ref={inputRef}
+                placeholder={searchPlaceholder}
+                value={searchQuery}
+                aria-label={searchPlaceholder}
+                aria-busy={librarySearchLoading}
+                onChange={event => setSearchQuery(event.target.value)}
+                onKeyDown={handleKeyDown}
+                onCompositionStart={() => {
+                    isComposingRef.current = true;
+                }}
+                onCompositionEnd={event => {
+                    isComposingRef.current = false;
+                    setSearchQuery(event.currentTarget.value);
+                }}
+            />
+            {!searchQuery && <SlidingSearchPlaceholder text={searchPlaceholder} />}
+            {searchQuery && (
+                <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={clearSearch}
+                    aria-label={clearLabel}
+                    title={clearLabel}
+                >
+                    ×
+                </button>
+            )}
+            <button
+                type="submit"
+                className="search-submit-btn"
+                aria-label={searchLabel}
+                title={`${searchLabel} (Enter)`}
+            >
+                <FaIcon name="search" />
+            </button>
+        </form>
+    );
+});
 
 function FolderTab({ config, saveConfig, t, showToast }) {
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
@@ -295,15 +444,29 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   ]);
 
   // --- 검색 상태 ---
-  const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
+  const [searchSubmitToken, setSearchSubmitToken] = useState(0);
+  const [searchResetToken, setSearchResetToken] = useState(0);
   const [librarySearchResults, setLibrarySearchResults] = useState([]);
   const [librarySearchLoading, setLibrarySearchLoading] = useState(false);
   const searchInputRef = useRef(null);
   const librarySearchRequestRef = useRef(0);
   const libraryEntries = useMemo(() => normalizeLibraryEntries(config || {}), [config]);
   const libraries = useMemo(() => libraryEntries.map(entry => entry.path), [libraryEntries]);
-  const normalizedSearchQuery = searchQuery.trim();
+  const searchPlaceholder = libraries.length > 0 ? t('folder_search_library_ph') : t('folder_search_ph');
+  const normalizedSearchQuery = appliedSearchQuery.trim();
   const isLibrarySearchActive = normalizedSearchQuery.length > 0 && libraries.length > 0;
+  const applySearchQuery = useCallback(query => {
+    setAppliedSearchQuery(query);
+    setSearchSubmitToken(token => token + 1);
+  }, []);
+  const clearAppliedSearchQuery = useCallback(() => {
+    setAppliedSearchQuery('');
+  }, []);
+  const resetSearchQuery = useCallback(() => {
+    setAppliedSearchQuery('');
+    setSearchResetToken(token => token + 1);
+  }, []);
 
   useEffect(() => {
     preparingDuplicatesRef.current = preparingDuplicates;
@@ -340,36 +503,53 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const requestId = librarySearchRequestRef.current + 1;
     librarySearchRequestRef.current = requestId;
     if (!isLibrarySearchActive) {
-      setLibrarySearchResults([]);
+      setLibrarySearchResults(current => current.length === 0 ? current : []);
       setLibrarySearchLoading(false);
       return undefined;
     }
 
     let disposed = false;
-    setLibrarySearchResults([]);
     setLibrarySearchLoading(true);
-    const timer = window.setTimeout(async () => {
+    const search = async () => {
       try {
-        const rows = await window.electronAPI?.searchLibraryFiles?.(normalizedSearchQuery, libraries, { limit: 3000 });
-        if (disposed || librarySearchRequestRef.current !== requestId) return;
-        setLibrarySearchResults(Array.isArray(rows) ? rows : []);
+        const rows = await window.electronAPI?.searchLibraryFiles?.(
+          normalizedSearchQuery,
+          libraries,
+          { limit: LIBRARY_SEARCH_RESULT_LIMIT },
+        );
+        if (
+          disposed
+          || librarySearchRequestRef.current !== requestId
+        ) return;
+        React.startTransition(() => {
+          setLibrarySearchResults(current => (
+            librarySearchRequestRef.current === requestId
+              ? (Array.isArray(rows) ? rows : [])
+              : current
+          ));
+        });
+        setLibrarySearchLoading(false);
       } catch (error) {
-        if (!disposed && librarySearchRequestRef.current === requestId) {
+        if (
+          !disposed
+          && librarySearchRequestRef.current === requestId
+        ) {
           console.error('라이브러리 검색 실패:', error);
-          setLibrarySearchResults([]);
-        }
-      } finally {
-        if (!disposed && librarySearchRequestRef.current === requestId) {
+          React.startTransition(() => {
+            setLibrarySearchResults(current => (
+              librarySearchRequestRef.current === requestId ? [] : current
+            ));
+          });
           setLibrarySearchLoading(false);
         }
       }
-    }, 180);
+    };
+    void search();
 
     return () => {
       disposed = true;
-      window.clearTimeout(timer);
     };
-  }, [isLibrarySearchActive, libraries, normalizedSearchQuery]);
+  }, [isLibrarySearchActive, libraries, normalizedSearchQuery, searchSubmitToken]);
 
   useEffect(() => {
     const refreshViewerStatus = () => {
@@ -387,17 +567,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   // 필터링된 파일 데이터
-  const filteredRawFileData = useMemo(() => {
-    const files = isLibrarySearchActive ? librarySearchResults : getCurrentFileData();
-    return filterFolderFiles(files, {
-      query: isLibrarySearchActive ? '' : searchQuery,
-      metadataMissingOnly,
-    });
-  }, [getCurrentFileData, isLibrarySearchActive, librarySearchResults, metadataMissingOnly, searchQuery]);
-  const filteredFileData = useMemo(() => {
+  const currentFolderFileData = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
+  const activeRawFileData = isLibrarySearchActive ? librarySearchResults : currentFolderFileData;
+  const fileDataWithViewerStatus = useMemo(() => {
+    if (activeRawFileData.length === 0) return activeRawFileData;
     const reader = createViewerStatusReader();
-    return filteredRawFileData.map(file => attachViewerStatus(file, reader));
-  }, [filteredRawFileData, viewerStatusVersion]);
+    return activeRawFileData.map(file => attachViewerStatus(file, reader));
+  }, [activeRawFileData, viewerStatusVersion]);
+  const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
+  const filteredFileData = useMemo(() => filterFolderFiles(fileDataWithViewerStatus, {
+    query: localSearchQuery,
+    metadataMissingOnly,
+  }), [fileDataWithViewerStatus, localSearchQuery, metadataMissingOnly]);
 
   const pumpCoverPreviewQueue = useCallback(() => {
     if (!selectedFolderPath || isLibrarySearchActive) return;
@@ -523,7 +704,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   useEffect(() => {
     if (isLibrarySearchActive) clearSelection();
-  }, [clearSelection, isLibrarySearchActive, normalizedSearchQuery]);
+  }, [clearSelection, isLibrarySearchActive, normalizedSearchQuery, searchSubmitToken]);
 
   useEffect(() => {
     if (!config || restoredLayoutRef.current) return;
@@ -901,7 +1082,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectedFolderPathRef.current = nextFolderPath;
     setSelectedFolderPath(nextFolderPath);
     clearSelection();
-    setSearchQuery('');
+    resetSearchQuery();
     if (nextFolderPath && config?.folder_last_path !== nextFolderPath) {
       saveConfig?.({ folder_last_path: nextFolderPath }).catch(error => {
         console.error('마지막 폴더 경로 저장 실패:', error);
@@ -911,7 +1092,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (selectedFolderPathRef.current !== nextFolderPath) return;
     const localMissing = findMissingVolumes(files || []);
     scheduleLocalMissingToast(nextFolderPath, localMissing);
-  }, [config?.folder_last_path, scanOptions, scanFolder, clearSelection, saveConfig, scheduleLocalMissingToast]);
+  }, [config?.folder_last_path, scanOptions, scanFolder, clearSelection, resetSearchQuery, saveConfig, scheduleLocalMissingToast]);
 
   const handleSafeFolderNavigation = useCallback(async (folderPath, options = {}) => {
     if (!folderPath) return false;
@@ -1280,7 +1461,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (includeSubfolders !== nextIncludeSubfolders) setIncludeSubfolders(nextIncludeSubfolders);
     setSelectedFolderPath(folderPath);
     clearSelection();
-    setSearchQuery('');
+    resetSearchQuery();
     const files = await scanFolder(folderPath, {
       ...refreshOptions,
       fastInitial: false,
@@ -1298,6 +1479,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     markLibraryScanStatesCancelled,
     preparingDuplicates,
     refreshLibraryScanStates,
+    resetSearchQuery,
     saveConfig,
     scanFolder,
     scanOptions,
@@ -2648,29 +2830,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
             
             <div className="right-toolbar-right">
-              <div className="search-input-wrap">
-                <input
-                  type="text"
-                  className="search-input"
-                  ref={searchInputRef}
-                  placeholder={libraries.length > 0 ? t('folder_search_library_ph') : t('folder_search_ph')}
-                  value={searchQuery}
-                  aria-busy={librarySearchLoading}
-                  onChange={e => setSearchQuery(e.target.value)}
-                />
-                {searchQuery && (
-                  <button
-                    className="search-clear-btn"
-                    onClick={() => {
-                      setSearchQuery('');
-                      searchInputRef.current?.focus();
-                    }}
-                    aria-label={t('folder_search_clear')}
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
+              <FolderSearchInput
+                key={searchResetToken}
+                inputRef={searchInputRef}
+                onApplyQuery={applySearchQuery}
+                onClearQuery={clearAppliedSearchQuery}
+                searchPlaceholder={searchPlaceholder}
+                librarySearchLoading={librarySearchLoading}
+                clearLabel={t('folder_search_clear')}
+                searchLabel={t('btn_search')}
+              />
               <button
                 className="refresh-btn"
                 onClick={() => handleSmartRefresh(true)}

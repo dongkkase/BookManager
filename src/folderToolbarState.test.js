@@ -23,6 +23,16 @@ test('메타데이터 없음 필터와 검색을 함께 적용한다', () => {
         [files[0]],
     );
     assert.equal(hasArchiveMetadata({ publisher: 'Publisher' }), true);
+
+    files[0].name = 'Gamma.cbz';
+    files[0].series = 'Gamma';
+    assert.deepEqual(filterFolderFiles(files, { query: 'gamma' }), [files[0]]);
+    assert.deepEqual(filterFolderFiles(files, { query: 'alpha' }), []);
+});
+
+test('필터 조건이 없으면 기존 파일 목록을 재사용한다', () => {
+    const files = [{ name: 'Alpha.cbz' }];
+    assert.equal(filterFolderFiles(files), files);
 });
 
 test('저장 레이아웃 이름을 배열과 객체 형식에서 읽는다', () => {

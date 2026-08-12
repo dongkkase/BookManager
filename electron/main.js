@@ -458,6 +458,9 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
+  void ipcController?.dispose?.().catch(error => {
+    console.warn(`[LibrarySearch] Failed to stop worker: ${error.message}`);
+  });
   if (tray) {
     tray.destroy();
     tray = null;

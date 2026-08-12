@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
 import { normalizeLibraryScanStateForRenderer, scanArchivePaths } from './ipcHandlers.js';
+import { LibrarySearchService } from './librarySearchService.js';
 
 test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-db-'));
@@ -37,6 +38,10 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
         const existing = await library.getFileInfo('/Books/A.cbz');
         assert.equal(existing.series, 'A');
         assert.equal(existing.pages, '20');
+        assert.deepEqual(
+            (await library.searchFiles('A 1권', ['/Books'], { limit: 10 })).map(row => row.path),
+            ['/Books/A.cbz'],
+        );
         await library.upsertFileInfo({
             filepath: '/Books/A.cbz',
             mod_date: 11,
@@ -53,6 +58,10 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
         assert.equal(updated.file_size, 120);
         assert.equal(updated.title, 'A 1권 수정');
         assert.equal(updated.thumbnail, '/thumb/new.jpg');
+        assert.deepEqual(
+            (await library.searchFiles('1권 수정', ['/Books'], { limit: 10 })).map(row => row.path),
+            ['/Books/A.cbz'],
+        );
         await library.close();
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -150,6 +159,308 @@ test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타�
         assert.deepEqual(scopedRows.map(row => row.path).sort(), [insidePath, secondPath].sort());
         await library.close();
     } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 파일 검색은 짧은 부분 문자열과 특수문자를 리터럴로 유지한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-fallback-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryRoot = path.join(root, 'Library');
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        const specialPath = path.join(libraryRoot, 'Special.cbz');
+        const otherPath = path.join(libraryRoot, 'Other.cbz');
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfoBulk([
+            {
+                path: specialPath,
+                title: '푸른 별빛마법사의 기록 100%_완성 A+B "인용"',
+            },
+            {
+                path: otherPath,
+                title: '별빛을 따라가는 일반 기록',
+            },
+        ]);
+
+        const pathsFor = async query => (await library.searchFiles(query, [libraryRoot], { limit: 10 }))
+            .map(row => row.path);
+        assert.deepEqual(await pathsFor('별빛마법사'), [specialPath]);
+        assert.deepEqual(await pathsFor('빛마'), [specialPath]);
+        assert.deepEqual(await pathsFor('법'), [specialPath]);
+        assert.deepEqual(await pathsFor('100%_'), [specialPath]);
+        assert.deepEqual(await pathsFor('a+b'), [specialPath]);
+        assert.deepEqual(await pathsFor('"인용"'), [specialPath]);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 검색 자료는 단건·일괄 갱신과 삭제를 동기화한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-sync-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryRoot = path.join(root, 'Library');
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        const firstPath = path.join(libraryRoot, 'First.cbz');
+        const secondPath = path.join(libraryRoot, 'Second.cbz');
+        const library = new LibraryDB({ dbPath });
+
+        await library.upsertFileInfo({ path: firstPath, title: 'old-marker-title' });
+        assert.deepEqual(
+            (await library.searchFiles('old-marker', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [firstPath],
+        );
+        const searchSchema = library.getConnection().prepare(`
+            SELECT type, name, sql
+            FROM sqlite_master
+            WHERE name IN (
+                'files_search_ids',
+                'files_search_content',
+                'files_search_fts',
+                'files_search_ai',
+                'files_search_ad',
+                'files_search_au'
+            )
+        `).all();
+        assert.equal(searchSchema.length, 6);
+        assert.match(
+            searchSchema.find(row => row.name === 'files_search_fts')?.sql || '',
+            /CREATE VIRTUAL TABLE[\s\S]*tokenize='trigram'/i,
+        );
+        assert.deepEqual(
+            searchSchema.filter(row => row.type === 'trigger').map(row => row.name).sort(),
+            ['files_search_ad', 'files_search_ai', 'files_search_au'],
+        );
+
+        await library.upsertFileInfo({ path: firstPath, title: 'single-update-marker' });
+        assert.deepEqual(await library.searchFiles('old-marker', [libraryRoot], { limit: 10 }), []);
+        assert.deepEqual(
+            (await library.searchFiles('single-update', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [firstPath],
+        );
+
+        await library.upsertFileInfoBulk([
+            { path: firstPath, title: 'bulk-update-marker' },
+            { path: secondPath, title: 'bulk-insert-marker' },
+        ]);
+        assert.deepEqual(await library.searchFiles('single-update', [libraryRoot], { limit: 10 }), []);
+        assert.deepEqual(
+            (await library.searchFiles('bulk-update', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [firstPath],
+        );
+        assert.deepEqual(
+            (await library.searchFiles('bulk-insert', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [secondPath],
+        );
+
+        library.getConnection().prepare('DELETE FROM files WHERE path = ?').run(secondPath);
+        assert.deepEqual(await library.searchFiles('bulk-insert', [libraryRoot], { limit: 10 }), []);
+        await library.close();
+
+        const reopened = new LibraryDB({ dbPath });
+        assert.deepEqual(
+            (await reopened.searchFiles('bulk-update', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [firstPath],
+        );
+        assert.deepEqual(await reopened.searchFiles('bulk-insert', [libraryRoot], { limit: 10 }), []);
+        await reopened.clearDupCache();
+        assert.deepEqual(
+            (await reopened.searchFiles('bulk-update', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [firstPath],
+        );
+        await reopened.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('준비된 검색 인덱스는 다시 생성하지 않고 연결당 한 번만 무결성을 확인한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-ready-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryRoot = path.join(root, 'Library');
+        const filePath = path.join(libraryRoot, 'Ready.cbz');
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({ path: filePath, title: 'ready-index-marker' });
+
+        const originalAssertIntegrity = library.assertSearchIndexIntegrity.bind(library);
+        let integrityCheckCount = 0;
+        library.assertSearchIndexIntegrity = db => {
+            integrityCheckCount += 1;
+            return originalAssertIntegrity(db);
+        };
+
+        assert.equal(await library.prepareSearchIndex(), true);
+        assert.equal(integrityCheckCount, 1);
+        const db = library.getConnection();
+        const schemaVersion = db.pragma('schema_version', { simple: true });
+        assert.equal(library.rebuildSearchIndex(db), false);
+        assert.equal(db.pragma('schema_version', { simple: true }), schemaVersion);
+
+        assert.deepEqual(
+            (await library.searchFiles('ready-index', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [filePath],
+        );
+        assert.equal(await library.prepareSearchIndex(), true);
+        assert.equal(db.pragma('schema_version', { simple: true }), schemaVersion);
+        assert.equal(integrityCheckCount, 1);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('검색 인덱스 준비는 누락된 안정 ID와 외부 content 불일치를 복구한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-integrity-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryRoot = path.join(root, 'Library');
+        const firstPath = path.join(libraryRoot, 'MissingId.cbz');
+        const secondPath = path.join(libraryRoot, 'StaleContent.cbz');
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfoBulk([
+            { path: firstPath, title: 'missing-id-marker' },
+            { path: secondPath, title: 'old-content-marker' },
+        ]);
+        assert.equal(await library.prepareSearchIndex(), true);
+
+        const db = library.getConnection();
+        db.prepare('DELETE FROM files_search_ids WHERE path = ?').run(firstPath);
+        await library.close();
+
+        const mappingRepair = new LibraryDB({ dbPath });
+        assert.equal(await mappingRepair.prepareSearchIndex(), true);
+        assert.deepEqual(
+            (await mappingRepair.searchFiles('missing-id', [libraryRoot], { limit: 10 }))
+                .map(row => row.path),
+            [firstPath],
+        );
+
+        const repairedDb = mappingRepair.getConnection();
+        const updateTriggerSql = repairedDb.prepare(`
+            SELECT sql FROM sqlite_master
+            WHERE type = 'trigger' AND name = 'files_search_au'
+        `).get().sql;
+        repairedDb.exec('DROP TRIGGER files_search_au');
+        repairedDb.prepare('UPDATE files SET title = ? WHERE path = ?')
+            .run('new-content-marker', secondPath);
+        repairedDb.exec(updateTriggerSql);
+        await mappingRepair.close();
+
+        const reopened = new LibraryDB({ dbPath });
+        assert.equal(await reopened.prepareSearchIndex(), true);
+        assert.deepEqual(await reopened.searchFiles('old-content', [libraryRoot], { limit: 10 }), []);
+        assert.deepEqual(
+            (await reopened.searchFiles('new-content', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [secondPath],
+        );
+        await reopened.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('MATCH 실패 후 현재 연결은 LIKE를 사용하고 다음 준비에서 인덱스를 복구한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-unhealthy-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryRoot = path.join(root, 'Library');
+        const filePath = path.join(libraryRoot, 'Fallback.cbz');
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({ path: filePath, title: 'fallback-after-failure-marker' });
+        assert.equal(await library.prepareSearchIndex(), true);
+
+        library.getConnection().exec('DROP TABLE files_search_fts');
+        assert.deepEqual(
+            (await library.searchFiles('failure-marker', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [filePath],
+        );
+        assert.equal(library.searchIndexUnhealthy, true);
+        assert.equal(library.tableExists('files_search_fts'), false);
+
+        assert.deepEqual(
+            (await library.searchFiles('fallback-after', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [filePath],
+        );
+        assert.equal(library.tableExists('files_search_fts'), false);
+
+        assert.equal(await library.prepareSearchIndex(), true);
+        assert.equal(library.searchIndexUnhealthy, false);
+        assert.equal(library.tableExists('files_search_fts'), true);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 검색 서비스는 worker 연결을 재사용하고 다른 연결의 갱신을 반영한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-worker-'));
+    const dbPath = path.join(root, 'library.db');
+    const libraryRoot = path.join(root, 'Library');
+    const filePath = path.join(libraryRoot, 'Worker.cbz');
+    const writer = new LibraryDB({ dbPath });
+    const service = new LibrarySearchService(dbPath);
+    try {
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        await writer.upsertFileInfo({ path: filePath, title: 'worker-original-marker' });
+        assert.deepEqual(await service.prepare(), { ready: true });
+        assert.deepEqual(
+            (await service.search('worker-original', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [filePath],
+        );
+
+        await writer.upsertFileInfo({ path: filePath, title: 'worker-updated-marker' });
+        assert.deepEqual(await service.search('worker-original', [libraryRoot], { limit: 10 }), []);
+        assert.deepEqual(
+            (await service.search('worker-updated', [libraryRoot], { limit: 10 })).map(row => row.path),
+            [filePath],
+        );
+    } finally {
+        await service.close();
+        await writer.close();
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('라이브러리 검색 worker는 준비 중 연속 요청에서 가장 최신 검색만 실행한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-search-latest-'));
+    const dbPath = path.join(root, 'library.db');
+    const libraryRoot = path.join(root, 'Library');
+    const paths = ['First.cbz', 'Middle.cbz', 'Latest.cbz']
+        .map(name => path.join(libraryRoot, name));
+    const writer = new LibraryDB({ dbPath });
+    const service = new LibrarySearchService(dbPath);
+    try {
+        fs.mkdirSync(libraryRoot, { recursive: true });
+        await writer.upsertFileInfoBulk([
+            { path: paths[0], title: 'first-queue-marker' },
+            { path: paths[1], title: 'middle-queue-marker' },
+            { path: paths[2], title: 'latest-queue-marker' },
+        ]);
+
+        const preparing = service.prepare();
+        const first = service.search('first-queue', [libraryRoot], { limit: 10 });
+        const middle = service.search('middle-queue', [libraryRoot], { limit: 10 });
+        const latest = service.search('latest-queue', [libraryRoot], { limit: 10 });
+
+        const [prepared, firstRows, middleRows, latestRows] = await Promise.all([
+            preparing,
+            first,
+            middle,
+            latest,
+        ]);
+        assert.deepEqual(prepared, { ready: true });
+        assert.deepEqual(firstRows, []);
+        assert.deepEqual(middleRows, []);
+        assert.deepEqual(latestRows.map(row => row.path), [paths[2]]);
+    } finally {
+        await service.close();
+        await writer.close();
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
@@ -386,6 +697,10 @@ test('라이브러리 이동 인덱스 반영은 전체 교체 없이 이동한 
             title: 'Moved Title',
             series: 'Moved Series',
         });
+        assert.deepEqual(
+            (await library.searchFiles('Moved Title', [sourceDir], { limit: 10 })).map(row => row.path),
+            [source],
+        );
 
         fs.renameSync(source, dest);
         const movedStat = fs.statSync(dest);
@@ -407,6 +722,11 @@ test('라이브러리 이동 인덱스 반영은 전체 교체 없이 이동한 
         assert.deepEqual(rows.map(row => row.full_path).sort(), [existing, dest].sort());
         assert.equal((await library.getFileInfo(dest)).series, 'Moved Series');
         assert.equal(await library.getFileInfo(source), null);
+        assert.deepEqual(await library.searchFiles('Moved Title', [sourceDir], { limit: 10 }), []);
+        assert.deepEqual(
+            (await library.searchFiles('Moved Title', [libraryDir], { limit: 10 })).map(row => row.path),
+            [dest],
+        );
         const state = await library.getLibraryScanState(libraryDir);
         assert.equal(state.status, 'ready');
         assert.equal(state.indexed_count, 2);

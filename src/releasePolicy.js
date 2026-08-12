@@ -53,11 +53,24 @@ export function parseInlineMarkdown(text = '') {
     return tokens.length > 0 ? tokens : [{ type: 'text', value: source }];
 }
 
+function listIndentWidth(indent = '') {
+    let width = 0;
+    for (const character of indent) {
+        if (character === '\t') {
+            width += 4 - (width % 4);
+        } else {
+            width += 1;
+        }
+    }
+    return width;
+}
+
 export function parseReleaseMarkdown(markdown = '') {
     const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
     const blocks = [];
     let paragraph = [];
     let listItems = [];
+    let listStack = [];
     let codeLines = [];
     let inCode = false;
 
@@ -73,6 +86,7 @@ export function parseReleaseMarkdown(markdown = '') {
         if (listItems.length === 0) return;
         blocks.push({ type: 'list', items: listItems });
         listItems = [];
+        listStack = [];
     };
     const flushCode = () => {
         blocks.push({ type: 'code', value: codeLines.join('\n') });
@@ -104,13 +118,36 @@ export function parseReleaseMarkdown(markdown = '') {
             continue;
         }
 
-        const listItem = line.match(/^\s*([-*]|\d+\.)\s+(.+)$/);
+        const listItem = line.match(/^([ \t]*)([-*]|\d+\.)[ \t]+(.+)$/);
         if (listItem) {
             flushParagraph();
-            listItems.push({
-                ordered: /\d+\./.test(listItem[1]),
-                content: parseInlineMarkdown(listItem[2]),
-            });
+            const indent = listIndentWidth(listItem[1]);
+            const item = {
+                ordered: /\d+\./.test(listItem[2]),
+                content: parseInlineMarkdown(listItem[3]),
+                children: [],
+            };
+
+            if (listStack.length === 0) {
+                listStack.push({ indent, items: listItems });
+            } else {
+                while (listStack.length > 1 && indent < listStack[listStack.length - 1].indent) {
+                    listStack.pop();
+                }
+
+                const currentLevel = listStack[listStack.length - 1];
+                if (indent > currentLevel.indent) {
+                    const parentItem = currentLevel.items[currentLevel.items.length - 1];
+                    if (parentItem) {
+                        listStack.push({ indent, items: parentItem.children });
+                    }
+                } else if (indent < currentLevel.indent) {
+                    flushList();
+                    listStack.push({ indent, items: listItems });
+                }
+            }
+
+            listStack[listStack.length - 1].items.push(item);
             continue;
         }
 

@@ -52,3 +52,43 @@ test('굵게, 인라인 코드, 순서 목록을 구조화한다', () => {
     assert.equal(list.type, 'list');
     assert.equal(list.items.every(item => item.ordered), true);
 });
+
+test('탭으로 들여쓴 릴리즈 목록을 하위 항목으로 구조화한다', () => {
+    const [list] = parseReleaseMarkdown([
+        '- 메타데이터 관리',
+        '\t- API 검색 적용',
+        '\t\t- 제목 접두사 삭제',
+        '\t\t- 제목 접미사 삭제',
+        '- 환경설정',
+    ].join('\r\n'));
+
+    assert.equal(list.items.length, 2);
+    assert.equal(list.items[0].content[0].value, '메타데이터 관리');
+    assert.equal(list.items[0].children.length, 1);
+    assert.equal(list.items[0].children[0].content[0].value, 'API 검색 적용');
+    assert.deepEqual(
+        list.items[0].children[0].children.map(item => item.content[0].value),
+        ['제목 접두사 삭제', '제목 접미사 삭제'],
+    );
+    assert.equal(list.items[1].content[0].value, '환경설정');
+});
+
+test('공백 들여쓰기와 순서가 섞인 목록의 깊이 복귀를 보존한다', () => {
+    const [list] = parseReleaseMarkdown([
+        '1. 첫째',
+        '  - 하위 1',
+        '    - 손자',
+        '  - 하위 2',
+        '2. 둘째',
+    ].join('\n'));
+
+    assert.equal(list.items.length, 2);
+    assert.equal(list.items.every(item => item.ordered), true);
+    assert.deepEqual(
+        list.items[0].children.map(item => item.content[0].value),
+        ['하위 1', '하위 2'],
+    );
+    assert.equal(list.items[0].children.every(item => !item.ordered), true);
+    assert.equal(list.items[0].children[0].children[0].content[0].value, '손자');
+    assert.equal(list.items[1].children.length, 0);
+});

@@ -729,31 +729,107 @@ body.is-resizing-panel .detail-panel-wrap {
 }
 
 .search-input-wrap {
-  position: relative;
+    position: relative;
+    margin: 0;
 }
 
 .search-input {
-  width: 210px;
-  min-height: var(--control-height-sm);
-  padding: 2px 28px 2px 12px;
-  color: #dedede;
-  background: #1c1c1c;
-  border: 1px solid #555;
-  border-radius: 11px;
-  font-size: var(--font-xs);
-  font-weight: 700;
+    width: 210px;
+    min-height: var(--control-height-sm);
+    padding: 2px 56px 2px 12px;
+    color: #dedede;
+    background: #1c1c1c;
+    border: 1px solid #555;
+    border-radius: 11px;
+    font-size: var(--font-xs);
+    font-weight: 700;
+}
+
+.search-input::placeholder {
+  color: transparent;
+}
+
+.search-placeholder-viewport {
+    position: absolute;
+    inset: 1px 36px 1px 12px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    color: #999;
+    font-size: var(--font-xs);
+    font-weight: 700;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.search-placeholder-text {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: max-content;
+  transform: translateX(0);
+}
+
+.search-placeholder-viewport.is-overflowing .search-placeholder-text {
+  animation: folder-search-placeholder-slide var(--search-placeholder-duration) ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes folder-search-placeholder-slide {
+  0%,
+  20% {
+    transform: translateX(0);
+  }
+
+  80%,
+  100% {
+    transform: translateX(var(--search-placeholder-offset));
+  }
+}
+
+.search-clear-btn,
+.search-submit-btn {
+    position: absolute;
+    top: 50%;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    color: #aaa;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
 }
 
 .search-clear-btn {
-  position: absolute;
-  top: 50%;
-  right: 7px;
-  padding: 0;
-  color: #aaa;
-  background: transparent;
-  border: none;
-  transform: translateY(-50%);
-  cursor: pointer;
+    right: 29px;
+    font-size: 15px;
+    line-height: 1;
+}
+
+.search-submit-btn {
+    right: 4px;
+    font-size: 11px;
+}
+
+.search-clear-btn:hover,
+.search-submit-btn:hover {
+    color: #fff;
+    background: #3a3a3a;
+}
+
+.search-clear-btn:focus-visible,
+.search-submit-btn:focus-visible {
+    color: #fff;
+    outline: 1px solid #6ca6c7;
+    outline-offset: -1px;
 }
 
 .view-container {

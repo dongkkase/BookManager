@@ -90,8 +90,34 @@ const FILE_SEARCH_COLUMNS = [
     'web',
 ];
 
+const FILE_SEARCH_INDEX_VERSION = '1';
+const FILE_SEARCH_INDEX_META_KEY = 'files_search_index_version';
+const FILE_SEARCH_SCHEMA_OBJECTS = [
+    ['table', 'files_search_ids'],
+    ['view', 'files_search_content'],
+    ['table', 'files_search_fts'],
+    ['trigger', 'files_search_ai'],
+    ['trigger', 'files_search_ad'],
+    ['trigger', 'files_search_au'],
+];
+
 function escapeLikeValue(value = '') {
     return String(value).replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+function ftsLiteralPhrase(value = '') {
+    return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function isDatabaseBusyError(error) {
+    return ['SQLITE_BUSY', 'SQLITE_LOCKED'].includes(error?.code);
+}
+
+function isRepairableSearchIndexError(error) {
+    return (
+        ['SQLITE_CORRUPT', 'SQLITE_CORRUPT_VTAB'].includes(error?.code)
+        || /^Search index mapping is inconsistent/.test(error?.message || '')
+    );
 }
 
 export class LibraryDB {
@@ -99,6 +125,9 @@ export class LibraryDB {
         this.dbPath = options.dbPath || path.join(options.userDataPath || defaultUserDataPath(), 'library.db');
         this.db = null;
         this.lock = Promise.resolve();
+        this.searchIndexAttempted = false;
+        this.searchIndexReady = false;
+        this.searchIndexUnhealthy = false;
     }
 
     getConnection() {
@@ -112,6 +141,7 @@ export class LibraryDB {
         this.db.pragma('temp_store = MEMORY');
         this.db.pragma('cache_size = -65536');
         this.db.pragma('mmap_size = 268435456');
+        this.db.pragma('busy_timeout = 5000');
         this.createTables();
         this.ensureSchemaColumns();
         this.migrateLegacyTables();
@@ -195,6 +225,10 @@ export class LibraryDB {
                 recursive_file_count INTEGER DEFAULT 0,
                 last_seen_at TEXT,
                 PRIMARY KEY (library_path, folder_path)
+            );
+            CREATE TABLE IF NOT EXISTS library_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_files_series ON files(series);
             CREATE INDEX IF NOT EXISTS idx_files_title ON files(title);
@@ -310,6 +344,196 @@ export class LibraryDB {
         `).run(...FILE_EXTENSION_FORMAT_VALUES);
     }
 
+    hasSearchIndexSchema(db = this.getConnection()) {
+        const version = db.prepare('SELECT value FROM library_meta WHERE key = ?')
+            .get(FILE_SEARCH_INDEX_META_KEY)?.value;
+        if (version !== FILE_SEARCH_INDEX_VERSION) return false;
+        const schemaObject = db.prepare(`
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = ? AND name = ?
+        `);
+        return FILE_SEARCH_SCHEMA_OBJECTS.every(
+            ([type, name]) => Boolean(schemaObject.get(type, name)),
+        );
+    }
+
+    hasReadySearchIndex(db = this.getConnection()) {
+        if (!this.hasSearchIndexSchema(db)) return false;
+        this.assertSearchIndexIntegrity(db);
+        return true;
+    }
+
+    assertSearchIndexIntegrity(db = this.getConnection()) {
+        const mappingProblem = db.prepare(`
+            SELECT 'missing-id' AS reason, f.path
+            FROM files AS f
+            LEFT JOIN files_search_ids AS ids ON ids.path = f.path
+            WHERE ids.search_id IS NULL
+            UNION ALL
+            SELECT 'orphan-id' AS reason, ids.path
+            FROM files_search_ids AS ids
+            LEFT JOIN files AS f ON f.path = ids.path
+            WHERE f.path IS NULL
+            LIMIT 1
+        `).get();
+        if (mappingProblem) {
+            throw new Error(
+                `Search index mapping is inconsistent (${mappingProblem.reason}: ${mappingProblem.path}).`,
+            );
+        }
+        db.prepare(`
+            INSERT INTO files_search_fts(files_search_fts, rank)
+            VALUES('integrity-check', 1)
+        `).run();
+    }
+
+    rebuildSearchIndex(db = this.getConnection(), options = {}) {
+        const searchColumns = FILE_SEARCH_COLUMNS.join(', ');
+        const contentColumns = FILE_SEARCH_COLUMNS.map(column => `f.${column}`).join(', ');
+        const oldSearchValues = FILE_SEARCH_COLUMNS.map(column => `old.${column}`).join(', ');
+        const newSearchValues = FILE_SEARCH_COLUMNS.map(column => `new.${column}`).join(', ');
+        const changedSearchValues = FILE_SEARCH_COLUMNS
+            .map(column => `old.${column} IS NOT new.${column}`)
+            .join(' OR ');
+        let rebuilt = false;
+
+        const rebuild = db.transaction(() => {
+            if (this.hasSearchIndexSchema(db)) {
+                if (options.repairExisting !== true) return;
+                try {
+                    this.assertSearchIndexIntegrity(db);
+                    return;
+                } catch (error) {
+                    if (!isRepairableSearchIndexError(error)) throw error;
+                    // The caller observed a broken index. Recheck after obtaining
+                    // the write lock so a concurrent repair is not repeated.
+                }
+            }
+            db.exec(`
+                DROP TRIGGER IF EXISTS files_search_ai;
+                DROP TRIGGER IF EXISTS files_search_ad;
+                DROP TRIGGER IF EXISTS files_search_au;
+                DROP TABLE IF EXISTS files_search_fts;
+                DROP VIEW IF EXISTS files_search_content;
+                DROP TABLE IF EXISTS files_search_ids;
+
+                CREATE TABLE files_search_ids (
+                    search_id INTEGER PRIMARY KEY,
+                    path TEXT NOT NULL UNIQUE
+                );
+                INSERT INTO files_search_ids (path)
+                SELECT path FROM files ORDER BY path;
+
+                CREATE VIEW files_search_content AS
+                SELECT ids.search_id, ${contentColumns}
+                FROM files AS f
+                JOIN files_search_ids AS ids ON ids.path = f.path;
+
+                CREATE VIRTUAL TABLE files_search_fts USING fts5(
+                    ${searchColumns},
+                    content='files_search_content',
+                    content_rowid='search_id',
+                    tokenize='trigram'
+                );
+                INSERT INTO files_search_fts(files_search_fts) VALUES('rebuild');
+
+                CREATE TRIGGER files_search_ai AFTER INSERT ON files BEGIN
+                    INSERT INTO files_search_ids(path)
+                    SELECT new.path
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM files_search_ids WHERE path = new.path
+                    );
+                    INSERT INTO files_search_fts(rowid, ${searchColumns})
+                    SELECT search_id, ${newSearchValues}
+                    FROM files_search_ids
+                    WHERE path = new.path;
+                END;
+
+                CREATE TRIGGER files_search_ad AFTER DELETE ON files BEGIN
+                    INSERT INTO files_search_fts(files_search_fts, rowid, ${searchColumns})
+                    SELECT 'delete', search_id, ${oldSearchValues}
+                    FROM files_search_ids
+                    WHERE path = old.path;
+                    DELETE FROM files_search_ids WHERE path = old.path;
+                END;
+
+                CREATE TRIGGER files_search_au
+                AFTER UPDATE OF ${searchColumns} ON files
+                WHEN ${changedSearchValues}
+                BEGIN
+                    INSERT INTO files_search_fts(files_search_fts, rowid, ${searchColumns})
+                    SELECT 'delete', search_id, ${oldSearchValues}
+                    FROM files_search_ids
+                    WHERE path = old.path;
+                    UPDATE files_search_ids
+                    SET path = new.path
+                    WHERE path = old.path AND old.path IS NOT new.path;
+                    INSERT INTO files_search_ids(path)
+                    SELECT new.path
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM files_search_ids WHERE path = new.path
+                    );
+                    INSERT INTO files_search_fts(rowid, ${searchColumns})
+                    SELECT search_id, ${newSearchValues}
+                    FROM files_search_ids
+                    WHERE path = new.path;
+                END;
+            `);
+            db.prepare(`
+                INSERT INTO library_meta(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            `).run(FILE_SEARCH_INDEX_META_KEY, FILE_SEARCH_INDEX_VERSION);
+            rebuilt = true;
+        });
+        rebuild.immediate();
+        return rebuilt;
+    }
+
+    ensureSearchIndex(db = this.getConnection(), options = {}) {
+        if (this.searchIndexReady) return true;
+        if (this.searchIndexUnhealthy && options.repairUnhealthy !== true) return false;
+        if (options.repairUnhealthy === true) {
+            this.searchIndexAttempted = false;
+            this.searchIndexUnhealthy = false;
+        }
+        if (this.searchIndexAttempted) return false;
+        this.searchIndexAttempted = true;
+        try {
+            let verified = false;
+            let repairExisting = false;
+            try {
+                verified = this.hasReadySearchIndex(db);
+            } catch (error) {
+                if (!isRepairableSearchIndexError(error)) throw error;
+                repairExisting = true;
+            }
+            if (!verified) {
+                this.rebuildSearchIndex(db, { repairExisting });
+                if (!this.hasReadySearchIndex(db)) {
+                    throw new Error('Search index schema is incomplete after preparation.');
+                }
+            }
+            this.searchIndexReady = true;
+            this.searchIndexUnhealthy = false;
+        } catch (error) {
+            this.searchIndexReady = false;
+            if (isDatabaseBusyError(error)) {
+                this.searchIndexAttempted = false;
+            } else {
+                this.searchIndexUnhealthy = true;
+            }
+            console.warn(`[LibraryDB] Search index unavailable; using LIKE fallback: ${error.message}`);
+        }
+        return this.searchIndexReady;
+    }
+
+    async prepareSearchIndex() {
+        return this.withLock(async () => this.ensureSearchIndex(this.getConnection(), {
+            repairUnhealthy: true,
+        }));
+    }
+
     async initDB() {
         this.getConnection();
         return true;
@@ -405,6 +629,7 @@ export class LibraryDB {
 
     async searchFiles(query, libraryPaths = [], options = {}) {
         return this.withLock(async () => {
+            const db = this.getConnection();
             const term = String(query || '').trim();
             const normalizedPaths = [...new Set((libraryPaths || [])
                 .filter(Boolean)
@@ -412,22 +637,52 @@ export class LibraryDB {
             if (!term || normalizedPaths.length === 0) return [];
 
             const limit = Math.max(1, Math.min(5000, Number(options.limit) || 1000));
-            const libraryClauses = normalizedPaths.map(() => "(path LIKE ? ESCAPE '\\')");
-            const searchClauses = FILE_SEARCH_COLUMNS.map(column => `LOWER(COALESCE(${column}, '')) LIKE LOWER(?) ESCAPE '\\'`);
+            const libraryClauses = normalizedPaths.map(() => "(f.path LIKE ? ESCAPE '\\')");
+            const searchClauses = FILE_SEARCH_COLUMNS.map(column => `LOWER(COALESCE(f.${column}, '')) LIKE LOWER(?) ESCAPE '\\'`);
             const libraryParams = normalizedPaths.map(folder => `${escapeLikeValue(`${folder}${path.sep}`)}%`);
             const searchParam = `%${escapeLikeValue(term)}%`;
             const searchParams = FILE_SEARCH_COLUMNS.map(() => searchParam);
 
-            return this.getConnection().prepare(`
-                SELECT *
-                FROM files
+            const runLikeSearch = () => db.prepare(`
+                SELECT f.*
+                FROM files AS f
                 WHERE (${libraryClauses.join(' OR ')})
                     AND (${searchClauses.join(' OR ')})
                 ORDER BY
-                    COALESCE(NULLIF(series, ''), NULLIF(title, ''), path) COLLATE NOCASE ASC,
-                    path COLLATE NOCASE ASC
+                    COALESCE(NULLIF(f.series, ''), NULLIF(f.title, ''), f.path) COLLATE NOCASE ASC,
+                    f.path COLLATE NOCASE ASC
                 LIMIT ?
             `).all(...libraryParams, ...searchParams, limit);
+
+            if (
+                Array.from(term).length < 3
+                || options.useSearchIndex === false
+                || !this.ensureSearchIndex(db)
+            ) {
+                return runLikeSearch();
+            }
+
+            try {
+                return db.prepare(`
+                    SELECT f.*
+                    FROM files_search_fts
+                    JOIN files_search_ids AS ids ON ids.search_id = files_search_fts.rowid
+                    JOIN files AS f ON f.path = ids.path
+                    WHERE files_search_fts MATCH ?
+                        AND (${libraryClauses.join(' OR ')})
+                        AND (${searchClauses.join(' OR ')})
+                    ORDER BY
+                        COALESCE(NULLIF(f.series, ''), NULLIF(f.title, ''), f.path) COLLATE NOCASE ASC,
+                        f.path COLLATE NOCASE ASC
+                    LIMIT ?
+                `).all(ftsLiteralPhrase(term), ...libraryParams, ...searchParams, limit);
+            } catch (error) {
+                this.searchIndexReady = false;
+                this.searchIndexAttempted = true;
+                this.searchIndexUnhealthy = true;
+                console.warn(`[LibraryDB] Indexed search failed; using LIKE fallback: ${error.message}`);
+                return runLikeSearch();
+            }
         });
     }
 
@@ -1007,6 +1262,9 @@ export class LibraryDB {
             this.db.close();
             this.db = null;
         }
+        this.searchIndexAttempted = false;
+        this.searchIndexReady = false;
+        this.searchIndexUnhealthy = false;
         return Promise.resolve();
     }
 }

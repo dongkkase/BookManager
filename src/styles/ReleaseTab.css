@@ -78,6 +78,12 @@
   margin-bottom: 5px;
 }
 
+.release-card-body li > ul,
+.release-card-body li > ol {
+    margin: 5px 0 0;
+    padding-left: 20px;
+}
+
 .release-card-link {
   display: inline-block;
   margin-top: 14px;

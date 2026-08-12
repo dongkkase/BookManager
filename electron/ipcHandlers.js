@@ -59,6 +59,10 @@ import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { LibraryDB } from './database/library_db.js';
 import {
+  LibrarySearchService,
+  isRetryableLibrarySearchWorkerError,
+} from './librarySearchService.js';
+import {
   buildLibraryFolderIndexRecords,
   normalizeLibraryFolderForRenderer,
 } from './libraryFolderIndex.js';
@@ -2792,14 +2796,8 @@ function findContainingLibraryPath(filePath, libraryPaths = []) {
 }
 
 function thumbnailUrlForSearchResult(thumbnailPath) {
-  if (!thumbnailPath || !fs.existsSync(thumbnailPath)) return '';
-  let version = '';
-  try {
-    version = `?v=${Math.round(fs.statSync(thumbnailPath).mtimeMs)}`;
-  } catch {
-    version = '';
-  }
-  return `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}${version}`;
+  if (!thumbnailPath) return '';
+  return `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}`;
 }
 
 function fileMtimeToMs(value) {
@@ -2811,7 +2809,7 @@ function fileMtimeToMs(value) {
 function normalizeLibrarySearchFileForRenderer(row = {}) {
   const filePath = row.path || '';
   const mtimeMs = fileMtimeToMs(row.mtime);
-  const thumbnailPath = row.thumb_path && fs.existsSync(row.thumb_path) ? row.thumb_path : '';
+  const thumbnailPath = row.thumb_path || '';
   const hasMetadata = [
     row.title,
     row.series,
@@ -3105,6 +3103,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const apiCoverCacheDir = () => resolveApiCoverCacheDir(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
+  const librarySearchService = new LibrarySearchService(libraryDbPath());
+  void librarySearchService.prepare().catch(error => {
+    console.warn(`[LibrarySearch] Background index preparation failed: ${error.message}`);
+  });
   let cwebpExePromise = null;
   let ffmpegExePromise = null;
   let jpegtranExePromise = null;
@@ -3942,15 +3944,26 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       ? payload.libraries
       : [...(config.libraries || []), ...(config.dup_check_folders || [])])
       .filter(Boolean)
-      .map(folder => path.resolve(folder))
-      .filter(folder => fs.existsSync(folder)))];
-    const db = new LibraryDB({ dbPath: libraryDbPath() });
+      .map(folder => path.resolve(folder)))];
+    const searchInWorker = () => librarySearchService.search(
+      payload.query || '',
+      targetLibraries,
+      payload.options || {},
+    );
+    let rows;
     try {
-      const rows = await db.searchFiles(payload.query || '', targetLibraries, payload.options || {});
-      return rows.map(normalizeLibrarySearchFileForRenderer);
-    } finally {
-      await db.close();
+      rows = await searchInWorker();
+    } catch (error) {
+      if (!isRetryableLibrarySearchWorkerError(error)) throw error;
+      console.warn(`[LibrarySearch] Worker transport failed; retrying once: ${error.message}`);
+      try {
+        rows = await searchInWorker();
+      } catch (retryError) {
+        console.warn(`[LibrarySearch] Worker retry failed: ${retryError.message}`);
+        throw retryError;
+      }
     }
+    return rows.map(normalizeLibrarySearchFileForRenderer);
   });
 
   ipcMain.handle('folder:getLibraryScanStates', async (_event, folders = []) => {
@@ -5004,6 +5017,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     },
     clear(ownerId) {
       runtimeStates.delete(ownerId);
+    },
+    dispose() {
+      return librarySearchService.close();
     },
   };
 }

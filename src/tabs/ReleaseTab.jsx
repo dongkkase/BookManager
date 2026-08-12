@@ -27,6 +27,22 @@ function InlineContent({ tokens, onOpenExternal }) {
     });
 }
 
+function MarkdownList({ items, onOpenExternal }) {
+    const List = items.every(item => item.ordered) ? 'ol' : 'ul';
+    return (
+        <List>
+            {items.map((item, index) => (
+                <li key={index}>
+                    <InlineContent tokens={item.content} onOpenExternal={onOpenExternal} />
+                    {item.children.length > 0 && (
+                        <MarkdownList items={item.children} onOpenExternal={onOpenExternal} />
+                    )}
+                </li>
+            ))}
+        </List>
+    );
+}
+
 function MarkdownBody({ markdown, onOpenExternal }) {
     const blocks = useMemo(() => parseReleaseMarkdown(markdown), [markdown]);
 
@@ -37,15 +53,12 @@ function MarkdownBody({ markdown, onOpenExternal }) {
             return <Heading key={key}><InlineContent tokens={block.content} onOpenExternal={onOpenExternal} /></Heading>;
         }
         if (block.type === 'list') {
-            const List = block.items.every(item => item.ordered) ? 'ol' : 'ul';
             return (
-                <List key={key}>
-                    {block.items.map((item, itemIndex) => (
-                        <li key={itemIndex}>
-                            <InlineContent tokens={item.content} onOpenExternal={onOpenExternal} />
-                        </li>
-                    ))}
-                </List>
+                <MarkdownList
+                    key={key}
+                    items={block.items}
+                    onOpenExternal={onOpenExternal}
+                />
             );
         }
         if (block.type === 'code') {
