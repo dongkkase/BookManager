@@ -43,7 +43,7 @@ test('현재 표시 중인 만화 이미지는 비동기 고품질 축소를 사
     assert.match(viewerCss, /\.viewer-comic-quality-canvas \{[\s\S]*pointer-events:\s*none;/);
     assert.match(viewerCss, /\.viewer-comic-page-frame\[data-high-quality-ready='true'\] \.viewer-comic-image \{[\s\S]*opacity:\s*0;/);
     assert.match(viewerCss, /\.viewer-comic-page-frame\[data-high-quality-ready='true'\] \.viewer-comic-quality-canvas \{[\s\S]*opacity:\s*1;/);
-    assert.match(viewerCss, /\.viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-quality-canvas \{[\s\S]*box-shadow:\s*none;/);
+    assert.match(viewerCss, /\.viewer-comic-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-comic-quality-canvas \{[\s\S]*box-shadow:\s*none;/);
 });
 
 test('고품질 축소는 주요 래스터 만화 형식을 지원하고 GIF와 벡터 형식은 제외한다', () => {
@@ -61,7 +61,11 @@ test('고품질 축소는 일반 보기와 책넘김의 현재 인접 펼침면�
     const renderComicSource = sourceBetween(viewerSource, 'const renderComic = () => {', 'const readerStyle = {');
     const scrollBranch = sourceBetween(renderComicSource, "if (flowMode === 'scroll') {", 'const isBookPageEffect');
     const flipBookBranch = sourceBetween(renderComicSource, 'if (isBookPageEffect) {', 'const displayStartIndex');
-    const standardBranch = sourceBetween(renderComicSource, 'const displayStartIndex', 'return (\n      <div className={comicStageClassName}>');
+    const standardBranch = sourceBetween(
+        renderComicSource,
+        'const displayStartIndex',
+        'return (\n      <div\n        className={comicStageClassName}',
+    );
 
     assert.doesNotMatch(scrollBranch, /highQuality/);
     assert.match(flipBookBranch, /highQuality:\s*Boolean\(renderState\?\.isNearCurrent\)/);
@@ -74,7 +78,7 @@ test('고품질 축소는 일반 보기와 책넘김의 현재 인접 펼침면�
     assert.match(viewerSource, /observedDevicePixelSize\.width \* normalizedQualityScale/);
     assert.match(viewerSource, /styledWidth \* normalizedQualityScale/);
     assert.match(viewerCss, /\.viewer-flipbook-page \.viewer-comic-quality-canvas \{[\s\S]*box-shadow:\s*none;/);
-    assert.match(standardBranch, /displayComicPages\.map[\s\S]*\{ highQuality: true \}/);
+    assert.match(standardBranch, /comicTransitionLayers[\s\S]*layerPages\.map[\s\S]*\{ highQuality: true \}/);
     assert.match(viewerSource, /highQuality=\{Boolean\(options\.highQuality && supportsHighQualityComicDownsample\(page\)\)\}/);
 });
 

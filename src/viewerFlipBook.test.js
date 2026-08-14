@@ -134,7 +134,7 @@ test('책넘김 시 이전 배경과 새 배경은 같은 프레임에서 밝기
     assert.match(viewerSource, /visible:\s*layer\.id === nextLayerId/);
     assert.match(viewerSource, /BOOK_PAGE_TURN_DURATION \+ BOOK_AMBIENT_FADE_CLEANUP_BUFFER/);
     assert.match(viewerCss, /\.viewer-flipbook-ambient-layer \{[\s\S]*isolation:\s*isolate;/);
-    assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer \{[\s\S]*transition:\s*opacity var\(--viewer-flipbook-ambient-fade-duration, 720ms\) ease-in-out;/);
+    assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer \{[\s\S]*transition:\s*opacity var\(--viewer-flipbook-ambient-fade-duration, 320ms\) ease-in-out;/);
     assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer \{[\s\S]*mix-blend-mode:\s*plus-lighter;/);
     assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer\.is-visible \{\s*opacity:\s*1;/);
 });

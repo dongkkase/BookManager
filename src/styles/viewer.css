@@ -599,6 +599,35 @@
   background: rgba(10, 10, 10, 0.24);
 }
 
+.viewer-initial-render-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.viewer-app.is-initial-render-loading .viewer-state:not(.viewer-error) {
+  visibility: hidden;
+}
+
+.viewer-initial-render-loading-indicator {
+  display: block;
+  padding: 10px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.5);
+  line-height: 0;
+}
+
+.viewer-initial-render-loading-indicator img {
+  display: block;
+  width: 36px;
+  height: 36px;
+  filter: invert(1);
+}
+
 .viewer-content.is-drag-panning,
 .viewer-content.is-drag-panning * {
   cursor: grabbing !important;
@@ -670,6 +699,8 @@
 
 .viewer-comic-stage {
   position: relative;
+  box-sizing: border-box;
+  height: 100%;
   min-height: 100%;
   display: flex;
   align-items: center;
@@ -705,26 +736,72 @@
   gap: 0;
 }
 
+.viewer-page-transition-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  backface-visibility: hidden;
+}
+
+.viewer-page-transition-layer.is-outgoing {
+  z-index: 1;
+}
+
+.viewer-page-transition-layer.is-incoming,
+.viewer-page-transition-layer.is-current {
+  z-index: 2;
+}
+
+.has-page-effect.is-preparing > .viewer-page-transition-layer.is-incoming {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.has-page-effect.is-animating > .viewer-page-transition-layer {
+  overflow: hidden;
+  will-change: opacity, transform;
+  pointer-events: none;
+}
+
+.viewer-comic-stage > .viewer-page-transition-layer {
+  align-items: center;
+  align-items: safe center;
+  justify-content: center;
+  justify-content: safe center;
+  gap: 8px;
+  padding: 12px;
+}
+
+.viewer-comic-stage.is-actual > .viewer-page-transition-layer {
+  align-items: flex-start;
+}
+
 .viewer-comic-stage.is-spread:not(.viewer-flipbook-stage) .viewer-comic-image {
   max-height: calc(100vh - 70px);
   max-width: 48%;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-page-frame {
   flex: 0 1 auto;
   max-width: 50%;
   margin: 0;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-image {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-image {
   box-shadow: none;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame:first-child .viewer-comic-image {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-page-frame:first-child .viewer-comic-image {
   object-position: right center;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame:last-child .viewer-comic-image {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-page-frame:last-child .viewer-comic-image {
   object-position: left center;
 }
 
@@ -735,27 +812,6 @@
   justify-content: center;
   min-width: 0;
   line-height: 0;
-}
-
-.viewer-comic-stage.has-page-effect {
-  perspective: 1800px;
-  perspective-origin: center center;
-}
-
-.viewer-comic-stage.has-page-effect .viewer-comic-page-frame,
-.viewer-comic-stage.has-page-effect .viewer-comic-placeholder {
-  backface-visibility: hidden;
-  will-change: opacity, transform;
-}
-
-.viewer-comic-stage.effect-slide.effect-next .viewer-comic-page-frame,
-.viewer-comic-stage.effect-slide.effect-next .viewer-comic-placeholder {
-  animation: viewer-comic-slide-next 180ms ease-out both;
-}
-
-.viewer-comic-stage.effect-slide.effect-previous .viewer-comic-page-frame,
-.viewer-comic-stage.effect-slide.effect-previous .viewer-comic-placeholder {
-  animation: viewer-comic-slide-previous 180ms ease-out both;
 }
 
 .viewer-comic-stage.effect-page {
@@ -814,7 +870,7 @@
   pointer-events: none;
   overflow: visible;
   opacity: 0;
-  transition: opacity var(--viewer-flipbook-ambient-fade-duration, 720ms) ease-in-out;
+  transition: opacity var(--viewer-flipbook-ambient-fade-duration, 320ms) ease-in-out;
   mix-blend-mode: plus-lighter;
   will-change: opacity;
 }
@@ -1071,15 +1127,15 @@
   opacity: 1;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-quality-canvas {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-quality-canvas {
   box-shadow: none;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame:first-child .viewer-comic-quality-canvas {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-page-frame:first-child .viewer-comic-quality-canvas {
   object-position: right center;
 }
 
-.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame:last-child .viewer-comic-quality-canvas {
+.viewer-comic-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-comic-page-frame:last-child .viewer-comic-quality-canvas {
   object-position: left center;
 }
 
@@ -1139,27 +1195,101 @@
   box-shadow: none;
 }
 
-@keyframes viewer-comic-slide-next {
+.is-animating.effect-slide.effect-next > .viewer-page-transition-layer.is-outgoing {
+  animation: viewer-page-slide-out-next var(--viewer-page-effect-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-animating.effect-slide.effect-next > .viewer-page-transition-layer.is-incoming {
+  animation: viewer-page-slide-in-next var(--viewer-page-effect-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-animating.effect-slide.effect-previous > .viewer-page-transition-layer.is-outgoing {
+  animation: viewer-page-slide-out-previous var(--viewer-page-effect-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-animating.effect-slide.effect-previous > .viewer-page-transition-layer.is-incoming {
+  animation: viewer-page-slide-in-previous var(--viewer-page-effect-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-animating.effect-fade > .viewer-page-transition-layer.is-outgoing {
+  opacity: 1;
+}
+
+.is-animating.effect-fade > .viewer-page-transition-layer.is-incoming {
+  animation: viewer-page-fade-in var(--viewer-page-effect-duration, 260ms) ease-in-out both;
+}
+
+.viewer-app.is-background-immersive .is-animating.effect-fade {
+  isolation: isolate;
+}
+
+.viewer-app.is-background-immersive .is-animating.effect-fade > .viewer-page-transition-layer.is-outgoing {
+  animation: viewer-page-fade-out var(--viewer-page-effect-duration, 260ms) ease-in-out both;
+  mix-blend-mode: plus-lighter;
+}
+
+.viewer-app.is-background-immersive .is-animating.effect-fade > .viewer-page-transition-layer.is-incoming {
+  animation: viewer-page-fade-in var(--viewer-page-effect-duration, 260ms) ease-in-out both;
+  mix-blend-mode: plus-lighter;
+}
+
+@keyframes viewer-page-slide-out-next {
   from {
-    opacity: 0.35;
-    transform: translateX(28px);
+    transform: translateX(0);
   }
 
   to {
-    opacity: 1;
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes viewer-page-slide-in-next {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
     transform: translateX(0);
   }
 }
 
-@keyframes viewer-comic-slide-previous {
+@keyframes viewer-page-slide-out-previous {
   from {
-    opacity: 0.35;
-    transform: translateX(-28px);
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes viewer-page-slide-in-previous {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes viewer-page-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes viewer-page-fade-in {
+  from {
+    opacity: 0;
   }
 
   to {
     opacity: 1;
-    transform: translateX(0);
   }
 }
 
@@ -1177,7 +1307,14 @@
   overflow: hidden;
 }
 
-.viewer-reader-stage.is-spread .viewer-text-page {
+.viewer-reader-stage > .viewer-page-transition-layer {
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  padding: var(--viewer-reader-stage-padding);
+}
+
+.viewer-reader-stage.is-spread .viewer-page-transition-layer .viewer-text-page {
   flex: 0 1 680px;
   max-width: 680px;
 }
@@ -1186,65 +1323,28 @@
   gap: 0;
 }
 
-.viewer-reader-stage.is-spread.has-spread-pair .viewer-spread-pair {
+.viewer-reader-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-spread-pair {
   height: 100%;
   align-items: stretch;
 }
 
-.viewer-reader-stage.is-spread.has-spread-pair .viewer-text-page {
+.viewer-reader-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-text-page {
   flex: 0 1 680px;
   margin-left: 0;
   margin-right: 0;
 }
 
-.viewer-reader-stage.is-width .viewer-text-page {
+.viewer-reader-stage.is-width .viewer-page-transition-layer .viewer-text-page {
   max-width: none;
 }
 
-.viewer-reader-stage.is-width.is-spread .viewer-text-page {
+.viewer-reader-stage.is-width.is-spread .viewer-page-transition-layer .viewer-text-page {
   flex-basis: 50%;
-}
-
-.viewer-reader-stage.has-page-effect .viewer-text-page {
-  backface-visibility: hidden;
-  will-change: opacity, transform;
-}
-
-.viewer-reader-stage.effect-slide.effect-next .viewer-text-page {
-  animation: viewer-reader-slide-next 180ms ease-out both;
-}
-
-.viewer-reader-stage.effect-slide.effect-previous .viewer-text-page {
-  animation: viewer-reader-slide-previous 180ms ease-out both;
 }
 
 .viewer-reader-stage.effect-page {
   perspective: 2200px;
   perspective-origin: center center;
-}
-
-@keyframes viewer-reader-slide-next {
-  from {
-    opacity: 0.35;
-    transform: translateX(28px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes viewer-reader-slide-previous {
-  from {
-    opacity: 0.35;
-    transform: translateX(-28px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 
 .viewer-pdf-stage {
@@ -1260,29 +1360,12 @@
   background: transparent;
 }
 
-.viewer-pdf-stage.has-page-effect {
-  perspective: 1800px;
-  perspective-origin: center center;
-}
-
-.viewer-pdf-stage.has-page-effect .viewer-pdf-page {
-  backface-visibility: hidden;
-  will-change: opacity, transform;
-}
-
-.viewer-pdf-stage.effect-slide.effect-next .viewer-pdf-page {
-  animation: viewer-pdf-slide-next 180ms ease-out both;
-}
-
-.viewer-pdf-stage.effect-slide.effect-previous .viewer-pdf-page {
-  animation: viewer-pdf-slide-previous 180ms ease-out both;
-}
-
-.viewer-comic-stage.effect-fade .viewer-comic-page-frame,
-.viewer-comic-stage.effect-fade .viewer-comic-placeholder,
-.viewer-reader-stage.effect-fade .viewer-text-page,
-.viewer-pdf-stage.effect-fade .viewer-pdf-page {
-  animation: viewer-page-fade 180ms ease-out both;
+.viewer-pdf-stage > .viewer-page-transition-layer {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  padding: 18px 0 32px;
 }
 
 .viewer-pdf-stage.effect-page {
@@ -1294,6 +1377,18 @@
 .viewer-pdf-stage.is-spread {
   justify-content: center;
   padding: 12px;
+}
+
+.viewer-pdf-stage.is-single > .viewer-page-transition-layer,
+.viewer-pdf-stage.is-spread > .viewer-page-transition-layer {
+  justify-content: center;
+  padding: 12px;
+}
+
+.viewer-pdf-stage.is-spread > .viewer-page-transition-layer {
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
 }
 
 .viewer-pdf-stage.is-spread {
@@ -1314,22 +1409,22 @@
   max-width: 50%;
 }
 
-.viewer-pdf-stage.is-spread.has-spread-pair .viewer-pdf-canvas-wrap {
+.viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-canvas-wrap {
   max-width: 100%;
   box-shadow: none;
 }
 
-.viewer-pdf-stage.is-spread.has-spread-pair .viewer-pdf-page {
+.viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-page {
   width: auto;
   flex: 0 1 auto;
   max-width: 50%;
 }
 
-.viewer-pdf-stage.is-spread.has-spread-pair .viewer-pdf-page:first-child {
+.viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-page:first-child {
   align-items: center;
 }
 
-.viewer-pdf-stage.is-spread.has-spread-pair .viewer-pdf-page:last-child {
+.viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-page:last-child {
   align-items: center;
 }
 
@@ -1431,40 +1526,6 @@
 .viewer-pdf-page-number {
   color: #bdbdbd;
   font-size: 11px;
-}
-
-@keyframes viewer-pdf-slide-next {
-  from {
-    opacity: 0.35;
-    transform: translateX(28px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes viewer-pdf-slide-previous {
-  from {
-    opacity: 0.35;
-    transform: translateX(-28px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes viewer-page-fade {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
 }
 
 .viewer-text-page {

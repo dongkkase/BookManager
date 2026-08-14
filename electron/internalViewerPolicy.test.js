@@ -905,20 +905,20 @@ test('두장보기모드는 두 페이지가 있을 때 가운데로 붙여서 �
     assert.match(i18nSource, /context_comic_single_page: '만화책 두장보기에서 순서가 어긋난 페이지를 단독 페이지로 분리/);
     assert.match(viewerAppSource, /const stageGap = flowMode === 'spread' \? 0 : 10/);
     assert.match(viewerAppSource, /const pageFrameWidth = Math\.min\(maxPageWidth,\s*Math\.max\(220,\s*\(stageWidth - stageGap\) \/ pageColumns\)\)/);
-    assert.match(viewerAppSource, /const pageSlots = hasSpreadPair \? 2 : 1/);
+    assert.match(viewerAppSource, /const layerPageSlots = layerHasSpreadPair \? 2 : 1/);
     assert.match(viewerAppSource, /const horizontalInset = slots > 1 \? 24 : 64/);
     assert.match(viewerAppSource, /const availableWidth = Math\.max\(220,\s*\(\(Number\(containerWidth\) \|\| 900\) - horizontalInset\) \/ slots\)/);
     assert.match(viewerStyleSource, /viewer-spread-pair[\s\S]*?gap:\s*0/);
     assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair[\s\S]*?gap:\s*0/);
-    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-page-frame[\s\S]*?flex:\s*0 1 auto/);
-    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-page-frame:first-child \.viewer-comic-image[\s\S]*?object-position:\s*right center/);
-    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread\.has-spread-pair \.viewer-comic-page-frame:last-child \.viewer-comic-image[\s\S]*?object-position:\s*left center/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-comic-page-frame[\s\S]*?flex:\s*0 1 auto/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-comic-page-frame:first-child \.viewer-comic-image[\s\S]*?object-position:\s*right center/);
+    assert.match(viewerStyleSource, /viewer-comic-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-comic-page-frame:last-child \.viewer-comic-image[\s\S]*?object-position:\s*left center/);
     assert.match(viewerStyleSource, /viewer-reader-stage\.is-spread\.has-spread-pair[\s\S]*?gap:\s*0/);
-    assert.match(viewerStyleSource, /viewer-reader-stage\.is-spread\.has-spread-pair \.viewer-spread-pair[\s\S]*?align-items:\s*stretch/);
+    assert.match(viewerStyleSource, /viewer-reader-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-spread-pair[\s\S]*?align-items:\s*stretch/);
     assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread[\s\S]*?gap:\s*0/);
-    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread\.has-spread-pair \.viewer-pdf-canvas-wrap[\s\S]*?max-width:\s*100%/);
-    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread\.has-spread-pair \.viewer-pdf-page[\s\S]*?flex:\s*0 1 auto/);
-    assert.doesNotMatch(viewerStyleSource, /viewer-pdf-stage\.is-spread\.has-spread-pair \.viewer-pdf-page[\s\S]*?flex:\s*0 0 50%/);
+    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-pdf-canvas-wrap[\s\S]*?max-width:\s*100%/);
+    assert.match(viewerStyleSource, /viewer-pdf-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-pdf-page[\s\S]*?flex:\s*0 1 auto/);
+    assert.doesNotMatch(viewerStyleSource, /viewer-pdf-stage\.is-spread \.viewer-page-transition-layer\.has-spread-pair \.viewer-pdf-page[\s\S]*?flex:\s*0 0 50%/);
 });
 
 test('뷰어 인접권 버튼은 사용 가능할 때만 동작한다', () => {
