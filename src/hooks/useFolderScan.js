@@ -101,6 +101,67 @@ export function trimFolderFileDataCache(cache = {}, order = [], keepKey = '') {
   return next;
 }
 
+export function coordinateFolderScanRequest({
+    activeScans,
+    queuedForceScans,
+    cacheKey,
+    force = false,
+    execute,
+}) {
+    const activeScan = activeScans.get(cacheKey);
+    if (activeScan) {
+        if (!force || activeScan.force) return activeScan.promise;
+
+        const existingQueuedForce = queuedForceScans.get(cacheKey);
+        if (existingQueuedForce) return existingQueuedForce;
+
+        let queuedForcePromise;
+        const startForcedScan = () => {
+            if (activeScans.get(cacheKey) === activeScan) {
+                activeScans.delete(cacheKey);
+            }
+            if (queuedForceScans.get(cacheKey) === queuedForcePromise) {
+                queuedForceScans.delete(cacheKey);
+            }
+            return coordinateFolderScanRequest({
+                activeScans,
+                queuedForceScans,
+                cacheKey,
+                force: true,
+                execute,
+            });
+        };
+        queuedForcePromise = activeScan.promise.then(startForcedScan, startForcedScan);
+        queuedForceScans.set(cacheKey, queuedForcePromise);
+        const releaseQueuedForce = () => {
+            if (queuedForceScans.get(cacheKey) === queuedForcePromise) {
+                queuedForceScans.delete(cacheKey);
+            }
+        };
+        queuedForcePromise.then(releaseQueuedForce, releaseQueuedForce);
+        return queuedForcePromise;
+    }
+
+    const promise = Promise.resolve().then(execute);
+    const activeEntry = { force, promise };
+    activeScans.set(cacheKey, activeEntry);
+    const releaseActiveScan = () => {
+        if (activeScans.get(cacheKey) === activeEntry) {
+            activeScans.delete(cacheKey);
+        }
+    };
+    promise.then(releaseActiveScan, releaseActiveScan);
+    return promise;
+}
+
+export function shouldApplyFolderFileUpdate(currentFile = {}, incomingFile = {}) {
+    const currentMtime = Number(currentFile?.mtime);
+    const incomingMtime = Number(incomingFile?.mtime);
+    if (!Number.isFinite(currentMtime) || currentMtime <= 0) return true;
+    if (!Number.isFinite(incomingMtime) || incomingMtime <= 0) return true;
+    return incomingMtime >= currentMtime;
+}
+
 /**
  * 폴더 스캔 상태 관리 훅
  * 
@@ -127,6 +188,7 @@ export function useFolderScan(t) {
   const fileDataCacheRef = useRef({});
   const fileDataCacheOrderRef = useRef([]);
   const activeScansRef = useRef(new Map());
+  const queuedForceScansRef = useRef(new Map());
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -134,6 +196,7 @@ export function useFolderScan(t) {
     return () => {
       mountedRef.current = false;
       activeScansRef.current.clear();
+      queuedForceScansRef.current.clear();
     };
   }, []);
 
@@ -151,6 +214,7 @@ export function useFolderScan(t) {
     return (Array.isArray(incomingFiles) ? incomingFiles : []).map(file => {
       const current = currentByPath.get(file?.path);
       if (!current) return file;
+      if (!shouldApplyFolderFileUpdate(current, file)) return current;
       return {
         ...current,
         ...file,
@@ -196,11 +260,8 @@ export function useFolderScan(t) {
       return fileDataCacheRef.current[cacheKey];
     }
 
-    if (activeScansRef.current.has(cacheKey)) {
-      return activeScansRef.current.get(cacheKey);
-    }
-
-    const scanPromise = (async () => {
+    const executeScan = async () => {
+      if (!mountedRef.current) return [];
       currentFolderRef.current = folderPath;
       if (mountedRef.current && !silent) {
         setScanning(true);
@@ -316,14 +377,27 @@ export function useFolderScan(t) {
         console.error('폴더 스캔 실패:', error);
         if (mountedRef.current && !silent) setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
         return [];
-      } finally {
-        activeScansRef.current.delete(cacheKey);
-        if (mountedRef.current && !silent && activeScansRef.current.size === 0) setScanning(false);
       }
-    })();
+    };
 
-    activeScansRef.current.set(cacheKey, scanPromise);
-    return scanPromise;
+    const scanPromise = coordinateFolderScanRequest({
+      activeScans: activeScansRef.current,
+      queuedForceScans: queuedForceScansRef.current,
+      cacheKey,
+      force,
+      execute: executeScan,
+    });
+    try {
+      return await scanPromise;
+    } finally {
+      if (
+        mountedRef.current
+        && activeScansRef.current.size === 0
+        && queuedForceScansRef.current.size === 0
+      ) {
+        setScanning(false);
+      }
+    }
   }, [getCacheKey, mergeFilesPreservingCover, t]);
 
   // --- 스캔 취소 ---
@@ -432,7 +506,7 @@ export function useFolderScan(t) {
           let changed = false;
           const nextFiles = currentFiles.map(file => {
             const updated = updatesByPath.get(file.path);
-            if (!updated) return file;
+            if (!updated || !shouldApplyFolderFileUpdate(file, updated)) return file;
             changed = true;
             return {
               ...file,

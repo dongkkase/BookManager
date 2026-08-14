@@ -777,6 +777,40 @@ function isValidCache(cached, stats) {
   );
 }
 
+function isSameFileSnapshot(previousStats, currentStats) {
+    if (!previousStats || !currentStats) return false;
+    for (const key of ['size', 'mtimeMs', 'ctimeMs']) {
+        const previousValue = Number(previousStats[key]);
+        const currentValue = Number(currentStats[key]);
+        if (!Number.isFinite(previousValue) || !Number.isFinite(currentValue) || previousValue !== currentValue) {
+            return false;
+        }
+    }
+    for (const key of ['dev', 'ino']) {
+        const previousValue = Number(previousStats[key]);
+        const currentValue = Number(currentStats[key]);
+        if (
+            Number.isFinite(previousValue)
+            && previousValue > 0
+            && Number.isFinite(currentValue)
+            && currentValue > 0
+            && previousValue !== currentValue
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+async function discardGeneratedThumbnail(thumbnailPath, thumbnailDir) {
+    if (!thumbnailPath || !thumbnailDir) return;
+    const resolvedDirectory = path.resolve(thumbnailDir);
+    const resolvedThumbnail = path.resolve(thumbnailPath);
+    const relativePath = path.relative(resolvedDirectory, resolvedThumbnail);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return;
+    await fs.promises.rm(resolvedThumbnail, { force: true }).catch(() => {});
+}
+
 function hasCurrentCachedThumbnail(cached, ext) {
   if (!cached?.thumb_path || !fs.existsSync(cached.thumb_path) || fs.statSync(cached.thumb_path).size <= 0) {
     return false;
@@ -1139,7 +1173,7 @@ async function safeUpsertFileInfo(libraryDb, info) {
   }
 }
 
-async function createFileData(fullPath, stats, options = {}) {
+async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCount = 0) {
   const name = path.basename(fullPath);
   const folderPath = path.dirname(fullPath);
   const ext = path.extname(name).toLowerCase();
@@ -1166,6 +1200,25 @@ async function createFileData(fullPath, stats, options = {}) {
       thumbnailEncoder: options.thumbnailEncoder,
       skipCoverExtraction: options.skipCoverExtraction === true,
     });
+    let latestStats;
+    try {
+      latestStats = await fs.promises.stat(fullPath);
+    } catch (error) {
+      await discardGeneratedThumbnail(extracted.thumb_path, options.thumbnailDir);
+      throw error;
+    }
+    if (!isSameFileSnapshot(stats, latestStats)) {
+      await discardGeneratedThumbnail(extracted.thumb_path, options.thumbnailDir);
+      if (sourceChangeRetryCount < 1) {
+        return createFileData(fullPath, latestStats, options, sourceChangeRetryCount + 1);
+      }
+      console.warn(`[FolderScan] File changed repeatedly during metadata extraction: ${fullPath}`);
+      return createFileData(fullPath, latestStats, {
+        ...options,
+        skipArchiveExtraction: true,
+        skipLibraryCache: true,
+      }, sourceChangeRetryCount + 1);
+    }
     archiveMeta = {
       ...(cacheValid ? archiveMeta : {}),
       ...extracted,

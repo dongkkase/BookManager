@@ -1275,9 +1275,11 @@ async function persistDocumentMetadata(item, options = {}) {
     const filePath = item.filepath || item.path || '';
     const stat = await fsp.stat(filePath);
     const existing = await libraryDb.getFileInfo(filePath).catch(() => null);
+    const invalidateThumbnail = isEpub(filePath) && Boolean(item.epubCoverChange);
     await libraryDb.upsertFileInfo({
       ...(existing || {}),
       ...metadataToLibraryRecord(item),
+      ...(invalidateThumbnail ? { thumb_path: '' } : {}),
       mtime: stat.mtimeMs / 1000,
       size: stat.size,
     });
@@ -1291,6 +1293,15 @@ async function persistDocumentMetadataIfPossible(item, options = {}) {
   if (!options.libraryDb && !options.dbPath) return false;
   await persistDocumentMetadata(item, options);
   return true;
+}
+
+async function refreshChangedEpubCoverThumbnail(item, filePath, options = {}) {
+  if (!isEpub(filePath) || !item.epubCoverChange || typeof options.refreshFilePreview !== 'function') return;
+  try {
+    await options.refreshFilePreview(filePath);
+  } catch (error) {
+    console.warn(`[Metadata] EPUB cover thumbnail refresh failed: ${filePath}`, error.message);
+  }
 }
 
 async function collectPublisherOptions(libraryDb) {
@@ -1756,8 +1767,12 @@ async function injectEpubMetadata(filePath, metadata, lang = 'ko', coverChange =
   const epubPackage = await readEpubPackage(filePath);
   if (!epubPackage) throw new Error(taskText(lang, 'metadata_epub_package_not_found'));
   let opfXml = updateEpubPackageXml(epubPackage.opfXml, metadata);
-  const coverAsset = await resolveEpubCoverChange(epubPackage, coverChange, options)
-    || await resolveEpubCompatibleCoverAsset(epubPackage, opfXml, options);
+  const requestedCoverChange = Boolean(coverChange?.type || coverChange?.source);
+  const changedCoverAsset = await resolveEpubCoverChange(epubPackage, coverChange, options);
+  if (requestedCoverChange && !changedCoverAsset) {
+    throw new Error(taskText(lang, 'metadata_epub_cover_not_found'));
+  }
+  const coverAsset = changedCoverAsset || await resolveEpubCompatibleCoverAsset(epubPackage, opfXml, options);
   if (coverAsset) {
     if (coverAsset.buffer) {
       await replaceZipEntry(filePath, coverAsset.entryName, coverAsset.buffer);
@@ -1901,7 +1916,6 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       await fsp.rename(filePath, sourceHoldingPath);
       try {
         await fsp.rename(tempArchive, filePath);
-        await fsp.rm(sourceHoldingPath, { force: true });
       } catch (error) {
         await fsp.rm(filePath, { force: true }).catch(() => {});
         if (fs.existsSync(sourceHoldingPath)) {
@@ -1909,7 +1923,11 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         }
         throw error;
       }
+      await fsp.rm(sourceHoldingPath, { force: true }).catch(error => {
+        console.warn(`[Metadata] Previous source cleanup failed: ${sourceHoldingPath}`, error.message);
+      });
       await persistDocumentMetadataIfPossible(item, options).catch(() => {});
+      await refreshChangedEpubCoverThumbnail(item, filePath, options);
       stats.success.push(item.name || path.basename(filePath));
     } catch (error) {
       stats.error.push(`${item.name || filePath} - ${error.message}`);

@@ -570,6 +570,101 @@ test('EPUB 표지는 로컬 이미지 파일을 EPUB 내부에 추가해 저장�
     }
 });
 
+test('EPUB 저장은 표지 변경 시에만 라이브러리 썸네일 경로를 비운다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-cache-'));
+    try {
+        const source = path.join(root, '표지 캐시 EPUB.epub');
+        await createEpubCoverFixture(source);
+
+        let databaseRow = {
+            path: source,
+            thumb_path: path.join(root, '기존-표지.jpg'),
+        };
+        const persistedThumbnailPaths = [];
+        const libraryDb = {
+            async getFileInfo() {
+                return databaseRow;
+            },
+            async upsertFileInfo(record) {
+                databaseRow = record;
+                persistedThumbnailPaths.push(record.thumb_path);
+            },
+        };
+        const refreshedThumbnailPath = path.join(root, '새-표지.png');
+
+        const coverSaved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '표지 변경 제목', Format: 'Novel' },
+            epubCoverChange: {
+                type: 'entry',
+                entryName: 'OEBPS/images/alt.png',
+            },
+        }], {
+            backup_on: false,
+            libraryDb,
+            async refreshFilePreview(filePath) {
+                assert.equal(filePath, source);
+                assert.equal(databaseRow.thumb_path, '');
+                databaseRow = { ...databaseRow, thumb_path: refreshedThumbnailPath };
+            },
+            shouldCancel: () => false,
+        });
+
+        assert.equal(coverSaved.stats.success.length, 1, coverSaved.stats.error.join('\n'));
+        assert.equal(persistedThumbnailPaths[0], '');
+        assert.equal(databaseRow.thumb_path, refreshedThumbnailPath);
+
+        const metadataSaved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '메타데이터만 변경', Format: 'Novel' },
+        }], {
+            backup_on: false,
+            libraryDb,
+            shouldCancel: () => false,
+        });
+
+        assert.equal(metadataSaved.stats.success.length, 1, metadataSaved.stats.error.join('\n'));
+        assert.equal(databaseRow.thumb_path, refreshedThumbnailPath);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('EPUB 저장은 선택한 내부 표지가 사라지면 기존 표지를 유지하고 실패를 알린다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-missing-'));
+    try {
+        const source = path.join(root, '사라진 표지 EPUB.epub');
+        await createEpubCoverFixture(source);
+        const original = fs.readFileSync(source);
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: source,
+            name: path.basename(source),
+            metadata: { Title: '저장되지 않아야 할 제목' },
+            epubCoverChange: {
+                type: 'entry',
+                entryName: 'OEBPS/images/missing.png',
+            },
+        }], {
+            backup_on: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(saved.stats.success.length, 0);
+        assert.equal(saved.stats.error.length, 1);
+        assert.match(saved.stats.error[0], /선택한 EPUB 표지 이미지를 찾을 수 없습니다/);
+        assert.deepEqual(fs.readFileSync(source), original);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('EPUB 표지는 저장 직전에 외부 뷰어 호환 이미지로 정규화할 수 있다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-epub-cover-normalize-'));
     try {

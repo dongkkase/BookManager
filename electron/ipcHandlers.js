@@ -2795,9 +2795,12 @@ function findContainingLibraryPath(filePath, libraryPaths = []) {
     .sort((left, right) => right.length - left.length)[0] || '';
 }
 
-function thumbnailUrlForSearchResult(thumbnailPath) {
+function thumbnailUrlForSearchResult(thumbnailPath, sourceMtime = 0, sourceSize = 0) {
   if (!thumbnailPath) return '';
-  return `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}`;
+  const baseUrl = `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}`;
+  const versionMtime = Math.round(fileMtimeToMs(sourceMtime));
+  const versionSize = Math.max(0, Number(sourceSize) || 0);
+  return versionMtime ? `${baseUrl}?v=${versionMtime}-${versionSize}` : baseUrl;
 }
 
 function fileMtimeToMs(value) {
@@ -2844,7 +2847,7 @@ function normalizeLibrarySearchFileForRenderer(row = {}) {
     description: row.summary || '',
     link: row.web || '',
     thumb_path: thumbnailPath,
-    cover: thumbnailUrlForSearchResult(thumbnailPath),
+    cover: thumbnailUrlForSearchResult(thumbnailPath, row.mtime, row.size),
     has_metadata: hasMetadata,
     duplicate_matches: [],
     dup_count: 0,
@@ -3582,6 +3585,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         sevenZExe,
         dbPath: libraryDbPath(),
         normalizeEpubCoverImage: normalizeEpubCoverImageBuffer,
+        refreshFilePreview: filePath => inspectFolderFile(filePath, {
+          dbPath: libraryDbPath(),
+          thumbnailDir: thumbnailDir(),
+          sevenZExe,
+          force: true,
+          thumbnailEncoder: encodeThumbnail,
+        }),
         shouldCancel: () => controller.shouldCancel(),
         lang: options.lang || config.language || config.lang || 'ko',
       }, (progress) => {
