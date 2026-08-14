@@ -31,7 +31,9 @@ test('내부 뷰어는 모달이 아니라 단일 BrowserWindow를 재사용한�
     assert.match(viewerWindowSource, /isLoadingMainFrame/);
     assert.match(viewerWindowSource, /plugins:\s*true/);
     assert.match(viewerWindowSource, /protocol\.handle\('bookmanager-comic'/);
+    assert.match(viewerWindowSource, /'Access-Control-Allow-Origin': '\*'/);
     assert.match(viewerWindowSource, /protocol\.handle\('bookmanager-document'/);
+    assert.match(mainSource, /scheme:\s*'bookmanager-comic'[\s\S]*corsEnabled:\s*true/);
     assert.match(mainSource, /setupViewerWindowManager/);
     assert.match(mainSource, /viewerWindow\.close\(\)/);
     assert.doesNotMatch(viewerWindowSource, /modal:\s*true/);

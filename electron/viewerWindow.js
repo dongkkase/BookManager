@@ -188,6 +188,7 @@ function registerComicProtocol(sessions) {
                 headers: {
                     'Content-Type': page.mime,
                     'Cache-Control': 'private, max-age=3600',
+                    'Access-Control-Allow-Origin': '*',
                 },
             });
         } catch {

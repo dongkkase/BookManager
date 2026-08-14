@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    comicDownsamplePasses,
     comicDownsampleTarget,
     paintComicDownsample,
 } from './comicImageDownsample.js';
@@ -90,65 +89,17 @@ test('comicDownsampleTarget skips invalid dimensions and images that would be en
     }), null);
 });
 
-test('comicDownsamplePasses halves large reductions before the final target', () => {
-    assert.deepEqual(comicDownsamplePasses({
-        sourceWidth: 4000,
-        sourceHeight: 6000,
-        targetWidth: 625,
-        targetHeight: 938,
-    }), [
-        { width: 2000, height: 3000 },
-        { width: 1000, height: 1500 },
-        { width: 625, height: 938 },
-    ]);
-});
-
-test('comicDownsamplePasses keeps temporary Canvas allocations under the pixel limit', () => {
-    const passes = comicDownsamplePasses({
-        sourceWidth: 8000,
-        sourceHeight: 12000,
-        targetWidth: 1000,
-        targetHeight: 1500,
-        maxIntermediatePixelCount: 8_000_000,
-    });
-
-    assert.deepEqual(passes.at(-1), { width: 1000, height: 1500 });
-    passes.slice(0, -1).forEach(pass => {
-        assert.ok(pass.width * pass.height <= 8_000_000);
-    });
-    passes.slice(1).forEach((pass, index) => {
-        assert.ok(pass.width < passes[index].width);
-        assert.ok(pass.height < passes[index].height);
-    });
-
-    const mismatchedRatioPasses = comicDownsamplePasses({
-        sourceWidth: 10000,
-        sourceHeight: 10000,
-        targetWidth: 4000,
-        targetHeight: 100,
-        maxIntermediatePixelCount: 8_000_000,
-    });
-    assert.deepEqual(mismatchedRatioPasses.at(-1), { width: 4000, height: 100 });
-    mismatchedRatioPasses.slice(0, -1).forEach(pass => {
-        assert.ok(pass.width * pass.height <= 8_000_000);
-    });
-});
-
-test('paintComicDownsample uses medium intermediate passes and a high quality final pass', () => {
+test('paintComicDownsample uses Lanczos3 in a staging Canvas and commits the completed result', async () => {
     const draws = [];
-    let scratchSequence = 0;
+    const resizeCalls = [];
     const makeCanvas = id => {
         const context = {
-            imageSmoothingEnabled: false,
-            imageSmoothingQuality: 'low',
             drawImage(input, ...args) {
                 draws.push({
                     input: input.id,
                     output: id,
-                    width: args.at(-2),
-                    height: args.at(-1),
-                    smoothingEnabled: this.imageSmoothingEnabled,
-                    smoothingQuality: this.imageSmoothingQuality,
+                    args,
+                    compositeOperation: this.globalCompositeOperation,
                 });
             },
         };
@@ -160,19 +111,101 @@ test('paintComicDownsample uses medium intermediate passes and a high quality fi
         };
     };
     const output = makeCanvas('output');
-    const painted = paintComicDownsample({
+    const staging = makeCanvas('staging');
+    const cancelToken = new Promise(() => {});
+    const painted = await paintComicDownsample({
         source: { id: 'source', naturalWidth: 4000, naturalHeight: 6000 },
         canvas: output,
         target: { width: 500, height: 750 },
-        createCanvas: () => makeCanvas(`scratch-${scratchSequence += 1}`),
+        createCanvas: () => staging,
+        cancelToken,
+        resizer: {
+            async resize(source, destination, options) {
+                resizeCalls.push({ source, destination, options });
+            },
+        },
     });
 
     assert.equal(painted, true);
-    assert.deepEqual(draws, [
-        { input: 'source', output: 'scratch-1', width: 2000, height: 3000, smoothingEnabled: true, smoothingQuality: 'medium' },
-        { input: 'scratch-1', output: 'scratch-2', width: 1000, height: 1500, smoothingEnabled: true, smoothingQuality: 'medium' },
-        { input: 'scratch-2', output: 'output', width: 500, height: 750, smoothingEnabled: true, smoothingQuality: 'high' },
-    ]);
+    assert.equal(resizeCalls.length, 1);
+    assert.equal(resizeCalls[0].source.id, 'source');
+    assert.equal(resizeCalls[0].destination.id, 'staging');
+    assert.deepEqual(resizeCalls[0].options, {
+        cancelToken,
+        filter: 'lanczos3',
+        unsharpAmount: 0,
+    });
+    assert.deepEqual(draws, [{
+        input: 'staging',
+        output: 'output',
+        args: [0, 0],
+        compositeOperation: 'copy',
+    }]);
     assert.equal(output.width, 500);
     assert.equal(output.height, 750);
+    assert.equal(staging.width, 1);
+    assert.equal(staging.height, 1);
+});
+
+test('paintComicDownsample keeps the previous Canvas when resizing fails and releases staging memory', async () => {
+    const output = {
+        width: 320,
+        height: 480,
+        getContext: () => ({ drawImage() {} }),
+    };
+    const staging = { width: 0, height: 0 };
+    const resizeError = new Error('resize failed');
+
+    await assert.rejects(paintComicDownsample({
+        source: { naturalWidth: 1600, naturalHeight: 2400 },
+        canvas: output,
+        target: { width: 400, height: 600 },
+        createCanvas: () => staging,
+        resizer: {
+            async resize() {
+                throw resizeError;
+            },
+        },
+    }), resizeError);
+
+    assert.equal(output.width, 320);
+    assert.equal(output.height, 480);
+    assert.equal(staging.width, 1);
+    assert.equal(staging.height, 1);
+});
+
+test('paintComicDownsample handles cancellation during resizer initialization', async () => {
+    let finishInitialization = null;
+    let rejectCancellation = null;
+    let resizeCalled = false;
+    const initialization = new Promise(resolve => {
+        finishInitialization = resolve;
+    });
+    const cancelToken = new Promise((_resolve, reject) => {
+        rejectCancellation = reject;
+    });
+    const abortError = new Error('canceled');
+    abortError.name = 'AbortError';
+    const staging = { width: 0, height: 0 };
+    const rendering = paintComicDownsample({
+        source: { naturalWidth: 1600, naturalHeight: 2400 },
+        canvas: { width: 320, height: 480 },
+        target: { width: 400, height: 600 },
+        createCanvas: () => staging,
+        cancelToken,
+        resizer: {
+            init: () => initialization,
+            async resize() {
+                resizeCalled = true;
+            },
+        },
+    });
+
+    rejectCancellation(abortError);
+    finishInitialization();
+
+    await assert.rejects(rendering, abortError);
+    assert.equal(resizeCalled, false);
+    assert.equal(staging.width, 1);
+    assert.equal(staging.height, 1);
 });

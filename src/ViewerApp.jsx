@@ -3690,12 +3690,17 @@ function ComicPageFrame({
     let generation = 0;
     let timerId = null;
     let observedDevicePixelSize = null;
+    let cancelActiveRender = null;
 
     const releaseCanvas = () => {
       if (canvas.width !== 1) canvas.width = 1;
       if (canvas.height !== 1) canvas.height = 1;
     };
-    const renderHighQualityImage = currentGeneration => {
+    const abortActiveRender = () => {
+      cancelActiveRender?.();
+      cancelActiveRender = null;
+    };
+    const renderHighQualityImage = async currentGeneration => {
       const image = imageRef.current;
       if (
         disposed
@@ -3724,15 +3729,32 @@ function ComicPageFrame({
         return;
       }
 
+      let rejectResize = null;
+      let resizeSettled = false;
+      const cancelToken = new Promise((_resolve, reject) => {
+        rejectResize = reject;
+      });
+      const cancelResize = () => {
+        if (resizeSettled) return;
+        resizeSettled = true;
+        const error = new Error('Comic image resize canceled.');
+        error.name = 'AbortError';
+        rejectResize(error);
+      };
+      cancelActiveRender = cancelResize;
+
       try {
-        const painted = paintComicDownsample({ source: image, canvas, target });
+        const painted = await paintComicDownsample({ source: image, canvas, target, cancelToken });
         if (!painted) releaseCanvas();
         if (!disposed && currentGeneration === generation) setQualityReady(painted);
-      } catch {
-        if (!disposed && currentGeneration === generation) {
+      } catch (error) {
+        if (error?.name !== 'AbortError' && !disposed && currentGeneration === generation) {
           releaseCanvas();
           setQualityReady(false);
         }
+      } finally {
+        resizeSettled = true;
+        if (cancelActiveRender === cancelResize) cancelActiveRender = null;
       }
     };
     const scheduleHighQualityRender = (delay = COMIC_HIGH_QUALITY_RENDER_DELAY_MS) => {
@@ -3740,10 +3762,10 @@ function ComicPageFrame({
       generation += 1;
       const currentGeneration = generation;
       if (timerId !== null) window.clearTimeout(timerId);
-      setQualityReady(false);
+      abortActiveRender();
       timerId = window.setTimeout(() => {
         timerId = null;
-        renderHighQualityImage(currentGeneration);
+        void renderHighQualityImage(currentGeneration);
       }, Math.max(0, Number(delay) || 0));
     };
 
@@ -3789,6 +3811,7 @@ function ComicPageFrame({
       disposed = true;
       generation += 1;
       if (timerId !== null) window.clearTimeout(timerId);
+      abortActiveRender();
       observer?.disconnect?.();
       window.removeEventListener('resize', handleWindowResize);
       qualityScheduleRef.current = null;
@@ -3811,6 +3834,7 @@ function ComicPageFrame({
       <img
         ref={imageRef}
         className={imageClassName}
+        crossOrigin={src.startsWith('bookmanager-comic:') ? 'anonymous' : undefined}
         src={src}
         alt={page.basename}
         draggable={false}

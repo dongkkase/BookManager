@@ -29,13 +29,14 @@ test('만화 이미지는 배율이 변해도 부드러운 기본 보간을 사�
     assert.doesNotMatch(imageRule, /image-rendering:\s*(?:crisp-edges|pixelated|-webkit-optimize-contrast)/);
 });
 
-test('현재 표시 중인 만화 이미지는 고품질 Canvas 축소를 사용한다', () => {
+test('현재 표시 중인 만화 이미지는 비동기 고품질 축소를 사용한다', () => {
     const pageFrameSource = sourceBetween(viewerSource, 'function ComicPageFrame({', 'function ComicFlipBookAmbientPage({');
 
     assert.match(viewerSource, /import \{ comicDownsampleTarget, paintComicDownsample \} from '\.\/comicImageDownsample';/);
     assert.match(pageFrameSource, /const qualityCanvasRef = useRef\(null\);/);
     assert.match(pageFrameSource, /const target = comicDownsampleTarget\(\{/);
-    assert.match(pageFrameSource, /paintComicDownsample\(\{ source: image, canvas, target \}\);/);
+    assert.match(pageFrameSource, /await paintComicDownsample\(\{ source: image, canvas, target, cancelToken \}\);/);
+    assert.match(pageFrameSource, /crossOrigin=\{src\.startsWith\('bookmanager-comic:'\) \? 'anonymous' : undefined\}/);
     assert.match(pageFrameSource, /qualityScheduleRef\.current\?\.\(0\);/);
     assert.match(pageFrameSource, /className="viewer-comic-quality-canvas"/);
     assert.match(pageFrameSource, /data-high-quality-ready=\{qualityReady \? 'true' : undefined\}/);
@@ -68,17 +69,19 @@ test('고품질 축소는 일반 단일 및 두 페이지 보기에만 적용한
     assert.match(viewerSource, /highQuality=\{Boolean\(options\.highQuality && supportsHighQualityComicDownsample\(page\)\)\}/);
 });
 
-test('고품질 Canvas는 리사이즈를 지연 처리하고 사용한 자원을 정리한다', () => {
+test('고품질 축소는 리사이즈를 지연 처리하고 진행 중인 작업과 자원을 정리한다', () => {
     const pageFrameSource = sourceBetween(viewerSource, 'function ComicPageFrame({', 'function ComicFlipBookAmbientPage({');
 
     assert.match(viewerSource, /const COMIC_HIGH_QUALITY_RENDER_DELAY_MS = 120;/);
     assert.match(pageFrameSource, /observer = new ResizeObserver\(handleResize\);[\s\S]*device-pixel-content-box/);
     assert.match(pageFrameSource, /const scheduleHighQualityRender = \(delay = COMIC_HIGH_QUALITY_RENDER_DELAY_MS\)[\s\S]*window\.setTimeout\(/);
-    assert.match(pageFrameSource, /setQualityReady\(false\);[\s\S]*window\.setTimeout\(/);
+    assert.match(pageFrameSource, /const cancelToken = new Promise/);
+    assert.match(pageFrameSource, /abortActiveRender\(\);[\s\S]*window\.setTimeout\(/);
     assert.match(pageFrameSource, /let generation = 0;/);
     assert.match(pageFrameSource, /currentGeneration !== generation/);
     assert.match(pageFrameSource, /generation \+= 1;/);
     assert.match(pageFrameSource, /if \(timerId !== null\) window\.clearTimeout\(timerId\);/);
+    assert.match(pageFrameSource, /error\.name = 'AbortError'/);
     assert.match(pageFrameSource, /observer\?\.disconnect\?\.\(\);/);
     assert.match(pageFrameSource, /qualityScheduleRef\.current = null;[\s\S]*releaseCanvas\(\);/);
 });

@@ -1,3 +1,12 @@
+import createPica from 'pica';
+
+const comicImageResizer = createPica({
+    concurrency: 2,
+    features: ['js', 'wasm', 'ww'],
+    idle: 10_000,
+    tile: 1024,
+});
+
 function positiveFiniteNumber(value) {
     const numericValue = Number(value);
     return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : null;
@@ -53,72 +62,13 @@ export function comicDownsampleTarget({
     return target;
 }
 
-export function comicDownsamplePasses({
-    sourceWidth,
-    sourceHeight,
-    targetWidth,
-    targetHeight,
-    maxPassScale = 0.5,
-    maxIntermediatePixelCount = 8_000_000,
-} = {}) {
-    const initialWidth = positivePixelDimension(sourceWidth);
-    const initialHeight = positivePixelDimension(sourceHeight);
-    const finalWidth = positivePixelDimension(targetWidth);
-    const finalHeight = positivePixelDimension(targetHeight);
-    const passScaleLimit = positiveFiniteNumber(maxPassScale);
-    const intermediatePixelLimit = positiveFiniteNumber(maxIntermediatePixelCount);
-    if (
-        initialWidth == null
-        || initialHeight == null
-        || finalWidth == null
-        || finalHeight == null
-        || passScaleLimit == null
-        || passScaleLimit >= 1
-        || intermediatePixelLimit == null
-        || finalWidth >= initialWidth
-        || finalHeight >= initialHeight
-    ) {
-        return [];
-    }
-
-    const passes = [];
-    let currentWidth = initialWidth;
-    let currentHeight = initialHeight;
-    while (true) {
-        const remainingWidthScale = finalWidth / currentWidth;
-        const remainingHeightScale = finalHeight / currentHeight;
-        if (Math.min(remainingWidthScale, remainingHeightScale) >= passScaleLimit) break;
-
-        let nextWidth = Math.max(finalWidth, Math.floor(currentWidth * passScaleLimit));
-        let nextHeight = Math.max(finalHeight, Math.floor(currentHeight * passScaleLimit));
-        if (nextWidth * nextHeight > intermediatePixelLimit) {
-            const pixelLimitScale = Math.sqrt(intermediatePixelLimit / (currentWidth * currentHeight));
-            nextWidth = Math.max(finalWidth, Math.floor(currentWidth * pixelLimitScale));
-            nextHeight = Math.max(finalHeight, Math.floor(currentHeight * pixelLimitScale));
-        }
-        if (
-            nextWidth * nextHeight > intermediatePixelLimit
-            || (nextWidth >= currentWidth && nextHeight >= currentHeight)
-            || (nextWidth === finalWidth && nextHeight === finalHeight)
-        ) {
-            break;
-        }
-
-        passes.push({ width: nextWidth, height: nextHeight });
-        currentWidth = nextWidth;
-        currentHeight = nextHeight;
-    }
-
-    passes.push({ width: finalWidth, height: finalHeight });
-    return passes;
-}
-
-export function paintComicDownsample({
+export async function paintComicDownsample({
     source,
     canvas,
     target,
     createCanvas,
-    maxIntermediatePixelCount = 8_000_000,
+    cancelToken,
+    resizer = comicImageResizer,
 } = {}) {
     const sourceWidth = positivePixelDimension(source?.naturalWidth || source?.width);
     const sourceHeight = positivePixelDimension(source?.naturalHeight || source?.height);
@@ -134,59 +84,51 @@ export function paintComicDownsample({
         return false;
     }
 
-    const passes = comicDownsamplePasses({
-        sourceWidth,
-        sourceHeight,
-        targetWidth,
-        targetHeight,
-        maxIntermediatePixelCount,
-    });
-    if (passes.length < 1) return false;
+    if (targetWidth >= sourceWidth || targetHeight >= sourceHeight || !resizer?.resize) return false;
 
     const canvasFactory = typeof createCanvas === 'function'
         ? createCanvas
         : () => canvas.ownerDocument?.createElement?.('canvas') || null;
-    const scratchCanvases = [];
-    let input = source;
-    let inputWidth = sourceWidth;
-    let inputHeight = sourceHeight;
+    const stagingCanvas = canvasFactory();
+    if (!stagingCanvas) return false;
 
     try {
-        passes.forEach((pass, index) => {
-            const finalPass = index === passes.length - 1;
-            const scratchIndex = index % 2;
-            const output = finalPass
-                ? canvas
-                : (scratchCanvases[scratchIndex] ||= canvasFactory());
-            if (!output) throw new Error('Canvas를 생성할 수 없습니다.');
+        stagingCanvas.width = targetWidth;
+        stagingCanvas.height = targetHeight;
+        let canceled = false;
+        let cancellationReason = null;
+        cancelToken?.then?.(
+            value => {
+                canceled = true;
+                cancellationReason = value;
+            },
+            error => {
+                canceled = true;
+                cancellationReason = error;
+            },
+        );
+        await resizer.init?.();
+        if (canceled) {
+            if (cancellationReason instanceof Error) throw cancellationReason;
+            const error = new Error('Comic image resize canceled.');
+            error.name = 'AbortError';
+            throw error;
+        }
+        await resizer.resize(source, stagingCanvas, {
+            cancelToken,
+            filter: 'lanczos3',
+            unsharpAmount: 0,
+        });
 
-            output.width = pass.width;
-            output.height = pass.height;
-            const context = output.getContext?.('2d');
-            if (!context) throw new Error('Canvas 2D 컨텍스트를 생성할 수 없습니다.');
-            context.imageSmoothingEnabled = true;
-            context.imageSmoothingQuality = finalPass ? 'high' : 'medium';
-            context.drawImage(
-                input,
-                0,
-                0,
-                inputWidth,
-                inputHeight,
-                0,
-                0,
-                pass.width,
-                pass.height,
-            );
-            input = output;
-            inputWidth = pass.width;
-            inputHeight = pass.height;
-        });
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const context = canvas.getContext?.('2d');
+        if (!context) throw new Error('Canvas 2D 컨텍스트를 생성할 수 없습니다.');
+        context.globalCompositeOperation = 'copy';
+        context.drawImage(stagingCanvas, 0, 0);
     } finally {
-        scratchCanvases.forEach(scratch => {
-            if (!scratch) return;
-            scratch.width = 1;
-            scratch.height = 1;
-        });
+        stagingCanvas.width = 1;
+        stagingCanvas.height = 1;
     }
 
     return true;
