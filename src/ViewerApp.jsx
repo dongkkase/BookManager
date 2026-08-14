@@ -5,6 +5,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
+import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
 import {
   buildFlipBookStructureKey,
   finishAndTurnFlipBookToPage,
@@ -79,12 +80,12 @@ const FLOW_MODES = [
   { id: 'scroll', label: '스크롤모드', labelKey: 'viewer.read_mode.scroll', iconSrc: readModeScrollIcon },
 ];
 const THEMES = [
-  { id: 'dark', label: '다크', bg: '#181818', fg: '#ededed' },
-  { id: 'black', label: '블랙', bg: '#050505', fg: '#f1f1f1' },
-  { id: 'paper', label: '종이', bg: '#f2ead9', fg: '#252018' },
-  { id: 'sepia', label: '세피아', bg: '#d8c3a0', fg: '#24190d' },
-  { id: 'white', label: '화이트', bg: '#f7f7f7', fg: '#202020' },
-  { id: 'green', label: '그린', bg: '#dfeedd', fg: '#162018' },
+  { id: 'dark', label: '다크', bg: '#181818', fg: '#ededed', headerFg: '#b1b1b1', footerFg: '#a0a0a0' },
+  { id: 'black', label: '블랙', bg: '#050505', fg: '#f1f1f1', headerFg: '#afafaf', footerFg: '#9c9c9c' },
+  { id: 'paper', label: '종이', bg: '#f2ead9', fg: '#252018', headerFg: '#5e594e', footerFg: '#6f695d' },
+  { id: 'sepia', label: '세피아', bg: '#d8c3a0', fg: '#24190d', headerFg: '#564936', footerFg: '#5e4f3c' },
+  { id: 'white', label: '화이트', bg: '#f7f7f7', fg: '#202020', headerFg: '#5c5c5c', footerFg: '#6d6d6d' },
+  { id: 'green', label: '그린', bg: '#dfeedd', fg: '#162018', headerFg: '#4e5a4f', footerFg: '#5e6a5f' },
 ];
 const DEFAULT_HIGHLIGHT_COLOR = 'yellow';
 const HIGHLIGHT_COLORS = [
@@ -750,10 +751,14 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
     activeGroupKeyRef.current = groupKey;
     layerIdRef.current += 1;
     const nextLayerId = layerIdRef.current;
-    setLayers(current => [
-      ...current,
-      { id: nextLayerId, groupKey, entries, visible: false },
-    ]);
+    setLayers(current => {
+      const outgoingLayer = [...current].reverse().find(layer => layer.visible)
+        || current[current.length - 1];
+      return [
+        ...(outgoingLayer ? [outgoingLayer] : []),
+        { id: nextLayerId, groupKey, entries, visible: false },
+      ];
+    });
 
     let revealFrame = 0;
     const mountFrame = window.requestAnimationFrame(() => {
@@ -814,14 +819,20 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
 const ViewerFlipBookPageRenderContext = React.createContext({
   renderPageRef: null,
   pageRenderDependency: null,
+  mountedBookIndexes: null,
+  currentBookIndexes: null,
   nearbyBookIndexes: null,
+  highQualityBookIndexes: null,
   visualScale: 1,
 });
 
 function ViewerFlipBookPageContent({ entry }) {
   const renderState = useContext(ViewerFlipBookPageRenderContext);
+  if (renderState.mountedBookIndexes && !renderState.mountedBookIndexes.has(entry.bookIndex)) return null;
   return renderState.renderPageRef?.current?.(entry.sourceIndex, entry, {
+    isCurrentGroup: renderState.currentBookIndexes?.has(entry.bookIndex) || false,
     isNearCurrent: renderState.nearbyBookIndexes?.has(entry.bookIndex) || false,
+    shouldRenderHighQuality: renderState.highQualityBookIndexes?.has(entry.bookIndex) || false,
     visualScale: renderState.visualScale,
   }) || null;
 }
@@ -841,13 +852,13 @@ function ViewerFlipBook({
   visualScale = 1,
   renderKey,
   provideNearbyPageState = false,
+  initialRenderLoading = false,
   renderAmbientPage,
   renderPage,
   onPageIndexChange,
 }) {
   const flipBookRef = useRef(null);
   const stageRef = useRef(null);
-  const [ambientBookIndex, setAmbientBookIndex] = useState(0);
   const lastAbsoluteNavigationKeyRef = useRef(absoluteNavigationKey);
   const absoluteTargetBookIndexRef = useRef(null);
   const renderPageRef = useRef(renderPage);
@@ -870,14 +881,40 @@ function ViewerFlipBook({
   const currentSourceIndex = clamp(Number(currentPageIndex) || 0, 0, Math.max(0, normalizedPageCount - 1));
   const currentBookIndex = model.pageToBookIndex.get(currentSourceIndex) ?? 0;
   const flipBookMountKey = `${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}-${structureKey}`;
+  const displayedSourceIndexRef = useRef(currentSourceIndex);
+  const [ambientBookIndex, setAmbientBookIndex] = useState(() => currentBookIndex);
+  const [displayedBookIndex, setDisplayedBookIndex] = useState(() => currentBookIndex);
+  const pageStateBookKeyRef = useRef(bookKey);
+  const pageStateMountKeyRef = useRef(flipBookMountKey);
+  const pageStateMountKeyChanged = pageStateMountKeyRef.current !== flipBookMountKey;
+  const pageStateBookKeyChanged = pageStateBookKeyRef.current !== bookKey;
+  const preservedDisplayedSourceIndex = pageStateBookKeyChanged
+    ? currentSourceIndex
+    : clamp(
+      Number(displayedSourceIndexRef.current) || 0,
+      0,
+      Math.max(0, normalizedPageCount - 1),
+    );
+  const remappedDisplayedBookIndex = model.pageToBookIndex.get(preservedDisplayedSourceIndex)
+    ?? currentBookIndex;
+  const effectiveAmbientBookIndex = pageStateMountKeyChanged
+    ? remappedDisplayedBookIndex
+    : ambientBookIndex;
+  const effectiveDisplayedBookIndex = pageStateMountKeyChanged
+    ? remappedDisplayedBookIndex
+    : displayedBookIndex;
   const initialBookIndexRef = useRef(currentBookIndex);
   const flipBookMountKeyRef = useRef(flipBookMountKey);
   if (flipBookMountKeyRef.current !== flipBookMountKey) {
     flipBookMountKeyRef.current = flipBookMountKey;
-    initialBookIndexRef.current = currentBookIndex;
+    initialBookIndexRef.current = remappedDisplayedBookIndex;
   }
   useLayoutEffect(() => {
-    setAmbientBookIndex(currentBookIndex);
+    pageStateBookKeyRef.current = bookKey;
+    pageStateMountKeyRef.current = flipBookMountKey;
+    displayedSourceIndexRef.current = preservedDisplayedSourceIndex;
+    setAmbientBookIndex(remappedDisplayedBookIndex);
+    setDisplayedBookIndex(remappedDisplayedBookIndex);
   }, [flipBookMountKey]);
   const bookPixelWidth = normalizedPageSize.width * (spread ? 2 : 1);
   const bookPixelHeight = normalizedPageSize.height;
@@ -898,47 +935,61 @@ function ViewerFlipBook({
     minWidth: `${Math.ceil(scaledBookPixelWidth) + 24}px`,
     minHeight: `${Math.ceil(scaledBookPixelHeight) + 24}px`,
   }), [scaledBookPixelHeight, scaledBookPixelWidth]);
-  pageChangeStateRef.current = { model, onPageIndexChange, spread };
+  pageChangeStateRef.current = { currentBookIndex, model, onPageIndexChange, spread };
   const handlePageChange = useCallback(bookIndex => {
     const pageChangeState = pageChangeStateRef.current;
     if (typeof pageChangeState?.onPageIndexChange !== 'function') return;
     const normalizedBookIndex = Math.max(0, Number(bookIndex) || 0);
+    if (normalizedBookIndex !== pageChangeState.currentBookIndex) return;
     if (absoluteTargetBookIndexRef.current != null) {
       if (normalizedBookIndex !== absoluteTargetBookIndexRef.current) return;
       absoluteTargetBookIndexRef.current = null;
     }
-    setAmbientBookIndex(normalizedBookIndex);
     const fallbackBookIndex = pageChangeState.spread ? normalizedBookIndex - (normalizedBookIndex % 2) : normalizedBookIndex;
     const nextPageIndex = pageChangeState.model.bookToPageIndex.get(normalizedBookIndex)
       ?? pageChangeState.model.bookToPageIndex.get(fallbackBookIndex);
-    if (Number.isInteger(nextPageIndex)) pageChangeState.onPageIndexChange(nextPageIndex);
+    setAmbientBookIndex(normalizedBookIndex);
+    setDisplayedBookIndex(normalizedBookIndex);
+    if (Number.isInteger(nextPageIndex)) {
+      displayedSourceIndexRef.current = nextPageIndex;
+      pageChangeState.onPageIndexChange(nextPageIndex);
+    }
   }, []);
   useLayoutEffect(() => {
-    if (lastAbsoluteNavigationKeyRef.current === absoluteNavigationKey) return;
-    lastAbsoluteNavigationKeyRef.current = absoluteNavigationKey;
-    const pageFlip = flipBookRef.current?.pageFlip?.();
-    if (!pageFlip) return;
-    absoluteTargetBookIndexRef.current = currentBookIndex;
-    setAmbientBookIndex(currentBookIndex);
-    if (!finishAndTurnFlipBookToPage(pageFlip, currentBookIndex)) {
+    if (lastAbsoluteNavigationKeyRef.current !== absoluteNavigationKey) {
+      lastAbsoluteNavigationKeyRef.current = absoluteNavigationKey;
+      absoluteTargetBookIndexRef.current = currentBookIndex;
+      return;
+    }
+    if (
+      absoluteTargetBookIndexRef.current != null
+      && absoluteTargetBookIndexRef.current !== currentBookIndex
+    ) {
       absoluteTargetBookIndexRef.current = null;
     }
   }, [absoluteNavigationKey, currentBookIndex]);
   useEffect(() => {
-    if (absoluteTargetBookIndexRef.current != null) return undefined;
     let frameId = 0;
     let disposed = false;
     const startedAt = window.performance?.now?.() || Date.now();
     const targetEntries = getFlipBookCurrentGroupEntries(model.entries, currentBookIndex);
 
     const requestFlip = () => {
-      if (disposed || absoluteTargetBookIndexRef.current != null) return;
+      if (disposed) return;
       const pageFlip = flipBookRef.current?.pageFlip?.();
       if (!pageFlip) {
         frameId = window.requestAnimationFrame(requestFlip);
         return;
       }
-      if (pageFlip.getCurrentPageIndex?.() === currentBookIndex) return;
+      const displayedIndex = Math.max(0, Number(pageFlip.getCurrentPageIndex?.()) || 0);
+      if (displayedIndex === currentBookIndex) {
+        displayedSourceIndexRef.current = currentSourceIndex;
+        setDisplayedBookIndex(currentBookIndex);
+        if (absoluteTargetBookIndexRef.current === currentBookIndex) {
+          absoluteTargetBookIndexRef.current = null;
+        }
+        return;
+      }
       const targetReady = targetEntries.every(entry => {
         if (entry.blank) return true;
         const target = stageRef.current?.querySelector?.(`[data-flipbook-index="${entry.bookIndex}"]`);
@@ -947,7 +998,20 @@ function ViewerFlipBook({
       const now = window.performance?.now?.() || Date.now();
       if (targetReady || now - startedAt >= PAGE_EFFECT_PREPARE_TIMEOUT) {
         setAmbientBookIndex(currentBookIndex);
-        pageFlip.flip(currentBookIndex);
+        const isAbsoluteNavigation = absoluteTargetBookIndexRef.current === currentBookIndex;
+        const singleTurnDistance = spread ? 2 : 1;
+        const isFarNavigation = Math.abs(displayedIndex - currentBookIndex) > singleTurnDistance;
+        if (isAbsoluteNavigation || isFarNavigation) {
+          if (finishAndTurnFlipBookToPage(pageFlip, currentBookIndex)) {
+            displayedSourceIndexRef.current = currentSourceIndex;
+            setDisplayedBookIndex(currentBookIndex);
+            if (isAbsoluteNavigation) absoluteTargetBookIndexRef.current = null;
+          } else if (isAbsoluteNavigation) {
+            absoluteTargetBookIndexRef.current = null;
+          }
+        } else {
+          pageFlip.flip(currentBookIndex);
+        }
         return;
       }
       frameId = window.requestAnimationFrame(requestFlip);
@@ -958,11 +1022,23 @@ function ViewerFlipBook({
       disposed = true;
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [currentBookIndex, pageFormat, structureKey]);
+  }, [currentBookIndex, currentSourceIndex, pageFormat, spread, structureKey]);
   const pageRenderDependency = renderKey ?? renderPage;
   const ambientEntries = useMemo(
-    () => getFlipBookCurrentGroupEntries(model.entries, ambientBookIndex),
-    [ambientBookIndex, model.entries],
+    () => getFlipBookCurrentGroupEntries(model.entries, effectiveAmbientBookIndex),
+    [effectiveAmbientBookIndex, model.entries],
+  );
+  const currentGroupEntries = useMemo(
+    () => getFlipBookCurrentGroupEntries(model.entries, currentBookIndex),
+    [currentBookIndex, model.entries],
+  );
+  const displayedGroupEntries = useMemo(
+    () => getFlipBookCurrentGroupEntries(model.entries, effectiveDisplayedBookIndex),
+    [effectiveDisplayedBookIndex, model.entries],
+  );
+  const currentBookIndexes = useMemo(
+    () => new Set(currentGroupEntries.map(entry => entry.bookIndex)),
+    [currentGroupEntries],
   );
   const nearbyBookIndexes = useMemo(() => {
     if (!provideNearbyPageState) return null;
@@ -971,12 +1047,100 @@ function ViewerFlipBook({
         .map(entry => entry.bookIndex),
     );
   }, [currentBookIndex, model.entries, provideNearbyPageState]);
+  const preloadKey = `${flipBookMountKey}:${currentGroupEntries[0]?.groupStartIndex ?? currentBookIndex}`;
+  const [nearbyPreloadState, setNearbyPreloadState] = useState(() => ({ key: preloadKey, phase: 0 }));
+  const nearbyPreloadPhase = nearbyPreloadState.key === preloadKey ? nearbyPreloadState.phase : 0;
+  useEffect(() => {
+    if (!provideNearbyPageState) return undefined;
+    if (initialRenderLoading || effectiveDisplayedBookIndex !== currentBookIndex) {
+      setNearbyPreloadState(current => (
+        current.key === preloadKey && current.phase === 0
+          ? current
+          : { key: preloadKey, phase: 0 }
+      ));
+      return undefined;
+    }
+    if (nearbyPreloadPhase >= 2) return undefined;
+
+    let idleId = null;
+    let timerId = null;
+    let disposed = false;
+    const advance = () => {
+      if (disposed) return;
+      setNearbyPreloadState(current => {
+        const phase = current.key === preloadKey ? current.phase : 0;
+        if (phase >= 2) return current;
+        return { key: preloadKey, phase: Math.min(2, phase + 1) };
+      });
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(advance, { timeout: 500 });
+    } else {
+      timerId = window.setTimeout(advance, 120);
+    }
+    return () => {
+      disposed = true;
+      if (idleId !== null) window.cancelIdleCallback?.(idleId);
+      if (timerId !== null) window.clearTimeout(timerId);
+    };
+  }, [
+    currentBookIndex,
+    effectiveDisplayedBookIndex,
+    initialRenderLoading,
+    nearbyPreloadPhase,
+    preloadKey,
+    provideNearbyPageState,
+  ]);
+  const mountedBookIndexes = useMemo(() => {
+    if (!provideNearbyPageState) return null;
+    const indexes = new Set([
+      ...currentGroupEntries.map(entry => entry.bookIndex),
+      ...displayedGroupEntries.map(entry => entry.bookIndex),
+    ]);
+    if (nearbyPreloadPhase >= 1) {
+      nearbyBookIndexes?.forEach(bookIndex => indexes.add(bookIndex));
+    }
+    return indexes;
+  }, [
+    currentGroupEntries,
+    displayedGroupEntries,
+    nearbyBookIndexes,
+    nearbyPreloadPhase,
+    provideNearbyPageState,
+  ]);
+  const highQualityBookIndexes = useMemo(() => {
+    if (!provideNearbyPageState) return null;
+    const indexes = new Set([
+      ...currentGroupEntries.map(entry => entry.bookIndex),
+      ...displayedGroupEntries.map(entry => entry.bookIndex),
+    ]);
+    if (nearbyPreloadPhase >= 2) {
+      nearbyBookIndexes?.forEach(bookIndex => indexes.add(bookIndex));
+    }
+    return indexes;
+  }, [
+    currentGroupEntries,
+    displayedGroupEntries,
+    nearbyBookIndexes,
+    nearbyPreloadPhase,
+    provideNearbyPageState,
+  ]);
   const pageRenderState = useMemo(() => ({
     renderPageRef,
     pageRenderDependency,
+    mountedBookIndexes,
+    currentBookIndexes,
     nearbyBookIndexes,
+    highQualityBookIndexes,
     visualScale: normalizedVisualScale,
-  }), [nearbyBookIndexes, normalizedVisualScale, pageRenderDependency]);
+  }), [
+    currentBookIndexes,
+    highQualityBookIndexes,
+    mountedBookIndexes,
+    nearbyBookIndexes,
+    normalizedVisualScale,
+    pageRenderDependency,
+  ]);
   const pageElements = useMemo(() => model.entries.map(entry => (
     <div
       key={`flipbook-page-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
@@ -3530,7 +3694,16 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
   );
 }
 
-function PdfThumbnailCanvas({ pdfDocument, pageNumber, active, onClick }) {
+function slideThumbPageLabel(pageIndexes = []) {
+  const logicalPageIndexes = [...pageIndexes].sort((left, right) => left - right);
+  const firstPageNumber = (logicalPageIndexes[0] ?? 0) + 1;
+  const lastPageNumber = (logicalPageIndexes[logicalPageIndexes.length - 1] ?? 0) + 1;
+  return firstPageNumber === lastPageNumber
+    ? String(firstPageNumber)
+    : `${firstPageNumber}–${lastPageNumber}`;
+}
+
+function PdfThumbnailCanvas({ pdfDocument, pageNumber }) {
   const itemRef = useRef(null);
   const canvasRef = useRef(null);
   const renderTaskRef = useRef(null);
@@ -3556,11 +3729,6 @@ function PdfThumbnailCanvas({ pdfDocument, pageNumber, active, onClick }) {
     observer.observe(node);
     return () => observer.disconnect();
   }, [pdfDocument, pageNumber, visible]);
-
-  useEffect(() => {
-    if (!active) return;
-    itemRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
-  }, [active]);
 
   useEffect(() => {
     if (!pdfDocument || !visible) return undefined;
@@ -3614,23 +3782,19 @@ function PdfThumbnailCanvas({ pdfDocument, pageNumber, active, onClick }) {
   }, [pdfDocument, pageNumber, visible]);
 
   return (
-    <button
+    <span
       ref={itemRef}
-      type="button"
-      className={`viewer-slide-thumb ${active ? 'is-active' : ''} is-${status}`}
-      onClick={onClick}
-      aria-label={viewerText('viewer.navigation.go_page', '{page} 페이지로 이동', { page: pageNumber })}
+      className={`viewer-slide-thumb-pdf-page is-${status}`}
+      aria-hidden="true"
     >
-      <span className="viewer-slide-thumb-canvas">
-        <canvas ref={canvasRef} />
-      </span>
-      <span>{pageNumber}</span>
-    </button>
+      <canvas ref={canvasRef} />
+    </span>
   );
 }
 
-function ComicSlideThumb({ page, pageNumber, active, src, hasFallbackSrc, onClick, onFallback }) {
+function PdfSlideThumb({ pdfDocument, items = [], pageLabel, ariaPageLabel, active, onClick }) {
   const itemRef = useRef(null);
+  const isSpread = items.length > 1;
 
   useEffect(() => {
     if (!active) return;
@@ -3641,32 +3805,34 @@ function ComicSlideThumb({ page, pageNumber, active, src, hasFallbackSrc, onClic
     <button
       ref={itemRef}
       type="button"
-      className={`viewer-slide-thumb is-comic ${active ? 'is-active' : ''} ${src ? 'is-ready' : 'is-idle'}`}
+      className={viewerClassName(
+        'viewer-slide-thumb',
+        'is-pdf',
+        isSpread && 'is-spread',
+        active && 'is-active',
+      )}
       onClick={onClick}
-      aria-label={viewerText('viewer.navigation.go_page', '{page} 페이지로 이동', { page: pageNumber })}
+      aria-current={active ? 'page' : undefined}
+      aria-label={viewerText('viewer.navigation.go_page', '{page} 페이지로 이동', { page: ariaPageLabel || pageLabel })}
     >
       <span className="viewer-slide-thumb-canvas">
-        {src ? (
-          <img
-            src={src}
-            alt={page?.basename || viewerText('viewer.navigation.page_alt', '{page} 페이지', { page: pageNumber })}
-            loading="lazy"
-            onError={() => {
-              if (page?.pageUrl && !hasFallbackSrc) onFallback?.();
-            }}
+        {items.map(item => (
+          <PdfThumbnailCanvas
+            key={item.pageIndex}
+            pdfDocument={pdfDocument}
+            pageNumber={item.pageNumber}
           />
-        ) : (
-          <span className="viewer-slide-thumb-placeholder">{pageNumber}</span>
-        )}
+        ))}
       </span>
-      <span>{pageNumber}</span>
+      <span>{pageLabel}</span>
     </button>
   );
 }
 
-function ReaderSlideThumb({ item, pageNumber, active, onClick }) {
+function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, onClick }) {
   const itemRef = useRef(null);
-  const text = String(item?.title || item?.text || item || '').replace(/\s+/g, ' ').trim();
+  const isSpread = items.length > 1;
+  const ready = items.length > 0 && items.every(item => Boolean(item.src));
 
   useEffect(() => {
     if (!active) return;
@@ -3677,17 +3843,86 @@ function ReaderSlideThumb({ item, pageNumber, active, onClick }) {
     <button
       ref={itemRef}
       type="button"
-      className={`viewer-slide-thumb is-reader ${active ? 'is-active' : ''}`}
+      className={viewerClassName(
+        'viewer-slide-thumb',
+        'is-comic',
+        isSpread && 'is-spread',
+        active && 'is-active',
+        ready ? 'is-ready' : 'is-idle',
+      )}
       onClick={onClick}
-      aria-label={viewerText('viewer.navigation.go_page', '{page} 페이지로 이동', { page: pageNumber })}
+      aria-current={active ? 'page' : undefined}
+      aria-label={viewerText('viewer.navigation.go_page', '{page} 페이지로 이동', { page: ariaPageLabel || pageLabel })}
     >
       <span className="viewer-slide-thumb-canvas">
-        <span className="viewer-slide-thumb-reader-preview">
-          <strong>{pageNumber}</strong>
-          <small>{text || viewerText('viewer.common.no_content', '내용 없음')}</small>
-        </span>
+        {items.map(item => (
+          <span
+            key={`${item.page?.name || item.pageIndex}-${item.pageIndex}`}
+            className="viewer-slide-thumb-comic-page"
+          >
+            {item.src ? (
+              <img
+                src={item.src}
+                alt=""
+                aria-hidden="true"
+                loading="lazy"
+                onLoad={item.onLoad}
+                onError={() => {
+                  if (item.page?.pageUrl && !item.hasFallbackSrc) item.onFallback?.();
+                }}
+              />
+            ) : (
+              <span className="viewer-slide-thumb-placeholder">{item.pageNumber}</span>
+            )}
+          </span>
+        ))}
       </span>
-      <span>{pageNumber}</span>
+      <span>{pageLabel}</span>
+    </button>
+  );
+}
+
+function ReaderSlideThumb({ items = [], pageLabel, ariaPageLabel, active, onClick }) {
+  const itemRef = useRef(null);
+  const isSpread = items.length > 1;
+
+  useEffect(() => {
+    if (!active) return;
+    itemRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+  }, [active]);
+
+  return (
+    <button
+      ref={itemRef}
+      type="button"
+      className={viewerClassName(
+        'viewer-slide-thumb',
+        'is-reader',
+        isSpread && 'is-spread',
+        active && 'is-active',
+      )}
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      aria-label={viewerText('viewer.navigation.go_page', '{page} 페이지로 이동', { page: ariaPageLabel || pageLabel })}
+    >
+      <span className="viewer-slide-thumb-canvas">
+        {items.map(item => {
+          const text = String(item.item?.title || item.item?.text || item.item || '').replace(/\s+/g, ' ').trim();
+          return (
+            <span
+              key={item.pageIndex}
+              className="viewer-slide-thumb-reader-page"
+              aria-hidden="true"
+            >
+              <span className="viewer-slide-thumb-reader-preview">
+                <strong>{item.pageNumber}</strong>
+                <small>{text || viewerText('viewer.common.no_content', '내용 없음')}</small>
+              </span>
+            </span>
+          );
+        })}
+      </span>
+      <span>{pageLabel}</span>
     </button>
   );
 }
@@ -3852,6 +4087,7 @@ function ComicPageFrame({
   imageFit = 'contain',
   highQuality = false,
   qualityScale = 1,
+  renderAmbientCanvas = true,
   onImageLoad,
   onImageError,
 }) {
@@ -3864,15 +4100,17 @@ function ComicPageFrame({
   const [qualitySettled, setQualitySettled] = useState(!highQuality);
 
   const paintAmbient = useCallback(image => {
+    if (!renderAmbientCanvas) return false;
     return paintAmbientCanvasFromSource(ambientCanvasRef.current, image);
-  }, []);
+  }, [renderAmbientCanvas]);
 
   useEffect(() => {
+    if (!renderAmbientCanvas) return;
     const image = imageRef.current;
     if (image?.complete && image.naturalWidth > 0) {
       paintAmbient(image);
     }
-  }, [paintAmbient, src]);
+  }, [paintAmbient, renderAmbientCanvas, src]);
 
   useEffect(() => {
     const frame = frameRef.current;
@@ -4045,9 +4283,11 @@ function ComicPageFrame({
       className={`viewer-comic-page-frame view-${viewMode}`}
       style={frameStyle}
     >
-      <span className="viewer-ambient-clip" aria-hidden="true">
-        <canvas ref={ambientCanvasRef} className="viewer-ambient-canvas" />
-      </span>
+      {renderAmbientCanvas && (
+        <span className="viewer-ambient-clip" aria-hidden="true">
+          <canvas ref={ambientCanvasRef} className="viewer-ambient-canvas" />
+        </span>
+      )}
       <img
         ref={imageRef}
         className={imageClassName}
@@ -4394,6 +4634,7 @@ function ViewerApp() {
   const [session, setSession] = useState(null);
   const [pages, setPages] = useState([]);
   const [pageIndex, setPageIndex] = useState(0);
+  const [selectedPageIndex, setSelectedPageIndex] = useState(0);
   const [pageData, setPageData] = useState({});
   const [pageErrors, setPageErrors] = useState({});
   const [pageRatios, setPageRatios] = useState({});
@@ -4525,10 +4766,15 @@ function ViewerApp() {
     clearToolbarPeekTimer();
   }, [clearToolbarPeekTimer]);
 
-  const setPageIndexSynced = useCallback(nextIndex => {
+  const setPageIndexSynced = useCallback((nextIndex, options = {}) => {
     const normalizedIndex = Math.max(0, Number(nextIndex) || 0);
+    const requestedSelectedPageIndex = Number(options.selectedPageIndex);
+    const normalizedSelectedPageIndex = Number.isFinite(requestedSelectedPageIndex)
+      ? Math.max(0, requestedSelectedPageIndex)
+      : normalizedIndex;
     pageIndexRef.current = normalizedIndex;
     setPageIndex(normalizedIndex);
+    setSelectedPageIndex(normalizedSelectedPageIndex);
   }, []);
 
   useEffect(() => {
@@ -4742,9 +4988,13 @@ function ViewerApp() {
       frameId = window.requestAnimationFrame(checkInitialRender);
     };
 
-    Promise.resolve(document.fonts?.ready)
-      .catch(() => {})
-      .then(startPolling);
+    if (format === 'reader') {
+      Promise.resolve(document.fonts?.ready)
+        .catch(() => {})
+        .then(startPolling);
+    } else {
+      startPolling();
+    }
     return () => {
       disposed = true;
       if (frameId) window.cancelAnimationFrame(frameId);
@@ -5214,11 +5464,11 @@ function ViewerApp() {
     });
   }, []);
 
-  const goPdfPage = useCallback(index => {
+  const goPdfPage = useCallback((index, options = {}) => {
     const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pdfPageCount - 1));
     const currentIndex = clamp(pageIndexRef.current, 0, Math.max(0, pdfPageCount - 1));
     const commitPdfPage = () => {
-      setPageIndexSynced(targetIndex);
+      setPageIndexSynced(targetIndex, options);
       if (flowMode === 'scroll') {
         scrollPdfPageIntoView(targetIndex);
         return;
@@ -5230,14 +5480,14 @@ function ViewerApp() {
     if (deferred) return;
     commitPdfPage();
   }, [flowMode, pdfPageCount, resetPageModeScroll, scrollPdfPageIntoView, setPageIndexSynced, triggerPdfPageEffect]);
-  const goPageIndex = useCallback(index => {
+  const goPageIndex = useCallback((index, options = {}) => {
     const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pageCount - 1));
     if (session?.type === 'pdf') {
-      goPdfPage(targetIndex);
+      goPdfPage(targetIndex, options);
       return;
     }
     const commitPageIndex = () => {
-      setPageIndexSynced(targetIndex);
+      setPageIndexSynced(targetIndex, options);
       if (session?.type === 'epub' || session?.type === 'text') {
         visibleReaderIndexRef.current = targetIndex;
       }
@@ -5845,6 +6095,19 @@ function ViewerApp() {
     return targetIndex;
   }, [flowMode, getStepSizeForIndex, pageCount, session?.type]);
 
+  useLayoutEffect(() => {
+    if (session?.type !== 'pdf' && session?.type !== 'epub' && session?.type !== 'text') return;
+    if (flowMode !== 'spread') {
+      const restoredPageIndex = clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1));
+      if (pageIndex !== restoredPageIndex) setPageIndexSynced(restoredPageIndex);
+      return;
+    }
+    const normalizedPageIndex = resolveSpreadNavigationIndex(pageIndex);
+    if (normalizedPageIndex !== pageIndex) {
+      setPageIndexSynced(normalizedPageIndex, { selectedPageIndex: pageIndex });
+    }
+  }, [flowMode, pageCount, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session?.type, setPageIndexSynced]);
+
   const movePage = useCallback(delta => {
     const currentIndex = clamp(pageIndexRef.current, 0, Math.max(0, pageCount - 1));
     if (delta > 0 && pageCount > 0 && flowMode !== 'scroll' && isForwardBoundaryIndex(currentIndex)) {
@@ -6037,7 +6300,7 @@ function ViewerApp() {
 
   const activeTocId = useMemo(() => {
     if (tocItems.length === 0) return '';
-    const currentPageIndex = clamp(pageIndex, 0, Math.max(0, pageCount - 1));
+    const currentPageIndex = clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1));
     const sortedItems = [...tocItems]
       .filter(item => Number.isFinite(Number(item.pageIndex)))
       .sort((a, b) => Number(a.pageIndex) - Number(b.pageIndex));
@@ -6047,7 +6310,7 @@ function ViewerApp() {
       activeItem = item;
     }
     return activeItem?.id || '';
-  }, [pageCount, pageIndex, tocItems]);
+  }, [pageCount, selectedPageIndex, tocItems]);
 
   const navigationThumbnailSrc = useMemo(() => {
     if (session?.type === 'comic') {
@@ -6121,7 +6384,9 @@ function ViewerApp() {
     const entryKey = epubTargetKey(entryName, '');
     const resolvedPageIndex = epubPageIndexByTarget.get(targetKey) ?? epubPageIndexByTarget.get(entryKey);
     if (!Number.isInteger(resolvedPageIndex)) return;
-    goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex));
+    goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex), {
+      selectedPageIndex: resolvedPageIndex,
+    });
     if (flowMode !== 'scroll' || !anchor) return;
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -6141,7 +6406,9 @@ function ViewerApp() {
       ? targetPageIndex.pageIndex
       : targetPageIndex;
     const resolvedPageIndex = clamp(Number(rawPageIndex) || 0, 0, Math.max(0, pageCount - 1));
-    goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex));
+    goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex), {
+      selectedPageIndex: resolvedPageIndex,
+    });
   }, [goEpubInternalTarget, goPageIndex, pageCount, resolveSpreadNavigationIndex, session?.type]);
 
   const goSlideNavPage = useCallback(targetPageIndex => {
@@ -6954,6 +7221,7 @@ function ViewerApp() {
         imageFit={options.objectFit || 'cover'}
         highQuality={Boolean(options.highQuality && supportsHighQualityComicDownsample(page))}
         qualityScale={options.qualityScale}
+        renderAmbientCanvas={options.renderAmbientCanvas !== false && backgroundMode === 'immersive'}
         onImageLoad={event => {
           const { naturalWidth, naturalHeight } = event.currentTarget;
           rememberComicPageImageSize(page.name, naturalWidth, naturalHeight);
@@ -7013,8 +7281,9 @@ function ViewerApp() {
           visualScale={flipBookVisualScale}
           renderKey={comicFlipBookRenderKey}
           provideNearbyPageState
+          initialRenderLoading={initialRenderLoading}
           onPageIndexChange={handleFlipBookPageIndexChange}
-          renderAmbientPage={backgroundMode === 'immersive' ? sourceIndex => {
+          renderAmbientPage={backgroundMode === 'immersive' && !initialRenderLoading ? sourceIndex => {
             const page = pages[sourceIndex];
             const src = page ? (pageData[page.name] || page?.pageUrl) : '';
             if (!page || !src) return null;
@@ -7032,8 +7301,9 @@ function ViewerApp() {
           renderPage={(sourceIndex, _entry, renderState) => {
             const page = pages[sourceIndex];
             return page ? renderComicImage(page, sourceIndex, pageSlots, {
-              highQuality: Boolean(renderState?.isNearCurrent),
+              highQuality: Boolean(renderState?.shouldRenderHighQuality),
               qualityScale: renderState?.visualScale,
+              renderAmbientCanvas: false,
               objectFit: 'contain',
               frameStyle: {
                 ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
@@ -7093,6 +7363,8 @@ function ViewerApp() {
   const readerStyle = {
     '--viewer-reader-bg': theme.bg,
     '--viewer-reader-fg': theme.fg,
+    '--viewer-reader-header-fg': theme.headerFg,
+    '--viewer-reader-footer-fg': theme.footerFg,
     '--viewer-reader-font': readerSettings.fontFamily,
     '--viewer-reader-size': `${readerFontSize}px`,
     '--viewer-reader-line-height': lineHeight,
@@ -7505,30 +7777,63 @@ function ViewerApp() {
   const renderSlideThumbs = () => {
     if (!slideNavAvailable) return null;
     if (session?.type === 'pdf') {
-      return Array.from({ length: pdfPageCount }, (_, index) => (
-        <PdfThumbnailCanvas
-          key={`${session?.id || 'pdf-thumb'}-${index}`}
-          pdfDocument={pdfDocument}
-          pageNumber={index + 1}
-            active={index === pageIndex}
-            onClick={runToolbarAction(() => goSlideNavPage(index))}
+      const pdfSlideThumbGroups = buildSlideThumbGroups({
+        items: Array.from({ length: pdfPageCount }, (_, index) => index),
+        spread: flowMode === 'spread',
+        getStepSizeForIndex,
+      });
+      return pdfSlideThumbGroups.map(group => {
+        const pageLabel = slideThumbPageLabel(group.pageIndexes);
+        const items = group.pageIndexes.map(index => ({
+          pageIndex: index,
+          pageNumber: index + 1,
+        }));
+        return (
+          <PdfSlideThumb
+            key={`${session?.id || 'pdf-thumb'}-${group.groupStartIndex}`}
+            pdfDocument={pdfDocument}
+            items={items}
+            pageLabel={pageLabel}
+            ariaPageLabel={pageLabel}
+            active={group.pageIndexes.includes(pageIndex)}
+            onClick={runToolbarAction(() => goSlideNavPage(group.groupStartIndex))}
           />
-      ));
+        );
+      });
     }
     if (session?.type === 'comic') {
-      return pages.map((page, index) => {
-        const fallbackSrc = pageData[page.name];
-        const src = fallbackSrc || page?.pageUrl;
+      const comicSlideThumbGroups = buildComicSlideThumbGroups({
+        pages,
+        spread: flowMode === 'spread',
+        readingDirection,
+        getStepSizeForIndex,
+      });
+      return comicSlideThumbGroups.map(group => {
+        const pageLabel = slideThumbPageLabel(group.pageIndexes);
+        const items = group.pageIndexes.map((index, itemIndex) => {
+          const page = group.pages[itemIndex];
+          const fallbackSrc = pageData[page.name];
+          return {
+            page,
+            pageIndex: index,
+            pageNumber: index + 1,
+            src: fallbackSrc || page?.pageUrl,
+            hasFallbackSrc: Boolean(fallbackSrc),
+            onLoad: event => {
+              const { naturalWidth, naturalHeight } = event.currentTarget;
+              rememberComicPageImageSize(page.name, naturalWidth, naturalHeight);
+            },
+            onFallback: () => loadComicPage(index, { force: true }),
+          };
+        });
         return (
           <ComicSlideThumb
-            key={page.name || index}
-            page={page}
-            pageNumber={index + 1}
-            active={index === pageIndex}
-            src={src}
-            hasFallbackSrc={Boolean(fallbackSrc)}
-            onClick={runToolbarAction(() => goSlideNavPage(index))}
-            onFallback={() => loadComicPage(index, { force: true })}
+            key={`${session.id || session.filePath || 'comic'}-${group.groupStartIndex}`}
+            items={items}
+            pageLabel={pageLabel}
+            ariaPageLabel={pageLabel}
+            active={group.pageIndexes.includes(pageIndex)}
+            onClick={runToolbarAction(() => goSlideNavPage(group.groupStartIndex))}
           />
         );
       });
@@ -7547,15 +7852,30 @@ function ViewerApp() {
       );
       if (session.type === 'text' && startIndex > 0) visibleIndexes.unshift(0);
       if (session.type === 'text' && endIndex < readerItems.length) visibleIndexes.push(readerItems.length - 1);
-      return [...new Set(visibleIndexes)].map(index => (
-        <ReaderSlideThumb
-          key={`${session.id || session.filePath || 'reader'}-${index}`}
-          item={readerItems[index]}
-          pageNumber={index + 1}
-          active={index === pageIndex}
-          onClick={runToolbarAction(() => goSlideNavPage(index))}
-        />
-      ));
+      const visibleIndexSet = new Set(visibleIndexes);
+      const readerSlideThumbGroups = buildSlideThumbGroups({
+        items: readerItems,
+        spread: flowMode === 'spread',
+        getStepSizeForIndex,
+      }).filter(group => group.pageIndexes.some(index => visibleIndexSet.has(index)));
+      return readerSlideThumbGroups.map(group => {
+        const pageLabel = slideThumbPageLabel(group.pageIndexes);
+        const items = group.pageIndexes.map((index, itemIndex) => ({
+          item: group.items[itemIndex],
+          pageIndex: index,
+          pageNumber: index + 1,
+        }));
+        return (
+          <ReaderSlideThumb
+            key={`${session.id || session.filePath || 'reader'}-${group.groupStartIndex}`}
+            items={items}
+            pageLabel={pageLabel}
+            ariaPageLabel={pageLabel}
+            active={group.pageIndexes.includes(pageIndex)}
+            onClick={runToolbarAction(() => goSlideNavPage(group.groupStartIndex))}
+          />
+        );
+      });
     }
     return null;
   };
@@ -7818,7 +8138,7 @@ function ViewerApp() {
             aria-hidden={!slideNavOpen}
             onWheel={handleSlideNavWheel}
           >
-            {renderSlideThumbs()}
+            {!initialRenderLoading && renderSlideThumbs()}
           </div>
         </div>
       )}

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { replaceZipEntry } from './core/zipArchive.js';
@@ -14,6 +16,14 @@ function pngHeader(width, height) {
     buffer.writeUInt32BE(width, 16);
     buffer.writeUInt32BE(height, 20);
     return buffer;
+}
+
+function find7z() {
+    for (const candidate of ['/usr/local/bin/7z', '/opt/homebrew/bin/7z', '7z', '7za']) {
+        const result = spawnSync(candidate, ['i'], { stdio: 'ignore' });
+        if (!result.error) return candidate;
+    }
+    return '';
 }
 
 test('TXT 뷰어 세션은 24MB를 초과하는 파일을 읽는다', async () => {
@@ -64,6 +74,100 @@ test('뷰어 세션은 같은 폴더의 이전권/다음권 가능 여부를 계
         assert.equal(third.filePath, path.resolve(thirdPath));
         assert.deepEqual(third.adjacent, { hasPrevious: true, hasNext: false });
         assert.throws(() => manager.createAdjacent(third.id, 1), /No adjacent book\./);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('CBZ 뷰어 세션은 페이지 요청에 ZIP 엔트리 캐시를 재사용하고 파일 변경 시 폐기한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-cache-'));
+    try {
+        const comicPath = path.join(root, 'Cached.cbz');
+        const firstPage = Buffer.concat([pngHeader(1200, 1800), Buffer.from('first')]);
+        const updatedPage = Buffer.concat([pngHeader(1400, 2100), Buffer.from('updated-page')]);
+        fs.writeFileSync(comicPath, Buffer.alloc(0));
+        await replaceZipEntry(comicPath, 'ComicInfo.xml', '<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>');
+        await replaceZipEntry(comicPath, '001.png', firstPage);
+        await replaceZipEntry(comicPath, '002.png', pngHeader(1200, 1800));
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(comicPath, { skipAdjacent: true });
+        const listed = await manager.listComicPages(session.id);
+
+        assert.equal(listed.readingDirection, 'rtl');
+        assert.deepEqual(listed.pages.map(page => page.name), ['001.png', '002.png']);
+        const archiveEntryCache = manager.comicArchiveEntryCaches.get(session.id);
+        assert.ok(archiveEntryCache);
+        assert.equal(archiveEntryCache.zipEntries.size, 3);
+        assert.deepEqual(Object.keys(archiveEntryCache.zipEntries.get('001.png')).sort(), [
+            'compressedSize',
+            'localHeaderOffset',
+            'method',
+            'name',
+            'uncompressedSize',
+        ]);
+
+        const originalOpen = fsp.open;
+        let comicOpenCount = 0;
+        fsp.open = async (...args) => {
+            if (path.resolve(String(args[0])) === path.resolve(comicPath)) comicOpenCount += 1;
+            return originalOpen(...args);
+        };
+        let pageData = null;
+        try {
+            pageData = await manager.getComicPageData(session.id, '001.png');
+        } finally {
+            fsp.open = originalOpen;
+        }
+        assert.deepEqual(pageData.buffer, firstPage);
+        assert.equal(comicOpenCount, 1);
+
+        await replaceZipEntry(comicPath, '001.png', updatedPage);
+        pageData = await manager.getComicPageData(session.id, '001.png');
+        assert.deepEqual(pageData.buffer, updatedPage);
+        assert.equal(manager.comicArchiveEntryCaches.has(session.id), false);
+
+        await manager.listComicPages(session.id);
+        assert.equal(manager.comicArchiveEntryCaches.has(session.id), true);
+        for (let index = 0; index < 16; index += 1) {
+            const documentPath = path.join(root, `${String(index).padStart(2, '0')}.pdf`);
+            fs.writeFileSync(documentPath, 'pdf');
+            manager.create(documentPath, { skipAdjacent: true });
+        }
+        assert.equal(manager.sessions.has(session.id), false);
+        assert.equal(manager.comicArchiveEntryCaches.has(session.id), false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('CBZ 확장자의 비 ZIP 압축 파일은 엔트리 캐시 없이 7z fallback으로 읽는다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-7z-fallback-'));
+    try {
+        const inputPath = path.join(root, 'input');
+        const comicPath = path.join(root, 'Mismatched.cbz');
+        const pageBuffer = pngHeader(900, 1400);
+        fs.mkdirSync(inputPath);
+        fs.writeFileSync(path.join(inputPath, '001.png'), pageBuffer);
+        const packed = spawnSync(sevenZExe, ['a', '-t7z', comicPath, '001.png'], {
+            cwd: inputPath,
+            stdio: 'ignore',
+        });
+        assert.equal(packed.status, 0);
+
+        const manager = new ViewerSessionManager({ getSevenZPath: async () => sevenZExe });
+        const session = manager.create(comicPath, { skipAdjacent: true });
+        const listed = await manager.listComicPages(session.id);
+
+        assert.deepEqual(listed.pages.map(page => page.name), ['001.png']);
+        assert.equal(manager.comicArchiveEntryCaches.has(session.id), false);
+        const pageData = await manager.getComicPageData(session.id, '001.png');
+        assert.deepEqual(pageData.buffer, pageBuffer);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

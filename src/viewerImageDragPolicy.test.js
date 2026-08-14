@@ -68,12 +68,13 @@ test('고품질 축소는 일반 보기와 책넘김의 현재 인접 펼침면�
     );
 
     assert.doesNotMatch(scrollBranch, /highQuality/);
-    assert.match(flipBookBranch, /highQuality:\s*Boolean\(renderState\?\.isNearCurrent\)/);
+    assert.match(flipBookBranch, /highQuality:\s*Boolean\(renderState\?\.shouldRenderHighQuality\)/);
     assert.match(flipBookBranch, /qualityScale:\s*renderState\?\.visualScale/);
     assert.match(flipBookBranch, /provideNearbyPageState/);
     assert.match(viewerSource, /getFlipBookNearbyGroupEntries\(model\.entries, currentBookIndex\)/);
     assert.match(viewerSource, /ViewerFlipBookPageRenderContext\.Provider value=\{pageRenderState\}/);
     assert.match(viewerSource, /isNearCurrent:\s*renderState\.nearbyBookIndexes\?\.has\(entry\.bookIndex\)/);
+    assert.match(viewerSource, /shouldRenderHighQuality:\s*renderState\.highQualityBookIndexes\?\.has\(entry\.bookIndex\)/);
     assert.match(viewerSource, /visualScale:\s*normalizedVisualScale/);
     assert.match(viewerSource, /observedDevicePixelSize\.width \* normalizedQualityScale/);
     assert.match(viewerSource, /styledWidth \* normalizedQualityScale/);

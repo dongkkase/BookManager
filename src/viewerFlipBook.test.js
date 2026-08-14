@@ -11,6 +11,14 @@ import {
 const viewerSource = fs.readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
 const i18nSource = fs.readFileSync(new URL('./utils/i18n.js', import.meta.url), 'utf8');
 const viewerCss = fs.readFileSync(new URL('./styles/viewer.css', import.meta.url), 'utf8');
+const viewerFlipBookSource = viewerSource.slice(
+    viewerSource.indexOf('function ViewerFlipBook('),
+    viewerSource.indexOf('function storageKey('),
+);
+const comicPageFrameSource = viewerSource.slice(
+    viewerSource.indexOf('function ComicPageFrame('),
+    viewerSource.indexOf('function ComicFlipBookAmbientPage('),
+);
 
 test('페이지 수가 같아도 플립북 페이지 묶음이 바뀌면 구조 키가 변경된다', () => {
     const pairedPages = [
@@ -87,6 +95,145 @@ test('플립북 고품질 렌더링은 현재 펼침면과 앞뒤 펼침면만 �
     );
 });
 
+test('RTL 플립북의 현재 표시 인접 집합은 페이지 순서와 빈 leaf를 보존한다', () => {
+    const entries = [
+        { bookIndex: 0, groupStartIndex: 5, sourceIndex: null, blank: true, side: 'left' },
+        { bookIndex: 1, groupStartIndex: 5, sourceIndex: 5, blank: false, side: 'right' },
+        { bookIndex: 2, groupStartIndex: 3, sourceIndex: 4, blank: false, side: 'left' },
+        { bookIndex: 3, groupStartIndex: 3, sourceIndex: 3, blank: false, side: 'right' },
+        { bookIndex: 4, groupStartIndex: 1, sourceIndex: 2, blank: false, side: 'left' },
+        { bookIndex: 5, groupStartIndex: 1, sourceIndex: 1, blank: false, side: 'right' },
+        { bookIndex: 6, groupStartIndex: 0, sourceIndex: 0, blank: false, side: 'left' },
+        { bookIndex: 7, groupStartIndex: 0, sourceIndex: null, blank: true, side: 'right' },
+    ];
+    const currentEntries = getFlipBookCurrentGroupEntries(entries, 2);
+    const displayedEntries = getFlipBookCurrentGroupEntries(entries, 4);
+    const nearbyEntries = getFlipBookNearbyGroupEntries(entries, 2);
+    const initialBookIndexes = new Set([
+        ...currentEntries.map(entry => entry.bookIndex),
+        ...displayedEntries.map(entry => entry.bookIndex),
+    ]);
+    const preloadedBookIndexes = new Set([
+        ...initialBookIndexes,
+        ...nearbyEntries.map(entry => entry.bookIndex),
+    ]);
+
+    assert.deepEqual(currentEntries.map(entry => entry.sourceIndex), [4, 3]);
+    assert.deepEqual(displayedEntries.map(entry => entry.sourceIndex), [2, 1]);
+    assert.deepEqual(nearbyEntries.map(entry => entry.sourceIndex), [null, 5, 4, 3, 2, 1]);
+    assert.deepEqual([...initialBookIndexes], [2, 3, 4, 5]);
+    assert.deepEqual([...preloadedBookIndexes], [2, 3, 4, 5, 0, 1]);
+});
+
+test('플립북은 전체 leaf shell을 유지하고 현재 펼침면부터 인접 펼침면까지만 단계적으로 마운트한다', () => {
+    assert.match(
+        viewerFlipBookSource,
+        /const pageElements = useMemo\(\(\) => model\.entries\.map\(entry => \(/,
+    );
+    assert.match(
+        viewerSource,
+        /if \(renderState\.mountedBookIndexes && !renderState\.mountedBookIndexes\.has\(entry\.bookIndex\)\) return null;/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const mountedBookIndexes = useMemo\(\(\) => \{[\s\S]*?\.\.\.currentGroupEntries\.map\(entry => entry\.bookIndex\),[\s\S]*?\.\.\.displayedGroupEntries\.map\(entry => entry\.bookIndex\),/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /if \(nearbyPreloadPhase >= 1\) \{\s*nearbyBookIndexes\?\.forEach\(bookIndex => indexes\.add\(bookIndex\)\);/,
+    );
+});
+
+test('플립북 페이지 렌더 상태는 현재 펼침면과 인접 펼침면을 구분한다', () => {
+    assert.match(
+        viewerFlipBookSource,
+        /const currentGroupEntries = useMemo\(\s*\(\) => getFlipBookCurrentGroupEntries\(model\.entries, currentBookIndex\)/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const currentBookIndexes = useMemo\(\s*\(\) => new Set\(currentGroupEntries\.map\(entry => entry\.bookIndex\)\)/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const nearbyBookIndexes = useMemo\([\s\S]*?getFlipBookNearbyGroupEntries\(model\.entries, currentBookIndex\)/,
+    );
+    assert.match(
+        viewerSource,
+        /isCurrentGroup:\s*renderState\.currentBookIndexes\?\.has\(entry\.bookIndex\) \|\| false/,
+    );
+    assert.match(
+        viewerSource,
+        /isNearCurrent:\s*renderState\.nearbyBookIndexes\?\.has\(entry\.bookIndex\) \|\| false/,
+    );
+});
+
+test('초기 로딩 중에는 현재 및 표시 중인 펼침면만 고품질로 렌더링한다', () => {
+    assert.match(
+        viewerFlipBookSource,
+        /if \(initialRenderLoading \|\| effectiveDisplayedBookIndex !== currentBookIndex\) \{[\s\S]*?\{ key: preloadKey, phase: 0 \}/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const highQualityBookIndexes = useMemo\(\(\) => \{[\s\S]*?\.\.\.currentGroupEntries\.map\(entry => entry\.bookIndex\),[\s\S]*?\.\.\.displayedGroupEntries\.map\(entry => entry\.bookIndex\),[\s\S]*?if \(nearbyPreloadPhase >= 2\) \{\s*nearbyBookIndexes\?\.forEach\(bookIndex => indexes\.add\(bookIndex\)\);/,
+    );
+    assert.match(
+        viewerSource,
+        /shouldRenderHighQuality:\s*renderState\.highQualityBookIndexes\?\.has\(entry\.bookIndex\) \|\| false/,
+    );
+    assert.match(
+        viewerSource,
+        /highQuality:\s*Boolean\(renderState\?\.shouldRenderHighQuality\)/,
+    );
+});
+
+test('플립북 ambient는 저장된 현재 펼침면에서 시작하고 초기 본문 렌더 뒤에 마운트한다', () => {
+    assert.doesNotMatch(
+        viewerFlipBookSource,
+        /const \[ambientBookIndex, setAmbientBookIndex\] = useState\(0\)/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const \[ambientBookIndex, setAmbientBookIndex\] = useState\(\(\) => currentBookIndex\)/,
+    );
+    assert.match(
+        viewerSource,
+        /renderAmbientPage=\{backgroundMode === 'immersive' && !initialRenderLoading \? sourceIndex => \{/,
+    );
+});
+
+test('가로형 페이지 발견으로 플립북 구조가 바뀌어도 표시 중인 원본 페이지를 보존한다', () => {
+    assert.match(
+        viewerFlipBookSource,
+        /const displayedSourceIndexRef = useRef\(currentSourceIndex\)/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const remappedDisplayedBookIndex = model\.pageToBookIndex\.get\(preservedDisplayedSourceIndex\)[\s\S]*?initialBookIndexRef\.current = remappedDisplayedBookIndex/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /const displayedGroupEntries = useMemo\(\s*\(\) => getFlipBookCurrentGroupEntries\(model\.entries, effectiveDisplayedBookIndex\)/,
+    );
+    assert.match(
+        viewerFlipBookSource,
+        /pageChangeStateRef\.current = \{ currentBookIndex, model, onPageIndexChange, spread \}[\s\S]*?if \(normalizedBookIndex !== pageChangeState\.currentBookIndex\) return/,
+    );
+});
+
+test('몰입형 책넘김의 본문 프레임은 중복 ambient 캔버스를 생성하지 않는다', () => {
+    assert.match(comicPageFrameSource, /renderAmbientCanvas = true/);
+    assert.match(comicPageFrameSource, /if \(!renderAmbientCanvas\) return false;/);
+    assert.match(comicPageFrameSource, /\{renderAmbientCanvas && \(\s*<span className="viewer-ambient-clip"/);
+    assert.match(
+        viewerSource,
+        /renderAmbientCanvas=\{options\.renderAmbientCanvas !== false && backgroundMode === 'immersive'\}/,
+    );
+    assert.match(
+        viewerSource,
+        /renderPage=\{\(sourceIndex, _entry, renderState\) => \{[\s\S]*?renderAmbientCanvas:\s*false/,
+    );
+});
+
 test('절대 페이지 이동은 진행 중인 애니메이션을 끝낸 뒤 목표 펼침면을 선택한다', () => {
     const calls = [];
     const pageFlip = {
@@ -98,6 +245,10 @@ test('절대 페이지 이동은 진행 중인 애니메이션을 끝낸 뒤 목
 
     assert.equal(finishAndTurnFlipBookToPage(pageFlip, 0), true);
     assert.deepEqual(calls, ['finish', 'turn:0']);
+    assert.match(
+        viewerFlipBookSource,
+        /absoluteTargetBookIndexRef\.current != null[\s\S]*?absoluteTargetBookIndexRef\.current !== currentBookIndex[\s\S]*?absoluteTargetBookIndexRef\.current = null/,
+    );
 });
 
 test('몰입형 배경은 책넘김 효과와 함께 유지된다', () => {
@@ -130,7 +281,8 @@ test('책넘김 몰입형 배경은 플립 변형 밖의 독립 레이어에서 
 });
 
 test('책넘김 시 이전 배경과 새 배경은 같은 프레임에서 밝기 저하 없이 교차 페이드된다', () => {
-    assert.match(viewerSource, /setLayers\(current => \[\s*\.\.\.current,\s*\{ id: nextLayerId, groupKey, entries, visible: false \},\s*\]\)/);
+    assert.match(viewerSource, /const outgoingLayer = \[\.\.\.current\]\.reverse\(\)\.find\(layer => layer\.visible\)/);
+    assert.match(viewerSource, /\.\.\.\(outgoingLayer \? \[outgoingLayer\] : \[\]\)/);
     assert.match(viewerSource, /visible:\s*layer\.id === nextLayerId/);
     assert.match(viewerSource, /BOOK_PAGE_TURN_DURATION \+ BOOK_AMBIENT_FADE_CLEANUP_BUFFER/);
     assert.match(viewerCss, /\.viewer-flipbook-ambient-layer \{[\s\S]*isolation:\s*isolate;/);

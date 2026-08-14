@@ -24,6 +24,7 @@ const SUPPORTED_VIEWER_EXTENSIONS = new Set([
 const MAX_EPUB_CHAPTER_BYTES = 8 * 1024 * 1024;
 const MAX_EPUB_STYLESHEET_BYTES = 1024 * 1024;
 const MAX_VIEWER_SESSIONS = 16;
+const MAX_CACHED_COMIC_ARCHIVE_ENTRIES = 10000;
 const EPUB_CSS_PROPERTY_TO_REACT_STYLE = new Map([
     ['color', 'color'],
     ['background-color', 'backgroundColor'],
@@ -1514,19 +1515,86 @@ async function listArchiveEntries(filePath, sevenZExe) {
     return listWith7z(filePath, sevenZExe);
 }
 
+async function archiveFileSignature(filePath) {
+    try {
+        const stat = await fsp.stat(filePath);
+        return {
+            device: Number(stat.dev) || 0,
+            inode: Number(stat.ino) || 0,
+            size: Number(stat.size) || 0,
+            modifiedAt: Number(stat.mtimeMs) || 0,
+            changedAt: Number(stat.ctimeMs) || 0,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function archiveFileSignaturesMatch(left, right) {
+    return Boolean(
+        left
+        && right
+        && left.device === right.device
+        && left.inode === right.inode
+        && left.size === right.size
+        && left.modifiedAt === right.modifiedAt
+        && left.changedAt === right.changedAt
+    );
+}
+
+function cacheableZipEntry(entry) {
+    const zipEntry = entry?.zipEntry;
+    if (!zipEntry || (zipEntry.method !== 0 && zipEntry.method !== 8)) return null;
+    return {
+        name: normalizeInnerPath(zipEntry.name),
+        method: Number(zipEntry.method) || 0,
+        compressedSize: Number(zipEntry.compressedSize) || 0,
+        uncompressedSize: Number(zipEntry.uncompressedSize) || 0,
+        localHeaderOffset: Number(zipEntry.localHeaderOffset) || 0,
+    };
+}
+
+function createComicArchiveEntryCache(entries, signature) {
+    if (!signature || entries.length > MAX_CACHED_COMIC_ARCHIVE_ENTRIES) return null;
+    const zipEntries = new Map();
+    for (const entry of entries) {
+        const zipEntry = cacheableZipEntry(entry);
+        if (!zipEntry || zipEntries.has(zipEntry.name)) continue;
+        zipEntries.set(zipEntry.name, zipEntry);
+    }
+    return zipEntries.size > 0 ? { signature, zipEntries } : null;
+}
+
 async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {}) {
     const extension = path.extname(filePath).toLowerCase();
     const normalizedEntryName = normalizeInnerPath(entryName);
     if (extension === '.zip' || extension === '.cbz' || extension === '.epub') {
-        const entries = await listZipEntriesFromFile(filePath);
-        const entry = entries.find(item => normalizeInnerPath(item.name) === normalizedEntryName);
-        if (!entry) throw new Error(`${entryName} not found`);
-        const buffer = await readZipEntryFromFile(filePath, entry, {
-            maxBytes: options.maxBytes,
-            maxCompressedBytes: options.maxCompressedBytes,
-        });
-        if (buffer) return buffer;
-        if (!sevenZExe) throw new Error(`${entryName} extraction failed`);
+        let nativeZipError = null;
+        try {
+            const cachedEntry = normalizeInnerPath(options.zipEntry?.name) === normalizedEntryName
+                ? options.zipEntry
+                : null;
+            if (cachedEntry) {
+                const cachedBuffer = await readZipEntryFromFile(filePath, cachedEntry, {
+                    maxBytes: options.maxBytes,
+                    maxCompressedBytes: options.maxCompressedBytes,
+                });
+                if (cachedBuffer) return cachedBuffer;
+            }
+
+            const entries = await listZipEntriesFromFile(filePath);
+            const entry = entries.find(item => normalizeInnerPath(item.name) === normalizedEntryName);
+            if (!entry) throw new Error(`${entryName} not found`);
+            const buffer = await readZipEntryFromFile(filePath, entry, {
+                maxBytes: options.maxBytes,
+                maxCompressedBytes: options.maxCompressedBytes,
+            });
+            if (buffer) return buffer;
+            throw new Error(`${entryName} extraction failed`);
+        } catch (error) {
+            nativeZipError = error;
+        }
+        if (!sevenZExe) throw nativeZipError;
     }
     return run7z(sevenZExe, ['x', '-so', filePath, normalizedEntryName], {
         maxBuffer: options.maxBytes || 500 * 1024 * 1024,
@@ -1589,6 +1657,7 @@ export class ViewerSessionManager {
     constructor(options = {}) {
         this.getSevenZPath = options.getSevenZPath || (async () => '');
         this.sessions = new Map();
+        this.comicArchiveEntryCaches = new Map();
         this.currentSessionId = '';
         this.nextSessionSeq = 1;
     }
@@ -1598,6 +1667,7 @@ export class ViewerSessionManager {
             const oldestSessionId = this.sessions.keys().next().value;
             if (!oldestSessionId || oldestSessionId === this.currentSessionId) return;
             this.sessions.delete(oldestSessionId);
+            this.comicArchiveEntryCaches.delete(oldestSessionId);
         }
     }
 
@@ -1657,22 +1727,35 @@ export class ViewerSessionManager {
         const session = this.get(sessionId);
         if (session.type !== 'comic') throw new Error('This file is not a comic archive.');
         const sevenZExe = await this.getSevenZPath();
+        const signatureBefore = await archiveFileSignature(session.filePath);
         const entries = await listArchiveEntries(session.filePath, sevenZExe);
+        const signatureAfter = await archiveFileSignature(session.filePath);
+        const stableSignature = archiveFileSignaturesMatch(signatureBefore, signatureAfter)
+            ? signatureAfter
+            : null;
         const comicInfoEntry = entries.find(entry => !entry.isDir && path.posix.basename(entry.name).toLowerCase() === 'comicinfo.xml');
+        const images = entries
+            .filter(entry => !entry.isDir && !entry.encrypted && isImageEntry(entry.name))
+            .sort((left, right) => naturalCompare(left.name, right.name));
+        const cachedEntries = comicInfoEntry ? [comicInfoEntry, ...images] : images;
+        const archiveEntryCache = createComicArchiveEntryCache(cachedEntries, stableSignature);
+        if (archiveEntryCache) {
+            this.comicArchiveEntryCaches.set(session.id, archiveEntryCache);
+        } else {
+            this.comicArchiveEntryCaches.delete(session.id);
+        }
         let readingDirection = 'ltr';
         if (comicInfoEntry) {
             try {
                 const buffer = await extractArchiveEntry(session.filePath, comicInfoEntry.name, sevenZExe, {
                     maxBytes: 2 * 1024 * 1024,
+                    zipEntry: stableSignature ? cacheableZipEntry(comicInfoEntry) : null,
                 });
                 readingDirection = parseComicReadingDirection(buffer.toString('utf8'));
             } catch {
                 readingDirection = 'ltr';
             }
         }
-        const images = entries
-            .filter(entry => !entry.isDir && !entry.encrypted && isImageEntry(entry.name))
-            .sort((left, right) => naturalCompare(left.name, right.name));
         return {
             readingDirection,
             pages: images.map((entry, index) => ({
@@ -1698,9 +1781,29 @@ export class ViewerSessionManager {
         const session = this.get(sessionId);
         if (session.type !== 'comic') throw new Error('This file is not a comic archive.');
         const sevenZExe = await this.getSevenZPath();
-        const buffer = await extractArchiveEntry(session.filePath, entryName, sevenZExe, {
+        const archiveEntryCache = this.comicArchiveEntryCaches.get(session.id);
+        let zipEntry = null;
+        if (archiveEntryCache) {
+            const currentSignature = await archiveFileSignature(session.filePath);
+            if (archiveFileSignaturesMatch(archiveEntryCache.signature, currentSignature)) {
+                zipEntry = archiveEntryCache.zipEntries.get(normalizeInnerPath(entryName)) || null;
+            } else {
+                this.comicArchiveEntryCaches.delete(session.id);
+            }
+        }
+        let buffer = await extractArchiveEntry(session.filePath, entryName, sevenZExe, {
             maxBytes: 500 * 1024 * 1024,
+            zipEntry,
         });
+        if (zipEntry) {
+            const extractedSignature = await archiveFileSignature(session.filePath);
+            if (!archiveFileSignaturesMatch(archiveEntryCache.signature, extractedSignature)) {
+                this.comicArchiveEntryCaches.delete(session.id);
+                buffer = await extractArchiveEntry(session.filePath, entryName, sevenZExe, {
+                    maxBytes: 500 * 1024 * 1024,
+                });
+            }
+        }
         return {
             name: entryName,
             mime: imageMime(entryName),

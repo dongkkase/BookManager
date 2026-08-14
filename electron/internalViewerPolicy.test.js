@@ -803,7 +803,7 @@ test('하단 페이지 네비게이션은 모든 뷰어 형식에서 사용할 �
     assert.match(viewerAppSource, /\[flowMode, pageCount, pageIndex, readerSettings, readingDirection, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom\]/);
     assert.match(viewerAppSource, /session\?\.type === 'comic'/);
     assert.match(viewerAppSource, /session\?\.type === 'epub' \|\| session\?\.type === 'text'/);
-    assert.match(viewerAppSource, /onClick=\{runToolbarAction\(\(\) => goSlideNavPage\(index\)\)\}/);
+    assert.match(viewerAppSource, /onClick=\{runToolbarAction\(\(\) => goSlideNavPage\(group\.groupStartIndex\)\)\}/);
     assert.match(viewerAppSource, /loadComicPage\(index, \{ force: true \}\)/);
     assert.match(viewerStyleSource, /viewer-slide-thumb\.is-comic/);
     assert.match(viewerStyleSource, /viewer-slide-thumb\.is-reader/);
@@ -980,7 +980,7 @@ test('뷰어 세션은 만화책, PDF, EPUB, TXT 형식을 분기한다', () => 
     assert.match(viewerAppSource, /className=\{viewerClassName\('viewer-epub-image', imagePreviewAllowed && 'is-previewable'\)\}/);
     assert.match(viewerAppSource, /READER_FOOTER_SPACE = 56/);
     assert.match(viewerAppSource, /className="viewer-reader-page-number"/);
-    assert.match(viewerStyleSource, /\.viewer-reader-page-body > h2[\s\S]*?opacity:\s*0\.6[\s\S]*?text-align:\s*center/);
+    assert.match(viewerStyleSource, /\.viewer-reader-page-body > h2[\s\S]*?var\(--viewer-reader-header-fg[\s\S]*?text-align:\s*center/);
     assert.match(viewerStyleSource, /\.viewer-epub-image img[\s\S]*?max-height:\s*min\(62vh, calc\(100vh - var\(--viewer-toolbar-height, 42px\) - 170px\)\) !important/);
     assert.match(viewerStyleSource, /\.viewer-text-page\.has-epub-image \.viewer-reader-html-block[\s\S]*?display:\s*flex/);
     assert.match(viewerStyleSource, /\.viewer-text-page\.has-epub-image \.viewer-reader-html-block > \*[\s\S]*?max-height:\s*100% !important/);
