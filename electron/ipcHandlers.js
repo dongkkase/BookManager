@@ -63,6 +63,7 @@ import {
   LibrarySearchService,
   isRetryableLibrarySearchWorkerError,
 } from './librarySearchService.js';
+import { ContentIndexService } from './contentIndexService.js';
 import {
   buildLibraryFolderIndexRecords,
   normalizeLibraryFolderForRenderer,
@@ -86,6 +87,7 @@ import {
   resolveApiCoverCacheDir,
   resolveApiCacheDbPath,
   resolveAppDataDir,
+  resolveContentIndexDbPath,
   resolveLibraryDbPath,
   resolveRenameHistoryPath,
   resolveThumbnailDir,
@@ -3104,10 +3106,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const appDataDir = () => getExecutableDir();
   const apiCacheDbPath = () => resolveApiCacheDbPath(appDataDir());
   const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
+  const contentIndexDbPath = () => resolveContentIndexDbPath(appDataDir());
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const apiCoverCacheDir = () => resolveApiCoverCacheDir(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
   const librarySearchService = new LibrarySearchService(libraryDbPath());
+  const contentIndexService = new ContentIndexService(contentIndexDbPath());
+  const removeContentIndexProgressListener = contentIndexService.onProgress(progress => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('folder:contentIndexProgress', progress);
+    }
+  });
   void librarySearchService.prepare().catch(error => {
     console.warn(`[LibrarySearch] Background index preparation failed: ${error.message}`);
   });
@@ -3985,6 +3994,83 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
     return rows.map(normalizeLibrarySearchFileForRenderer);
   });
+
+  ipcMain.handle('folder:searchLibraryContent', async (_event, payload = {}) => {
+    const config = configManager.getConfig() || {};
+    const targetLibraries = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : (config.libraries || []))
+      .filter(Boolean)
+      .map(folder => path.resolve(folder)))];
+    const documents = await contentIndexService.search(
+      payload.query || '',
+      targetLibraries,
+      payload.options || {},
+    );
+    if (!Array.isArray(documents) || documents.length === 0) return [];
+
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const metadataRows = await db.getFilesByPaths(documents.map(document => document.path));
+      const metadataByPath = new Map(metadataRows.map(row => [path.resolve(row.path), row]));
+      return documents.map(document => normalizeLibrarySearchFileForRenderer({
+        ...document,
+        ...(metadataByPath.get(path.resolve(document.path)) || {}),
+        path: document.path,
+        size: metadataByPath.get(path.resolve(document.path))?.size || document.size,
+        mtime: metadataByPath.get(path.resolve(document.path))?.mtime || document.mtime,
+      }));
+    } finally {
+      await db.close();
+    }
+  });
+
+  ipcMain.handle('folder:getContentIndexStatus', async (_event, payload = {}) => {
+    const config = configManager.getConfig() || {};
+    const libraries = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : (config.libraries || []))
+      .filter(Boolean)
+      .map(folder => path.resolve(folder)))];
+    const status = await contentIndexService.getStatus(libraries);
+    return {
+      ...status,
+      dbPath: contentIndexDbPath(),
+    };
+  });
+
+  ipcMain.handle('folder:startContentIndex', async (_event, payload = {}) => {
+    const config = configManager.getConfig() || {};
+    const activeLibraries = [...new Set([
+      ...(config.libraries || []),
+      ...(config.dup_check_folders || []),
+    ].filter(Boolean).map(folder => path.resolve(folder)))];
+    const libraries = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : activeLibraries)
+      .filter(Boolean)
+      .map(folder => path.resolve(folder)))];
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const entries = [];
+      const authoritativeLibraries = [];
+      for (const libraryPath of libraries) {
+        const targetRows = await db.getTargetIndex(libraryPath);
+        entries.push(...targetRows);
+        if (targetRows.length > 0) authoritativeLibraries.push(libraryPath);
+      }
+      return await contentIndexService.startIndex(entries, libraries, {
+        ...(payload.options || {}),
+        activeLibraries,
+        authoritativeLibraries,
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
+  ipcMain.handle('folder:stopContentIndex', () => contentIndexService.cancelIndex());
+  ipcMain.handle('folder:clearContentIndex', () => contentIndexService.clear());
 
   ipcMain.handle('folder:getLibraryScanStates', async (_event, folders = []) => {
     const targetFolders = [...new Set((folders || []).filter(Boolean).map(folder => path.resolve(folder)))];
@@ -5039,7 +5125,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       runtimeStates.delete(ownerId);
     },
     dispose() {
-      return librarySearchService.close();
+      removeContentIndexProgressListener();
+      return Promise.all([
+        librarySearchService.close(),
+        contentIndexService.close(),
+      ]).then(() => undefined);
     },
   };
 }

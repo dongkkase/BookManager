@@ -96,6 +96,8 @@ const VISIBLE_COVER_REQUEST_LIMIT = 32;
 const COVER_PREVIEW_QUEUE_LIMIT = 96;
 const COVER_PREVIEW_CONCURRENCY = 2;
 const LIBRARY_SEARCH_RESULT_LIMIT = 3000;
+const CONTENT_SEARCH_RESULT_LIMIT = 3000;
+const FOLDER_SEARCH_SCOPES = new Set(['metadata', 'content', 'all']);
 const MISSING_BACKGROUND_SCAN_DELAY_MS = 2500;
 const EXTERNAL_VIEWER_EXTENSIONS = {
   comic: new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']),
@@ -136,6 +138,28 @@ const viewerTypeForFile = (filePath = '') => {
 };
 
 const configuredViewerPath = (viewerPath = '') => String(viewerPath || '').trim();
+
+const normalizeFolderSearchScope = value => (
+  FOLDER_SEARCH_SCOPES.has(value) ? value : 'metadata'
+);
+
+const mergeLibrarySearchResults = (metadataRows = [], contentRows = []) => {
+  const rows = [];
+  const indexByPath = new Map();
+  for (const row of [...metadataRows, ...contentRows]) {
+    const filePath = row?.full_path || row?.path || '';
+    const key = normalizeLibraryKey(filePath);
+    if (!key) continue;
+    const existingIndex = indexByPath.get(key);
+    if (existingIndex === undefined) {
+      indexByPath.set(key, rows.length);
+      rows.push(row);
+    } else {
+      rows[existingIndex] = { ...row, ...rows[existingIndex] };
+    }
+  }
+  return rows.slice(0, LIBRARY_SEARCH_RESULT_LIMIT);
+};
 
 const typeSpecificViewerPath = (config, filePath) => {
   const viewerType = viewerTypeForFile(filePath);
@@ -225,10 +249,17 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
     inputRef,
     onApplyQuery,
     onClearQuery,
+    onSearchScopeChange,
     searchPlaceholder,
     librarySearchLoading,
     clearLabel,
     searchLabel,
+    searchScope,
+    searchScopeLabel,
+    searchScopeMetadataLabel,
+    searchScopeContentLabel,
+    searchScopeAllLabel,
+    showSearchScope,
 }) {
     const [searchQuery, setSearchQuery] = useState('');
     const isComposingRef = useRef(false);
@@ -264,11 +295,24 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
 
     return (
         <form
-            className="search-input-wrap"
+            className={`search-input-wrap ${showSearchScope ? 'has-search-scope' : ''}`}
             role="search"
             aria-label={searchLabel}
             onSubmit={handleSubmit}
         >
+            {showSearchScope && (
+                <select
+                    className="folder-search-scope"
+                    value={searchScope}
+                    onChange={event => onSearchScopeChange(event.target.value)}
+                    aria-label={searchScopeLabel}
+                    title={searchScopeLabel}
+                >
+                    <option value="metadata">{searchScopeMetadataLabel}</option>
+                    <option value="content">{searchScopeContentLabel}</option>
+                    <option value="all">{searchScopeAllLabel}</option>
+                </select>
+            )}
             <input
                 type="text"
                 className="search-input"
@@ -390,6 +434,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [contextMenu, setContextMenu] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
   const [showGotoDialog, setShowGotoDialog] = useState(false);
+  const [showContentIndexDialog, setShowContentIndexDialog] = useState(false);
   const [gotoPathDraft, setGotoPathDraft] = useState('');
   const [seriesMovePreview, setSeriesMovePreview] = useState(null);
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
@@ -421,6 +466,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     if (showMultiRenameDialog) setShowMultiRenameDialog(false);
     else if (showGotoDialog) setShowGotoDialog(false);
+    else if (showContentIndexDialog) setShowContentIndexDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
     else if (seriesMovePreview) setSeriesMovePreview(null);
     else if (showDeleteLayoutDialog) setShowDeleteLayoutDialog(false);
@@ -438,6 +484,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeTextInputDialog,
     showDeleteLayoutDialog,
     showGotoDialog,
+    showContentIndexDialog,
     showLayoutDialog,
     showMissingDialog,
     showMultiRenameDialog,
@@ -449,11 +496,28 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [searchResetToken, setSearchResetToken] = useState(0);
   const [librarySearchResults, setLibrarySearchResults] = useState([]);
   const [librarySearchLoading, setLibrarySearchLoading] = useState(false);
+  const [searchScope, setSearchScope] = useState(() => normalizeFolderSearchScope(config?.folder_search_scope));
+  const [contentIndexStatus, setContentIndexStatus] = useState(null);
+  const [contentIndexActionLoading, setContentIndexActionLoading] = useState(false);
+  const contentIndexProgress = contentIndexStatus?.progress || {};
+  const contentIndexRunning = Boolean(contentIndexStatus?.running || contentIndexProgress.running);
+  const contentIndexButtonLabel = contentIndexRunning
+    ? t('folder_content_index_running', [
+      Number(contentIndexProgress.processed) || 0,
+      Number(contentIndexProgress.total) || 0,
+    ])
+    : t('folder_content_index_manage');
   const searchInputRef = useRef(null);
   const librarySearchRequestRef = useRef(0);
   const libraryEntries = useMemo(() => normalizeLibraryEntries(config || {}), [config]);
   const libraries = useMemo(() => libraryEntries.map(entry => entry.path), [libraryEntries]);
-  const searchPlaceholder = libraries.length > 0 ? t('folder_search_library_ph') : t('folder_search_ph');
+  const searchPlaceholder = libraries.length === 0
+    ? t('folder_search_ph')
+    : searchScope === 'content'
+      ? t('folder_search_content_ph')
+      : searchScope === 'all'
+        ? t('folder_search_all_ph')
+        : t('folder_search_library_ph');
   const normalizedSearchQuery = appliedSearchQuery.trim();
   const isLibrarySearchActive = normalizedSearchQuery.length > 0 && libraries.length > 0;
   const applySearchQuery = useCallback(query => {
@@ -467,6 +531,78 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setAppliedSearchQuery('');
     setSearchResetToken(token => token + 1);
   }, []);
+  const handleSearchScopeChange = useCallback(value => {
+    const nextScope = normalizeFolderSearchScope(value);
+    setSearchScope(nextScope);
+    setAppliedSearchQuery('');
+    setLibrarySearchResults([]);
+    saveConfig?.({ folder_search_scope: nextScope }).catch(error => {
+      console.error('검색 범위 저장 실패:', error);
+    });
+  }, [saveConfig]);
+
+  const refreshContentIndexStatus = useCallback(async () => {
+    try {
+      const status = await window.electronAPI?.getContentIndexStatus?.(libraries);
+      if (status) setContentIndexStatus(status);
+      return status;
+    } catch (error) {
+      console.error('내용 인덱스 상태 조회 실패:', error);
+      showToast?.(t('folder_content_index_error', [error?.message || t('msg_failed')]));
+      return null;
+    }
+  }, [libraries, showToast, t]);
+
+  const openContentIndexDialog = useCallback(() => {
+    setShowContentIndexDialog(true);
+    void refreshContentIndexStatus();
+  }, [refreshContentIndexStatus]);
+
+  const runContentIndexAction = useCallback(async force => {
+    setContentIndexActionLoading(true);
+    try {
+      const status = await window.electronAPI?.startContentIndex?.(libraries, { force });
+      if (status) setContentIndexStatus(status);
+    } catch (error) {
+      console.error('내용 인덱싱 실패:', error);
+      showToast?.(t('folder_content_index_error', [error?.message || t('msg_failed')]));
+    } finally {
+      setContentIndexActionLoading(false);
+      void refreshContentIndexStatus();
+    }
+  }, [libraries, refreshContentIndexStatus, showToast, t]);
+
+  const stopContentIndex = useCallback(async () => {
+    try {
+      await window.electronAPI?.stopContentIndex?.();
+    } catch (error) {
+      console.error('내용 인덱싱 중지 실패:', error);
+    }
+  }, []);
+
+  const clearContentIndex = useCallback(async () => {
+    setContentIndexActionLoading(true);
+    try {
+      const status = await window.electronAPI?.clearContentIndex?.();
+      if (status) {
+        setContentIndexStatus(status);
+        setSearchSubmitToken(token => token + 1);
+      }
+    } catch (error) {
+      console.error('내용 인덱스 삭제 실패:', error);
+      showToast?.(t('folder_content_index_error', [error?.message || t('msg_failed')]));
+    } finally {
+      setContentIndexActionLoading(false);
+    }
+  }, [showToast, t]);
+
+  useEffect(() => window.electronAPI?.onContentIndexProgress?.(progress => {
+    setContentIndexStatus(current => ({
+      ...(current || {}),
+      progress,
+      running: Boolean(progress?.running),
+    }));
+  }), []);
 
   useEffect(() => {
     preparingDuplicatesRef.current = preparingDuplicates;
@@ -512,10 +648,42 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setLibrarySearchLoading(true);
     const search = async () => {
       try {
-        const rows = await window.electronAPI?.searchLibraryFiles?.(
-          normalizedSearchQuery,
-          libraries,
-          { limit: LIBRARY_SEARCH_RESULT_LIMIT },
+        const metadataPromise = searchScope === 'content'
+          ? Promise.resolve([])
+          : window.electronAPI?.searchLibraryFiles?.(
+            normalizedSearchQuery,
+            libraries,
+            { limit: LIBRARY_SEARCH_RESULT_LIMIT },
+          );
+        const contentPromise = searchScope === 'metadata'
+          ? Promise.resolve([])
+          : window.electronAPI?.searchLibraryContent?.(
+            normalizedSearchQuery,
+            libraries,
+            { limit: CONTENT_SEARCH_RESULT_LIMIT },
+          );
+        const [metadataResult, contentResult] = await Promise.allSettled([
+          metadataPromise || Promise.resolve([]),
+          contentPromise || Promise.resolve([]),
+        ]);
+        if (
+          (searchScope === 'metadata' && metadataResult.status === 'rejected')
+          || (searchScope === 'content' && contentResult.status === 'rejected')
+          || (metadataResult.status === 'rejected' && contentResult.status === 'rejected')
+        ) {
+          throw metadataResult.reason || contentResult.reason;
+        }
+        if (metadataResult.status === 'rejected') {
+          console.warn('메타데이터 검색 실패:', metadataResult.reason);
+        }
+        if (contentResult.status === 'rejected') {
+          console.warn('내용 검색 실패:', contentResult.reason);
+        }
+        const metadataRows = metadataResult.status === 'fulfilled' ? metadataResult.value : [];
+        const contentRows = contentResult.status === 'fulfilled' ? contentResult.value : [];
+        const rows = mergeLibrarySearchResults(
+          Array.isArray(metadataRows) ? metadataRows : [],
+          Array.isArray(contentRows) ? contentRows : [],
         );
         if (
           disposed
@@ -535,6 +703,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           && librarySearchRequestRef.current === requestId
         ) {
           console.error('라이브러리 검색 실패:', error);
+          if (searchScope !== 'metadata') {
+            showToast?.(t('folder_content_index_error', [error?.message || t('msg_failed')]));
+          }
           React.startTransition(() => {
             setLibrarySearchResults(current => (
               librarySearchRequestRef.current === requestId ? [] : current
@@ -549,7 +720,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return () => {
       disposed = true;
     };
-  }, [isLibrarySearchActive, libraries, normalizedSearchQuery, searchSubmitToken]);
+  }, [isLibrarySearchActive, libraries, normalizedSearchQuery, searchScope, searchSubmitToken, showToast, t]);
 
   useEffect(() => {
     const refreshViewerStatus = () => {
@@ -2830,16 +3001,41 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
             
             <div className="right-toolbar-right">
-              <FolderSearchInput
-                key={searchResetToken}
-                inputRef={searchInputRef}
-                onApplyQuery={applySearchQuery}
-                onClearQuery={clearAppliedSearchQuery}
-                searchPlaceholder={searchPlaceholder}
-                librarySearchLoading={librarySearchLoading}
-                clearLabel={t('folder_search_clear')}
-                searchLabel={t('btn_search')}
-              />
+              <div className="folder-search-control">
+                <FolderSearchInput
+                  key={searchResetToken}
+                  inputRef={searchInputRef}
+                  onApplyQuery={applySearchQuery}
+                  onClearQuery={clearAppliedSearchQuery}
+                  onSearchScopeChange={handleSearchScopeChange}
+                  searchPlaceholder={searchPlaceholder}
+                  librarySearchLoading={librarySearchLoading}
+                  clearLabel={t('folder_search_clear')}
+                  searchLabel={t('btn_search')}
+                  searchScope={searchScope}
+                  searchScopeLabel={t('folder_search_scope')}
+                  searchScopeMetadataLabel={t('folder_search_scope_metadata')}
+                  searchScopeContentLabel={t('folder_search_scope_content')}
+                  searchScopeAllLabel={t('folder_search_scope_all')}
+                  showSearchScope={libraries.length > 0}
+                />
+              </div>
+              <button
+                type="button"
+                className={`content-index-btn ${contentIndexRunning ? 'is-running' : ''}`}
+                onClick={openContentIndexDialog}
+                title={contentIndexButtonLabel}
+                aria-label={contentIndexButtonLabel}
+                aria-busy={contentIndexRunning}
+              >
+                {contentIndexRunning ? (
+                  <span className="content-index-spinner" aria-hidden="true">
+                    <FaIcon name="spinner" size={12} />
+                  </span>
+                ) : (
+                  <FaIcon name="fileLines" size={12} />
+                )}
+              </button>
               <button
                 className="refresh-btn"
                 onClick={() => handleSmartRefresh(true)}
@@ -3025,6 +3221,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           t={t}
         />
       )}
+      {showContentIndexDialog && (
+        <ContentIndexDialog
+          status={contentIndexStatus}
+          actionLoading={contentIndexActionLoading}
+          libraryCount={libraries.length}
+          onRefresh={refreshContentIndexStatus}
+          onBuild={() => runContentIndexAction(false)}
+          onRebuild={() => runContentIndexAction(true)}
+          onStop={stopContentIndex}
+          onClear={clearContentIndex}
+          onClose={() => setShowContentIndexDialog(false)}
+          t={t}
+        />
+      )}
       {textInputDialog && (
         <TextInputDialog
           {...textInputDialog}
@@ -3106,6 +3316,129 @@ function ContextMenuItem({ label, shortcut = '', icon = '', onClick }) {
       <span className="folder-context-menu-label">{label}</span>
       <span className="folder-context-menu-shortcut">{shortcut}</span>
     </button>
+  );
+}
+
+function ContentIndexDialog({
+  status,
+  actionLoading,
+  libraryCount,
+  onRefresh,
+  onBuild,
+  onRebuild,
+  onStop,
+  onClear,
+  onClose,
+  t,
+}) {
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const progress = status?.progress || {};
+  const running = Boolean(status?.running || progress.running);
+  const total = Number(progress.total) || 0;
+  const processed = Number(progress.processed) || 0;
+  const progressPercent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const statusCounts = status?.statusCounts || {};
+  const skippedDocumentCount = Number(statusCounts.ocr_required || 0)
+    + Number(statusCounts.encrypted || 0)
+    + Number(statusCounts.unsupported || 0);
+  const searchableDocumentCount = Math.max(
+    0,
+    (Number(status?.readyCount) || 0) - Number(statusCounts.empty || 0),
+  );
+  const failedDocumentCount = Math.max(
+    Number(status?.failedCount) || 0,
+    Number(progress.failed) || 0,
+  );
+
+  const confirmClear = async () => {
+    if (!clearConfirm) {
+      setClearConfirm(true);
+      return;
+    }
+    await onClear();
+    setClearConfirm(false);
+  };
+
+  return (
+    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
+      <section
+        className="content-index-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="content-index-dialog-title"
+        onMouseDown={event => event.stopPropagation()}
+      >
+        <div className="dialog-titlebar">
+          <span id="content-index-dialog-title">{t('folder_content_index_title')}</span>
+          <button type="button" onClick={onClose} aria-label={t('btn_close')}>×</button>
+        </div>
+        <div className="content-index-dialog-body">
+          <p className="content-index-description">{t('folder_content_index_description')}</p>
+          <div className="content-index-path-row">
+            <span>{t('folder_content_index_path')}</span>
+            <code title={status?.dbPath || ''}>{status?.dbPath || '-'}</code>
+          </div>
+          <div className="content-index-summary">
+            <div><span>{t('folder_content_index_documents')}</span><strong>{Number(status?.totalCount) || 0}</strong></div>
+            <div><span>{t('folder_content_index_searchable')}</span><strong>{searchableDocumentCount}</strong></div>
+            <div><span>{t('folder_content_index_tokens')}</span><strong>{Number(status?.tokenCount || 0).toLocaleString()}</strong></div>
+            <div><span>{t('folder_content_index_size')}</span><strong>{formatBytes(Number(status?.totalBytes) || 0)}</strong></div>
+            <div><span>{t('folder_content_index_skipped')}</span><strong>{skippedDocumentCount}</strong></div>
+            <div><span>{t('folder_content_index_failed')}</span><strong>{failedDocumentCount}</strong></div>
+          </div>
+          {Number(status?.offlineLibraryCount) > 0 && (
+            <div className="content-index-warning">
+              {t('folder_content_index_offline', [status.offlineLibraryCount])}
+            </div>
+          )}
+          {Number(statusCounts.truncated) > 0 && (
+            <div className="content-index-warning">
+              {t('folder_content_index_truncated', [statusCounts.truncated])}
+            </div>
+          )}
+          {running && (
+            <div className="content-index-progress" aria-live="polite">
+              <div className="content-index-progress-label">
+                <span>{t('folder_content_index_running', [processed, total])}</span>
+                <strong>{progressPercent}%</strong>
+              </div>
+              <progress max="100" value={progressPercent} />
+              <div className="content-index-current" title={progress.currentPath || ''}>
+                {progress.currentPath || t('folder_scan_prep')}
+              </div>
+            </div>
+          )}
+          {!running && Number(status?.totalCount || 0) === 0 && (
+            <div className="content-index-hint">{t('folder_content_index_empty_hint')}</div>
+          )}
+          <div className="content-index-note">{t('folder_content_index_note')}</div>
+        </div>
+        <div className="layout-dialog-footer content-index-footer">
+          <button type="button" onClick={onRefresh} disabled={actionLoading}>{t('folder_content_index_refresh')}</button>
+          {!running ? (
+            <>
+              <button type="button" className="primary" onClick={onBuild} disabled={actionLoading || libraryCount === 0}>
+                {t('folder_content_index_build')}
+              </button>
+              <button type="button" onClick={onRebuild} disabled={actionLoading || libraryCount === 0}>
+                {t('folder_content_index_rebuild')}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="danger" onClick={onStop}>{t('folder_content_index_stop')}</button>
+          )}
+          <button
+            type="button"
+            className={clearConfirm ? 'danger' : ''}
+            onClick={confirmClear}
+            disabled={actionLoading || running}
+          >
+            {clearConfirm ? t('folder_content_index_clear_confirm') : t('folder_content_index_clear')}
+          </button>
+          <button type="button" className="secondary" onClick={onClose}>{t('btn_close')}</button>
+        </div>
+      </section>
+    </div>
   );
 }
 

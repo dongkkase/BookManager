@@ -11,6 +11,8 @@ const UTF8_FLAG = 0x800;
 const DATA_DESCRIPTOR_FLAG = 0x08;
 const EPUB_MIMETYPE = 'application/epub+zip';
 const EOCD_TAIL_BYTES = 0xffff + 22;
+const MAX_CENTRAL_DIRECTORY_BYTES = 64 * 1024 * 1024;
+const MAX_ZIP_ENTRY_COUNT = 100000;
 const ZIP32_MAX = 0xffffffff;
 const ZIP32_MAX_ENTRIES = 0xffff;
 const LEGACY_NAME_ENCODINGS = ['euc-kr', 'shift_jis'];
@@ -219,8 +221,20 @@ export function readZipEntry(buffer, entry, options = {}) {
 async function readFileRange(handle, start, length) {
     const buffer = Buffer.alloc(Math.max(0, length));
     if (buffer.length === 0) return buffer;
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
-    return bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead);
+    let totalBytesRead = 0;
+    while (totalBytesRead < buffer.length) {
+        const { bytesRead } = await handle.read(
+            buffer,
+            totalBytesRead,
+            buffer.length - totalBytesRead,
+            start + totalBytesRead,
+        );
+        if (bytesRead < 1) break;
+        totalBytesRead += bytesRead;
+    }
+    return totalBytesRead === buffer.length
+        ? buffer
+        : buffer.subarray(0, totalBytesRead);
 }
 
 export async function listZipEntriesFromFile(filePath) {
@@ -230,6 +244,7 @@ export async function listZipEntriesFromFile(filePath) {
         const tailLength = Math.min(stat.size, EOCD_TAIL_BYTES);
         const tailStart = stat.size - tailLength;
         const tail = await readFileRange(handle, tailStart, tailLength);
+        if (tail.length !== tailLength) throw new Error('ZIP tail could not be read completely.');
         const eocdOffsetInTail = findEndOfCentralDirectory(tail);
         if (eocdOffsetInTail < 0) return [];
 
@@ -244,6 +259,11 @@ export async function listZipEntriesFromFile(filePath) {
             const locator = await readFileRange(handle, locatorOffset, 20);
             if (locator.length < 20 || locator.readUInt32LE(0) !== ZIP64_LOCATOR_SIGNATURE) return [];
             const zip64EocdOffset = readUInt64LEAsNumber(locator, 8);
+            if (
+                !Number.isSafeInteger(zip64EocdOffset)
+                || zip64EocdOffset < 0
+                || zip64EocdOffset + 56 > stat.size
+            ) return [];
             const zip64Eocd = await readFileRange(handle, zip64EocdOffset, 56);
             if (zip64Eocd.length < 56 || zip64Eocd.readUInt32LE(0) !== ZIP64_EOCD_SIGNATURE) return [];
             entryCount = readUInt64LEAsNumber(zip64Eocd, 32);
@@ -251,12 +271,31 @@ export async function listZipEntriesFromFile(filePath) {
             centralOffset = readUInt64LEAsNumber(zip64Eocd, 48);
         }
 
+        if (
+            !Number.isSafeInteger(entryCount)
+            || entryCount < 0
+            || entryCount > MAX_ZIP_ENTRY_COUNT
+            || !Number.isSafeInteger(centralSize)
+            || centralSize < 0
+            || centralSize > MAX_CENTRAL_DIRECTORY_BYTES
+            || !Number.isSafeInteger(centralOffset)
+            || centralOffset < 0
+            || centralOffset > stat.size
+            || centralSize > stat.size - centralOffset
+            || centralOffset + centralSize > eocdOffset
+        ) return [];
+
         const central = await readFileRange(handle, centralOffset, centralSize);
+        if (central.length !== centralSize) {
+            throw new Error('ZIP central directory could not be read completely.');
+        }
         const entries = [];
         let offset = 0;
 
         for (let i = 0; i < entryCount; i += 1) {
-            if (offset + 46 > central.length || central.readUInt32LE(offset) !== CENTRAL_SIGNATURE) break;
+            if (offset + 46 > central.length || central.readUInt32LE(offset) !== CENTRAL_SIGNATURE) {
+                throw new Error('ZIP central directory entry is incomplete.');
+            }
 
             const flags = central.readUInt16LE(offset + 8);
             const method = central.readUInt16LE(offset + 10);
@@ -270,6 +309,10 @@ export async function listZipEntriesFromFile(filePath) {
             const commentLength = central.readUInt16LE(offset + 32);
             const externalAttrs = central.readUInt32LE(offset + 38);
             const localHeaderOffset = central.readUInt32LE(offset + 42);
+            const nextOffset = offset + 46 + fileNameLength + extraLength + commentLength;
+            if (nextOffset > central.length) {
+                throw new Error('ZIP central directory entry exceeds its declared size.');
+            }
             const nameBuffer = Buffer.from(central.subarray(offset + 46, offset + 46 + fileNameLength));
             const extraBuffer = Buffer.from(central.subarray(offset + 46 + fileNameLength, offset + 46 + fileNameLength + extraLength));
             const name = decodeName(nameBuffer, flags);
@@ -288,7 +331,7 @@ export async function listZipEntriesFromFile(filePath) {
                 externalAttrs,
                 isDirectory: name.endsWith('/'),
             }, extraBuffer));
-            offset += 46 + fileNameLength + extraLength + commentLength;
+            offset = nextOffset;
         }
 
         return entries;
@@ -298,7 +341,9 @@ export async function listZipEntriesFromFile(filePath) {
 }
 
 export async function readZipEntryFromFile(filePath, entry, options = {}) {
-    if (options.maxBytes && entry.uncompressedSize > options.maxBytes) return null;
+    const maxBytes = Number(options.maxBytes);
+    const hasMaxBytes = Number.isFinite(maxBytes) && maxBytes > 0;
+    if (hasMaxBytes && entry.uncompressedSize > maxBytes) return null;
     if (options.maxCompressedBytes && entry.compressedSize > options.maxCompressedBytes) return null;
 
     const handle = await fs.open(filePath, 'r');
@@ -311,10 +356,16 @@ export async function readZipEntryFromFile(filePath, entry, options = {}) {
         const dataStart = entry.localHeaderOffset + 30 + fileNameLength + extraLength;
         const compressed = await readFileRange(handle, dataStart, entry.compressedSize);
         if (compressed.length !== entry.compressedSize) return null;
-        if (entry.method === 0) return compressed;
+        if (entry.method === 0) {
+            return hasMaxBytes && compressed.length > maxBytes ? null : compressed;
+        }
         if (entry.method === 8) {
             try {
-                return zlib.inflateRawSync(compressed);
+                const inflated = zlib.inflateRawSync(
+                    compressed,
+                    hasMaxBytes ? { maxOutputLength: maxBytes } : undefined,
+                );
+                return hasMaxBytes && inflated.length > maxBytes ? null : inflated;
             } catch {
                 return null;
             }

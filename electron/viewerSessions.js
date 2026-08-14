@@ -1350,16 +1350,35 @@ function decodeWithEncoding(buffer, encodingName, options = {}) {
     return new TextDecoder(encodingName, options).decode(buffer);
 }
 
+const AUTO_ENCODING_SAMPLE_BYTES = 512 * 1024;
+
 function scoreDecodedText(text = '') {
     const value = String(text || '');
-    const replacementCount = (value.match(/\uFFFD/g) || []).length;
-    const controlCount = (value.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) || []).length;
-    const hangulCount = (value.match(/[가-힣]/g) || []).length;
-    const visibleCount = value.replace(/\s/g, '').length || 1;
+    let replacementCount = 0;
+    let controlCount = 0;
+    let hangulCount = 0;
+    let visibleCount = 0;
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code === 0xfffd) replacementCount += 1;
+        if ((code <= 0x08) || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f)) {
+            controlCount += 1;
+        }
+        if (code >= 0xac00 && code <= 0xd7a3) hangulCount += 1;
+        if (!(
+            code === 0x20
+            || (code >= 0x09 && code <= 0x0d)
+            || code === 0x00a0
+            || code === 0x2028
+            || code === 0x2029
+            || code === 0xfeff
+        )) visibleCount += 1;
+    }
+    visibleCount = Math.max(1, visibleCount);
     return (replacementCount * 120) + (controlCount * 80) - ((hangulCount / visibleCount) * 30);
 }
 
-function decodeTextBuffer(buffer, encoding = 'auto') {
+export function decodeTextBuffer(buffer, encoding = 'auto') {
     const selected = String(encoding || 'auto').toLowerCase();
     if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
         return buffer.subarray(3).toString('utf8');
@@ -1370,22 +1389,40 @@ function decodeTextBuffer(buffer, encoding = 'auto') {
     const encodings = selected === 'auto'
         ? ['utf-8', 'euc-kr', 'windows-949', 'shift_jis']
         : [selected];
+    if (selected !== 'auto') {
+        return selected === 'utf-8'
+            ? decodeWithEncoding(buffer, selected, { fatal: true })
+            : decodeWithEncoding(buffer, selected);
+    }
+
+    const sample = buffer.length > AUTO_ENCODING_SAMPLE_BYTES
+        ? buffer.subarray(0, AUTO_ENCODING_SAMPLE_BYTES)
+        : buffer;
     let best = null;
     for (const encodingName of encodings) {
         try {
-            const decoded = encodingName === 'utf-8'
-                ? decodeWithEncoding(buffer, encodingName, { fatal: selected !== 'auto' })
-                : decodeWithEncoding(buffer, encodingName);
+            const decoded = decodeWithEncoding(sample, encodingName);
             const score = scoreDecodedText(decoded);
             if (!best || score < best.score) {
-                best = { text: decoded, score };
+                best = { encodingName, score };
             }
-            if (selected !== 'auto') return decoded;
         } catch {
             // 지원하지 않는 인코딩은 다음 후보를 시도합니다.
         }
     }
-    return best?.text || buffer.toString('utf8');
+    if (!best) return buffer.toString('utf8');
+    try {
+        return decodeWithEncoding(buffer, best.encodingName);
+    } catch {
+        return buffer.toString('utf8');
+    }
+}
+
+function throwIfViewerOperationAborted(signal) {
+    if (!signal?.aborted) return;
+    const error = new Error('Operation cancelled.');
+    error.name = 'AbortError';
+    throw error;
 }
 
 function run7z(sevenZExe, args, options = {}) {
@@ -1564,9 +1601,12 @@ export class ViewerSessionManager {
         }
     }
 
-    create(filePath) {
+    create(filePath, options = {}) {
         const normalizedPath = path.resolve(filePath || '');
-        if (!normalizedPath || !fs.existsSync(normalizedPath)) {
+        if (
+            !normalizedPath
+            || (options.skipExistenceCheck !== true && !fs.existsSync(normalizedPath))
+        ) {
             throw new Error('File not found.');
         }
         const type = viewerTypeForPath(normalizedPath);
@@ -1579,7 +1619,9 @@ export class ViewerSessionManager {
             fileName: path.basename(normalizedPath),
             extension: path.extname(normalizedPath).toLowerCase(),
             type,
-            adjacent: adjacentBookState(normalizedPath),
+            adjacent: options.skipAdjacent === true
+                ? { hasPrevious: false, hasNext: false }
+                : adjacentBookState(normalizedPath),
             createdAt: new Date().toISOString(),
         };
         this.nextSessionSeq += 1;
@@ -1747,17 +1789,25 @@ export class ViewerSessionManager {
         };
     }
 
-    async getEpubText(sessionId) {
+    async getEpubText(sessionId, options = {}) {
         const session = this.get(sessionId);
         if (session.type !== 'epub') throw new Error('This file is not an EPUB document.');
+        throwIfViewerOperationAborted(options.signal);
         const entries = await listArchiveEntries(session.filePath, '');
+        throwIfViewerOperationAborted(options.signal);
         const containerEntry = findArchiveEntry(entries, 'META-INF/container.xml');
         let opfPath = '';
         let opfXml = '';
         if (containerEntry) {
-            const containerBuffer = await extractArchiveEntry(session.filePath, containerEntry.name, '', {
-                maxBytes: 1024 * 1024,
-            });
+            const containerBuffer = containerEntry.zipEntry
+                ? await readZipEntryFromFile(session.filePath, containerEntry.zipEntry, {
+                    maxBytes: 1024 * 1024,
+                    maxCompressedBytes: 1024 * 1024,
+                })
+                : await extractArchiveEntry(session.filePath, containerEntry.name, '', {
+                    maxBytes: 1024 * 1024,
+                });
+            if (!containerBuffer) throw new Error('EPUB container is too large.');
             opfPath = decodeEpubEntities(
                 containerBuffer.toString('utf8').match(/full-path\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || '',
             );
@@ -1766,9 +1816,15 @@ export class ViewerSessionManager {
             || entries.find(entry => !entry.isDir && /\.opf$/i.test(entry.name));
         if (opfEntry) {
             opfPath = opfEntry.name;
-            const opfBuffer = await extractArchiveEntry(session.filePath, opfEntry.name, '', {
-                maxBytes: 4 * 1024 * 1024,
-            });
+            const opfBuffer = opfEntry.zipEntry
+                ? await readZipEntryFromFile(session.filePath, opfEntry.zipEntry, {
+                    maxBytes: 4 * 1024 * 1024,
+                    maxCompressedBytes: 4 * 1024 * 1024,
+                })
+                : await extractArchiveEntry(session.filePath, opfEntry.name, '', {
+                    maxBytes: 4 * 1024 * 1024,
+                });
+            if (!opfBuffer) throw new Error('EPUB package document is too large.');
             opfXml = opfBuffer.toString('utf8');
         }
         const metadata = parseEpubMetadata(opfXml);
@@ -1784,6 +1840,67 @@ export class ViewerSessionManager {
                 .filter(entry => !/(^|\/)(nav|toc)\.(xhtml|html|htm)$/i.test(entry.name))
                 .sort((left, right) => naturalCompare(left.name, right.name))
                 .map(entry => entry.name);
+        if (options.textOnly === true) {
+            const textEntries = chapterEntryNames
+                .map(entryName => findArchiveEntry(entries, entryName))
+                .filter(entry => entry && /\.(xhtml|html|htm)$/i.test(entry.name));
+            const warnings = [];
+            if (textEntries.length > 200) {
+                warnings.push(`EPUB text extraction was limited to 200 of ${textEntries.length} chapters.`);
+            }
+            const chapters = [];
+            for (const entry of textEntries.slice(0, 200)) {
+                throwIfViewerOperationAborted(options.signal);
+                if (entry.encrypted) {
+                    return {
+                        metadata,
+                        chapters: [],
+                        encrypted: true,
+                        truncated: false,
+                        warnings: ['EPUB spine content is encrypted.'],
+                    };
+                }
+                if (
+                    Number(entry.size) > MAX_EPUB_CHAPTER_BYTES
+                    || Number(entry.zipEntry?.compressedSize || 0) > MAX_EPUB_CHAPTER_BYTES
+                ) {
+                    warnings.push(`Skipped oversized EPUB chapter: ${entry.name}`);
+                    continue;
+                }
+                const buffer = entry.zipEntry
+                    ? await readZipEntryFromFile(session.filePath, entry.zipEntry, {
+                        maxBytes: MAX_EPUB_CHAPTER_BYTES,
+                        maxCompressedBytes: MAX_EPUB_CHAPTER_BYTES,
+                    })
+                    : await extractArchiveEntry(session.filePath, entry.name, '', {
+                        maxBytes: MAX_EPUB_CHAPTER_BYTES,
+                    });
+                if (!buffer) {
+                    throw new Error(`EPUB chapter could not be read safely: ${entry.name}`);
+                }
+                const html = buffer.toString('utf8');
+                const text = stripHtmlToText(epubBodyHtmlFromDocument(html));
+                if (!text) continue;
+                const chapter = {
+                    name: entry.name,
+                    text,
+                };
+                if (typeof options.onChapterText === 'function') {
+                    await options.onChapterText(chapter);
+                } else {
+                    chapters.push(chapter);
+                }
+                if (options.shouldStop?.()) break;
+            }
+            throwIfViewerOperationAborted(options.signal);
+            return {
+                metadata,
+                chapters,
+                encrypted: false,
+                truncated: warnings.length > 0,
+                warnings,
+            };
+        }
         const manifestItems = Array.from(manifest.values());
         const navItem = manifestItems.find(item => String(item.properties || '').split(/\s+/).includes('nav'))
             || manifestItems.find(item => /(^|\/)(nav|toc)\.(xhtml|html|htm)$/i.test(item.entryName || ''));

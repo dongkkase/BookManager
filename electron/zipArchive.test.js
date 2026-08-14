@@ -4,7 +4,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { crc32, listZipEntries, readZipEntry, replaceZipEntry, replaceZipEntryAppendOnly } from './core/zipArchive.js';
+import {
+    crc32,
+    listZipEntries,
+    listZipEntriesFromFile,
+    readZipEntry,
+    readZipEntryFromFile,
+    replaceZipEntry,
+    replaceZipEntryAppendOnly,
+} from './core/zipArchive.js';
 
 function createStoredZipWithRawName(nameBuffer, content = Buffer.from('page'), options = {}) {
     const flags = options.flags || 0;
@@ -119,6 +127,73 @@ test('ZIP append-only 교체는 기존 데이터를 유지하고 새 엔트리�
         assert.ok(coverEntry);
         assert.equal(readZipEntry(buffer, coverEntry).toString('utf8'), 'cover');
         assert.equal(readZipEntry(buffer, comicInfoEntries[0]).toString('utf8'), '<ComicInfo><Title>New</Title></ComicInfo>');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('파일 기반 ZIP 읽기는 잘못된 헤더보다 큰 압축 해제 결과를 제한한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-zip-output-limit-'));
+    try {
+        const source = path.join(root, 'sample.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'content.xhtml', Buffer.alloc(1024 * 1024, 0x61));
+
+        const buffer = fs.readFileSync(source);
+        const centralOffset = buffer.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+        assert.ok(centralOffset >= 0);
+        buffer.writeUInt32LE(1, centralOffset + 24);
+        fs.writeFileSync(source, buffer);
+
+        const entries = await listZipEntriesFromFile(source);
+        assert.equal(entries[0].uncompressedSize, 1);
+        const extracted = await readZipEntryFromFile(source, entries[0], {
+            maxBytes: 1024,
+            maxCompressedBytes: 1024 * 1024,
+        });
+        assert.equal(extracted, null);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('파일 기반 ZIP 목록은 파일 범위를 벗어난 중앙 디렉터리를 할당하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-zip-central-limit-'));
+    try {
+        const source = path.join(root, 'sample.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'content.xhtml', Buffer.from('content'));
+
+        const buffer = fs.readFileSync(source);
+        const eocdOffset = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+        assert.ok(eocdOffset >= 0);
+        buffer.writeUInt32LE(64 * 1024 * 1024, eocdOffset + 12);
+        fs.writeFileSync(source, buffer);
+
+        assert.deepEqual(await listZipEntriesFromFile(source), []);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('파일 기반 ZIP 목록은 불완전한 중앙 디렉터리를 부분 결과로 반환하지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-zip-central-partial-'));
+    try {
+        const source = path.join(root, 'sample.zip');
+        fs.writeFileSync(source, Buffer.alloc(0));
+        await replaceZipEntry(source, 'content.xhtml', Buffer.from('content'));
+
+        const buffer = fs.readFileSync(source);
+        const eocdOffset = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+        assert.ok(eocdOffset >= 0);
+        buffer.writeUInt16LE(2, eocdOffset + 8);
+        buffer.writeUInt16LE(2, eocdOffset + 10);
+        fs.writeFileSync(source, buffer);
+
+        await assert.rejects(
+            listZipEntriesFromFile(source),
+            /central directory entry is incomplete/i,
+        );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

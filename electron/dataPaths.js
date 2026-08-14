@@ -71,6 +71,14 @@ export function resolveLibraryDbPath(executableDir = process.cwd(), platform = p
     return path.join(resolveAppDataDir(executableDir, platform, env), 'library.db');
 }
 
+export function resolveContentIndexDir(executableDir = process.cwd(), platform = process.platform, env = process.env) {
+    return path.join(resolveAppDataDir(executableDir, platform, env), 'content_index');
+}
+
+export function resolveContentIndexDbPath(executableDir = process.cwd(), platform = process.platform, env = process.env) {
+    return path.join(resolveContentIndexDir(executableDir, platform, env), 'content.db');
+}
+
 export function resolveApiCacheDbPath(executableDir = process.cwd(), platform = process.platform, env = process.env) {
     return path.join(resolveAppDataDir(executableDir, platform, env), '.api_cache.db');
 }

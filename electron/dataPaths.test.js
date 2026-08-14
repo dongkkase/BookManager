@@ -6,6 +6,8 @@ import {
     resolveApiCacheDbPath,
     resolveAppDataDir,
     resolveConfigPath,
+    resolveContentIndexDbPath,
+    resolveContentIndexDir,
     migrateLegacyAppDataDir,
     resolveLibraryDbPath,
     resolveLegacyAppDataDirs,
@@ -19,6 +21,8 @@ test('앱 데이터 경로는 실행 폴더의 BookManagerData 하위로 고정�
 
     assert.equal(resolveAppDataDir(executableDir), path.join(executableDir, 'BookManagerData'));
     assert.equal(resolveLibraryDbPath(executableDir), path.join(executableDir, 'BookManagerData', 'library.db'));
+    assert.equal(resolveContentIndexDir(executableDir), path.join(executableDir, 'BookManagerData', 'content_index'));
+    assert.equal(resolveContentIndexDbPath(executableDir), path.join(executableDir, 'BookManagerData', 'content_index', 'content.db'));
     assert.equal(resolveApiCacheDbPath(executableDir), path.join(executableDir, 'BookManagerData', '.api_cache.db'));
     assert.equal(resolveConfigPath(executableDir), path.join(executableDir, 'BookManagerData', 'config.json'));
     assert.equal(resolveRenameHistoryPath(executableDir), path.join(executableDir, 'BookManagerData', 'rename_history.json'));
@@ -31,6 +35,7 @@ test('macOS .app 내부 실행 경로는 앱 번들 옆 BookManagerData 폴더�
     assert.equal(resolvePortableBaseDir(executableDir, 'darwin'), '/portable');
     assert.equal(resolveAppDataDir(executableDir, 'darwin'), path.join('/portable', 'BookManagerData'));
     assert.equal(resolveLibraryDbPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'library.db'));
+    assert.equal(resolveContentIndexDbPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'content_index', 'content.db'));
     assert.equal(resolveApiCacheDbPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', '.api_cache.db'));
     assert.equal(resolveConfigPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'config.json'));
     assert.equal(resolveRenameHistoryPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'rename_history.json'));
@@ -48,6 +53,7 @@ test('Windows portable은 임시 추출 경로 대신 원본 exe 폴더에 BookM
     assert.equal(resolvePortableBaseDir(extractedExecutableDir, 'win32', env), portableDir);
     assert.equal(resolveAppDataDir(extractedExecutableDir, 'win32', env), path.join(portableDir, 'BookManagerData'));
     assert.equal(resolveLibraryDbPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'BookManagerData', 'library.db'));
+    assert.equal(resolveContentIndexDbPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'BookManagerData', 'content_index', 'content.db'));
     assert.equal(resolveApiCacheDbPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'BookManagerData', '.api_cache.db'));
     assert.equal(resolveConfigPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'BookManagerData', 'config.json'));
     assert.equal(resolveRenameHistoryPath(extractedExecutableDir, 'win32', env), path.join(portableDir, 'BookManagerData', 'rename_history.json'));
@@ -79,6 +85,7 @@ test('IPC의 DB, 캐시 파일, 썸네일 경로는 BookManagerData 경로 정�
     const configManager = fs.readFileSync(new URL('./configManager.js', import.meta.url), 'utf8');
 
     assert.match(source, /resolveLibraryDbPath/);
+    assert.match(source, /resolveContentIndexDbPath/);
     assert.match(source, /resolveApiCacheDbPath/);
     assert.match(source, /resolveRenameHistoryPath/);
     assert.match(source, /resolveThumbnailDir/);

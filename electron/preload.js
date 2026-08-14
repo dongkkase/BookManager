@@ -53,6 +53,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
   searchLibraryFiles: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryFiles', { query, libraries, options }),
+  searchLibraryContent: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryContent', { query, libraries, options }),
+  getContentIndexStatus: (libraries) => ipcRenderer.invoke('folder:getContentIndexStatus', { libraries }),
+  startContentIndex: (libraries, options) => ipcRenderer.invoke('folder:startContentIndex', { libraries, options }),
+  stopContentIndex: () => ipcRenderer.invoke('folder:stopContentIndex'),
+  clearContentIndex: () => ipcRenderer.invoke('folder:clearContentIndex'),
   getLibraryFolderChildren: (libraryPath, parentPath) => ipcRenderer.invoke('folder:getLibraryFolderChildren', libraryPath, parentPath),
   
   // 라이브러리 DB
@@ -108,6 +113,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('task:progress', handler);
     return () => ipcRenderer.removeListener('task:progress', handler);
+  },
+  onContentIndexProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('folder:contentIndexProgress', handler);
+    return () => ipcRenderer.removeListener('folder:contentIndexProgress', handler);
   },
   onTaskComplete: (callback) => {
     const handler = (_, data) => callback(data);

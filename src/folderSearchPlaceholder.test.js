@@ -18,9 +18,13 @@ assert.ok(folderSearchInputStart >= 0);
 assert.ok(folderSearchInputEnd > folderSearchInputStart);
 
 test('폴더 검색 placeholder는 기존 문구와 input 너비를 유지한다', () => {
-    assert.match(folderSource, /t\('folder_search_library_ph'\)\s*:\s*t\('folder_search_ph'\)/);
+    assert.match(folderSource, /t\('folder_search_library_ph'\)/);
+    assert.match(folderSource, /t\('folder_search_ph'\)/);
+    assert.match(folderSource, /t\('folder_search_content_ph'\)/);
     assert.match(folderSource, /placeholder=\{searchPlaceholder\}/);
-    assert.match(folderStyles, /\.search-input\s*\{[\s\S]*?width:\s*210px;/);
+    assert.match(folderStyles, /\.search-input-wrap\s*\{[^}]*width:\s*210px;/);
+    assert.match(folderStyles, /\.search-input-wrap\.has-search-scope\s*\{[^}]*width:\s*292px;/);
+    assert.match(folderStyles, /\.search-input\s*\{[^}]*width:\s*100%;/);
 });
 
 test('폴더 검색 placeholder는 비어 있고 문구가 넘칠 때만 자동 슬라이드한다', () => {
@@ -46,7 +50,7 @@ test('폴더 검색은 자동 적용하지 않고 버튼 또는 submit에서만 
     assert.doesNotMatch(folderSearchInputSource, /setTimeout/);
     assert.equal(folderSearchInputSource.match(/onApplyQuery\s*\(/g)?.length, 1);
     assert.match(folderSearchInputSource, /onChange=\{event\s*=>\s*setSearchQuery\(event\.target\.value\)\}/);
-    assert.match(folderSearchInputSource, /<form[\s\S]*?className="search-input-wrap"[\s\S]*?role="search"[\s\S]*?onSubmit=\{handleSubmit\}\s*>/);
+    assert.match(folderSearchInputSource, /<form[\s\S]*?className=\{`search-input-wrap \$\{showSearchScope \? 'has-search-scope' : ''\}`\}[\s\S]*?role="search"[\s\S]*?onSubmit=\{handleSubmit\}\s*>/);
     assert.match(folderSearchInputSource, /const submitSearch\s*=\s*\(\)\s*=>\s*\{\s*if \(isComposingRef\.current\) return;\s*const inputValue = inputRef\.current\?\.value \?\? searchQuery;\s*onApplyQuery\(inputValue\.trim\(\)\);\s*\};/);
     assert.match(folderSearchInputSource, /const handleSubmit\s*=\s*event\s*=>\s*\{\s*event\.preventDefault\(\);\s*submitSearch\(\);\s*\};/);
     assert.match(folderSearchInputSource, /type="submit"[\s\S]*?className="search-submit-btn"[\s\S]*?<FaIcon name="search"/);
@@ -54,7 +58,7 @@ test('폴더 검색은 자동 적용하지 않고 버튼 또는 submit에서만 
     assert.match(folderSource, /const \[searchSubmitToken, setSearchSubmitToken\] = useState\(0\);/);
     assert.match(folderSource, /const applySearchQuery = useCallback\(query => \{\s*setAppliedSearchQuery\(query\);\s*setSearchSubmitToken\(token => token \+ 1\);/);
     assert.match(folderSource, /onApplyQuery=\{applySearchQuery\}/);
-    assert.match(folderSource, /\[isLibrarySearchActive, libraries, normalizedSearchQuery, searchSubmitToken\]/);
+    assert.match(folderSource, /\[isLibrarySearchActive, libraries, normalizedSearchQuery, searchScope, searchSubmitToken, showToast, t\]/);
 });
 
 test('폴더 검색 Enter는 IME 조합을 보호하고 지우기는 즉시 적용한다', () => {
@@ -72,4 +76,27 @@ test('검색 및 지우기 버튼은 input 안에서 텍스트와 겹치지 않�
     assert.match(folderStyles, /\.search-clear-btn,[\s\S]*?\.search-submit-btn\s*\{[\s\S]*?width:\s*24px;[\s\S]*?height:\s*24px;/);
     assert.match(folderStyles, /\.search-clear-btn\s*\{[\s\S]*?right:\s*29px;/);
     assert.match(folderStyles, /\.search-submit-btn\s*\{[\s\S]*?right:\s*4px;/);
+});
+
+test('검색 범위는 검색 form 내부의 input 왼쪽 영역에 표시한다', () => {
+    const searchFormIndex = folderSearchInputSource.indexOf('<form');
+    const searchScopeIndex = folderSearchInputSource.indexOf('className="folder-search-scope"');
+    const searchInputIndex = folderSearchInputSource.indexOf('<input', searchScopeIndex);
+    const searchFormEndIndex = folderSearchInputSource.indexOf('</form>', searchInputIndex);
+
+    assert.ok(searchFormIndex >= 0);
+    assert.ok(searchScopeIndex > searchFormIndex);
+    assert.ok(searchInputIndex > searchScopeIndex);
+    assert.ok(searchFormEndIndex > searchInputIndex);
+    assert.equal(folderSource.match(/className="folder-search-scope"/g)?.length, 1);
+    assert.match(folderSearchInputSource, /className=\{`search-input-wrap \$\{showSearchScope \? 'has-search-scope' : ''\}`\}/);
+    assert.match(folderSearchInputSource, /value=\{searchScope\}/);
+    assert.match(folderSearchInputSource, /onChange=\{event\s*=>\s*onSearchScopeChange\(event\.target\.value\)\}/);
+    assert.match(folderSource, /searchScope=\{searchScope\}/);
+    assert.match(folderSource, /onSearchScopeChange=\{handleSearchScopeChange\}/);
+
+    assert.match(folderStyles, /\.search-input-wrap\s*\{[^}]*position:\s*relative;/);
+    assert.match(folderStyles, /\.folder-search-scope\s*\{[^}]*position:\s*absolute;[^}]*left:\s*\d+px;[^}]*z-index:\s*\d+;[^}]*width:\s*82px;[^}]*height:\s*calc\(100% - 2px\);/);
+    assert.match(folderStyles, /\.search-input-wrap\.has-search-scope \.search-input\s*\{[^}]*padding-left:\s*[^;]+;/);
+    assert.match(folderStyles, /\.search-input-wrap\.has-search-scope \.search-placeholder-viewport\s*\{[^}]*left:\s*[^;]+;/);
 });

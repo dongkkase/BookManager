@@ -758,6 +758,25 @@ export class LibraryDB {
         })));
     }
 
+    async getFilesByPaths(filePaths = []) {
+        return this.withLock(async () => {
+            const normalizedPaths = [...new Set((filePaths || []).filter(Boolean).map(filePath => path.resolve(filePath)))];
+            if (normalizedPaths.length === 0) return [];
+            const db = this.getConnection();
+            const rows = [];
+            const chunkSize = 400;
+            for (let offset = 0; offset < normalizedPaths.length; offset += chunkSize) {
+                const chunk = normalizedPaths.slice(offset, offset + chunkSize);
+                rows.push(...db.prepare(`
+                    SELECT *
+                    FROM files
+                    WHERE path IN (${chunk.map(() => '?').join(', ')})
+                `).all(...chunk));
+            }
+            return rows;
+        });
+    }
+
     async replaceTargetIndex(targetFolder, filePaths = []) {
         return this.withLock(async () => {
             const db = this.getConnection();
