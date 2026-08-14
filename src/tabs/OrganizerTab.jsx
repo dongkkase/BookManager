@@ -818,8 +818,10 @@ function OrganizerTab({ config, t, showToast }) {
                         onClick={(event) => event.stopPropagation()}
                       />
                       <span className="org-icon"><FaIcon name="cube" /></span>
-                      <span className="org-title">{item.clean_title || item.name}</span>
-                      <span className="org-original-name">({item.name})</span>
+                      <span className="org-name-text">
+                        <span className="org-title">{item.clean_title || item.name}</span>
+                        <span className="org-original-name">({item.name})</span>
+                      </span>
                     </div>
                     <div className="org-col-path org-path-widget">
                       <input

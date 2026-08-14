@@ -233,6 +233,29 @@
 }
 .org-child-row .org-icon {color: rgba(255,255,255,0.7);}
 
+.org-name-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1.15;
+}
+
+.org-name-text .org-title,
+.org-name-text .org-original-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.org-name-text .org-original-name {
+  margin-left: 0;
+}
+
 .org-title {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -247,7 +270,9 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   color: rgba(255, 255, 255, 0.3);
-  font-weight:400;
+  font-weight:normal;
+  font-size:0.9em;
+  padding-top:2px;
 }
 
 .org-path-widget {
@@ -269,12 +294,14 @@
 .org-row-menu-wrap {
   position: relative;
   flex: 0 0 auto;
+  height: var(--control-height);
 }
 
 .org-path-widget .org-row-menu-button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  height: 100%;
 }
 
 .org-path-widget .org-row-menu-button.active {
@@ -321,7 +348,11 @@
   border: 1px solid #555;
   border-radius: 3px;
   font-size: var(--font-xs);
-  font-weight: 400;
+  font-weight: normal;
+}
+
+.org-path-input {
+  height: var(--control-height);
 }
 
 .org-volume-input {
