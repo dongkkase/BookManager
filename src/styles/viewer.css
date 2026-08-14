@@ -1036,6 +1036,40 @@
   max-height: none;
 }
 
+.viewer-comic-quality-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.55);
+  object-fit: contain;
+  image-rendering: auto;
+}
+
+.viewer-comic-page-frame[data-high-quality-ready='true'] .viewer-comic-image {
+  opacity: 0;
+}
+
+.viewer-comic-page-frame[data-high-quality-ready='true'] .viewer-comic-quality-canvas {
+  opacity: 1;
+}
+
+.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-quality-canvas {
+  box-shadow: none;
+}
+
+.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame:first-child .viewer-comic-quality-canvas {
+  object-position: right center;
+}
+
+.viewer-comic-stage.is-spread.has-spread-pair .viewer-comic-page-frame:last-child .viewer-comic-quality-canvas {
+  object-position: left center;
+}
+
 .viewer-comic-placeholder {
   width: min(100%, 420px);
   min-height: min(72vh, 720px);

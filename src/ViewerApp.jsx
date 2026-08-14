@@ -4,6 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
+import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { buildFlipBookStructureKey, finishAndTurnFlipBookToPage, getFlipBookCurrentGroupEntries } from './viewerFlipBook';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
@@ -191,6 +192,7 @@ const ZOOM_MIN = 10;
 const ZOOM_MAX = 500;
 const ZOOM_STEP = 10;
 const COMIC_ZOOM_STEP = 5;
+const COMIC_HIGH_QUALITY_RENDER_DELAY_MS = 120;
 const WHEEL_ZOOM_BUTTON_MASK = 1 | 2;
 const READER_ALLOWED_HTML_TAGS = new Set([
   'a', 'abbr', 'article', 'b', 'blockquote', 'br', 'caption', 'cite', 'code', 'dd', 'div',
@@ -515,6 +517,13 @@ function scaledPageSizeForViewMode({ viewMode, baseWidth, baseHeight, availableW
     width: Math.max(1, Math.floor((Number(baseWidth) || 1) * scale)),
     height: Math.max(1, Math.floor((Number(baseHeight) || 1) * scale)),
   };
+}
+
+function supportsHighQualityComicDownsample(page = {}) {
+  const mime = String(page.mime || '').toLowerCase();
+  const name = String(page.name || page.basename || '').toLowerCase();
+  return ['image/jpeg', 'image/png', 'image/webp', 'image/bmp'].includes(mime)
+    || /\.(?:jpe?g|png|webp|bmp)$/.test(name);
 }
 
 function dragPanOverflowStateForTarget(node, panTarget) {
@@ -3648,11 +3657,17 @@ function ComicPageFrame({
   imageClassName,
   frameStyle,
   imageStyle,
+  imageFit = 'contain',
+  highQuality = false,
   onImageLoad,
   onImageError,
 }) {
+  const frameRef = useRef(null);
   const imageRef = useRef(null);
   const ambientCanvasRef = useRef(null);
+  const qualityCanvasRef = useRef(null);
+  const qualityScheduleRef = useRef(null);
+  const [qualityReady, setQualityReady] = useState(false);
 
   const paintAmbient = useCallback(image => {
     return paintAmbientCanvasFromSource(ambientCanvasRef.current, image);
@@ -3665,10 +3680,128 @@ function ComicPageFrame({
     }
   }, [paintAmbient, src]);
 
+  useEffect(() => {
+    const frame = frameRef.current;
+    const canvas = qualityCanvasRef.current;
+    if (!frame || !canvas) return undefined;
+
+    setQualityReady(false);
+    let disposed = false;
+    let generation = 0;
+    let timerId = null;
+    let observedDevicePixelSize = null;
+
+    const releaseCanvas = () => {
+      if (canvas.width !== 1) canvas.width = 1;
+      if (canvas.height !== 1) canvas.height = 1;
+    };
+    const renderHighQualityImage = currentGeneration => {
+      const image = imageRef.current;
+      if (
+        disposed
+        || currentGeneration !== generation
+        || !highQuality
+        || !image?.complete
+        || image.naturalWidth < 1
+        || image.naturalHeight < 1
+      ) return;
+
+      const rect = frame.getBoundingClientRect();
+      const hasObservedDevicePixelSize = Boolean(
+        observedDevicePixelSize?.width > 0 && observedDevicePixelSize?.height > 0
+      );
+      const target = comicDownsampleTarget({
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight,
+        displayWidth: hasObservedDevicePixelSize ? observedDevicePixelSize.width : rect.width,
+        displayHeight: hasObservedDevicePixelSize ? observedDevicePixelSize.height : rect.height,
+        devicePixelRatio: hasObservedDevicePixelSize ? 1 : (window.devicePixelRatio || 1),
+        fitMode: imageFit,
+      });
+      if (!target) {
+        releaseCanvas();
+        if (!disposed && currentGeneration === generation) setQualityReady(false);
+        return;
+      }
+
+      try {
+        const painted = paintComicDownsample({ source: image, canvas, target });
+        if (!painted) releaseCanvas();
+        if (!disposed && currentGeneration === generation) setQualityReady(painted);
+      } catch {
+        if (!disposed && currentGeneration === generation) {
+          releaseCanvas();
+          setQualityReady(false);
+        }
+      }
+    };
+    const scheduleHighQualityRender = (delay = COMIC_HIGH_QUALITY_RENDER_DELAY_MS) => {
+      if (disposed) return;
+      generation += 1;
+      const currentGeneration = generation;
+      if (timerId !== null) window.clearTimeout(timerId);
+      setQualityReady(false);
+      timerId = window.setTimeout(() => {
+        timerId = null;
+        renderHighQualityImage(currentGeneration);
+      }, Math.max(0, Number(delay) || 0));
+    };
+
+    qualityScheduleRef.current = scheduleHighQualityRender;
+    if (!highQuality) {
+      releaseCanvas();
+      setQualityReady(false);
+      return () => {
+        disposed = true;
+        generation += 1;
+        qualityScheduleRef.current = null;
+      };
+    }
+
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) scheduleHighQualityRender(0);
+    let observer = null;
+    let receivedInitialResize = false;
+    const handleResize = entries => {
+      const devicePixelBox = entries?.[0]?.devicePixelContentBoxSize;
+      const devicePixelSize = devicePixelBox?.[0] || devicePixelBox;
+      observedDevicePixelSize = devicePixelSize
+        ? { width: devicePixelSize.inlineSize, height: devicePixelSize.blockSize }
+        : null;
+      scheduleHighQualityRender(receivedInitialResize ? COMIC_HIGH_QUALITY_RENDER_DELAY_MS : 0);
+      receivedInitialResize = true;
+    };
+    const handleWindowResize = () => {
+      observedDevicePixelSize = null;
+      scheduleHighQualityRender();
+    };
+    if (typeof ResizeObserver === 'function') {
+      observer = new ResizeObserver(handleResize);
+      try {
+        observer.observe(frame, { box: 'device-pixel-content-box' });
+      } catch {
+        observer.observe(frame);
+      }
+    }
+    window.addEventListener('resize', handleWindowResize);
+
+    return () => {
+      disposed = true;
+      generation += 1;
+      if (timerId !== null) window.clearTimeout(timerId);
+      observer?.disconnect?.();
+      window.removeEventListener('resize', handleWindowResize);
+      qualityScheduleRef.current = null;
+      releaseCanvas();
+    };
+  }, [highQuality, imageFit, src]);
+
   return (
     <div
       key={page.name}
+      ref={frameRef}
       data-page-index={index}
+      data-high-quality-ready={qualityReady ? 'true' : undefined}
       className={`viewer-comic-page-frame view-${viewMode}`}
       style={frameStyle}
     >
@@ -3685,9 +3818,19 @@ function ComicPageFrame({
         onLoad={event => {
           paintAmbient(event.currentTarget);
           onImageLoad(event);
+          qualityScheduleRef.current?.(0);
         }}
         onDragStart={event => event.preventDefault()}
-        onError={onImageError}
+        onError={event => {
+          setQualityReady(false);
+          onImageError?.(event);
+        }}
+      />
+      <canvas
+        ref={qualityCanvasRef}
+        className="viewer-comic-quality-canvas"
+        aria-hidden="true"
+        style={{ objectFit: imageFit }}
       />
     </div>
   );
@@ -6397,6 +6540,8 @@ function ViewerApp() {
         imageClassName={imageClassName}
         frameStyle={frameStyle}
         imageStyle={fittedImageStyle}
+        imageFit={options.objectFit || 'cover'}
+        highQuality={Boolean(options.highQuality && supportsHighQualityComicDownsample(page))}
         onImageLoad={event => {
           const { naturalWidth, naturalHeight } = event.currentTarget;
           rememberComicPageImageSize(page.name, naturalWidth, naturalHeight);
@@ -6492,7 +6637,12 @@ function ViewerApp() {
       ? `has-page-effect effect-${pageTurn.effect} effect-${pageTurn.direction}`
       : '';
     const comicStageClassName = `viewer-comic-stage is-${viewMode} ${flowMode === 'spread' ? 'is-spread' : ''} ${hasSpreadPair ? 'has-spread-pair' : ''} ${comicEffectClassName}`.trim();
-    const comicPages = displayComicPages.map((page, index) => renderComicImage(page, Number.isFinite(page?.index) ? page.index : displayStartIndex + index, pageSlots));
+    const comicPages = displayComicPages.map((page, index) => renderComicImage(
+      page,
+      Number.isFinite(page?.index) ? page.index : displayStartIndex + index,
+      pageSlots,
+      { highQuality: true },
+    ));
     return (
       <div className={comicStageClassName}>
         {hasSpreadPair ? <div className="viewer-spread-pair">{comicPages}</div> : comicPages}
