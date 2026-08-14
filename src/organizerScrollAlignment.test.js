@@ -37,3 +37,15 @@ test('구조 정리 헤더와 행은 공통 열 정의를 사용하고 헤더는
     assert.match(headerDeclarations, /position\s*:\s*sticky\s*;/);
     assert.match(headerDeclarations, /top\s*:\s*0\s*;/);
 });
+
+test('구조 정리 항목 수와 용량 열은 작은 고정 너비와 가운데 정렬을 사용한다', () => {
+    const containerDeclarations = declarationsForSelector(organizerCss, '.org-tree-container');
+    const countDeclarations = declarationsForSelector(organizerCss, '.org-col-count');
+    const sizeDeclarations = declarationsForSelector(organizerCss, '.org-col-size');
+    const columnDefinition = containerDeclarations.match(/--org-tree-columns\s*:\s*([^;]+);/)?.[1];
+
+    assert.ok(columnDefinition, '구조 정리 테이블의 공통 열 정의가 필요합니다.');
+    assert.match(columnDefinition, /64px\s+84px\s+64px\s*$/);
+    assert.match(countDeclarations, /justify-content\s*:\s*center\s*;/);
+    assert.match(sizeDeclarations, /justify-content\s*:\s*center\s*;/);
+});

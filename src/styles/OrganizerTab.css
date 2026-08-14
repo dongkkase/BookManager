@@ -77,7 +77,7 @@
 }
 
 .org-tree-container {
-  --org-tree-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 92px 100px 64px;
+  --org-tree-columns: minmax(300px, 1.5fr) minmax(360px, 1.4fr) 64px 84px 64px;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -191,7 +191,7 @@
 
 .org-col-count,
 .org-col-size {
-  justify-content: flex-end;
+  justify-content: center;
   color: #f3f3f3;
 }
 
