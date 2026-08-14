@@ -673,7 +673,9 @@
   min-height: 100%;
   display: flex;
   align-items: center;
+  align-items: safe center;
   justify-content: center;
+  justify-content: safe center;
   gap: 8px;
   padding: 12px;
 }
@@ -688,7 +690,9 @@
   max-height: 100%;
   display: flex;
   align-items: center;
+  align-items: safe center;
   justify-content: center;
+  justify-content: safe center;
   gap: 0;
   min-width: 0;
 }
@@ -1006,8 +1010,7 @@
   cursor: grab;
   -webkit-user-drag: none;
   user-select: none;
-  image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
+  image-rendering: auto;
   object-fit: cover;
 
 }

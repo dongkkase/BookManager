@@ -730,6 +730,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /const ZOOM_MIN = 10/);
     assert.match(viewerAppSource, /const ZOOM_MAX = 500/);
     assert.match(viewerAppSource, /const ZOOM_STEP = 10/);
+    assert.match(viewerAppSource, /const COMIC_ZOOM_STEP = 5/);
     assert.match(viewerAppSource, /function ZoomControl/);
     assert.match(viewerAppSource, /const adjustZoom = useCallback/);
     assert.match(viewerAppSource, /const setZoomValue = useCallback/);
@@ -762,7 +763,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /function isShortcutModifierEvent\(event = \{\}\)/);
     assert.match(viewerAppSource, /return event\.ctrlKey \|\| event\.metaKey/);
     assert.match(viewerAppSource, /const zoomByWheelCombination = isShortcutModifierEvent\(event\) \|\| Boolean\(activeWheelButtons & WHEEL_ZOOM_BUTTON_MASK\)/);
-    assert.match(viewerAppSource, /adjustZoomAtPoint\(wheelDelta < 0 \? ZOOM_STEP : -ZOOM_STEP, event\)/);
+    assert.match(viewerAppSource, /adjustZoomAtPoint\(wheelDelta < 0 \? zoomStep : -zoomStep, event\)/);
     assert.match(viewerAppSource, /if \(activeWheelButtons & 2\) suppressContextMenuRef\.current = true/);
     assert.match(viewerAppSource, /if \(suppressContextMenuRef\.current\)/);
     assert.match(viewerStyleSource, /\.viewer-zoom-menu/);
@@ -771,6 +772,17 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerStyleSource, /font-variant-numeric:\s*tabular-nums/);
     assert.doesNotMatch(viewerAppSource, /<ToolbarButton[^>]+icon="(?:chevronLeft|chevronRight|angleUp|angleDown)"/);
     assert.doesNotMatch(viewerAppSource, /title="닫기 \(Esc\)"/);
+});
+
+test('만화책 뷰어 배율 조절은 슬라이더, 키보드, 휠에서 5% 단위를 공유한다', () => {
+    assert.match(viewerAppSource, /const COMIC_ZOOM_STEP = 5/);
+    assert.match(viewerAppSource, /const zoomStep = session\?\.type === 'comic' \? COMIC_ZOOM_STEP : ZOOM_STEP/);
+    assert.match(viewerAppSource, /className="viewer-zoom-range"[\s\S]*?step=\{step\}/);
+    assert.match(viewerAppSource, /<ZoomControl[\s\S]*?step=\{zoomStep\}/);
+    assert.match(viewerAppSource, /const handleZoomWheel = useCallback\([\s\S]*?adjustZoom\(zoomStep\)[\s\S]*?adjustZoom\(-zoomStep\)/);
+    assert.match(viewerAppSource, /\(event\.key === '\+' \|\| event\.key === '='\)[\s\S]*?adjustZoom\(zoomStep\)/);
+    assert.match(viewerAppSource, /event\.key === '-'[\s\S]*?adjustZoom\(-zoomStep\)/);
+    assert.match(viewerAppSource, /const zoomByWheelCombination = [\s\S]*?adjustZoomAtPoint\(wheelDelta < 0 \? zoomStep : -zoomStep, event\)/);
 });
 
 test('하단 페이지 네비게이션은 모든 뷰어 형식에서 사용할 수 있다', () => {

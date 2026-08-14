@@ -190,6 +190,7 @@ const VISIBILITY_OPTIONS = [
 const ZOOM_MIN = 10;
 const ZOOM_MAX = 500;
 const ZOOM_STEP = 10;
+const COMIC_ZOOM_STEP = 5;
 const WHEEL_ZOOM_BUTTON_MASK = 1 | 2;
 const READER_ALLOWED_HTML_TAGS = new Set([
   'a', 'abbr', 'article', 'b', 'blockquote', 'br', 'caption', 'cite', 'code', 'dd', 'div',
@@ -2265,7 +2266,7 @@ function ViewerDropdown({ value, options, onChange, title = '', className = '', 
   );
 }
 
-function ZoomControl({ zoom, onZoomChange, onReset, onWheel }) {
+function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
 
@@ -2304,7 +2305,7 @@ function ZoomControl({ zoom, onZoomChange, onReset, onWheel }) {
             type="range"
             min={ZOOM_MIN}
             max={ZOOM_MAX}
-            step={ZOOM_STEP}
+            step={step}
             value={zoom}
             title={viewerText('viewer.zoom.ratio', '확대/축소 배율')}
             aria-label={viewerText('viewer.zoom.ratio', '확대/축소 배율')}
@@ -4025,6 +4026,7 @@ function ViewerApp() {
   const [flowMode, setFlowMode] = useState('single');
   const [viewMode, setViewMode] = useState('fit');
   const [zoom, setZoom] = useState(100);
+  const zoomStep = session?.type === 'comic' ? COMIC_ZOOM_STEP : ZOOM_STEP;
   const [readingDirection, setReadingDirection] = useState('ltr');
   const [spreadCoverFirst, setSpreadCoverFirst] = useState(true);
   const [readerSettings, setReaderSettings] = useState(normalizeReaderSettings());
@@ -4444,9 +4446,9 @@ function ViewerApp() {
   const handleZoomWheel = useCallback(event => {
     event.preventDefault();
     event.stopPropagation();
-    if (event.deltaY < 0) adjustZoom(ZOOM_STEP);
-    else if (event.deltaY > 0) adjustZoom(-ZOOM_STEP);
-  }, [adjustZoom]);
+    if (event.deltaY < 0) adjustZoom(zoomStep);
+    else if (event.deltaY > 0) adjustZoom(-zoomStep);
+  }, [adjustZoom, zoomStep]);
   const handleSlideNavWheel = useCallback(event => {
     event.preventDefault();
     event.stopPropagation();
@@ -5917,7 +5919,7 @@ function ViewerApp() {
       event.preventDefault();
       event.stopPropagation();
       if (activeWheelButtons & 2) suppressContextMenuRef.current = true;
-      adjustZoomAtPoint(wheelDelta < 0 ? ZOOM_STEP : -ZOOM_STEP, event);
+      adjustZoomAtPoint(wheelDelta < 0 ? zoomStep : -zoomStep, event);
       return;
     }
     if (flowMode === 'scroll') return;
@@ -6263,10 +6265,10 @@ function ViewerApp() {
         moveAdjacentBook(-1);
       } else if ((event.key === '+' || event.key === '=') && (session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub' || session?.type === 'text')) {
         event.preventDefault();
-        adjustZoom(ZOOM_STEP);
+        adjustZoom(zoomStep);
       } else if (event.key === '-' && (session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub' || session?.type === 'text')) {
         event.preventDefault();
-        adjustZoom(-ZOOM_STEP);
+        adjustZoom(-zoomStep);
       } else if (event.key === '0' && (session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub' || session?.type === 'text')) {
         setViewMode('actual');
         setZoom(100);
@@ -6305,7 +6307,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned]);
+  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -6985,6 +6987,7 @@ function ViewerApp() {
             <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.zoom_group', '확대/축소')}>
               <ZoomControl
                 zoom={zoom}
+                step={zoomStep}
                 onZoomChange={setZoomValue}
                 onReset={() => setZoom(100)}
                 onWheel={handleZoomWheel}
