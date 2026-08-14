@@ -496,6 +496,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [searchResetToken, setSearchResetToken] = useState(0);
   const [librarySearchResults, setLibrarySearchResults] = useState([]);
   const [librarySearchLoading, setLibrarySearchLoading] = useState(false);
+  const [showContentIndexSearchHint, setShowContentIndexSearchHint] = useState(false);
   const [searchScope, setSearchScope] = useState(() => normalizeFolderSearchScope(config?.folder_search_scope));
   const [contentIndexStatus, setContentIndexStatus] = useState(null);
   const [contentIndexActionLoading, setContentIndexActionLoading] = useState(false);
@@ -523,16 +524,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const applySearchQuery = useCallback(query => {
     setAppliedSearchQuery(query);
     setSearchSubmitToken(token => token + 1);
+    setShowContentIndexSearchHint(false);
   }, []);
   const clearAppliedSearchQuery = useCallback(() => {
+    setShowContentIndexSearchHint(false);
     setAppliedSearchQuery('');
   }, []);
   const resetSearchQuery = useCallback(() => {
+    setShowContentIndexSearchHint(false);
     setAppliedSearchQuery('');
     setSearchResetToken(token => token + 1);
   }, []);
   const handleSearchScopeChange = useCallback(value => {
     const nextScope = normalizeFolderSearchScope(value);
+    setShowContentIndexSearchHint(false);
     setSearchScope(nextScope);
     setAppliedSearchQuery('');
     setLibrarySearchResults([]);
@@ -641,11 +646,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!isLibrarySearchActive) {
       setLibrarySearchResults(current => current.length === 0 ? current : []);
       setLibrarySearchLoading(false);
+      setShowContentIndexSearchHint(false);
       return undefined;
     }
 
     let disposed = false;
     setLibrarySearchLoading(true);
+    setShowContentIndexSearchHint(false);
     const search = async () => {
       try {
         const metadataPromise = searchScope === 'content'
@@ -662,9 +669,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             libraries,
             { limit: CONTENT_SEARCH_RESULT_LIMIT },
           );
-        const [metadataResult, contentResult] = await Promise.allSettled([
+        const contentIndexStatusPromise = searchScope === 'metadata'
+          ? Promise.resolve(null)
+          : window.electronAPI?.getContentIndexStatus?.(libraries);
+        const [metadataResult, contentResult, contentIndexStatusResult] = await Promise.allSettled([
           metadataPromise || Promise.resolve([]),
           contentPromise || Promise.resolve([]),
+          contentIndexStatusPromise || Promise.resolve(null),
         ]);
         if (
           (searchScope === 'metadata' && metadataResult.status === 'rejected')
@@ -685,6 +696,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           Array.isArray(metadataRows) ? metadataRows : [],
           Array.isArray(contentRows) ? contentRows : [],
         );
+        const resolvedContentIndexStatus = contentIndexStatusResult.status === 'fulfilled'
+          ? contentIndexStatusResult.value
+          : null;
+        const contentIndexIsEmpty = Boolean(resolvedContentIndexStatus)
+          && (
+            Number(resolvedContentIndexStatus.totalCount || 0) === 0
+            || Number(resolvedContentIndexStatus.tokenCount || 0) === 0
+          );
+        const shouldShowContentIndexHint = searchScope !== 'metadata'
+          && contentResult.status === 'fulfilled'
+          && (contentIndexIsEmpty || rows.length === 0);
         if (
           disposed
           || librarySearchRequestRef.current !== requestId
@@ -693,6 +715,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           setLibrarySearchResults(current => (
             librarySearchRequestRef.current === requestId
               ? (Array.isArray(rows) ? rows : [])
+              : current
+          ));
+          setShowContentIndexSearchHint(current => (
+            librarySearchRequestRef.current === requestId
+              ? shouldShowContentIndexHint
               : current
           ));
         });
@@ -709,6 +736,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           React.startTransition(() => {
             setLibrarySearchResults(current => (
               librarySearchRequestRef.current === requestId ? [] : current
+            ));
+            setShowContentIndexSearchHint(current => (
+              librarySearchRequestRef.current === requestId ? false : current
             ));
           });
           setLibrarySearchLoading(false);
@@ -3020,22 +3050,29 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   showSearchScope={libraries.length > 0}
                 />
               </div>
-              <button
-                type="button"
-                className={`content-index-btn ${contentIndexRunning ? 'is-running' : ''}`}
-                onClick={openContentIndexDialog}
-                title={contentIndexButtonLabel}
-                aria-label={contentIndexButtonLabel}
-                aria-busy={contentIndexRunning}
-              >
-                {contentIndexRunning ? (
-                  <span className="content-index-spinner" aria-hidden="true">
-                    <FaIcon name="spinner" size={12} />
-                  </span>
-                ) : (
-                  <FaIcon name="fileLines" size={12} />
+              <div className="content-index-control">
+                <button
+                  type="button"
+                  className={`content-index-btn ${contentIndexRunning ? 'is-running' : ''}`}
+                  onClick={openContentIndexDialog}
+                  title={contentIndexButtonLabel}
+                  aria-label={contentIndexButtonLabel}
+                  aria-busy={contentIndexRunning}
+                >
+                  {contentIndexRunning ? (
+                    <span className="content-index-spinner" aria-hidden="true">
+                      <FaIcon name="spinner" size={12} />
+                    </span>
+                  ) : (
+                    <FaIcon name="fileLines" size={12} />
+                  )}
+                </button>
+                {showContentIndexSearchHint && (
+                  <div className="content-index-search-hint" role="status" aria-live="polite">
+                    {t('folder_content_index_search_hint')}
+                  </div>
                 )}
-              </button>
+              </div>
               <button
                 className="refresh-btn"
                 onClick={() => handleSmartRefresh(true)}
