@@ -629,6 +629,12 @@ test('Organizer는 제목의 부대, 부, 장 숫자를 권수로 오인하지 �
                 cleanTitle: 'Re 제로부터 시작하는 이세계 생활 제5장',
                 newName: 'Re 제로부터 시작하는 이세계 생활 제5장',
             },
+            {
+                filename: '북두의 권 세기말 드라마 촬영전.zip',
+                innerName: '북두의 권 세기말 드라마 촬영전.cbz',
+                cleanTitle: '북두의 권 세기말 드라마 촬영전',
+                newName: '북두의 권 세기말 드라마 촬영전',
+            },
         ];
 
         for (const item of cases) {

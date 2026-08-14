@@ -84,6 +84,17 @@ test('제목의 부대, 부, 장 숫자는 권수로 오인하지 않는다', ()
     );
 });
 
+test('제목 중간의 단독 권은 보존하고 숫자가 붙은 권수만 정리한다', () => {
+    const title = '북두의 권 세기말 드라마 촬영전';
+
+    assert.equal(cleanDisplayTitle(title), title);
+    assert.equal(extractCoreTitle(title), title);
+    assert.equal(cleanDisplayTitle(`${title} 1권`), title);
+    assert.equal(extractCoreTitle(`${title} 1권`), title);
+    assert.equal(cleanDisplayTitle(`${title} 제1권`), title);
+    assert.equal(extractCoreTitle(`${title} 제1권`), title);
+});
+
 test('이미지 보정 suffix 안의 숫자는 무단위 권수로 오인하지 않는다', () => {
     assert.equal(
         formatLeafName('프랑켄 프랑 번역본', '프랑켄프랑 01_waifu2x_noise2', 0, 8, 'ko'),

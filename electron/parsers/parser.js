@@ -140,7 +140,7 @@ export function extractCoreTitle(text) {
   cleaned = cleaned.replace(/[：:—\-\/]/g, ' ');
   cleaned = cleaned.replace(/\d+\s*(?:권|화)/g, ' ');
   cleaned = cleaned.replace(/완결[!?.~]*/g, ' ');
-  cleaned = cleaned.replace(/\s+(완|화|권)[!?.~]*(?=\s|$)/g, ' ');
+  cleaned = cleaned.replace(/\s+(완|화)[!?.~]*(?=\s|$)/g, ' ');
   cleaned = cleaned.replace(/\<\s\>/g, '');
   cleaned = cleaned.replace(/[-_+]+/g, ' ');
   return cleaned.replace(/\s+/g, ' ').trim();
