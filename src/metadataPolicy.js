@@ -204,6 +204,22 @@ export function formatMetadataModifiedDate(value, fallback = 'No Data') {
         ].join(':')}`;
 }
 
+export function buildMetadataSeriesGroupOptions({
+    savedOptions = [],
+    items = [],
+    batchMetadata = {},
+} = {}) {
+    const values = new Set(['']);
+    const addValue = value => {
+        const normalized = String(value || '').trim();
+        if (normalized) values.add(normalized);
+    };
+    for (const option of savedOptions) addValue(option);
+    for (const item of items) addValue(item?.metadata?.SeriesGroup);
+    addValue(batchMetadata?.SeriesGroup);
+    return [...values];
+}
+
 export function adjacentSelectionAfterRemoval(items, removedIds, selectedId) {
     const removed = new Set(removedIds);
     const selectedIndex = items.findIndex(item => item.id === selectedId);

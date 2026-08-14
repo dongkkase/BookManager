@@ -1311,6 +1311,13 @@ async function collectPublisherOptions(libraryDb) {
   return uniqueValues(publishers);
 }
 
+async function collectSeriesGroupOptions(libraryDb) {
+  if (!libraryDb || typeof libraryDb.getDistinctSeriesGroups !== 'function') return [];
+  const rows = await libraryDb.getDistinctSeriesGroups(1000).catch(() => []);
+  const seriesGroups = rows.map(row => typeof row === 'string' ? row : row?.series_group);
+  return uniqueValues(seriesGroups);
+}
+
 export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
   const defaultLanguageISO = normalizeLanguageIso(options.languageISO || options.defaultLanguageISO || options.lang || 'ko');
@@ -1321,6 +1328,7 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   const skippedFiles = [];
   const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
   const publisherOptions = await collectPublisherOptions(libraryDb);
+  const seriesGroupOptions = await collectSeriesGroupOptions(libraryDb);
 
   try {
     for (let index = 0; index < archives.length; index += 1) {
@@ -1400,7 +1408,7 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   }
 
   onProgress?.({ progress: 100, message: taskText(options.lang, 'task_analysis_done') });
-  return { items, skippedFiles, publisherOptions };
+  return { items, skippedFiles, publisherOptions, seriesGroupOptions };
 }
 
 export function metadataWriteSupport(filePath, lang = 'ko') {

@@ -627,6 +627,17 @@ export class LibraryDB {
         `).all(Math.max(1, Math.min(5000, Number(limit) || 500))));
     }
 
+    async getDistinctSeriesGroups(limit = 1000) {
+        return this.withLock(async () => this.getConnection().prepare(`
+            SELECT series_group, COUNT(*) AS count
+            FROM files
+            WHERE TRIM(COALESCE(series_group, '')) <> ''
+            GROUP BY series_group
+            ORDER BY count DESC, series_group COLLATE NOCASE ASC
+            LIMIT ?
+        `).all(Math.max(1, Math.min(5000, Number(limit) || 1000))));
+    }
+
     async searchFiles(query, libraryPaths = [], options = {}) {
         return this.withLock(async () => {
             const db = this.getConnection();

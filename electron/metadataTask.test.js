@@ -255,7 +255,7 @@ test('메타데이터 분석은 표지를 지연 로드할 수 있다', async ()
     }
 });
 
-test('메타데이터 분석은 DB 출판사 후보와 설정 언어 기본값을 반환한다', async () => {
+test('메타데이터 분석은 DB의 전역 후보와 설정 언어 기본값을 반환한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-publishers-'));
     try {
         const source = path.join(root, '소설책 02권.txt');
@@ -270,6 +270,13 @@ test('메타데이터 분석은 DB 출판사 후보와 설정 언어 기본값�
                         { publisher: '민음사', count: 1 },
                     ];
                 },
+                async getDistinctSeriesGroups() {
+                    return [
+                        { series_group: '판타지 세계관', count: 4 },
+                        { series_group: '현대물', count: 2 },
+                        { series_group: '판타지 세계관', count: 1 },
+                    ];
+                },
                 async getFileInfo() {
                     return null;
                 },
@@ -277,7 +284,41 @@ test('메타데이터 분석은 DB 출판사 후보와 설정 언어 기본값�
         });
 
         assert.deepEqual(analyzed.publisherOptions, ['민음사', '황금가지']);
+        assert.deepEqual(analyzed.seriesGroupOptions, ['판타지 세계관', '현대물']);
         assert.equal(analyzed.items[0].metadata.LanguageISO, 'ja');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('A 파일에 저장한 시리즈 그룹은 B 파일 분석에서도 전역 후보로 반환한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-series-groups-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const first = path.join(root, 'A 라이브러리', 'A 책.txt');
+        const second = path.join(root, 'B 라이브러리', 'B 책.txt');
+        fs.mkdirSync(path.dirname(first), { recursive: true });
+        fs.mkdirSync(path.dirname(second), { recursive: true });
+        fs.writeFileSync(first, 'first');
+        fs.writeFileSync(second, 'second');
+
+        const saved = await saveMetadataItems([{
+            checked: true,
+            filepath: first,
+            name: path.basename(first),
+            metadata: {
+                Title: 'A 책',
+                SeriesGroup: '공유 세계관',
+            },
+        }], {
+            dbPath,
+            shouldCancel: () => false,
+        });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const analyzed = await analyzeMetadataInputs([second], { dbPath });
+        assert.deepEqual(analyzed.seriesGroupOptions, ['공유 세계관']);
+        assert.equal(analyzed.items[0].filepath, second);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

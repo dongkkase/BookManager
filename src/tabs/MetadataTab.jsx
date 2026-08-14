@@ -12,6 +12,7 @@ import {
     applyCombinedGenreTagsValue,
     applyInferredMetadataField,
     applySeriesAutoMetadata,
+    buildMetadataSeriesGroupOptions,
     clampMetadataNumber,
     cleanMetadataSummary,
     combinedGenreTagsValue,
@@ -330,6 +331,7 @@ function MetadataTab({ config, t, showToast }) {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [publisherOptions, setPublisherOptions] = useState([]);
+  const [savedSeriesGroupOptions, setSavedSeriesGroupOptions] = useState([]);
   const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: initialApiSource, query: '', cached: false });
   const [taskPhase, setTaskPhase] = useState('idle');
   const primaryShortcut = primaryModifierLabel(isMacPlatform() ? 'MacIntel' : 'Win32');
@@ -349,6 +351,11 @@ function MetadataTab({ config, t, showToast }) {
       return { ...prev, [selectedFileId]: next || {} };
     });
   }, [selectedFileId]);
+  const rememberSeriesGroupOptions = useCallback((values = []) => {
+    setSavedSeriesGroupOptions(prev => buildMetadataSeriesGroupOptions({
+      savedOptions: [...values, ...prev],
+    }).filter(Boolean));
+  }, []);
   const language = config?.language || config?.lang || 'ko';
   const defaultLanguageISO = useMemo(
     () => languageIsoFromConfig(config?.language || config?.lang || 'ko'),
@@ -374,16 +381,11 @@ function MetadataTab({ config, t, showToast }) {
     () => uniqueSelectOptions([...genreOptions, ...tagOptions], '').filter(Boolean),
     [genreOptions, tagOptions],
   );
-  const seriesGroupOptions = useMemo(() => {
-    const values = new Set(['']);
-    for (const item of fileList) {
-      const value = String(item.metadata?.SeriesGroup || '').trim();
-      if (value) values.add(value);
-    }
-    const batchValue = String(batchMetadata.SeriesGroup || '').trim();
-    if (batchValue) values.add(batchValue);
-    return [...values];
-  }, [batchMetadata.SeriesGroup, fileList]);
+  const seriesGroupOptions = useMemo(() => buildMetadataSeriesGroupOptions({
+    savedOptions: savedSeriesGroupOptions,
+    items: fileList,
+    batchMetadata: { SeriesGroup: batchMetadata.SeriesGroup },
+  }), [batchMetadata.SeriesGroup, fileList, savedSeriesGroupOptions]);
   const publisherSelectOptions = useMemo(() => {
     const values = new Set();
     for (const option of publisherOptions) {
@@ -670,6 +672,7 @@ function MetadataTab({ config, t, showToast }) {
         includeCovers: false,
       });
       setPublisherOptions(prev => uniqueSelectOptions([...(result.publisherOptions || []), ...prev], '').filter(Boolean));
+      rememberSeriesGroupOptions(result.seriesGroupOptions || []);
       const items = (result.items || []).map(item => ({
         ...item,
         metadata: {
@@ -714,7 +717,7 @@ function MetadataTab({ config, t, showToast }) {
       setIsWorking(false);
       setTaskPhase('idle');
     }
-  }, [config?.language, config?.lang, defaultLanguageISO, t]);
+  }, [config?.language, config?.lang, defaultLanguageISO, rememberSeriesGroupOptions, t]);
 
   const handleSelectFiles = useCallback(async () => {
     const paths = await window.electronAPI.selectArchives(t('add_file'));
@@ -1376,6 +1379,10 @@ function MetadataTab({ config, t, showToast }) {
           },
         }));
       }
+      const savedGroupTargets = !all && success === 1
+        ? saveTargets
+        : (all && success === saveTargets.length && skip === 0 && errors === 0 ? saveTargets : []);
+      rememberSeriesGroupOptions(savedGroupTargets.map(item => item.metadata?.SeriesGroup));
       const message = all
         ? t('t3_msg_save_all_done', { success_count: success, fail_count: errors })
         : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));

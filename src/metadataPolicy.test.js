@@ -6,6 +6,7 @@ import {
     applyCombinedGenreTagsValue,
     applyInferredMetadataField,
     applySeriesAutoMetadata,
+    buildMetadataSeriesGroupOptions,
     clampMetadataNumber,
     cleanMetadataSummary,
     combinedGenreTagsValue,
@@ -15,6 +16,25 @@ import {
     normalizeMetadataDecimal,
     splitCombinedGenreTags,
 } from './metadataPolicy.js';
+
+test('saved series groups remain global candidates when editing another file', () => {
+    const savedOptions = buildMetadataSeriesGroupOptions({
+        savedOptions: ['기존 그룹', ' 새 그룹 ', ''],
+    }).filter(Boolean);
+    const optionsForAnotherFile = buildMetadataSeriesGroupOptions({
+        savedOptions,
+        items: [{ metadata: { SeriesGroup: 'B 파일 그룹' } }],
+        batchMetadata: { SeriesGroup: '일괄 편집 그룹' },
+    });
+
+    assert.deepEqual(optionsForAnotherFile, [
+        '',
+        '기존 그룹',
+        '새 그룹',
+        'B 파일 그룹',
+        '일괄 편집 그룹',
+    ]);
+});
 
 test('metadata filename inference follows volume and chapter conventions', () => {
     assert.deepEqual(inferMetadataFromArchiveName('[팀] 작품명 Vol. 03.cbz', 'ko'), {
