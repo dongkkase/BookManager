@@ -57,14 +57,23 @@ test('고품질 축소는 주요 래스터 만화 형식을 지원하고 GIF와 
     assert.doesNotMatch(supportSource, /image\/svg\+xml/);
 });
 
-test('고품질 축소는 일반 단일 및 두 페이지 보기에만 적용한다', () => {
+test('고품질 축소는 일반 보기와 책넘김의 현재 인접 펼침면에 적용한다', () => {
     const renderComicSource = sourceBetween(viewerSource, 'const renderComic = () => {', 'const readerStyle = {');
     const scrollBranch = sourceBetween(renderComicSource, "if (flowMode === 'scroll') {", 'const isBookPageEffect');
     const flipBookBranch = sourceBetween(renderComicSource, 'if (isBookPageEffect) {', 'const displayStartIndex');
     const standardBranch = sourceBetween(renderComicSource, 'const displayStartIndex', 'return (\n      <div className={comicStageClassName}>');
 
     assert.doesNotMatch(scrollBranch, /highQuality/);
-    assert.doesNotMatch(flipBookBranch, /highQuality/);
+    assert.match(flipBookBranch, /highQuality:\s*Boolean\(renderState\?\.isNearCurrent\)/);
+    assert.match(flipBookBranch, /qualityScale:\s*renderState\?\.visualScale/);
+    assert.match(flipBookBranch, /provideNearbyPageState/);
+    assert.match(viewerSource, /getFlipBookNearbyGroupEntries\(model\.entries, currentBookIndex\)/);
+    assert.match(viewerSource, /ViewerFlipBookPageRenderContext\.Provider value=\{pageRenderState\}/);
+    assert.match(viewerSource, /isNearCurrent:\s*renderState\.nearbyBookIndexes\?\.has\(entry\.bookIndex\)/);
+    assert.match(viewerSource, /visualScale:\s*normalizedVisualScale/);
+    assert.match(viewerSource, /observedDevicePixelSize\.width \* normalizedQualityScale/);
+    assert.match(viewerSource, /styledWidth \* normalizedQualityScale/);
+    assert.match(viewerCss, /\.viewer-flipbook-page \.viewer-comic-quality-canvas \{[\s\S]*box-shadow:\s*none;/);
     assert.match(standardBranch, /displayComicPages\.map[\s\S]*\{ highQuality: true \}/);
     assert.match(viewerSource, /highQuality=\{Boolean\(options\.highQuality && supportsHighQualityComicDownsample\(page\)\)\}/);
 });

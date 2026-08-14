@@ -5,6 +5,7 @@ import {
     buildFlipBookStructureKey,
     finishAndTurnFlipBookToPage,
     getFlipBookCurrentGroupEntries,
+    getFlipBookNearbyGroupEntries,
 } from './viewerFlipBook.js';
 
 const viewerSource = fs.readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
@@ -61,6 +62,28 @@ test('플립북 ambient 레이어는 현재 펼침면의 페이지만 선택한�
     assert.deepEqual(
         getFlipBookCurrentGroupEntries(entries, 2).map(entry => entry.sourceIndex),
         [1, 2],
+    );
+});
+
+test('플립북 고품질 렌더링은 현재 펼침면과 앞뒤 펼침면만 선택한다', () => {
+    const entries = Array.from({ length: 8 }, (_, bookIndex) => ({
+        bookIndex,
+        groupStartIndex: bookIndex - (bookIndex % 2),
+        sourceIndex: bookIndex,
+        side: bookIndex % 2 === 0 ? 'left' : 'right',
+    }));
+
+    assert.deepEqual(
+        getFlipBookNearbyGroupEntries(entries, 3).map(entry => entry.bookIndex),
+        [0, 1, 2, 3, 4, 5],
+    );
+    assert.deepEqual(
+        getFlipBookNearbyGroupEntries(entries, 0).map(entry => entry.bookIndex),
+        [0, 1, 2, 3],
+    );
+    assert.deepEqual(
+        getFlipBookNearbyGroupEntries([...entries].reverse(), 4).map(entry => entry.bookIndex),
+        [7, 6, 5, 4, 3, 2],
     );
 });
 

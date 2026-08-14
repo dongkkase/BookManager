@@ -942,11 +942,24 @@
   object-fit: contain;
 }
 
+.viewer-flipbook-page .viewer-comic-quality-canvas {
+  box-shadow: none;
+  object-fit: contain;
+}
+
 .viewer-flipbook-page.is-left-page .viewer-comic-image {
   object-position: right center;
 }
 
+.viewer-flipbook-page.is-left-page .viewer-comic-quality-canvas {
+  object-position: right center;
+}
+
 .viewer-flipbook-page.is-right-page .viewer-comic-image {
+  object-position: left center;
+}
+
+.viewer-flipbook-page.is-right-page .viewer-comic-quality-canvas {
   object-position: left center;
 }
 

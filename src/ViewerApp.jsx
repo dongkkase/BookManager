@@ -1,11 +1,16 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
-import { buildFlipBookStructureKey, finishAndTurnFlipBookToPage, getFlipBookCurrentGroupEntries } from './viewerFlipBook';
+import {
+  buildFlipBookStructureKey,
+  finishAndTurnFlipBookToPage,
+  getFlipBookCurrentGroupEntries,
+  getFlipBookNearbyGroupEntries,
+} from './viewerFlipBook';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
 import fullScreenIcon from './images/full_screen.svg';
@@ -701,6 +706,19 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
   );
 }
 
+const ViewerFlipBookPageRenderContext = React.createContext({
+  nearbyBookIndexes: null,
+  visualScale: 1,
+});
+
+function ViewerFlipBookPageContent({ entry, renderPageRef }) {
+  const renderState = useContext(ViewerFlipBookPageRenderContext);
+  return renderPageRef.current?.(entry.sourceIndex, entry, {
+    isNearCurrent: renderState.nearbyBookIndexes?.has(entry.bookIndex) || false,
+    visualScale: renderState.visualScale,
+  }) || null;
+}
+
 function ViewerFlipBook({
   bookKey,
   className = '',
@@ -714,6 +732,7 @@ function ViewerFlipBook({
   absoluteNavigationKey = 0,
   visualScale = 1,
   renderKey,
+  provideNearbyPageState = false,
   renderAmbientPage,
   renderPage,
   onPageIndexChange,
@@ -785,6 +804,17 @@ function ViewerFlipBook({
     () => getFlipBookCurrentGroupEntries(model.entries, currentBookIndex),
     [currentBookIndex, model.entries],
   );
+  const nearbyBookIndexes = useMemo(() => {
+    if (!provideNearbyPageState) return null;
+    return new Set(
+      getFlipBookNearbyGroupEntries(model.entries, currentBookIndex)
+        .map(entry => entry.bookIndex),
+    );
+  }, [currentBookIndex, model.entries, provideNearbyPageState]);
+  const pageRenderState = useMemo(() => ({
+    nearbyBookIndexes,
+    visualScale: normalizedVisualScale,
+  }), [nearbyBookIndexes, normalizedVisualScale]);
   const pageElements = useMemo(() => model.entries.map(entry => (
     <div
       key={`flipbook-page-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
@@ -800,7 +830,9 @@ function ViewerFlipBook({
       <div className={viewerClassName('viewer-flipbook-page-inner', `is-${entry.side}-page`)}>
         {entry.blank
           ? <div className="viewer-flipbook-blank-page" />
-          : renderPageRef.current?.(entry.sourceIndex, entry)}
+          : (provideNearbyPageState
+            ? <ViewerFlipBookPageContent entry={entry} renderPageRef={renderPageRef} />
+            : renderPageRef.current?.(entry.sourceIndex, entry))}
       </div>
     </div>
   )), [
@@ -809,6 +841,7 @@ function ViewerFlipBook({
     normalizedPageSize.width,
     pageClassName,
     pageRenderDependency,
+    provideNearbyPageState,
   ]);
   if (normalizedPageCount <= 0 || pageElements.length < 1) return null;
   return (
@@ -822,32 +855,34 @@ function ViewerFlipBook({
           entries={ambientEntries}
           renderPage={renderAmbientPage}
         />
-        <ReactFlipBook
-          ref={flipBookRef}
-          key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}-${structureKey}`}
-          className="viewer-flipbook"
-          style={bookStyle}
-          width={normalizedPageSize.width}
-          height={normalizedPageSize.height}
-          size="fixed"
-          startPage={currentBookIndex}
-          currentPage={currentBookIndex}
-          flippingTime={BOOK_PAGE_TURN_DURATION}
-          usePortrait={!spread}
-          autoSize={false}
-          showCover={false}
-          drawShadow
-          maxShadowOpacity={0.52}
-          mobileScrollSupport={false}
-          clickEventForward={false}
-          useMouseEvents={false}
-          showPageCorners={false}
-          disableFlipByClick
-          enableKeyboardNav={false}
-          onPageChange={handlePageChange}
-        >
-          {pageElements}
-        </ReactFlipBook>
+        <ViewerFlipBookPageRenderContext.Provider value={pageRenderState}>
+          <ReactFlipBook
+            ref={flipBookRef}
+            key={`${bookKey}-${spread ? 'spread' : 'single'}-${readingDirection}-${normalizedPageSize.width}x${normalizedPageSize.height}-${normalizedPageCount}-${structureKey}`}
+            className="viewer-flipbook"
+            style={bookStyle}
+            width={normalizedPageSize.width}
+            height={normalizedPageSize.height}
+            size="fixed"
+            startPage={currentBookIndex}
+            currentPage={currentBookIndex}
+            flippingTime={BOOK_PAGE_TURN_DURATION}
+            usePortrait={!spread}
+            autoSize={false}
+            showCover={false}
+            drawShadow
+            maxShadowOpacity={0.52}
+            mobileScrollSupport={false}
+            clickEventForward={false}
+            useMouseEvents={false}
+            showPageCorners={false}
+            disableFlipByClick
+            enableKeyboardNav={false}
+            onPageChange={handlePageChange}
+          >
+            {pageElements}
+          </ReactFlipBook>
+        </ViewerFlipBookPageRenderContext.Provider>
       </div>
     </div>
   );
@@ -3659,6 +3694,7 @@ function ComicPageFrame({
   imageStyle,
   imageFit = 'contain',
   highQuality = false,
+  qualityScale = 1,
   onImageLoad,
   onImageError,
 }) {
@@ -3715,11 +3751,24 @@ function ComicPageFrame({
       const hasObservedDevicePixelSize = Boolean(
         observedDevicePixelSize?.width > 0 && observedDevicePixelSize?.height > 0
       );
+      const normalizedQualityScale = Math.max(0.02, Number(qualityScale) || 1);
+      const styledWidth = Number.parseFloat(String(frameStyle?.width || ''));
+      const styledHeight = Number.parseFloat(String(frameStyle?.height || ''));
+      const measuredDisplayWidth = rect.width > 0
+        ? rect.width
+        : (Number.isFinite(styledWidth) ? styledWidth * normalizedQualityScale : rect.width);
+      const measuredDisplayHeight = rect.height > 0
+        ? rect.height
+        : (Number.isFinite(styledHeight) ? styledHeight * normalizedQualityScale : rect.height);
       const target = comicDownsampleTarget({
         naturalWidth: image.naturalWidth,
         naturalHeight: image.naturalHeight,
-        displayWidth: hasObservedDevicePixelSize ? observedDevicePixelSize.width : rect.width,
-        displayHeight: hasObservedDevicePixelSize ? observedDevicePixelSize.height : rect.height,
+        displayWidth: hasObservedDevicePixelSize
+          ? observedDevicePixelSize.width * normalizedQualityScale
+          : measuredDisplayWidth,
+        displayHeight: hasObservedDevicePixelSize
+          ? observedDevicePixelSize.height * normalizedQualityScale
+          : measuredDisplayHeight,
         devicePixelRatio: hasObservedDevicePixelSize ? 1 : (window.devicePixelRatio || 1),
         fitMode: imageFit,
       });
@@ -3817,7 +3866,7 @@ function ComicPageFrame({
       qualityScheduleRef.current = null;
       releaseCanvas();
     };
-  }, [highQuality, imageFit, src]);
+  }, [frameStyle?.height, frameStyle?.width, highQuality, imageFit, qualityScale, src]);
 
   return (
     <div
@@ -6566,6 +6615,7 @@ function ViewerApp() {
         imageStyle={fittedImageStyle}
         imageFit={options.objectFit || 'cover'}
         highQuality={Boolean(options.highQuality && supportsHighQualityComicDownsample(page))}
+        qualityScale={options.qualityScale}
         onImageLoad={event => {
           const { naturalWidth, naturalHeight } = event.currentTarget;
           rememberComicPageImageSize(page.name, naturalWidth, naturalHeight);
@@ -6623,6 +6673,7 @@ function ViewerApp() {
           absoluteNavigationKey={absolutePageJumpSequence}
           visualScale={flipBookVisualScale}
           renderKey={comicFlipBookRenderKey}
+          provideNearbyPageState
           onPageIndexChange={handleFlipBookPageIndexChange}
           renderAmbientPage={backgroundMode === 'immersive' ? sourceIndex => {
             const page = pages[sourceIndex];
@@ -6639,9 +6690,11 @@ function ViewerApp() {
               />
             );
           } : undefined}
-          renderPage={(sourceIndex, entry) => {
+          renderPage={(sourceIndex, _entry, renderState) => {
             const page = pages[sourceIndex];
             return page ? renderComicImage(page, sourceIndex, pageSlots, {
+              highQuality: Boolean(renderState?.isNearCurrent),
+              qualityScale: renderState?.visualScale,
               objectFit: 'contain',
               frameStyle: {
                 ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
