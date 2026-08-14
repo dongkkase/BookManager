@@ -622,6 +622,7 @@ function OrganizerTab({ config, t, showToast }) {
     if (event.button !== 0) return;
     if (event.target.closest('input, button, textarea, select, a')) return;
     if (event.target.closest('.org-tree-row')) return;
+    if (event.target.closest('.org-tree-header')) return;
     treeBodyRef.current?.focus({ preventScroll: true });
     setSelectedItemId('');
     setSelectedItemIds([]);
@@ -764,14 +765,6 @@ function OrganizerTab({ config, t, showToast }) {
           </div>
         ) : (
           <div className="org-tree-container">
-            <div className="org-tree-header">
-              <div className="org-col-name">{t('col_org_name')}</div>
-              <div className="org-col-path">{t('col_org_path')}</div>
-              <div className="org-col-count">{t('col_org_count')}</div>
-              <div className="org-col-size">{t('col_org_size')}</div>
-              <div className="org-col-actions">{t('btn_remove')}</div>
-            </div>
-
             <div
               ref={treeBodyRef}
               className="org-tree-body"
@@ -786,6 +779,14 @@ function OrganizerTab({ config, t, showToast }) {
                 stopVolumeRubberSelection();
               }}
             >
+              <div className="org-tree-header">
+                <div className="org-col-name">{t('col_org_name')}</div>
+                <div className="org-col-path">{t('col_org_path')}</div>
+                <div className="org-col-count">{t('col_org_count')}</div>
+                <div className="org-col-size">{t('col_org_size')}</div>
+                <div className="org-col-actions">{t('btn_remove')}</div>
+              </div>
+
               {fileList.map((item) => (
                 <div key={item.id} className={`org-tree-item-group ${selectedItemIds.includes(item.id) ? 'selected' : ''} ${selectedItemId === item.id ? 'active-selection' : ''}`}>
                   <div
