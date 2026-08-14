@@ -47,3 +47,9 @@ test('폴더 리스트의 출판 레이블 라벨은 메타데이터 필드와 �
     assert.equal(legacyTranslations.en.col_imprint, legacyTranslations.en.t3_f_imp);
     assert.equal(legacyTranslations.ja.col_imprint, legacyTranslations.ja.t3_f_imp);
 });
+
+test('구조 정리 일괄 폴더명 추출 메뉴를 세 언어로 표시한다', () => {
+    assert.equal(translate('org_batch_folder_name', 'ko'), '일괄: 폴더명 추출');
+    assert.equal(translate('org_batch_folder_name', 'en'), 'All: Folder Name');
+    assert.equal(translate('org_batch_folder_name', 'ja'), '一括: フォルダ名抽出');
+});

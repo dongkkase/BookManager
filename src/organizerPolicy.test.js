@@ -5,6 +5,7 @@ import {
     changeOrganizerUnit,
     filenameOutputPath,
     organizerExtractedTitleName,
+    organizerFolderName,
     organizerOriginalFilenameName,
     preserveOrganizerExtractedTitle,
     removeOrganizerItems,
@@ -46,6 +47,126 @@ test('일괄 이름 복원은 기존 파일명과 분석된 제목을 구분한�
     assert.deepEqual(
         preserveOrganizerExtractedTitle({ new_name: '프랑켄 프랑 번역본 01권' }),
         { new_name: '프랑켄 프랑 번역본 01권', extracted_name: '프랑켄 프랑 번역본 01권' },
+    );
+});
+
+test('일괄 폴더명 추출은 파일의 부모 폴더명에서 정확히 (미완)만 제거한다', () => {
+    assert.equal(
+        organizerFolderName({
+            filepath: '/보관함/작품 [특별] (미완)  01권+/책.cbz',
+            original_path: '내부/이 값은 사용하지 않음',
+            original_basename: '이 값도 사용하지 않음',
+        }),
+        '작품 [특별]   01권+',
+    );
+    assert.equal(
+        organizerFolderName({ filepath: '/보관함/(미완)외전(미완) (完) [미완] 미완!/책.zip' }),
+        '외전 (完) [미완] 미완!',
+    );
+    assert.equal(
+        organizerFolderName({ filepath: 'D:\\보관함\\Windows 폴더 (미완) 03권\\책.zip' }),
+        'Windows 폴더  03권',
+    );
+    assert.equal(
+        organizerFolderName({ filepath: '/시리즈/  작품명 (미완)  /책.zip' }),
+        '  작품명   ',
+    );
+    const nfdFolderName = '작품 (미완)'.normalize('NFD');
+    assert.equal(
+        organizerFolderName({ filepath: `/시리즈/${nfdFolderName}/책.zip` }),
+        '작품 '.normalize('NFD'),
+    );
+    assert.equal(organizerFolderName({ filepath: '/보관함/Root_Files/책.zip' }), 'Root_Files');
+    assert.equal(organizerFolderName({ filepath: '/보관함/(미완)/책.zip' }), '');
+    assert.equal(
+        organizerFolderName({ filepath: '책.zip', original_path: '시리즈/사용하지 않음' }),
+        '',
+    );
+});
+
+test('일괄 폴더명 추출은 기존 파일의 권수만 보존한다', () => {
+    const item = { filepath: '/보관함/(미완)작품/묶음.zip' };
+    const cases = [
+        [{ original_basename: '기존 제목 01권' }, '작품 01권'],
+        [{ original_basename: '기존 제목 제1권' }, '작품 제1권'],
+        [{ original_basename: '스캔본', original_path: '내부/기존 제목 2.5권/스캔본' }, '작품 2.5권'],
+        [{ original_path: '내부/기존 제목 1~3권' }, '작품 1~3권'],
+        [{ original_path: '내부 1~10권/기존 제목 04권' }, '작품 04권'],
+        [{ original_basename: '기존 제목 12화' }, '작품'],
+        [{ original_basename: '기존 제목 2024' }, '작품'],
+        [{ original_path: '내부/기존 제목' }, '작품'],
+        [{}, '작품'],
+    ];
+
+    for (const [volume, expected] of cases) {
+        assert.equal(organizerFolderName(item, volume), expected);
+    }
+
+    assert.equal(
+        organizerFolderName(
+            { filepath: '/보관함/작품/기존 제목 03권.cbz' },
+            { original_basename: 'Root_Files', original_path: 'Root_Files' },
+        ),
+        '작품 03권',
+    );
+    assert.equal(
+        organizerFolderName(
+            { filepath: '/보관함/(미완)작품 01권/묶음.zip' },
+            { original_basename: '기존 제목 01권' },
+        ),
+        '작품 01권',
+    );
+    const multipleVolumes = {
+        filepath: '/보관함/작품 1~10권/작품 1~10권.zip',
+        volumes: [{}, {}],
+    };
+    assert.equal(
+        organizerFolderName(multipleVolumes, { original_basename: '기존 제목 01권' }),
+        '작품 1~10권 01권',
+    );
+    assert.equal(
+        organizerFolderName(multipleVolumes, { original_basename: '기존 제목 02권' }),
+        '작품 1~10권 02권',
+    );
+    assert.equal(
+        organizerFolderName(
+            { filepath: '/보관함/작품/작품 1~10권.zip', volumes: [{}, {}] },
+            { original_basename: '스캔본', original_path: '내부/스캔본' },
+        ),
+        '작품',
+    );
+});
+
+test('폴더명 추출 권수는 기존 경로와 이름의 가장 마지막 토큰을 사용한다', () => {
+    const item = { filepath: '/보관함/작품/묶음.zip' };
+
+    assert.equal(
+        organizerFolderName(item, { original_path: '묶음 1~10권/작품 01권' }),
+        '작품 01권',
+    );
+    assert.equal(
+        organizerFolderName(item, { original_basename: '묶음 1~10권 작품 02권' }),
+        '작품 02권',
+    );
+});
+
+test('폴더명 추출 권수는 macOS NFD 형태의 한글을 인식한다', () => {
+    const nfdVolumeName = '기존 제목 01권'.normalize('NFD');
+    const result = organizerFolderName(
+        { filepath: '/보관함/작품/묶음.zip' },
+        { original_basename: nfdVolumeName },
+    );
+
+    assert.equal(result.normalize('NFC'), '작품 01권');
+});
+
+test('폴더명 추출 권수는 em dash 범위를 보존한다', () => {
+    assert.equal(
+        organizerFolderName(
+            { filepath: '/보관함/작품/묶음.zip' },
+            { original_basename: '기존 제목 1—3권' },
+        ),
+        '작품 1—3권',
     );
 });
 

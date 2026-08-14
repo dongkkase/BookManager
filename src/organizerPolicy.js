@@ -1,4 +1,5 @@
 const INVALID_FILENAME_CHARS = /[\\/:*?"<>|]/g;
+const ORGANIZER_INCOMPLETE_MARKERS = ['(미완)', '(미완)'.normalize('NFD')];
 
 export function defaultOutputPath(filePath) {
     const value = String(filePath || '');
@@ -63,6 +64,53 @@ export function organizerOriginalFilenameName(volume) {
 
 export function organizerExtractedTitleName(volume) {
     return String(volume?.extracted_name || volume?.new_name || '').trim();
+}
+
+function organizerVolumeToken(value) {
+    const text = String(value || '').normalize('NFC');
+    const volumeMatches = [...text.matchAll(/(?:(?:제\s*)?\d+(?:\.\d+)?(?:\s*권)?\s*[~～\-–—]\s*(?:제\s*)?\d+(?:\.\d+)?\s*권|(?:제\s*)?\d+(?:\.\d+)?\s*권)(?![가-힣A-Za-z0-9])/gu)];
+    return volumeMatches.at(-1)?.[0].trim() || '';
+}
+
+function organizerVolumeTokenKey(value) {
+    const numbers = organizerVolumeToken(value).match(/\d+(?:\.\d+)?/g) || [];
+    return numbers.map(number => String(Number(number))).join('~');
+}
+
+function stripOrganizerIncompleteMarkers(value) {
+    return ORGANIZER_INCOMPLETE_MARKERS.reduce(
+        (text, marker) => text.split(marker).join(''),
+        String(value || ''),
+    );
+}
+
+export function organizerFolderName(item, volume) {
+    const parentPath = defaultOutputPath(item?.filepath).replace(/\\/g, '/');
+    const pathParts = parentPath.split('/').filter(Boolean);
+    const folderName = pathParts.at(-1) || '';
+    if (!folderName || /^[a-z]:$/i.test(folderName)) return '';
+    const withoutIncompleteMarker = stripOrganizerIncompleteMarkers(folderName);
+    if (!withoutIncompleteMarker.trim()) return '';
+
+    const filePath = String(item?.filepath || '').replace(/\\/g, '/');
+    const fileName = filePath.split('/').filter(Boolean).at(-1) || item?.name || '';
+    const originalPath = String(volume?.original_path || '').replace(/\\/g, '/');
+    const originalPathLeaf = originalPath.split('/').filter(Boolean).at(-1) || '';
+    let volumeToken = [
+        volume?.original_basename,
+        volume?.original_path,
+    ].map(organizerVolumeToken).find(Boolean);
+    const canUseFileName = volume?.original_basename === 'Root_Files'
+        || originalPathLeaf === 'Root_Files'
+        || item?.volumes?.length === 1;
+    if (!volumeToken && canUseFileName) volumeToken = organizerVolumeToken(fileName);
+    if (!volumeToken) return withoutIncompleteMarker;
+    const folderVolumeKey = organizerVolumeTokenKey(withoutIncompleteMarker);
+    if (folderVolumeKey && folderVolumeKey === organizerVolumeTokenKey(volumeToken)) {
+        return withoutIncompleteMarker;
+    }
+    const separator = /\s$/u.test(withoutIncompleteMarker) ? '' : ' ';
+    return `${withoutIncompleteMarker}${separator}${volumeToken}`;
 }
 
 export function preserveOrganizerExtractedTitle(volume) {

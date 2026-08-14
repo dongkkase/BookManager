@@ -346,6 +346,14 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
     assert.doesNotMatch(sources.organizer, /image_count\}p/);
 });
 
+test('압축 파일 구조 정리 일괄 메뉴는 폴더명 추출을 적용한다', () => {
+    assertInventory('organizer', [
+        ['일괄 폴더명 추출 버튼', "t('org_batch_folder_name')"],
+        ['일괄 폴더명 추출 액션', "handleBatchMenuAction(item.id, 'folder')"],
+        ['일괄 폴더명 추출 작업 항목과 기존 권수 전달', 'organizerFolderName(item, preserved)'],
+    ]);
+});
+
 test('여러 파일 이름 변경 UI는 공용 컴포넌트로 분리된다', () => {
     assertInventory('multiRenameDialog', [
         ['미리보기 컬럼 폭 상태', 'columnWidths'],

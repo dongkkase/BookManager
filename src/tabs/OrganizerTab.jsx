@@ -16,6 +16,7 @@ import {
   defaultOutputPath,
   filenameOutputPath,
   organizerExtractedTitleName,
+  organizerFolderName,
   organizerOriginalFilenameName,
   preserveOrganizerExtractedTitle,
   removeOrganizerItems,
@@ -347,7 +348,9 @@ function OrganizerTab({ config, t, showToast }) {
         const preserved = preserveOrganizerExtractedTitle(volume);
         const nextName = mode === 'original'
           ? organizerOriginalFilenameName(preserved)
-          : organizerExtractedTitleName(preserved);
+          : mode === 'folder'
+            ? organizerFolderName(item, preserved)
+            : organizerExtractedTitleName(preserved);
         return nextName ? { ...preserved, new_name: nextName } : preserved;
       }),
     }));
@@ -893,6 +896,9 @@ function OrganizerTab({ config, t, showToast }) {
                             </button>
                             <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'original')}>
                               {t('org_batch_original_name')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'folder')}>
+                              {t('org_batch_folder_name')}
                             </button>
                             <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'extracted')}>
                               {t('org_batch_extracted_title')}
