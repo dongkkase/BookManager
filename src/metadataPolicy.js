@@ -220,6 +220,25 @@ export function buildMetadataSeriesGroupOptions({
     return [...values];
 }
 
+export function buildLatestMetadataBatch(metadata = {}, fieldIds = [], extraFieldIds = []) {
+    const excludedFields = new Set([
+        'Title',
+        'Volume',
+        'Number',
+        'PageCount',
+        'ComicZipAddedDate',
+        'ComicZipModifiedDate',
+        'PdfCreateDate',
+        'PdfModifyDate',
+    ]);
+    const allowedFields = new Set([...fieldIds, ...extraFieldIds]);
+    return Object.fromEntries(
+        Object.entries(metadata || {}).filter(([field]) => (
+            allowedFields.has(field) && !excludedFields.has(field)
+        )),
+    );
+}
+
 export function adjacentSelectionAfterRemoval(items, removedIds, selectedId) {
     const removed = new Set(removedIds);
     const selectedIndex = items.findIndex(item => item.id === selectedId);

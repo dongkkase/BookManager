@@ -18,8 +18,26 @@ const child = spawn(electron, electronArgs, {
     stdio: 'inherit',
     env,
 });
+let shuttingDown = false;
+
+function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (child && !child.killed) {
+        child.kill(signal);
+        return;
+    }
+    process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 child.on('exit', (code, signal) => {
+    if (shuttingDown) {
+        process.exit(code ?? 0);
+        return;
+    }
     if (signal) {
         process.kill(process.pid, signal);
         return;

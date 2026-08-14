@@ -16,6 +16,10 @@ import {
 import { translate } from '../../src/utils/i18n.js';
 import { BOOK_EXTENSIONS, resolveBookType } from '../../src/metadata/metadataTypes.js';
 import {
+  latestMetadataTitleKey,
+  normalizeLatestMetadataTitle,
+} from '../metadataLatestPolicy.js';
+import {
   analyzePdfDocument,
   extractPdfCoverImage,
   writePdfMetadata,
@@ -1318,6 +1322,75 @@ async function collectSeriesGroupOptions(libraryDb) {
   return uniqueValues(seriesGroups);
 }
 
+function metadataTitleMatches(record = {}, criteria = {}) {
+  return latestMetadataTitleKey(record.title ?? record.Title) === criteria.titleKey;
+}
+
+function actualMetadataTitleMatches(metadata = {}, criteria = {}) {
+  const actualTitleKey = latestMetadataTitleKey(metadata.Title);
+  return !actualTitleKey || actualTitleKey === criteria.titleKey;
+}
+
+function numericMetadataValue(value) {
+  const text = normalizeMetadataText(value).normalize('NFKC');
+  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(text)) return null;
+  const number = Number(text);
+  if (Number.isFinite(number)) return number;
+  return null;
+}
+
+function compareOptionalMetadataNumber(left, right) {
+  if (left === null && right !== null) return 1;
+  if (left !== null && right === null) return -1;
+  if (left === right) return 0;
+  return (right || 0) - (left || 0);
+}
+
+function sameFilePath(left = '', right = '') {
+  if (!left || !right) return false;
+  const normalize = value => {
+    const resolved = path.resolve(String(value));
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
+function rankedLatestMetadataCandidates(records = [], criteria = {}) {
+  const expectedBookType = String(criteria.bookType || '').trim().toLowerCase();
+  const excludePath = criteria.excludePath || criteria.filePath || '';
+  const candidates = [];
+  const seenPaths = new Set();
+
+  for (const record of records || []) {
+    const candidatePath = record?.path || record?.filepath || record?.file_path || '';
+    if (!candidatePath || sameFilePath(candidatePath, excludePath)) continue;
+    const pathKey = process.platform === 'win32'
+      ? path.resolve(candidatePath).toLowerCase()
+      : path.resolve(candidatePath);
+    if (seenPaths.has(pathKey)) continue;
+    seenPaths.add(pathKey);
+
+    if (!metadataTitleMatches(record, criteria)) continue;
+    if (expectedBookType && resolveBookType(record) !== expectedBookType) continue;
+    candidates.push({
+      record,
+      candidatePath,
+      volumePosition: numericMetadataValue(record.volume ?? record.Volume),
+      numberPosition: numericMetadataValue(record.number ?? record.Number),
+      mtime: Number(record.mtime) || 0,
+    });
+  }
+
+  return candidates.sort((left, right) => {
+    const volumeOrder = compareOptionalMetadataNumber(left.volumePosition, right.volumePosition);
+    if (volumeOrder !== 0) return volumeOrder;
+    const numberOrder = compareOptionalMetadataNumber(left.numberPosition, right.numberPosition);
+    if (numberOrder !== 0) return numberOrder;
+    if (right.mtime !== left.mtime) return right.mtime - left.mtime;
+    return naturalCompare(left.candidatePath, right.candidatePath);
+  });
+}
+
 export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
   const defaultLanguageISO = normalizeLanguageIso(options.languageISO || options.defaultLanguageISO || options.lang || 'ko');
@@ -1327,8 +1400,12 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
   const items = [];
   const skippedFiles = [];
   const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
-  const publisherOptions = await collectPublisherOptions(libraryDb);
-  const seriesGroupOptions = await collectSeriesGroupOptions(libraryDb);
+  const publisherOptions = options.includeLibraryOptions === false
+    ? []
+    : await collectPublisherOptions(libraryDb);
+  const seriesGroupOptions = options.includeLibraryOptions === false
+    ? []
+    : await collectSeriesGroupOptions(libraryDb);
 
   try {
     for (let index = 0; index < archives.length; index += 1) {
@@ -1349,9 +1426,11 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           .sort((a, b) => naturalCompare(a.name, b.name));
         const comicInfoEntry = entries.find(entry => !entry.isDir && path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
         const pageCount = pdfAnalysis?.pageCount || imageEntries.length;
-        let metadata = inferMetadataFromFilename(filePath, pageCount, { bookType, languageISO: defaultLanguageISO });
+        let metadata = options.includeInferredMetadata === false
+          ? {}
+          : inferMetadataFromFilename(filePath, pageCount, { bookType, languageISO: defaultLanguageISO });
 
-        if (libraryDb) {
+        if (libraryDb && options.includeCachedMetadata !== false) {
           const cached = await libraryDb.getFileInfo(filePath).catch(() => null);
           metadata = { ...metadata, ...metadataFromLibraryRecord(cached) };
         }
@@ -1409,6 +1488,62 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
 
   onProgress?.({ progress: 100, message: taskText(options.lang, 'task_analysis_done') });
   return { items, skippedFiles, publisherOptions, seriesGroupOptions };
+}
+
+export async function loadLatestSeriesMetadata(criteria = {}, options = {}) {
+  const normalizedTitle = normalizeLatestMetadataTitle(criteria.title);
+  const normalizedCriteria = {
+    title: normalizedTitle,
+    titleKey: latestMetadataTitleKey(normalizedTitle),
+    bookType: String(criteria.bookType || '').trim().toLowerCase(),
+    excludePath: criteria.excludePath || criteria.currentPath || criteria.filePath || '',
+  };
+  if (!normalizedCriteria.titleKey) return null;
+
+  const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
+  if (!libraryDb || typeof libraryDb.getMetadataTitleCandidates !== 'function') return null;
+
+  try {
+    const records = await libraryDb.getMetadataTitleCandidates({
+      title: normalizedCriteria.title,
+      limit: criteria.limit,
+    });
+    const candidates = rankedLatestMetadataCandidates(records, normalizedCriteria);
+    for (const candidate of candidates) {
+      const analysis = await analyzeMetadataInputs([candidate.candidatePath], {
+        ...options,
+        libraryDb,
+        includeCovers: false,
+        includeCachedMetadata: false,
+        includeInferredMetadata: false,
+        includeLibraryOptions: false,
+      });
+      const item = analysis.items?.[0];
+      const itemBookType = item ? resolveBookType(item) : '';
+      const requiresEmbeddedMetadata = itemBookType === 'comic'
+        || itemBookType === 'pdf'
+        || path.extname(item?.filepath || '').toLowerCase() === EPUB_EXT;
+      const hasEmbeddedMetadata = Boolean(
+        item?.hasComicInfo || item?.hasEpubMetadata || item?.hasPdfMetadata,
+      );
+      if (
+        !item
+        || (requiresEmbeddedMetadata && !hasEmbeddedMetadata)
+        || !actualMetadataTitleMatches(item.metadata, normalizedCriteria)
+      ) {
+        continue;
+      }
+      if (normalizedCriteria.bookType && itemBookType !== normalizedCriteria.bookType) continue;
+      return {
+        sourcePath: item.filepath || candidate.candidatePath,
+        sourceName: item.name || path.basename(candidate.candidatePath),
+        metadata: item.metadata || {},
+      };
+    }
+    return null;
+  } finally {
+    if (shouldClose) await libraryDb.close();
+  }
 }
 
 export function metadataWriteSupport(filePath, lang = 'ko') {

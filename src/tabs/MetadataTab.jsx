@@ -12,6 +12,7 @@ import {
     applyCombinedGenreTagsValue,
     applyInferredMetadataField,
     applySeriesAutoMetadata,
+    buildLatestMetadataBatch,
     buildMetadataSeriesGroupOptions,
     clampMetadataNumber,
     cleanMetadataSummary,
@@ -316,6 +317,10 @@ function MetadataTab({ config, t, showToast }) {
   const [fileList, setFileList] = useState([]);
   const saveLockRef = useRef(false);
   const [selectedFileId, setSelectedFileId] = useState(null);
+  const selectedFileIdRef = useRef(selectedFileId);
+  const latestMetadataRequestRef = useRef(0);
+  const latestMetadataLoadingRef = useRef(false);
+  selectedFileIdRef.current = selectedFileId;
   const [selectedGroup, setSelectedGroup] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
   const treeContainerRef = useRef(null);
@@ -1286,26 +1291,60 @@ function MetadataTab({ config, t, showToast }) {
     }));
   }, []);
 
-  const handleLoadLatest = () => {
-    if (!activeItem) return;
-    const groupItems = fileList.filter(item => item.group === activeItem.group && isSameActiveBookType(item));
-    const latest = [...groupItems].sort((a, b) => {
-      const av = Number(a.metadata?.Volume || 0);
-      const bv = Number(b.metadata?.Volume || 0);
-      return bv - av;
-    }).find(item => item.id !== activeItem.id && item.metadata && Object.keys(item.metadata).length > 0);
-    if (!latest) {
+  const handleLoadLatest = async () => {
+    if (!activeItem || isWorking || latestMetadataLoadingRef.current) return;
+    const title = String(activeItem.metadata?.Title || '').trim();
+    if (!title) {
       setStatusMessage(text('t3_msg_load_latest_empty', '불러올 최신권 메타데이터가 없습니다.'));
       showToast?.({ key: 't3_msg_load_latest_empty' });
       return;
     }
-    setBatchMetadata(pickMetadataFields(
-      latest.metadata || {},
-      currentMetaFieldIds,
-      currentMetadataExtraFieldIds,
-    ));
-    setStatusMessage(text('t3_msg_load_latest_done', '최신권 메타데이터를 일괄 편집창에 불러왔습니다.'));
-    showToast?.({ key: 't3_msg_load_latest_done' });
+
+    const requestId = latestMetadataRequestRef.current + 1;
+    const activeId = activeItem.id;
+    latestMetadataRequestRef.current = requestId;
+    latestMetadataLoadingRef.current = true;
+    setIsWorking(true);
+    setStatusMessage(text('t3_msg_load_latest_loading', '라이브러리에서 최신권 메타데이터를 찾는 중...'));
+    try {
+      const result = await window.electronAPI?.loadLatestSeriesMetadata?.({
+        title,
+        bookType: activeBookType,
+        excludePath: activeItem.filepath || activeItem.path || '',
+      });
+      if (latestMetadataRequestRef.current !== requestId || selectedFileIdRef.current !== activeId) return;
+      if (!result?.metadata) {
+        setStatusMessage(text('t3_msg_load_latest_empty', '불러올 최신권 메타데이터가 없습니다.'));
+        showToast?.({ key: 't3_msg_load_latest_empty' });
+        return;
+      }
+
+      const latestBatch = buildLatestMetadataBatch(
+        result.metadata,
+        currentMetaFieldIds,
+        currentMetadataExtraFieldIds,
+      );
+      if (Object.keys(latestBatch).length === 0) {
+        setStatusMessage(text('t3_msg_load_latest_empty', '불러올 최신권 메타데이터가 없습니다.'));
+        showToast?.({ key: 't3_msg_load_latest_empty' });
+        return;
+      }
+      setBatchMetadata(latestBatch);
+      setStatusMessage(text('t3_msg_load_latest_done', '최신권 메타데이터를 일괄 편집창에 불러왔습니다.'));
+      showToast?.({ key: 't3_msg_load_latest_done' });
+    } catch (error) {
+      if (latestMetadataRequestRef.current !== requestId || selectedFileIdRef.current !== activeId) return;
+      const message = text('t3_msg_load_latest_failed', '최신권 메타데이터를 불러오지 못했습니다: {msg}', {
+        msg: error?.message || String(error),
+      });
+      setStatusMessage(message);
+      showToast?.(message);
+    } finally {
+      if (latestMetadataRequestRef.current === requestId) {
+        latestMetadataLoadingRef.current = false;
+        setIsWorking(false);
+      }
+    }
   };
 
   const sanitizeItemForSave = (item) => {
@@ -2125,7 +2164,7 @@ function MetadataTab({ config, t, showToast }) {
                 <span className="meta-tool-icon"><FaIcon name="arrowRotateLeft" size={12} /></span>
                 <span className="meta-tool-text">{t('t3_btn_reset_series').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
-              <button className="meta-btn" title="D" onClick={handleLoadLatest} disabled={!activeItem}>
+              <button className="meta-btn" title={`${t('t3_tt_load_latest')} (D)`} onClick={handleLoadLatest} disabled={!activeItem || isWorking}>
                 <span className="meta-tool-icon"><FaIcon name="cloudArrowDown" size={12} /></span>
                 <span className="meta-tool-text">{t('t3_btn_load_latest').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)} (D)</span>
               </button>

@@ -244,6 +244,11 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     assert.match(devRunnerSource, /BOOKMANAGER_DEV_LOAD_DIST/);
     assert.match(devRunnerSource, /restartElectron/);
     assert.match(devRunnerSource, /closeBuildWatcher/);
+    assert.match(devRunnerSource, /fs\.watch\(electronSourceDir,\s*\{\s*recursive:\s*true\s*\}/);
+    assert.match(devRunnerSource, /isElectronRuntimeSource/);
+    assert.match(devRunnerSource, /scheduleElectronRestart/);
+    assert.match(devRunnerSource, /closeElectronSourceWatcher/);
+    assert.match(devRunnerSource, /electronSourceWatcher\.on\('error'/);
     assert.match(devRunnerSource, /createServer/);
     assert.match(devRunnerSource, /await viteServer\.listen\(\)/);
     assert.match(devRunnerSource, /viteServer\.printUrls\(\)/);
@@ -266,6 +271,9 @@ test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사�
     assert.match(launcherSource, /electronArgs = \['\.',\s*'--dev'\]/);
     assert.match(launcherSource, /electronArgs\.push\('--unsafe-dev-node'\)/);
     assert.match(launcherSource, /spawn\(electron,\s*electronArgs/);
+    assert.match(launcherSource, /process\.on\('SIGINT',\s*\(\)\s*=>\s*shutdown\('SIGINT'\)\)/);
+    assert.match(launcherSource, /process\.on\('SIGTERM',\s*\(\)\s*=>\s*shutdown\('SIGTERM'\)\)/);
+    assert.match(launcherSource, /child\.kill\(signal\)/);
     assert.match(mainSource, /useUnsafeDevNodeIntegration = isDev/);
     assert.match(mainSource, /BOOKMANAGER_DEV_LOAD_DIST/);
     assert.match(mainSource, /useDevServer/);

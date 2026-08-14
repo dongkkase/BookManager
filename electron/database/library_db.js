@@ -232,6 +232,7 @@ export class LibraryDB {
             );
             CREATE INDEX IF NOT EXISTS idx_files_series ON files(series);
             CREATE INDEX IF NOT EXISTS idx_files_title ON files(title);
+            CREATE INDEX IF NOT EXISTS idx_files_title_nocase ON files(title COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_files_writer ON files(writer);
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
             CREATE INDEX IF NOT EXISTS idx_files_path_nocase ON files(path COLLATE NOCASE);
@@ -636,6 +637,27 @@ export class LibraryDB {
             ORDER BY count DESC, series_group COLLATE NOCASE ASC
             LIMIT ?
         `).all(Math.max(1, Math.min(5000, Number(limit) || 1000))));
+    }
+
+    async getMetadataTitleCandidates(criteria = {}) {
+        return this.withLock(async () => {
+            const title = String(criteria.title || '').trim();
+            if (!title) return [];
+
+            const limit = Math.max(1, Math.min(5000, Number(criteria.limit) || 5000));
+            const titlePrefixes = [...new Set([
+                title.normalize('NFC'),
+                title.normalize('NFD'),
+            ])].map(value => `${escapeLikeValue(value)}%`);
+            const titleClauses = titlePrefixes.map(() => "title LIKE ? ESCAPE '\\' COLLATE NOCASE");
+            return this.getConnection().prepare(`
+                SELECT path, title, volume, number, mtime, book_type, ext
+                FROM files
+                WHERE (${titleClauses.join(' OR ')})
+                ORDER BY mtime DESC, path COLLATE NOCASE ASC
+                LIMIT ?
+            `).all(...titlePrefixes, limit);
+        });
     }
 
     async searchFiles(query, libraryPaths = [], options = {}) {

@@ -18,6 +18,7 @@ import {
   loadMetadataCover,
   loadMetadataEpubImage,
   loadMetadataImageFile,
+  loadLatestSeriesMetadata,
   saveMetadataItems,
 } from './tasks/metadataTask.js';
 import {
@@ -3510,6 +3511,15 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       lang: options.lang || configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko',
     }, (progress) => {
       event.sender.send('task:progress', { task: 'metadata:analyze', ...progress });
+    });
+  });
+
+  ipcMain.handle('metadata:latest', async (_event, criteria = {}) => {
+    const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+    return loadLatestSeriesMetadata(criteria, {
+      sevenZExe,
+      dbPath: libraryDbPath(),
+      lang: configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko',
     });
   });
 

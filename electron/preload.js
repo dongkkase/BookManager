@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractArchiveImage: (filePath, entryPath) => ipcRenderer.invoke('renamer:extractImage', filePath, entryPath),
   executeRenamer: (items, options) => ipcRenderer.invoke('renamer:execute', items, options),
   analyzeMetadata: (paths, options) => ipcRenderer.invoke('metadata:analyze', paths, options),
+  loadLatestSeriesMetadata: (criteria) => ipcRenderer.invoke('metadata:latest', criteria),
   loadMetadataCover: (filePath, options) => ipcRenderer.invoke('metadata:cover', filePath, options),
   listMetadataEpubImages: (filePath) => ipcRenderer.invoke('metadata:epubImages', filePath),
   loadMetadataEpubImage: (filePath, entryName) => ipcRenderer.invoke('metadata:epubImage', filePath, entryName),

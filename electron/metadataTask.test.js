@@ -10,10 +10,12 @@ import {
     listMetadataEpubImages,
     loadMetadataCover,
     loadMetadataEpubImage,
+    loadLatestSeriesMetadata,
     metadataWriteSupport,
     parseComicInfo,
     saveMetadataItems,
 } from './tasks/metadataTask.js';
+import { LibraryDB } from './database/library_db.js';
 import {
     listZipEntries,
     readZipEntry,
@@ -320,6 +322,319 @@ test('A 파일에 저장한 시리즈 그룹은 B 파일 분석에서도 전역 
         assert.deepEqual(analyzed.seriesGroupOptions, ['공유 세계관']);
         assert.equal(analyzed.items[0].filepath, second);
     } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('최신권 메타데이터는 라이브러리 DB의 다른 폴더에서 같은 기본 제목의 가장 높은 숫자 권을 읽는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-latest-series-'));
+    let library = null;
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const baseTitle = '별의 100%_여행';
+        const currentSeries = '현재 권 시리즈';
+        const decimalSeries = '소수 권 시리즈';
+        const latestSeries = '최신 권 시리즈';
+        const currentPath = path.join(root, '편집 중', `${baseTitle} 11권.cbz`);
+        const decimalPath = path.join(root, '기존 권', `${baseTitle} 9.5권.cbz`);
+        const latestPath = path.join(root, '다른 라이브러리 폴더', `${baseTitle} 10권.cbz`);
+        const lowerChapterPath = path.join(root, '낮은 화수', `${baseTitle} 10권 99화.cbz`);
+        const similarPath = path.join(root, '유사 제목', `${baseTitle} 외전 99권.cbz`);
+
+        const createArchive = async (filePath, metadata) => {
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, Buffer.alloc(0));
+            await replaceZipEntry(filePath, 'ComicInfo.xml', createComicInfoXml(metadata));
+        };
+
+        await createArchive(currentPath, {
+            Series: currentSeries,
+            SeriesGroup: '현재 권 세계관',
+            Title: `${baseTitle} 11권`,
+            Volume: '11',
+            Publisher: '현재 파일 출판사',
+        });
+        await createArchive(decimalPath, {
+            Series: decimalSeries,
+            SeriesGroup: '소수 권 세계관',
+            Title: `${baseTitle} 9.5권`,
+            Volume: '9.5',
+            Publisher: '소수 권 출판사',
+        });
+        await createArchive(latestPath, {
+            Series: latestSeries,
+            SeriesGroup: '최신 권 세계관',
+            Title: `${baseTitle} 10권`,
+            Volume: '10',
+            Number: '100',
+            PageCount: '240',
+            Writer: '최신권 글 작가',
+            Penciller: '최신권 그림 작가',
+            Inker: '최신권 잉커',
+            Colorist: '최신권 컬러리스트',
+            Letterer: '최신권 레터러',
+            CoverArtist: '최신권 표지 작가',
+            Editor: '최신권 편집자',
+            Publisher: '실제 최신권 출판사',
+        });
+        await createArchive(lowerChapterPath, {
+            Series: '낮은 화수 시리즈',
+            SeriesGroup: '낮은 화수 세계관',
+            Title: `${baseTitle} 10권`,
+            Volume: '10',
+            Number: '99',
+            Publisher: '낮은 화수 출판사',
+        });
+        await createArchive(similarPath, {
+            Series: latestSeries,
+            SeriesGroup: '최신 권 세계관',
+            Title: `${baseTitle} 외전 99권`,
+            Volume: '99',
+            Publisher: '유사 제목 출판사',
+        });
+
+        library = new LibraryDB({ dbPath });
+        await library.upsertFileInfoBulk([
+            {
+                path: currentPath,
+                series: currentSeries,
+                series_group: '현재 권 세계관',
+                title: `${baseTitle} 11권`,
+                volume: '11',
+                publisher: 'DB 현재 파일 출판사',
+                mtime: 400,
+                book_type: 'comic',
+            },
+            {
+                path: decimalPath,
+                series: decimalSeries,
+                series_group: '소수 권 세계관',
+                title: `${baseTitle} 9.5권`,
+                volume: '9.5',
+                publisher: 'DB 소수 권 출판사',
+                mtime: 300,
+                book_type: 'comic',
+            },
+            {
+                path: latestPath,
+                series: latestSeries,
+                series_group: '최신 권 세계관',
+                title: `${baseTitle} 10권`,
+                volume: '10',
+                number: '100',
+                publisher: 'DB 캐시 출판사',
+                mtime: 100,
+                book_type: 'comic',
+            },
+            {
+                path: lowerChapterPath,
+                series: '낮은 화수 시리즈',
+                series_group: '낮은 화수 세계관',
+                title: `${baseTitle} 10권`,
+                volume: '10',
+                number: '99',
+                publisher: 'DB 낮은 화수 출판사',
+                mtime: 700,
+                book_type: 'comic',
+            },
+            {
+                path: similarPath,
+                series: latestSeries,
+                series_group: '최신 권 세계관',
+                title: `${baseTitle} 외전 99권`,
+                volume: '99',
+                publisher: 'DB 유사 제목 출판사',
+                mtime: 500,
+                book_type: 'comic',
+            },
+        ]);
+        await library.close();
+        library = null;
+
+        const latest = await loadLatestSeriesMetadata({
+            title: `${baseTitle} 11권`,
+            bookType: 'comic',
+            currentPath,
+        }, { dbPath });
+
+        assert.ok(latest);
+        assert.equal(latest.sourcePath, latestPath);
+        assert.equal(latest.sourceName, path.basename(latestPath));
+        assert.equal(latest.metadata.Series, latestSeries);
+        assert.equal(latest.metadata.SeriesGroup, '최신 권 세계관');
+        assert.equal(latest.metadata.Volume, '10');
+        assert.equal(latest.metadata.Publisher, '실제 최신권 출판사');
+        assert.equal(latest.metadata.Writer, '최신권 글 작가');
+        assert.equal(latest.metadata.Penciller, '최신권 그림 작가');
+        assert.equal(latest.metadata.Inker, '최신권 잉커');
+        assert.equal(latest.metadata.Colorist, '최신권 컬러리스트');
+        assert.equal(latest.metadata.Letterer, '최신권 레터러');
+        assert.equal(latest.metadata.CoverArtist, '최신권 표지 작가');
+        assert.equal(latest.metadata.Editor, '최신권 편집자');
+    } finally {
+        await library?.close();
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('최신권 메타데이터는 누락 파일과 ComicInfo가 없는 상위 후보를 건너뛴다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-latest-fallback-'));
+    let library = null;
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const baseTitle = '달의 기록';
+        const missingPath = path.join(root, '누락 후보', `${baseTitle} 12권.cbz`);
+        const noMetadataPath = path.join(root, '메타데이터 없음', `${baseTitle} 11권.cbz`);
+        const validPath = path.join(root, '유효 후보', `${baseTitle} 10권.cbz`);
+
+        fs.mkdirSync(path.dirname(noMetadataPath), { recursive: true });
+        fs.writeFileSync(noMetadataPath, Buffer.alloc(0));
+        await replaceZipEntry(noMetadataPath, '001.jpg', Buffer.from('cover without metadata'));
+
+        fs.mkdirSync(path.dirname(validPath), { recursive: true });
+        fs.writeFileSync(validPath, Buffer.alloc(0));
+        await replaceZipEntry(validPath, 'ComicInfo.xml', createComicInfoXml({
+            Series: '유효 후보 시리즈',
+            SeriesGroup: '유효 후보 세계관',
+            Title: `${baseTitle} 10권`,
+            Volume: '10',
+            Publisher: '유효 후보 출판사',
+        }));
+
+        library = new LibraryDB({ dbPath });
+        await library.upsertFileInfoBulk([
+            {
+                path: missingPath,
+                series: '누락 후보 시리즈',
+                series_group: '누락 후보 세계관',
+                title: `${baseTitle} 12권`,
+                volume: '12',
+                mtime: 300,
+                book_type: 'comic',
+            },
+            {
+                path: noMetadataPath,
+                series: '메타데이터 없는 후보 시리즈',
+                series_group: '메타데이터 없는 후보 세계관',
+                title: `${baseTitle} 11권`,
+                volume: '11',
+                mtime: 200,
+                book_type: 'comic',
+            },
+            {
+                path: validPath,
+                series: '유효 후보 시리즈',
+                series_group: '유효 후보 세계관',
+                title: `${baseTitle} 10권`,
+                volume: '10',
+                mtime: 100,
+                book_type: 'comic',
+            },
+        ]);
+        await library.close();
+        library = null;
+
+        const latest = await loadLatestSeriesMetadata({
+            title: `${baseTitle} 1권`,
+            bookType: 'comic',
+        }, { dbPath });
+
+        assert.ok(latest);
+        assert.equal(latest.sourcePath, validPath);
+        assert.equal(latest.sourceName, path.basename(validPath));
+        assert.equal(latest.metadata.Volume, '10');
+        assert.equal(latest.metadata.Publisher, '유효 후보 출판사');
+    } finally {
+        await library?.close();
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('최신권 메타데이터에는 DB 캐시와 파일명 추론값이 섞이지 않는다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-latest-embedded-only-'));
+    let library = null;
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const baseTitle = '실제 정보만';
+        const sourcePath = path.join(root, `${baseTitle} 10권.cbz`);
+        fs.writeFileSync(sourcePath, Buffer.alloc(0));
+        await replaceZipEntry(sourcePath, 'ComicInfo.xml', createComicInfoXml({
+            Publisher: '파일 내부 출판사',
+        }));
+
+        library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: sourcePath,
+            series: 'DB 분류용 시리즈',
+            series_group: 'DB 분류용 세계관',
+            title: `${baseTitle} 10권`,
+            volume: '10',
+            publisher: 'DB 캐시 출판사',
+            format: 'DB 캐시 형식',
+            mtime: 100,
+            book_type: 'comic',
+        });
+        await library.close();
+        library = null;
+
+        const latest = await loadLatestSeriesMetadata({
+            title: `${baseTitle} 1권`,
+            bookType: 'comic',
+        }, { dbPath });
+
+        assert.ok(latest);
+        assert.equal(latest.metadata.Publisher, '파일 내부 출판사');
+        assert.equal(latest.metadata.Series, undefined);
+        assert.equal(latest.metadata.Title, undefined);
+        assert.equal(latest.metadata.Volume, undefined);
+        assert.equal(latest.metadata.Format, undefined);
+        assert.equal(latest.metadata.Manga, undefined);
+        assert.equal(latest.metadata.LanguageISO, undefined);
+    } finally {
+        await library?.close();
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('최신권 메타데이터는 NFC 제목으로 macOS NFD 저장 후보를 조회한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-latest-nfd-'));
+    let library = null;
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const baseTitle = '용사의 기록';
+        const storedTitle = `${baseTitle} 10권`.normalize('NFD');
+        const sourcePath = path.join(root, `${storedTitle}.cbz`);
+        assert.notEqual(storedTitle, storedTitle.normalize('NFC'));
+
+        fs.writeFileSync(sourcePath, Buffer.alloc(0));
+        await replaceZipEntry(sourcePath, 'ComicInfo.xml', createComicInfoXml({
+            Title: storedTitle,
+            Volume: '10',
+            Publisher: 'NFD 후보 출판사',
+        }));
+
+        library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: sourcePath,
+            title: storedTitle,
+            volume: '10',
+            mtime: 100,
+            book_type: 'comic',
+        });
+        await library.close();
+        library = null;
+
+        const latest = await loadLatestSeriesMetadata({
+            title: `${baseTitle} 1권`,
+            bookType: 'comic',
+        }, { dbPath });
+
+        assert.ok(latest);
+        assert.equal(latest.sourcePath.normalize('NFC'), sourcePath.normalize('NFC'));
+        assert.equal(latest.metadata.Title.normalize('NFC'), `${baseTitle} 10권`);
+        assert.equal(latest.metadata.Publisher, 'NFD 후보 출판사');
+    } finally {
+        await library?.close();
         fs.rmSync(root, { recursive: true, force: true });
     }
 });

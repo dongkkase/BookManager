@@ -6,6 +6,7 @@ import {
     applyCombinedGenreTagsValue,
     applyInferredMetadataField,
     applySeriesAutoMetadata,
+    buildLatestMetadataBatch,
     buildMetadataSeriesGroupOptions,
     clampMetadataNumber,
     cleanMetadataSummary,
@@ -116,6 +117,38 @@ test('metadata series batch apply copies batch fields then runs automatic fields
         Number: '',
         PageCount: '180',
     });
+});
+
+test('latest metadata batch keeps shared fields and excludes volume-specific fields', () => {
+    const metadata = {
+        Title: '최신권 제목',
+        Series: '공유 시리즈',
+        SeriesGroup: '공유 세계관',
+        Volume: '12.5',
+        Number: '120',
+        PageCount: '240',
+        Writer: '공유 작가',
+        Publisher: '공유 출판사',
+        ComicZipModifiedDate: '2026-08-14 12:00:00',
+        UnsupportedField: '복사 금지',
+    };
+
+    const batch = buildLatestMetadataBatch(
+        metadata,
+        ['Title', 'Series', 'SeriesGroup', 'Volume', 'Number', 'PageCount', 'Writer', 'Publisher'],
+        ['ComicZipModifiedDate'],
+    );
+
+    assert.deepEqual(batch, {
+        Series: '공유 시리즈',
+        SeriesGroup: '공유 세계관',
+        Writer: '공유 작가',
+        Publisher: '공유 출판사',
+    });
+    for (const field of ['Title', 'Volume', 'Number', 'PageCount', 'ComicZipModifiedDate']) {
+        assert.equal(Object.hasOwn(batch, field), false);
+    }
+    assert.equal(metadata.Title, '최신권 제목');
 });
 
 test('metadata number fields use the original bounds', () => {

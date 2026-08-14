@@ -1,7 +1,9 @@
 const { spawn, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const projectRoot = path.join(__dirname, '..');
+const electronSourceDir = path.join(projectRoot, 'electron');
 const useUnsafeDevNodeIntegration = process.argv.includes('--unsafe-dev-node');
 const useDistWatch = process.argv.includes('--dist-watch');
 const requestedDevServerUrl = new URL(process.env.BOOKMANAGER_DEV_SERVER_URL || 'http://127.0.0.1:5173/');
@@ -15,6 +17,8 @@ if (useUnsafeDevNodeIntegration) {
 let electronProcess = null;
 let viteServer = null;
 let buildWatcher = null;
+let electronSourceWatcher = null;
+let electronRestartTimer = null;
 let activeDevServerUrl = requestedDevServerUrl;
 let restartingElectron = false;
 let shuttingDown = false;
@@ -71,10 +75,21 @@ async function closeBuildWatcher() {
     await Promise.resolve(watcher.close?.());
 }
 
+function closeElectronSourceWatcher() {
+    if (electronRestartTimer) {
+        clearTimeout(electronRestartTimer);
+        electronRestartTimer = null;
+    }
+    if (!electronSourceWatcher) return;
+    electronSourceWatcher.close();
+    electronSourceWatcher = null;
+}
+
 async function shutdown(code = 0) {
     if (shuttingDown) return;
     shuttingDown = true;
     stopProcess(electronProcess);
+    closeElectronSourceWatcher();
     try {
         await closeBuildWatcher();
         await closeViteServer();
@@ -117,12 +132,50 @@ function startElectron() {
 }
 
 function restartElectron() {
+    if (electronRestartTimer) {
+        clearTimeout(electronRestartTimer);
+        electronRestartTimer = null;
+    }
+    if (restartingElectron) return;
     if (!electronProcess) {
         startElectron();
         return;
     }
     restartingElectron = true;
     stopProcess(electronProcess);
+}
+
+function isElectronRuntimeSource(filename = '') {
+    const normalized = String(filename || '').replace(/\\/g, '/');
+    if (!/\.(?:[cm]?js|json)$/i.test(normalized)) return false;
+    return !/(?:^|\/)tests?(?:\/|$)|\.test\.[cm]?js$/i.test(normalized);
+}
+
+function scheduleElectronRestart(filename) {
+    if (shuttingDown) return;
+    if (electronRestartTimer) clearTimeout(electronRestartTimer);
+    electronRestartTimer = setTimeout(() => {
+        electronRestartTimer = null;
+        console.log(`[BookManager] Electron source changed (${filename}). Restarting Electron.`);
+        restartElectron();
+    }, 300);
+}
+
+function startElectronSourceWatcher() {
+    if (electronSourceWatcher) return;
+    try {
+        electronSourceWatcher = fs.watch(electronSourceDir, { recursive: true }, (_eventType, filename) => {
+            if (!isElectronRuntimeSource(filename)) return;
+            scheduleElectronRestart(String(filename));
+        });
+        electronSourceWatcher.on('error', error => {
+            console.warn(`[BookManager] Electron source watcher stopped: ${error.message}`);
+            electronSourceWatcher?.close();
+            electronSourceWatcher = null;
+        });
+    } catch (error) {
+        console.warn(`[BookManager] Electron source watcher unavailable: ${error.message}`);
+    }
 }
 
 function resolveActiveDevServerUrl(server) {
@@ -158,6 +211,7 @@ async function startDevServer() {
         console.warn(`[BookManager] Port ${requestedDevServerUrl.port} is in use. Using ${activeDevServerUrl.href}`);
     }
     viteServer.printUrls();
+    startElectronSourceWatcher();
     startElectron();
 }
 
@@ -175,6 +229,7 @@ async function startDistWatch() {
             watch: {},
         },
     });
+    startElectronSourceWatcher();
 
     if (!buildWatcher || typeof buildWatcher.on !== 'function') {
         startElectron();
