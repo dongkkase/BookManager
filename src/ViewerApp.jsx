@@ -8,11 +8,19 @@ import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsam
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
 import {
+  buildFlipBookPageModel,
   buildFlipBookStructureKey,
   finishAndTurnFlipBookToPage,
+  getFlipBookAmbientEntries,
   getFlipBookCurrentGroupEntries,
   getFlipBookNearbyGroupEntries,
+  getSplitSpreadFrameStyle,
 } from './viewerFlipBook';
+import {
+  adjacentSpreadPageStartIndex,
+  adjacentSpreadSelectionIndex,
+  resolveSpreadPageStartIndex,
+} from './viewerSpreadNavigation';
 import blocksShuffle4Icon from './images/blocks-shuffle-4.svg';
 import fitWidthOrHeightIcon from './images/fit_width_or_height.svg';
 import fitToPageIcon from './images/fit_to_page.svg';
@@ -665,73 +673,6 @@ function zoomAnchorSelectorForTarget(target) {
   return `[${attributeName}="${escapedValue}"]`;
 }
 
-function buildFlipBookGroups({ pageCount, spread, getStepSizeForIndex }) {
-  if (!spread) {
-    return Array.from({ length: Math.max(0, pageCount) }, (_, index) => ({
-      startIndex: index,
-      indexes: [index],
-    }));
-  }
-  const groups = [];
-  let index = 0;
-  while (index < pageCount) {
-    const rawStepSize = typeof getStepSizeForIndex === 'function'
-      ? getStepSizeForIndex(index)
-      : 2;
-    const stepSize = clamp(Math.max(1, Number(rawStepSize) || 1), 1, Math.max(1, pageCount - index));
-    const indexes = Array.from({ length: stepSize }, (_, offset) => index + offset)
-      .filter(pageIndex => pageIndex >= 0 && pageIndex < pageCount);
-    groups.push({ startIndex: index, indexes });
-    index += stepSize;
-  }
-  return groups;
-}
-
-function flipBookLeafSourcesForGroup(group, { spread, readingDirection }) {
-  const indexes = Array.isArray(group?.indexes) ? group.indexes.filter(Number.isInteger) : [];
-  if (!spread) return [indexes[0] ?? null];
-  if (indexes.length > 1) {
-    const pair = indexes.slice(0, 2);
-    return readingDirection === 'rtl' ? [pair[1], pair[0]] : pair;
-  }
-  const single = indexes[0] ?? null;
-  if (group?.startIndex === 0) {
-    return readingDirection === 'rtl' ? [single, null] : [null, single];
-  }
-  return readingDirection === 'rtl' ? [null, single] : [single, null];
-}
-
-function buildFlipBookPageModel({ pageCount, spread, readingDirection = 'ltr', getStepSizeForIndex }) {
-  const groups = buildFlipBookGroups({ pageCount, spread, getStepSizeForIndex });
-  const orderedGroups = spread && readingDirection === 'rtl'
-    ? [...groups].reverse()
-    : groups;
-  const pageToBookIndex = new Map();
-  const bookToPageIndex = new Map();
-  const entries = [];
-  orderedGroups.forEach(group => {
-    const firstBookIndex = entries.length;
-    const groupStartIndex = clamp(Number(group.startIndex) || 0, 0, Math.max(0, pageCount - 1));
-    group.indexes.forEach(pageIndex => {
-      pageToBookIndex.set(pageIndex, firstBookIndex);
-    });
-    const leafSources = flipBookLeafSourcesForGroup(group, { spread, readingDirection });
-    leafSources.forEach((sourceIndex, leafOffset) => {
-      const bookIndex = entries.length;
-      bookToPageIndex.set(bookIndex, groupStartIndex);
-      entries.push({
-        bookIndex,
-        groupStartIndex,
-        sourceIndex,
-        leafOffset,
-        blank: sourceIndex == null,
-        side: spread ? (leafOffset === 0 ? 'left' : 'right') : 'single',
-      });
-    });
-  });
-  return { entries, pageToBookIndex, bookToPageIndex };
-}
-
 function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
   const enabled = typeof renderPage === 'function' && entries.length > 0;
   const groupKey = buildFlipBookStructureKey(entries);
@@ -804,12 +745,13 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
             layer.visible && 'is-visible',
           )}
         >
-          {layer.entries.map(entry => (
+          {getFlipBookAmbientEntries(layer.entries).map(entry => (
             <div
               key={`flipbook-ambient-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
               className={viewerClassName(
                 'viewer-flipbook-ambient-slot',
                 entry.blank && 'is-blank',
+                entry.splitSpread && 'is-split-spread',
                 `is-${entry.side}-page`,
               )}
             >
@@ -854,6 +796,7 @@ function ViewerFlipBook({
   readingDirection = 'ltr',
   pageSize,
   getStepSizeForIndex,
+  shouldSplitSinglePage,
   absoluteNavigationKey = 0,
   visualScale = 1,
   renderKey,
@@ -881,7 +824,8 @@ function ViewerFlipBook({
     spread,
     readingDirection,
     getStepSizeForIndex,
-  }), [getStepSizeForIndex, normalizedPageCount, readingDirection, spread]);
+    shouldSplitSinglePage,
+  }), [getStepSizeForIndex, normalizedPageCount, readingDirection, shouldSplitSinglePage, spread]);
   // page-flip moves these nodes under its own wrapper, so leaf changes require a fresh React boundary.
   const structureKey = useMemo(() => buildFlipBookStructureKey(model.entries), [model.entries]);
   const currentSourceIndex = clamp(Number(currentPageIndex) || 0, 0, Math.max(0, normalizedPageCount - 1));
@@ -1154,10 +1098,12 @@ function ViewerFlipBook({
         'viewer-flipbook-page',
         pageClassName,
         entry.blank && 'is-blank',
+        entry.splitSpread && 'is-split-spread',
         `is-${entry.side}-page`,
       )}
       data-flipbook-index={entry.bookIndex}
       data-source-page-index={entry.sourceIndex ?? ''}
+      data-spread-segment={entry.splitSpread ? entry.side : undefined}
     >
       <div className={viewerClassName('viewer-flipbook-page-inner', `is-${entry.side}-page`)}>
         {entry.blank
@@ -4092,6 +4038,7 @@ function ComicPageFrame({
   frameStyle,
   imageStyle,
   imageFit = 'contain',
+  imagePosition,
   highQuality = false,
   qualityScale = 1,
   renderAmbientCanvas = true,
@@ -4318,7 +4265,7 @@ function ComicPageFrame({
         ref={qualityCanvasRef}
         className="viewer-comic-quality-canvas"
         aria-hidden="true"
-        style={{ objectFit: imageFit }}
+        style={{ objectFit: imageFit, objectPosition: imagePosition }}
       />
     </div>
   );
@@ -5362,7 +5309,6 @@ function ViewerApp() {
       pageTurnPendingRef.current = true;
       bookPageTurnTargetRef.current = targetIndex;
       pageTurnTimerRef.current = window.setTimeout(() => {
-        if (bookPageTurnTargetRef.current !== targetIndex) return;
         bookPageTurnTargetRef.current = null;
         pageTurnPendingRef.current = false;
         pageTurnTimerRef.current = null;
@@ -6054,35 +6000,36 @@ function ViewerApp() {
     }
   }, [hasNextBook, hasPreviousBook, loadSession, session]);
 
+  const isComicLandscapePage = useCallback(index => {
+    const page = pages[index];
+    return Boolean(page?.name && (pageRatios[page.name] || 0) > 1);
+  }, [pageRatios, pages]);
+
   const getStepSizeForIndex = useCallback(index => {
     if (flowMode !== 'spread') return 1;
     if (session?.type !== 'comic') return 2;
     if (spreadCoverFirst && index === 0) return 1;
     if (isComicSinglePage(index) || isComicSinglePage(index + 1)) return 1;
     const current = pages[index];
-    if (!current || (pageRatios[current.name] || 0) > 1) return 1;
+    if (!current || isComicLandscapePage(index)) return 1;
     const next = pages[index + 1];
-    if (!next || (pageRatios[next.name] || 0) > 1) return 1;
+    if (!next || isComicLandscapePage(index + 1)) return 1;
     return 2;
-  }, [flowMode, isComicSinglePage, pageRatios, pages, session?.type, spreadCoverFirst]);
+  }, [flowMode, isComicLandscapePage, isComicSinglePage, pages, session?.type, spreadCoverFirst]);
 
   const isForwardBoundaryIndex = useCallback(index => {
     if (pageCount <= 0) return false;
     const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pageCount - 1));
     if (flowMode !== 'spread') return targetIndex >= pageCount - 1;
-    if (session?.type === 'comic') {
-      const current = pages[targetIndex];
-      if (!current) return targetIndex >= pageCount - 1;
-      if (spreadCoverFirst && targetIndex === 0) return pageCount <= 1;
-      if (isComicSinglePage(targetIndex) || isComicSinglePage(targetIndex + 1)) return targetIndex >= pageCount - 1;
-      const currentRatio = pageRatios[current.name] || 0;
-      if (currentRatio > 1) return targetIndex >= pageCount - 1;
-      const next = pages[targetIndex + 1];
-      const nextRatio = next ? (pageRatios[next.name] || 0) : 0;
-      return targetIndex >= pageCount - 1 || Boolean(next && nextRatio <= 1 && targetIndex + 1 >= pageCount - 1);
-    }
-    return targetIndex >= Math.max(0, pageCount - 2);
-  }, [flowMode, isComicSinglePage, pageCount, pageRatios, pages, session?.type, spreadCoverFirst]);
+    const stepSizeResolver = session?.type === 'comic' ? getStepSizeForIndex : undefined;
+    const currentStartIndex = resolveSpreadPageStartIndex(targetIndex, pageCount, stepSizeResolver);
+    return adjacentSpreadPageStartIndex(
+      currentStartIndex,
+      1,
+      pageCount,
+      stepSizeResolver,
+    ) === currentStartIndex;
+  }, [flowMode, getStepSizeForIndex, pageCount, session?.type]);
 
   useEffect(() => {
     if (!session || !hasNextBook || pageCount <= 0 || flowMode === 'scroll') return;
@@ -6100,27 +6047,35 @@ function ViewerApp() {
   const resolveSpreadNavigationIndex = useCallback(targetPageIndex => {
     const targetIndex = clamp(Number(targetPageIndex) || 0, 0, Math.max(0, pageCount - 1));
     if (flowMode !== 'spread' || pageCount <= 1) return targetIndex;
-    let startIndex = 0;
-    while (startIndex < targetIndex) {
-      const stepSize = session?.type === 'comic' ? getStepSizeForIndex(startIndex) : 2;
-      const nextStartIndex = startIndex + Math.max(1, stepSize);
-      if (targetIndex < nextStartIndex) return startIndex;
-      if (nextStartIndex <= startIndex || nextStartIndex >= pageCount) break;
-      startIndex = nextStartIndex;
-    }
-    return targetIndex;
+    return resolveSpreadPageStartIndex(
+      targetIndex,
+      pageCount,
+      session?.type === 'comic' ? getStepSizeForIndex : undefined,
+    );
   }, [flowMode, getStepSizeForIndex, pageCount, session?.type]);
 
   useLayoutEffect(() => {
-    if (session?.type !== 'pdf' && session?.type !== 'epub' && session?.type !== 'text') return;
+    if (!['comic', 'pdf', 'epub', 'text'].includes(session?.type)) return;
     if (flowMode !== 'spread') {
       const restoredPageIndex = clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1));
       if (pageIndex !== restoredPageIndex) setPageIndexSynced(restoredPageIndex);
       return;
     }
-    const normalizedPageIndex = resolveSpreadNavigationIndex(pageIndex);
+    const normalizationTargetPageIndex = session?.type === 'comic'
+      ? clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1))
+      : pageIndex;
+    const normalizedPageIndex = resolveSpreadNavigationIndex(normalizationTargetPageIndex);
     if (normalizedPageIndex !== pageIndex) {
-      setPageIndexSynced(normalizedPageIndex, { selectedPageIndex: pageIndex });
+      if (
+        session?.type === 'comic'
+        && pageTurnPendingRef.current
+        && bookPageTurnTargetRef.current === pageIndex
+      ) {
+        bookPageTurnTargetRef.current = normalizedPageIndex;
+      }
+      setPageIndexSynced(normalizedPageIndex, {
+        selectedPageIndex: session?.type === 'comic' ? normalizationTargetPageIndex : pageIndex,
+      });
     }
   }, [flowMode, pageCount, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session?.type, setPageIndexSynced]);
 
@@ -6154,11 +6109,15 @@ function ViewerApp() {
       }
       return;
     }
-    const size = flowMode === 'spread' ? getStepSizeForIndex(currentIndex) : 1;
-    const nextIndex = clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+    const nextIndex = flowMode === 'spread'
+      ? adjacentSpreadPageStartIndex(currentIndex, delta, pageCount, getStepSizeForIndex)
+      : clamp(currentIndex + (delta > 0 ? 1 : -1), 0, Math.max(0, pageCount - 1));
     if (nextIndex === currentIndex) return;
+    const nextSelectedPageIndex = flowMode === 'spread' && session?.type === 'comic' && delta < 0
+      ? adjacentSpreadSelectionIndex(currentIndex, delta, pageCount, getStepSizeForIndex)
+      : nextIndex;
     const commitPageIndex = () => {
-      setPageIndexSynced(nextIndex);
+      setPageIndexSynced(nextIndex, { selectedPageIndex: nextSelectedPageIndex });
       if (session?.type === 'epub' || session?.type === 'text') {
         visibleReaderIndexRef.current = nextIndex;
       }
@@ -7176,12 +7135,11 @@ function ViewerApp() {
     const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pageCount - 1));
     const current = pages[targetIndex];
     if (!current) return [];
-    const currentRatio = pageRatios[current.name] || 0;
-    if (flowMode !== 'spread' || (spreadCoverFirst && targetIndex === 0) || isComicSinglePage(targetIndex) || currentRatio > 1) return [current];
+    if (flowMode !== 'spread' || (spreadCoverFirst && targetIndex === 0) || isComicSinglePage(targetIndex) || isComicLandscapePage(targetIndex)) return [current];
     const next = pages[targetIndex + 1];
-    if (!next || isComicSinglePage(targetIndex + 1) || (pageRatios[next.name] || 0) > 1) return [current];
+    if (!next || isComicSinglePage(targetIndex + 1) || isComicLandscapePage(targetIndex + 1)) return [current];
     return readingDirection === 'rtl' ? [next, current] : [current, next];
-  }, [flowMode, isComicSinglePage, pageCount, pageRatios, pages, readingDirection, spreadCoverFirst]);
+  }, [flowMode, isComicLandscapePage, isComicSinglePage, pageCount, pages, readingDirection, spreadCoverFirst]);
 
   const comicSpreadPages = useMemo(() => getComicSpreadPagesForIndex(pageIndex), [getComicSpreadPagesForIndex, pageIndex]);
 
@@ -7215,7 +7173,14 @@ function ViewerApp() {
     const frameSizeStyle = options.frameStyle || getComicImageStyle(page, pageSlots);
     const frameStyle = frameSizeStyle;
     const fittedImageStyle = options.imageStyle || (frameSizeStyle
-      ? { width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', objectFit: options.objectFit || 'cover' }
+      ? {
+        width: '100%',
+        height: '100%',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        objectFit: options.objectFit || 'cover',
+        objectPosition: options.objectPosition,
+      }
       : undefined);
     if (pageError && !pageData[page.name]) {
       return (
@@ -7242,6 +7207,7 @@ function ViewerApp() {
         frameStyle={frameStyle}
         imageStyle={fittedImageStyle}
         imageFit={options.objectFit || 'cover'}
+        imagePosition={options.objectPosition}
         highQuality={Boolean(options.highQuality && supportsHighQualityComicDownsample(page))}
         qualityScale={options.qualityScale}
         renderAmbientCanvas={options.renderAmbientCanvas !== false && backgroundMode === 'immersive'}
@@ -7300,39 +7266,48 @@ function ViewerApp() {
           readingDirection={readingDirection}
           pageSize={pageSize}
           getStepSizeForIndex={getStepSizeForIndex}
+          shouldSplitSinglePage={isComicLandscapePage}
           absoluteNavigationKey={absolutePageJumpSequence}
           visualScale={flipBookVisualScale}
           renderKey={comicFlipBookRenderKey}
           provideNearbyPageState
           initialRenderLoading={initialRenderLoading}
           onPageIndexChange={handleFlipBookPageIndexChange}
-          renderAmbientPage={backgroundMode === 'immersive' && !initialRenderLoading ? sourceIndex => {
+          renderAmbientPage={backgroundMode === 'immersive' && !initialRenderLoading ? (sourceIndex, entry) => {
             const page = pages[sourceIndex];
             const src = page ? (pageData[page.name] || page?.pageUrl) : '';
             if (!page || !src) return null;
+            const ambientPageSlots = entry?.splitSpread ? 1 : pageSlots;
             return (
               <ComicFlipBookAmbientPage
                 src={src}
                 frameStyle={{
-                  ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
+                  ...getComicImageStyle(page, ambientPageSlots, flipBookRenderZoom),
                   maxWidth: '100%',
                   maxHeight: '100%',
                 }}
               />
             );
           } : undefined}
-          renderPage={(sourceIndex, _entry, renderState) => {
+          renderPage={(sourceIndex, entry, renderState) => {
             const page = pages[sourceIndex];
+            const frameStyle = entry?.splitSpread
+              ? getSplitSpreadFrameStyle(
+                getComicImageStyle(page, 1, flipBookRenderZoom),
+                entry.side,
+              )
+              : {
+                ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
+                maxWidth: '100%',
+                maxHeight: '100%',
+              };
             return page ? renderComicImage(page, sourceIndex, pageSlots, {
               highQuality: Boolean(renderState?.shouldRenderHighQuality),
               qualityScale: renderState?.visualScale,
               renderAmbientCanvas: false,
               objectFit: 'contain',
-              frameStyle: {
-                ...getComicImageStyle(page, pageSlots, flipBookRenderZoom),
-                maxWidth: '100%',
-                maxHeight: '100%',
-              },
+              objectPosition: entry?.splitSpread ? 'center center' : undefined,
+              frameStyle,
             }) : null;
           }}
         />

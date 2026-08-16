@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import {
+    buildFlipBookGroups,
+    buildFlipBookPageModel,
     buildFlipBookStructureKey,
     finishAndTurnFlipBookToPage,
+    flipBookLeafSourcesForGroup,
+    getFlipBookAmbientEntries,
     getFlipBookCurrentGroupEntries,
     getFlipBookNearbyGroupEntries,
+    getSplitSpreadFrameStyle,
 } from './viewerFlipBook.js';
 
 const viewerSource = fs.readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
@@ -19,6 +24,216 @@ const comicPageFrameSource = viewerSource.slice(
     viewerSource.indexOf('function ComicPageFrame('),
     viewerSource.indexOf('function ComicFlipBookAmbientPage('),
 );
+
+test('플립북 그룹은 페이지별 가변 step 크기를 순서대로 적용한다', () => {
+    const stepSizes = new Map([
+        [0, 1],
+        [1, 1],
+        [2, 2],
+        [4, 1],
+        [5, 2],
+    ]);
+
+    assert.deepEqual(
+        buildFlipBookGroups({
+            pageCount: 7,
+            spread: true,
+            getStepSizeForIndex: index => stepSizes.get(index),
+        }),
+        [
+            { startIndex: 0, indexes: [0] },
+            { startIndex: 1, indexes: [1] },
+            { startIndex: 2, indexes: [2, 3] },
+            { startIndex: 4, indexes: [4] },
+            { startIndex: 5, indexes: [5, 6] },
+        ],
+    );
+});
+
+test('가로 단독 페이지는 양쪽 leaf가 같은 원본을 사용하고 세로 단독 페이지는 빈 leaf를 유지한다', () => {
+    const group = { startIndex: 2, indexes: [2] };
+
+    assert.deepEqual(
+        flipBookLeafSourcesForGroup(group, { spread: true, readingDirection: 'ltr' }),
+        [2, null],
+    );
+    assert.deepEqual(
+        flipBookLeafSourcesForGroup(group, { spread: true, readingDirection: 'rtl' }),
+        [null, 2],
+    );
+    assert.deepEqual(
+        flipBookLeafSourcesForGroup(group, {
+            spread: true,
+            readingDirection: 'ltr',
+            shouldSplitSinglePage: index => index === 2,
+        }),
+        [2, 2],
+    );
+    assert.deepEqual(
+        flipBookLeafSourcesForGroup(group, {
+            spread: false,
+            shouldSplitSinglePage: () => true,
+        }),
+        [2],
+    );
+});
+
+test('LTR 플립북 모델은 분할 단독 페이지만 같은 원본을 두 leaf에 매핑한다', () => {
+    const model = buildFlipBookPageModel({
+        pageCount: 5,
+        spread: true,
+        readingDirection: 'ltr',
+        getStepSizeForIndex: index => index <= 1 || index === 4 ? 1 : 2,
+        shouldSplitSinglePage: index => index === 1,
+    });
+
+    assert.deepEqual(
+        model.entries.map(({ groupStartIndex, sourceIndex, side, blank, splitSpread }) => ({
+            groupStartIndex,
+            sourceIndex,
+            side,
+            blank,
+            splitSpread,
+        })),
+        [
+            { groupStartIndex: 0, sourceIndex: null, side: 'left', blank: true, splitSpread: false },
+            { groupStartIndex: 0, sourceIndex: 0, side: 'right', blank: false, splitSpread: false },
+            { groupStartIndex: 1, sourceIndex: 1, side: 'left', blank: false, splitSpread: true },
+            { groupStartIndex: 1, sourceIndex: 1, side: 'right', blank: false, splitSpread: true },
+            { groupStartIndex: 2, sourceIndex: 2, side: 'left', blank: false, splitSpread: false },
+            { groupStartIndex: 2, sourceIndex: 3, side: 'right', blank: false, splitSpread: false },
+            { groupStartIndex: 4, sourceIndex: 4, side: 'left', blank: false, splitSpread: false },
+            { groupStartIndex: 4, sourceIndex: null, side: 'right', blank: true, splitSpread: false },
+        ],
+    );
+    assert.deepEqual([...model.pageToBookIndex], [[0, 0], [1, 2], [2, 4], [3, 4], [4, 6]]);
+    assert.deepEqual([...model.bookToPageIndex], [
+        [0, 0], [1, 0], [2, 1], [3, 1], [4, 2], [5, 2], [6, 4], [7, 4],
+    ]);
+});
+
+test('RTL 플립북 모델은 그룹과 일반 쌍만 뒤집고 분할 페이지의 물리적 좌우를 유지한다', () => {
+    const model = buildFlipBookPageModel({
+        pageCount: 4,
+        spread: true,
+        readingDirection: 'rtl',
+        getStepSizeForIndex: index => index <= 1 ? 1 : 2,
+        shouldSplitSinglePage: index => index === 1,
+    });
+
+    assert.deepEqual(
+        model.entries.map(entry => ({
+            groupStartIndex: entry.groupStartIndex,
+            sourceIndex: entry.sourceIndex,
+            side: entry.side,
+            splitSpread: entry.splitSpread,
+        })),
+        [
+            { groupStartIndex: 2, sourceIndex: 3, side: 'left', splitSpread: false },
+            { groupStartIndex: 2, sourceIndex: 2, side: 'right', splitSpread: false },
+            { groupStartIndex: 1, sourceIndex: 1, side: 'left', splitSpread: true },
+            { groupStartIndex: 1, sourceIndex: 1, side: 'right', splitSpread: true },
+            { groupStartIndex: 0, sourceIndex: 0, side: 'left', splitSpread: false },
+            { groupStartIndex: 0, sourceIndex: null, side: 'right', splitSpread: false },
+        ],
+    );
+    assert.deepEqual([...model.pageToBookIndex], [[2, 0], [3, 0], [1, 2], [0, 4]]);
+});
+
+test('첫 페이지와 마지막 페이지가 가로형이면 표지나 끝의 빈 leaf 없이 각각 분할한다', () => {
+    const model = buildFlipBookPageModel({
+        pageCount: 3,
+        spread: true,
+        getStepSizeForIndex: () => 1,
+        shouldSplitSinglePage: index => index !== 1,
+    });
+
+    assert.deepEqual(
+        model.entries.map(({ sourceIndex, side, blank, splitSpread }) => ({
+            sourceIndex,
+            side,
+            blank,
+            splitSpread,
+        })),
+        [
+            { sourceIndex: 0, side: 'left', blank: false, splitSpread: true },
+            { sourceIndex: 0, side: 'right', blank: false, splitSpread: true },
+            { sourceIndex: 1, side: 'left', blank: false, splitSpread: false },
+            { sourceIndex: null, side: 'right', blank: true, splitSpread: false },
+            { sourceIndex: 2, side: 'left', blank: false, splitSpread: true },
+            { sourceIndex: 2, side: 'right', blank: false, splitSpread: true },
+        ],
+    );
+});
+
+test('단독 페이지 분할 여부가 바뀌면 플립북 구조 키도 변경된다', () => {
+    const commonOptions = {
+        pageCount: 1,
+        spread: true,
+        readingDirection: 'ltr',
+        getStepSizeForIndex: () => 1,
+    };
+    const portraitModel = buildFlipBookPageModel(commonOptions);
+    const splitModel = buildFlipBookPageModel({
+        ...commonOptions,
+        shouldSplitSinglePage: () => true,
+    });
+
+    assert.notEqual(
+        buildFlipBookStructureKey(portraitModel.entries),
+        buildFlipBookStructureKey(splitModel.entries),
+    );
+});
+
+test('가로 분할 페이지의 ambient는 같은 원본을 펼침면 전체에 한 번만 사용한다', () => {
+    const entries = [
+        { bookIndex: 0, groupStartIndex: 3, sourceIndex: 3, side: 'left', splitSpread: true },
+        { bookIndex: 1, groupStartIndex: 3, sourceIndex: 3, side: 'right', splitSpread: true },
+    ];
+
+    assert.deepEqual(getFlipBookAmbientEntries(entries), [entries[0]]);
+});
+
+test('가로 분할 leaf는 같은 전체 이미지 프레임을 중앙 기준으로 이어서 자른다', () => {
+    const frameStyle = {
+        width: '820px',
+        height: '460px',
+        maxWidth: 'none',
+        maxHeight: 'none',
+    };
+    const leftStyle = getSplitSpreadFrameStyle(frameStyle, 'left');
+    const rightStyle = getSplitSpreadFrameStyle(frameStyle, 'right');
+
+    assert.equal(leftStyle.width, rightStyle.width);
+    assert.equal(leftStyle.height, rightStyle.height);
+    assert.equal(leftStyle.left, '100%');
+    assert.equal(rightStyle.left, '0');
+    assert.equal(leftStyle.top, '50%');
+    assert.equal(rightStyle.transform, 'translate(-50%, -50%)');
+
+    const frameWidth = 820;
+    const leafWidth = frameWidth / 2;
+    const leftAnchor = leftStyle.left === '100%' ? leafWidth : Number.parseFloat(leftStyle.left);
+    const rightAnchor = leafWidth + Number.parseFloat(rightStyle.left);
+    const leftGlobalFrameOrigin = leftAnchor - (frameWidth / 2);
+    const rightGlobalFrameOrigin = rightAnchor - (frameWidth / 2);
+    assert.equal(leftGlobalFrameOrigin, rightGlobalFrameOrigin);
+});
+
+test('크기를 아직 모르는 가로 페이지도 두 leaf에 걸친 기본 프레임을 사용한다', () => {
+    assert.deepEqual(getSplitSpreadFrameStyle(undefined, 'left'), {
+        width: '200%',
+        height: '100%',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        flex: '0 0 auto',
+        position: 'absolute',
+        top: '50%',
+        left: '100%',
+        margin: 0,
+        transform: 'translate(-50%, -50%)',
+    });
+});
 
 test('페이지 수가 같아도 플립북 페이지 묶음이 바뀌면 구조 키가 변경된다', () => {
     const pairedPages = [
@@ -197,7 +412,7 @@ test('플립북 ambient는 저장된 현재 펼침면에서 시작하고 초기 
     );
     assert.match(
         viewerSource,
-        /renderAmbientPage=\{backgroundMode === 'immersive' && !initialRenderLoading \? sourceIndex => \{/,
+        /renderAmbientPage=\{backgroundMode === 'immersive' && !initialRenderLoading \? \(sourceIndex, entry\) => \{/,
     );
 });
 
@@ -220,6 +435,27 @@ test('가로형 페이지 발견으로 플립북 구조가 바뀌어도 표시 �
     );
 });
 
+test('만화 책넘김은 가로 단독 페이지를 같은 전체 이미지의 좌우 leaf로 렌더링한다', () => {
+    assert.match(viewerSource, /shouldSplitSinglePage=\{isComicLandscapePage\}/);
+    assert.match(
+        viewerSource,
+        /entry\?\.splitSpread[\s\S]*?getSplitSpreadFrameStyle\([\s\S]*?getComicImageStyle\(page, 1, flipBookRenderZoom\)[\s\S]*?entry\.side/,
+    );
+    assert.match(viewerSource, /data-spread-segment=\{entry\.splitSpread \? entry\.side : undefined\}/);
+    assert.match(
+        viewerSource,
+        /getFlipBookAmbientEntries\(layer\.entries\)[\s\S]*?entry\.splitSpread && 'is-split-spread'/,
+    );
+    assert.match(
+        viewerCss,
+        /\.viewer-flipbook-ambient-slot\.is-split-spread \{\s*flex:\s*1 0 100%;\s*justify-content:\s*center;/,
+    );
+    assert.match(
+        viewerCss,
+        /\.viewer-comic-stage\.is-spread:not\(\.viewer-flipbook-stage\) \.viewer-page-transition-layer\.has-spread-pair \.viewer-comic-image/,
+    );
+});
+
 test('몰입형 책넘김의 본문 프레임은 중복 ambient 캔버스를 생성하지 않는다', () => {
     assert.match(comicPageFrameSource, /renderAmbientCanvas = true/);
     assert.match(comicPageFrameSource, /if \(!renderAmbientCanvas\) return false;/);
@@ -230,7 +466,7 @@ test('몰입형 책넘김의 본문 프레임은 중복 ambient 캔버스를 생
     );
     assert.match(
         viewerSource,
-        /renderPage=\{\(sourceIndex, _entry, renderState\) => \{[\s\S]*?renderAmbientCanvas:\s*false/,
+        /renderPage=\{\(sourceIndex, entry, renderState\) => \{[\s\S]*?renderAmbientCanvas:\s*false/,
     );
 });
 

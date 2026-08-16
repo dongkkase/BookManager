@@ -92,15 +92,23 @@ test('두 장 보기에서 목차로 펼침면의 두 번째 페이지를 선택
 
     assert.match(
         normalizationSource,
-        /const stepSize = session\?\.type === 'comic' \? getStepSizeForIndex\(startIndex\) : 2;/,
-    );
-    assert.match(
-        normalizationSource,
-        /setPageIndexSynced\(normalizedPageIndex,\s*\{\s*selectedPageIndex:\s*(?:pageIndex|selectedPageIndex),?\s*\}\)/,
+        /return resolveSpreadPageStartIndex\([\s\S]*?session\?\.type === 'comic' \? getStepSizeForIndex : undefined/,
     );
     assert.match(
         normalizationSource,
         /if \(flowMode !== 'spread'\) \{\s*const restoredPageIndex = clamp\(selectedPageIndex, 0, Math\.max\(0, pageCount - 1\)\);\s*if \(pageIndex !== restoredPageIndex\) setPageIndexSynced\(restoredPageIndex\);\s*return;\s*\}/,
+    );
+    assert.match(
+        normalizationSource,
+        /\['comic', 'pdf', 'epub', 'text'\]\.includes\(session\?\.type\)/,
+    );
+    assert.match(
+        normalizationSource,
+        /const normalizationTargetPageIndex = session\?\.type === 'comic'[\s\S]*?\? clamp\(selectedPageIndex,[\s\S]*?: pageIndex;/,
+    );
+    assert.match(
+        normalizationSource,
+        /selectedPageIndex: session\?\.type === 'comic' \? normalizationTargetPageIndex : pageIndex/,
     );
     assert.match(
         normalizationSource,

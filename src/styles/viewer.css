@@ -782,7 +782,7 @@
   align-items: flex-start;
 }
 
-.viewer-comic-stage.is-spread:not(.viewer-flipbook-stage) .viewer-comic-image {
+.viewer-comic-stage.is-spread:not(.viewer-flipbook-stage) .viewer-page-transition-layer.has-spread-pair .viewer-comic-image {
   max-height: calc(100vh - 70px);
   max-width: 48%;
 }
@@ -895,6 +895,11 @@
 
 .viewer-flipbook-ambient-slot.is-right-page {
   justify-content: flex-start;
+}
+
+.viewer-flipbook-ambient-slot.is-split-spread {
+  flex: 1 0 100%;
+  justify-content: center;
 }
 
 .viewer-flipbook-ambient-frame {

@@ -15,6 +15,7 @@ const mainSource = readFileSync(path.join(root, 'main.js'), 'utf8');
 const folderTabSource = readFileSync(path.join(projectRoot, 'src', 'tabs', 'FolderTab.jsx'), 'utf8');
 const appEntrySource = readFileSync(path.join(projectRoot, 'src', 'main.jsx'), 'utf8');
 const viewerAppSource = readFileSync(path.join(projectRoot, 'src', 'ViewerApp.jsx'), 'utf8');
+const viewerFlipBookSource = readFileSync(path.join(projectRoot, 'src', 'viewerFlipBook.js'), 'utf8');
 const viewerStyleSource = readFileSync(path.join(projectRoot, 'src', 'styles', 'viewer.css'), 'utf8');
 const indexSource = readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
 const i18nSource = readFileSync(path.join(projectRoot, 'src', 'utils', 'i18n.js'), 'utf8');
@@ -575,16 +576,17 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /import \{ ReactFlipBook \} from '@vuvandinh203\/react-flipbook'/);
     assert.match(packageSource, /"@vuvandinh203\/react-flipbook": "\^1\.0\.2"/);
     assert.match(viewerAppSource, /const BOOK_PAGE_TURN_DURATION = 720/);
-    assert.match(viewerAppSource, /function buildFlipBookGroups/);
-    assert.match(viewerAppSource, /function flipBookLeafSourcesForGroup/);
-    assert.match(viewerAppSource, /function buildFlipBookPageModel/);
+    assert.match(viewerAppSource, /buildFlipBookPageModel,/);
+    assert.match(viewerFlipBookSource, /export function buildFlipBookGroups/);
+    assert.match(viewerFlipBookSource, /export function flipBookLeafSourcesForGroup/);
+    assert.match(viewerFlipBookSource, /export function buildFlipBookPageModel/);
     assert.match(viewerAppSource, /function ViewerFlipBook/);
-    assert.match(viewerAppSource, /readingDirection === 'rtl'\s*\? \[...groups\]\.reverse\(\)\s*:\s*groups/);
-    assert.match(viewerAppSource, /return readingDirection === 'rtl' \? \[pair\[1\], pair\[0\]\] : pair/);
-    assert.match(viewerAppSource, /return readingDirection === 'rtl' \? \[single, null\] : \[null, single\]/);
-    assert.match(viewerAppSource, /return readingDirection === 'rtl' \? \[null, single\] : \[single, null\]/);
-    assert.match(viewerAppSource, /pageToBookIndex\.set\(pageIndex, firstBookIndex\)/);
-    assert.match(viewerAppSource, /bookToPageIndex\.set\(bookIndex, groupStartIndex\)/);
+    assert.match(viewerFlipBookSource, /readingDirection === 'rtl'\s*\? \[...groups\]\.reverse\(\)\s*:\s*groups/);
+    assert.match(viewerFlipBookSource, /return readingDirection === 'rtl' \? \[pair\[1\], pair\[0\]\] : pair/);
+    assert.match(viewerFlipBookSource, /return readingDirection === 'rtl' \? \[single, null\] : \[null, single\]/);
+    assert.match(viewerFlipBookSource, /return readingDirection === 'rtl' \? \[null, single\] : \[single, null\]/);
+    assert.match(viewerFlipBookSource, /pageToBookIndex\.set\(pageIndex, firstBookIndex\)/);
+    assert.match(viewerFlipBookSource, /bookToPageIndex\.set\(bookIndex, groupStartIndex\)/);
     assert.match(viewerAppSource, /currentPage=\{currentBookIndex\}/);
     assert.match(viewerAppSource, /startPage=\{currentBookIndex\}/);
     assert.match(viewerAppSource, /flippingTime=\{BOOK_PAGE_TURN_DURATION\}/);
@@ -670,7 +672,7 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerStyleSource, /\.viewer-flipbook-page-inner\.is-right-page\s*\{[\s\S]*?justify-content:\s*flex-start/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-page\.is-blank\s*\{[\s\S]*?opacity:\s*0 !important;[\s\S]*?pointer-events:\s*none/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-blank-page/);
-    assert.match(viewerStyleSource, /\.viewer-comic-stage\.is-spread:not\(\.viewer-flipbook-stage\) \.viewer-comic-image\s*\{[\s\S]*?max-width:\s*48%/);
+    assert.match(viewerStyleSource, /\.viewer-comic-stage\.is-spread:not\(\.viewer-flipbook-stage\) \.viewer-page-transition-layer\.has-spread-pair \.viewer-comic-image\s*\{[\s\S]*?max-width:\s*48%/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-stage\.viewer-comic-stage\.is-spread \.viewer-comic-image\s*\{[\s\S]*?max-width:\s*100%;[\s\S]*?max-height:\s*100%/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-page \.viewer-comic-page-frame\s*\{[\s\S]*?overflow:\s*hidden/);
     assert.match(viewerStyleSource, /\.viewer-flipbook-page \.viewer-ambient-clip\s*\{[\s\S]*?overflow:\s*hidden/);
@@ -831,7 +833,10 @@ test('Ctrl/Cmd+F는 목차 및 검색 패널을 열고 검색 입력에 포커�
     assert.match(viewerAppSource, /aria-current=\{activeTocId === item\.id \? 'page' : undefined\}/);
     assert.match(viewerStyleSource, /\.viewer-navigation-list-item\.is-active/);
     assert.match(viewerAppSource, /const resolveSpreadNavigationIndex = useCallback/);
-    assert.match(viewerAppSource, /session\?\.type === 'comic' \? getStepSizeForIndex\(startIndex\) : 2/);
+    assert.match(
+        viewerAppSource,
+        /return resolveSpreadPageStartIndex\([\s\S]*?session\?\.type === 'comic' \? getStepSizeForIndex : undefined/,
+    );
     assert.match(viewerAppSource, /goPageIndex\(resolveSpreadNavigationIndex\(resolvedPageIndex\)\)/);
     assert.match(viewerAppSource, /const goHighlight = useCallback/);
     assert.match(viewerAppSource, /goNavigationPage\(highlight\.pageIndex\)/);
