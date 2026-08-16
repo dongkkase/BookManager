@@ -7734,6 +7734,26 @@ function ViewerApp() {
     ? pageCount <= 0 || pageIndex <= 0
     : flowMode !== 'scroll' && pageIndex <= 0;
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
+  const toolbarPageDirectionOptions = {
+    mode: readerSettings.arrowKeyMode,
+    readingDirection: session?.type === 'comic' ? readingDirection : 'ltr',
+  };
+  const toolbarLeftPageDelta = viewerArrowKeyPageDelta('ArrowLeft', toolbarPageDirectionOptions) ?? -1;
+  const toolbarRightPageDelta = viewerArrowKeyPageDelta('ArrowRight', toolbarPageDirectionOptions) ?? 1;
+  const previousPageButtonState = {
+    title: viewerText('viewer.toolbar.previous_page', '이전장'),
+    disabled: previousPageDisabled,
+  };
+  const nextPageButtonState = {
+    title: viewerText('viewer.toolbar.next_page', '다음장'),
+    disabled: nextPageDisabled,
+  };
+  const toolbarLeftPageButtonState = toolbarLeftPageDelta < 0
+    ? previousPageButtonState
+    : nextPageButtonState;
+  const toolbarRightPageButtonState = toolbarRightPageDelta < 0
+    ? previousPageButtonState
+    : nextPageButtonState;
   const slideNavAvailable = Boolean(session && pageCount > 0 && (session.type !== 'pdf' || pdfDocument));
   const slideNavDirection = session?.type === 'comic' && readingDirection === 'rtl' ? 'rtl' : 'ltr';
   const backgroundMode = supportsBackgroundSettings
@@ -7944,8 +7964,18 @@ function ViewerApp() {
             />
           </div>
           <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.page_navigation', '페이지 이동')}>
-            <ToolbarButton title={viewerText('viewer.toolbar.previous_page', '이전장')} icon="angleLeft" disabled={previousPageDisabled} onClick={runToolbarAction(() => movePage(-1))} />
-            <ToolbarButton title={viewerText('viewer.toolbar.next_page', '다음장')} icon="angleRight" disabled={nextPageDisabled} onClick={runToolbarAction(() => movePage(1))} />
+            <ToolbarButton
+              title={toolbarLeftPageButtonState.title}
+              icon="angleLeft"
+              disabled={toolbarLeftPageButtonState.disabled}
+              onClick={runToolbarAction(() => movePage(toolbarLeftPageDelta))}
+            />
+            <ToolbarButton
+              title={toolbarRightPageButtonState.title}
+              icon="angleRight"
+              disabled={toolbarRightPageButtonState.disabled}
+              onClick={runToolbarAction(() => movePage(toolbarRightPageDelta))}
+            />
           </div>
           {supportsViewControls && (
             <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.fit_group', '화면맞춤')}>

@@ -711,7 +711,8 @@ test('뷰어 툴바는 기능별 아이콘 그룹과 줌 팝업을 사용한다'
     assert.match(viewerAppSource, /full_screen\.svg/);
     assert.match(viewerAppSource, /viewer\.toolbar\.file_navigation[\s\S]*?viewer\.toolbar\.page_navigation[\s\S]*?viewer\.toolbar\.fit_group[\s\S]*?viewer\.toolbar\.zoom_group[\s\S]*?viewer\.toolbar\.read_mode_group[\s\S]*?viewer\.toolbar\.reading_direction_group[\s\S]*?viewer\.toolbar\.slide_nav_group[\s\S]*?viewer\.toolbar\.cover_group[\s\S]*?viewer\.toolbar\.bookmark_group[\s\S]*?viewer\.toolbar\.fullscreen[\s\S]*?viewer\.toolbar\.help_group[\s\S]*?viewer\.toolbar\.settings_group/);
     assert.match(viewerAppSource, /viewer\.toolbar\.file_navigation[\s\S]*?viewer\.toolbar\.previous_file[\s\S]*?viewer\.toolbar\.next_file/);
-    assert.match(viewerAppSource, /viewer\.toolbar\.page_navigation[\s\S]*?viewer\.toolbar\.previous_page[\s\S]*?viewer\.toolbar\.next_page/);
+    assert.match(viewerAppSource, /const previousPageButtonState = \{[\s\S]*?viewer\.toolbar\.previous_page[\s\S]*?const nextPageButtonState = \{[\s\S]*?viewer\.toolbar\.next_page/);
+    assert.match(viewerAppSource, /viewer\.toolbar\.page_navigation[\s\S]*?toolbarLeftPageButtonState[\s\S]*?toolbarRightPageButtonState/);
     assert.doesNotMatch(viewerAppSource, /aria-label="파일 및 페이지 이동"/);
     assert.doesNotMatch(viewerAppSource, /aria-label="보기 및 설정"/);
     assert.doesNotMatch(viewerAppSource, /aria-label="만화책 옵션"/);

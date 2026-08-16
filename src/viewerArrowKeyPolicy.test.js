@@ -121,3 +121,39 @@ test('키보드 핸들러는 좌우 키만 정책에 위임하고 세로 키 동
     assert.match(keyboardSource, /event\.key === 'ArrowDown' \|\| event\.key === 'PageDown'[\s\S]*movePage\(1\)/);
     assert.match(keyboardSource, /event\.key === 'ArrowUp' \|\| event\.key === 'PageUp'[\s\S]*movePage\(-1\)/);
 });
+
+test('툴바 좌우 페이지 버튼은 방향키와 같은 이동 정책과 버튼 상태를 사용한다', () => {
+    const toolbarStateSource = sourceBetween(
+        viewerSource,
+        '  const previousPageDisabled =',
+        '  const slideNavAvailable =',
+    );
+    const toolbarSource = sourceBetween(
+        viewerSource,
+        '          <div className="viewer-tool-cluster" aria-label={viewerText(\'viewer.toolbar.page_navigation\'',
+        '          {supportsViewControls && (',
+    );
+
+    assert.match(
+        toolbarStateSource,
+        /const toolbarPageDirectionOptions = \{\s*mode: readerSettings\.arrowKeyMode,\s*readingDirection: session\?\.type === 'comic' \? readingDirection : 'ltr',\s*\};/,
+    );
+    assert.match(toolbarStateSource, /viewerArrowKeyPageDelta\('ArrowLeft', toolbarPageDirectionOptions\)/);
+    assert.match(toolbarStateSource, /viewerArrowKeyPageDelta\('ArrowRight', toolbarPageDirectionOptions\)/);
+    assert.match(
+        toolbarStateSource,
+        /const toolbarLeftPageButtonState = toolbarLeftPageDelta < 0\s*\? previousPageButtonState\s*:\s*nextPageButtonState/,
+    );
+    assert.match(
+        toolbarStateSource,
+        /const toolbarRightPageButtonState = toolbarRightPageDelta < 0\s*\? previousPageButtonState\s*:\s*nextPageButtonState/,
+    );
+    assert.match(
+        toolbarSource,
+        /title=\{toolbarLeftPageButtonState\.title\}[\s\S]*?icon="angleLeft"[\s\S]*?disabled=\{toolbarLeftPageButtonState\.disabled\}[\s\S]*?movePage\(toolbarLeftPageDelta\)/,
+    );
+    assert.match(
+        toolbarSource,
+        /title=\{toolbarRightPageButtonState\.title\}[\s\S]*?icon="angleRight"[\s\S]*?disabled=\{toolbarRightPageButtonState\.disabled\}[\s\S]*?movePage\(toolbarRightPageDelta\)/,
+    );
+});
