@@ -5,6 +5,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
+import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
 import {
   buildFlipBookStructureKey,
@@ -111,6 +112,7 @@ const DEFAULT_READER_SETTINGS = {
   showFooter: true,
   wrapMode: 'word',
   pageEffect: 'none',
+  arrowKeyMode: 'reading-natural',
 };
 const DEFAULT_FONT_GROUPS = {
   epub: [],
@@ -181,6 +183,10 @@ const PAGE_EFFECT_OPTIONS = [
   { id: 'slide', label: '슬라이드', labelKey: 'viewer.option.effect_slide' },
   { id: 'fade', label: '페이드', labelKey: 'viewer.option.effect_fade' },
   { id: 'page', label: '책 넘김', labelKey: 'viewer.option.effect_page' },
+];
+const ARROW_KEY_MODE_OPTIONS = [
+  { id: 'reading-natural', label: '읽기방향에 자연스럽게', labelKey: 'viewer.option.arrow_key_reading_natural' },
+  { id: 'ltr', label: '왼쪽에서 오른쪽', labelKey: 'viewer.option.arrow_key_ltr' },
 ];
 const TEXT_ALIGN_OPTIONS = [
   { id: 'left', label: '왼쪽 맞춤', labelKey: 'viewer.option.align_left' },
@@ -1454,6 +1460,7 @@ function normalizeReaderSettings(settings = {}) {
     showFooter: merged.showFooter !== false,
     wrapMode: WRAP_OPTIONS.some(item => item.id === merged.wrapMode) ? merged.wrapMode : DEFAULT_READER_SETTINGS.wrapMode,
     pageEffect: PAGE_EFFECT_OPTIONS.some(item => item.id === merged.pageEffect) ? merged.pageEffect : DEFAULT_READER_SETTINGS.pageEffect,
+    arrowKeyMode: normalizeViewerArrowKeyMode(merged.arrowKeyMode),
   };
 }
 
@@ -3829,7 +3836,7 @@ function PdfSlideThumb({ pdfDocument, items = [], pageLabel, ariaPageLabel, acti
   );
 }
 
-function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, onClick }) {
+function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, navigationDirection = 'ltr', onClick }) {
   const itemRef = useRef(null);
   const isSpread = items.length > 1;
   const ready = items.length > 0 && items.every(item => Boolean(item.src));
@@ -3837,7 +3844,7 @@ function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, onClick
   useEffect(() => {
     if (!active) return;
     itemRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
-  }, [active]);
+  }, [active, navigationDirection]);
 
   return (
     <button
@@ -4462,6 +4469,12 @@ function ReaderSettingsPanel({
       {showComicSettings && (
         <section className="viewer-settings-section">
           <h3>{viewerText('viewer.settings.display', '표시')}</h3>
+          <ReaderSegmentedSetting
+            label={viewerText('viewer.settings.arrow_key_mode', '좌/우 방향키')}
+            value={settings.arrowKeyMode}
+            options={ARROW_KEY_MODE_OPTIONS}
+            onChange={arrowKeyMode => onChange({ arrowKeyMode })}
+          />
           <ReaderSegmentedSetting
             label={viewerText('viewer.settings.page_effect', '넘김효과')}
             value={settings.pageEffect}
@@ -5158,9 +5171,12 @@ function ViewerApp() {
   const handleSlideNavWheel = useCallback(event => {
     event.preventDefault();
     event.stopPropagation();
-    const wheelDelta = event.deltaY || event.deltaX;
-    if (!wheelDelta) return;
-    event.currentTarget.scrollBy({ left: wheelDelta, behavior: 'auto' });
+    const isRtl = event.currentTarget.dir === 'rtl';
+    const horizontalDelta = event.deltaY
+      ? (isRtl ? -event.deltaY : event.deltaY)
+      : event.deltaX;
+    if (!horizontalDelta) return;
+    event.currentTarget.scrollBy({ left: horizontalDelta, behavior: 'auto' });
   }, []);
 
   useEffect(() => {
@@ -7075,6 +7091,10 @@ function ViewerApp() {
         || document.querySelector('.viewer-tts-menu')
       );
       if (shortcutsBlockedByOverlay || isViewerShortcutBlockedTarget(event.target)) return;
+      const arrowKeyPageDelta = viewerArrowKeyPageDelta(event.key, {
+        mode: readerSettings.arrowKeyMode,
+        readingDirection: session?.type === 'comic' ? readingDirection : 'ltr',
+      });
       if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         event.stopPropagation();
@@ -7090,10 +7110,13 @@ function ViewerApp() {
           event.preventDefault();
           event.stopPropagation();
         }
-      } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'PageDown') {
+      } else if (arrowKeyPageDelta !== null) {
+        event.preventDefault();
+        movePage(arrowKeyPageDelta);
+      } else if (event.key === 'ArrowDown' || event.key === 'PageDown') {
         event.preventDefault();
         movePage(1);
-      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'PageUp') {
+      } else if (event.key === 'ArrowUp' || event.key === 'PageUp') {
         event.preventDefault();
         movePage(-1);
       } else if (event.key === ']') {
@@ -7146,7 +7169,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned, zoomStep]);
+  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, readerSettings.arrowKeyMode, readingDirection, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -7737,6 +7760,7 @@ function ViewerApp() {
     : flowMode !== 'scroll' && pageIndex <= 0;
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
   const slideNavAvailable = Boolean(session && pageCount > 0 && (session.type !== 'pdf' || pdfDocument));
+  const slideNavDirection = session?.type === 'comic' && readingDirection === 'rtl' ? 'rtl' : 'ltr';
   const backgroundMode = supportsBackgroundSettings
     ? viewerBackground.mode
     : 'solid';
@@ -7833,6 +7857,7 @@ function ViewerApp() {
             pageLabel={pageLabel}
             ariaPageLabel={pageLabel}
             active={group.pageIndexes.includes(pageIndex)}
+            navigationDirection={slideNavDirection}
             onClick={runToolbarAction(() => goSlideNavPage(group.groupStartIndex))}
           />
         );
@@ -8134,6 +8159,7 @@ function ViewerApp() {
           </button>
           <div
             className="viewer-slide-strip"
+            dir={slideNavDirection}
             aria-label={viewerText('viewer.navigation.page_nav', '페이지 네비게이션')}
             aria-hidden={!slideNavOpen}
             onWheel={handleSlideNavWheel}

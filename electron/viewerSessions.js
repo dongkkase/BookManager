@@ -462,6 +462,7 @@ function removeHiddenDisplayForEpubImages(nodes = []) {
                 const nextStyle = { ...node.style };
                 delete nextStyle.display;
                 node.style = Object.keys(nextStyle).length > 0 ? nextStyle : undefined;
+                node.hiddenText = epubStyleHidesText(node.style) || undefined;
             }
         }
     }
@@ -836,27 +837,71 @@ function parseEpubCssRules(cssText = '') {
     return rules;
 }
 
-function selectorMatchesEpubElement(selector = '', tagName = '', className = '') {
-    const normalizedTagName = String(tagName || '').toLowerCase();
-    const classNames = new Set(String(className || '').split(/\s+/).filter(Boolean));
+function epubSelectorTarget(selector = '') {
     const selectorParts = String(selector || '').trim().split(/\s+|>|\+|~/).filter(Boolean);
     let selectorPart = selectorParts[selectorParts.length - 1] || '';
     selectorPart = selectorPart
         .replace(/::?[\w-]+(?:\([^)]*\))?/g, '')
         .replace(/#[^\s.#:>+~]+/g, '');
-    if (!selectorPart || selectorPart === '*') return selectorPart === '*';
-
-    const tagMatch = selectorPart.match(/^([a-z][\w-]*)/i);
-    if (tagMatch && tagMatch[1].toLowerCase() !== normalizedTagName) return false;
-    const selectorClasses = Array.from(selectorPart.matchAll(/\.([^\s.#:>+~]+)/g)).map(match => match[1]);
-    if (!tagMatch && selectorClasses.length === 0) return false;
-    return selectorClasses.every(name => classNames.has(name));
+    const tagMatch = selectorPart.match(/^([\p{L}_][\p{L}\p{N}\p{M}_-]*)/iu);
+    return {
+        selectorPart,
+        tagName: tagMatch?.[1]?.toLowerCase() || '',
+        classNames: Array.from(selectorPart.matchAll(/\.([^\s.#:>+~]+)/g)).map(match => match[1]),
+    };
 }
 
-function epubStyleForElement(tagName = '', attrs = {}, cssRules = []) {
+function selectorMatchesEpubElement(selector = '', tagName = '', className = '') {
+    const normalizedTagName = String(tagName || '').toLowerCase();
+    const classNames = new Set(String(className || '').split(/\s+/).filter(Boolean));
+    const target = epubSelectorTarget(selector);
+    if (!target.selectorPart || target.selectorPart === '*') return target.selectorPart === '*';
+    if (target.tagName && target.tagName !== normalizedTagName) return false;
+    if (!target.tagName && target.classNames.length === 0) return false;
+    return target.classNames.every(name => classNames.has(name));
+}
+
+function indexEpubCssRules(cssRules = []) {
+    const byTagName = new Map();
+    const byClassName = new Map();
+    const fallbackIndexes = new Set();
+    const addIndex = (target, key, index) => {
+        if (!target.has(key)) target.set(key, new Set());
+        target.get(key).add(index);
+    };
+    cssRules.forEach((rule, index) => {
+        for (const selector of rule.selectors || []) {
+            const target = epubSelectorTarget(selector);
+            if (target.classNames.length > 0) {
+                addIndex(byClassName, target.classNames[0], index);
+            } else if (target.tagName) {
+                addIndex(byTagName, target.tagName, index);
+            } else {
+                fallbackIndexes.add(index);
+            }
+        }
+    });
+    return { cssRules, byTagName, byClassName, fallbackIndexes };
+}
+
+function epubCssRulesForElement(ruleIndex, tagName = '', className = '') {
+    if (!ruleIndex) return [];
+    const indexes = new Set(ruleIndex.fallbackIndexes);
+    const normalizedTagName = String(tagName || '').toLowerCase();
+    for (const index of ruleIndex.byTagName.get(normalizedTagName) || []) indexes.add(index);
+    for (const name of String(className || '').split(/\s+/).filter(Boolean)) {
+        for (const index of ruleIndex.byClassName.get(name) || []) indexes.add(index);
+    }
+    return Array.from(indexes)
+        .sort((left, right) => left - right)
+        .map(index => ruleIndex.cssRules[index]);
+}
+
+function epubStyleForElement(tagName = '', attrs = {}, cssRules = [], ruleIndex = null) {
     const style = {};
     const className = sanitizeEpubClassName(attrs.class || '');
-    for (const rule of cssRules) {
+    const candidateRules = ruleIndex ? epubCssRulesForElement(ruleIndex, tagName, className) : cssRules;
+    for (const rule of candidateRules) {
         if (rule.selectors.some(selector => selectorMatchesEpubElement(selector, tagName, className))) {
             Object.assign(style, rule.style);
         }
@@ -866,7 +911,9 @@ function epubStyleForElement(tagName = '', attrs = {}, cssRules = []) {
 }
 
 function normalizeEpubTagName(tagName = '') {
-    const normalized = String(tagName || '').toLowerCase().replace(/^[\w-]+:/, '');
+    const normalized = String(tagName || '')
+        .toLowerCase()
+        .replace(/^[\p{L}_][\p{L}\p{N}\p{M}_.-]*:/u, '');
     return normalized === 'image' ? 'img' : normalized;
 }
 
@@ -892,6 +939,7 @@ function textFromEpubNodes(nodes = []) {
     const text = nodes.map(node => {
         if (!node) return '';
         if (node.type === 'text') return node.text || '';
+        if (node.hiddenText) return '';
         if (node.tagName === 'br') return '\n';
         if (node.tagName === 'img') return '';
         return textFromEpubNodes(node.children || []);
@@ -908,6 +956,12 @@ function epubNodesContainImage(nodes = []) {
     });
 }
 
+function epubStyleHidesText(style = {}) {
+    if (String(style?.display || '').trim().toLowerCase() === 'none') return true;
+    const fontSize = String(style?.fontSize || '').trim().toLowerCase();
+    return /^(?:0+(?:\.0*)?|\.0+)(?:px|em|rem|%|pt|pc|cm|mm|in|vh|vw|vmin|vmax)?$/i.test(fontSize);
+}
+
 function epubAnchorsFromNodes(nodes = []) {
     const anchors = [];
     const collect = node => {
@@ -922,7 +976,8 @@ function epubAnchorsFromNodes(nodes = []) {
 function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries = [], cssRules = [], imageEntryNames = [], imageDimensionByEntryName = new Map()) {
     const root = { tagName: 'root', children: [] };
     const stack = [root];
-    const tokenPattern = /<\/?[\w:-]+(?:\s+[^<>]*)?\s*\/?>|[^<]+/g;
+    const cssRuleIndex = indexEpubCssRules(cssRules);
+    const tokenPattern = /<\/?[\p{L}_:][\p{L}\p{N}\p{M}_.:-]*(?:\s+[^<>]*)?\s*\/?>|[^<]+/gu;
 
     for (const match of stripEpubHtmlComments(fragment).matchAll(tokenPattern)) {
         const token = match[0];
@@ -933,23 +988,30 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
             continue;
         }
 
-        const tagMatch = token.match(/^<\s*(\/)?\s*([\w:-]+)/i);
+        const tagMatch = token.match(/^<\s*(\/)?\s*([\p{L}_:][\p{L}\p{N}\p{M}_.:-]*)/iu);
         if (!tagMatch) continue;
         const isClosingTag = Boolean(tagMatch[1]);
-        const tagName = normalizeEpubTagName(tagMatch[2]);
+        const sourceTagName = normalizeEpubTagName(tagMatch[2]);
         if (isClosingTag) {
             for (let index = stack.length - 1; index > 0; index -= 1) {
-                if (stack[index].tagName === tagName) {
+                if ((stack[index].sourceTagName || stack[index].tagName) === sourceTagName) {
                     stack.length = index;
                     break;
                 }
             }
             continue;
         }
-        if (!EPUB_ALLOWED_HTML_TAGS.has(tagName)) continue;
+        const isAllowedTag = EPUB_ALLOWED_HTML_TAGS.has(sourceTagName);
+        const isUnicodeCustomTag = !isAllowedTag && /[^\u0000-\u007f]/u.test(sourceTagName);
+        if (!isAllowedTag && !isUnicodeCustomTag) continue;
+        const tagName = isAllowedTag ? sourceTagName : 'span';
 
         const attrs = tagAttributes(token);
-        const style = epubStyleWithSizeAttributes(tagName, attrs, epubStyleForElement(tagName, attrs, cssRules));
+        const style = epubStyleWithSizeAttributes(
+            tagName,
+            attrs,
+            epubStyleForElement(sourceTagName, attrs, cssRules, cssRuleIndex),
+        );
         const className = sanitizeEpubClassName(attrs.class || '');
         const anchorId = sanitizeEpubIdentifier(attrs.id || attrs.name || '');
         const safeAttributes = safeEpubHtmlAttributes(tagName, attrs);
@@ -984,7 +1046,9 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
         const node = {
             type: 'element',
             tagName,
+            sourceTagName: isUnicodeCustomTag ? sourceTagName : undefined,
             style,
+            hiddenText: epubStyleHidesText(style) || undefined,
             className,
             id: anchorId || undefined,
             href: tagName === 'a' ? (attrs.href || attrs['xlink:href'] || '') : undefined,

@@ -3288,6 +3288,10 @@
   display: none;
 }
 
+.viewer-slide-strip[dir="rtl"] > .viewer-slide-thumb {
+  direction: ltr;
+}
+
 .viewer-slide-thumb {
   flex: 0 0 auto;
   width: 68px;
