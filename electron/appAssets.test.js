@@ -191,6 +191,11 @@ test('Electron 메인 프로세스가 직접 import하는 src 모듈은 app.asar
         && item.from === 'src/metadata'
         && item.to === 'src/metadata'
     ));
+    const folderTagFileSet = packageConfig.build.files.find(item => (
+        typeof item === 'object'
+        && item.from === 'src'
+        && item.to === 'src'
+    ));
 
     assert.ok(utilsFileSet);
     assert.equal(utilsFileSet.filter.includes('i18n.js'), true);
@@ -198,6 +203,8 @@ test('Electron 메인 프로세스가 직접 import하는 src 모듈은 app.asar
     assert.equal(utilsFileSet.filter.includes('folderUtils.js'), true);
     assert.ok(metadataFileSet);
     assert.equal(metadataFileSet.filter.includes('metadataTypes.js'), true);
+    assert.ok(folderTagFileSet);
+    assert.equal(folderTagFileSet.filter.includes('folderTagFilter.js'), true);
 });
 
 test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () => {

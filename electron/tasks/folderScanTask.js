@@ -444,6 +444,7 @@ function parseComicInfo(xml) {
     colorist: readXmlTag(xml, 'Colorist'),
     letterer: readXmlTag(xml, 'Letterer'),
     cover_artist: readXmlTag(xml, 'CoverArtist'),
+    editor: readXmlTag(xml, 'Editor'),
     publisher: readXmlTag(xml, 'Publisher'),
     imprint: readXmlTag(xml, 'Imprint'),
     genre: readXmlTag(xml, 'Genre'),
@@ -723,6 +724,12 @@ function metadataFromCache(cached = {}) {
     volume: cached.volume || '',
     chapter: cached.number || '',
     writer: cached.writer || '',
+    penciller: cached.penciller || '',
+    inker: cached.inker || '',
+    colorist: cached.colorist || '',
+    letterer: cached.letterer || '',
+    cover_artist: cached.cover_artist || '',
+    editor: cached.editor || '',
     publisher: cached.publisher || '',
     imprint: cached.imprint || '',
     genre: cached.genre || '',
@@ -854,6 +861,7 @@ function createQuickFileData(fullPath) {
     colorist: '',
     letterer: '',
     cover_artist: '',
+    editor: '',
     producer: '',
     publisher: '',
     imprint: '',
@@ -1187,11 +1195,26 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
   const shouldRefreshEpubMetadata = cacheValid
     && ext === '.epub'
     && normalizeMetadataFormat(cached?.format) !== 'Novel';
+  const shouldRefreshComicCreatorMetadata = cacheValid
+    && ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7'].includes(ext)
+    && [
+      cached?.penciller,
+      cached?.inker,
+      cached?.colorist,
+      cached?.letterer,
+      cached?.cover_artist,
+      cached?.editor,
+    ].some(value => value === null || value === undefined);
   let archiveMeta = cacheValid ? metadataFromCache(cached) : {};
   const shouldExtractArchive = options.skipArchiveExtraction !== true;
   const shouldRefreshMissingThumbnail = options.skipCoverExtraction !== true && !cachedThumbnailExists;
 
-  if (shouldExtractArchive && (!cacheValid || shouldRefreshMissingThumbnail || shouldRefreshEpubMetadata)) {
+  if (shouldExtractArchive && (
+    !cacheValid
+    || shouldRefreshMissingThumbnail
+    || shouldRefreshEpubMetadata
+    || shouldRefreshComicCreatorMetadata
+  )) {
     const extracted = await extractArchiveMetadata(fullPath, ext, {
       sevenZExe: options.sevenZExe,
       thumbnailDir: options.thumbnailDir,
@@ -1243,6 +1266,12 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         number: archiveMeta.chapter || '',
         writer: archiveMeta.writer || '',
         creators: archiveMeta.producer || '',
+        penciller: archiveMeta.penciller || '',
+        inker: archiveMeta.inker || '',
+        colorist: archiveMeta.colorist || '',
+        letterer: archiveMeta.letterer || '',
+        cover_artist: archiveMeta.cover_artist || '',
+        editor: archiveMeta.editor || '',
         publisher: archiveMeta.publisher || '',
         imprint: archiveMeta.imprint || '',
         genre: archiveMeta.genre || '',
@@ -1303,6 +1332,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     colorist: archiveMeta.colorist || '',
     letterer: archiveMeta.letterer || '',
     cover_artist: archiveMeta.cover_artist || '',
+    editor: archiveMeta.editor || '',
     producer: archiveMeta.producer || [
       archiveMeta.writer,
       archiveMeta.penciller,
@@ -1310,6 +1340,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
       archiveMeta.colorist,
       archiveMeta.letterer,
       archiveMeta.cover_artist,
+      archiveMeta.editor,
     ].filter(Boolean).join(', '),
     creator: archiveMeta.creator || '',
     publisher: archiveMeta.publisher || '',

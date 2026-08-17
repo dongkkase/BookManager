@@ -44,7 +44,7 @@ test('폴더 스캔은 썸네일 파일과 ComicInfo DB 캐시를 재사용한�
         fs.writeFileSync(path.join(inputDir, '001.png'), PNG_1X1);
         fs.writeFileSync(
             path.join(inputDir, 'ComicInfo.xml'),
-            '<ComicInfo><Title>Cached Title</Title><Series>Cached Series</Series><Volume>3</Volume><Writer>Writer</Writer></ComicInfo>',
+            '<ComicInfo><Title>Cached Title</Title><Series>Cached Series</Series><Volume>3</Volume><Writer>Writer</Writer><Penciller>Penciller</Penciller><Inker>Inker</Inker><Colorist>Colorist</Colorist><Letterer>Letterer</Letterer><CoverArtist>Cover Artist</CoverArtist><Editor>Editor</Editor></ComicInfo>',
         );
         const created = spawnSync(sevenZExe, ['a', '-tzip', archivePath, '*'], {
             cwd: inputDir,
@@ -60,6 +60,8 @@ test('폴더 스캔은 썸네일 파일과 ComicInfo DB 캐시를 재사용한�
         assert.equal(first.length, 1);
         assert.equal(first[0].cache_source, 'archive');
         assert.equal(first[0].series, 'Cached Series');
+        assert.equal(first[0].penciller, 'Penciller');
+        assert.equal(first[0].editor, 'Editor');
         assert.equal(first[0].has_metadata, true);
         assert.match(first[0].cover, /^bookmanager-thumbnail:\/\/cache\//);
         assert.equal(fs.existsSync(first[0].thumb_path), true);
@@ -69,6 +71,12 @@ test('폴더 스캔은 썸네일 파일과 ComicInfo DB 캐시를 재사용한�
         const cached = await library.getFileInfo(archivePath);
         assert.equal(cached.title, 'Cached Title');
         assert.equal(cached.series, 'Cached Series');
+        assert.equal(cached.penciller, 'Penciller');
+        assert.equal(cached.inker, 'Inker');
+        assert.equal(cached.colorist, 'Colorist');
+        assert.equal(cached.letterer, 'Letterer');
+        assert.equal(cached.cover_artist, 'Cover Artist');
+        assert.equal(cached.editor, 'Editor');
         assert.equal(cached.thumb_path, first[0].thumb_path);
         await library.close();
 
@@ -92,6 +100,8 @@ test('폴더 스캔은 썸네일 파일과 ComicInfo DB 캐시를 재사용한�
         assert.equal(second[0].cache_source, 'library');
         assert.equal(second[0].title, 'Cached Title');
         assert.equal(second[0].series, 'Cached Series');
+        assert.equal(second[0].penciller, 'Penciller');
+        assert.equal(second[0].editor, 'Editor');
         assert.equal(second[0].thumb_path, first[0].thumb_path);
         assert.equal(warnings.some(message => message.includes('Failed to extract archive metadata')), false);
     } finally {

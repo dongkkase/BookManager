@@ -81,6 +81,13 @@
           "metadataTypes.js"
         ]
       },
+      {
+        "from": "src",
+        "to": "src",
+        "filter": [
+          "folderTagFilter.js"
+        ]
+      },
       "version.json"
     ],
     "extraResources": [

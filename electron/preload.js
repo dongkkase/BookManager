@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
   searchLibraryFiles: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryFiles', { query, libraries, options }),
+  getLibraryTagFacets: (libraries) => ipcRenderer.invoke('folder:getLibraryTagFacets', { libraries }),
+  searchLibraryTags: (libraries, selections, matchMode) => ipcRenderer.invoke('folder:searchLibraryTags', { libraries, selections, matchMode }),
   searchLibraryContent: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryContent', { query, libraries, options }),
   getContentIndexStatus: (libraries) => ipcRenderer.invoke('folder:getContentIndexStatus', { libraries }),
   startContentIndex: (libraries, options) => ipcRenderer.invoke('folder:startContentIndex', { libraries, options }),

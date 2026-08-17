@@ -138,6 +138,41 @@ test('superseded 응답은 빈 결과로 완료한다', async () => {
     await service.close();
 });
 
+test('태그 집계 요청은 라이브러리 범위를 worker에 전달한다', async () => {
+    const service = createService();
+    const request = service.tagFacets(['/Books', '/Comics']);
+    const worker = FakeWorker.instances[0];
+    const message = worker.messages[0];
+
+    assert.equal(message.type, 'tag-facets');
+    assert.deepEqual(message.libraries, ['/Books', '/Comics']);
+    worker.emit('message', {
+        id: message.id,
+        result: { categories: [{ id: 'genre', values: [] }], totalCount: 1 },
+    });
+    assert.deepEqual(await request, { categories: [{ id: 'genre', values: [] }], totalCount: 1 });
+    await service.close();
+});
+
+test('태그 파일 검색 요청은 선택 조건만 worker에 전달한다', async () => {
+    const service = createService();
+    const selections = [{ categoryId: 'genre', value: '판타지' }];
+    const request = service.searchTags(['/Books'], selections, 'all');
+    const worker = FakeWorker.instances[0];
+    const message = worker.messages[0];
+
+    assert.equal(message.type, 'tag-search');
+    assert.deepEqual(message.libraries, ['/Books']);
+    assert.deepEqual(message.selections, selections);
+    assert.equal(message.matchMode, 'all');
+    worker.emit('message', {
+        id: message.id,
+        result: [{ path: '/Books/A.cbz', genre: '판타지' }],
+    });
+    assert.deepEqual(await request, [{ path: '/Books/A.cbz', genre: '판타지' }]);
+    await service.close();
+});
+
 test('close는 pending을 closed로 거절하고 몇 번 호출해도 worker를 한 번만 종료한다', async () => {
     const service = createService();
     const request = service.search('query', ['/Books']);

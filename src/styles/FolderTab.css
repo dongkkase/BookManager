@@ -743,6 +743,48 @@ body.is-resizing-panel .detail-panel-wrap {
   border-color: #4f89aa;
 }
 
+.folder-tag-search-btn {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: var(--control-height-sm);
+    padding: 3px 8px;
+    color: #d8d8d8;
+    background: #303030;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: var(--font-xs);
+    font-weight: 800;
+    line-height: 1;
+}
+
+.folder-tag-search-btn:hover {
+    color: #fff;
+    background: #3c3c3c;
+}
+
+.folder-tag-search-btn.active {
+    color: #fff;
+    background: #315064;
+    border-color: #4f89aa;
+}
+
+.folder-tag-search-btn strong {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    color: #16212a;
+    background: #8bcdf4;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 1;
+}
+
 .search-input-wrap {
     position: relative;
     flex: 0 0 auto;
@@ -2527,6 +2569,453 @@ body.is-reordering-table-column {
 .content-index-footer button:disabled {
     opacity: 0.45;
     cursor: default;
+}
+
+.folder-tag-search-dialog {
+    display: flex;
+    flex-direction: column;
+    width: min(980px, calc(100vw - 40px));
+    height: min(760px, calc(100vh - 40px));
+    max-height: calc(100vh - 40px);
+    color: #eee;
+    background: #252525;
+    border: 1px solid #515151;
+    border-radius: 7px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.folder-tag-search-titlebar span::before {
+    content: '#';
+    margin-right: 4px;
+    color: #75bde9;
+}
+
+.folder-tag-search-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: #222;
+    border-bottom: 1px solid #3d3d3d;
+}
+
+.folder-tag-search-toolbar input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 32px;
+    padding: 4px 10px;
+    color: #eee;
+    background: #171717;
+    border: 1px solid #505050;
+    border-radius: 4px;
+    font-size: var(--font-sm);
+}
+
+.folder-tag-search-toolbar input:focus {
+    border-color: #4f9dca;
+    outline: none;
+}
+
+.folder-tag-match-mode {
+    display: inline-flex;
+    flex: 0 0 auto;
+    padding: 2px;
+    background: #171717;
+    border: 1px solid #4a4a4a;
+    border-radius: 5px;
+}
+
+.folder-tag-match-mode button {
+    min-height: 26px;
+    padding: 0 10px;
+    color: #aaa;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-match-mode button.active {
+    color: #fff;
+    background: #315f79;
+}
+
+.folder-tag-search-toolbar input:disabled,
+.folder-tag-match-mode button:disabled,
+.folder-tag-selected button:disabled,
+.folder-tag-search-footer button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.folder-tag-database-note {
+    padding: 8px 14px;
+    color: #91aab7;
+    background: #20282c;
+    border-bottom: 1px solid #39464d;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-selected {
+    display: grid;
+    gap: 7px;
+    padding: 10px 14px;
+    background: rgba(49, 95, 121, 0.14);
+    border-bottom: 1px solid #3d4c55;
+}
+
+.folder-tag-selected-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: #b9cfda;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-selected-header button {
+    padding: 0;
+    color: #8fc9ea;
+    background: transparent;
+    border: none;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-selected-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 64px;
+    overflow: auto;
+}
+
+.folder-tag-selected-list button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 25px;
+    padding: 2px 7px;
+    color: #e7f5fc;
+    background: #315064;
+    border: 1px solid #507e98;
+    border-radius: 13px;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-selected-list button > span:first-child {
+    color: #a9c9da;
+}
+
+.folder-tag-browser {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: 210px minmax(0, 1fr);
+    min-height: 240px;
+    background: #191919;
+    overflow: hidden;
+}
+
+.folder-tag-category-nav {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: #202020;
+    border-right: 1px solid #414141;
+    overflow: hidden;
+}
+
+.folder-tag-category-nav-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 40px;
+    padding: 0 12px;
+    color: #aebdc5;
+    border-bottom: 1px solid #3a3a3a;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-category-nav-header > span {
+    color: #75848b;
+}
+
+.folder-tag-category-nav-list {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+    padding: 6px;
+    overflow: auto;
+}
+
+.folder-tag-category-nav-list button {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 34px;
+    padding: 5px 8px;
+    color: #bcbcbc;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-category-nav-list button:hover {
+    color: #fff;
+    background: #2b2b2b;
+}
+
+.folder-tag-category-nav-list button.active {
+    color: #fff;
+    background: #2c4f62;
+    border-color: #49788f;
+}
+
+.folder-tag-category-nav-list button > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-tag-category-nav-list button > small {
+    color: #7d9099;
+    font-size: 10px;
+}
+
+.folder-tag-category-nav-list button > strong {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    color: #152630;
+    background: #83c4e7;
+    border-radius: 9px;
+    font-size: 10px;
+}
+
+.folder-tag-results {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.folder-tag-results-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 48px;
+    padding: 7px 14px;
+    background: #202020;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+.folder-tag-results-header > div:first-child {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.folder-tag-results-header h3 {
+    margin: 0;
+    color: #d4e1e7;
+    font-size: var(--font-sm);
+}
+
+.folder-tag-results-header > div:first-child > span {
+    color: #788a93;
+    font-size: var(--font-xs);
+    white-space: nowrap;
+}
+
+.folder-tag-sort-mode {
+    display: inline-flex;
+    flex: 0 0 auto;
+    padding: 2px;
+    background: #171717;
+    border: 1px solid #444;
+    border-radius: 4px;
+}
+
+.folder-tag-sort-mode button {
+    min-height: 25px;
+    padding: 0 9px;
+    color: #8f8f8f;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-sort-mode button.active {
+    color: #fff;
+    background: #3a5969;
+}
+
+.folder-tag-values {
+    display: flex;
+    flex: 1 1 auto;
+    align-content: flex-start;
+    flex-wrap: wrap;
+    gap: 7px;
+    min-height: 0;
+    padding: 12px 14px 16px;
+    overflow: auto;
+}
+
+.folder-tag-values button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    min-height: 26px;
+    padding: 3px 7px;
+    color: #ccc;
+    background: #2c2c2c;
+    border: 1px solid #484848;
+    border-radius: 4px;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-values button:hover {
+    color: #fff;
+    background: #383838;
+    border-color: #606060;
+}
+
+.folder-tag-values button.active {
+    color: #fff;
+    background: #315f79;
+    border-color: #5792b2;
+}
+
+.folder-tag-values button > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-tag-values small {
+    flex: 0 0 auto;
+    color: #8aa4b2;
+    font-size: 10px;
+}
+
+.folder-tag-values button.folder-tag-show-more {
+    flex: 0 0 100%;
+    justify-content: center;
+    min-height: 34px;
+    margin-top: 5px;
+    color: #9bcce7;
+    background: #24343d;
+    border-color: #3f6579;
+}
+
+.folder-tag-values button.folder-tag-show-more:hover {
+    background: #2d4653;
+    border-color: #52829a;
+}
+
+.folder-tag-empty {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 180px;
+    color: #888;
+    font-size: var(--font-sm);
+    text-align: center;
+}
+
+.folder-tag-search-footer {
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 48px;
+    height: auto;
+    padding: 8px 14px;
+    border-top: 1px solid #3d3d3d;
+}
+
+.folder-tag-search-footer > span {
+    color: #9cb7c5;
+    font-size: var(--font-xs);
+}
+
+.folder-tag-search-footer > div {
+    display: flex;
+    gap: 8px;
+}
+
+.folder-tag-search-footer button {
+    min-width: 88px;
+    min-height: 30px;
+    padding: 0 13px;
+    background: #414141;
+    border: 1px solid #555;
+    border-radius: 4px;
+}
+
+.folder-tag-search-footer button.primary {
+    background: #167dbf;
+    border-color: #258dd0;
+}
+
+@media (max-width: 680px) {
+    .folder-tag-search-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .folder-tag-browser {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .folder-tag-category-nav {
+        border-right: none;
+        border-bottom: 1px solid #414141;
+    }
+
+    .folder-tag-category-nav-header {
+        display: none;
+    }
+
+    .folder-tag-category-nav-list {
+        flex-direction: row;
+        padding: 6px 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+
+    .folder-tag-category-nav-list button {
+        flex: 0 0 auto;
+        width: auto;
+        max-width: 190px;
+    }
+
+    .folder-tag-search-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .folder-tag-search-footer > div {
+        justify-content: flex-end;
+    }
 }
 
 .goto-path-dialog-body,

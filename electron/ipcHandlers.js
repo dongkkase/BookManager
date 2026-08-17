@@ -3995,6 +3995,48 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return rows.map(normalizeLibrarySearchFileForRenderer);
   });
 
+  ipcMain.handle('folder:getLibraryTagFacets', async (_event, payload = {}) => {
+    const config = configManager.getConfig() || {};
+    const targetLibraries = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : (config.libraries || []))
+      .filter(Boolean)
+      .map(folder => path.resolve(folder)))];
+    const readInWorker = () => librarySearchService.tagFacets(targetLibraries);
+    let result;
+    try {
+      result = await readInWorker();
+    } catch (error) {
+      if (!isRetryableLibrarySearchWorkerError(error)) throw error;
+      console.warn(`[LibraryTagFacets] Worker transport failed; retrying once: ${error.message}`);
+      result = await readInWorker();
+    }
+    return result;
+  });
+
+  ipcMain.handle('folder:searchLibraryTags', async (_event, payload = {}) => {
+    const config = configManager.getConfig() || {};
+    const targetLibraries = [...new Set((payload.libraries?.length > 0
+      ? payload.libraries
+      : (config.libraries || []))
+      .filter(Boolean)
+      .map(folder => path.resolve(folder)))];
+    const searchInWorker = () => librarySearchService.searchTags(
+      targetLibraries,
+      payload.selections || [],
+      payload.matchMode,
+    );
+    let rows;
+    try {
+      rows = await searchInWorker();
+    } catch (error) {
+      if (!isRetryableLibrarySearchWorkerError(error)) throw error;
+      console.warn(`[LibraryTagSearch] Worker transport failed; retrying once: ${error.message}`);
+      rows = await searchInWorker();
+    }
+    return rows.map(normalizeLibrarySearchFileForRenderer);
+  });
+
   ipcMain.handle('folder:searchLibraryContent', async (_event, payload = {}) => {
     const config = configManager.getConfig() || {};
     const targetLibraries = [...new Set((payload.libraries?.length > 0

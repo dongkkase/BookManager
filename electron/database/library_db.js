@@ -32,10 +32,17 @@ function defaultUserDataPath() {
 
 const FILE_COLUMNS = [
     'path', 'mtime', 'size', 'ext', 'resolution', 'title', 'series', 'series_group',
-    'volume', 'number', 'writer', 'creators', 'publisher', 'imprint', 'genre',
+    'volume', 'number', 'writer', 'creators', 'penciller', 'inker', 'colorist',
+    'letterer', 'cover_artist', 'editor', 'publisher', 'imprint', 'genre',
     'volume_count', 'page_count', 'format', 'manga', 'language', 'rating',
     'age_rating', 'publish_date', 'summary', 'characters', 'teams', 'locations',
     'story_arc', 'tags', 'notes', 'web', 'isbn', 'book_type', 'thumb_path',
+];
+
+const TAG_METADATA_COLUMNS = [
+    'path', 'ext', 'book_type', 'genre', 'tags', 'publisher', 'writer',
+    'penciller', 'inker', 'colorist', 'letterer', 'cover_artist', 'editor',
+    'age_rating', 'format', 'characters', 'publish_date',
 ];
 
 const LIBRARY_SCAN_STATE_COLUMNS = [
@@ -75,6 +82,12 @@ const FILE_SEARCH_COLUMNS = [
     'number',
     'writer',
     'creators',
+    'penciller',
+    'inker',
+    'colorist',
+    'letterer',
+    'cover_artist',
+    'editor',
     'publisher',
     'imprint',
     'genre',
@@ -90,7 +103,7 @@ const FILE_SEARCH_COLUMNS = [
     'web',
 ];
 
-const FILE_SEARCH_INDEX_VERSION = '1';
+const FILE_SEARCH_INDEX_VERSION = '2';
 const FILE_SEARCH_INDEX_META_KEY = 'files_search_index_version';
 const FILE_SEARCH_SCHEMA_OBJECTS = [
     ['table', 'files_search_ids'],
@@ -165,6 +178,12 @@ export class LibraryDB {
                 number TEXT,
                 writer TEXT,
                 creators TEXT,
+                penciller TEXT,
+                inker TEXT,
+                colorist TEXT,
+                letterer TEXT,
+                cover_artist TEXT,
+                editor TEXT,
                 publisher TEXT,
                 imprint TEXT,
                 genre TEXT,
@@ -254,6 +273,12 @@ export class LibraryDB {
         const fileColumnDefinitions = {
             isbn: 'TEXT',
             book_type: 'TEXT',
+            penciller: 'TEXT',
+            inker: 'TEXT',
+            colorist: 'TEXT',
+            letterer: 'TEXT',
+            cover_artist: 'TEXT',
+            editor: 'TEXT',
         };
         for (const [column, definition] of Object.entries(fileColumnDefinitions)) {
             if (!fileColumns.has(column)) {
@@ -717,6 +742,54 @@ export class LibraryDB {
                 return runLikeSearch();
             }
         });
+    }
+
+    async listTagMetadata(libraryPaths = []) {
+        return this.withLock(async () => {
+            const normalizedPaths = [...new Set((libraryPaths || [])
+                .filter(Boolean)
+                .map(folder => path.resolve(folder)))];
+            if (normalizedPaths.length === 0) return [];
+
+            const clauses = normalizedPaths.map(() => "path LIKE ? ESCAPE '\\'");
+            const params = normalizedPaths.map(folder => `${escapeLikeValue(`${folder}${path.sep}`)}%`);
+            return this.getConnection().prepare(`
+                SELECT ${TAG_METADATA_COLUMNS.join(', ')}
+                FROM files
+                WHERE ${clauses.map(clause => `(${clause})`).join(' OR ')}
+                ORDER BY
+                    COALESCE(NULLIF(series, ''), NULLIF(title, ''), path) COLLATE NOCASE ASC,
+                    path COLLATE NOCASE ASC
+            `).all(...params);
+        });
+    }
+
+    async listFilesByPaths(filePaths = []) {
+        return this.withLock(async () => {
+            const normalizedPaths = [...new Set((filePaths || []).filter(Boolean).map(String))];
+            if (normalizedPaths.length === 0) return [];
+
+            const connection = this.getConnection();
+            const rows = [];
+            const chunkSize = 500;
+            for (let index = 0; index < normalizedPaths.length; index += chunkSize) {
+                const chunk = normalizedPaths.slice(index, index + chunkSize);
+                const placeholders = chunk.map(() => '?').join(', ');
+                rows.push(...connection.prepare(`
+                    SELECT *
+                    FROM files
+                    WHERE path IN (${placeholders})
+                `).all(...chunk));
+            }
+            const rowsByPath = new Map(rows.map(row => [row.path, row]));
+            return normalizedPaths.map(filePath => rowsByPath.get(filePath)).filter(Boolean);
+        });
+    }
+
+    async getDataVersion() {
+        return this.withLock(async () => Number(
+            this.getConnection().pragma('data_version', { simple: true }),
+        ) || 0);
     }
 
     async saveTargetIndex(records = []) {

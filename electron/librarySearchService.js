@@ -163,6 +163,18 @@ export class LibrarySearchService {
         return this.request('search', { query, libraries, options }, this.searchTimeoutMs);
     }
 
+    tagFacets(libraries) {
+        return this.request('tag-facets', { libraries }, this.searchTimeoutMs);
+    }
+
+    searchTags(libraries, selections, matchMode) {
+        return this.request('tag-search', {
+            libraries,
+            selections,
+            matchMode,
+        }, this.searchTimeoutMs);
+    }
+
     close() {
         if (this.closePromise) return this.closePromise;
         this.closed = true;

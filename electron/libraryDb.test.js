@@ -38,6 +38,7 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
         const existing = await library.getFileInfo('/Books/A.cbz');
         assert.equal(existing.series, 'A');
         assert.equal(existing.pages, '20');
+        assert.equal(existing.penciller, null);
         assert.deepEqual(
             (await library.searchFiles('A 1권', ['/Books'], { limit: 10 })).map(row => row.path),
             ['/Books/A.cbz'],
@@ -48,6 +49,8 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
             file_size: 120,
             title: 'A 1권 수정',
             series: 'A',
+            penciller: '그림 작가',
+            editor: '편집자',
             pages: 21,
             thumbnail: '/thumb/new.jpg',
         });
@@ -57,9 +60,15 @@ test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한
         assert.equal(updated.filepath, '/Books/A.cbz');
         assert.equal(updated.file_size, 120);
         assert.equal(updated.title, 'A 1권 수정');
+        assert.equal(updated.penciller, '그림 작가');
+        assert.equal(updated.editor, '편집자');
         assert.equal(updated.thumbnail, '/thumb/new.jpg');
         assert.deepEqual(
             (await library.searchFiles('1권 수정', ['/Books'], { limit: 10 })).map(row => row.path),
+            ['/Books/A.cbz'],
+        );
+        assert.deepEqual(
+            (await library.searchFiles('그림 작가', ['/Books'], { limit: 10 })).map(row => row.path),
             ['/Books/A.cbz'],
         );
         await library.close();
@@ -136,6 +145,9 @@ test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타�
             title: '검색 대상',
             series: '마법 시리즈',
             writer: '테스트 작가',
+            penciller: '테스트 그림 작가',
+            genre: '판타지',
+            tags: '마법, 모험',
             summary: '등록 라이브러리 검색용 메타데이터',
         });
         await library.upsertFileInfo({
@@ -157,6 +169,15 @@ test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타�
 
         const scopedRows = await library.searchFiles('검색 대상', [firstLibrary, secondLibrary], { limit: 10 });
         assert.deepEqual(scopedRows.map(row => row.path).sort(), [insidePath, secondPath].sort());
+
+        fs.rmSync(firstLibrary, { recursive: true, force: true });
+        const tagMetadataRows = await library.listTagMetadata([firstLibrary]);
+        assert.deepEqual(tagMetadataRows.map(row => row.path), [insidePath]);
+        assert.equal(tagMetadataRows[0].genre, '판타지');
+        assert.equal(tagMetadataRows[0].tags, '마법, 모험');
+        assert.equal(tagMetadataRows[0].penciller, '테스트 그림 작가');
+        assert.equal('summary' in tagMetadataRows[0], false);
+        assert.equal((await library.listFilesByPaths([insidePath]))[0].summary, '등록 라이브러리 검색용 메타데이터');
         await library.close();
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -407,18 +428,45 @@ test('라이브러리 검색 서비스는 worker 연결을 재사용하고 다�
     const service = new LibrarySearchService(dbPath);
     try {
         fs.mkdirSync(libraryRoot, { recursive: true });
-        await writer.upsertFileInfo({ path: filePath, title: 'worker-original-marker' });
+        await writer.upsertFileInfo({
+            path: filePath,
+            title: 'worker-original-marker',
+            genre: '원본 장르',
+        });
         assert.deepEqual(await service.prepare(), { ready: true });
         assert.deepEqual(
             (await service.search('worker-original', [libraryRoot], { limit: 10 })).map(row => row.path),
             [filePath],
         );
+        const originalFacets = await service.tagFacets([libraryRoot]);
+        assert.equal(originalFacets.totalCount, 1);
+        assert.deepEqual(
+            originalFacets.categories.find(category => category.id === 'genre')?.values.map(item => item.value),
+            ['원본 장르'],
+        );
+        assert.deepEqual(
+            (await service.searchTags(
+                [libraryRoot],
+                [{ categoryId: 'genre', value: '원본 장르' }],
+                'all',
+            )).map(row => row.path),
+            [filePath],
+        );
 
-        await writer.upsertFileInfo({ path: filePath, title: 'worker-updated-marker' });
+        await writer.upsertFileInfo({
+            path: filePath,
+            title: 'worker-updated-marker',
+            genre: '수정 장르',
+        });
         assert.deepEqual(await service.search('worker-original', [libraryRoot], { limit: 10 }), []);
         assert.deepEqual(
             (await service.search('worker-updated', [libraryRoot], { limit: 10 })).map(row => row.path),
             [filePath],
+        );
+        const updatedFacets = await service.tagFacets([libraryRoot]);
+        assert.deepEqual(
+            updatedFacets.categories.find(category => category.id === 'genre')?.values.map(item => item.value),
+            ['수정 장르'],
         );
     } finally {
         await service.close();

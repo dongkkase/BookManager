@@ -1401,6 +1401,12 @@ test('CBZ 메타데이터 저장은 라이브러리 캐시를 갱신한다', asy
         analyzed.items[0].metadata.Series = '변경된 작품';
         analyzed.items[0].metadata.Title = '변경된 제목';
         analyzed.items[0].metadata.SeriesGroup = '테스트 그룹';
+        analyzed.items[0].metadata.Penciller = '그림 작가';
+        analyzed.items[0].metadata.Inker = '잉크 작업';
+        analyzed.items[0].metadata.Colorist = '채색 작가';
+        analyzed.items[0].metadata.Letterer = '글자 작업';
+        analyzed.items[0].metadata.CoverArtist = '표지 작가';
+        analyzed.items[0].metadata.Editor = '편집자';
 
         const persistedRecords = [];
         const saved = await saveMetadataItems(analyzed.items, {
@@ -1421,6 +1427,12 @@ test('CBZ 메타데이터 저장은 라이브러리 캐시를 갱신한다', asy
         assert.equal(persistedRecords[0].series_group, '테스트 그룹');
         assert.equal(persistedRecords[0].series, '변경된 작품');
         assert.equal(persistedRecords[0].title, '변경된 제목');
+        assert.equal(persistedRecords[0].penciller, '그림 작가');
+        assert.equal(persistedRecords[0].inker, '잉크 작업');
+        assert.equal(persistedRecords[0].colorist, '채색 작가');
+        assert.equal(persistedRecords[0].letterer, '글자 작업');
+        assert.equal(persistedRecords[0].cover_artist, '표지 작가');
+        assert.equal(persistedRecords[0].editor, '편집자');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

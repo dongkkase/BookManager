@@ -7,6 +7,7 @@ import { ThumbnailView } from '../components/folder/ThumbnailView';
 import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
+import { FolderTagSearchDialog } from '../components/folder/FolderTagSearchDialog';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { extractCoreTitle } from '../utils/folderUtils';
@@ -416,6 +417,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [sortOrder, setSortOrder] = useState('asc');
   const [groupKey, setGroupKey] = useState('none');
   const [metadataMissingOnly, setMetadataMissingOnly] = useState(false);
+  const [folderTagSelections, setFolderTagSelections] = useState([]);
+  const [folderTagMatchMode, setFolderTagMatchMode] = useState('all');
+  const [showFolderTagSearchDialog, setShowFolderTagSearchDialog] = useState(false);
+  const [folderTagCategories, setFolderTagCategories] = useState([]);
+  const [folderTagDatabaseFileCount, setFolderTagDatabaseFileCount] = useState(0);
+  const [folderTagSearchResults, setFolderTagSearchResults] = useState([]);
+  const [folderTagLoading, setFolderTagLoading] = useState(false);
+  const [folderTagFacetScopeKey, setFolderTagFacetScopeKey] = useState('');
+  const [folderTagResultScopeKey, setFolderTagResultScopeKey] = useState('');
   const [includeSubfolders, setIncludeSubfolders] = useState(false);
   const [enableDupCheck, setEnableDupCheck] = useState(false);
   const [preparingDuplicates, setPreparingDuplicates] = useState(false);
@@ -466,6 +476,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       return true;
     }
     if (showMultiRenameDialog) setShowMultiRenameDialog(false);
+    else if (showFolderTagSearchDialog) setShowFolderTagSearchDialog(false);
     else if (showGotoDialog) setShowGotoDialog(false);
     else if (showContentIndexDialog) setShowContentIndexDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
@@ -485,6 +496,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeTextInputDialog,
     showDeleteLayoutDialog,
     showGotoDialog,
+    showFolderTagSearchDialog,
     showContentIndexDialog,
     showLayoutDialog,
     showMissingDialog,
@@ -511,8 +523,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     : t('folder_content_index_manage');
   const searchInputRef = useRef(null);
   const librarySearchRequestRef = useRef(0);
+  const folderTagRequestRef = useRef(0);
   const libraryEntries = useMemo(() => normalizeLibraryEntries(config || {}), [config]);
   const libraries = useMemo(() => libraryEntries.map(entry => entry.path), [libraryEntries]);
+  const folderTagDatabaseScopes = useMemo(() => (
+    libraries.length > 0
+      ? libraries
+      : (selectedFolderPath ? [selectedFolderPath] : [])
+  ), [libraries, selectedFolderPath]);
+  const folderTagDatabaseScopeKey = useMemo(
+    () => JSON.stringify(folderTagDatabaseScopes),
+    [folderTagDatabaseScopes],
+  );
   const searchPlaceholder = libraries.length === 0
     ? t('folder_search_ph')
     : searchScope === 'content'
@@ -531,6 +553,71 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setShowContentIndexSearchHint(false);
     setAppliedSearchQuery('');
   }, []);
+  const openFolderTagSearch = useCallback(async () => {
+    const requestId = folderTagRequestRef.current + 1;
+    const hasCachedFacets = folderTagFacetScopeKey === folderTagDatabaseScopeKey;
+    folderTagRequestRef.current = requestId;
+    setShowFolderTagSearchDialog(true);
+    setFolderTagLoading(!hasCachedFacets);
+    try {
+      const result = await window.electronAPI?.getLibraryTagFacets?.(folderTagDatabaseScopes);
+      if (folderTagRequestRef.current !== requestId) return;
+      setFolderTagCategories(Array.isArray(result?.categories) ? result.categories : []);
+      setFolderTagDatabaseFileCount(Math.max(0, Number(result?.totalCount) || 0));
+      setFolderTagFacetScopeKey(folderTagDatabaseScopeKey);
+    } catch (error) {
+      if (folderTagRequestRef.current !== requestId) return;
+      console.error('태그 메타데이터 조회 실패:', error);
+      showToast?.(t('folder_tag_load_error', [error?.message || t('msg_failed')]));
+    } finally {
+      if (folderTagRequestRef.current === requestId) {
+        setFolderTagLoading(false);
+      }
+    }
+  }, [
+    folderTagDatabaseScopeKey,
+    folderTagDatabaseScopes,
+    folderTagFacetScopeKey,
+    showToast,
+    t,
+  ]);
+  const applyFolderTagSearch = useCallback(async ({ selections, matchMode }) => {
+    if (!Array.isArray(selections) || selections.length === 0) {
+      folderTagRequestRef.current += 1;
+      setFolderTagSelections([]);
+      setFolderTagMatchMode(matchMode);
+      setFolderTagSearchResults([]);
+      setFolderTagResultScopeKey('');
+      setFolderTagLoading(false);
+      setShowFolderTagSearchDialog(false);
+      return;
+    }
+
+    const requestId = folderTagRequestRef.current + 1;
+    folderTagRequestRef.current = requestId;
+    setFolderTagLoading(true);
+    try {
+      const rows = await window.electronAPI?.searchLibraryTags?.(
+        folderTagDatabaseScopes,
+        selections,
+        matchMode,
+      );
+      if (folderTagRequestRef.current !== requestId) return;
+      setFolderTagSelections(selections);
+      setFolderTagMatchMode(matchMode);
+      setFolderTagSearchResults(Array.isArray(rows) ? rows : []);
+      setFolderTagResultScopeKey(folderTagDatabaseScopeKey);
+      setShowFolderTagSearchDialog(false);
+    } catch (error) {
+      if (folderTagRequestRef.current !== requestId) return;
+      console.error('태그 검색 실패:', error);
+      showToast?.(t('folder_tag_load_error', [error?.message || t('msg_failed')]));
+    } finally {
+      if (folderTagRequestRef.current === requestId) {
+        setFolderTagLoading(false);
+      }
+    }
+  }, [folderTagDatabaseScopeKey, folderTagDatabaseScopes, showToast, t]);
   const resetSearchQuery = useCallback(() => {
     setShowContentIndexSearchHint(false);
     setAppliedSearchQuery('');
@@ -613,6 +700,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     preparingDuplicatesRef.current = preparingDuplicates;
   }, [preparingDuplicates]);
+
+  useEffect(() => {
+    folderTagRequestRef.current += 1;
+    setFolderTagSelections([]);
+    setFolderTagCategories([]);
+    setFolderTagDatabaseFileCount(0);
+    setFolderTagSearchResults([]);
+    setFolderTagLoading(false);
+    setFolderTagFacetScopeKey('');
+    setFolderTagResultScopeKey('');
+    setShowFolderTagSearchDialog(false);
+  }, [folderTagDatabaseScopeKey]);
 
   const scanOptions = useMemo(() => ({
     includeSubfolders,
@@ -770,7 +869,21 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // 필터링된 파일 데이터
   const currentFolderFileData = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
-  const activeRawFileData = isLibrarySearchActive ? librarySearchResults : currentFolderFileData;
+  const isFolderTagSearchActive = folderTagSelections.length > 0
+    && folderTagResultScopeKey === folderTagDatabaseScopeKey;
+  const normalRawFileData = isLibrarySearchActive ? librarySearchResults : currentFolderFileData;
+  const activeRawFileData = useMemo(() => {
+    if (!isFolderTagSearchActive) return normalRawFileData;
+    if (!isLibrarySearchActive) return folderTagSearchResults;
+    const searchResultPaths = new Set(librarySearchResults.map(file => file.full_path || file.path));
+    return folderTagSearchResults.filter(file => searchResultPaths.has(file.full_path || file.path));
+  }, [
+    folderTagSearchResults,
+    isFolderTagSearchActive,
+    isLibrarySearchActive,
+    librarySearchResults,
+    normalRawFileData,
+  ]);
   const fileDataWithViewerStatus = useMemo(() => {
     if (activeRawFileData.length === 0) return activeRawFileData;
     const reader = createViewerStatusReader();
@@ -781,6 +894,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     query: localSearchQuery,
     metadataMissingOnly,
   }), [fileDataWithViewerStatus, localSearchQuery, metadataMissingOnly]);
+  const folderTagSearchButtonLabel = folderTagSelections.length > 0
+    ? `${t('folder_tag_search_button_title')} · ${t('folder_tag_selected_count', [folderTagSelections.length])}`
+    : t('folder_tag_search_button_title');
 
   const pumpCoverPreviewQueue = useCallback(() => {
     if (!selectedFolderPath || isLibrarySearchActive) return;
@@ -3041,6 +3157,21 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
             
             <div className="right-toolbar-right">
+              <button
+                type="button"
+                className={`folder-tag-search-btn ${folderTagSelections.length > 0 ? 'active' : ''}`}
+                onClick={openFolderTagSearch}
+                title={folderTagSearchButtonLabel}
+                aria-label={folderTagSearchButtonLabel}
+                aria-pressed={folderTagSelections.length > 0}
+              >
+                <span>{t('folder_tag_search_button')}</span>
+                {folderTagSelections.length > 0 && (
+                  <strong aria-label={t('folder_tag_selected_count', [folderTagSelections.length])}>
+                    {folderTagSelections.length}
+                  </strong>
+                )}
+              </button>
               <div className="folder-search-control">
                 <FolderSearchInput
                   key={searchResetToken}
@@ -3279,6 +3410,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           onStop={stopContentIndex}
           onClear={clearContentIndex}
           onClose={() => setShowContentIndexDialog(false)}
+          t={t}
+        />
+      )}
+      {showFolderTagSearchDialog && (
+        <FolderTagSearchDialog
+          categories={folderTagCategories}
+          totalFileCount={folderTagDatabaseFileCount}
+          loading={folderTagLoading}
+          selections={folderTagSelections}
+          matchMode={folderTagMatchMode}
+          onApply={applyFolderTagSearch}
+          onClose={() => setShowFolderTagSearchDialog(false)}
           t={t}
         />
       )}
