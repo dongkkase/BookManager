@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
@@ -3004,11 +3005,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         >
           <div className="right-toolbar">
             <div className="right-toolbar-left">
-              <button 
-                className={`toggle-btn ${isSidebarVisible ? 'active' : ''}`}
+              <button
+                type="button"
+                className={`toggle-btn folder-list-sidebar-toggle ${isSidebarVisible ? 'active' : ''}`}
                 onClick={() => setIsSidebarVisible(!isSidebarVisible)}
+                title={t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}
+                aria-label={t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}
+                aria-pressed={isSidebarVisible}
               >
-                {t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}
+                <img
+                  className="folder-list-sidebar-toggle-icon"
+                  src={leftSidebarIcon}
+                  alt=""
+                  aria-hidden="true"
+                />
               </button>
               
               <FolderToolbar 

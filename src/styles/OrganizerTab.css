@@ -125,7 +125,9 @@
 
 .org-tree-item-group {
   border-bottom: 1px solid #151515;
+  background: #242424;
 }
+.org-tree-item-group>.org-child-row:last-of-type{margin-bottom:10px;}
 
 .org-tree-item-group.selected > .org-root-row {
   background: #31566f;

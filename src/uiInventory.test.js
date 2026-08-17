@@ -400,6 +400,19 @@ test('리스트 패널 새로고침 버튼은 캐시를 건너뛰고 강제 스�
     );
 });
 
+test('리스트 패널 사이드바 토글은 SVG 아이콘과 접근성 상태를 제공한다', () => {
+    assertInventory('folder', [
+        ['왼쪽 사이드바 SVG 아이콘', "import leftSidebarIcon from '../images/left_sidebar.svg'"],
+        ['사이드바 아이콘 이미지', 'src={leftSidebarIcon}'],
+        ['사이드바 토글 접근성 이름', "aria-label={t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}"],
+        ['사이드바 토글 활성 상태', 'aria-pressed={isSidebarVisible}'],
+    ]);
+    assertInventory('folderCss', [
+        ['사이드바 아이콘 버튼 스타일', '.folder-list-sidebar-toggle'],
+        ['사이드바 SVG 아이콘 스타일', '.folder-list-sidebar-toggle-icon'],
+    ]);
+});
+
 test('폴더 탭 F5는 활성 패널에 맞는 새로고침을 실행한다', () => {
     assertInventory('folder', [
         ['F5 활성 패널 판정', 'isExplorerPanelActive'],

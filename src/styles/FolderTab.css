@@ -127,6 +127,21 @@
   border-color: #4aa8e7;
 }
 
+.folder-list-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  min-width: var(--control-height-sm);
+  padding: 0;
+}
+
+.folder-list-sidebar-toggle-icon {
+  width: 16px;
+  height: 16px;
+  filter: brightness(0) invert(1);
+}
+
 .sidebar-container {
   flex: 1;
   min-height: 0;
