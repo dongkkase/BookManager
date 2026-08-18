@@ -3112,7 +3112,7 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 }
 
 // IPC 핸들러 설정
-export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath) {
+export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
   const cancellationRegistry = new TaskCancellationRegistry();
   const runtimeStates = new Map();
   const appDataDir = () => getExecutableDir();
@@ -3638,7 +3638,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const config = configManager.getConfig() || {};
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     try {
-      return await saveMetadataItems(items, {
+      const result = await saveMetadataItems(items, {
         ...config,
         ...options,
         sevenZExe,
@@ -3658,6 +3658,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       }, (progress) => {
         event.sender.send('task:progress', { task: 'metadata:save', ...progress });
       });
+      const successfulPaths = Array.isArray(result?.stats?.successPaths)
+        ? result.stats.successPaths
+        : [];
+      if (successfulPaths.length > 0 && typeof hooks.onMetadataSaveSuccess === 'function') {
+        try {
+          await hooks.onMetadataSaveSuccess(successfulPaths);
+        } catch (error) {
+          console.warn(`[Viewer] Could not refresh audiobook metadata: ${error.message || String(error)}`);
+        }
+      }
+      return result;
     } finally {
       cancellationRegistry.finish(event.sender.id, taskId, controller);
     }

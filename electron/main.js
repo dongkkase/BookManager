@@ -264,7 +264,16 @@ async function initializeApp() {
   await setupI18n(config?.lang || 'ko');
 
   // IPC 핸들러 설정
-  ipcController = setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath);
+  ipcController = setupIPCHandlers(
+    configManager,
+    getExecutableDir,
+    getResourcePath,
+    getBinPath,
+    getFontPath,
+    {
+      onMetadataSaveSuccess: successfulPaths => viewerController?.refreshAudioMetadata?.(successfulPaths),
+    },
+  );
   viewerController = setupViewerWindowManager({
     isDev: useDevServer,
     devServerUrl: DEV_SERVER_URL,

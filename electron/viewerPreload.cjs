@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('viewerAPI', {
     ipcRenderer.on('viewer:audio-mini-command', handler);
     return () => ipcRenderer.removeListener('viewer:audio-mini-command', handler);
   },
+  onAudioMetadataRefresh: callback => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('viewer:audio-metadata-refresh', handler);
+    return () => ipcRenderer.removeListener('viewer:audio-metadata-refresh', handler);
+  },
   onFullscreenChange: callback => {
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('viewer:fullscreen-change', handler);

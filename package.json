@@ -46,6 +46,7 @@
     "express": "^4.18.2",
     "music-metadata": "10.9.1",
     "node-7z": "^3.0.0",
+    "node-taglib-sharp": "6.0.3",
     "pdfjs-dist": "^4.10.38",
     "pica": "^10.0.0",
     "react": "^18.2.0",

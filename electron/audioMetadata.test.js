@@ -36,6 +36,9 @@ test('music-metadata 결과를 Readive와 BookManager 필드로 정규화한다'
             albumartist: ' Studio ',
             composer: [' Composer One ', 'Composer\u0000 Two'],
             genre: [' Fiction ', 'Audio  Drama'],
+            grouping: ' Saga ',
+            publisher: [' Publisher '],
+            comment: [{ text: ' Audiobook summary ' }],
             year: 2025,
             track: { no: 2, of: 12 },
             disk: { no: 1, of: 3 },
@@ -62,6 +65,9 @@ test('music-metadata 결과를 Readive와 BookManager 필드로 정규화한다'
     assert.deepEqual(metadata.composers, ['Composer One', 'Composer Two']);
     assert.equal(metadata.genre, 'Fiction, Audio Drama');
     assert.deepEqual(metadata.genres, ['Fiction', 'Audio Drama']);
+    assert.equal(metadata.grouping, 'Saga');
+    assert.equal(metadata.publisher, 'Publisher');
+    assert.equal(metadata.description, 'Audiobook summary');
     assert.equal(metadata.year, 2025);
     assert.equal(metadata.trackNumber, 2);
     assert.equal(metadata.trackTotal, 12);
@@ -76,8 +82,10 @@ test('music-metadata 결과를 Readive와 BookManager 필드로 정규화한다'
     assert.equal(metadata.fileSizeBytes, 59572000);
     assert.equal(metadata.mimeType, 'audio/mp4');
     assert.equal(metadata.book_type, 'audio');
-    assert.equal(metadata.series, 'Series Name');
+    assert.equal(metadata.series, 'Saga');
     assert.equal(metadata.writer, 'Narrator');
+    assert.equal(metadata.publisher, 'Publisher');
+    assert.equal(metadata.description, 'Audiobook summary');
     assert.equal(metadata.volume, '1');
     assert.equal(metadata.chapter, '2');
     assert.equal(metadata.total_volume, '3');

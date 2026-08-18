@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { readAudioMetadata } from './audioMetadata.js';
 import { LibraryDB } from './database/library_db.js';
 import {
     analyzeMetadataInputs,
@@ -205,10 +206,10 @@ test('폴더 스캔은 오디오 메타데이터를 DB에 저장하고 유효한
     }
 });
 
-test('오디오 메타데이터 편집은 원본 파일을 바꾸지 않고 DB에서 다시 로드한다', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-metadata-db-'));
+test('오디오 메타데이터 편집은 실제 파일 태그를 수정하고 기술 정보를 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-metadata-file-'));
     const dbPath = path.join(root, 'library.db');
-    const audioPath = path.join(root, 'DB Only Audio.wav');
+    const audioPath = path.join(root, 'Edited Audio.wav');
     const original = createWaveFixture();
 
     try {
@@ -223,13 +224,14 @@ test('오디오 메타데이터 편집은 원본 파일을 바꾸지 않고 DB�
 
         analyzed.items[0].metadata = {
             ...analyzed.items[0].metadata,
-            Title: 'DB Title',
-            Series: 'DB Series',
-            Album: 'DB Album',
-            Writer: 'DB Artist',
-            AlbumArtist: 'DB Album Artist',
-            Composer: 'DB Composer',
-            Summary: 'DB Summary',
+            Title: 'Edited Title',
+            Series: 'Edited Series',
+            Album: 'Edited Album',
+            Writer: 'Edited Artist',
+            AlbumArtist: 'Edited Album Artist',
+            Composer: 'Edited Composer',
+            Publisher: 'Edited Publisher',
+            Summary: 'Edited Summary',
             Genre: 'Mystery',
             Tags: 'Narrated, Unabridged',
             Year: '2026',
@@ -248,66 +250,110 @@ test('오디오 메타데이터 편집은 원본 파일을 바꾸지 않고 DB�
         };
 
         const saved = await saveMetadataItems(analyzed.items, {
-            backup_on: false,
+            backup_on: true,
             dbPath,
             shouldCancel: () => false,
         });
         assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
-        assert.deepEqual(fs.readFileSync(audioPath), original);
+        assert.notDeepEqual(fs.readFileSync(audioPath), original);
+        assert.deepEqual(fs.readFileSync(path.join(root, 'bak', path.basename(audioPath))), original);
+
+        const embedded = await readAudioMetadata(audioPath, { includeCover: false });
+        assert.equal(embedded.title, 'Edited Title');
+        assert.equal(embedded.grouping, 'Edited Series');
+        assert.equal(embedded.series, 'Edited Series');
+        assert.equal(embedded.album, 'Edited Album');
+        assert.equal(embedded.artist, 'Edited Artist');
+        assert.equal(embedded.albumArtist, 'Edited Album Artist');
+        assert.equal(embedded.composer, 'Edited Composer');
+        assert.equal(embedded.publisher, 'Edited Publisher');
+        assert.equal(embedded.description, 'Edited Summary');
+        assert.equal(embedded.genre, 'Mystery, Narrated, Unabridged');
+        assert.deepEqual(embedded.genres, ['Mystery', 'Narrated', 'Unabridged']);
+        assert.equal(embedded.year, 2026);
+        assert.equal(embedded.trackNumber, 4);
+        assert.equal(embedded.trackTotal, 12);
+        assert.equal(embedded.discNumber, 2);
+        assert.equal(embedded.discTotal, 3);
+        assert.equal(embedded.durationSeconds, 1);
+        assert.equal(embedded.bitrateBitsPerSecond, 128000);
+        assert.equal(embedded.sampleRateHz, 8000);
+        assert.equal(embedded.codec, 'PCM');
+        assert.equal(embedded.container, 'WAVE');
+        assert.equal(embedded.channels, 1);
+        assert.equal(embedded.mimeType, 'audio/wav');
 
         const library = new LibraryDB({ dbPath });
         try {
             const cached = await library.getFileInfo(audioPath);
-            assert.equal(cached.title, 'DB Title');
-            assert.equal(cached.series, 'DB Series');
-            assert.equal(cached.volume, '2');
-            assert.equal(cached.number, '4');
-            assert.equal(cached.volume_count, '3');
-            assert.equal(cached.album, 'DB Album');
-            assert.equal(cached.writer, 'DB Artist');
-            assert.equal(cached.album_artist, 'DB Album Artist');
-            assert.equal(cached.composer, 'DB Composer');
+            assert.equal(cached.title, 'Edited Title');
+            assert.equal(cached.series, 'Edited Series');
+            assert.equal(Number(cached.volume), 2);
+            assert.equal(Number(cached.number), 4);
+            assert.equal(Number(cached.volume_count), 3);
+            assert.equal(cached.album, 'Edited Album');
+            assert.equal(cached.writer, 'Edited Artist');
+            assert.equal(cached.album_artist, 'Edited Album Artist');
+            assert.equal(cached.composer, 'Edited Composer');
+            assert.equal(cached.publisher, 'Edited Publisher');
+            assert.equal(cached.summary, 'Edited Summary');
+            assert.equal(cached.genre, 'Mystery, Narrated, Unabridged');
+            assert.equal(cached.tags, 'Mystery, Narrated, Unabridged');
             assert.equal(cached.publish_date, '2026');
-            assert.equal(cached.duration_seconds, 3456.75);
-            assert.equal(cached.bitrate, 96000);
-            assert.equal(cached.sample_rate, 48000);
-            assert.equal(cached.codec, 'AAC LC');
-            assert.equal(cached.container, 'MPEG-4');
-            assert.equal(cached.channels, 2);
-            assert.equal(cached.track_number, '4');
-            assert.equal(cached.track_total, '12');
-            assert.equal(cached.disc_number, '2');
-            assert.equal(cached.disc_total, '3');
-            assert.equal(cached.mime_type, 'audio/mp4');
+            assert.equal(cached.duration_seconds, 1);
+            assert.equal(cached.bitrate, 128000);
+            assert.equal(cached.sample_rate, 8000);
+            assert.equal(cached.codec, 'PCM');
+            assert.equal(cached.container, 'WAVE');
+            assert.equal(cached.channels, 1);
+            assert.equal(Number(cached.track_number), 4);
+            assert.equal(Number(cached.track_total), 12);
+            assert.equal(Number(cached.disc_number), 2);
+            assert.equal(Number(cached.disc_total), 3);
+            assert.equal(cached.mime_type, 'audio/wav');
             assert.equal(cached.has_metadata, 1);
-            assert.equal(cached.metadata_override, 1);
+            assert.equal(cached.metadata_override, 0);
         } finally {
             await library.close();
         }
 
-        const refreshed = await scanFolder(root, { dbPath });
-        assert.equal(refreshed[0].title, 'DB Title');
-        assert.equal(refreshed[0].writer, 'DB Artist');
-        assert.equal(refreshed[0].album, 'DB Album');
-        assert.equal(refreshed[0].volume, '2');
-        assert.equal(refreshed[0].chapter, '4');
-        assert.equal(refreshed[0].total_volume, '3');
-        assert.equal(refreshed[0].has_metadata, true);
-
         const forceRefreshed = await scanFolder(root, { dbPath, force: true });
-        assert.equal(forceRefreshed[0].title, 'DB Title');
-        assert.equal(forceRefreshed[0].writer, 'DB Artist');
-        assert.equal(forceRefreshed[0].album, 'DB Album');
-        assert.equal(forceRefreshed[0].has_metadata, true);
+        const forceRefreshedAudio = forceRefreshed.find(file => file.path === audioPath);
+        assert.ok(forceRefreshedAudio);
+        assert.equal(forceRefreshedAudio.title, 'Edited Title');
+        assert.equal(forceRefreshedAudio.series, 'Edited Series');
+        assert.equal(forceRefreshedAudio.album, 'Edited Album');
+        assert.equal(forceRefreshedAudio.writer, 'Edited Artist');
+        assert.equal(forceRefreshedAudio.albumArtist, 'Edited Album Artist');
+        assert.equal(forceRefreshedAudio.composer, 'Edited Composer');
+        assert.equal(forceRefreshedAudio.publisher, 'Edited Publisher');
+        assert.equal(forceRefreshedAudio.description, 'Edited Summary');
+        assert.equal(forceRefreshedAudio.genre, 'Mystery, Narrated, Unabridged');
+        assert.equal(forceRefreshedAudio.tags, 'Mystery, Narrated, Unabridged');
+        assert.equal(Number(forceRefreshedAudio.volume), 2);
+        assert.equal(Number(forceRefreshedAudio.chapter), 4);
+        assert.equal(Number(forceRefreshedAudio.total_volume), 3);
+        assert.equal(forceRefreshedAudio.trackNumber, 4);
+        assert.equal(forceRefreshedAudio.trackTotal, 12);
+        assert.equal(forceRefreshedAudio.discNumber, 2);
+        assert.equal(forceRefreshedAudio.discTotal, 3);
+        assert.equal(forceRefreshedAudio.durationSeconds, 1);
+        assert.equal(forceRefreshedAudio.bitrateBitsPerSecond, 128000);
+        assert.equal(forceRefreshedAudio.sampleRateHz, 8000);
+        assert.equal(forceRefreshedAudio.codec, 'PCM');
+        assert.equal(forceRefreshedAudio.container, 'WAVE');
+        assert.equal(forceRefreshedAudio.channels, 1);
+        assert.equal(forceRefreshedAudio.mimeType, 'audio/wav');
+        assert.equal(forceRefreshedAudio.has_metadata, true);
 
         const refreshedLibrary = new LibraryDB({ dbPath });
         try {
             const refreshedCached = await refreshedLibrary.getFileInfo(audioPath);
-            assert.equal(refreshedCached.title, 'DB Title');
-            assert.equal(refreshedCached.writer, 'DB Artist');
-            assert.equal(refreshedCached.album, 'DB Album');
+            assert.equal(refreshedCached.title, 'Edited Title');
+            assert.equal(refreshedCached.writer, 'Edited Artist');
+            assert.equal(refreshedCached.album, 'Edited Album');
             assert.equal(refreshedCached.has_metadata, 1);
-            assert.equal(refreshedCached.metadata_override, 1);
+            assert.equal(refreshedCached.metadata_override, 0);
         } finally {
             await refreshedLibrary.close();
         }
@@ -317,40 +363,41 @@ test('오디오 메타데이터 편집은 원본 파일을 바꾸지 않고 DB�
             includeCovers: false,
         });
         const metadata = reanalyzed.items[0].metadata;
-        assert.equal(metadata.Title, 'DB Title');
-        assert.equal(metadata.Series, 'DB Series');
-        assert.equal(metadata.Album, 'DB Album');
-        assert.equal(metadata.Writer, 'DB Artist');
-        assert.equal(metadata.AlbumArtist, 'DB Album Artist');
-        assert.equal(metadata.Composer, 'DB Composer');
-        assert.equal(metadata.Summary, 'DB Summary');
-        assert.equal(metadata.Genre, 'Mystery');
-        assert.equal(metadata.Tags, 'Narrated, Unabridged');
-        assert.equal(metadata.Year, '2026');
-        assert.equal(metadata.TrackNumber, '4');
-        assert.equal(metadata.TrackTotal, '12');
-        assert.equal(metadata.DiscNumber, '2');
-        assert.equal(metadata.DiscTotal, '3');
-        assert.equal(metadata.DurationSeconds, 3456.75);
-        assert.equal(metadata.Bitrate, 96000);
-        assert.equal(metadata.SampleRate, 48000);
-        assert.equal(metadata.Codec, 'AAC LC');
-        assert.equal(metadata.Container, 'MPEG-4');
-        assert.equal(metadata.Channels, 2);
-        assert.equal(metadata.MimeType, 'audio/mp4');
+        assert.equal(metadata.Title, 'Edited Title');
+        assert.equal(metadata.Series, 'Edited Series');
+        assert.equal(metadata.Album, 'Edited Album');
+        assert.equal(metadata.Writer, 'Edited Artist');
+        assert.equal(metadata.AlbumArtist, 'Edited Album Artist');
+        assert.equal(metadata.Composer, 'Edited Composer');
+        assert.equal(metadata.Publisher, 'Edited Publisher');
+        assert.equal(metadata.Summary, 'Edited Summary');
+        assert.equal(metadata.Genre, 'Mystery, Narrated, Unabridged');
+        assert.equal(metadata.Tags, 'Mystery, Narrated, Unabridged');
+        assert.equal(Number(metadata.Year), 2026);
+        assert.equal(Number(metadata.TrackNumber), 4);
+        assert.equal(Number(metadata.TrackTotal), 12);
+        assert.equal(Number(metadata.DiscNumber), 2);
+        assert.equal(Number(metadata.DiscTotal), 3);
+        assert.equal(metadata.DurationSeconds, 1);
+        assert.equal(metadata.Bitrate, 128000);
+        assert.equal(metadata.SampleRate, 8000);
+        assert.equal(metadata.Codec, 'PCM');
+        assert.equal(metadata.Container, 'WAVE');
+        assert.equal(metadata.Channels, 1);
+        assert.equal(metadata.MimeType, 'audio/wav');
         assert.equal(metadata.Format, 'Audiobook');
 
         const latest = await loadLatestSeriesMetadata({
-            title: 'DB Title',
+            title: 'Edited Title',
             bookType: 'audio',
         }, { dbPath });
         assert.ok(latest);
         assert.equal(latest.sourcePath, audioPath);
-        assert.equal(latest.metadata.Title, 'DB Title');
-        assert.equal(latest.metadata.Writer, 'DB Artist');
-        assert.equal(latest.metadata.Album, 'DB Album');
+        assert.equal(latest.metadata.Title, 'Edited Title');
+        assert.equal(latest.metadata.Writer, 'Edited Artist');
+        assert.equal(latest.metadata.Album, 'Edited Album');
 
-        const renamedPath = path.join(root, 'Renamed DB Only Audio.wav');
+        const renamedPath = path.join(root, 'Renamed Edited Audio.wav');
         fs.renameSync(audioPath, renamedPath);
         const renameLibrary = new LibraryDB({ dbPath });
         try {
@@ -366,17 +413,17 @@ test('오디오 메타데이터 편집은 원본 파일을 바꾸지 않고 DB�
         const renamedRefresh = await scanFolder(root, { dbPath, force: true });
         const renamedAudio = renamedRefresh.find(file => file.path === renamedPath);
         assert.ok(renamedAudio);
-        assert.equal(renamedAudio.title, 'DB Title');
-        assert.equal(renamedAudio.writer, 'DB Artist');
-        assert.equal(renamedAudio.album, 'DB Album');
+        assert.equal(renamedAudio.title, 'Edited Title');
+        assert.equal(renamedAudio.writer, 'Edited Artist');
+        assert.equal(renamedAudio.album, 'Edited Album');
         assert.equal(renamedAudio.has_metadata, true);
 
         const renamedLibrary = new LibraryDB({ dbPath });
         try {
             const renamedRecord = await renamedLibrary.getFileInfo(renamedPath);
-            assert.equal(renamedRecord.title, 'DB Title');
-            assert.equal(renamedRecord.writer, 'DB Artist');
-            assert.equal(renamedRecord.metadata_override, 1);
+            assert.equal(renamedRecord.title, 'Edited Title');
+            assert.equal(renamedRecord.writer, 'Edited Artist');
+            assert.equal(renamedRecord.metadata_override, 0);
         } finally {
             await renamedLibrary.close();
         }
@@ -436,7 +483,7 @@ test('macOS NFC 메타데이터 저장은 NFD 폴더 스캔 행을 갱신하고 
             assert.equal(rows.length, 1);
             assert.equal(rows[0].path, nfdPath);
             assert.equal(rows[0].title, '사용자 수정 제목');
-            assert.equal(rows[0].metadata_override, 1);
+            assert.equal(rows[0].metadata_override, 0);
             assert.equal((await library.getFileInfo(nfcPath)).title, '사용자 수정 제목');
         } finally {
             await library.close();
@@ -446,14 +493,16 @@ test('macOS NFC 메타데이터 저장은 NFD 폴더 스캔 행을 갱신하고 
     }
 });
 
-test('오디오 표지 override는 원본을 바꾸지 않고 스캔과 이름 변경 왕복에서 유지되며 reset으로 복귀한다', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-cover-override-'));
+test('오디오 표지 교체는 실제 파일에 임베드되고 기존 override reset 후에도 유지된다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-cover-embedded-'));
     const libraryDir = path.join(root, 'library');
     const thumbnailDir = path.join(root, 'thumbnails');
     const dbPath = path.join(root, 'library.db');
     const audioPath = path.join(libraryDir, 'Covered Book.mp3');
     const replacementPath = path.join(root, 'replacement.png');
     const replacementCover = Buffer.concat([EMBEDDED_COVER, Buffer.from('replacement-cover')]);
+    const externalOverridePath = path.join(thumbnailDir, 'audio-cover-override-legacy.png');
+    const externalOverrideCover = Buffer.concat([EMBEDDED_COVER, Buffer.from('legacy-external-cover')]);
 
     try {
         fs.mkdirSync(libraryDir, { recursive: true });
@@ -475,41 +524,37 @@ test('오디오 표지 override는 원본을 바꾸지 않고 스캔과 이름 �
             thumbnailEncoder: async buffer => ({ buffer, extension: '.png' }),
         });
         assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
-        assert.deepEqual(fs.readFileSync(audioPath), originalAudio);
+        assert.notDeepEqual(fs.readFileSync(audioPath), originalAudio);
 
         const library = new LibraryDB({ dbPath });
-        let overridePath;
         try {
             const cached = await library.getFileInfo(audioPath);
-            overridePath = cached.cover_override_path;
-            assert.match(path.basename(overridePath), /^audio-cover-override-.*\.png$/);
-            assert.equal(cached.thumb_path, overridePath);
-            assert.equal(fs.existsSync(overridePath), true);
-            assert.deepEqual(fs.readFileSync(overridePath), replacementCover);
+            assert.equal(cached.cover_override_path, '');
+            assert.equal(cached.metadata_override, 0);
         } finally {
             await library.close();
         }
 
-        const loadedOverride = await loadMetadataCover(audioPath, { dbPath });
-        assert.deepEqual(dataUrlBuffer(loadedOverride), replacementCover);
+        const embeddedAfterReplacement = await readAudioMetadata(audioPath, { includeCover: true });
+        assert.deepEqual(embeddedAfterReplacement.artworkBuffer, replacementCover);
+        assert.deepEqual(dataUrlBuffer(await loadMetadataCover(audioPath, { dbPath })), replacementCover);
         const loadedEmbedded = await loadMetadataCover(audioPath, {
             dbPath,
             ignoreAudioCoverOverride: true,
         });
-        assert.deepEqual(dataUrlBuffer(loadedEmbedded), EMBEDDED_COVER);
+        assert.deepEqual(dataUrlBuffer(loadedEmbedded), replacementCover);
 
         const reanalyzed = await analyzeMetadataInputs([audioPath], { dbPath });
-        assert.equal(reanalyzed.items[0].audioCoverOverride, true);
-        assert.equal(reanalyzed.items[0].coverOverridePath, overridePath);
+        assert.equal(reanalyzed.items[0].audioCoverOverride, false);
+        assert.equal(reanalyzed.items[0].coverOverridePath, '');
         assert.deepEqual(dataUrlBuffer(reanalyzed.items[0].coverDataUrl), replacementCover);
 
         const regularScan = await scanFolder(libraryDir, { dbPath, thumbnailDir });
-        assert.equal(regularScan[0].cover_override_path, overridePath);
-        assert.equal(regularScan[0].thumb_path, overridePath);
+        assert.equal(regularScan[0].cover_override_path, '');
         const forceScan = await scanFolder(libraryDir, { dbPath, thumbnailDir, force: true });
-        assert.equal(forceScan[0].cover_override_path, overridePath);
-        assert.equal(forceScan[0].thumb_path, overridePath);
-        assert.deepEqual(fs.readFileSync(overridePath), replacementCover);
+        assert.equal(forceScan[0].cover_override_path, '');
+        assert.ok(forceScan[0].thumb_path);
+        assert.deepEqual(fs.readFileSync(forceScan[0].thumb_path), replacementCover);
 
         const renamedPath = path.join(libraryDir, 'Renamed Covered Book.mp3');
         fs.renameSync(audioPath, renamedPath);
@@ -518,12 +563,13 @@ test('오디오 표지 override는 원본을 바꾸지 않고 스캔과 이름 �
             await renameLibrary.applyLibraryMoveIndexChanges({
                 fileInfoMoves: [{ src: audioPath, dest: renamedPath, recursive: false }],
             });
-            assert.equal((await renameLibrary.getFileInfo(renamedPath)).cover_override_path, overridePath);
+            assert.equal((await renameLibrary.getFileInfo(renamedPath)).cover_override_path, '');
         } finally {
             await renameLibrary.close();
         }
         const renamedScan = await scanFolder(libraryDir, { dbPath, thumbnailDir, force: true });
-        assert.equal(renamedScan[0].thumb_path, overridePath);
+        assert.equal(renamedScan[0].cover_override_path, '');
+        assert.deepEqual(dataUrlBuffer(await loadMetadataCover(renamedPath, { dbPath })), replacementCover);
 
         fs.renameSync(renamedPath, audioPath);
         const undoLibrary = new LibraryDB({ dbPath });
@@ -531,12 +577,32 @@ test('오디오 표지 override는 원본을 바꾸지 않고 스캔과 이름 �
             await undoLibrary.applyLibraryMoveIndexChanges({
                 fileInfoMoves: [{ src: renamedPath, dest: audioPath, recursive: false }],
             });
-            assert.equal((await undoLibrary.getFileInfo(audioPath)).cover_override_path, overridePath);
+            assert.equal((await undoLibrary.getFileInfo(audioPath)).cover_override_path, '');
         } finally {
             await undoLibrary.close();
         }
 
+        fs.mkdirSync(thumbnailDir, { recursive: true });
+        fs.writeFileSync(externalOverridePath, externalOverrideCover);
+        const externalOverrideLibrary = new LibraryDB({ dbPath });
+        try {
+            const cached = await externalOverrideLibrary.getFileInfo(audioPath);
+            await externalOverrideLibrary.upsertFileInfo({
+                ...cached,
+                cover_override_path: externalOverridePath,
+                thumb_path: externalOverridePath,
+            });
+        } finally {
+            await externalOverrideLibrary.close();
+        }
+        assert.deepEqual(dataUrlBuffer(await loadMetadataCover(audioPath, { dbPath })), externalOverrideCover);
+        assert.deepEqual(dataUrlBuffer(await loadMetadataCover(audioPath, {
+            dbPath,
+            ignoreAudioCoverOverride: true,
+        })), replacementCover);
+
         const resetAnalysis = await analyzeMetadataInputs([audioPath], { dbPath });
+        assert.equal(resetAnalysis.items[0].audioCoverOverride, true);
         resetAnalysis.items[0].audioCoverChange = { type: 'reset' };
         const reset = await saveMetadataItems(resetAnalysis.items, {
             dbPath,
@@ -551,23 +617,23 @@ test('오디오 표지 override는 원본을 바꾸지 않고 스캔과 이름 �
             },
         });
         assert.equal(reset.stats.success.length, 1, reset.stats.error.join('\n'));
-        assert.deepEqual(fs.readFileSync(audioPath), originalAudio);
-        assert.equal(fs.existsSync(overridePath), false);
+        assert.notDeepEqual(fs.readFileSync(audioPath), originalAudio);
+        assert.equal(fs.existsSync(externalOverridePath), false);
 
         const resetLibrary = new LibraryDB({ dbPath });
         try {
             const cached = await resetLibrary.getFileInfo(audioPath);
             assert.equal(cached.cover_override_path, '');
             assert.ok(cached.thumb_path);
-            assert.notEqual(cached.thumb_path, overridePath);
+            assert.notEqual(cached.thumb_path, externalOverridePath);
             assert.equal(fs.existsSync(cached.thumb_path), true);
         } finally {
             await resetLibrary.close();
         }
-        assert.deepEqual(dataUrlBuffer(await loadMetadataCover(audioPath, { dbPath })), EMBEDDED_COVER);
+        assert.deepEqual(dataUrlBuffer(await loadMetadataCover(audioPath, { dbPath })), replacementCover);
         const resetAnalyzed = await analyzeMetadataInputs([audioPath], { dbPath });
         assert.equal(resetAnalyzed.items[0].audioCoverOverride, false);
-        assert.deepEqual(dataUrlBuffer(resetAnalyzed.items[0].coverDataUrl), EMBEDDED_COVER);
+        assert.deepEqual(dataUrlBuffer(resetAnalyzed.items[0].coverDataUrl), replacementCover);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

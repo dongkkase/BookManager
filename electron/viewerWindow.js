@@ -9,6 +9,7 @@ import {
 } from './audiobookClosePolicy.js';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
+import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -634,6 +635,30 @@ export function setupViewerWindowManager(options = {}) {
         return { success: true, session };
     };
 
+    const refreshAudioMetadata = async successfulPaths => {
+        const context = viewerContexts.audio;
+        const session = context.currentSession;
+        const viewerWindow = activeViewerWindow(context);
+        if (!viewerWindow || !audioSessionMatchesSuccessfulPath(session, successfulPaths)) {
+            return { success: false, refreshed: false };
+        }
+
+        const sessionId = session.id;
+        const audioData = await sessions.getAudioData(sessionId);
+        if (
+            activeViewerWindow(context) !== viewerWindow
+            || context.currentSession?.id !== sessionId
+        ) {
+            return { success: false, refreshed: false, stale: true };
+        }
+
+        viewerWindow.webContents.send('viewer:audio-metadata-refresh', {
+            sessionId,
+            audioData,
+        });
+        return { success: true, refreshed: true, sessionId };
+    };
+
     const viewerContextForSessionRequest = (event, sessionId) => {
         const session = sessions.get(sessionId);
         const expectedContext = contextForSession(session);
@@ -837,6 +862,7 @@ export function setupViewerWindowManager(options = {}) {
 
     return {
         openViewer,
+        refreshAudioMetadata,
         getWindow: () => (
             activeViewerWindow(viewerContexts.reader)
             || activeViewerWindow(viewerContexts.audio)

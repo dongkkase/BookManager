@@ -1,5 +1,8 @@
 import fs from 'node:fs/promises';
 import { parseFile, selectCover } from 'music-metadata';
+import tagLib from 'node-taglib-sharp';
+
+const { File: TagLibFile } = tagLib;
 
 export const AUDIO_EXTENSION_VALUES = Object.freeze([
     '.3gp',
@@ -42,6 +45,20 @@ export const AUDIO_MIME_TYPES = Object.freeze({
 });
 
 const AUDIO_FORMATS_WITHOUT_MUSIC_METADATA_PARSERS = new Set(['.amr', '.caf']);
+const TAGLIB_AUDIO_MIME_TYPES = Object.freeze({
+    '.aac': 'taglib/aac',
+    '.aif': 'taglib/aif',
+    '.aiff': 'taglib/aiff',
+    '.flac': 'taglib/flac',
+    '.m4a': 'taglib/m4a',
+    '.m4b': 'taglib/m4b',
+    '.mp3': 'taglib/mp3',
+    '.oga': 'taglib/oga',
+    '.ogg': 'taglib/ogg',
+    '.opus': 'taglib/opus',
+    '.wav': 'taglib/wav',
+    '.wave': 'audio/wav',
+});
 
 function extensionFromPath(filePath = '') {
     const withoutQuery = String(filePath ?? '').split(/[?#]/, 1)[0].trim().toLowerCase();
@@ -72,6 +89,18 @@ function normalizeTextList(value) {
     }
 
     return result;
+}
+
+function normalizeCommentList(value) {
+    const values = Array.isArray(value) ? value : [value];
+    return normalizeTextList(values.map(item => (
+        item && typeof item === 'object' && !Array.isArray(item) ? item.text : item
+    )));
+}
+
+function normalizeGenreList(value) {
+    const values = Array.isArray(value) ? value : [value];
+    return normalizeTextList(values.flatMap(item => String(item ?? '').split(/[;,]/)));
 }
 
 function normalizeNumber(value, options = {}) {
@@ -206,23 +235,63 @@ export function inferAudioMimeType(filePath = '') {
 export function normalizeAudioMetadata(parsed = {}, options = {}) {
     const common = parsed?.common && typeof parsed.common === 'object' ? parsed.common : {};
     const technical = parsed?.format && typeof parsed.format === 'object' ? parsed.format : {};
+    const tagMetadata = options.tagMetadata && typeof options.tagMetadata === 'object'
+        ? options.tagMetadata
+        : {};
     const includeCover = options.includeCover !== false;
-    const title = normalizeText(common.title);
-    const listedArtists = normalizeTextList(common.artists);
-    const taggedArtist = normalizeText(common.artist);
+    const title = normalizeText(common.title) || normalizeText(tagMetadata.title);
+    const listedArtists = normalizeTextList(
+        Array.isArray(common.artists) && common.artists.length > 0
+            ? common.artists
+            : tagMetadata.performers,
+    );
+    const taggedArtist = normalizeText(common.artist)
+        || normalizeText(tagMetadata.artist)
+        || listedArtists[0]
+        || null;
     const artists = listedArtists.length > 0
         ? listedArtists
         : normalizeTextList(taggedArtist);
     const artist = taggedArtist || (artists.length > 0 ? artists.join(', ') : null);
-    const album = normalizeText(common.album);
-    const albumArtist = normalizeText(common.albumartist);
-    const composers = normalizeTextList(common.composer);
+    const album = normalizeText(common.album) || normalizeText(tagMetadata.album);
+    const albumArtist = normalizeText(common.albumartist) || normalizeText(tagMetadata.albumArtist);
+    const composers = normalizeTextList(
+        Array.isArray(common.composer) && common.composer.length > 0
+            ? common.composer
+            : tagMetadata.composers,
+    );
     const composer = composers.length > 0 ? composers.join(', ') : null;
-    const genres = normalizeTextList(common.genre);
+    const genres = normalizeGenreList(
+        Array.isArray(common.genre) && common.genre.length > 0
+            ? common.genre
+            : tagMetadata.genres,
+    );
     const genre = genres.length > 0 ? genres.join(', ') : null;
-    const year = normalizeYear(common);
+    const year = normalizeYear(common)
+        ?? normalizeNumber(tagMetadata.year, { minimum: 1, maximum: 9999, integer: true });
     const track = normalizeNumberPair(common.track);
     const disc = normalizeNumberPair(common.disk);
+    if (track.number === null) track.number = normalizePositiveInteger(tagMetadata.trackNumber);
+    if (track.total === null) track.total = normalizePositiveInteger(tagMetadata.trackTotal);
+    if (disc.number === null) disc.number = normalizePositiveInteger(tagMetadata.discNumber);
+    if (disc.total === null) disc.total = normalizePositiveInteger(tagMetadata.discTotal);
+    const grouping = normalizeText(common.grouping) || normalizeText(tagMetadata.grouping);
+    const taggedPublisher = normalizeText(tagMetadata.publisher);
+    const publishers = taggedPublisher
+        ? [taggedPublisher]
+        : normalizeTextList([
+            ...(Array.isArray(common.publisher) ? common.publisher : [common.publisher]),
+            ...(Array.isArray(common.label) ? common.label : [common.label]),
+        ]);
+    const publisher = publishers.join(', ') || null;
+    const descriptions = [
+        normalizeText(tagMetadata.description),
+        normalizeText(tagMetadata.comment),
+        normalizeText(common.longDescription),
+        ...normalizeTextList(common.description),
+        ...normalizeCommentList(common.comment),
+    ].filter(Boolean);
+    const description = descriptions[0] || null;
     const audioTrack = firstAudioTrack(technical);
     const durationSeconds = normalizeNumber(technical.duration);
     const bitrateBitsPerSecond = normalizePositiveNumber(technical.bitrate);
@@ -242,6 +311,9 @@ export function normalizeAudioMetadata(parsed = {}, options = {}) {
         || albumArtist
         || composer
         || genre
+        || grouping
+        || publisher
+        || description
         || year !== null
         || track.number !== null
         || track.total !== null
@@ -260,6 +332,9 @@ export function normalizeAudioMetadata(parsed = {}, options = {}) {
         composers,
         genre,
         genres,
+        grouping,
+        publisher,
+        description,
         year,
         trackNumber: track.number,
         trackTotal: track.total,
@@ -277,14 +352,14 @@ export function normalizeAudioMetadata(parsed = {}, options = {}) {
         artworkBuffer: artwork?.buffer || null,
         artworkMimeType: artwork?.mimeType || null,
         book_type: 'audio',
-        series: album || '',
+        series: grouping || album || '',
         volume: disc.number === null ? '' : String(disc.number),
         chapter: track.number === null ? '' : String(track.number),
         writer: artist || '',
-        publisher: '',
+        publisher: publisher || '',
         page_count: '',
         total_volume: disc.total === null ? '' : String(disc.total),
-        description: '',
+        description: description || '',
         tags: genres.join(', '),
         date: year === null ? '' : String(year),
         format: 'Audiobook',
@@ -292,6 +367,40 @@ export function normalizeAudioMetadata(parsed = {}, options = {}) {
         imageBuffer: artwork?.buffer || null,
         imageName: artworkFileName(artwork?.mimeType),
     };
+}
+
+function readTagLibMetadata(filePath) {
+    const extension = extensionFromPath(filePath);
+    const mimeType = TAGLIB_AUDIO_MIME_TYPES[extension];
+    if (!mimeType) return {};
+
+    let audioFile = null;
+    try {
+        audioFile = TagLibFile.createFromPath(filePath, mimeType);
+        const tag = audioFile.tag;
+        return {
+            title: tag.title,
+            artist: tag.firstPerformer,
+            performers: tag.performers,
+            album: tag.album,
+            albumArtist: tag.firstAlbumArtist,
+            composers: tag.composers,
+            genres: tag.genres,
+            grouping: tag.grouping,
+            publisher: tag.publisher,
+            description: tag.description,
+            comment: tag.comment,
+            year: tag.year,
+            trackNumber: tag.track,
+            trackTotal: tag.trackCount,
+            discNumber: tag.disc,
+            discTotal: tag.discCount,
+        };
+    } catch {
+        return {};
+    } finally {
+        audioFile?.dispose();
+    }
 }
 
 async function parseAudioFile(filePath, options) {
@@ -309,12 +418,13 @@ async function parseAudioFile(filePath, options) {
 export async function readAudioMetadata(filePath, options = {}) {
     const normalizedPath = String(filePath ?? '');
     const includeCover = options.includeCover !== false;
-    const [parsed, stats] = await Promise.all([
+    const [parsed, stats, tagMetadata] = await Promise.all([
         parseAudioFile(normalizedPath, {
             duration: true,
             skipCovers: !includeCover,
         }),
         fs.stat(normalizedPath),
+        Promise.resolve().then(() => readTagLibMetadata(normalizedPath)),
     ]);
 
     return normalizeAudioMetadata(parsed, {
@@ -322,5 +432,6 @@ export async function readAudioMetadata(filePath, options = {}) {
         fileSizeBytes: stats.size,
         includeCover,
         mimeType: options.mimeType,
+        tagMetadata,
     });
 }

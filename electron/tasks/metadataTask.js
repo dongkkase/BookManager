@@ -21,8 +21,11 @@ import {
   readAudioMetadata,
 } from '../audioMetadata.js';
 import {
+  isAudioMetadataWriteSupported,
+  writeAudioMetadataFile,
+} from '../audioMetadataWriter.js';
+import {
   detectImageMimeType,
-  supportedImageExtensionForMimeType,
   supportedImageMimeTypeForPath,
 } from '../imageMagic.js';
 import {
@@ -1293,11 +1296,13 @@ function metadataFromAudioAnalysis(audio = {}) {
   if (!audio) return {};
   const metadata = {
     Title: audio.title || '',
-    Series: audio.album || '',
+    Series: audio.series || audio.grouping || audio.album || '',
     Writer: audio.artist || '',
     Album: audio.album || '',
     AlbumArtist: audio.albumArtist || '',
     Composer: audio.composer || '',
+    Publisher: audio.publisher || '',
+    Summary: audio.description || '',
     Genre: audio.genre || '',
     Tags: Array.isArray(audio.genres) ? audio.genres.join(', ') : audio.tags || '',
     Year: audio.year ?? '',
@@ -1443,12 +1448,6 @@ async function createLibraryDbHandle(options = {}) {
   return { libraryDb: new LibraryDB({ dbPath: options.dbPath }), shouldClose: true };
 }
 
-function normalizedCoverExtension(value = '', fallback = '.jpg') {
-  const normalized = String(value || '').trim().toLowerCase();
-  const extension = normalized && !normalized.startsWith('.') ? `.${normalized}` : normalized;
-  return IMAGE_EXTS.has(extension) ? extension : fallback;
-}
-
 function isManagedAudioCoverPath(filePath = '', thumbnailDir = '') {
   if (!filePath || !thumbnailDir) return false;
   const resolvedDir = path.resolve(thumbnailDir);
@@ -1467,115 +1466,239 @@ async function removeManagedAudioCover(filePath = '', thumbnailDir = '') {
   await fsp.rm(path.resolve(filePath), { force: true }).catch(() => {});
 }
 
-async function prepareAudioCoverChange(item, existing = {}, options = {}) {
-  const filePath = item.filepath || item.path || '';
-  if (!isAudioPath(filePath)) return null;
+async function discardPreviousAudioThumbnail(filePath = '', thumbnailDir = '', refreshedPath = '') {
+  if (!filePath || !thumbnailDir) return;
+  const resolvedDirectory = path.resolve(thumbnailDir);
+  const resolvedThumbnail = path.resolve(filePath);
+  const resolvedRefreshed = refreshedPath ? path.resolve(refreshedPath) : '';
+  const relativePath = path.relative(resolvedDirectory, resolvedThumbnail);
+  if (
+    !relativePath
+    || relativePath.startsWith('..')
+    || path.isAbsolute(relativePath)
+    || resolvedThumbnail === resolvedRefreshed
+  ) return;
+  await fsp.rm(resolvedThumbnail, { force: true }).catch(() => {});
+}
+
+async function resolveEmbeddedAudioCoverChange(item, existing = {}, options = {}) {
   const coverChange = item.audioCoverChange || null;
   const changeType = String(coverChange?.type || '').trim().toLowerCase();
   if (!changeType) return null;
 
   const previousPath = String(existing?.cover_override_path || '').trim();
+  const previousThumbnailPath = String(existing?.thumb_path || '').trim();
   if (changeType === 'reset') {
     return {
       changeType,
       previousPath,
-      fields: {
-        cover_override_path: '',
-        thumb_path: '',
-      },
+      previousThumbnailPath,
+      cover: null,
     };
   }
   if (changeType !== 'file') {
     throw new Error(`Unsupported audiobook cover change: ${changeType}`);
   }
 
-  const thumbnailDir = String(options.thumbnailDir || '').trim();
-  if (!thumbnailDir) throw new Error('Audiobook cover directory is unavailable.');
   const sourcePath = String(coverChange.filePath || coverChange.path || '').trim();
   const sourceAsset = await loadImageAssetFromFile(sourcePath, 'replacement');
   if (!sourceAsset) throw new Error('The selected audiobook cover is not a supported image file.');
-  const sourceStat = await fsp.stat(sourcePath);
-  const encoded = typeof options.thumbnailEncoder === 'function'
-    ? await options.thumbnailEncoder(sourceAsset.buffer, {
-      imageName: sourceAsset.imageName,
-      filePath,
-      mtime: sourceStat.mtimeMs,
-      thumbnailDir,
-      imageTransform: null,
-    })
-    : null;
-  const outputBuffer = encoded?.buffer ? Buffer.from(encoded.buffer) : sourceAsset.buffer;
-  if (outputBuffer.length <= 0) throw new Error('The selected audiobook cover is empty.');
-  const outputMimeType = detectImageMimeType(outputBuffer);
-  if (!outputMimeType) throw new Error('The selected audiobook cover is not a supported image file.');
-  const extension = encoded?.extension
-    ? normalizedCoverExtension(encoded.extension, '')
-    : supportedImageExtensionForMimeType(outputMimeType);
-  if (!extension || supportedImageMimeTypeForPath(`cover${extension}`) !== outputMimeType) {
-    throw new Error('The encoded audiobook cover format does not match its extension.');
+
+  let buffer = sourceAsset.buffer;
+  let mimeType = sourceAsset.mimeType;
+  if (!['image/jpeg', 'image/png'].includes(mimeType)) {
+    if (typeof options.normalizeEpubCoverImage !== 'function') {
+      throw new Error('Audiobook covers must be JPEG or PNG images.');
+    }
+    const normalized = await options.normalizeEpubCoverImage(buffer, sourcePath, mimeType);
+    buffer = normalized?.buffer ? Buffer.from(normalized.buffer) : null;
+    mimeType = String(normalized?.mimeType || normalized?.mediaType || '').trim().toLowerCase();
   }
-  const fileName = `${AUDIO_COVER_OVERRIDE_PREFIX}${randomUUID()}${extension}`;
-  const destinationPath = path.join(path.resolve(thumbnailDir), fileName);
-  const temporaryPath = path.join(
-    path.resolve(thumbnailDir),
-    `.${fileName}.${randomUUID()}.tmp`,
-  );
-  await fsp.mkdir(path.resolve(thumbnailDir), { recursive: true });
-  try {
-    await fsp.writeFile(temporaryPath, outputBuffer, { flag: 'wx' });
-    await fsp.rename(temporaryPath, destinationPath);
-  } catch (error) {
-    await fsp.rm(temporaryPath, { force: true }).catch(() => {});
-    await fsp.rm(destinationPath, { force: true }).catch(() => {});
-    throw error;
+
+  const detectedMimeType = buffer ? detectImageMimeType(buffer) : '';
+  if (!buffer?.length || !['image/jpeg', 'image/png'].includes(mimeType) || detectedMimeType !== mimeType) {
+    throw new Error('The selected audiobook cover could not be converted to JPEG or PNG.');
   }
+
   return {
     changeType,
-    createdPath: destinationPath,
     previousPath,
-    fields: {
-      cover_override_path: destinationPath,
-      thumb_path: destinationPath,
+    previousThumbnailPath,
+    cover: {
+      buffer,
+      mimeType,
+      description: path.basename(sourcePath),
     },
   };
+}
+
+async function persistWrittenAudioMetadata(item, filePath, audio, existing, coverChange, libraryDb) {
+  if (!libraryDb) return;
+  const stat = await fsp.stat(filePath);
+  const actualItem = {
+    ...item,
+    filepath: filePath,
+    path: filePath,
+    metadata: metadataFromAudioAnalysis(audio),
+  };
+  await libraryDb.upsertFileInfo({
+    ...(existing || {}),
+    ...metadataToLibraryRecord(actualItem),
+    ...(coverChange ? {
+      cover_override_path: '',
+      thumb_path: '',
+    } : {}),
+    has_metadata: audio.has_metadata === true ? 1 : 0,
+    metadata_override: 0,
+    mtime: stat.mtimeMs / 1000,
+    size: stat.size,
+  });
+}
+
+async function restoreAudioSourceAfterFailure(filePath, sourceHoldingPath, error) {
+  try {
+    await fsp.rm(filePath, { force: true });
+    await fsp.rename(sourceHoldingPath, filePath);
+  } catch (rollbackError) {
+    const combined = new Error(`${error.message}; audio rollback failed: ${rollbackError.message}`);
+    combined.cause = error;
+    throw combined;
+  }
+  throw error;
+}
+
+async function createAudioRollbackFile(filePath, sourceHoldingPath) {
+  await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
+  try {
+    await fsp.link(filePath, sourceHoldingPath);
+  } catch {
+    await copyAudioFileForEditing(filePath, sourceHoldingPath);
+  }
+}
+
+async function copyAudioFileForEditing(sourcePath, destinationPath) {
+  if (process.platform !== 'darwin') {
+    await fsp.copyFile(sourcePath, destinationPath);
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const child = spawn('/bin/cp', ['-p', sourcePath, destinationPath], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', data => {
+      stderr += data.toString();
+    });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `/bin/cp exited with ${code}`));
+    });
+  });
+}
+
+function existingAudioSourcePath(requestedPath, existing = {}) {
+  const storedPath = String(existing?.path || existing?.filepath || '').trim();
+  if (!storedPath || !fs.existsSync(storedPath)) return requestedPath;
+  const requestedResolved = path.resolve(requestedPath);
+  const storedResolved = path.resolve(storedPath);
+  const samePath = process.platform === 'darwin'
+    ? requestedResolved.normalize('NFC') === storedResolved.normalize('NFC')
+    : requestedResolved === storedResolved;
+  return samePath ? storedPath : requestedPath;
+}
+
+async function writeAudioMetadataItem(item, requestedPath, token, options = {}) {
+  if (!isAudioMetadataWriteSupported(requestedPath)) {
+    throw new Error(taskText(options.lang, 'metadata_audio_write_unsupported'));
+  }
+
+  const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
+  let existing = null;
+  let filePath = requestedPath;
+  let tempPath = '';
+  let sourceHoldingPath = '';
+  try {
+    existing = await libraryDb?.getFileInfo(requestedPath).catch(() => null);
+    filePath = existingAudioSourcePath(requestedPath, existing);
+    const extension = path.extname(filePath);
+    tempPath = path.join(
+      path.dirname(filePath),
+      `.${path.basename(filePath, extension)}.bookmanager_metadata_${token}${extension}`,
+    );
+    sourceHoldingPath = `${filePath}.bookmanager.metadata.${token}.old`;
+    const coverChange = await resolveEmbeddedAudioCoverChange(item, existing, options);
+    await copyAudioFileForEditing(filePath, tempPath);
+    const writeResult = await writeAudioMetadataFile(tempPath, item.metadata || {}, {
+      cover: coverChange?.cover || null,
+    });
+    if (options.shouldCancel?.()) return { cancelled: true };
+
+    if (options.backup_on) {
+      await createMetadataBackup(filePath, path.extname(filePath), token);
+    }
+
+    await createAudioRollbackFile(filePath, sourceHoldingPath);
+    try {
+      await fsp.rename(tempPath, filePath);
+      await persistWrittenAudioMetadata(
+        item,
+        filePath,
+        writeResult.metadata,
+        existing,
+        coverChange,
+        libraryDb,
+      );
+    } catch (error) {
+      await restoreAudioSourceAfterFailure(filePath, sourceHoldingPath, error);
+    }
+
+    await fsp.rm(sourceHoldingPath, { force: true }).catch(error => {
+      console.warn(`[Metadata] Previous audio source cleanup failed: ${sourceHoldingPath}`, error.message);
+    });
+    if (coverChange?.previousPath) {
+      await removeManagedAudioCover(coverChange.previousPath, options.thumbnailDir);
+    }
+    const refreshedPreview = await refreshChangedAudioCoverThumbnail(item, filePath, options);
+    if (refreshedPreview && coverChange?.previousThumbnailPath) {
+      await discardPreviousAudioThumbnail(
+        coverChange.previousThumbnailPath,
+        options.thumbnailDir,
+        refreshedPreview.thumb_path || refreshedPreview.thumbnail || '',
+      );
+    }
+    return { cancelled: false };
+  } finally {
+    if (tempPath) await fsp.rm(tempPath, { force: true }).catch(() => {});
+    if (sourceHoldingPath && fs.existsSync(sourceHoldingPath)) {
+      if (!fs.existsSync(filePath)) {
+        await fsp.rename(sourceHoldingPath, filePath).catch(() => {});
+      } else {
+        await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
+      }
+    }
+    if (shouldClose) await libraryDb?.close();
+  }
 }
 
 async function persistDocumentMetadata(item, options = {}) {
   const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
   if (!libraryDb) throw new Error(taskText(options.lang, 'metadata_document_write_unsupported'));
-  let preparedCoverChange = null;
-  let committed = false;
   try {
     const filePath = item.filepath || item.path || '';
     const stat = await fsp.stat(filePath);
     const existing = await libraryDb.getFileInfo(filePath).catch(() => null);
-    preparedCoverChange = await prepareAudioCoverChange(item, existing, options);
     const invalidateThumbnail = isEpub(filePath) && Boolean(item.epubCoverChange);
     await libraryDb.upsertFileInfo({
       ...(existing || {}),
       ...metadataToLibraryRecord(item),
       ...(invalidateThumbnail ? { thumb_path: '' } : {}),
-      ...(preparedCoverChange?.fields || {}),
       mtime: stat.mtimeMs / 1000,
       size: stat.size,
     });
-    committed = true;
-    if (
-      preparedCoverChange?.previousPath
-      && preparedCoverChange.previousPath !== preparedCoverChange.createdPath
-    ) {
-      await removeManagedAudioCover(preparedCoverChange.previousPath, options.thumbnailDir);
-    }
-    return {
-      coverChanged: Boolean(preparedCoverChange),
-      coverChangeType: preparedCoverChange?.changeType || '',
-      coverOverridePath: preparedCoverChange?.createdPath || '',
-    };
-  } catch (error) {
-    if (!committed && preparedCoverChange?.createdPath) {
-      await removeManagedAudioCover(preparedCoverChange.createdPath, options.thumbnailDir);
-    }
-    throw error;
+    return { coverChanged: false };
   } finally {
     if (shouldClose) await libraryDb.close();
   }
@@ -1597,11 +1720,12 @@ async function refreshChangedEpubCoverThumbnail(item, filePath, options = {}) {
 }
 
 async function refreshChangedAudioCoverThumbnail(item, filePath, options = {}) {
-  if (!isAudioPath(filePath) || !item.audioCoverChange || typeof options.refreshFilePreview !== 'function') return;
+  if (!isAudioPath(filePath) || !item.audioCoverChange || typeof options.refreshFilePreview !== 'function') return null;
   try {
-    await options.refreshFilePreview(filePath);
+    return await options.refreshFilePreview(filePath);
   } catch (error) {
     console.warn(`[Metadata] Audiobook cover thumbnail refresh failed: ${filePath}`, error.message);
+    return null;
   }
 }
 
@@ -1789,6 +1913,7 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         }
 
         const stat = await fsp.stat(filePath);
+        const writeSupport = metadataWriteSupport(filePath, options.lang);
         items.push({
           id: filePath,
           filepath: filePath,
@@ -1806,6 +1931,8 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           coverDataUrl,
           coverOverridePath: cachedMetadataRecord?.cover_override_path || '',
           audioCoverOverride,
+          metadataWriteSupported: writeSupport.supported,
+          metadataWriteMessage: writeSupport.message,
           metadata,
           originalMetadata: { ...metadata },
         });
@@ -1880,6 +2007,14 @@ export async function loadLatestSeriesMetadata(criteria = {}, options = {}) {
 
 export function metadataWriteSupport(filePath, lang = 'ko') {
   const ext = path.extname(filePath).toLowerCase();
+  if (isAudioPath(filePath)) {
+    return isAudioMetadataWriteSupported(filePath)
+      ? { supported: true, message: '' }
+      : {
+        supported: false,
+        message: taskText(lang, 'metadata_audio_write_unsupported'),
+      };
+  }
   if (ext === EPUB_EXT || ext === PDF_EXT) {
     return { supported: true, message: '' };
   }
@@ -2336,8 +2471,28 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       path.dirname(filePath),
       `.${path.basename(filePath, extension)}.bookmanager_metadata_${token}${extension}`,
     );
-    const sourceHoldingPath = `${filePath}.bookmanager.metadata.old`;
+    const sourceHoldingPath = `${filePath}.bookmanager.metadata.${token}.old`;
     try {
+      if (isAudioPath(filePath)) {
+        const support = metadataWriteSupport(filePath, options.lang);
+        if (!support.supported) {
+          stats.skip.push(`${item.name || filePath} - ${support.message}`);
+          continue;
+        }
+        const result = await writeAudioMetadataItem(
+          item,
+          filePath,
+          token,
+          options,
+        );
+        if (result.cancelled) {
+          cancelled = true;
+          break;
+        }
+        recordMetadataSaveSuccess(stats, item, filePath);
+        continue;
+      }
+
       if (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath)) {
         await persistDocumentMetadata(item, options);
         await refreshChangedAudioCoverThumbnail(item, filePath, options);

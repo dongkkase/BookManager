@@ -404,6 +404,20 @@ function AudiobookViewer({
         };
     }, [initialPreferences.playbackRate, session, t]);
 
+    useEffect(() => window.viewerAPI?.onAudioMetadataRefresh?.(payload => {
+        if (!session?.id || payload?.sessionId !== session.id || !payload.audioData) return;
+        setAudioData(current => {
+            if (current?._sessionId && current._sessionId !== session.id) return current;
+            return {
+                ...(current || {}),
+                ...payload.audioData,
+                documentUrl: current?.documentUrl || payload.audioData.documentUrl,
+                metadata: payload.audioData.metadata || current?.metadata || {},
+                _sessionId: session.id,
+            };
+        });
+    }), [session?.id]);
+
     useEffect(() => {
         if (!activeAudioData?.documentUrl) return undefined;
         const capturedSession = session;

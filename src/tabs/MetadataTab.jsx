@@ -508,6 +508,8 @@ function MetadataTab({ config, t, showToast }) {
     [fileList],
   );
   const activeBookType = useMemo(() => resolveBookType(activeItem || {}), [activeItem]);
+  const activeMetadataWriteSupported = activeItem?.metadataWriteSupported !== false;
+  const activeMetadataWriteMessage = activeItem?.metadataWriteMessage || '';
   const activeIsEpub = isEpubFilePath(activeItem?.filepath || activeItem?.path || activeItem?.name);
   const activeEpubImageState = activeItem?.filepath ? epubImagesByFilePath[activeItem.filepath] || {} : {};
   const activeEpubImages = activeEpubImageState.images || [];
@@ -1507,6 +1509,12 @@ function MetadataTab({ config, t, showToast }) {
 
   const handleSave = async (all = false) => {
     if (saveLockRef.current) return;
+    if (!all && activeItem?.metadataWriteSupported === false) {
+      const message = activeItem.metadataWriteMessage || t('msg_unsupported_format');
+      setStatusMessage(message);
+      showToast?.(message);
+      return;
+    }
     const targets = all
       ? fileList.filter(item => item.checked !== false)
       : activeItem ? [{ ...activeItem, checked: true }] : [];
@@ -1548,7 +1556,7 @@ function MetadataTab({ config, t, showToast }) {
       if (success > 0) {
         window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', {
           detail: {
-            paths: saveTargets.map(item => item.filepath || item.path).filter(Boolean),
+            paths: result.stats?.successPaths || [],
           },
         }));
         const successfulAudioTargets = successfulAudioCoverTargets(
@@ -1569,7 +1577,8 @@ function MetadataTab({ config, t, showToast }) {
             if (!coverChange) return item;
             const next = {
               ...item,
-              audioCoverOverride: coverChange.type === 'file',
+              audioCoverOverride: false,
+              coverOverridePath: '',
             };
             delete next.audioCoverChange;
             if (coverChange.type === 'reset') {
@@ -2154,7 +2163,7 @@ function MetadataTab({ config, t, showToast }) {
                 <button
                   type="button"
                   onClick={handleSelectLocalAudioCover}
-                  disabled={isWorking}
+                  disabled={isWorking || !activeMetadataWriteSupported}
                   title={text('audio_cover_replace', '오디오북 썸네일 교체')}
                 >
                   <FaIcon name="fileCirclePlus" size={11} />
@@ -2163,7 +2172,7 @@ function MetadataTab({ config, t, showToast }) {
                 <button
                   type="button"
                   onClick={handleResetAudioCoverChange}
-                  disabled={isWorking || pendingReset || (!activeItem.audioCoverChange && !activeItem.audioCoverOverride)}
+                  disabled={isWorking || !activeMetadataWriteSupported || pendingReset || (!activeItem.audioCoverChange && !activeItem.audioCoverOverride)}
                   title={text('audio_cover_reset', '원본 임베디드 표지로 복원')}
                 >
                   <FaIcon name="arrowRotateLeft" size={11} />
@@ -2451,7 +2460,7 @@ function MetadataTab({ config, t, showToast }) {
             )}
           </div>
           <div className="meta-bottom-right">
-            <button className="meta-btn-save" title={`${primaryShortcut}+S`} onClick={() => handleSave(false)} disabled={!activeItem || isWorking}><FaIcon name="floppy" /> {t('t3_save')} <span>({primaryShortcut}+S)</span></button>
+            <button className="meta-btn-save" title={activeMetadataWriteSupported ? `${primaryShortcut}+S` : activeMetadataWriteMessage} onClick={() => handleSave(false)} disabled={!activeItem || isWorking || !activeMetadataWriteSupported}><FaIcon name="floppy" /> {t('t3_save')} <span>({primaryShortcut}+S)</span></button>
             <button className="meta-btn-save" title={`${primaryShortcut}+Shift+S`} onClick={() => handleSave(true)} disabled={checkedCount === 0 || isWorking}><FaIcon name="floppy" /> {t('t3_save_all')} <span>({primaryShortcut}+Shift+S)</span></button>
           </div>
         </div>
