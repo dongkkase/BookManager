@@ -4,12 +4,18 @@ const path = require('node:path');
 
 const projectRoot = path.join(__dirname, '..');
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const electronCommand = require('electron');
+const testElectronPackagePreloadPath = path.join(__dirname, 'testElectronPackagePreload.cjs');
+const electronTestEnv = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+};
 
-function run(command, args) {
+function run(command, args, options = {}) {
     const result = spawnSync(command, args, {
         cwd: projectRoot,
-        env: process.env,
-        stdio: 'inherit',
+        env: options.env || process.env,
+        stdio: options.stdio || 'inherit',
     });
 
     if (result.error) {
@@ -17,6 +23,18 @@ function run(command, args) {
         return 1;
     }
     return result.status ?? 1;
+}
+
+function electronNativeDependenciesAreReady() {
+    const probeSource = [
+        "const Database = require('better-sqlite3');",
+        "const database = new Database(':memory:');",
+        'database.close();',
+    ].join(' ');
+    return run(electronCommand, ['-e', probeSource], {
+        env: electronTestEnv,
+        stdio: 'ignore',
+    }) === 0;
 }
 
 function collectTestFiles() {
@@ -29,19 +47,22 @@ function collectTestFiles() {
 }
 
 const requestedTestArgs = process.argv.slice(2);
-let testExitCode = 1;
-let electronRebuildExitCode = 1;
-
-try {
-    console.log('[BookManager] Rebuilding native dependencies for Node tests.');
-    const nodeRebuildExitCode = run(npmCommand, ['run', 'node:rebuild']);
-    if (nodeRebuildExitCode === 0) {
-        const testArgs = requestedTestArgs.length > 0 ? requestedTestArgs : collectTestFiles();
-        testExitCode = run(process.execPath, ['--test', ...testArgs]);
+if (!electronNativeDependenciesAreReady()) {
+    console.log('[BookManager] Rebuilding native dependencies for Electron tests.');
+    const electronRebuildExitCode = run(npmCommand, ['run', 'electron:rebuild']);
+    if (electronRebuildExitCode !== 0) {
+        process.exit(electronRebuildExitCode);
     }
-} finally {
-    console.log('[BookManager] Restoring native dependencies for Electron.');
-    electronRebuildExitCode = run(npmCommand, ['run', 'electron:rebuild']);
+    if (!electronNativeDependenciesAreReady()) {
+        console.error('[BookManager] Electron native dependency probe failed after rebuild.');
+        process.exit(1);
+    }
 }
 
-process.exit(testExitCode === 0 ? electronRebuildExitCode : testExitCode);
+const testArgs = requestedTestArgs.length > 0 ? requestedTestArgs : collectTestFiles();
+const testExitCode = run(
+    electronCommand,
+    ['--require', testElectronPackagePreloadPath, '--test', ...testArgs],
+    { env: electronTestEnv },
+);
+process.exit(testExitCode);

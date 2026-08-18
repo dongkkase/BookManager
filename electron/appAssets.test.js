@@ -216,24 +216,43 @@ test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () 
     assert.match(bootstrapSource, /await import\('\.\/main\.js'\)/);
 });
 
+test('Node 테스트는 Electron ABI를 유지한 런타임에서 실행한다', () => {
+    const testRunnerSource = fs.readFileSync(path.join(projectRoot, 'electron', 'runNodeTests.cjs'), 'utf8');
+    const testPreloadSource = fs.readFileSync(
+        path.join(projectRoot, 'electron', 'testElectronPackagePreload.cjs'),
+        'utf8',
+    );
+
+    assert.equal(packageConfig.scripts.test, 'node electron/runNodeTests.cjs');
+    assert.equal(packageConfig.scripts['node:rebuild'], undefined);
+    assert.equal(packageConfig.scripts.postinstall, 'electron-builder install-app-deps');
+    assert.match(packageConfig.scripts['electron:rebuild'], /electron-builder install-app-deps/);
+    assert.match(testRunnerSource, /const electronCommand = require\('electron'\)/);
+    assert.match(testRunnerSource, /ELECTRON_RUN_AS_NODE: '1'/);
+    assert.match(testRunnerSource, /new Database\(':memory:'\)/);
+    assert.match(testRunnerSource, /if \(!electronNativeDependenciesAreReady\(\)\)/);
+    assert.match(testRunnerSource, /run\(npmCommand, \['run', 'electron:rebuild'\]\)/);
+    assert.doesNotMatch(testRunnerSource, /\['run', 'node:rebuild'\]/);
+    assert.match(
+        testRunnerSource,
+        /\['--require', testElectronPackagePreloadPath, '--test', \.\.\.testArgs\]/,
+    );
+    assert.match(testPreloadSource, /require\(require\.resolve\('electron'\)\)/);
+    assert.match(testPreloadSource, /request === 'electron'/);
+    assert.match(testPreloadSource, /Reflect\.apply\(originalLoad/);
+});
+
 test('Electron 개발 실행은 ELECTRON_RUN_AS_NODE를 제거한 런처를 사용한다', () => {
     const devScript = packageConfig.scripts['electron:dev'];
     const rebuildDevScript = packageConfig.scripts['electron:dev:rebuild'];
     const unsafeDevScript = packageConfig.scripts['electron:dev:unsafe'];
     const unsafeRebuildDevScript = packageConfig.scripts['electron:dev:unsafe:rebuild'];
-    const testRunnerSource = fs.readFileSync(path.join(projectRoot, 'electron', 'runNodeTests.cjs'), 'utf8');
     const devRunnerSource = fs.readFileSync(path.join(projectRoot, 'electron', 'runElectronDev.cjs'), 'utf8');
     const launcherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronDev.cjs'), 'utf8');
     const fastDevScript = packageConfig.scripts['electron:dev:fast'];
     const watchLauncherSource = fs.readFileSync(path.join(projectRoot, 'electron', 'launchElectronWatch.cjs'), 'utf8');
     const mainSource = fs.readFileSync(path.join(projectRoot, 'electron', 'main.js'), 'utf8');
 
-    assert.match(packageConfig.scripts['node:rebuild'], /npm rebuild better-sqlite3/);
-    assert.equal(packageConfig.scripts.test, 'node electron/runNodeTests.cjs');
-    assert.match(packageConfig.scripts['electron:rebuild'], /electron-builder install-app-deps/);
-    assert.match(testRunnerSource, /run\(npmCommand, \['run', 'node:rebuild'\]\)/);
-    assert.match(testRunnerSource, /finally/);
-    assert.match(testRunnerSource, /run\(npmCommand, \['run', 'electron:rebuild'\]\)/);
     assert.doesNotMatch(devScript, /npm run electron:rebuild/);
     assert.match(devScript, /node electron\/runElectronDev\.cjs --dist-watch/);
     assert.doesNotMatch(devScript, /wait-on/);

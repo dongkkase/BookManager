@@ -8,9 +8,9 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "node:rebuild": "npm rebuild better-sqlite3",
     "test": "node electron/runNodeTests.cjs",
     "build": "vite build",
+    "postinstall": "electron-builder install-app-deps",
     "postbuild": "node electron/runElectronBuilder.cjs --prepare-default-win-code-sign-cache",
     "preview": "vite preview",
     "electron:rebuild": "electron-builder install-app-deps",
