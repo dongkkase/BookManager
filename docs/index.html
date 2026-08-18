@@ -3,18 +3,18 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리</title>
-    <meta name="description" content="BookManager는 Windows와 macOS에서 CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. 한국어, 영어, 일본어 UI를 지원합니다.">
+    <title>BookManager - 만화책·전자책·오디오북 파일 및 메타데이터 관리</title>
+    <meta name="description" content="BookManager는 Windows와 macOS에서 CBZ, ZIP, EPUB, PDF와 오디오북을 정리하고, ComicInfo.xml 및 지원 오디오 파일의 내부 메타데이터를 관리하는 데스크톱 앱입니다.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리">
-    <meta property="og:description" content="CBZ, ZIP, EPUB, PDF 파일 정리, ComicInfo.xml 메타데이터 편집, 라이브러리 검색, 공유 서버를 지원하는 Windows/macOS 데스크톱 앱입니다.">
+    <meta property="og:title" content="BookManager - 만화책·전자책·오디오북 파일 관리">
+    <meta property="og:description" content="CBZ, ZIP, EPUB, PDF와 오디오북 파일 정리, 실제 파일 메타데이터 편집, 라이브러리 검색과 공유 서버를 지원하는 Windows/macOS 데스크톱 앱입니다.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/">
     <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="BookManager - 만화책·전자책 파일 정리 및 메타데이터 관리">
-    <meta name="twitter:description" content="CBZ, EPUB, PDF, ComicInfo.xml 메타데이터를 관리하는 Windows/macOS용 책 파일 정리 앱입니다.">
+    <meta name="twitter:title" content="BookManager - 만화책·전자책·오디오북 파일 관리">
+    <meta name="twitter:description" content="CBZ, EPUB, PDF와 오디오북의 파일 내부 메타데이터를 관리하는 Windows/macOS용 앱입니다.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <link rel="icon" type="image/x-icon" href="app.ico">
@@ -29,7 +29,7 @@
         "name": "BookManager",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows, macOS",
-        "description": "BookManager is a Windows and macOS desktop app for organizing comic and ebook files, including CBZ, ZIP, EPUB, PDF, ComicInfo.xml metadata editing, archive structure cleanup, file renaming, library search, and sharing servers.",
+        "description": "BookManager is a Windows and macOS desktop app for organizing comic, ebook, and audiobook files, including CBZ, ZIP, EPUB, PDF, ComicInfo.xml and embedded audio metadata editing, library search, playback, and sharing servers.",
         "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
         "url": "https://dongkkase.github.io/BookManager/",
         "downloadUrl": [
@@ -635,9 +635,9 @@
     </nav>
     <header class="hero">
         <div class="hero-inner">
-            <p class="eyebrow">Windows/macOS desktop app for comics and ebooks</p>
+            <p class="eyebrow">Windows/macOS desktop app for comics, ebooks, and audiobooks</p>
             <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
-            <p class="lead">CBZ, ZIP, EPUB, PDF 파일을 정리하고 ComicInfo.xml 메타데이터를 관리하는 데스크톱 앱입니다. Kavita, Komga, YACReader, Panels, Calibre, KOReader 같은 서버와 뷰어에 맞춰 책 파일을 관리할 수 있습니다.</p>
+            <p class="lead">CBZ, ZIP, EPUB, PDF와 오디오북 파일을 정리하고 메타데이터를 관리하는 데스크톱 앱입니다. 지원하는 오디오 형식은 편집한 태그와 표지를 실제 파일 내부에 저장합니다.</p>
             <div class="actions">
                 <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-mac.zip" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
                     <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
@@ -671,9 +671,9 @@
             <div class="demo-header">
                 <div>
                     <h2 id="demo-title" class="text-animate">화면 미리보기</h2>
-                    <p class="section-lead">라이브러리 관리, 압축 파일 정리, 메타데이터 편집, 공유 서버, 내장 뷰어 화면을 실제 앱 이미지로 확인할 수 있습니다.</p>
+                    <p class="section-lead">라이브러리 관리, 압축 파일 정리, 메타데이터 편집, 공유 서버, 책과 오디오북 뷰어를 실제 앱 이미지로 확인할 수 있습니다.</p>
                 </div>
-                <span class="demo-count" data-demo-count>1 / 9</span>
+                <span class="demo-count" data-demo-count>1 / 10</span>
             </div>
             <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 이미지">
                 <div class="demo-viewport">
@@ -743,7 +743,7 @@
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo9.png" alt="BookManager 오디오북 뷰어 화면" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>오디오북 뷰어</strong></span>
+                            <span><strong>오디오북 뷰어</strong>재생 속도, 북마크, 취침 타이머와 재생목록을 관리합니다.</span>
                             <em class="demo-badge">뷰어</em>
                         </figcaption>
                     </figure>
@@ -810,8 +810,34 @@
         </section>
 
         <section>
+            <h2 class="text-animate">오디오북 메타데이터와 재생</h2>
+            <p class="section-lead">오디오북의 임베디드 태그와 표지를 읽어 라이브러리에 표시하고, 지원 형식은 편집 결과를 실제 오디오 파일에 저장합니다. 사용자 지정 표지도 파일 내부의 임베디드 앞표지로 교체됩니다.</p>
+            <div class="split">
+                <div class="list-panel">
+                    <h3>파일 내부 저장 지원</h3>
+                    <ul>
+                        <li>AAC, AIF/AIFF, FLAC</li>
+                        <li>M4A/M4B, MP3</li>
+                        <li>OGA/OGG/OPUS, WAV/WAVE</li>
+                        <li>제목, 시리즈, 앨범, 아티스트, 장르·태그, 트랙·디스크 정보</li>
+                    </ul>
+                </div>
+                <div class="list-panel">
+                    <h3>오디오북 뷰어</h3>
+                    <ul>
+                        <li>재생 속도와 이동 간격 조절</li>
+                        <li>트랙 자동 재생과 재생목록</li>
+                        <li>시간 북마크와 취침 타이머</li>
+                        <li>메인 창의 미니 플레이어</li>
+                    </ul>
+                </div>
+            </div>
+            <p class="note">3GP, AMR, CAF, WEBM은 분석은 가능하지만 파일 내부 메타데이터 저장은 지원하지 않습니다. 오디오 태그나 표지를 저장하면 실제 파일이 변경되므로, 원본 보관이 필요하면 환경 설정의 원본 백업을 켜세요.</p>
+        </section>
+
+        <section>
             <h2 class="text-animate">메타데이터 검색</h2>
-            <p class="section-lead">리디북스, 알라딘, Google Books, AniList, Comic Vine, Amazon 등 국내외 소스를 통해 책 정보를 검색하고 편집할 수 있습니다. 만화책과 전자책을 한 라이브러리 안에서 관리하는 사용자를 기준으로 설계했습니다.</p>
+            <p class="section-lead">리디북스, 알라딘, Google Books, AniList, Comic Vine, Amazon 등 국내외 소스를 통해 책 정보를 검색하고 편집할 수 있습니다. 만화책, 전자책과 오디오북을 한 라이브러리 안에서 관리할 수 있습니다.</p>
             <div class="list-panel">
                 <h3>API 및 검색 설정</h3>
                 <ul>
@@ -825,9 +851,11 @@
                 <span class="keyword">CBZ 관리 프로그램</span>
                 <span class="keyword">ComicInfo.xml 편집기</span>
                 <span class="keyword">EPUB PDF 라이브러리 관리</span>
+                <span class="keyword">오디오북 메타데이터 편집</span>
                 <span class="keyword">comic book manager</span>
                 <span class="keyword">CBZ organizer</span>
                 <span class="keyword">ebook library manager</span>
+                <span class="keyword">audiobook metadata editor</span>
             </div>
         </section>
 

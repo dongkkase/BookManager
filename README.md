@@ -2,22 +2,17 @@
 > **This program supports `Korean`, `English`, `Japanese`.**
 > **The program description on the wiki page is only available in `Korean`. Please use Chrome's translation feature.**
 
+[![프로젝트 페이지](https://img.shields.io/badge/Project-Website-1f7dbc?style=flat-square&logo=githubpages&logoColor=white)](https://dongkkase.github.io/BookManager/)
+[![Discord 참여](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/ND6gpPZHD)
+[![전체 릴리즈 다운로드 수](https://img.shields.io/github/downloads/dongkkase/BookManager/total?style=flat-square&logo=github&label=Downloads)](https://github.com/dongkkase/BookManager/releases)
+
 <kbd>![image](https://raw.githubusercontent.com/dongkkase/BookManager/main/demo/demo1.gif)</kbd>
 <kbd>![image](https://raw.githubusercontent.com/dongkkase/BookManager/main/demo/demo2.gif)</kbd>
 
-BookManager는 CBZ, ZIP, EPUB, PDF 같은 만화책과 전자책 파일을 로컬 데스크톱에서 정리하고 관리하기 위한 Windows/macOS 지원 앱입니다.
-Kavita, Komga, YACReader, Panels 같은 만화 관리 서버와 Calibre, KOReader, Apple Books, Google Play Books 같은 전자책 환경에서 쓰기 좋도록 압축 파일 구조 정리, 내부 이미지 파일명 변경, ComicInfo.xml 메타데이터 편집, 라이브러리 검색을 한 화면에서 처리하는 것을 목표로 합니다.
+BookManager는 CBZ, ZIP, EPUB, PDF 같은 만화책·전자책과 MP3, M4B 등의 오디오북 파일을 로컬 데스크톱에서 정리하고 관리하기 위한 Windows/macOS 지원 앱입니다.
+Kavita, Komga, YACReader, Panels 같은 만화 관리 서버와 Calibre, KOReader, Apple Books, Google Play Books 같은 전자책 환경에서 쓰기 좋도록 압축 파일 구조 정리, 내부 이미지 파일명 변경, 책과 오디오북 메타데이터 편집, 라이브러리 검색을 한 화면에서 처리하는 것을 목표로 합니다.
 로컬 드라이브나 NAS에 보관된 대량의 파일을 스캔하고, OPDS, Web, WebDAV 공유 서버로 책 파일을 공유할 수 있습니다.
 
-- 프로젝트 페이지: https://dongkkase.github.io/BookManager/
-
-<div align="center">
-
-[![Issues](https://img.shields.io/badge/Issues-질문,%20의견,%20버그%20제보-D21F3C?style=for-the-badge&logo=github)](https://github.com/dongkkase/BookManager/issues)
-[![Wiki](https://img.shields.io/badge/Wiki-상세한%20설명-1F425F?style=for-the-badge&logo=read-the-docs)](https://github.com/dongkkase/BookManager/wiki)
-[![Download](https://img.shields.io/badge/Download-최신버전%20다운로드-238636?style=for-the-badge&logo=github)](https://github.com/dongkkase/BookManager/releases)
-
-</div>
 
 ## 지원 플랫폼
 
@@ -29,9 +24,9 @@ Kavita, Komga, YACReader, Panels 같은 만화 관리 서버와 Calibre, KOReade
 - 라이브러리 폴더 등록, 스캔, 검색, 썸네일 및 메타데이터 캐시 관리
 - ZIP, CBZ, CBR, RAR, 7Z 기반 만화책 압축 파일의 구조 정리, 평탄화
 - 압축 파일 내부 이미지 파일명 일괄 변경, 패턴 미리보기, 누락 페이지 확인
-- EPUB, PDF 파일의 라이브러리 관리 및 메타데이터 관리
+- CBZ, EPUB, PDF, 오디오북 파일의 라이브러리 및 메타데이터 관리
 - ComicInfo.xml 기반 메타데이터 조회, 편집, 저장
-- 내장 뷰어에서 만화책, EPUB, PDF, TXT 지원
+- 내장 뷰어에서 만화책, EPUB, PDF, TXT, 오디오북 지원
 - OPDS, Web, WebDAV 공유 서버 실행
 
 ## 만화책 파일 관리
@@ -63,6 +58,14 @@ EPUB과 PDF도 만화책 파일처럼 라이브러리 단위로 관리할 수 �
 - Kavita
 - Komga
 
+## 오디오북 관리
+
+BookManager는 오디오북의 임베디드 태그와 표지, 재생 시간과 코덱 정보를 분석해 라이브러리에 표시합니다. 제목, 시리즈, 앨범, 아티스트, 출판사, 설명, 장르·태그, 연도, 트랙·디스크 번호를 편집할 수 있습니다.
+
+AAC, AIF/AIFF, FLAC, M4A/M4B, MP3, OGA/OGG/OPUS, WAV/WAVE는 편집 결과를 실제 오디오 파일의 내부 태그에 저장합니다. 사용자 지정 표지도 파일 내부의 임베디드 앞표지로 교체됩니다. 3GP, AMR, CAF, WEBM은 분석은 가능하지만 BookManager에서 파일 내부 메타데이터를 저장할 수 없는 읽기 전용 형식입니다.
+
+저장 후에는 실제 파일을 다시 읽어 라이브러리 DB와 썸네일을 갱신합니다. 실제 파일이 변경되므로 원본을 보관해야 한다면 환경 설정의 원본 백업을 켜세요. 오디오북 뷰어에서는 재생 속도, 북마크, 취침 타이머와 미니 플레이어를 사용할 수 있습니다.
+
 ## 메타데이터 관리
 
 BookManager는 국내외 메타데이터 API와 연동하여 책 정보를 검색하고 편집할 수 있습니다.
@@ -70,6 +73,8 @@ BookManager는 국내외 메타데이터 API와 연동하여 책 정보를 검�
 
 만화책 메타데이터는 글로벌 만화 관리 생태계에서 널리 사용하는 ComicInfo.xml 형식으로 저장할 수 있습니다.
 이를 통해 파일 자체와 함께 메타데이터를 보관하고, 다른 서버나 뷰어에서도 가능한 한 동일한 책 정보를 유지할 수 있습니다.
+
+오디오북은 쓰기 지원 형식의 실제 파일 태그와 임베디드 앞표지를 저장합니다. 재생 시간, 비트레이트, 샘플레이트, 코덱, 컨테이너, 채널과 MIME 형식은 파일에서 분석해 표시만 하며 편집하지 않습니다.
 
 ## 기술 스택
 
