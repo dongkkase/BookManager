@@ -2,6 +2,11 @@ import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
 import { BrowserWindow, dialog, ipcMain, protocol, screen, shell } from 'electron';
+import {
+    AUDIOBOOK_CLOSE_ACTION,
+    createAudiobookCloseDialogOptions,
+    resolveAudiobookCloseAction,
+} from './audiobookClosePolicy.js';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
 
@@ -48,7 +53,12 @@ function viewerBoundsIntersectWorkArea(bounds, workArea) {
         && bounds.y < workBottom;
 }
 
-function resolveViewerWindowState(config = {}, displays = [], primaryWorkArea = {}) {
+function viewerWindowStateKey(kind = 'reader', field = '') {
+    const prefix = kind === 'audio' ? 'audio_viewer' : 'viewer';
+    return `${prefix}_${field}`;
+}
+
+function resolveViewerWindowState(config = {}, displays = [], primaryWorkArea = {}, kind = 'reader') {
     const workArea = {
         x: toFiniteNumber(primaryWorkArea.x) ?? 0,
         y: toFiniteNumber(primaryWorkArea.y) ?? 0,
@@ -57,10 +67,20 @@ function resolveViewerWindowState(config = {}, displays = [], primaryWorkArea = 
     };
     const maxWidth = Math.max(VIEWER_MIN_WIDTH, workArea.width);
     const maxHeight = Math.max(VIEWER_MIN_HEIGHT, workArea.height);
-    const width = clampViewerSize(config.viewer_width, VIEWER_MIN_WIDTH, VIEWER_DEFAULT_WIDTH, maxWidth);
-    const height = clampViewerSize(config.viewer_height, VIEWER_MIN_HEIGHT, VIEWER_DEFAULT_HEIGHT, maxHeight);
-    const savedX = toFiniteNumber(config.viewer_x);
-    const savedY = toFiniteNumber(config.viewer_y);
+    const width = clampViewerSize(
+        config[viewerWindowStateKey(kind, 'width')],
+        VIEWER_MIN_WIDTH,
+        VIEWER_DEFAULT_WIDTH,
+        maxWidth,
+    );
+    const height = clampViewerSize(
+        config[viewerWindowStateKey(kind, 'height')],
+        VIEWER_MIN_HEIGHT,
+        VIEWER_DEFAULT_HEIGHT,
+        maxHeight,
+    );
+    const savedX = toFiniteNumber(config[viewerWindowStateKey(kind, 'x')]);
+    const savedY = toFiniteNumber(config[viewerWindowStateKey(kind, 'y')]);
     const savedBounds = savedX === null || savedY === null
         ? null
         : { x: Math.round(savedX), y: Math.round(savedY), width, height };
@@ -79,18 +99,18 @@ function resolveViewerWindowState(config = {}, displays = [], primaryWorkArea = 
         },
         minWidth: VIEWER_MIN_WIDTH,
         minHeight: VIEWER_MIN_HEIGHT,
-        isMaximized: Boolean(config.viewer_is_maximized),
+        isMaximized: Boolean(config[viewerWindowStateKey(kind, 'is_maximized')]),
     };
 }
 
-function serializeViewerWindowState(window) {
+function serializeViewerWindowState(window, kind = 'reader') {
     const bounds = window.getNormalBounds();
     return {
-        viewer_x: bounds.x,
-        viewer_y: bounds.y,
-        viewer_width: bounds.width,
-        viewer_height: bounds.height,
-        viewer_is_maximized: window.isMaximized(),
+        [viewerWindowStateKey(kind, 'x')]: bounds.x,
+        [viewerWindowStateKey(kind, 'y')]: bounds.y,
+        [viewerWindowStateKey(kind, 'width')]: bounds.width,
+        [viewerWindowStateKey(kind, 'height')]: bounds.height,
+        [viewerWindowStateKey(kind, 'is_maximized')]: window.isMaximized(),
     };
 }
 
@@ -206,40 +226,269 @@ export function setupViewerWindowManager(options = {}) {
         getIconPath = () => undefined,
         getSevenZPath = async () => '',
         getAudioLibraryRecord = async () => null,
+        getMainWindow = () => null,
         configManager = null,
     } = options;
 
     const sessions = new ViewerSessionManager({ getSevenZPath, getAudioLibraryRecord });
     registerDocumentProtocol(sessions);
     registerComicProtocol(sessions);
-    let viewerWindow = null;
-    let pendingSession = null;
-    let viewerWindowStateSaveTimer = null;
+    const viewerContexts = {
+        reader: {
+            kind: 'reader',
+            window: null,
+            closingWindows: new Set(),
+            pendingSession: null,
+            currentSession: null,
+            stateSaveTimer: null,
+        },
+        audio: {
+            kind: 'audio',
+            window: null,
+            closingWindows: new Set(),
+            pendingSession: null,
+            currentSession: null,
+            stateSaveTimer: null,
+            miniPlayerActive: false,
+            audioTrackState: null,
+            audioPlaybackState: null,
+            allowClose: false,
+            closeDialogPromise: null,
+            closeRequestVersion: 0,
+        },
+    };
 
     const viewerUrl = () => `${devServerUrl}?viewer=1`;
+    const contextForSession = session => (
+        session?.type === 'audio' ? viewerContexts.audio : viewerContexts.reader
+    );
+    const activeViewerWindow = context => (
+        context?.window
+        && !context.window.isDestroyed()
+        && !context.closingWindows.has(context.window)
+            ? context.window
+            : null
+    );
+    const viewerContextForSender = sender => {
+        const senderWindow = BrowserWindow.fromWebContents(sender);
+        if (!senderWindow || senderWindow.isDestroyed()) return null;
+        return Object.values(viewerContexts).find(context => activeViewerWindow(context) === senderWindow) || null;
+    };
+    const setContextSession = (context, session, options = {}) => {
+        if (!context || !session) return;
+        if (context.kind === 'audio' && context.currentSession?.id !== session.id) {
+            if (options.preserveCloseRequest !== true) {
+                context.closeRequestVersion += 1;
+            }
+            context.audioTrackState = {
+                sessionId: session.id,
+                fileName: session.fileName,
+            };
+            context.audioPlaybackState = { sessionId: session.id };
+        }
+        context.currentSession = session;
+    };
 
-    const sendSession = session => {
-        if (!viewerWindow || viewerWindow.isDestroyed() || !session) return;
+    const mainAppWindow = () => {
+        const window = getMainWindow?.();
+        return window
+            && !window.isDestroyed()
+            && !window.webContents.isDestroyed()
+            ? window
+            : null;
+    };
+
+    const mainWindowForSender = sender => {
+        const window = mainAppWindow();
+        return window?.webContents === sender ? window : null;
+    };
+
+    const nonNegativeNumber = (value, fallback = 0) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? Math.max(0, number) : fallback;
+    };
+
+    const sanitizeAudioTrackState = (state = {}, session) => ({
+        sessionId: session.id,
+        title: String(state.title || ''),
+        artist: String(state.artist || ''),
+        artwork: String(state.artwork || state.artworkDataUrl || ''),
+        fileName: String(state.fileName || session.fileName || ''),
+    });
+
+    const sanitizeAudioPlaybackState = (state = {}, session) => {
+        const volume = Number(state.volume);
+        const duration = nonNegativeNumber(state.duration ?? state.durationSeconds);
+        const currentTime = nonNegativeNumber(state.currentTime ?? state.positionSeconds);
+        return {
+            sessionId: session.id,
+            currentTime: duration > 0 ? Math.min(currentTime, duration) : currentTime,
+            duration,
+            playing: Boolean(state.playing),
+            playbackRate: Math.min(4, Math.max(0.25, Number(state.playbackRate) || 1)),
+            volume: Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1,
+            muted: Boolean(state.muted),
+        };
+    };
+
+    const audioMiniPlayerSnapshot = (context, type = 'show') => ({
+        type,
+        visible: Boolean(context?.miniPlayerActive),
+        sessionId: context?.currentSession?.id || '',
+        title: context?.audioTrackState?.title || '',
+        artist: context?.audioTrackState?.artist || '',
+        artwork: context?.audioTrackState?.artwork || '',
+        fileName: context?.audioTrackState?.fileName || context?.currentSession?.fileName || '',
+        currentTime: nonNegativeNumber(context?.audioPlaybackState?.currentTime),
+        duration: nonNegativeNumber(context?.audioPlaybackState?.duration),
+        playing: Boolean(context?.audioPlaybackState?.playing),
+        playbackRate: Number(context?.audioPlaybackState?.playbackRate) || 1,
+        volume: Number.isFinite(Number(context?.audioPlaybackState?.volume))
+            ? Number(context.audioPlaybackState.volume)
+            : 1,
+        muted: Boolean(context?.audioPlaybackState?.muted),
+    });
+
+    const sendAudioMiniPlayerState = (context, type = 'show') => {
+        const window = mainAppWindow();
+        if (!window || !context?.miniPlayerActive) return;
+        let payload = audioMiniPlayerSnapshot(context, type);
+        if (type === 'track') {
+            payload = {
+                type,
+                visible: true,
+                ...(context.audioTrackState || {}),
+            };
+        } else if (type === 'playback') {
+            payload = {
+                type,
+                visible: true,
+                ...(context.audioPlaybackState || {}),
+            };
+        }
+        window.webContents.send('viewer:audio-mini-state', payload);
+    };
+
+    const clearAudioMiniPlayer = context => {
+        if (!context || context.kind !== 'audio') return;
+        const wasActive = context.miniPlayerActive;
+        context.miniPlayerActive = false;
+        if (!wasActive) return;
+        const window = mainAppWindow();
+        if (!window) return;
+        window.webContents.send('viewer:audio-mini-state', {
+            type: 'clear',
+            visible: false,
+        });
+    };
+
+    const focusMainAppWindow = () => {
+        const window = mainAppWindow();
+        if (!window) return null;
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+        return window;
+    };
+
+    const forceCloseViewerContext = context => {
+        const window = activeViewerWindow(context);
+        if (!window) {
+            clearAudioMiniPlayer(context);
+            return false;
+        }
+        if (context.kind === 'audio') {
+            clearAudioMiniPlayer(context);
+            context.allowClose = true;
+            context.closeRequestVersion += 1;
+        }
+        window.close();
+        return true;
+    };
+
+    const transferAudioContextToMiniPlayer = (context, window) => {
+        if (!mainAppWindow() || activeViewerWindow(context) !== window) return false;
+        context.miniPlayerActive = true;
+        window.hide();
+        sendAudioMiniPlayerState(context, 'show');
+        focusMainAppWindow();
+        return true;
+    };
+
+    const requestViewerClose = (context, window) => {
+        if (!context || !window || window.isDestroyed()) {
+            return Promise.resolve({ success: false });
+        }
+        if (context.kind !== 'audio') {
+            window.close();
+            return Promise.resolve({ success: true, action: AUDIOBOOK_CLOSE_ACTION.CLOSE });
+        }
+        if (context.closeDialogPromise) return context.closeDialogPromise;
+
+        const requestedVersion = context.closeRequestVersion;
+        const config = configManager?.getConfig?.() || {};
+        const language = config.language || config.lang || 'ko';
+        const closeDialogPromise = (async () => {
+            const result = await dialog.showMessageBox(
+                window,
+                createAudiobookCloseDialogOptions(language),
+            );
+            const action = resolveAudiobookCloseAction(result.response);
+            const requestIsCurrent = activeViewerWindow(context) === window
+                && context.closeRequestVersion === requestedVersion;
+            if (!requestIsCurrent) {
+                return { success: false, stale: true, action: AUDIOBOOK_CLOSE_ACTION.CANCEL };
+            }
+            if (action === AUDIOBOOK_CLOSE_ACTION.TRANSFER) {
+                const transferred = transferAudioContextToMiniPlayer(context, window);
+                return {
+                    success: transferred,
+                    action: transferred ? action : AUDIOBOOK_CLOSE_ACTION.CANCEL,
+                };
+            }
+            if (action === AUDIOBOOK_CLOSE_ACTION.CLOSE) {
+                forceCloseViewerContext(context);
+                return { success: true, action };
+            }
+            return { success: true, canceled: true, action };
+        })().catch(() => ({
+            success: false,
+            canceled: true,
+            action: AUDIOBOOK_CLOSE_ACTION.CANCEL,
+        })).finally(() => {
+            if (context.closeDialogPromise === closeDialogPromise) {
+                context.closeDialogPromise = null;
+            }
+        });
+        context.closeDialogPromise = closeDialogPromise;
+        return closeDialogPromise;
+    };
+
+    const sendSession = (context, session) => {
+        const viewerWindow = activeViewerWindow(context);
+        if (!viewerWindow || !session) return;
         const isMainFrameLoading = typeof viewerWindow.webContents.isLoadingMainFrame === 'function'
             ? viewerWindow.webContents.isLoadingMainFrame()
             : viewerWindow.webContents.isLoading();
         if (isMainFrameLoading) {
-            pendingSession = session;
+            context.pendingSession = session;
             return;
         }
         viewerWindow.webContents.send('viewer:load-session', session);
     };
 
-    const ensureViewerWindow = () => {
-        if (viewerWindow && !viewerWindow.isDestroyed()) return viewerWindow;
+    const ensureViewerWindow = context => {
+        const existingWindow = activeViewerWindow(context);
+        if (existingWindow) return existingWindow;
         const primaryDisplay = screen.getPrimaryDisplay();
         const windowState = resolveViewerWindowState(
             configManager?.getConfig?.() || {},
             screen.getAllDisplays(),
             primaryDisplay.workArea,
+            context.kind,
         );
 
-        viewerWindow = new BrowserWindow({
+        const viewerWindow = new BrowserWindow({
             ...windowState.bounds,
             minWidth: windowState.minWidth,
             minHeight: windowState.minHeight,
@@ -254,27 +503,42 @@ export function setupViewerWindowManager(options = {}) {
                 sandbox: false,
                 plugins: true,
                 webviewTag: true,
+                backgroundThrottling: context.kind !== 'audio',
             },
             show: false,
         });
+        context.window = viewerWindow;
 
         const sendFullscreenState = () => {
-            if (!viewerWindow || viewerWindow.isDestroyed()) return;
+            if (viewerWindow.isDestroyed() || context.window !== viewerWindow) return;
             viewerWindow.webContents.send('viewer:fullscreen-change', {
                 fullscreen: viewerWindow.isFullScreen(),
             });
         };
         const saveViewerWindowState = () => {
-            if (!viewerWindow || viewerWindow.isDestroyed() || !configManager) return;
-            configManager.updateConfig(serializeViewerWindowState(viewerWindow));
+            if (viewerWindow.isDestroyed() || context.window !== viewerWindow || !configManager) return;
+            configManager.updateConfig(serializeViewerWindowState(viewerWindow, context.kind));
         };
         const scheduleViewerWindowStateSave = () => {
             if (!configManager) return;
-            if (viewerWindowStateSaveTimer) clearTimeout(viewerWindowStateSaveTimer);
-            viewerWindowStateSaveTimer = setTimeout(() => {
-                viewerWindowStateSaveTimer = null;
+            if (context.stateSaveTimer) clearTimeout(context.stateSaveTimer);
+            const stateSaveTimer = setTimeout(() => {
+                if (context.stateSaveTimer === stateSaveTimer) {
+                    context.stateSaveTimer = null;
+                }
                 saveViewerWindowState();
             }, 400);
+            context.stateSaveTimer = stateSaveTimer;
+        };
+        const handleViewerWindowClose = event => {
+            saveViewerWindowState();
+            if (context.kind === 'audio' && !context.allowClose) {
+                event.preventDefault();
+                void requestViewerClose(context, viewerWindow);
+                return;
+            }
+            if (context.kind === 'audio') context.allowClose = false;
+            context.closingWindows.add(viewerWindow);
         };
 
         if (process.platform !== 'darwin') {
@@ -287,15 +551,21 @@ export function setupViewerWindowManager(options = {}) {
             toggleDevTools(viewerWindow.webContents);
         });
         viewerWindow.once('ready-to-show', () => {
+            if (viewerWindow.isDestroyed() || context.window !== viewerWindow) return;
             if (windowState.isMaximized) {
-                viewerWindow?.maximize();
+                viewerWindow.maximize();
             }
-            viewerWindow?.show();
+            if (!context.miniPlayerActive) viewerWindow.show();
         });
         viewerWindow.webContents.on('did-finish-load', () => {
-            sendSession(pendingSession || sessions.current());
+            if (context.window !== viewerWindow) return;
+            const currentSession = context.pendingSession
+                || context.currentSession
+                || sessions.current(context.kind);
+            setContextSession(context, currentSession);
+            sendSession(context, currentSession);
             sendFullscreenState();
-            pendingSession = null;
+            context.pendingSession = null;
         });
         viewerWindow.on('enter-full-screen', sendFullscreenState);
         viewerWindow.on('leave-full-screen', sendFullscreenState);
@@ -303,14 +573,30 @@ export function setupViewerWindowManager(options = {}) {
         viewerWindow.on('move', scheduleViewerWindowStateSave);
         viewerWindow.on('maximize', scheduleViewerWindowStateSave);
         viewerWindow.on('unmaximize', scheduleViewerWindowStateSave);
-        viewerWindow.on('close', saveViewerWindowState);
+        viewerWindow.on('close', handleViewerWindowClose);
+        viewerWindow.webContents.on('render-process-gone', () => {
+            if (context.window !== viewerWindow || context.kind !== 'audio') return;
+            context.closeRequestVersion += 1;
+            clearAudioMiniPlayer(context);
+        });
         viewerWindow.on('closed', () => {
-            if (viewerWindowStateSaveTimer) {
-                clearTimeout(viewerWindowStateSaveTimer);
-                viewerWindowStateSaveTimer = null;
+            context.closingWindows.delete(viewerWindow);
+            if (context.window !== viewerWindow) return;
+            if (context.stateSaveTimer) {
+                clearTimeout(context.stateSaveTimer);
+                context.stateSaveTimer = null;
             }
-            viewerWindow = null;
-            pendingSession = null;
+            if (context.kind === 'audio') {
+                context.closeRequestVersion += 1;
+                clearAudioMiniPlayer(context);
+                context.audioTrackState = null;
+                context.audioPlaybackState = null;
+                context.allowClose = false;
+                context.closeDialogPromise = null;
+            }
+            context.window = null;
+            context.pendingSession = null;
+            context.currentSession = null;
         });
 
         if (isDev) {
@@ -322,61 +608,178 @@ export function setupViewerWindowManager(options = {}) {
         return viewerWindow;
     };
 
+    const focusContextWindow = (context, session, options = {}) => {
+        const preserveMiniPlayer = options.preserveMiniPlayer === true;
+        const preserveCloseRequest = options.preserveCloseRequest === true;
+        const wasMiniPlayerActive = context.kind === 'audio' && context.miniPlayerActive;
+        setContextSession(context, session, { preserveCloseRequest });
+        const window = ensureViewerWindow(context);
+        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
+        if (wasMiniPlayerActive && preserveMiniPlayer) {
+            sendAudioMiniPlayerState(context, 'show');
+            return window;
+        }
+        if (context.kind === 'audio') clearAudioMiniPlayer(context);
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+        return window;
+    };
+
     const openViewer = async filePath => {
         const session = sessions.create(filePath);
-        const window = ensureViewerWindow();
-        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
-        if (window.isMinimized()) window.restore();
-        window.show();
-        window.focus();
-        sendSession(session);
+        const context = contextForSession(session);
+        focusContextWindow(context, session);
+        sendSession(context, session);
         return { success: true, session };
     };
 
-    const openAdjacentViewer = async (sessionId, direction) => {
+    const viewerContextForSessionRequest = (event, sessionId) => {
+        const session = sessions.get(sessionId);
+        const expectedContext = contextForSession(session);
+        const senderContext = viewerContextForSender(event?.sender);
+        if (!senderContext) {
+            throw new Error('Viewer window was not found.');
+        }
+        if (senderContext !== expectedContext) {
+            throw new Error('Viewer session does not belong to this window.');
+        }
+        return senderContext;
+    };
+
+    const viewerContextForCurrentSessionRequest = (event, sessionId) => {
+        const context = viewerContextForSessionRequest(event, sessionId);
+        if (context.currentSession?.id !== sessionId) {
+            throw new Error('Viewer session is no longer current.');
+        }
+        return context;
+    };
+
+    const openAdjacentViewer = async (event, sessionId, direction) => {
+        const context = viewerContextForCurrentSessionRequest(event, sessionId);
         const session = sessions.createAdjacent(sessionId, direction);
-        const window = ensureViewerWindow();
-        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
-        if (window.isMinimized()) window.restore();
-        window.show();
-        window.focus();
+        focusContextWindow(context, session, {
+            preserveMiniPlayer: true,
+            preserveCloseRequest: true,
+        });
         return { success: true, session };
     };
 
-    const openAudioQueueItem = async (sessionId, fileName) => {
+    const openAudioQueueItem = async (event, sessionId, fileName) => {
+        const context = viewerContextForCurrentSessionRequest(event, sessionId);
         const session = sessions.createAudioQueueItem(sessionId, fileName);
-        const window = ensureViewerWindow();
-        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
-        if (window.isMinimized()) window.restore();
-        window.show();
-        window.focus();
+        focusContextWindow(context, session, {
+            preserveMiniPlayer: true,
+            preserveCloseRequest: true,
+        });
         return { success: true, session };
+    };
+
+    const audioContextForPublishedState = (event, state = {}) => {
+        const context = viewerContextForSender(event?.sender);
+        const session = context?.currentSession;
+        if (context !== viewerContexts.audio || session?.type !== 'audio') return null;
+        if (!state || String(state.sessionId || '') !== session.id) return null;
+        return { context, session };
+    };
+
+    const controlAudioMiniPlayer = (event, command = {}) => {
+        if (!mainWindowForSender(event?.sender)) {
+            throw new Error('Audio mini player control is only available from the main window.');
+        }
+        const context = viewerContexts.audio;
+        const window = activeViewerWindow(context);
+        const sessionId = context.currentSession?.id || '';
+        if (!context.miniPlayerActive || !window || !sessionId) return { success: false };
+        if (String(command?.sessionId || '') !== sessionId) return { success: false };
+        const type = String(command?.type || '');
+        if (type === 'restore') {
+            clearAudioMiniPlayer(context);
+            if (window.isMinimized()) window.restore();
+            window.show();
+            window.focus();
+            return { success: true, type };
+        }
+        if (type === 'close') {
+            forceCloseViewerContext(context);
+            return { success: true, type };
+        }
+        if (!['play', 'pause', 'seek'].includes(type)) return { success: false };
+        const payload = { type, sessionId };
+        if (type === 'seek') {
+            const duration = nonNegativeNumber(context.audioPlaybackState?.duration);
+            payload.positionSeconds = Math.min(
+                nonNegativeNumber(command.positionSeconds),
+                duration > 0 ? duration : Number.MAX_SAFE_INTEGER,
+            );
+        }
+        window.webContents.send('viewer:audio-mini-command', payload);
+        return { success: true, type };
     };
 
     ipcMain.handle('viewer:open', async (_event, filePath) => openViewer(filePath));
-    ipcMain.handle('viewer:openAdjacent', async (_event, sessionId, direction) => openAdjacentViewer(sessionId, direction));
-    ipcMain.handle('viewer:openAudioQueueItem', async (_event, sessionId, fileName) => openAudioQueueItem(sessionId, fileName));
-    ipcMain.handle('viewer:getCurrentSession', async () => sessions.current());
-    ipcMain.handle('viewer:listComicPages', async (_event, sessionId) => (
-        sessions.listComicPages(sessionId)
+    ipcMain.handle('viewer:openAdjacent', async (event, sessionId, direction) => (
+        openAdjacentViewer(event, sessionId, direction)
     ));
-    ipcMain.handle('viewer:getComicPage', async (_event, sessionId, entryName) => (
-        sessions.getComicPage(sessionId, entryName)
+    ipcMain.handle('viewer:openAudioQueueItem', async (event, sessionId, fileName) => (
+        openAudioQueueItem(event, sessionId, fileName)
     ));
-    ipcMain.handle('viewer:getDocumentData', async (_event, sessionId) => (
-        sessions.getDocumentData(sessionId)
-    ));
-    ipcMain.handle('viewer:getAudioData', async (_event, sessionId) => (
-        sessions.getAudioData(sessionId)
-    ));
-    ipcMain.handle('viewer:listAudioQueue', async (_event, sessionId) => (
-        sessions.listAudioQueue(sessionId)
-    ));
-    ipcMain.handle('viewer:getText', async (_event, sessionId, options = {}) => (
-        sessions.getText(sessionId, options)
-    ));
-    ipcMain.handle('viewer:getEpubText', async (_event, sessionId) => (
-        sessions.getEpubText(sessionId)
+    ipcMain.handle('viewer:getCurrentSession', async event => {
+        const context = viewerContextForSender(event.sender);
+        if (!context) return null;
+        return context.currentSession || sessions.current(context.kind);
+    });
+    ipcMain.handle('viewer:listComicPages', async (event, sessionId) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.listComicPages(sessionId);
+    });
+    ipcMain.handle('viewer:getComicPage', async (event, sessionId, entryName) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.getComicPage(sessionId, entryName);
+    });
+    ipcMain.handle('viewer:getDocumentData', async (event, sessionId) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.getDocumentData(sessionId);
+    });
+    ipcMain.handle('viewer:getAudioData', async (event, sessionId) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.getAudioData(sessionId);
+    });
+    ipcMain.handle('viewer:listAudioQueue', async (event, sessionId) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.listAudioQueue(sessionId);
+    });
+    ipcMain.handle('viewer:getText', async (event, sessionId, options = {}) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.getText(sessionId, options);
+    });
+    ipcMain.handle('viewer:getEpubText', async (event, sessionId) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.getEpubText(sessionId);
+    });
+    ipcMain.on('viewer:audio-track-state', (event, state = {}) => {
+        const resolved = audioContextForPublishedState(event, state);
+        if (!resolved) return;
+        resolved.context.audioTrackState = sanitizeAudioTrackState(state, resolved.session);
+        sendAudioMiniPlayerState(resolved.context, 'track');
+    });
+    ipcMain.on('viewer:audio-playback-state', (event, state = {}) => {
+        const resolved = audioContextForPublishedState(event, state);
+        if (!resolved) return;
+        resolved.context.audioPlaybackState = sanitizeAudioPlaybackState(state, resolved.session);
+        sendAudioMiniPlayerState(resolved.context, 'playback');
+    });
+    ipcMain.handle('viewer:getAudioMiniPlayerState', async event => {
+        if (!mainWindowForSender(event.sender)) {
+            throw new Error('Audio mini player state is only available from the main window.');
+        }
+        const context = viewerContexts.audio;
+        return context.miniPlayerActive
+            ? audioMiniPlayerSnapshot(context, 'show')
+            : { type: 'clear', visible: false };
+    });
+    ipcMain.handle('viewer:controlAudioMiniPlayer', async (event, command = {}) => (
+        controlAudioMiniPlayer(event, command)
     ));
     ipcMain.handle('viewer:getConfig', async () => {
         const config = configManager?.getConfig?.() || {};
@@ -392,7 +795,9 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:openExternal', async (event, url) => {
         const safeUrl = normalizeExternalUrl(url);
         if (!safeUrl) throw new Error('External URL was blocked.');
-        const targetWindow = BrowserWindow.fromWebContents(event.sender) || viewerWindow;
+        const targetWindow = BrowserWindow.fromWebContents(event.sender)
+            || activeViewerWindow(viewerContexts.reader)
+            || activeViewerWindow(viewerContexts.audio);
         const result = await dialog.showMessageBox(targetWindow, {
             type: 'question',
             buttons: ['열기', '취소'],
@@ -407,6 +812,12 @@ export function setupViewerWindowManager(options = {}) {
         await shell.openExternal(safeUrl);
         return { success: true };
     });
+    ipcMain.handle('viewer:closeWindow', async event => {
+        const context = viewerContextForSender(event.sender);
+        const targetWindow = activeViewerWindow(context);
+        if (!targetWindow) return { success: false };
+        return requestViewerClose(context, targetWindow);
+    });
     ipcMain.handle('viewer:toggleFullscreen', async event => {
         const targetWindow = BrowserWindow.fromWebContents(event.sender);
         if (!targetWindow || targetWindow.isDestroyed()) return { success: false };
@@ -420,8 +831,32 @@ export function setupViewerWindowManager(options = {}) {
         return { success: true, fullscreen: targetWindow.isFullScreen() };
     });
 
+    const getOpenViewerWindows = () => Object.values(viewerContexts)
+        .map(activeViewerWindow)
+        .filter(Boolean);
+
     return {
         openViewer,
-        getWindow: () => viewerWindow,
+        getWindow: () => (
+            activeViewerWindow(viewerContexts.reader)
+            || activeViewerWindow(viewerContexts.audio)
+        ),
+        prepareForAppQuit: () => {
+            const context = viewerContexts.audio;
+            context.allowClose = true;
+            context.closeRequestVersion += 1;
+            clearAudioMiniPlayer(context);
+        },
+        closeAllWindows: (options = {}) => {
+            if (options.force === true) {
+                for (const context of Object.values(viewerContexts)) {
+                    forceCloseViewerContext(context);
+                }
+                return;
+            }
+            for (const window of getOpenViewerWindows()) {
+                window.close();
+            }
+        },
     };
 }

@@ -19,7 +19,16 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   openExternal: url => ipcRenderer.invoke('viewer:openExternal', url),
   toggleFullscreen: () => ipcRenderer.invoke('viewer:toggleFullscreen'),
   getFullscreenState: () => ipcRenderer.invoke('viewer:getFullscreenState'),
-  closeWindow: () => ipcRenderer.send('window:close'),
+  closeWindow: () => ipcRenderer.invoke('viewer:closeWindow'),
+  publishAudioMiniTrack: state => ipcRenderer.send('viewer:audio-track-state', state),
+  publishAudioMiniPlayback: state => ipcRenderer.send('viewer:audio-playback-state', state),
+  publishAudioTrackState: state => ipcRenderer.send('viewer:audio-track-state', state),
+  publishAudioPlaybackState: state => ipcRenderer.send('viewer:audio-playback-state', state),
+  onAudioMiniPlayerCommand: callback => {
+    const handler = (_event, command) => callback(command);
+    ipcRenderer.on('viewer:audio-mini-command', handler);
+    return () => ipcRenderer.removeListener('viewer:audio-mini-command', handler);
+  },
   onFullscreenChange: callback => {
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('viewer:fullscreen-change', handler);

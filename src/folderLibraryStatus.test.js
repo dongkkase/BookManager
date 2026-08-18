@@ -4,6 +4,7 @@ import {
     isLibraryScanning,
     libraryStatusClass,
     libraryStatusText,
+    normalizeLibraryKey,
     shouldShowLibrarySyncButton,
 } from './folderLibraryStatus.js';
 
@@ -26,6 +27,22 @@ function t(key, values = []) {
         messages[key] || key,
     );
 }
+
+test('macOS의 라이브러리 비교 키는 Unicode 정규형 차이를 제거한다', () => {
+    const decomposedPath = `/책/${'한글'.normalize('NFD')}`;
+    const composedPath = decomposedPath.normalize('NFC');
+
+    assert.equal(normalizeLibraryKey(decomposedPath, 'darwin'), normalizeLibraryKey(composedPath, 'darwin'));
+    assert.equal(normalizeLibraryKey(decomposedPath, 'MacIntel'), normalizeLibraryKey(composedPath, 'MacIntel'));
+});
+
+test('Linux와 Windows의 라이브러리 비교 키는 Unicode 정규형 차이를 유지한다', () => {
+    const decomposedPath = `/책/${'한글'.normalize('NFD')}`;
+    const composedPath = decomposedPath.normalize('NFC');
+
+    assert.notEqual(normalizeLibraryKey(decomposedPath, 'linux'), normalizeLibraryKey(composedPath, 'linux'));
+    assert.notEqual(normalizeLibraryKey(decomposedPath, 'win32'), normalizeLibraryKey(composedPath, 'win32'));
+});
 
 test('최신 인덱스 상태의 라이브러리는 새로고침 아이콘을 표시하지 않는다', () => {
     const nowMs = Date.parse('2026-06-21T12:00:00.000Z');

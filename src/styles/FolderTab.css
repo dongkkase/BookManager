@@ -449,6 +449,23 @@
   transform: translateY(0) rotate(45deg);
 }
 
+/* Keep the final library action tooltip inside its scroll container. */
+.sidebar-section-library > .nav-list > .library-list-item:last-child
+  .library-menu-btn[data-tooltip]::before {
+  top: auto;
+  bottom: calc(100% + 7px);
+}
+
+.sidebar-section-library > .nav-list > .library-list-item:last-child
+  .library-menu-btn[data-tooltip]::after {
+  top: auto;
+  bottom: calc(100% + 2px);
+  border-top: 0;
+  border-right: 1px solid #58606a;
+  border-bottom: 1px solid #58606a;
+  border-left: 0;
+}
+
 .nav-list:not(.folder-tree-list) li:has(.favorite-menu-btn:hover),
 .nav-list:not(.folder-tree-list) li:has(.favorite-menu-btn:focus-visible),
 .nav-list:not(.folder-tree-list) li:has(.library-menu-btn:hover),

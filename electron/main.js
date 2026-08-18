@@ -37,6 +37,9 @@ let viewerController = null;
 let allowWindowClose = false;
 let isShowingExitDialog = false;
 let sharingServersStopped = false;
+let appQuitRequested = false;
+let allowAppQuit = false;
+let isFinalizingAppQuit = false;
 
 // 개발 모드 여부
 const isDev = process.argv.includes('--dev');
@@ -270,6 +273,7 @@ async function initializeApp() {
     getIconPath: getAppIconPath,
     getSevenZPath: async () => await getBinPath('7za') || await getBinPath('7z'),
     getAudioLibraryRecord: getViewerAudioLibraryRecord,
+    getMainWindow: () => mainWindow,
     configManager,
   });
 
@@ -366,25 +370,30 @@ function createMainWindow(config) {
           mainWindow,
           createExitDialogOptions(runtimeState.language),
         );
-        if (!shouldProceedWithExit(result.response)) return;
+        if (!shouldProceedWithExit(result.response)) {
+          appQuitRequested = false;
+          return;
+        }
         ipcController?.cancelAll(windowOwnerId);
         await ipcController?.waitForIdle(windowOwnerId, 30000);
+      } catch (error) {
+        appQuitRequested = false;
+        console.error('App exit confirmation failed:', error);
+        return;
       } finally {
         isShowingExitDialog = false;
       }
     }
 
     configManager?.updateConfig(serializeWindowState(mainWindow));
+    viewerController?.prepareForAppQuit?.();
     allowWindowClose = true;
     mainWindow.close();
   });
 
   mainWindow.on('closed', () => {
     ipcController?.clear(windowOwnerId);
-    const viewerWindow = viewerController?.getWindow?.();
-    if (viewerWindow && !viewerWindow.isDestroyed()) {
-      viewerWindow.close();
-    }
+    viewerController?.closeAllWindows?.({ force: true });
     mainWindow = null;
     allowWindowClose = false;
   });
@@ -451,15 +460,29 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async event => {
-    const status = getSharingServerStatus();
-    const hasRunningServer = status.OPDS.running || status.Web.running || status.WebDAV.running;
-    if (sharingServersStopped || !hasRunningServer) return;
+    if (allowAppQuit) return;
 
     event.preventDefault();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (appQuitRequested) return;
+      appQuitRequested = true;
+      mainWindow.close();
+      return;
+    }
+    if (isFinalizingAppQuit) return;
+
+    isFinalizingAppQuit = true;
     try {
-        await stopAllSharingServers(undefined, configManager?.getConfig?.() || {});
+        const status = getSharingServerStatus();
+        const hasRunningServer = status.OPDS.running || status.Web.running || status.WebDAV.running;
+        if (!sharingServersStopped && hasRunningServer) {
+          await stopAllSharingServers(undefined, configManager?.getConfig?.() || {});
+        }
     } finally {
         sharingServersStopped = true;
+        viewerController?.prepareForAppQuit?.();
+        allowAppQuit = true;
+        isFinalizingAppQuit = false;
         app.quit();
     }
 });

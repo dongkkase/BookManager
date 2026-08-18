@@ -75,6 +75,21 @@ test('드롭 경로는 Unicode와 Windows NAS 구분자를 정규화한다', () 
     );
 });
 
+test('POSIX 드롭 경로는 원문을 유지하면서 Unicode 정규형 중복만 제거한다', () => {
+    const decomposedPath = `/책/${'한글'.normalize('NFD')}/오디오.m4a`;
+    const composedPath = decomposedPath.normalize('NFC');
+
+    assert.notEqual(decomposedPath, composedPath);
+    assert.deepEqual(
+        normalizeDroppedPaths([decomposedPath, composedPath]),
+        [decomposedPath],
+    );
+    assert.deepEqual(
+        normalizeDroppedPaths(['/tmp/a\\b', '/tmp/a/b']),
+        ['/tmp/a\\b', '/tmp/a/b'],
+    );
+});
+
 test('마지막 탭 인덱스를 복원하고 잘못된 값은 첫 탭으로 보정한다', () => {
     assert.equal(resolveTabId(0), 'folder');
     assert.equal(resolveTabId(3), 'metadata');

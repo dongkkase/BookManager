@@ -65,6 +65,35 @@ test('TXT 뷰어 세션은 24MB를 초과하는 파일을 읽는다', async () =
     }
 });
 
+test('뷰어 세션 제한을 넘어도 리더와 오디오의 최신 세션을 각각 유지한다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-session-kinds-'));
+    try {
+        const readerPath = path.join(root, 'reader.pdf');
+        fs.writeFileSync(readerPath, '');
+
+        const manager = new ViewerSessionManager();
+        const reader = manager.create(readerPath, { skipAdjacent: true });
+        let firstAudio = null;
+        let latestAudio = null;
+
+        for (let index = 1; index <= 24; index += 1) {
+            const audioPath = path.join(root, `track-${index}.mp3`);
+            fs.writeFileSync(audioPath, '');
+            latestAudio = manager.create(audioPath, { skipAdjacent: true });
+            if (!firstAudio) firstAudio = latestAudio;
+        }
+
+        assert.equal(manager.sessions.size, 16);
+        assert.equal(manager.get(reader.id), reader);
+        assert.equal(manager.current('reader'), reader);
+        assert.equal(manager.current('audio'), latestAudio);
+        assert.equal(manager.current(), latestAudio);
+        assert.throws(() => manager.get(firstAudio.id), /Viewer session not found\./);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('뷰어 세션은 같은 폴더의 이전권/다음권 가능 여부를 계산한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-adjacent-'));
     try {

@@ -81,6 +81,7 @@ import {
   createLibraryMovePlans,
 } from '../libraryMovePolicy';
 import { normalizeLibraryKey } from '../folderLibraryStatus';
+import { hasMetadataSavedPathForFolder } from '../folderMetadataRefreshPolicy';
 import {
   normalizeLibraryEntries,
   syncLibraryConfig,
@@ -1563,13 +1564,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const handleMetadataSaved = event => {
       const paths = Array.isArray(event.detail?.paths) ? event.detail.paths : [];
       if (!selectedFolderPath || paths.length === 0) return;
-      const folderKey = normalizeLibraryKey(selectedFolderPath);
-      const hasCurrentFolderFile = paths.some(filePath => {
-        const fileKey = normalizeLibraryKey(filePath);
-        const parentKey = normalizeLibraryKey(parentPath(filePath));
-        if (!folderKey || !fileKey) return false;
-        if (includeSubfolders) return fileKey === folderKey || fileKey.startsWith(`${folderKey}/`);
-        return parentKey === folderKey;
+      const hasCurrentFolderFile = hasMetadataSavedPathForFolder({
+        paths,
+        selectedFolderPath,
+        includeSubfolders,
       });
       if (!hasCurrentFolderFile) return;
       pendingMetadataRefreshRef.current = true;

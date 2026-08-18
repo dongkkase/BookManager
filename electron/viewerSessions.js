@@ -1821,15 +1821,25 @@ export class ViewerSessionManager {
         this.sessions = new Map();
         this.comicArchiveEntryCaches = new Map();
         this.currentSessionId = '';
+        this.currentSessionIdsByKind = new Map();
         this.nextSessionSeq = 1;
     }
 
     pruneSessions() {
+        const protectedSessionIds = new Set([
+            this.currentSessionId,
+            ...this.currentSessionIdsByKind.values(),
+        ].filter(Boolean));
         while (this.sessions.size > MAX_VIEWER_SESSIONS) {
-            const oldestSessionId = this.sessions.keys().next().value;
-            if (!oldestSessionId || oldestSessionId === this.currentSessionId) return;
-            this.sessions.delete(oldestSessionId);
-            this.comicArchiveEntryCaches.delete(oldestSessionId);
+            let oldestInactiveSessionId = '';
+            for (const sessionId of this.sessions.keys()) {
+                if (protectedSessionIds.has(sessionId)) continue;
+                oldestInactiveSessionId = sessionId;
+                break;
+            }
+            if (!oldestInactiveSessionId) return;
+            this.sessions.delete(oldestInactiveSessionId);
+            this.comicArchiveEntryCaches.delete(oldestInactiveSessionId);
         }
     }
 
@@ -1859,6 +1869,7 @@ export class ViewerSessionManager {
         this.nextSessionSeq += 1;
         this.sessions.set(session.id, session);
         this.currentSessionId = session.id;
+        this.currentSessionIdsByKind.set(type === 'audio' ? 'audio' : 'reader', session.id);
         this.pruneSessions();
         return session;
     }
@@ -1904,8 +1915,11 @@ export class ViewerSessionManager {
         };
     }
 
-    current() {
-        return this.sessions.get(this.currentSessionId) || null;
+    current(kind = '') {
+        const sessionId = kind
+            ? this.currentSessionIdsByKind.get(kind)
+            : this.currentSessionId;
+        return this.sessions.get(sessionId) || null;
     }
 
     get(sessionId = '') {

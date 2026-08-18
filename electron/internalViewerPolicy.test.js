@@ -21,13 +21,18 @@ const indexSource = readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
 const i18nSource = readFileSync(path.join(projectRoot, 'src', 'utils', 'i18n.js'), 'utf8');
 const packageSource = readFileSync(path.join(projectRoot, 'package.json'), 'utf8');
 
-test('내부 뷰어는 모달이 아니라 단일 BrowserWindow를 재사용한다', () => {
-    assert.match(viewerWindowSource, /let viewerWindow = null/);
-    assert.match(viewerWindowSource, /if \(viewerWindow && !viewerWindow\.isDestroyed\(\)\) return viewerWindow/);
-    assert.match(viewerWindowSource, /viewerWindow = new BrowserWindow/);
+test('내부 뷰어는 리더와 오디오 창을 각각 하나씩 재사용한다', () => {
+    assert.match(viewerWindowSource, /const viewerContexts = \{/);
+    assert.match(viewerWindowSource, /reader:\s*\{[\s\S]*?kind:\s*'reader'/);
+    assert.match(viewerWindowSource, /audio:\s*\{[\s\S]*?kind:\s*'audio'/);
+    assert.match(viewerWindowSource, /session\?\.type === 'audio' \? viewerContexts\.audio : viewerContexts\.reader/);
+    assert.match(viewerWindowSource, /const ensureViewerWindow = context =>/);
+    assert.match(viewerWindowSource, /const viewerWindow = new BrowserWindow/);
     assert.match(viewerWindowSource, /title:\s*'BookManagerViewer'/);
     assert.match(viewerWindowSource, /setTitle\(`BookManagerViewer - \$\{path\.basename\(session\.filePath\)\}`\)/);
     assert.match(viewerWindowSource, /ipcMain\.handle\('viewer:open'/);
+    assert.match(viewerWindowSource, /viewerContextForSender\(event\.sender\)/);
+    assert.match(viewerWindowSource, /context\.currentSession \|\| sessions\.current\(context\.kind\)/);
     assert.match(viewerWindowSource, /webContents\.send\('viewer:load-session'/);
     assert.match(viewerWindowSource, /isLoadingMainFrame/);
     assert.match(viewerWindowSource, /plugins:\s*true/);
@@ -36,7 +41,10 @@ test('내부 뷰어는 모달이 아니라 단일 BrowserWindow를 재사용한�
     assert.match(viewerWindowSource, /protocol\.handle\('bookmanager-document'/);
     assert.match(mainSource, /scheme:\s*'bookmanager-comic'[\s\S]*corsEnabled:\s*true/);
     assert.match(mainSource, /setupViewerWindowManager/);
-    assert.match(mainSource, /viewerWindow\.close\(\)/);
+    assert.match(mainSource, /viewerController\?\.closeAllWindows\?\.\(\{ force: true \}\)/);
+    assert.match(viewerWindowSource, /closeAllWindows:\s*\(options = \{\}\) =>/);
+    assert.match(viewerWindowSource, /ipcMain\.handle\('viewer:closeWindow'/);
+    assert.match(viewerPreloadSource, /closeWindow:\s*\(\) => ipcRenderer\.invoke\('viewer:closeWindow'\)/);
     assert.doesNotMatch(viewerWindowSource, /modal:\s*true/);
 });
 
@@ -76,11 +84,13 @@ test('뷰어 창은 F12와 Ctrl/Cmd+Shift+I로 개발자 도구를 토글한다'
 
 test('뷰어 창 위치와 크기는 config에 저장하고 다음 실행에 복원한다', () => {
     assert.match(viewerWindowSource, /resolveViewerWindowState/);
-    assert.match(viewerWindowSource, /viewer_width/);
-    assert.match(viewerWindowSource, /viewer_height/);
-    assert.match(viewerWindowSource, /viewer_x/);
-    assert.match(viewerWindowSource, /viewer_y/);
-    assert.match(viewerWindowSource, /viewer_is_maximized/);
+    assert.match(viewerWindowSource, /function viewerWindowStateKey/);
+    assert.match(viewerWindowSource, /kind === 'audio' \? 'audio_viewer' : 'viewer'/);
+    assert.match(viewerWindowSource, /viewerWindowStateKey\(kind, 'width'\)/);
+    assert.match(viewerWindowSource, /viewerWindowStateKey\(kind, 'height'\)/);
+    assert.match(viewerWindowSource, /viewerWindowStateKey\(kind, 'x'\)/);
+    assert.match(viewerWindowSource, /viewerWindowStateKey\(kind, 'y'\)/);
+    assert.match(viewerWindowSource, /viewerWindowStateKey\(kind, 'is_maximized'\)/);
     assert.match(viewerWindowSource, /screen\.getPrimaryDisplay\(\)/);
     assert.match(viewerWindowSource, /screen\.getAllDisplays\(\)/);
     assert.match(viewerWindowSource, /configManager\?\.getConfig\?\.\(\)/);
@@ -89,10 +99,10 @@ test('뷰어 창 위치와 크기는 config에 저장하고 다음 실행에 복
     assert.match(viewerWindowSource, /minHeight: windowState\.minHeight/);
     assert.match(viewerWindowSource, /if \(windowState\.isMaximized\)/);
     assert.match(viewerWindowSource, /serializeViewerWindowState/);
-    assert.match(viewerWindowSource, /configManager\.updateConfig\(serializeViewerWindowState\(viewerWindow\)\)/);
+    assert.match(viewerWindowSource, /configManager\.updateConfig\(serializeViewerWindowState\(viewerWindow, context\.kind\)\)/);
     assert.match(viewerWindowSource, /viewerWindow\.on\('resize', scheduleViewerWindowStateSave\)/);
     assert.match(viewerWindowSource, /viewerWindow\.on\('move', scheduleViewerWindowStateSave\)/);
-    assert.match(viewerWindowSource, /viewerWindow\.on\('close', saveViewerWindowState\)/);
+    assert.match(viewerWindowSource, /viewerWindow\.on\('close', handleViewerWindowClose\)/);
     assert.match(mainSource, /configManager,/);
 });
 

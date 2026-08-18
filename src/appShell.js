@@ -29,11 +29,16 @@ export function normalizeDroppedPaths(paths = []) {
     const normalized = [];
 
     for (const filePath of paths) {
-        const value = String(filePath || '').replace(/\0/g, '').normalize('NFC');
+        const value = String(filePath || '').replace(/\0/g, '');
         if (!value) continue;
         const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]/.test(value);
-        const normalizedPath = isWindowsPath ? value.replace(/\//g, '\\') : value;
-        const comparisonKey = isWindowsPath ? normalizedPath.toLocaleLowerCase() : normalizedPath;
+        const normalizedPath = isWindowsPath
+            ? value.normalize('NFC').replace(/\//g, '\\')
+            : value;
+        const comparisonPath = normalizedPath.normalize('NFC');
+        const comparisonKey = isWindowsPath
+            ? comparisonPath.replace(/\\/g, '/').toLocaleLowerCase()
+            : comparisonPath;
         if (seen.has(comparisonKey)) continue;
         seen.add(comparisonKey);
         normalized.push(normalizedPath);

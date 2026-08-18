@@ -385,6 +385,67 @@ test('오디오 메타데이터 편집은 원본 파일을 바꾸지 않고 DB�
     }
 });
 
+test('macOS NFC 메타데이터 저장은 NFD 폴더 스캔 행을 갱신하고 강제 스캔에서도 유지한다', {
+    skip: process.platform !== 'darwin',
+}, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-unicode-save-'));
+    const dbPath = path.join(root, 'library.db');
+    const nfdName = '눈물을 마시는 새 1장.wav'.normalize('NFD');
+    const nfcName = nfdName.normalize('NFC');
+    const nfdPath = path.join(root, nfdName);
+    const nfcPath = path.join(root, nfcName);
+
+    try {
+        fs.writeFileSync(nfdPath, createWaveFixture({
+            title: 'Embedded Title',
+            artist: 'Embedded Artist',
+        }));
+        const initial = await scanFolder(root, { dbPath, skipCoverExtraction: true });
+        assert.equal(initial[0].title, 'Embedded Title');
+
+        const analyzed = await analyzeMetadataInputs([nfcPath], {
+            dbPath,
+            includeCovers: false,
+        });
+        analyzed.items[0].metadata = {
+            ...analyzed.items[0].metadata,
+            Title: '사용자 수정 제목',
+            Series: '사용자 수정 시리즈',
+            Album: '사용자 수정 앨범',
+            Writer: '사용자 수정 작가',
+            Summary: '사용자 수정 설명',
+        };
+        const saved = await saveMetadataItems(analyzed.items, { dbPath });
+        assert.equal(saved.stats.success.length, 1, saved.stats.error.join('\n'));
+
+        const refreshed = await scanFolder(root, {
+            dbPath,
+            force: true,
+            skipCoverExtraction: true,
+        });
+        assert.equal(refreshed[0].path, nfdPath);
+        assert.equal(refreshed[0].title, '사용자 수정 제목');
+        assert.equal(refreshed[0].series, '사용자 수정 시리즈');
+        assert.equal(refreshed[0].album, '사용자 수정 앨범');
+        assert.equal(refreshed[0].writer, '사용자 수정 작가');
+        assert.equal(refreshed[0].description, '사용자 수정 설명');
+
+        const library = new LibraryDB({ dbPath });
+        try {
+            const rows = library.getConnection().prepare('SELECT path, title, metadata_override FROM files').all();
+            assert.equal(rows.length, 1);
+            assert.equal(rows[0].path, nfdPath);
+            assert.equal(rows[0].title, '사용자 수정 제목');
+            assert.equal(rows[0].metadata_override, 1);
+            assert.equal((await library.getFileInfo(nfcPath)).title, '사용자 수정 제목');
+        } finally {
+            await library.close();
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('오디오 표지 override는 원본을 바꾸지 않고 스캔과 이름 변경 왕복에서 유지되며 reset으로 복귀한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-cover-override-'));
     const libraryDir = path.join(root, 'library');

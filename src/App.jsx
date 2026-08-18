@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { TabBar } from './components/TabBar';
 import { SettingsModal } from './components/SettingsModal';
 import { AppLockOverlay } from './components/AppLockOverlay';
+import { AudiobookMiniPlayer } from './components/AudiobookMiniPlayer';
 import { FaIcon } from './components/FaIcon';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
@@ -39,6 +40,10 @@ import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
 import { fontVarsForConfig } from './fontPolicy';
 import { installBundledFontFaces } from './bundledFonts';
+import {
+  initialAudioMiniPlayerState,
+  reduceAudioMiniPlayerState,
+} from './audioMiniPlayerState';
 import './styles/App.css';
 
 function lazyTab(loader, exportName) {
@@ -78,6 +83,7 @@ function App() {
   const [toolbarStates, setToolbarStates] = useState({});
   const [statusStates, setStatusStates] = useState({});
   const [serverStatus, setServerStatus] = useState(null);
+  const [audioMiniPlayerState, setAudioMiniPlayerState] = useState(null);
   const [updateInfo, setUpdateInfo] = useState({
     available: false,
     latestVersion: '',
@@ -130,6 +136,50 @@ function App() {
       activeTab,
     });
   }, [activeTab, isAppLocked, language]);
+
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.getAudioMiniPlayerState && !api?.onAudioMiniPlayerState) return undefined;
+
+    let active = true;
+    let initialStateResolved = !api?.getAudioMiniPlayerState;
+    let queuedEvents = [];
+    const handleMiniPlayerState = event => {
+      if (!active) return;
+      if (!initialStateResolved) queuedEvents.push(event);
+      setAudioMiniPlayerState(current => reduceAudioMiniPlayerState(current, event));
+    };
+    const removeMiniPlayerListener = api.onAudioMiniPlayerState?.(handleMiniPlayerState);
+
+    if (api.getAudioMiniPlayerState) {
+      Promise.resolve()
+        .then(() => api.getAudioMiniPlayerState())
+        .then(snapshot => {
+          if (!active) return;
+          const initialState = initialAudioMiniPlayerState(snapshot);
+          const pendingEvents = queuedEvents;
+          queuedEvents = [];
+          initialStateResolved = true;
+          setAudioMiniPlayerState(
+            pendingEvents.reduce(reduceAudioMiniPlayerState, initialState),
+          );
+        })
+        .catch(() => {
+          initialStateResolved = true;
+          queuedEvents = [];
+        });
+    }
+
+    return () => {
+      active = false;
+      queuedEvents = [];
+      if (typeof removeMiniPlayerListener === 'function') removeMiniPlayerListener();
+    };
+  }, []);
+
+  const handleAudioMiniPlayerControl = useCallback(command => (
+    window.electronAPI?.controlAudioMiniPlayer?.(command)
+  ), []);
 
   useEffect(() => {
     if (!config || didRestoreTab.current) return;
@@ -725,6 +775,13 @@ function App() {
             <FaIcon name={isExecuting || isCancelling ? 'stopCircle' : 'rocket'} size={16} />
             {isCancelling ? t('cancel_wait') : isExecuting ? t('cancel_btn') : t('run_btn')}
           </button>
+        )}
+        {audioMiniPlayerState && (
+          <AudiobookMiniPlayer
+            state={audioMiniPlayerState}
+            language={language}
+            onControl={handleAudioMiniPlayerControl}
+          />
         )}
       </div>
 

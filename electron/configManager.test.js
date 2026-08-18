@@ -149,6 +149,11 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.viewer_width, 1280);
         assert.equal(loaded.viewer_height, 860);
         assert.equal(loaded.viewer_is_maximized, false);
+        assert.equal(loaded.audio_viewer_x, null);
+        assert.equal(loaded.audio_viewer_y, null);
+        assert.equal(loaded.audio_viewer_width, 1280);
+        assert.equal(loaded.audio_viewer_height, 860);
+        assert.equal(loaded.audio_viewer_is_maximized, false);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -231,6 +236,7 @@ test('연속 부분 저장은 이전 변경과 임시 파일 정리를 유지한
         manager.updateConfig({ width: 1400 });
         manager.updateConfig({ height: 900 });
         manager.updateConfig({ viewer_width: 1440, viewer_height: 920, viewer_x: 30, viewer_y: 40, viewer_is_maximized: true });
+        manager.updateConfig({ audio_viewer_width: 1180, audio_viewer_height: 760, audio_viewer_x: 80, audio_viewer_y: 90, audio_viewer_is_maximized: false });
         manager.updateConfig({ viewer_paths: { comic: 'C:/Tools/comic.exe' } });
         manager.updateConfig({ viewer_paths: { pdf: 'C:/Tools/pdf.exe' } });
         manager.updateConfig({ folder_view_mode: 'tile' });
@@ -243,6 +249,11 @@ test('연속 부분 저장은 이전 변경과 임시 파일 정리를 유지한
         assert.equal(saved.viewer_x, 30);
         assert.equal(saved.viewer_y, 40);
         assert.equal(saved.viewer_is_maximized, true);
+        assert.equal(saved.audio_viewer_width, 1180);
+        assert.equal(saved.audio_viewer_height, 760);
+        assert.equal(saved.audio_viewer_x, 80);
+        assert.equal(saved.audio_viewer_y, 90);
+        assert.equal(saved.audio_viewer_is_maximized, false);
         assert.equal(saved.viewer_paths.comic, 'C:/Tools/comic.exe');
         assert.equal(saved.viewer_paths.pdf, 'C:/Tools/pdf.exe');
         assert.equal(saved.viewer_paths.epub, '');

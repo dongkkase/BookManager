@@ -4,9 +4,288 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { LibraryDB } from './database/library_db.js';
+import { LibraryDB, normalizeLibraryFilePath } from './database/library_db.js';
 import { normalizeLibraryScanStateForRenderer, scanArchivePaths } from './ipcHandlers.js';
 import { LibrarySearchService } from './librarySearchService.js';
+
+test('macOS 라이브러리 DB 경로는 NFD를 사용하고 다른 플랫폼 경로는 보존한다', () => {
+    const composedPath = '/책/한글/오디오.m4a'.normalize('NFC');
+    const decomposedPath = composedPath.normalize('NFD');
+
+    assert.equal(normalizeLibraryFilePath(composedPath, 'darwin'), decomposedPath);
+    assert.equal(normalizeLibraryFilePath(decomposedPath, 'darwin'), decomposedPath);
+    assert.equal(normalizeLibraryFilePath(decomposedPath, 'linux'), decomposedPath);
+    assert.equal(normalizeLibraryFilePath(composedPath, 'linux'), composedPath);
+});
+
+test('macOS 동등 경로 병합은 최신 사용자 행의 빈 값과 표지 변경을 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-unicode-merge-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const firstNfd = path.join(root, '최신 편집.m4a'.normalize('NFD'));
+        const firstNfc = firstNfd.normalize('NFC');
+        const secondNfd = path.join(root, '표지 제거.m4a'.normalize('NFD'));
+        const secondNfc = secondNfd.normalize('NFC');
+        const thirdNfd = path.join(root, '자동 추출.m4a'.normalize('NFD'));
+        const thirdNfc = thirdNfd.normalize('NFC');
+        const oldCoverPath = path.join(root, 'old-cover.jpg');
+        const newCoverPath = path.join(root, 'new-cover.jpg');
+        const clearedCoverPath = path.join(root, 'cleared-cover.jpg');
+        const legacy = new LibraryDB({ dbPath, platform: 'linux' });
+
+        await legacy.upsertFileInfo({
+            path: firstNfd,
+            mtime: 999,
+            title: '되살아나면 안 되는 제목',
+            summary: '되살아나면 안 되는 설명',
+            writer: '이전 작가',
+            publisher: '이전 출판사',
+            cover_override_path: oldCoverPath,
+            thumb_path: oldCoverPath,
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        await legacy.upsertFileInfo({
+            path: firstNfc,
+            mtime: 1,
+            title: '',
+            summary: '',
+            writer: '최신 작가',
+            cover_override_path: newCoverPath,
+            thumb_path: '',
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        await legacy.upsertFileInfo({
+            path: secondNfd,
+            title: '표지 제거 전',
+            writer: '이전 작가',
+            publisher: '이전 출판사',
+            cover_override_path: clearedCoverPath,
+            thumb_path: clearedCoverPath,
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        await legacy.upsertFileInfo({
+            path: secondNfc,
+            title: '표지 제거 후',
+            cover_override_path: '',
+            thumb_path: '',
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        await legacy.upsertFileInfo({
+            path: thirdNfd,
+            mtime: 1,
+            title: '풍부한 자동 제목',
+            summary: '풍부한 자동 설명',
+            writer: '자동 작가',
+            publisher: '자동 출판사',
+            genre: '판타지',
+            has_metadata: 1,
+            metadata_override: 0,
+        });
+        await legacy.upsertFileInfo({
+            path: thirdNfc,
+            mtime: 999,
+            title: '불완전 자동 제목',
+            has_metadata: 1,
+            metadata_override: 0,
+        });
+        await legacy.close();
+
+        const library = new LibraryDB({ dbPath, platform: 'darwin' });
+        const latest = await library.getFileInfo(firstNfd);
+        assert.equal(latest.title, '');
+        assert.equal(latest.summary, '');
+        assert.equal(latest.publisher, '');
+        assert.equal(latest.writer, '최신 작가');
+        assert.equal(latest.cover_override_path, newCoverPath);
+        assert.equal(latest.thumb_path, newCoverPath);
+
+        const cleared = await library.getFileInfo(secondNfd);
+        assert.equal(cleared.title, '표지 제거 후');
+        assert.equal(cleared.cover_override_path, '');
+        assert.equal(cleared.thumb_path, '');
+        const automatic = await library.getFileInfo(thirdNfd);
+        assert.equal(automatic.title, '풍부한 자동 제목');
+        assert.equal(automatic.summary, '풍부한 자동 설명');
+        assert.equal(automatic.writer, '자동 작가');
+        assert.equal(library.getConnection().prepare('SELECT COUNT(*) AS count FROM files').get().count, 3);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('trigram보다 짧은 Unicode 정규형이 있으면 LIKE 검색을 사용하고 준비된 인덱스를 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-short-unicode-search-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const filePath = path.join(root, 'audio.m4a');
+        const legacy = new LibraryDB({ dbPath, platform: 'linux' });
+        await legacy.upsertFileInfo({
+            path: filePath,
+            title: '각 제목',
+            book_type: 'audio',
+        });
+        assert.equal(await legacy.prepareSearchIndex(), true);
+        assert.equal(legacy.hasSearchIndexSchema(legacy.getConnection()), true);
+        await legacy.close();
+
+        const library = new LibraryDB({ dbPath, platform: 'darwin' });
+        assert.equal(library.hasSearchIndexSchema(library.getConnection()), true);
+        const decomposedQuery = '각'.normalize('NFD');
+        assert.equal(Array.from(decomposedQuery).length, 3);
+        assert.equal(Array.from(decomposedQuery.normalize('NFC')).length, 1);
+        assert.deepEqual(
+            (await library.searchFiles(decomposedQuery, [root], { limit: 10 })).map(row => row.path),
+            [filePath],
+        );
+        assert.equal(library.searchIndexAttempted, false);
+        assert.equal(library.hasSearchIndexSchema(library.getConnection()), true);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('macOS NFC 사용자 override와 NFD 자동 스캔 행을 병합하고 이동·삭제·검색에 같은 키를 사용한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-unicode-path-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const libraryDirNfd = path.join(root, '한글 라이브러리'.normalize('NFD'));
+        const libraryDirNfc = libraryDirNfd.normalize('NFC');
+        const sourceNfd = path.join(libraryDirNfd, '눈물을 마시는 새.m4a'.normalize('NFD'));
+        const sourceNfc = sourceNfd.normalize('NFC');
+        const movedNfd = path.join(libraryDirNfd, '수정된 오디오.m4a'.normalize('NFD'));
+        const movedNfc = movedNfd.normalize('NFC');
+        const legacyOnlyNfc = path.join(root, '과도기 오디오.m4a'.normalize('NFC'));
+        const legacyOnlyNfd = legacyOnlyNfc.normalize('NFD');
+        const thumbnailPath = path.join(root, 'embedded-cover.jpg');
+        fs.mkdirSync(libraryDirNfd, { recursive: true });
+        fs.writeFileSync(sourceNfd, 'audio');
+        fs.writeFileSync(thumbnailPath, 'cover');
+
+        const legacy = new LibraryDB({ dbPath, platform: 'linux' });
+        await legacy.upsertFileInfo({
+            path: sourceNfd,
+            title: '자동 추출 제목',
+            writer: '자동 추출 작가',
+            thumb_path: thumbnailPath,
+            resolution: '600x600',
+            book_type: 'audio',
+            has_metadata: 1,
+            metadata_override: 0,
+        });
+        await legacy.upsertFileInfo({
+            path: sourceNfc,
+            title: '사용자 수정 제목',
+            writer: '사용자 수정 작가',
+            album: '사용자 수정 앨범',
+            genre: '판타지',
+            book_type: 'audio',
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        legacy.getConnection().exec(`
+            CREATE TABLE file_info (
+                path TEXT PRIMARY KEY,
+                mod_date REAL,
+                size REAL,
+                ext TEXT,
+                meta_title TEXT
+            )
+        `);
+        const insertLegacyFileInfo = legacy.getConnection().prepare(`
+            INSERT INTO file_info (path, mod_date, size, ext, meta_title)
+            VALUES (?, ?, ?, ?, ?)
+        `);
+        insertLegacyFileInfo.run(sourceNfc, 1, 5, '.m4a', '과도기 자동 제목');
+        insertLegacyFileInfo.run(legacyOnlyNfc, 2, 6, '.m4a', '과도기 단독 제목');
+        assert.equal(legacy.getConnection().prepare('SELECT COUNT(*) AS count FROM files').get().count, 2);
+        assert.equal(await legacy.prepareSearchIndex(), true);
+        legacy.getConnection().exec(`
+            CREATE TABLE search_trigger_audit (event_count INTEGER NOT NULL);
+            INSERT INTO search_trigger_audit (event_count) VALUES (0);
+            CREATE TRIGGER files_search_ids_delete_audit
+            AFTER DELETE ON files_search_ids
+            BEGIN
+                UPDATE search_trigger_audit SET event_count = event_count + 1;
+            END;
+        `);
+        await legacy.close();
+
+        const library = new LibraryDB({ dbPath, platform: 'darwin' });
+        const migrated = await library.getFileInfo(sourceNfc);
+        assert.equal(migrated.path, sourceNfd);
+        assert.equal(migrated.title, '사용자 수정 제목');
+        assert.equal(migrated.writer, '사용자 수정 작가');
+        assert.equal(migrated.album, '사용자 수정 앨범');
+        assert.equal(migrated.metadata_override, 1);
+        assert.equal(migrated.thumb_path, thumbnailPath);
+        assert.equal(migrated.resolution, '600x600');
+        assert.equal((await library.getFileInfo(legacyOnlyNfc)).path, legacyOnlyNfd);
+        assert.equal((await library.getFileInfo(legacyOnlyNfd)).title, '과도기 단독 제목');
+        assert.equal(library.getConnection().prepare('SELECT COUNT(*) AS count FROM files').get().count, 2);
+        assert.equal(library.getConnection().prepare('SELECT event_count FROM search_trigger_audit').get().event_count, 0);
+        assert.equal(library.hasSearchIndexSchema(library.getConnection()), false);
+        assert.deepEqual(
+            (await library.listFilesByPaths([sourceNfc, sourceNfd])).map(row => row.path),
+            [sourceNfd],
+        );
+        assert.deepEqual(
+            (await library.getFilesByPaths([sourceNfc, sourceNfd])).map(row => row.path),
+            [sourceNfd],
+        );
+        assert.deepEqual(
+            (await library.searchFiles('사용자 수정 제목', [libraryDirNfc], { limit: 10 })).map(row => row.path),
+            [sourceNfd],
+        );
+        assert.equal(library.hasSearchIndexSchema(library.getConnection()), true);
+        assert.deepEqual(
+            (await library.listTagMetadata([libraryDirNfc])).map(row => row.path),
+            [sourceNfd],
+        );
+        assert.deepEqual(
+            (await library.getAllFilesInPath(libraryDirNfc, true)).map(row => row.path),
+            [sourceNfd],
+        );
+        assert.deepEqual(
+            (await library.getAllFilesInPath(libraryDirNfc, false)).map(row => row.path),
+            [sourceNfd],
+        );
+        await library.close();
+
+        const reopened = new LibraryDB({ dbPath, platform: 'darwin' });
+        assert.equal((await reopened.getFileInfo(sourceNfc)).title, '사용자 수정 제목');
+        assert.equal(reopened.getConnection().prepare('SELECT COUNT(*) AS count FROM files').get().count, 2);
+
+        fs.renameSync(sourceNfd, movedNfd);
+        const moved = await reopened.applyLibraryMoveIndexChanges({
+            fileInfoMoves: [{ src: sourceNfc, dest: movedNfc, recursive: false }],
+        });
+        assert.equal(moved.movedFileInfoCount, 1);
+        assert.equal(await reopened.getFileInfo(sourceNfc), null);
+        assert.equal((await reopened.getFileInfo(movedNfc)).title, '사용자 수정 제목');
+        assert.equal((await reopened.getFileInfo(movedNfc)).metadata_override, 1);
+        assert.deepEqual(
+            (await reopened.searchFiles('사용자 수정 제목', [libraryDirNfc], { limit: 10 })).map(row => row.path),
+            [movedNfd],
+        );
+
+        fs.rmSync(movedNfd);
+        const removed = await reopened.applyLibraryMoveIndexChanges({
+            fileInfoDeletes: [{ path: movedNfc, recursive: false }],
+        });
+        assert.equal(removed.deletedFileInfoCount, 1);
+        assert.equal(await reopened.getFileInfo(movedNfd), null);
+        assert.deepEqual(await reopened.searchFiles('사용자 수정 제목', [libraryDirNfc], { limit: 10 }), []);
+        await reopened.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
 
 test('원본 Python library.db schema와 데이터를 그대로 읽고 갱신한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-db-'));
@@ -137,6 +416,7 @@ test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타�
         fs.mkdirSync(outsideLibrary, { recursive: true });
 
         const insidePath = path.join(firstLibrary, '마법 폴더', 'Inside.cbz');
+        const storedInsidePath = normalizeLibraryFilePath(insidePath);
         const secondPath = path.join(secondLibrary, 'Other.cbz');
         const outsidePath = path.join(outsideLibrary, 'Outside.cbz');
         const library = new LibraryDB({ dbPath });
@@ -162,17 +442,17 @@ test('라이브러리 파일 검색은 등록된 라이브러리 안의 메타�
         });
 
         const metadataRows = await library.searchFiles('검색용', [firstLibrary], { limit: 10 });
-        assert.deepEqual(metadataRows.map(row => row.path), [insidePath]);
+        assert.deepEqual(metadataRows.map(row => row.path), [storedInsidePath]);
 
         const folderRows = await library.searchFiles('마법 폴더', [firstLibrary], { limit: 10 });
-        assert.deepEqual(folderRows.map(row => row.path), [insidePath]);
+        assert.deepEqual(folderRows.map(row => row.path), [storedInsidePath]);
 
         const scopedRows = await library.searchFiles('검색 대상', [firstLibrary, secondLibrary], { limit: 10 });
-        assert.deepEqual(scopedRows.map(row => row.path).sort(), [insidePath, secondPath].sort());
+        assert.deepEqual(scopedRows.map(row => row.path).sort(), [storedInsidePath, secondPath].sort());
 
         fs.rmSync(firstLibrary, { recursive: true, force: true });
         const tagMetadataRows = await library.listTagMetadata([firstLibrary]);
-        assert.deepEqual(tagMetadataRows.map(row => row.path), [insidePath]);
+        assert.deepEqual(tagMetadataRows.map(row => row.path), [storedInsidePath]);
         assert.equal(tagMetadataRows[0].genre, '판타지');
         assert.equal(tagMetadataRows[0].tags, '마법, 모험');
         assert.equal(tagMetadataRows[0].penciller, '테스트 그림 작가');

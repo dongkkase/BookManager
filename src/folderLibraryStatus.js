@@ -1,7 +1,21 @@
 const DEFAULT_SCANNING_HEARTBEAT_TIMEOUT_MS = 120000;
 
-export function normalizeLibraryKey(folderPath = '') {
-    return String(folderPath)
+function resolveRuntimePlatform() {
+    if (typeof navigator !== 'undefined' && typeof navigator.platform === 'string' && navigator.platform) {
+        return navigator.platform;
+    }
+    if (typeof process !== 'undefined' && typeof process.platform === 'string') return process.platform;
+    return '';
+}
+
+function isMacPlatform(platform) {
+    const normalizedPlatform = String(platform || '').toLowerCase();
+    return normalizedPlatform === 'darwin' || normalizedPlatform.startsWith('mac');
+}
+
+export function normalizeLibraryKey(folderPath = '', platform = resolveRuntimePlatform()) {
+    const path = String(folderPath);
+    return (isMacPlatform(platform) ? path.normalize('NFC') : path)
         .replace(/\\/g, '/')
         .replace(/\/+$/, '')
         .toLowerCase();

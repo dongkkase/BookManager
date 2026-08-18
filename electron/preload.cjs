@@ -42,6 +42,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
   openInternalViewer: (filePath) => ipcRenderer.invoke('viewer:open', filePath),
+  getAudioMiniPlayerState: () => ipcRenderer.invoke('viewer:getAudioMiniPlayerState'),
+  controlAudioMiniPlayer: (command) => ipcRenderer.invoke('viewer:controlAudioMiniPlayer', command),
+  onAudioMiniPlayerState: (callback) => {
+    const handler = (_, state) => callback(state);
+    ipcRenderer.on('viewer:audio-mini-state', handler);
+    return () => ipcRenderer.removeListener('viewer:audio-mini-state', handler);
+  },
   exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
   getFilePreview: (filePath, options) => ipcRenderer.invoke('fs:filePreview', filePath, options),
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),

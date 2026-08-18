@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const viewerSource = fs.readFileSync(path.join(root, 'src/components/viewer/AudiobookViewer.jsx'), 'utf8');
+const viewerStyles = fs.readFileSync(path.join(root, 'src/styles/viewer.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'src/ViewerApp.jsx'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'electron/viewerPreload.cjs'), 'utf8');
 const windowSource = fs.readFileSync(path.join(root, 'electron/viewerWindow.js'), 'utf8');
@@ -47,4 +48,10 @@ test('오디오북 뷰어는 핵심 재생 제어와 종료 후 연속 재생을
     assert.match(viewerSource, /moveAdjacent\(1, true\)/);
     assert.match(viewerSource, /event\.code === 'Space'/);
     assert.match(viewerSource, /onPointerCancel=/);
+});
+
+test('오디오북 진행 슬라이더는 전역 입력 필드 여백과 테두리를 제거한다', () => {
+    const rangeRule = viewerStyles.match(/\.audiobook-viewer input\[type="range"\]\s*\{([^}]*)\}/)?.[1] || '';
+    assert.match(rangeRule, /padding:\s*0;/);
+    assert.match(rangeRule, /border:\s*0;/);
 });

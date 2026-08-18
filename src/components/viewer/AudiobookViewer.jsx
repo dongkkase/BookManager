@@ -325,6 +325,24 @@ function AudiobookViewer({
         );
     }, [effectiveDuration, playbackRate, session]);
 
+    const publishAudioMiniPlayback = useCallback(() => {
+        if (!session?.id) return;
+        const audio = audioRef.current;
+        const audioPosition = Number(audio?.currentTime);
+        const audioDuration = Number(audio?.duration);
+        const audioRate = Number(audio?.playbackRate);
+        const audioVolume = Number(audio?.volume);
+        window.viewerAPI?.publishAudioMiniPlayback?.({
+            sessionId: session.id,
+            positionSeconds: Number.isFinite(audioPosition) ? audioPosition : currentTime,
+            durationSeconds: Number.isFinite(audioDuration) ? audioDuration : effectiveDuration,
+            playing: audio ? !audio.paused && !audio.ended : playing,
+            playbackRate: Number.isFinite(audioRate) ? audioRate : playbackRate,
+            volume: Number.isFinite(audioVolume) ? audioVolume : volume,
+            muted: Boolean(audio?.muted ?? muted),
+        });
+    }, [currentTime, effectiveDuration, muted, playbackRate, playing, session?.id, volume]);
+
     useEffect(() => {
         saveStoredJson(AUDIO_PREFS_KEY, {
             playbackRate,
@@ -409,6 +427,22 @@ function AudiobookViewer({
     }, [activeAudioData?.documentUrl, metadata.durationSeconds, playbackRate, session]);
 
     useEffect(() => {
+        if (!activeAudioData?.documentUrl || !session?.id) return;
+        window.viewerAPI?.publishAudioMiniTrack?.({
+            sessionId: session.id,
+            fileName: session.fileName || '',
+            title,
+            artist,
+            artworkDataUrl: artwork,
+        });
+    }, [activeAudioData?.documentUrl, artist, artwork, session?.fileName, session?.id, title]);
+
+    useEffect(() => {
+        if (!activeAudioData?.documentUrl) return;
+        publishAudioMiniPlayback();
+    }, [activeAudioData?.documentUrl, publishAudioMiniPlayback]);
+
+    useEffect(() => {
         if (!sleepDeadline) {
             setSleepRemaining(0);
             return undefined;
@@ -446,6 +480,19 @@ function AudiobookViewer({
         setCurrentTime(target);
         savePlaybackState();
     }, [effectiveDuration, savePlaybackState]);
+
+    useEffect(() => window.viewerAPI?.onAudioMiniPlayerCommand?.(command => {
+        if (command?.sessionId && command.sessionId !== session?.id) return;
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (command?.type === 'play') {
+            audio.play().catch(playError => setError(playError?.message || String(playError)));
+        } else if (command?.type === 'pause') {
+            audio.pause();
+        } else if (command?.type === 'seek') {
+            seekTo(command.positionSeconds);
+        }
+    }), [seekTo, session?.id]);
 
     const skipBy = useCallback(delta => {
         seekTo((Number(audioRef.current?.currentTime) || 0) + delta);
@@ -502,10 +549,9 @@ function AudiobookViewer({
     }, [adjacentLoading, onMoveAdjacent, savePlaybackState]);
 
     const closeViewer = useCallback(() => {
-        audioRef.current?.pause();
-        savePlaybackState();
+        publishAudioMiniPlayback();
         onClose?.();
-    }, [onClose, savePlaybackState]);
+    }, [onClose, publishAudioMiniPlayback]);
 
     const openQueueItem = useCallback(async fileName => {
         if (!fileName || adjacentLoading) return;
@@ -685,10 +731,9 @@ function AudiobookViewer({
                 <div className="audiobook-toolbar-actions">
                     <ToolbarButton title={t('playlist')} active={panel === 'playlist'} icon="list" onClick={() => togglePanel('playlist')} />
                     <ToolbarButton title={t('bookmarks')} active={panel === 'bookmarks'} icon="bookmark" onClick={() => togglePanel('bookmarks')} />
-                    <ToolbarButton title={t('settings')} active={panel === 'settings'} icon="sliders" onClick={() => togglePanel('settings')} />
                     <ToolbarButton title={t('info')} active={panel === 'info'} icon="info" onClick={() => togglePanel('info')} />
                     <ToolbarButton title={t('fullscreen')} active={isFullscreen} icon="desktop" onClick={onToggleFullscreen} />
-                    <ToolbarButton title={t('close')} icon="xmark" onClick={closeViewer} />
+                    <ToolbarButton title={t('settings')} active={panel === 'settings'} icon="gear" onClick={() => togglePanel('settings')} />
                 </div>
             </header>
 

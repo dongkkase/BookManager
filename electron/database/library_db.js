@@ -114,6 +114,8 @@ const FILE_SEARCH_COLUMNS = [
 
 const FILE_SEARCH_INDEX_VERSION = '3';
 const FILE_SEARCH_INDEX_META_KEY = 'files_search_index_version';
+const FILE_PATH_NORMALIZATION_VERSION = 'darwin-nfd-v1';
+const FILE_PATH_NORMALIZATION_META_KEY = 'files_path_normalization_version';
 const FILE_SEARCH_SCHEMA_OBJECTS = [
     ['table', 'files_search_ids'],
     ['view', 'files_search_content'],
@@ -142,9 +144,63 @@ function isRepairableSearchIndexError(error) {
     );
 }
 
+export function normalizeLibraryFilePath(filePath = '', platform = process.platform) {
+    const value = String(filePath || '');
+    return platform === 'darwin' ? value.normalize('NFD') : value;
+}
+
+function hasStoredFileValue(value) {
+    return value !== null && value !== undefined && value !== '' && value !== 0;
+}
+
+function storedFileValueCount(record = {}) {
+    return FILE_COLUMNS.reduce(
+        (count, column) => count + (hasStoredFileValue(record[column]) ? 1 : 0),
+        0,
+    );
+}
+
+function mergeEquivalentFileRecords(records = [], canonicalPath = '') {
+    const ranked = [...records].sort((left, right) => {
+        const overrideOrder = Number(right.metadata_override) - Number(left.metadata_override);
+        if (overrideOrder !== 0) return overrideOrder;
+        if (Number(left.metadata_override) === 1 && Number(right.metadata_override) === 1) {
+            const rowIdOrder = Number(right.storage_rowid || 0) - Number(left.storage_rowid || 0);
+            if (rowIdOrder !== 0) return rowIdOrder;
+        }
+        const metadataOrder = Number(right.has_metadata) - Number(left.has_metadata);
+        if (metadataOrder !== 0) return metadataOrder;
+        const valueOrder = storedFileValueCount(right) - storedFileValueCount(left);
+        if (valueOrder !== 0) return valueOrder;
+        const mtimeOrder = Number(right.mtime || 0) - Number(left.mtime || 0);
+        if (mtimeOrder !== 0) return mtimeOrder;
+        return Number(right.path === canonicalPath) - Number(left.path === canonicalPath);
+    });
+    const preferred = ranked[0] || {};
+    const merged = { ...preferred, path: canonicalPath };
+    for (const column of ['mtime', 'size', 'ext', 'resolution', 'book_type']) {
+        if (hasStoredFileValue(merged[column])) continue;
+        const fallback = ranked.find(record => hasStoredFileValue(record[column]));
+        if (fallback) merged[column] = fallback[column];
+    }
+    if (!hasStoredFileValue(merged.thumb_path)) {
+        if (hasStoredFileValue(merged.cover_override_path)) {
+            merged.thumb_path = merged.cover_override_path;
+        } else {
+            const fallback = ranked.find(record => (
+                hasStoredFileValue(record.thumb_path)
+                && !hasStoredFileValue(record.cover_override_path)
+            ));
+            if (fallback) merged.thumb_path = fallback.thumb_path;
+        }
+    }
+    return merged;
+}
+
 export class LibraryDB {
     constructor(options = {}) {
         this.dbPath = options.dbPath || path.join(options.userDataPath || defaultUserDataPath(), 'library.db');
+        this.platform = options.platform || process.platform;
         this.db = null;
         this.lock = Promise.resolve();
         this.searchIndexAttempted = false;
@@ -167,9 +223,14 @@ export class LibraryDB {
         this.createTables();
         this.ensureSchemaColumns();
         this.migrateLegacyTables();
+        this.normalizeStoredFilePaths();
         this.sanitizeFormatColumn();
         this.db.pragma('optimize');
         return this.db;
+    }
+
+    normalizeFilePath(filePath = '') {
+        return normalizeLibraryFilePath(filePath, this.platform);
     }
 
     createTables() {
@@ -342,6 +403,7 @@ export class LibraryDB {
     }
 
     migrateLegacyTables() {
+        this.db.function('normalize_library_file_path', filePath => this.normalizeFilePath(filePath));
         const migrate = this.db.transaction(() => {
             if (this.tableExists('file_info')) {
                 const columns = new Set(this.db.prepare('PRAGMA table_info(file_info)').all().map(row => row.name));
@@ -356,7 +418,7 @@ export class LibraryDB {
                         writer, page_count, format, thumb_path
                     )
                     SELECT
-                        ${pathColumn},
+                        normalize_library_file_path(${pathColumn}),
                         ${value('mod_date', '0')},
                         ${value(['size', 'file_size'], '0')},
                         ${value('ext')},
@@ -401,6 +463,80 @@ export class LibraryDB {
             }
         });
         migrate();
+    }
+
+    normalizeStoredFilePaths() {
+        if (this.platform !== 'darwin' || !this.tableExists('files')) return;
+        const storedVersion = this.db.prepare('SELECT value FROM library_meta WHERE key = ?')
+            .get(FILE_PATH_NORMALIZATION_META_KEY)?.value;
+        if (storedVersion === FILE_PATH_NORMALIZATION_VERSION) return;
+
+        const selectExact = this.db.prepare(`
+            SELECT rowid AS storage_rowid, ${FILE_COLUMNS.join(', ')} FROM files WHERE path = ?
+        `);
+        const selectEquivalentRows = storedPathGroup => storedPathGroup
+            .map(storedPath => selectExact.get(storedPath))
+            .filter(Boolean);
+
+        const remove = this.db.prepare('DELETE FROM files WHERE path = ?');
+        const insert = this.db.prepare(`
+            INSERT INTO files (${FILE_COLUMNS.join(', ')})
+            VALUES (${FILE_COLUMNS.map(column => `@${column}`).join(', ')})
+        `);
+        const saveVersion = this.db.prepare(`
+            INSERT INTO library_meta(key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `);
+        const migrate = this.db.transaction(() => {
+            const currentVersion = this.db.prepare('SELECT value FROM library_meta WHERE key = ?')
+                .get(FILE_PATH_NORMALIZATION_META_KEY)?.value;
+            if (currentVersion === FILE_PATH_NORMALIZATION_VERSION) return;
+
+            const pathsByCanonicalPath = new Map();
+            for (const row of this.db.prepare('SELECT path FROM files').iterate()) {
+                const storedPath = row.path;
+                const canonicalPath = this.normalizeFilePath(storedPath);
+                if (!pathsByCanonicalPath.has(canonicalPath)) {
+                    pathsByCanonicalPath.set(canonicalPath, storedPath);
+                    continue;
+                }
+                const existing = pathsByCanonicalPath.get(canonicalPath);
+                if (Array.isArray(existing)) existing.push(storedPath);
+                else pathsByCanonicalPath.set(canonicalPath, [existing, storedPath]);
+            }
+            const changedPathGroups = [];
+            for (const [canonicalPath, storedPaths] of pathsByCanonicalPath) {
+                const storedPathGroup = Array.isArray(storedPaths) ? storedPaths : [storedPaths];
+                if (storedPathGroup.length > 1 || storedPathGroup[0] !== canonicalPath) {
+                    changedPathGroups.push([canonicalPath, storedPathGroup]);
+                }
+            }
+            if (changedPathGroups.length > 0) {
+                this.db.exec(`
+                    DROP TRIGGER IF EXISTS files_search_ai;
+                    DROP TRIGGER IF EXISTS files_search_ad;
+                    DROP TRIGGER IF EXISTS files_search_au;
+                    DROP TABLE IF EXISTS files_search_fts;
+                    DROP VIEW IF EXISTS files_search_content;
+                    DROP TABLE IF EXISTS files_search_ids;
+                `);
+                this.db.prepare('DELETE FROM library_meta WHERE key = ?')
+                    .run(FILE_SEARCH_INDEX_META_KEY);
+            }
+            for (const [canonicalPath, storedPathGroup] of changedPathGroups) {
+                const equivalentRows = selectEquivalentRows(storedPathGroup);
+                const merged = mergeEquivalentFileRecords(equivalentRows, canonicalPath);
+                for (const row of equivalentRows) remove.run(row.path);
+                insert.run(Object.fromEntries(
+                    FILE_COLUMNS.map(column => [column, merged[column]]),
+                ));
+            }
+            saveVersion.run(FILE_PATH_NORMALIZATION_META_KEY, FILE_PATH_NORMALIZATION_VERSION);
+        });
+        migrate.immediate();
+        this.searchIndexAttempted = false;
+        this.searchIndexReady = false;
+        this.searchIndexUnhealthy = false;
     }
 
     sanitizeFormatColumn() {
@@ -615,12 +751,15 @@ export class LibraryDB {
     }
 
     normalizeFileRecord(record = {}) {
+        const filePath = this.normalizeFilePath(
+            record.path || record.filepath || record.file_path || record.full_path || '',
+        );
         return {
             ...record,
-            path: record.path || record.filepath || record.file_path || record.full_path || '',
+            path: filePath,
             mtime: record.mtime ?? record.mod_date ?? 0,
             size: record.size ?? record.file_size ?? 0,
-            ext: record.ext || path.extname(record.path || record.filepath || record.file_path || record.full_path || '').toLowerCase(),
+            ext: record.ext || path.extname(filePath).toLowerCase(),
             title: record.title ?? record.meta_title ?? '',
             series: record.series ?? record.series_name ?? '',
             series_group: record.series_group ?? '',
@@ -699,7 +838,7 @@ export class LibraryDB {
                 page_count AS pages,
                 thumb_path AS thumbnail
             FROM files WHERE path = ?`,
-        ).get(filePath) || null);
+        ).get(this.normalizeFilePath(filePath)) || null);
     }
 
     async getDistinctPublishers(limit = 500) {
@@ -751,15 +890,26 @@ export class LibraryDB {
             const term = String(query || '').trim();
             const normalizedPaths = [...new Set((libraryPaths || [])
                 .filter(Boolean)
-                .map(folder => path.resolve(folder)))];
+                .map(folder => this.normalizeFilePath(path.resolve(folder))))];
             if (!term || normalizedPaths.length === 0) return [];
 
             const limit = Math.max(1, Math.min(5000, Number(options.limit) || 1000));
+            const termVariants = [...new Set([
+                term.normalize('NFC'),
+                term.normalize('NFD'),
+            ])];
+            const canUseTrigramIndex = termVariants.every(
+                value => Array.from(value).length >= 3,
+            );
             const libraryClauses = normalizedPaths.map(() => "(f.path LIKE ? ESCAPE '\\')");
-            const searchClauses = FILE_SEARCH_COLUMNS.map(column => `LOWER(COALESCE(f.${column}, '')) LIKE LOWER(?) ESCAPE '\\'`);
+            const searchClauses = FILE_SEARCH_COLUMNS.map(column => `(${termVariants
+                .map(() => `LOWER(COALESCE(f.${column}, '')) LIKE LOWER(?) ESCAPE '\\'`)
+                .join(' OR ')})`);
             const libraryParams = normalizedPaths.map(folder => `${escapeLikeValue(`${folder}${path.sep}`)}%`);
-            const searchParam = `%${escapeLikeValue(term)}%`;
-            const searchParams = FILE_SEARCH_COLUMNS.map(() => searchParam);
+            const searchParams = FILE_SEARCH_COLUMNS.flatMap(() => (
+                termVariants.map(value => `%${escapeLikeValue(value)}%`)
+            ));
+            const ftsQuery = termVariants.map(ftsLiteralPhrase).join(' OR ');
 
             const runLikeSearch = () => db.prepare(`
                 SELECT f.*
@@ -773,7 +923,7 @@ export class LibraryDB {
             `).all(...libraryParams, ...searchParams, limit);
 
             if (
-                Array.from(term).length < 3
+                !canUseTrigramIndex
                 || options.useSearchIndex === false
                 || !this.ensureSearchIndex(db)
             ) {
@@ -793,7 +943,7 @@ export class LibraryDB {
                         COALESCE(NULLIF(f.series, ''), NULLIF(f.title, ''), f.path) COLLATE NOCASE ASC,
                         f.path COLLATE NOCASE ASC
                     LIMIT ?
-                `).all(ftsLiteralPhrase(term), ...libraryParams, ...searchParams, limit);
+                `).all(ftsQuery, ...libraryParams, ...searchParams, limit);
             } catch (error) {
                 this.searchIndexReady = false;
                 this.searchIndexAttempted = true;
@@ -808,7 +958,7 @@ export class LibraryDB {
         return this.withLock(async () => {
             const normalizedPaths = [...new Set((libraryPaths || [])
                 .filter(Boolean)
-                .map(folder => path.resolve(folder)))];
+                .map(folder => this.normalizeFilePath(path.resolve(folder))))];
             if (normalizedPaths.length === 0) return [];
 
             const clauses = normalizedPaths.map(() => "path LIKE ? ESCAPE '\\'");
@@ -826,7 +976,9 @@ export class LibraryDB {
 
     async listFilesByPaths(filePaths = []) {
         return this.withLock(async () => {
-            const normalizedPaths = [...new Set((filePaths || []).filter(Boolean).map(String))];
+            const normalizedPaths = [...new Set((filePaths || [])
+                .filter(Boolean)
+                .map(filePath => this.normalizeFilePath(String(filePath))))];
             if (normalizedPaths.length === 0) return [];
 
             const connection = this.getConnection();
@@ -893,7 +1045,9 @@ export class LibraryDB {
 
     async getFilesByPaths(filePaths = []) {
         return this.withLock(async () => {
-            const normalizedPaths = [...new Set((filePaths || []).filter(Boolean).map(filePath => path.resolve(filePath)))];
+            const normalizedPaths = [...new Set((filePaths || [])
+                .filter(Boolean)
+                .map(filePath => this.normalizeFilePath(path.resolve(filePath))))];
             if (normalizedPaths.length === 0) return [];
             const db = this.getConnection();
             const rows = [];
@@ -1111,8 +1265,8 @@ export class LibraryDB {
                 .filter(Boolean);
             const fileInfoMoves = (changes.fileInfoMoves || [])
                 .map(move => ({
-                    src: move?.src ? path.resolve(move.src) : '',
-                    dest: move?.dest ? path.resolve(move.dest) : '',
+                    src: move?.src ? this.normalizeFilePath(path.resolve(move.src)) : '',
+                    dest: move?.dest ? this.normalizeFilePath(path.resolve(move.dest)) : '',
                     recursive: move?.recursive === true,
                 }))
                 .filter(move => move.src && move.dest);
@@ -1125,7 +1279,7 @@ export class LibraryDB {
                 .filter(move => move.src && move.dest);
             const fileInfoDeletes = (changes.fileInfoDeletes || [])
                 .map(entry => ({
-                    path: entry?.path ? path.resolve(entry.path) : '',
+                    path: entry?.path ? this.normalizeFilePath(path.resolve(entry.path)) : '',
                     recursive: entry?.recursive === true,
                 }))
                 .filter(entry => entry.path);
@@ -1199,7 +1353,7 @@ export class LibraryDB {
             };
             const fileValues = (record = {}, filePath, stat = fileStat(filePath)) => {
                 const values = Object.fromEntries(FILE_COLUMNS.map(column => [column, record[column] ?? '']));
-                values.path = filePath;
+                values.path = this.normalizeFilePath(filePath);
                 const rawMtime = Number(stat.mtime) || 0;
                 values.mtime = rawMtime > 100000000000 ? rawMtime / 1000 : rawMtime;
                 values.size = stat.size;
@@ -1298,9 +1452,9 @@ export class LibraryDB {
                         ? selectFilePrefix.all(move.src, prefixLike(move.src))
                         : [selectFileExact.get(move.src)].filter(Boolean);
                     for (const row of rows) {
-                        const sourcePath = path.resolve(row.path);
+                        const sourcePath = this.normalizeFilePath(path.resolve(row.path));
                         const destinationPath = move.recursive
-                            ? path.resolve(move.dest, path.relative(move.src, sourcePath))
+                            ? this.normalizeFilePath(path.resolve(move.dest, path.relative(move.src, sourcePath)))
                             : move.dest;
                         if (sourcePath !== destinationPath) deleteFile.run(destinationPath);
                         deleteFile.run(row.path);
@@ -1498,11 +1652,14 @@ export class LibraryDB {
 
     async getAllFilesInPath(folderPath, includeSub) {
         return this.withLock(async () => {
-            const normalized = path.resolve(folderPath);
+            const normalized = this.normalizeFilePath(path.resolve(folderPath));
             const rows = this.getConnection().prepare('SELECT * FROM files WHERE path LIKE ?').all(
                 `${normalized}${path.sep}%`,
             );
-            return rows.filter(row => includeSub || path.dirname(path.resolve(row.path)) === normalized);
+            return rows.filter(row => (
+                includeSub
+                || this.normalizeFilePath(path.dirname(path.resolve(row.path))) === normalized
+            ));
         });
     }
 
