@@ -93,10 +93,13 @@ import {
   resolveThumbnailDir,
 } from './dataPaths.js';
 import {
+  commitRenameOperation,
   executeLibraryMoveAsync,
   executeMultiRename,
   findLibraryMoveConflicts,
   removeTreeIfNoFilesAsync,
+  reverseRenameMapForCompletedMoves,
+  saveRenameHistoryFile,
   undoRename,
 } from './fsOperations.js';
 import {
@@ -115,6 +118,10 @@ import {
   parseImageDataUrl,
   toGeminiResponseSchema,
 } from './coverTitleIdentification.js';
+import {
+  decodeMetadataCoverDataUrl,
+  defaultMetadataCoverName,
+} from './metadataCoverExport.js';
 
 const RENAMER_PREVIEW_MAX_DIMENSION = 720;
 const RENAMER_PREVIEW_JPEG_QUALITY = 86;
@@ -1270,11 +1277,13 @@ function normalizeApiSource(apiName = '') {
 function normalizeSearchBookType(value = '') {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'pdf') return 'pdf';
+  if (['audio', 'audiobook', 'audio-book'].includes(raw)) return 'audio';
   return ['book', 'document', 'novel', 'epub', 'txt'].includes(raw) ? 'book' : 'comic';
 }
 
 function metadataFormatForBookType(bookType = 'comic') {
   if (bookType === 'pdf') return 'PDF';
+  if (bookType === 'audio') return 'Audiobook';
   return bookType === 'book' ? 'Novel' : 'Manga';
 }
 
@@ -1283,7 +1292,7 @@ function mangaValueForBookType(bookType = 'comic') {
 }
 
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
-  const allowed = bookType === 'book' || bookType === 'pdf'
+  const allowed = bookType === 'book' || bookType === 'pdf' || bookType === 'audio'
     ? new Set(['리디북스', '알라딘', 'Google Books', 'Amazon'])
     : new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
   return allowed.has(apiName);
@@ -1715,7 +1724,7 @@ function extractAmazonSearchAuthor(chunk = '') {
   return names.slice(0, 3).join(', ');
 }
 
-function parseAmazonSearchHtml(html = '') {
+function parseAmazonSearchHtml(html = '', bookType = 'book') {
   const entries = [];
   const chunks = String(html || '').split(/<div\b[^>]*data-component-type=["']s-search-result["'][^>]*>/i).slice(1);
 
@@ -1762,8 +1771,8 @@ function parseAmazonSearchHtml(html = '') {
       CommunityRating: rating,
       AgeRating: '',
       PubDate: '',
-      Format: 'Novel',
-      Manga: '',
+      Format: metadataFormatForBookType(bookType),
+      Manga: mangaValueForBookType(bookType),
       LocalizedSeries: title,
       Year: '',
       Month: '',
@@ -1900,7 +1909,7 @@ async function fetchAmazonBookDetail(url = '') {
   };
 }
 
-async function searchAmazon(query, page = 1) {
+async function searchAmazon(query, page = 1, bookType = 'book') {
   const params = new URLSearchParams({
     k: query,
     i: 'stripbooks',
@@ -1916,7 +1925,7 @@ async function searchAmazon(query, page = 1) {
     html = await requestTextGeneric(url, headers, 12000);
   }
 
-  const rawResults = parseAmazonSearchHtml(html).slice(0, 20);
+  const rawResults = parseAmazonSearchHtml(html, bookType).slice(0, 20);
   let cursor = 0;
   const worker = async () => {
     while (cursor < rawResults.length) {
@@ -2816,7 +2825,7 @@ function normalizeLibrarySearchFileForRenderer(row = {}) {
   const filePath = row.path || '';
   const mtimeMs = fileMtimeToMs(row.mtime);
   const thumbnailPath = row.thumb_path || '';
-  const hasMetadata = [
+  const inferredHasMetadata = [
     row.title,
     row.series,
     row.series_group,
@@ -2828,6 +2837,9 @@ function normalizeLibrarySearchFileForRenderer(row = {}) {
     row.characters,
     row.tags,
   ].some(Boolean);
+  const hasMetadata = row.has_metadata === null || row.has_metadata === undefined || row.has_metadata === ''
+    ? inferredHasMetadata
+    : Boolean(Number(row.has_metadata));
   return {
     ...row,
     name: path.basename(filePath),
@@ -3534,7 +3546,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   ipcMain.handle('metadata:cover', async (_event, filePath, options = {}) => {
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
-    return loadMetadataCover(filePath, { ...options, sevenZExe });
+    return loadMetadataCover(filePath, {
+      ...options,
+      sevenZExe,
+      dbPath: libraryDbPath(),
+    });
   });
 
   ipcMain.handle('api:identifyCoverTitles', async (_event, options = {}) => {
@@ -3584,6 +3600,30 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return loadMetadataImageFile(filePath);
   });
 
+  ipcMain.handle('metadata:exportCover', async (event, options = {}) => {
+    const filePath = String(options.filePath || '');
+    const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
+    const coverDataUrl = String(options.coverDataUrl || '') || await loadMetadataCover(filePath, {
+      sevenZExe,
+      dbPath: libraryDbPath(),
+    });
+    const cover = decodeMetadataCoverDataUrl(coverDataUrl);
+    if (!cover) return { success: false, reason: 'no_cover' };
+
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showSaveDialog(window, {
+      title: options.title || i18nT('audio_cover_export'),
+      defaultPath: filePath
+        ? path.join(path.dirname(filePath), defaultMetadataCoverName(filePath, cover.extension))
+        : defaultMetadataCoverName('', cover.extension),
+      filters: [{ name: 'Image', extensions: [cover.extension.slice(1)] }],
+    });
+    const destinationPath = normalizeSaveDialogResult(result);
+    if (!destinationPath) return { success: false, cancelled: true };
+    await fs.promises.writeFile(destinationPath, cover.buffer);
+    return { success: true, filePath: destinationPath };
+  });
+
   ipcMain.handle('metadata:cacheRemoteCover', async (_event, imageUrl) => {
     const filePath = await fetchImageCacheFileFromUrl(imageUrl, apiCoverCacheDir());
     return {
@@ -3603,6 +3643,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         ...options,
         sevenZExe,
         dbPath: libraryDbPath(),
+        thumbnailDir: thumbnailDir(),
+        thumbnailEncoder: encodeThumbnail,
         normalizeEpubCoverImage: normalizeEpubCoverImageBuffer,
         refreshFilePreview: filePath => inspectFolderFile(filePath, {
           dbPath: libraryDbPath(),
@@ -3686,7 +3728,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       } else if (apiName === '알라딘') {
         results = await searchAladin(query, apiKeys.aladin || '', page, bookType);
       } else if (apiName === 'Amazon') {
-        results = await searchAmazon(query, page);
+        results = await searchAmazon(query, page, bookType);
       } else if (apiName === 'Vine') {
         results = await searchVine(query, apiKeys.vine || '', page);
       } else {
@@ -4805,7 +4847,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   function loadRenameHistory() {
     try {
       if (fs.existsSync(historyPath)) {
-        return JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
+        const history = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
+        return Array.isArray(history) ? history : [];
       }
     } catch (e) {
       console.error('Failed to load rename history', e);
@@ -4815,11 +4858,57 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   function saveRenameHistory(history) {
     try {
-      fs.mkdirSync(path.dirname(historyPath), { recursive: true });
-      fs.writeFileSync(historyPath, JSON.stringify(history, null, 2), 'utf-8');
+      saveRenameHistoryFile(historyPath, history);
     } catch (e) {
       console.error('Failed to save rename history', e);
+      throw e;
     }
+  }
+
+  async function syncFileInfoPathChanges(completedMoves = [], fileInfoDeletes = []) {
+    if (completedMoves.length === 0 && fileInfoDeletes.length === 0) return null;
+    const config = configManager.getConfig() || {};
+    const libraryPaths = [...new Set([
+      ...(config.libraries || []),
+      ...(config.dup_check_folders || []),
+    ]
+      .filter(Boolean)
+      .map(folderPath => path.resolve(folderPath)))];
+    const touchedLibraries = new Set();
+    const includeContainingLibrary = filePath => {
+      const libraryPath = findContainingLibraryPath(filePath, libraryPaths);
+      if (libraryPath) touchedLibraries.add(libraryPath);
+      return libraryPath;
+    };
+    for (const move of completedMoves) {
+      const sourceLibrary = includeContainingLibrary(move.src);
+      includeContainingLibrary(move.dest);
+      if (move.recursive && sourceLibrary && path.resolve(move.src) === sourceLibrary) {
+        touchedLibraries.add(path.resolve(move.dest));
+      }
+    }
+    for (const entry of fileInfoDeletes) includeContainingLibrary(entry.path);
+
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      return await db.applyLibraryMoveIndexChanges({
+        fileInfoMoves: completedMoves,
+        targetIndexMoves: completedMoves,
+        fileInfoDeletes,
+        sourcePaths: fileInfoDeletes.filter(entry => !entry.recursive).map(entry => entry.path),
+        sourcePrefixes: fileInfoDeletes.filter(entry => entry.recursive).map(entry => entry.path),
+        touchedLibraries: [...touchedLibraries],
+      });
+    } finally {
+      await db.close();
+    }
+  }
+
+  function renameRollbackRecord(completedMoves = []) {
+    return {
+      timestamp: Date.now(),
+      mapping: Object.fromEntries(completedMoves.map(move => [move.dest, move.src])),
+    };
   }
 
   // 1. 단일 파일/폴더 이름 변경
@@ -4828,16 +4917,37 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       if (fs.existsSync(newPath) && oldPath.toLowerCase() !== newPath.toLowerCase()) {
         return { success: false, message: i18nT('fs_path_exists') };
       }
+      const recursive = fs.statSync(oldPath).isDirectory();
+      const originalHistory = loadRenameHistory();
+      const nextHistory = [
+        ...originalHistory,
+        {
+          timestamp: Date.now(),
+          mapping: { [newPath]: oldPath },
+        },
+      ];
+      if (nextHistory.length > 10) nextHistory.splice(0, nextHistory.length - 10);
+      const completedMoves = [{ src: oldPath, dest: newPath, recursive }];
       fs.renameSync(oldPath, newPath);
-
-      // 히스토리 기록
-      const history = loadRenameHistory();
-      history.push({
-        timestamp: Date.now(),
-        mapping: { [newPath]: oldPath }
+      const committed = await commitRenameOperation({
+        completedMoves,
+        previousHistory: originalHistory,
+        nextHistory,
+        saveHistory: saveRenameHistory,
+        syncPathChanges: syncFileInfoPathChanges,
+        rollbackPathChanges: moves => undoRename([renameRollbackRecord(moves)]),
       });
-      if (history.length > 10) history.splice(0, history.length - 10);
-      saveRenameHistory(history);
+      if (!committed.success) {
+        return {
+          success: false,
+          message: committed.error.message,
+          errors: [
+            committed.error.message,
+            ...(committed.rollback?.errors || []),
+            ...(committed.historyRestoreError ? [committed.historyRestoreError.message] : []),
+          ],
+        };
+      }
 
       return { success: true };
     } catch (error) {
@@ -4866,8 +4976,28 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // 2. 다중 파일 이름 변경 (Multi-rename)
   ipcMain.handle('fs:multiRename', async (_, renameMap) => {
-    const result = executeMultiRename(renameMap, loadRenameHistory());
-    saveRenameHistory(result.history);
+    const originalHistory = loadRenameHistory();
+    const result = executeMultiRename(renameMap, originalHistory);
+    const committed = await commitRenameOperation({
+      completedMoves: result.completedMoves,
+      previousHistory: originalHistory,
+      nextHistory: result.history,
+      saveHistory: saveRenameHistory,
+      syncPathChanges: syncFileInfoPathChanges,
+      rollbackPathChanges: moves => undoRename([renameRollbackRecord(moves)]),
+    });
+    if (!committed.success) {
+      return {
+        success: false,
+        successCount: Math.max(0, result.completedMoves.length - committed.rollback.successCount),
+        errors: [
+          ...result.errors,
+          committed.error.message,
+          ...(committed.rollback?.errors || []),
+          ...(committed.historyRestoreError ? [committed.historyRestoreError.message] : []),
+        ],
+      };
+    }
     return {
       success: result.success,
       successCount: result.successCount,
@@ -4877,8 +5007,31 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // 3. 파일 이름 변경 Undo
   ipcMain.handle('fs:undoRename', async () => {
-    const result = undoRename(loadRenameHistory());
-    saveRenameHistory(result.history);
+    const originalHistory = loadRenameHistory();
+    const result = undoRename(originalHistory);
+    const committed = await commitRenameOperation({
+      completedMoves: result.completedMoves,
+      previousHistory: originalHistory,
+      nextHistory: result.history,
+      saveHistory: saveRenameHistory,
+      syncPathChanges: syncFileInfoPathChanges,
+      rollbackPathChanges: moves => executeMultiRename(
+        reverseRenameMapForCompletedMoves(moves),
+      ),
+    });
+    if (!committed.success) {
+      return {
+        success: false,
+        successCount: Math.max(0, result.completedMoves.length - committed.rollback.successCount),
+        errors: [
+          ...result.errors,
+          committed.error.message,
+          ...(committed.rollback?.errors || []),
+          ...(committed.historyRestoreError ? [committed.historyRestoreError.message] : []),
+        ],
+        message: committed.error.message,
+      };
+    }
     return {
       success: result.success,
       successCount: result.successCount,
@@ -4890,16 +5043,24 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   // 4. 휴지통으로 이동
   ipcMain.handle('fs:delete', async (_, filePaths) => {
     const deleted = [];
+    const fileInfoDeletes = [];
     const errors = [];
     for (const filePath of filePaths) {
       try {
         if (fs.existsSync(filePath)) {
+          const recursive = fs.statSync(filePath).isDirectory();
           await shell.trashItem(filePath);
           deleted.push(filePath);
+          fileInfoDeletes.push({ path: filePath, recursive });
         }
       } catch (err) {
         errors.push(i18nT('fs_delete_failed', [path.basename(filePath), err.message]));
       }
+    }
+    try {
+      await syncFileInfoPathChanges([], fileInfoDeletes);
+    } catch (error) {
+      errors.push(error.message);
     }
     return {
       success: errors.length === 0,

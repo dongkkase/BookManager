@@ -18,6 +18,26 @@ function pngHeader(width, height) {
     return buffer;
 }
 
+function silentWav(durationSeconds = 1, sampleRate = 8000) {
+    const sampleCount = Math.max(1, Math.round(durationSeconds * sampleRate));
+    const dataLength = sampleCount * 2;
+    const buffer = Buffer.alloc(44 + dataLength);
+    buffer.write('RIFF', 0, 'ascii');
+    buffer.writeUInt32LE(36 + dataLength, 4);
+    buffer.write('WAVE', 8, 'ascii');
+    buffer.write('fmt ', 12, 'ascii');
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(1, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(sampleRate * 2, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34);
+    buffer.write('data', 36, 'ascii');
+    buffer.writeUInt32LE(dataLength, 40);
+    return buffer;
+}
+
 function find7z() {
     for (const candidate of ['/usr/local/bin/7z', '/opt/homebrew/bin/7z', '7z', '7za']) {
         const result = spawnSync(candidate, ['i'], { stdio: 'ignore' });
@@ -74,6 +94,88 @@ test('뷰어 세션은 같은 폴더의 이전권/다음권 가능 여부를 계
         assert.equal(third.filePath, path.resolve(thirdPath));
         assert.deepEqual(third.adjacent, { hasPrevious: true, hasNext: false });
         assert.throws(() => manager.createAdjacent(third.id, 1), /No adjacent book\./);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('오디오북 뷰어 세션은 같은 폴더의 오디오만 자연 정렬하고 범위 스트리밍 URL을 제공한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-audio-'));
+    try {
+        const firstPath = path.join(root, 'Track 1.mp3');
+        const secondPath = path.join(root, 'Track 2.wav');
+        const thirdPath = path.join(root, 'Track 10.m4b');
+        const coverOverridePath = path.join(root, 'audio-cover-override.png');
+        const coverOverride = Buffer.concat([pngHeader(1, 1), Buffer.from('audio-cover-override')]);
+        fs.writeFileSync(firstPath, 'not-real-mp3');
+        fs.writeFileSync(secondPath, silentWav());
+        fs.writeFileSync(thirdPath, 'not-real-m4b');
+        fs.writeFileSync(path.join(root, 'Track 3.pdf'), 'pdf');
+        fs.writeFileSync(coverOverridePath, coverOverride);
+
+        const manager = new ViewerSessionManager({
+            getAudioLibraryRecord: async filePath => filePath === path.resolve(secondPath) ? {
+                metadata_override: 1,
+                title: 'DB Audio Title',
+                series: 'DB Series',
+                writer: 'DB Narrator',
+                album: 'DB Album',
+                album_artist: 'DB Album Artist',
+                composer: 'DB Composer',
+                genre: 'Fiction',
+                publish_date: '2026',
+                track_number: '2',
+                track_total: '10',
+                disc_number: '1',
+                disc_total: '2',
+                duration_seconds: 345.5,
+                bitrate: 96000,
+                sample_rate: 48000,
+                codec: 'AAC LC',
+                container: 'MPEG-4',
+                channels: 2,
+                mime_type: 'audio/mp4',
+                cover_override_path: coverOverridePath,
+            } : null,
+        });
+        const session = manager.create(secondPath);
+        assert.equal(session.type, 'audio');
+        assert.deepEqual(session.adjacent, { hasPrevious: true, hasNext: true });
+
+        const queue = manager.listAudioQueue(session.id);
+        assert.equal(queue.currentIndex, 1);
+        assert.deepEqual(queue.items.map(item => item.fileName), [
+            'Track 1.mp3',
+            'Track 2.wav',
+            'Track 10.m4b',
+        ]);
+        assert.deepEqual(queue.items.map(item => item.current), [false, true, false]);
+
+        const next = manager.createAdjacent(session.id, 1);
+        assert.equal(next.filePath, path.resolve(thirdPath));
+        assert.equal(next.type, 'audio');
+        const selected = manager.createAudioQueueItem(next.id, 'Track 1.mp3');
+        assert.equal(selected.filePath, path.resolve(firstPath));
+
+        const audioData = await manager.getAudioData(session.id);
+        assert.equal(audioData.mime, 'audio/wav');
+        assert.match(audioData.documentUrl, /^bookmanager-document:\/\/session\//);
+        assert.equal(audioData.metadata.title, 'DB Audio Title');
+        assert.equal(audioData.metadata.artist, 'DB Narrator');
+        assert.equal(audioData.metadata.album, 'DB Album');
+        assert.equal(audioData.metadata.trackNumber, 2);
+        assert.equal(audioData.metadata.durationSeconds, 345.5);
+        assert.equal(audioData.metadata.mimeType, 'audio/mp4');
+        assert.match(audioData.metadata.artworkDataUrl, /^data:image\/png;base64,/);
+        assert.deepEqual(
+            Buffer.from(audioData.metadata.artworkDataUrl.split(',')[1], 'base64'),
+            coverOverride,
+        );
+        assert.equal('artworkBuffer' in audioData.metadata, false);
+
+        const request = manager.resolveDocumentRequest(audioData.documentUrl);
+        assert.equal(request.filePath, path.resolve(secondPath));
+        assert.equal(request.mime, 'audio/wav');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

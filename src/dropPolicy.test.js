@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     classifyDroppedEntries,
+    isSupportedAudioDropPath,
     isSupportedArchivePath,
     isSupportedDocumentDropPath,
     isSupportedDroppedFilePath,
@@ -25,6 +26,15 @@ test('문서 드롭 확장자는 메타데이터와 폴더 탭에서만 지원 �
     assert.equal(isSupportedDroppedFilePath('book.pdf', { includeDocuments: true }), true);
 });
 
+test('오디오북 드롭 확장자는 메타데이터와 폴더 탭에서 지원한다', () => {
+    for (const filePath of ['book.MP3', 'book.m4b', 'book.flac', 'book.opus', 'book.wave']) {
+        assert.equal(isSupportedAudioDropPath(filePath), true);
+        assert.equal(isSupportedDroppedFilePath(filePath), false);
+        assert.equal(isSupportedDroppedFilePath(filePath, { includeDocuments: true }), true);
+    }
+    assert.equal(isSupportedAudioDropPath('book.mp4'), false);
+});
+
 test('드롭 항목을 폴더·지원 파일·미지원 파일로 순서대로 분류한다', () => {
     assert.deepEqual(classifyDroppedEntries([
         { path: '/books', isDirectory: true },
@@ -41,10 +51,11 @@ test('드롭 항목을 폴더·지원 파일·미지원 파일로 순서대로 �
         { path: '/books/a.cbz', isFile: true },
         { path: '/books/book.epub', isFile: true },
         { path: '/books/book.pdf', isFile: true },
+        { path: '/books/audio.m4b', isFile: true },
         { path: '/books/readme.txt', isFile: true },
     ], { includeDocuments: true }), {
         folders: ['/books'],
-        files: ['/books/a.cbz', '/books/book.epub', '/books/book.pdf'],
+        files: ['/books/a.cbz', '/books/book.epub', '/books/book.pdf', '/books/audio.m4b'],
         unsupported: ['/books/readme.txt'],
     });
 });

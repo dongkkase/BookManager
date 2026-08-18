@@ -11,8 +11,28 @@ export const SUPPORTED_DOCUMENT_DROP_EXTENSIONS = Object.freeze([
     '.pdf',
 ]);
 
+export const SUPPORTED_AUDIO_DROP_EXTENSIONS = Object.freeze([
+    '.3gp',
+    '.aac',
+    '.aif',
+    '.aiff',
+    '.amr',
+    '.caf',
+    '.flac',
+    '.m4a',
+    '.m4b',
+    '.mp3',
+    '.oga',
+    '.ogg',
+    '.opus',
+    '.wav',
+    '.wave',
+    '.webm',
+]);
+
 const SUPPORTED_EXTENSION_SET = new Set(SUPPORTED_ARCHIVE_EXTENSIONS);
 const SUPPORTED_DOCUMENT_DROP_EXTENSION_SET = new Set(SUPPORTED_DOCUMENT_DROP_EXTENSIONS);
+const SUPPORTED_AUDIO_DROP_EXTENSION_SET = new Set(SUPPORTED_AUDIO_DROP_EXTENSIONS);
 
 function normalizedFileExtension(filePath) {
     const normalized = String(filePath || '')
@@ -31,9 +51,16 @@ export function isSupportedDocumentDropPath(filePath) {
     return SUPPORTED_DOCUMENT_DROP_EXTENSION_SET.has(normalizedFileExtension(filePath));
 }
 
+export function isSupportedAudioDropPath(filePath) {
+    return SUPPORTED_AUDIO_DROP_EXTENSION_SET.has(normalizedFileExtension(filePath));
+}
+
 export function isSupportedDroppedFilePath(filePath, options = {}) {
     return isSupportedArchivePath(filePath)
-        || Boolean(options.includeDocuments && isSupportedDocumentDropPath(filePath));
+        || Boolean(options.includeDocuments && (
+            isSupportedDocumentDropPath(filePath)
+            || isSupportedAudioDropPath(filePath)
+        ));
 }
 
 export function classifyDroppedEntries(entries = [], options = {}) {

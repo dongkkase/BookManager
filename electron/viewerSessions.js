@@ -7,6 +7,11 @@ import {
     listZipEntriesFromFile,
     readZipEntryFromFile,
 } from './core/zipArchive.js';
+import {
+    AUDIO_EXTENSIONS,
+    inferAudioMimeType,
+    readAudioMetadata,
+} from './audioMetadata.js';
 import { missingBinaryMessage } from './binaryPolicy.js';
 
 const COMIC_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
@@ -20,9 +25,11 @@ const SUPPORTED_VIEWER_EXTENSIONS = new Set([
     ...PDF_EXTENSIONS,
     ...EPUB_EXTENSIONS,
     ...TEXT_EXTENSIONS,
+    ...AUDIO_EXTENSIONS,
 ]);
 const MAX_EPUB_CHAPTER_BYTES = 8 * 1024 * 1024;
 const MAX_EPUB_STYLESHEET_BYTES = 1024 * 1024;
+const MAX_AUDIO_ARTWORK_BYTES = 16 * 1024 * 1024;
 const MAX_VIEWER_SESSIONS = 16;
 const MAX_CACHED_COMIC_ARCHIVE_ENTRIES = 10000;
 const EPUB_CSS_PROPERTY_TO_REACT_STYLE = new Map([
@@ -225,6 +232,7 @@ function documentMime(filePath = '') {
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.pdf') return 'application/pdf';
     if (extension === '.epub') return 'application/epub+zip';
+    if (AUDIO_EXTENSIONS.has(extension)) return inferAudioMimeType(filePath) || 'audio/*';
     return 'application/octet-stream';
 }
 
@@ -250,6 +258,7 @@ function viewerTypeForPath(filePath = '') {
     if (PDF_EXTENSIONS.has(extension)) return 'pdf';
     if (EPUB_EXTENSIONS.has(extension)) return 'epub';
     if (TEXT_EXTENSIONS.has(extension)) return 'text';
+    if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
     return 'unsupported';
 }
 
@@ -1695,10 +1704,15 @@ function sameViewerPath(left = '', right = '') {
 function listSiblingViewerFiles(filePath = '') {
     try {
         const folderPath = path.dirname(filePath);
+        const audioOnly = AUDIO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
         return fs.readdirSync(folderPath, { withFileTypes: true })
             .filter(entry => entry.isFile())
             .map(entry => path.join(folderPath, entry.name))
-            .filter(entryPath => SUPPORTED_VIEWER_EXTENSIONS.has(path.extname(entryPath).toLowerCase()))
+            .filter(entryPath => {
+                const extension = path.extname(entryPath).toLowerCase();
+                if (audioOnly) return AUDIO_EXTENSIONS.has(extension);
+                return SUPPORTED_VIEWER_EXTENSIONS.has(extension) && !AUDIO_EXTENSIONS.has(extension);
+            })
             .sort((left, right) => path.basename(left).localeCompare(path.basename(right), 'ko', {
                 numeric: true,
                 sensitivity: 'base',
@@ -1717,9 +1731,93 @@ function adjacentBookState(filePath = '') {
     };
 }
 
+function serializeAudioMetadata(metadata = {}) {
+    const artworkBuffer = metadata.artwork?.buffer
+        || metadata.artworkBuffer
+        || metadata.imageBuffer;
+    const artworkMimeType = metadata.artwork?.mimeType
+        || metadata.artworkMimeType
+        || 'image/jpeg';
+    const {
+        artwork: _artwork,
+        artworkBuffer: _artworkBuffer,
+        imageBuffer: _imageBuffer,
+        ...serializableMetadata
+    } = metadata;
+    return {
+        ...serializableMetadata,
+        artworkDataUrl: artworkBuffer
+            ? bufferToDataUrl(Buffer.from(artworkBuffer), artworkMimeType)
+            : '',
+    };
+}
+
+function audioMetadataWithLibraryOverride(metadata = {}, record = {}) {
+    if (Number(record?.metadata_override) !== 1) return metadata;
+    const writer = String(record.writer || '').trim();
+    const genre = String(record.genre || '').trim();
+    const yearMatch = String(record.publish_date || '').match(/\d{4}/);
+    const numericValue = value => {
+        if (value === '' || value === null || value === undefined) return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    };
+    return {
+        ...metadata,
+        title: record.title || '',
+        series: record.series || '',
+        artist: writer,
+        artists: writer ? [writer] : [],
+        writer,
+        album: record.album || '',
+        albumArtist: record.album_artist || '',
+        composer: record.composer || '',
+        genre,
+        genres: genre ? [genre] : [],
+        tags: record.tags || '',
+        publisher: record.publisher || '',
+        description: record.summary || '',
+        year: yearMatch ? Number(yearMatch[0]) : null,
+        trackNumber: numericValue(record.track_number),
+        trackTotal: numericValue(record.track_total),
+        discNumber: numericValue(record.disc_number),
+        discTotal: numericValue(record.disc_total),
+        durationSeconds: numericValue(record.duration_seconds),
+        bitrateBitsPerSecond: numericValue(record.bitrate),
+        sampleRateHz: numericValue(record.sample_rate),
+        codec: record.codec || '',
+        container: record.container || '',
+        channels: numericValue(record.channels),
+        mimeType: record.mime_type || metadata.mimeType || '',
+        has_metadata: true,
+    };
+}
+
+async function audioArtworkWithLibraryOverride(metadata = {}, record = {}) {
+    const overridePath = String(record?.cover_override_path || '').trim();
+    if (!overridePath || !isImageEntry(overridePath)) return metadata;
+    try {
+        const stat = await fsp.stat(overridePath);
+        if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_AUDIO_ARTWORK_BYTES) return metadata;
+        const buffer = await fsp.readFile(overridePath);
+        const mimeType = imageMime(overridePath);
+        return {
+            ...metadata,
+            artwork: { buffer, mimeType },
+            artworkBuffer: buffer,
+            artworkMimeType: mimeType,
+            imageBuffer: buffer,
+            imageName: path.basename(overridePath),
+        };
+    } catch {
+        return metadata;
+    }
+}
+
 export class ViewerSessionManager {
     constructor(options = {}) {
         this.getSevenZPath = options.getSevenZPath || (async () => '');
+        this.getAudioLibraryRecord = options.getAudioLibraryRecord || (async () => null);
         this.sessions = new Map();
         this.comicArchiveEntryCaches = new Map();
         this.currentSessionId = '';
@@ -1775,6 +1873,35 @@ export class ViewerSessionManager {
             throw new Error('No adjacent book.');
         }
         return this.create(entries[nextIndex]);
+    }
+
+    createAudioQueueItem(sessionId, fileName) {
+        const session = this.get(sessionId);
+        if (session.type !== 'audio') throw new Error('This file is not an audiobook.');
+        const entries = listSiblingViewerFiles(session.filePath);
+        const requestedName = String(fileName || '');
+        const nextPath = entries.find(entryPath => path.basename(entryPath) === requestedName);
+        if (!nextPath) {
+            throw new Error('Audiobook queue item was not found.');
+        }
+        return this.create(nextPath);
+    }
+
+    listAudioQueue(sessionId) {
+        const session = this.get(sessionId);
+        if (session.type !== 'audio') throw new Error('This file is not an audiobook.');
+        const entries = listSiblingViewerFiles(session.filePath);
+        const currentIndex = entries.findIndex(filePath => sameViewerPath(filePath, session.filePath));
+        return {
+            currentIndex,
+            items: entries.map((filePath, index) => ({
+                index,
+                fileName: path.basename(filePath),
+                title: path.basename(filePath, path.extname(filePath)),
+                extension: path.extname(filePath).toLowerCase(),
+                current: index === currentIndex,
+            })),
+        };
     }
 
     current() {
@@ -1877,13 +2004,36 @@ export class ViewerSessionManager {
 
     async getDocumentData(sessionId) {
         const session = this.get(sessionId);
-        if (session.type !== 'pdf' && session.type !== 'epub') {
+        if (session.type !== 'pdf' && session.type !== 'epub' && session.type !== 'audio') {
             throw new Error('This file is not a document.');
         }
         const mime = documentMime(session.filePath);
         return {
             mime,
             documentUrl: documentProtocolUrl(session),
+        };
+    }
+
+    async getAudioData(sessionId) {
+        const session = this.get(sessionId);
+        if (session.type !== 'audio') throw new Error('This file is not an audiobook.');
+        let metadata = {};
+        try {
+            metadata = await readAudioMetadata(session.filePath, { includeCover: true });
+        } catch {
+            metadata = {};
+        }
+        try {
+            const libraryRecord = await this.getAudioLibraryRecord(session.filePath);
+            metadata = audioMetadataWithLibraryOverride(metadata, libraryRecord);
+            metadata = await audioArtworkWithLibraryOverride(metadata, libraryRecord);
+        } catch {
+            // The embedded metadata remains usable when the library cache is unavailable.
+        }
+        return {
+            mime: documentMime(session.filePath),
+            documentUrl: documentProtocolUrl(session),
+            metadata: serializeAudioMetadata(metadata),
         };
     }
 
@@ -1899,7 +2049,7 @@ export class ViewerSessionManager {
         if (pathParts[1] === 'asset') return null;
         const sessionId = decodeURIComponent(pathParts[0] || '');
         const session = this.sessions.get(sessionId);
-        if (!session || (session.type !== 'pdf' && session.type !== 'epub')) return null;
+        if (!session || (session.type !== 'pdf' && session.type !== 'epub' && session.type !== 'audio')) return null;
         return {
             filePath: session.filePath,
             mime: documentMime(session.filePath),

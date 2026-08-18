@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listMetadataEpubImages: (filePath) => ipcRenderer.invoke('metadata:epubImages', filePath),
   loadMetadataEpubImage: (filePath, entryName) => ipcRenderer.invoke('metadata:epubImage', filePath, entryName),
   loadMetadataImageFile: (filePath) => ipcRenderer.invoke('metadata:imageFile', filePath),
+  exportMetadataCover: (options) => ipcRenderer.invoke('metadata:exportCover', options),
   cacheMetadataRemoteCover: (imageUrl) => ipcRenderer.invoke('metadata:cacheRemoteCover', imageUrl),
   saveMetadata: (items, options) => ipcRenderer.invoke('metadata:save', items, options),
   clearApiCache: () => ipcRenderer.invoke('cache:clearApi'),

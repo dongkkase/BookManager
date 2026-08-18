@@ -1,3 +1,5 @@
+import { resolveBookType } from './metadata/metadataTypes.js';
+
 const VIEWER_STATE_PREFIX = 'bookmanager-viewer-state:';
 const VIEWER_BOOKMARKS_PREFIX = 'bookmanager-viewer-bookmarks:';
 
@@ -82,20 +84,38 @@ function normalizeBookmarkCount(bookmarkValue) {
 
 function buildViewerFileStatus(file = {}, state = {}, bookmarkValue = [], hasStoredState = false) {
     const filePath = viewerStatusFilePath(file);
+    const isAudio = resolveBookType(file) === 'audio'
+        || Object.prototype.hasOwnProperty.call(state || {}, 'positionSeconds')
+        || Object.prototype.hasOwnProperty.call(state || {}, 'durationSeconds');
+    const positionSeconds = Math.max(0, numericValue(state?.positionSeconds, 0));
+    const durationSeconds = Math.max(0, numericValue(
+        firstMetadataValue(file, ['duration_seconds', 'durationSeconds', 'DurationSeconds'])
+        || state?.durationSeconds,
+        0,
+    ));
+    const audioPercent = durationSeconds > 0
+        ? Math.max(0, Math.min(100, Math.round((positionSeconds / durationSeconds) * 100)))
+        : 0;
     const pageCount = viewerStatusPageCount(file, state);
     const pageIndex = Math.max(0, Math.floor(numericValue(state?.pageIndex, 0)));
     const scrollPercent = Math.max(0, Math.min(100, numericValue(state?.scrollPercent, 0)));
     const bookmarkCount = normalizeBookmarkCount(bookmarkValue);
-    const hasReadingProgress = hasStoredState || pageIndex > 0 || scrollPercent > 0;
+    const hasReadingProgress = hasStoredState || (isAudio ? positionSeconds > 0 : pageIndex > 0 || scrollPercent > 0);
     const isCompleted = hasReadingProgress && (
-        (pageCount > 0 && pageIndex >= pageCount - 1)
-        || scrollPercent >= 99.5
+        isAudio
+            ? durationSeconds > 0 && (positionSeconds >= durationSeconds - 1 || audioPercent >= 100)
+            : (pageCount > 0 && pageIndex >= pageCount - 1) || scrollPercent >= 99.5
     );
     const pagePercent = pageCount > 0 ? ((pageIndex + 1) / pageCount) * 100 : 0;
-    const percent = Math.max(0, Math.min(100, Math.round(Math.max(pagePercent, scrollPercent))));
+    const percent = isAudio
+        ? audioPercent
+        : Math.max(0, Math.min(100, Math.round(Math.max(pagePercent, scrollPercent))));
 
     return {
         filePath,
+        isAudio,
+        positionSeconds,
+        durationSeconds,
         pageCount,
         pageIndex,
         scrollPercent,
@@ -171,6 +191,14 @@ export function viewerReadingStatusText(status = {}, t) {
 
 export function viewerReadingProgressParts(status = {}) {
     if (!status.hasReadingProgress) return { percentText: '', pageText: '' };
+    if (status.isAudio) {
+        const positionText = formatAudioStatusTime(status.positionSeconds);
+        const durationText = formatAudioStatusTime(status.durationSeconds);
+        return {
+            percentText: `${Math.max(0, Math.min(100, Math.round(numericValue(status.percent, 0))))}%`,
+            pageText: durationText ? `${positionText} / ${durationText}` : positionText,
+        };
+    }
     const pageIndex = Math.max(0, Math.floor(numericValue(status.pageIndex, 0)));
     const pageCount = Math.max(0, Math.floor(numericValue(status.pageCount, 0)));
     const currentPage = pageIndex + 1;
@@ -179,6 +207,16 @@ export function viewerReadingProgressParts(status = {}) {
         percentText: `${percent}%`,
         pageText: pageCount > 0 ? `${currentPage} / ${pageCount}p` : `${currentPage}p`,
     };
+}
+
+function formatAudioStatusTime(value) {
+    const totalSeconds = Math.max(0, Math.floor(numericValue(value, 0)));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return hours > 0
+        ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+        : `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 export function viewerReadingProgressText(status = {}) {

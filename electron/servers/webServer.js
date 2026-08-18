@@ -27,6 +27,7 @@ import {
 } from './web/webLibraryPage.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
 import { ViewerSessionManager } from '../viewerSessions.js';
+import { AUDIO_EXTENSION_VALUES, inferAudioMimeType } from '../audioMetadata.js';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -52,6 +53,7 @@ const WEB_VIEWER_EXTENSIONS = new Set([
     '.text',
     '.log',
     '.md',
+    ...AUDIO_EXTENSION_VALUES,
 ]);
 const WEB_METADATA_FIELDS = [
     'title',
@@ -171,6 +173,9 @@ function metadataFieldValue(record = {}, field = '') {
 }
 
 function hasMetadata(record = {}) {
+    if (record.has_metadata !== null && record.has_metadata !== undefined && record.has_metadata !== '') {
+        return Boolean(Number(record.has_metadata));
+    }
     return WEB_METADATA_FIELDS.some(field => String(metadataFieldValue(record, field) || '').trim());
 }
 
@@ -397,9 +402,16 @@ const WEB_SQL_METADATA_FIELDS = [
 ];
 
 function webSqlMetadataExpression() {
-    return WEB_SQL_METADATA_FIELDS
+    const inferredExpression = WEB_SQL_METADATA_FIELDS
         .map(field => `TRIM(COALESCE(${field}, '')) <> ''`)
         .join(' OR ');
+    return `(
+        CASE
+            WHEN has_metadata IS NOT NULL AND TRIM(CAST(has_metadata AS TEXT)) <> ''
+                THEN CAST(has_metadata AS INTEGER) <> 0
+            ELSE (${inferredExpression})
+        END
+    )`;
 }
 
 async function indexedCatalogPageFromDb(currentDir, roots = [], options = {}, pagination = {}) {
@@ -1129,6 +1141,7 @@ function webViewerDocumentMime(filePath = '') {
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.pdf') return 'application/pdf';
     if (extension === '.epub') return 'application/epub+zip';
+    if (AUDIO_EXTENSION_VALUES.includes(extension)) return inferAudioMimeType(filePath) || 'audio/*';
     return 'application/octet-stream';
 }
 
@@ -1226,7 +1239,13 @@ export function buildWebApp(config, options = {}, log = () => {}) {
     const roots = rootEntries.map(entry => entry.root);
     const viewerSessions = new ViewerSessionManager({
         getSevenZPath: async () => options.sevenZExe || '',
+        getAudioLibraryRecord: filePath => safeReadIndexedFile(filePath, options, log),
     });
+    const isAllowedViewerSession = session => Boolean(
+        session
+        && isWithinRoot(session.filePath, roots)
+        && isWebViewerPath(session.filePath),
+    );
 
     app.get('/', (_req, res) => {
         res.set('Content-Type', 'text/html; charset=utf-8').send(WEB_LIBRARY_HTML);
@@ -1286,6 +1305,25 @@ export function buildWebApp(config, options = {}, log = () => {}) {
         }
     });
 
+    app.get('/api/viewer/audio-queue-item/:sessionId', (req, res) => {
+        attachNoCache(res);
+        try {
+            const currentSession = viewerSessions.get(req.params.sessionId);
+            if (!isAllowedViewerSession(currentSession)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            const session = viewerSessions.createAudioQueueItem(req.params.sessionId, req.query.fileName);
+            if (!isWithinRoot(session.filePath, roots) || !isWebViewerPath(session.filePath)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            res.json({ session: webViewerSessionPayload(session) });
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
     app.get('/api/viewer/comic-pages/:sessionId', async (req, res) => {
         attachNoCache(res);
         try {
@@ -1321,7 +1359,11 @@ export function buildWebApp(config, options = {}, log = () => {}) {
         attachNoCache(res);
         try {
             const session = viewerSessions.get(req.params.sessionId);
-            if (session.type !== 'pdf' && session.type !== 'epub') {
+            if (!isAllowedViewerSession(session)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            if (session.type !== 'pdf' && session.type !== 'epub' && session.type !== 'audio') {
                 formatJsonError(res, 400, 'This file is not a document.');
                 return;
             }
@@ -1334,10 +1376,46 @@ export function buildWebApp(config, options = {}, log = () => {}) {
         }
     });
 
+    app.get('/api/viewer/audio-data/:sessionId', async (req, res) => {
+        attachNoCache(res);
+        try {
+            const session = viewerSessions.get(req.params.sessionId);
+            if (!isAllowedViewerSession(session)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            const result = await viewerSessions.getAudioData(req.params.sessionId);
+            res.json({
+                ...result,
+                documentUrl: webViewerDocumentUrl(session),
+            });
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
+    app.get('/api/viewer/audio-queue/:sessionId', (req, res) => {
+        attachNoCache(res);
+        try {
+            const session = viewerSessions.get(req.params.sessionId);
+            if (!isAllowedViewerSession(session)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            res.json(viewerSessions.listAudioQueue(req.params.sessionId));
+        } catch (error) {
+            sendViewerApiError(res, error);
+        }
+    });
+
     app.get('/api/viewer/document/:sessionId/:fileName', (req, res) => {
         try {
             const session = viewerSessions.get(req.params.sessionId);
-            if (session.type !== 'pdf' && session.type !== 'epub') {
+            if (!isAllowedViewerSession(session)) {
+                formatJsonError(res, 404, sharingText(config, 'sharing_file_not_found', '파일을 찾을 수 없습니다.'));
+                return;
+            }
+            if (session.type !== 'pdf' && session.type !== 'epub' && session.type !== 'audio') {
                 formatJsonError(res, 400, 'This file is not a document.');
                 return;
             }

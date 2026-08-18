@@ -64,3 +64,30 @@ test('상태 리더는 저장소를 한 번 스캔해 책갈피 수를 읽는다
     assert.equal(status.bookmarkCount, 2);
     assert.equal(viewerBookmarkStatusText(status, (key, values) => `${values[0]}개`), '2개');
 });
+
+test('오디오북 진행률과 초 단위 북마크 상태를 계산한다', () => {
+    const storage = new MemoryStorage({
+        'bookmanager-viewer-state:C:/audio.m4b': JSON.stringify({
+            positionSeconds: 3723,
+            durationSeconds: 7200,
+        }),
+        'bookmanager-viewer-bookmarks:C:/audio.m4b': JSON.stringify([
+            { id: 1, timeSeconds: 60, label: '1:00' },
+        ]),
+    });
+    const status = readViewerFileStatus({ path: 'C:/audio.m4b', book_type: 'audio' }, storage);
+
+    assert.equal(status.isAudio, true);
+    assert.equal(status.percent, 52);
+    assert.equal(status.isCompleted, false);
+    assert.equal(status.bookmarkCount, 1);
+    assert.equal(viewerReadingProgressText(status), '52% · 1:02:03 / 2:00:00');
+
+    const completed = readViewerFileStatus({ path: 'C:/done.mp3' }, new MemoryStorage({
+        'bookmanager-viewer-state:C:/done.mp3': JSON.stringify({
+            positionSeconds: 99.5,
+            durationSeconds: 100,
+        }),
+    }));
+    assert.equal(completed.isCompleted, true);
+});

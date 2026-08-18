@@ -787,6 +787,110 @@ test('라이브러리 이동 인덱스 반영은 전체 교체 없이 이동한 
     }
 });
 
+test('파일 시스템 이름 변경과 삭제는 오디오 DB override 및 검색 인덱스를 함께 갱신한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-audio-path-index-'));
+    try {
+        const dbPath = path.join(root, 'library.db');
+        const oldPath = path.join(root, 'Old Audio.m4b');
+        const newPath = path.join(root, 'New Audio.m4b');
+        const deletedPath = path.join(root, 'Deleted Audio.mp3');
+        const deletedFolder = path.join(root, 'Deleted Series');
+        const deletedChild = path.join(deletedFolder, 'Chapter 1.mp3');
+        fs.mkdirSync(deletedFolder, { recursive: true });
+        fs.writeFileSync(oldPath, 'audio');
+        fs.writeFileSync(deletedPath, 'deleted');
+        fs.writeFileSync(deletedChild, 'child');
+
+        const library = new LibraryDB({ dbPath });
+        await library.upsertFileInfo({
+            path: oldPath,
+            title: 'User Audio Title',
+            writer: 'User Narrator',
+            album: 'User Album',
+            composer: 'User Composer',
+            book_type: 'audio',
+            has_metadata: 1,
+            metadata_override: 1,
+            duration_seconds: 123.5,
+            mime_type: 'audio/mp4',
+        });
+        await library.upsertFileInfo({
+            path: deletedPath,
+            title: 'Deleted Exact Audio',
+            book_type: 'audio',
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        await library.upsertFileInfo({
+            path: deletedChild,
+            title: 'Deleted Child Audio',
+            book_type: 'audio',
+            has_metadata: 1,
+            metadata_override: 1,
+        });
+        const targetEntry = filePath => {
+            const stat = fs.statSync(filePath);
+            return {
+                full_path: filePath,
+                target_folder: root,
+                name: path.basename(filePath),
+                size: stat.size,
+                mtime: stat.mtimeMs,
+            };
+        };
+        await library.syncTargetIndex(root, [
+            targetEntry(oldPath),
+            targetEntry(deletedPath),
+            targetEntry(deletedChild),
+        ]);
+
+        fs.renameSync(oldPath, newPath);
+        const moved = await library.applyLibraryMoveIndexChanges({
+            fileInfoMoves: [{ src: oldPath, dest: newPath, recursive: false }],
+            targetIndexMoves: [{ src: oldPath, dest: newPath, recursive: false }],
+            touchedLibraries: [root],
+        });
+        assert.equal(moved.movedFileInfoCount, 1);
+        assert.equal(moved.movedTargetCount, 1);
+        assert.equal(await library.getFileInfo(oldPath), null);
+        assert.deepEqual(
+            (await library.getTargetIndex(root)).map(row => row.full_path).sort(),
+            [newPath, deletedPath, deletedChild].sort(),
+        );
+        const movedRecord = await library.getFileInfo(newPath);
+        assert.equal(movedRecord.title, 'User Audio Title');
+        assert.equal(movedRecord.writer, 'User Narrator');
+        assert.equal(movedRecord.album, 'User Album');
+        assert.equal(movedRecord.composer, 'User Composer');
+        assert.equal(movedRecord.has_metadata, 1);
+        assert.equal(movedRecord.metadata_override, 1);
+        assert.equal(movedRecord.duration_seconds, 123.5);
+        assert.equal(movedRecord.mime_type, 'audio/mp4');
+        assert.ok(Math.abs(Number(movedRecord.mtime) - fs.statSync(newPath).mtimeMs / 1000) < 0.01);
+
+        fs.rmSync(deletedPath);
+        fs.rmSync(deletedFolder, { recursive: true });
+        const removed = await library.applyLibraryMoveIndexChanges({
+            sourcePaths: [deletedPath],
+            sourcePrefixes: [deletedFolder],
+            fileInfoDeletes: [
+                { path: deletedPath, recursive: false },
+                { path: deletedFolder, recursive: true },
+            ],
+            touchedLibraries: [root],
+        });
+        assert.equal(removed.deletedFileInfoCount, 2);
+        assert.equal(await library.getFileInfo(deletedPath), null);
+        assert.equal(await library.getFileInfo(deletedChild), null);
+        assert.deepEqual(await library.searchFiles('Deleted', [root], { limit: 10 }), []);
+        assert.deepEqual((await library.getTargetIndex(root)).map(row => row.full_path), [newPath]);
+        assert.deepEqual(await library.getLibraryFolderChildren(root, root), []);
+        await library.close();
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('라이브러리 스캔 상태를 저장하고 기본 상태를 조회한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-library-state-'));
     try {

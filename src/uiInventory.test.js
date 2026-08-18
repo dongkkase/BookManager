@@ -16,6 +16,7 @@ const sources = {
         './components/folder/DetailPanel.jsx',
         './components/folder/ComicDetailPanel.jsx',
         './components/folder/BookDetailPanel.jsx',
+        './components/folder/AudiobookDetailPanel.jsx',
         './components/folder/detailPanelCommon.jsx',
     ].map(file => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'),
     folderCss: fs.readFileSync(new URL('./styles/FolderTab.css', import.meta.url), 'utf8'),
@@ -24,9 +25,13 @@ const sources = {
         './tabs/MetadataTab.jsx',
         './metadata/comicMetadataFields.js',
         './metadata/bookMetadataFields.js',
+        './metadata/audiobookMetadataFields.js',
         './components/metadata/ComicMetadataEditor.jsx',
         './components/metadata/BookMetadataEditor.jsx',
+        './components/metadata/AudiobookMetadataEditor.jsx',
     ].map(file => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'),
+    audiobookMetadataEditor: fs.readFileSync(new URL('./components/metadata/AudiobookMetadataEditor.jsx', import.meta.url), 'utf8'),
+    audiobookMetadataFields: fs.readFileSync(new URL('./metadata/audiobookMetadataFields.js', import.meta.url), 'utf8'),
     organizer: fs.readFileSync(new URL('./tabs/OrganizerTab.jsx', import.meta.url), 'utf8'),
     organizerCss: fs.readFileSync(new URL('./styles/OrganizerTab.css', import.meta.url), 'utf8'),
     renamer: fs.readFileSync(new URL('./tabs/RenamerTab.jsx', import.meta.url), 'utf8'),
@@ -568,6 +573,45 @@ test('도서 상세보기 패널은 메타데이터 관리와 같은 책 항목�
         ['도서 상세 ISBN', "metadataText(t, 't3_f_isbn'"],
         ['도서 상세 언어 코드', "metadataText(t, 't3_f_iso'"],
         ['도서 상세 평점', "metadataText(t, 't3_f_rating'"],
+    ]);
+});
+
+test('오디오북 상세보기와 메타데이터 편집기는 수정 가능 정보와 기술 정보를 분리한다', () => {
+    assertInventory('detailPanel', [
+        ['오디오북 상세보기 타입 분기', "resolveBookType(selectedFile) === 'audio'"],
+        ['오디오북 표지 폴백', 'name="headphones"'],
+        ['오디오북 아티스트', "metadataText(t, 'audio_f_artist'"],
+        ['오디오북 앨범', "metadataText(t, 'audio_f_album'"],
+        ['오디오북 트랙', "metadataText(t, 'audio_f_track'"],
+        ['오디오북 재생 시간', "metadataText(t, 'audio_f_duration'"],
+        ['오디오북 비트레이트', "metadataText(t, 'audio_f_bitrate'"],
+        ['오디오북 샘플레이트', "metadataText(t, 'audio_f_sample_rate'"],
+        ['오디오북 MIME 형식', "metadataText(t, 'audio_f_mime_type'"],
+    ]);
+    assertInventory('metadata', [
+        ['오디오북 편집기 타입 분기', "activeBookType === 'audio'"],
+        ['오디오북 메타데이터 필드 목록', 'AUDIOBOOK_META_FIELD_IDS'],
+        ['오디오북 앨범 필드', "{ id: 'Album'"],
+        ['오디오북 앨범 아티스트 필드', "{ id: 'AlbumArtist'"],
+        ['오디오북 작곡가 필드', "{ id: 'Composer'"],
+        ['오디오북 트랙 필드', "{ id: 'TrackNumber'"],
+        ['오디오북 디스크 필드', "{ id: 'DiscNumber'"],
+        ['오디오북 저장 필드 목록', 'AUDIOBOOK_SAVE_FIELD_IDS'],
+        ['오디오북 표지 편집 필드', 'renderAudioCoverField'],
+        ['오디오북 썸네일 저장', 'exportMetadataCover'],
+        ['오디오북 썸네일 교체', 'handleSelectLocalAudioCover'],
+        ['오디오북 원본 표지 복원', 'handleResetAudioCoverChange'],
+        ['오디오북 표지 저장 지시값', 'audioCoverChange'],
+    ]);
+    assert.match(sources.audiobookMetadataEditor, /renderCoverField\?\.\(\)/);
+    assert.doesNotMatch(sources.audiobookMetadataEditor, /sectionRef\(sectionRefs, 'technical'\)/);
+    assert.doesNotMatch(
+        sources.audiobookMetadataFields.match(/export const AUDIOBOOK_META_FIELDS = \[[\s\S]*?\n\];/)?.[0] || '',
+        /AUDIOBOOK_TECHNICAL_FIELDS/,
+    );
+    assertInventory('folderCss', [
+        ['오디오북 정사각형 표지', '.audiobook-detail-panel .detail-cover-image'],
+        ['오디오북 기술 정보', '.audiobook-technical-details .detail-line'],
     ]);
 });
 

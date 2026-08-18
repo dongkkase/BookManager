@@ -1,13 +1,81 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { t as i18nT } from './utils/i18n.js';
 
 const fsp = fs.promises;
 
+export function saveRenameHistoryFile(historyPath, history, fsImpl = fs) {
+  const tempPath = `${historyPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fsImpl.mkdirSync(path.dirname(historyPath), { recursive: true });
+    fsImpl.writeFileSync(tempPath, JSON.stringify(history, null, 2), 'utf-8');
+    fsImpl.renameSync(tempPath, historyPath);
+  } catch (error) {
+    try {
+      fsImpl.rmSync(tempPath, { force: true });
+    } catch {
+      // Preserve the original history write error.
+    }
+    throw error;
+  }
+}
+
+export async function commitRenameOperation({
+  completedMoves = [],
+  previousHistory = [],
+  nextHistory = [],
+  saveHistory,
+  syncPathChanges,
+  rollbackPathChanges,
+}) {
+  let historySaved = false;
+  try {
+    await saveHistory(nextHistory);
+    historySaved = true;
+    await syncPathChanges(completedMoves);
+    return { success: true };
+  } catch (error) {
+    let rollback = { successCount: 0, errors: [] };
+    try {
+      rollback = await rollbackPathChanges(completedMoves) || rollback;
+    } catch (rollbackError) {
+      rollback = { successCount: 0, errors: [rollbackError.message] };
+    }
+    const rollbackComplete = Number(rollback.successCount || 0) === completedMoves.length;
+    let historyRestoreError = null;
+    if (historySaved && rollbackComplete) {
+      try {
+        await saveHistory(previousHistory);
+      } catch (restoreError) {
+        historyRestoreError = restoreError;
+      }
+    }
+    return {
+      success: false,
+      error,
+      rollback,
+      rollbackComplete,
+      historyRestoreError,
+    };
+  }
+}
+
+export function reverseRenameMapForCompletedMoves(completedMoves = []) {
+  const safeMoves = Array.isArray(completedMoves) ? completedMoves : [];
+  return Object.fromEntries(
+    [...safeMoves]
+      .reverse()
+      .filter(move => move?.src && move?.dest)
+      .map(move => [move.dest, move.src]),
+  );
+}
+
 function appendRenameHistory(history, mapping) {
-  if (Object.keys(mapping).length === 0) return history;
+  const safeHistory = Array.isArray(history) ? history : [];
+  if (Object.keys(mapping).length === 0) return safeHistory;
   const next = [
-    ...history,
+    ...safeHistory,
     {
       timestamp: Date.now(),
       mapping,
@@ -21,6 +89,7 @@ export function executeMultiRename(renameMap, history = []) {
   const errors = [];
   let successCount = 0;
   const actualMapping = {};
+  const completedMoves = [];
 
   for (const [oldPath, newPath] of Object.entries(renameMap || {})) {
     try {
@@ -32,8 +101,10 @@ export function executeMultiRename(renameMap, history = []) {
         errors.push(i18nT('fs_name_exists', [path.basename(newPath)]));
         continue;
       }
+      const recursive = fs.statSync(oldPath).isDirectory();
       fs.renameSync(oldPath, newPath);
       actualMapping[newPath] = oldPath;
+      completedMoves.push({ src: oldPath, dest: newPath, recursive });
       successCount++;
     } catch (error) {
       errors.push(i18nT('fs_rename_failed', [path.basename(oldPath), error.message]));
@@ -44,47 +115,69 @@ export function executeMultiRename(renameMap, history = []) {
     success: errors.length === 0,
     successCount,
     errors,
+    completedMoves,
     history: appendRenameHistory(history, actualMapping),
   };
 }
 
 export function undoRename(history = []) {
-  if (history.length === 0) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  if (safeHistory.length === 0) {
     return {
       success: false,
       successCount: 0,
       errors: [],
       message: i18nT('fs_undo_empty'),
-      history,
+      completedMoves: [],
+      history: safeHistory,
     };
   }
-  const nextHistory = [...history];
+  const nextHistory = [...safeHistory];
   const lastRecord = nextHistory.pop();
   const mapping = lastRecord?.mapping || {};
+  const mappingEntries = Object.entries(mapping);
+  const failedCurrentPaths = new Set();
   const errors = [];
+  const completedMoves = [];
   let successCount = 0;
 
-  for (const [currentPath, oldPath] of Object.entries(mapping)) {
+  for (const [currentPath, oldPath] of [...mappingEntries].reverse()) {
     if (fs.existsSync(currentPath)) {
       try {
         if (fs.existsSync(oldPath)) {
           errors.push(i18nT('fs_restore_exists', [path.basename(oldPath)]));
+          failedCurrentPaths.add(currentPath);
           continue;
         }
+        const recursive = fs.statSync(currentPath).isDirectory();
         fs.renameSync(currentPath, oldPath);
+        completedMoves.push({ src: currentPath, dest: oldPath, recursive });
         successCount++;
       } catch (error) {
         errors.push(i18nT('fs_restore_failed', [path.basename(currentPath), error.message]));
+        failedCurrentPaths.add(currentPath);
       }
     } else {
       errors.push(i18nT('fs_file_missing', [path.basename(currentPath)]));
+      failedCurrentPaths.add(currentPath);
     }
+  }
+
+  const remainingMapping = Object.fromEntries(
+    mappingEntries.filter(([currentPath]) => failedCurrentPaths.has(currentPath)),
+  );
+  if (Object.keys(remainingMapping).length > 0) {
+    nextHistory.push({
+      ...lastRecord,
+      mapping: remainingMapping,
+    });
   }
 
   return {
     success: errors.length === 0,
     successCount,
     errors,
+    completedMoves,
     history: nextHistory,
   };
 }

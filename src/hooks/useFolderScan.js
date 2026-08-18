@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { resolveBookType } from '../metadata/metadataTypes.js';
+import { AUDIO_EXTENSIONS, resolveBookType } from '../metadata/metadataTypes.js';
 import { joinPath } from '../utils/folderPath.js';
 
 export const FOLDER_FILE_CACHE_LIMIT = 8;
@@ -14,6 +14,7 @@ const QUICK_LIST_TARGET_EXTENSIONS = new Set([
   '.pdf',
   '.epub',
   '.txt',
+  ...AUDIO_EXTENSIONS,
 ]);
 
 function fileExtension(name = '') {

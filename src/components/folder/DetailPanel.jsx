@@ -1,5 +1,6 @@
 import React from 'react';
 import { resolveBookType } from '../../metadata/metadataTypes';
+import { AudiobookDetailPanel } from './AudiobookDetailPanel';
 import { BookDetailPanel } from './BookDetailPanel';
 import { ComicDetailPanel } from './ComicDetailPanel';
 import { PdfDetailPanel } from './PdfDetailPanel';
@@ -11,6 +12,9 @@ const DetailPanel = React.memo((props) => {
     }
     if (resolveBookType(selectedFile) === 'book') {
         return <BookDetailPanel {...props} />;
+    }
+    if (resolveBookType(selectedFile) === 'audio') {
+        return <AudiobookDetailPanel {...props} />;
     }
     return <ComicDetailPanel {...props} />;
 });

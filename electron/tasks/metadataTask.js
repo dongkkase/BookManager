@@ -16,6 +16,16 @@ import {
 import { translate } from '../../src/utils/i18n.js';
 import { BOOK_EXTENSIONS, resolveBookType } from '../../src/metadata/metadataTypes.js';
 import {
+  AUDIO_EXTENSIONS,
+  isAudioPath,
+  readAudioMetadata,
+} from '../audioMetadata.js';
+import {
+  detectImageMimeType,
+  supportedImageExtensionForMimeType,
+  supportedImageMimeTypeForPath,
+} from '../imageMagic.js';
+import {
   latestMetadataTitleKey,
   normalizeLatestMetadataTitle,
 } from '../metadataLatestPolicy.js';
@@ -26,9 +36,11 @@ import {
 } from '../pdfMetadata.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
-const DOCUMENT_EXTS = BOOK_EXTENSIONS;
+const DOCUMENT_EXTS = new Set([...BOOK_EXTENSIONS, ...AUDIO_EXTENSIONS]);
 const METADATA_EXTS = new Set([...ARCHIVE_EXTS, ...DOCUMENT_EXTS]);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']);
+const MAX_METADATA_COVER_BYTES = 16 * 1024 * 1024;
+const AUDIO_COVER_OVERRIDE_PREFIX = 'audio-cover-override-';
 const EPUB_EXT = '.epub';
 const PDF_EXT = '.pdf';
 const EPUB_PACKAGE_MIME = 'application/oebps-package+xml';
@@ -68,6 +80,11 @@ function isPdf(filePath) {
 
 function isImage(filePath) {
   return IMAGE_EXTS.has(path.extname(filePath).toLowerCase());
+}
+
+function imageExtension(filePath = '', fallback = '.jpg') {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_EXTS.has(ext) ? ext : fallback;
 }
 
 function isZipArchive(filePath) {
@@ -1082,44 +1099,116 @@ export async function loadMetadataEpubImage(filePath, entryName) {
   if (!epubPackage || !entryName) return '';
   const entry = findArchiveEntry(epubPackage.entries, entryName);
   if (!entry || entry.isDirectory || !isImage(entry.name)) return '';
-  const buffer = await readZipEntryFromFile(filePath, entry, { maxBytes: 16 * 1024 * 1024 });
+  const buffer = await readZipEntryFromFile(filePath, entry, { maxBytes: MAX_METADATA_COVER_BYTES });
   return buffer ? imageDataUrl(buffer, entry.name) : '';
 }
 
 export async function loadMetadataImageFile(filePath) {
-  if (!filePath || !isImage(filePath)) return '';
-  const stat = await fsp.stat(filePath);
-  if (!stat.isFile() || stat.size > 16 * 1024 * 1024) return '';
-  return imageDataUrl(await fsp.readFile(filePath), filePath);
+  const asset = await loadImageAssetFromFile(filePath);
+  return asset ? imageDataUrl(asset.buffer, asset.imageName, asset.mimeType) : '';
 }
 
-export async function loadMetadataCover(filePath, options = {}) {
-  if (!filePath || (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath))) return '';
+async function loadImageAssetFromFile(filePath, source = 'file') {
+  if (!filePath || !isImage(filePath)) return null;
+  try {
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_METADATA_COVER_BYTES) return null;
+    const buffer = await fsp.readFile(filePath);
+    const mimeType = detectImageMimeType(buffer);
+    if (!mimeType || mimeType !== supportedImageMimeTypeForPath(filePath)) return null;
+    return {
+      buffer,
+      imageName: path.basename(filePath),
+      mimeType,
+      source,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function isUsableImageFile(filePath = '') {
+  return Boolean(await loadImageAssetFromFile(filePath, 'validation'));
+}
+
+async function loadAudioCoverOverrideAsset(filePath, options = {}) {
+  let record = options.libraryRecord || null;
+  let libraryDb = null;
+  let shouldClose = false;
+  if (!record && (options.libraryDb || options.dbPath)) {
+    ({ libraryDb, shouldClose } = await createLibraryDbHandle(options));
+    try {
+      record = await libraryDb?.getFileInfo(filePath).catch(() => null);
+    } finally {
+      if (shouldClose) await libraryDb?.close();
+    }
+  }
+  const overridePath = String(record?.cover_override_path || '').trim();
+  return overridePath ? loadImageAssetFromFile(overridePath, 'override') : null;
+}
+
+export async function loadMetadataCoverAsset(filePath, options = {}) {
+  if (!filePath) return null;
+  if (isAudioPath(filePath)) {
+    if (options.ignoreAudioCoverOverride !== true) {
+      const overrideAsset = await loadAudioCoverOverrideAsset(filePath, options);
+      if (overrideAsset) return overrideAsset;
+    }
+    const audio = await readAudioMetadata(filePath, { includeCover: true });
+    if (!audio.artwork?.buffer) return null;
+    return {
+      buffer: Buffer.from(audio.artwork.buffer),
+      imageName: audio.imageName || `cover${imageExtensionFromMimeType(audio.artwork.mimeType) || '.jpg'}`,
+      mimeType: audio.artwork.mimeType || 'image/jpeg',
+      source: 'embedded',
+    };
+  }
+  if (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath)) return null;
   const sevenZExe = options.sevenZExe;
   if (isEpub(filePath)) {
     const epubPackage = await readEpubPackage(filePath);
-    if (!epubPackage) return '';
+    if (!epubPackage) return null;
     const coverEntry = findEpubCoverEntry(epubPackage.entries, epubPackage.opfPath, epubPackage.opfXml);
-    if (!coverEntry) return '';
-    const coverBuffer = await readZipEntryFromFile(epubPackage.filePath, coverEntry, { maxBytes: 16 * 1024 * 1024 });
-    return coverBuffer ? imageDataUrl(coverBuffer, coverEntry.name) : '';
+    if (!coverEntry) return null;
+    const coverBuffer = await readZipEntryFromFile(epubPackage.filePath, coverEntry, { maxBytes: MAX_METADATA_COVER_BYTES });
+    return coverBuffer ? {
+      buffer: coverBuffer,
+      imageName: coverEntry.name,
+      mimeType: imageMimeType(coverEntry.name),
+      source: 'embedded',
+    } : null;
   }
   if (isPdf(filePath)) {
     const cover = await extractPdfCoverImage(filePath).catch(() => null);
-    return cover?.buffer ? imageDataUrl(cover.buffer, cover.imageName) : '';
+    return cover?.buffer ? {
+      buffer: cover.buffer,
+      imageName: cover.imageName,
+      mimeType: imageMimeType(cover.imageName),
+      source: 'embedded',
+    } : null;
   }
 
   const entries = await listArchiveEntries(filePath, sevenZExe);
   const imageEntry = entries
     .filter(entry => !entry.isDir && isImage(entry.name))
     .sort((a, b) => naturalCompare(a.name, b.name))[0];
-  if (!imageEntry) return '';
+  if (!imageEntry) return null;
   try {
-    const buffer = await extractArchiveFile(filePath, imageEntry.name, sevenZExe, { maxBytes: 16 * 1024 * 1024 });
-    return buffer ? imageDataUrl(buffer, imageEntry.name) : '';
+    const buffer = await extractArchiveFile(filePath, imageEntry.name, sevenZExe, { maxBytes: MAX_METADATA_COVER_BYTES });
+    return buffer ? {
+      buffer,
+      imageName: imageEntry.name,
+      mimeType: imageMimeType(imageEntry.name),
+      source: 'embedded',
+    } : null;
   } catch {
-    return '';
+    return null;
   }
+}
+
+export async function loadMetadataCover(filePath, options = {}) {
+  const asset = await loadMetadataCoverAsset(filePath, options);
+  return asset ? imageDataUrl(asset.buffer, asset.imageName, asset.mimeType) : '';
 }
 
 export function parseComicInfo(xmlText) {
@@ -1150,12 +1239,8 @@ export function createComicInfoXml(metadata = {}) {
   return xml;
 }
 
-function imageDataUrl(buffer, innerPath) {
-  const ext = path.extname(innerPath).toLowerCase();
-  const mime = ext === '.png' ? 'image/png'
-    : ext === '.webp' ? 'image/webp'
-      : ext === '.gif' ? 'image/gif'
-        : 'image/jpeg';
+function imageDataUrl(buffer, innerPath, explicitMimeType = '') {
+  const mime = explicitMimeType || imageMimeType(innerPath);
   return `data:${mime};base64,${buffer.toString('base64')}`;
 }
 
@@ -1165,6 +1250,15 @@ function inferMetadataFromFilename(filePath, pageCount, options = {}) {
   const title = filename.replace(/\.(zip|cbz|cbr|rar|7z)$/i, '').trim();
   const bookType = options.bookType || resolveBookType({ path: filePath });
   const languageISO = normalizeLanguageIso(options.languageISO || options.defaultLanguageISO || options.lang || 'ko');
+  if (bookType === 'audio') {
+    return {
+      Title: title,
+      Series: '',
+      Writer: '',
+      Format: 'Audiobook',
+      LanguageISO: languageISO,
+    };
+  }
   if (bookType === 'book' || bookType === 'pdf') {
     return {
       Series: title.replace(/\s*(?:v|vol\.?|volume)?\s*\d+(?:\.\d+)?권?\s*$/i, '').trim() || title,
@@ -1195,8 +1289,39 @@ function metadataPublishDate(metadata = {}) {
   ].filter(Boolean).join('-');
 }
 
-function metadataFromLibraryRecord(record = {}) {
+function metadataFromAudioAnalysis(audio = {}) {
+  if (!audio) return {};
+  const metadata = {
+    Title: audio.title || '',
+    Series: audio.album || '',
+    Writer: audio.artist || '',
+    Album: audio.album || '',
+    AlbumArtist: audio.albumArtist || '',
+    Composer: audio.composer || '',
+    Genre: audio.genre || '',
+    Tags: Array.isArray(audio.genres) ? audio.genres.join(', ') : audio.tags || '',
+    Year: audio.year ?? '',
+    TrackNumber: audio.trackNumber ?? '',
+    TrackTotal: audio.trackTotal ?? '',
+    DiscNumber: audio.discNumber ?? '',
+    DiscTotal: audio.discTotal ?? '',
+    DurationSeconds: audio.durationSeconds ?? '',
+    Bitrate: audio.bitrateBitsPerSecond ?? '',
+    SampleRate: audio.sampleRateHz ?? '',
+    Codec: audio.codec || '',
+    Container: audio.container || '',
+    Channels: audio.channels ?? '',
+    MimeType: audio.mimeType || '',
+    Format: 'Audiobook',
+  };
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => value !== '' && value !== null && value !== undefined),
+  );
+}
+
+function metadataFromLibraryRecord(record = {}, options = {}) {
   if (!record) return {};
+  const [publishYear = '', publishMonth = '', publishDay = ''] = String(record.publish_date || '').split('-');
   const metadata = {
     Title: record.title || '',
     Series: record.series || '',
@@ -1228,7 +1353,25 @@ function metadataFromLibraryRecord(record = {}) {
     CommunityRating: record.rating || '',
     Creator: record.creators || '',
     Producer: record.creators || '',
+    Year: publishYear,
+    Month: publishMonth,
+    Day: publishDay,
+    Album: record.album || '',
+    AlbumArtist: record.album_artist || '',
+    Composer: record.composer || '',
+    DurationSeconds: record.duration_seconds ?? '',
+    Bitrate: record.bitrate ?? '',
+    SampleRate: record.sample_rate ?? '',
+    Codec: record.codec || '',
+    Container: record.container || '',
+    Channels: record.channels ?? '',
+    TrackNumber: record.track_number ?? '',
+    TrackTotal: record.track_total ?? '',
+    DiscNumber: record.disc_number ?? '',
+    DiscTotal: record.disc_total ?? '',
+    MimeType: record.mime_type || '',
   };
+  if (options.preserveEmpty === true) return metadata;
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => String(value || '').trim() !== ''),
   );
@@ -1237,14 +1380,15 @@ function metadataFromLibraryRecord(record = {}) {
 function metadataToLibraryRecord(item = {}) {
   const metadata = item.metadata || {};
   const filePath = item.filepath || item.path || '';
+  const bookType = resolveBookType({ path: filePath });
   return {
     path: filePath,
     ext: path.extname(filePath).toLowerCase(),
     title: metadata.Title || '',
     series: metadata.Series || '',
     series_group: metadata.SeriesGroup || '',
-    volume: metadata.Volume || '',
-    number: metadata.Number || '',
+    volume: bookType === 'audio' ? metadata.DiscNumber || '' : metadata.Volume || '',
+    number: bookType === 'audio' ? metadata.TrackNumber || '' : metadata.Number || '',
     writer: metadata.Writer || '',
     creators: [metadata.Creator, metadata.Producer, metadata.Writer, metadata.Editor].filter(Boolean).join(', '),
     penciller: metadata.Penciller || '',
@@ -1256,7 +1400,7 @@ function metadataToLibraryRecord(item = {}) {
     publisher: metadata.Publisher || '',
     imprint: metadata.Imprint || '',
     genre: metadata.Genre || '',
-    volume_count: metadata.Count || '',
+    volume_count: bookType === 'audio' ? metadata.DiscTotal || '' : metadata.Count || '',
     page_count: metadata.PageCount || '',
     format: metadata.Format || '',
     manga: metadata.Manga || '',
@@ -1273,7 +1417,22 @@ function metadataToLibraryRecord(item = {}) {
     notes: metadata.Rights || metadata.Notes || '',
     web: metadata.Web || '',
     isbn: metadata.ISBN || '',
-    book_type: resolveBookType({ path: filePath }),
+    book_type: bookType,
+    album: metadata.Album || metadata.Series || '',
+    album_artist: metadata.AlbumArtist || '',
+    composer: metadata.Composer || '',
+    duration_seconds: metadata.DurationSeconds ?? '',
+    bitrate: metadata.Bitrate ?? '',
+    sample_rate: metadata.SampleRate ?? '',
+    codec: metadata.Codec || '',
+    container: metadata.Container || '',
+    channels: metadata.Channels ?? '',
+    track_number: metadata.TrackNumber ?? '',
+    track_total: metadata.TrackTotal ?? '',
+    disc_number: metadata.DiscNumber ?? '',
+    disc_total: metadata.DiscTotal ?? '',
+    mime_type: metadata.MimeType || '',
+    ...(bookType === 'audio' ? { has_metadata: 1, metadata_override: 1 } : {}),
   };
 }
 
@@ -1284,22 +1443,139 @@ async function createLibraryDbHandle(options = {}) {
   return { libraryDb: new LibraryDB({ dbPath: options.dbPath }), shouldClose: true };
 }
 
+function normalizedCoverExtension(value = '', fallback = '.jpg') {
+  const normalized = String(value || '').trim().toLowerCase();
+  const extension = normalized && !normalized.startsWith('.') ? `.${normalized}` : normalized;
+  return IMAGE_EXTS.has(extension) ? extension : fallback;
+}
+
+function isManagedAudioCoverPath(filePath = '', thumbnailDir = '') {
+  if (!filePath || !thumbnailDir) return false;
+  const resolvedDir = path.resolve(thumbnailDir);
+  const resolvedPath = path.resolve(filePath);
+  const relativePath = path.relative(resolvedDir, resolvedPath);
+  return Boolean(
+    relativePath
+    && !relativePath.startsWith('..')
+    && !path.isAbsolute(relativePath)
+    && path.basename(resolvedPath).startsWith(AUDIO_COVER_OVERRIDE_PREFIX),
+  );
+}
+
+async function removeManagedAudioCover(filePath = '', thumbnailDir = '') {
+  if (!isManagedAudioCoverPath(filePath, thumbnailDir)) return;
+  await fsp.rm(path.resolve(filePath), { force: true }).catch(() => {});
+}
+
+async function prepareAudioCoverChange(item, existing = {}, options = {}) {
+  const filePath = item.filepath || item.path || '';
+  if (!isAudioPath(filePath)) return null;
+  const coverChange = item.audioCoverChange || null;
+  const changeType = String(coverChange?.type || '').trim().toLowerCase();
+  if (!changeType) return null;
+
+  const previousPath = String(existing?.cover_override_path || '').trim();
+  if (changeType === 'reset') {
+    return {
+      changeType,
+      previousPath,
+      fields: {
+        cover_override_path: '',
+        thumb_path: '',
+      },
+    };
+  }
+  if (changeType !== 'file') {
+    throw new Error(`Unsupported audiobook cover change: ${changeType}`);
+  }
+
+  const thumbnailDir = String(options.thumbnailDir || '').trim();
+  if (!thumbnailDir) throw new Error('Audiobook cover directory is unavailable.');
+  const sourcePath = String(coverChange.filePath || coverChange.path || '').trim();
+  const sourceAsset = await loadImageAssetFromFile(sourcePath, 'replacement');
+  if (!sourceAsset) throw new Error('The selected audiobook cover is not a supported image file.');
+  const sourceStat = await fsp.stat(sourcePath);
+  const encoded = typeof options.thumbnailEncoder === 'function'
+    ? await options.thumbnailEncoder(sourceAsset.buffer, {
+      imageName: sourceAsset.imageName,
+      filePath,
+      mtime: sourceStat.mtimeMs,
+      thumbnailDir,
+      imageTransform: null,
+    })
+    : null;
+  const outputBuffer = encoded?.buffer ? Buffer.from(encoded.buffer) : sourceAsset.buffer;
+  if (outputBuffer.length <= 0) throw new Error('The selected audiobook cover is empty.');
+  const outputMimeType = detectImageMimeType(outputBuffer);
+  if (!outputMimeType) throw new Error('The selected audiobook cover is not a supported image file.');
+  const extension = encoded?.extension
+    ? normalizedCoverExtension(encoded.extension, '')
+    : supportedImageExtensionForMimeType(outputMimeType);
+  if (!extension || supportedImageMimeTypeForPath(`cover${extension}`) !== outputMimeType) {
+    throw new Error('The encoded audiobook cover format does not match its extension.');
+  }
+  const fileName = `${AUDIO_COVER_OVERRIDE_PREFIX}${randomUUID()}${extension}`;
+  const destinationPath = path.join(path.resolve(thumbnailDir), fileName);
+  const temporaryPath = path.join(
+    path.resolve(thumbnailDir),
+    `.${fileName}.${randomUUID()}.tmp`,
+  );
+  await fsp.mkdir(path.resolve(thumbnailDir), { recursive: true });
+  try {
+    await fsp.writeFile(temporaryPath, outputBuffer, { flag: 'wx' });
+    await fsp.rename(temporaryPath, destinationPath);
+  } catch (error) {
+    await fsp.rm(temporaryPath, { force: true }).catch(() => {});
+    await fsp.rm(destinationPath, { force: true }).catch(() => {});
+    throw error;
+  }
+  return {
+    changeType,
+    createdPath: destinationPath,
+    previousPath,
+    fields: {
+      cover_override_path: destinationPath,
+      thumb_path: destinationPath,
+    },
+  };
+}
+
 async function persistDocumentMetadata(item, options = {}) {
   const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
   if (!libraryDb) throw new Error(taskText(options.lang, 'metadata_document_write_unsupported'));
+  let preparedCoverChange = null;
+  let committed = false;
   try {
     const filePath = item.filepath || item.path || '';
     const stat = await fsp.stat(filePath);
     const existing = await libraryDb.getFileInfo(filePath).catch(() => null);
+    preparedCoverChange = await prepareAudioCoverChange(item, existing, options);
     const invalidateThumbnail = isEpub(filePath) && Boolean(item.epubCoverChange);
     await libraryDb.upsertFileInfo({
       ...(existing || {}),
       ...metadataToLibraryRecord(item),
       ...(invalidateThumbnail ? { thumb_path: '' } : {}),
+      ...(preparedCoverChange?.fields || {}),
       mtime: stat.mtimeMs / 1000,
       size: stat.size,
     });
-    return true;
+    committed = true;
+    if (
+      preparedCoverChange?.previousPath
+      && preparedCoverChange.previousPath !== preparedCoverChange.createdPath
+    ) {
+      await removeManagedAudioCover(preparedCoverChange.previousPath, options.thumbnailDir);
+    }
+    return {
+      coverChanged: Boolean(preparedCoverChange),
+      coverChangeType: preparedCoverChange?.changeType || '',
+      coverOverridePath: preparedCoverChange?.createdPath || '',
+    };
+  } catch (error) {
+    if (!committed && preparedCoverChange?.createdPath) {
+      await removeManagedAudioCover(preparedCoverChange.createdPath, options.thumbnailDir);
+    }
+    throw error;
   } finally {
     if (shouldClose) await libraryDb.close();
   }
@@ -1317,6 +1593,15 @@ async function refreshChangedEpubCoverThumbnail(item, filePath, options = {}) {
     await options.refreshFilePreview(filePath);
   } catch (error) {
     console.warn(`[Metadata] EPUB cover thumbnail refresh failed: ${filePath}`, error.message);
+  }
+}
+
+async function refreshChangedAudioCoverThumbnail(item, filePath, options = {}) {
+  if (!isAudioPath(filePath) || !item.audioCoverChange || typeof options.refreshFilePreview !== 'function') return;
+  try {
+    await options.refreshFilePreview(filePath);
+  } catch (error) {
+    console.warn(`[Metadata] Audiobook cover thumbnail refresh failed: ${filePath}`, error.message);
   }
 }
 
@@ -1432,6 +1717,9 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         const bookType = resolveBookType({ path: filePath });
         const epubAnalysis = isEpub(filePath) ? await analyzeEpubFile(filePath, { includeCover: includeCovers }) : null;
         const pdfAnalysis = isPdf(filePath) ? await analyzePdfDocument(filePath, { includeCover: includeCovers }) : null;
+        const audioAnalysis = isAudioPath(filePath)
+          ? await readAudioMetadata(filePath, { includeCover: includeCovers })
+          : null;
         const entries = isDocument(filePath) ? [] : await listArchiveEntries(filePath, sevenZExe);
         const imageEntries = entries
           .filter(entry => !entry.isDir && isImage(entry.name))
@@ -1441,11 +1729,23 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         let metadata = options.includeInferredMetadata === false
           ? {}
           : inferMetadataFromFilename(filePath, pageCount, { bookType, languageISO: defaultLanguageISO });
+        let cachedMetadataRecord = null;
+
+        if (audioAnalysis) {
+          metadata = { ...metadata, ...metadataFromAudioAnalysis(audioAnalysis) };
+        }
 
         if (libraryDb && options.includeCachedMetadata !== false) {
-          const cached = await libraryDb.getFileInfo(filePath).catch(() => null);
-          metadata = { ...metadata, ...metadataFromLibraryRecord(cached) };
+          cachedMetadataRecord = await libraryDb.getFileInfo(filePath).catch(() => null);
+          if (bookType !== 'audio' || Number(cachedMetadataRecord?.metadata_override) === 1) {
+            metadata = {
+              ...metadata,
+              ...metadataFromLibraryRecord(cachedMetadataRecord, { preserveEmpty: bookType === 'audio' }),
+            };
+          }
         }
+        const audioCoverOverride = bookType === 'audio'
+          && await isUsableImageFile(cachedMetadataRecord?.cover_override_path || '');
 
         if (epubAnalysis?.metadata) {
           metadata = { ...metadata, ...epubAnalysis.metadata };
@@ -1463,6 +1763,21 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         let coverDataUrl = epubAnalysis?.coverDataUrl || '';
         if (!coverDataUrl && pdfAnalysis?.cover?.buffer) {
           coverDataUrl = imageDataUrl(pdfAnalysis.cover.buffer, pdfAnalysis.cover.imageName);
+        }
+        if (!coverDataUrl && includeCovers && audioAnalysis) {
+          const overrideAsset = await loadAudioCoverOverrideAsset(filePath, {
+            libraryRecord: cachedMetadataRecord,
+          });
+          if (overrideAsset) {
+            coverDataUrl = imageDataUrl(
+              overrideAsset.buffer,
+              overrideAsset.imageName,
+              overrideAsset.mimeType,
+            );
+          }
+        }
+        if (!coverDataUrl && audioAnalysis?.artwork?.buffer) {
+          coverDataUrl = `data:${audioAnalysis.artwork.mimeType || 'image/jpeg'};base64,${audioAnalysis.artwork.buffer.toString('base64')}`;
         }
         if (includeCovers && imageEntries[0]) {
           try {
@@ -1484,9 +1799,13 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           hasComicInfo: Boolean(comicInfoEntry),
           hasEpubMetadata: Boolean(epubAnalysis?.hasMetadata),
           hasPdfMetadata: Boolean(pdfAnalysis?.hasMetadata),
+          hasAudioMetadata: Boolean(audioAnalysis?.has_metadata),
           pageCount,
+          durationSeconds: audioAnalysis?.durationSeconds ?? null,
           sizeMb: stat.size / (1024 * 1024),
           coverDataUrl,
+          coverOverridePath: cachedMetadataRecord?.cover_override_path || '',
+          audioCoverOverride,
           metadata,
           originalMetadata: { ...metadata },
         });
@@ -1522,11 +1841,12 @@ export async function loadLatestSeriesMetadata(criteria = {}, options = {}) {
     });
     const candidates = rankedLatestMetadataCandidates(records, normalizedCriteria);
     for (const candidate of candidates) {
+      const candidateBookType = resolveBookType(candidate.record);
       const analysis = await analyzeMetadataInputs([candidate.candidatePath], {
         ...options,
         libraryDb,
         includeCovers: false,
-        includeCachedMetadata: false,
+        includeCachedMetadata: candidateBookType === 'audio',
         includeInferredMetadata: false,
         includeLibraryOptions: false,
       });
@@ -1986,11 +2306,16 @@ async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {
   }
 }
 
+function recordMetadataSaveSuccess(stats, item, filePath) {
+  stats.success.push(item.name || path.basename(filePath));
+  stats.successPaths.push(path.resolve(filePath).replace(/\\/g, '/').normalize('NFC'));
+}
+
 export async function saveMetadataItems(items, options = {}, onProgress) {
   const sevenZExe = options.sevenZExe;
 
   const targets = (items || []).filter(item => item.checked !== false);
-  const stats = { success: [], skip: [], error: [] };
+  const stats = { success: [], successPaths: [], skip: [], error: [] };
   let cancelled = false;
 
   for (let index = 0; index < targets.length; index += 1) {
@@ -2015,7 +2340,8 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
     try {
       if (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath)) {
         await persistDocumentMetadata(item, options);
-        stats.success.push(item.name || path.basename(filePath));
+        await refreshChangedAudioCoverThumbnail(item, filePath, options);
+        recordMetadataSaveSuccess(stats, item, filePath);
         continue;
       }
 
@@ -2026,7 +2352,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       }
 
       if (!isEpub(filePath) && !isPdf(filePath) && !(await hasComicInfoMetadataChanges(filePath, item.metadata || {}, sevenZExe))) {
-        stats.success.push(item.name || path.basename(filePath));
+        recordMetadataSaveSuccess(stats, item, filePath);
         continue;
       }
 
@@ -2043,7 +2369,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
             },
           });
           await persistDocumentMetadataIfPossible(item, options).catch(() => {});
-          stats.success.push(item.name || path.basename(filePath));
+          recordMetadataSaveSuccess(stats, item, filePath);
           continue;
         } catch (error) {
           if (error.code !== 'ZIP_APPEND_UNSUPPORTED') throw error;
@@ -2083,7 +2409,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       });
       await persistDocumentMetadataIfPossible(item, options).catch(() => {});
       await refreshChangedEpubCoverThumbnail(item, filePath, options);
-      stats.success.push(item.name || path.basename(filePath));
+      recordMetadataSaveSuccess(stats, item, filePath);
     } catch (error) {
       stats.error.push(`${item.name || filePath} - ${error.message}`);
     } finally {

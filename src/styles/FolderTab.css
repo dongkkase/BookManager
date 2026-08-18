@@ -1453,6 +1453,31 @@ body.is-reordering-table-column {
   font-size: var(--font-2xs);
 }
 
+.audiobook-detail-panel .detail-cover-frame,
+.audiobook-detail-panel .detail-cover-image,
+.audiobook-detail-panel .detail-cover-placeholder {
+  height: 220px;
+}
+
+.audiobook-detail-panel .detail-cover-image {
+  aspect-ratio: 1;
+}
+
+.detail-audiobook-artist {
+  margin: -4px 0 10px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: var(--font-sm);
+}
+
+.audiobook-technical-details .detail-line {
+  padding: 4px 0;
+}
+
+.audiobook-technical-details .detail-line.plain {
+  display: block;
+  margin-top: 6px;
+}
+
 .detail-cover-caption {
   padding-top: 8px;
   color: #dedede;

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { AudiobookMetadataEditor } from '../components/metadata/AudiobookMetadataEditor';
 import { BookMetadataEditor } from '../components/metadata/BookMetadataEditor';
 import { ComicMetadataEditor } from '../components/metadata/ComicMetadataEditor';
 import { PdfMetadataEditor } from '../components/metadata/PdfMetadataEditor';
@@ -42,6 +43,16 @@ import {
   preferredMetadataApiSource,
 } from '../metadataApiPolicy';
 import {
+  AUDIOBOOK_BASIC_FIELDS,
+  AUDIOBOOK_CREATOR_FIELDS,
+  AUDIOBOOK_META_FIELD_IDS,
+  AUDIOBOOK_META_FIELDS,
+  AUDIOBOOK_SAVE_FIELD_IDS,
+  AUDIOBOOK_SEARCHABLE_SELECT_FIELDS,
+  AUDIOBOOK_SECTION_TABS,
+  AUDIOBOOK_TRACK_FIELDS,
+} from '../metadata/audiobookMetadataFields';
+import {
   BOOK_BASIC_FIELDS,
   BOOK_CREATOR_FIELDS,
   BOOK_META_FIELD_IDS,
@@ -72,6 +83,10 @@ import {
   SECTION_TABS,
 } from '../metadata/comicMetadataFields';
 import { resolveBookType } from '../metadata/metadataTypes';
+import {
+  normalizeMetadataFilePath,
+  successfulAudioCoverTargets,
+} from '../audiobookCoverPolicy';
 
 const DEFAULT_GENRE_OPTIONS = [
   '액션', '모험', '코미디', '드라마', '판타지',
@@ -164,6 +179,7 @@ function uniqueSelectOptions(options = [], currentValue = '') {
 function isSearchableSelectField(fieldId, bookType = 'comic') {
   if (bookType === 'pdf') return PDF_SEARCHABLE_SELECT_FIELDS.has(fieldId);
   if (bookType === 'book') return BOOK_SEARCHABLE_SELECT_FIELDS.has(fieldId);
+  if (bookType === 'audio') return AUDIOBOOK_SEARCHABLE_SELECT_FIELDS.has(fieldId);
   return SEARCHABLE_SELECT_FIELDS.has(fieldId);
 }
 
@@ -460,7 +476,9 @@ function MetadataTab({ config, t, showToast }) {
 
     let cancelled = false;
     coverLoadRequestsRef.current.add(filePath);
-    loadMetadataCover(filePath)
+    loadMetadataCover(filePath, {
+      ignoreAudioCoverOverride: activeItem.audioCoverChange?.type === 'reset',
+    })
       .then(coverDataUrl => {
         if (cancelled || !coverDataUrl) return;
         const coverLoadedAt = Date.now();
@@ -473,7 +491,7 @@ function MetadataTab({ config, t, showToast }) {
     return () => {
       cancelled = true;
     };
-  }, [activeItem?.coverDataUrl, activeItem?.filepath]);
+  }, [activeItem?.audioCoverChange?.type, activeItem?.coverDataUrl, activeItem?.filepath]);
 
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
   const visibleTreeNodes = useMemo(
@@ -506,6 +524,17 @@ function MetadataTab({ config, t, showToast }) {
           publisher: PDF_PUBLISHER_FIELDS,
           document: PDF_DOCUMENT_FIELDS,
           rights: PDF_RIGHTS_FIELDS,
+        },
+      }
+      : activeBookType === 'audio'
+      ? {
+        sectionTabs: AUDIOBOOK_SECTION_TABS,
+        metaFields: AUDIOBOOK_META_FIELDS,
+        metaFieldIds: AUDIOBOOK_META_FIELD_IDS,
+        fields: {
+          basic: AUDIOBOOK_BASIC_FIELDS,
+          creators: AUDIOBOOK_CREATOR_FIELDS,
+          track: AUDIOBOOK_TRACK_FIELDS,
         },
       }
       : activeBookType === 'book'
@@ -725,7 +754,15 @@ function MetadataTab({ config, t, showToast }) {
   }, [config?.language, config?.lang, defaultLanguageISO, rememberSeriesGroupOptions, t]);
 
   const handleSelectFiles = useCallback(async () => {
-    const paths = await window.electronAPI.selectArchives(t('add_file'));
+    const paths = await window.electronAPI.selectFiles(t('add_file'), [{
+      name: 'Books and audiobooks',
+      extensions: [
+        'zip', 'cbz', 'cbr', '7z', 'rar',
+        'epub', 'pdf',
+        '3gp', 'aac', 'aif', 'aiff', 'amr', 'caf', 'flac', 'm4a', 'm4b',
+        'mp3', 'oga', 'ogg', 'opus', 'wav', 'wave', 'webm',
+      ],
+    }]);
     await analyzePaths(paths);
   }, [analyzePaths, t]);
 
@@ -1145,6 +1182,98 @@ function MetadataTab({ config, t, showToast }) {
     setStatusMessage(text('meta_epub_cover_reset_done', 'EPUB 표지 변경을 취소했습니다.'));
   };
 
+  const updateActiveAudioCoverChange = useCallback((coverChange, coverDataUrl = '') => {
+    if (!activeItem || activeBookType !== 'audio') return;
+    const activeFilePath = activeItem.filepath || '';
+    const coverLoadedAt = coverDataUrl ? Date.now() : undefined;
+    setFileList(prev => trimMetadataCoverCache(prev.map(item => {
+      if (item.id !== activeItem.id) return item;
+      const next = { ...item };
+      if (coverChange) next.audioCoverChange = coverChange;
+      else delete next.audioCoverChange;
+      if (coverDataUrl) {
+        next.coverDataUrl = coverDataUrl;
+        next.coverLoadedAt = coverLoadedAt;
+      } else {
+        delete next.coverDataUrl;
+        delete next.coverLoadedAt;
+      }
+      return next;
+    }), activeFilePath));
+  }, [activeBookType, activeItem]);
+
+  const handleSelectLocalAudioCover = async () => {
+    if (!activeItem || activeBookType !== 'audio') return;
+    try {
+      const filePath = await window.electronAPI?.selectFile?.(
+        text('audio_cover_select_file', '오디오북 표지 이미지 선택'),
+        [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'] }],
+      );
+      if (!filePath) return;
+      const coverDataUrl = await window.electronAPI?.loadMetadataImageFile?.(filePath);
+      if (!coverDataUrl) throw new Error(text('audio_cover_file_empty', '선택한 이미지를 표지로 사용할 수 없습니다.'));
+      updateActiveAudioCoverChange({
+        type: 'file',
+        filePath,
+        label: fileNameFromPath(filePath),
+      }, coverDataUrl);
+      setStatusMessage(text('audio_cover_replace_pending', '저장하면 오디오북 썸네일이 교체됩니다.'));
+    } catch (error) {
+      const message = error.message || text('audio_cover_replace_failed', '오디오북 썸네일 교체 준비에 실패했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    }
+  };
+
+  const handleResetAudioCoverChange = async () => {
+    if (!activeItem || activeBookType !== 'audio') return;
+    const filePath = activeItem.filepath || '';
+    const resetPersistedOverride = activeItem.audioCoverOverride === true;
+    try {
+      coverLoadRequestsRef.current.delete(filePath);
+      const coverDataUrl = await window.electronAPI?.loadMetadataCover?.(filePath, {
+        ignoreAudioCoverOverride: resetPersistedOverride,
+      }) || '';
+      updateActiveAudioCoverChange(
+        resetPersistedOverride
+          ? { type: 'reset', label: text('audio_cover_original', '원본 임베디드 표지') }
+          : null,
+        coverDataUrl,
+      );
+      setStatusMessage(resetPersistedOverride
+        ? text('audio_cover_reset_pending', '저장하면 원본 임베디드 표지로 복원됩니다.')
+        : text('audio_cover_change_cancelled', '오디오북 썸네일 변경을 취소했습니다.'));
+    } catch (error) {
+      const message = error.message || text('audio_cover_reset_failed', '원본 표지를 불러오지 못했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    }
+  };
+
+  const handleExportAudioCover = async () => {
+    if (!activeItem || activeBookType !== 'audio') return;
+    if (!activeItem.coverDataUrl) {
+      setStatusMessage(text('audio_cover_export_empty', '저장할 오디오북 썸네일이 없습니다.'));
+      return;
+    }
+    try {
+      const result = await window.electronAPI?.exportMetadataCover?.({
+        filePath: activeItem.filepath || '',
+        coverDataUrl: activeItem.coverDataUrl,
+        title: text('audio_cover_export', '오디오북 썸네일 저장'),
+      });
+      if (result?.cancelled) return;
+      if (!result?.success) throw new Error(text('audio_cover_export_empty', '저장할 오디오북 썸네일이 없습니다.'));
+      const message = text('audio_cover_export_done', '오디오북 썸네일을 저장했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    } catch (error) {
+      const message = error.message || text('audio_cover_export_failed', '오디오북 썸네일 저장에 실패했습니다.');
+      setStatusMessage(message);
+      showToast?.(message);
+    }
+  };
+
   const handleUseApiCoverResult = async (result) => {
     if (!activeItem || activeBookType !== 'book' || !activeIsEpub) return;
     const coverUrl = apiResultCoverUrl(result);
@@ -1351,9 +1480,11 @@ function MetadataTab({ config, t, showToast }) {
     const itemBookType = resolveBookType(item || {});
     const fieldIds = itemBookType === 'pdf'
       ? PDF_META_FIELD_IDS
-      : itemBookType === 'book'
-        ? BOOK_META_FIELD_IDS
-        : META_FIELD_IDS;
+      : itemBookType === 'audio'
+        ? AUDIOBOOK_SAVE_FIELD_IDS
+        : itemBookType === 'book'
+          ? BOOK_META_FIELD_IDS
+          : META_FIELD_IDS;
     const extraFieldIds = itemBookType === 'comic' ? ['ComicZipAddedDate', 'ComicZipModifiedDate'] : [];
     const payload = {
       id: item.id,
@@ -1367,6 +1498,9 @@ function MetadataTab({ config, t, showToast }) {
     };
     if (itemBookType === 'book' && item.epubCoverChange) {
       payload.epubCoverChange = item.epubCoverChange;
+    }
+    if (itemBookType === 'audio' && item.audioCoverChange) {
+      payload.audioCoverChange = item.audioCoverChange;
     }
     return payload;
   };
@@ -1417,6 +1551,34 @@ function MetadataTab({ config, t, showToast }) {
             paths: saveTargets.map(item => item.filepath || item.path).filter(Boolean),
           },
         }));
+        const successfulAudioTargets = successfulAudioCoverTargets(
+          saveTargets,
+          result.stats?.successPaths,
+        );
+        if (successfulAudioTargets.length > 0) {
+          const changesByPath = new Map(successfulAudioTargets.map(item => [
+            normalizeMetadataFilePath(item.filepath || item.path),
+            item.audioCoverChange,
+          ]));
+          for (const item of successfulAudioTargets) {
+            coverLoadRequestsRef.current.delete(item.filepath || item.path);
+          }
+          setFileList(prev => prev.map(item => {
+            const filePath = item.filepath || item.path;
+            const coverChange = changesByPath.get(normalizeMetadataFilePath(filePath));
+            if (!coverChange) return item;
+            const next = {
+              ...item,
+              audioCoverOverride: coverChange.type === 'file',
+            };
+            delete next.audioCoverChange;
+            if (coverChange.type === 'reset') {
+              delete next.coverDataUrl;
+              delete next.coverLoadedAt;
+            }
+            return next;
+          }));
+        }
       }
       const savedGroupTargets = !all && success === 1
         ? saveTargets
@@ -1962,12 +2124,73 @@ function MetadataTab({ config, t, showToast }) {
       );
     };
 
+    const renderAudioCoverField = () => {
+      if (activeBookType !== 'audio' || !activeItem) return null;
+      const pendingCoverName = activeItem.audioCoverChange?.label
+        || fileNameFromPath(activeItem.audioCoverChange?.filePath);
+      const pendingReset = activeItem.audioCoverChange?.type === 'reset';
+      return (
+        <div className="meta-form-row meta-epub-cover-row meta-audio-cover-row">
+          <div className="meta-col-label">{text('audio_cover_label', '썸네일')}</div>
+          <div className="meta-epub-cover-field">
+            <div className="meta-epub-cover-thumb-box">
+              {activeItem.coverDataUrl ? (
+                <img src={activeItem.coverDataUrl} alt="" />
+              ) : (
+                <span className="audiobook-no-cover"><FaIcon name="headphones" size={18} /></span>
+              )}
+            </div>
+            <div className="meta-epub-cover-tools">
+              <div className="meta-epub-cover-buttons">
+                <button
+                  type="button"
+                  onClick={handleExportAudioCover}
+                  disabled={isWorking || !activeItem.coverDataUrl}
+                  title={text('audio_cover_export', '오디오북 썸네일 저장')}
+                >
+                  <FaIcon name="download" size={11} />
+                  <span>{text('audio_cover_export_short', '저장')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSelectLocalAudioCover}
+                  disabled={isWorking}
+                  title={text('audio_cover_replace', '오디오북 썸네일 교체')}
+                >
+                  <FaIcon name="fileCirclePlus" size={11} />
+                  <span>{text('audio_cover_replace_short', '교체')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetAudioCoverChange}
+                  disabled={isWorking || pendingReset || (!activeItem.audioCoverChange && !activeItem.audioCoverOverride)}
+                  title={text('audio_cover_reset', '원본 임베디드 표지로 복원')}
+                >
+                  <FaIcon name="arrowRotateLeft" size={11} />
+                  <span>{text('audio_cover_reset_short', '원본')}</span>
+                </button>
+              </div>
+              <div className="meta-epub-cover-status">
+                {pendingReset
+                  ? text('audio_cover_reset_pending', '저장하면 원본 임베디드 표지로 복원됩니다.')
+                  : activeItem.audioCoverChange
+                    ? `${text('audio_cover_pending_prefix', '저장 시 썸네일 교체')}: ${pendingCoverName}`
+                    : activeItem.audioCoverOverride
+                      ? text('audio_cover_custom_active', '사용자 지정 썸네일을 사용하고 있습니다.')
+                      : text('audio_cover_embedded_active', '오디오 파일의 임베디드 표지를 사용합니다.')}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     const editorProps = {
       fields: currentMetadataConfig.fields,
       combinedTagOptions,
       genreOptions,
       renderCombinedGenreTags,
-      renderCoverField: renderEpubCoverField,
+      renderCoverField: activeBookType === 'audio' ? renderAudioCoverField : renderEpubCoverField,
       renderChoiceGrid,
       renderDualTextarea,
       renderFieldRows,
@@ -1980,6 +2203,9 @@ function MetadataTab({ config, t, showToast }) {
     };
     if (activeBookType === 'pdf') {
       return <PdfMetadataEditor key={`pdf-${activeItem?.id || 'none'}`} {...editorProps} />;
+    }
+    if (activeBookType === 'audio') {
+      return <AudiobookMetadataEditor key={`audio-${activeItem?.id || 'none'}`} {...editorProps} />;
     }
     return activeBookType === 'book'
       ? <BookMetadataEditor key={`book-${activeItem?.id || 'none'}`} {...editorProps} />
@@ -2000,6 +2226,8 @@ function MetadataTab({ config, t, showToast }) {
         <div className="meta-preview-img-box">
           {activeItem?.coverDataUrl ? (
             <img src={activeItem.coverDataUrl} alt="" className="meta-cover-image" />
+          ) : activeBookType === 'audio' ? (
+            <span className="meta-no-image audiobook-no-cover"><FaIcon name="headphones" size={30} /><span>{t('audio_no_cover')}</span></span>
           ) : (
             <span className="meta-no-image">{t('no_image')}</span>
           )}
@@ -2212,7 +2440,9 @@ function MetadataTab({ config, t, showToast }) {
           <div className="meta-bottom-left">
             <button className="meta-btn-magic" onClick={handleAutoMatchSeries} disabled={!activeItem || isWorking}><FaIcon name="wand" /> {t('t3_auto_match')}</button>
             <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Title')} disabled={!activeItem}>{t('t3_auto_title')}</button>
-            <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{activeBookType === 'book' || activeBookType === 'pdf' ? text('t3_auto_series_number', '자동 시리즈번호 입력') : t('t3_auto_vol')}</button>
+            {activeBookType !== 'audio' && (
+              <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Volume')} disabled={!activeItem}>{activeBookType === 'book' || activeBookType === 'pdf' ? text('t3_auto_series_number', '자동 시리즈번호 입력') : t('t3_auto_vol')}</button>
+            )}
             {activeBookType === 'comic' && (
               <>
                 <button className="meta-btn" onClick={() => applyAutoFieldToSeries('Number')} disabled={!activeItem}>{t('t3_auto_chap')}</button>

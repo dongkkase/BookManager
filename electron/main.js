@@ -13,8 +13,10 @@ import { findBinaryPath } from './binaryPolicy.js';
 import {
   resolveApiCoverCacheDir,
   resolveAppDataDir,
+  resolveLibraryDbPath,
   resolveThumbnailDir,
 } from './dataPaths.js';
+import { LibraryDB } from './database/library_db.js';
 import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
 import {
   attachWindowSafetyHandlers,
@@ -119,6 +121,15 @@ function getExecutableDir() {
     return path.dirname(app.getPath('exe'));
   }
   return path.join(__dirname, '..');
+}
+
+async function getViewerAudioLibraryRecord(filePath) {
+  const db = new LibraryDB({ dbPath: resolveLibraryDbPath(getExecutableDir()) });
+  try {
+    return await db.getFileInfo(filePath);
+  } finally {
+    await db.close();
+  }
 }
 
 function getProcessLogPath() {
@@ -258,6 +269,7 @@ async function initializeApp() {
     preloadPath: path.join(__dirname, 'viewerPreload.cjs'),
     getIconPath: getAppIconPath,
     getSevenZPath: async () => await getBinPath('7za') || await getBinPath('7z'),
+    getAudioLibraryRecord: getViewerAudioLibraryRecord,
     configManager,
   });
 

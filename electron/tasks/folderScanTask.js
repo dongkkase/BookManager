@@ -14,6 +14,7 @@ import { translate } from '../../src/utils/i18n.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
 import { resolveBookType } from '../../src/metadata/metadataTypes.js';
 import { isBrokenPipeError } from '../utils/consolePipeGuard.js';
+import { isAudioPath, readAudioMetadata } from '../audioMetadata.js';
 import {
   analyzePdfDocument,
   pdfMetadataToArchiveMetadata,
@@ -656,15 +657,16 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
         const imageEntry = entries
           .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.isDirectory)
           .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
-        if (!imageEntry) return result;
-        const imageBuffer = await readZipEntryFromFile(filePath, imageEntry, {
-          maxBytes: MAX_INLINE_COVER_BYTES,
-          maxCompressedBytes: MAX_INLINE_COVER_BYTES,
-        });
-        if (imageBuffer) {
-          result.imageBuffer = imageBuffer;
-          result.imageName = imageEntry.name;
-          result.resolution = getImageResolution(imageBuffer, imageEntry.name);
+        if (imageEntry) {
+          const imageBuffer = await readZipEntryFromFile(filePath, imageEntry, {
+            maxBytes: MAX_INLINE_COVER_BYTES,
+            maxCompressedBytes: MAX_INLINE_COVER_BYTES,
+          });
+          if (imageBuffer) {
+            result.imageBuffer = imageBuffer;
+            result.imageName = imageEntry.name;
+            result.resolution = getImageResolution(imageBuffer, imageEntry.name);
+          }
         }
       }
     } else if (['.rar', '.cbr', '.7z', '.cb7'].includes(ext)) {
@@ -684,6 +686,10 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
         result.imageTransform = pdfAnalysis.cover.imageTransform || null;
         result.resolution = `${pdfAnalysis.cover.width}x${pdfAnalysis.cover.height}`;
       }
+    } else if (isAudioPath(filePath)) {
+      result = await readAudioMetadata(filePath, {
+        includeCover: options.skipCoverExtraction !== true,
+      });
     }
 
     if (result.imageBuffer) {
@@ -700,6 +706,10 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
     delete result.imageBuffer;
     delete result.imageName;
     delete result.imageTransform;
+    delete result.artwork;
+    delete result.artworkBuffer;
+    delete result.artworkMimeType;
+    result.thumbnail_refresh_completed = options.skipCoverExtraction !== true;
     return result;
   } catch (error) {
     console.warn(`Failed to extract archive metadata: ${filePath}`, error.message);
@@ -707,8 +717,19 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
   }
 }
 
+function cachedAudioNumber(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function audioIndexForCache(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  return String(value);
+}
+
 function metadataFromCache(cached = {}) {
-  const hasMetadata = [
+  const inferredHasMetadata = [
     cached.title,
     cached.series,
     cached.series_group,
@@ -717,7 +738,14 @@ function metadataFromCache(cached = {}) {
     cached.writer,
     cached.publisher,
     cached.summary,
+    cached.album,
+    cached.album_artist,
+    cached.composer,
+    cached.thumb_path,
   ].some(Boolean);
+  const hasMetadata = cached.has_metadata === null || cached.has_metadata === undefined || cached.has_metadata === ''
+    ? inferredHasMetadata
+    : Boolean(Number(cached.has_metadata));
   return {
     title: cached.title || '',
     series: cached.series || '',
@@ -762,7 +790,40 @@ function metadataFromCache(cached = {}) {
     pdf_version: '',
     has_metadata: hasMetadata,
     thumb_path: cached.thumb_path || '',
+    cover_override_path: cached.cover_override_path || '',
+    album: cached.album || '',
+    albumArtist: cached.album_artist || '',
+    album_artist: cached.album_artist || '',
+    composer: cached.composer || '',
+    durationSeconds: cachedAudioNumber(cached.duration_seconds),
+    duration_seconds: cachedAudioNumber(cached.duration_seconds),
+    bitrateBitsPerSecond: cachedAudioNumber(cached.bitrate),
+    bitrate: cachedAudioNumber(cached.bitrate),
+    sampleRateHz: cachedAudioNumber(cached.sample_rate),
+    sample_rate: cachedAudioNumber(cached.sample_rate),
+    codec: cached.codec || '',
+    container: cached.container || '',
+    channels: cachedAudioNumber(cached.channels),
+    trackNumber: cachedAudioNumber(cached.track_number),
+    track_number: cachedAudioNumber(cached.track_number),
+    trackTotal: cachedAudioNumber(cached.track_total),
+    track_total: cachedAudioNumber(cached.track_total),
+    discNumber: cachedAudioNumber(cached.disc_number),
+    disc_number: cachedAudioNumber(cached.disc_number),
+    discTotal: cachedAudioNumber(cached.disc_total),
+    disc_total: cachedAudioNumber(cached.disc_total),
+    mimeType: cached.mime_type || '',
+    mime_type: cached.mime_type || '',
   };
+}
+
+function audioMetadataOverridesFromCache(cached = {}) {
+  const metadata = metadataFromCache(cached);
+  delete metadata.thumb_path;
+  delete metadata.cover_override_path;
+  delete metadata.resolution;
+  delete metadata.has_metadata;
+  return metadata;
 }
 
 function thumbnailUrlForPath(thumbnailPath) {
@@ -826,6 +887,17 @@ function hasCurrentCachedThumbnail(cached, ext) {
   return path.basename(cached.thumb_path).startsWith(PDF_THUMBNAIL_CACHE_PREFIX);
 }
 
+function validAudioCoverOverridePath(cached = {}) {
+  const overridePath = String(cached?.cover_override_path || '').trim();
+  if (!overridePath || !IMAGE_EXTS.includes(path.extname(overridePath).toLowerCase())) return '';
+  try {
+    const stat = fs.statSync(overridePath);
+    return stat.isFile() && stat.size > 0 ? overridePath : '';
+  } catch {
+    return '';
+  }
+}
+
 function createQuickFileData(fullPath) {
   const name = path.basename(fullPath);
   const folderPath = path.dirname(fullPath);
@@ -883,9 +955,34 @@ function createQuickFileData(fullPath) {
     age_rating: '',
     rating: '',
     date: '',
+    album: '',
+    albumArtist: '',
+    album_artist: '',
+    composer: '',
+    durationSeconds: null,
+    duration_seconds: null,
+    bitrateBitsPerSecond: null,
+    bitrate: null,
+    sampleRateHz: null,
+    sample_rate: null,
+    codec: '',
+    container: '',
+    channels: null,
+    trackNumber: null,
+    track_number: null,
+    trackTotal: null,
+    track_total: null,
+    discNumber: null,
+    disc_number: null,
+    discTotal: null,
+    disc_total: null,
+    mimeType: '',
+    mime_type: '',
     has_metadata: false,
     resolution: '',
     thumb_path: '',
+    cover_override_path: '',
+    coverOverridePath: '',
     cover: '',
     cache_source: 'quick',
     duplicate_matches: [],
@@ -1191,6 +1288,12 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     ? null
     : await safeGetCachedFileInfo(options.libraryDb, fullPath);
   const cacheValid = options.force !== true && isValidCache(cached, stats);
+  const audioCoverOverridePath = bookType === 'audio'
+    ? validAudioCoverOverridePath(cached)
+    : '';
+  const hasMissingAudioCoverOverride = bookType === 'audio'
+    && Boolean(cached?.cover_override_path)
+    && !audioCoverOverridePath;
   const cachedThumbnailExists = hasCurrentCachedThumbnail(cached, ext);
   const shouldRefreshEpubMetadata = cacheValid
     && ext === '.epub'
@@ -1205,7 +1308,20 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
       cached?.cover_artist,
       cached?.editor,
     ].some(value => value === null || value === undefined);
+  const shouldRefreshAudioMetadata = cacheValid
+    && bookType === 'audio'
+    && (
+      [cached?.duration_seconds, cached?.mime_type]
+        .some(value => value === null || value === undefined)
+      || [cached?.has_metadata, cached?.metadata_override]
+        .some(value => value === '' || value === null || value === undefined)
+      || hasMissingAudioCoverOverride
+    );
   let archiveMeta = cacheValid ? metadataFromCache(cached) : {};
+  if (audioCoverOverridePath) {
+    archiveMeta.thumb_path = audioCoverOverridePath;
+    archiveMeta.cover_override_path = audioCoverOverridePath;
+  }
   const shouldExtractArchive = options.skipArchiveExtraction !== true;
   const shouldRefreshMissingThumbnail = options.skipCoverExtraction !== true && !cachedThumbnailExists;
 
@@ -1214,6 +1330,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     || shouldRefreshMissingThumbnail
     || shouldRefreshEpubMetadata
     || shouldRefreshComicCreatorMetadata
+    || shouldRefreshAudioMetadata
   )) {
     const extracted = await extractArchiveMetadata(fullPath, ext, {
       sevenZExe: options.sevenZExe,
@@ -1223,6 +1340,8 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
       thumbnailEncoder: options.thumbnailEncoder,
       skipCoverExtraction: options.skipCoverExtraction === true,
     });
+    const thumbnailRefreshCompleted = extracted.thumbnail_refresh_completed === true;
+    delete extracted.thumbnail_refresh_completed;
     let latestStats;
     try {
       latestStats = await fs.promises.stat(fullPath);
@@ -1242,17 +1361,38 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         skipLibraryCache: true,
       }, sourceChangeRetryCount + 1);
     }
+    const preserveAudioMetadataOverrides = bookType === 'audio'
+      && Number(cached?.metadata_override) === 1;
     archiveMeta = {
       ...(cacheValid ? archiveMeta : {}),
       ...extracted,
+      ...(preserveAudioMetadataOverrides ? audioMetadataOverridesFromCache(cached) : {}),
     };
-    if (options.libraryDb && options.skipLibraryCache !== true) {
-      let thumbnailPathForCache = archiveMeta.thumb_path || cached?.thumb_path || '';
-      if (!thumbnailPathForCache && options.skipCoverExtraction === true) {
-        const latestCached = await safeGetCachedFileInfo(options.libraryDb, fullPath);
-        thumbnailPathForCache = latestCached?.thumb_path || '';
+    if (audioCoverOverridePath) {
+      if (extracted.thumb_path && extracted.thumb_path !== audioCoverOverridePath) {
+        await discardGeneratedThumbnail(extracted.thumb_path, options.thumbnailDir);
       }
-      if (thumbnailPathForCache) archiveMeta.thumb_path = thumbnailPathForCache;
+      archiveMeta.thumb_path = audioCoverOverridePath;
+      archiveMeta.cover_override_path = audioCoverOverridePath;
+    } else if (bookType === 'audio') {
+      archiveMeta.cover_override_path = '';
+    }
+    if (preserveAudioMetadataOverrides) archiveMeta.has_metadata = true;
+    if (options.libraryDb && options.skipLibraryCache !== true) {
+      let thumbnailPathForCache = audioCoverOverridePath || (thumbnailRefreshCompleted
+        ? extracted.thumb_path || ''
+        : archiveMeta.thumb_path || cached?.thumb_path || '');
+      if (!thumbnailPathForCache && !thumbnailRefreshCompleted && options.skipCoverExtraction === true) {
+        const latestCached = await safeGetCachedFileInfo(options.libraryDb, fullPath);
+        const latestThumbnailPath = latestCached?.thumb_path || '';
+        thumbnailPathForCache = latestThumbnailPath && fs.existsSync(latestThumbnailPath)
+          ? latestThumbnailPath
+          : '';
+      }
+      if (thumbnailRefreshCompleted && cached?.thumb_path && cached.thumb_path !== thumbnailPathForCache) {
+        await discardGeneratedThumbnail(cached.thumb_path, options.thumbnailDir);
+      }
+      archiveMeta.thumb_path = thumbnailPathForCache;
       await safeUpsertFileInfo(options.libraryDb, {
         path: fullPath,
         mtime: stats.mtimeMs / 1000,
@@ -1294,6 +1434,23 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         isbn: archiveMeta.isbn || '',
         book_type: archiveMeta.book_type || bookType,
         thumb_path: thumbnailPathForCache,
+        cover_override_path: audioCoverOverridePath,
+        has_metadata: preserveAudioMetadataOverrides || archiveMeta.has_metadata === true ? 1 : 0,
+        metadata_override: preserveAudioMetadataOverrides ? 1 : 0,
+        album: archiveMeta.album || '',
+        album_artist: archiveMeta.albumArtist || archiveMeta.album_artist || '',
+        composer: archiveMeta.composer || '',
+        duration_seconds: archiveMeta.durationSeconds ?? archiveMeta.duration_seconds ?? '',
+        bitrate: archiveMeta.bitrateBitsPerSecond ?? archiveMeta.bitrate ?? '',
+        sample_rate: archiveMeta.sampleRateHz ?? archiveMeta.sample_rate ?? '',
+        codec: archiveMeta.codec || '',
+        container: archiveMeta.container || '',
+        channels: archiveMeta.channels ?? '',
+        track_number: audioIndexForCache(archiveMeta.trackNumber ?? archiveMeta.track_number),
+        track_total: audioIndexForCache(archiveMeta.trackTotal ?? archiveMeta.track_total),
+        disc_number: audioIndexForCache(archiveMeta.discNumber ?? archiveMeta.disc_number),
+        disc_total: audioIndexForCache(archiveMeta.discTotal ?? archiveMeta.disc_total),
+        mime_type: archiveMeta.mimeType || archiveMeta.mime_type || '',
       });
     }
   }
@@ -1363,6 +1520,29 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     age_rating: archiveMeta.age_rating || '',
     rating: archiveMeta.rating || '',
     date: archiveMeta.date || '',
+    album: archiveMeta.album || '',
+    albumArtist: archiveMeta.albumArtist || archiveMeta.album_artist || '',
+    album_artist: archiveMeta.albumArtist || archiveMeta.album_artist || '',
+    composer: archiveMeta.composer || '',
+    durationSeconds: archiveMeta.durationSeconds ?? archiveMeta.duration_seconds ?? null,
+    duration_seconds: archiveMeta.durationSeconds ?? archiveMeta.duration_seconds ?? null,
+    bitrateBitsPerSecond: archiveMeta.bitrateBitsPerSecond ?? archiveMeta.bitrate ?? null,
+    bitrate: archiveMeta.bitrateBitsPerSecond ?? archiveMeta.bitrate ?? null,
+    sampleRateHz: archiveMeta.sampleRateHz ?? archiveMeta.sample_rate ?? null,
+    sample_rate: archiveMeta.sampleRateHz ?? archiveMeta.sample_rate ?? null,
+    codec: archiveMeta.codec || '',
+    container: archiveMeta.container || '',
+    channels: archiveMeta.channels ?? null,
+    trackNumber: archiveMeta.trackNumber ?? archiveMeta.track_number ?? null,
+    track_number: archiveMeta.trackNumber ?? archiveMeta.track_number ?? null,
+    trackTotal: archiveMeta.trackTotal ?? archiveMeta.track_total ?? null,
+    track_total: archiveMeta.trackTotal ?? archiveMeta.track_total ?? null,
+    discNumber: archiveMeta.discNumber ?? archiveMeta.disc_number ?? null,
+    disc_number: archiveMeta.discNumber ?? archiveMeta.disc_number ?? null,
+    discTotal: archiveMeta.discTotal ?? archiveMeta.disc_total ?? null,
+    disc_total: archiveMeta.discTotal ?? archiveMeta.disc_total ?? null,
+    mimeType: archiveMeta.mimeType || archiveMeta.mime_type || '',
+    mime_type: archiveMeta.mimeType || archiveMeta.mime_type || '',
     trapped: archiveMeta.trapped || '',
     creation_date: archiveMeta.creation_date || '',
     modified_date: archiveMeta.modified_date || '',
@@ -1371,6 +1551,8 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
     thumb_path: thumbnailPath,
+    cover_override_path: audioCoverOverridePath,
+    coverOverridePath: audioCoverOverridePath,
     cover: thumbnailUrlForPath(thumbnailPath),
     cache_source: cacheValid && cachedThumbnailExists ? 'library' : 'archive',
     duplicate_matches: [],

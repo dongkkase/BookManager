@@ -71,6 +71,6 @@ test('환경설정은 AI 표지 제목 검색용 제공자와 API Key만 표시�
 test('AniList·Comic Vine·Amazon 검색은 자동 원제 변환 없이 입력한 제목을 그대로 사용한다', () => {
     assert.doesNotMatch(ipcSource, /identifyOriginalTitles|NamuWiki|titleCandidates/);
     assert.match(ipcSource, /results = await searchAnilist\(query, page\)/);
-    assert.match(ipcSource, /results = await searchAmazon\(query, page\)/);
+    assert.match(ipcSource, /results = await searchAmazon\(query, page, bookType\)/);
     assert.match(ipcSource, /results = await searchVine\(query, apiKeys\.vine \|\| '', page\)/);
 });

@@ -205,10 +205,11 @@ export function setupViewerWindowManager(options = {}) {
         preloadPath = '',
         getIconPath = () => undefined,
         getSevenZPath = async () => '',
+        getAudioLibraryRecord = async () => null,
         configManager = null,
     } = options;
 
-    const sessions = new ViewerSessionManager({ getSevenZPath });
+    const sessions = new ViewerSessionManager({ getSevenZPath, getAudioLibraryRecord });
     registerDocumentProtocol(sessions);
     registerComicProtocol(sessions);
     let viewerWindow = null;
@@ -342,8 +343,19 @@ export function setupViewerWindowManager(options = {}) {
         return { success: true, session };
     };
 
+    const openAudioQueueItem = async (sessionId, fileName) => {
+        const session = sessions.createAudioQueueItem(sessionId, fileName);
+        const window = ensureViewerWindow();
+        window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+        return { success: true, session };
+    };
+
     ipcMain.handle('viewer:open', async (_event, filePath) => openViewer(filePath));
     ipcMain.handle('viewer:openAdjacent', async (_event, sessionId, direction) => openAdjacentViewer(sessionId, direction));
+    ipcMain.handle('viewer:openAudioQueueItem', async (_event, sessionId, fileName) => openAudioQueueItem(sessionId, fileName));
     ipcMain.handle('viewer:getCurrentSession', async () => sessions.current());
     ipcMain.handle('viewer:listComicPages', async (_event, sessionId) => (
         sessions.listComicPages(sessionId)
@@ -353,6 +365,12 @@ export function setupViewerWindowManager(options = {}) {
     ));
     ipcMain.handle('viewer:getDocumentData', async (_event, sessionId) => (
         sessions.getDocumentData(sessionId)
+    ));
+    ipcMain.handle('viewer:getAudioData', async (_event, sessionId) => (
+        sessions.getAudioData(sessionId)
+    ));
+    ipcMain.handle('viewer:listAudioQueue', async (_event, sessionId) => (
+        sessions.listAudioQueue(sessionId)
     ));
     ipcMain.handle('viewer:getText', async (_event, sessionId, options = {}) => (
         sessions.getText(sessionId, options)

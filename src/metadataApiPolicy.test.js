@@ -29,7 +29,7 @@ test('API source별 필수 키 요구 여부를 판정한다', () => {
   assert.equal(apiSourceHasRequiredKey('리디북스', {}), true);
 });
 
-test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF 도서를 분리한다', () => {
+test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 도서를 분리한다', () => {
   assert.deepEqual(metadataApiSourcesForBookType('comic').map(source => source.value), [
     '리디북스',
     '알라딘',
@@ -49,8 +49,15 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF 도서를 분�
     'Google Books',
     'Amazon',
   ]);
+  assert.deepEqual(metadataApiSourcesForBookType('audio').map(source => source.value), [
+    '리디북스',
+    '알라딘',
+    'Google Books',
+    'Amazon',
+  ]);
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'book', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'pdf', {}), '리디북스');
+  assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'audio', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('알라딘', 'book', { aladin: 'key' }), '알라딘');
   assert.equal(normalizeMetadataApiSourceForBookType('Amazon', 'comic', {}), '리디북스');
 });
@@ -59,6 +66,7 @@ test('책 타입별 기본 검색 API 설정을 선택한다', () => {
   assert.equal(metadataApiPreferenceKey('comic'), 'preferred_meta_api_comic');
   assert.equal(metadataApiPreferenceKey('book'), 'preferred_meta_api_book');
   assert.equal(metadataApiPreferenceKey('pdf'), 'preferred_meta_api_pdf');
+  assert.equal(metadataApiPreferenceKey('audio'), 'preferred_meta_api_book');
   assert.equal(preferredMetadataApiSource({
     preferred_meta_api_comic: 'Vine',
     preferred_meta_api_book: 'Amazon',
@@ -75,6 +83,7 @@ test('책 타입별 기본 검색 API 설정을 선택한다', () => {
     preferred_meta_api_pdf: 'Google Books',
   }, 'pdf'), 'Google Books');
   assert.equal(preferredMetadataApiSource({ last_meta_api: 'Anilist' }, 'book'), '리디북스');
+  assert.equal(preferredMetadataApiSource({ preferred_meta_api_book: 'Amazon' }, 'audio'), 'Amazon');
 });
 
 test('메타데이터 관리의 검색 API 선택은 환경 설정 기본값을 저장하지 않는다', () => {
@@ -221,6 +230,20 @@ test('PDF API 검색 결과에도 만화 읽기 방향 기본값을 넣지 않�
   }, { bookType: 'pdf' }), {
     Title: 'PDF',
     Writer: 'Author',
+    Summary: '설명',
+  });
+});
+
+test('오디오북 API 검색 결과에도 만화 읽기 방향 기본값을 넣지 않는다', () => {
+  assert.deepEqual(metadataFromApiResult({
+    summary: '설명',
+    metadata: {
+      Title: 'Audiobook',
+      Writer: 'Artist',
+    },
+  }, { bookType: 'audio' }), {
+    Title: 'Audiobook',
+    Writer: 'Artist',
     Summary: '설명',
   });
 });

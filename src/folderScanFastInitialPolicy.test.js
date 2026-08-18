@@ -27,7 +27,7 @@ test('폴더 클릭의 빠른 1차 목록은 readDir로 먼저 표시하고 무�
     assert.match(taskSource, /options\.libraryDb && options\.skipLibraryCache !== true/);
     assert.match(taskSource, /function createQuickFileData/);
     assert.match(taskSource, /if \(quickListOnly\) \{[\s\S]*await scanQuickList\(folderPath\)/);
-    assert.match(taskSource, /if \(!thumbnailPathForCache && options\.skipCoverExtraction === true\)/);
+    assert.match(taskSource, /if \(!thumbnailPathForCache && !thumbnailRefreshCompleted && options\.skipCoverExtraction === true\)/);
     assert.match(taskSource, /thumb_path:\s*thumbnailPathForCache/);
     assert.match(taskSource, /let folderUtilsPromise = null/);
     assert.match(taskSource, /folderUtilsPromise = import\(folderUtilsUrl\)/);

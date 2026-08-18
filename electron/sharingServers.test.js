@@ -439,6 +439,51 @@ test('Web 서버는 브라우저 UI와 목록, 검색, 다운로드 API를 제�
     });
 });
 
+test('Web 오디오북 뷰어는 범위 스트리밍을 제공하고 세션 후 공유 루트 이탈을 차단한다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-web-audio-viewer-'));
+    const library = path.join(tempRoot, 'Library');
+    const outsidePath = path.join(tempRoot, 'outside.mp3');
+    const audioPath = path.join(library, 'Audio.mp3');
+    fs.mkdirSync(library, { recursive: true });
+    fs.writeFileSync(audioPath, '0123456789');
+    fs.writeFileSync(outsidePath, 'outside-audio');
+    const realLibrary = fs.realpathSync(library);
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const app = buildWebApp({ dup_check_folders: [realLibrary] });
+    await withHttpServer(app, async baseUrl => {
+        const session = await (await fetch(
+            `${baseUrl}/api/viewer/session?file=${encodeURIComponent(audioPath)}`,
+        )).json();
+        assert.equal(session.type, 'audio');
+
+        const audioData = await (await fetch(
+            `${baseUrl}/api/viewer/audio-data/${encodeURIComponent(session.id)}`,
+        )).json();
+        const rangeResponse = await fetch(`${baseUrl}${audioData.documentUrl}`, {
+            headers: { Range: 'bytes=2-5' },
+        });
+        assert.equal(rangeResponse.status, 206);
+        assert.equal(rangeResponse.headers.get('accept-ranges'), 'bytes');
+        assert.equal(rangeResponse.headers.get('content-range'), 'bytes 2-5/10');
+        assert.equal(await rangeResponse.text(), '2345');
+
+        fs.rmSync(audioPath);
+        try {
+            fs.symlinkSync(outsidePath, audioPath, process.platform === 'win32' ? 'file' : undefined);
+        } catch (error) {
+            if (['EPERM', 'EACCES'].includes(error.code)) return;
+            throw error;
+        }
+        const blockedMetadata = await fetch(
+            `${baseUrl}/api/viewer/audio-data/${encodeURIComponent(session.id)}`,
+        );
+        assert.equal(blockedMetadata.status, 404);
+        const blockedStream = await fetch(`${baseUrl}${audioData.documentUrl}`);
+        assert.equal(blockedStream.status, 404);
+    });
+});
+
 test('Web 서버 목록 API는 큰 폴더를 페이지 단위로 반환한다', async t => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-web-page-'));
     const library = path.join(tempRoot, 'Library A');
@@ -622,6 +667,43 @@ test('Web 서버는 DB 인덱스로 검색 결과, 메타데이터, 직접 썸�
         assert.equal(thumbnailResponse.status, 200);
         assert.match(thumbnailResponse.headers.get('content-type'), /image\/jpeg/);
         assert.equal(await thumbnailResponse.text(), 'thumbnail');
+    });
+});
+
+test('Web 서버는 명시적인 has_metadata false를 파일명 제목보다 우선한다', async t => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-web-audio-metadata-'));
+    const library = path.join(tempRoot, 'Library');
+    const child = path.join(library, 'Audio');
+    const audioPath = path.join(child, 'Chapter 01.wav');
+    const dbPath = path.join(tempRoot, 'library.db');
+    fs.mkdirSync(child, { recursive: true });
+    fs.writeFileSync(audioPath, 'audio');
+    const realLibrary = fs.realpathSync(library);
+    const realChild = fs.realpathSync(child);
+    const realAudioPath = fs.realpathSync(audioPath);
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const db = new LibraryDB({ dbPath });
+    await db.upsertFileInfo({
+        path: realAudioPath,
+        title: 'Chapter 01',
+        ext: '.wav',
+        book_type: 'audio',
+        has_metadata: 0,
+    });
+    await db.close();
+
+    const app = buildWebApp({ dup_check_folders: [realLibrary] }, { dbPath });
+    await withHttpServer(app, async baseUrl => {
+        const rootList = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(realLibrary)}`)).json();
+        assert.equal(rootList.folders[0].has_metadata, false);
+
+        const childList = await (await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(realChild)}`)).json();
+        assert.equal(childList.files[0].title, 'Chapter 01');
+        assert.equal(childList.files[0].has_metadata, false);
+
+        const fileMetadata = await (await fetch(`${baseUrl}/api/file-meta?file=${encodeURIComponent(realAudioPath)}`)).json();
+        assert.deepEqual(fileMetadata, {});
     });
 });
 

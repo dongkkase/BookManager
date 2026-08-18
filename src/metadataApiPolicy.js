@@ -41,14 +41,14 @@ export function apiSourceHasRequiredKey(source, apiKeys = {}) {
 
 export function metadataApiSourcesForBookType(bookType = 'comic') {
   if (bookType === 'pdf') return PDF_METADATA_API_SOURCES;
-  return bookType === 'book'
+  return bookType === 'book' || bookType === 'audio'
     ? BOOK_METADATA_API_SOURCES
     : COMIC_METADATA_API_SOURCES;
 }
 
 export function metadataApiPreferenceKey(bookType = 'comic') {
   if (bookType === 'pdf') return 'preferred_meta_api_pdf';
-  return bookType === 'book'
+  return bookType === 'book' || bookType === 'audio'
     ? 'preferred_meta_api_book'
     : 'preferred_meta_api_comic';
 }

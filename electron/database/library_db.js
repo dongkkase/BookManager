@@ -37,6 +37,10 @@ const FILE_COLUMNS = [
     'volume_count', 'page_count', 'format', 'manga', 'language', 'rating',
     'age_rating', 'publish_date', 'summary', 'characters', 'teams', 'locations',
     'story_arc', 'tags', 'notes', 'web', 'isbn', 'book_type', 'thumb_path',
+    'cover_override_path', 'has_metadata', 'metadata_override',
+    'album', 'album_artist', 'composer', 'duration_seconds', 'bitrate',
+    'sample_rate', 'codec', 'container', 'channels', 'track_number',
+    'track_total', 'disc_number', 'disc_total', 'mime_type',
 ];
 
 const TAG_METADATA_COLUMNS = [
@@ -101,9 +105,14 @@ const FILE_SEARCH_COLUMNS = [
     'tags',
     'notes',
     'web',
+    'album',
+    'album_artist',
+    'composer',
+    'codec',
+    'container',
 ];
 
-const FILE_SEARCH_INDEX_VERSION = '2';
+const FILE_SEARCH_INDEX_VERSION = '3';
 const FILE_SEARCH_INDEX_META_KEY = 'files_search_index_version';
 const FILE_SEARCH_SCHEMA_OBJECTS = [
     ['table', 'files_search_ids'],
@@ -205,7 +214,24 @@ export class LibraryDB {
                 web TEXT,
                 isbn TEXT,
                 book_type TEXT,
-                thumb_path TEXT
+                thumb_path TEXT,
+                cover_override_path TEXT,
+                has_metadata INTEGER,
+                metadata_override INTEGER,
+                album TEXT,
+                album_artist TEXT,
+                composer TEXT,
+                duration_seconds REAL,
+                bitrate REAL,
+                sample_rate REAL,
+                codec TEXT,
+                container TEXT,
+                channels REAL,
+                track_number TEXT,
+                track_total TEXT,
+                disc_number TEXT,
+                disc_total TEXT,
+                mime_type TEXT
             );
             CREATE TABLE IF NOT EXISTS dup_cache (
                 a_path TEXT PRIMARY KEY,
@@ -279,6 +305,23 @@ export class LibraryDB {
             letterer: 'TEXT',
             cover_artist: 'TEXT',
             editor: 'TEXT',
+            cover_override_path: 'TEXT',
+            has_metadata: 'INTEGER',
+            metadata_override: 'INTEGER',
+            album: 'TEXT',
+            album_artist: 'TEXT',
+            composer: 'TEXT',
+            duration_seconds: 'REAL',
+            bitrate: 'REAL',
+            sample_rate: 'REAL',
+            codec: 'TEXT',
+            container: 'TEXT',
+            channels: 'REAL',
+            track_number: 'TEXT',
+            track_total: 'TEXT',
+            disc_number: 'TEXT',
+            disc_total: 'TEXT',
+            mime_type: 'TEXT',
         };
         for (const [column, definition] of Object.entries(fileColumnDefinitions)) {
             if (!fileColumns.has(column)) {
@@ -589,6 +632,23 @@ export class LibraryDB {
             isbn: record.isbn ?? record.ISBN ?? '',
             book_type: record.book_type ?? record.bookType ?? '',
             thumb_path: record.thumb_path ?? record.thumbnail ?? '',
+            cover_override_path: record.cover_override_path ?? record.coverOverridePath ?? '',
+            has_metadata: record.has_metadata ?? record.hasMetadata ?? '',
+            metadata_override: record.metadata_override ?? record.metadataOverride ?? '',
+            album: record.album ?? '',
+            album_artist: record.album_artist ?? record.albumArtist ?? '',
+            composer: record.composer ?? '',
+            duration_seconds: record.duration_seconds ?? record.durationSeconds ?? '',
+            bitrate: record.bitrate ?? record.bitrateBitsPerSecond ?? '',
+            sample_rate: record.sample_rate ?? record.sampleRateHz ?? '',
+            codec: record.codec ?? '',
+            container: record.container ?? '',
+            channels: record.channels ?? '',
+            track_number: record.track_number ?? record.trackNumber ?? '',
+            track_total: record.track_total ?? record.trackTotal ?? '',
+            disc_number: record.disc_number ?? record.discNumber ?? '',
+            disc_total: record.disc_total ?? record.discTotal ?? '',
+            mime_type: record.mime_type ?? record.mimeType ?? '',
         };
     }
 
@@ -1056,6 +1116,19 @@ export class LibraryDB {
                     recursive: move?.recursive === true,
                 }))
                 .filter(move => move.src && move.dest);
+            const targetIndexMoves = (changes.targetIndexMoves || [])
+                .map(move => ({
+                    src: move?.src ? path.resolve(move.src) : '',
+                    dest: move?.dest ? path.resolve(move.dest) : '',
+                    recursive: move?.recursive === true,
+                }))
+                .filter(move => move.src && move.dest);
+            const fileInfoDeletes = (changes.fileInfoDeletes || [])
+                .map(entry => ({
+                    path: entry?.path ? path.resolve(entry.path) : '',
+                    recursive: entry?.recursive === true,
+                }))
+                .filter(entry => entry.path);
             const touchedLibraries = [...new Set([
                 ...(changes.touchedLibraries || []),
                 ...targetEntries.map(entry => entry.target_folder),
@@ -1065,6 +1138,11 @@ export class LibraryDB {
             const deleteTargetExact = db.prepare('DELETE FROM dup_target_index WHERE full_path = ?');
             const deleteTargetPrefix = db.prepare(`
                 DELETE FROM dup_target_index
+                WHERE full_path = ? OR full_path LIKE ? ESCAPE '\\'
+            `);
+            const selectTargetExact = db.prepare('SELECT * FROM dup_target_index WHERE full_path = ?');
+            const selectTargetPrefix = db.prepare(`
+                SELECT * FROM dup_target_index
                 WHERE full_path = ? OR full_path LIKE ? ESCAPE '\\'
             `);
             const upsertTarget = db.prepare(`
@@ -1082,6 +1160,10 @@ export class LibraryDB {
                 WHERE path = ? OR path LIKE ? ESCAPE '\\'
             `);
             const deleteFile = db.prepare('DELETE FROM files WHERE path = ?');
+            const deleteFilePrefix = db.prepare(`
+                DELETE FROM files
+                WHERE path = ? OR path LIKE ? ESCAPE '\\'
+            `);
             const upsertFile = db.prepare(`
                 INSERT INTO files (${FILE_COLUMNS.join(', ')})
                 VALUES (${FILE_COLUMNS.map(column => `@${column}`).join(', ')})
@@ -1118,7 +1200,8 @@ export class LibraryDB {
             const fileValues = (record = {}, filePath, stat = fileStat(filePath)) => {
                 const values = Object.fromEntries(FILE_COLUMNS.map(column => [column, record[column] ?? '']));
                 values.path = filePath;
-                values.mtime = stat.mtime;
+                const rawMtime = Number(stat.mtime) || 0;
+                values.mtime = rawMtime > 100000000000 ? rawMtime / 1000 : rawMtime;
                 values.size = stat.size;
                 values.ext = path.extname(filePath).toLowerCase();
                 if (!values.title) values.title = path.parse(filePath).name;
@@ -1162,7 +1245,9 @@ export class LibraryDB {
             const result = {
                 removedTargetCount: 0,
                 savedTargetCount: 0,
+                movedTargetCount: 0,
                 movedFileInfoCount: 0,
+                deletedFileInfoCount: 0,
                 stubbedFileInfoCount: 0,
                 libraryCount: touchedLibraries.length,
             };
@@ -1176,6 +1261,37 @@ export class LibraryDB {
                 }
                 for (const entry of targetEntries) {
                     result.savedTargetCount += upsertTarget.run(entry).changes;
+                }
+                for (const move of targetIndexMoves) {
+                    const rows = move.recursive
+                        ? selectTargetPrefix.all(move.src, prefixLike(move.src))
+                        : [selectTargetExact.get(move.src)].filter(Boolean);
+                    for (const row of rows) {
+                        const sourcePath = path.resolve(row.full_path);
+                        const destinationPath = move.recursive
+                            ? path.resolve(move.dest, path.relative(move.src, sourcePath))
+                            : move.dest;
+                        const relativeTargetFolder = path.relative(move.src, row.target_folder);
+                        const targetFolderMovesWithSource = move.recursive && (
+                            relativeTargetFolder === ''
+                            || (!relativeTargetFolder.startsWith('..') && !path.isAbsolute(relativeTargetFolder))
+                        );
+                        const destinationTargetFolder = targetFolderMovesWithSource
+                            ? path.resolve(move.dest, relativeTargetFolder)
+                            : row.target_folder;
+                        const stat = fileStat(destinationPath);
+                        if (sourcePath !== destinationPath) deleteTargetExact.run(destinationPath);
+                        deleteTargetExact.run(row.full_path);
+                        upsertTarget.run({
+                            ...row,
+                            full_path: destinationPath,
+                            target_folder: destinationTargetFolder,
+                            name: path.basename(destinationPath),
+                            size: stat.size,
+                            mtime: stat.mtime,
+                        });
+                        result.movedTargetCount += 1;
+                    }
                 }
                 for (const move of fileInfoMoves) {
                     const rows = move.recursive
@@ -1191,6 +1307,11 @@ export class LibraryDB {
                         upsertFile.run(fileValues(row, destinationPath));
                         result.movedFileInfoCount += 1;
                     }
+                }
+                for (const entry of fileInfoDeletes) {
+                    result.deletedFileInfoCount += entry.recursive
+                        ? deleteFilePrefix.run(entry.path, prefixLike(entry.path)).changes
+                        : deleteFile.run(entry.path).changes;
                 }
                 for (const entry of targetEntries) {
                     const insertResult = insertFileStub.run(fileValues({
@@ -1211,7 +1332,10 @@ export class LibraryDB {
                     const targetPaths = selectTargetPaths.all(libraryPath)
                         .map(row => row.full_path)
                         .filter(Boolean);
-                    if (existingFolders.length === 0 && targetPaths.length === 0) continue;
+                    if (existingFolders.length === 0 && targetPaths.length === 0) {
+                        removeLibraryFolders.run(libraryPath);
+                        continue;
+                    }
                     const folderRecords = buildLibraryFolderIndexRecords(libraryPath, existingFolders, targetPaths);
                     removeLibraryFolders.run(libraryPath);
                     for (const record of folderRecords) insertLibraryFolder.run(record);

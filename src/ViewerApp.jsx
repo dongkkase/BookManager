@@ -4,6 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
+import { AudiobookViewer } from './components/viewer/AudiobookViewer';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
@@ -1286,6 +1287,18 @@ function createWebViewerAPI() {
       }
       return { session: currentSession };
     },
+    openAudioQueueItem: async (sessionId, fileName) => {
+      const result = await fetchWebViewerJson(`/api/viewer/audio-queue-item/${encodeURIComponent(sessionId)}?fileName=${encodeURIComponent(fileName)}`);
+      currentSession = result.session || result;
+      currentSessionPromise = Promise.resolve(currentSession);
+      if (currentSession?.filePath) {
+        currentFilePath = currentSession.filePath;
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('file', currentFilePath);
+        window.history.replaceState(null, '', nextUrl);
+      }
+      return { session: currentSession };
+    },
     listComicPages: sessionId => fetchWebViewerJson(`/api/viewer/comic-pages/${encodeURIComponent(sessionId)}`),
     getComicPage: async (sessionId, entryName) => {
       const response = await fetch(`/api/viewer/comic-page/${encodeURIComponent(sessionId)}?entry=${encodeURIComponent(entryName)}`, {
@@ -1298,6 +1311,8 @@ function createWebViewerAPI() {
       };
     },
     getDocumentData: sessionId => fetchWebViewerJson(`/api/viewer/document-data/${encodeURIComponent(sessionId)}`),
+    getAudioData: sessionId => fetchWebViewerJson(`/api/viewer/audio-data/${encodeURIComponent(sessionId)}`),
+    listAudioQueue: sessionId => fetchWebViewerJson(`/api/viewer/audio-queue/${encodeURIComponent(sessionId)}`),
     getEpubText: sessionId => fetchWebViewerJson(`/api/viewer/epub/${encodeURIComponent(sessionId)}`),
     getText: (sessionId, options = {}) => fetchWebViewerJson(`/api/viewer/text/${encodeURIComponent(sessionId)}?encoding=${encodeURIComponent(options.encoding || 'auto')}`),
     createOpenAiTts: async () => ({
@@ -5174,7 +5189,7 @@ function ViewerApp() {
   }, []);
 
   const persistState = useCallback((patch = {}) => {
-    if (!session) return;
+    if (!session || session.type === 'audio') return;
     const fileState = {
       pageIndex: 'pageIndex' in patch ? patch.pageIndex : pageIndex,
       scrollPercent: 'scrollPercent' in patch ? patch.scrollPercent : scrollPercent,
@@ -5605,7 +5620,7 @@ function ViewerApp() {
         const result = await window.viewerAPI.getText(nextSession.id, { encoding: 'auto' });
         if (!isCurrentLoad()) return;
         setTextContent(result.text || '');
-      } else {
+      } else if (nextSession.type !== 'audio') {
         setError(viewerText('viewer.common.unsupported_format', '지원하지 않는 형식입니다.'));
       }
       if (savedPrefs.flowMode === 'scroll') {
@@ -5984,21 +5999,41 @@ function ViewerApp() {
 
   const moveAdjacentBook = useCallback(async direction => {
     const hasAdjacentBook = Number(direction) < 0 ? hasPreviousBook : hasNextBook;
-    if (!session || !hasAdjacentBook || adjacentLoadingRef.current) return;
+    if (!session || !hasAdjacentBook || adjacentLoadingRef.current) return null;
     adjacentLoadingRef.current = true;
     setAdjacentLoading(true);
     try {
       const result = await window.viewerAPI.openAdjacent(session.id, direction);
       if (result?.session) await loadSession(result.session);
+      return result?.session || null;
     } catch (adjacentError) {
       const message = adjacentError.message || String(adjacentError);
-      if (message === 'No adjacent book.') return;
+      if (message === 'No adjacent book.') return null;
       setError(message);
+      if (session?.type === 'audio') throw adjacentError;
+      return null;
     } finally {
       adjacentLoadingRef.current = false;
       setAdjacentLoading(false);
     }
   }, [hasNextBook, hasPreviousBook, loadSession, session]);
+
+  const openAudioQueueItem = useCallback(async fileName => {
+    if (!session || session.type !== 'audio' || adjacentLoadingRef.current) return null;
+    adjacentLoadingRef.current = true;
+    setAdjacentLoading(true);
+    try {
+      const result = await window.viewerAPI.openAudioQueueItem(session.id, fileName);
+      if (result?.session) await loadSession(result.session);
+      return result?.session || null;
+    } catch (queueError) {
+      setError(queueError.message || String(queueError));
+      throw queueError;
+    } finally {
+      adjacentLoadingRef.current = false;
+      setAdjacentLoading(false);
+    }
+  }, [loadSession, session]);
 
   const isComicLandscapePage = useCallback(index => {
     const page = pages[index];
@@ -7022,6 +7057,7 @@ function ViewerApp() {
   }, [cancelSwipeGesture, endDragPan]);
 
   useEffect(() => {
+    if (session?.type === 'audio') return undefined;
     const handler = event => {
       if (event.key === 'Escape' && (settingsOpen || navigationPanelOpen || helpOpen)) {
         event.preventDefault();
@@ -7899,6 +7935,21 @@ function ViewerApp() {
     }
     return null;
   };
+
+  if (session?.type === 'audio') {
+    return (
+      <AudiobookViewer
+        session={session}
+        language={viewerLanguage}
+        isFullscreen={isFullscreen}
+        adjacentLoading={adjacentLoading}
+        onToggleFullscreen={toggleFullscreen}
+        onClose={() => window.viewerAPI?.closeWindow?.()}
+        onMoveAdjacent={moveAdjacentBook}
+        onOpenQueueItem={openAudioQueueItem}
+      />
+    );
+  }
 
   return (
     <div className={appClassName} style={appStyle} lang={viewerLanguage}>
