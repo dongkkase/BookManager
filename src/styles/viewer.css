@@ -4199,7 +4199,7 @@
   }
 
   .viewer-title {
-    flex: 1 1 100%;
+    flex: 1 1 0;
   }
 
   .viewer-tool-group {
@@ -4219,7 +4219,7 @@
   }
 
   .viewer-title {
-    flex: 1 1 100%;
+    flex: 1 1 0;
     gap: 6px;
   }
 
@@ -4254,7 +4254,7 @@
   }
 
   .viewer-title {
-    flex: 1 1 100%;
+    flex: 1 1 0;
   }
 
   .viewer-tool-group {

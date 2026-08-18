@@ -123,3 +123,27 @@ test('뷰어 공통 툴바는 Tab과 hover로 부드럽게 표시 상태를 전�
     assert.match(i18nSource, /hide_toolbar: 'Hide toolbar \(Tab\)'/);
     assert.match(i18nSource, /hide_toolbar: 'ツールバーを隠す \(Tab\)'/);
 });
+
+test('좁은 뷰어의 제목은 툴바 숨기기 버튼 옆 첫 줄에 유지된다', () => {
+    const toolbarSource = sourceBetween(
+        viewerSource,
+        '<header\n        ref={toolbarRef}',
+        '<div className="viewer-tool-group">',
+    );
+    const responsiveSource = viewerCss.slice(viewerCss.indexOf('@media (max-width: 1320px)'));
+    const responsiveTitleRules = Array.from(
+        responsiveSource.matchAll(/\.viewer-title\s*\{([^}]*)\}/g),
+        match => match[1],
+    );
+
+    assert.ok(toolbarSource.indexOf('viewer-toolbar-toggle-cluster') < toolbarSource.indexOf('viewer-title'));
+    assert.ok(responsiveTitleRules.length >= 3);
+    responsiveTitleRules.forEach(rule => {
+        assert.match(rule, /flex:\s*1 1 0/);
+        assert.doesNotMatch(rule, /flex:\s*1 1 100%/);
+    });
+    assert.match(
+        responsiveSource,
+        /\.viewer-tool-group\s*\{[^}]*flex:\s*1 1 100%/,
+    );
+});
