@@ -122,6 +122,11 @@ import {
   decodeMetadataCoverDataUrl,
   defaultMetadataCoverName,
 } from './metadataCoverExport.js';
+import {
+  createSupertonicModelManager,
+  resolveSupertonicModelDir,
+} from './supertonicModel.js';
+import { createSupertonicTtsDataUrl } from './supertonicTts.js';
 
 const RENAMER_PREVIEW_MAX_DIMENSION = 720;
 const RENAMER_PREVIEW_JPEG_QUALITY = 86;
@@ -3115,6 +3120,15 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
   const cancellationRegistry = new TaskCancellationRegistry();
   const runtimeStates = new Map();
+  const supertonicModelManager = createSupertonicModelManager({
+    getModelDir: () => resolveSupertonicModelDir(getExecutableDir()),
+    getSevenZipPath: async () => await getBinPath('7za') || await getBinPath('7z'),
+  });
+  const broadcastSupertonicStatus = status => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('tts:supertonic-status', status);
+    }
+  };
   const appDataDir = () => getExecutableDir();
   const apiCacheDbPath = () => resolveApiCacheDbPath(appDataDir());
   const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
@@ -3810,6 +3824,47 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         error: error.message || String(error),
       });
       return { success: false, error: error.message || String(error) };
+    }
+  });
+
+  ipcMain.handle('tts:supertonicStatus', () => supertonicModelManager.status());
+
+  ipcMain.handle('tts:supertonicInstall', async event => {
+    try {
+      const status = await supertonicModelManager.install(progress => {
+        if (!event.sender.isDestroyed()) event.sender.send('tts:supertonic-progress', progress);
+      });
+      broadcastSupertonicStatus(status);
+      return { success: true, ...status };
+    } catch (error) {
+      const status = supertonicModelManager.status();
+      broadcastSupertonicStatus(status);
+      return {
+        success: false,
+        ...status,
+        code: error?.code || 'SUPERTONIC_INSTALL_FAILED',
+        error: String(error?.message || error || 'Supertonic model installation failed.').slice(0, 300),
+      };
+    }
+  });
+
+  ipcMain.handle('api:supertonicTts', async (_event, options = {}) => {
+    const status = supertonicModelManager.status();
+    if (!status.installed) {
+      return {
+        success: false,
+        code: 'SUPERTONIC_MODEL_MISSING',
+        error: 'Supertonic model is not installed.',
+      };
+    }
+    try {
+      return await createSupertonicTtsDataUrl(options, { modelDir: status.modelDir });
+    } catch (error) {
+      return {
+        success: false,
+        code: error?.code || 'SUPERTONIC_TTS_FAILED',
+        error: String(error?.message || error || 'Supertonic speech synthesis failed.').slice(0, 300),
+      };
     }
   });
 
@@ -4653,6 +4708,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           language: savedConfig.language,
           hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
           hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
+          hasSupertonicModel: supertonicModelManager.status().installed,
         });
       }
     });

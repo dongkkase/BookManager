@@ -83,6 +83,13 @@ test('macOS 배포본은 bundled 7za 리소스를 포함한다', () => {
     ]);
 });
 
+test('Supertonic ONNX 런타임과 제3자 고지는 배포본에 포함한다', () => {
+    assert.equal(packageConfig.dependencies['onnxruntime-node'], '1.22.0');
+    assert.deepEqual(packageConfig.build.asarUnpack, ['node_modules/onnxruntime-node/**/*']);
+    assert.ok(packageConfig.build.files.includes('THIRD_PARTY_NOTICES.md'));
+    assert.equal(fs.existsSync(path.join(projectRoot, 'THIRD_PARTY_NOTICES.md')), true);
+});
+
 test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한다', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-'));
     try {

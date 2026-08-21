@@ -47,6 +47,7 @@
     "music-metadata": "10.9.1",
     "node-7z": "^3.0.0",
     "node-taglib-sharp": "6.0.3",
+    "onnxruntime-node": "1.22.0",
     "pdfjs-dist": "^4.10.38",
     "pica": "^10.0.0",
     "react": "^18.2.0",
@@ -67,6 +68,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "THIRD_PARTY_NOTICES.md",
       {
         "from": "src/utils",
         "to": "src/utils",
@@ -91,6 +93,9 @@
         ]
       },
       "version.json"
+    ],
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**/*"
     ],
     "extraResources": [
       {

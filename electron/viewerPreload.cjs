@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   getText: (sessionId, options) => ipcRenderer.invoke('viewer:getText', sessionId, options),
   getEpubText: sessionId => ipcRenderer.invoke('viewer:getEpubText', sessionId),
   getConfig: () => ipcRenderer.invoke('viewer:getConfig'),
+  getSupertonicModelStatus: () => ipcRenderer.invoke('tts:supertonicStatus'),
+  createSupertonicTts: options => ipcRenderer.invoke('api:supertonicTts', options),
   createOpenAiTts: options => ipcRenderer.invoke('api:openaiTts', options),
   createGoogleTts: options => ipcRenderer.invoke('api:googleTts', options),
   listBundledFonts: () => ipcRenderer.invoke('font:listBundled'),
@@ -43,6 +45,11 @@ contextBridge.exposeInMainWorld('viewerAPI', {
     const handler = (_event, config) => callback(config);
     ipcRenderer.on('viewer:config-change', handler);
     return () => ipcRenderer.removeListener('viewer:config-change', handler);
+  },
+  onSupertonicModelStatus: callback => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('tts:supertonic-status', handler);
+    return () => ipcRenderer.removeListener('tts:supertonic-status', handler);
   },
   onLoadSession: callback => {
     const handler = (_event, session) => callback(session);

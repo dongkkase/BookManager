@@ -83,6 +83,15 @@ function libraryFallbackName(folderPath = '') {
   return parts[parts.length - 1] || folderPath;
 }
 
+function supertonicInstallPercent(progress = {}) {
+  const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+  if (progress.phase === 'complete') return 100;
+  if (progress.phase === 'verify-files') return Math.min(99, 80 + Math.round(percent * 0.19));
+  if (progress.phase === 'extract') return 80;
+  if (progress.phase === 'verify-archive') return 76;
+  return Math.round(percent * 0.75);
+}
+
 function normalizeConfig(config) {
   return normalizeSettingsConfig({
     target_format: 'none',
@@ -127,6 +136,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const [showSecrets, setShowSecrets] = React.useState({});
   const [maintenanceMessage, setMaintenanceMessage] = React.useState('');
   const [maintenanceBusy, setMaintenanceBusy] = React.useState('');
+  const [supertonicStatus, setSupertonicStatus] = React.useState({ installed: false, modelDir: '', archiveSize: 0 });
+  const [supertonicProgress, setSupertonicProgress] = React.useState(null);
   const [selectedDupFolder, setSelectedDupFolder] = React.useState('');
   const [soundOptions, setSoundOptions] = React.useState(['Default.wav']);
   const [bundledFontFaces, setBundledFontFaces] = React.useState([]);
@@ -159,6 +170,28 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
       .catch(() => {});
     return () => {
       cancelled = true;
+    };
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return undefined;
+    let cancelled = false;
+    setSupertonicProgress(null);
+    window.electronAPI?.getSupertonicModelStatus?.()
+      .then(status => {
+        if (!cancelled && status) setSupertonicStatus(status);
+      })
+      .catch(() => {});
+    const removeProgressListener = window.electronAPI?.onSupertonicModelProgress?.(progress => {
+      if (!cancelled) setSupertonicProgress(progress);
+    });
+    const removeStatusListener = window.electronAPI?.onSupertonicModelStatus?.(status => {
+      if (!cancelled && status) setSupertonicStatus(status);
+    });
+    return () => {
+      cancelled = true;
+      removeProgressListener?.();
+      removeStatusListener?.();
     };
   }, [isOpen]);
 
@@ -395,6 +428,41 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     }
   };
 
+  const handleInstallSupertonic = async () => {
+    const archiveSizeMb = Math.round((supertonicStatus.archiveSize || 371138757) / (1024 * 1024));
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: label('tts_supertonic_group', 'Supertonic 3 (로컬)'),
+      message: label(
+        'tts_supertonic_confirm',
+        'Supertonic 3 모델 약 {size}MB를 다운로드할까요? 모델은 Supertonic OpenRAIL-M 라이선스로 제공됩니다.',
+      ).replace('{size}', archiveSizeMb),
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: localConfig.language || localConfig.lang || 'ko',
+    });
+    if (response !== 'yes') return;
+
+    setMaintenanceBusy('supertonic-model');
+    setMaintenanceMessage('');
+    setSupertonicProgress({ phase: 'download', percent: 0 });
+    try {
+      const result = await window.electronAPI?.installSupertonicModel?.();
+      if (!result?.success) throw new Error(result?.error || 'Supertonic model installation failed.');
+      setSupertonicStatus(result);
+      setSupertonicProgress({ phase: 'complete', percent: 100 });
+      const message = label('tts_supertonic_complete', 'Supertonic 3 모델 설치가 완료되었습니다.');
+      setMaintenanceMessage(message);
+      showToast?.({ key: 'tts_supertonic_complete' });
+    } catch (error) {
+      setMaintenanceMessage(
+        label('tts_supertonic_failed', 'Supertonic 3 모델 설치 실패: {msg}').replace('{msg}', error.message),
+      );
+    } finally {
+      setMaintenanceBusy('');
+    }
+  };
+
   const renderSecretInput = (key, placeholder, disabled = false) => (
     <div className="settings-secret-row">
       <input
@@ -447,7 +515,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
           <button className={activeTab === 'basic' ? 'active' : ''} onClick={() => setActiveTab('basic')}>{label('tab_basic', '기본 설정')}</button>
           <button className={activeTab === 'folder' ? 'active' : ''} onClick={() => setActiveTab('folder')}>{label('tab_folder_settings', '폴더 탭 설정')}</button>
           <button className={activeTab === 'api' ? 'active' : ''} onClick={() => setActiveTab('api')}>{label('tab_api', 'API 검색 설정')}</button>
-          <button className={activeTab === 'ttsApi' ? 'active' : ''} onClick={() => setActiveTab('ttsApi')}>{label('tab_tts_api_key', 'TTS API Key 설정')}</button>
+          <button className={activeTab === 'ttsApi' ? 'active' : ''} onClick={() => setActiveTab('ttsApi')}>{label('tab_tts_api_key', 'TTS 설정')}</button>
         </div>
 
         <div className="modal-body settings-modal-body">
@@ -814,6 +882,28 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
 
           {activeTab === 'ttsApi' && (
             <div className="settings-panel">
+              <fieldset className="settings-fieldset">
+              <legend>{label('tts_supertonic_group', 'Supertonic 3 (로컬)')}</legend>
+              <p className="settings-help">{label('tts_supertonic_desc', '인터넷 전송 없이 기기에서 음성을 생성합니다. 최초 사용 전 모델 설치가 필요합니다.')}</p>
+              <div className="settings-maintenance-actions">
+                {!supertonicStatus.installed && (
+                  <button className="settings-action-btn settings-blue-btn" onClick={handleInstallSupertonic} disabled={Boolean(maintenanceBusy)}>
+                    {maintenanceBusy === 'supertonic-model'
+                      ? `${label('tts_supertonic_installing', '설치 중...')} ${supertonicInstallPercent(supertonicProgress)}%`
+                      : label('tts_supertonic_download', '모델 다운로드 및 설치')}
+                  </button>
+                )}
+                <span>
+                  {supertonicStatus.installed
+                    ? label('tts_supertonic_installed', '설치됨')
+                    : label('tts_supertonic_not_installed', '설치되지 않음')}
+                </span>
+              </div>
+              {supertonicStatus.installed && supertonicStatus.modelDir && (
+                <p className="settings-help">{supertonicStatus.modelDir}</p>
+              )}
+              <p className="settings-help">{label('tts_supertonic_license', '모델: Supertonic OpenRAIL-M · 추론 코드: MIT')}</p>
+              </fieldset>
               <fieldset className="settings-fieldset">
               <legend>{label('tts_api_group', 'TTS API')}</legend>
               <div className="settings-row">

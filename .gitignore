@@ -15,6 +15,7 @@
 !LICENSE.md
 !LICENSE.*.md
 !MIGRATION_DETAIL_CHECKLIST.md
+!THIRD_PARTY_NOTICES.md
 
 # Dependencies
 node_modules/

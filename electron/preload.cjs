@@ -5,6 +5,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 설정 관련
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
+  getSupertonicModelStatus: () => ipcRenderer.invoke('tts:supertonicStatus'),
+  installSupertonicModel: () => ipcRenderer.invoke('tts:supertonicInstall'),
+  onSupertonicModelProgress: (callback) => {
+    const handler = (_, progress) => callback(progress);
+    ipcRenderer.on('tts:supertonic-progress', handler);
+    return () => ipcRenderer.removeListener('tts:supertonic-progress', handler);
+  },
+  onSupertonicModelStatus: (callback) => {
+    const handler = (_, status) => callback(status);
+    ipcRenderer.on('tts:supertonic-status', handler);
+    return () => ipcRenderer.removeListener('tts:supertonic-status', handler);
+  },
   
   // 폰트 관련
   getFontPath: (fontFilename) => ipcRenderer.invoke('font:getPath', fontFilename),

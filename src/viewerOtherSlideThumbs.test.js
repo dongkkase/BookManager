@@ -112,7 +112,7 @@ test('두 장 보기에서 목차로 펼침면의 두 번째 페이지를 선택
     );
     assert.match(
         normalizationSource,
-        /\[flowMode, pageCount, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session\?\.type, setPageIndexSynced\]/,
+        /\[flowMode, pageCount, pageCountReadyForNavigation, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session\?\.type, setPageIndexSynced\]/,
     );
 
     const activeTocStart = viewerSource.indexOf('const activeTocId = useMemo');

@@ -78,40 +78,52 @@ test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이
     assert.match(viewerCss, /\.viewer-dropdown-group \{/);
 });
 
-test('TTS 메뉴는 음성 드롭다운 안에서 시스템, OpenAI, Google 음성을 그룹으로 제공한다', () => {
+test('TTS 메뉴는 음성 드롭다운 안에서 시스템, Supertonic, OpenAI, Google 음성을 그룹으로 제공한다', () => {
     assert.match(viewerSource, /const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts'/);
+    assert.match(viewerSource, /const SUPERTONIC_TTS_VOICES = \[/);
     assert.match(viewerSource, /const OPENAI_TTS_VOICES = \[/);
     assert.match(viewerSource, /const GOOGLE_TTS_VOICES = \[/);
     assert.match(viewerSource, /labelKey: 'viewer\.tts\.google_voice_ko'/);
     assert.match(viewerSource, /engine: 'system'/);
+    assert.match(viewerSource, /supertonicVoice: 'M1'/);
     assert.match(viewerSource, /openaiVoice: 'marin'/);
     assert.match(viewerSource, /googleVoice: 'ko-KR'/);
     assert.match(viewerSource, /function splitTtsTextIntoChunks/);
     assert.match(ttsControlSource, /settings\.engine === 'openai'/);
     assert.match(ttsControlSource, /settings\.engine === 'google'/);
+    assert.match(ttsControlSource, /settings\.engine === 'supertonic'/);
     assert.doesNotMatch(ttsControlSource, /viewer\.tts\.engine', '엔진'/);
     assert.match(ttsControlSource, /voice_group_system/);
+    assert.match(ttsControlSource, /voice_group_supertonic/);
     assert.match(ttsControlSource, /voice_group_openai/);
     assert.match(ttsControlSource, /voice_group_google/);
     assert.match(ttsControlSource, /const \[ttsApiKeyState, setTtsApiKeyState\]/);
     assert.match(ttsControlSource, /hasTtsOpenAiKey/);
     assert.match(ttsControlSource, /hasTtsGoogleKey/);
+    assert.match(ttsControlSource, /getSupertonicModelStatus/);
+    assert.match(ttsControlSource, /onSupertonicModelStatus/);
     assert.match(ttsControlSource, /tts_openai_key/);
     assert.match(ttsControlSource, /tts_google_key/);
     assert.match(ttsControlSource, /apiKeyRequiredOption\(`openai:\$\{settings\.openaiVoice\}`\)/);
     assert.match(ttsControlSource, /apiKeyRequiredOption\(`google:\$\{settings\.googleVoice\}`\)/);
     assert.match(ttsControlSource, /viewer\.tts\.api_key_required/);
+    assert.match(ttsControlSource, /viewer\.tts\.supertonic_model_required/);
+    assert.match(ttsControlSource, /id: `supertonic:\$\{voice\.id\}`/);
     assert.match(ttsControlSource, /id: `openai:\$\{voice\.id\}`/);
     assert.match(ttsControlSource, /id: `google:\$\{voice\.id\}`/);
     assert.match(ttsControlSource, /id: `system:\$\{voice\.voiceURI \|\| voice\.name\}`/);
     assert.match(ttsControlSource, /voice\.startsWith\('openai:'\)/);
     assert.match(ttsControlSource, /voice\.startsWith\('google:'\)/);
+    assert.match(ttsControlSource, /voice\.startsWith\('supertonic:'\)/);
+    assert.match(viewerSource, /window\.viewerAPI\?\.createSupertonicTts/);
     assert.match(viewerSource, /window\.viewerAPI\?\.createOpenAiTts/);
     assert.match(viewerSource, /window\.viewerAPI\?\.createGoogleTts/);
     assert.match(viewerSource, /viewer\.tts\.openai_key_missing/);
     assert.match(viewerSource, /viewer\.tts\.google_key_missing/);
     assert.match(viewerPreloadSource, /createOpenAiTts:\s*options => ipcRenderer\.invoke\('api:openaiTts', options\)/);
     assert.match(viewerPreloadSource, /createGoogleTts:\s*options => ipcRenderer\.invoke\('api:googleTts', options\)/);
+    assert.match(viewerPreloadSource, /createSupertonicTts:\s*options => ipcRenderer\.invoke\('api:supertonicTts', options\)/);
+    assert.match(ipcHandlersSource, /ipcMain\.handle\('api:supertonicTts'/);
     assert.match(ipcHandlersSource, /ipcMain\.handle\('api:openaiTts'/);
     assert.match(ipcHandlersSource, /ipcMain\.handle\('api:googleTts'/);
     assert.match(ipcHandlersSource, /tts_openai_key/);
@@ -129,12 +141,19 @@ test('TTS 메뉴는 음성 드롭다운 안에서 시스템, OpenAI, Google 음�
     for (const language of ['ko', 'en', 'ja']) {
         for (const key of [
             'viewer.tts.voice_group_system',
+            'viewer.tts.voice_group_supertonic',
             'viewer.tts.voice_group_openai',
             'viewer.tts.voice_group_google',
             'viewer.tts.google_voice_ko',
             'viewer.tts.google_voice_en',
             'viewer.tts.google_voice_ja',
             'viewer.tts.api_key_required',
+            'viewer.tts.supertonic_model_required',
+            'viewer.tts.supertonic_loading',
+            'viewer.tts.supertonic_model_missing',
+            'viewer.tts.supertonic_model_invalid',
+            'viewer.tts.supertonic_error_detail',
+            'viewer.tts.supertonic_unsupported',
             'viewer.tts.openai_loading',
             'viewer.tts.openai_key_missing',
             'viewer.tts.openai_invalid_key',
@@ -153,6 +172,16 @@ test('TTS 메뉴는 음성 드롭다운 안에서 시스템, OpenAI, Google 음�
             assert.notEqual(translate(key, language), key, `${language}:${key}`);
         }
     }
+});
+
+test('시스템 TTS 음성 목록과 선택 음성은 현재 BookManager 언어로 제한한다', () => {
+    assert.match(viewerSource, /function systemVoiceMatchesLanguage\(voice, language\)/);
+    assert.match(viewerSource, /replaceAll\('_', '-'\)/);
+    assert.match(ttsControlSource, /availableVoices\.filter\(voice => systemVoiceMatchesLanguage\(voice, language\)\)/);
+    assert.match(ttsControlSource, /voices\.filter\(voice => systemVoiceMatchesLanguage\(voice, language\)\)/);
+    assert.match(ttsControlSource, /\.\.\.matchingSystemVoices\.map\(voice => \(\{/);
+    assert.doesNotMatch(ttsControlSource, /\.\.\.voices\.map\(voice => \(\{/);
+    assert.match(viewerSource, /systemVoiceMatchesLanguage\(voice, viewerLanguage\)/);
 });
 
 test('TTS 메뉴는 명시적으로 끄기 전까지 유지되고 스페이스바로 재생을 토글한다', () => {
