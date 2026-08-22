@@ -336,7 +336,7 @@ test('초기 렌더 로더는 현재 표시 페이지가 안정된 뒤에만 제
     const readinessSource = sourceBetween(
         viewerSource,
         '  useEffect(() => {\n    if (!initialRenderLoading || !viewerSessionResolved)',
-        '  const currentTtsText = useMemo(',
+        '  const ttsPageWindow = useMemo(',
     );
 
     assert.match(viewerSource, /const \[initialRenderLoading, setInitialRenderLoading\] = useState\(true\)/);

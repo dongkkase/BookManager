@@ -135,6 +135,7 @@ const DEFAULT_VIEWER_BACKGROUND = {
 const VIEWER_TTS_SETTINGS_KEY = 'bookmanager-viewer-tts-settings';
 const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
 const OPENAI_TTS_MAX_INPUT_LENGTH = 4000;
+const REMOTE_TTS_PREFETCH_PAGE_LIMIT = 3;
 const OPENAI_TTS_VOICES = [
   { id: 'marin', label: 'Marin' },
   { id: 'cedar', label: 'Cedar' },
@@ -153,16 +154,16 @@ const OPENAI_TTS_VOICES = [
 const OPENAI_TTS_VOICE_IDS = new Set(OPENAI_TTS_VOICES.map(voice => voice.id));
 const SUPERTONIC_TTS_MAX_INPUT_LENGTH = 900;
 const SUPERTONIC_TTS_VOICES = [
-  { id: 'M1', label: 'M1' },
-  { id: 'M2', label: 'M2' },
-  { id: 'M3', label: 'M3' },
-  { id: 'M4', label: 'M4' },
-  { id: 'M5', label: 'M5' },
-  { id: 'F1', label: 'F1' },
-  { id: 'F2', label: 'F2' },
-  { id: 'F3', label: 'F3' },
-  { id: 'F4', label: 'F4' },
-  { id: 'F5', label: 'F5' },
+  { id: 'M1', label: 'Alex' },
+  { id: 'M2', label: 'James' },
+  { id: 'M3', label: 'Robert' },
+  { id: 'M4', label: 'Sam' },
+  { id: 'M5', label: 'Daniel' },
+  { id: 'F1', label: 'Sarah' },
+  { id: 'F2', label: 'Lily' },
+  { id: 'F3', label: 'Jessica' },
+  { id: 'F4', label: 'Olivia' },
+  { id: 'F5', label: 'Emily' },
 ];
 const SUPERTONIC_TTS_VOICE_IDS = new Set(SUPERTONIC_TTS_VOICES.map(voice => voice.id));
 const GOOGLE_TTS_VOICES = [
@@ -179,6 +180,11 @@ const DEFAULT_TTS_SETTINGS = {
   openaiVoice: 'marin',
   googleVoice: 'ko-KR',
   autoAdvance: false,
+};
+const TTS_VOICE_PREVIEW_TEXT = {
+  ko: '안녕하세요! 오늘 하루 어떠세요?',
+  en: 'Hello! How are you today?',
+  ja: 'こんにちは！今日はどうですか？',
 };
 const VIEWER_BACKGROUND_COLORS = [
   { id: 'charcoal', label: '차콜', labelKey: 'viewer.background_color.charcoal', color: '#111111' },
@@ -426,10 +432,35 @@ function normalizeTtsSettings(settings = {}) {
   };
 }
 
+function ttsVoicePreviewText(language = 'ko') {
+  const normalizedLanguage = String(language || '')
+    .trim()
+    .replaceAll('_', '-')
+    .toLowerCase()
+    .split('-')[0];
+  return TTS_VOICE_PREVIEW_TEXT[normalizedLanguage] || TTS_VOICE_PREVIEW_TEXT.ko;
+}
+
+const TTS_BRACKETED_TEXT_PATTERN = /\([^()]*\)|\[[^[\]]*\]|\{[^{}]*\}|（[^（）]*）|［[^［］]*］|【[^【】]*】/gu;
+const TTS_BRACKET_CHARACTER_PATTERN = /[()\[\]{}（）［］【】]/gu;
+const TTS_SPECIAL_CHARACTER_PATTERN = /[^\p{L}\p{N}\s.,!?;:。！？、'’]/gu;
+
+function removeTtsBracketedText(text = '') {
+  let result = String(text || '');
+  let nextResult = result.replace(TTS_BRACKETED_TEXT_PATTERN, ' ');
+  while (nextResult !== result) {
+    result = nextResult;
+    nextResult = result.replace(TTS_BRACKETED_TEXT_PATTERN, ' ');
+  }
+  return nextResult.replace(TTS_BRACKET_CHARACTER_PATTERN, ' ');
+}
+
 function normalizeTtsText(text = '') {
-  return String(text || '')
+  return removeTtsBracketedText(text)
     .replace(/\u00a0/g, ' ')
+    .replace(TTS_SPECIAL_CHARACTER_PATTERN, ' ')
     .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -505,22 +536,29 @@ function remoteTtsPayload(engine, text, settings, language = 'en') {
       text,
       voice: settings.supertonicVoice,
       lang: detectViewerTtsLanguage(text, language),
-      speed: settings.rate,
+      speed: 1,
     };
   }
   if (engine === 'google') {
     return {
       text,
       voice: settings.googleVoice,
-      speed: settings.rate,
+      speed: 1,
     };
   }
   return {
     text,
     model: OPENAI_TTS_MODEL,
     voice: settings.openaiVoice,
-    speed: settings.rate,
+    speed: 1,
   };
+}
+
+function applyTtsAudioPlaybackRate(audio, rate) {
+  if (!audio) return;
+  const normalizedRate = clampNumber(rate, 0.5, 2, DEFAULT_TTS_SETTINGS.rate);
+  audio.defaultPlaybackRate = normalizedRate;
+  audio.playbackRate = normalizedRate;
 }
 
 function remoteTtsFallbackCode(engine) {
@@ -538,6 +576,23 @@ function remoteTtsMaxInputLength(engine) {
   return engine === 'supertonic' ? SUPERTONIC_TTS_MAX_INPUT_LENGTH : OPENAI_TTS_MAX_INPUT_LENGTH;
 }
 
+function remoteTtsVoiceCacheKey(settings, language) {
+  const voice = settings.engine === 'supertonic'
+    ? settings.supertonicVoice
+    : settings.engine === 'google'
+      ? settings.googleVoice
+      : settings.openaiVoice;
+  return `${settings.engine}:${voice}:${language}`;
+}
+
+function remoteTtsPageCacheKey(page, settings, language) {
+  return JSON.stringify([
+    remoteTtsVoiceCacheKey(settings, language),
+    Number(page?.pageIndex) || 0,
+    normalizeTtsText(page?.text),
+  ]);
+}
+
 function stopDetachedRemoteTtsAudio() {
   detachedRemoteTtsCancel?.();
   const audio = detachedRemoteTtsAudio;
@@ -551,7 +606,7 @@ function stopDetachedRemoteTtsAudio() {
   detachedRemoteTtsCancel = null;
 }
 
-function playDetachedRemoteTtsAudio(dataUrl, token, engine) {
+function playDetachedRemoteTtsAudio(dataUrl, token, engine, rate) {
   return new Promise((resolve, reject) => {
     if (typeof Audio !== 'function') {
       reject(Object.assign(new Error('Remote TTS is not available.'), {
@@ -560,6 +615,7 @@ function playDetachedRemoteTtsAudio(dataUrl, token, engine) {
       return;
     }
     const audio = new Audio(dataUrl);
+    applyTtsAudioPlaybackRate(audio, rate);
     let settled = false;
     const cleanup = () => {
       audio.onended = null;
@@ -654,7 +710,7 @@ function remoteTtsToastMessage(error, engine = 'openai') {
   return viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.');
 }
 
-async function speakDetachedRemoteTts(text, settings, onToast) {
+async function speakDetachedRemoteTts(text, settings, onToast, language = 'en') {
   const createRemoteTts = getRemoteTtsApi(settings.engine);
   if (typeof createRemoteTts !== 'function') {
     onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
@@ -671,12 +727,12 @@ async function speakDetachedRemoteTts(text, settings, onToast) {
   try {
     for (const chunk of chunks) {
       if (detachedRemoteTtsToken !== token) return;
-      const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunk, settings));
+      const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunk, settings, language));
       if (detachedRemoteTtsToken !== token) return;
       if (!result?.success || !result.dataUrl) {
         throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), { code: result?.code || remoteTtsFallbackCode(settings.engine) });
       }
-      const playbackResult = await playDetachedRemoteTtsAudio(result.dataUrl, token, settings.engine);
+      const playbackResult = await playDetachedRemoteTtsAudio(result.dataUrl, token, settings.engine, settings.rate);
       if (playbackResult === 'cancelled') return;
     }
   } catch (error) {
@@ -2607,7 +2663,7 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
   );
 }
 
-function ViewerDropdown({ value, options, onChange, title = '', className = '', buttonIcon = '' }) {
+function ViewerDropdown({ value, options, onChange, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const selectableOptions = options.filter(option => option.kind !== 'group' && option.kind !== 'notice' && option.disabled !== true);
@@ -2657,22 +2713,39 @@ function ViewerDropdown({ value, options, onChange, title = '', className = '', 
                 {viewerText(option.labelKey, option.label)}
               </div>
             ) : (
-              <button
-                key={option.id}
-                type="button"
-                className={`viewer-dropdown-option ${option.id === selected.id ? 'is-selected' : ''}`}
-                role="option"
-                aria-selected={option.id === selected.id}
-                disabled={option.disabled === true}
-                onClick={() => {
-                  if (option.disabled === true) return;
-                  onChange(option.id);
-                  setOpen(false);
-                }}
-              >
-                <span>{viewerText(option.labelKey, option.label)}</span>
-                {option.id === selected.id ? <FaIcon name="check" size={11} /> : null}
-              </button>
+              <div key={option.id} className={`viewer-dropdown-option-row ${onPreview ? 'has-preview' : ''}`}>
+                <button
+                  type="button"
+                  className={`viewer-dropdown-option ${option.id === selected.id ? 'is-selected' : ''}`}
+                  role="option"
+                  aria-selected={option.id === selected.id}
+                  disabled={option.disabled === true}
+                  onClick={() => {
+                    if (option.disabled === true) return;
+                    onChange(option.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span>{viewerText(option.labelKey, option.label)}</span>
+                  {option.id === selected.id ? <FaIcon name="check" size={11} /> : null}
+                </button>
+                {onPreview ? (
+                  <button
+                    type="button"
+                    className={`viewer-dropdown-option-preview ${previewingValue === option.id ? 'is-previewing' : ''}`}
+                    title={`${viewerText(option.labelKey, option.label)} ${previewTitle}`.trim()}
+                    aria-label={`${viewerText(option.labelKey, option.label)} ${previewTitle}`.trim()}
+                    onMouseDown={event => event.preventDefault()}
+                    onClick={() => onPreview(option.id)}
+                  >
+                    <FaIcon
+                      name={previewingValue === option.id ? 'spinner' : 'volumeHigh'}
+                      className={previewingValue === option.id ? 'viewer-tts-progress-spinner' : ''}
+                      size={11}
+                    />
+                  </button>
+                ) : null}
+              </div>
             )
           ))}
         </div>
@@ -2735,7 +2808,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onToast }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onMoveToPage, onToast }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
@@ -2744,13 +2817,37 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   const [open, setOpen] = useState(false);
   const [rateOpen, setRateOpen] = useState(false);
   const [pendingPlayAfterPageMove, setPendingPlayAfterPageMove] = useState(false);
+  const [previewingVoiceValue, setPreviewingVoiceValue] = useState('');
   const suppressEndRef = useRef(false);
   const previousSpeechTextRef = useRef('');
   const previousTtsPageRef = useRef(null);
   const openAiRunRef = useRef(0);
   const openAiAudioRef = useRef(null);
   const openAiPlaybackCancelRef = useRef(null);
+  const ttsRateRef = useRef(settings.rate);
+  const systemRateRestartTimerRef = useRef(null);
+  const voicePreviewRunRef = useRef(0);
+  const voicePreviewCancelRef = useRef(null);
+  const remoteTtsPageCacheRef = useRef(new Map());
+  const remoteTtsPagePromiseRef = useRef(new Map());
+  const remoteTtsCacheGenerationRef = useRef(0);
+  const remoteTtsAllowedCacheKeysRef = useRef(new Set());
+  const remoteTtsPrefetchRunRef = useRef(0);
+  const remoteTtsPageWindowRef = useRef([]);
+  const remoteTtsPageHandoffRef = useRef(new Set());
+  const ttsSettingsRef = useRef(settings);
+  const onMoveToPageRef = useRef(onMoveToPage);
   const speechText = normalizeTtsText(text);
+  const normalizedPrefetchPages = useMemo(() => prefetchPages
+    .slice(0, REMOTE_TTS_PREFETCH_PAGE_LIMIT)
+    .map(page => ({
+      pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
+      text: normalizeTtsText(page?.text),
+    }))
+    .filter(page => page.text), [prefetchPages]);
+  const nextSpeakablePage = normalizedPrefetchPages.find(page => page.pageIndex > pageIndex) || null;
+  const hasText = speechText.length > 0;
+  const hasPlayableText = hasText || Boolean(nextSpeakablePage);
   const isSupertonicEngine = settings.engine === 'supertonic';
   const isOpenAiEngine = settings.engine === 'openai';
   const isGoogleEngine = settings.engine === 'google';
@@ -2770,6 +2867,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     play,
     stop,
     pause,
+    set: setSystemTts,
   } = useTts({
     children: speechText || ' ',
     lang: selectedVoice?.lang || language,
@@ -2780,9 +2878,9 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     markBackgroundColor: 'rgba(52, 152, 219, 0.28)',
     onEnd: () => {
       if (settings.engine !== 'system') return;
-      if (suppressEndRef.current || !settings.autoAdvance || pageIndex >= pageCount - 1) return;
+      if (suppressEndRef.current || !settings.autoAdvance || !nextSpeakablePage) return;
       setPendingPlayAfterPageMove(true);
-      onMovePage?.(1);
+      onMoveToPage?.(nextSpeakablePage.pageIndex);
     },
     onError: message => {
       onToast?.(message || viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
@@ -2792,12 +2890,23 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   const matchingSystemVoices = useMemo(() => (
     voices.filter(voice => systemVoiceMatchesLanguage(voice, language))
   ), [language, voices]);
-  const hasText = speechText.length > 0;
+  const remoteTtsPageWindow = useMemo(() => [
+    { pageIndex, text: speechText },
+    ...normalizedPrefetchPages,
+  ].filter(page => page.text), [normalizedPrefetchPages, pageIndex, speechText]);
+  const remoteTtsCacheConfigKey = remoteTtsVoiceCacheKey(settings, language);
+  const remoteTtsAllowedCacheKeys = useMemo(() => new Set(
+    remoteTtsPageWindow.map(page => remoteTtsPageCacheKey(page, settings, language)),
+  ), [language, remoteTtsPageWindow, settings.engine, settings.googleVoice, settings.openaiVoice, settings.supertonicVoice]);
+  remoteTtsPageWindowRef.current = remoteTtsPageWindow;
+  ttsSettingsRef.current = settings;
+  onMoveToPageRef.current = onMoveToPage;
   const isOpenAiLoading = openAiState.status === 'loading';
   const isOpenAiPlaying = openAiState.status === 'playing';
   const isOpenAiPaused = openAiState.status === 'paused';
   const isActivelyPlaying = isRemoteEngine ? (isOpenAiLoading || isOpenAiPlaying) : state.isPlaying && !state.isPaused;
-  const isTtsActive = isRemoteEngine ? openAiState.status !== 'idle' : state.isPlaying || state.isPaused;
+  const isTtsActive = (isRemoteEngine ? openAiState.status !== 'idle' : state.isPlaying || state.isPaused)
+    || Boolean(previewingVoiceValue);
   const canMovePrevious = pageIndex > 0;
   const canMoveNext = pageIndex < pageCount - 1;
   const hasOpenAiTtsApiKey = ttsApiKeyState.openai;
@@ -2843,14 +2952,14 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     })),
   ], [language, matchingSystemVoices]);
   const combinedVoiceOptions = useMemo(() => [
-    { id: 'system-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_system', '시스템 음성') },
-    ...systemVoiceOptions,
-    { id: 'supertonic-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_supertonic', 'Supertonic 3 로컬 음성') },
-    ...supertonicVoiceOptions,
-    { id: 'openai-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_openai', 'OpenAI 음성') },
-    ...openAiVoiceOptions,
     { id: 'google-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_google', 'Google 음성') },
-    ...googleVoiceOptions,
+    ...[...googleVoiceOptions].reverse(),
+    { id: 'openai-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_openai', 'OpenAI 음성') },
+    ...[...openAiVoiceOptions].reverse(),
+    { id: 'supertonic-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_supertonic', 'Supertonic 3 로컬 음성') },
+    ...[...supertonicVoiceOptions].reverse(),
+    { id: 'system-voices', kind: 'group', label: viewerText('viewer.tts.voice_group_system', '시스템 음성') },
+    ...[...systemVoiceOptions].reverse(),
   ], [googleVoiceOptions, language, openAiVoiceOptions, supertonicVoiceOptions, systemVoiceOptions]);
   const activeVoiceValue = isSupertonicEngine
     ? `supertonic:${settings.supertonicVoice}`
@@ -2874,6 +2983,22 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   useEffect(() => {
     saveJson(VIEWER_TTS_SETTINGS_KEY, settings);
   }, [settings]);
+
+  useEffect(() => {
+    remoteTtsCacheGenerationRef.current += 1;
+    remoteTtsPrefetchRunRef.current += 1;
+    remoteTtsPageCacheRef.current.clear();
+    remoteTtsPagePromiseRef.current.clear();
+  }, [remoteTtsCacheConfigKey]);
+
+  useEffect(() => {
+    remoteTtsAllowedCacheKeysRef.current = remoteTtsAllowedCacheKeys;
+    for (const cacheKey of remoteTtsPageCacheRef.current.keys()) {
+      if (!remoteTtsAllowedCacheKeys.has(cacheKey)) {
+        remoteTtsPageCacheRef.current.delete(cacheKey);
+      }
+    }
+  }, [remoteTtsAllowedCacheKeys]);
 
   useEffect(() => {
     if (!open) setRateOpen(false);
@@ -2938,6 +3063,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
 
   const stopOpenAiSpeech = useCallback((options = {}) => {
     openAiRunRef.current += 1;
+    remoteTtsPageHandoffRef.current.clear();
     openAiPlaybackCancelRef.current?.();
     const audio = openAiAudioRef.current;
     if (audio) {
@@ -2952,6 +3078,62 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     }
   }, []);
 
+  const loadRemoteTtsPageAudio = useCallback(async page => {
+    const normalizedPage = {
+      pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
+      text: normalizeTtsText(page?.text),
+    };
+    const cacheKey = remoteTtsPageCacheKey(normalizedPage, settings, language);
+    const cachedPage = remoteTtsPageCacheRef.current.get(cacheKey);
+    if (cachedPage) return cachedPage;
+    const pendingPage = remoteTtsPagePromiseRef.current.get(cacheKey);
+    if (pendingPage) return pendingPage;
+    const createRemoteTts = getRemoteTtsApi(settings.engine);
+    if (typeof createRemoteTts !== 'function') {
+      throw Object.assign(new Error('Remote TTS is not available.'), {
+        code: remoteTtsCode(settings.engine, 'UNSUPPORTED'),
+      });
+    }
+    const chunks = splitTtsTextIntoChunks(normalizedPage.text, remoteTtsMaxInputLength(settings.engine));
+    if (chunks.length === 0) {
+      throw Object.assign(new Error('There is no text to synthesize.'), { code: 'TTS_NO_TEXT' });
+    }
+    const cacheGeneration = remoteTtsCacheGenerationRef.current;
+    const pagePromise = (async () => {
+      const audioDataUrls = [];
+      for (const chunk of chunks) {
+        const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunk, settings, language));
+        if (!result?.success || !result.dataUrl) {
+          throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), {
+            code: result?.code || remoteTtsFallbackCode(settings.engine),
+          });
+        }
+        audioDataUrls.push(result.dataUrl);
+      }
+      const cachedResult = {
+        cacheKey,
+        pageIndex: normalizedPage.pageIndex,
+        text: normalizedPage.text,
+        audioDataUrls,
+      };
+      if (
+        remoteTtsCacheGenerationRef.current === cacheGeneration
+        && remoteTtsAllowedCacheKeysRef.current.has(cacheKey)
+      ) {
+        remoteTtsPageCacheRef.current.set(cacheKey, cachedResult);
+      }
+      return cachedResult;
+    })();
+    remoteTtsPagePromiseRef.current.set(cacheKey, pagePromise);
+    try {
+      return await pagePromise;
+    } finally {
+      if (remoteTtsPagePromiseRef.current.get(cacheKey) === pagePromise) {
+        remoteTtsPagePromiseRef.current.delete(cacheKey);
+      }
+    }
+  }, [language, settings]);
+
   const playOpenAiAudioDataUrl = useCallback((dataUrl, runId, engine) => new Promise((resolve, reject) => {
     if (typeof Audio !== 'function') {
       reject(Object.assign(new Error('Remote TTS is not available.'), {
@@ -2960,6 +3142,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
       return;
     }
     const audio = new Audio(dataUrl);
+    applyTtsAudioPlaybackRate(audio, ttsRateRef.current);
     let settled = false;
     const cleanup = () => {
       audio.onplaying = null;
@@ -3013,8 +3196,25 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
 
   const openAiTtsErrorMessage = useCallback(error => remoteTtsToastMessage(error, settings.engine), [language, settings.engine]);
 
+  const prefetchRemoteTtsPages = useCallback(async () => {
+    if (!settings.autoAdvance || !isRemoteTtsEngine(settings.engine)) return;
+    const prefetchRunId = remoteTtsPrefetchRunRef.current + 1;
+    remoteTtsPrefetchRunRef.current = prefetchRunId;
+    for (const page of normalizedPrefetchPages) {
+      if (remoteTtsPrefetchRunRef.current !== prefetchRunId) return;
+      const cacheKey = remoteTtsPageCacheKey(page, settings, language);
+      if (!remoteTtsAllowedCacheKeysRef.current.has(cacheKey)) return;
+      try {
+        await loadRemoteTtsPageAudio(page);
+      } catch {
+        return;
+      }
+    }
+  }, [language, loadRemoteTtsPageAudio, normalizedPrefetchPages, settings]);
+
   const playOpenAiSpeech = useCallback(async () => {
-    if (!hasText) {
+    const initialPage = hasText ? { pageIndex, text: speechText } : nextSpeakablePage;
+    if (!initialPage) {
       onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
     }
@@ -3023,7 +3223,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
       onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
       return;
     }
-    const chunks = splitTtsTextIntoChunks(speechText, remoteTtsMaxInputLength(settings.engine));
+    const chunks = splitTtsTextIntoChunks(initialPage.text, remoteTtsMaxInputLength(settings.engine));
     if (chunks.length === 0) {
       onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
@@ -3032,32 +3232,52 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     const runId = openAiRunRef.current + 1;
     openAiRunRef.current = runId;
     setOpenAiState({ status: 'loading', currentChunk: 1, totalChunks: chunks.length });
+    if (initialPage.pageIndex !== pageIndex) {
+      remoteTtsPageHandoffRef.current.add(initialPage.pageIndex);
+      onMoveToPageRef.current?.(initialPage.pageIndex);
+    }
     try {
-      for (let index = 0; index < chunks.length; index += 1) {
+      let targetPage = initialPage;
+      while (targetPage) {
+        const targetChunks = splitTtsTextIntoChunks(targetPage.text, remoteTtsMaxInputLength(settings.engine));
+        setOpenAiState({ status: 'loading', currentChunk: 1, totalChunks: targetChunks.length });
+        const currentPageAudio = await loadRemoteTtsPageAudio(targetPage);
         if (openAiRunRef.current !== runId) return;
-        setOpenAiState({ status: 'loading', currentChunk: index + 1, totalChunks: chunks.length });
-        const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunks[index], settings, language));
-        if (openAiRunRef.current !== runId) return;
-        if (!result?.success || !result.dataUrl) {
-          throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), { code: result?.code || remoteTtsFallbackCode(settings.engine) });
+        const audioDataUrls = currentPageAudio.audioDataUrls;
+        for (let index = 0; index < audioDataUrls.length; index += 1) {
+          if (openAiRunRef.current !== runId) return;
+          setOpenAiState({ status: 'loading', currentChunk: index + 1, totalChunks: audioDataUrls.length });
+          const playbackResult = await playOpenAiAudioDataUrl(audioDataUrls[index], runId, settings.engine);
+          if (playbackResult === 'cancelled' || openAiRunRef.current !== runId) return;
         }
-        const playbackResult = await playOpenAiAudioDataUrl(result.dataUrl, runId, settings.engine);
-        if (playbackResult === 'cancelled' || openAiRunRef.current !== runId) return;
+        const liveSettings = ttsSettingsRef.current;
+        const nextPage = liveSettings.engine === settings.engine && liveSettings.autoAdvance
+          ? remoteTtsPageWindowRef.current.find(page => page.pageIndex > targetPage.pageIndex && page.text)
+          : null;
+        if (!nextPage) break;
+        remoteTtsPageHandoffRef.current.add(nextPage.pageIndex);
+        onMoveToPageRef.current?.(nextPage.pageIndex);
+        targetPage = nextPage;
       }
       if (openAiRunRef.current !== runId) return;
       openAiAudioRef.current = null;
       setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
-      if (settings.autoAdvance && pageIndex < pageCount - 1) {
-        setPendingPlayAfterPageMove(true);
-        onMovePage?.(1);
-      }
     } catch (error) {
       if (openAiRunRef.current !== runId) return;
       openAiAudioRef.current = null;
       setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
       onToast?.(openAiTtsErrorMessage(error));
     }
-  }, [hasText, language, onMovePage, onToast, openAiTtsErrorMessage, pageCount, pageIndex, playOpenAiAudioDataUrl, settings, speechText, stopOpenAiSpeech]);
+  }, [hasText, language, loadRemoteTtsPageAudio, nextSpeakablePage, onToast, openAiTtsErrorMessage, pageIndex, playOpenAiAudioDataUrl, settings, speechText, stopOpenAiSpeech]);
+
+  useEffect(() => {
+    if (!isRemoteEngine || !settings.autoAdvance) {
+      remoteTtsPrefetchRunRef.current += 1;
+      return;
+    }
+    if (!isOpenAiPlaying) return;
+    void prefetchRemoteTtsPages();
+  }, [isOpenAiPlaying, isRemoteEngine, prefetchRemoteTtsPages, settings.autoAdvance]);
 
   const resumeOpenAiSpeech = useCallback(() => {
     const audio = openAiAudioRef.current;
@@ -3092,6 +3312,10 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   }, [play, playOpenAiSpeech, settings.engine]);
 
   const stopCurrentTtsWithoutAutoAdvance = useCallback(() => {
+    if (systemRateRestartTimerRef.current) {
+      window.clearTimeout(systemRateRestartTimerRef.current);
+      systemRateRestartTimerRef.current = null;
+    }
     if (isRemoteTtsEngine(settings.engine)) {
       stopOpenAiSpeech();
       return;
@@ -3099,14 +3323,97 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     stopWithoutAutoAdvance();
   }, [settings.engine, stopOpenAiSpeech, stopWithoutAutoAdvance]);
 
+  const stopVoicePreview = useCallback((options = {}) => {
+    voicePreviewRunRef.current += 1;
+    voicePreviewCancelRef.current?.();
+    voicePreviewCancelRef.current = null;
+    detachedRemoteTtsToken += 1;
+    stopDetachedRemoteTtsAudio();
+    window.speechSynthesis?.cancel?.();
+    if (!options.skipState) setPreviewingVoiceValue('');
+  }, []);
+
+  const handleVoicePreview = useCallback(async voiceValue => {
+    const previewText = ttsVoicePreviewText(language);
+    setPendingPlayAfterPageMove(false);
+    stopCurrentTtsWithoutAutoAdvance();
+    stopVoicePreview();
+    const previewRunId = voicePreviewRunRef.current + 1;
+    voicePreviewRunRef.current = previewRunId;
+    setPreviewingVoiceValue(voiceValue);
+    try {
+      if (voiceValue.startsWith('system:')) {
+        const synth = window.speechSynthesis;
+        if (!synth || typeof window.SpeechSynthesisUtterance !== 'function') {
+          throw new Error('System TTS is not available.');
+        }
+        const voiceId = voiceValue.slice('system:'.length);
+        const previewVoice = voices.find(voice => (
+          systemVoiceMatchesLanguage(voice, language)
+          && (voice.voiceURI === voiceId || voice.name === voiceId)
+        ));
+        await new Promise((resolve, reject) => {
+          const utterance = new window.SpeechSynthesisUtterance(previewText);
+          let settled = false;
+          const cleanup = () => {
+            utterance.onend = null;
+            utterance.onerror = null;
+            if (voicePreviewCancelRef.current === cancel) voicePreviewCancelRef.current = null;
+          };
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve();
+          };
+          const fail = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(new Error('System TTS preview failed.'));
+          };
+          const cancel = () => finish();
+          voicePreviewCancelRef.current = cancel;
+          if (previewVoice) utterance.voice = previewVoice;
+          utterance.lang = previewVoice?.lang || language;
+          utterance.rate = settings.rate;
+          utterance.volume = 1;
+          utterance.onend = finish;
+          utterance.onerror = fail;
+          synth.speak(utterance);
+        });
+      } else {
+        const previewSettings = voiceValue.startsWith('supertonic:')
+          ? normalizeTtsSettings({ ...settings, engine: 'supertonic', supertonicVoice: voiceValue.slice('supertonic:'.length) })
+          : voiceValue.startsWith('google:')
+            ? normalizeTtsSettings({ ...settings, engine: 'google', googleVoice: voiceValue.slice('google:'.length) })
+            : normalizeTtsSettings({ ...settings, engine: 'openai', openaiVoice: voiceValue.slice('openai:'.length) });
+        await speakDetachedRemoteTts(previewText, previewSettings, onToast, language);
+      }
+    } catch {
+      if (voicePreviewRunRef.current === previewRunId) {
+        onToast?.(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
+      }
+    } finally {
+      if (voicePreviewRunRef.current === previewRunId) {
+        voicePreviewCancelRef.current = null;
+        setPreviewingVoiceValue('');
+      }
+    }
+  }, [language, onToast, settings, stopCurrentTtsWithoutAutoAdvance, stopVoicePreview, voices]);
+
+  useEffect(() => () => {
+    stopVoicePreview({ skipState: true });
+  }, [stopVoicePreview]);
+
   useEffect(() => {
     if (!pendingPlayAfterPageMove || !hasText) return undefined;
     const timer = window.setTimeout(() => {
       setPendingPlayAfterPageMove(false);
       playCurrentTts();
-    }, 80);
+    }, isRemoteEngine ? 0 : 80);
     return () => window.clearTimeout(timer);
-  }, [hasText, pendingPlayAfterPageMove, playCurrentTts, speechText]);
+  }, [hasText, isRemoteEngine, pendingPlayAfterPageMove, playCurrentTts, speechText]);
 
   useEffect(() => {
     if (isRemoteTtsEngine(settings.engine)) {
@@ -3117,6 +3424,10 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   }, [openAiState.status, settings.engine, state.isPaused, state.isPlaying, stopOpenAiSpeech, stopWithoutAutoAdvance]);
 
   useEffect(() => () => {
+    if (systemRateRestartTimerRef.current) {
+      window.clearTimeout(systemRateRestartTimerRef.current);
+      systemRateRestartTimerRef.current = null;
+    }
     stopOpenAiSpeech({ skipState: true });
   }, [stopOpenAiSpeech]);
 
@@ -3126,19 +3437,24 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     const hasPreviousTarget = previousPageIndex != null || previousText;
     previousSpeechTextRef.current = speechText;
     previousTtsPageRef.current = pageIndex;
+    if (isRemoteTtsEngine(settings.engine) && remoteTtsPageHandoffRef.current.has(pageIndex)) {
+      remoteTtsPageHandoffRef.current.delete(pageIndex);
+      return;
+    }
     if (!hasPreviousTarget || pendingPlayAfterPageMove) return;
     if (previousText === speechText && previousPageIndex === pageIndex) return;
     if (!isTtsActive) return;
     const shouldRestart = isActivelyPlaying;
     setPendingPlayAfterPageMove(shouldRestart);
     stopCurrentTtsWithoutAutoAdvance();
-  }, [isActivelyPlaying, isTtsActive, pageIndex, pendingPlayAfterPageMove, speechText, stopCurrentTtsWithoutAutoAdvance]);
+  }, [isActivelyPlaying, isTtsActive, pageIndex, pendingPlayAfterPageMove, settings.engine, speechText, stopCurrentTtsWithoutAutoAdvance]);
 
   const handlePlayPause = useCallback(() => {
-    if (!hasText) {
+    if (!hasPlayableText) {
       onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
     }
+    if (previewingVoiceValue) stopVoicePreview();
     if (isRemoteEngine) {
       if (isOpenAiLoading) return;
       if (isOpenAiPlaying) {
@@ -3152,12 +3468,17 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
       void playOpenAiSpeech();
       return;
     }
+    if (!hasText && nextSpeakablePage) {
+      setPendingPlayAfterPageMove(true);
+      onMoveToPage?.(nextSpeakablePage.pageIndex);
+      return;
+    }
     if (isActivelyPlaying) {
       pause();
       return;
     }
     play();
-  }, [hasText, isActivelyPlaying, isOpenAiLoading, isOpenAiPaused, isOpenAiPlaying, isRemoteEngine, onToast, pause, pauseOpenAiSpeech, play, playOpenAiSpeech, resumeOpenAiSpeech]);
+  }, [hasPlayableText, hasText, isActivelyPlaying, isOpenAiLoading, isOpenAiPaused, isOpenAiPlaying, isRemoteEngine, nextSpeakablePage, onMoveToPage, onToast, pause, pauseOpenAiSpeech, play, playOpenAiSpeech, previewingVoiceValue, resumeOpenAiSpeech, stopVoicePreview]);
 
   const handleTtsKeyDown = useCallback(event => {
     if (event.key === 'Escape') {
@@ -3182,9 +3503,11 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
   }, [handleTtsKeyDown, open]);
 
   const handleStop = useCallback(() => {
+    remoteTtsPrefetchRunRef.current += 1;
     setPendingPlayAfterPageMove(false);
+    stopVoicePreview();
     stopCurrentTtsWithoutAutoAdvance();
-  }, [stopCurrentTtsWithoutAutoAdvance]);
+  }, [stopCurrentTtsWithoutAutoAdvance, stopVoicePreview]);
 
   const handleMove = useCallback(direction => {
     const shouldContinue = isActivelyPlaying;
@@ -3192,6 +3515,31 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
     stopCurrentTtsWithoutAutoAdvance();
     onMovePage?.(direction);
   }, [isActivelyPlaying, onMovePage, stopCurrentTtsWithoutAutoAdvance]);
+
+  const handleTtsRateChange = useCallback(value => {
+    const nextRate = clampNumber(value, 0.5, 2, DEFAULT_TTS_SETTINGS.rate);
+    const restartPending = Boolean(systemRateRestartTimerRef.current);
+    const shouldRestartSystem = settings.engine === 'system'
+      && ((state.isPlaying && !state.isPaused) || restartPending);
+    const shouldStopSystem = settings.engine === 'system'
+      && (state.isPlaying || state.isPaused);
+    ttsRateRef.current = nextRate;
+    setSystemTts.rate(nextRate);
+    applyTtsAudioPlaybackRate(openAiAudioRef.current, nextRate);
+    applyTtsAudioPlaybackRate(detachedRemoteTtsAudio, nextRate);
+    updateSettings({ rate: nextRate });
+    if (systemRateRestartTimerRef.current) {
+      window.clearTimeout(systemRateRestartTimerRef.current);
+      systemRateRestartTimerRef.current = null;
+    }
+    if (shouldStopSystem) stopWithoutAutoAdvance();
+    if (shouldRestartSystem) {
+      systemRateRestartTimerRef.current = window.setTimeout(() => {
+        systemRateRestartTimerRef.current = null;
+        play();
+      }, 80);
+    }
+  }, [play, setSystemTts, settings.engine, state.isPaused, state.isPlaying, stopWithoutAutoAdvance, updateSettings]);
 
   const playTitle = isActivelyPlaying
     ? viewerText('viewer.tts.pause', 'TTS 일시정지')
@@ -3236,7 +3584,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
               className={`viewer-tts-action ${isActivelyPlaying ? 'is-active' : ''}`}
               title={playTitle}
               aria-label={playTitle}
-              disabled={!hasText || isOpenAiLoading}
+              disabled={!hasPlayableText || isOpenAiLoading}
               onClick={handlePlayPause}
             >
               <FaIcon name={isActivelyPlaying ? 'pause' : 'play'} />
@@ -3283,7 +3631,7 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
                     value={settings.rate}
                     title={viewerText('viewer.tts.rate', '속도')}
                     aria-label={viewerText('viewer.tts.rate', '속도')}
-                    onChange={event => updateSettings({ rate: Number(event.target.value) })}
+                    onChange={event => handleTtsRateChange(Number(event.target.value))}
                   />
                   <output>{settings.rate.toFixed(1)}x</output>
                 </div>
@@ -3295,8 +3643,12 @@ function ViewerTtsControls({ text = '', pageIndex = 0, pageCount = 0, language =
               title={viewerText('viewer.tts.voice', '음성')}
               className="viewer-tts-voice-dropdown"
               buttonIcon="language"
+              previewingValue={previewingVoiceValue}
+              previewTitle={viewerText('viewer.tts.voice_preview', '음성 미리듣기')}
+              onPreview={handleVoicePreview}
               onChange={voice => {
                 stopCurrentTtsWithoutAutoAdvance();
+                stopVoicePreview();
                 setRateOpen(false);
                 if (voice.startsWith('supertonic:')) {
                   updateSettings({ engine: 'supertonic', supertonicVoice: voice.slice('supertonic:'.length) });
@@ -5125,15 +5477,31 @@ function ViewerApp() {
     session,
     viewerSessionResolved,
   ]);
-  const currentTtsText = useMemo(() => {
-    if (!isReaderDocument || flowItems.length < 1) return '';
-    const indexes = flowMode === 'spread' ? [pageIndex, pageIndex + 1] : [pageIndex];
-    return normalizeTtsText(indexes
-      .filter(index => index >= 0 && index < flowItems.length)
-      .map(index => readerItemTtsText(flowItems[index]))
-      .filter(Boolean)
-      .join('\n\n'));
+  const ttsPageWindow = useMemo(() => {
+    if (!isReaderDocument || flowItems.length < 1) return [];
+    const pageStep = flowMode === 'spread' ? 2 : 1;
+    const pageTextAt = targetPageIndex => {
+      const indexes = flowMode === 'spread' ? [targetPageIndex, targetPageIndex + 1] : [targetPageIndex];
+      return normalizeTtsText(indexes
+        .filter(index => index >= 0 && index < flowItems.length)
+        .map(index => readerItemTtsText(flowItems[index]))
+        .filter(Boolean)
+        .join('\n\n'));
+    };
+    const speakablePages = [{ pageIndex, text: pageTextAt(pageIndex) }];
+    for (
+      let targetPageIndex = pageIndex + pageStep;
+      targetPageIndex < flowItems.length && speakablePages.length < REMOTE_TTS_PREFETCH_PAGE_LIMIT + 1;
+      targetPageIndex += pageStep
+    ) {
+      const text = pageTextAt(targetPageIndex);
+      if (!text) continue;
+      speakablePages.push({ pageIndex: targetPageIndex, text });
+    }
+    return speakablePages;
   }, [flowItems, flowMode, isReaderDocument, pageIndex]);
+  const currentTtsText = ttsPageWindow[0]?.text || '';
+  const ttsPrefetchPages = useMemo(() => ttsPageWindow.slice(1), [ttsPageWindow]);
   const currentPercent = flowMode === 'scroll'
     ? Math.round(scrollPercent)
     : pageCount > 0
@@ -6753,7 +7121,7 @@ function ViewerApp() {
       const settings = normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS));
       if (isRemoteTtsEngine(settings.engine)) {
         window.speechSynthesis?.cancel?.();
-        await speakDetachedRemoteTts(text, settings, showViewerToast);
+        await speakDetachedRemoteTts(text, settings, showViewerToast, viewerLanguage);
         setSelectionMenu(null);
         clearNativeSelection();
         return;
@@ -8238,10 +8606,12 @@ function ViewerApp() {
             <div className="viewer-tool-cluster viewer-tts-cluster" aria-label={viewerText('viewer.tts.group', 'TTS')}>
               <ViewerTtsControls
                 text={currentTtsText}
+                prefetchPages={ttsPrefetchPages}
                 pageIndex={pageIndex}
                 pageCount={pageCount}
                 language={viewerLanguage}
                 onMovePage={movePage}
+                onMoveToPage={goPageIndex}
                 onToast={showViewerToast}
               />
             </div>

@@ -318,6 +318,12 @@ function SharingTab({ config, saveConfig, t, showToast }) {
                                 ))}
                             </select>
                         </div>
+                        <div className="sharing-desc" role="note">
+                            {text(
+                                'tab_sharing_port_desc',
+                                '각 서버의 포트는 1024~65535 범위에서 수정할 수 있습니다. 실행 중인 서버의 포트를 변경하려면 먼저 서버를 끄세요.',
+                            )}
+                        </div>
                     </div>
                 </div>
 

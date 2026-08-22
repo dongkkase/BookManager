@@ -29,6 +29,14 @@ test('지원하지 않는 언어와 누락된 현지어 문구는 한국어로 f
     assert.equal(translate('folder.status.files_found', 'en', { count: 3 }), '3 files found');
 });
 
+test('공유 서버는 포트 수정과 OPDS HTTP 호환 안내를 세 언어로 제공한다', () => {
+    for (const language of ['ko', 'en', 'ja']) {
+        assert.match(translate('tab_sharing_port_desc', language), /1024.*65535/);
+        assert.match(translate('tab_sharing_https_desc', language), /OPDS/);
+        assert.match(translate('tab_sharing_https_desc', language), /HTTP/);
+    }
+});
+
 test('named placeholder와 반복 placeholder를 모두 치환한다', () => {
     assert.equal(
         formatTranslation('{count}개 중 {count}개 완료: {msg}', { count: 2, msg: '완료' }),

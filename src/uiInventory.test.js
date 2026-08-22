@@ -175,6 +175,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
     ]);
     assertInventory('sharing', [
         ['서버 주소 선택', 'id="sharing-server-address"'],
+        ['공유 서버 포트 수정 안내', 'tab_sharing_port_desc'],
         ['Web 서버 포트', 'id="web-port"'],
         ['WebDAV 아이디', 'id="webdav-id"'],
         ['WebDAV 비밀번호', 'id="webdav-password"'],

@@ -1230,6 +1230,39 @@
   color: #eeeeee;
   font-size: 12px;
   cursor: pointer;
+  padding-left:20px;
+}
+
+.viewer-dropdown-option-row {
+  position: relative;
+}
+
+.viewer-dropdown-option-row.has-preview .viewer-dropdown-option {
+  padding-right: 36px;
+}
+
+.viewer-dropdown-option-preview {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 26px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #aeb8c0;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.viewer-dropdown-option-preview:hover,
+.viewer-dropdown-option-preview.is-previewing {
+  background: rgba(127, 195, 241, 0.16);
+  color: #7fc3f1;
 }
 
 .viewer-dropdown-group {
