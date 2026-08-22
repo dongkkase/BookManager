@@ -34,8 +34,10 @@ import readModeOnePageIcon from './images/read_mode_one_page.svg';
 import readModeScrollIcon from './images/read_mode_scroll.svg';
 import showFullSizeIcon from './images/show_full_size.svg';
 import listSearchIcon from './images/list_search.svg';
+import personRunningIcon from './images/person-running.svg';
 import slideNavigationIcon from './images/slide_navigation.svg';
 import toolbarIcon from './images/toolbar.svg';
+import voiceSelectionIcon from './images/voice_selection.svg';
 import { getCurrentLanguage, setLanguage, translate } from './utils/i18n';
 import './styles/viewer.css';
 
@@ -2663,7 +2665,7 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
   );
 }
 
-function ViewerDropdown({ value, options, onChange, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '' }) {
+function ViewerDropdown({ value, options, onChange, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '', buttonIconSrc = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const selectableOptions = options.filter(option => option.kind !== 'group' && option.kind !== 'notice' && option.disabled !== true);
@@ -2691,15 +2693,17 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
     <div className={`viewer-dropdown ${open ? 'is-open' : ''} ${className}`.trim()} ref={rootRef}>
       <button
         type="button"
-        className={`viewer-dropdown-button ${buttonIcon ? 'is-icon-only' : ''}`.trim()}
+        className={`viewer-dropdown-button ${buttonIcon || buttonIconSrc ? 'is-icon-only' : ''}`.trim()}
         title={buttonTitle}
         aria-label={buttonTitle}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
       >
-        {buttonIcon ? <FaIcon name={buttonIcon} /> : <span>{selectedLabel}</span>}
-        <FaIcon name="caretDown" size={buttonIcon ? 8 : 11} />
+        {buttonIcon ? <FaIcon name={buttonIcon} /> : null}
+        {buttonIconSrc ? <img className="viewer-dropdown-icon-image" src={buttonIconSrc} alt="" aria-hidden="true" /> : null}
+        {!buttonIcon && !buttonIconSrc ? <span>{selectedLabel}</span> : null}
+        <FaIcon name="caretDown" size={buttonIcon || buttonIconSrc ? 8 : 11} />
       </button>
       {open && (
         <div className="viewer-dropdown-menu" role="listbox">
@@ -3619,7 +3623,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
                 aria-expanded={rateOpen}
                 onClick={() => setRateOpen(current => !current)}
               >
-                <FaIcon name="clock" />
+                <span className="viewer-tts-rate-value">{settings.rate.toFixed(1)}x</span>
               </button>
               {rateOpen && (
                 <div className="viewer-tts-rate-popover" role="dialog" aria-label={viewerText('viewer.tts.rate', '속도')}>
@@ -3642,7 +3646,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
               options={combinedVoiceOptions}
               title={viewerText('viewer.tts.voice', '음성')}
               className="viewer-tts-voice-dropdown"
-              buttonIcon="language"
+              buttonIconSrc={voiceSelectionIcon}
               previewingValue={previewingVoiceValue}
               previewTitle={viewerText('viewer.tts.voice_preview', '음성 미리듣기')}
               onPreview={handleVoicePreview}
@@ -3669,7 +3673,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
               aria-pressed={settings.autoAdvance}
               onClick={() => updateSettings({ autoAdvance: !settings.autoAdvance })}
             >
-              <FaIcon name="anglesRight" />
+              <img className="viewer-tts-action-icon" src={personRunningIcon} alt="" aria-hidden="true" />
             </button>
           </div>
           {isRemoteEngine && isOpenAiLoading && (

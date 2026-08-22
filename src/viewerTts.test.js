@@ -82,10 +82,14 @@ test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이
     assert.match(viewerCss, /grid-template-columns:\s*repeat\(7, 30px\)/);
     assert.match(ttsControlSource, /const \[rateOpen, setRateOpen\]/);
     assert.match(ttsControlSource, /className="viewer-tts-rate-popover"/);
-    assert.match(ttsControlSource, /buttonIcon="language"/);
+    assert.match(viewerSource, /import voiceSelectionIcon from '\.\/images\/voice_selection\.svg'/);
+    assert.match(viewerSource, /import personRunningIcon from '\.\/images\/person-running\.svg'/);
+    assert.match(ttsControlSource, /buttonIconSrc=\{voiceSelectionIcon\}/);
     assert.match(ttsControlSource, /aria-pressed=\{settings\.autoAdvance\}/);
-    assert.match(ttsControlSource, /<FaIcon name="clock" \/>/);
-    assert.match(ttsControlSource, /<FaIcon name="anglesRight" \/>/);
+    assert.match(ttsControlSource, /className="viewer-tts-rate-value">\{settings\.rate\.toFixed\(1\)\}x/);
+    assert.match(ttsControlSource, /className="viewer-tts-action-icon" src=\{personRunningIcon\}/);
+    assert.doesNotMatch(ttsControlSource, /<FaIcon name="clock" \/>/);
+    assert.doesNotMatch(ttsControlSource, /<FaIcon name="anglesRight" \/>/);
     assert.match(ttsControlSource, /className="viewer-tts-progress"/);
     assert.match(ttsControlSource, /<FaIcon name="spinner" className="viewer-tts-progress-spinner" \/>/);
     assert.match(ttsControlSource, /remoteTtsProgressLabel/);
@@ -96,6 +100,9 @@ test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이
     assert.match(viewerCss, /\.viewer-tts-progress \{/);
     assert.match(viewerCss, /\.viewer-tts-progress-spinner \{/);
     assert.match(viewerCss, /@keyframes viewerTtsSpin/);
+    assert.match(viewerCss, /\.viewer-tts-rate-value \{/);
+    assert.match(viewerCss, /\.viewer-tool-icon-image,[\s\S]*filter:\s*brightness\(0\) invert\(1\)/);
+    assert.match(viewerCss, /\.viewer-tts-action-icon,[\s\S]*\.viewer-dropdown-icon-image \{/);
     assert.match(viewerCss, /\.viewer-dropdown-button\.is-icon-only \{/);
     assert.match(viewerCss, /\.viewer-dropdown-group \{/);
 });
