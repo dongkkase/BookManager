@@ -10,6 +10,7 @@ import {
 import { ViewerSessionManager } from './viewerSessions.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
 import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
+import { LibraryDB } from './database/library_db.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -227,11 +228,13 @@ export function setupViewerWindowManager(options = {}) {
         getIconPath = () => undefined,
         getSevenZPath = async () => '',
         getAudioLibraryRecord = async () => null,
+        getLibraryDbPath = () => '',
         getMainWindow = () => null,
         configManager = null,
     } = options;
 
     const sessions = new ViewerSessionManager({ getSevenZPath, getAudioLibraryRecord });
+    let readingStateDb = null;
     registerDocumentProtocol(sessions);
     registerComicProtocol(sessions);
     const viewerContexts = {
@@ -297,6 +300,30 @@ export function setupViewerWindowManager(options = {}) {
             && !window.webContents.isDestroyed()
             ? window
             : null;
+    };
+
+    const recordReadingState = async (session, state = {}) => {
+        const dbPath = getLibraryDbPath?.();
+        if (!session?.filePath || !dbPath) return null;
+        try {
+            if (!readingStateDb) readingStateDb = new LibraryDB({ dbPath });
+            const saved = await readingStateDb.upsertReadingState(session.filePath, {
+                ...state,
+                format: session.type || state.format || '',
+            });
+            const mainWindow = mainAppWindow();
+            if (saved && mainWindow) {
+                mainWindow.webContents.send('reading:changed', {
+                    filePath: saved.filePath,
+                    itemId: saved.itemId,
+                    lastReadAt: saved.lastReadAt,
+                });
+            }
+            return saved;
+        } catch (error) {
+            console.warn(`[ReadingState] Failed to save ${session.filePath}: ${error.message}`);
+            return null;
+        }
     };
 
     const mainWindowForSender = sender => {
@@ -632,6 +659,7 @@ export function setupViewerWindowManager(options = {}) {
         const context = contextForSession(session);
         focusContextWindow(context, session);
         sendSession(context, session);
+        void recordReadingState(session, { lastReadAt: Date.now() });
         return { success: true, session };
     };
 
@@ -687,6 +715,7 @@ export function setupViewerWindowManager(options = {}) {
             preserveMiniPlayer: true,
             preserveCloseRequest: true,
         });
+        void recordReadingState(session, { lastReadAt: Date.now() });
         return { success: true, session };
     };
 
@@ -697,6 +726,7 @@ export function setupViewerWindowManager(options = {}) {
             preserveMiniPlayer: true,
             preserveCloseRequest: true,
         });
+        void recordReadingState(session, { lastReadAt: Date.now() });
         return { success: true, session };
     };
 
@@ -781,6 +811,10 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:getEpubText', async (event, sessionId) => {
         viewerContextForSessionRequest(event, sessionId);
         return sessions.getEpubText(sessionId);
+    });
+    ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
+        viewerContextForCurrentSessionRequest(event, sessionId);
+        return recordReadingState(sessions.get(sessionId), state);
     });
     ipcMain.on('viewer:audio-track-state', (event, state = {}) => {
         const resolved = audioContextForPublishedState(event, state);

@@ -282,6 +282,7 @@ async function initializeApp() {
     getIconPath: getAppIconPath,
     getSevenZPath: async () => await getBinPath('7za') || await getBinPath('7z'),
     getAudioLibraryRecord: getViewerAudioLibraryRecord,
+    getLibraryDbPath: () => resolveLibraryDbPath(getExecutableDir()),
     getMainWindow: () => mainWindow,
     configManager,
   });

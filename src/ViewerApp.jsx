@@ -1320,6 +1320,17 @@ function saveJson(key, value) {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
+function viewerReadingLocator(session, state = {}) {
+  if (session?.type === 'audio') {
+    return { kind: 'audio-time', positionSeconds: Math.max(0, Number(state.positionSeconds) || 0) };
+  }
+  return {
+    kind: session?.type === 'epub' ? 'epub-page' : session?.type === 'text' ? 'text-page' : 'page',
+    pageIndex: Math.max(0, Number(state.pageIndex) || 0),
+    scrollPercent: clamp(Number(state.scrollPercent) || 0, 0, 100),
+  };
+}
+
 function isWebViewerMode() {
   if (typeof window === 'undefined') return false;
   const params = new URLSearchParams(window.location.search);
@@ -5717,6 +5728,14 @@ function ViewerApp() {
     };
     saveJson(storageKey(session, 'state'), fileState);
     saveJson(viewerPrefsKey(session), viewerPrefs);
+    window.viewerAPI?.saveReadingState?.(session.id, {
+      format: session.type,
+      ...fileState,
+      locator: viewerReadingLocator(session, fileState),
+      lastReadAt: Date.now(),
+    }).catch(error => {
+      console.warn('읽기 상태 저장 실패:', error);
+    });
   }, [flowMode, pageCount, pageIndex, readerSettings, readingDirection, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
 
   const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {

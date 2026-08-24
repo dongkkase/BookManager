@@ -239,10 +239,20 @@ function persistAudioPlaybackState(session, audio, fallbackDuration = 0, fallbac
     const positionSeconds = Number(audio?.currentTime);
     const playbackRate = Number(audio?.playbackRate);
     const hasLoadedAudio = Boolean(audio) && Number(audio.readyState) > 0 && Number.isFinite(positionSeconds);
-    saveStoredJson(audioStateKey(session), {
+    const state = {
         positionSeconds: hasLoadedAudio ? positionSeconds : Math.max(0, Number(fallbackPosition) || 0),
         durationSeconds: Number(audio?.duration) || fallbackDuration,
         playbackRate: Number.isFinite(playbackRate) ? playbackRate : fallbackRate,
+    };
+    saveStoredJson(audioStateKey(session), state);
+    window.viewerAPI?.saveReadingState?.(session.id, {
+        format: 'audio',
+        positionSeconds: state.positionSeconds,
+        durationSeconds: state.durationSeconds,
+        locator: { kind: 'audio-time', positionSeconds: state.positionSeconds },
+        lastReadAt: Date.now(),
+    }).catch(error => {
+        console.warn('읽기 상태 저장 실패:', error);
     });
 }
 

@@ -425,6 +425,16 @@ const FileTableView = forwardRef(({
       return <td key={column.key} className={className}>{formatDate(file[column.key])}</td>;
     }
     if (column.key === 'size') return <td key={column.key} className={className}>{formatSize(file.size)}</td>;
+    if (column.key === 'name' && file.recentReadingText) {
+      return (
+        <td key={column.key} className={className}>
+          <div className="file-name-with-recent-reading">
+            <span>{file.name || ''}</span>
+            <small><FaIcon name="clock" size={9} /> {file.recentReadingText}</small>
+          </div>
+        </td>
+      );
+    }
     return <td key={column.key} className={className}>{file[column.key] || ''}</td>;
   };
 

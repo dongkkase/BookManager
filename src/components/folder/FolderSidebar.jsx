@@ -36,7 +36,7 @@ function readStoredSidebarCollapseState() {
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
   const [roots, setRoots] = useState([]);
@@ -436,6 +436,44 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
     );
   };
 
+  const renderReadingList = () => {
+    const sectionLabel = t('folder.sidebar.reading');
+    const collapsed = isSectionCollapsed('reading');
+    return (
+      <div className={`sidebar-section sidebar-section-reading ${collapsed ? 'is-collapsed' : ''}`}>
+        <div className="nav-header">
+          <span className="nav-header-title">{sectionLabel}</span>
+          <div className="folder-sidebar-header-actions">
+            {renderSectionToggle('reading', sectionLabel)}
+          </div>
+        </div>
+        {!collapsed && (
+          <ul className="nav-list">
+            <li
+              className={`recent-reading-list-item ${recentReadingSelected ? 'selected' : ''}`}
+              onClick={(event) => {
+                applySidebarSelection(event);
+                setSelectedSource('recent-reading');
+                setOptimisticSelectedPath('');
+                onSelectRecentReading?.();
+              }}
+            >
+              <span className="recent-reading-list-main">
+                <FaIcon name="clock" size={12} />
+                <span>{t('folder.sidebar.recent_reading')}</span>
+              </span>
+              {recentReadingCount > 0 && (
+                <span className="recent-reading-count" aria-label={t('folder.recent.count', [recentReadingCount])}>
+                  {recentReadingCount}
+                </span>
+              )}
+            </li>
+          </ul>
+        )}
+      </div>
+    );
+  };
+
   // 즐겨찾기 목록
   const renderFavoritesList = () => {
     const sectionLabel = t('folder.sidebar.favorites');
@@ -622,6 +660,7 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
 
   return (
     <div ref={sidebarRef} className="folder-sidebar">
+      {renderReadingList()}
       {renderLibraryList()}
       {renderFavoritesList()}
       {renderFolderTree()}

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
+import { randomUUID } from 'crypto';
 import { resolveAppDataDir } from '../dataPaths.js';
 import {
     FILE_EXTENSION_FORMAT_VALUES,
@@ -75,6 +76,24 @@ const LIBRARY_FOLDER_COLUMNS = [
     'direct_file_count',
     'recursive_file_count',
     'last_seen_at',
+];
+
+const READING_STATE_COLUMNS = [
+    'item_id',
+    'file_path',
+    'format',
+    'locator_json',
+    'page_index',
+    'page_count',
+    'scroll_percent',
+    'position_seconds',
+    'duration_seconds',
+    'status',
+    'last_read_at',
+    'updated_at',
+    'device_id',
+    'revision',
+    'deleted_at',
 ];
 
 const FILE_SEARCH_COLUMNS = [
@@ -158,6 +177,75 @@ function storedFileValueCount(record = {}) {
         (count, column) => count + (hasStoredFileValue(record[column]) ? 1 : 0),
         0,
     );
+}
+
+function finiteReadingNumber(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
+function readingTimestamp(value, fallback = new Date().toISOString()) {
+    if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
+    const numeric = Number(value);
+    const date = Number.isFinite(numeric) && numeric > 0 ? new Date(numeric) : new Date(String(value || ''));
+    return Number.isFinite(date.getTime()) ? date.toISOString() : fallback;
+}
+
+function parseReadingLocator(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    try {
+        const parsed = JSON.parse(String(value || '{}'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function readingStateStatus(state = {}) {
+    if (state.status === 'completed') return 'completed';
+    const format = String(state.format || '').toLowerCase();
+    const isAudio = format === 'audio' || state.duration_seconds > 0 || state.position_seconds > 0;
+    if (isAudio) {
+        return state.duration_seconds > 0 && state.position_seconds >= state.duration_seconds - 1
+            ? 'completed'
+            : 'reading';
+    }
+    return (
+        state.page_count > 0 && state.page_index >= state.page_count - 1
+    ) || state.scroll_percent >= 99.5
+        ? 'completed'
+        : 'reading';
+}
+
+function defaultReadingLocator(state = {}) {
+    if (state.format === 'audio') {
+        return { kind: 'audio-time', positionSeconds: state.position_seconds };
+    }
+    return {
+        kind: 'page',
+        pageIndex: state.page_index,
+        scrollPercent: state.scroll_percent,
+    };
+}
+
+function normalizeReadingStateRow(row = {}) {
+    return {
+        itemId: String(row.item_id || ''),
+        filePath: String(row.file_path || ''),
+        format: String(row.format || ''),
+        locator: parseReadingLocator(row.locator_json),
+        pageIndex: Math.max(0, Math.floor(finiteReadingNumber(row.page_index, 0))),
+        pageCount: Math.max(0, Math.floor(finiteReadingNumber(row.page_count, 0))),
+        scrollPercent: Math.max(0, Math.min(100, finiteReadingNumber(row.scroll_percent, 0))),
+        positionSeconds: Math.max(0, finiteReadingNumber(row.position_seconds, 0)),
+        durationSeconds: Math.max(0, finiteReadingNumber(row.duration_seconds, 0)),
+        status: row.status === 'completed' ? 'completed' : 'reading',
+        lastReadAt: String(row.last_read_at || ''),
+        updatedAt: String(row.updated_at || ''),
+        deviceId: String(row.device_id || ''),
+        revision: Math.max(0, Math.floor(finiteReadingNumber(row.revision, 0))),
+        deletedAt: String(row.deleted_at || ''),
+    };
 }
 
 function mergeEquivalentFileRecords(records = [], canonicalPath = '') {
@@ -336,6 +424,23 @@ export class LibraryDB {
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS reading_states (
+                item_id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL UNIQUE,
+                format TEXT NOT NULL DEFAULT '',
+                locator_json TEXT NOT NULL DEFAULT '{}',
+                page_index INTEGER NOT NULL DEFAULT 0,
+                page_count INTEGER NOT NULL DEFAULT 0,
+                scroll_percent REAL NOT NULL DEFAULT 0,
+                position_seconds REAL NOT NULL DEFAULT 0,
+                duration_seconds REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'reading',
+                last_read_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                device_id TEXT NOT NULL DEFAULT '',
+                revision INTEGER NOT NULL DEFAULT 1,
+                deleted_at TEXT NOT NULL DEFAULT ''
+            );
             CREATE INDEX IF NOT EXISTS idx_files_series ON files(series);
             CREATE INDEX IF NOT EXISTS idx_files_title ON files(title);
             CREATE INDEX IF NOT EXISTS idx_files_title_nocase ON files(title COLLATE NOCASE);
@@ -347,6 +452,7 @@ export class LibraryDB {
             CREATE INDEX IF NOT EXISTS idx_library_scan_status ON library_scan_state(status);
             CREATE INDEX IF NOT EXISTS idx_library_folders_parent ON library_folders(library_path, parent_path, name);
             CREATE INDEX IF NOT EXISTS idx_library_folders_path ON library_folders(folder_path);
+            CREATE INDEX IF NOT EXISTS idx_reading_states_recent ON reading_states(deleted_at, last_read_at DESC);
         `);
     }
 
@@ -995,6 +1101,137 @@ export class LibraryDB {
             }
             const rowsByPath = new Map(rows.map(row => [row.path, row]));
             return normalizedPaths.map(filePath => rowsByPath.get(filePath)).filter(Boolean);
+        });
+    }
+
+    readingDeviceId(connection = this.getConnection()) {
+        const key = 'reading_device_id';
+        const existing = connection.prepare('SELECT value FROM library_meta WHERE key = ?').get(key)?.value;
+        if (existing) return existing;
+        const deviceId = randomUUID();
+        connection.prepare('INSERT OR IGNORE INTO library_meta (key, value) VALUES (?, ?)').run(key, deviceId);
+        return connection.prepare('SELECT value FROM library_meta WHERE key = ?').get(key)?.value || deviceId;
+    }
+
+    async upsertReadingState(filePath, patch = {}) {
+        return this.withLock(async () => {
+            const value = String(filePath || '').trim();
+            if (!value) return null;
+            const connection = this.getConnection();
+            const normalizedPath = this.normalizeFilePath(path.resolve(value));
+            const previous = connection.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(normalizedPath) || {};
+            const now = new Date().toISOString();
+            const has = key => Object.prototype.hasOwnProperty.call(patch || {}, key);
+            const pageIndex = Math.max(0, Math.floor(finiteReadingNumber(
+                has('pageIndex') ? patch.pageIndex : previous.page_index,
+                0,
+            )));
+            const pageCount = Math.max(0, Math.floor(finiteReadingNumber(
+                has('pageCount') ? patch.pageCount : previous.page_count,
+                0,
+            )));
+            const scrollPercent = Math.max(0, Math.min(100, finiteReadingNumber(
+                has('scrollPercent') ? patch.scrollPercent : previous.scroll_percent,
+                0,
+            )));
+            const positionSeconds = Math.max(0, finiteReadingNumber(
+                has('positionSeconds') ? patch.positionSeconds : previous.position_seconds,
+                0,
+            ));
+            const durationSeconds = Math.max(0, finiteReadingNumber(
+                has('durationSeconds') ? patch.durationSeconds : previous.duration_seconds,
+                0,
+            ));
+            const format = String(patch.format || previous.format || '').slice(0, 32);
+            const nextState = {
+                item_id: previous.item_id || randomUUID(),
+                file_path: normalizedPath,
+                format,
+                page_index: pageIndex,
+                page_count: pageCount,
+                scroll_percent: scrollPercent,
+                position_seconds: positionSeconds,
+                duration_seconds: durationSeconds,
+                status: '',
+                last_read_at: readingTimestamp(patch.lastReadAt || patch.last_read_at, now),
+                updated_at: now,
+                device_id: previous.device_id || this.readingDeviceId(connection),
+                revision: Math.max(0, Math.floor(finiteReadingNumber(previous.revision, 0))) + 1,
+                deleted_at: '',
+            };
+            nextState.status = readingStateStatus({
+                ...nextState,
+                status: patch.status,
+            });
+            const previousLocator = parseReadingLocator(previous.locator_json);
+            const locator = has('locator')
+                ? parseReadingLocator(patch.locator)
+                : Object.keys(previousLocator).length > 0
+                    ? previousLocator
+                    : defaultReadingLocator(nextState);
+            nextState.locator_json = JSON.stringify(locator);
+
+            connection.prepare(`
+                INSERT INTO reading_states (${READING_STATE_COLUMNS.join(', ')})
+                VALUES (${READING_STATE_COLUMNS.map(column => `@${column}`).join(', ')})
+                ON CONFLICT(file_path) DO UPDATE SET
+                    format = excluded.format,
+                    locator_json = excluded.locator_json,
+                    page_index = excluded.page_index,
+                    page_count = excluded.page_count,
+                    scroll_percent = excluded.scroll_percent,
+                    position_seconds = excluded.position_seconds,
+                    duration_seconds = excluded.duration_seconds,
+                    status = excluded.status,
+                    last_read_at = excluded.last_read_at,
+                    updated_at = excluded.updated_at,
+                    device_id = excluded.device_id,
+                    revision = excluded.revision,
+                    deleted_at = ''
+            `).run(nextState);
+            return normalizeReadingStateRow(
+                connection.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(normalizedPath),
+            );
+        });
+    }
+
+    async listRecentReadingStates(limit = 50) {
+        return this.withLock(async () => {
+            const safeLimit = Math.max(1, Math.min(200, Math.floor(finiteReadingNumber(limit, 50))));
+            return this.getConnection().prepare(`
+                SELECT *
+                FROM reading_states
+                WHERE deleted_at = ''
+                ORDER BY last_read_at DESC, updated_at DESC
+                LIMIT ?
+            `).all(safeLimit).map(normalizeReadingStateRow);
+        });
+    }
+
+    async removeReadingState(filePath) {
+        return this.withLock(async () => {
+            const value = String(filePath || '').trim();
+            if (!value) return { changes: 0 };
+            const now = new Date().toISOString();
+            const normalizedPath = this.normalizeFilePath(path.resolve(value));
+            const result = this.getConnection().prepare(`
+                UPDATE reading_states
+                SET deleted_at = ?, updated_at = ?, revision = revision + 1
+                WHERE file_path = ? AND deleted_at = ''
+            `).run(now, now, normalizedPath);
+            return { changes: result.changes };
+        });
+    }
+
+    async clearReadingStates() {
+        return this.withLock(async () => {
+            const now = new Date().toISOString();
+            const result = this.getConnection().prepare(`
+                UPDATE reading_states
+                SET deleted_at = ?, updated_at = ?, revision = revision + 1
+                WHERE deleted_at = ''
+            `).run(now, now);
+            return { changes: result.changes };
         });
     }
 

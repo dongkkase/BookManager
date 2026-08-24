@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   listAudioQueue: sessionId => ipcRenderer.invoke('viewer:listAudioQueue', sessionId),
   getText: (sessionId, options) => ipcRenderer.invoke('viewer:getText', sessionId, options),
   getEpubText: sessionId => ipcRenderer.invoke('viewer:getEpubText', sessionId),
+  saveReadingState: (sessionId, state) => ipcRenderer.invoke('viewer:saveReadingState', sessionId, state),
   getConfig: () => ipcRenderer.invoke('viewer:getConfig'),
   getSupertonicModelStatus: () => ipcRenderer.invoke('tts:supertonicStatus'),
   createSupertonicTts: options => ipcRenderer.invoke('api:supertonicTts', options),

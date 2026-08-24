@@ -93,6 +93,7 @@ import {
   shouldHandleGlobalShortcut,
 } from '../interactionPolicy';
 import { emitStatusState } from '../statusState';
+import { recentReadingTimeText } from '../recentReadingState';
 import '../styles/FolderTab.css';
 
 const VISIBLE_COVER_REQUEST_LIMIT = 32;
@@ -100,6 +101,7 @@ const COVER_PREVIEW_QUEUE_LIMIT = 96;
 const COVER_PREVIEW_CONCURRENCY = 2;
 const LIBRARY_SEARCH_RESULT_LIMIT = 3000;
 const CONTENT_SEARCH_RESULT_LIMIT = 3000;
+const RECENT_READING_LIMIT = 50;
 const FOLDER_SEARCH_SCOPES = new Set(['metadata', 'content', 'all']);
 const MISSING_BACKGROUND_SCAN_DELAY_MS = 2500;
 const EXTERNAL_VIEWER_EXTENSIONS = {
@@ -453,6 +455,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [moveConflict, setMoveConflict] = useState(null);
   const [textInputDialog, setTextInputDialog] = useState(null);
   const [viewerStatusVersion, setViewerStatusVersion] = useState(0);
+  const [folderSource, setFolderSource] = useState('folder');
+  const [recentReadingFiles, setRecentReadingFiles] = useState([]);
+  const [recentReadingLoading, setRecentReadingLoading] = useState(false);
+  const isRecentReading = folderSource === 'recent-reading';
   const textInputResolverRef = useRef(null);
   const closeTextInputDialog = useCallback((value = null) => {
     const resolver = textInputResolverRef.current;
@@ -536,15 +542,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     () => JSON.stringify(folderTagDatabaseScopes),
     [folderTagDatabaseScopes],
   );
-  const searchPlaceholder = libraries.length === 0
-    ? t('folder_search_ph')
-    : searchScope === 'content'
-      ? t('folder_search_content_ph')
-      : searchScope === 'all'
-        ? t('folder_search_all_ph')
-        : t('folder_search_library_ph');
+  const searchPlaceholder = isRecentReading
+    ? t('folder.recent.search')
+    : libraries.length === 0
+      ? t('folder_search_ph')
+      : searchScope === 'content'
+        ? t('folder_search_content_ph')
+        : searchScope === 'all'
+          ? t('folder_search_all_ph')
+          : t('folder_search_library_ph');
   const normalizedSearchQuery = appliedSearchQuery.trim();
-  const isLibrarySearchActive = normalizedSearchQuery.length > 0 && libraries.length > 0;
+  const isLibrarySearchActive = !isRecentReading && normalizedSearchQuery.length > 0 && libraries.length > 0;
   const applySearchQuery = useCallback(query => {
     setAppliedSearchQuery(query);
     setSearchSubmitToken(token => token + 1);
@@ -868,12 +876,46 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     };
   }, []);
 
+  const loadRecentReading = useCallback(async () => {
+    setRecentReadingLoading(true);
+    try {
+      const files = await window.electronAPI?.listRecentReading?.(RECENT_READING_LIMIT);
+      setRecentReadingFiles(Array.isArray(files) ? files : []);
+    } catch (error) {
+      console.error('최근 읽은 항목 조회 실패:', error);
+      setRecentReadingFiles([]);
+    } finally {
+      setRecentReadingLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRecentReading();
+    let refreshTimer = 0;
+    const removeListener = window.electronAPI?.onRecentReadingChanged?.(() => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = 0;
+        void loadRecentReading();
+      }, 150);
+    });
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      removeListener?.();
+    };
+  }, [loadRecentReading]);
+
   // 필터링된 파일 데이터
   const currentFolderFileData = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
   const isFolderTagSearchActive = folderTagSelections.length > 0
     && folderTagResultScopeKey === folderTagDatabaseScopeKey;
-  const normalRawFileData = isLibrarySearchActive ? librarySearchResults : currentFolderFileData;
+  const normalRawFileData = isRecentReading
+    ? recentReadingFiles
+    : isLibrarySearchActive
+      ? librarySearchResults
+      : currentFolderFileData;
   const activeRawFileData = useMemo(() => {
+    if (isRecentReading) return normalRawFileData;
     if (!isFolderTagSearchActive) return normalRawFileData;
     if (!isLibrarySearchActive) return folderTagSearchResults;
     const searchResultPaths = new Set(librarySearchResults.map(file => file.full_path || file.path));
@@ -882,25 +924,39 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     folderTagSearchResults,
     isFolderTagSearchActive,
     isLibrarySearchActive,
+    isRecentReading,
     librarySearchResults,
     normalRawFileData,
   ]);
   const fileDataWithViewerStatus = useMemo(() => {
     if (activeRawFileData.length === 0) return activeRawFileData;
     const reader = createViewerStatusReader();
-    return activeRawFileData.map(file => attachViewerStatus(file, reader));
-  }, [activeRawFileData, viewerStatusVersion]);
+    return activeRawFileData.map(file => attachViewerStatus(
+      isRecentReading
+        ? {
+            ...file,
+            recentReadingText: recentReadingTimeText(
+              file.lastReadAt,
+              t,
+              Date.now(),
+              config?.language || config?.lang || 'ko',
+            ),
+          }
+        : file,
+      reader,
+    ));
+  }, [activeRawFileData, config?.lang, config?.language, isRecentReading, t, viewerStatusVersion]);
   const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
   const filteredFileData = useMemo(() => filterFolderFiles(fileDataWithViewerStatus, {
     query: localSearchQuery,
-    metadataMissingOnly,
-  }), [fileDataWithViewerStatus, localSearchQuery, metadataMissingOnly]);
+    metadataMissingOnly: !isRecentReading && metadataMissingOnly,
+  }), [fileDataWithViewerStatus, isRecentReading, localSearchQuery, metadataMissingOnly]);
   const folderTagSearchButtonLabel = folderTagSelections.length > 0
     ? `${t('folder_tag_search_button_title')} · ${t('folder_tag_selected_count', [folderTagSelections.length])}`
     : t('folder_tag_search_button_title');
 
   const pumpCoverPreviewQueue = useCallback(() => {
-    if (!selectedFolderPath || isLibrarySearchActive) return;
+    if (!selectedFolderPath || isLibrarySearchActive || isRecentReading) return;
     const loadPreview = window.electronAPI?.getFilePreview;
     if (!loadPreview) return;
 
@@ -935,10 +991,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           pumpCoverPreviewQueue();
         });
     }
-  }, [isLibrarySearchActive, scanOptions, selectedFolderPath, updateCachedFiles]);
+  }, [isLibrarySearchActive, isRecentReading, scanOptions, selectedFolderPath, updateCachedFiles]);
 
   const handleVisibleFilesChange = useCallback((visibleFiles = []) => {
-    if (!selectedFolderPath || isLibrarySearchActive) return;
+    if (!selectedFolderPath || isLibrarySearchActive || isRecentReading) return;
     const nextItems = (Array.isArray(visibleFiles) ? visibleFiles : [])
       .filter(file => {
         const requestKey = coverPreviewRequestKey(file);
@@ -967,16 +1023,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     ]);
     coverPreviewQueueRef.current = merged;
     pumpCoverPreviewQueue();
-  }, [isLibrarySearchActive, pumpCoverPreviewQueue, selectedFolderPath]);
+  }, [isLibrarySearchActive, isRecentReading, pumpCoverPreviewQueue, selectedFolderPath]);
   const savedLayouts = useMemo(
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
   );
   const groupedFileData = useMemo(
-    () => groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder, {
-      fallbackGroupName: t('folder_group_uncategorized'),
-    }),
-    [filteredFileData, groupKey, sortKey, sortOrder, t],
+    () => isRecentReading
+      ? groupFolderFiles(filteredFileData, 'none', 'lastReadAt', 'desc')
+      : groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder, {
+          fallbackGroupName: t('folder_group_uncategorized'),
+        }),
+    [filteredFileData, groupKey, isRecentReading, sortKey, sortOrder, t],
   );
   const displayedFileData = useMemo(
     () => groupedFileData.flatMap(group => group.files),
@@ -1021,9 +1079,43 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const itemScale = itemScales[viewMode] || 50;
   const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
+  const handleSelectRecentReading = useCallback(() => {
+    setFolderSource('recent-reading');
+    clearSelection();
+    resetSearchQuery();
+    void loadRecentReading();
+  }, [clearSelection, loadRecentReading, resetSearchQuery]);
+
+  const removeRecentReading = useCallback(async filePath => {
+    if (!filePath) return;
+    const result = await window.electronAPI?.removeRecentReading?.(filePath);
+    if (result?.success !== false) {
+      setRecentReadingFiles(current => current.filter(file => (file.full_path || file.path) !== filePath));
+      clearSelection();
+    }
+  }, [clearSelection]);
+
+  const clearRecentReading = useCallback(async () => {
+    if (recentReadingFiles.length === 0) return;
+    const response = await window.electronAPI?.showMessage?.({
+      type: 'question',
+      title: t('folder.recent.clear'),
+      message: t('folder.recent.clear_confirm'),
+      buttons: 'yes-no',
+      defaultChoice: 'no',
+      language: config?.language || config?.lang || 'ko',
+    });
+    if (response !== 'yes') return;
+    const result = await window.electronAPI?.clearRecentReading?.();
+    if (result?.success !== false) {
+      setRecentReadingFiles([]);
+      clearSelection();
+    }
+  }, [clearSelection, config?.lang, config?.language, recentReadingFiles.length, t]);
+
   useEffect(() => {
-    if (isLibrarySearchActive) clearSelection();
-  }, [clearSelection, isLibrarySearchActive, normalizedSearchQuery, searchSubmitToken]);
+    if (isLibrarySearchActive || isRecentReading) clearSelection();
+  }, [clearSelection, isLibrarySearchActive, isRecentReading, normalizedSearchQuery, searchSubmitToken]);
 
   useEffect(() => {
     if (!config || restoredLayoutRef.current) return;
@@ -1398,6 +1490,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // 폴더 변경 핸들러
   const handleFolderChange = useCallback(async (folderPath) => {
     const nextFolderPath = String(folderPath || '');
+    setFolderSource('folder');
     selectedFolderPathRef.current = nextFolderPath;
     setSelectedFolderPath(nextFolderPath);
     clearSelection();
@@ -2481,12 +2574,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   const handleRefreshShortcut = useCallback(async () => {
+    if (isRecentReading) {
+      await loadRecentReading();
+      return;
+    }
     if (isExplorerPanelActive()) {
       await refreshContextFolder(selectedFolderPath);
       return;
     }
     await handleSmartRefresh(true);
-  }, [handleSmartRefresh, isExplorerPanelActive, refreshContextFolder, selectedFolderPath]);
+  }, [handleSmartRefresh, isExplorerPanelActive, isRecentReading, loadRecentReading, refreshContextFolder, selectedFolderPath]);
 
   const handleRenameShortcut = useCallback(async () => {
     if (isExplorerPanelActive()) {
@@ -2567,7 +2664,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'sync-library' && isLibraryContext(menu)) {
+    if (action === 'remove-recent') {
+      await removeRecentReading(menu.file?.full_path || menu.file?.path);
+    } else if (action === 'refresh-recent') {
+      await loadRecentReading();
+    } else if (action === 'sync-library' && isLibraryContext(menu)) {
       await runLibraryIndexAction(menu.folderPath, false);
     } else if (action === 'optimize-library' && isLibraryContext(menu)) {
       await runLibraryIndexAction(menu.folderPath, true);
@@ -2627,7 +2728,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, invertSelection, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, removeLibrary, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, invertSelection, loadRecentReading, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -2675,7 +2776,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         closeContextMenu();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
-        deleteSelectedFiles();
+        if (isRecentReading) removeRecentReading(activeSelectedPath);
+        else deleteSelectedFiles();
       } else if (event.key === 'Enter') {
         event.preventDefault();
         openSelectedInExplorer();
@@ -2704,7 +2806,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, moveActiveSelection, openSelectedInExplorer, runtimePlatform, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
+  }, [activeSelectedPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isRecentReading, moveActiveSelection, openSelectedInExplorer, removeRecentReading, runtimePlatform, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -3072,6 +3174,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 onLibraryContextMenu={showLibraryContextMenu}
                 onOpenLibrarySettings={openLibrarySettings}
                 onSyncLibrary={runLibraryIndexAction}
+                recentReadingSelected={isRecentReading}
+                recentReadingCount={recentReadingFiles.length}
+                onSelectRecentReading={handleSelectRecentReading}
                 libraryScanStateMap={libraryScanStateMap}
                 refreshToken={treeRefreshToken}
                 t={t}
@@ -3135,41 +3240,51 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 />
               </button>
               
-              <FolderToolbar 
-                t={t}
-                sortKey={sortKey}
-                sortOrder={sortOrder}
-                onSort={handleSort}
-                onToggleSortOrder={handleToggleSortOrder}
-                groupKey={groupKey}
-                setGroupKey={setGroupKey}
-                metadataMissingOnly={metadataMissingOnly}
-                setMetadataMissingOnly={setMetadataMissingOnly}
-                savedLayouts={savedLayouts}
-                onEditLayout={() => setShowLayoutDialog(true)}
-                onSaveLayout={handleSaveLayout}
-                onDeleteLayout={() => savedLayouts.length > 0 && setShowDeleteLayoutDialog(true)}
-                onApplyLayout={handleApplyLayout}
-                onExportCsv={handleExportCsv}
-              />
+              {isRecentReading ? (
+                <div className="recent-reading-toolbar-title">
+                  <FaIcon name="clock" size={12} />
+                  <strong>{t('folder.recent.title')}</strong>
+                  <span>{recentReadingFiles.length}</span>
+                </div>
+              ) : (
+                <FolderToolbar
+                  t={t}
+                  sortKey={sortKey}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                  onToggleSortOrder={handleToggleSortOrder}
+                  groupKey={groupKey}
+                  setGroupKey={setGroupKey}
+                  metadataMissingOnly={metadataMissingOnly}
+                  setMetadataMissingOnly={setMetadataMissingOnly}
+                  savedLayouts={savedLayouts}
+                  onEditLayout={() => setShowLayoutDialog(true)}
+                  onSaveLayout={handleSaveLayout}
+                  onDeleteLayout={() => savedLayouts.length > 0 && setShowDeleteLayoutDialog(true)}
+                  onApplyLayout={handleApplyLayout}
+                  onExportCsv={handleExportCsv}
+                />
+              )}
             </div>
             
             <div className="right-toolbar-right">
-              <button
-                type="button"
-                className={`folder-tag-search-btn ${folderTagSelections.length > 0 ? 'active' : ''}`}
-                onClick={openFolderTagSearch}
-                title={folderTagSearchButtonLabel}
-                aria-label={folderTagSearchButtonLabel}
-                aria-pressed={folderTagSelections.length > 0}
-              >
-                <span>{t('folder_tag_search_button')}</span>
-                {folderTagSelections.length > 0 && (
-                  <strong aria-label={t('folder_tag_selected_count', [folderTagSelections.length])}>
-                    {folderTagSelections.length}
-                  </strong>
-                )}
-              </button>
+              {!isRecentReading && (
+                <button
+                  type="button"
+                  className={`folder-tag-search-btn ${folderTagSelections.length > 0 ? 'active' : ''}`}
+                  onClick={openFolderTagSearch}
+                  title={folderTagSearchButtonLabel}
+                  aria-label={folderTagSearchButtonLabel}
+                  aria-pressed={folderTagSelections.length > 0}
+                >
+                  <span>{t('folder_tag_search_button')}</span>
+                  {folderTagSelections.length > 0 && (
+                    <strong aria-label={t('folder_tag_selected_count', [folderTagSelections.length])}>
+                      {folderTagSelections.length}
+                    </strong>
+                  )}
+                </button>
+              )}
               <div className="folder-search-control">
                 <FolderSearchInput
                   key={searchResetToken}
@@ -3186,10 +3301,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   searchScopeMetadataLabel={t('folder_search_scope_metadata')}
                   searchScopeContentLabel={t('folder_search_scope_content')}
                   searchScopeAllLabel={t('folder_search_scope_all')}
-                  showSearchScope={libraries.length > 0}
+                  showSearchScope={!isRecentReading && libraries.length > 0}
                 />
               </div>
-              <div className="content-index-control">
+              {!isRecentReading && <div className="content-index-control">
                 <button
                   type="button"
                   className={`content-index-btn ${contentIndexRunning ? 'is-running' : ''}`}
@@ -3211,14 +3326,35 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                     {t('folder_content_index_search_hint')}
                   </div>
                 )}
-              </div>
-              <button
-                className="refresh-btn"
-                onClick={() => handleSmartRefresh(true)}
-                title={t('folder_refresh_force_tip')}
-              >
-                {t('folder_refresh_list')}
-              </button>
+              </div>}
+              {isRecentReading ? (
+                <>
+                  <button
+                    className="refresh-btn"
+                    onClick={() => void loadRecentReading()}
+                    title={t('folder.recent.refresh')}
+                  >
+                    {t('folder_refresh_list')}
+                  </button>
+                  <button
+                    className="refresh-btn recent-reading-clear-button"
+                    onClick={() => void clearRecentReading()}
+                    title={t('folder.recent.clear')}
+                    disabled={recentReadingFiles.length === 0}
+                  >
+                    <FaIcon name="trash" size={11} />
+                    <span>{t('folder.recent.clear')}</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="refresh-btn"
+                  onClick={() => handleSmartRefresh(true)}
+                  title={t('folder_refresh_force_tip')}
+                >
+                  {t('folder_refresh_list')}
+                </button>
+              )}
             </div>
           </div>
 
@@ -3227,7 +3363,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             ref={viewContainerRef}
             style={{ '--folder-view-width': `${viewContainerWidth}px` }}
           >
-             {renderViewStack()}
+             {isRecentReading && recentReadingLoading ? (
+               <div className="recent-reading-state" role="status">
+                 <FaIcon name="spinner" className="content-index-spinner" size={15} />
+                 <span>{t('folder.recent.loading')}</span>
+               </div>
+             ) : isRecentReading && filteredFileData.length === 0 ? (
+               <div className="recent-reading-state">
+                 <FaIcon name="bookOpen" size={22} />
+                 <span>{t('folder.recent.empty')}</span>
+               </div>
+             ) : renderViewStack()}
           </div>
           
           {activeSelectedFile && (
@@ -3331,22 +3477,33 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           ) : (
             <>
               <ContextMenuItem onClick={() => handleContextAction('view-file')} label={t('action_view')} />
-              <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
-              <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
-              <ContextMenuItem onClick={() => handleContextAction('send-file-metadata')} label={t('action_meta_edit')} shortcut="F3" />
-              <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
-              <div className="folder-context-menu-separator" />
-              <ContextMenuItem onClick={() => handleContextAction('group-series')} label={t('action_group_by_series')} />
-              <ContextMenuItem onClick={() => handleContextAction('move-library')} label={t('action_move_file_to_library')} />
-              <div className="folder-context-menu-separator" />
-              <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t('action_del_files')} shortcut="Del" />
-              <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t('tf_menu_rename_multi')} shortcut="Shift+R" />
-              <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut={formatPrimaryShortcut('Z', runtimePlatform)} />
+              {!isRecentReading && (
+                <>
+                  <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
+                  <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
+                  <ContextMenuItem onClick={() => handleContextAction('send-file-metadata')} label={t('action_meta_edit')} shortcut="F3" />
+                  <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
+                  <div className="folder-context-menu-separator" />
+                  <ContextMenuItem onClick={() => handleContextAction('group-series')} label={t('action_group_by_series')} />
+                  <ContextMenuItem onClick={() => handleContextAction('move-library')} label={t('action_move_file_to_library')} />
+                  <div className="folder-context-menu-separator" />
+                  <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t('action_del_files')} shortcut="Del" />
+                  <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t('tf_menu_rename_multi')} shortcut="Shift+R" />
+                  <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut={formatPrimaryShortcut('Z', runtimePlatform)} />
+                </>
+              )}
               <ContextMenuItem onClick={() => handleContextAction('show-file')} icon="folderOpen" label={t('action_open_exp')} />
+              {isRecentReading && (
+                <ContextMenuItem onClick={() => handleContextAction('remove-recent')} icon="trash" label={t('folder.recent.remove')} />
+              )}
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('select-all')} label={t('action_sel_all')} shortcut={formatPrimaryShortcut('A', runtimePlatform)} />
               <ContextMenuItem onClick={() => handleContextAction('invert-selection')} label={t('action_inv_sel')} />
-              <ContextMenuItem onClick={() => handleContextAction('refresh-list')} label={t('action_refresh')} shortcut="F5" />
+              <ContextMenuItem
+                onClick={() => handleContextAction(isRecentReading ? 'refresh-recent' : 'refresh-list')}
+                label={t('action_refresh')}
+                shortcut="F5"
+              />
             </>
           )}
         </ContextMenu>

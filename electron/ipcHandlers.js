@@ -4103,6 +4103,99 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return rows.map(normalizeLibrarySearchFileForRenderer);
   });
 
+  const broadcastReadingChanged = payload => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('reading:changed', payload);
+    }
+  };
+
+  const readingFormatForPath = filePath => {
+    const extension = path.extname(String(filePath || '')).toLowerCase();
+    if (['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7'].includes(extension)) return 'comic';
+    if (extension === '.epub') return 'epub';
+    if (extension === '.pdf') return 'pdf';
+    if (['.txt', '.text', '.log', '.md'].includes(extension)) return 'text';
+    if (['.mp3', '.m4a', '.m4b', '.aac', '.wav', '.flac', '.ogg', '.opus', '.wma'].includes(extension)) return 'audio';
+    return '';
+  };
+
+  const recordReadingOpened = async filePath => {
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const state = await db.upsertReadingState(filePath, {
+        format: readingFormatForPath(filePath),
+        lastReadAt: Date.now(),
+      });
+      if (state) broadcastReadingChanged({
+        filePath: state.filePath,
+        itemId: state.itemId,
+        lastReadAt: state.lastReadAt,
+      });
+    } catch (error) {
+      console.warn(`[ReadingState] Failed to record ${filePath}: ${error.message}`);
+    } finally {
+      await db.close();
+    }
+  };
+
+  ipcMain.handle('reading:listRecent', async (_event, limit = 50) => {
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const states = await db.listRecentReadingStates(limit);
+      const rows = await db.listFilesByPaths(states.map(state => state.filePath));
+      const rowsByPath = new Map(rows.map(row => [row.path, row]));
+      return states.map(state => {
+        const filePath = state.filePath;
+        let stat = null;
+        try {
+          stat = fs.statSync(filePath);
+        } catch {
+          stat = null;
+        }
+        const row = rowsByPath.get(filePath) || {
+          path: filePath,
+          ext: path.extname(filePath).toLowerCase(),
+          title: path.parse(filePath).name,
+          book_type: state.format,
+          size: Number(stat?.size) || 0,
+          mtime: Number(stat?.mtimeMs) || 0,
+        };
+        return {
+          ...normalizeLibrarySearchFileForRenderer(row),
+          exists: Boolean(stat?.isFile?.()),
+          itemId: state.itemId,
+          lastReadAt: state.lastReadAt,
+          updatedAt: state.updatedAt,
+          readingState: state,
+        };
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
+  ipcMain.handle('reading:remove', async (_event, filePath) => {
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const result = await db.removeReadingState(filePath);
+      if (result.changes > 0) broadcastReadingChanged({ filePath, removed: true });
+      return { success: true, ...result };
+    } finally {
+      await db.close();
+    }
+  });
+
+  ipcMain.handle('reading:clear', async () => {
+    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    try {
+      const result = await db.clearReadingStates();
+      if (result.changes > 0) broadcastReadingChanged({ cleared: true });
+      return { success: true, ...result };
+    } finally {
+      await db.close();
+    }
+  });
+
   ipcMain.handle('folder:getLibraryTagFacets', async (_event, payload = {}) => {
     const config = configManager.getConfig() || {};
     const targetLibraries = [...new Set((payload.libraries?.length > 0
@@ -5035,6 +5128,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         stdio: 'ignore',
       });
       child.unref();
+      await recordReadingOpened(filePath);
       return { success: true };
     } catch (error) {
       return { success: false, code: error.code || '', message: error.message };

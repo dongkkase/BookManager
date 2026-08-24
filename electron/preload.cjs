@@ -54,6 +54,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
   openInternalViewer: (filePath) => ipcRenderer.invoke('viewer:open', filePath),
+  listRecentReading: (limit) => ipcRenderer.invoke('reading:listRecent', limit),
+  removeRecentReading: (filePath) => ipcRenderer.invoke('reading:remove', filePath),
+  clearRecentReading: () => ipcRenderer.invoke('reading:clear'),
+  onRecentReadingChanged: (callback) => {
+    const handler = (_, state) => callback(state);
+    ipcRenderer.on('reading:changed', handler);
+    return () => ipcRenderer.removeListener('reading:changed', handler);
+  },
   getAudioMiniPlayerState: () => ipcRenderer.invoke('viewer:getAudioMiniPlayerState'),
   controlAudioMiniPlayer: (command) => ipcRenderer.invoke('viewer:controlAudioMiniPlayer', command),
   onAudioMiniPlayerState: (callback) => {
