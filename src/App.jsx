@@ -18,6 +18,7 @@ import {
   TABS,
   canAcceptGlobalDrop,
   formatAppTitle,
+  isExternalFileDrag,
   isFileToolbarEnabled,
   normalizeDroppedPaths,
   resolveTabId,
@@ -63,6 +64,21 @@ function TabLoading({ t }) {
   return <div className="app-tab-loading">{t('msg_loading_list')}</div>;
 }
 
+function FileDropHoverOverlay({ opensViewer, t }) {
+  return (
+    <div
+      className={`app-file-drop-hover ${opensViewer ? 'is-viewer-open' : ''}`.trim()}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="app-file-drop-hover-card">
+        <FaIcon name={opensViewer ? 'bookOpen' : 'fileCirclePlus'} size={32} />
+        <span>{t(opensViewer ? 'folder.drop.open_in_viewer' : 'drag_drop')}</span>
+      </div>
+    </div>
+  );
+}
+
 function isSameStatusState(left = {}, right = {}) {
   const keys = new Set([...Object.keys(left || {}), ...Object.keys(right || {})]);
   for (const key of keys) {
@@ -84,6 +100,7 @@ function App() {
   const [statusStates, setStatusStates] = useState({});
   const [serverStatus, setServerStatus] = useState(null);
   const [audioMiniPlayerState, setAudioMiniPlayerState] = useState(null);
+  const [fileDropHoverTab, setFileDropHoverTab] = useState(null);
   const [updateInfo, setUpdateInfo] = useState({
     available: false,
     latestVersion: '',
@@ -111,12 +128,16 @@ function App() {
   const lastTabSaveTimer = useRef(null);
   const readyTabsRef = useRef(new Set());
   const pendingTabActionsRef = useRef(new Map());
+  const fileDragDepthRef = useRef(0);
   const effectiveWorkingTab = useMemo(
     () => resolveEffectiveWorkingTab(workingTab, statusStates, activeTab),
     [activeTab, statusStates, workingTab],
   );
   const isAppLocked = Boolean(effectiveWorkingTab);
   const isWorking = effectiveWorkingTab === activeTab;
+  const dropInteractionBlocked = isAppLocked || showSettings;
+  const fileDropHoverEnabled = canAcceptGlobalDrop(activeTab, dropInteractionBlocked);
+  const showFileDropHover = fileDropHoverTab === activeTab && fileDropHoverEnabled;
   const effectiveWorkingStatus = effectiveWorkingTab ? statusStates[effectiveWorkingTab] : null;
   const isLibraryScanSlideActive = shouldUseLibraryScanSlide(effectiveWorkingTab, effectiveWorkingStatus || {});
   const {
@@ -419,14 +440,40 @@ function App() {
     return () => window.removeEventListener('bookmanager:working-state', handleWorkingState);
   }, []);
 
+  const resetFileDropHover = useCallback(() => {
+    fileDragDepthRef.current = 0;
+    setFileDropHoverTab(null);
+  }, []);
+
+  useEffect(() => {
+    resetFileDropHover();
+  }, [activeTab, dropInteractionBlocked, resetFileDropHover]);
+
+  const handleGlobalDragEnter = useCallback((event) => {
+    if (!fileDropHoverEnabled || !isExternalFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    fileDragDepthRef.current += 1;
+    setFileDropHoverTab(activeTab);
+  }, [activeTab, fileDropHoverEnabled]);
+
+  const handleGlobalDragLeave = useCallback(() => {
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+    if (fileDragDepthRef.current === 0) setFileDropHoverTab(null);
+  }, []);
+
   const handleGlobalDragOver = useCallback((event) => {
     event.preventDefault();
-    event.dataTransfer.dropEffect = canAcceptGlobalDrop(activeTab, isAppLocked) ? 'copy' : 'none';
-  }, [activeTab, isAppLocked]);
+    event.dataTransfer.dropEffect = canAcceptGlobalDrop(activeTab, dropInteractionBlocked) ? 'copy' : 'none';
+    if (fileDropHoverEnabled && isExternalFileDrag(event.dataTransfer)) {
+      if (fileDragDepthRef.current === 0) fileDragDepthRef.current = 1;
+      setFileDropHoverTab(activeTab);
+    }
+  }, [activeTab, dropInteractionBlocked, fileDropHoverEnabled]);
 
   const handleGlobalDrop = useCallback(async (event) => {
     event.preventDefault();
-    if (!canAcceptGlobalDrop(activeTab, isAppLocked)) return;
+    resetFileDropHover();
+    if (!canAcceptGlobalDrop(activeTab, dropInteractionBlocked)) return;
     const paths = normalizeDroppedPaths(
       Array.from(event.dataTransfer.files || []).map(file => file.path),
     );
@@ -436,7 +483,8 @@ function App() {
       ...(await window.electronAPI?.stat?.(droppedPath)),
     })));
     const classified = classifyDroppedEntries(entries, {
-      includeDocuments: activeTab === 'folder' || activeTab === 'metadata',
+      includeDocuments: activeTab === 'metadata',
+      includeViewerFiles: activeTab === 'folder',
     });
     if (classified.unsupported.length > 0) {
       await window.electronAPI?.showMessage?.({
@@ -457,7 +505,7 @@ function App() {
     }
     if (acceptedPaths.length === 0) return;
     dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths });
-  }, [activeTab, dispatchTabAction, isAppLocked, language, showToast, t]);
+  }, [activeTab, dispatchTabAction, dropInteractionBlocked, language, resetFileDropHover, showToast, t]);
 
   const handleSettingsClose = useCallback(async (updatedConfig) => {
     setShowSettings(false);
@@ -629,8 +677,11 @@ function App() {
     <div
       className={`app-container ${language}`}
       style={appStyle}
+      onDragEnter={handleGlobalDragEnter}
+      onDragLeave={handleGlobalDragLeave}
       onDragOver={handleGlobalDragOver}
       onDrop={handleGlobalDrop}
+      onDragEnd={resetFileDropHover}
     >
       <div className="top-menu-bar">
         <div className="top-menu-left">
@@ -740,6 +791,7 @@ function App() {
             </React.Suspense>
           )}
         </div>
+        {showFileDropHover && <FileDropHoverOverlay opensViewer={activeTab === 'folder'} t={t} />}
         <AppLockOverlay
           isAppLocked={isAppLocked}
           useLibraryScanSlide={useLibraryScanSlide}

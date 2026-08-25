@@ -25,6 +25,10 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: '{0} 삭제 대상',
     },
     folder: {
+      drop: {
+        open_in_viewer: '지원 파일은 뷰어로 열고, 폴더는 해당 위치로 이동합니다',
+        first_file_only: '여러 항목 중 첫 번째 지원 파일만 뷰어로 엽니다.',
+      },
       sidebar: {
         more_actions: '메뉴 열기',
         remove_library: '라이브러리 제거',
@@ -411,6 +415,10 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: 'Mark {0} for deletion',
     },
     folder: {
+      drop: {
+        open_in_viewer: 'Drop a supported file to open it in the viewer, or a folder to navigate to it',
+        first_file_only: 'Only the first supported file is opened in the viewer when multiple items are dropped.',
+      },
       sidebar: {
         more_actions: 'Open menu',
         remove_library: 'Remove Library',
@@ -797,6 +805,10 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: '{0} を削除対象にする',
     },
     folder: {
+      drop: {
+        open_in_viewer: '対応ファイルはビューアで開き、フォルダーはその場所へ移動します',
+        first_file_only: '複数の項目をドロップした場合、最初の対応ファイルだけをビューアで開きます。',
+      },
       sidebar: {
         more_actions: 'メニューを開く',
         remove_library: 'ライブラリを削除',

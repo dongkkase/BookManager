@@ -6,6 +6,8 @@ import {
     isSupportedArchivePath,
     isSupportedDocumentDropPath,
     isSupportedDroppedFilePath,
+    isSupportedTextDropPath,
+    isSupportedViewerDropPath,
     resolveMetadataDropPaths,
 } from './dropPolicy.js';
 
@@ -33,6 +35,33 @@ test('오디오북 드롭 확장자는 메타데이터와 폴더 탭에서 지�
         assert.equal(isSupportedDroppedFilePath(filePath, { includeDocuments: true }), true);
     }
     assert.equal(isSupportedAudioDropPath('book.mp4'), false);
+});
+
+test('폴더 탭 뷰어 드롭은 내부 뷰어가 지원하는 파일 형식을 모두 허용한다', () => {
+    const viewerPaths = [
+        'comic.cb7',
+        'book.epub',
+        'book.pdf',
+        'notes.txt',
+        'notes.text',
+        'notes.log',
+        'notes.md',
+        'audio.m4b',
+    ];
+
+    for (const filePath of viewerPaths) {
+        assert.equal(isSupportedViewerDropPath(filePath), true, filePath);
+        assert.equal(isSupportedDroppedFilePath(filePath, { includeViewerFiles: true }), true, filePath);
+    }
+    assert.equal(isSupportedTextDropPath('notes.MD '), true);
+    assert.equal(isSupportedViewerDropPath('cover.jpg'), false);
+});
+
+test('폴더 전용 뷰어 형식은 다른 작업 탭의 기본 드롭 범위를 넓히지 않는다', () => {
+    for (const filePath of ['comic.cb7', 'notes.txt', 'notes.md']) {
+        assert.equal(isSupportedDroppedFilePath(filePath), false, filePath);
+    }
+    assert.equal(isSupportedDroppedFilePath('notes.txt', { includeDocuments: true }), false);
 });
 
 test('드롭 항목을 폴더·지원 파일·미지원 파일로 순서대로 분류한다', () => {

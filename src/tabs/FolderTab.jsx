@@ -1998,16 +1998,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (firstParent) await handleFolderChange(firstParent);
   }, [handleFolderChange, t]);
 
-  const handleDroppedPaths = useCallback(async (paths) => {
-    for (const droppedPath of paths || []) {
-      const stat = await window.electronAPI?.stat?.(droppedPath);
-      const targetFolder = stat?.isDirectory ? droppedPath : parentPath(droppedPath);
-      if (!targetFolder) continue;
-      await handleFolderChange(targetFolder);
-      return;
-    }
-  }, [handleFolderChange]);
-
   const handleFileSelect = useCallback((filePath, event, index) => {
     if (Array.isArray(filePath)) {
       if (filePath.length > 0) selectFile(filePath[0]);
@@ -2129,6 +2119,26 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectFile(file.path, null, index);
     await openFileInViewer(file);
   }, [openFileInViewer, selectFile]);
+
+  const handleDroppedPaths = useCallback(async (paths) => {
+    try {
+      for (const droppedPath of paths || []) {
+        const stat = await window.electronAPI?.stat?.(droppedPath);
+        if (stat?.isDirectory) {
+          await handleFolderChange(droppedPath);
+          return;
+        }
+        if (stat?.isFile) {
+          if ((paths?.length || 0) > 1) showToast?.(t('folder.drop.first_file_only'));
+          await openFileInViewer(droppedPath);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('드롭 경로 처리 실패:', error);
+      showToast?.(error?.message || t('msg_failed'));
+    }
+  }, [handleFolderChange, openFileInViewer, showToast, t]);
 
   const deleteSelectedFiles = useCallback(async () => {
     const targets = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);

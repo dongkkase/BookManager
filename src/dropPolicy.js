@@ -30,9 +30,26 @@ export const SUPPORTED_AUDIO_DROP_EXTENSIONS = Object.freeze([
     '.webm',
 ]);
 
+export const SUPPORTED_TEXT_DROP_EXTENSIONS = Object.freeze([
+    '.txt',
+    '.text',
+    '.log',
+    '.md',
+]);
+
+export const SUPPORTED_VIEWER_DROP_EXTENSIONS = Object.freeze([
+    ...SUPPORTED_ARCHIVE_EXTENSIONS,
+    '.cb7',
+    ...SUPPORTED_DOCUMENT_DROP_EXTENSIONS,
+    ...SUPPORTED_TEXT_DROP_EXTENSIONS,
+    ...SUPPORTED_AUDIO_DROP_EXTENSIONS,
+]);
+
 const SUPPORTED_EXTENSION_SET = new Set(SUPPORTED_ARCHIVE_EXTENSIONS);
 const SUPPORTED_DOCUMENT_DROP_EXTENSION_SET = new Set(SUPPORTED_DOCUMENT_DROP_EXTENSIONS);
 const SUPPORTED_AUDIO_DROP_EXTENSION_SET = new Set(SUPPORTED_AUDIO_DROP_EXTENSIONS);
+const SUPPORTED_TEXT_DROP_EXTENSION_SET = new Set(SUPPORTED_TEXT_DROP_EXTENSIONS);
+const SUPPORTED_VIEWER_DROP_EXTENSION_SET = new Set(SUPPORTED_VIEWER_DROP_EXTENSIONS);
 
 function normalizedFileExtension(filePath) {
     const normalized = String(filePath || '')
@@ -55,8 +72,17 @@ export function isSupportedAudioDropPath(filePath) {
     return SUPPORTED_AUDIO_DROP_EXTENSION_SET.has(normalizedFileExtension(filePath));
 }
 
+export function isSupportedTextDropPath(filePath) {
+    return SUPPORTED_TEXT_DROP_EXTENSION_SET.has(normalizedFileExtension(filePath));
+}
+
+export function isSupportedViewerDropPath(filePath) {
+    return SUPPORTED_VIEWER_DROP_EXTENSION_SET.has(normalizedFileExtension(filePath));
+}
+
 export function isSupportedDroppedFilePath(filePath, options = {}) {
     return isSupportedArchivePath(filePath)
+        || Boolean(options.includeViewerFiles && isSupportedViewerDropPath(filePath))
         || Boolean(options.includeDocuments && (
             isSupportedDocumentDropPath(filePath)
             || isSupportedAudioDropPath(filePath)

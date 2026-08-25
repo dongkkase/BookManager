@@ -127,6 +127,7 @@ import {
   resolveSupertonicModelDir,
 } from './supertonicModel.js';
 import { createSupertonicTtsDataUrl } from './supertonicTts.js';
+import { launchExternalViewer } from './associatedFileOpener.js';
 
 const RENAMER_PREVIEW_MAX_DIMENSION = 720;
 const RENAMER_PREVIEW_JPEG_QUALITY = 86;
@@ -5117,19 +5118,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   ipcMain.handle('fs:openWithViewer', async (_, viewerPath, filePath) => {
     try {
-      if (!viewerPath || !fs.existsSync(viewerPath)) {
-        return { success: false, code: 'VIEWER_NOT_FOUND', message: i18nT('viewer_not_found') };
+      const result = await launchExternalViewer(viewerPath, filePath);
+      if (!result.success) {
+        const fallbackMessage = result.code === 'VIEWER_NOT_FOUND'
+          ? i18nT('viewer_not_found')
+          : result.code === 'FILE_NOT_FOUND'
+            ? i18nT('fs_file_not_found')
+            : i18nT('msg_failed');
+        return { ...result, message: result.message || fallbackMessage };
       }
-      if (!filePath || !fs.existsSync(filePath)) {
-        return { success: false, code: 'FILE_NOT_FOUND', message: i18nT('fs_file_not_found') };
-      }
-      const child = spawn(viewerPath, [filePath], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
       await recordReadingOpened(filePath);
-      return { success: true };
+      return result;
     } catch (error) {
       return { success: false, code: error.code || '', message: error.message };
     }

@@ -24,6 +24,13 @@ export function canAcceptGlobalDrop(tabId, isWorking = false) {
     return !isWorking && !['sharing', 'releases'].includes(tabId);
 }
 
+export function isExternalFileDrag(dataTransfer) {
+    const types = dataTransfer?.types;
+    if (!types) return false;
+    if (typeof types.contains === 'function' && types.contains('Files')) return true;
+    return Array.from(types).includes('Files');
+}
+
 export function normalizeDroppedPaths(paths = []) {
     const seen = new Set();
     const normalized = [];

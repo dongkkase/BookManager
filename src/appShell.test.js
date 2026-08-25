@@ -9,6 +9,7 @@ import {
     TABS,
     canAcceptGlobalDrop,
     formatAppTitle,
+    isExternalFileDrag,
     isFileToolbarEnabled,
     normalizeDroppedPaths,
     resolveTabId,
@@ -55,6 +56,20 @@ test('공유 서버와 릴리즈 탭 및 작업 중에는 전역 드롭을 무�
     assert.equal(canAcceptGlobalDrop('sharing'), false);
     assert.equal(canAcceptGlobalDrop('releases'), false);
     assert.equal(canAcceptGlobalDrop('metadata', true), false);
+});
+
+test('외부 파일 드래그만 드롭존 호버 대상으로 판별한다', () => {
+    assert.equal(isExternalFileDrag({ types: ['Files'] }), true);
+    assert.equal(isExternalFileDrag({ types: ['text/plain', 'FILES'] }), false);
+    assert.equal(isExternalFileDrag({ types: ['files'] }), false);
+    assert.equal(isExternalFileDrag({ types: ['text/plain'] }), false);
+    assert.equal(isExternalFileDrag({ types: [] }), false);
+    assert.equal(isExternalFileDrag(null), false);
+    assert.equal(isExternalFileDrag({
+        types: {
+            contains: type => type === 'Files',
+        },
+    }), true);
 });
 
 test('드롭 경로는 입력 순서를 유지하며 중복과 빈 값을 제거한다', () => {

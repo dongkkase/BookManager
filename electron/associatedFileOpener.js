@@ -70,6 +70,66 @@ export function configuredViewerPathForAssociatedFile(config = {}, filePath = ''
     return viewerType ? String(config?.viewer_paths?.[viewerType] || '').trim() : '';
 }
 
+export async function launchExternalViewer(viewerPath, filePath, options = {}) {
+    const {
+        spawnTarget = spawn,
+        fsTarget = fs,
+        platform = process.platform,
+    } = options;
+    const normalizedPath = path.resolve(String(filePath || '')).normalize('NFC');
+    const normalizedViewerPath = path.resolve(String(viewerPath || '')).normalize('NFC');
+    if (pathEntryType(normalizedPath, fsTarget) !== 'file') {
+        return {
+            success: false,
+            code: 'FILE_NOT_FOUND',
+            filePath: normalizedPath,
+            viewerPath: normalizedViewerPath,
+        };
+    }
+
+    const viewerEntryType = pathEntryType(normalizedViewerPath, fsTarget);
+    const macApplicationBundle = isMacApplicationBundle(
+        normalizedViewerPath,
+        viewerEntryType,
+        platform,
+    );
+    if (viewerEntryType !== 'file' && !macApplicationBundle) {
+        return {
+            success: false,
+            code: 'VIEWER_NOT_FOUND',
+            filePath: normalizedPath,
+            viewerPath: normalizedViewerPath,
+        };
+    }
+
+    const command = macApplicationBundle ? '/usr/bin/open' : normalizedViewerPath;
+    const args = macApplicationBundle
+        ? ['-a', normalizedViewerPath, normalizedPath]
+        : [normalizedPath];
+    try {
+        const child = spawnTarget(command, args, {
+            detached: true,
+            stdio: 'ignore',
+        });
+        await waitForSpawn(child);
+    } catch (error) {
+        return {
+            success: false,
+            code: error?.code || 'VIEWER_LAUNCH_FAILED',
+            message: error?.message || String(error),
+            filePath: normalizedPath,
+            viewerPath: normalizedViewerPath,
+        };
+    }
+
+    return {
+        success: true,
+        external: true,
+        filePath: normalizedPath,
+        viewerPath: normalizedViewerPath,
+    };
+}
+
 export async function openAssociatedFile(filePath, options = {}) {
     const {
         getConfig = () => ({}),
@@ -91,40 +151,15 @@ export async function openAssociatedFile(filePath, options = {}) {
     if (isBlockedViewerPath(viewerPath, blockedViewerPaths, platform, fsTarget)) {
         return openInternalViewer(normalizedPath);
     }
-    const viewerEntryType = pathEntryType(viewerPath, fsTarget);
-    const macApplicationBundle = isMacApplicationBundle(viewerPath, viewerEntryType, platform);
-    if (viewerEntryType !== 'file' && !macApplicationBundle) {
-        return {
-            success: false,
-            code: 'VIEWER_NOT_FOUND',
-            filePath: normalizedPath,
-            viewerPath,
-        };
-    }
-
-    const command = macApplicationBundle ? '/usr/bin/open' : viewerPath;
-    const args = macApplicationBundle ? ['-a', viewerPath, normalizedPath] : [normalizedPath];
-    try {
-        const child = spawnTarget(command, args, {
-            detached: true,
-            stdio: 'ignore',
-        });
-        await waitForSpawn(child);
-    } catch (error) {
-        return {
-            success: false,
-            code: error?.code || 'VIEWER_LAUNCH_FAILED',
-            message: error?.message || String(error),
-            filePath: normalizedPath,
-            viewerPath,
-        };
-    }
+    const launchResult = await launchExternalViewer(viewerPath, normalizedPath, {
+        spawnTarget,
+        fsTarget,
+        platform,
+    });
+    if (!launchResult.success) return launchResult;
     await onExternalViewerOpened(normalizedPath, viewerType);
     return {
-        success: true,
-        external: true,
-        filePath: normalizedPath,
-        viewerPath,
+        ...launchResult,
         viewerType,
     };
 }
