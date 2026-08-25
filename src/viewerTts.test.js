@@ -79,12 +79,14 @@ test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이
     assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*display:\s*flex/);
     assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*flex-wrap:\s*nowrap/);
     assert.match(viewerCss, /\.viewer-tts-actions \{/);
-    assert.match(viewerCss, /grid-template-columns:\s*repeat\(7, 30px\)/);
+    assert.match(viewerCss, /grid-template-columns:\s*repeat\(5, 30px\) minmax\(140px, 168px\) 30px/);
     assert.match(ttsControlSource, /const \[rateOpen, setRateOpen\]/);
     assert.match(ttsControlSource, /className="viewer-tts-rate-popover"/);
     assert.match(viewerSource, /import voiceSelectionIcon from '\.\/images\/voice_selection\.svg'/);
     assert.match(viewerSource, /import personRunningIcon from '\.\/images\/person-running\.svg'/);
     assert.match(ttsControlSource, /buttonIconSrc=\{voiceSelectionIcon\}/);
+    assert.match(ttsControlSource, /buttonLabel=\{activeVoiceLabel\}/);
+    assert.match(ttsControlSource, /focusSelectedOnOpen/);
     assert.match(ttsControlSource, /aria-pressed=\{settings\.autoAdvance\}/);
     assert.match(ttsControlSource, /className="viewer-tts-rate-value">\{settings\.rate\.toFixed\(1\)\}x/);
     assert.match(ttsControlSource, /className="viewer-tts-action-icon" src=\{personRunningIcon\}/);
@@ -104,7 +106,30 @@ test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이
     assert.match(viewerCss, /\.viewer-tool-icon-image,[\s\S]*filter:\s*brightness\(0\) invert\(1\)/);
     assert.match(viewerCss, /\.viewer-tts-action-icon,[\s\S]*\.viewer-dropdown-icon-image \{/);
     assert.match(viewerCss, /\.viewer-dropdown-button\.is-icon-only \{/);
+    assert.match(viewerCss, /\.viewer-dropdown-button\.has-icon-label \{/);
     assert.match(viewerCss, /\.viewer-dropdown-group \{/);
+});
+
+test('TTS 음성 선택기는 현재 음성명을 표시하고 열릴 때 선택된 음성으로 이동한다', () => {
+    assert.match(viewerDropdownSource, /buttonLabel = '', focusSelectedOnOpen = false/);
+    assert.match(viewerDropdownSource, /const selectedOptionRef = useRef\(null\)/);
+    assert.match(viewerDropdownSource, /const selectedIsSelectable = selectableOptions\.some\(option => option\.id === value\)/);
+    assert.match(viewerDropdownSource, /if \(!open \|\| !focusSelectedOnOpen \|\| !selectedIsSelectable \|\| !selectedOptionRef\.current\) return/);
+    assert.match(viewerDropdownSource, /selectedOptionRef\.current\.focus\(\{ preventScroll: true \}\)/);
+    assert.match(viewerDropdownSource, /selectedOptionRef\.current\.scrollIntoView\?\.\(\{ block: 'nearest', inline: 'nearest' \}\)/);
+    assert.match(viewerDropdownSource, /\[focusSelectedOnOpen, open, selectedIsSelectable, value\]/);
+    assert.match(viewerDropdownSource, /ref=\{option\.id === value \? selectedOptionRef : undefined\}/);
+    assert.match(viewerDropdownSource, /if \(!open \|\| !focusSelectedOnOpen \|\| event\.key !== 'Escape'\) return/);
+    assert.match(viewerDropdownSource, /const hasIconLabel = hasButtonIcon && Boolean\(buttonLabel\)/);
+    assert.match(viewerDropdownSource, /hasIconLabel \? <span>\{displayedLabel\}<\/span> : null/);
+    assert.match(ttsControlSource, /SUPERTONIC_TTS_VOICES\.find\(voice => voice\.id === settings\.supertonicVoice\)\?\.label/);
+    assert.match(ttsControlSource, /OPENAI_TTS_VOICES\.find\(voice => voice\.id === settings\.openaiVoice\)\?\.label/);
+    assert.match(ttsControlSource, /viewerText\(googleVoice\?\.labelKey, googleVoice\?\.label \|\| settings\.googleVoice\)/);
+    assert.match(ttsControlSource, /let activeVoiceLabel = selectedVoice[\s\S]*viewerText\('viewer\.tts\.system_voice', '시스템 기본 음성'\)/);
+    assert.match(viewerCss, /\.viewer-tts-actions \.viewer-tts-voice-dropdown,[\s\S]*?\{\s*width:\s*100%;\s*\}/);
+    assert.match(viewerCss, /\.viewer-dropdown-button\.has-icon-label \{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto/);
+    assert.match(viewerCss, /\.viewer-dropdown-button span \{[\s\S]*text-overflow:\s*ellipsis/);
+    assert.match(viewerCss, /\.viewer-tts-voice-dropdown \.viewer-dropdown-option:focus-visible \{/);
 });
 
 test('TTS 메뉴는 음성 드롭다운 안에서 시스템, Supertonic, OpenAI, Google 음성을 그룹으로 제공한다', () => {

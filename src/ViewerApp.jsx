@@ -2676,13 +2676,32 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
   );
 }
 
-function ViewerDropdown({ value, options, onChange, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '', buttonIconSrc = '' }) {
+function ViewerDropdown({ value, options, onChange, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '', buttonIconSrc = '', buttonLabel = '', focusSelectedOnOpen = false }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const selectedOptionRef = useRef(null);
   const selectableOptions = options.filter(option => option.kind !== 'group' && option.kind !== 'notice' && option.disabled !== true);
+  const selectedIsSelectable = selectableOptions.some(option => option.id === value);
   const selected = options.find(option => option.id === value && option.kind !== 'group') || selectableOptions[0] || { id: '', label: '' };
   const selectedLabel = viewerText(selected.labelKey, selected.label);
-  const buttonTitle = title || selectedLabel;
+  const displayedLabel = buttonLabel || selectedLabel;
+  const hasButtonIcon = Boolean(buttonIcon || buttonIconSrc);
+  const hasIconLabel = hasButtonIcon && Boolean(buttonLabel);
+  const buttonTitle = title
+    ? `${title}${buttonLabel ? `: ${displayedLabel}` : ''}`
+    : displayedLabel;
+  const closeAndRestoreFocus = useCallback(() => {
+    setOpen(false);
+    if (!focusSelectedOnOpen) return;
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  }, [focusSelectedOnOpen]);
+
+  useLayoutEffect(() => {
+    if (!open || !focusSelectedOnOpen || !selectedIsSelectable || !selectedOptionRef.current) return;
+    selectedOptionRef.current.focus({ preventScroll: true });
+    selectedOptionRef.current.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [focusSelectedOnOpen, open, selectedIsSelectable, value]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -2690,7 +2709,7 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
       if (!rootRef.current?.contains(event.target)) setOpen(false);
     };
     const handleKeyDown = event => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') closeAndRestoreFocus();
     };
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
@@ -2698,13 +2717,23 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open]);
+  }, [closeAndRestoreFocus, open]);
 
   return (
-    <div className={`viewer-dropdown ${open ? 'is-open' : ''} ${className}`.trim()} ref={rootRef}>
+    <div
+      className={`viewer-dropdown ${open ? 'is-open' : ''} ${className}`.trim()}
+      ref={rootRef}
+      onKeyDown={event => {
+        if (!open || !focusSelectedOnOpen || event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeAndRestoreFocus();
+      }}
+    >
       <button
+        ref={triggerRef}
         type="button"
-        className={`viewer-dropdown-button ${buttonIcon || buttonIconSrc ? 'is-icon-only' : ''}`.trim()}
+        className={`viewer-dropdown-button ${hasButtonIcon && !hasIconLabel ? 'is-icon-only' : ''} ${hasIconLabel ? 'has-icon-label' : ''}`.trim()}
         title={buttonTitle}
         aria-label={buttonTitle}
         aria-haspopup="listbox"
@@ -2713,8 +2742,8 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
       >
         {buttonIcon ? <FaIcon name={buttonIcon} /> : null}
         {buttonIconSrc ? <img className="viewer-dropdown-icon-image" src={buttonIconSrc} alt="" aria-hidden="true" /> : null}
-        {!buttonIcon && !buttonIconSrc ? <span>{selectedLabel}</span> : null}
-        <FaIcon name="caretDown" size={buttonIcon || buttonIconSrc ? 8 : 11} />
+        {!hasButtonIcon || hasIconLabel ? <span>{displayedLabel}</span> : null}
+        <FaIcon name="caretDown" size={hasButtonIcon ? 8 : 11} />
       </button>
       {open && (
         <div className="viewer-dropdown-menu" role="listbox">
@@ -2730,6 +2759,7 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
             ) : (
               <div key={option.id} className={`viewer-dropdown-option-row ${onPreview ? 'has-preview' : ''}`}>
                 <button
+                  ref={option.id === value ? selectedOptionRef : undefined}
                   type="button"
                   className={`viewer-dropdown-option ${option.id === selected.id ? 'is-selected' : ''}`}
                   role="option"
@@ -2738,7 +2768,7 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
                   onClick={() => {
                     if (option.disabled === true) return;
                     onChange(option.id);
-                    setOpen(false);
+                    closeAndRestoreFocus();
                   }}
                 >
                   <span>{viewerText(option.labelKey, option.label)}</span>
@@ -2982,7 +3012,22 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
       ? `openai:${settings.openaiVoice}`
       : isGoogleEngine
         ? `google:${settings.googleVoice}`
-        : `system:${settings.voiceURI}`;
+        : selectedVoice
+          ? `system:${selectedVoice.voiceURI || selectedVoice.name}`
+          : 'system:';
+  let activeVoiceLabel = selectedVoice
+    ? `${selectedVoice.name}${selectedVoice.lang ? ` (${selectedVoice.lang})` : ''}`
+    : viewerText('viewer.tts.system_voice', '시스템 기본 음성');
+  if (isSupertonicEngine) {
+    activeVoiceLabel = SUPERTONIC_TTS_VOICES.find(voice => voice.id === settings.supertonicVoice)?.label
+      || settings.supertonicVoice;
+  } else if (isOpenAiEngine) {
+    activeVoiceLabel = OPENAI_TTS_VOICES.find(voice => voice.id === settings.openaiVoice)?.label
+      || settings.openaiVoice;
+  } else if (isGoogleEngine) {
+    const googleVoice = GOOGLE_TTS_VOICES.find(voice => voice.id === settings.googleVoice);
+    activeVoiceLabel = viewerText(googleVoice?.labelKey, googleVoice?.label || settings.googleVoice);
+  }
   const remoteLoadingKey = isSupertonicEngine
     ? 'supertonic'
     : isGoogleEngine
@@ -3658,6 +3703,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
               title={viewerText('viewer.tts.voice', '음성')}
               className="viewer-tts-voice-dropdown"
               buttonIconSrc={voiceSelectionIcon}
+              buttonLabel={activeVoiceLabel}
+              focusSelectedOnOpen
               previewingValue={previewingVoiceValue}
               previewTitle={viewerText('viewer.tts.voice_preview', '음성 미리듣기')}
               onPreview={handleVoicePreview}

@@ -1027,7 +1027,7 @@
 .viewer-tts-actions {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(7, 30px);
+  grid-template-columns: repeat(5, 30px) minmax(140px, 168px) 30px;
   gap: 4px;
   align-items: center;
 }
@@ -1131,6 +1131,20 @@
   border-color: #4d4d4d;
 }
 
+.viewer-tts-actions .viewer-tts-voice-dropdown,
+.viewer-tts-actions .viewer-tts-voice-dropdown .viewer-dropdown-button {
+  width: 100%;
+}
+
+.viewer-tts-actions .viewer-tts-voice-dropdown .viewer-dropdown-button {
+  padding: 0 7px;
+}
+
+.viewer-tts-voice-dropdown .viewer-dropdown-option:focus-visible {
+  outline: 1px solid #7fc3f1;
+  outline-offset: -1px;
+}
+
 .viewer-tts-actions .viewer-dropdown-menu {
   position: absolute;
   top: calc(100% + 8px);
@@ -1203,6 +1217,11 @@
   gap: 2px;
   justify-items: center;
   padding: 0 4px;
+}
+
+.viewer-dropdown-button.has-icon-label {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
 }
 
 .viewer-dropdown-button span {
