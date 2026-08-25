@@ -721,6 +721,153 @@ body.is-resizing-panel .detail-panel-wrap {
   background: #202020;
 }
 
+.folder-goto-path-bar {
+    position: relative;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: auto minmax(160px, 1fr) auto;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 5px 8px;
+    background: #242424;
+    border-bottom: 1px solid var(--line);
+}
+
+.folder-goto-path-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #cfd8dd;
+    font-size: var(--font-xs);
+    white-space: nowrap;
+}
+
+.folder-goto-path-label kbd {
+    padding: 2px 5px;
+    color: #b9c8d0;
+    background: #171717;
+    border: 1px solid #4b4b4b;
+    border-bottom-color: #666;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: var(--font-2xs);
+    line-height: 1;
+}
+
+.folder-goto-path-control {
+    position: relative;
+    min-width: 0;
+}
+
+.folder-goto-path-control .goto-path-input {
+    width: 100%;
+    padding-right: 30px;
+}
+
+.folder-goto-path-arrow {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    display: inline-flex;
+    color: #9aa6ad;
+    pointer-events: none;
+    transform: translateY(-50%);
+}
+
+.folder-goto-path-history {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    z-index: 40;
+    max-height: min(390px, calc(100vh - 180px));
+    padding: 5px;
+    overflow-y: auto;
+    background: #202020;
+    border: 1px solid #555;
+    border-radius: 4px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+}
+
+.folder-goto-path-history-title {
+    padding: 4px 7px 6px;
+    color: #93a3ac;
+    font-size: var(--font-2xs);
+    font-weight: 700;
+}
+
+.folder-goto-path-option {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 6px 8px;
+    color: #eee;
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.folder-goto-path-option:hover,
+.folder-goto-path-option.active {
+    background: #315064;
+}
+
+.folder-goto-path-option strong,
+.folder-goto-path-option span {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-goto-path-option strong {
+    font-size: var(--font-xs);
+}
+
+.folder-goto-path-option span {
+    color: #aeb9bf;
+    font-size: var(--font-2xs);
+}
+
+.folder-goto-path-option.active span {
+    color: #d9e5eb;
+}
+
+.folder-goto-path-empty {
+    padding: 13px 8px;
+    color: #929da3;
+    font-size: var(--font-xs);
+    text-align: center;
+}
+
+.folder-goto-path-submit {
+    min-height: var(--control-height);
+    padding: 4px 12px;
+    color: #fff;
+    background: #315064;
+    border: 1px solid #4f7890;
+    border-radius: 4px;
+    font-size: var(--font-xs);
+    font-weight: 700;
+}
+
+.folder-goto-path-submit:hover {
+    background: #3b6076;
+}
+
+.folder-goto-path-submit:focus-visible {
+    outline: 1px solid #8bcdf4;
+    outline-offset: 1px;
+}
+
 .right-toolbar-left,
 .right-toolbar-right,
 .folder-toolbar,
@@ -2573,7 +2720,6 @@ body.is-reordering-table-column {
 }
 
 .missing-dialog,
-.goto-path-dialog,
 .text-input-dialog,
 .layout-dialog {
   display: flex;
@@ -2588,10 +2734,6 @@ body.is-reordering-table-column {
 .missing-dialog {
   width: 552px;
   max-height: 482px;
-}
-
-.goto-path-dialog {
-  width: 400px;
 }
 
 .text-input-dialog {
@@ -3190,7 +3332,6 @@ body.is-reordering-table-column {
     }
 }
 
-.goto-path-dialog-body,
 .text-input-dialog-body {
   display: flex;
   flex-direction: column;
@@ -3217,12 +3358,10 @@ body.is-reordering-table-column {
   outline: none;
 }
 
-.goto-path-dialog .layout-dialog-footer,
 .text-input-dialog .layout-dialog-footer {
   gap: 10px;
 }
 
-.goto-path-dialog .layout-dialog-footer button,
 .text-input-dialog .layout-dialog-footer button {
   min-width: 78px;
   padding: 5px 15px;
@@ -3231,22 +3370,18 @@ body.is-reordering-table-column {
   color: #fff;
 }
 
-.goto-path-dialog .goto-path-confirm,
 .text-input-dialog .text-input-confirm {
   background: #0078d7;
 }
 
-.goto-path-dialog .goto-path-confirm:hover,
 .text-input-dialog .text-input-confirm:hover {
   background: #3a7ebf;
 }
 
-.goto-path-dialog .goto-path-cancel,
 .text-input-dialog .text-input-cancel {
   background: #555;
 }
 
-.goto-path-dialog .goto-path-cancel:hover,
 .text-input-dialog .text-input-cancel:hover {
   background: #666;
 }

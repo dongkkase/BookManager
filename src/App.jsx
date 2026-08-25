@@ -790,6 +790,7 @@ function App() {
           config={config} 
           initialTab={settingsInitialTab}
           onClose={handleSettingsClose}
+          onPersistViewerPaths={setConfig}
           onLanguagePreviewChange={handleSettingsLanguagePreview}
           t={t}
           showToast={showToast}

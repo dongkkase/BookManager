@@ -7,6 +7,7 @@ import { ThumbnailView } from '../components/folder/ThumbnailView';
 import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
+import { FolderPathBar } from '../components/folder/FolderPathBar';
 import { FolderTagSearchDialog } from '../components/folder/FolderTagSearchDialog';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
@@ -94,6 +95,10 @@ import {
 } from '../interactionPolicy';
 import { emitStatusState } from '../statusState';
 import { recentReadingTimeText } from '../recentReadingState';
+import {
+  addGotoPathHistory,
+  normalizeGotoPathHistory,
+} from '../folderPathHistory';
 import '../styles/FolderTab.css';
 
 const VISIBLE_COVER_REQUEST_LIMIT = 32;
@@ -447,9 +452,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
-  const [showGotoDialog, setShowGotoDialog] = useState(false);
   const [showContentIndexDialog, setShowContentIndexDialog] = useState(false);
   const [gotoPathDraft, setGotoPathDraft] = useState('');
+  const [gotoPathHistory, setGotoPathHistory] = useState(() => (
+    normalizeGotoPathHistory(config?.folder_goto_history, runtimePlatform)
+  ));
+  const [showGotoPathHistory, setShowGotoPathHistory] = useState(false);
   const [seriesMovePreview, setSeriesMovePreview] = useState(null);
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
   const [moveConflict, setMoveConflict] = useState(null);
@@ -459,6 +467,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [recentReadingFiles, setRecentReadingFiles] = useState([]);
   const [recentReadingLoading, setRecentReadingLoading] = useState(false);
   const isRecentReading = folderSource === 'recent-reading';
+  const gotoPathInputRef = useRef(null);
+  const gotoPathHistoryRef = useRef(gotoPathHistory);
   const textInputResolverRef = useRef(null);
   const closeTextInputDialog = useCallback((value = null) => {
     const resolver = textInputResolverRef.current;
@@ -484,7 +494,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     if (showMultiRenameDialog) setShowMultiRenameDialog(false);
     else if (showFolderTagSearchDialog) setShowFolderTagSearchDialog(false);
-    else if (showGotoDialog) setShowGotoDialog(false);
     else if (showContentIndexDialog) setShowContentIndexDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
     else if (seriesMovePreview) setSeriesMovePreview(null);
@@ -502,7 +511,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     textInputDialog,
     closeTextInputDialog,
     showDeleteLayoutDialog,
-    showGotoDialog,
     showFolderTagSearchDialog,
     showContentIndexDialog,
     showLayoutDialog,
@@ -742,6 +750,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     coverPreviewFolderRef.current = selectedFolderPath;
     resetCoverPreviewQueue();
   }, [resetCoverPreviewQueue, selectedFolderPath]);
+
+  useEffect(() => {
+    const nextHistory = normalizeGotoPathHistory(config?.folder_goto_history, runtimePlatform);
+    gotoPathHistoryRef.current = nextHistory;
+    setGotoPathHistory(nextHistory);
+  }, [config?.folder_goto_history, runtimePlatform]);
+
+  useEffect(() => {
+    if (document.activeElement !== gotoPathInputRef.current) {
+      setGotoPathDraft(selectedFolderPath);
+    }
+  }, [selectedFolderPath]);
 
   // 파일 데이터 가져오기 (캐시에서)
   const getCurrentFileData = useCallback(() => {
@@ -1509,8 +1529,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const handleSafeFolderNavigation = useCallback(async (folderPath, options = {}) => {
     if (!folderPath) return false;
     if (options.skipExistsCheck !== true) {
-      const exists = await window.electronAPI?.exists?.(folderPath);
-      if (!exists) return false;
+      const stat = await window.electronAPI?.stat?.(folderPath);
+      if (!stat?.isDirectory) return false;
     }
     await handleFolderChange(folderPath);
     return true;
@@ -1544,10 +1564,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const handlePathNavigation = useCallback(async targetPathValue => {
     const targetPath = String(targetPathValue || '').trim();
-    if (!targetPath) return;
+    if (!targetPath) return false;
     if (await handleSafeFolderNavigation(targetPath)) {
-      setShowGotoDialog(false);
-      return;
+      const currentHistory = gotoPathHistoryRef.current;
+      const nextHistory = addGotoPathHistory(currentHistory, targetPath, runtimePlatform);
+      const historyChanged = nextHistory.length !== currentHistory.length
+        || nextHistory.some((path, index) => path !== currentHistory[index]);
+      gotoPathHistoryRef.current = nextHistory;
+      setGotoPathHistory(nextHistory);
+      setGotoPathDraft(targetPath);
+      setShowGotoPathHistory(false);
+      if (historyChanged) {
+        saveConfig?.({ folder_goto_history: nextHistory }).catch(error => {
+          console.error('최근 이동 경로 저장 실패:', error);
+        });
+      }
+      return true;
     }
     await window.electronAPI?.showMessage?.({
       type: 'warning',
@@ -1555,7 +1587,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       message: t('fm_error_desc'),
       language: config?.language || config?.lang || 'ko',
     });
-  }, [config?.lang, config?.language, handleSafeFolderNavigation, t]);
+    return false;
+  }, [config?.lang, config?.language, handleSafeFolderNavigation, runtimePlatform, saveConfig, t]);
+
+  const focusGotoPathInput = useCallback(() => {
+    setContextMenu(null);
+    setGotoPathDraft(selectedFolderPath);
+    setShowGotoPathHistory(true);
+    window.requestAnimationFrame(() => {
+      gotoPathInputRef.current?.focus();
+      gotoPathInputRef.current?.select();
+    });
+  }, [selectedFolderPath]);
 
   const runInternalFileAction = useCallback(async action => {
     internalFileActionRef.current = true;
@@ -1644,6 +1687,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const isFolderTabVisible = useCallback(() => (
     !mainAreaRef.current?.closest?.('[hidden]')
+  ), []);
+
+  const canFocusGotoPath = useCallback(() => (
+    !document.querySelector('.modal-overlay')
+    && !document.querySelector('.app-lock-screen')
+    && !document.querySelector('.app-library-scan-slide')
+    && !mainAreaRef.current?.closest('.folder-tab')?.querySelector('.folder-dialog-backdrop')
   ), []);
 
   const handleRefresh = useCallback(async () => {
@@ -2733,6 +2783,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (!isFolderTabVisible()) return;
+      if (
+        !event.defaultPrevented
+        && !event.repeat
+        && hasPrimaryModifier(event, runtimePlatform)
+        && isShortcutKey(event, 'g')
+        && canFocusGotoPath()
+      ) {
+        event.preventDefault();
+        focusGotoPathInput();
+        return;
+      }
       if (event.key === 'Escape' && closeTopOverlay()) {
         event.preventDefault();
         event.stopPropagation();
@@ -2764,10 +2825,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'f')) {
         event.preventDefault();
         searchInputRef.current?.focus();
-      } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'g')) {
-        event.preventDefault();
-        setGotoPathDraft(selectedFolderPath);
-        setShowGotoDialog(true);
       } else if (event.shiftKey && isShortcutKey(event, 'r')) {
         event.preventDefault();
         handleRenameShortcut();
@@ -2806,7 +2863,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [activeSelectedPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isRecentReading, moveActiveSelection, openSelectedInExplorer, removeRecentReading, runtimePlatform, selectAll, selectedFolderPath, sendSelectedFilesToTab, undoLastRename]);
+  }, [activeSelectedPath, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isRecentReading, moveActiveSelection, openSelectedInExplorer, removeRecentReading, runtimePlatform, selectAll, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -3358,6 +3415,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
           </div>
 
+          <FolderPathBar
+            value={gotoPathDraft}
+            history={gotoPathHistory}
+            inputRef={gotoPathInputRef}
+            isOpen={showGotoPathHistory}
+            onChange={setGotoPathDraft}
+            onNavigate={handlePathNavigation}
+            onOpenChange={setShowGotoPathHistory}
+            shortcutLabel={formatPrimaryShortcut('G', runtimePlatform)}
+            t={t}
+          />
+
           <div
             className="view-container"
             ref={viewContainerRef}
@@ -3542,15 +3611,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           files={selectedFileObjects}
           onExecute={executeMultiRename}
           onClose={() => setShowMultiRenameDialog(false)}
-          t={t}
-        />
-      )}
-      {showGotoDialog && (
-        <GotoPathDialog
-          value={gotoPathDraft}
-          onChange={setGotoPathDraft}
-          onConfirm={() => handlePathNavigation(gotoPathDraft)}
-          onClose={() => setShowGotoDialog(false)}
           t={t}
         />
       )}
@@ -3858,48 +3918,6 @@ function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
           <button className="dialog-cancel-button" onClick={onClose}>{t('btn_cancel')}</button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function GotoPathDialog({ value, onChange, onConfirm, onClose, t }) {
-  const inputRef = useRef(null);
-
-  useEffect(() => {
-    window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-  }, []);
-
-  const submit = event => {
-    event.preventDefault();
-    onConfirm();
-  };
-
-  return (
-    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <form className="goto-path-dialog" onSubmit={submit} onMouseDown={event => event.stopPropagation()}>
-        <div className="dialog-titlebar">
-          <span>{t('fm_title')}</span>
-          <button type="button" onClick={onClose}>×</button>
-        </div>
-        <div className="goto-path-dialog-body">
-          <label htmlFor="goto-path-input">{t('fm_dsc')}</label>
-          <input
-            id="goto-path-input"
-            ref={inputRef}
-            className="goto-path-input"
-            type="text"
-            value={value}
-            onChange={event => onChange(event.target.value)}
-          />
-        </div>
-        <div className="layout-dialog-footer">
-          <button type="submit" className="goto-path-confirm">{t('btn_ok')}</button>
-          <button type="button" className="goto-path-cancel" onClick={onClose}>{t('btn_cancel')}</button>
-        </div>
-      </form>
     </div>
   );
 }

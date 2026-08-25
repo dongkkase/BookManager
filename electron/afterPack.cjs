@@ -5,6 +5,14 @@ const MAC_7ZA_RELATIVE_PATHS = [
     path.join('Contents', 'Resources', 'bin', 'mac', 'x64', '7za'),
     path.join('Contents', 'Resources', 'bin', 'mac', 'arm64', '7za'),
 ];
+const MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH = path.join(
+    'Contents',
+    'Resources',
+    'bin',
+    'mac',
+    'universal',
+    'file-association-helper',
+);
 
 function archFromRelativePath(relativePath) {
     return path.basename(path.dirname(relativePath));
@@ -59,11 +67,21 @@ async function afterPack(context) {
     if (copiedPaths.length === 0) {
         throw new Error('[afterPack] macOS 7za binaries were not bundled.');
     }
+    const appName = context.packager.appInfo.productFilename;
+    const helperPath = path.join(
+        context.appOutDir,
+        `${appName}.app`,
+        MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH,
+    );
+    if (!chmodExecutable(helperPath)) {
+        throw new Error(`[afterPack] Missing file association helper: ${helperPath}`);
+    }
 }
 
 module.exports = afterPack;
 module.exports.afterPack = afterPack;
 module.exports.MAC_7ZA_RELATIVE_PATHS = MAC_7ZA_RELATIVE_PATHS;
+module.exports.MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH = MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH;
 module.exports.chmodExecutable = chmodExecutable;
 module.exports.copyMacSevenZipBinaries = copyMacSevenZipBinaries;
 module.exports.isUniversalIntermediateApp = isUniversalIntermediateApp;

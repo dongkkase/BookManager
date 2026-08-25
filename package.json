@@ -97,6 +97,32 @@
     "asarUnpack": [
       "node_modules/onnxruntime-node/**/*"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["zip", "cbz", "rar", "cbr", "7z", "cb7"],
+        "name": "BookManager Comic Archive",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["epub", "pdf"],
+        "name": "BookManager Document",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["txt", "text", "log", "md"],
+        "name": "BookManager Text Document",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["3gp", "aac", "aif", "aiff", "amr", "caf", "flac", "m4a", "m4b", "mp3", "oga", "ogg", "opus", "wav", "wave", "webm"],
+        "name": "BookManager Audio",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ],
     "extraResources": [
       {
         "from": "bin",
@@ -132,8 +158,37 @@
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "x64ArchFiles": "Contents/Resources/bin/mac/universal/file-association-helper",
       "entitlements": "electron/entitlements.mac.plist",
-      "entitlementsInherit": "electron/entitlements.mac.plist"
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "extendInfo": {
+        "UTExportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "com.bookmanager.app.cbz",
+            "UTTypeDescription": "Comic Book ZIP Archive",
+            "UTTypeConformsTo": ["public.data"],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": ["cbz"]
+            }
+          },
+          {
+            "UTTypeIdentifier": "com.bookmanager.app.cbr",
+            "UTTypeDescription": "Comic Book RAR Archive",
+            "UTTypeConformsTo": ["public.data"],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": ["cbr"]
+            }
+          },
+          {
+            "UTTypeIdentifier": "com.bookmanager.app.cb7",
+            "UTTypeDescription": "Comic Book 7-Zip Archive",
+            "UTTypeConformsTo": ["public.data"],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": ["cb7"]
+            }
+          }
+        ]
+      }
     },
     "linux": {
       "target": [

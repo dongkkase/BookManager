@@ -12,6 +12,7 @@ const sources = {
     tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
     coverImage: fs.readFileSync(new URL('./components/folder/CoverImage.jsx', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
+    folderPathBar: fs.readFileSync(new URL('./components/folder/FolderPathBar.jsx', import.meta.url), 'utf8'),
     detailPanel: [
         './components/folder/DetailPanel.jsx',
         './components/folder/ComicDetailPanel.jsx',
@@ -71,10 +72,15 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['여러 파일 이름 변경 공용 컴포넌트', '<MultiRenameDialog'],
         ['레이아웃 이름 저장', "t('dlg_save_lay_msg')"],
         ['삭제할 레이아웃 선택', 'id="layout-delete-select"'],
-        ['경로로 이동', "t('fm_title')"],
+        ['경로 이동 입력 영역', '<FolderPathBar'],
         ['경로 이동 단축키', "isShortcutKey(event, 'g')"],
         ['보이는 항목 표지 지연 로드 큐', 'handleVisibleFilesChange'],
         ['표지 지연 로드 동시성 제한', 'COVER_PREVIEW_CONCURRENCY'],
+    ]);
+    assertInventory('folderPathBar', [
+        ['경로 이동 라벨', "t('fm_title')"],
+        ['경로 이동 입력', 'id="folder-goto-path-input"'],
+        ['최근 경로 목록', 'role="listbox"'],
     ]);
     assertInventory('fileTable', [
         ['리스트 보이는 항목 표지 요청', 'onVisibleFilesChange?.(visibleCoverRows)'],

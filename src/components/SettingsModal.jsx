@@ -37,6 +37,22 @@ const VIEWER_PROGRAM_TYPES = [
   { key: 'pdf', labelKey: 'viewer_type_pdf', fallback: 'PDF:' },
   { key: 'text', labelKey: 'viewer_type_text', fallback: 'TXT:' },
 ];
+const FILE_ASSOCIATION_GROUPS = [
+    { key: 'comic', labelKey: 'file_association_group_comic', fallback: '코믹' },
+    { key: 'document', labelKey: 'file_association_group_document', fallback: '문서' },
+    { key: 'text', labelKey: 'file_association_group_text', fallback: '텍스트' },
+    { key: 'audio', labelKey: 'file_association_group_audio', fallback: '오디오' },
+];
+
+function selectedFileAssociationExtensions(status = {}) {
+    const associations = Array.isArray(status?.associations) ? status.associations : [];
+    const useRegisteredCandidate = status?.platform === 'win32';
+    return associations
+        .filter(association => (
+            useRegisteredCandidate ? association.isRegistered : association.isDefault
+        ))
+        .map(association => association.extension);
+}
 const FONT_SCALES = Array.from({ length: 16 }, (_, index) => 80 + index * 5);
 const FALLBACK_SYSTEM_FONT_OPTIONS = [
   'Malgun Gothic',
@@ -130,7 +146,7 @@ function normalizeConfig(config) {
   }, navigator.hardwareConcurrency || 4);
 }
 
-function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, initialTab = 'basic', onLanguagePreviewChange }) {
+function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', onLanguagePreviewChange }) {
   const [localConfig, setLocalConfig] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState('basic');
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -143,6 +159,12 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const [bundledFontFaces, setBundledFontFaces] = React.useState([]);
   const [systemFontOptions, setSystemFontOptions] = React.useState(FALLBACK_SYSTEM_FONT_OPTIONS);
   const [showApiManual, setShowApiManual] = React.useState(false);
+  const [fileAssociationStatus, setFileAssociationStatus] = React.useState(null);
+  const [selectedFileAssociations, setSelectedFileAssociations] = React.useState([]);
+  const [fileAssociationLoading, setFileAssociationLoading] = React.useState(false);
+  const [fileAssociationBusy, setFileAssociationBusy] = React.useState('');
+  const [fileAssociationFeedback, setFileAssociationFeedback] = React.useState(null);
+  const settingsOpenInitializedRef = React.useRef(false);
   const threadMax = React.useMemo(() => safeThreadMax(), []);
   const handleCancel = React.useCallback(() => {
     setLocalConfig(normalizeConfig(config));
@@ -154,10 +176,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   });
 
   React.useEffect(() => {
-    if (isOpen) {
-      setLocalConfig(normalizeConfig(config));
-      setActiveTab(initialTab);
+    if (!isOpen) {
+      settingsOpenInitializedRef.current = false;
+      return;
     }
+    if (settingsOpenInitializedRef.current) return;
+    settingsOpenInitializedRef.current = true;
+    setLocalConfig(normalizeConfig(config));
+    setActiveTab(initialTab);
   }, [config, initialTab, isOpen]);
 
   React.useEffect(() => {
@@ -231,6 +257,67 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
     };
   }, [isOpen]);
 
+    React.useEffect(() => {
+        if (!isOpen) return undefined;
+        let cancelled = false;
+        const getFileAssociationStatus = window.electronAPI?.getFileAssociationStatus;
+        setFileAssociationLoading(true);
+        setFileAssociationBusy('');
+        setFileAssociationFeedback(null);
+
+        if (!getFileAssociationStatus) {
+            setFileAssociationStatus({
+                platform: 'unknown',
+                supported: false,
+                directApply: false,
+                associations: [],
+            });
+            setSelectedFileAssociations([]);
+            setFileAssociationLoading(false);
+            return undefined;
+        }
+
+        Promise.resolve(getFileAssociationStatus())
+            .then(status => {
+                if (cancelled) return;
+                const associations = Array.isArray(status?.associations)
+                    ? status.associations.filter(association => association?.extension)
+                    : [];
+                const normalizedStatus = {
+                    platform: status?.platform || 'unknown',
+                    supported: Boolean(status?.supported),
+                    directApply: Boolean(status?.directApply),
+                    reason: status?.reason || '',
+                    associations,
+                };
+                setFileAssociationStatus(normalizedStatus);
+                setSelectedFileAssociations(selectedFileAssociationExtensions(normalizedStatus));
+            })
+            .catch(error => {
+                if (cancelled) return;
+                setFileAssociationStatus({
+                    platform: 'unknown',
+                    supported: false,
+                    directApply: false,
+                    associations: [],
+                });
+                setSelectedFileAssociations([]);
+                setFileAssociationFeedback({
+                    type: 'error',
+                    key: 'file_association_status_failed',
+                    fallback: '파일 연결 상태를 확인하지 못했습니다: {msg}',
+                    detail: error?.message || String(error),
+                });
+            })
+            .finally(() => {
+                if (!cancelled) setFileAssociationLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen]);
+
   if (!isOpen || !localConfig) return null;
 
   const label = (key, fallback) => {
@@ -259,6 +346,16 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const systemFontsForSelect = uniqueSystemFonts(systemFontOptions, localConfig.font_family, bundledFontOptions);
   const aiProvider = localConfig.api_keys?.ai_provider === 'OpenAI' ? 'OpenAI' : 'Gemini';
   const aiKeyField = aiProvider === 'OpenAI' ? 'ai_openai_key' : 'ai_gemini_key';
+    const availableFileAssociations = fileAssociationStatus?.associations || [];
+    const fileAssociationControlsDisabled = Boolean(
+        fileAssociationLoading
+        || fileAssociationBusy
+        || !fileAssociationStatus?.supported,
+    );
+    const fileAssociationFeedbackText = fileAssociationFeedback
+        ? label(fileAssociationFeedback.key, fileAssociationFeedback.fallback)
+            .replace('{msg}', fileAssociationFeedback.detail || '')
+        : '';
 
   const handleChange = (key, value) => {
     setLocalConfig(prev => ({ ...prev, [key]: value }));
@@ -309,6 +406,196 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
   const handleClearViewer = (viewerType) => {
     updateViewerPath(viewerType, '');
   };
+
+    const toggleFileAssociation = (extension, checked) => {
+        setSelectedFileAssociations(current => {
+            if (checked) return current.includes(extension) ? current : [...current, extension];
+            return current.filter(value => value !== extension);
+        });
+        setFileAssociationFeedback(null);
+    };
+
+    const handleSelectAllFileAssociations = () => {
+        const associations = fileAssociationStatus?.associations || [];
+        setSelectedFileAssociations(associations.map(association => association.extension));
+        setFileAssociationFeedback(null);
+    };
+
+    const handleClearFileAssociationSelection = () => {
+        setSelectedFileAssociations([]);
+        setFileAssociationFeedback(null);
+    };
+
+    const handleApplyFileAssociations = async () => {
+        if (selectedFileAssociations.length === 0) {
+            setFileAssociationFeedback({
+                type: 'error',
+                key: 'file_association_select_required',
+                fallback: '연결할 확장자를 하나 이상 선택하세요.',
+            });
+            return;
+        }
+
+        const applyFileAssociations = window.electronAPI?.applyFileAssociations;
+        if (!applyFileAssociations || !fileAssociationStatus?.supported) {
+            setFileAssociationFeedback({
+                type: 'error',
+                key: 'file_association_unsupported',
+                fallback: '이 운영체제 또는 현재 실행 환경에서는 파일 연결을 지원하지 않습니다.',
+            });
+            return;
+        }
+
+        setFileAssociationBusy('apply');
+        setFileAssociationFeedback(null);
+        try {
+            const viewerPaths = Object.fromEntries(
+                VIEWER_PROGRAM_TYPES.map(({ key }) => [
+                    key,
+                    String(localConfig?.viewer_paths?.[key] || '').trim(),
+                ]),
+            );
+            if (typeof onPersistViewerPaths === 'function') {
+                await onPersistViewerPaths({ viewer_paths: viewerPaths });
+            } else if (window.electronAPI?.saveConfig) {
+                await window.electronAPI.saveConfig({ viewer_paths: viewerPaths });
+            }
+
+            const result = await applyFileAssociations(selectedFileAssociations);
+            if (result?.success === false) {
+                throw new Error(result.error || result.message || result.reason || 'Unknown error');
+            }
+
+            let nextStatus = fileAssociationStatus;
+            if (window.electronAPI?.getFileAssociationStatus) {
+                try {
+                    const refreshedStatus = await window.electronAPI.getFileAssociationStatus();
+                    nextStatus = {
+                        platform: refreshedStatus?.platform || fileAssociationStatus.platform,
+                        supported: Boolean(refreshedStatus?.supported),
+                        directApply: Boolean(refreshedStatus?.directApply),
+                        reason: refreshedStatus?.reason || '',
+                        associations: Array.isArray(refreshedStatus?.associations)
+                            ? refreshedStatus.associations.filter(association => association?.extension)
+                            : fileAssociationStatus.associations,
+                    };
+                    setFileAssociationStatus(nextStatus);
+                    setSelectedFileAssociations(selectedFileAssociationExtensions(nextStatus));
+                } catch {
+                    // 적용 성공 여부와 상태 새로고침 실패를 분리합니다.
+                }
+            }
+
+            const requiresSystemConfirmation = Boolean(
+                result?.requiresSystemConfirmation
+                || result?.requiresUserConfirmation
+                || (nextStatus.platform === 'win32' && !nextStatus.directApply),
+            );
+            if (requiresSystemConfirmation && window.electronAPI?.openFileAssociationSettings) {
+                setFileAssociationBusy('settings');
+                try {
+                    const settingsResult = await window.electronAPI.openFileAssociationSettings();
+                    if (settingsResult?.success === false) {
+                        throw new Error(
+                            settingsResult.error
+                            || settingsResult.message
+                            || settingsResult.reason
+                            || 'Unknown error',
+                        );
+                    }
+                } catch (error) {
+                    setFileAssociationFeedback({
+                        type: 'error',
+                        key: 'file_association_settings_failed',
+                        fallback: '운영체제 설정을 열지 못했습니다: {msg}',
+                        detail: error?.message || String(error),
+                    });
+                    return;
+                }
+            }
+            setFileAssociationFeedback({
+                type: requiresSystemConfirmation ? 'notice' : 'success',
+                key: requiresSystemConfirmation
+                    ? 'file_association_windows_confirmation'
+                    : 'file_association_apply_success',
+                fallback: requiresSystemConfirmation
+                    ? 'Windows 시스템 설정에서 BookManager를 기본 앱으로 한 번 더 선택해야 합니다.'
+                    : '선택한 확장자의 파일 연결을 적용했습니다.',
+            });
+        } catch (error) {
+            setFileAssociationFeedback({
+                type: 'error',
+                key: 'file_association_apply_failed',
+                fallback: '파일 연결을 적용하지 못했습니다: {msg}',
+                detail: error?.message || String(error),
+            });
+        } finally {
+            setFileAssociationBusy('');
+        }
+    };
+
+    const handleRefreshFileAssociationStatus = async () => {
+        const getFileAssociationStatus = window.electronAPI?.getFileAssociationStatus;
+        if (!getFileAssociationStatus || !fileAssociationStatus?.supported) return;
+        setFileAssociationBusy('refresh');
+        setFileAssociationFeedback(null);
+        try {
+            const status = await getFileAssociationStatus();
+            const associations = Array.isArray(status?.associations)
+                ? status.associations.filter(association => association?.extension)
+                : [];
+            const normalizedStatus = {
+                platform: status?.platform || fileAssociationStatus.platform,
+                supported: Boolean(status?.supported),
+                directApply: Boolean(status?.directApply),
+                reason: status?.reason || '',
+                associations,
+            };
+            setFileAssociationStatus(normalizedStatus);
+            setSelectedFileAssociations(selectedFileAssociationExtensions(normalizedStatus));
+            setFileAssociationFeedback({
+                type: 'success',
+                key: 'file_association_refresh_success',
+                fallback: '현재 파일 연결 상태를 새로고침했습니다.',
+            });
+        } catch (error) {
+            setFileAssociationFeedback({
+                type: 'error',
+                key: 'file_association_status_failed',
+                fallback: '파일 연결 상태를 확인하지 못했습니다: {msg}',
+                detail: error?.message || String(error),
+            });
+        } finally {
+            setFileAssociationBusy('');
+        }
+    };
+
+    const handleOpenFileAssociationSettings = async () => {
+        const openFileAssociationSettings = window.electronAPI?.openFileAssociationSettings;
+        if (!openFileAssociationSettings) return;
+        setFileAssociationBusy('settings');
+        setFileAssociationFeedback(null);
+        try {
+            const result = await openFileAssociationSettings();
+            if (result?.success === false) {
+                throw new Error(result.error || result.message || result.reason || 'Unknown error');
+            }
+            setFileAssociationFeedback({
+                type: 'notice',
+                key: 'file_association_settings_opened',
+                fallback: '운영체제의 기본 앱 설정 화면을 열었습니다.',
+            });
+        } catch (error) {
+            setFileAssociationFeedback({
+                type: 'error',
+                key: 'file_association_settings_failed',
+                fallback: '운영체제 설정을 열지 못했습니다: {msg}',
+                detail: error?.message || String(error),
+            });
+        } finally {
+            setFileAssociationBusy('');
+        }
+    };
 
   const libraryEntries = normalizeLibraryEntries(localConfig);
   const selectedLibraryEntry = libraryEntries.find(entry => entry.path === selectedDupFolder) || null;
@@ -651,6 +938,161 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, t, showToast, i
                 </div>
               ))}
               </fieldset>
+
+                <fieldset className="settings-fieldset settings-file-association-fieldset">
+                    <legend>{label('file_association_title', '파일 연결')}</legend>
+                    <p className="settings-help">
+                        {label(
+                            'file_association_desc',
+                            'BookManager를 통해 열 확장자를 체크한 뒤 적용하세요. 상태 배지는 현재 기본 앱 연결을 표시합니다.',
+                        )}
+                    </p>
+                    <p className="settings-help">
+                        {label(
+                            'file_association_behavior_notice',
+                            '체크는 BookManager로 연결할 대상을 선택합니다. 적용 시 위 뷰어 경로도 함께 저장됩니다. 기존 기본 앱을 다른 앱으로 바꾸려면 운영체제 설정을 사용하세요.',
+                        )}
+                    </p>
+
+                    {fileAssociationLoading ? (
+                        <p className="settings-file-association-message" role="status">
+                            {label('file_association_loading', '파일 연결 상태를 확인하는 중...')}
+                        </p>
+                    ) : null}
+
+                    {!fileAssociationLoading && !fileAssociationStatus?.supported ? (
+                        <p className="settings-file-association-message is-notice" role="status">
+                            {fileAssociationStatus?.reason === 'macos-12-required'
+                                ? label(
+                                    'file_association_macos_12_required',
+                                    '파일 연결 설정은 macOS 12 이상에서 사용할 수 있습니다.',
+                                )
+                                : label(
+                                    'file_association_unsupported',
+                                    '이 운영체제 또는 현재 실행 환경에서는 파일 연결을 지원하지 않습니다.',
+                                )}
+                        </p>
+                    ) : null}
+
+                    {availableFileAssociations.length > 0 ? (
+                        <div className="settings-file-association-groups">
+                            {FILE_ASSOCIATION_GROUPS.map(group => {
+                                const groupAssociations = availableFileAssociations.filter(
+                                    association => association.group === group.key,
+                                );
+                                if (groupAssociations.length === 0) return null;
+                                return (
+                                    <section className="settings-file-association-group" key={group.key}>
+                                        <h4>{label(group.labelKey, group.fallback)}</h4>
+                                        <div className="settings-file-association-options">
+                                            {groupAssociations.map(association => {
+                                                const extension = association.extension;
+                                                const extensionLabel = String(extension).replace(/^\./, '').toUpperCase();
+                                                const statusType = association.isDefault
+                                                    ? 'default'
+                                                    : association.handlerName ? 'other' : 'none';
+                                                const statusLabel = statusType === 'default'
+                                                    ? label('file_association_status_bookmanager', 'BookManager')
+                                                    : statusType === 'other'
+                                                        ? label('file_association_status_other', '다른 앱')
+                                                        : label('file_association_status_none', '연결 없음');
+                                                return (
+                                                    <label className="settings-file-association-option" key={extension}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedFileAssociations.includes(extension)}
+                                                            onChange={event => toggleFileAssociation(extension, event.target.checked)}
+                                                            disabled={fileAssociationControlsDisabled}
+                                                            aria-label={`${extensionLabel} ${label('file_association_checkbox_aria', '연결 대상 선택')}`}
+                                                        />
+                                                        <strong>{extensionLabel}</strong>
+                                                        <span
+                                                            className={`settings-file-association-badge is-${statusType}`}
+                                                            title={statusType === 'other' ? association.handlerName : statusLabel}
+                                                        >
+                                                            {statusLabel}
+                                                        </span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                );
+                            })}
+                        </div>
+                    ) : null}
+
+                    <div className="settings-file-association-actions">
+                        <button
+                            type="button"
+                            className="settings-action-btn"
+                            onClick={handleRefreshFileAssociationStatus}
+                            disabled={fileAssociationControlsDisabled || availableFileAssociations.length === 0}
+                        >
+                            {fileAssociationBusy === 'refresh'
+                                ? label('file_association_refreshing', '새로고침 중...')
+                                : label('file_association_refresh', '상태 새로고침')}
+                        </button>
+                        <button
+                            type="button"
+                            className="settings-action-btn"
+                            onClick={handleSelectAllFileAssociations}
+                            disabled={fileAssociationControlsDisabled || availableFileAssociations.length === 0}
+                        >
+                            {label('file_association_select_all', '전체 선택')}
+                        </button>
+                        <button
+                            type="button"
+                            className="settings-action-btn"
+                            onClick={handleClearFileAssociationSelection}
+                            disabled={fileAssociationControlsDisabled || selectedFileAssociations.length === 0}
+                        >
+                            {label('file_association_clear_all', '전체 해제')}
+                        </button>
+                        <button
+                            type="button"
+                            className="settings-action-btn settings-blue-btn"
+                            onClick={handleApplyFileAssociations}
+                            disabled={fileAssociationControlsDisabled || selectedFileAssociations.length === 0}
+                        >
+                            {fileAssociationBusy === 'apply'
+                                ? label('file_association_applying', '연결 중...')
+                                : label('file_association_apply', 'BookManager로 연결')}
+                        </button>
+                    </div>
+
+                    {fileAssociationStatus?.supported
+                        && fileAssociationStatus.platform === 'win32'
+                        && !fileAssociationStatus.directApply ? (
+                            <div className="settings-file-association-system-note">
+                                <p>
+                                    {label(
+                                        'file_association_windows_confirmation',
+                                        'Windows 시스템 설정에서 BookManager를 기본 앱으로 한 번 더 선택해야 합니다.',
+                                    )}
+                                </p>
+                                <button
+                                    type="button"
+                                    className="settings-action-btn"
+                                    onClick={handleOpenFileAssociationSettings}
+                                    disabled={Boolean(fileAssociationBusy) || !window.electronAPI?.openFileAssociationSettings}
+                                >
+                                    {fileAssociationBusy === 'settings'
+                                        ? label('file_association_opening_settings', '설정 여는 중...')
+                                        : label('file_association_open_settings', 'Windows 기본 앱 설정 열기')}
+                                </button>
+                            </div>
+                        ) : null}
+
+                    {fileAssociationFeedback ? (
+                        <p
+                            className={`settings-file-association-message is-${fileAssociationFeedback.type}`}
+                            role={fileAssociationFeedback.type === 'error' ? 'alert' : 'status'}
+                        >
+                            {fileAssociationFeedbackText}
+                        </p>
+                    ) : null}
+                </fieldset>
             </div>
           )}
 

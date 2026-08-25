@@ -114,3 +114,6 @@ Thumbs.db
 tmp-*
 
 imgwork/
+
+# Generated native helpers
+/bin/mac/*/file-association-helper

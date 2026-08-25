@@ -1267,6 +1267,174 @@ body.is-resizing-panel * {
   line-height: 1.35;
 }
 
+.settings-file-association-fieldset {
+    display: grid;
+    gap: 12px;
+    padding: 16px 14px 14px;
+}
+
+.settings-file-association-groups {
+    display: grid;
+    gap: 12px;
+}
+
+.settings-file-association-group {
+    display: grid;
+    gap: 7px;
+}
+
+.settings-file-association-group h4 {
+    margin: 0;
+    color: #d8e8f2;
+    font-size: var(--font-xs);
+    font-weight: 900;
+}
+
+.settings-file-association-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.settings-file-association-option {
+    display: grid;
+    grid-template-columns: 18px minmax(42px, auto) minmax(0, 1fr);
+    gap: 7px;
+    align-items: center;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    background-color: #2a2a2a;
+    color: #f4f4f4;
+    cursor: pointer;
+}
+
+.settings-file-association-option:has(input:disabled) {
+    opacity: 0.58;
+    cursor: default;
+}
+
+.settings-file-association-option input[type="checkbox"] {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 1px solid #9a9a9a;
+    border-radius: 4px;
+    background-color: #1f1f1f;
+    display: grid;
+    place-content: center;
+}
+
+.settings-file-association-option input[type="checkbox"]:checked {
+    border-color: #3aa9e8;
+    background-color: #3aa9e8;
+}
+
+.settings-file-association-option input[type="checkbox"]:checked::after {
+    content: "";
+    width: 8px;
+    height: 5px;
+    margin-top: -2px;
+    border-left: 2px solid #fff;
+    border-bottom: 2px solid #fff;
+    transform: rotate(-45deg);
+}
+
+.settings-file-association-option strong {
+    font-size: var(--font-sm);
+    font-weight: 900;
+}
+
+.settings-file-association-badge {
+    justify-self: end;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 2px 6px;
+    border: 1px solid #646464;
+    border-radius: 10px;
+    color: #d2d2d2;
+    font-size: var(--font-2xs);
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-file-association-badge.is-default {
+    border-color: #3a8fc4;
+    background-color: #23475d;
+    color: #dff4ff;
+}
+
+.settings-file-association-badge.is-other {
+    border-color: #8a7142;
+    background-color: #493b24;
+    color: #ffe4ad;
+}
+
+.settings-file-association-badge.is-none {
+    border-color: #555;
+    background-color: #333;
+    color: #b9b9b9;
+}
+
+.settings-file-association-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 7px;
+}
+
+.settings-file-association-system-note {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 9px 10px;
+    border: 1px solid #66532d;
+    border-radius: 4px;
+    background-color: #302918;
+}
+
+.settings-file-association-system-note p {
+    margin: 0;
+    color: #f0c975;
+    font-size: var(--font-xs);
+    font-weight: 700;
+    line-height: 1.45;
+}
+
+.settings-file-association-message {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid #4d5962;
+    border-radius: 4px;
+    background-color: #27313a;
+    color: #d9e8f1;
+    font-size: var(--font-xs);
+    font-weight: 700;
+    line-height: 1.45;
+}
+
+.settings-file-association-message.is-success {
+    border-color: #3a6c4c;
+    background-color: #213829;
+    color: #bfe7c9;
+}
+
+.settings-file-association-message.is-error {
+    border-color: #7f403b;
+    background-color: #3e2523;
+    color: #ffbab2;
+}
+
+.settings-file-association-message.is-notice {
+    border-color: #66532d;
+    background-color: #302918;
+    color: #f0c975;
+}
+
 .settings-select,
 .settings-input,
 .settings-textarea {

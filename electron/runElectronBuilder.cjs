@@ -19,12 +19,13 @@ const args = rawArgs.filter(arg => (
 ));
 const originalElectronBuilderCache = process.env.ELECTRON_BUILDER_CACHE;
 const hasWindowsTarget = args.includes('--win') || args.includes('-w');
+const hasMacTarget = args.includes('--mac') || args.includes('-m');
 const hasExplicitTarget = hasWindowsTarget
-    || args.includes('--mac')
-    || args.includes('-m')
+    || hasMacTarget
     || args.includes('--linux')
     || args.includes('-l');
 const isWindowsBuild = hasWindowsTarget || (!hasExplicitTarget && process.platform === 'win32');
+const isMacBuild = hasMacTarget || (!hasExplicitTarget && process.platform === 'darwin');
 const env = { ...process.env };
 
 if (isWindowsBuild && env.CSC_IDENTITY_AUTO_DISCOVERY === undefined) {
@@ -167,6 +168,11 @@ async function main() {
 
     if (isWindowsBuild) {
         await ensureWinCodeSignCache(projectElectronBuilderCache());
+    }
+    if (isMacBuild) {
+        const { buildFileAssociationHelper } = require('./buildFileAssociationHelper.cjs');
+        const result = buildFileAssociationHelper();
+        if (result.skipped) throw new Error(result.reason);
     }
 
     const cliPath = require.resolve('electron-builder/out/cli/cli.js');

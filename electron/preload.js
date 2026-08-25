@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 설정 관련
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
+  getFileAssociationStatus: () => ipcRenderer.invoke('fileAssociations:getStatus'),
+  applyFileAssociations: (extensions) => ipcRenderer.invoke('fileAssociations:apply', extensions),
+  openFileAssociationSettings: () => ipcRenderer.invoke('fileAssociations:openSettings'),
   
   // 폰트 관련
   getFontPath: (fontFilename) => ipcRenderer.invoke('font:getPath', fontFilename),

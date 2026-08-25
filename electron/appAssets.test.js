@@ -60,6 +60,10 @@ test('macOS 배포본은 Developer ID 서명과 공증 설정을 사용한다', 
     assert.equal(packageConfig.build.afterSign, 'electron/notarize.cjs');
     assert.equal(packageConfig.build.mac.hardenedRuntime, true);
     assert.equal(packageConfig.build.mac.gatekeeperAssess, false);
+    assert.equal(
+        packageConfig.build.mac.x64ArchFiles,
+        'Contents/Resources/bin/mac/universal/file-association-helper',
+    );
     assert.equal(packageConfig.build.mac.entitlements, 'electron/entitlements.mac.plist');
     assert.equal(packageConfig.build.mac.entitlementsInherit, 'electron/entitlements.mac.plist');
 
@@ -81,6 +85,27 @@ test('macOS 배포본은 bundled 7za 리소스를 포함한다', () => {
         path.join('Contents', 'Resources', 'bin', 'mac', 'x64', '7za'),
         path.join('Contents', 'Resources', 'bin', 'mac', 'arm64', '7za'),
     ]);
+    assert.equal(
+        afterPackHook.MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH,
+        path.join('Contents', 'Resources', 'bin', 'mac', 'universal', 'file-association-helper'),
+    );
+});
+
+test('macOS 배포본은 지원 확장자와 코믹 UTI를 선언한다', () => {
+    const declaredExtensions = packageConfig.build.fileAssociations
+        .flatMap(association => association.ext)
+        .sort();
+    assert.deepEqual(declaredExtensions, [
+        '3gp', '7z', 'aac', 'aif', 'aiff', 'amr', 'caf', 'cb7', 'cbr', 'cbz',
+        'epub', 'flac', 'log', 'm4a', 'm4b', 'md', 'mp3', 'oga', 'ogg', 'opus',
+        'pdf', 'rar', 'text', 'txt', 'wav', 'wave', 'webm', 'zip',
+    ]);
+    assert.deepEqual(
+        packageConfig.build.mac.extendInfo.UTExportedTypeDeclarations
+            .map(declaration => declaration.UTTypeTagSpecification['public.filename-extension'][0])
+            .sort(),
+        ['cb7', 'cbr', 'cbz'],
+    );
 });
 
 test('Supertonic ONNX 런타임과 제3자 고지는 배포본에 포함한다', () => {
@@ -103,6 +128,13 @@ test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한�
             fs.writeFileSync(sourcePath, `7za ${arch}`);
             fs.chmodSync(sourcePath, 0o644);
         }
+        const helperPath = path.join(
+            appRoot,
+            afterPackHook.MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH,
+        );
+        fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+        fs.writeFileSync(helperPath, 'file association helper');
+        fs.chmodSync(helperPath, 0o644);
 
         await afterPackHook.afterPack({
             electronPlatformName: 'darwin',
@@ -121,6 +153,7 @@ test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한�
             assert.equal(fs.readFileSync(destinationPath, 'utf8'), `7za ${path.basename(path.dirname(relativePath))}`);
             assert.equal((mode & 0o111) !== 0, true);
         }
+        assert.equal((fs.statSync(helperPath).mode & 0o111) !== 0, true);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

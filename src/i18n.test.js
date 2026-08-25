@@ -61,3 +61,35 @@ test('구조 정리 일괄 폴더명 추출 메뉴를 세 언어로 표시한다
     assert.equal(translate('org_batch_folder_name', 'en'), 'All: Folder Name');
     assert.equal(translate('org_batch_folder_name', 'ja'), '一括: フォルダ名抽出');
 });
+
+test('경로 이동 입력과 최근 기록 문구를 세 언어로 제공한다', () => {
+    const expectedTranslations = {
+        ko: {
+            placeholder: '이동할 폴더 경로 입력',
+            input_label: '이동할 폴더 경로',
+            go: '이동',
+            recent: '최근 이동 경로',
+            empty: '최근 이동 경로가 없습니다.',
+        },
+        en: {
+            placeholder: 'Enter a folder path',
+            input_label: 'Folder path to open',
+            go: 'Go',
+            recent: 'Recent paths',
+            empty: 'No recent paths.',
+        },
+        ja: {
+            placeholder: '移動先のフォルダーパスを入力',
+            input_label: '移動先のフォルダーパス',
+            go: '移動',
+            recent: '最近移動したパス',
+            empty: '最近移動したパスはありません。',
+        },
+    };
+
+    for (const [language, translations] of Object.entries(expectedTranslations)) {
+        for (const [key, value] of Object.entries(translations)) {
+            assert.equal(translate(`folder.goto.${key}`, language), value);
+        }
+    }
+});

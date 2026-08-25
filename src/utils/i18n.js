@@ -33,6 +33,13 @@ const EXTRA_TRANSLATIONS = {
         reading: '읽기',
         recent_reading: '최근 읽음',
       },
+      goto: {
+        placeholder: '이동할 폴더 경로 입력',
+        input_label: '이동할 폴더 경로',
+        go: '이동',
+        recent: '최근 이동 경로',
+        empty: '최근 이동 경로가 없습니다.',
+      },
       recent: {
         title: '최근 읽음',
         count: '최근 읽은 항목 {0}개',
@@ -412,6 +419,13 @@ const EXTRA_TRANSLATIONS = {
         reading: 'Reading',
         recent_reading: 'Recently Read',
       },
+      goto: {
+        placeholder: 'Enter a folder path',
+        input_label: 'Folder path to open',
+        go: 'Go',
+        recent: 'Recent paths',
+        empty: 'No recent paths.',
+      },
       recent: {
         title: 'Recently Read',
         count: '{0} recently read items',
@@ -790,6 +804,13 @@ const EXTRA_TRANSLATIONS = {
         expand_section: '{0} を展開',
         reading: '読書',
         recent_reading: '最近読んだ項目',
+      },
+      goto: {
+        placeholder: '移動先のフォルダーパスを入力',
+        input_label: '移動先のフォルダーパス',
+        go: '移動',
+        recent: '最近移動したパス',
+        empty: '最近移動したパスはありません。',
       },
       recent: {
         title: '最近読んだ項目',

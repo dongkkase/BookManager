@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -23,6 +23,16 @@ import {
   createProcessFaultReporter,
   installProcessSafetyHandlers,
 } from './processSafety.js';
+import { openAssociatedFile } from './associatedFileOpener.js';
+import {
+  addPendingOpenFiles,
+  resolveLaunchFilePaths,
+} from './openFileLaunchPolicy.js';
+import {
+  createFileAssociationManager,
+  resolveMacApplicationPath,
+} from './fileAssociations.js';
+import { setupFileAssociationIPC } from './fileAssociationIpc.js';
 
 installConsolePipeGuard();
 
@@ -34,12 +44,16 @@ let tray = null;
 let configManager = null;
 let ipcController = null;
 let viewerController = null;
+let fileAssociationController = null;
 let allowWindowClose = false;
 let isShowingExitDialog = false;
 let sharingServersStopped = false;
 let appQuitRequested = false;
 let allowAppQuit = false;
 let isFinalizingAppQuit = false;
+let mainWindowReady = false;
+let isDrainingOpenFiles = false;
+const pendingOpenFiles = [];
 
 // 개발 모드 여부
 const isDev = process.argv.includes('--dev');
@@ -139,6 +153,101 @@ function getProcessLogPath() {
   return path.join(resolveAppDataDir(getExecutableDir()), 'process.log');
 }
 
+async function recordExternalViewerOpen(filePath, format) {
+  let db = null;
+  try {
+    db = new LibraryDB({ dbPath: resolveLibraryDbPath(getExecutableDir()) });
+    const saved = await db.upsertReadingState(filePath, {
+      format,
+      lastReadAt: Date.now(),
+    });
+    if (
+      saved
+      && mainWindow
+      && !mainWindow.isDestroyed()
+      && !mainWindow.webContents.isDestroyed()
+    ) {
+      mainWindow.webContents.send('reading:changed', {
+        filePath: saved.filePath,
+        itemId: saved.itemId,
+        lastReadAt: saved.lastReadAt,
+      });
+    }
+  } catch (error) {
+    console.warn(`[ReadingState] Failed to record ${filePath}: ${error.message}`);
+  } finally {
+    if (db) {
+      try {
+        await db.close();
+      } catch (error) {
+        console.warn(`[ReadingState] Failed to close database: ${error.message}`);
+      }
+    }
+  }
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+async function drainPendingOpenFiles() {
+  if (isDrainingOpenFiles || !mainWindowReady || !viewerController || !configManager) return;
+  isDrainingOpenFiles = true;
+  try {
+    while (pendingOpenFiles.length > 0) {
+      const filePath = pendingOpenFiles.shift();
+      try {
+        const result = await openAssociatedFile(filePath, {
+          getConfig: () => configManager.getConfig(),
+          openInternalViewer: targetPath => viewerController.openViewer(targetPath),
+          onExternalViewerOpened: recordExternalViewerOpen,
+          blockedViewerPaths: [
+            app.getPath('exe'),
+            process.env.PORTABLE_EXECUTABLE_FILE,
+            process.platform === 'darwin' ? resolveMacApplicationPath(app.getPath('exe')) : '',
+          ],
+        });
+        if (!result?.success) {
+          console.warn(`[FileAssociation] Could not open ${filePath}: ${result?.code || 'UNKNOWN_ERROR'}`);
+          if (result?.code === 'VIEWER_NOT_FOUND' && mainWindow && !mainWindow.isDestroyed()) {
+            await dialog.showMessageBox(mainWindow, {
+              type: 'error',
+              title: APP_NAME,
+              message: i18nT('viewer_not_found'),
+            });
+          }
+        }
+      } catch (error) {
+        reportProcessFault('associated-file-open-failed', error, { filePath });
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await dialog.showMessageBox(mainWindow, {
+            type: 'error',
+            title: APP_NAME,
+            message: error?.message || String(error),
+          });
+        }
+      }
+    }
+  } finally {
+    isDrainingOpenFiles = false;
+  }
+}
+
+function enqueueOpenFiles(filePaths = []) {
+  addPendingOpenFiles(pendingOpenFiles, filePaths, process.platform);
+  void drainPendingOpenFiles();
+}
+
+function launchFilePathsFromArguments(argv, workingDirectory = process.cwd()) {
+  return resolveLaunchFilePaths(argv, {
+    workingDirectory,
+    platform: process.platform,
+  });
+}
+
 const reportProcessFault = createProcessFaultReporter({
   getLogPath: getProcessLogPath,
 });
@@ -198,17 +307,27 @@ async function readCachedThumbnail(thumbnailPath) {
   return value;
 }
 
+if (process.platform === 'darwin') {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    enqueueOpenFiles(launchFilePathsFromArguments([filePath]));
+  });
+}
+
 // 단일 인스턴스 락
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+  if (process.platform === 'win32') {
+    enqueueOpenFiles(launchFilePathsFromArguments(process.argv));
+  }
+
+  app.on('second-instance', (_event, commandLine, workingDirectory) => {
+    focusMainWindow();
+    const filePaths = launchFilePathsFromArguments(commandLine, workingDirectory);
+    if (filePaths.length > 0) enqueueOpenFiles(filePaths);
   });
 
   app.whenReady()
@@ -286,6 +405,20 @@ async function initializeApp() {
     getMainWindow: () => mainWindow,
     configManager,
   });
+  fileAssociationController = setupFileAssociationIPC({
+    ipcMain,
+    manager: createFileAssociationManager({
+      platform: process.platform,
+      systemVersion: process.getSystemVersion?.() || '',
+      isPackaged: app.isPackaged,
+      env: process.env,
+      executablePath: app.getPath('exe'),
+      resourcesPath: process.resourcesPath,
+      projectRoot: path.join(__dirname, '..'),
+      shell,
+    }),
+    getMainWindow: () => mainWindow,
+  });
 
   // 메인 윈도우 생성
   createMainWindow(config);
@@ -295,6 +428,7 @@ async function initializeApp() {
 }
 
 function createMainWindow(config) {
+  mainWindowReady = false;
   if (useUnsafeDevNodeIntegration) {
     console.warn('[BookManager] Unsafe dev Node integration is enabled for this session.');
   }
@@ -360,6 +494,8 @@ function createMainWindow(config) {
     if (!mainWindow.isVisible()) {
       mainWindow.show();
     }
+    mainWindowReady = true;
+    void drainPendingOpenFiles();
   });
 
   mainWindow.on('close', async (event) => {
@@ -405,6 +541,7 @@ function createMainWindow(config) {
     ipcController?.clear(windowOwnerId);
     viewerController?.closeAllWindows?.({ force: true });
     mainWindow = null;
+    mainWindowReady = false;
     allowWindowClose = false;
   });
 }
@@ -504,6 +641,8 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
+  fileAssociationController?.dispose?.();
+  fileAssociationController = null;
   void ipcController?.dispose?.().catch(error => {
     console.warn(`[LibrarySearch] Failed to stop worker: ${error.message}`);
   });
