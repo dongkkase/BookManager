@@ -547,6 +547,26 @@ test('상세보기 패널은 선택 항목 내용 높이에 맞춰 자동 조절
     ]);
 });
 
+test('상세보기 패널 접기 상태는 선택 항목과 독립적으로 유지한다', () => {
+    assertInventory('folder', [
+        ['상세보기 독립 접기 상태', 'const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false)'],
+        ['상세보기 접기 상태 토글', 'setIsDetailPanelCollapsed(current => !current)'],
+        ['상세보기 토글 확장 상태', 'aria-expanded={!isDetailPanelCollapsed}'],
+        ['상세보기 토글 제어 대상', 'aria-controls="folder-detail-panel"'],
+        ['상세보기 접힘 렌더링', 'hidden={isDetailPanelCollapsed}'],
+    ]);
+    assert.match(
+        sources.folder,
+        /folder-detail-resizer-row[\s\S]*folder-resizer-horizontal[\s\S]*folder-detail-panel-toggle/,
+        '상세보기 토글은 수평 리사이저 중앙 영역에 배치되어야 합니다.',
+    );
+    assertInventory('folderCss', [
+        ['상세보기 리사이저 바 스타일', '.folder-detail-resizer-row'],
+        ['상세보기 토글 버튼 스타일', '.folder-detail-panel-toggle'],
+        ['숨겨진 상세보기 패널 제거', '.detail-panel-wrap[hidden]'],
+    ]);
+});
+
 test('상세보기 패널은 링크 열기와 메타데이터 값 스타일을 제공한다', () => {
     assertInventory('detailPanel', [
         ['상세보기 링크 외부 열기', 'openExternalLink(value)'],

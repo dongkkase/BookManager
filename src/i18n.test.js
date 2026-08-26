@@ -93,3 +93,17 @@ test('경로 이동 입력과 최근 기록 문구를 세 언어로 제공한다
         }
     }
 });
+
+test('상세 패널 접기와 열기 문구를 세 언어로 제공한다', () => {
+    const expectedTranslations = {
+        ko: ['상세', '상세 패널 접기', '상세 패널 열기'],
+        en: ['Details', 'Collapse details panel', 'Open details panel'],
+        ja: ['詳細', '詳細パネルを折りたたむ', '詳細パネルを開く'],
+    };
+
+    for (const [language, translations] of Object.entries(expectedTranslations)) {
+        assert.equal(translate('folder.detail.label', language), translations[0]);
+        assert.equal(translate('folder.detail.collapse', language), translations[1]);
+        assert.equal(translate('folder.detail.expand', language), translations[2]);
+    }
+});

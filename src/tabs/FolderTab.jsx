@@ -418,6 +418,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [rightPanelWidth, setRightPanelWidth] = useState(900);
   const [viewContainerWidth, setViewContainerWidth] = useState(900);
   const [detailPanelHeight, setDetailPanelHeight] = useState(245);
+  const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
 
   // --- 뷰 상태 ---
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'thumbnail' | 'tile'
@@ -3457,17 +3458,38 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           
           {activeSelectedFile && (
             <>
+              <div className={`folder-detail-resizer-row ${isDetailPanelCollapsed ? 'is-collapsed' : 'is-expanded'}`}>
+                <div
+                  className="folder-resizer folder-resizer-horizontal"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-disabled={isDetailPanelCollapsed}
+                  onMouseDown={isDetailPanelCollapsed ? undefined : startVerticalResize}
+                />
+                <button
+                  type="button"
+                  className="folder-detail-panel-toggle"
+                  onClick={() => setIsDetailPanelCollapsed(current => !current)}
+                  title={t(isDetailPanelCollapsed ? 'folder.detail.expand' : 'folder.detail.collapse')}
+                  aria-label={t(isDetailPanelCollapsed ? 'folder.detail.expand' : 'folder.detail.collapse')}
+                  aria-expanded={!isDetailPanelCollapsed}
+                  aria-controls="folder-detail-panel"
+                >
+                  <span>{t('folder.detail.label')}</span>
+                  <FaIcon name={isDetailPanelCollapsed ? 'angleUp' : 'angleDown'} size={11} />
+                </button>
+              </div>
               <div
-                className="folder-resizer folder-resizer-horizontal"
-                role="separator"
-                aria-orientation="horizontal"
-                onMouseDown={startVerticalResize}
-              />
-              <div
+                id="folder-detail-panel"
                 className="detail-panel-wrap"
-                style={{ flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}
+                hidden={isDetailPanelCollapsed}
+                style={isDetailPanelCollapsed
+                  ? undefined
+                  : { flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}
               >
-                <DetailPanel selectedFile={detailSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
+                {!isDetailPanelCollapsed && (
+                  <DetailPanel selectedFile={detailSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
+                )}
               </div>
             </>
           )}
