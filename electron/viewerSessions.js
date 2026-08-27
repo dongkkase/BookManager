@@ -117,6 +117,18 @@ function naturalCompare(left, right) {
     });
 }
 
+function compareComicPageNames(left, right) {
+    const leftName = normalizeInnerPath(left);
+    const rightName = normalizeInnerPath(right);
+    const leftHasFirstPagePrefix = path.posix.basename(leftName).startsWith('!');
+    const rightHasFirstPagePrefix = path.posix.basename(rightName).startsWith('!');
+
+    if (leftHasFirstPagePrefix !== rightHasFirstPagePrefix) {
+        return leftHasFirstPagePrefix ? -1 : 1;
+    }
+    return naturalCompare(leftName, rightName);
+}
+
 function isImageEntry(entryPath = '') {
     return IMAGE_EXTENSIONS.has(path.extname(entryPath).toLowerCase());
 }
@@ -1941,7 +1953,7 @@ export class ViewerSessionManager {
         const comicInfoEntry = entries.find(entry => !entry.isDir && path.posix.basename(entry.name).toLowerCase() === 'comicinfo.xml');
         const images = entries
             .filter(entry => !entry.isDir && !entry.encrypted && isImageEntry(entry.name))
-            .sort((left, right) => naturalCompare(left.name, right.name));
+            .sort((left, right) => compareComicPageNames(left.name, right.name));
         const cachedEntries = comicInfoEntry ? [comicInfoEntry, ...images] : images;
         const archiveEntryCache = createComicArchiveEntryCache(cachedEntries, stableSignature);
         if (archiveEntryCache) {

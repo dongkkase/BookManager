@@ -1318,6 +1318,28 @@
   text-align: left;
 }
 
+.viewer-dropdown-notice.is-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.viewer-dropdown-notice-icon {
+  justify-self: end;
+}
+
+.viewer-dropdown-notice.is-action:hover,
+.viewer-dropdown-notice.is-action:focus-visible {
+  background: rgba(214, 201, 146, 0.12);
+  color: #eee2ab;
+}
+
 .viewer-dropdown-option span {
   min-width: 0;
   overflow: hidden;

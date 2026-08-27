@@ -2676,7 +2676,7 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
   );
 }
 
-function ViewerDropdown({ value, options, onChange, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '', buttonIconSrc = '', buttonLabel = '', focusSelectedOnOpen = false }) {
+function ViewerDropdown({ value, options, onChange, onNotice, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '', buttonIconSrc = '', buttonLabel = '', focusSelectedOnOpen = false }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
@@ -2753,9 +2753,26 @@ function ViewerDropdown({ value, options, onChange, onPreview, previewingValue =
                 {viewerText(option.labelKey, option.label)}
               </div>
             ) : option.kind === 'notice' ? (
-              <div key={option.id} className="viewer-dropdown-notice" role="presentation">
-                {viewerText(option.labelKey, option.label)}
-              </div>
+              typeof onNotice === 'function' ? (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="viewer-dropdown-notice is-action"
+                  role="option"
+                  aria-selected={false}
+                  onClick={() => {
+                    onNotice(option.id);
+                    closeAndRestoreFocus();
+                  }}
+                >
+                  <span>{viewerText(option.labelKey, option.label)}</span>
+                  <FaIcon name="gear" className="viewer-dropdown-notice-icon" size={11} />
+                </button>
+              ) : (
+                <div key={option.id} className="viewer-dropdown-notice" role="presentation">
+                  {viewerText(option.labelKey, option.label)}
+                </div>
+              )
             ) : (
               <div key={option.id} className={`viewer-dropdown-option-row ${onPreview ? 'has-preview' : ''}`}>
                 <button
@@ -2853,7 +2870,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onMoveToPage, onToast }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onMoveToPage, onOpenTtsSettings, onToast }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
@@ -2900,6 +2917,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
   const updateSettings = useCallback(patch => {
     setSettings(current => normalizeTtsSettings({ ...current, ...patch }));
   }, []);
+  const handleOpenTtsSettings = useCallback(() => {
+    if (typeof onOpenTtsSettings !== 'function') return;
+    Promise.resolve(onOpenTtsSettings()).catch(() => {});
+  }, [onOpenTtsSettings]);
   const matchingAvailableVoices = useMemo(() => (
     availableVoices.filter(voice => systemVoiceMatchesLanguage(voice, language))
   ), [availableVoices, language]);
@@ -3707,6 +3728,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
               focusSelectedOnOpen
               previewingValue={previewingVoiceValue}
               previewTitle={viewerText('viewer.tts.voice_preview', '음성 미리듣기')}
+              onNotice={typeof onOpenTtsSettings === 'function' ? handleOpenTtsSettings : undefined}
               onPreview={handleVoicePreview}
               onChange={voice => {
                 stopCurrentTtsWithoutAutoAdvance();
@@ -8682,6 +8704,7 @@ function ViewerApp() {
                 language={viewerLanguage}
                 onMovePage={movePage}
                 onMoveToPage={goPageIndex}
+                onOpenTtsSettings={window.viewerAPI?.openTtsSettings}
                 onToast={showViewerToast}
               />
             </div>

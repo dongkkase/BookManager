@@ -210,6 +210,29 @@ test('오디오북 뷰어 세션은 같은 폴더의 오디오만 자연 정렬�
     }
 });
 
+test('CBZ 뷰어 세션은 하위 폴더의 느낌표 접두 페이지를 가장 먼저 정렬한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-first-page-prefix-'));
+    try {
+        const comicPath = path.join(root, 'First Page Prefix.cbz');
+        fs.writeFileSync(comicPath, Buffer.alloc(0));
+        await replaceZipEntry(comicPath, '001.jpg', Buffer.from('page-1'));
+        await replaceZipEntry(comicPath, '010.jpg', Buffer.from('page-10'));
+        await replaceZipEntry(comicPath, 'extra/!000.jpg', Buffer.from('cover'));
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(comicPath, { skipAdjacent: true });
+        const listed = await manager.listComicPages(session.id);
+
+        assert.deepEqual(listed.pages.map(page => page.name), [
+            'extra/!000.jpg',
+            '001.jpg',
+            '010.jpg',
+        ]);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('CBZ 뷰어 세션은 페이지 요청에 ZIP 엔트리 캐시를 재사용하고 파일 변경 시 폐기한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-cache-'));
     try {

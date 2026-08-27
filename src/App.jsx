@@ -92,6 +92,7 @@ function App() {
   const [loadedTabs, setLoadedTabs] = useState(() => new Set(['folder']));
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('basic');
+  const [settingsNavigationRequest, setSettingsNavigationRequest] = useState(0);
   const [toast, setToast] = useState(null);
   const [appVersion, setAppVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -399,19 +400,27 @@ function App() {
     return () => window.removeEventListener('bookmanager:navigate', handleNavigate);
   }, [dispatchTabAction, isAppLocked, scheduleLastTabSave]);
 
-  const handleSettings = useCallback(() => {
-    setSettingsInitialTab('basic');
+  const openSettings = useCallback((tab = 'basic') => {
+    setSettingsInitialTab(tab);
+    setSettingsNavigationRequest(current => current + 1);
     setShowSettings(true);
   }, []);
 
+  const handleSettings = useCallback(() => {
+    openSettings('basic');
+  }, [openSettings]);
+
   useEffect(() => {
     const handleOpenSettings = event => {
-      setSettingsInitialTab(event.detail?.tab || 'basic');
-      setShowSettings(true);
+      openSettings(event.detail?.tab || 'basic');
     };
     window.addEventListener('bookmanager:open-settings', handleOpenSettings);
     return () => window.removeEventListener('bookmanager:open-settings', handleOpenSettings);
-  }, []);
+  }, [openSettings]);
+
+  useEffect(() => window.electronAPI?.onOpenSettings?.(request => {
+    openSettings(request?.tab || 'basic');
+  }), [openSettings]);
 
   const showToast = useCallback((input, duration = 2500) => {
     if (!input) return;
@@ -841,6 +850,7 @@ function App() {
         <SettingsModal 
           config={config} 
           initialTab={settingsInitialTab}
+          navigationRequest={settingsNavigationRequest}
           onClose={handleSettingsClose}
           onPersistViewerPaths={setConfig}
           onLanguagePreviewChange={handleSettingsLanguagePreview}

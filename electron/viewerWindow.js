@@ -851,6 +851,15 @@ export function setupViewerWindowManager(options = {}) {
             hasTtsGoogleKey: Boolean(String(apiKeys.tts_google_key || '').trim()),
         };
     });
+    ipcMain.handle('viewer:openTtsSettings', async event => {
+        if (!viewerContextForSender(event.sender)) {
+            throw new Error('TTS settings are only available from a viewer window.');
+        }
+        const window = focusMainAppWindow();
+        if (!window) return { success: false };
+        window.webContents.send('app:open-settings', { tab: 'ttsApi' });
+        return { success: true };
+    });
     ipcMain.handle('viewer:openExternal', async (event, url) => {
         const safeUrl = normalizeExternalUrl(url);
         if (!safeUrl) throw new Error('External URL was blocked.');

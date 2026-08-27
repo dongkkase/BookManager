@@ -7,7 +7,12 @@ import { translate } from './utils/i18n.js';
 const viewerSource = readFileSync(fileURLToPath(new URL('./ViewerApp.jsx', import.meta.url)), 'utf8');
 const viewerCss = readFileSync(fileURLToPath(new URL('./styles/viewer.css', import.meta.url)), 'utf8');
 const viewerPreloadSource = readFileSync(fileURLToPath(new URL('../electron/viewerPreload.cjs', import.meta.url)), 'utf8');
+const viewerWindowSource = readFileSync(fileURLToPath(new URL('../electron/viewerWindow.js', import.meta.url)), 'utf8');
+const mainPreloadSource = readFileSync(fileURLToPath(new URL('../electron/preload.cjs', import.meta.url)), 'utf8');
+const mainPreloadEsmSource = readFileSync(fileURLToPath(new URL('../electron/preload.js', import.meta.url)), 'utf8');
 const ipcHandlersSource = readFileSync(fileURLToPath(new URL('../electron/ipcHandlers.js', import.meta.url)), 'utf8');
+const appSource = readFileSync(fileURLToPath(new URL('./App.jsx', import.meta.url)), 'utf8');
+const settingsModalSource = readFileSync(fileURLToPath(new URL('./components/SettingsModal.jsx', import.meta.url)), 'utf8');
 const packageJson = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
 const ttsControlSource = viewerSource.match(/function ViewerTtsControls[\s\S]*?\n}\n\nfunction BookmarkEditor/)?.[0] || '';
 const viewerDropdownSource = viewerSource.match(/function ViewerDropdown[\s\S]*?\n}\n\nfunction ZoomControl/)?.[0] || '';
@@ -241,6 +246,31 @@ test('TTS 메뉴는 음성 드롭다운 안에서 시스템, Supertonic, OpenAI,
             assert.notEqual(translate(key, language), key, `${language}:${key}`);
         }
     }
+});
+
+test('TTS 미설정 안내를 누르면 메인 설정의 TTS 탭을 연다', () => {
+    assert.match(viewerDropdownSource, /option\.kind === 'notice'[\s\S]*?typeof onNotice === 'function'[\s\S]*?<button[\s\S]*?onNotice\(option\.id\);[\s\S]*?closeAndRestoreFocus\(\)/);
+    assert.match(viewerDropdownSource, /<FaIcon name="gear" className="viewer-dropdown-notice-icon" size=\{11\} \/>/);
+    assert.match(ttsControlSource, /function ViewerTtsControls\([\s\S]*?onOpenTtsSettings/);
+    assert.match(ttsControlSource, /Promise\.resolve\(onOpenTtsSettings\(\)\)\.catch\(\(\) => \{\}\)/);
+    assert.match(ttsControlSource, /onNotice=\{typeof onOpenTtsSettings === 'function' \? handleOpenTtsSettings : undefined\}/);
+    assert.match(viewerSource, /onOpenTtsSettings=\{window\.viewerAPI\?\.openTtsSettings\}/);
+    assert.match(viewerCss, /\.viewer-dropdown-notice\.is-action[\s\S]*?cursor:\s*pointer/);
+    assert.match(viewerCss, /\.viewer-dropdown-notice\.is-action[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+    assert.match(viewerCss, /\.viewer-dropdown-notice-icon\s*\{[\s\S]*?justify-self:\s*end/);
+
+    assert.match(viewerPreloadSource, /openTtsSettings:\s*\(\) => ipcRenderer\.invoke\('viewer:openTtsSettings'\)/);
+    assert.match(
+        viewerWindowSource,
+        /ipcMain\.handle\('viewer:openTtsSettings'[\s\S]*?viewerContextForSender\(event\.sender\)[\s\S]*?focusMainAppWindow\(\)[\s\S]*?webContents\.send\('app:open-settings', \{ tab: 'ttsApi' \}\)/,
+    );
+    for (const preloadSource of [mainPreloadSource, mainPreloadEsmSource]) {
+        assert.match(preloadSource, /onOpenSettings:[\s\S]*?ipcRenderer\.on\('app:open-settings', handler\)[\s\S]*?removeListener\('app:open-settings', handler\)/);
+    }
+    assert.match(appSource, /onOpenSettings\?\.\(request => \{\s*openSettings\(request\?\.tab \|\| 'basic'\)/);
+    assert.match(appSource, /navigationRequest=\{settingsNavigationRequest\}/);
+    assert.match(settingsModalSource, /navigationRequest = 0/);
+    assert.match(settingsModalSource, /setActiveTab\(initialTab\);\s*\}, \[initialTab, isOpen, navigationRequest\]\)/);
 });
 
 test('TTS 음성 목록은 그룹과 그룹 안의 음성을 역순으로 표시한다', () => {

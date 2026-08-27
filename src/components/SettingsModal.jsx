@@ -146,7 +146,7 @@ function normalizeConfig(config) {
   }, navigator.hardwareConcurrency || 4);
 }
 
-function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', onLanguagePreviewChange }) {
+function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', navigationRequest = 0, onLanguagePreviewChange }) {
   const [localConfig, setLocalConfig] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState('basic');
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -183,8 +183,12 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     if (settingsOpenInitializedRef.current) return;
     settingsOpenInitializedRef.current = true;
     setLocalConfig(normalizeConfig(config));
+  }, [config, isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
     setActiveTab(initialTab);
-  }, [config, initialTab, isOpen]);
+  }, [initialTab, isOpen, navigationRequest]);
 
   React.useEffect(() => {
     if (!isOpen) return undefined;
