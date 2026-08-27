@@ -233,6 +233,35 @@ test('CBZ 뷰어 세션은 하위 폴더의 느낌표 접두 페이지를 가장
     }
 });
 
+test('CBZ 뷰어 세션은 macOS AppleDouble 메타데이터를 페이지에서 제외한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-macos-metadata-'));
+    try {
+        const comicPath = path.join(root, 'Mac Metadata.cbz');
+        const firstPage = pngHeader(1200, 1800);
+        fs.writeFileSync(comicPath, Buffer.alloc(0));
+        await replaceZipEntry(comicPath, '1.png', firstPage);
+        await replaceZipEntry(comicPath, '__MACOSX/._1.png', Buffer.from('apple-double'));
+        await replaceZipEntry(comicPath, '._2.png', Buffer.from('apple-double'));
+        await replaceZipEntry(
+            comicPath,
+            '__MACOSX/ComicInfo.xml',
+            '<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>',
+        );
+
+        const manager = new ViewerSessionManager();
+        const session = manager.create(comicPath, { skipAdjacent: true });
+        const listed = await manager.listComicPages(session.id);
+
+        assert.equal(listed.readingDirection, 'ltr');
+        assert.deepEqual(listed.pages.map(page => page.name), ['1.png']);
+        assert.equal(manager.comicArchiveEntryCaches.get(session.id)?.zipEntries.size, 1);
+        const pageData = await manager.getComicPageData(session.id, '1.png');
+        assert.deepEqual(pageData.buffer, firstPage);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('CBZ 뷰어 세션은 페이지 요청에 ZIP 엔트리 캐시를 재사용하고 파일 변경 시 폐기한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-cache-'));
     try {

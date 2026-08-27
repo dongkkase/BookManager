@@ -1,6 +1,13 @@
 import { app } from 'electron';
+import path from 'node:path';
 import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
+import { installRuntimeLogging } from './utils/runtimeLog.js';
 
+installRuntimeLogging({
+    appTarget: app,
+    enabled: app.isPackaged,
+    executableDir: path.dirname(process.execPath),
+});
 installConsolePipeGuard();
 
 let mainModule = null;

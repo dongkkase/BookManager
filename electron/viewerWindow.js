@@ -813,6 +813,8 @@ export function setupViewerWindowManager(options = {}) {
         return sessions.getEpubText(sessionId);
     });
     ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
+        const context = viewerContextForSender(event.sender);
+        if (!context) return { success: false, stale: true };
         viewerContextForCurrentSessionRequest(event, sessionId);
         return recordReadingState(sessions.get(sessionId), state);
     });

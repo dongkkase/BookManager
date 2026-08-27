@@ -133,6 +133,13 @@ function isImageEntry(entryPath = '') {
     return IMAGE_EXTENSIONS.has(path.extname(entryPath).toLowerCase());
 }
 
+function isMacArchiveMetadataPath(entryPath = '') {
+    const parts = normalizeInnerPath(entryPath)
+        .split('/')
+        .filter(Boolean);
+    return parts.some(part => part === '__MACOSX' || part.startsWith('._'));
+}
+
 function isFontEntry(entryPath = '') {
     return FONT_EXTENSIONS.has(path.extname(entryPath).toLowerCase());
 }
@@ -1950,8 +1957,9 @@ export class ViewerSessionManager {
         const stableSignature = archiveFileSignaturesMatch(signatureBefore, signatureAfter)
             ? signatureAfter
             : null;
-        const comicInfoEntry = entries.find(entry => !entry.isDir && path.posix.basename(entry.name).toLowerCase() === 'comicinfo.xml');
-        const images = entries
+        const visibleEntries = entries.filter(entry => !isMacArchiveMetadataPath(entry.name));
+        const comicInfoEntry = visibleEntries.find(entry => !entry.isDir && path.posix.basename(entry.name).toLowerCase() === 'comicinfo.xml');
+        const images = visibleEntries
             .filter(entry => !entry.isDir && !entry.encrypted && isImageEntry(entry.name))
             .sort((left, right) => compareComicPageNames(left.name, right.name));
         const cachedEntries = comicInfoEntry ? [comicInfoEntry, ...images] : images;

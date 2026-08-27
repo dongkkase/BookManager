@@ -119,6 +119,18 @@ test('인접권과 오디오 큐 이동은 현재 세션에서 온 요청만 허
     );
 });
 
+test('종료된 뷰어의 늦은 읽기 상태 저장 요청은 오류 없이 무시한다', () => {
+    const saveStateSource = sourceSection(
+        viewerWindowSource,
+        "ipcMain.handle('viewer:saveReadingState'",
+        "ipcMain.on('viewer:audio-track-state'",
+    );
+    assert.match(saveStateSource, /const context = viewerContextForSender\(event\.sender\)/);
+    assert.match(saveStateSource, /if \(!context\) return \{ success: false, stale: true \}/);
+    assert.match(saveStateSource, /viewerContextForCurrentSessionRequest\(event, sessionId\)/);
+    assert.match(saveStateSource, /recordReadingState\(sessions\.get\(sessionId\), state\)/);
+});
+
 test('뷰어 닫기와 메인 창 종료는 audio 확인 흐름 또는 강제 종료 범위로 닫는다', () => {
     assert.match(viewerPreloadSource, /closeWindow:\s*\(\) => ipcRenderer\.invoke\('viewer:closeWindow'\)/);
     assert.match(viewerWindowSource, /ipcMain\.handle\('viewer:closeWindow',[\s\S]*?viewerContextForSender\(event\.sender\)[\s\S]*?requestViewerClose\(context, targetWindow\)/);
