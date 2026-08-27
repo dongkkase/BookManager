@@ -52,6 +52,7 @@ let appQuitRequested = false;
 let allowAppQuit = false;
 let isFinalizingAppQuit = false;
 let mainWindowReady = false;
+let showMainWindowInactiveForInitialFile = false;
 let isDrainingOpenFiles = false;
 const pendingOpenFiles = [];
 
@@ -194,7 +195,7 @@ function focusMainWindow() {
 }
 
 async function drainPendingOpenFiles() {
-  if (isDrainingOpenFiles || !mainWindowReady || !viewerController || !configManager) return;
+  if (isDrainingOpenFiles || !viewerController || !configManager) return;
   isDrainingOpenFiles = true;
   try {
     while (pendingOpenFiles.length > 0) {
@@ -237,7 +238,11 @@ async function drainPendingOpenFiles() {
 }
 
 function enqueueOpenFiles(filePaths = []) {
+  const queuedFileCount = pendingOpenFiles.length;
   addPendingOpenFiles(pendingOpenFiles, filePaths, process.platform);
+  if (pendingOpenFiles.length > queuedFileCount && !mainWindowReady) {
+    showMainWindowInactiveForInitialFile = true;
+  }
   void drainPendingOpenFiles();
 }
 
@@ -307,41 +312,34 @@ async function readCachedThumbnail(thumbnailPath) {
   return value;
 }
 
-if (process.platform === 'darwin') {
-  app.on('open-file', (event, filePath) => {
-    event.preventDefault();
-    enqueueOpenFiles(launchFilePathsFromArguments([filePath]));
-  });
+export function handleBootstrapOpenFile(filePath) {
+  enqueueOpenFiles(launchFilePathsFromArguments([filePath]));
 }
 
-// 단일 인스턴스 락
-const gotTheLock = app.requestSingleInstanceLock();
-
-if (!gotTheLock) {
-  app.quit();
-} else {
-  if (process.platform === 'win32') {
-    enqueueOpenFiles(launchFilePathsFromArguments(process.argv));
+export function handleBootstrapSecondInstance(commandLine, workingDirectory) {
+  const filePaths = launchFilePathsFromArguments(commandLine, workingDirectory);
+  if (filePaths.length > 0) {
+    enqueueOpenFiles(filePaths);
+    return;
   }
-
-  app.on('second-instance', (_event, commandLine, workingDirectory) => {
-    focusMainWindow();
-    const filePaths = launchFilePathsFromArguments(commandLine, workingDirectory);
-    if (filePaths.length > 0) enqueueOpenFiles(filePaths);
-  });
-
-  app.whenReady()
-    .then(initializeApp)
-    .catch(error => {
-      reportProcessFault('startup-failed', error);
-      try {
-        dialog.showErrorBox(APP_NAME, error?.message || String(error));
-      } catch {
-        // The process fault log is the fallback if a native dialog cannot be shown.
-      }
-      app.quit();
-    });
+  focusMainWindow();
 }
+
+if (process.platform === 'win32') {
+  enqueueOpenFiles(launchFilePathsFromArguments(process.argv));
+}
+
+app.whenReady()
+  .then(initializeApp)
+  .catch(error => {
+    reportProcessFault('startup-failed', error);
+    try {
+      dialog.showErrorBox(APP_NAME, error?.message || String(error));
+    } catch {
+      // The process fault log is the fallback if a native dialog cannot be shown.
+    }
+    app.quit();
+  });
 
 async function initializeApp() {
   protocol.handle('bookmanager-thumbnail', async request => {
@@ -422,6 +420,7 @@ async function initializeApp() {
 
   // 메인 윈도우 생성
   createMainWindow(config);
+  void drainPendingOpenFiles();
 
   // 트레이 생성
   createTray();
@@ -492,10 +491,14 @@ function createMainWindow(config) {
       mainWindow.maximize();
     }
     if (!mainWindow.isVisible()) {
-      mainWindow.show();
+      if (showMainWindowInactiveForInitialFile && typeof mainWindow.showInactive === 'function') {
+        mainWindow.showInactive();
+      } else {
+        mainWindow.show();
+      }
     }
     mainWindowReady = true;
-    void drainPendingOpenFiles();
+    showMainWindowInactiveForInitialFile = false;
   });
 
   mainWindow.on('close', async (event) => {
@@ -542,6 +545,7 @@ function createMainWindow(config) {
     viewerController?.closeAllWindows?.({ force: true });
     mainWindow = null;
     mainWindowReady = false;
+    showMainWindowInactiveForInitialFile = false;
     allowWindowClose = false;
   });
 }
