@@ -178,6 +178,23 @@ const typeSpecificViewerPath = (config, filePath) => {
 
 const viewerErrorMessage = result => result?.message || result?.error || '';
 
+function FolderScanFeedback({ compact = false, message = '', onCancel, t }) {
+    const resolvedMessage = message || t('msg_loading_list');
+    return (
+        <div
+            className={`folder-scan-feedback ${compact ? 'is-compact' : 'is-empty'}`}
+            role="status"
+            aria-live="polite"
+        >
+            <FaIcon name="spinner" className="content-index-spinner" size={18} />
+            <span>{resolvedMessage}</span>
+            <button type="button" onClick={() => void onCancel?.()}>
+                {t('cancel_btn')}
+            </button>
+        </div>
+    );
+}
+
 function createFolderResizeGuide(axis, position) {
   if (typeof document === 'undefined') return null;
   const guide = document.createElement('div');
@@ -377,7 +394,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
-  const { scanning, scanProgress, statusMessage, scanFolder, getCachedFiles, updateCachedFiles } = useFolderScan(t);
+  const { scanning, scanProgress, statusMessage, scanFolder, cancelScan, getCachedFiles, updateCachedFiles } = useFolderScan(t);
   const selectedFolderPathRef = useRef('');
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
@@ -1982,11 +1999,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (isCheckingMissing) backgroundLibraryScanCancelRef.current?.();
     await Promise.all([
       window.electronAPI?.stopTask?.('folder:updateIndex'),
-      window.electronAPI?.stopTask?.('folder:scan'),
+      cancelScan(),
     ]);
     await refreshLibraryScanStates();
     markLibraryScanStatesCancelled();
-  }, [duplicatePreparationProgress, isCheckingMissing, libraryTaskMode, markLibraryScanStatesCancelled, preparingDuplicates, refreshLibraryScanStates, scanProgress, scanning, t]);
+  }, [cancelScan, duplicatePreparationProgress, isCheckingMissing, libraryTaskMode, markLibraryScanStatesCancelled, preparingDuplicates, refreshLibraryScanStates, scanProgress, scanning, t]);
 
   const handleAddFolderFromToolbar = useCallback(async () => {
     const folderPath = await window.electronAPI?.selectFolder?.(t('add_folder'));
@@ -3443,6 +3460,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             className="view-container"
             ref={viewContainerRef}
             style={{ '--folder-view-width': `${viewContainerWidth}px` }}
+            aria-busy={!isRecentReading && scanning}
           >
              {isRecentReading && recentReadingLoading ? (
                <div className="recent-reading-state" role="status">
@@ -3455,6 +3473,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                  <span>{t('folder.recent.empty')}</span>
                </div>
              ) : renderViewStack()}
+             {!isRecentReading && scanning && (
+               <FolderScanFeedback
+                 compact={filteredFileData.length > 0}
+                 message={statusMessage}
+                 onCancel={cancelScan}
+                 t={t}
+               />
+             )}
           </div>
           
           {activeSelectedFile && (
@@ -3497,7 +3523,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
           <div className="right-bottom-bar">
             <div className="status-info">
-              {librarySearchLoading && isLibrarySearchActive
+              {!isRecentReading && scanning
+                ? statusMessage || t('msg_loading_list')
+                : librarySearchLoading && isLibrarySearchActive
                 ? t('folder_searching_libraries')
                 : formatStatus(t, selectedFiles, filteredFileData, selectedFilesTotalBytes)}
             </div>

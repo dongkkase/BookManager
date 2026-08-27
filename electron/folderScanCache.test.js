@@ -204,6 +204,62 @@ test('폴더 클릭용 빠른 목록은 파일명 데이터만 먼저 반환한�
     }
 });
 
+test('하위 폴더 빠른 목록은 재귀 탐색 상태와 전체 파일명을 반환한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-folder-recursive-quick-list-'));
+    const libraryDir = path.join(root, 'library');
+    const nestedDir = path.join(libraryDir, 'nested', 'deeper');
+    const siblingDir = path.join(libraryDir, 'sibling');
+    const progressEvents = [];
+    const quickFileEvents = [];
+    const event = {
+        sender: {
+            isDestroyed: () => false,
+            send: (channel, data) => {
+                if (channel === 'task:progress') progressEvents.push(data);
+                if (channel === 'folder:quickFiles') quickFileEvents.push(data);
+            },
+        },
+    };
+
+    try {
+        fs.mkdirSync(nestedDir, { recursive: true });
+        fs.mkdirSync(siblingDir, { recursive: true });
+        fs.writeFileSync(path.join(nestedDir, 'Nested Book.pdf'), 'book');
+        fs.writeFileSync(path.join(siblingDir, 'Shallow Book.epub'), 'book');
+
+        const files = await scanFolder(libraryDir, {
+            quickListOnly: true,
+            includeSubfolders: true,
+            skipLibraryCache: true,
+            suppressEvents: true,
+            reportTaskProgress: true,
+            reportQuickFiles: true,
+            resultCacheKey: 'recursive-quick-cache',
+            requestId: 42,
+        }, event);
+
+        assert.deepEqual(
+            files.map(file => file.name),
+            ['Shallow Book.epub', 'Nested Book.pdf'],
+        );
+        assert.equal(progressEvents.find(data => data?.task)?.progress, 0);
+        assert.equal(progressEvents.find(data => data?.task)?.currentFile, libraryDir);
+        assert.equal(progressEvents.filter(data => data?.task).at(-1)?.progress, 100);
+        assert.deepEqual(
+            quickFileEvents.flatMap(data => data.files).map(file => file.name).sort(),
+            ['Nested Book.pdf', 'Shallow Book.epub'],
+        );
+        assert.equal(quickFileEvents.length, 2);
+        assert.deepEqual(quickFileEvents[0]?.files.map(file => file.name), ['Shallow Book.epub']);
+        assert.equal(quickFileEvents[0]?.folderPath, libraryDir);
+        assert.equal(quickFileEvents[0]?.cacheKey, 'recursive-quick-cache');
+        assert.equal(quickFileEvents[0]?.requestId, 42);
+        assert.equal(quickFileEvents.at(-1)?.matchedCount, files.length);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-native-scan-'));
     const libraryDir = path.join(root, 'library');

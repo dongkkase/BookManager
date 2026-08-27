@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { startTransition, useState, useCallback, useEffect, useRef } from 'react';
 import { AUDIO_EXTENSIONS, resolveBookType } from '../metadata/metadataTypes.js';
 import { joinPath } from '../utils/folderPath.js';
 
 export const FOLDER_FILE_CACHE_LIMIT = 8;
 const READY_FILES_FLUSH_DELAY_MS = 180;
+const QUICK_FILES_FLUSH_DELAY_MS = 180;
 const QUICK_LIST_TARGET_EXTENSIONS = new Set([
   '.zip',
   '.cbz',
@@ -102,6 +103,27 @@ export function trimFolderFileDataCache(cache = {}, order = [], keepKey = '') {
   return next;
 }
 
+export function hasReusableFolderFileCache(cache = {}, pendingCacheKeys = new Set(), cacheKey = '') {
+    return Boolean(cacheKey)
+        && !pendingCacheKeys.has(cacheKey)
+        && Object.prototype.hasOwnProperty.call(cache, cacheKey);
+}
+
+export function appendUniqueFolderFiles(currentFiles = [], incomingFiles = []) {
+    const current = Array.isArray(currentFiles) ? currentFiles : [];
+    const incoming = Array.isArray(incomingFiles) ? incomingFiles : [];
+    if (incoming.length === 0) return current;
+
+    const seenPaths = new Set(current.map(file => file?.path).filter(Boolean));
+    const additions = [];
+    for (const file of incoming) {
+        if (!file?.path || seenPaths.has(file.path)) continue;
+        seenPaths.add(file.path);
+        additions.push(file);
+    }
+    return additions.length > 0 ? [...current, ...additions] : current;
+}
+
 export function coordinateFolderScanRequest({
     activeScans,
     queuedForceScans,
@@ -190,14 +212,18 @@ export function useFolderScan(t) {
   const fileDataCacheOrderRef = useRef([]);
   const activeScansRef = useRef(new Map());
   const queuedForceScansRef = useRef(new Map());
+  const pendingScanCacheKeysRef = useRef(new Set());
+  const scanRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      scanRequestIdRef.current += 1;
       activeScansRef.current.clear();
       queuedForceScansRef.current.clear();
+      pendingScanCacheKeysRef.current.clear();
     };
   }, []);
 
@@ -256,14 +282,32 @@ export function useFolderScan(t) {
     const cacheKey = getCacheKey(folderPath, options);
 
     // 캐시에 데이터가 있다면 재사용
-    if (!force && fileDataCacheRef.current[cacheKey]) {
+    if (!force && hasReusableFolderFileCache(
+      fileDataCacheRef.current,
+      pendingScanCacheKeysRef.current,
+      cacheKey,
+    )) {
+      if (currentFolderRef.current && currentFolderRef.current !== folderPath) {
+        scanRequestIdRef.current += 1;
+        currentFolderRef.current = folderPath;
+        setScanning(false);
+        void window.electronAPI?.stopTask?.('folder:scan');
+      }
       touchCacheKey(cacheKey);
       return fileDataCacheRef.current[cacheKey];
     }
 
     const executeScan = async () => {
       if (!mountedRef.current) return [];
+      const requestId = scanRequestIdRef.current + 1;
+      scanRequestIdRef.current = requestId;
+      pendingScanCacheKeysRef.current.add(cacheKey);
       currentFolderRef.current = folderPath;
+      const isCurrentRequest = () => (
+        mountedRef.current
+        && scanRequestIdRef.current === requestId
+        && currentFolderRef.current === folderPath
+      );
       if (mountedRef.current && !silent) {
         setScanning(true);
         setScanProgress(0);
@@ -276,23 +320,30 @@ export function useFolderScan(t) {
           enableDupCheck,
           dupFolders: options.dupFolders || [],
           force,
+          requestId,
         };
 
         if (fastInitial) {
-          const initialFiles = await readQuickListFiles(folderPath);
+          const initialFiles = includeSubfolders ? [] : await readQuickListFiles(folderPath);
+          if (!isCurrentRequest()) return initialFiles || [];
 
-          if (mountedRef.current && currentFolderRef.current === folderPath) {
+          if (isCurrentRequest()) {
             touchCacheKey(cacheKey);
             setFileDataCache(prev => ({
               ...limitCache(prev, cacheKey),
               [cacheKey]: initialFiles || [],
             }));
             const initialCount = initialFiles?.length || 0;
-            setStatusMessage(
-              t('folder.status.files_found')?.replace('{count}', initialCount) || `${initialCount}개 파일 발견`
-            );
-            setScanProgress(100);
-            setScanning(false);
+            if (includeSubfolders) {
+              setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
+            } else {
+              pendingScanCacheKeysRef.current.delete(cacheKey);
+              setStatusMessage(
+                t('folder.status.files_found')?.replace('{count}', initialCount) || `${initialCount}개 파일 발견`
+              );
+              setScanProgress(100);
+              setScanning(false);
+            }
           }
 
           const refreshInBackground = async () => {
@@ -300,24 +351,35 @@ export function useFolderScan(t) {
               ...requestOptions,
               enableDupCheck: false,
               dupFolders: [],
-              skipArchiveExtraction: true,
+              ...(includeSubfolders
+                ? { quickListOnly: true, skipArchiveExtraction: true }
+                : { skipArchiveExtraction: true }),
               skipLibraryCache: true,
               suppressEvents: true,
               background: true,
-              reportTaskProgress: false,
+              reportTaskProgress: includeSubfolders,
               reportFileReady: false,
+              reportQuickFiles: includeSubfolders,
+              resultCacheKey: cacheKey,
             });
 
-            if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
+            if (!isCurrentRequest()) return quickFiles || [];
             touchCacheKey(cacheKey);
             setFileDataCache(prev => ({
               ...limitCache(prev, cacheKey),
               [cacheKey]: mergeFilesPreservingCover(quickFiles || [], prev[cacheKey] || []),
             }));
+            pendingScanCacheKeysRef.current.delete(cacheKey);
             const quickCount = quickFiles?.length || 0;
             setStatusMessage(
               t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
             );
+            if (includeSubfolders) {
+              setScanProgress(100);
+              setScanning(false);
+            }
+
+            if (!Array.isArray(quickFiles) || quickFiles.length === 0) return [];
 
             window.electronAPI.scanFolder(folderPath, {
               ...requestOptions,
@@ -329,7 +391,7 @@ export function useFolderScan(t) {
               reportTaskProgress: false,
               reportFileReady: true,
             }).then(files => {
-              if (!mountedRef.current || currentFolderRef.current !== folderPath) return;
+              if (!isCurrentRequest()) return;
               touchCacheKey(cacheKey);
               setFileDataCache(prev => ({
                 ...limitCache(prev, cacheKey),
@@ -342,7 +404,13 @@ export function useFolderScan(t) {
             }).catch(error => {
               console.error('폴더 메타데이터 갱신 실패:', error);
             });
+
+            return quickFiles || [];
           };
+
+          if (includeSubfolders) {
+            return await refreshInBackground();
+          }
 
           void refreshInBackground().catch(error => {
             console.error('폴더 빠른 메타데이터 갱신 실패:', error);
@@ -359,12 +427,13 @@ export function useFolderScan(t) {
           reportFileReady: options.reportFileReady !== false,
         });
 
-        if (!mountedRef.current) return files || [];
+        if (!isCurrentRequest()) return files || [];
         touchCacheKey(cacheKey);
         setFileDataCache(prev => ({
           ...limitCache(prev, cacheKey),
           [cacheKey]: files || [],
         }));
+        pendingScanCacheKeysRef.current.delete(cacheKey);
         if (!silent) {
           setScanProgress(100);
           const count = files?.length || 0;
@@ -376,7 +445,7 @@ export function useFolderScan(t) {
         return files || [];
       } catch (error) {
         console.error('폴더 스캔 실패:', error);
-        if (mountedRef.current && !silent) setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
+        if (isCurrentRequest() && !silent) setStatusMessage(t('folder.status.error') || '스캔 중 오류 발생');
         return [];
       }
     };
@@ -402,14 +471,18 @@ export function useFolderScan(t) {
   }, [getCacheKey, mergeFilesPreservingCover, t]);
 
   // --- 스캔 취소 ---
-  const cancelScan = useCallback(() => {
+  const cancelScan = useCallback(async () => {
+    scanRequestIdRef.current += 1;
+    activeScansRef.current.clear();
+    queuedForceScansRef.current.clear();
     if (abortController) {
       abortController.abort();
       setAbortController(null);
     }
     setScanning(false);
-    setStatusMessage('스캔이 취소되었습니다');
-  }, [abortController]);
+    setStatusMessage(t('msg_cancelled') || '스캔이 취소되었습니다');
+    return await window.electronAPI?.stopTask?.('folder:scan');
+  }, [abortController, t]);
 
   // --- 캐시에서 파일 데이터 가져오기 ---
   const getCachedFiles = useCallback((folderPath, options = {}) => {
@@ -446,6 +519,15 @@ export function useFolderScan(t) {
   // --- 캐시 초기화 ---
   const clearCache = useCallback((folderPath) => {
     if (folderPath) {
+      for (const cacheKey of pendingScanCacheKeysRef.current) {
+        try {
+          if (JSON.parse(cacheKey).folderPath === folderPath) {
+            pendingScanCacheKeysRef.current.delete(cacheKey);
+          }
+        } catch {
+          pendingScanCacheKeysRef.current.delete(cacheKey);
+        }
+      }
       // 특정 폴더 관련 캐시만 제거
       setFileDataCache(prev => {
         const newCache = { ...prev };
@@ -462,6 +544,7 @@ export function useFolderScan(t) {
     } else {
       // 전체 캐시 초기화
       fileDataCacheOrderRef.current = [];
+      pendingScanCacheKeysRef.current.clear();
       setFileDataCache({});
     }
   }, []);
@@ -469,7 +552,16 @@ export function useFolderScan(t) {
   // --- IPC 이벤트 리스너 ---
   useEffect(() => {
     const pendingReadyFiles = [];
+    const pendingQuickFileEvents = [];
     let readyFilesFlushTimer = null;
+    let quickFilesFlushTimer = null;
+    let immediateQuickStreamKey = '';
+
+    const isCurrentScanEvent = data => {
+      if (data?.folderPath && currentFolderRef.current !== data.folderPath) return false;
+      if (data?.requestId !== undefined && data.requestId !== scanRequestIdRef.current) return false;
+      return true;
+    };
 
     const findReadyTargetKey = (cache, data, folderTargetKeys) => {
       if (cache[data.cacheKey]) return data.cacheKey;
@@ -494,6 +586,7 @@ export function useFolderScan(t) {
         const folderTargetKeys = new Map();
         const updatesByTargetKey = new Map();
         for (const data of batch) {
+          if (!isCurrentScanEvent(data)) continue;
           const targetKey = findReadyTargetKey(prev, data, folderTargetKeys);
           if (!targetKey) continue;
           if (!updatesByTargetKey.has(targetKey)) updatesByTargetKey.set(targetKey, new Map());
@@ -531,7 +624,7 @@ export function useFolderScan(t) {
 
     const handleFolderFileReady = (data) => {
       if (!data?.file?.path) return;
-      if (data.folderPath && currentFolderRef.current !== data.folderPath) return;
+      if (!isCurrentScanEvent(data)) return;
       if (data.file.cover) {
         window.dispatchEvent(new CustomEvent('bookmanager:folder-thumbnail-ready', {
           detail: {
@@ -545,7 +638,69 @@ export function useFolderScan(t) {
       scheduleReadyFilesFlush();
     };
 
+    const applyQuickFileEvents = (events, deferred = false) => {
+      const validEvents = events.filter(data => (
+        Array.isArray(data?.files)
+        && data.files.length > 0
+        && isCurrentScanEvent(data)
+        && data.cacheKey
+        && pendingScanCacheKeysRef.current.has(data.cacheKey)
+      ));
+      if (validEvents.length === 0) return;
+
+      const cacheKeys = new Set(validEvents.map(data => data.cacheKey));
+      for (const cacheKey of cacheKeys) touchCacheKey(cacheKey);
+
+      const updateCache = () => setFileDataCache(prev => {
+        let next = prev;
+        for (const cacheKey of cacheKeys) {
+          if (!pendingScanCacheKeysRef.current.has(cacheKey)) continue;
+          const incomingFiles = validEvents
+            .filter(data => data.cacheKey === cacheKey && isCurrentScanEvent(data))
+            .flatMap(data => data.files);
+          if (incomingFiles.length === 0) continue;
+          const currentFiles = next[cacheKey] || [];
+          const nextFiles = appendUniqueFolderFiles(currentFiles, incomingFiles);
+          if (nextFiles === currentFiles) continue;
+          if (next === prev) next = { ...limitCache(prev, cacheKey) };
+          next[cacheKey] = nextFiles;
+        }
+        return next;
+      });
+
+      if (deferred) startTransition(updateCache);
+      else updateCache();
+
+      const latestMessage = validEvents.at(-1)?.message;
+      if (latestMessage) setStatusMessage(latestMessage);
+    };
+
+    const flushQuickFileEvents = () => {
+      quickFilesFlushTimer = null;
+      const events = pendingQuickFileEvents.splice(0);
+      applyQuickFileEvents(events, true);
+    };
+
+    const handleFolderQuickFiles = data => {
+      if (!Array.isArray(data?.files) || data.files.length === 0) return;
+      if (!isCurrentScanEvent(data)) return;
+      if (!data.cacheKey || !pendingScanCacheKeysRef.current.has(data.cacheKey)) return;
+
+      const streamKey = `${data.requestId ?? ''}:${data.cacheKey}`;
+      if (immediateQuickStreamKey !== streamKey) {
+        immediateQuickStreamKey = streamKey;
+        applyQuickFileEvents([data]);
+        return;
+      }
+
+      pendingQuickFileEvents.push(data);
+      if (!quickFilesFlushTimer) {
+        quickFilesFlushTimer = window.setTimeout(flushQuickFileEvents, QUICK_FILES_FLUSH_DELAY_MS);
+      }
+    };
+
     const handleScanProgress = (data) => {
+      if (!isCurrentScanEvent(data)) return;
       const { progress, message } = data || {};
       if (progress !== undefined) {
         setScanProgress(progress);
@@ -557,6 +712,7 @@ export function useFolderScan(t) {
 
     const handleTaskProgress = (data) => {
       if (data?.task !== 'folder:scan') return;
+      if (!isCurrentScanEvent(data)) return;
       if (data.progress !== undefined) {
         setScanProgress(Math.max(0, Math.min(100, Number(data.progress) || 0)));
       }
@@ -566,6 +722,7 @@ export function useFolderScan(t) {
     };
 
     const handleScanComplete = (data) => {
+      if (!isCurrentScanEvent(data)) return;
       const { files, folderPath, cacheKey } = data || {};
       if (folderPath && files && cacheKey) {
         touchCacheKey(cacheKey);
@@ -583,16 +740,20 @@ export function useFolderScan(t) {
     };
 
     const handleScanError = (data) => {
+      if (!isCurrentScanEvent(data)) return;
       const { error, message } = data || {};
       console.error('스캔 오류:', error || message);
       setScanning(false);
       setStatusMessage(message || (t('folder.status.error') || '스캔 중 오류 발생'));
     };
 
-    let removeFileReady, removeProgress, removeTaskProgress, removeComplete, removeError;
+    let removeFileReady, removeQuickFiles, removeProgress, removeTaskProgress, removeComplete, removeError;
 
     if (window.electronAPI?.onFolderFileReady) {
       removeFileReady = window.electronAPI.onFolderFileReady(handleFolderFileReady);
+    }
+    if (window.electronAPI?.onFolderQuickFiles) {
+      removeQuickFiles = window.electronAPI.onFolderQuickFiles(handleFolderQuickFiles);
     }
     if (window.electronAPI?.onScanProgress) {
       removeProgress = window.electronAPI.onScanProgress(handleScanProgress);
@@ -609,7 +770,9 @@ export function useFolderScan(t) {
 
     return () => {
       if (readyFilesFlushTimer) window.clearTimeout(readyFilesFlushTimer);
+      if (quickFilesFlushTimer) window.clearTimeout(quickFilesFlushTimer);
       if (removeFileReady) removeFileReady();
+      if (removeQuickFiles) removeQuickFiles();
       if (removeProgress) removeProgress();
       if (removeTaskProgress) removeTaskProgress();
       if (removeComplete) removeComplete();

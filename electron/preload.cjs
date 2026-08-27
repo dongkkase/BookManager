@@ -182,6 +182,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('folder:fileReady', handler);
     return () => ipcRenderer.removeListener('folder:fileReady', handler);
   },
+  onFolderQuickFiles: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('folder:quickFiles', handler);
+    return () => ipcRenderer.removeListener('folder:quickFiles', handler);
+  },
   onScanComplete: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('scan-complete', handler);

@@ -3415,6 +3415,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         if (!event.sender.isDestroyed()) {
           event.sender.send('task:progress', {
             task: 'folder:scan',
+            folderPath,
+            requestId: options?.requestId,
             progress: 0,
             message: i18nT('msg_cancelled'),
             phase: 'idle',
@@ -3423,7 +3425,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         return [];
       }
       console.error('Folder scan error:', error);
-      event.sender.send('scan-error', { message: error.message });
+      event.sender.send('scan-error', {
+        message: error.message,
+        folderPath,
+        requestId: options?.requestId,
+      });
       throw error;
     } finally {
       cancellationRegistry.finish(event.sender.id, taskId, controller);

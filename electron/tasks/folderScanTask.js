@@ -24,6 +24,8 @@ const DEFAULT_TARGET_EXTS = SCAN_TARGET_EXTENSIONS;
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const PDF_THUMBNAIL_CACHE_PREFIX = 'pdf-first-page-v2-';
+const QUICK_FILE_BATCH_SIZE = 500;
+const QUICK_FILE_BATCH_INTERVAL_MS = 250;
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 const execFileAsync = promisify(execFile);
 let folderScanStdoutBroken = false;
@@ -1199,6 +1201,7 @@ async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options
 
   if (event && cache.length) {
     event.sender.send('scan-progress', {
+      requestId: options.requestId,
       progress: 85,
       message: taskText(lang, 'task_dup_index_done', { count: cache.length }),
     });
@@ -1610,34 +1613,84 @@ export async function scanFolder(folderPath, options = {}, event) {
   let matchedCount = 0;
   const shouldUseLibraryDb = !quickListOnly && (skipLibraryCache !== true || enableDupCheck);
   const libraryDb = options.libraryDb || (shouldUseLibraryDb && dbPath ? new LibraryDB({ dbPath }) : null);
+  const quickFileBatch = [];
+  const quickFileCacheKey = typeof options.resultCacheKey === 'string' ? options.resultCacheKey : '';
   let lastTaskProgressAt = 0;
   let lastTaskLogAt = 0;
+  let lastQuickFileBatchAt = 0;
 
-  async function scanQuickList(currentPath) {
-    let entries;
-    try {
-      entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
-    } catch (error) {
-      console.error(`Failed to read directory: ${currentPath}`, error);
-      return;
-    }
-
-    for (const entry of sortEntriesForPriority(entries)) {
+  async function scanQuickList(rootPath) {
+    const pendingDirectories = [rootPath];
+    for (let directoryIndex = 0; directoryIndex < pendingDirectories.length; directoryIndex += 1) {
       throwIfTaskCancelled(options);
-      if (shouldSkipScanDirectoryEntry(entry)) continue;
-      const fullPath = path.join(currentPath, entry.name);
+      const currentPath = pendingDirectories[directoryIndex];
+      let entries;
+      try {
+        entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+      } catch (error) {
+        console.error(`Failed to read directory: ${currentPath}`, error);
+        emitQuickFileBatch();
+        continue;
+      }
 
-      if (entry.isDirectory()) {
-        if (includeSubfolders) await scanQuickList(fullPath);
-      } else if (entry.isFile()) {
-        scannedCount += 1;
-        const ext = path.extname(entry.name).toLowerCase();
-        if (normalizedExtSet.has(ext)) {
-          results.push(createQuickFileData(fullPath));
-          matchedCount += 1;
+      const now = Date.now();
+      if (now - lastTaskProgressAt > 150) {
+        lastTaskProgressAt = now;
+        emitTaskProgress({
+          progress: 0,
+          message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
+          currentFile: currentPath,
+          currentFileName: path.basename(currentPath),
+        });
+      }
+
+      for (const entry of sortEntriesForPriority(entries)) {
+        throwIfTaskCancelled(options);
+        if (shouldSkipScanDirectoryEntry(entry)) continue;
+        const fullPath = path.join(currentPath, entry.name);
+
+        if (entry.isDirectory()) {
+          if (includeSubfolders) pendingDirectories.push(fullPath);
+        } else if (entry.isFile()) {
+          scannedCount += 1;
+          const ext = path.extname(entry.name).toLowerCase();
+          if (normalizedExtSet.has(ext)) {
+            const file = createQuickFileData(fullPath);
+            results.push(file);
+            matchedCount += 1;
+            if (options.reportQuickFiles && quickFileCacheKey) {
+              quickFileBatch.push(file);
+              emitQuickFileBatch();
+            }
+          }
         }
       }
+      emitQuickFileBatch();
     }
+  }
+
+  function emitQuickFileBatch(force = false) {
+    if (!event || !options.reportQuickFiles || event.sender.isDestroyed()) return;
+    if (quickFileBatch.length === 0) return;
+    if (!quickFileCacheKey) return;
+
+    const now = Date.now();
+    const shouldFlush = force
+      || lastQuickFileBatchAt === 0
+      || quickFileBatch.length >= QUICK_FILE_BATCH_SIZE
+      || now - lastQuickFileBatchAt >= QUICK_FILE_BATCH_INTERVAL_MS;
+    if (!shouldFlush) return;
+
+    const files = quickFileBatch.splice(0);
+    lastQuickFileBatchAt = now;
+    event.sender.send('folder:quickFiles', {
+      folderPath,
+      cacheKey: quickFileCacheKey,
+      requestId: options.requestId,
+      files,
+      matchedCount,
+      message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
+    });
   }
 
   function emitTaskProgress(payload) {
@@ -1645,6 +1698,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     event.sender.send('task:progress', {
       task: 'folder:scan',
       folderPath,
+      requestId: options.requestId,
       ...payload,
     });
     const now = Date.now();
@@ -1666,6 +1720,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     event.sender.send('folder:fileReady', {
       folderPath,
       cacheKey,
+      requestId: options.requestId,
       file,
     });
     if (file.cover) {
@@ -1728,6 +1783,8 @@ export async function scanFolder(folderPath, options = {}, event) {
 
         if (event && !suppressEvents && scannedCount % 50 === 0) {
           event.sender.send('scan-progress', {
+            folderPath,
+            requestId: options.requestId,
             progress: Math.min(80, Math.floor((matchedCount / Math.max(scannedCount, 1)) * 80)),
             message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
           });
@@ -1740,6 +1797,7 @@ export async function scanFolder(folderPath, options = {}, event) {
   try {
     if (quickListOnly) {
       await scanQuickList(folderPath);
+      emitQuickFileBatch(true);
     } else {
       await scanDir(folderPath);
     }
@@ -1775,7 +1833,12 @@ export async function scanFolder(folderPath, options = {}, event) {
         dupFolders: (dupFolders || []).filter(Boolean).sort(),
         skipArchiveExtraction,
       });
-      event.sender.send('scan-complete', { files, folderPath, cacheKey });
+      event.sender.send('scan-complete', {
+        files,
+        folderPath,
+        cacheKey,
+        requestId: options.requestId,
+      });
     }
 
     return files;
