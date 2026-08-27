@@ -3228,6 +3228,16 @@ body,
   white-space: nowrap;
 }
 
+.viewer-selection-tool.is-loading {
+  background: #3498db;
+  color: #ffffff;
+  cursor: wait;
+}
+
+.viewer-selection-tts-spinner {
+  animation: viewerTtsSpin 0.9s linear infinite;
+}
+
 .viewer-selection-tool:hover,
 .viewer-selection-tool:focus-visible,
 .viewer-selection-menu:focus-within > .viewer-selection-tool {

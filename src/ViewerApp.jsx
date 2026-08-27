@@ -650,7 +650,7 @@ function stopDetachedRemoteTtsAudio() {
   detachedRemoteTtsCancel = null;
 }
 
-function playDetachedRemoteTtsAudio(dataUrl, token, engine, rate) {
+function playDetachedRemoteTtsAudio(dataUrl, token, engine, rate, onPlaybackStart) {
   return new Promise((resolve, reject) => {
     if (typeof Audio !== 'function') {
       reject(Object.assign(new Error('Remote TTS is not available.'), {
@@ -661,7 +661,9 @@ function playDetachedRemoteTtsAudio(dataUrl, token, engine, rate) {
     const audio = new Audio(dataUrl);
     applyTtsAudioPlaybackRate(audio, rate);
     let settled = false;
+    let playbackStarted = false;
     const cleanup = () => {
+      audio.onplaying = null;
       audio.onended = null;
       audio.onerror = null;
       if (detachedRemoteTtsCancel === cancel) detachedRemoteTtsCancel = null;
@@ -678,16 +680,24 @@ function playDetachedRemoteTtsAudio(dataUrl, token, engine, rate) {
       cleanup();
       reject(error);
     };
+    const notifyPlaybackStart = () => {
+      if (settled || playbackStarted || detachedRemoteTtsToken !== token) return;
+      playbackStarted = true;
+      onPlaybackStart?.();
+    };
     const cancel = () => finish('cancelled');
     detachedRemoteTtsAudio = audio;
     detachedRemoteTtsCancel = cancel;
+    audio.onplaying = notifyPlaybackStart;
     audio.onended = () => finish('ended');
     audio.onerror = () => fail(Object.assign(new Error('Remote TTS audio playback failed.'), {
       code: remoteTtsCode(engine, 'AUDIO_ERROR'),
     }));
     const playPromise = audio.play();
     if (playPromise?.then) {
-      playPromise.catch(fail);
+      playPromise.then(notifyPlaybackStart).catch(fail);
+    } else {
+      notifyPlaybackStart();
     }
     if (detachedRemoteTtsToken !== token) finish('cancelled');
   });
@@ -754,7 +764,14 @@ function remoteTtsToastMessage(error, engine = 'openai') {
   return viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.');
 }
 
-async function speakDetachedRemoteTts(text, settings, onToast, language = 'en') {
+async function speakDetachedRemoteTts(
+  text,
+  settings,
+  onToast,
+  language = 'en',
+  onPlaybackStart,
+  shouldStartPlayback,
+) {
   const createRemoteTts = getRemoteTtsApi(settings.engine);
   if (typeof createRemoteTts !== 'function') {
     onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
@@ -768,6 +785,12 @@ async function speakDetachedRemoteTts(text, settings, onToast, language = 'en') 
   detachedRemoteTtsToken += 1;
   const token = detachedRemoteTtsToken;
   stopDetachedRemoteTtsAudio();
+  let playbackStarted = false;
+  const notifyPlaybackStart = () => {
+    if (playbackStarted) return;
+    playbackStarted = true;
+    onPlaybackStart?.();
+  };
   try {
     for (const chunk of chunks) {
       if (detachedRemoteTtsToken !== token) return;
@@ -776,7 +799,14 @@ async function speakDetachedRemoteTts(text, settings, onToast, language = 'en') 
       if (!result?.success || !result.dataUrl) {
         throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), { code: result?.code || remoteTtsFallbackCode(settings.engine) });
       }
-      const playbackResult = await playDetachedRemoteTtsAudio(result.dataUrl, token, settings.engine, settings.rate);
+      if (!playbackStarted && shouldStartPlayback?.() === false) return;
+      const playbackResult = await playDetachedRemoteTtsAudio(
+        result.dataUrl,
+        token,
+        settings.engine,
+        settings.rate,
+        notifyPlaybackStart,
+      );
       if (playbackResult === 'cancelled') return;
     }
   } catch (error) {
@@ -5249,6 +5279,7 @@ function ViewerApp() {
   const [comicSinglePageNames, setComicSinglePageNames] = useState([]);
   const [highlights, setHighlights] = useState([]);
   const [selectionMenu, setSelectionMenu] = useState(null);
+  const [selectionTtsLoading, setSelectionTtsLoading] = useState(false);
   const [navigationPanelOpen, setNavigationPanelOpen] = useState(false);
   const [navigationTab, setNavigationTab] = useState('toc');
   const [bookSearchQuery, setBookSearchQuery] = useState('');
@@ -5312,6 +5343,7 @@ function ViewerApp() {
   const scrollZoomAnchorSequenceRef = useRef(0);
   const scrollRestoreTokenRef = useRef(0);
   const textSelectionPointerRef = useRef(null);
+  const selectionTtsRunRef = useRef(0);
 
   const restoreViewerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -6618,6 +6650,11 @@ function ViewerApp() {
   }, [pageCount, pageCountReadyForNavigation, pageIndex, setPageIndexSynced]);
 
   useEffect(() => {
+    selectionTtsRunRef.current += 1;
+    setSelectionTtsLoading(false);
+  }, [selectionMenu]);
+
+  useEffect(() => {
     if (!selectionMenu) return undefined;
     const closeSelectionMenu = event => {
       if (event.target?.closest?.('.viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel')) return;
@@ -7246,22 +7283,46 @@ function ViewerApp() {
   }, [openLookupWindow, selectionMenu?.text, viewerLanguage]);
 
   const speakSelectionText = useCallback(async () => {
+    if (selectionTtsLoading) return;
     const text = normalizeTtsText(selectionMenu?.text);
     if (!text) {
       showViewerToast(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
     }
+    const sourceSelectionMenu = selectionMenu;
+    const runId = selectionTtsRunRef.current + 1;
+    selectionTtsRunRef.current = runId;
+    setSelectionTtsLoading(true);
+    const finishSelectionTtsLoading = () => {
+      if (selectionTtsRunRef.current === runId) setSelectionTtsLoading(false);
+    };
+    const handleSelectionTtsPlaybackStart = () => {
+      if (selectionTtsRunRef.current !== runId) return;
+      setSelectionTtsLoading(false);
+      setSelectionMenu(current => current === sourceSelectionMenu ? null : current);
+      clearNativeSelection();
+    };
     try {
       const settings = normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS));
       if (isRemoteTtsEngine(settings.engine)) {
         window.speechSynthesis?.cancel?.();
-        await speakDetachedRemoteTts(text, settings, showViewerToast, viewerLanguage);
-        setSelectionMenu(null);
-        clearNativeSelection();
+        try {
+          await speakDetachedRemoteTts(
+            text,
+            settings,
+            showViewerToast,
+            viewerLanguage,
+            handleSelectionTtsPlaybackStart,
+            () => selectionTtsRunRef.current === runId,
+          );
+        } finally {
+          finishSelectionTtsLoading();
+        }
         return;
       }
       const synth = window.speechSynthesis;
       if (!synth || typeof window.SpeechSynthesisUtterance !== 'function') {
+        finishSelectionTtsLoading();
         showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
         return;
       }
@@ -7275,17 +7336,19 @@ function ViewerApp() {
       utterance.lang = selectedVoice?.lang || viewerLanguage;
       utterance.rate = settings.rate;
       utterance.volume = 1;
+      utterance.onstart = handleSelectionTtsPlaybackStart;
+      utterance.onend = finishSelectionTtsLoading;
       utterance.onerror = () => {
+        finishSelectionTtsLoading();
         showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
       };
       synth.cancel?.();
       synth.speak(utterance);
-      setSelectionMenu(null);
-      clearNativeSelection();
     } catch {
+      finishSelectionTtsLoading();
       showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
     }
-  }, [clearNativeSelection, selectionMenu?.text, showViewerToast, viewerLanguage]);
+  }, [clearNativeSelection, selectionMenu, selectionTtsLoading, showViewerToast, viewerLanguage]);
 
   const isViewerInteractiveTarget = useCallback(target => {
     const targetName = target?.tagName?.toLowerCase();
@@ -9019,11 +9082,16 @@ function ViewerApp() {
             </div>
             <button
               type="button"
-              className="viewer-selection-tool"
+              className={`viewer-selection-tool${selectionTtsLoading ? ' is-loading' : ''}`}
               title={viewerText('viewer.context.tts_selection', '선택 영역 TTS 읽기')}
+              aria-busy={selectionTtsLoading}
+              disabled={selectionTtsLoading}
               onClick={speakSelectionText}
             >
-              <FaIcon name="play" />
+              <FaIcon
+                name={selectionTtsLoading ? 'spinner' : 'play'}
+                className={selectionTtsLoading ? 'viewer-selection-tts-spinner' : ''}
+              />
               <span>{viewerText('viewer.context.tts_selection_short', 'TTS')}</span>
             </button>
           </div>

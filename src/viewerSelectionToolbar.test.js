@@ -35,8 +35,26 @@ test('선택 툴바는 요청된 텍스트 액션을 제공한다', () => {
     assert.match(viewerSource, /const speakSelectionText = useCallback/);
     assert.match(viewerSource, /function speakDetachedRemoteTts/);
     assert.match(viewerSource, /isRemoteTtsEngine\(settings\.engine\)/);
-    assert.match(viewerSource, /await speakDetachedRemoteTts\(text, settings, showViewerToast\)/);
+    assert.match(viewerSource, /await speakDetachedRemoteTts\([\s\S]*?viewerLanguage,[\s\S]*?handleSelectionTtsPlaybackStart/);
     assert.match(viewerSource, /new window\.SpeechSynthesisUtterance\(text\)/);
+});
+
+test('선택 영역 TTS는 실제 재생 전까지 회전 로딩 아이콘을 표시한다', () => {
+    assert.match(viewerSource, /const \[selectionTtsLoading, setSelectionTtsLoading\] = useState\(false\)/);
+    assert.match(viewerSource, /if \(selectionTtsLoading\) return/);
+    assert.match(viewerSource, /function playDetachedRemoteTtsAudio\([^)]*onPlaybackStart\)/);
+    assert.match(viewerSource, /audio\.onplaying = notifyPlaybackStart/);
+    assert.match(viewerSource, /playPromise\.then\(notifyPlaybackStart\)\.catch\(fail\)/);
+    assert.match(viewerSource, /if \(playbackStarted\) return;[\s\S]*?onPlaybackStart\?\.\(\)/);
+    assert.match(viewerSource, /if \(!playbackStarted && shouldStartPlayback\?\.\(\) === false\) return/);
+    assert.match(viewerSource, /\(\) => selectionTtsRunRef\.current === runId/);
+    assert.match(viewerSource, /utterance\.onstart = handleSelectionTtsPlaybackStart/);
+    assert.match(viewerSource, /utterance\.onend = finishSelectionTtsLoading/);
+    assert.match(viewerSource, /aria-busy=\{selectionTtsLoading\}/);
+    assert.match(viewerSource, /disabled=\{selectionTtsLoading\}/);
+    assert.match(viewerSource, /name=\{selectionTtsLoading \? 'spinner' : 'play'\}/);
+    assert.match(viewerSource, /className=\{selectionTtsLoading \? 'viewer-selection-tts-spinner' : ''\}/);
+    assert.match(viewerCss, /\.viewer-selection-tts-spinner\s*\{[\s\S]*?animation:\s*viewerTtsSpin 0\.9s linear infinite/);
 });
 
 test('하이라이트는 색상을 선택해 저장하고 표시한다', () => {
