@@ -41,6 +41,45 @@ import voiceSelectionIcon from './images/voice_selection.svg';
 import { getCurrentLanguage, setLanguage, translate } from './utils/i18n';
 import './styles/viewer.css';
 
+const VIEWER_DIAGNOSTICS_DELAY_MS = 1500;
+
+function viewerImageSource(image) {
+    const source = image.currentSrc || image.src || '';
+    return source.length > 1000 ? `${source.slice(0, 1000)}...` : source;
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('error', event => {
+        if (!(event.target instanceof HTMLImageElement)) return;
+
+        console.error(`[Viewer] Image failed to load: ${viewerImageSource(event.target)}`);
+    }, true);
+
+    window.setTimeout(() => {
+        const viewer = document.querySelector('.viewer-app');
+        const images = Array.from(document.images);
+        const loadedImages = images.filter(image => image.complete && image.naturalWidth > 0).length;
+        const failedImages = images.filter(image => image.complete && image.naturalWidth === 0).length;
+        const pendingImages = images.length - loadedImages - failedImages;
+        const backgroundColor = element => element
+            ? window.getComputedStyle(element).backgroundColor
+            : null;
+
+        console.info(`[Viewer] Initial visual state: ${JSON.stringify({
+            bodyBackground: backgroundColor(document.body),
+            rootBackground: backgroundColor(document.getElementById('root')),
+            viewerBackground: backgroundColor(viewer),
+            misplacedStyleElements: document.querySelectorAll('body style, #root style').length,
+            images: {
+                total: images.length,
+                loaded: loadedImages,
+                failed: failedImages,
+                pending: pendingImages,
+            },
+        })}`);
+    }, VIEWER_DIAGNOSTICS_DELAY_MS);
+}
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 function viewerText(key, fallback, values) {

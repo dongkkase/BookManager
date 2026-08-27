@@ -523,7 +523,9 @@ export function setupViewerWindowManager(options = {}) {
             title: 'BookManagerViewer',
             icon: getIconPath(),
             autoHideMenuBar: true,
-            backgroundColor: '#111111',
+        backgroundColor: '#111111',
+        transparent: false,
+        opacity: 1,
             webPreferences: {
                 preload: preloadPath,
                 contextIsolation: true,

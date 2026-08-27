@@ -1,3 +1,9 @@
+html,
+body,
+#root {
+    background-color: #101010;
+}
+
 .viewer-app {
   position: relative;
   width: 100vw;
