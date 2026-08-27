@@ -1,3 +1,7 @@
+html > head {
+    display: none !important;
+}
+
 html,
 body,
 #root {

@@ -66,6 +66,9 @@ if (typeof window !== 'undefined') {
             : null;
 
         console.info(`[Viewer] Initial visual state: ${JSON.stringify({
+            headDisplay: backgroundColor(document.head) === null
+                ? null
+                : window.getComputedStyle(document.head).display,
             bodyBackground: backgroundColor(document.body),
             rootBackground: backgroundColor(document.getElementById('root')),
             viewerBackground: backgroundColor(viewer),

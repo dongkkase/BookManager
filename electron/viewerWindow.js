@@ -523,9 +523,9 @@ export function setupViewerWindowManager(options = {}) {
             title: 'BookManagerViewer',
             icon: getIconPath(),
             autoHideMenuBar: true,
-        backgroundColor: '#111111',
-        transparent: false,
-        opacity: 1,
+            backgroundColor: '#111111',
+            transparent: false,
+            opacity: 1,
             webPreferences: {
                 preload: preloadPath,
                 contextIsolation: true,
@@ -585,6 +585,7 @@ export function setupViewerWindowManager(options = {}) {
             if (windowState.isMaximized) {
                 viewerWindow.maximize();
             }
+            console.info(`[ViewerWindow] Ready to show (${context.kind}).`);
             if (!context.miniPlayerActive) viewerWindow.show();
         });
         viewerWindow.webContents.on('did-finish-load', () => {
@@ -596,6 +597,7 @@ export function setupViewerWindowManager(options = {}) {
             sendSession(context, currentSession);
             sendFullscreenState();
             context.pendingSession = null;
+            console.info(`[ViewerWindow] Renderer loaded (${context.kind}, session=${currentSession?.id || 'none'}).`);
         });
         viewerWindow.on('enter-full-screen', sendFullscreenState);
         viewerWindow.on('leave-full-screen', sendFullscreenState);
@@ -642,6 +644,7 @@ export function setupViewerWindowManager(options = {}) {
         const preserveMiniPlayer = options.preserveMiniPlayer === true;
         const preserveCloseRequest = options.preserveCloseRequest === true;
         const wasMiniPlayerActive = context.kind === 'audio' && context.miniPlayerActive;
+        const existingWindow = activeViewerWindow(context);
         setContextSession(context, session, { preserveCloseRequest });
         const window = ensureViewerWindow(context);
         window.setTitle(`BookManagerViewer - ${path.basename(session.filePath)}`);
@@ -650,6 +653,13 @@ export function setupViewerWindowManager(options = {}) {
             return window;
         }
         if (context.kind === 'audio') clearAudioMiniPlayer(context);
+        if (!existingWindow) {
+            window.once('ready-to-show', () => {
+                if (window.isDestroyed() || context.window !== window || context.miniPlayerActive) return;
+                window.focus();
+            });
+            return window;
+        }
         if (window.isMinimized()) window.restore();
         window.show();
         window.focus();
@@ -659,6 +669,7 @@ export function setupViewerWindowManager(options = {}) {
     const openViewer = async filePath => {
         const session = sessions.create(filePath);
         const context = contextForSession(session);
+        console.info(`[ViewerWindow] Opening ${session.type} session ${session.id}: ${session.filePath}`);
         focusContextWindow(context, session);
         sendSession(context, session);
         void recordReadingState(session, { lastReadAt: Date.now() });

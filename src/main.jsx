@@ -6,6 +6,10 @@ import './styles/global.css';
 const root = ReactDOM.createRoot(document.getElementById('root'));
 const isViewerWindow = new URLSearchParams(window.location.search).get('viewer') === '1';
 
+if (isViewerWindow && document.head) {
+  document.head.style.setProperty('display', 'none', 'important');
+}
+
 function renderRoot(Component) {
   const app = import.meta.env.VITE_REACT_STRICT_MODE === 'true'
     ? (

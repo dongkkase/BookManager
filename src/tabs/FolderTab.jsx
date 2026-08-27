@@ -2131,6 +2131,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         }
         if (stat?.isFile) {
           if ((paths?.length || 0) > 1) showToast?.(t('folder.drop.first_file_only'));
+          await new Promise(resolve => window.setTimeout(resolve, 0));
           await openFileInViewer(droppedPath);
           return;
         }

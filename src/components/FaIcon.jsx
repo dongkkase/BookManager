@@ -1,4 +1,6 @@
 import React from 'react';
+import { config as fontAwesomeConfig } from '@fortawesome/fontawesome-svg-core';
+import '@fortawesome/fontawesome-svg-core/styles.css';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faDiscord,
@@ -89,6 +91,8 @@ import {
   faWandMagicSparkles,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
+
+fontAwesomeConfig.autoAddCss = false;
 
 const ICONS = {
   angleDown: faAngleDown,
