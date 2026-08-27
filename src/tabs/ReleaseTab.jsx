@@ -43,6 +43,70 @@ function MarkdownList({ items, onOpenExternal }) {
     );
 }
 
+function ReleaseImage({ image, onOpenExternal }) {
+    const [imageSrc, setImageSrc] = useState('');
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        setImageSrc('');
+        setFailed(false);
+        const fetchImageDataUrl = window.electronAPI?.fetchImageDataUrl;
+        if (typeof fetchImageDataUrl !== 'function') {
+            setFailed(true);
+            return () => {
+                cancelled = true;
+            };
+        }
+        fetchImageDataUrl(image.src)
+            .then(dataUrl => {
+                if (cancelled) return;
+                if (dataUrl) setImageSrc(dataUrl);
+                else setFailed(true);
+            })
+            .catch(() => {
+                if (!cancelled) setFailed(true);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [image.src]);
+
+    if (!imageSrc && !failed) {
+        return <div className="release-image-loading" aria-hidden="true" />;
+    }
+    if (failed) {
+        return (
+            <button
+                type="button"
+                className="release-image-fallback"
+                onClick={() => onOpenExternal(image.src)}
+            >
+                {image.alt || 'Image'}
+            </button>
+        );
+    }
+    return (
+        <button
+            type="button"
+            className="release-image-button"
+            aria-label={image.alt || 'Image'}
+            onClick={() => onOpenExternal(image.src)}
+        >
+            <img
+                className="release-card-image"
+                src={imageSrc}
+                alt={image.alt}
+                width={image.width}
+                height={image.height}
+                loading="lazy"
+                decoding="async"
+                onError={() => setFailed(true)}
+            />
+        </button>
+    );
+}
+
 function MarkdownBody({ markdown, onOpenExternal }) {
     const blocks = useMemo(() => parseReleaseMarkdown(markdown), [markdown]);
 
@@ -63,6 +127,15 @@ function MarkdownBody({ markdown, onOpenExternal }) {
         }
         if (block.type === 'code') {
             return <pre key={key}><code>{block.value}</code></pre>;
+        }
+        if (block.type === 'image') {
+            return (
+                <ReleaseImage
+                    key={key}
+                    image={block}
+                    onOpenExternal={onOpenExternal}
+                />
+            );
         }
         return (
             <p key={key}>

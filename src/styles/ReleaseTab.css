@@ -109,6 +109,52 @@
   cursor: pointer;
 }
 
+.release-image-button {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.release-image-button:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.release-card-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.release-image-loading {
+  width: 100%;
+  height: 54px;
+  margin: 0 0 12px;
+  border-radius: 6px;
+  background: #242424;
+}
+
+.release-image-fallback {
+  display: inline-block;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #60a5fa;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .release-card-body pre {
   overflow-x: auto;
   margin: 0 0 12px;

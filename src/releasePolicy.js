@@ -1,7 +1,105 @@
+const RELEASE_IMAGE_CDN_HOSTS = new Set([
+    'user-images.githubusercontent.com',
+    'private-user-images.githubusercontent.com',
+    'secured-user-images.githubusercontent.com',
+]);
+const MAX_RELEASE_IMAGE_DIMENSION = 4096;
+const RELEASE_HTML_ENTITIES = Object.freeze({
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    ldquo: '“',
+    lsquo: '‘',
+    lt: '<',
+    nbsp: ' ',
+    quot: '"',
+    rdquo: '”',
+    rsquo: '’',
+});
+
+function decodeReleaseHtmlEntities(value = '') {
+    return String(value).replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z][a-z0-9]+);/gi, (entityText, entity) => {
+        if (!entity.startsWith('#')) {
+            return RELEASE_HTML_ENTITIES[entity.toLowerCase()] ?? entityText;
+        }
+        const hexadecimal = entity[1]?.toLowerCase() === 'x';
+        const codePoint = Number.parseInt(entity.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+        if (!Number.isInteger(codePoint) || codePoint < 1 || codePoint > 0x10ffff) return entityText;
+        try {
+            return String.fromCodePoint(codePoint);
+        } catch {
+            return entityText;
+        }
+    });
+}
+
 function timestampOf(release = {}) {
     const value = release.publishedAt || release.published_at || release.date || '';
     const timestamp = Date.parse(value);
     return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function parseHtmlAttributes(source = '') {
+    const attributes = {};
+    const attributePattern = /([a-z][a-z0-9:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+    let match;
+    while ((match = attributePattern.exec(source)) !== null) {
+        const name = match[1].toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(attributes, name)) continue;
+        attributes[name] = decodeReleaseHtmlEntities(match[2] ?? match[3] ?? match[4] ?? '');
+    }
+    return attributes;
+}
+
+function normalizeReleaseImageDimension(value = '') {
+    const source = String(value || '').trim();
+    if (!/^\d+$/.test(source)) return null;
+    const dimension = Number(source);
+    if (!Number.isSafeInteger(dimension) || dimension < 1) return null;
+    return Math.min(dimension, MAX_RELEASE_IMAGE_DIMENSION);
+}
+
+export function normalizeReleaseImageUrl(value = '') {
+    try {
+        const url = new URL(decodeReleaseHtmlEntities(String(value || '').trim()));
+        if (url.protocol !== 'https:' || url.username || url.password || url.port) return '';
+        const hostname = url.hostname.toLowerCase();
+        const isGithubAttachment = hostname === 'github.com'
+            && /^\/user-attachments\/assets\/[a-z0-9-]+\/?$/i.test(url.pathname);
+        const isGithubImageCdn = RELEASE_IMAGE_CDN_HOSTS.has(hostname) && url.pathname !== '/';
+        return isGithubAttachment || isGithubImageCdn ? url.toString() : '';
+    } catch {
+        return '';
+    }
+}
+
+export function parseReleaseImageLine(line = '') {
+    const source = String(line || '').trim();
+    const htmlImage = source.match(/^<img\b([^<>]*)\/?\s*>$/i);
+    if (htmlImage) {
+        const attributes = parseHtmlAttributes(htmlImage[1]);
+        const src = normalizeReleaseImageUrl(attributes.src);
+        if (!src) return null;
+        const width = normalizeReleaseImageDimension(attributes.width);
+        const height = normalizeReleaseImageDimension(attributes.height);
+        return {
+            type: 'image',
+            src,
+            alt: String(attributes.alt || '').slice(0, 500),
+            ...(width ? { width } : {}),
+            ...(height ? { height } : {}),
+        };
+    }
+
+    const markdownImage = source.match(/^!\[([^\]]*)\]\(\s*(https:\/\/[^\s)]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)$/i);
+    if (!markdownImage) return null;
+    const src = normalizeReleaseImageUrl(markdownImage[2]);
+    if (!src) return null;
+    return {
+        type: 'image',
+        src,
+        alt: decodeReleaseHtmlEntities(markdownImage[1]).slice(0, 500),
+    };
 }
 
 export function normalizeReleaseList(releases = []) {
@@ -103,6 +201,14 @@ export function parseReleaseMarkdown(markdown = '') {
         }
         if (inCode) {
             codeLines.push(line);
+            continue;
+        }
+
+        const image = parseReleaseImageLine(line);
+        if (image) {
+            flushParagraph();
+            flushList();
+            blocks.push(image);
             continue;
         }
 
