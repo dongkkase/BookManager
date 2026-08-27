@@ -55,3 +55,12 @@ test('오디오북 진행 슬라이더는 전역 입력 필드 여백과 테두�
     assert.match(rangeRule, /padding:\s*0;/);
     assert.match(rangeRule, /border:\s*0;/);
 });
+
+test('오디오북 진행 위치와 음량은 운영체제 네이티브 손잡이 대신 상태 기반 표시를 사용한다', () => {
+    assert.match(viewerSource, /--audiobook-range-progress/);
+    assert.match(viewerSource, /audiobook-range-fill/);
+    assert.match(viewerSource, /audiobook-range-thumb/);
+    assert.match(viewerSource, /clamp\(volume, 0, 1\) \* 100/);
+    assert.match(viewerStyles, /\.audiobook-range-thumb\s*\{[\s\S]*?left:\s*var\(--audiobook-range-progress\)/);
+    assert.match(viewerStyles, /\.audiobook-range-control > input\[type="range"\]\s*\{[\s\S]*?opacity:\s*0/);
+});

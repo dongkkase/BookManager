@@ -784,27 +784,35 @@ function AudiobookViewer({
             <footer className="audiobook-player">
                 <div className="audiobook-timeline">
                     <span>{formatTime(currentTime)}</span>
-                    <input
-                        type="range"
-                        min="0"
-                        max={Math.max(1, effectiveDuration)}
-                        step="0.1"
-                        value={clamp(currentTime, 0, Math.max(1, effectiveDuration))}
-                        style={{ '--audiobook-progress': `${progress * 100}%` }}
-                        aria-label={t('duration')}
-                        onPointerDown={() => setScrubbing(true)}
-                        onChange={event => setCurrentTime(Number(event.target.value))}
-                        onPointerUp={event => {
-                            setScrubbing(false);
-                            seekTo(Number(event.currentTarget.value));
-                        }}
-                        onPointerCancel={() => {
-                            restoreTimeRef.current = Number(audioRef.current?.currentTime) || 0;
-                            setScrubbing(false);
-                            setCurrentTime(restoreTimeRef.current);
-                        }}
-                        onKeyUp={event => seekTo(Number(event.currentTarget.value))}
-                    />
+                    <div
+                        className="audiobook-range-control"
+                        style={{ '--audiobook-range-progress': `${progress * 100}%` }}
+                    >
+                        <span className="audiobook-range-track" aria-hidden="true">
+                            <span className="audiobook-range-fill" />
+                            <span className="audiobook-range-thumb" />
+                        </span>
+                        <input
+                            type="range"
+                            min="0"
+                            max={Math.max(1, effectiveDuration)}
+                            step="0.1"
+                            value={clamp(currentTime, 0, Math.max(1, effectiveDuration))}
+                            aria-label={t('duration')}
+                            onPointerDown={() => setScrubbing(true)}
+                            onChange={event => setCurrentTime(Number(event.target.value))}
+                            onPointerUp={event => {
+                                setScrubbing(false);
+                                seekTo(Number(event.currentTarget.value));
+                            }}
+                            onPointerCancel={() => {
+                                restoreTimeRef.current = Number(audioRef.current?.currentTime) || 0;
+                                setScrubbing(false);
+                                setCurrentTime(restoreTimeRef.current);
+                            }}
+                            onKeyUp={event => seekTo(Number(event.currentTarget.value))}
+                        />
+                    </div>
                     <span>{formatTime(effectiveDuration)}</span>
                 </div>
 
@@ -818,15 +826,24 @@ function AudiobookViewer({
                         >
                             <FaIcon name={muted || volume === 0 ? 'volumeMute' : 'volumeHigh'} size={16} />
                         </button>
-                        <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            value={volume}
-                            aria-label={t('volume')}
-                            onChange={event => setVolume(clamp(event.target.value, 0, 1))}
-                        />
+                        <div
+                            className="audiobook-range-control"
+                            style={{ '--audiobook-range-progress': `${clamp(volume, 0, 1) * 100}%` }}
+                        >
+                            <span className="audiobook-range-track" aria-hidden="true">
+                                <span className="audiobook-range-fill" />
+                                <span className="audiobook-range-thumb" />
+                            </span>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={volume}
+                                aria-label={t('volume')}
+                                onChange={event => setVolume(clamp(event.target.value, 0, 1))}
+                            />
+                        </div>
                     </div>
 
                     <div className="audiobook-primary-controls">
