@@ -2798,7 +2798,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         !event.defaultPrevented
         && !event.repeat
         && hasPrimaryModifier(event, runtimePlatform)
-        && isShortcutKey(event, 'g')
+        && isShortcutKey(event, 'l')
         && canFocusGotoPath()
       ) {
         event.preventDefault();
@@ -3434,7 +3434,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onChange={setGotoPathDraft}
             onNavigate={handlePathNavigation}
             onOpenChange={setShowGotoPathHistory}
-            shortcutLabel={formatPrimaryShortcut('G', runtimePlatform)}
+            shortcutLabel={formatPrimaryShortcut('L', runtimePlatform)}
             t={t}
           />
 

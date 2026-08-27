@@ -18,15 +18,16 @@ test('경로 이동 입력은 리스트 툴바와 파일 목록 사이에 항상
     assert.match(folderCssSource, /\.folder-goto-path-bar\s*\{/);
 });
 
-test('Ctrl 또는 Cmd+G는 일반 입력 단축키 필터 전에 경로 입력으로 포커스를 옮긴다', () => {
-    const shortcutIndex = folderTabSource.indexOf("isShortcutKey(event, 'g')");
+test('Ctrl 또는 Cmd+L은 일반 입력 단축키 필터 전에 경로 입력으로 포커스를 옮긴다', () => {
+    const shortcutIndex = folderTabSource.indexOf("isShortcutKey(event, 'l')");
     const globalShortcutGuardIndex = folderTabSource.indexOf('if (!shouldHandleGlobalShortcut(event)) return;', shortcutIndex);
 
     assert.ok(shortcutIndex >= 0);
     assert.ok(globalShortcutGuardIndex > shortcutIndex);
     assert.match(folderTabSource, /gotoPathInputRef\.current\?\.focus\(\)/);
     assert.match(folderTabSource, /gotoPathInputRef\.current\?\.select\(\)/);
-    assert.match(folderTabSource, /formatPrimaryShortcut\('G', runtimePlatform\)/);
+    assert.match(folderTabSource, /formatPrimaryShortcut\('L', runtimePlatform\)/);
+    assert.doesNotMatch(folderTabSource, /isShortcutKey\(event, 'g'\)/);
     assert.match(folderTabSource, /&& canFocusGotoPath\(\)/);
     assert.match(folderTabSource, /document\.querySelector\('\.modal-overlay'\)/);
     assert.match(folderTabSource, /document\.querySelector\('\.app-lock-screen'\)/);

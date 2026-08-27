@@ -73,7 +73,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['레이아웃 이름 저장', "t('dlg_save_lay_msg')"],
         ['삭제할 레이아웃 선택', 'id="layout-delete-select"'],
         ['경로 이동 입력 영역', '<FolderPathBar'],
-        ['경로 이동 단축키', "isShortcutKey(event, 'g')"],
+        ['경로 이동 단축키', "isShortcutKey(event, 'l')"],
         ['보이는 항목 표지 지연 로드 큐', 'handleVisibleFilesChange'],
         ['표지 지연 로드 동시성 제한', 'COVER_PREVIEW_CONCURRENCY'],
     ]);
