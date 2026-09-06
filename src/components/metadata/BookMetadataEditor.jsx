@@ -9,12 +9,15 @@ function sectionRef(sectionRefs, id) {
 function BookMetadataEditor({
     combinedTagOptions,
     fields,
+    isTextMetadata = false,
+    originalColumnLabel,
     renderCombinedGenreTags,
     renderCoverField,
     renderFieldRows,
     sectionLabel,
     sectionRefs,
     sectionTabs,
+    storageNotice,
     t,
 }) {
     const tabById = Object.fromEntries(sectionTabs.map(section => [section.id, section]));
@@ -22,9 +25,10 @@ function BookMetadataEditor({
     return (
         <div className="meta-section-stack">
             <section className="meta-section-box" ref={sectionRef(sectionRefs, 'basic')}>
-                <div className="meta-section-title">{sectionLabel(tabById.basic)}</div>
+                <div className="meta-section-title">{sectionLabel(tabById.basic)}{isTextMetadata ? ' · TXT' : ''}</div>
+                {storageNotice && <p className="meta-storage-notice">{storageNotice}</p>}
                 {renderCoverField?.()}
-                <div className="meta-column-heads"><span /> <b>{t('t3_col_orig')}</b><span /> <b>{t('t3_col_res')}</b></div>
+                <div className="meta-column-heads"><span /> <b>{originalColumnLabel || t('t3_col_orig')}</b><span /> <b>{t('t3_col_res')}</b></div>
                 {renderFieldRows(fields.basic)}
             </section>
 

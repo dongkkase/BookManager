@@ -125,6 +125,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
     ).trim();
     const normalizedApiKeys = {
         ...apiKeys,
+        yes24: String(apiKeys.yes24 || '').trim(),
         aladin: String(apiKeys.aladin || '').trim(),
         vine: String(apiKeys.vine || '').trim(),
         google: String(apiKeys.google || '').trim(),

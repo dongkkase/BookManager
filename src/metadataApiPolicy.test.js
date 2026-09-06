@@ -18,6 +18,10 @@ const ipcSource = readFileSync(new URL('../electron/ipcHandlers.js', import.meta
 const preloadSource = readFileSync(new URL('../electron/preload.js', import.meta.url), 'utf8');
 
 test('API source별 필수 키 요구 여부를 판정한다', () => {
+    assert.equal(requiredApiKeyForSource('YES24'), 'yes24');
+    assert.equal(apiSourceHasRequiredKey('YES24', {}), false);
+    assert.equal(apiSourceHasRequiredKey('YES24', { yes24: '  ' }), false);
+    assert.equal(apiSourceHasRequiredKey('YES24', { yes24: 'yk_live_test' }), true);
   assert.equal(requiredApiKeyForSource('알라딘'), 'aladin');
   assert.equal(requiredApiKeyForSource('Google Books'), 'google');
   assert.equal(requiredApiKeyForSource('Vine'), 'vine');
@@ -32,6 +36,7 @@ test('API source별 필수 키 요구 여부를 판정한다', () => {
 test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 도서를 분리한다', () => {
   assert.deepEqual(metadataApiSourcesForBookType('comic').map(source => source.value), [
     '리디북스',
+    'YES24',
     '알라딘',
     'Google Books',
     'Anilist',
@@ -39,18 +44,21 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('book').map(source => source.value), [
     '리디북스',
+    'YES24',
     '알라딘',
     'Google Books',
     'Amazon',
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('pdf').map(source => source.value), [
     '리디북스',
+    'YES24',
     '알라딘',
     'Google Books',
     'Amazon',
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('audio').map(source => source.value), [
     '리디북스',
+    'YES24',
     '알라딘',
     'Google Books',
     'Amazon',

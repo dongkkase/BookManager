@@ -37,6 +37,12 @@ import {
   extractPdfCoverImage,
   writePdfMetadata,
 } from '../pdfMetadata.js';
+import {
+    getTextContentHash,
+    isTextMetadataPath,
+    resolveTextMetadata,
+    saveTextMetadata,
+} from '../textMetadataStore.js';
 
 const ARCHIVE_EXTS = new Set(['.zip', '.cbz', '.cbr', '.7z', '.rar']);
 const DOCUMENT_EXTS = new Set([...BOOK_EXTENSIONS, ...AUDIO_EXTENSIONS]);
@@ -1152,6 +1158,15 @@ async function loadAudioCoverOverrideAsset(filePath, options = {}) {
 
 export async function loadMetadataCoverAsset(filePath, options = {}) {
   if (!filePath) return null;
+    if (isTextMetadataPath(filePath)) {
+        const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
+        try {
+            const stored = await resolveTextMetadata(filePath, { libraryDb });
+            return stored?.coverPath ? await loadImageAssetFromFile(stored.coverPath, 'database') : null;
+        } finally {
+            if (shouldClose) await libraryDb.close();
+        }
+    }
   if (isAudioPath(filePath)) {
     if (options.ignoreAudioCoverOverride !== true) {
       const overrideAsset = await loadAudioCoverOverrideAsset(filePath, options);
@@ -1839,6 +1854,9 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
 
       try {
         const bookType = resolveBookType({ path: filePath });
+        const isText = isTextMetadataPath(filePath);
+        const textMetadata = isText ? await resolveTextMetadata(filePath, { libraryDb }) : null;
+        const textContentHash = isText ? textMetadata?.contentHash || await getTextContentHash(filePath) : '';
         const epubAnalysis = isEpub(filePath) ? await analyzeEpubFile(filePath, { includeCover: includeCovers }) : null;
         const pdfAnalysis = isPdf(filePath) ? await analyzePdfDocument(filePath, { includeCover: includeCovers }) : null;
         const audioAnalysis = isAudioPath(filePath)
@@ -1853,13 +1871,14 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         let metadata = options.includeInferredMetadata === false
           ? {}
           : inferMetadataFromFilename(filePath, pageCount, { bookType, languageISO: defaultLanguageISO });
+        const textInferredMetadata = isText ? { ...metadata } : undefined;
         let cachedMetadataRecord = null;
 
         if (audioAnalysis) {
           metadata = { ...metadata, ...metadataFromAudioAnalysis(audioAnalysis) };
         }
 
-        if (libraryDb && options.includeCachedMetadata !== false) {
+        if (!isText && libraryDb && options.includeCachedMetadata !== false) {
           cachedMetadataRecord = await libraryDb.getFileInfo(filePath).catch(() => null);
           if (bookType !== 'audio' || Number(cachedMetadataRecord?.metadata_override) === 1) {
             metadata = {
@@ -1867,6 +1886,14 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
               ...metadataFromLibraryRecord(cachedMetadataRecord, { preserveEmpty: bookType === 'audio' }),
             };
           }
+        }
+        if (textMetadata) {
+            cachedMetadataRecord = textMetadata.record;
+            metadata = {
+                ...metadata,
+                ...metadataFromLibraryRecord(textMetadata.record, { preserveEmpty: true }),
+                ...textMetadata.metadata,
+            };
         }
         const audioCoverOverride = bookType === 'audio'
           && await isUsableImageFile(cachedMetadataRecord?.cover_override_path || '');
@@ -1885,6 +1912,9 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         }
 
         let coverDataUrl = epubAnalysis?.coverDataUrl || '';
+        if (includeCovers && textMetadata?.coverPath) {
+            coverDataUrl = await loadMetadataImageFile(textMetadata.coverPath);
+        }
         if (!coverDataUrl && pdfAnalysis?.cover?.buffer) {
           coverDataUrl = imageDataUrl(pdfAnalysis.cover.buffer, pdfAnalysis.cover.imageName);
         }
@@ -1931,6 +1961,13 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           coverDataUrl,
           coverOverridePath: cachedMetadataRecord?.cover_override_path || '',
           audioCoverOverride,
+          ...(isText ? {
+              metadataStorage: 'database',
+              hasTextMetadata: Boolean(textMetadata),
+              textInferredMetadata,
+              textContentHash,
+              textCoverPath: textMetadata?.coverPath || '',
+          } : {}),
           metadataWriteSupported: writeSupport.supported,
           metadataWriteMessage: writeSupport.message,
           metadata,
@@ -2007,6 +2044,9 @@ export async function loadLatestSeriesMetadata(criteria = {}, options = {}) {
 
 export function metadataWriteSupport(filePath, lang = 'ko') {
   const ext = path.extname(filePath).toLowerCase();
+    if (isTextMetadataPath(filePath)) {
+        return { supported: true, message: '', storage: 'database' };
+    }
   if (isAudioPath(filePath)) {
     return isAudioMetadataWriteSupported(filePath)
       ? { supported: true, message: '' }
@@ -2451,6 +2491,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
 
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], successPaths: [], skip: [], error: [] };
+    const textMetadataUpdates = [];
   let cancelled = false;
 
   for (let index = 0; index < targets.length; index += 1) {
@@ -2473,6 +2514,29 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
     );
     const sourceHoldingPath = `${filePath}.bookmanager.metadata.${token}.old`;
     try {
+        if (isTextMetadataPath(filePath)) {
+            const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
+            try {
+                const saved = await saveTextMetadata(filePath, {
+                    libraryDb,
+                    metadata: item.metadata || {},
+                    record: metadataToLibraryRecord(item),
+                    coverChange: item.txtCoverChange,
+                    thumbnailDir: options.thumbnailDir,
+                    expectedContentHash: item.textContentHash,
+                });
+                textMetadataUpdates.push({
+                    filepath: filePath,
+                    textContentHash: saved.contentHash,
+                    textCoverPath: saved.coverPath,
+                    coverOverridePath: saved.coverPath,
+                });
+                recordMetadataSaveSuccess(stats, item, filePath);
+                continue;
+            } finally {
+                if (shouldClose) await libraryDb.close();
+            }
+        }
       if (isAudioPath(filePath)) {
         const support = metadataWriteSupport(filePath, options.lang);
         if (!support.supported) {
@@ -2582,5 +2646,5 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
   if (!cancelled) {
     onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
   }
-  return { stats, cancelled };
+  return { stats, cancelled, textMetadataUpdates };
 }

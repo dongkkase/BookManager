@@ -89,7 +89,8 @@
         "from": "src",
         "to": "src",
         "filter": [
-          "folderTagFilter.js"
+          "folderTagFilter.js",
+          "missingVolumesPolicy.js"
         ]
       },
       "version.json"

@@ -285,6 +285,7 @@ function mimeTypeForThumbnail(filePath) {
   if (ext === '.png') return 'image/png';
   if (ext === '.webp') return 'image/webp';
   if (ext === '.gif') return 'image/gif';
+    if (ext === '.bmp') return 'image/bmp';
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
   return 'application/octet-stream';
 }
@@ -350,6 +351,8 @@ async function initializeApp() {
     }
     const cacheDir = requestUrl.hostname === 'api-cover'
       ? resolveApiCoverCacheDir(getExecutableDir())
+        : requestUrl.hostname === 'text-cover'
+            ? path.join(path.dirname(resolveLibraryDbPath(getExecutableDir())), 'text-thumbnails')
       : resolveThumbnailDir(getExecutableDir());
     const thumbnailPath = path.join(cacheDir, requestedName);
     try {

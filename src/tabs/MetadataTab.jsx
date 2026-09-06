@@ -87,6 +87,16 @@ import {
   normalizeMetadataFilePath,
   successfulAudioCoverTargets,
 } from '../audiobookCoverPolicy';
+import {
+    applySuccessfulTxtMetadataSave,
+    applyTxtSeriesCover,
+    isTxtMetadataItem,
+    resetTxtMetadataDraft,
+    shouldAutoUseTxtSearchCover,
+    successfulTxtMetadataTargets,
+    txtMetadataCoverForSeries,
+    withTxtCoverChange,
+} from '../txtMetadataPolicy';
 
 const DEFAULT_GENRE_OPTIONS = [
   '액션', '모험', '코미디', '드라마', '판타지',
@@ -470,15 +480,19 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const filePath = activeItem?.filepath;
+    if (activeItem?.txtCoverChange?.type === 'reset') return undefined;
     if (!filePath || activeItem.coverDataUrl || coverLoadRequestsRef.current.has(filePath)) return undefined;
     const loadMetadataCover = window.electronAPI?.loadMetadataCover;
     if (!loadMetadataCover) return undefined;
 
     let cancelled = false;
     coverLoadRequestsRef.current.add(filePath);
-    loadMetadataCover(filePath, {
-      ignoreAudioCoverOverride: activeItem.audioCoverChange?.type === 'reset',
-    })
+    const coverRequest = activeItem.txtCoverChange?.type === 'file'
+        ? window.electronAPI.loadMetadataImageFile(activeItem.txtCoverChange.filePath)
+        : loadMetadataCover(filePath, {
+            ignoreAudioCoverOverride: activeItem.audioCoverChange?.type === 'reset',
+        });
+    coverRequest
       .then(coverDataUrl => {
         if (cancelled || !coverDataUrl) return;
         const coverLoadedAt = Date.now();
@@ -490,8 +504,9 @@ function MetadataTab({ config, t, showToast }) {
 
     return () => {
       cancelled = true;
+        if (isTxtMetadataItem(activeItem)) coverLoadRequestsRef.current.delete(filePath);
     };
-  }, [activeItem?.audioCoverChange?.type, activeItem?.coverDataUrl, activeItem?.filepath]);
+  }, [activeItem?.audioCoverChange?.type, activeItem?.coverDataUrl, activeItem?.filepath, activeItem?.textCoverRevision, activeItem?.txtCoverChange]);
 
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
   const visibleTreeNodes = useMemo(
@@ -511,6 +526,7 @@ function MetadataTab({ config, t, showToast }) {
   const activeMetadataWriteSupported = activeItem?.metadataWriteSupported !== false;
   const activeMetadataWriteMessage = activeItem?.metadataWriteMessage || '';
   const activeIsEpub = isEpubFilePath(activeItem?.filepath || activeItem?.path || activeItem?.name);
+    const activeIsTxt = isTxtMetadataItem(activeItem);
   const activeEpubImageState = activeItem?.filepath ? epubImagesByFilePath[activeItem.filepath] || {} : {};
   const activeEpubImages = activeEpubImageState.images || [];
   const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
@@ -713,7 +729,9 @@ function MetadataTab({ config, t, showToast }) {
         ...item,
         metadata: {
           ...(item.metadata || {}),
-          LanguageISO: item.metadata?.LanguageISO || defaultLanguageISO,
+          LanguageISO: isTxtMetadataItem(item)
+            ? item.metadata?.LanguageISO ?? defaultLanguageISO
+            : item.metadata?.LanguageISO || defaultLanguageISO,
         },
       }));
       setFileList(prev => {
@@ -760,7 +778,7 @@ function MetadataTab({ config, t, showToast }) {
       name: 'Books and audiobooks',
       extensions: [
         'zip', 'cbz', 'cbr', '7z', 'rar',
-        'epub', 'pdf',
+        'epub', 'pdf', 'txt',
         '3gp', 'aac', 'aif', 'aiff', 'amr', 'caf', 'flac', 'm4a', 'm4b',
         'mp3', 'oga', 'ogg', 'opus', 'wav', 'wave', 'webm',
       ],
@@ -910,20 +928,34 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   const handleApplyBatchToSeries = () => {
+    if (!activeItem || isWorking || saveLockRef.current) return;
+    const hasTxtCover = Boolean(txtMetadataCoverForSeries(activeItem));
     const hasBatchData = currentMetaFields.some(field => {
       const value = batchMetadata[field.id];
       return applyEmpty || (value !== undefined && value !== null && String(value).trim() !== '');
     });
-    if (!hasBatchData) {
+    if (!hasBatchData && !hasTxtCover) {
       showToast?.(t('t3_msg_no_data_copy'));
       return;
     }
-    setFileList(prev => prev.map(item => {
-      if (!activeItem || item.group !== activeItem.group || !isSameActiveBookType(item)) return item;
-      const copiedMetadata = applyBatchMetadataFields(item.metadata || {}, batchMetadata, currentMetaFieldIds, applyEmpty);
-      const inferred = inferTitleParts(item);
-      return { ...item, metadata: applySeriesAutoMetadata(copiedMetadata, inferred) };
-    }));
+    if (hasTxtCover) {
+        for (const item of fileList) {
+            if (item.id !== activeItem.id && item.group === activeItem.group && isTxtMetadataItem(item)) {
+                coverLoadRequestsRef.current.delete(item.filepath);
+            }
+        }
+    }
+    setFileList(prev => {
+        const items = hasBatchData ? prev.map(item => {
+            if (item.group !== activeItem.group || !isSameActiveBookType(item)) return item;
+            const copiedMetadata = applyBatchMetadataFields(item.metadata || {}, batchMetadata, currentMetaFieldIds, applyEmpty);
+            const inferred = inferTitleParts(item);
+            return { ...item, metadata: applySeriesAutoMetadata(copiedMetadata, inferred) };
+        }) : prev;
+        return hasTxtCover
+            ? trimMetadataCoverCache(applyTxtSeriesCover(items, activeItem), activeItem.filepath)
+            : items;
+    });
     showToast?.({ key: 't3_msg_applied_series_all' });
   };
 
@@ -947,10 +979,17 @@ function MetadataTab({ config, t, showToast }) {
       language,
     });
     if (response !== 'yes') return;
-    setFileList(prev => prev.map(item => item.group === activeItem.group
-      && isSameActiveBookType(item)
-      ? { ...item, metadata: { ...(item.originalMetadata || {}) } }
-      : item));
+    for (const item of fileList) {
+        if (item.group === activeItem.group && isTxtMetadataItem(item)) {
+            coverLoadRequestsRef.current.delete(item.filepath);
+        }
+    }
+    setFileList(prev => prev.map(item => {
+        if (item.group !== activeItem.group || !isSameActiveBookType(item)) return item;
+        return isTxtMetadataItem(item)
+            ? resetTxtMetadataDraft(item)
+            : { ...item, metadata: { ...(item.originalMetadata || {}) } };
+    }));
     showToast?.({ key: 't3_msg_reset_series_done' });
   };
 
@@ -1099,7 +1138,8 @@ function MetadataTab({ config, t, showToast }) {
     await fetchMetadataResults({ source: apiSource, query, page });
   };
 
-  const handleSelectApiResult = (result) => {
+  const handleSelectApiResult = async (result) => {
+    if (isWorking || saveLockRef.current) return;
     applyMetadataToBatch(metadataFromApiResult(result, {
       bookType: activeBookType,
       query: apiSearch.query || searchQuery,
@@ -1107,6 +1147,16 @@ function MetadataTab({ config, t, showToast }) {
     setApiSearch(prev => ({ ...prev, open: false }));
     setStatusMessage(text('t3_msg_loaded_search_result_batch', '검색 결과를 일괄 편집창에 불러왔습니다.'));
     showToast?.({ key: 't3_msg_applied_series_tag' });
+    if (shouldAutoUseTxtSearchCover(activeItem) && apiResultCoverUrl(result)) {
+        saveLockRef.current = true;
+        setIsWorking(true);
+        try {
+            await handleUseApiCoverResult(result, { autoForEmptyTxt: true });
+        } finally {
+            saveLockRef.current = false;
+            setIsWorking(false);
+        }
+    }
   };
 
   const updateActiveEpubCoverChange = useCallback((coverChange, coverDataUrl = '') => {
@@ -1183,6 +1233,48 @@ function MetadataTab({ config, t, showToast }) {
     updateActiveEpubCoverChange(null, '');
     setStatusMessage(text('meta_epub_cover_reset_done', 'EPUB 표지 변경을 취소했습니다.'));
   };
+
+    const updateActiveTxtCoverChange = useCallback((coverChange, coverDataUrl = '', { onlyIfEmpty = false } = {}) => {
+        if (!activeItem || !activeIsTxt) return;
+        coverLoadRequestsRef.current.delete(activeItem.filepath);
+        setFileList(prev => trimMetadataCoverCache(prev.map(item => {
+            if (item.id !== activeItem.id) return item;
+            if (onlyIfEmpty && (
+                !shouldAutoUseTxtSearchCover(item)
+                || item.textCoverRevision !== activeItem.textCoverRevision
+            )) return item;
+            return withTxtCoverChange(item, coverChange, coverDataUrl);
+        }), activeItem.filepath));
+    }, [activeIsTxt, activeItem]);
+
+    const handleSelectLocalTxtCover = async () => {
+        if (!activeItem || !activeIsTxt) return;
+        try {
+            const filePath = await window.electronAPI?.selectFile?.(
+                text('txt_cover_choose', '표지 이미지 선택'),
+                [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'] }],
+            );
+            if (!filePath) return;
+            const coverDataUrl = await window.electronAPI?.loadMetadataImageFile?.(filePath);
+            if (!coverDataUrl) throw new Error(text('audio_cover_file_empty', '선택한 이미지를 표지로 사용할 수 없습니다.'));
+            updateActiveTxtCoverChange({ type: 'file', filePath, label: fileNameFromPath(filePath) }, coverDataUrl);
+            setStatusMessage(text('txt_cover_replace_pending', '저장하면 TXT 표지가 교체됩니다.'));
+        } catch (error) {
+            const message = error.message || text('txt_cover_failed', 'TXT 표지를 불러오지 못했습니다.');
+            setStatusMessage(message);
+            showToast?.(message);
+        }
+    };
+
+    const handleRemoveTxtCover = () => {
+        updateActiveTxtCoverChange({ type: 'reset' });
+        setStatusMessage(text('txt_cover_remove_pending', '저장하면 TXT 표지가 삭제됩니다.'));
+    };
+
+    const handleCancelTxtCoverChange = () => {
+        updateActiveTxtCoverChange(null);
+        setStatusMessage(text('txt_cover_cancelled', 'TXT 표지 변경을 취소했습니다.'));
+    };
 
   const updateActiveAudioCoverChange = useCallback((coverChange, coverDataUrl = '') => {
     if (!activeItem || activeBookType !== 'audio') return;
@@ -1276,8 +1368,8 @@ function MetadataTab({ config, t, showToast }) {
     }
   };
 
-  const handleUseApiCoverResult = async (result) => {
-    if (!activeItem || activeBookType !== 'book' || !activeIsEpub) return;
+  const handleUseApiCoverResult = async (result, { autoForEmptyTxt = false } = {}) => {
+    if (!activeItem || activeBookType !== 'book' || (!activeIsEpub && !activeIsTxt)) return;
     const coverUrl = apiResultCoverUrl(result);
     if (!coverUrl) {
       setStatusMessage(text('meta_epub_cover_api_empty', '선택한 검색 결과에 사용할 표지가 없습니다.'));
@@ -1288,13 +1380,16 @@ function MetadataTab({ config, t, showToast }) {
       setStatusMessage(text('meta_epub_cover_api_loading', '검색 API 표지를 저장하는 중...'));
       const cached = await window.electronAPI?.cacheMetadataRemoteCover?.(originalUrl);
       if (!cached?.filePath) throw new Error(text('meta_epub_cover_api_failed', '검색 API 표지를 로컬 캐시에 저장하지 못했습니다.'));
-      updateActiveEpubCoverChange({
+      const updateCoverChange = activeIsTxt ? updateActiveTxtCoverChange : updateActiveEpubCoverChange;
+      updateCoverChange({
         type: 'file',
         filePath: cached.filePath,
         label: result?.title || result?.metadata?.Title || fileNameFromPath(cached.filePath),
-      }, cached.coverCacheUrl || coverUrl);
+      }, cached.coverCacheUrl || coverUrl, { onlyIfEmpty: autoForEmptyTxt });
       setApiSearch(prev => ({ ...prev, open: false }));
-      setStatusMessage(text('meta_epub_cover_api_done', '검색 API 표지를 새 EPUB 표지로 선택했습니다.'));
+      setStatusMessage(activeIsTxt
+        ? text('txt_cover_replace_pending', '저장하면 TXT 표지가 교체됩니다.')
+        : text('meta_epub_cover_api_done', '검색 API 표지를 새 EPUB 표지로 선택했습니다.'));
     } catch (error) {
       const message = error.message || text('meta_epub_cover_api_failed', '검색 API 표지를 로컬 캐시에 저장하지 못했습니다.');
       setStatusMessage(message);
@@ -1498,8 +1593,12 @@ function MetadataTab({ config, t, showToast }) {
       pageCount: item.pageCount || '',
       metadata: pickMetadataFields(item.metadata || {}, fieldIds, extraFieldIds),
     };
-    if (itemBookType === 'book' && item.epubCoverChange) {
+    if (itemBookType === 'book' && isEpubFilePath(payload.filepath) && item.epubCoverChange) {
       payload.epubCoverChange = item.epubCoverChange;
+    }
+    if (isTxtMetadataItem(item)) {
+        payload.textContentHash = item.textContentHash || '';
+        if (item.txtCoverChange) payload.txtCoverChange = item.txtCoverChange;
     }
     if (itemBookType === 'audio' && item.audioCoverChange) {
       payload.audioCoverChange = item.audioCoverChange;
@@ -1545,7 +1644,7 @@ function MetadataTab({ config, t, showToast }) {
         lang: config?.language || config?.lang || 'ko',
       });
       setLastResult(result);
-      if (result.cancelled) {
+      if (result.cancelled && !result.stats?.success?.length) {
         setStatusMessage(t('msg_cancelled'));
         return;
       }
@@ -1559,6 +1658,25 @@ function MetadataTab({ config, t, showToast }) {
             paths: result.stats?.successPaths || [],
           },
         }));
+        const successfulTxtTargets = successfulTxtMetadataTargets(saveTargets, result.stats?.successPaths);
+        if (successfulTxtTargets.length > 0) {
+            const targetsByPath = new Map(successfulTxtTargets.map(item => [
+                normalizeMetadataFilePath(item.filepath || item.path), item,
+            ]));
+            const updatesByPath = new Map((result.textMetadataUpdates || []).map(item => [
+                normalizeMetadataFilePath(item.filepath || item.path), item,
+            ]));
+            for (const item of successfulTxtTargets) {
+                coverLoadRequestsRef.current.delete(item.filepath || item.path);
+            }
+            setFileList(prev => prev.map(item => {
+                const key = normalizeMetadataFilePath(item.filepath || item.path);
+                const savedTarget = targetsByPath.get(key);
+                return savedTarget
+                    ? applySuccessfulTxtMetadataSave(item, savedTarget, updatesByPath.get(key))
+                    : item;
+            }));
+        }
         const successfulAudioTargets = successfulAudioCoverTargets(
           saveTargets,
           result.stats?.successPaths,
@@ -1593,9 +1711,11 @@ function MetadataTab({ config, t, showToast }) {
         ? saveTargets
         : (all && success === saveTargets.length && skip === 0 && errors === 0 ? saveTargets : []);
       rememberSeriesGroupOptions(savedGroupTargets.map(item => item.metadata?.SeriesGroup));
-      const message = all
-        ? t('t3_msg_save_all_done', { success_count: success, fail_count: errors })
-        : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));
+      const message = result.cancelled
+        ? t('msg_cancelled')
+        : all
+          ? t('t3_msg_save_all_done', { success_count: success, fail_count: errors })
+          : (errors ? `${t('msg_failed')}: ${result.stats.error.join(' / ')}` : t('t3_msg_save_single_done'));
       setStatusMessage(message);
       showToast?.(message);
       if (shouldPlayCompletionSound(config, completed, result.cancelled)) {
@@ -2037,6 +2157,46 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   const renderAllSections = () => {
+    const renderTxtCoverField = () => {
+        if (!activeIsTxt || !activeItem) return null;
+        const pendingReset = activeItem.txtCoverChange?.type === 'reset';
+        const pendingCoverName = activeItem.txtCoverChange?.label
+            || fileNameFromPath(activeItem.txtCoverChange?.filePath);
+        const hasCover = Boolean(activeItem.coverDataUrl || activeItem.textCoverPath || activeItem.coverOverridePath);
+        return (
+            <div className="meta-form-row meta-epub-cover-row">
+                <div className="meta-col-label">{text('txt_cover_label', '표지')}</div>
+                <div className="meta-epub-cover-field">
+                    <div className="meta-epub-cover-thumb-box">
+                        {activeItem.coverDataUrl ? <img src={activeItem.coverDataUrl} alt="" /> : <span>{text('txt_cover_empty', '등록된 표지가 없습니다.')}</span>}
+                    </div>
+                    <div className="meta-epub-cover-tools">
+                        <div className="meta-epub-cover-buttons">
+                            <button type="button" onClick={handleSelectLocalTxtCover} disabled={isWorking}>
+                                <FaIcon name="fileCirclePlus" size={11} />
+                                <span>{text('txt_cover_choose', '표지 이미지 선택')}</span>
+                            </button>
+                            <button type="button" onClick={handleRemoveTxtCover} disabled={isWorking || pendingReset || !hasCover}>
+                                <span>{text('txt_cover_remove', '표지 삭제')}</span>
+                            </button>
+                            <button type="button" onClick={handleCancelTxtCoverChange} disabled={isWorking || !activeItem.txtCoverChange}>
+                                <FaIcon name="arrowRotateLeft" size={11} />
+                                <span>{text('txt_cover_cancel', '변경 취소')}</span>
+                            </button>
+                        </div>
+                        <div className="meta-epub-cover-status">
+                            {pendingReset
+                                ? text('txt_cover_remove_pending', '저장하면 TXT 표지가 삭제됩니다.')
+                                : activeItem.txtCoverChange
+                                    ? `${text('txt_cover_replace_pending', '저장하면 TXT 표지가 교체됩니다.')} ${pendingCoverName}`
+                                    : hasCover ? text('txt_cover_saved', '저장된 TXT 표지를 사용합니다.') : text('txt_cover_empty', '등록된 표지가 없습니다.')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const renderEpubCoverField = () => {
       if (activeBookType !== 'book' || !activeIsEpub || !activeItem) return null;
       const pendingCoverName = activeItem.epubCoverChange?.label
@@ -2199,7 +2359,10 @@ function MetadataTab({ config, t, showToast }) {
       combinedTagOptions,
       genreOptions,
       renderCombinedGenreTags,
-      renderCoverField: activeBookType === 'audio' ? renderAudioCoverField : renderEpubCoverField,
+      renderCoverField: activeBookType === 'audio' ? renderAudioCoverField : activeIsTxt ? renderTxtCoverField : renderEpubCoverField,
+        isTextMetadata: activeIsTxt,
+        storageNotice: activeIsTxt ? text('txt_metadata_storage_note', '메타데이터는 앱 DB에, 표지는 TXT 전용 폴더에 저장됩니다. 내용이 같은 파일은 이름이나 경로가 바뀌어도 다시 추가하거나 스캔하면 연결됩니다.') : '',
+        originalColumnLabel: activeIsTxt ? text('txt_metadata_column', 'DB 메타데이터') : undefined,
       renderChoiceGrid,
       renderDualTextarea,
       renderFieldRows,
@@ -2231,14 +2394,14 @@ function MetadataTab({ config, t, showToast }) {
       ) : (
       <>
       <aside className="meta-left-panel">
-        <div className="meta-preview-title">{t('metadata.cover')}</div>
+        <div className="meta-preview-title">{activeIsTxt ? text('txt_cover_label', '표지') : t('metadata.cover')}</div>
         <div className="meta-preview-img-box">
           {activeItem?.coverDataUrl ? (
             <img src={activeItem.coverDataUrl} alt="" className="meta-cover-image" />
           ) : activeBookType === 'audio' ? (
             <span className="meta-no-image audiobook-no-cover"><FaIcon name="headphones" size={30} /><span>{t('audio_no_cover')}</span></span>
           ) : (
-            <span className="meta-no-image">{t('no_image')}</span>
+            <span className="meta-no-image">{activeIsTxt ? text('txt_cover_empty', '등록된 표지가 없습니다.') : t('no_image')}</span>
           )}
         </div>
 
@@ -2413,7 +2576,7 @@ function MetadataTab({ config, t, showToast }) {
                 <span className="meta-tool-icon"><FaIcon name="check" size={12} /></span>
                 <span className="meta-tool-text">{t('t3_btn_apply_all').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)}</span>
               </button>
-              <button className="meta-btn-primary" title="C" onClick={handleApplyBatchToSeries} disabled={!activeItem}>
+              <button className="meta-btn-primary" title="C" onClick={handleApplyBatchToSeries} disabled={!activeItem || isWorking}>
                 <span className="meta-tool-icon"><FaIcon name="layer-group" size={12} /></span>
                 <span className="meta-tool-text">{t('t3_btn_apply_series').split('\n').map((part, index) => <React.Fragment key={part}>{index > 0 && <br />}{part}</React.Fragment>)} (C)</span>
               </button>
@@ -2482,7 +2645,7 @@ function MetadataTab({ config, t, showToast }) {
           t={t}
           onClose={() => setApiSearch(prev => ({ ...prev, open: false }))}
           onSelect={handleSelectApiResult}
-          onUseCover={activeBookType === 'book' && activeIsEpub ? handleUseApiCoverResult : null}
+          onUseCover={activeBookType === 'book' && (activeIsEpub || activeIsTxt) ? handleUseApiCoverResult : null}
           onSearch={fetchMetadataResults}
           onResolveRidiDate={resolveRidiPublishDate}
           minWidth={config?.metadata_search_min_width}

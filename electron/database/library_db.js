@@ -424,6 +424,18 @@ export class LibraryDB {
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS text_metadata (
+                content_hash TEXT PRIMARY KEY,
+                metadata_json TEXT NOT NULL,
+                record_json TEXT NOT NULL,
+                cover_path TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS text_metadata_paths (
+                path TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                FOREIGN KEY (content_hash) REFERENCES text_metadata(content_hash)
+            );
             CREATE TABLE IF NOT EXISTS reading_states (
                 item_id TEXT PRIMARY KEY,
                 file_path TEXT NOT NULL UNIQUE,
@@ -447,6 +459,7 @@ export class LibraryDB {
             CREATE INDEX IF NOT EXISTS idx_files_writer ON files(writer);
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
             CREATE INDEX IF NOT EXISTS idx_files_path_nocase ON files(path COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_text_metadata_paths_hash ON text_metadata_paths(content_hash);
             CREATE INDEX IF NOT EXISTS idx_dup_target_folder ON dup_target_index(target_folder);
             CREATE INDEX IF NOT EXISTS idx_dup_target_name ON dup_target_index(name);
             CREATE INDEX IF NOT EXISTS idx_library_scan_status ON library_scan_state(status);
@@ -945,6 +958,86 @@ export class LibraryDB {
                 thumb_path AS thumbnail
             FROM files WHERE path = ?`,
         ).get(this.normalizeFilePath(filePath)) || null);
+    }
+
+    async getTextMetadata(contentHash) {
+        return this.withLock(async () => {
+            const row = this.getConnection().prepare(
+                'SELECT * FROM text_metadata WHERE content_hash = ?',
+            ).get(contentHash);
+            if (!row) return null;
+            return {
+                contentHash: row.content_hash,
+                metadata: JSON.parse(row.metadata_json),
+                record: JSON.parse(row.record_json),
+                coverPath: row.cover_path,
+            };
+        });
+    }
+
+    async getTextMetadataPathHash(filePath) {
+        return this.withLock(async () => this.getConnection().prepare(
+            'SELECT content_hash FROM text_metadata_paths WHERE path = ?',
+        ).get(this.normalizeFilePath(filePath))?.content_hash || '');
+    }
+
+    async getTextMetadataPaths(contentHash) {
+        return this.withLock(async () => this.getConnection().prepare(
+            'SELECT path FROM text_metadata_paths WHERE content_hash = ?',
+        ).all(contentHash).map(row => row.path));
+    }
+
+    writeTextMetadataIndex(db, contentHash, record) {
+        const normalized = this.normalizeFileRecord(record);
+        const placeholders = FILE_COLUMNS.map(column => `@${column}`).join(', ');
+        const updates = FILE_COLUMNS.slice(1).map(column => `${column} = excluded.${column}`).join(', ');
+        db.prepare(`
+            INSERT INTO files (${FILE_COLUMNS.join(', ')}) VALUES (${placeholders})
+            ON CONFLICT(path) DO UPDATE SET ${updates}
+        `).run(Object.fromEntries(FILE_COLUMNS.map(column => [column, normalized[column] ?? ''])));
+        db.prepare(`
+            INSERT INTO text_metadata_paths (path, content_hash) VALUES (?, ?)
+            ON CONFLICT(path) DO UPDATE SET content_hash = excluded.content_hash
+        `).run(normalized.path, contentHash);
+    }
+
+    async linkTextMetadataRecord({ contentHash, record, missingPaths = [] }) {
+        return this.withLock(async () => {
+            const db = this.getConnection();
+            db.transaction(() => {
+                this.writeTextMetadataIndex(db, contentHash, record);
+                const remove = db.prepare(`
+                    DELETE FROM files WHERE path = ? AND path IN (
+                        SELECT path FROM text_metadata_paths WHERE content_hash = ?
+                    )
+                `);
+                for (const filePath of missingPaths) remove.run(this.normalizeFilePath(filePath), contentHash);
+            })();
+        });
+    }
+
+    async saveTextMetadataRecord({ contentHash, metadata, record, coverPath = '', relatedRecords = [] }) {
+        return this.withLock(async () => {
+            const db = this.getConnection();
+            db.transaction(() => {
+                db.prepare(`
+                    INSERT INTO text_metadata (content_hash, metadata_json, record_json, cover_path, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(content_hash) DO UPDATE SET
+                        metadata_json = excluded.metadata_json,
+                        record_json = excluded.record_json,
+                        cover_path = excluded.cover_path,
+                        updated_at = excluded.updated_at
+                `).run(contentHash, JSON.stringify(metadata), JSON.stringify(record), coverPath, new Date().toISOString());
+                this.writeTextMetadataIndex(db, contentHash, record);
+                const linkedHash = db.prepare('SELECT content_hash FROM text_metadata_paths WHERE path = ?');
+                for (const related of relatedRecords) {
+                    if (linkedHash.get(this.normalizeFilePath(related.path))?.content_hash === contentHash) {
+                        this.writeTextMetadataIndex(db, contentHash, related);
+                    }
+                }
+            })();
+        });
     }
 
     async getDistinctPublishers(limit = 500) {
@@ -1546,6 +1639,11 @@ export class LibraryDB {
                     mtime = excluded.mtime
             `);
             const selectFileExact = db.prepare('SELECT * FROM files WHERE path = ?');
+            const selectTextPath = db.prepare('SELECT content_hash FROM text_metadata_paths WHERE path = ?');
+            const linkTextPath = db.prepare(`
+                INSERT INTO text_metadata_paths (path, content_hash) VALUES (?, ?)
+                ON CONFLICT(path) DO UPDATE SET content_hash = excluded.content_hash
+            `);
             const selectFilePrefix = db.prepare(`
                 SELECT * FROM files
                 WHERE path = ? OR path LIKE ? ESCAPE '\\'
@@ -1595,7 +1693,9 @@ export class LibraryDB {
                 values.mtime = rawMtime > 100000000000 ? rawMtime / 1000 : rawMtime;
                 values.size = stat.size;
                 values.ext = path.extname(filePath).toLowerCase();
-                if (!values.title) values.title = path.parse(filePath).name;
+                if (!values.title && !(values.ext === '.txt' && Number(values.metadata_override) === 1)) {
+                    values.title = path.parse(filePath).name;
+                }
                 return values;
             };
             const stateValues = libraryPath => {
@@ -1696,6 +1796,8 @@ export class LibraryDB {
                         if (sourcePath !== destinationPath) deleteFile.run(destinationPath);
                         deleteFile.run(row.path);
                         upsertFile.run(fileValues(row, destinationPath));
+                        const textPath = selectTextPath.get(row.path);
+                        if (textPath) linkTextPath.run(destinationPath, textPath.content_hash);
                         result.movedFileInfoCount += 1;
                     }
                 }
@@ -1884,6 +1986,36 @@ export class LibraryDB {
             const result = this.getConnection().prepare('DELETE FROM dup_cache').run();
             this.db.exec('VACUUM');
             return { changes: result.changes };
+        });
+    }
+
+    async getMissingVolumeMetadata(libraryPaths = []) {
+        return this.withLock(async () => {
+            const roots = [...new Set(libraryPaths.filter(Boolean).flatMap(folder => {
+                const root = this.normalizeFilePath(path.resolve(folder));
+                return this.platform === 'darwin' ? [root.normalize('NFC'), root.normalize('NFD')] : [root];
+            }))];
+            if (roots.length === 0) return [];
+            const fileClauses = roots.map(() => "path LIKE ? ESCAPE '\\'");
+            const indexClauses = roots.map(() => "full_path LIKE ? ESCAPE '\\'");
+            const prefixes = roots.map(folder => {
+                const prefix = folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`;
+                return `${escapeLikeValue(prefix)}%`;
+            });
+            const rows = this.getConnection().prepare(`
+                SELECT path, series FROM files
+                WHERE ${fileClauses.map(clause => `(${clause})`).join(' OR ')}
+                UNION
+                SELECT full_path AS path, '' AS series FROM dup_target_index
+                WHERE ${indexClauses.map(clause => `(${clause})`).join(' OR ')}
+            `).all(...prefixes, ...prefixes);
+            const filesByPath = new Map();
+            for (const row of rows) {
+                const key = this.normalizeFilePath(row.path);
+                const previous = filesByPath.get(key);
+                if (!previous || (!previous.series && row.series)) filesByPath.set(key, row);
+            }
+            return [...filesByPath.values()];
         });
     }
 

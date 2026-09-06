@@ -65,6 +65,7 @@ const FALLBACK_SYSTEM_FONT_OPTIONS = [
   'Consolas',
 ];
 const DEFAULT_API_KEYS = {
+    yes24: '',
   aladin: '',
   vine: '',
   google: '',
@@ -1294,10 +1295,31 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 <button className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}><FaIcon name="bookOpen" />{label('btn_api_manual', 'API 발급 매뉴얼')}</button>
               </div>
 
-              <div className="settings-row">
-                <span className="settings-label">Aladin TTBKey</span>
-                {renderSecretInput('aladin', 'Aladin TTBKey')}
-              </div>
+                <div className="settings-row">
+                    <span className="settings-label">YES24 API Key</span>
+                    {renderSecretInput('yes24', 'YES24 API Key (yk_live_...)')}
+                </div>
+                <div className="settings-row settings-aladin-api-row">
+                    <span className="settings-label">Aladin TTBKey</span>
+                    {renderSecretInput('aladin', 'Aladin TTBKey')}
+                    <p className="settings-help settings-aladin-api-notice">
+                        {label('aladin_openapi_shutdown_notice', '알라딘 OpenAPI 서비스 종료 예정 26년 10월 30일')}{' '}
+                        <a
+                            className="settings-help-link"
+                            href="https://blog.aladin.co.kr/openapi/group/18264538"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={event => {
+                                if (window.electronAPI?.openExternal) {
+                                    event.preventDefault();
+                                    window.electronAPI.openExternal(event.currentTarget.href);
+                                }
+                            }}
+                        >
+                            [{label('aladin_openapi_shutdown_details', '자세히보기')}]
+                        </a>
+                    </p>
+                </div>
               <div className="settings-row">
                 <span className="settings-label">Google Books API</span>
                 {renderSecretInput('google', 'Google Books API Key')}
@@ -1379,6 +1401,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
           <div className="settings-manual-backdrop" onClick={() => setShowApiManual(false)}>
             <div className="settings-manual-dialog" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}>
               <h3>{label('api_manual_title', 'API 발급 매뉴얼')}</h3>
+                <button onClick={() => window.electronAPI?.openExternal?.('https://developers.yes24.com/docs/apikey')}>YES24 OpenAPI</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://blog.aladin.co.kr/openapi')}>Aladin OpenAPI</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://comicvine.gamespot.com/api/')}>Comic Vine API</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://console.cloud.google.com/')}>Google Cloud Console</button>

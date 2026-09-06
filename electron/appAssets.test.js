@@ -245,6 +245,7 @@ test('Electron 메인 프로세스가 직접 import하는 src 모듈은 app.asar
     assert.equal(metadataFileSet.filter.includes('metadataTypes.js'), true);
     assert.ok(folderTagFileSet);
     assert.equal(folderTagFileSet.filter.includes('folderTagFilter.js'), true);
+    assert.equal(folderTagFileSet.filter.includes('missingVolumesPolicy.js'), true);
 });
 
 test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () => {

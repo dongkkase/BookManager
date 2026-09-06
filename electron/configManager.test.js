@@ -57,6 +57,30 @@ test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한�
     }
 });
 
+test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-yes24-'));
+    try {
+        const manager = new ConfigManager(root, root);
+        assert.equal(manager.loadConfig().api_keys.yes24, '');
+        manager.saveConfig({
+            api_keys: { yes24: '  yk_live_test  ', aladin: 'aladin-key' },
+            preferred_meta_api_comic: 'YES24',
+            preferred_meta_api_book: 'YES24',
+            preferred_meta_api_pdf: 'YES24',
+        });
+        manager.saveConfig({ api_keys: { google: 'google-key' } });
+        const loaded = new ConfigManager(root, root).loadConfig();
+        assert.equal(loaded.api_keys.yes24, 'yk_live_test');
+        assert.equal(loaded.api_keys.aladin, 'aladin-key');
+        assert.equal(loaded.api_keys.google, 'google-key');
+        assert.equal(loaded.preferred_meta_api_comic, 'YES24');
+        assert.equal(loaded.preferred_meta_api_book, 'YES24');
+        assert.equal(loaded.preferred_meta_api_pdf, 'YES24');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('경로 목록과 즐겨찾기는 형식을 유지하며 중복을 제거한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-paths-'));
     try {

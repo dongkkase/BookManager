@@ -1649,6 +1649,21 @@ body.is-resizing-panel * {
   white-space: pre-line;
 }
 
+.settings-help-link {
+    color: #62b2ff;
+    text-decoration: underline;
+    white-space: nowrap;
+}
+
+.settings-aladin-api-row {
+    row-gap: 6px;
+}
+
+.settings-aladin-api-notice {
+    grid-column: 2;
+    min-width: 0;
+}
+
 .settings-basic-fieldset > .settings-help {
   margin: -4px 0 14px 128px;
 }
@@ -1972,6 +1987,14 @@ body.is-resizing-panel * {
 .settings-tag-fieldset .settings-textarea {
   min-height: 155px;
   margin-top: 10px;
+}
+
+.settings-tag-fieldset .settings-maintenance-actions {
+    display: flex;
+}
+
+.settings-tag-fieldset .settings-maintenance-actions .settings-action-btn {
+    width: 100%;
 }
 
 .btn-secondary {

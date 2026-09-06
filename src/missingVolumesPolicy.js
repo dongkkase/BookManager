@@ -12,7 +12,8 @@ export function findMissingVolumes(files = []) {
     files.forEach(file => {
         if (file?.is_folder || file?.is_dup_folder || file?.is_dup_child) return;
         const filePath = file?.full_path || file?.path || '';
-        const series = String(file?.series || extractCoreTitle(file?.name || '') || '').trim()
+        const filenameStem = String(file?.name || '').replace(/\.[^.]+$/, '');
+        const series = String(file?.series || extractCoreTitle(filenameStem) || '').trim()
             || parentPath(filePath).split(/[\\/]/).pop()
             || '';
         if (!series) return;

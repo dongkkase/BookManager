@@ -77,6 +77,7 @@ import {
 import {
   findMissingVolumes,
 } from '../missingVolumesPolicy';
+import { createMissingVolumesCheck, missingVolumesLibraryScope } from '../missingVolumesCheck';
 import {
   applyConflictChoice,
   createLibraryMovePlans,
@@ -402,7 +403,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const panelResizingRef = useRef(false);
   const viewScrollPositionsRef = useRef({ table: 0, tile: 0, thumbnail: 0 });
   const hasShownMissingToastRef = useRef(false);
-  const missingBackgroundKeyRef = useRef('');
+    const missingCheckRef = useRef(null);
+    const missingCheckContextRef = useRef(null);
+    const missingLocalRevisionRef = useRef(0);
+    const missingAutoAttemptRef = useRef('');
   const missingLocalTimerRef = useRef(null);
   const lastMissingLocalToastRef = useRef({ folderPath: '', timestamp: 0 });
   const backgroundLibraryScanCancelRef = useRef(null);
@@ -462,6 +466,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [libraryScanStateMap, setLibraryScanStateMap] = useState({});
   const [missingData, setMissingData] = useState([]);
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
+    const [missingRefreshVersion, setMissingRefreshVersion] = useState(0);
   const [treeRefreshToken, setTreeRefreshToken] = useState(0);
   const [itemScales, setItemScales] = useState({ table: 50, tile: 50, thumbnail: 50 });
   const [showLayoutDialog, setShowLayoutDialog] = useState(false);
@@ -1447,71 +1452,121 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   // --- refs ---
   const fileTableRef = useRef(null);
 
-  useEffect(() => {
-    const libraryFolders = [...new Set([
-      ...(config?.libraries || []),
-      ...(config?.dup_check_folders || []),
-    ])].filter(Boolean);
-    const backgroundKey = JSON.stringify(libraryFolders);
-    if (!config || missingBackgroundKeyRef.current === backgroundKey || scanning || preparingDuplicates) return undefined;
-    let cancelled = false;
-    backgroundLibraryScanCancelRef.current = () => {
-      cancelled = true;
-      setIsCheckingMissing(false);
-      setFolderTaskCancelling(false);
+    const missingLibraryScope = missingVolumesLibraryScope([...libraries, ...(config?.dup_check_folders || [])]);
+    const missingLibraryKey = missingLibraryScope.key;
+    const missingLibraryFolders = useMemo(() => missingLibraryScope.folders, [missingLibraryKey]);
+    const missingConfigReady = Boolean(config);
+    missingCheckContextRef.current = {
+        libraryKey: missingLibraryKey,
+        folders: missingLibraryFolders,
+        files: currentFolderFileData,
+        selectedFolderPath,
+        preparingDuplicates,
+        showToast,
+        t,
+        language: config?.language || config?.lang || 'ko',
     };
 
-    const analyze = async () => {
-      if (cancelled) return;
-      if (preparingDuplicatesRef.current) return;
-      setIsCheckingMissing(true);
-      try {
-        const libraryFiles = [];
-        const prioritizedFolders = selectedFolderPath
-          ? [
-              ...libraryFolders.filter(folderPath => folderPath === selectedFolderPath),
-              ...libraryFolders.filter(folderPath => folderPath !== selectedFolderPath),
-            ]
-          : libraryFolders;
-        for (let index = 0; index < prioritizedFolders.length; index += 1) {
-          const folderPath = prioritizedFolders[index];
-          if (cancelled) return;
-          if (preparingDuplicatesRef.current) return;
-          const files = await window.electronAPI?.scanFolder?.(folderPath, {
-            includeSubfolders: true,
-            enableDupCheck: false,
-            skipArchiveExtraction: true,
-            suppressEvents: true,
-            reportTaskProgress: false,
-            reportFileReady: false,
-          });
-          if (Array.isArray(files)) libraryFiles.push(...files);
+    const getMissingVolumesCheck = useCallback(() => {
+        if (!missingCheckRef.current) {
+            missingCheckRef.current = createMissingVolumesCheck({
+                onBusy: setIsCheckingMissing,
+                onResult: result => setMissingData(result.missing),
+                onError: error => {
+                    const current = missingCheckContextRef.current;
+                    current.showToast?.(`${current.t('msg_failed')}: ${error.message}`);
+                },
+                stop: () => window.electronAPI?.stopTask?.('folder:missingVolumes'),
+            });
         }
-        if (cancelled) return;
-        const missing = findMissingVolumes(
-          libraryFolders.length > 0 ? libraryFiles : getCurrentFileData(),
-        );
-        missingBackgroundKeyRef.current = backgroundKey;
-        setMissingData(missing);
-        if (missing.length > 0 && !hasShownMissingToastRef.current) {
-          hasShownMissingToastRef.current = true;
-          showToast?.({ key: 'tf_toast_missing', values: [missing.length] });
-        }
-      } finally {
-        if (backgroundLibraryScanCancelRef.current) backgroundLibraryScanCancelRef.current = null;
-        if (!cancelled) {
-          setIsCheckingMissing(false);
-        }
-      }
-    };
+        return missingCheckRef.current;
+    }, []);
 
-    const timer = window.setTimeout(analyze, MISSING_BACKGROUND_SCAN_DELAY_MS);
-    return () => {
-      cancelled = true;
-      if (backgroundLibraryScanCancelRef.current) backgroundLibraryScanCancelRef.current = null;
-      window.clearTimeout(timer);
-    };
-  }, [config, getCurrentFileData, preparingDuplicates, scanning, selectedFolderPath, showToast]);
+    const cancelMissingVolumesCheck = useCallback(async () => {
+        await missingCheckRef.current?.cancel();
+        setFolderTaskCancelling(false);
+    }, []);
+
+    const invalidateMissingVolumesCheck = useCallback(() => {
+        missingCheckRef.current?.invalidate();
+        setMissingData([]);
+    }, []);
+
+    const runMissingVolumesCheck = useCallback(async (manual = false) => {
+        const current = missingCheckContextRef.current;
+        if (!current || current.preparingDuplicates) return;
+        const key = current.folders.length > 0
+            ? current.libraryKey
+            : `local:${current.selectedFolderPath}:${missingLocalRevisionRef.current}`;
+        const result = await getMissingVolumesCheck().run(key, async () => {
+            if (current.folders.length > 0) {
+                return window.electronAPI?.checkMissingVolumes?.(current.folders, { indexOnly: !manual });
+            }
+            const files = missingCheckContextRef.current.files || [];
+            return { missing: findMissingVolumes(files), fileCount: files.length, cancelled: false };
+        });
+        if (!result) return;
+        const latest = missingCheckContextRef.current;
+        if (latest.libraryKey !== current.libraryKey
+            || (current.folders.length === 0 && latest.selectedFolderPath !== current.selectedFolderPath)) return;
+        if (manual) {
+            if (result.missing.length > 0) setShowMissingDialog(true);
+            else await window.electronAPI?.showMessage?.({
+                type: 'info',
+                title: latest.t('tf_dlg_missing_title'),
+                message: latest.t('msg_no_missing_vols'),
+                language: latest.language,
+            });
+        } else if (result.missing.length > 0 && !hasShownMissingToastRef.current) {
+            hasShownMissingToastRef.current = true;
+            latest.showToast?.({ key: 'tf_toast_missing', values: [result.missing.length] });
+        }
+    }, [getMissingVolumesCheck]);
+
+    useEffect(() => {
+        backgroundLibraryScanCancelRef.current = cancelMissingVolumesCheck;
+        return () => {
+            missingCheckRef.current?.dispose();
+            missingCheckRef.current = null;
+            backgroundLibraryScanCancelRef.current = null;
+        };
+    }, [cancelMissingVolumesCheck]);
+
+    useEffect(() => {
+        missingCheckRef.current?.cancel();
+        missingAutoAttemptRef.current = '';
+        invalidateMissingVolumesCheck();
+    }, [invalidateMissingVolumesCheck, missingLibraryKey]);
+
+    useEffect(() => {
+        if (!missingConfigReady || missingLibraryKey === '[]' || scanning || preparingDuplicates) return undefined;
+        const attemptKey = `${missingLibraryKey}:${missingRefreshVersion}`;
+        if (missingAutoAttemptRef.current === attemptKey) return undefined;
+        if (getMissingVolumesCheck().hasResult(missingLibraryKey)) return undefined;
+        const timer = window.setTimeout(() => {
+            missingAutoAttemptRef.current = attemptKey;
+            runMissingVolumesCheck();
+        }, MISSING_BACKGROUND_SCAN_DELAY_MS);
+        return () => window.clearTimeout(timer);
+    }, [getMissingVolumesCheck, missingConfigReady, missingLibraryKey, missingRefreshVersion, preparingDuplicates, runMissingVolumesCheck, scanning]);
+
+    useEffect(() => {
+        if (!missingConfigReady || missingLibraryKey !== '[]') return undefined;
+        missingLocalRevisionRef.current += 1;
+        invalidateMissingVolumesCheck();
+        if (scanning || preparingDuplicates) return undefined;
+        const timer = window.setTimeout(() => runMissingVolumesCheck(), MISSING_BACKGROUND_SCAN_DELAY_MS);
+        return () => window.clearTimeout(timer);
+    }, [currentFolderFileData, invalidateMissingVolumesCheck, missingConfigReady, missingLibraryKey, preparingDuplicates, runMissingVolumesCheck, scanning, selectedFolderPath]);
+
+    useEffect(() => {
+        const invalidate = () => {
+            invalidateMissingVolumesCheck();
+            setMissingRefreshVersion(value => value + 1);
+        };
+        window.addEventListener('bookmanager:metadata-saved', invalidate);
+        return () => window.removeEventListener('bookmanager:metadata-saved', invalidate);
+    }, [invalidateMissingVolumesCheck]);
 
   const scheduleLocalMissingToast = useCallback((folderPath, missing) => {
     if (missingLocalTimerRef.current) window.clearTimeout(missingLocalTimerRef.current);
@@ -1655,6 +1710,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       setTreeRefreshToken(current => current + 1);
       resetCoverPreviewQueue();
       await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
+        invalidateMissingVolumesCheck();
+        setMissingRefreshVersion(value => value + 1);
     };
 
     pollFolder();
@@ -1663,45 +1720,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [preparingDuplicates, resetCoverPreviewQueue, scanFolder, scanOptions, scanning, selectedFolderPath]);
+  }, [invalidateMissingVolumesCheck, preparingDuplicates, resetCoverPreviewQueue, scanFolder, scanOptions, scanning, selectedFolderPath]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
-    if (isCheckingMissing) return;
-    if (missingData.length > 0) {
-      setShowMissingDialog(true);
-      return;
-    }
-    setIsCheckingMissing(true);
-    window.setTimeout(async () => {
-      const libraryFolders = [...new Set([
-        ...(config?.libraries || []),
-        ...(config?.dup_check_folders || []),
-      ])].filter(Boolean);
-      const files = [];
-      for (const folderPath of libraryFolders) {
-        const scanned = await window.electronAPI?.scanFolder?.(folderPath, {
-          includeSubfolders: true,
-          enableDupCheck: false,
-          skipArchiveExtraction: true,
-          suppressEvents: true,
-        });
-        if (Array.isArray(scanned)) files.push(...scanned);
-      }
-      const missing = findMissingVolumes(libraryFolders.length > 0 ? files : filteredFileData);
-      setMissingData(missing);
-      setIsCheckingMissing(false);
-      if (missing.length > 0) setShowMissingDialog(true);
-      else {
-        await window.electronAPI?.showMessage?.({
-          type: 'info',
-          title: t('tf_dlg_missing_title'),
-          message: t('msg_no_missing_vols'),
-          language: config?.language || config?.lang || 'ko',
-        });
-      }
-    }, 0);
-  }, [config?.dup_check_folders, config?.lang, config?.language, config?.libraries, filteredFileData, isCheckingMissing, missingData.length, t]);
+    if (isCheckingMissing || preparingDuplicates) return;
+    await runMissingVolumesCheck(true);
+  }, [isCheckingMissing, preparingDuplicates, runMissingVolumesCheck]);
 
   const isFolderTabVisible = useCallback(() => (
     !mainAreaRef.current?.closest?.('[hidden]')
@@ -1719,7 +1744,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     resetCoverPreviewQueue();
     const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
     scheduleLocalMissingToast(selectedFolderPath, findMissingVolumes(files || []));
-  }, [resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
+    invalidateMissingVolumesCheck();
+    setMissingRefreshVersion(value => value + 1);
+  }, [invalidateMissingVolumesCheck, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
   useEffect(() => {
     const handleMetadataSaved = event => {
@@ -1767,8 +1794,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!selectedFolderPath) return;
     const nextOptions = { ...scanOptions, includeSubfolders: nextValue, force: true };
     resetCoverPreviewQueue();
-    const files = await scanFolder(selectedFolderPath, nextOptions);
-    setMissingData(findMissingVolumes(files || []));
+    await scanFolder(selectedFolderPath, nextOptions);
   }, [
     clearSelection,
     includeSubfolders,
@@ -1795,8 +1821,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       force: true,
     };
     resetCoverPreviewQueue();
-    const files = await scanFolder(selectedFolderPath, nextOptions);
-    setMissingData(findMissingVolumes(files || []));
+    await scanFolder(selectedFolderPath, nextOptions);
   }, [
     clearSelection,
     config?.dup_check_folders,
@@ -1841,10 +1866,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         });
     if (!choice || choice === 'cancel') return;
 
-    if (isCheckingMissing) {
-      backgroundLibraryScanCancelRef.current?.();
-      await window.electronAPI?.stopTask?.('folder:scan');
-    }
+    await backgroundLibraryScanCancelRef.current?.();
     await saveConfig?.({ last_selected_library: folderPath });
     folderStatusItemRef.current = {
       currentItem: folderPath,
@@ -1915,6 +1937,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       setDuplicatePreparationProgress(0);
       folderStatusItemRef.current = { currentItem: '', currentItemName: '' };
       await refreshLibraryScanStates([folderPath]);
+        invalidateMissingVolumesCheck();
+        setMissingRefreshVersion(value => value + 1);
       if (wasCancelled) markLibraryScanStatesCancelled([folderPath]);
       activeLibraryScanKeyRef.current = '';
       libraryScanUiHeartbeatRef.current = 0;
@@ -1939,7 +1963,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setSelectedFolderPath(folderPath);
     clearSelection();
     resetSearchQuery();
-    const files = await scanFolder(folderPath, {
+    await scanFolder(folderPath, {
       ...refreshOptions,
       fastInitial: false,
       silent: true,
@@ -1947,7 +1971,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       reportTaskProgress: false,
       reportFileReady: false,
     });
-    setMissingData(findMissingVolumes(files || []));
     if (shouldShowSuccessToast) showToast?.({ key: 'setting_update_index_msg' });
   }, [
     config?.language,
@@ -1965,6 +1988,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     showToast,
     includeSubfolders,
     isCheckingMissing,
+    invalidateMissingVolumesCheck,
     t,
   ]);
 
@@ -1988,7 +2012,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setDuplicatePreparationStatus(t('cancel_wait'));
     const isLibraryScanTask = preparingDuplicates;
     emitStatusState('folder', {
-      task: preparingDuplicates ? 'folder:updateIndex' : isCheckingMissing ? 'folder:libraryScan' : 'folder:scan',
+      task: preparingDuplicates ? 'folder:updateIndex' : isCheckingMissing ? 'folder:missingVolumes' : 'folder:scan',
       display: isLibraryScanTask ? 'library-slide' : '',
       message: t('cancel_wait'),
       progress: duplicatePreparationProgress || scanProgress,
@@ -1996,7 +2020,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       libraryPhase: isLibraryScanTask ? (libraryPhaseRef.current || (libraryTaskMode === 'metadata' ? 'metadata' : 'indexing')) : '',
       libraryTaskMode,
     });
-    if (isCheckingMissing) backgroundLibraryScanCancelRef.current?.();
+    if (isCheckingMissing && !preparingDuplicates) {
+        await backgroundLibraryScanCancelRef.current?.();
+        emitStatusState('folder', { message: t('status_wait'), progress: 0, phase: 'idle' });
+        return;
+    }
     await Promise.all([
       window.electronAPI?.stopTask?.('folder:updateIndex'),
       cancelScan(),
@@ -3273,7 +3301,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <button 
                 className="warning-btn" 
                 onClick={checkMissingVolumes} 
-                disabled={isCheckingMissing}
+                disabled={isCheckingMissing || preparingDuplicates}
               >
                 {isCheckingMissing ? t('msg_analyzing') : (
                   <>

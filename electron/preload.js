@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
+    checkMissingVolumes: (libraryFolders, options) => ipcRenderer.invoke('folder:missingVolumes', libraryFolders, options),
   searchLibraryFiles: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryFiles', { query, libraries, options }),
   getLibraryTagFacets: (libraries) => ipcRenderer.invoke('folder:getLibraryTagFacets', { libraries }),
   searchLibraryTags: (libraries, selections, matchMode) => ipcRenderer.invoke('folder:searchLibraryTags', { libraries, selections, matchMode }),

@@ -20,3 +20,10 @@ test('isPathInsideFolder handles platform separators', () => {
     assert.equal(isPathInsideFolder('C:\\Books\\A\\1.cbz', 'C:\\Books\\A'), true);
     assert.equal(isPathInsideFolder('/books/AB/1.cbz', '/books/A'), false);
 });
+
+test('filename-only listings group numbered books without treating extensions as part of the series', () => {
+    assert.deepEqual(findMissingVolumes([
+        { name: '소설 1.txt', full_path: '/library/소설/소설 1.txt' },
+        { name: '소설 3.txt', full_path: '/library/소설/소설 3.txt' },
+    ]), [{ series: '소설', missing: ['2'], folder_path: '/library/소설' }]);
+});

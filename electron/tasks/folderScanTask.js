@@ -15,6 +15,7 @@ import { normalizeMetadataFormat } from '../metadataFormat.js';
 import { resolveBookType } from '../../src/metadata/metadataTypes.js';
 import { isBrokenPipeError } from '../utils/consolePipeGuard.js';
 import { isAudioPath, readAudioMetadata } from '../audioMetadata.js';
+import { isTextMetadataPath, resolveTextMetadata } from '../textMetadataStore.js';
 import {
   analyzePdfDocument,
   pdfMetadataToArchiveMetadata,
@@ -836,7 +837,8 @@ function thumbnailUrlForPath(thumbnailPath) {
   } catch {
     version = '';
   }
-  return `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}${version}`;
+    const cacheHost = path.basename(path.dirname(thumbnailPath)) === 'text-thumbnails' ? 'text-cover' : 'cache';
+    return `bookmanager-thumbnail://${cacheHost}/${encodeURIComponent(path.basename(thumbnailPath))}${version}`;
 }
 
 function isValidCache(cached, stats) {
@@ -1287,9 +1289,29 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
   const ext = path.extname(name).toLowerCase();
   const bookType = resolveBookType({ path: fullPath, ext });
   const filenameMeta = await extractFilenameMetadata(name);
-  const cached = options.skipLibraryCache === true
-    ? null
-    : await safeGetCachedFileInfo(options.libraryDb, fullPath);
+    const isTextFile = isTextMetadataPath(fullPath);
+    const textMetadata = isTextFile && options.libraryDb && !options.libraryDb.__bookManagerUnavailable
+        ? await resolveTextMetadata(fullPath, { libraryDb: options.libraryDb })
+        : null;
+    if (isTextFile && !textMetadata && options.skipLibraryCache !== true) {
+        await safeUpsertFileInfo(options.libraryDb, {
+            path: fullPath,
+            mtime: stats.mtimeMs / 1000,
+            size: stats.size,
+            ext,
+            title: path.parse(name).name,
+            series: filenameMeta.series || '',
+            volume: filenameMeta.volume || '',
+            book_type: bookType,
+            has_metadata: 0,
+            metadata_override: 0,
+        });
+    }
+    const cached = isTextFile
+        ? textMetadata?.record || null
+        : options.skipLibraryCache === true
+            ? null
+            : await safeGetCachedFileInfo(options.libraryDb, fullPath);
   const cacheValid = options.force !== true && isValidCache(cached, stats);
   const audioCoverOverridePath = bookType === 'audio'
     ? validAudioCoverOverridePath(cached)
@@ -1320,12 +1342,12 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         .some(value => value === '' || value === null || value === undefined)
       || hasMissingAudioCoverOverride
     );
-  let archiveMeta = cacheValid ? metadataFromCache(cached) : {};
+    let archiveMeta = textMetadata || cacheValid ? metadataFromCache(cached) : {};
   if (audioCoverOverridePath) {
     archiveMeta.thumb_path = audioCoverOverridePath;
     archiveMeta.cover_override_path = audioCoverOverridePath;
   }
-  const shouldExtractArchive = options.skipArchiveExtraction !== true;
+    const shouldExtractArchive = !isTextFile && options.skipArchiveExtraction !== true;
   const shouldRefreshMissingThumbnail = options.skipCoverExtraction !== true && !cachedThumbnailExists;
 
   if (shouldExtractArchive && (
@@ -1458,8 +1480,8 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     }
   }
 
-  const series = archiveMeta.series || filenameMeta.series || '';
-  const volume = archiveMeta.volume || filenameMeta.volume || '';
+    const series = textMetadata ? archiveMeta.series : archiveMeta.series || filenameMeta.series || '';
+    const volume = textMetadata ? archiveMeta.volume : archiveMeta.volume || filenameMeta.volume || '';
   const thumbnailPath = archiveMeta.thumb_path && fs.existsSync(archiveMeta.thumb_path)
     ? archiveMeta.thumb_path
     : '';
@@ -1480,7 +1502,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     modified: new Date(stats.mtimeMs).toISOString(),
     is_folder: false,
     series,
-    title: archiveMeta.title || path.parse(name).name,
+    title: textMetadata ? archiveMeta.title : archiveMeta.title || path.parse(name).name,
     volume,
     sorted_volume: filenameMeta.sorted_volume,
     compare_nums: filenameMeta.nums || [],
@@ -1512,8 +1534,8 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     series_group: archiveMeta.series_group || '',
     tags: archiveMeta.tags || '',
     characters: archiveMeta.characters || '',
-    teams: '',
-    locations: '',
+    teams: textMetadata ? archiveMeta.teams || '' : '',
+    locations: textMetadata ? archiveMeta.locations || '' : '',
     story_arc: archiveMeta.story_arc || '',
     notes: archiveMeta.notes || '',
     link: archiveMeta.link || '',
@@ -1554,10 +1576,10 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     has_metadata: archiveMeta.has_metadata === true,
     resolution: archiveMeta.resolution || '',
     thumb_path: thumbnailPath,
-    cover_override_path: audioCoverOverridePath,
-    coverOverridePath: audioCoverOverridePath,
+    cover_override_path: textMetadata?.coverPath || audioCoverOverridePath,
+    coverOverridePath: textMetadata?.coverPath || audioCoverOverridePath,
     cover: thumbnailUrlForPath(thumbnailPath),
-    cache_source: cacheValid && cachedThumbnailExists ? 'library' : 'archive',
+    cache_source: textMetadata || (cacheValid && cachedThumbnailExists) ? 'library' : 'archive',
     duplicate_matches: [],
     dup_count: 0,
     max_ratio: 0,
@@ -1611,7 +1633,7 @@ export async function scanFolder(folderPath, options = {}, event) {
   const results = [];
   let scannedCount = 0;
   let matchedCount = 0;
-  const shouldUseLibraryDb = !quickListOnly && (skipLibraryCache !== true || enableDupCheck);
+    const shouldUseLibraryDb = !quickListOnly && (skipLibraryCache !== true || enableDupCheck || normalizedExtSet.has('.txt'));
   const libraryDb = options.libraryDb || (shouldUseLibraryDb && dbPath ? new LibraryDB({ dbPath }) : null);
   const quickFileBatch = [];
   const quickFileCacheKey = typeof options.resultCacheKey === 'string' ? options.resultCacheKey : '';

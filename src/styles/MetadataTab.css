@@ -720,6 +720,13 @@
   color: #ff9b8f;
 }
 
+.meta-storage-notice {
+    margin: 0 0 12px;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: var(--font-xs);
+    line-height: 1.5;
+}
+
 .meta-epub-cover-resolution {
   min-height: 18px;
   display: inline-flex;

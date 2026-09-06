@@ -10,6 +10,7 @@ import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
+import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
 import {
@@ -58,6 +59,7 @@ import {
 import { SCAN_TARGET_EXTENSIONS } from './scanTargets.js';
 import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
+import { searchYes24 } from './yes24Search.js';
 import { LibraryDB } from './database/library_db.js';
 import {
   LibrarySearchService,
@@ -252,20 +254,24 @@ function requestJsonGeneric(url, headers = {}, timeout = 12000) {
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           let apiMessage = '';
+            let apiCode = '';
           try {
             const parsed = JSON.parse(body);
             apiMessage = parsed?.error?.message || parsed?.message || '';
+            apiCode = parsed?.errorCode || '';
           } catch {
             apiMessage = body;
           }
           apiMessage = String(apiMessage || '')
             .replace(/\bsk-(?:proj-)?[A-Za-z0-9_*\-]+\b/g, '[REDACTED]')
             .replace(/\bAIza[A-Za-z0-9_\-]+\b/g, '[REDACTED]')
+            .replace(/\byk_[A-Za-z0-9_-]+\b/g, '[REDACTED]')
             .replace(/\s+/g, ' ')
             .trim()
             .slice(0, 300);
           const error = new Error(`HTTP ${res.statusCode}${apiMessage ? `: ${apiMessage}` : ''}`);
           error.statusCode = res.statusCode;
+            if (apiCode) error.code = apiCode;
           reject(error);
           return;
         }
@@ -1275,6 +1281,7 @@ function normalizeApiSource(apiName = '') {
   if (name.includes('google')) return 'Google Books';
   if (name.includes('anilist')) return 'Anilist';
   if (name.includes('amazon') || name.includes('아마존')) return 'Amazon';
+    if (name.includes('yes24') || name.includes('예스24')) return 'YES24';
   if (name.includes('알라딘') || name.includes('aladin')) return '알라딘';
   if (name.includes('vine')) return 'Vine';
   return '리디북스';
@@ -1299,8 +1306,8 @@ function mangaValueForBookType(bookType = 'comic') {
 
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
   const allowed = bookType === 'book' || bookType === 'pdf' || bookType === 'audio'
-    ? new Set(['리디북스', '알라딘', 'Google Books', 'Amazon'])
-    : new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+    ? new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Amazon'])
+    : new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
   return allowed.has(apiName);
 }
 
@@ -2180,7 +2187,7 @@ async function searchRidibooks(query, page = 1, bookType = 'comic') {
 }
 
 const INDEX_EXTENSIONS = new Set(SCAN_TARGET_EXTENSIONS);
-const LIBRARY_SCAN_VISUAL_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
+const LIBRARY_SCAN_VISUAL_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7', '.txt']);
 const LIBRARY_SCAN_PROGRESS_INTERVAL_MS = 500;
 const LIBRARY_SCAN_PROGRESS_MATCH_DELTA = 250;
 const LIBRARY_SCAN_STAT_CONCURRENCY = 16;
@@ -2815,7 +2822,8 @@ function findContainingLibraryPath(filePath, libraryPaths = []) {
 
 function thumbnailUrlForSearchResult(thumbnailPath, sourceMtime = 0, sourceSize = 0) {
   if (!thumbnailPath) return '';
-  const baseUrl = `bookmanager-thumbnail://cache/${encodeURIComponent(path.basename(thumbnailPath))}`;
+    const host = path.basename(path.dirname(thumbnailPath)) === 'text-thumbnails' ? 'text-cover' : 'cache';
+    const baseUrl = `bookmanager-thumbnail://${host}/${encodeURIComponent(path.basename(thumbnailPath))}`;
   const versionMtime = Math.round(fileMtimeToMs(sourceMtime));
   const versionSize = Math.max(0, Number(sourceSize) || 0);
   return versionMtime ? `${baseUrl}?v=${versionMtime}-${versionSize}` : baseUrl;
@@ -2831,6 +2839,8 @@ function normalizeLibrarySearchFileForRenderer(row = {}) {
   const filePath = row.path || '';
   const mtimeMs = fileMtimeToMs(row.mtime);
   const thumbnailPath = row.thumb_path || '';
+    const preserveTextMetadata = path.extname(filePath).toLowerCase() === '.txt'
+        && Number(row.metadata_override) === 1;
   const inferredHasMetadata = [
     row.title,
     row.series,
@@ -2858,7 +2868,7 @@ function normalizeLibrarySearchFileForRenderer(row = {}) {
     ctime: mtimeMs,
     created: '',
     modified: mtimeMs ? new Date(mtimeMs).toISOString() : '',
-    title: row.title || path.parse(filePath).name,
+    title: preserveTextMetadata ? row.title || '' : row.title || path.parse(filePath).name,
     volume: row.volume || '',
     chapter: row.number || '',
     author: row.writer || row.creators || '',
@@ -3394,6 +3404,26 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 폴더 스캔 ==========
+    ipcMain.handle('folder:missingVolumes', async (event, libraryFolders = [], options = {}) => {
+        const taskId = 'folder:missingVolumes';
+        cancellationRegistry.cancel(event.sender.id, taskId);
+        const controller = cancellationRegistry.start(event.sender.id, taskId);
+        try {
+            return await checkMissingVolumes(libraryFolders, {
+                dbPath: libraryDbPath(),
+                indexOnly: options?.indexOnly === true,
+                shouldCancel: () => controller.shouldCancel(),
+            });
+        } catch (error) {
+            if (error?.code === 'TASK_CANCELLED') {
+                return { missing: [], fileCount: 0, cancelled: true };
+            }
+            throw error;
+        } finally {
+            cancellationRegistry.finish(event.sender.id, taskId, controller);
+        }
+    });
+
   ipcMain.handle('folder:scan', async (event, folderPath, options) => {
     const taskId = 'folder:scan';
     cancellationRegistry.cancel(event.sender.id, taskId);
@@ -3582,7 +3612,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       let coverDataUrl = String(options.coverDataUrl || '');
       if (!parseImageDataUrl(coverDataUrl) && options.filePath) {
         const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
-        coverDataUrl = await loadMetadataCover(options.filePath, { sevenZExe }) || '';
+        coverDataUrl = await loadMetadataCover(options.filePath, {
+            sevenZExe,
+            dbPath: libraryDbPath(),
+        }) || '';
       }
       const result = await identifyCoverTitlesFromImage(
         coverDataUrl,
@@ -3700,7 +3733,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const apiKeys = { ...(config.api_keys || {}), ...(options.apiKeys || {}) };
     const apiName = normalizeApiSource(options.api || options.apiName || options.source || options.apiSource);
     const bookType = normalizeSearchBookType(options.bookType || options.mediaType || options.type);
-    const query = String(options.query || '').trim();
+    const queryText = String(options.query || '').trim();
+    const query = apiName === 'YES24' ? queryText.normalize('NFC') : queryText;
     const page = Number(options.page || 1);
 
     if (!query) return { success: true, api: apiName, actualQuery: query, results: [] };
@@ -3759,6 +3793,14 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         results = await searchRidibooks(query, page, bookType);
       } else if (apiName === '알라딘') {
         results = await searchAladin(query, apiKeys.aladin || '', page, bookType);
+      } else if (apiName === 'YES24') {
+        const items = await searchYes24(query, apiKeys.yes24 || '', page, requestJsonGeneric);
+        results = items.map(item => normalizeSearchResult({
+            ...item,
+            Format: metadataFormatForBookType(bookType),
+            Manga: mangaValueForBookType(bookType),
+            ...parseDateParts(item.PubDate),
+        }, item.ID));
       } else if (apiName === 'Amazon') {
         results = await searchAmazon(query, page, bookType);
       } else if (apiName === 'Vine') {

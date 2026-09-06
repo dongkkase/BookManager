@@ -65,6 +65,21 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.api_keys.tts_google_key, 'google-tts');
 });
 
+test('YES24 키를 정리하고 책 타입별 기본 검색 API를 유지한다', () => {
+    const normalized = normalizeSettingsConfig({
+        api_keys: { yes24: '  yk_live_test  ', aladin: 'aladin-key' },
+        preferred_meta_api_comic: 'YES24',
+        preferred_meta_api_book: 'YES24',
+        preferred_meta_api_pdf: 'YES24',
+    });
+    assert.equal(normalized.api_keys.yes24, 'yk_live_test');
+    assert.equal(normalized.api_keys.aladin, 'aladin-key');
+    assert.equal(normalized.preferred_meta_api_comic, 'YES24');
+    assert.equal(normalized.preferred_meta_api_book, 'YES24');
+    assert.equal(normalized.preferred_meta_api_pdf, 'YES24');
+    assert.equal(normalizeSettingsConfig().api_keys.yes24, '');
+});
+
 test('AI 표지 검색 키는 제공자별로 저장하고 기존 ai_key를 선택된 제공자 키로 이전한다', () => {
     const migrated = normalizeSettingsConfig({
         api_keys: {

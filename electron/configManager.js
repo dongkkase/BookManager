@@ -8,9 +8,9 @@ import {
 } from './dataPaths.js';
 
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
-const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Anilist', 'Vine']);
-const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
-const PDF_METADATA_API_SOURCES = new Set(['리디북스', '알라딘', 'Google Books', 'Amazon']);
+const COMIC_METADATA_API_SOURCES = new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+const BOOK_METADATA_API_SOURCES = new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Amazon']);
+const PDF_METADATA_API_SOURCES = new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Amazon']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
 const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
 
@@ -193,6 +193,7 @@ export class ConfigManager {
       last_meta_api: String(raw.last_meta_api || preferredComicApi || defaults.last_meta_api).trim(),
       api_keys: {
         ...mergedApiKeys,
+        yes24: String(mergedApiKeys.yes24 || '').trim(),
         ai_provider: aiProvider,
         ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
         ai_gemini_key: aiGeminiKey,
@@ -255,6 +256,7 @@ export class ConfigManager {
       preferred_meta_api_book: '리디북스',
       preferred_meta_api_pdf: '리디북스',
       api_keys: {
+        yes24: '',
         aladin: '',
         vine: '',
         google: '',
