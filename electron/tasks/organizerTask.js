@@ -5,6 +5,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import { createOrganizerRenameBatches } from '../organizerRenamePolicy.js';
 import { listZipEntries, listZipEntriesFromFile, readZipEntry, readZipEntryFromFile } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 
@@ -918,22 +919,23 @@ async function writePreparedArchive(sourcePath, preparedArchive, finalPath, opti
   await replaceSourceWithPreparedArchive(sourcePath, preparedArchive, finalPath, options);
 }
 
-async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options = {}) {
+async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, entries, options = {}) {
   const sevenZExe = options.sevenZExe;
   const filename = path.basename(sourcePath);
   let tempArchive = await outputLocalTempArchivePath(finalPath, 'rename');
 
   try {
     await fsp.copyFile(sourcePath, tempArchive);
-    for (let index = 0; index < renamePairs.length; index += 20) {
+    for (const batch of createOrganizerRenameBatches(renamePairs, sevenZExe, tempArchive, entries)) {
       if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
       const args = [];
-      for (const pair of renamePairs.slice(index, index + 20)) {
+      for (const pair of batch) {
         args.push(pair.oldPath, pair.newPath);
       }
       await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args]);
     }
 
+    if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
     await writePreparedArchive(sourcePath, tempArchive, finalPath, options);
     tempArchive = '';
     return { success: true, message: filename, created: [finalPath] };
@@ -1050,7 +1052,7 @@ async function tryProcessOrganizerItemDirectly(item, sourceExt, targetExt, optio
       releasePath(finalPath, options.reservedOutputPaths);
       return null;
     }
-    return await renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, options);
+    return await renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath, entries, options);
   } catch (error) {
     releasePath(finalPath, options.reservedOutputPaths);
     throw error;

@@ -320,7 +320,7 @@ test('압축 파일 구조 정리 로컬 툴바는 공통 파일 액션을 중�
 
 test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이름 변경을 사용한다', () => {
     assertInventory('organizer', [
-        ['하위 항목 선택 경로', 'selectedVolumePaths.includes(volumeRow.path)'],
+        ['하위 항목 선택 경로', 'selectedVolumePathSet.has(volumeRow.path)'],
         ['하위 항목 활성 선택 표시', "activeVolumePath === volumeRow.path"],
         ['하위 항목 드래그 범위 선택', 'handleVolumeRowMouseEnter'],
         ['하위 항목 드래그 영역 표시', 'volumeSelectionBox'],

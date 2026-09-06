@@ -6,7 +6,7 @@ import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
-import { listZipEntriesFromFile, replaceZipEntry } from './core/zipArchive.js';
+import { listZipEntriesFromFile, readZipEntry, replaceZipEntry } from './core/zipArchive.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 
 function find7z() {
@@ -423,6 +423,209 @@ test('Organizer는 단일 폴더 ZIP 정리를 압축 해제 없이 7z rn으로 
 
         const outputEntries = await listZipEntriesFromFile(result.createdFiles[0]);
         assert.deepEqual(outputEntries.map(entry => entry.name), ['001.jpg']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 320개 단일 폴더 ZIP을 세 번의 rn으로 정리하고 내용과 원본 백업을 보존한다', async t => {
+    if (process.platform === 'win32') {
+        t.skip('shell wrapper is not available on Windows');
+        return;
+    }
+    const sevenZExe = findBundled7z();
+    if (!sevenZExe) {
+        t.skip('bundled 7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-rn-batches-'));
+    try {
+        const expectedPages = new Map(Array.from({ length: 320 }, (_, index) => [
+            `${String(index + 1).padStart(4, '0')}.jpg`,
+            Buffer.from(`original-page-${index + 1}`),
+        ]));
+        const source = path.join(root, 'Batch Source.zip');
+        const original = await makeZipBuffer(root, path.basename(source), [...expectedPages].map(
+            ([name, content]) => [`Pages 01/${name}`, content],
+        ));
+        const analyzed = await analyzeOrganizerInputs([source], { sevenZExe: '', lang: 'ko' });
+        assert.equal(analyzed.items.length, 1, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items[0].volumes.length, 1);
+        assert.equal(analyzed.items[0].volumes[0].type, 'folder');
+        const outputDir = path.join(root, 'output');
+        analyzed.items[0].out_path = outputDir;
+        analyzed.items[0].volumes[0].new_name = 'Batch Output';
+
+        const logPath = path.join(root, 'rename-pairs.log');
+        const wrapperPath = path.join(root, 'organizer-batched-7z.sh');
+        fs.writeFileSync(wrapperPath, [
+            '#!/bin/sh',
+            'if [ "$1" != "rn" ]; then exit 91; fi',
+            `printf '%s\\n' "$((($# - 2) / 2))" >> ${shellQuote(logPath)}`,
+            `exec ${shellQuote(sevenZExe)} "$@"`,
+            '',
+        ].join('\n'));
+        fs.chmodSync(wrapperPath, 0o755);
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe: wrapperPath,
+            target_format: 'cbz',
+            deleteOriginal: true,
+            backup_on: true,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.deepEqual(fs.readFileSync(logPath, 'utf8').trim().split('\n').map(Number), [128, 128, 64]);
+        assert.deepEqual(result.createdFiles, [path.join(outputDir, 'Batch Output.cbz')]);
+        assert.equal(fs.existsSync(source), false);
+        assert.deepEqual(fs.readFileSync(path.join(root, 'bak', path.basename(source))), original);
+        assert.deepEqual(fs.readdirSync(outputDir), ['Batch Output.cbz']);
+        const outputEntries = await listZipEntriesFromFile(result.createdFiles[0]);
+        assert.deepEqual(outputEntries.map(entry => entry.name).sort(), [...expectedPages.keys()].sort());
+        const outputArchive = fs.readFileSync(result.createdFiles[0]);
+        for (const entry of outputEntries) {
+            assert.deepEqual(readZipEntry(outputArchive, entry), expectedPages.get(entry.name), entry.name);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 긴 Unicode 내부경로를 명령행 예산에 따라 나누고 내용을 보존한다', async t => {
+    if (process.platform === 'win32') {
+        t.skip('shell wrapper is not available on Windows');
+        return;
+    }
+    const sevenZExe = findBundled7z();
+    if (!sevenZExe) {
+        t.skip('bundled 7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-rn-long-'));
+    try {
+        const folderName = `${'긴시리즈'.repeat(40)} 01`;
+        const expectedPages = new Map(Array.from({ length: 32 }, (_, index) => [
+            `${'페이지'.repeat(20)} ${String(index + 1).padStart(4, '0')}.jpg`,
+            Buffer.from(`long-path-page-${index + 1}`),
+        ]));
+        const source = path.join(root, 'Long Source.zip');
+        const original = await makeZipBuffer(root, path.basename(source), [...expectedPages].map(
+            ([name, content]) => [`${folderName}/${name}`, content],
+        ));
+        const analyzed = await analyzeOrganizerInputs([source], { sevenZExe: '', lang: 'ko' });
+        assert.equal(analyzed.items.length, 1, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items[0].volumes.length, 1);
+        assert.equal(analyzed.items[0].volumes[0].type, 'folder');
+        analyzed.items[0].out_path = path.join(root, 'output');
+        analyzed.items[0].volumes[0].new_name = 'Long Output';
+
+        const logPath = path.join(root, 'rename-pairs.log');
+        const wrapperPath = path.join(root, 'organizer-long-path-7z.sh');
+        fs.writeFileSync(wrapperPath, [
+            '#!/bin/sh',
+            'if [ "$1" != "rn" ]; then exit 91; fi',
+            `printf '%s\\n' "$((($# - 2) / 2))" >> ${shellQuote(logPath)}`,
+            `exec ${shellQuote(sevenZExe)} "$@"`,
+            '',
+        ].join('\n'));
+        fs.chmodSync(wrapperPath, 0o755);
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe: wrapperPath,
+            target_format: 'cbz',
+            deleteOriginal: false,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        const batchSizes = fs.readFileSync(logPath, 'utf8').trim().split('\n').map(Number);
+        assert.ok(batchSizes.length > 1);
+        assert.ok(batchSizes.every(size => size > 0 && size < 32));
+        assert.equal(batchSizes.reduce((sum, size) => sum + size, 0), 32);
+        assert.equal(result.createdFiles.length, 1);
+        assert.deepEqual(fs.readFileSync(source), original);
+        const outputEntries = await listZipEntriesFromFile(result.createdFiles[0]);
+        assert.deepEqual(outputEntries.map(entry => entry.name).sort(), [...expectedPages.keys()].sort());
+        const outputArchive = fs.readFileSync(result.createdFiles[0]);
+        for (const entry of outputEntries) {
+            assert.deepEqual(readZipEntry(outputArchive, entry), expectedPages.get(entry.name), entry.name);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 마지막 rn 완료 직후 취소되면 원본을 유지하고 출력을 확정하지 않는다', async t => {
+    if (process.platform === 'win32') {
+        t.skip('shell wrapper is not available on Windows');
+        return;
+    }
+    const sevenZExe = findBundled7z();
+    if (!sevenZExe) {
+        t.skip('bundled 7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-rn-cancel-'));
+    try {
+        const source = path.join(root, 'Cancel Source.zip');
+        const original = await makeZipBuffer(root, path.basename(source), [
+            ['Pages 01/001.jpg', Buffer.from('original-page')],
+        ]);
+        const analyzed = await analyzeOrganizerInputs([source], { sevenZExe: '', lang: 'ko' });
+        assert.equal(analyzed.items.length, 1, analyzed.skippedFiles.join('\n'));
+        assert.equal(analyzed.items[0].volumes.length, 1);
+        const outputDir = path.join(root, 'output');
+        analyzed.items[0].out_path = outputDir;
+        analyzed.items[0].volumes[0].new_name = 'Cancelled Output';
+
+        const completedPath = path.join(root, 'rename-completed');
+        const logPath = path.join(root, 'commands.log');
+        const wrapperPath = path.join(root, 'organizer-cancel-after-7z.sh');
+        fs.writeFileSync(wrapperPath, [
+            '#!/bin/sh',
+            'if [ "$1" != "rn" ]; then exit 91; fi',
+            `printf '%s\\n' "$1" >> ${shellQuote(logPath)}`,
+            `${shellQuote(sevenZExe)} "$@"`,
+            'organizer_exit_code=$?',
+            'if [ "$organizer_exit_code" -ne 0 ]; then exit "$organizer_exit_code"; fi',
+            `printf 'completed\\n' > ${shellQuote(completedPath)}`,
+            '',
+        ].join('\n'));
+        fs.chmodSync(wrapperPath, 0o755);
+
+        const result = await executeOrganizer(analyzed.items, {
+            sevenZExe: wrapperPath,
+            target_format: 'cbz',
+            deleteOriginal: true,
+            backup_on: true,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => fs.existsSync(completedPath),
+            lang: 'ko',
+        });
+
+        assert.equal(fs.existsSync(completedPath), true);
+        assert.equal(fs.readFileSync(logPath, 'utf8').trim(), 'rn');
+        assert.equal(result.cancelled, true);
+        assert.deepEqual(result.stats.error, []);
+        assert.deepEqual(result.stats.success, []);
+        assert.deepEqual(result.createdFiles, []);
+        assert.deepEqual(fs.readFileSync(source), original);
+        assert.deepEqual(fs.readdirSync(outputDir), []);
+        assert.equal(fs.existsSync(path.join(root, 'bak')), false);
+        assert.equal(fs.readdirSync(root).some(name => name.includes('.bookmanager')), false);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

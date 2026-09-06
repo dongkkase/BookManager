@@ -102,6 +102,13 @@ function OrganizerTab({ config, t, showToast }) {
         }))
       : []
   )), [config, expandedItems, groupedItems]);
+    const visibleVolumeIndexByPath = useMemo(() => {
+        const indices = new Map();
+        visibleVolumeRows.forEach((row, index) => {
+            if (!indices.has(row.path)) indices.set(row.path, index);
+        });
+        return indices;
+    }, [visibleVolumeRows]);
   const {
     selectedFiles: selectedVolumePaths,
     activeSelectedPath: activeVolumePath,
@@ -111,11 +118,12 @@ function OrganizerTab({ config, t, showToast }) {
     clearSelection: clearVolumeSelection,
     selectPaths: selectVolumePaths,
   } = useFileSelection(visibleVolumeRows);
+    const selectedVolumePathSet = useMemo(() => new Set(selectedVolumePaths), [selectedVolumePaths]);
   const selectedVolumeRows = useMemo(() => (
     selectedVolumePaths
-      .map(path => visibleVolumeRows.find(row => row.path === path))
+        .map(path => visibleVolumeRows[visibleVolumeIndexByPath.get(path)])
       .filter(Boolean)
-  ), [selectedVolumePaths, visibleVolumeRows]);
+    ), [selectedVolumePaths, visibleVolumeIndexByPath, visibleVolumeRows]);
   const selectedRowCount = selectedItemIds.length + selectedVolumeRows.length;
 
   const isOrganizerTabVisible = useCallback(() => (
@@ -939,8 +947,8 @@ function OrganizerTab({ config, t, showToast }) {
                   {expandedItems.has(item.id) && item.volumes.map(({ item: sourceItem, volume }) => {
                     const extension = targetExtension(volume, config?.target_format || 'none');
                     const volumeRow = organizerVolumeRenameFile(sourceItem, volume, config);
-                    const volumeIndex = visibleVolumeRows.findIndex(row => row.path === volumeRow.path);
-                    const isVolumeSelected = selectedVolumePaths.includes(volumeRow.path);
+                    const volumeIndex = visibleVolumeIndexByPath.get(volumeRow.path) ?? -1;
+                    const isVolumeSelected = selectedVolumePathSet.has(volumeRow.path);
                     return (
                     <div
                       key={volumeRow.path}
