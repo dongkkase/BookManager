@@ -7,6 +7,67 @@ export function defaultOutputPath(filePath) {
     return index >= 0 ? value.slice(0, index) : '';
 }
 
+export function groupOrganizerItems(items = [], platform = '') {
+    const isWindows = /^win/i.test(platform);
+    const isMac = /^(mac|darwin)/i.test(platform);
+    const canonicalPath = value => {
+        const normalized = isWindows ? value.replace(/\\/g, '/').toLowerCase() : value;
+        return isMac ? normalized.normalize('NFC') : normalized;
+    };
+    const groups = new Map();
+
+    items.forEach((item, index) => {
+        const filePath = String(item.filepath || '');
+        const separatorIndex = isWindows
+            ? Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+            : filePath.lastIndexOf('/');
+        const isDriveRoot = isWindows && separatorIndex === 2 && /^[a-z]:/i.test(filePath);
+        const directoryPath = separatorIndex < 0
+            ? ''
+            : separatorIndex === 0 || isDriveRoot
+                ? filePath.slice(0, separatorIndex + 1)
+                : filePath.slice(0, separatorIndex);
+        const directoryKey = directoryPath
+            ? canonicalPath(directoryPath)
+            : `item:${index}:${String(item.id || '')}`;
+        const id = `organizer-directory:${directoryKey}`;
+
+        if (!groups.has(id)) {
+            const directoryParts = directoryPath.split(isWindows ? /[\\/]/ : /\//).filter(Boolean);
+            const basename = directoryParts.at(-1) || '';
+            groups.set(id, {
+                id,
+                directoryPath,
+                name: !basename || (isWindows && /^[a-z]:$/i.test(basename))
+                    ? directoryPath || item.name || filePath || String(item.id || '')
+                    : basename,
+                items: [],
+                volumes: [],
+            });
+        }
+        const group = groups.get(id);
+        group.items.push(item);
+        for (const volume of item.volumes || []) group.volumes.push({ item, volume });
+    });
+
+    return [...groups.values()].map(group => {
+        const outPath = String(group.items[0].out_path || '');
+        const mixedOutPaths = group.items.some(item => canonicalPath(String(item.out_path || '')) !== canonicalPath(outPath));
+        const checked = group.items.every(item => item.checked !== false);
+        return {
+            ...group,
+            out_path: mixedOutPaths ? '' : outPath,
+            mixedOutPaths,
+            checked,
+            partiallyChecked: !checked && group.items.some(item => item.checked !== false),
+            size_mb: group.items.reduce((sum, item) => {
+                const size = Number(item.size_mb);
+                return sum + (Number.isFinite(size) ? size : 0);
+            }, 0),
+        };
+    });
+}
+
 export function titleOutputPath(item) {
     const base = defaultOutputPath(item?.filepath);
     const title = String(item?.clean_title || '').trim();
@@ -58,7 +119,16 @@ export function changeOrganizerUnit(name, unit, lang = 'ko') {
     return base ? `${base} ${number}${suffix}` : `${number}${suffix}`;
 }
 
-export function organizerOriginalFilenameName(volume) {
+export function organizerOriginalFilenameName(volume, item) {
+    const isRootFiles = !volume?.inner_path && volume?.type !== 'folder'
+        && (volume?.original_path || volume?.original_basename) === 'Root_Files';
+    if (isRootFiles) {
+        const sourcePath = String(item?.filepath || item?.name || '').replace(/\\/g, '/');
+        const filename = sourcePath.split('/').at(-1) || '';
+        const extensionIndex = filename.lastIndexOf('.');
+        const originalName = (extensionIndex > 0 ? filename.slice(0, extensionIndex) : filename).trim();
+        return originalName || String(volume?.extracted_name || volume?.new_name || '').trim();
+    }
     return String(volume?.original_basename || volume?.original_path || volume?.new_name || '').trim();
 }
 

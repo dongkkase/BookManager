@@ -15,6 +15,7 @@ import {
   changeOrganizerUnit,
   defaultOutputPath,
   filenameOutputPath,
+    groupOrganizerItems,
   organizerExtractedTitleName,
   organizerFolderName,
   organizerOriginalFilenameName,
@@ -70,7 +71,6 @@ function OrganizerTab({ config, t, showToast }) {
 
   const [fileList, setFileList] = useState([]);
   const [expandedItems, setExpandedItems] = useState(new Set());
-  const [isAllExpanded, setIsAllExpanded] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [statusMessage, setStatusMessage] = useState(t('status_wait'));
   const [progress, setProgress] = useState(0);
@@ -91,15 +91,17 @@ function OrganizerTab({ config, t, showToast }) {
     () => selectRandomResource(DRAG_DROP_IMAGES),
     [],
   );
-  const visibleVolumeRows = useMemo(() => fileList.flatMap(item => (
-    expandedItems.has(item.id)
-      ? (item.volumes || []).map(volume => ({
+    const groupedItems = useMemo(() => groupOrganizerItems(fileList, runtimePlatform), [fileList, runtimePlatform]);
+    const isAllExpanded = groupedItems.length > 0 && groupedItems.every(group => expandedItems.has(group.id));
+  const visibleVolumeRows = useMemo(() => groupedItems.flatMap(group => (
+    expandedItems.has(group.id)
+      ? group.volumes.map(({ item, volume }) => ({
           ...organizerVolumeRenameFile(item, volume, config),
           item,
           volume,
         }))
       : []
-  )), [config, expandedItems, fileList]);
+  )), [config, expandedItems, groupedItems]);
   const {
     selectedFiles: selectedVolumePaths,
     activeSelectedPath: activeVolumePath,
@@ -193,10 +195,9 @@ function OrganizerTab({ config, t, showToast }) {
       });
       setExpandedItems(prev => {
         const next = new Set(prev);
-        for (const item of result.items || []) next.add(item.id);
+        for (const group of groupOrganizerItems(result.items || [], runtimePlatform)) next.add(group.id);
         return next;
       });
-      setIsAllExpanded(true);
       setSkippedFiles(prev => [...new Set([...prev, ...(result.skippedFiles || [])])]);
       if (result.skippedFiles?.length) {
         setStatusMessage(`${t('msg_failed')}: ${result.skippedFiles.join(', ')}`);
@@ -228,7 +229,7 @@ function OrganizerTab({ config, t, showToast }) {
       setIsWorking(false);
       setTaskPhase('idle');
     }
-  }, [language, t]);
+  }, [language, runtimePlatform, t]);
 
   const handleSelectFiles = useCallback(async () => {
     const paths = await window.electronAPI.selectArchives(t('add_file'));
@@ -253,9 +254,8 @@ function OrganizerTab({ config, t, showToast }) {
     if (isAllExpanded) {
       setExpandedItems(new Set());
     } else {
-      setExpandedItems(new Set(fileList.map(item => item.id)));
+      setExpandedItems(new Set(groupedItems.map(item => item.id)));
     }
-    setIsAllExpanded(!isAllExpanded);
   };
 
   const handleToggleExpand = (id) => {
@@ -268,11 +268,13 @@ function OrganizerTab({ config, t, showToast }) {
   };
 
   const updateItem = (id, updater) => {
-    setFileList(prev => prev.map(item => item.id === id ? updater(item) : item));
+    const sourceIds = new Set(groupedItems.find(group => group.id === id)?.items.map(item => item.id) || [id]);
+    setFileList(prev => prev.map(item => sourceIds.has(item.id) ? updater(item) : item));
   };
 
   const handleCheck = (id) => {
-    updateItem(id, item => ({ ...item, checked: !item.checked }));
+    const checked = !groupedItems.find(group => group.id === id)?.checked;
+    updateItem(id, item => ({ ...item, checked }));
   };
 
   const handleOutPathChange = (id, outPath) => {
@@ -281,15 +283,12 @@ function OrganizerTab({ config, t, showToast }) {
 
   const handleFolderMenuAction = (item, mode) => {
     setOpenFolderMenuId('');
-    if (mode === 'title') {
-      handleOutPathChange(item.id, titleOutputPath(item));
-      return;
-    }
-    if (mode === 'filename') {
-      handleOutPathChange(item.id, filenameOutputPath(item));
-      return;
-    }
-    handleOutPathChange(item.id, defaultOutputPath(item.filepath));
+    updateItem(item.id, source => ({
+        ...source,
+        out_path: mode === 'title' ? titleOutputPath(source)
+            : mode === 'filename' ? filenameOutputPath(source)
+                : defaultOutputPath(source.filepath),
+    }));
   };
 
   const openFolderRowMenu = useCallback((itemId) => {
@@ -347,7 +346,7 @@ function OrganizerTab({ config, t, showToast }) {
       volumes: item.volumes.map(volume => {
         const preserved = preserveOrganizerExtractedTitle(volume);
         const nextName = mode === 'original'
-          ? organizerOriginalFilenameName(preserved)
+          ? organizerOriginalFilenameName(preserved, item)
           : mode === 'folder'
             ? organizerFolderName(item, preserved)
             : organizerExtractedTitleName(preserved);
@@ -390,21 +389,30 @@ function OrganizerTab({ config, t, showToast }) {
   }, [isWorking, t]);
 
   const removeByIds = useCallback((ids) => {
-    const targetIds = (ids || []).filter(Boolean);
-    if (targetIds.length === 0) return;
+    const requestedIds = new Set((ids || []).filter(Boolean));
+    if (requestedIds.size === 0) return;
     clearVolumeSelection();
     setFileList(prev => {
+        const previousGroups = groupOrganizerItems(prev, runtimePlatform);
+        const targetIds = previousGroups.flatMap(group => (
+            group.items.filter(item => requestedIds.has(group.id) || requestedIds.has(item.id)).map(item => item.id)
+        ));
+        const firstRemovedGroupIndex = previousGroups.findIndex(group => (
+            requestedIds.has(group.id) || group.items.some(item => requestedIds.has(item.id))
+        ));
       const result = removeOrganizerItems(prev, targetIds);
-      setSelectedItemId(result.nextSelectedId);
-      setSelectedItemIds(result.nextSelectedId ? [result.nextSelectedId] : []);
+        const nextGroups = groupOrganizerItems(result.items, runtimePlatform);
+        const nextSelectedId = nextGroups.find(group => group.id === previousGroups[firstRemovedGroupIndex]?.id)?.id
+            || nextGroups[Math.min(firstRemovedGroupIndex, nextGroups.length - 1)]?.id || '';
+      setSelectedItemId(nextSelectedId);
+      setSelectedItemIds(nextSelectedId ? [nextSelectedId] : []);
       setExpandedItems(current => {
-        const next = new Set(current);
-        targetIds.forEach(id => next.delete(id));
-        return next;
+        const remainingIds = new Set(nextGroups.map(group => group.id));
+        return new Set([...current].filter(id => remainingIds.has(id)));
       });
       return result.items;
     });
-  }, [clearVolumeSelection]);
+  }, [clearVolumeSelection, runtimePlatform]);
 
   const handleRemoveChecked = useCallback(() => {
     removeByIds(fileList.filter(item => item.checked).map(item => item.id));
@@ -435,12 +443,12 @@ function OrganizerTab({ config, t, showToast }) {
   }, [clearVolumeSelection]);
 
   const handleSelectAllItemRows = useCallback(() => {
-    const itemIds = fileList.map(item => item.id).filter(Boolean);
+    const itemIds = groupedItems.map(item => item.id);
     treeBodyRef.current?.focus({ preventScroll: true });
     setSelectedItemId(itemIds[itemIds.length - 1] || '');
     setSelectedItemIds(itemIds);
     clearVolumeSelection();
-  }, [clearVolumeSelection, fileList]);
+  }, [clearVolumeSelection, groupedItems]);
 
   const scrollActiveItemIntoView = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -451,28 +459,28 @@ function OrganizerTab({ config, t, showToast }) {
   }, []);
 
   const selectItemAtIndex = useCallback((index) => {
-    if (fileList.length === 0) return false;
-    const clampedIndex = Math.max(0, Math.min(index, fileList.length - 1));
-    const itemId = fileList[clampedIndex]?.id;
+    if (groupedItems.length === 0) return false;
+    const clampedIndex = Math.max(0, Math.min(index, groupedItems.length - 1));
+    const itemId = groupedItems[clampedIndex]?.id;
     if (!itemId) return false;
     handleSelectItemRow(itemId);
     return true;
-  }, [fileList, handleSelectItemRow]);
+  }, [groupedItems, handleSelectItemRow]);
 
   const moveItemSelection = useCallback((direction) => {
     const currentIndex = selectedItemId
-      ? fileList.findIndex(item => item.id === selectedItemId)
+      ? groupedItems.findIndex(item => item.id === selectedItemId)
       : -1;
     const moved = selectItemAtIndex(currentIndex + direction);
     if (moved) scrollActiveItemIntoView();
     return moved;
-  }, [fileList, scrollActiveItemIntoView, selectItemAtIndex, selectedItemId]);
+  }, [groupedItems, scrollActiveItemIntoView, selectItemAtIndex, selectedItemId]);
 
   const selectEdgeItem = useCallback((edge) => {
-    const moved = selectItemAtIndex(edge === 'end' ? fileList.length - 1 : 0);
+    const moved = selectItemAtIndex(edge === 'end' ? groupedItems.length - 1 : 0);
     if (moved) scrollActiveItemIntoView();
     return moved;
-  }, [fileList.length, scrollActiveItemIntoView, selectItemAtIndex]);
+  }, [groupedItems.length, scrollActiveItemIntoView, selectItemAtIndex]);
 
   const setSelectedItemsExpanded = useCallback((expanded) => {
     const targetIds = selectedItemIds.length > 0 ? selectedItemIds : [selectedItemId].filter(Boolean);
@@ -485,7 +493,6 @@ function OrganizerTab({ config, t, showToast }) {
       });
       return next;
     });
-    if (!expanded) setIsAllExpanded(false);
     return true;
   }, [selectedItemId, selectedItemIds]);
 
@@ -790,7 +797,7 @@ function OrganizerTab({ config, t, showToast }) {
                 <div className="org-col-actions">{t('btn_remove')}</div>
               </div>
 
-              {fileList.map((item) => (
+              {groupedItems.map((item) => (
                 <div key={item.id} className={`org-tree-item-group ${selectedItemIds.includes(item.id) ? 'selected' : ''} ${selectedItemId === item.id ? 'active-selection' : ''}`}>
                   <div
                     className="org-tree-row org-root-row"
@@ -799,6 +806,7 @@ function OrganizerTab({ config, t, showToast }) {
                   >
                     <div
                       className="org-col-name"
+                      title={item.directoryPath}
                       role="button"
                       tabIndex={0}
                       aria-expanded={expandedItems.has(item.id)}
@@ -817,13 +825,15 @@ function OrganizerTab({ config, t, showToast }) {
                       <input
                         type="checkbox"
                         checked={item.checked}
+                        ref={element => { if (element) element.indeterminate = item.partiallyChecked; }}
+                        aria-label={item.name}
                         onChange={() => handleCheck(item.id)}
                         onClick={(event) => event.stopPropagation()}
                       />
-                      <span className="org-icon"><FaIcon name="cube" /></span>
+                      <span className="org-icon"><FaIcon name="folder" /></span>
                       <span className="org-name-text">
-                        <span className="org-title">{item.clean_title || item.name}</span>
-                        <span className="org-original-name">({item.name})</span>
+                        <span className="org-title">{item.name}</span>
+                        <span className="org-original-name">{item.directoryPath}</span>
                       </span>
                     </div>
                     <div className="org-col-path org-path-widget">
@@ -831,6 +841,7 @@ function OrganizerTab({ config, t, showToast }) {
                         type="text"
                         className="org-path-input"
                         value={item.out_path || ''}
+                        placeholder={item.mixedOutPaths ? t('org_mixed_output_paths') : ''}
                         onChange={(event) => handleOutPathChange(item.id, event.target.value)}
                         onClick={event => event.stopPropagation()}
                       />
@@ -925,14 +936,14 @@ function OrganizerTab({ config, t, showToast }) {
                     </div>
                   </div>
 
-                  {expandedItems.has(item.id) && item.volumes.map((volume) => {
+                  {expandedItems.has(item.id) && item.volumes.map(({ item: sourceItem, volume }) => {
                     const extension = targetExtension(volume, config?.target_format || 'none');
-                    const volumeRow = organizerVolumeRenameFile(item, volume, config);
+                    const volumeRow = organizerVolumeRenameFile(sourceItem, volume, config);
                     const volumeIndex = visibleVolumeRows.findIndex(row => row.path === volumeRow.path);
                     const isVolumeSelected = selectedVolumePaths.includes(volumeRow.path);
                     return (
                     <div
-                      key={volume.id}
+                      key={volumeRow.path}
                       className={`org-tree-row org-child-row ${isVolumeSelected ? 'selected' : ''} ${activeVolumePath === volumeRow.path ? 'active-selection' : ''}`}
                       data-volume-path={volumeRow.path}
                       onMouseDown={event => handleVolumeRowMouseDown(volumeRow, event, volumeIndex)}
@@ -941,7 +952,9 @@ function OrganizerTab({ config, t, showToast }) {
                         <span className="org-indent">↳</span>
                         <span className="org-icon"><FaIcon name="file-zipper" /></span>
                         <span className="org-volume-name">{volume.new_name}{extension}</span>
-                        {volume.original_basename && <span className="org-original-name">({volume.original_basename})</span>}
+                        <span className="org-original-name" title={sourceItem.filepath}>
+                            ({sourceItem.name}{volume.original_basename && volume.original_basename !== 'Root_Files' ? ` / ${volume.original_basename}` : ''})
+                        </span>
                         {volume.spinoff_folder && <span className="org-spinoff">SPINOFF</span>}
                       </div>
                     </div>
@@ -962,7 +975,7 @@ function OrganizerTab({ config, t, showToast }) {
       <div className="org-progress-row" />
 
       <div className="org-bottom-info">
-        {t('total_files', { count: fileList.length })} / {selectedCount} checked / {selectedRowCount} selected
+        {t('org_group_summary', { groups: groupedItems.length, files: fileList.length })} / {selectedCount} checked / {selectedRowCount} selected
       </div>
       {skippedFiles.length > 0 && (
         <div className="org-result-errors">
