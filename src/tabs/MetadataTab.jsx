@@ -37,11 +37,13 @@ import {
 import { partitionSkippedFiles } from '../notificationPolicy';
 import {
   ALL_METADATA_API_SOURCES,
+    UNIFIED_METADATA_API_SOURCE,
   apiSourceHasRequiredKey,
-  metadataApiSourcesForBookType,
+    metadataSearchSourcesForBookType,
   metadataFromApiResult,
   preferredMetadataApiSource,
 } from '../metadataApiPolicy';
+import { metadataSearchResultKey, searchMetadata } from '../metadataSearch';
 import {
   AUDIOBOOK_BASIC_FIELDS,
   AUDIOBOOK_CREATOR_FIELDS,
@@ -287,7 +289,7 @@ function ridiOriginalCoverUrl(result = {}, fallbackUrl = '') {
 
 function apiResultCoverUrlForUse(result = {}, apiSource = '') {
   const coverUrl = apiResultCoverUrl(result);
-  if (apiSource === '리디북스') return ridiOriginalCoverUrl(result, coverUrl) || coverUrl;
+    if ((result.apiSource || apiSource) === '리디북스') return ridiOriginalCoverUrl(result, coverUrl) || coverUrl;
   return coverUrl;
 }
 
@@ -316,18 +318,6 @@ function languageIsoFromConfig(value = '') {
   if (normalized.startsWith('zh-tw')) return 'zh-TW';
   if (normalized.startsWith('zh')) return 'zh';
   return normalized || 'ko';
-}
-
-function similarity(a = '', b = '') {
-  const left = String(a).toLowerCase();
-  const right = String(b).toLowerCase();
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  const leftSet = new Set(left.split(/\s+/).filter(Boolean));
-  const rightSet = new Set(right.split(/\s+/).filter(Boolean));
-  let hits = 0;
-  for (const token of leftSet) if (rightSet.has(token)) hits += 1;
-  return hits / Math.max(leftSet.size, rightSet.size, 1);
 }
 
 function MetadataTab({ config, t, showToast }) {
@@ -364,6 +354,11 @@ function MetadataTab({ config, t, showToast }) {
   const [publisherOptions, setPublisherOptions] = useState([]);
   const [savedSeriesGroupOptions, setSavedSeriesGroupOptions] = useState([]);
   const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: initialApiSource, query: '', cached: false });
+    const apiSearchRequestRef = useRef(0);
+    const closeApiSearch = useCallback(() => {
+        apiSearchRequestRef.current += 1;
+        setApiSearch(prev => ({ ...prev, open: false, loading: false }));
+    }, []);
   const [taskPhase, setTaskPhase] = useState('idle');
   const primaryShortcut = primaryModifierLabel(isMacPlatform() ? 'MacIntel' : 'Win32');
   const formScrollRef = useRef(null);
@@ -399,6 +394,7 @@ function MetadataTab({ config, t, showToast }) {
     return translated && translated !== key ? translated : fallback;
   }, [t]);
   const apiSourceLabel = useCallback((source) => {
+        if (source === UNIFIED_METADATA_API_SOURCE) return text('api_source_unified', '통합검색');
     const entry = ALL_METADATA_API_SOURCES.find(item => item.value === source);
     return entry ? text(entry.labelKey, entry.value) : source;
   }, [text]);
@@ -532,7 +528,11 @@ function MetadataTab({ config, t, showToast }) {
   const activeEpubImageState = activeItem?.filepath ? epubImagesByFilePath[activeItem.filepath] || {} : {};
   const activeEpubImages = activeEpubImageState.images || [];
   const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
-  const currentApiSources = useMemo(() => metadataApiSourcesForBookType(activeBookType), [activeBookType]);
+    const currentApiSources = useMemo(() => metadataSearchSourcesForBookType(activeBookType), [activeBookType]);
+    useEffect(() => {
+        closeApiSearch();
+        return () => { apiSearchRequestRef.current += 1; };
+    }, [activeBookType, closeApiSearch]);
   const currentMetadataConfig = useMemo(() => (
     activeBookType === 'pdf'
       ? {
@@ -1046,91 +1046,70 @@ function MetadataTab({ config, t, showToast }) {
     return normalized;
   }, [normalizeTagText]);
 
-  const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
-    const cleanQuery = String(query || '').trim();
-    if (!cleanQuery) return;
-    selectApiSource(source);
-    if (!apiSourceHasRequiredKey(source, config?.api_keys || {})) {
-      setApiSearch(prev => ({
-        ...prev,
-        open: true,
-        loading: false,
-        results: [],
-        error: text('api_key_missing', '환경설정에서 API 키를 입력해주세요.'),
-        actualQuery: cleanQuery,
-        query: cleanQuery,
-        page,
-        apiSource: source,
-        cached: false,
-      }));
-      return;
-    }
-    setApiSearch(prev => ({
-      ...prev,
-      open: true,
-      loading: true,
-      results: [],
-      error: '',
-      actualQuery: cleanQuery,
-      query: cleanQuery,
-      page,
-      apiSource: source,
-      cached: false,
-    }));
-    try {
-      const result = await window.electronAPI.fetchMetadata({
-        apiSource: source,
-        query: cleanQuery,
-        page,
-        bookType: activeBookType,
-        apiKeys: config?.api_keys || {},
-      });
-      if (result?.success === false) {
-        setApiSearch(prev => ({
-          ...prev,
-          open: true,
-          loading: false,
-          results: [],
-          error: result.error || text('meta_search_failed', '검색에 실패했습니다.'),
-          actualQuery: result.actualQuery || cleanQuery,
-          query: cleanQuery,
-          page,
-          apiSource: source,
-          cached: false,
-        }));
-        return;
-      }
-      const comparisonQuery = result.actualQuery || cleanQuery;
-      const sortedResults = [...(result.results || [])].sort((a, b) => (
-        similarity(comparisonQuery, b.title || b.metadata?.Title) - similarity(comparisonQuery, a.title || a.metadata?.Title)
-      ));
-      setApiSearch(prev => ({
-        ...prev,
-        open: true,
-        loading: false,
-        results: sortedResults,
-        error: '',
-        actualQuery: result.actualQuery || cleanQuery,
-        query: cleanQuery,
-        page,
-        apiSource: source,
-        cached: Boolean(result.cached),
-      }));
-    } catch (error) {
-      setApiSearch(prev => ({
-        ...prev,
-        open: true,
-        loading: false,
-        results: [],
-        error: error.message,
-        actualQuery: cleanQuery,
-        query: cleanQuery,
-        page,
-        apiSource: source,
-        cached: false,
-      }));
-    }
-  }, [activeBookType, apiSource, config?.api_keys, searchQuery, selectApiSource, text]);
+    const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
+        const cleanQuery = String(query || '').trim();
+        if (!cleanQuery) return;
+        const requestId = ++apiSearchRequestRef.current;
+        const isCancelled = () => apiSearchRequestRef.current !== requestId;
+        selectApiSource(source);
+        const searchState = {
+            requestId,
+            open: true,
+            results: [],
+            error: '',
+            failures: [],
+            hasNext: false,
+            actualQuery: cleanQuery,
+            query: cleanQuery,
+            page,
+            apiSource: source,
+            cached: false,
+        };
+        if (!apiSourceHasRequiredKey(source, config?.api_keys || {})) {
+            setApiSearch({
+                ...searchState,
+                loading: false,
+                error: text('api_key_missing', '환경설정에서 API 키를 입력해주세요.'),
+            });
+            return;
+        }
+        setApiSearch({ ...searchState, loading: true });
+        try {
+            const result = await searchMetadata({
+                apiSource: source,
+                query: cleanQuery,
+                page,
+                bookType: activeBookType,
+                apiKeys: config?.api_keys || {},
+            }, options => window.electronAPI.fetchMetadata(options), { isCancelled });
+            if (isCancelled()) return;
+            let error = '';
+            if (result.success === false) {
+                error = result.code === 'ALL_APIS_FAILED'
+                    ? text('meta_search_all_failed', '모든 API 검색에 실패했습니다.')
+                    : result.code === 'NO_ENABLED_APIS'
+                        ? text('meta_search_no_enabled_api', '사용 가능한 검색 API가 없습니다.')
+                        : result.error || text('meta_search_failed', '검색에 실패했습니다.');
+            }
+            setApiSearch({
+                ...searchState,
+                loading: false,
+                results: result.results || [],
+                error,
+                failures: result.failures || [],
+                hasNext: Boolean(result.hasNext),
+                actualQuery: result.actualQuery || cleanQuery,
+                cached: Boolean(result.cached),
+            });
+        } catch (error) {
+            if (isCancelled()) return;
+            setApiSearch({
+                ...searchState,
+                loading: false,
+                error: error.message || text('meta_search_failed', '검색에 실패했습니다.'),
+            });
+        }
+    }, [activeBookType, apiSource, config?.api_keys, searchQuery, selectApiSource, text]);
 
   const handleSearchApi = async (page = 1) => {
     const query = searchQuery.trim();
@@ -1148,7 +1127,7 @@ function MetadataTab({ config, t, showToast }) {
       bookType: activeBookType,
       query: apiSearch.query || searchQuery,
     }));
-    setApiSearch(prev => ({ ...prev, open: false }));
+    closeApiSearch();
     setStatusMessage(text('t3_msg_loaded_search_result_batch', '검색 결과를 일괄 편집창에 불러왔습니다.'));
     showToast?.({ key: 't3_msg_applied_series_tag' });
     if (shouldAutoUseTxtSearchCover(activeItem) && apiResultCoverUrl(result)) {
@@ -1380,6 +1359,7 @@ function MetadataTab({ config, t, showToast }) {
       return;
     }
     const originalUrl = apiResultCoverUrlForUse(result, apiSearch.apiSource);
+        const requestId = apiSearchRequestRef.current;
     try {
       setStatusMessage(text('meta_epub_cover_api_loading', '검색 API 표지를 저장하는 중...'));
       const cached = await window.electronAPI?.cacheMetadataRemoteCover?.(originalUrl);
@@ -1390,7 +1370,7 @@ function MetadataTab({ config, t, showToast }) {
         filePath: cached.filePath,
         label: result?.title || result?.metadata?.Title || fileNameFromPath(cached.filePath),
       }, cached.coverCacheUrl || coverUrl, { onlyIfEmpty: autoForEmptyTxt });
-      setApiSearch(prev => ({ ...prev, open: false }));
+            if (apiSearchRequestRef.current === requestId) closeApiSearch();
       setStatusMessage(activeIsTxt
         ? text('txt_cover_replace_pending', '저장하면 TXT 표지가 교체됩니다.')
         : text('meta_epub_cover_api_done', '검색 API 표지를 새 EPUB 표지로 선택했습니다.'));
@@ -1440,13 +1420,13 @@ function MetadataTab({ config, t, showToast }) {
     setIsWorking(true);
     setStatusMessage(text('t3_msg_auto_matching', '시리즈 자동 매칭 중...'));
     try {
-      const result = await window.electronAPI.fetchMetadata({
+      const result = await searchMetadata({
         apiSource,
         query,
         page: 1,
         bookType: activeBookType,
         apiKeys: config?.api_keys || {},
-      });
+      }, options => window.electronAPI.fetchMetadata(options));
       if (result?.success === false) {
         setStatusMessage(result.error || text('t3_msg_auto_match_failed', '자동 매칭에 실패했습니다.'));
         return;
@@ -1475,6 +1455,8 @@ function MetadataTab({ config, t, showToast }) {
 
   const resolveRidiPublishDate = useCallback(async (result) => {
     const bookId = result?.id || result?.b_id;
+        const requestId = apiSearchRequestRef.current;
+        const resultKey = metadataSearchResultKey(result, '리디북스');
     const existingPubDate = result?.metadata?.PubDate || result?.PubDate;
     const existingIsbn = result?.metadata?.ISBN || result?.ISBN || result?.isbn;
     if (!bookId || (existingPubDate && existingIsbn)) return;
@@ -1482,13 +1464,14 @@ function MetadataTab({ config, t, showToast }) {
     const detail = typeof window.electronAPI?.fetchRidiBookDetail === 'function'
       ? await window.electronAPI.fetchRidiBookDetail(bookId)
       : { PubDate: await window.electronAPI?.fetchRidiPublishDate?.(bookId) };
+        if (apiSearchRequestRef.current !== requestId) return;
     const pubDate = detail?.PubDate || existingPubDate || '';
     const isbn = detail?.ISBN || existingIsbn || '';
     if (!pubDate && !isbn) {
       setApiSearch(prev => ({
         ...prev,
         results: prev.results.map(item => (
-          (item.id || item.b_id) === bookId ? { ...item, ridiDetailResolved: true } : item
+                    metadataSearchResultKey(item, prev.apiSource) === resultKey ? { ...item, ridiDetailResolved: true } : item
         )),
       }));
       return;
@@ -1497,7 +1480,7 @@ function MetadataTab({ config, t, showToast }) {
     setApiSearch(prev => ({
       ...prev,
       results: prev.results.map(item => (
-        (item.id || item.b_id) === bookId
+                metadataSearchResultKey(item, prev.apiSource) === resultKey
           ? {
               ...item,
               ridiDetailResolved: true,
@@ -2647,7 +2630,7 @@ function MetadataTab({ config, t, showToast }) {
           apiSources={currentApiSources}
           bookType={activeBookType}
           t={t}
-          onClose={() => setApiSearch(prev => ({ ...prev, open: false }))}
+          onClose={closeApiSearch}
           onSelect={handleSelectApiResult}
           onUseCover={activeBookType === 'book' && (activeIsEpub || activeIsTxt) ? handleUseApiCoverResult : null}
           onSearch={fetchMetadataResults}
@@ -2874,9 +2857,17 @@ function MetadataSearchDialog({
   const [aiTitleMenuOpen, setAiTitleMenuOpen] = useState(false);
   const [aiTitleActiveIndex, setAiTitleActiveIndex] = useState(0);
   const dialogQueryInputRef = useRef(null);
+    const dialogRequestRef = useRef(state.requestId);
+    dialogRequestRef.current = state.requestId;
+    useEffect(() => {
+        dialogRequestRef.current = state.requestId;
+        return () => { dialogRequestRef.current = null; };
+    }, [state.requestId]);
   const resolvingRidiDates = useRef(new Set());
   const rawSelected = state.results[selectedIndex];
-  const selected = showTranslated && translatedResult ? translatedResult : rawSelected;
+    const selectedResultKey = rawSelected ? metadataSearchResultKey(rawSelected, state.apiSource) : '';
+    const translationRequestRef = useRef(0);
+    const selected = showTranslated && translatedResult?.key === selectedResultKey ? translatedResult.result : rawSelected;
   const selectedCoverUrl = selected ? apiResultCoverUrl(selected) : '';
 
   useLayoutEffect(() => {
@@ -2951,11 +2942,13 @@ function MetadataSearchDialog({
   }, [selectedIndex, state.results]);
 
   useEffect(() => {
+        translationRequestRef.current += 1;
     setTranslatedResult(null);
     setShowTranslated(false);
     setTranslating(false);
     setTranslationError('');
-  }, [rawSelected?.id, state.apiSource]);
+        return () => { translationRequestRef.current += 1; };
+    }, [selectedResultKey, state.apiSource, state.query, state.page]);
 
   useEffect(() => {
     setDialogApi(state.apiSource || apiSources[0]?.value || '');
@@ -2965,12 +2958,15 @@ function MetadataSearchDialog({
   useEffect(() => {
     const hasPubDate = selected?.PubDate || selected?.metadata?.PubDate;
     const hasIsbn = selected?.ISBN || selected?.isbn || selected?.metadata?.ISBN || selected?.metadata?.isbn;
-    if (state.apiSource !== '리디북스' || !selected || selected.ridiDetailResolved || (hasPubDate && hasIsbn)) return;
+        if ((selected?.apiSource || state.apiSource) !== '리디북스' || !selected || selected.ridiDetailResolved || (hasPubDate && hasIsbn)) return;
     const bookId = selected.id || selected.b_id;
-    if (!bookId || resolvingRidiDates.current.has(bookId)) return;
-    resolvingRidiDates.current.add(bookId);
-    Promise.resolve(onResolveRidiDate?.(selected)).finally(() => resolvingRidiDates.current.delete(bookId));
-  }, [onResolveRidiDate, selected, state.apiSource]);
+        const detailKey = `${state.requestId}:${bookId}`;
+        if (!bookId || resolvingRidiDates.current.has(detailKey)) return;
+        resolvingRidiDates.current.add(detailKey);
+        Promise.resolve(onResolveRidiDate?.(selected))
+            .catch(() => {})
+            .finally(() => resolvingRidiDates.current.delete(detailKey));
+    }, [onResolveRidiDate, selected, state.apiSource, state.requestId]);
 
   const runSearch = (page = 1, query = dialogQuery) => {
     onSearch({ source: dialogApi, query, page });
@@ -2978,10 +2974,12 @@ function MetadataSearchDialog({
 
   const clearSearchCache = async () => {
     if (clearingCache) return;
+        const requestId = dialogRequestRef.current;
     setClearingCache(true);
     setCacheError('');
     try {
       const response = await window.electronAPI?.clearApiCache?.();
+            if (dialogRequestRef.current !== requestId) return;
       if (response?.success === false) {
         throw new Error(response.error || text('meta_cache_clear_failed', '검색 캐시를 비우지 못했습니다.'));
       }
@@ -3001,30 +2999,36 @@ function MetadataSearchDialog({
       setTranslationError('');
       return;
     }
-    if (translatedResult) {
+        if (translatedResult?.key === selectedResultKey) {
       setShowTranslated(true);
       setTranslationError('');
       return;
     }
     setTranslating(true);
     setTranslationError('');
+        const requestId = ++translationRequestRef.current;
     try {
       if (typeof window.electronAPI?.translateMetadata !== 'function') {
         throw new Error(text('meta_translate_unavailable', '번역 기능을 불러오지 못했습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
       }
       const response = await window.electronAPI.translateMetadata(rawSelected);
+            if (translationRequestRef.current !== requestId) return;
       if (response === undefined || response === null) {
         throw new Error(text('meta_translate_no_response', '번역 IPC에서 응답이 없습니다. BookManager를 완전히 종료한 뒤 다시 실행해주세요.'));
       }
       if (!response?.success || !response.result) {
         throw new Error(response?.error || text('meta_translate_failed', '번역에 실패했습니다.'));
       }
-      setTranslatedResult(response.result);
+            setTranslatedResult({
+                key: selectedResultKey,
+                result: { ...response.result, id: rawSelected.id, apiSource: rawSelected.apiSource || state.apiSource },
+            });
       setShowTranslated(true);
     } catch (error) {
+            if (translationRequestRef.current !== requestId) return;
       setTranslationError(error.message || text('meta_translate_failed', '번역에 실패했습니다.'));
     } finally {
-      setTranslating(false);
+            if (translationRequestRef.current === requestId) setTranslating(false);
     }
   };
 
@@ -3032,6 +3036,11 @@ function MetadataSearchDialog({
     const translated = t?.(key, values);
     return translated && translated !== key ? translated : fallback;
   };
+
+    const apiSourceLabel = (source) => {
+        const entry = ALL_METADATA_API_SOURCES.find(item => item.value === source);
+        return entry ? text(entry.labelKey, entry.value) : source;
+    };
 
   const aiTitleKindLabel = (kind) => ({
     native: text('meta_ai_title_native', '원제'),
@@ -3300,15 +3309,22 @@ function MetadataSearchDialog({
         </div>
         {aiTitleError && <div className="meta-api-header-error">{aiTitleError}</div>}
         {cacheError && <div className="meta-api-header-error">{cacheError}</div>}
+        {state.failures?.length > 0 && !state.error && (
+            <div className="meta-api-header-error" role="status" title={state.failures.map(failure => `${apiSourceLabel(failure.apiSource)}: ${failure.error || ''}`).join('\n')}>
+                {text('meta_search_partial_failed', '일부 API 검색에 실패했습니다: {sources}', {
+                    sources: state.failures.map(failure => apiSourceLabel(failure.apiSource)).join(', '),
+                })}
+            </div>
+        )}
         <div className="meta-api-dialog-body">
           <div className="meta-api-results-panel">
           <div className="meta-api-results">
             {state.loading && <div className="meta-api-empty">{text('meta_search_loading', '검색 중...')}</div>}
-            {state.error && <div className="meta-api-empty error">{state.error}</div>}
+            {state.error && <div className="meta-api-empty error" title={state.failures?.map(failure => `${apiSourceLabel(failure.apiSource)}: ${failure.error || ''}`).join('\n')}>{state.error}</div>}
             {!state.loading && !state.error && state.results.length === 0 && <div className="meta-api-empty">{text('meta_search_empty', '검색 결과가 없습니다.')}</div>}
             {state.results.map((result, index) => (
               <button
-                key={result.id || `${result.title}-${index}`}
+                key={metadataSearchResultKey(result, state.apiSource)}
                 ref={node => {
                   resultRefs.current[index] = node;
                 }}
@@ -3322,6 +3338,9 @@ function MetadataSearchDialog({
                   <strong>{result.title || '-'}</strong>
                   <span className="meta-api-result-summary">{result.summary || '-'}</span>
                   <span className="meta-api-result-meta">
+                    {state.apiSource === UNIFIED_METADATA_API_SOURCE && (
+                        <span>{apiSourceLabel(result.apiSource)}</span>
+                    )}
                     <span>{result.author || '-'}</span>
                     <span>{result.publisher || '-'}</span>
                     <span className="meta-api-rating"><FaIcon name="star" size={11} />{result.rating || '-'}</span>
@@ -3336,7 +3355,7 @@ function MetadataSearchDialog({
               <strong>{text('api_page_info', `${state.page || 1} 페이지`, { page: state.page || 1 })}</strong>
               <small>{text('search_result_prefix', '검색 결과:')} {state.results.length}{text('search_result_suffix', '건')}</small>
             </span>
-            <button onClick={() => runSearch((state.page || 1) + 1)} disabled={state.loading || state.results.length < 20}>{text('api_page_next', '다음')}<FaIcon name="chevronRight" size={10} /></button>
+            <button onClick={() => runSearch((state.page || 1) + 1)} disabled={state.loading || !state.hasNext}>{text('api_page_next', '다음')}<FaIcon name="chevronRight" size={10} /></button>
           </div>
           </div>
           <div className="meta-api-preview">

@@ -102,6 +102,32 @@ test('문피아 기본 검색 API를 저장 후 다시 불러온다', () => {
     }
 });
 
+test('통합검색 기본 API 설정을 저장 후 다시 불러온다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-unified-search-'));
+    try {
+        const manager = new ConfigManager(root, root);
+        manager.loadConfig();
+        manager.saveConfig({
+            preferred_meta_api_comic: '통합검색',
+            preferred_meta_api_book: '통합검색',
+            preferred_meta_api_pdf: '통합검색',
+            last_meta_api: '통합검색',
+        });
+        manager.saveConfig({ language: 'en' });
+        const loaded = new ConfigManager(root, root).loadConfig();
+        assert.equal(loaded.preferred_meta_api_comic, '통합검색');
+        assert.equal(loaded.preferred_meta_api_book, '통합검색');
+        assert.equal(loaded.preferred_meta_api_pdf, '통합검색');
+        assert.equal(loaded.last_meta_api, '통합검색');
+        const migrated = manager.normalizeConfig({ last_meta_api: '통합검색' });
+        assert.equal(migrated.preferred_meta_api_comic, '통합검색');
+        assert.equal(migrated.preferred_meta_api_book, '통합검색');
+        assert.equal(migrated.preferred_meta_api_pdf, '통합검색');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('경로 목록과 즐겨찾기는 형식을 유지하며 중복을 제거한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-paths-'));
     try {

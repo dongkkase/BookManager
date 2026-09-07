@@ -8,9 +8,7 @@ import {
   syncLibraryConfig,
 } from '../settingsPolicy';
 import {
-  BOOK_METADATA_API_SOURCES,
-  COMIC_METADATA_API_SOURCES,
-  PDF_METADATA_API_SOURCES,
+    metadataSearchSourcesForBookType,
   normalizeMetadataApiSourceForBookType,
 } from '../metadataApiPolicy';
 import {
@@ -1240,7 +1238,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                   value={preferredComicApi}
                   onChange={event => handleChange('preferred_meta_api_comic', event.target.value)}
                 >
-                  {COMIC_METADATA_API_SOURCES.map(source => (
+                  {metadataSearchSourcesForBookType('comic').map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>
@@ -1252,7 +1250,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                   value={preferredBookApi}
                   onChange={event => handleChange('preferred_meta_api_book', event.target.value)}
                 >
-                  {BOOK_METADATA_API_SOURCES.map(source => (
+                  {metadataSearchSourcesForBookType('book').map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>
@@ -1264,7 +1262,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                   value={preferredPdfApi}
                   onChange={event => handleChange('preferred_meta_api_pdf', event.target.value)}
                 >
-                  {PDF_METADATA_API_SOURCES.map(source => (
+                  {metadataSearchSourcesForBookType('pdf').map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>

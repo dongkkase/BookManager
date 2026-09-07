@@ -1,5 +1,7 @@
 import { cleanMetadataSummary } from './metadataPolicy.js';
 
+export const UNIFIED_METADATA_API_SOURCE = '통합검색';
+
 export const COMIC_METADATA_API_SOURCES = [
   { value: '리디북스', labelKey: 'api_source_ridi' },
     { value: '문피아', labelKey: 'api_source_munpia' },
@@ -51,6 +53,19 @@ export function metadataApiSourcesForBookType(bookType = 'comic') {
     : COMIC_METADATA_API_SOURCES;
 }
 
+export function metadataSearchSourcesForBookType(bookType = 'comic') {
+    return [
+        { value: UNIFIED_METADATA_API_SOURCE, labelKey: 'api_source_unified' },
+        ...metadataApiSourcesForBookType(bookType),
+    ];
+}
+
+export function enabledMetadataApiSourcesForBookType(bookType = 'comic', apiKeys = {}) {
+    return metadataApiSourcesForBookType(bookType).filter(source => (
+        apiSourceHasRequiredKey(source.value, apiKeys)
+    ));
+}
+
 export function metadataApiPreferenceKey(bookType = 'comic') {
   if (bookType === 'pdf') return 'preferred_meta_api_pdf';
   return bookType === 'book' || bookType === 'audio'
@@ -59,6 +74,7 @@ export function metadataApiPreferenceKey(bookType = 'comic') {
 }
 
 export function normalizeMetadataApiSourceForBookType(source = '', bookType = 'comic', apiKeys = {}) {
+    if (source === UNIFIED_METADATA_API_SOURCE) return source;
   const sources = metadataApiSourcesForBookType(bookType);
   if (sources.some(item => item.value === source)) return source;
   return sources.find(item => apiSourceHasRequiredKey(item.value, apiKeys))?.value || sources[0]?.value || '';

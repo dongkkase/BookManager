@@ -20,6 +20,7 @@ function normalizeLanguage(value, fallback = 'ko') {
 
 function normalizeMetadataApiSource(value, sources, fallback = '리디북스') {
   const source = String(value || '').trim();
+    if (source === '통합검색') return source;
   return sources.has(source) ? source : fallback;
 }
 

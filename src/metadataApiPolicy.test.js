@@ -3,10 +3,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
     ALL_METADATA_API_SOURCES,
+    UNIFIED_METADATA_API_SOURCE,
   apiSourceHasRequiredKey,
   cleanApiSeriesName,
+    enabledMetadataApiSourcesForBookType,
   metadataApiPreferenceKey,
   metadataApiSourcesForBookType,
+    metadataSearchSourcesForBookType,
   metadataFromApiResult,
   normalizeMetadataApiSourceForBookType,
   preferredMetadataApiSource,
@@ -112,6 +115,44 @@ test('책 타입별 기본 검색 API 설정을 선택한다', () => {
   }, 'pdf'), 'Google Books');
   assert.equal(preferredMetadataApiSource({ last_meta_api: 'Anilist' }, 'book'), '리디북스');
   assert.equal(preferredMetadataApiSource({ preferred_meta_api_book: 'Amazon' }, 'audio'), 'Amazon');
+});
+
+test('통합검색은 모든 책 타입에서 선택할 수 있고 실제 API 목록에 포함되지 않는다', () => {
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        const searchSources = metadataSearchSourcesForBookType(bookType);
+        assert.deepEqual(searchSources[0], {
+            value: UNIFIED_METADATA_API_SOURCE,
+            labelKey: 'api_source_unified',
+        });
+        assert.deepEqual(searchSources.slice(1), metadataApiSourcesForBookType(bookType));
+        assert.equal(normalizeMetadataApiSourceForBookType(UNIFIED_METADATA_API_SOURCE, bookType), UNIFIED_METADATA_API_SOURCE);
+        assert.equal(preferredMetadataApiSource({
+            [metadataApiPreferenceKey(bookType)]: UNIFIED_METADATA_API_SOURCE,
+        }, bookType), UNIFIED_METADATA_API_SOURCE);
+        assert.equal(preferredMetadataApiSource({ last_meta_api: UNIFIED_METADATA_API_SOURCE }, bookType), UNIFIED_METADATA_API_SOURCE);
+        assert.equal(preferredMetadataApiSource({}, bookType), '리디북스');
+    }
+    assert.equal(ALL_METADATA_API_SOURCES.some(source => source.value === UNIFIED_METADATA_API_SOURCE), false);
+});
+
+test('통합검색 대상은 책 타입과 API 키 등록 여부를 함께 반영한다', () => {
+    assert.deepEqual(enabledMetadataApiSourcesForBookType('comic').map(source => source.value), [
+        '리디북스', '문피아', 'Anilist',
+    ]);
+    for (const bookType of ['book', 'pdf', 'audio']) {
+        assert.deepEqual(enabledMetadataApiSourcesForBookType(bookType).map(source => source.value), [
+            '리디북스', '문피아', 'Amazon',
+        ]);
+    }
+    assert.deepEqual(enabledMetadataApiSourcesForBookType('comic', {
+        yes24: 'yk_live_test', aladin: ' ', google: 'key', vine: '',
+    }).map(source => source.value), [
+        '리디북스', '문피아', 'YES24', 'Google Books', 'Anilist',
+    ]);
+    const apiKeys = { yes24: 'key', aladin: 'key', google: 'key', vine: 'key' };
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        assert.deepEqual(enabledMetadataApiSourcesForBookType(bookType, apiKeys), metadataApiSourcesForBookType(bookType));
+    }
 });
 
 test('메타데이터 관리의 검색 API 선택은 환경 설정 기본값을 저장하지 않는다', () => {
