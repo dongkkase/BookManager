@@ -26,6 +26,7 @@ import {
   scheduleAfterNextPaint,
 } from '../selectionVisualFeedback';
 import noImage from '../images/noimage.png';
+import { SmoothCoverImage } from '../components/SmoothCoverImage';
 
 function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
@@ -781,7 +782,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-preview-img-box">
           {coverPreview && !previewError.cover
             ? <img src={coverPreview} alt="" onError={() => setPreviewError(current => ({ ...current, cover: true }))} />
-            : <img src={noImage} alt={activeArchive ? t('no_preview') : t('tf_empty_no_data')} className="renamer-no-image" />}
+            : <SmoothCoverImage src={noImage} alt={activeArchive ? t('no_preview') : t('tf_empty_no_data')} className="renamer-no-image" />}
         </div>
 
         <div className="renamer-divider" />
@@ -790,7 +791,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-preview-img-box">
           {innerPreview && !previewError.inner
             ? <img src={innerPreview} alt="" onError={() => setPreviewError(current => ({ ...current, inner: true }))} />
-            : <img src={noImage} alt={activeEntry ? t('no_image') : t('tf_empty_no_data')} className="renamer-no-image" />}
+            : <SmoothCoverImage src={noImage} alt={activeEntry ? t('no_image') : t('tf_empty_no_data')} className="renamer-no-image" />}
         </div>
       </div>
 

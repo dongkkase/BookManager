@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 
 const LOADED_COVER_SRC_CACHE_LIMIT = 512;
 const loadedCoverSrcSet = new Set();
@@ -54,6 +55,7 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
     const frameId = window.requestAnimationFrame(applyImageState);
     const eagerTimer = window.setTimeout(() => {
       if (disposed || imageRef.current !== image || image.complete) return;
+      if (image.getAttribute('src') !== src) return;
       image.loading = 'eager';
       image.src = src;
     }, 250);
@@ -79,7 +81,7 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
   if (!src || failed) {
     return (
       <div className={`${className} folder-cover-placeholder`} title={t('folder_no_cover')}>
-        <CoverArtwork fallbackAlt={t('folder_no_cover')} />
+        <CoverArtwork fallbackAlt={t('folder_no_cover')} smooth />
       </div>
     );
   }
@@ -87,7 +89,7 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
   return (
     <div className={`${className} folder-cover-loading`}>
       {showLoadingIndicator && !loaded && <span className="folder-cover-spinner" aria-hidden="true" />}
-      <img
+      <SmoothCoverImage
         ref={imageRef}
         src={src}
         alt={alt}
