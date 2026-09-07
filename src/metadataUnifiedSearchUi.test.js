@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { apiSourceHasRequiredKey, UNIFIED_METADATA_API_SOURCE } from './metadataApiPolicy.js';
+import { apiSourceHasRequiredKey, metadataSearchQueryForItem, UNIFIED_METADATA_API_SOURCE } from './metadataApiPolicy.js';
 import { metadataSearchResultKey, searchMetadata } from './metadataSearch.js';
 
 const source = readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8');
@@ -18,7 +18,7 @@ const searchCallback = fragment('const fetchMetadataResults = useCallback(', 'co
 const closeCallback = fragment('const closeApiSearch = useCallback(', 'const [taskPhase,');
 const detailCallback = fragment('const resolveRidiPublishDate = useCallback(', 'const handleLoadLatest =');
 const coverFunctions = fragment('function apiResultCoverUrl(', 'function isEpubFilePath(');
-const useCoverCallback = fragment('const handleUseApiCoverResult = async (', 'const filenameStem =');
+const useCoverCallback = fragment('const handleUseApiCoverResult = async (', 'const inferTitleParts =');
 const clearCacheCallback = fragment('const runSearch = (', 'const toggleTranslation =');
 const dialogRequestEffectStart = source.lastIndexOf('useEffect(() => {', source.indexOf('return () => { dialogRequestRef.current = null; };'));
 const dialogRequestEffect = source.slice(dialogRequestEffectStart, source.indexOf('const resolvingRidiDates =', dialogRequestEffectStart));
@@ -35,6 +35,49 @@ function deferred() {
     });
     return { promise, resolve, reject };
 }
+
+test('automatic query initialization and series matching use the cleaned title without changing metadata', async () => {
+    const original = '[싱숑] 전지적 독자 시점 1-551 완'.normalize('NFD');
+    const activeItem = { name: `${original}.txt`, metadata: { Series: original, Title: original } };
+    const queries = [];
+    const requests = [];
+    const effectStart = source.lastIndexOf('useEffect(() => {', source.indexOf('setSearchQuery(metadataSearchQueryForItem(activeItem))'));
+    const effect = source.slice(effectStart, source.indexOf('useEffect(() => {', effectStart + 1));
+    const autoMatch = fragment('const handleAutoMatchSeries = async () => {', 'const resolveRidiPublishDate = useCallback(');
+    const context = vm.createContext({
+        activeItem,
+        metadataSearchQueryForItem,
+        useEffect: callback => callback(),
+        setSearchQuery: query => queries.push(query),
+        setIsWorking: () => {},
+        setStatusMessage: () => {},
+        text: (key, fallback) => fallback,
+        apiSource: UNIFIED_METADATA_API_SOURCE,
+        activeBookType: 'book',
+        activeIsTxt: true,
+        config: { api_keys: {} },
+        searchMetadata: async options => {
+            requests.push(options);
+            return { success: false };
+        },
+    });
+    vm.runInContext(`${effect}\n${autoMatch}\nglobalThis.autoMatch = handleAutoMatchSeries;`, context);
+    await context.autoMatch();
+    assert.deepEqual(queries, ['전지적 독자 시점', '전지적 독자 시점']);
+    assert.equal(requests[0].query, '전지적 독자 시점');
+    assert.equal(activeItem.metadata.Series, original);
+    assert.equal(activeItem.metadata.Title, original);
+});
+
+test('a manually entered search query retains its author, episode range and completion marker', async () => {
+    const h = searchHarness();
+    const query = '[싱숑] 전지적 독자 시점 1-551 완';
+    const searching = h.fetchMetadataResults({ source: '문피아', query });
+    assert.equal(h.requests[0].options.query, query);
+    h.requests[0].resolve({ success: true, results: [] });
+    await searching;
+    assert.equal(h.state().query, query);
+});
 
 function searchHarness({ initialState = {}, fetchDetail, cacheCover } = {}) {
     let state = { open: false, results: [], ...initialState };

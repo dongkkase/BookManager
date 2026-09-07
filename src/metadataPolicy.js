@@ -108,11 +108,15 @@ export function applyBatchMetadataFields(metadata = {}, batchMetadata = {}, fiel
     return next;
 }
 
-export function applySeriesAutoMetadata(metadata = {}, inferred = {}) {
-    return ['Title', 'Volume', 'Number', 'PageCount'].reduce(
+export function applySeriesAutoMetadata(metadata = {}, inferred = {}, options = {}) {
+    const next = ['Title', 'Volume', 'Number', 'PageCount'].reduce(
         (next, field) => applyInferredMetadataField(next, inferred, field),
         metadata,
     );
+    if (options.preserveNumber && Object.hasOwn(metadata, 'Number')) {
+        next.Number = metadata.Number;
+    }
+    return next;
 }
 
 export function clampMetadataNumber(field, value) {

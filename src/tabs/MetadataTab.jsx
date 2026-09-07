@@ -65,6 +65,9 @@ import {
   BOOK_PUBLISHER_FIELDS,
   BOOK_SEARCHABLE_SELECT_FIELDS,
   BOOK_SECTION_TABS,
+    TXT_BASIC_FIELDS,
+    TXT_META_FIELDS,
+    TXT_META_FIELD_IDS,
 } from '../metadata/bookMetadataFields';
 import {
   PDF_BASIC_FIELDS,
@@ -562,10 +565,10 @@ function MetadataTab({ config, t, showToast }) {
       : activeBookType === 'book'
       ? {
         sectionTabs: BOOK_SECTION_TABS,
-        metaFields: BOOK_META_FIELDS,
-        metaFieldIds: BOOK_META_FIELD_IDS,
+        metaFields: activeIsTxt ? TXT_META_FIELDS : BOOK_META_FIELDS,
+        metaFieldIds: activeIsTxt ? TXT_META_FIELD_IDS : BOOK_META_FIELD_IDS,
         fields: {
-          basic: BOOK_BASIC_FIELDS,
+          basic: activeIsTxt ? TXT_BASIC_FIELDS : BOOK_BASIC_FIELDS,
           creators: BOOK_CREATOR_FIELDS,
           publisher: BOOK_PUBLISHER_FIELDS,
           other: BOOK_OTHER_FIELDS,
@@ -582,7 +585,7 @@ function MetadataTab({ config, t, showToast }) {
           other: OTHER_FIELDS,
         },
       }
-  ), [activeBookType]);
+  ), [activeBookType, activeIsTxt]);
   const currentSectionTabs = currentMetadataConfig.sectionTabs;
   const currentMetaFields = currentMetadataConfig.metaFields;
   const currentMetaFieldIds = currentMetadataConfig.metaFieldIds;
@@ -956,7 +959,9 @@ function MetadataTab({ config, t, showToast }) {
             if (item.group !== activeItem.group || !isSameActiveBookType(item)) return item;
             const copiedMetadata = applyBatchMetadataFields(item.metadata || {}, batchMetadata, currentMetaFieldIds, applyEmpty);
             const inferred = inferTitleParts(item);
-            return { ...item, metadata: applySeriesAutoMetadata(copiedMetadata, inferred) };
+            return { ...item, metadata: applySeriesAutoMetadata(copiedMetadata, inferred, {
+                preserveNumber: isTxtMetadataItem(item),
+            }) };
         }) : prev;
         return hasTxtCover
             ? trimMetadataCoverCache(applyTxtSeriesCover(items, activeItem), activeItem.filepath)
@@ -1020,6 +1025,7 @@ function MetadataTab({ config, t, showToast }) {
       metadata: applySeriesAutoMetadata(
         { ...(item.metadata || {}), ...normalized },
         inferTitleParts(item),
+                { preserveNumber: isTxtMetadataItem(item) },
       ),
     } : item));
   };
@@ -1127,6 +1133,7 @@ function MetadataTab({ config, t, showToast }) {
     if (isWorking || saveLockRef.current) return;
     applyMetadataToBatch(metadataFromApiResult(result, {
       bookType: activeBookType,
+            isTextMetadata: activeIsTxt,
       query: apiSearch.query || searchQuery,
     }));
     closeApiSearch();
@@ -1437,7 +1444,11 @@ function MetadataTab({ config, t, showToast }) {
         showToast?.(t('t3_msg_no_search_result'));
         return;
       }
-      const firstMetadata = metadataFromApiResult(first, { bookType: activeBookType, query });
+            const firstMetadata = metadataFromApiResult(first, {
+                bookType: activeBookType,
+                isTextMetadata: activeIsTxt,
+                query,
+            });
       applyMetadataToSeries(firstMetadata);
       setBatchMetadata(pickMetadataFields(
         normalizeMetadata(firstMetadata),
@@ -1567,7 +1578,7 @@ function MetadataTab({ config, t, showToast }) {
       : itemBookType === 'audio'
         ? AUDIOBOOK_SAVE_FIELD_IDS
         : itemBookType === 'book'
-          ? BOOK_META_FIELD_IDS
+          ? (isTxtMetadataItem(item) ? TXT_META_FIELD_IDS : BOOK_META_FIELD_IDS)
           : META_FIELD_IDS;
     const extraFieldIds = itemBookType === 'comic' ? ['ComicZipAddedDate', 'ComicZipModifiedDate'] : [];
     const payload = {

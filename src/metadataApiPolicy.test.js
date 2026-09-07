@@ -10,6 +10,7 @@ import {
   metadataApiPreferenceKey,
   metadataApiSourcesForBookType,
     metadataSearchSourcesForBookType,
+    metadataSearchQueryForItem,
   metadataFromApiResult,
   normalizeMetadataApiSourceForBookType,
   preferredMetadataApiSource,
@@ -187,6 +188,95 @@ test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터�
     Summary: '## 작품 소개\n설명',
     Manga: 'YesAndRightToLeft',
   });
+});
+
+test('TXT 검색 결과의 전체권수를 빈 권/화 항목에 적용한다', () => {
+    for (const number of ['', ' ', undefined]) {
+        const result = { metadata: { Title: '전지적 독자 시점', Count: '1064', Volume: '2', Number: number } };
+        const converted = metadataFromApiResult(result, { bookType: 'book', isTextMetadata: true });
+        assert.equal(converted.Number, '1064');
+        assert.equal(converted.Volume, '2');
+        assert.equal(converted.Count, '1064');
+        assert.equal(result.metadata.Number, number);
+    }
+    assert.equal(metadataFromApiResult({ metadata: { Count: 0 } }, {
+        bookType: 'book', isTextMetadata: true,
+    }).Number, '0');
+});
+
+test('TXT의 명시적인 권/화 값과 다른 파일 형식의 권수 의미를 보존한다', () => {
+    for (const number of ['12.5', '1-551', '0']) {
+        assert.equal(metadataFromApiResult({ metadata: { Count: '1064', Number: number } }, {
+            bookType: 'book', isTextMetadata: true,
+        }).Number, number);
+    }
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        assert.equal(metadataFromApiResult({ metadata: { Count: '1064', Number: '' } }, {
+            bookType,
+        }).Number, '');
+    }
+    assert.equal(metadataFromApiResult({ metadata: {} }, {
+        bookType: 'book', isTextMetadata: true,
+    }).Number, undefined);
+});
+
+test('자동 검색어는 자모가 분리된 작가명·회차 범위·완결 표기를 정리한다', () => {
+    for (const normalization of ['NFC', 'NFD']) {
+        const title = '[싱숑] 전지적 독자 시점 1-551 완'.normalize(normalization);
+        for (const item of [
+            { name: `${title}.txt` },
+            { metadata: { Series: title } },
+            { metadata: { Title: title } },
+        ]) {
+            const before = structuredClone(item);
+            assert.equal(metadataSearchQueryForItem(item), '전지적 독자 시점');
+            assert.deepEqual(item, before);
+        }
+    }
+});
+
+test('자동 검색어는 제목 끝의 회차 범위와 괄호로 묶인 완결 표기를 처리한다', () => {
+    for (const suffix of [
+        '1-551', '1-551 완결', '001~551화 [완]', '1～551 完',
+        '제1화–제551화 (완결)', '1권-5권', '(1-551 완)', '[1-551] [완결]',
+        '완결 1-551', '551화', '제12권', 'Vol. 12', 'Chapter 551',
+    ]) {
+        assert.equal(metadataSearchQueryForItem({
+            metadata: { Series: `전지적 독자 시점 ${suffix}` },
+        }), '전지적 독자 시점', suffix);
+    }
+});
+
+test('자동 검색어는 제목 자체의 숫자와 시즌·외전을 보존한다', () => {
+    for (const title of [
+        '1984', '1Q84', '제3인류', '22-11-63', '20세기 소년', '3월의 라이온',
+        '아이실드 21', '86 -에이티식스-', '0.5인분의 연인', '완벽한 결혼의 정석',
+        '작품명 시즌2', '작품명 외전', '1-551', '완', '미완',
+    ]) {
+        assert.equal(metadataSearchQueryForItem({ metadata: { Title: title } }), title);
+    }
+    assert.equal(metadataSearchQueryForItem({
+        metadata: { Series: '작품명 외전 1-10 완' },
+    }), '작품명 외전');
+    for (const title of ['[외전] 작품명 1-10 완', '[작가] (외전) 작품명 1-10 완']) {
+        assert.equal(metadataSearchQueryForItem({ metadata: { Title: title } }), '외전 작품명');
+    }
+});
+
+test('자동 검색어는 시리즈·제목·파일명 우선순위를 유지한다', () => {
+    assert.equal(metadataSearchQueryForItem({
+        metadata: { Series: '시리즈 1-12 완', Title: '다른 제목' }, name: '파일명.txt',
+    }), '시리즈');
+    assert.equal(metadataSearchQueryForItem({
+        metadata: { Series: ' ', Title: '제목 1-12 완' }, name: '파일명.txt',
+    }), '제목');
+    assert.equal(metadataSearchQueryForItem({
+        filepath: '/책/[싱숑] 전지적 독자 시점 1-551 완.txt'.normalize('NFD'),
+    }), '전지적 독자 시점');
+    assert.equal(metadataSearchQueryForItem({
+        name: 'C:\\Books\\[작가] 작품명 1-12 완.TXT',
+    }), '작품명');
+    assert.equal(metadataSearchQueryForItem({}), '');
 });
 
 test('API 검색 결과 제목은 앞쪽 불필요한 태그를 제거한다', () => {

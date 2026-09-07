@@ -105,6 +105,38 @@ test('TXT metadata saves complete editable fields in the DB without changing the
     assert.equal(await loadMetadataCover(source, { dbPath }), reopened.coverDataUrl);
 });
 
+test('TXT volume and chapter numbers remain independent through DB saves and reloads', async t => {
+    const { dbPath, source } = fixture(t);
+    const before = fs.readFileSync(source);
+    const beforeStat = fs.statSync(source);
+    let item = (await analyzeMetadataInputs([source], { dbPath })).items[0];
+    const db = new LibraryDB({ dbPath });
+    try {
+        for (const number of ['1064', '551', '12.5', '1-551', '0', '']) {
+            const saved = await saveMetadataItems([{
+                ...item,
+                metadata: { ...item.metadata, Series: '같은 시리즈', Volume: '2', Number: number },
+            }], { dbPath });
+            assert.deepEqual(saved.stats.error, []);
+            assert.deepEqual(saved.stats.successPaths, [source]);
+
+            item = (await analyzeMetadataInputs([source], {
+                dbPath,
+                includeCachedMetadata: false,
+            })).items[0];
+            assert.equal(item.metadata.Volume, '2');
+            assert.equal(item.metadata.Number, number);
+            const record = await db.getFileInfo(source);
+            assert.equal(record.volume, '2');
+            assert.equal(record.number, number);
+            assert.deepEqual(fs.readFileSync(source), before);
+            assert.equal(fs.statSync(source).mtimeMs, beforeStat.mtimeMs);
+        }
+    } finally {
+        await db.close();
+    }
+});
+
 test('TXT filename defaults remain eligible before and after saving completion labels and volume ranges', async t => {
     const { root, dbPath } = fixture(t);
     for (const name of ['[완결] 소설 1.txt', '소설 1.5권.txt', '소설 1~5권.txt']) {

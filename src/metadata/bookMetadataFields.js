@@ -54,4 +54,15 @@ export const BOOK_META_FIELDS = [
 
 export const BOOK_META_FIELD_IDS = BOOK_META_FIELDS.map(field => field.id);
 
+export const TXT_BASIC_FIELDS = BOOK_BASIC_FIELDS.flatMap(field => field.id === 'Volume'
+    ? [field, { id: 'Number', labelKey: 'txt_f_volume_chapter', type: 'text' }]
+    : [field]);
+
+export const TXT_META_FIELDS = [
+    ...TXT_BASIC_FIELDS,
+    ...BOOK_META_FIELDS.filter(field => !BOOK_BASIC_FIELDS.includes(field)),
+];
+
+export const TXT_META_FIELD_IDS = TXT_META_FIELDS.map(field => field.id);
+
 export const BOOK_SEARCHABLE_SELECT_FIELDS = new Set(['Publisher']);

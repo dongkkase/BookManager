@@ -119,6 +119,19 @@ test('metadata series batch apply copies batch fields then runs automatic fields
     });
 });
 
+test('TXT 시리즈 일괄 적용은 입력한 권/화 값을 파일명 추론값보다 우선한다', () => {
+    const inferred = inferMetadataFromArchiveName('작품명 551화.txt');
+    for (const number of ['1064', '12.5', '1-551', '0', '']) {
+        const metadata = { Volume: '2', Number: number };
+        const applied = applySeriesAutoMetadata(metadata, inferred, { preserveNumber: true });
+        assert.equal(applied.Number, number);
+        assert.equal(applied.Volume, '2');
+        assert.equal(metadata.Number, number);
+    }
+    assert.equal(applySeriesAutoMetadata({ Number: '1064' }, inferred).Number, '551');
+    assert.equal(applySeriesAutoMetadata({}, inferred, { preserveNumber: true }).Number, '551');
+});
+
 test('latest metadata batch keeps shared fields and excludes volume-specific fields', () => {
     const metadata = {
         Title: '최신권 제목',

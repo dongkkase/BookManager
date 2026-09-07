@@ -157,7 +157,11 @@ export function metadataSearchQueryForItem(item = {}) {
     const value = [item.metadata?.Series, item.metadata?.Title, filename]
         .find(candidate => typeof candidate === 'string' && candidate.trim()) || '';
     const original = value.normalize('NFC').replace(/\s+/g, ' ').trim();
-    let query = cleanApiDecorativePrefix(original) || original;
+    const titleWithStoryMarkers = original.replace(
+        /[\[(（【]\s*(외전|번외편?|스핀오프|특별편?|단편)\s*[\])）】]/gu,
+        ' $1 ',
+    ).replace(/\s+/g, ' ').trim();
+    let query = cleanApiDecorativePrefix(titleWithStoryMarkers) || original;
     for (let pass = 0; pass < 4; pass += 1) {
         const next = query.replace(SEARCH_COMPLETION_SUFFIX_PATTERN, '')
             .replace(SEARCH_SEQUENCE_SUFFIX_PATTERN, '').trim();
@@ -173,6 +177,10 @@ export function metadataFromApiResult(result = {}, options = {}) {
     ...metadata,
     Summary: cleanMetadataSummary(metadata.Summary || result.summary || ''),
   };
+    if (options.isTextMetadata && !String(metadata.Number ?? '').trim()) {
+        const count = String(metadata.Count ?? '').trim();
+        if (count) normalized.Number = count;
+    }
   if (metadata.Title) {
     normalized.Title = cleanApiDecorativePrefix(metadata.Title);
   }
