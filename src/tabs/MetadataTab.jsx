@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { CoverArtwork } from '../components/CoverArtwork';
 import { AudiobookMetadataEditor } from '../components/metadata/AudiobookMetadataEditor';
 import { BookMetadataEditor } from '../components/metadata/BookMetadataEditor';
 import { ComicMetadataEditor } from '../components/metadata/ComicMetadataEditor';
@@ -40,6 +41,7 @@ import {
     UNIFIED_METADATA_API_SOURCE,
   apiSourceHasRequiredKey,
     metadataSearchSourcesForBookType,
+    metadataSearchQueryForItem,
   metadataFromApiResult,
   preferredMetadataApiSource,
 } from '../metadataApiPolicy';
@@ -608,7 +610,7 @@ function MetadataTab({ config, t, showToast }) {
   }, [progress, statusMessage, taskPhase]);
 
   useEffect(() => {
-    if (activeItem) setSearchQuery(activeItem.metadata?.Series || activeItem.metadata?.Title || activeItem.name.replace(/\.[^.]+$/, ''));
+        if (activeItem) setSearchQuery(metadataSearchQueryForItem(activeItem));
   }, [activeItem]);
 
   useEffect(() => {
@@ -1381,8 +1383,6 @@ function MetadataTab({ config, t, showToast }) {
     }
   };
 
-  const filenameStem = (name = '') => String(name).replace(/\.[^.]+$/, '');
-
   const inferTitleParts = (item) => {
     const inferred = inferMetadataFromArchiveName(
       item.name || item.filepath || '',
@@ -1415,7 +1415,7 @@ function MetadataTab({ config, t, showToast }) {
 
   const handleAutoMatchSeries = async () => {
     if (!activeItem) return;
-    const query = activeItem.metadata?.Series || activeItem.metadata?.Title || filenameStem(activeItem.name);
+        const query = metadataSearchQueryForItem(activeItem);
     setSearchQuery(query);
     setIsWorking(true);
     setStatusMessage(text('t3_msg_auto_matching', '시리즈 자동 매칭 중...'));
@@ -2155,7 +2155,7 @@ function MetadataTab({ config, t, showToast }) {
                 <div className="meta-col-label">{text('txt_cover_label', '표지')}</div>
                 <div className="meta-epub-cover-field">
                     <div className="meta-epub-cover-thumb-box">
-                        {activeItem.coverDataUrl ? <img src={activeItem.coverDataUrl} alt="" /> : <span>{text('txt_cover_empty', '등록된 표지가 없습니다.')}</span>}
+                        <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={text('txt_cover_empty', '등록된 표지가 없습니다.')} />
                     </div>
                     <div className="meta-epub-cover-tools">
                         <div className="meta-epub-cover-buttons">
@@ -2214,11 +2214,7 @@ function MetadataTab({ config, t, showToast }) {
           <div className="meta-col-label">{text('meta_epub_cover_label', '표지')}</div>
           <div className="meta-epub-cover-field">
             <div className="meta-epub-cover-thumb-box">
-              {activeItem.coverDataUrl ? (
-                <img src={activeItem.coverDataUrl} alt="" onLoad={handleCoverImageLoad} />
-              ) : (
-                <span>{t('no_image')}</span>
-              )}
+                <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={t('no_image')} onLoad={handleCoverImageLoad} />
             </div>
             <div className="meta-epub-cover-tools">
               <select
@@ -2290,11 +2286,7 @@ function MetadataTab({ config, t, showToast }) {
           <div className="meta-col-label">{text('audio_cover_label', '썸네일')}</div>
           <div className="meta-epub-cover-field">
             <div className="meta-epub-cover-thumb-box">
-              {activeItem.coverDataUrl ? (
-                <img src={activeItem.coverDataUrl} alt="" />
-              ) : (
-                <span className="audiobook-no-cover"><FaIcon name="headphones" size={18} /></span>
-              )}
+                <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={t('audio_no_cover')} />
             </div>
             <div className="meta-epub-cover-tools">
               <div className="meta-epub-cover-buttons">
@@ -2383,13 +2375,13 @@ function MetadataTab({ config, t, showToast }) {
       <aside className="meta-left-panel">
         <div className="meta-preview-title">{activeIsTxt ? text('txt_cover_label', '표지') : t('metadata.cover')}</div>
         <div className="meta-preview-img-box">
-          {activeItem?.coverDataUrl ? (
-            <img src={activeItem.coverDataUrl} alt="" className="meta-cover-image" />
-          ) : activeBookType === 'audio' ? (
-            <span className="meta-no-image audiobook-no-cover"><FaIcon name="headphones" size={30} /><span>{t('audio_no_cover')}</span></span>
-          ) : (
-            <span className="meta-no-image">{activeIsTxt ? text('txt_cover_empty', '등록된 표지가 없습니다.') : t('no_image')}</span>
-          )}
+            <CoverArtwork
+                src={activeItem?.coverDataUrl}
+                className="meta-cover-image"
+                fallbackAlt={activeBookType === 'audio'
+                    ? t('audio_no_cover')
+                    : activeIsTxt ? text('txt_cover_empty', '등록된 표지가 없습니다.') : t('no_image')}
+            />
         </div>
 
         <button
@@ -3488,7 +3480,7 @@ function RemoteCoverImage({ src, className, fallbackClassName, size = 18 }) {
   if (imageSrc && !failed) {
     return <img src={imageSrc} alt="" className={className} onError={() => setFailed(true)} />;
   }
-  return <div className={fallbackClassName}><FaIcon name="bookOpen" size={size} /></div>;
+    return <CoverArtwork className={fallbackClassName} />;
 }
 
 export { MetadataTab };

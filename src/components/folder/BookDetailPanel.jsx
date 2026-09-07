@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FaIcon } from '../FaIcon';
+import { CoverArtwork } from '../CoverArtwork';
 import {
     duplicateDetailRows,
     splitMetadataValues,
@@ -88,10 +88,7 @@ const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
                                         onError={() => setImageError(true)}
                                     />
                                 ) : (
-                                    <div className="detail-cover-placeholder" title={t('folder_no_cover')}>
-                                        <FaIcon name="bookOpen" size={42} />
-                                        <span>{t('folder_no_cover')}</span>
-                                    </div>
+                                    <CoverArtwork className="detail-cover-placeholder" fallbackAlt={t('folder_no_cover')} />
                                 )}
                             </DetailCoverFrame>
                             <div className="detail-cover-caption">

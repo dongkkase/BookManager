@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FaIcon } from '../FaIcon';
+import { CoverArtwork } from '../CoverArtwork';
 import {
     duplicateDetailRows,
     splitMetadataValues,
@@ -144,10 +144,7 @@ const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, t })
                                         onError={() => setImageError(true)}
                                     />
                                 ) : (
-                                    <div className="detail-cover-placeholder" title={t('audio_no_cover')}>
-                                        <FaIcon name="headphones" size={42} />
-                                        <span>{t('audio_no_cover')}</span>
-                                    </div>
+                                    <CoverArtwork className="detail-cover-placeholder" fallbackAlt={t('audio_no_cover')} />
                                 )}
                             </DetailCoverFrame>
                             <div className="detail-cover-caption">

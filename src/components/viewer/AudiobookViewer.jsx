@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
+import { CoverArtwork } from '../CoverArtwork';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const SKIP_INTERVALS = [5, 10, 15, 30, 60];
@@ -763,9 +764,7 @@ function AudiobookViewer({
 
             <main className="audiobook-stage">
                 <div className={`audiobook-cover ${artwork ? 'has-artwork' : 'is-fallback'}`.trim()}>
-                    {artwork
-                        ? <img src={artwork} alt="" />
-                        : <FaIcon name="headphones" size={82} />}
+                    <CoverArtwork src={artwork} />
                 </div>
                 <section className="audiobook-identity">
                     <h1>{title}</h1>

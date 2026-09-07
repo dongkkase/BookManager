@@ -6,6 +6,7 @@ import { loadViewerPdfDocument } from './viewerPdfLoader';
 import { createViewerTtsRequests } from './viewerTtsRequests';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
+import { CoverArtwork } from './components/CoverArtwork';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
@@ -4673,7 +4674,7 @@ function ViewerNavigationPanel({
     <aside className={`viewer-navigation-panel ${open ? 'is-open' : ''}`} aria-hidden={!open}>
       <div className="viewer-navigation-header">
         <div className="viewer-navigation-thumb">
-          {thumbnailSrc ? <img src={thumbnailSrc} alt="" /> : <FaIcon name="bookOpen" />}
+          <CoverArtwork src={thumbnailSrc} />
         </div>
         <div className="viewer-navigation-meta">
           <div className="viewer-navigation-title" title={session?.fileName || ''}>

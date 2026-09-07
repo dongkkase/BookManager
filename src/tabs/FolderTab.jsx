@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { CoverArtwork } from '../components/CoverArtwork';
 import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { FileTableView } from '../components/folder/FileTableView';
@@ -4171,9 +4172,7 @@ function ConflictFileCard({ title, file, t }) {
     <section className="move-conflict-card">
       <strong>{title}</strong>
       <div className="move-conflict-cover">
-        {file?.cover
-          ? <img src={file.cover} alt={file.name || ''} />
-          : <span>{t('folder_no_cover')}</span>}
+        <CoverArtwork src={file?.cover} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} />
       </div>
       <span>{formatBytes(file?.size || 0)} | {file?.resolution || '-'}</span>
     </section>

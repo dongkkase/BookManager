@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FaIcon } from '../FaIcon';
+import { CoverArtwork } from '../CoverArtwork';
 
 const LOADED_COVER_SRC_CACHE_LIMIT = 512;
 const loadedCoverSrcSet = new Set();
@@ -79,8 +79,7 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
   if (!src || failed) {
     return (
       <div className={`${className} folder-cover-placeholder`} title={t('folder_no_cover')}>
-        <FaIcon name="file" size={iconSize} />
-        <span>{t('folder_no_cover')}</span>
+        <CoverArtwork fallbackAlt={t('folder_no_cover')} />
       </div>
     );
   }

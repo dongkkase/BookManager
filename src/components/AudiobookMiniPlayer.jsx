@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { clampAudioMiniPlayerSeek } from '../audioMiniPlayerState';
 import { FaIcon } from './FaIcon';
+import { CoverArtwork } from './CoverArtwork';
 
 const MINI_PLAYER_TEXT = {
     ko: {
@@ -113,7 +114,7 @@ export function AudiobookMiniPlayer({ state, language = 'ko', onControl }) {
             <div className={`app-audio-mini-cover ${artwork ? 'has-artwork' : 'is-fallback'}`}>
                 {artwork
                     ? <img src={artwork} alt="" onError={() => setCoverFailed(true)} />
-                    : <FaIcon name="headphones" size={18} />}
+                    : <CoverArtwork />}
             </div>
 
             <div className="app-audio-mini-main">

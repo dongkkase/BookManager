@@ -144,6 +144,29 @@ export function cleanApiSeriesName(value = '', options = {}) {
   return original;
 }
 
+const SEARCH_COMPLETION_SUFFIX_PATTERN = /(?:\s+|\s*[\[(（【]\s*)(?:완결|완|完結|完|complete(?:d)?)\s*[\])）】]?\s*$/iu;
+const SEARCH_NUMBER_PATTERN = '(?:제|第)?\\s*\\d+(?:\\.\\d+)?';
+const SEARCH_UNIT_PATTERN = '(?:권|화|회|편|巻|話)';
+const SEARCH_SEQUENCE_SUFFIX_PATTERN = new RegExp(
+    `(?:\\s+|\\s*[\\[(（【]\\s*)(?:${SEARCH_NUMBER_PATTERN}\\s*${SEARCH_UNIT_PATTERN}?\\s*[~～–—-]\\s*${SEARCH_NUMBER_PATTERN}\\s*${SEARCH_UNIT_PATTERN}?|${SEARCH_NUMBER_PATTERN}\\s*${SEARCH_UNIT_PATTERN}|(?:vol(?:ume)?|ch(?:apter)?|ep(?:isode)?)\\.?\\s*#?\\s*\\d+(?:\\.\\d+)?)(?:\\s*[\\])）】])?\\s*$`,
+    'iu',
+);
+
+export function metadataSearchQueryForItem(item = {}) {
+    const filename = String(item.name || item.filepath || '').replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '');
+    const value = [item.metadata?.Series, item.metadata?.Title, filename]
+        .find(candidate => typeof candidate === 'string' && candidate.trim()) || '';
+    const original = value.normalize('NFC').replace(/\s+/g, ' ').trim();
+    let query = cleanApiDecorativePrefix(original) || original;
+    for (let pass = 0; pass < 4; pass += 1) {
+        const next = query.replace(SEARCH_COMPLETION_SUFFIX_PATTERN, '')
+            .replace(SEARCH_SEQUENCE_SUFFIX_PATTERN, '').trim();
+        if (!next || next === query) break;
+        query = next;
+    }
+    return query;
+}
+
 export function metadataFromApiResult(result = {}, options = {}) {
   const metadata = result.metadata || {};
   const normalized = {

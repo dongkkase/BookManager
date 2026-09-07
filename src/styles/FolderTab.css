@@ -2589,6 +2589,13 @@ body.is-reordering-table-column {
   text-overflow: ellipsis;
 }
 
+.folder-cover-placeholder img {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 1;
+}
+
 .folder-cover-spinner {
   position: absolute;
   top: 50%;

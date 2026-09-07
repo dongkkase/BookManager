@@ -606,7 +606,7 @@ test('도서 상세보기 패널은 메타데이터 관리와 같은 책 항목�
 test('오디오북 상세보기와 메타데이터 편집기는 수정 가능 정보와 기술 정보를 분리한다', () => {
     assertInventory('detailPanel', [
         ['오디오북 상세보기 타입 분기', "resolveBookType(selectedFile) === 'audio'"],
-        ['오디오북 표지 폴백', 'name="headphones"'],
+        ['오디오북 표지 폴백', '<CoverArtwork className="detail-cover-placeholder" fallbackAlt={t(\'audio_no_cover\')} />'],
         ['오디오북 아티스트', "metadataText(t, 'audio_f_artist'"],
         ['오디오북 앨범', "metadataText(t, 'audio_f_album'"],
         ['오디오북 트랙', "metadataText(t, 'audio_f_track'"],

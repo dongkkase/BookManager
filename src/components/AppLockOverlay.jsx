@@ -1,5 +1,5 @@
 import React from 'react';
-import { FaIcon } from './FaIcon';
+import { CoverArtwork } from './CoverArtwork';
 import workingAnimation from '../images/rainbow cat remix.gif';
 
 export function AppLockOverlay({
@@ -29,17 +29,7 @@ export function AppLockOverlay({
                                     className={`app-library-scan-card ${item.src ? '' : 'is-placeholder'}`}
                                     key={item.key || item.src || item.path || item.name}
                                 >
-                                    {item.src ? (
-                                        <img
-                                            className="app-library-scan-thumbnail"
-                                            src={item.src}
-                                            alt=""
-                                        />
-                                    ) : (
-                                        <div className="app-library-scan-placeholder" aria-hidden="true">
-                                            <FaIcon name="bookOpen" size={24} />
-                                        </div>
-                                    )}
+                                    <CoverArtwork className="app-library-scan-thumbnail" src={item.src} />
                                     {item.name && (
                                         <span className="app-library-scan-caption" title={item.path || item.name}>
                                             {item.name}
@@ -76,17 +66,7 @@ export function AppLockOverlay({
                                 className={`app-lock-thumbnail-frame ${item.src ? '' : 'is-placeholder'}`}
                                 key={item.key || item.src || item.path || item.name}
                             >
-                                {item.src ? (
-                                    <img
-                                        className="app-lock-thumbnail"
-                                        src={item.src}
-                                        alt=""
-                                    />
-                                ) : (
-                                    <div className="app-lock-thumbnail-placeholder" aria-hidden="true">
-                                        <FaIcon name="bookOpen" size={28} />
-                                    </div>
-                                )}
+                                <CoverArtwork className="app-lock-thumbnail" src={item.src} />
                                 {item.name && (
                                     <span className="app-lock-thumbnail-caption" title={item.path || item.name}>
                                         {item.name}
