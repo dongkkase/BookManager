@@ -2644,10 +2644,11 @@ body.is-reordering-table-column {
 }
 
 .folder-empty-image {
-  width: min(260px, 42%);
-  max-height: 220px;
-  object-fit: contain;
-  opacity: 0.82;
+    width: min(390px, 63%);
+    min-height: 0;
+    max-height: 330px;
+    object-fit: contain;
+    opacity: 0.82;
 }
 
 .tile-info {
@@ -2841,8 +2842,18 @@ body.is-reordering-table-column {
   align-items: center;
   justify-content: center;
   color: #888;
-  gap: 8px;
+    gap: 16px;
   pointer-events: none;
+}
+
+.empty-folder-page .empty-message {
+    flex: 0 0 auto;
+    max-width: min(560px, calc(100% - 32px));
+    font-size: var(--font-lg);
+    line-height: 1.6;
+    text-align: center;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
 }
 
 .folder-dialog-backdrop {

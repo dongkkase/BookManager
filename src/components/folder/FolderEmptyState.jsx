@@ -1,5 +1,5 @@
 import React from 'react';
-import noDataImage from '../../images/nodata2.png';
+import noDataImage from '../../images/folder-empty-bookshelf.png';
 
 function FolderEmptyState({ t }) {
     return (

@@ -25,6 +25,9 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: '{0} 삭제 대상',
     },
     folder: {
+        message: {
+            noFiles: '현 폴더에 파일이 없습니다.  다른 폴더 및 하위 폴더를 선택해주세요.',
+        },
       detail: {
         label: '상세',
         collapse: '상세 패널 접기',
@@ -420,6 +423,9 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: 'Mark {0} for deletion',
     },
     folder: {
+        message: {
+            noFiles: 'There are no files in the current folder. Please select another folder or a subfolder.',
+        },
       detail: {
         label: 'Details',
         collapse: 'Collapse details panel',
@@ -815,6 +821,9 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: '{0} を削除対象にする',
     },
     folder: {
+        message: {
+            noFiles: '現在のフォルダーにファイルがありません。他のフォルダーまたはサブフォルダーを選択してください。',
+        },
       detail: {
         label: '詳細',
         collapse: '詳細パネルを折りたたむ',
