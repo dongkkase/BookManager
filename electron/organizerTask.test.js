@@ -8,6 +8,7 @@ import { spawnSync } from 'child_process';
 
 import { listZipEntriesFromFile, readZipEntry, replaceZipEntry } from './core/zipArchive.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
+import { assignOrganizerSeriesOutputPaths } from '../src/organizerPolicy.js';
 
 function find7z() {
     for (const candidate of [
@@ -47,6 +48,157 @@ async function makeZipBuffer(root, filename, entries) {
     }
     return fs.readFileSync(filePath);
 }
+
+async function makeMixedSeriesSources(root) {
+    const directory = path.join(root, '마린블루스 & 마조앤새디');
+    fs.mkdirSync(directory);
+    const suffix = '_waifu2x_scale_x0_7_waifu2x_noise2_scale_x0_7';
+    const samples = [
+        {
+            filename: '[정미조] 마린블루스 1-7 완결.zip',
+            seriesTitle: '마린블루스',
+            entries: ['시즌1-1', '시즌1-2', '시즌2-1', '시즌2,5-1'].map(season => [
+                `마린블루스 ${season}${suffix}/001.jpg`,
+                Buffer.from(`original-marine-${season}`),
+            ]),
+        },
+        {
+            filename: '[정마조] 마조와 새디.zip',
+            seriesTitle: '마조와 새디',
+            entries: [
+                ['마조 시즌1/001.jpg', Buffer.from('original-majo-season-1')],
+                ['마조 시즌2/001.jpg', Buffer.from('original-majo-season-2')],
+            ],
+        },
+    ];
+    for (const sample of samples) {
+        sample.filepath = path.join(directory, sample.filename);
+        sample.original = await makeZipBuffer(directory, sample.filename, sample.entries);
+    }
+    return { directory, samples };
+}
+
+test('Organizer는 혼합 폴더에서 원본 시리즈와 보정 suffix가 붙은 시즌 권차를 각각 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-mixed-series-analyze-'));
+    try {
+        const { samples } = await makeMixedSeriesSources(root);
+        const analyzed = await analyzeOrganizerInputs(samples.map(sample => sample.filepath), {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+
+        assert.deepEqual(analyzed.skippedFiles, []);
+        assert.equal(analyzed.items.length, samples.length);
+        for (const sample of samples) {
+            const item = analyzed.items.find(candidate => candidate.filepath === sample.filepath);
+            assert.equal(item.series_title, sample.seriesTitle, sample.filename);
+        }
+        const marine = analyzed.items.find(item => item.series_title === '마린블루스');
+        const names = marine.volumes.map(volume => volume.new_name);
+        assert.deepEqual(names.slice().sort(), [
+            '마린블루스 시즌1 01권',
+            '마린블루스 시즌1 02권',
+            '마린블루스 시즌2 01권',
+            '마린블루스 시즌2,5 01권',
+        ].sort());
+        assert.equal(new Set(names).size, names.length);
+        assert.equal(names.some(name => /waifu2x|noise2|scale/i.test(name)), false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer 시리즈 식별은 권차를 제거하고 제목 숫자와 부·시즌을 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-series-title-'));
+    try {
+        const cases = [
+            ['작품01.zip', '작품'],
+            ['작품02.zip', '작품'],
+            ['작품 03.zip', '작품'],
+            ['작품 Vol. 4.zip', '작품'],
+            ['0.5인분의 연인 01권.cbz', '0.5인분의 연인'],
+            ['0.5인분의 연인 02권.cbz', '0.5인분의 연인'],
+            ['사이코 메트러 2부 01권.cbz', '사이코 메트러 2부'],
+            ['시리즈 시즌 2 01권.zip', '시리즈 시즌 2'],
+            ['86 에이티식스 01권.zip', '86 에이티식스'],
+            ['X1999.zip', 'X1999'],
+            ['SeriesX2.zip', 'SeriesX2'],
+        ];
+        const sources = [];
+        for (const [filename] of cases) {
+            await makeZipBuffer(root, filename, [['001.jpg', Buffer.from(filename)]]);
+            sources.push(path.join(root, filename));
+        }
+        const numericDirectory = path.join(root, '숫자권 시리즈');
+        fs.mkdirSync(numericDirectory);
+        await makeZipBuffer(numericDirectory, '01.cbz', [['001.jpg', Buffer.from('numeric-page')]]);
+        sources.push(path.join(numericDirectory, '01.cbz'));
+
+        const analyzed = await analyzeOrganizerInputs(sources, { sevenZExe: '', lang: 'ko' });
+
+        assert.deepEqual(analyzed.skippedFiles, []);
+        assert.equal(analyzed.items.length, sources.length);
+        for (const [filename, expected] of [...cases, ['01.cbz', '숫자권 시리즈']]) {
+            const item = analyzed.items.find(candidate => candidate.name === filename);
+            assert.equal(item.series_title, expected, filename);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 혼합 폴더의 시리즈를 별도 폴더에 저장하고 원본과 페이지 내용을 보존한다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-mixed-series-execute-'));
+    try {
+        const { directory, samples } = await makeMixedSeriesSources(root);
+        const analyzed = await analyzeOrganizerInputs(samples.map(sample => sample.filepath), {
+            sevenZExe: '',
+            lang: 'ko',
+        });
+        assert.deepEqual(analyzed.skippedFiles, []);
+        const items = assignOrganizerSeriesOutputPaths(analyzed.items, process.platform);
+        const expectedOutputs = new Map();
+        for (const item of items) {
+            const sample = samples.find(candidate => candidate.filepath === item.filepath);
+            const expectedDirectory = path.join(directory, sample.seriesTitle);
+            assert.equal(item.out_path, expectedDirectory);
+            for (const volume of item.volumes) {
+                const expectedPage = sample.entries.find(([name]) => name === `${volume.original_path}/001.jpg`);
+                assert.ok(expectedPage, volume.original_path);
+                expectedOutputs.set(path.join(expectedDirectory, `${volume.new_name}.cbz`), expectedPage[1]);
+            }
+        }
+
+        const result = await executeOrganizer(items, {
+            sevenZExe,
+            target_format: 'cbz',
+            deleteOriginal: false,
+            flatten_folders: false,
+            webp_conversion: false,
+            shouldCancel: () => false,
+            lang: 'ko',
+        });
+
+        assert.equal(result.cancelled, false);
+        assert.deepEqual(result.stats.error, []);
+        assert.deepEqual(result.createdFiles.slice().sort(), [...expectedOutputs.keys()].sort());
+        assert.equal(new Set(result.createdFiles.map(filePath => path.dirname(filePath))).size, 2);
+        for (const sample of samples) assert.deepEqual(fs.readFileSync(sample.filepath), sample.original);
+        for (const [filePath, expectedPage] of expectedOutputs) {
+            const entries = await listZipEntriesFromFile(filePath);
+            assert.deepEqual(entries.map(entry => entry.name), ['001.jpg']);
+            assert.deepEqual(readZipEntry(fs.readFileSync(filePath), entries[0]), expectedPage, filePath);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
 
 test('Organizer는 ZIP 구조 분석을 외부 7z 없이 수행한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-native-'));

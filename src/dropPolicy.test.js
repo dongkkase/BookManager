@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { BOOK_EXTENSIONS } from './metadata/metadataTypes.js';
 import {
+    SUPPORTED_VIEWER_DROP_EXTENSIONS,
     classifyDroppedEntries,
     isSupportedAudioDropPath,
     isSupportedArchivePath,
@@ -23,7 +25,8 @@ test('지원 아카이브 확장자는 대소문자와 관계없이 인식한다
 test('문서 드롭 확장자는 메타데이터와 폴더 탭에서만 지원 파일로 취급한다', () => {
     assert.equal(isSupportedDocumentDropPath('book.epub'), true);
     assert.equal(isSupportedDocumentDropPath('book.PDF '), true);
-    assert.equal(isSupportedDocumentDropPath('book.txt'), false);
+    assert.equal(isSupportedDocumentDropPath('book.txt'), true);
+    assert.equal(isSupportedDocumentDropPath('book.TXT'), true);
     assert.equal(isSupportedDroppedFilePath('book.pdf'), false);
     assert.equal(isSupportedDroppedFilePath('book.pdf', { includeDocuments: true }), true);
 });
@@ -57,11 +60,14 @@ test('폴더 탭 뷰어 드롭은 내부 뷰어가 지원하는 파일 형식을
     assert.equal(isSupportedViewerDropPath('cover.jpg'), false);
 });
 
-test('폴더 전용 뷰어 형식은 다른 작업 탭의 기본 드롭 범위를 넓히지 않는다', () => {
+test('메타데이터 TXT 지원은 다른 작업 탭과 뷰어 전용 형식의 드롭 범위를 넓히지 않는다', () => {
     for (const filePath of ['comic.cb7', 'notes.txt', 'notes.md']) {
         assert.equal(isSupportedDroppedFilePath(filePath), false, filePath);
     }
-    assert.equal(isSupportedDroppedFilePath('notes.txt', { includeDocuments: true }), false);
+    assert.equal(isSupportedDroppedFilePath('notes.txt', { includeDocuments: true }), true);
+    for (const filePath of ['comic.cb7', 'notes.text', 'notes.log', 'notes.md']) {
+        assert.equal(isSupportedDroppedFilePath(filePath, { includeDocuments: true }), false, filePath);
+    }
 });
 
 test('드롭 항목을 폴더·지원 파일·미지원 파일로 순서대로 분류한다', () => {
@@ -84,9 +90,33 @@ test('드롭 항목을 폴더·지원 파일·미지원 파일로 순서대로 �
         { path: '/books/readme.txt', isFile: true },
     ], { includeDocuments: true }), {
         folders: ['/books'],
-        files: ['/books/a.cbz', '/books/book.epub', '/books/book.pdf', '/books/audio.m4b'],
-        unsupported: ['/books/readme.txt'],
+        files: ['/books/a.cbz', '/books/book.epub', '/books/book.pdf', '/books/audio.m4b', '/books/readme.txt'],
+        unsupported: [],
     });
+});
+
+test('메타데이터 분석기가 지원하는 문서는 드롭 검사에서도 허용한다', () => {
+    for (const extension of BOOK_EXTENSIONS) {
+        assert.equal(isSupportedDroppedFilePath(`book${extension}`, { includeDocuments: true }), true, extension);
+    }
+    assert.equal(new Set(SUPPORTED_VIEWER_DROP_EXTENSIONS).size, SUPPORTED_VIEWER_DROP_EXTENSIONS.length);
+});
+
+test('한글 TXT 드롭은 개별 파일과 부모 폴더 선택을 통해 메타데이터 분석 경로로 전달된다', () => {
+    const directory = '/Volumes/drive2/_test_txt/9클래스 마스터 검술러';
+    const filePath = `${directory}/9클래스 마스터 검술러 (완).txt`;
+    for (const normalization of ['NFC', 'NFD']) {
+        const droppedPath = filePath.normalize(normalization);
+        const classified = classifyDroppedEntries([{ path: droppedPath, isFile: true }], {
+            includeDocuments: true,
+            includeViewerFiles: false,
+        });
+        assert.deepEqual(classified.unsupported, []);
+        assert.deepEqual(classified.files, [droppedPath]);
+        assert.deepEqual(resolveMetadataDropPaths(classified, 'no'), [droppedPath]);
+        assert.deepEqual(resolveMetadataDropPaths(classified, 'yes'), [directory.normalize(normalization)]);
+        assert.deepEqual(resolveMetadataDropPaths(classified, 'cancel'), []);
+    }
 });
 
 test('메타데이터 드롭 예는 파일 부모 폴더를 중복 없이 추가한다', () => {

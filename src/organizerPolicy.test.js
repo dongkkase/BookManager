@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    assignOrganizerSeriesOutputPaths,
     changeOrganizerUnit,
     filenameOutputPath,
     groupOrganizerItems,
@@ -287,6 +288,99 @@ test('같은 폴더명이나 출력경로라도 원본 부모 경로가 다르�
     assert.equal(groups.length, 2);
     assert.deepEqual(groups.map(group => group.name), ['Series', 'Series']);
     assert.notEqual(groups[0].id, groups[1].id);
+});
+
+test('같은 폴더에서도 원본 시리즈가 다르면 분리하고 같은 시리즈의 권은 함께 묶는다', () => {
+    const makeItem = (id, seriesTitle) => Object.freeze({
+        id,
+        filepath: `/books/모음/${id}.zip`,
+        clean_title: '마린블루스 & 마조앤새디',
+        series_title: seriesTitle,
+        out_path: '/books/모음',
+        volumes: Object.freeze([Object.freeze({ id: `${id}:0`, new_name: `${seriesTitle} 01권` })]),
+    });
+    const first = makeItem('first', '마린블루스');
+    const other = makeItem('other', '마조와 새디');
+    const second = makeItem('second', '마린 블루스'.normalize('NFD'));
+    const groups = groupOrganizerItems([first, other, second], 'MacIntel');
+
+    assert.deepEqual(groups.map(group => group.name), ['마린블루스', '마조와 새디']);
+    assert.deepEqual(groups[0].items, [first, second]);
+    assert.deepEqual(groups[1].items, [other]);
+    assert.equal(groups[0].volumes[0].item, first);
+    assert.equal(groups[0].volumes[0].volume, first.volumes[0]);
+    assert.equal(groups[0].id, groupOrganizerItems([first], 'MacIntel')[0].id);
+    assert.notEqual(groups[0].id, groups[1].id);
+    assert.equal(titleOutputPath(first), '/books/모음/마린블루스');
+    assert.deepEqual(groups[0].items.map(item => titleOutputPath(item, groups[0].seriesTitle)), [
+        '/books/모음/마린블루스',
+        '/books/모음/마린블루스',
+    ]);
+});
+
+test('혼합 시리즈는 실행 항목의 기본 저장 경로를 분리하고 나중에 추가한 권에도 적용한다', () => {
+    const first = Object.freeze({ id: 'a1', filepath: '/books/모음/A 01.zip', series_title: '작품 A', out_path: '/books/모음' });
+    const other = Object.freeze({ id: 'b1', filepath: '/books/모음/B 01.zip', series_title: '작품 B', out_path: '/books/모음' });
+    const initial = assignOrganizerSeriesOutputPaths([first]);
+    assert.equal(initial[0], first);
+
+    const separated = assignOrganizerSeriesOutputPaths([...initial, other]);
+    assert.deepEqual(separated.map(item => item.out_path), ['/books/모음/작품 A', '/books/모음/작품 B']);
+    assert.equal(first.out_path, '/books/모음');
+    assert.equal(other.out_path, '/books/모음');
+
+    const nextVolume = { ...first, id: 'a2', filepath: '/books/모음/A 02.zip' };
+    const appended = assignOrganizerSeriesOutputPaths([...separated, nextVolume]);
+    const groups = groupOrganizerItems(appended);
+    assert.equal(appended[0], separated[0]);
+    assert.equal(appended[1], separated[1]);
+    assert.equal(appended[2].out_path, '/books/모음/작품 A');
+    assert.equal(groups[0].out_path, '/books/모음/작품 A');
+    assert.equal(groups[0].mixedOutPaths, false);
+    assert.equal(groups[0].id, groupOrganizerItems(initial)[0].id);
+    assert.equal(groupOrganizerItems([appended[0]])[0].id, groups[0].id);
+});
+
+test('시리즈 경로 자동 분리는 사용자가 지정한 경로와 명시적으로 선택한 기본 경로를 보존한다', () => {
+    const items = [
+        { id: 'a', filepath: '/books/A.zip', series_title: 'A', out_path: '/custom/A' },
+        { id: 'b', filepath: '/books/B.zip', series_title: 'B', out_path: '/books', out_path_user_set: true },
+        { id: 'c', filepath: '/books/C.zip', series_title: 'C', out_path: '/custom/C', out_path_auto: true, out_path_user_set: true },
+        { id: 'd', filepath: '/books/D.zip', series_title: 'D', out_path: '/books', checked: false },
+    ];
+    const result = assignOrganizerSeriesOutputPaths(items);
+
+    assert.equal(result[0], items[0]);
+    assert.equal(result[1], items[1]);
+    assert.equal(result[2], items[2]);
+    assert.equal(result[3].out_path, '/books/D');
+    assert.equal(result[3].checked, false);
+});
+
+test('시리즈 저장 폴더는 Windows 루트와 macOS 정규화 경로에서도 동일하게 분리한다', () => {
+    const windows = assignOrganizerSeriesOutputPaths([
+        { filepath: 'C:\\A.zip', series_title: 'A', out_path: 'C:\\' },
+        { filepath: 'c:/B.zip', series_title: 'B', out_path: 'c:/' },
+    ], 'Win32');
+    assert.deepEqual(windows.map(item => item.out_path), ['C:\\A', 'c:/B']);
+
+    const directory = '/books/모음';
+    const mac = assignOrganizerSeriesOutputPaths([
+        { filepath: `${directory.normalize('NFD')}/A.zip`, series_title: 'A', out_path: directory },
+        { filepath: `${directory}/B.zip`, series_title: 'B', out_path: directory },
+    ], 'MacIntel');
+    assert.deepEqual(mac.map(item => item.out_path), [`${directory.normalize('NFD')}/A`, `${directory}/B`]);
+});
+
+test('시리즈명의 금지 문자를 정리한 저장 폴더가 같아도 서로 덮어쓰지 않게 구분한다', () => {
+    const items = [
+        { filepath: '/books/A.zip', series_title: 'A?B', out_path: '/books' },
+        { filepath: '/books/B.zip', series_title: 'A*B', out_path: '/books' },
+    ];
+    const result = assignOrganizerSeriesOutputPaths(items);
+
+    assert.deepEqual(result.map(item => item.out_path), ['/books/A_B', '/books/A_B (2)']);
+    assert.deepEqual(assignOrganizerSeriesOutputPaths(result).map(item => item.out_path), result.map(item => item.out_path));
 });
 
 test('출력경로와 선택 상태가 바뀌어도 원본 폴더 그룹은 유지하고 혼합 상태를 계산한다', () => {

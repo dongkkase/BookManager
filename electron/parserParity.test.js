@@ -114,6 +114,49 @@ test('이미지 보정 suffix 안의 숫자는 무단위 권수로 오인하지 
     );
 });
 
+test('이미지 보정 suffix는 표시 제목과 코어 제목에서도 제거한다', () => {
+    for (const suffix of [
+        '_waifu2x_scale_x0_7_waifu2x_noise2_scale_x0_7',
+        ' waifu2x scale x0 7 waifu2x noise2 scale x0 7',
+        '_WAIFU2X_NOISE2_SCALE_X1_4',
+        '_noise2_scale_x0_7',
+        '_scale_x0_7',
+    ]) {
+        const filename = `다른 작품 03권${suffix}.zip`;
+
+        assert.equal(cleanDisplayTitle(filename), '다른 작품', filename);
+        assert.equal(extractCoreTitle(filename), '다른 작품', filename);
+        assert.equal(formatLeafName('혼합 모음', filename, 0, 10, 'ko'), '다른 작품 03권', filename);
+    }
+
+    assert.equal(cleanDisplayTitle('프랑켄프랑 01waifu2x_noise2'), '프랑켄프랑 01');
+    assert.equal(cleanDisplayTitle('Raw Story 01권.zip'), 'Raw Story');
+    assert.equal(cleanDisplayTitle('A Different Scale 01권.zip'), 'A Different Scale');
+    assert.equal(cleanDisplayTitle('Noise 01권.zip'), 'Noise');
+    assert.equal(cleanDisplayTitle('X1999 01권.zip'), 'X1999');
+    assert.equal(cleanDisplayTitle('Series X2 01권.zip'), 'Series X2');
+});
+
+test('보정 suffix가 붙은 시즌-권차 파일명은 시즌과 실제 권차를 보존한다', () => {
+    const suffix = '_waifu2x_scale_x0_7_waifu2x_noise2_scale_x0_7';
+    for (const [season, volume] of [['1', '1'], ['1', '3'], ['2', '1'], ['2,5', '2'], ['2.5', '1']]) {
+        const filename = `마린블루스 시즌${season}-${volume}${suffix}`;
+        const title = `마린블루스 시즌${season}`;
+        const expected = `${title} ${volume.padStart(2, '0')}권`;
+
+        assert.equal(cleanDisplayTitle(filename), title, filename);
+        assert.equal(extractCoreTitle(filename), title, filename);
+        assert.equal(formatLeafName('마린블루스', filename, 0, 7, 'ko'), expected, filename);
+        assert.equal(formatLeafName('마린블루스 & 마조앤새디', filename, 0, 7, 'ko'), expected, filename);
+    }
+
+    assert.equal(cleanDisplayTitle('작품명 1-7권 완결.zip'), '작품명');
+    assert.equal(cleanDisplayTitle('Series Season 2-3_waifu2x_noise2.zip'), 'Series Season 2');
+    assert.equal(formatLeafName('Series', 'Series Season 2-3_waifu2x_noise2.zip', 0, 7, 'en'), 'Series Season 2 v03');
+    assert.equal(formatLeafName('기타 모음', '마린블루스 시즌 1-1_waifu2x_noise2', 0, 7, 'ko'), '마린블루스 시즌 1 01권');
+    assert.equal(formatLeafName('기타 모음', 'Series Season 2-2_waifu2x_noise2', 0, 7, 'en'), 'Series Season 2 v02');
+});
+
 test('한글과 일본어 파일명은 NFC로 정규화한다', () => {
     assert.equal(fixEncoding('한글'.normalize('NFD')), '한글');
     assert.equal(fixEncoding('作品名'), '作品名');

@@ -5,6 +5,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import { runMetadataProcess as runProcess } from '../metadataProcess.js';
 import {
   listZipEntries,
   listZipEntriesFromFile,
@@ -12,6 +13,7 @@ import {
   readZipEntryFromFile,
   replaceZipEntry,
   replaceZipEntryAppendOnly,
+    replaceZipEntries,
 } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 import { BOOK_EXTENSIONS, resolveBookType } from '../../src/metadata/metadataTypes.js';
@@ -131,29 +133,6 @@ async function expandInputPaths(paths) {
   return [...new Set(archives)].sort(naturalCompare);
 }
 
-function runProcess(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const chunks = [];
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', data => {
-      chunks.push(Buffer.from(data));
-      stdout += data.toString();
-    });
-    child.stderr.on('data', data => { stderr += data.toString(); });
-    child.on('error', reject);
-    child.on('close', code => {
-      if (code === 0 || code === 1) resolve({ code, stdout, stderr, buffer: Buffer.concat(chunks) });
-      else reject(new Error(stderr || stdout || `${command} exited with ${code}`));
-    });
-  });
-}
-
 async function listWith7z(filePath, sevenZExe) {
   if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
   const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath]);
@@ -191,8 +170,7 @@ async function extractArchiveFile(filePath, innerPath, sevenZExe, options = {}) 
     if (!extracted) throw new Error(`${innerPath} extraction failed`);
     return extracted;
   }
-  const result = await runProcess(sevenZExe, ['e', '-so', filePath, innerPath]);
-  if (options.maxBytes && result.buffer.length > options.maxBytes) throw new Error(`${innerPath} extraction failed`);
+    const result = await runProcess(sevenZExe, ['e', '-so', filePath, innerPath], { ...options, binary: true });
   return result.buffer;
 }
 
@@ -2388,7 +2366,7 @@ async function readExistingComicInfoMetadata(filePath, sevenZExe) {
 
   if (!sevenZExe) return null;
   try {
-    const result = await runProcess(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml']);
+    const result = await runProcess(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml'], { binary: true });
     return result.buffer.length ? parseComicInfo(result.buffer.toString('utf8')) : null;
   } catch {
     return null;
@@ -2423,17 +2401,19 @@ async function injectEpubMetadata(filePath, metadata, lang = 'ko', coverChange =
     throw new Error(taskText(lang, 'metadata_epub_cover_not_found'));
   }
   const coverAsset = changedCoverAsset || await resolveEpubCompatibleCoverAsset(epubPackage, opfXml, options);
+    const replacements = [];
   if (coverAsset) {
     if (coverAsset.buffer) {
-      await replaceZipEntry(filePath, coverAsset.entryName, coverAsset.buffer);
+        replacements.push({ name: coverAsset.entryName, content: coverAsset.buffer });
     }
     opfXml = updateEpubCoverReferences(opfXml, epubPackage.opfPath, coverAsset.entryName, coverAsset.mediaType);
     const coverPageEntryName = defaultEpubCoverPageEntryName(epubPackage, opfXml);
     const coverPage = updateEpubCoverPageReferences(opfXml, epubPackage.opfPath, coverPageEntryName);
     opfXml = coverPage.opfXml;
-    await replaceZipEntry(filePath, coverPageEntryName, buildEpubCoverPageXml(coverPageEntryName, coverAsset.entryName));
+        replacements.push({ name: coverPageEntryName, content: buildEpubCoverPageXml(coverPageEntryName, coverAsset.entryName) });
   }
-  await replaceZipEntry(filePath, epubPackage.opfPath, opfXml);
+    replacements.push({ name: epubPackage.opfPath, content: opfXml });
+    await replaceZipEntries(filePath, replacements, { shouldCancel: options.shouldCancel });
   return true;
 }
 
@@ -2630,14 +2610,15 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       await refreshChangedEpubCoverThumbnail(item, filePath, options);
       recordMetadataSaveSuccess(stats, item, filePath);
     } catch (error) {
-      stats.error.push(`${item.name || filePath} - ${error.message}`);
+        if (error.code === 'TASK_CANCELLED') cancelled = true;
+        else stats.error.push(`${item.name || filePath} - ${error.message}`);
     } finally {
       await fsp.rm(tempArchive, { force: true }).catch(() => {});
       if (fs.existsSync(sourceHoldingPath) && !fs.existsSync(filePath)) {
         await fsp.rename(sourceHoldingPath, filePath).catch(() => {});
       }
     }
-    if (options.shouldCancel?.()) {
+    if (cancelled || options.shouldCancel?.()) {
       cancelled = true;
       break;
     }

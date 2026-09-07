@@ -11,6 +11,7 @@ import {
     faUser,
     faUsers,
 } from '@fortawesome/free-solid-svg-icons';
+import { createWebResponseCache } from './webResponseCache.js';
 
 function fontAwesomeIconData(iconDefinition) {
     const pathData = iconDefinition.icon[4];
@@ -845,7 +846,7 @@ const state = {
     isLoadingMore: false,
     autoLoadFrame: 0,
 };
-const responseCache = new Map();
+const responseCache = (${createWebResponseCache.toString()})();
 
 const elements = {
     breadcrumbs: document.getElementById("breadcrumbs"),
@@ -923,13 +924,12 @@ function queryString(values) {
     return text ? "?" + text : "";
 }
 
-function cloneJson(value) {
-    return JSON.parse(JSON.stringify(value));
-}
-
 async function fetchJson(url, options = {}) {
     const useCache = options.useCache !== false;
-    if (useCache && responseCache.has(url)) return cloneJson(responseCache.get(url));
+    if (useCache) {
+        const cached = responseCache.get(url);
+        if (cached !== undefined) return cached;
+    }
     const response = await fetch(url);
     if (!response.ok) {
         const text = await response.text();
@@ -937,7 +937,7 @@ async function fetchJson(url, options = {}) {
     }
     const data = await response.json();
     if (useCache) responseCache.set(url, data);
-    return cloneJson(data);
+    return data;
 }
 
 function renderedCardCount() {

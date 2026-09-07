@@ -43,9 +43,13 @@ export function inferRenamePattern(filenames = []) {
     const names = filenames.map(name => String(name || '').split(/[\\/]/).pop() || '').filter(Boolean);
     if (names.length === 0) return { oldPattern: '%1', newPattern: '%1' };
 
-    const refTokens = tokenizeFilename(names[0]);
+    const extension = splitName(names[0]).extension;
+    const sharedExtension = extension && names.every(name => splitName(name).extension === extension)
+        ? extension : '';
+    const patternNames = sharedExtension ? names.map(name => name.slice(0, -sharedExtension.length)) : names;
+    const refTokens = tokenizeFilename(patternNames[0]);
     const commonMask = Array(refTokens.length).fill(true);
-    for (const name of names.slice(1)) {
+    for (const name of patternNames.slice(1)) {
         const matches = matchingRefIndexes(refTokens, tokenizeFilename(name));
         for (let index = 0; index < commonMask.length; index += 1) {
             commonMask[index] = commonMask[index] && matches.has(index);
@@ -66,6 +70,7 @@ export function inferRenamePattern(filenames = []) {
         }
     }
     if (!pattern) pattern = '%1';
+    pattern += sharedExtension;
     return { oldPattern: pattern, newPattern: pattern };
 }
 
@@ -102,7 +107,9 @@ export function regexPatternToNormal(pattern = '') {
 }
 
 export function padNumbers(value = '', digits = 3) {
-    return String(value).replace(/\d+/g, match => match.padStart(digits, '0'));
+    return String(value).replace(/\d+/g, match => (
+        match.replace(/^0+(?=\d)/, '').padStart(digits, '0')
+    ));
 }
 
 function escapeRegExp(value = '') {

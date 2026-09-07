@@ -370,6 +370,8 @@ function MetadataTab({ config, t, showToast }) {
   const sectionRefs = useRef({});
   const coverLoadRequestsRef = useRef(new Set());
   const [epubImagesByFilePath, setEpubImagesByFilePath] = useState({});
+    const epubImagesByFilePathRef = useRef(epubImagesByFilePath);
+    epubImagesByFilePathRef.current = epubImagesByFilePath;
   const batchMetadata = useMemo(
     () => selectedFileId ? (batchMetadataByFileId[selectedFileId] || {}) : {},
     [batchMetadataByFileId, selectedFileId],
@@ -612,7 +614,7 @@ function MetadataTab({ config, t, showToast }) {
   useEffect(() => {
     const filePath = activeItem?.filepath;
     if (activeBookType !== 'book' || !activeIsEpub || !filePath) return undefined;
-    if (activeEpubImageState.loaded || activeEpubImageState.loading) return undefined;
+        if (epubImagesByFilePathRef.current[filePath]?.loaded) return undefined;
     const listMetadataEpubImages = window.electronAPI?.listMetadataEpubImages;
     if (typeof listMetadataEpubImages !== 'function') return undefined;
 
@@ -656,12 +658,14 @@ function MetadataTab({ config, t, showToast }) {
 
     return () => {
       cancelled = true;
+            setEpubImagesByFilePath(prev => {
+                if (!prev[filePath]?.loading) return prev;
+                return { ...prev, [filePath]: { ...prev[filePath], loading: false } };
+            });
     };
   }, [
     activeBookType,
     activeIsEpub,
-    activeEpubImageState.loaded,
-    activeEpubImageState.loading,
     activeItem?.filepath,
     text,
   ]);

@@ -78,6 +78,7 @@ import {
   findMissingVolumes,
 } from '../missingVolumesPolicy';
 import { createMissingVolumesCheck, missingVolumesLibraryScope } from '../missingVolumesCheck';
+import { createCoverPreviewQueue, createFolderPoller } from '../folderAsyncWork';
 import {
   applyConflictChoice,
   createLibraryMovePlans,
@@ -426,12 +427,26 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const watchedMtimeRef = useRef(null);
   const lastFolderPanelRef = useRef('list');
   const pendingMetadataRefreshRef = useRef(false);
-  const coverPreviewQueueRef = useRef([]);
-  const coverPreviewQueuedRef = useRef(new Set());
-  const coverPreviewActivePathsRef = useRef(new Set());
-  const coverPreviewAttemptedRef = useRef(new Set());
-  const coverPreviewActiveCountRef = useRef(0);
-  const coverPreviewFolderRef = useRef('');
+    const coverPreviewQueueRef = useRef(null);
+    if (!coverPreviewQueueRef.current) {
+        coverPreviewQueueRef.current = createCoverPreviewQueue({
+            concurrency: COVER_PREVIEW_CONCURRENCY,
+            queueLimit: COVER_PREVIEW_QUEUE_LIMIT,
+            requestLimit: VISIBLE_COVER_REQUEST_LIMIT,
+            keyForFile: coverPreviewRequestKey,
+            load: file => window.electronAPI.getFilePreview(coverPreviewFilePath(file), { force: false }),
+            onResult: (result, file, context) => {
+                if (!result?.success || !result.file?.cover) return;
+                context.updateCachedFiles(context.folderPath, context.scanOptions, [{
+                    ...file,
+                    ...result.file,
+                    path: file.path,
+                    full_path: file.full_path || result.file.full_path || result.file.path,
+                }]);
+            },
+        });
+    }
+    const folderPollContextRef = useRef(null);
 
   // --- UI 토글 상태 ---
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -761,18 +776,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }), [includeSubfolders, enableDupCheck, config?.dup_check_folders]);
 
   const resetCoverPreviewQueue = useCallback(() => {
-    coverPreviewQueueRef.current = [];
-    coverPreviewQueuedRef.current.clear();
-    coverPreviewActivePathsRef.current.clear();
-    coverPreviewAttemptedRef.current.clear();
-    coverPreviewActiveCountRef.current = 0;
+        coverPreviewQueueRef.current.reset();
   }, []);
+
+    useEffect(() => resetCoverPreviewQueue, [resetCoverPreviewQueue]);
 
   useEffect(() => {
     selectedFolderPathRef.current = selectedFolderPath;
-    coverPreviewFolderRef.current = selectedFolderPath;
-    resetCoverPreviewQueue();
-  }, [resetCoverPreviewQueue, selectedFolderPath]);
+        coverPreviewQueueRef.current.setScope(isLibrarySearchActive || isRecentReading ? '' : selectedFolderPath);
+    }, [isLibrarySearchActive, isRecentReading, selectedFolderPath]);
 
   useEffect(() => {
     const nextHistory = normalizeGotoPathHistory(config?.folder_goto_history, runtimePlatform);
@@ -998,75 +1010,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     ? `${t('folder_tag_search_button_title')} · ${t('folder_tag_selected_count', [folderTagSelections.length])}`
     : t('folder_tag_search_button_title');
 
-  const pumpCoverPreviewQueue = useCallback(() => {
-    if (!selectedFolderPath || isLibrarySearchActive || isRecentReading) return;
-    const loadPreview = window.electronAPI?.getFilePreview;
-    if (!loadPreview) return;
-
-    while (
-      coverPreviewActiveCountRef.current < COVER_PREVIEW_CONCURRENCY
-      && coverPreviewQueueRef.current.length > 0
-    ) {
-      const file = coverPreviewQueueRef.current.shift();
-      const filePath = coverPreviewFilePath(file);
-      const requestKey = coverPreviewRequestKey(file);
-      if (!filePath || !requestKey) continue;
-      coverPreviewActiveCountRef.current += 1;
-      coverPreviewActivePathsRef.current.add(requestKey);
-      coverPreviewAttemptedRef.current.add(requestKey);
-
-      loadPreview(filePath, { force: false })
-        .then(result => {
-          if (coverPreviewFolderRef.current !== selectedFolderPath) return;
-          if (!result?.success || !result.file?.cover) return;
-          updateCachedFiles(selectedFolderPath, scanOptions, [{
-            ...file,
-            ...result.file,
-            path: file.path,
-            full_path: file.full_path || result.file.full_path || result.file.path,
-          }]);
-        })
-        .catch(() => {})
-        .finally(() => {
-          coverPreviewActivePathsRef.current.delete(requestKey);
-          coverPreviewQueuedRef.current.delete(requestKey);
-          coverPreviewActiveCountRef.current = Math.max(0, coverPreviewActiveCountRef.current - 1);
-          pumpCoverPreviewQueue();
-        });
-    }
-  }, [isLibrarySearchActive, isRecentReading, scanOptions, selectedFolderPath, updateCachedFiles]);
-
   const handleVisibleFilesChange = useCallback((visibleFiles = []) => {
     if (!selectedFolderPath || isLibrarySearchActive || isRecentReading) return;
-    const nextItems = (Array.isArray(visibleFiles) ? visibleFiles : [])
-      .filter(file => {
-        const requestKey = coverPreviewRequestKey(file);
-        return requestKey
-          && !file.cover
-          && !coverPreviewQueuedRef.current.has(requestKey)
-          && !coverPreviewAttemptedRef.current.has(requestKey);
-      })
-      .slice(0, VISIBLE_COVER_REQUEST_LIMIT);
-    if (nextItems.length === 0) return;
-
-    const existing = coverPreviewQueueRef.current;
-    const seen = new Set();
-    const merged = [...nextItems, ...existing]
-      .filter(file => {
-        const requestKey = coverPreviewRequestKey(file);
-        if (!requestKey || seen.has(requestKey)) return false;
-        seen.add(requestKey);
-        return true;
-      })
-      .slice(0, COVER_PREVIEW_QUEUE_LIMIT);
-
-    coverPreviewQueuedRef.current = new Set([
-      ...Array.from(coverPreviewActivePathsRef.current),
-      ...merged.map(coverPreviewRequestKey).filter(Boolean),
-    ]);
-    coverPreviewQueueRef.current = merged;
-    pumpCoverPreviewQueue();
-  }, [isLibrarySearchActive, isRecentReading, pumpCoverPreviewQueue, selectedFolderPath]);
+        if (!window.electronAPI?.getFilePreview) return;
+        const queue = coverPreviewQueueRef.current;
+        queue.setScope(selectedFolderPath);
+        queue.enqueue(Array.isArray(visibleFiles) ? visibleFiles : [], {
+            folderPath: selectedFolderPath,
+            scanOptions,
+            updateCachedFiles,
+        });
+    }, [isLibrarySearchActive, isRecentReading, scanOptions, selectedFolderPath, updateCachedFiles]);
   const savedLayouts = useMemo(
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
@@ -1679,12 +1633,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       return await action();
     } finally {
       window.setTimeout(async () => {
-        if (selectedFolderPath) {
+        if (selectedFolderPath && selectedFolderPathRef.current === selectedFolderPath) {
           try {
             const stat = await window.electronAPI?.stat?.(selectedFolderPath);
-            watchedMtimeRef.current = stat?.isDirectory ? stat.mtime : null;
+            if (selectedFolderPathRef.current === selectedFolderPath) {
+                watchedMtimeRef.current = stat?.isDirectory ? stat.mtime : null;
+            }
           } catch {
-            watchedMtimeRef.current = null;
+            if (selectedFolderPathRef.current === selectedFolderPath) watchedMtimeRef.current = null;
           }
         }
         internalFileActionRef.current = false;
@@ -1692,35 +1648,40 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
   }, [selectedFolderPath]);
 
-  useEffect(() => {
-    watchedMtimeRef.current = null;
-    if (!selectedFolderPath) return undefined;
-    let disposed = false;
-
-    const pollFolder = async () => {
-      if (disposed || internalFileActionRef.current || scanning || preparingDuplicates) return;
-      const stat = await window.electronAPI?.stat?.(selectedFolderPath);
-      if (!stat?.isDirectory) return;
-      if (watchedMtimeRef.current === null) {
-        watchedMtimeRef.current = stat.mtime;
-        return;
-      }
-      if (stat.mtime === watchedMtimeRef.current) return;
-      watchedMtimeRef.current = stat.mtime;
-      setTreeRefreshToken(current => current + 1);
-      resetCoverPreviewQueue();
-      await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
-        invalidateMissingVolumesCheck();
-        setMissingRefreshVersion(value => value + 1);
-    };
-
-    pollFolder();
-    const timer = window.setInterval(pollFolder, 10000);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [invalidateMissingVolumesCheck, preparingDuplicates, resetCoverPreviewQueue, scanFolder, scanOptions, scanning, selectedFolderPath]);
+    folderPollContextRef.current = { folderPath: selectedFolderPath, scanning, preparingDuplicates, scanFolder, scanOptions, invalidateMissingVolumesCheck };
+    useEffect(() => {
+        watchedMtimeRef.current = null;
+        if (!selectedFolderPath) return undefined;
+        const poller = createFolderPoller({
+            readStat: () => window.electronAPI?.stat?.(selectedFolderPath),
+            mtimeRef: watchedMtimeRef,
+            canPoll: () => !internalFileActionRef.current
+                && folderPollContextRef.current.folderPath === selectedFolderPath
+                && !folderPollContextRef.current.scanning
+                && !folderPollContextRef.current.preparingDuplicates
+                && !mainAreaRef.current?.closest?.('[hidden]'),
+            onChange: async isCurrent => {
+                const context = folderPollContextRef.current;
+                setTreeRefreshToken(current => current + 1);
+                resetCoverPreviewQueue();
+                await context.scanFolder(selectedFolderPath, { ...context.scanOptions, force: true });
+                if (!isCurrent()) return;
+                context.invalidateMissingVolumesCheck();
+                setMissingRefreshVersion(value => value + 1);
+            },
+        });
+        const handleActiveTabChanged = event => {
+            if (event.detail?.activeTab === 'folder') void poller.poll();
+        };
+        void poller.poll();
+        const timer = window.setInterval(poller.poll, 10000);
+        window.addEventListener('bookmanager:active-tab-changed', handleActiveTabChanged);
+        return () => {
+            poller.dispose();
+            window.clearInterval(timer);
+            window.removeEventListener('bookmanager:active-tab-changed', handleActiveTabChanged);
+        };
+    }, [resetCoverPreviewQueue, selectedFolderPath]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {

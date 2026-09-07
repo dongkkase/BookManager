@@ -8,9 +8,9 @@ import {
 } from './dataPaths.js';
 
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
-const COMIC_METADATA_API_SOURCES = new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
-const BOOK_METADATA_API_SOURCES = new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Amazon']);
-const PDF_METADATA_API_SOURCES = new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Amazon']);
+const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon']);
+const PDF_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
 const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
 

@@ -2,6 +2,7 @@ import { cleanMetadataSummary } from './metadataPolicy.js';
 
 export const COMIC_METADATA_API_SOURCES = [
   { value: '리디북스', labelKey: 'api_source_ridi' },
+    { value: '문피아', labelKey: 'api_source_munpia' },
     { value: 'YES24', labelKey: 'api_source_yes24' },
   { value: '알라딘', labelKey: 'api_source_aladin' },
   { value: 'Google Books', labelKey: 'api_source_google' },
@@ -11,6 +12,7 @@ export const COMIC_METADATA_API_SOURCES = [
 
 export const BOOK_METADATA_API_SOURCES = [
   { value: '리디북스', labelKey: 'api_source_ridi' },
+    { value: '문피아', labelKey: 'api_source_munpia' },
     { value: 'YES24', labelKey: 'api_source_yes24' },
   { value: '알라딘', labelKey: 'api_source_aladin' },
   { value: 'Google Books', labelKey: 'api_source_google' },

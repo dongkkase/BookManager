@@ -27,6 +27,33 @@ test('여러 가변 숫자 토큰을 %1, %2 순서로 추론한다', () => {
     });
 });
 
+test('원본 권명에 괄호가 섞여 있어도 확장자를 보존해 새 형식을 적용한다', () => {
+    const names = [
+        '이토 준지 걸작집 1권 토미에 (상).zip',
+        '이토 준지 걸작집 2권 토미에 (하).zip',
+        '이토 준지 걸작집 6권 뒷골목.zip',
+        '이토 준지 걸작집 11권 괴담 (완결).zip',
+    ];
+    for (const normalization of ['NFC', 'NFD']) {
+        const originalNames = names.map(name => name.normalize(normalization));
+        const inferred = inferRenamePattern(originalNames);
+        assert.equal(inferred.oldPattern, '이토 준지 걸작집 %1권 %2.zip'.normalize(normalization));
+        const newPattern = inferred.newPattern.replace(
+            '이토 준지'.normalize(normalization),
+            '이토준지'.normalize(normalization),
+        );
+        for (const name of originalNames) {
+            const row = previewRename({ name, path: `/books/${name}` }, { ...inferred, newPattern });
+            assert.equal(row.newName, name.replace(
+                '이토 준지'.normalize(normalization),
+                '이토준지'.normalize(normalization),
+            ));
+            assert.equal(row.status, 'ok');
+            assert.equal(row.targetPath, `/books/${row.newName}`);
+        }
+    }
+});
+
 test('일반 패턴과 정규식 치환 형식을 상호 변환한다', () => {
     assert.equal(normalPatternToRegex('Book %1').source, '^Book (.*?)$');
     assert.equal(normalReplacementToRegex('%1 New'), '\\1 New');
@@ -50,6 +77,37 @@ test('Python 방식으로 숫자 패딩과 순번을 미리보기에 적용한�
         },
         0,
     ).newName, '01_Volume 002.cbz');
+});
+
+test('숫자 자리수는 기존 선행 0을 줄이거나 늘리고 유효 숫자는 보존한다', () => {
+    const cases = [
+        ['Book 01', 1, 'Book 1'],
+        ['Book 001', 2, 'Book 01'],
+        ['Book 1', 3, 'Book 001'],
+        ['Book 000', 1, 'Book 0'],
+        ['Book 0', 3, 'Book 000'],
+        ['Book 0012', 1, 'Book 12'],
+        ['Book 0009007199254740993', 2, 'Book 9007199254740993'],
+        ['Book 001 Chapter 002', 1, 'Book 1 Chapter 2'],
+    ];
+    for (const [name, digits, expected] of cases) {
+        assert.equal(padNumbers(name, digits), expected);
+    }
+});
+
+test('숫자 자리수 변경은 미리보기에 반영하고 옵션을 끄면 원래 자리수를 유지한다', () => {
+    const file = { name: 'Book 01.cbz', path: '/Books/Book 01.cbz' };
+    const options = {
+        oldPattern: 'Book %1.cbz',
+        newPattern: 'Volume %1.cbz',
+        padNumbers: true,
+        numberDigits: 1,
+    };
+    const row = previewRename(file, options);
+    assert.equal(row.newName, 'Volume 1.cbz');
+    assert.equal(row.targetPath, '/Books/Volume 1.cbz');
+    assert.equal(row.status, 'ok');
+    assert.equal(previewRename(file, { ...options, padNumbers: false }).newName, 'Volume 01.cbz');
 });
 
 test('확장자가 패턴에 포함되면 전체 파일명을 대상으로 이름을 바꾼다', () => {

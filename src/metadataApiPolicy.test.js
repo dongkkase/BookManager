@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+    ALL_METADATA_API_SOURCES,
   apiSourceHasRequiredKey,
   cleanApiSeriesName,
   metadataApiPreferenceKey,
@@ -27,15 +28,18 @@ test('API source별 필수 키 요구 여부를 판정한다', () => {
   assert.equal(requiredApiKeyForSource('Vine'), 'vine');
   assert.equal(requiredApiKeyForSource('Amazon'), '');
   assert.equal(requiredApiKeyForSource('리디북스'), '');
+    assert.equal(requiredApiKeyForSource('문피아'), '');
   assert.equal(apiSourceHasRequiredKey('Google Books', { google: '' }), false);
   assert.equal(apiSourceHasRequiredKey('Google Books', { google: 'key' }), true);
   assert.equal(apiSourceHasRequiredKey('Amazon', {}), true);
   assert.equal(apiSourceHasRequiredKey('리디북스', {}), true);
+    assert.equal(apiSourceHasRequiredKey('문피아', {}), true);
 });
 
 test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 도서를 분리한다', () => {
   assert.deepEqual(metadataApiSourcesForBookType('comic').map(source => source.value), [
     '리디북스',
+    '문피아',
     'YES24',
     '알라딘',
     'Google Books',
@@ -44,6 +48,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('book').map(source => source.value), [
     '리디북스',
+    '문피아',
     'YES24',
     '알라딘',
     'Google Books',
@@ -51,6 +56,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('pdf').map(source => source.value), [
     '리디북스',
+    '문피아',
     'YES24',
     '알라딘',
     'Google Books',
@@ -58,6 +64,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('audio').map(source => source.value), [
     '리디북스',
+    '문피아',
     'YES24',
     '알라딘',
     'Google Books',
@@ -68,6 +75,19 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'audio', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('알라딘', 'book', { aladin: 'key' }), '알라딘');
   assert.equal(normalizeMetadataApiSourceForBookType('Amazon', 'comic', {}), '리디북스');
+});
+
+test('문피아는 키 없이 모든 책 타입에서 검색과 기본 제공자로 선택할 수 있다', () => {
+    assert.deepEqual(ALL_METADATA_API_SOURCES.filter(source => source.value === '문피아'), [
+        { value: '문피아', labelKey: 'api_source_munpia' },
+    ]);
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        assert.equal(normalizeMetadataApiSourceForBookType('문피아', bookType, {}), '문피아');
+        assert.equal(preferredMetadataApiSource({
+            [metadataApiPreferenceKey(bookType)]: '문피아',
+        }, bookType), '문피아');
+        assert.equal(preferredMetadataApiSource({ last_meta_api: '문피아' }, bookType), '문피아');
+    }
 });
 
 test('책 타입별 기본 검색 API 설정을 선택한다', () => {

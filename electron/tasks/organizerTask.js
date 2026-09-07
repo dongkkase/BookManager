@@ -3,7 +3,7 @@ import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
-import { cleanDisplayTitle, extractCoreTitle, formatLeafName, resolveTitles } from '../parsers/parser.js';
+import { cleanDisplayTitle, extractCoreTitle, formatLeafName, isGarbageFolderName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
 import { createOrganizerRenameBatches } from '../organizerRenamePolicy.js';
 import { listZipEntries, listZipEntriesFromFile, readZipEntry, readZipEntryFromFile } from '../core/zipArchive.js';
@@ -531,6 +531,19 @@ function applyLangFormat(name, lang, forceUnit = '') {
   return base ? `${base} ${num}${unit}` : `${num}${unit}`;
 }
 
+function organizerSeriesTitle(filename, fallbackTitle) {
+    const stem = path.basename(filename, path.extname(filename));
+    let title = extractCoreTitle(stem);
+    if (!/(?:시즌|season|part)\s*\d+(?:[.,]\d+)?$/i.test(title)) {
+        title = title
+            .replace(/\s+(?:(?:v|vol\.?|volume|c|ch\.?|chapter)\s*)?\d+(?:\.\d+)?\s*$/i, '')
+            .replace(/(?<=\p{L})0\d+(?:\.\d+)?$/u, '')
+            .trim();
+    }
+    return title && /\p{L}/u.test(title) && !isGarbageFolderName(stem)
+        ? title : extractCoreTitle(fallbackTitle);
+}
+
 export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
   const lang = options.lang || 'ko';
   const archives = await expandInputPaths(paths);
@@ -591,6 +604,7 @@ export async function analyzeOrganizerInputs(paths, options = {}, onProgress) {
         out_path: path.dirname(filePath),
         clean_title: cleanDisplayTitle(displayTitle),
         core_title: extractCoreTitle(coreTitle),
+        series_title: organizerSeriesTitle(filename, coreTitle),
         size_mb: stat.size / (1024 * 1024),
         page_count: groups.reduce((sum, group) => sum + group.image_count, 0),
         volumes,

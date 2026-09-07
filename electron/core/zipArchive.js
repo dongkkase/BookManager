@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import zlib from 'zlib';
+import { randomUUID } from 'crypto';
 
 const EOCD_SIGNATURE = 0x06054b50;
 const ZIP64_EOCD_SIGNATURE = 0x06064b50;
@@ -237,7 +238,7 @@ async function readFileRange(handle, start, length) {
         : buffer.subarray(0, totalBytesRead);
 }
 
-export async function listZipEntriesFromFile(filePath) {
+export async function listZipEntriesFromFile(filePath, options = {}) {
     const handle = await fs.open(filePath, 'r');
     try {
         const stat = await handle.stat();
@@ -330,6 +331,7 @@ export async function listZipEntriesFromFile(filePath) {
                 localHeaderOffset,
                 externalAttrs,
                 isDirectory: name.endsWith('/'),
+                ...(options.includeRawRecords ? { centralRecord: Buffer.from(central.subarray(offset, nextOffset)) } : {}),
             }, extraBuffer));
             offset = nextOffset;
         }
@@ -566,4 +568,140 @@ export async function replaceZipEntry(filePath, entryName, content, options = {}
     const central = Buffer.concat(centralParts);
     const eocd = endOfCentralDirectory(outputEntries.length, central.length, centralOffset);
     await fs.writeFile(filePath, Buffer.concat([...localParts, central, eocd]));
+}
+
+function unsupportedZipRewrite(message) {
+    const error = new Error(message);
+    error.code = 'ZIP_REWRITE_UNSUPPORTED';
+    return error;
+}
+
+function checkZipRewriteCancellation(options) {
+    if (!options.shouldCancel?.()) return;
+    const error = new Error('ZIP update cancelled');
+    error.code = 'TASK_CANCELLED';
+    throw error;
+}
+
+export async function replaceZipEntries(filePath, replacements, options = {}) {
+    if (!replacements.length) return;
+    const source = await fs.open(filePath, 'r');
+    const temporaryPath = path.join(path.dirname(filePath), `.bookmanager-zip-${randomUUID()}.zip-update`);
+    let output = null;
+    try {
+        checkZipRewriteCancellation(options);
+        const sourceStat = await source.stat();
+        const tail = await readFileRange(source, Math.max(0, sourceStat.size - EOCD_TAIL_BYTES), Math.min(sourceStat.size, EOCD_TAIL_BYTES));
+        const eocd = findEndOfCentralDirectory(tail);
+        if (eocd < 0 || eocd + 22 + tail.readUInt16LE(eocd + 20) !== tail.length) {
+            throw unsupportedZipRewrite('ZIP end record is missing or incomplete');
+        }
+        const count = tail.readUInt16LE(eocd + 10);
+        const centralSize = tail.readUInt32LE(eocd + 12);
+        const centralOffset = tail.readUInt32LE(eocd + 16);
+        if (count === ZIP32_MAX_ENTRIES || centralSize === ZIP32_MAX || centralOffset === ZIP32_MAX) {
+            throw unsupportedZipRewrite('ZIP64 archives are not supported by ZIP update');
+        }
+        if (tail.readUInt16LE(eocd + 4) || tail.readUInt16LE(eocd + 6) || tail.readUInt16LE(eocd + 8) !== count) {
+            throw unsupportedZipRewrite('Split ZIP archives are not supported by ZIP update');
+        }
+        const endRecordOffset = sourceStat.size - tail.length + eocd;
+        if (centralOffset + centralSize > endRecordOffset) throw unsupportedZipRewrite('ZIP central directory exceeds the archive size');
+        const comment = tail.subarray(eocd + 22);
+        const sourceEntries = await listZipEntriesFromFile(filePath, { includeRawRecords: true });
+        if (sourceEntries.length !== count || sourceEntries.reduce((size, entry) => size + entry.centralRecord.length, 0) !== centralSize) {
+            throw unsupportedZipRewrite('ZIP central directory is incomplete or unsupported');
+        }
+
+        // Copy complete local records, including extra fields and data descriptors.
+        // Central records are retained verbatim apart from their new local offset.
+        const sorted = [...sourceEntries].sort((a, b) => a.localHeaderOffset - b.localHeaderOffset);
+        const offsets = [...new Set(sorted.map(entry => entry.localHeaderOffset))];
+        const localEnds = new Map(offsets.map((offset, index) => [offset, offsets[index + 1] ?? centralOffset]));
+        for (let index = 0; index < sorted.length; index += 1) {
+            checkZipRewriteCancellation(options);
+            const entry = sorted[index];
+            const record = entry.centralRecord;
+            if (record.readUInt16LE(34) || record.readUInt32LE(20) === ZIP32_MAX
+                || record.readUInt32LE(24) === ZIP32_MAX || record.readUInt32LE(42) === ZIP32_MAX) {
+                throw unsupportedZipRewrite('ZIP64 or split entries are not supported by ZIP update');
+            }
+            const end = localEnds.get(entry.localHeaderOffset);
+            const header = await readFileRange(source, entry.localHeaderOffset, 30);
+            if (header.length !== 30 || header.readUInt32LE(0) !== LOCAL_SIGNATURE) {
+                throw unsupportedZipRewrite('ZIP local entry is incomplete');
+            }
+            const nameLength = header.readUInt16LE(26);
+            const extraLength = header.readUInt16LE(28);
+            if (entry.localHeaderOffset + 30 + nameLength + extraLength + entry.compressedSize > end || end > centralOffset) {
+                throw unsupportedZipRewrite('ZIP local entry overlaps another record');
+            }
+            entry.localRecordLength = end - entry.localHeaderOffset;
+        }
+
+        let entries = [...sourceEntries];
+        for (const replacement of replacements) {
+            entries = entries.filter(entry => !zipEntryMatchesName(entry.name, replacement.name, replacement.options || options));
+            entries.push(createEntry(replacement.name, replacement.content, replacement.options));
+        }
+        entries = normalizeEpubEntries(filePath, entries);
+        if (entries.length >= ZIP32_MAX_ENTRIES) throw unsupportedZipRewrite('ZIP64 entry counts are not supported by ZIP update');
+        const centralParts = [];
+        let offset = 0;
+        for (const entry of entries) {
+            if (!canWriteZip32Entry(entry, offset)) throw unsupportedZipRewrite('ZIP64 entries are not supported by ZIP update');
+            const record = entry.centralRecord ? Buffer.from(entry.centralRecord) : centralHeader(entry, offset);
+            record.writeUInt32LE(offset, 42);
+            centralParts.push(record);
+            entry.outputOffset = offset;
+            offset += entry.localRecordLength ?? (30 + entry.nameBuffer.length + entry.compressed.length);
+        }
+        const outputCentralOffset = offset;
+        const outputCentralSize = centralParts.reduce((size, record) => size + record.length, 0);
+        if (offset >= ZIP32_MAX || outputCentralSize >= ZIP32_MAX) throw unsupportedZipRewrite('ZIP64 output is not supported by ZIP update');
+
+        checkZipRewriteCancellation(options);
+        output = await fs.open(temporaryPath, 'wx', sourceStat.mode & 0o777);
+        const copyBuffer = Buffer.alloc(256 * 1024);
+        for (const entry of entries) {
+            checkZipRewriteCancellation(options);
+            if (entry.centralRecord) {
+                let copied = 0;
+                while (copied < entry.localRecordLength) {
+                    checkZipRewriteCancellation(options);
+                    const length = Math.min(copyBuffer.length, entry.localRecordLength - copied);
+                    const { bytesRead } = await source.read(copyBuffer, 0, length, entry.localHeaderOffset + copied);
+                    if (!bytesRead) throw new Error('ZIP entry could not be read completely');
+                    await writeAll(output, copyBuffer.subarray(0, bytesRead), entry.outputOffset + copied);
+                    copied += bytesRead;
+                }
+            } else {
+                const header = localHeader(entry, entry.outputOffset).buffer;
+                await writeAll(output, header, entry.outputOffset);
+                await writeAll(output, entry.compressed, entry.outputOffset + header.length);
+            }
+        }
+        for (const record of centralParts) {
+            await writeAll(output, record, offset);
+            offset += record.length;
+        }
+        const endRecord = endOfCentralDirectory(entries.length, outputCentralSize, outputCentralOffset);
+        endRecord.writeUInt16LE(comment.length, 20);
+        await writeAll(output, endRecord, offset);
+        await writeAll(output, comment, offset + endRecord.length);
+        await output.close();
+        output = null;
+        await source.close();
+        await options.beforeWrite?.();
+        checkZipRewriteCancellation(options);
+        const currentStat = await fs.stat(filePath);
+        if (['size', 'mtimeMs', 'ctimeMs', 'ino', 'dev'].some(key => currentStat[key] !== sourceStat[key])) {
+            throw new Error('ZIP source changed while metadata was being saved');
+        }
+        await fs.rename(temporaryPath, filePath);
+    } finally {
+        await output?.close().catch(() => {});
+        await source.close().catch(() => {});
+        await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    }
 }

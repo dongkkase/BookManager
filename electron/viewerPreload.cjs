@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   createSupertonicTts: options => ipcRenderer.invoke('api:supertonicTts', options),
   createOpenAiTts: options => ipcRenderer.invoke('api:openaiTts', options),
   createGoogleTts: options => ipcRenderer.invoke('api:googleTts', options),
+    cancelTts: requestId => ipcRenderer.invoke('api:cancelTts', requestId),
   listBundledFonts: () => ipcRenderer.invoke('font:listBundled'),
   listSystemFonts: () => ipcRenderer.invoke('font:listSystem'),
   openExternal: url => ipcRenderer.invoke('viewer:openExternal', url),

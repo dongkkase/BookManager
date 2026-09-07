@@ -2,6 +2,8 @@ import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, us
 import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { loadViewerPdfDocument } from './viewerPdfLoader';
+import { createViewerTtsRequests } from './viewerTtsRequests';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
@@ -180,6 +182,7 @@ const VIEWER_TTS_SETTINGS_KEY = 'bookmanager-viewer-tts-settings';
 const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
 const OPENAI_TTS_MAX_INPUT_LENGTH = 4000;
 const REMOTE_TTS_PREFETCH_PAGE_LIMIT = 3;
+const REMOTE_TTS_HISTORY_PAGE_LIMIT = 4;
 const OPENAI_TTS_VOICES = [
   { id: 'marin', label: 'Marin' },
   { id: 'cedar', label: 'Cedar' },
@@ -555,6 +558,7 @@ function splitTtsTextIntoChunks(text = '', maxLength = OPENAI_TTS_MAX_INPUT_LENG
 let detachedRemoteTtsAudio = null;
 let detachedRemoteTtsToken = 0;
 let detachedRemoteTtsCancel = null;
+let detachedRemoteTtsRequests = null;
 
 function isRemoteTtsEngine(engine) {
   return engine === 'openai' || engine === 'google' || engine === 'supertonic';
@@ -638,6 +642,8 @@ function remoteTtsPageCacheKey(page, settings, language) {
 }
 
 function stopDetachedRemoteTtsAudio() {
+    detachedRemoteTtsRequests?.cancel();
+    detachedRemoteTtsRequests = null;
   detachedRemoteTtsCancel?.();
   const audio = detachedRemoteTtsAudio;
   if (audio) {
@@ -785,6 +791,8 @@ async function speakDetachedRemoteTts(
   detachedRemoteTtsToken += 1;
   const token = detachedRemoteTtsToken;
   stopDetachedRemoteTtsAudio();
+    const requests = createViewerTtsRequests(window.viewerAPI?.cancelTts);
+    detachedRemoteTtsRequests = requests;
   let playbackStarted = false;
   const notifyPlaybackStart = () => {
     if (playbackStarted) return;
@@ -794,7 +802,7 @@ async function speakDetachedRemoteTts(
   try {
     for (const chunk of chunks) {
       if (detachedRemoteTtsToken !== token) return;
-      const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunk, settings, language));
+      const result = await requests.run(createRemoteTts, remoteTtsPayload(settings.engine, chunk, settings, language));
       if (detachedRemoteTtsToken !== token) return;
       if (!result?.success || !result.dataUrl) {
         throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), { code: result?.code || remoteTtsFallbackCode(settings.engine) });
@@ -2942,7 +2950,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageCount = 0, language = 'ko', onMovePage, onMoveToPage, onOpenTtsSettings, onToast }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', onMovePage, onMoveToPage, onOpenTtsSettings, onToast }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
@@ -2964,6 +2972,12 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
   const voicePreviewCancelRef = useRef(null);
   const remoteTtsPageCacheRef = useRef(new Map());
   const remoteTtsPagePromiseRef = useRef(new Map());
+    const remoteTtsPageRequestsRef = useRef(new Map());
+    const cancelRemoteTtsRequests = useCallback(() => {
+        for (const requests of remoteTtsPageRequestsRef.current.values()) requests.cancel();
+        remoteTtsPageRequestsRef.current.clear();
+        remoteTtsPagePromiseRef.current.clear();
+    }, []);
   const remoteTtsCacheGenerationRef = useRef(0);
   const remoteTtsAllowedCacheKeysRef = useRef(new Set());
   const remoteTtsPrefetchRunRef = useRef(0);
@@ -2979,6 +2993,13 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
       text: normalizeTtsText(page?.text),
     }))
     .filter(page => page.text), [prefetchPages]);
+    const normalizedPreviousPages = useMemo(() => previousPages
+        .slice(0, REMOTE_TTS_HISTORY_PAGE_LIMIT)
+        .map(page => ({
+            pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
+            text: normalizeTtsText(page?.text),
+        }))
+        .filter(page => page.text && page.pageIndex < pageIndex), [pageIndex, previousPages]);
   const nextSpeakablePage = normalizedPrefetchPages.find(page => page.pageIndex > pageIndex) || null;
   const hasText = speechText.length > 0;
   const hasPlayableText = hasText || Boolean(nextSpeakablePage);
@@ -3036,6 +3057,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
   const remoteTtsAllowedCacheKeys = useMemo(() => new Set(
     remoteTtsPageWindow.map(page => remoteTtsPageCacheKey(page, settings, language)),
   ), [language, remoteTtsPageWindow, settings.engine, settings.googleVoice, settings.openaiVoice, settings.supertonicVoice]);
+    const remoteTtsRetainedCacheKeys = useMemo(() => new Set([
+        ...remoteTtsAllowedCacheKeys,
+        ...normalizedPreviousPages.map(page => remoteTtsPageCacheKey(page, settings, language)),
+    ]), [language, normalizedPreviousPages, remoteTtsAllowedCacheKeys]);
   remoteTtsPageWindowRef.current = remoteTtsPageWindow;
   ttsSettingsRef.current = settings;
   onMoveToPageRef.current = onMoveToPage;
@@ -3140,18 +3165,26 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
   useEffect(() => {
     remoteTtsCacheGenerationRef.current += 1;
     remoteTtsPrefetchRunRef.current += 1;
+    cancelRemoteTtsRequests();
     remoteTtsPageCacheRef.current.clear();
     remoteTtsPagePromiseRef.current.clear();
-  }, [remoteTtsCacheConfigKey]);
+  }, [cancelRemoteTtsRequests, remoteTtsCacheConfigKey, sessionId]);
 
   useEffect(() => {
     remoteTtsAllowedCacheKeysRef.current = remoteTtsAllowedCacheKeys;
     for (const cacheKey of remoteTtsPageCacheRef.current.keys()) {
-      if (!remoteTtsAllowedCacheKeys.has(cacheKey)) {
+      if (!remoteTtsRetainedCacheKeys.has(cacheKey)) {
         remoteTtsPageCacheRef.current.delete(cacheKey);
       }
     }
-  }, [remoteTtsAllowedCacheKeys]);
+    for (const [cacheKey, requests] of remoteTtsPageRequestsRef.current) {
+        if (!remoteTtsAllowedCacheKeys.has(cacheKey)) {
+            requests.cancel();
+            remoteTtsPageRequestsRef.current.delete(cacheKey);
+            remoteTtsPagePromiseRef.current.delete(cacheKey);
+        }
+    }
+  }, [remoteTtsAllowedCacheKeys, remoteTtsRetainedCacheKeys]);
 
   useEffect(() => {
     if (!open) setRateOpen(false);
@@ -3216,6 +3249,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
 
   const stopOpenAiSpeech = useCallback((options = {}) => {
     openAiRunRef.current += 1;
+    remoteTtsPrefetchRunRef.current += 1;
+    cancelRemoteTtsRequests();
     remoteTtsPageHandoffRef.current.clear();
     openAiPlaybackCancelRef.current?.();
     const audio = openAiAudioRef.current;
@@ -3229,7 +3264,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
     if (!options.skipState) {
       setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
     }
-  }, []);
+  }, [cancelRemoteTtsRequests]);
 
   const loadRemoteTtsPageAudio = useCallback(async page => {
     const normalizedPage = {
@@ -3252,10 +3287,12 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
       throw Object.assign(new Error('There is no text to synthesize.'), { code: 'TTS_NO_TEXT' });
     }
     const cacheGeneration = remoteTtsCacheGenerationRef.current;
+    const requests = createViewerTtsRequests(window.viewerAPI?.cancelTts);
+    remoteTtsPageRequestsRef.current.set(cacheKey, requests);
     const pagePromise = (async () => {
       const audioDataUrls = [];
       for (const chunk of chunks) {
-        const result = await createRemoteTts(remoteTtsPayload(settings.engine, chunk, settings, language));
+        const result = await requests.run(createRemoteTts, remoteTtsPayload(settings.engine, chunk, settings, language));
         if (!result?.success || !result.dataUrl) {
           throw Object.assign(new Error(result?.error || 'Remote TTS failed.'), {
             code: result?.code || remoteTtsFallbackCode(settings.engine),
@@ -3281,6 +3318,9 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
     try {
       return await pagePromise;
     } finally {
+      if (remoteTtsPageRequestsRef.current.get(cacheKey) === requests) {
+          remoteTtsPageRequestsRef.current.delete(cacheKey);
+      }
       if (remoteTtsPagePromiseRef.current.get(cacheKey) === pagePromise) {
         remoteTtsPagePromiseRef.current.delete(cacheKey);
       }
@@ -3419,6 +3459,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
       if (openAiRunRef.current !== runId) return;
       openAiAudioRef.current = null;
       setOpenAiState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
+      if (error?.name === 'AbortError' || error?.code === 'TTS_CANCELLED') return;
       onToast?.(openAiTtsErrorMessage(error));
     }
   }, [hasText, language, loadRemoteTtsPageAudio, nextSpeakablePage, onToast, openAiTtsErrorMessage, pageIndex, playOpenAiAudioDataUrl, settings, speechText, stopOpenAiSpeech]);
@@ -3558,6 +3599,14 @@ function ViewerTtsControls({ text = '', prefetchPages = [], pageIndex = 0, pageC
   useEffect(() => () => {
     stopVoicePreview({ skipState: true });
   }, [stopVoicePreview]);
+
+    useEffect(() => {
+        previousSpeechTextRef.current = '';
+        previousTtsPageRef.current = null;
+        setPendingPlayAfterPageMove(false);
+        stopVoicePreview();
+        stopOpenAiSpeech();
+    }, [sessionId, stopOpenAiSpeech, stopVoicePreview]);
 
   useEffect(() => {
     if (!pendingPlayAfterPageMove || !hasText) return undefined;
@@ -4122,11 +4171,13 @@ function ImageLightbox({ image, onClose }) {
   );
 }
 
-function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeight, pageSlots, viewMode, zoom, active }) {
+function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeight, pageSlots, viewMode, zoom, active, recycle = false }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const ambientCanvasRef = useRef(null);
   const renderTaskRef = useRef(null);
+  const pageProxyRef = useRef(null);
+  const basePageSizeRef = useRef(null);
   const [visible, setVisible] = useState(active || pageNumber <= 2);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
@@ -4139,6 +4190,8 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
     setError('');
     setPageSize(null);
     setTextLayerItems([]);
+    pageProxyRef.current = null;
+    basePageSizeRef.current = null;
     const ambientCanvas = ambientCanvasRef.current;
     const context = ambientCanvas?.getContext('2d');
     if (ambientCanvas && context) context.clearRect(0, 0, ambientCanvas.width, ambientCanvas.height);
@@ -4150,10 +4203,12 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
 
   useEffect(() => {
     const node = containerRef.current;
-    if (!node || visible) return undefined;
+    if (!node || (visible && !recycle)) return undefined;
     const root = node.closest('.viewer-content');
     const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) setVisible(true);
+      const intersecting = entries.some(entry => entry.isIntersecting);
+      if (recycle) setVisible(active || intersecting);
+      else if (intersecting) setVisible(true);
     }, {
       root,
       rootMargin: '1400px 0px',
@@ -4161,7 +4216,55 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [pdfDocument, pageNumber, visible]);
+  }, [active, pdfDocument, pageNumber, recycle, visible]);
+
+    const scaleForPage = useCallback(baseViewport => {
+        const slots = Math.max(1, Number(pageSlots) || 1);
+        return scaledPageSizeForViewMode({
+            viewMode,
+            baseWidth: baseViewport.width,
+            baseHeight: baseViewport.height,
+            availableWidth: Math.max(220, ((Number(containerWidth) || 900) - (slots > 1 ? 24 : 64)) / slots),
+            availableHeight: Math.max(220, (Number(containerHeight) || 700) - 80),
+            zoom,
+        });
+    }, [containerHeight, containerWidth, pageSlots, viewMode, zoom]);
+
+    useEffect(() => {
+        if (!recycle || visible) return;
+        for (const canvas of [canvasRef.current, ambientCanvasRef.current]) {
+            if (!canvas) continue;
+            canvas.width = 0;
+            canvas.height = 0;
+            if (canvas === canvasRef.current) {
+                canvas.style.width = '0px';
+                canvas.style.height = '0px';
+            }
+        }
+        pageProxyRef.current?.cleanup?.();
+        const pageNode = containerRef.current;
+        const isPageSelected = () => {
+            const selection = window.getSelection?.();
+            if (!pageNode || !selection || selection.isCollapsed) return false;
+            for (let index = 0; index < selection.rangeCount; index += 1) {
+                if (selection.getRangeAt(index).intersectsNode(pageNode)) return true;
+            }
+            return false;
+        };
+        const releaseUnselectedText = () => {
+            if (isPageSelected()) return;
+            document.removeEventListener('selectionchange', releaseUnselectedText);
+            setTextLayerItems([]);
+        };
+        if (isPageSelected()) document.addEventListener('selectionchange', releaseUnselectedText);
+        else setTextLayerItems([]);
+        setStatus('idle');
+        if (basePageSizeRef.current) {
+            const size = scaleForPage(basePageSizeRef.current);
+            setPageSize({ width: Math.floor(size.width), height: Math.floor(size.height) });
+        }
+        return () => document.removeEventListener('selectionchange', releaseUnselectedText);
+    }, [recycle, scaleForPage, visible]);
 
   useEffect(() => {
     if (!pdfDocument || !visible) return undefined;
@@ -4173,19 +4276,10 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
       try {
         const page = await pdfDocument.getPage(pageNumber);
         if (canceled) return;
+        pageProxyRef.current = page;
         const baseViewport = page.getViewport({ scale: 1 });
-        const slots = Math.max(1, Number(pageSlots) || 1);
-        const horizontalInset = slots > 1 ? 24 : 64;
-        const availableWidth = Math.max(220, ((Number(containerWidth) || 900) - horizontalInset) / slots);
-        const availableHeight = Math.max(220, (Number(containerHeight) || 700) - 80);
-        const { scale } = scaledPageSizeForViewMode({
-          viewMode,
-          baseWidth: baseViewport.width,
-          baseHeight: baseViewport.height,
-          availableWidth,
-          availableHeight,
-          zoom,
-        });
+        basePageSizeRef.current = { width: baseViewport.width, height: baseViewport.height };
+        const { scale } = scaleForPage(baseViewport);
         const viewport = page.getViewport({ scale });
         const nextPageSize = {
           width: Math.floor(viewport.width),
@@ -4247,7 +4341,7 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
       renderTaskRef.current?.cancel?.();
       renderTaskRef.current = null;
     };
-  }, [containerHeight, containerWidth, pageNumber, pageSlots, pdfDocument, viewMode, visible, zoom]);
+  }, [pageNumber, pdfDocument, scaleForPage, visible]);
 
   const canvasWrapStyle = pageSize
     ? {
@@ -5635,31 +5729,45 @@ function ViewerApp() {
     session,
     viewerSessionResolved,
   ]);
+    const ttsPageTextAt = useCallback(targetPageIndex => {
+        const indexes = flowMode === 'spread' ? [targetPageIndex, targetPageIndex + 1] : [targetPageIndex];
+        return normalizeTtsText(indexes
+            .filter(index => index >= 0 && index < flowItems.length)
+            .map(index => readerItemTtsText(flowItems[index]))
+            .filter(Boolean)
+            .join('\n\n'));
+    }, [flowItems, flowMode]);
   const ttsPageWindow = useMemo(() => {
     if (!isReaderDocument || flowItems.length < 1) return [];
     const pageStep = flowMode === 'spread' ? 2 : 1;
-    const pageTextAt = targetPageIndex => {
-      const indexes = flowMode === 'spread' ? [targetPageIndex, targetPageIndex + 1] : [targetPageIndex];
-      return normalizeTtsText(indexes
-        .filter(index => index >= 0 && index < flowItems.length)
-        .map(index => readerItemTtsText(flowItems[index]))
-        .filter(Boolean)
-        .join('\n\n'));
-    };
-    const speakablePages = [{ pageIndex, text: pageTextAt(pageIndex) }];
+    const speakablePages = [{ pageIndex, text: ttsPageTextAt(pageIndex) }];
     for (
       let targetPageIndex = pageIndex + pageStep;
       targetPageIndex < flowItems.length && speakablePages.length < REMOTE_TTS_PREFETCH_PAGE_LIMIT + 1;
       targetPageIndex += pageStep
     ) {
-      const text = pageTextAt(targetPageIndex);
+      const text = ttsPageTextAt(targetPageIndex);
       if (!text) continue;
       speakablePages.push({ pageIndex: targetPageIndex, text });
     }
     return speakablePages;
-  }, [flowItems, flowMode, isReaderDocument, pageIndex]);
+  }, [flowItems, flowMode, isReaderDocument, pageIndex, ttsPageTextAt]);
   const currentTtsText = ttsPageWindow[0]?.text || '';
   const ttsPrefetchPages = useMemo(() => ttsPageWindow.slice(1), [ttsPageWindow]);
+    const ttsPreviousPages = useMemo(() => {
+        if (!isReaderDocument || flowItems.length < 1) return [];
+        const pageStep = flowMode === 'spread' ? 2 : 1;
+        const previousPages = [];
+        for (
+            let targetPageIndex = pageIndex - pageStep;
+            targetPageIndex >= 0 && previousPages.length < REMOTE_TTS_HISTORY_PAGE_LIMIT;
+            targetPageIndex -= pageStep
+        ) {
+            const text = ttsPageTextAt(targetPageIndex);
+            if (text) previousPages.push({ pageIndex: targetPageIndex, text });
+        }
+        return previousPages;
+    }, [flowItems, flowMode, isReaderDocument, pageIndex, ttsPageTextAt]);
   const currentPercent = flowMode === 'scroll'
     ? Math.round(scrollPercent)
     : pageCount > 0
@@ -6194,6 +6302,8 @@ function ViewerApp() {
 
   const loadSession = useCallback(async nextSession => {
     if (!nextSession) return;
+    detachedRemoteTtsToken += 1;
+    stopDetachedRemoteTtsAudio();
     const loadSequence = loadSequenceRef.current + 1;
     loadSequenceRef.current = loadSequence;
     const isCurrentLoad = () => loadSequenceRef.current === loadSequence;
@@ -6269,21 +6379,13 @@ function ViewerApp() {
         if (!isCurrentLoad()) return;
         const controller = new AbortController();
         documentAbortRef.current = controller;
-        const response = await fetch(result.documentUrl, {
-          cache: 'no-store',
-          signal: controller.signal,
+        const loadedPdfDocument = await loadViewerPdfDocument(pdfjsLib, result.documentUrl, {
+            signal: controller.signal,
+            onLoadingTask: loadingTask => {
+                if (isCurrentLoad()) pdfLoadingTaskRef.current = loadingTask;
+            },
         });
-        if (!response.ok) throw new Error(`PDF load failed: ${response.status}`);
-        const arrayBuffer = await response.arrayBuffer();
-        if (!isCurrentLoad()) return;
-        const loadingTask = pdfjsLib.getDocument({
-          data: new Uint8Array(arrayBuffer),
-          disableAutoFetch: true,
-          disableStream: true,
-        });
-        pdfLoadingTaskRef.current = loadingTask;
-        const loadedPdfDocument = await loadingTask.promise;
-        pdfLoadingTaskRef.current = null;
+        if (isCurrentLoad()) pdfLoadingTaskRef.current = null;
         if (!isCurrentLoad()) {
           loadedPdfDocument.destroy?.();
           return;
@@ -6326,7 +6428,7 @@ function ViewerApp() {
         setError(loadError.message || String(loadError));
       }
     } finally {
-      if (isCurrentLoad()) documentAbortRef.current = null;
+      if (isCurrentLoad() && nextSession.type !== 'pdf') documentAbortRef.current = null;
       if (isCurrentLoad()) setLoading(false);
     }
   }, [clearDocumentFrame, clearPageTurnRuntime, restoreSavedScrollPosition, setPageIndexSynced]);
@@ -8393,6 +8495,7 @@ function ViewerApp() {
         viewMode={viewMode}
         zoom={renderZoom}
         active={forceActive || (keyPrefix !== 'flipbook' && flowMode !== 'scroll') || index === activeIndex}
+        recycle={flowMode === 'scroll'}
       />
     );
     if (readerSettings.pageEffect === 'page' && flowMode === 'spread') {
@@ -8445,7 +8548,7 @@ function ViewerApp() {
       ));
       return (
         <div
-          key={`pdf-transition-${layer.index}`}
+          key={flowMode === 'scroll' ? `pdf-scroll-${session.id}` : `pdf-transition-${layer.index}`}
           className={viewerClassName(
             'viewer-page-transition-layer',
             `is-${layer.role}`,
@@ -8802,8 +8905,10 @@ function ViewerApp() {
           {isReaderDocument && (
             <div className="viewer-tool-cluster viewer-tts-cluster" aria-label={viewerText('viewer.tts.group', 'TTS')}>
               <ViewerTtsControls
+                sessionId={session.id}
                 text={currentTtsText}
                 prefetchPages={ttsPrefetchPages}
+                previousPages={ttsPreviousPages}
                 pageIndex={pageIndex}
                 pageCount={pageCount}
                 language={viewerLanguage}

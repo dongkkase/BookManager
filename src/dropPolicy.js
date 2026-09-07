@@ -9,6 +9,7 @@ export const SUPPORTED_ARCHIVE_EXTENSIONS = Object.freeze([
 export const SUPPORTED_DOCUMENT_DROP_EXTENSIONS = Object.freeze([
     '.epub',
     '.pdf',
+    '.txt',
 ]);
 
 export const SUPPORTED_AUDIO_DROP_EXTENSIONS = Object.freeze([
@@ -37,13 +38,13 @@ export const SUPPORTED_TEXT_DROP_EXTENSIONS = Object.freeze([
     '.md',
 ]);
 
-export const SUPPORTED_VIEWER_DROP_EXTENSIONS = Object.freeze([
+export const SUPPORTED_VIEWER_DROP_EXTENSIONS = Object.freeze([...new Set([
     ...SUPPORTED_ARCHIVE_EXTENSIONS,
     '.cb7',
     ...SUPPORTED_DOCUMENT_DROP_EXTENSIONS,
     ...SUPPORTED_TEXT_DROP_EXTENSIONS,
     ...SUPPORTED_AUDIO_DROP_EXTENSIONS,
-]);
+])]);
 
 const SUPPORTED_EXTENSION_SET = new Set(SUPPORTED_ARCHIVE_EXTENSIONS);
 const SUPPORTED_DOCUMENT_DROP_EXTENSION_SET = new Set(SUPPORTED_DOCUMENT_DROP_EXTENSIONS);

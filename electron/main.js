@@ -33,6 +33,7 @@ import {
   resolveMacApplicationPath,
 } from './fileAssociations.js';
 import { setupFileAssociationIPC } from './fileAssociationIpc.js';
+import { BoundedMemoryCache } from './boundedMemoryCache.js';
 
 installConsolePipeGuard();
 
@@ -68,7 +69,11 @@ const APP_ID = 'com.bookmanager.app';
 const DEV_SERVER_URL = process.env.BOOKMANAGER_DEV_SERVER_URL || 'http://127.0.0.1:5173';
 const DIST_INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
 const THUMBNAIL_MEMORY_CACHE_LIMIT = 256;
-const thumbnailMemoryCache = new Map();
+const thumbnailMemoryCache = new BoundedMemoryCache({
+    maxEntries: THUMBNAIL_MEMORY_CACHE_LIMIT,
+    maxBytes: 32 * 1024 * 1024,
+    sizeOf: value => value.data.byteLength,
+});
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -291,26 +296,12 @@ function mimeTypeForThumbnail(filePath) {
 }
 
 async function readCachedThumbnail(thumbnailPath) {
-  const stat = await fs.promises.stat(thumbnailPath);
-  const cacheKey = `${thumbnailPath}:${stat.mtimeMs}:${stat.size}`;
-  const cached = thumbnailMemoryCache.get(cacheKey);
-  if (cached) {
-    thumbnailMemoryCache.delete(cacheKey);
-    thumbnailMemoryCache.set(cacheKey, cached);
-    return cached;
-  }
-
-  const data = await fs.promises.readFile(thumbnailPath);
-  const value = {
-    data,
-    mimeType: mimeTypeForThumbnail(thumbnailPath),
-  };
-  thumbnailMemoryCache.set(cacheKey, value);
-  while (thumbnailMemoryCache.size > THUMBNAIL_MEMORY_CACHE_LIMIT) {
-    const oldestKey = thumbnailMemoryCache.keys().next().value;
-    thumbnailMemoryCache.delete(oldestKey);
-  }
-  return value;
+    const stat = await fs.promises.stat(thumbnailPath);
+    const cacheKey = `${thumbnailPath}:${stat.mtimeMs}:${stat.size}`;
+    return thumbnailMemoryCache.getOrLoad(cacheKey, async () => ({
+        data: await fs.promises.readFile(thumbnailPath),
+        mimeType: mimeTypeForThumbnail(thumbnailPath),
+    }));
 }
 
 export function handleBootstrapOpenFile(filePath) {

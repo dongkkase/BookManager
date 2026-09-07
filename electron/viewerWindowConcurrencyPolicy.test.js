@@ -107,7 +107,9 @@ test('세션 데이터 IPC는 sender 뷰어 종류와 요청 세션 종류를 �
             `ipcMain.handle('${channel}'`,
             `ipcMain.handle('${nextChannel}'`,
         );
-        assert.match(handlerSource, /viewerContextForSessionRequest\(event, sessionId\)/, channel);
+        assert.match(handlerSource, channel === 'viewer:getEpubText'
+            ? /viewerContextForCurrentSessionRequest\(event, sessionId\)/
+            : /viewerContextForSessionRequest\(event, sessionId\)/, channel);
         assert.match(handlerSource, new RegExp(`sessions\\.${method}\\(sessionId`), channel);
     }
 });

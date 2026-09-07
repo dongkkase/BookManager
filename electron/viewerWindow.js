@@ -280,6 +280,10 @@ export function setupViewerWindowManager(options = {}) {
     };
     const setContextSession = (context, session, options = {}) => {
         if (!context || !session) return;
+        if (context.currentSession?.id !== session.id) {
+            context.epubRequestController?.abort();
+            context.epubRequestController = null;
+        }
         if (context.kind === 'audio' && context.currentSession?.id !== session.id) {
             if (options.preserveCloseRequest !== true) {
                 context.closeRequestVersion += 1;
@@ -614,6 +618,8 @@ export function setupViewerWindowManager(options = {}) {
         viewerWindow.on('closed', () => {
             context.closingWindows.delete(viewerWindow);
             if (context.window !== viewerWindow) return;
+            context.epubRequestController?.abort();
+            context.epubRequestController = null;
             if (context.stateSaveTimer) {
                 clearTimeout(context.stateSaveTimer);
                 context.stateSaveTimer = null;
@@ -822,8 +828,15 @@ export function setupViewerWindowManager(options = {}) {
         return sessions.getText(sessionId, options);
     });
     ipcMain.handle('viewer:getEpubText', async (event, sessionId) => {
-        viewerContextForSessionRequest(event, sessionId);
-        return sessions.getEpubText(sessionId);
+        const context = viewerContextForCurrentSessionRequest(event, sessionId);
+        context.epubRequestController?.abort();
+        const controller = new AbortController();
+        context.epubRequestController = controller;
+        try {
+            return await sessions.getEpubText(sessionId, { signal: controller.signal });
+        } finally {
+            if (context.epubRequestController === controller) context.epubRequestController = null;
+        }
     });
     ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
         const context = viewerContextForSender(event.sender);

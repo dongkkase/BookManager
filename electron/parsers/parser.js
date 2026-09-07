@@ -60,8 +60,10 @@ function stripKoreanStructuralNumberTokens(text) {
     );
 }
 
-function stripImageProcessingSuffix(text) {
-    const tokenPattern = '(?:waifu2x|noise\\d*|denoise\\d*|scale(?:[\\s_.-]*x?\\d+(?:[\\s_.-]\\d+)?)?|x\\d+(?:[\\s_.-]\\d+)?|upscale(?:d)?|resize(?:d)?|converted?|cleaned?|raw)';
+function stripImageProcessingSuffix(text, stripPlainMarkers = true) {
+    const numericTokens = 'waifu2x|(?:de)?noise\\d+|scale[\\s_.-]*x?\\d+(?:[\\s_.-]\\d+)?';
+    const fallbackTokens = stripPlainMarkers ? '|x\\d+(?:[\\s_.-]\\d+)?|noise|denoise|scale|upscale(?:d)?|resize(?:d)?|converted?|cleaned?|raw' : '';
+    const tokenPattern = `(?:${numericTokens}${fallbackTokens})`;
     return String(text || '')
         .replace(new RegExp(`(\\d)${tokenPattern}(?=$|[\\s_.-]).*$`, 'i'), '$1')
         .replace(new RegExp(`(?:^|[\\s_.-])${tokenPattern}(?=$|[\\s_.-]).*$`, 'i'), ' ');
@@ -89,6 +91,7 @@ export function cleanDisplayTitle(text) {
   cleaned = cleaned.replace(/\d{4}년\s*\d{1,2}월\s*\d{1,2}일/g, '');
   cleaned = cleaned.replace(/업로드\s*$/g, '');
   cleaned = cleaned.replace(/\+\s*\d+\s*$/g, '');
+    cleaned = stripImageProcessingSuffix(cleaned, false);
 
   // --- [수정된 부분] 작가명 제거 로직 분리 ---
   // '원작, 그림, 지음' 등은 공백이 없어도(예: 홍길동그림) 제거하지만
@@ -104,6 +107,10 @@ export function cleanDisplayTitle(text) {
   // ----------------------------------------
 
   cleaned = cleaned.replace(/\d{3,4}\s*px/gi, ' ');
+    cleaned = cleaned.replace(
+        /((?:시즌|season)\s*\d+(?:[.,]\d+)?)\s*[-_]\s*\d+(?:\.\d+)?\s*(?:권|화)?(?=$|[\s._-])/gi,
+        '$1'
+    );
   cleaned = cleaned.replace(
     /\d+(?:\.\d+)?\s*[~-]\s*\d+(?:\.\d+)?\s*(?:권|화|장|편|부)?/g,
     ' '
@@ -448,12 +455,13 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
   // [수정] leaf가 제목+숫자 패턴인 경우 parent_core를 base_name으로 사용
   const leafCoreCheck = extractCoreTitle(leafClean);
   const parentCoreCheck = extractCoreTitle(parentCore);
+    const hasSeasonVolume = /(?:시즌|season)\s*\d+(?:[.,]\d+)?\s*[-_]\s*\d+/i.test(leafClean);
   if (
     leafCoreCheck &&
     parentCoreCheck &&
     getSimilarity(leafCoreCheck, parentCoreCheck) >= 0.5
   ) {
-    if (hasStandalonePartMarker(leafCoreCheck) && !hasStandalonePartMarker(parentCoreCheck)) {
+    if (hasSeasonVolume || (hasStandalonePartMarker(leafCoreCheck) && !hasStandalonePartMarker(parentCoreCheck))) {
       baseName = leafCoreCheck;
     } else {
       baseName = reSub('^[_\-\s]+', '', parentCore);
@@ -472,7 +480,7 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
       'i'
     );
     const match = baseName.match(pattern);
-    if (match) {
+    if (match && !hasSeasonVolume) {
       const baseNameCandidate = match[1].trim();
       if (baseNameCandidate) {
         baseName = baseNameCandidate;

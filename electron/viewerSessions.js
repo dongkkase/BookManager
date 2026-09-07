@@ -745,7 +745,7 @@ function addUniqueEpubFontFaces(target = new Map(), faces = []) {
     }
 }
 
-async function readEpubFontFacesFromStylesheets(session, filePath = '', entries = []) {
+async function readEpubFontFacesFromStylesheets(session, filePath = '', entries = [], readOptions = {}) {
     const fontFaceMap = new Map();
     const stylesheetEntries = entries
         .filter(entry => !entry.isDir && /\.css$/i.test(entry.name))
@@ -753,13 +753,15 @@ async function readEpubFontFacesFromStylesheets(session, filePath = '', entries 
     for (const entry of stylesheetEntries) {
         try {
             const cssBuffer = await extractArchiveEntry(filePath, entry.name, '', {
+                ...readOptions,
                 maxBytes: MAX_EPUB_STYLESHEET_BYTES,
             });
             addUniqueEpubFontFaces(
                 fontFaceMap,
                 extractEpubFontFacesFromCss(cssBuffer.toString('utf8'), entry.name, entries, session),
             );
-        } catch {
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             // 읽을 수 없는 스타일시트는 EPUB 본문 표시를 막지 않습니다.
         }
     }
@@ -1184,7 +1186,8 @@ function epubStylesheetEntryNamesFromHtml(html = '', entryName = '') {
     return stylesheetEntryNames;
 }
 
-async function readExpandedEpubStylesheet(stylesheetEntryName = '', filePath = '', entries = [], stylesheetCache = new Map(), importStack = new Set()) {
+async function readExpandedEpubStylesheet(stylesheetEntryName = '', filePath = '', entries = [], stylesheetCache = new Map(), importStack = new Set(), readOptions = {}) {
+    throwIfViewerOperationAborted(readOptions.signal);
     const stylesheetEntry = findArchiveEntry(entries, stylesheetEntryName);
     if (!stylesheetEntry || stylesheetEntry.isDir) return '';
     const normalizedKey = normalizeInnerPath(stylesheetEntry.name).toLowerCase();
@@ -1197,10 +1200,12 @@ async function readExpandedEpubStylesheet(stylesheetEntryName = '', filePath = '
         let rawCss = '';
         try {
             const cssBuffer = await extractArchiveEntry(filePath, stylesheetEntry.name, '', {
+                ...readOptions,
                 maxBytes: MAX_EPUB_STYLESHEET_BYTES,
             });
             rawCss = cssBuffer.toString('utf8');
-        } catch {
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             stylesheetCache.set(cacheKey, '');
             return '';
         }
@@ -1210,7 +1215,7 @@ async function readExpandedEpubStylesheet(stylesheetEntryName = '', filePath = '
         for (const href of imports.slice(0, 32)) {
             const importedEntryName = resolveEpubHref(stylesheetEntry.name, href);
             if (!importedEntryName) continue;
-            const importedCss = await readExpandedEpubStylesheet(importedEntryName, filePath, entries, stylesheetCache, importStack);
+            const importedCss = await readExpandedEpubStylesheet(importedEntryName, filePath, entries, stylesheetCache, importStack, readOptions);
             if (importedCss) importedCssParts.push(importedCss);
         }
         const expandedCss = [...importedCssParts, css].filter(Boolean).join('\n');
@@ -1221,10 +1226,10 @@ async function readExpandedEpubStylesheet(stylesheetEntryName = '', filePath = '
     }
 }
 
-async function readEpubCssRulesForHtml(html = '', entryName = '', filePath = '', entries = [], stylesheetCache = new Map()) {
+async function readEpubCssRulesForHtml(html = '', entryName = '', filePath = '', entries = [], stylesheetCache = new Map(), readOptions = {}) {
     const cssParts = [];
     for (const stylesheetEntryName of epubStylesheetEntryNamesFromHtml(html, entryName)) {
-        const cssText = await readExpandedEpubStylesheet(stylesheetEntryName, filePath, entries, stylesheetCache);
+        const cssText = await readExpandedEpubStylesheet(stylesheetEntryName, filePath, entries, stylesheetCache, new Set(), readOptions);
         if (cssText) cssParts.push(cssText);
     }
     const inlineCss = extractEpubInlineCss(html);
@@ -1658,32 +1663,46 @@ function createComicArchiveEntryCache(entries, signature) {
 }
 
 async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {}) {
+    throwIfViewerOperationAborted(options.signal);
     const extension = path.extname(filePath).toLowerCase();
     const normalizedEntryName = normalizeInnerPath(entryName);
     if (extension === '.zip' || extension === '.cbz' || extension === '.epub') {
         let nativeZipError = null;
         try {
-            const cachedEntry = normalizeInnerPath(options.zipEntry?.name) === normalizedEntryName
-                ? options.zipEntry
+            const candidateEntry = options.zipEntry || options.zipEntries?.get(normalizedEntryName);
+            let cachedEntry = normalizeInnerPath(candidateEntry?.name) === normalizedEntryName
+                ? candidateEntry
                 : null;
+            if (cachedEntry && options.archiveSignature
+                && !archiveFileSignaturesMatch(options.archiveSignature, await archiveFileSignature(filePath))) {
+                cachedEntry = null;
+            }
+            throwIfViewerOperationAborted(options.signal);
             if (cachedEntry) {
                 const cachedBuffer = await readZipEntryFromFile(filePath, cachedEntry, {
                     maxBytes: options.maxBytes,
                     maxCompressedBytes: options.maxCompressedBytes,
                 });
-                if (cachedBuffer) return cachedBuffer;
+                throwIfViewerOperationAborted(options.signal);
+                if (cachedBuffer && (!options.archiveSignature
+                    || archiveFileSignaturesMatch(options.archiveSignature, await archiveFileSignature(filePath)))) {
+                    return cachedBuffer;
+                }
             }
 
             const entries = await listZipEntriesFromFile(filePath);
+            throwIfViewerOperationAborted(options.signal);
             const entry = entries.find(item => normalizeInnerPath(item.name) === normalizedEntryName);
             if (!entry) throw new Error(`${entryName} not found`);
             const buffer = await readZipEntryFromFile(filePath, entry, {
                 maxBytes: options.maxBytes,
                 maxCompressedBytes: options.maxCompressedBytes,
             });
+            throwIfViewerOperationAborted(options.signal);
             if (buffer) return buffer;
             throw new Error(`${entryName} extraction failed`);
         } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             nativeZipError = error;
         }
         if (!sevenZExe) throw nativeZipError;
@@ -1693,7 +1712,7 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
     });
 }
 
-async function readEpubImageDimensionMap(filePath = '', entries = []) {
+async function readEpubImageDimensionMap(filePath = '', entries = [], readOptions = {}) {
     const imageDimensionByEntryName = new Map();
     const imageEntries = entries
         .filter(entry => !entry.isDir && !entry.encrypted && isImageEntry(entry.name) && (!entry.size || entry.size <= 8 * 1024 * 1024))
@@ -1701,11 +1720,13 @@ async function readEpubImageDimensionMap(filePath = '', entries = []) {
     for (const entry of imageEntries) {
         try {
             const buffer = await extractArchiveEntry(filePath, entry.name, '', {
+                ...readOptions,
                 maxBytes: 8 * 1024 * 1024,
             });
             const dimensions = imageDimensionsFromBuffer(buffer, entry.name);
             if (dimensions) imageDimensionByEntryName.set(normalizeInnerPath(entry.name).toLowerCase(), dimensions);
-        } catch {
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             // Image dimensions are an optimization for reader pagination.
         }
     }
@@ -1964,7 +1985,7 @@ export class ViewerSessionManager {
             .sort((left, right) => compareComicPageNames(left.name, right.name));
         const cachedEntries = comicInfoEntry ? [comicInfoEntry, ...images] : images;
         const archiveEntryCache = createComicArchiveEntryCache(cachedEntries, stableSignature);
-        if (archiveEntryCache) {
+        if (archiveEntryCache && this.sessions.has(session.id)) {
             this.comicArchiveEntryCaches.set(session.id, archiveEntryCache);
         } else {
             this.comicArchiveEntryCaches.delete(session.id);
@@ -2144,20 +2165,26 @@ export class ViewerSessionManager {
         const session = this.get(sessionId);
         if (session.type !== 'epub') throw new Error('This file is not an EPUB document.');
         throwIfViewerOperationAborted(options.signal);
+        const signatureBefore = await archiveFileSignature(session.filePath);
         const entries = await listArchiveEntries(session.filePath, '');
+        const signatureAfter = await archiveFileSignature(session.filePath);
+        const readOptions = {
+            signal: options.signal,
+            archiveSignature: archiveFileSignaturesMatch(signatureBefore, signatureAfter) ? signatureAfter : null,
+            zipEntries: archiveFileSignaturesMatch(signatureBefore, signatureAfter)
+                ? new Map(entries.filter(entry => entry.zipEntry).map(entry => [normalizeInnerPath(entry.name), entry.zipEntry]))
+                : null,
+        };
         throwIfViewerOperationAborted(options.signal);
         const containerEntry = findArchiveEntry(entries, 'META-INF/container.xml');
         let opfPath = '';
         let opfXml = '';
         if (containerEntry) {
-            const containerBuffer = containerEntry.zipEntry
-                ? await readZipEntryFromFile(session.filePath, containerEntry.zipEntry, {
-                    maxBytes: 1024 * 1024,
-                    maxCompressedBytes: 1024 * 1024,
-                })
-                : await extractArchiveEntry(session.filePath, containerEntry.name, '', {
-                    maxBytes: 1024 * 1024,
-                });
+            const containerBuffer = await extractArchiveEntry(session.filePath, containerEntry.name, '', {
+                ...readOptions,
+                maxBytes: 1024 * 1024,
+                maxCompressedBytes: 1024 * 1024,
+            });
             if (!containerBuffer) throw new Error('EPUB container is too large.');
             opfPath = decodeEpubEntities(
                 containerBuffer.toString('utf8').match(/full-path\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || '',
@@ -2167,14 +2194,11 @@ export class ViewerSessionManager {
             || entries.find(entry => !entry.isDir && /\.opf$/i.test(entry.name));
         if (opfEntry) {
             opfPath = opfEntry.name;
-            const opfBuffer = opfEntry.zipEntry
-                ? await readZipEntryFromFile(session.filePath, opfEntry.zipEntry, {
-                    maxBytes: 4 * 1024 * 1024,
-                    maxCompressedBytes: 4 * 1024 * 1024,
-                })
-                : await extractArchiveEntry(session.filePath, opfEntry.name, '', {
-                    maxBytes: 4 * 1024 * 1024,
-                });
+            const opfBuffer = await extractArchiveEntry(session.filePath, opfEntry.name, '', {
+                ...readOptions,
+                maxBytes: 4 * 1024 * 1024,
+                maxCompressedBytes: 4 * 1024 * 1024,
+            });
             if (!opfBuffer) throw new Error('EPUB package document is too large.');
             opfXml = opfBuffer.toString('utf8');
         }
@@ -2272,6 +2296,7 @@ export class ViewerSessionManager {
             const navEntry = findArchiveEntry(entries, navItem.entryName);
             if (navEntry) {
                 const navBuffer = await extractArchiveEntry(session.filePath, navEntry.name, '', {
+                    ...readOptions,
                     maxBytes: 2 * 1024 * 1024,
                 });
                 appendTocEntries(parseEpubNavEntries(navBuffer.toString('utf8'), navEntry.name));
@@ -2284,6 +2309,7 @@ export class ViewerSessionManager {
             const ncxEntry = findArchiveEntry(entries, ncxItem.entryName);
             if (ncxEntry) {
                 const ncxBuffer = await extractArchiveEntry(session.filePath, ncxEntry.name, '', {
+                    ...readOptions,
                     maxBytes: 2 * 1024 * 1024,
                 });
                 appendTocEntries(parseEpubNcxEntries(ncxBuffer.toString('utf8'), ncxEntry.name));
@@ -2301,10 +2327,11 @@ export class ViewerSessionManager {
         const stylesheetCache = new Map();
         const stylesheetTexts = new Set();
         const fontFaceMap = new Map();
-        const imageDimensionByEntryName = await readEpubImageDimensionMap(session.filePath, entries);
-        addUniqueEpubFontFaces(fontFaceMap, await readEpubFontFacesFromStylesheets(session, session.filePath, entries));
+        const imageDimensionByEntryName = await readEpubImageDimensionMap(session.filePath, entries, readOptions);
+        addUniqueEpubFontFaces(fontFaceMap, await readEpubFontFacesFromStylesheets(session, session.filePath, entries, readOptions));
         for (const entry of chapters) {
             const buffer = await extractArchiveEntry(session.filePath, entry.name, '', {
+                ...readOptions,
                 maxBytes: MAX_EPUB_CHAPTER_BYTES,
             });
             const html = buffer.toString('utf8');
@@ -2312,7 +2339,7 @@ export class ViewerSessionManager {
                 fontFaceMap,
                 extractEpubFontFacesFromCss(extractEpubInlineCss(html), entry.name, entries, session),
             );
-            const css = await readEpubCssRulesForHtml(html, entry.name, session.filePath, entries, stylesheetCache);
+            const css = await readEpubCssRulesForHtml(html, entry.name, session.filePath, entries, stylesheetCache, readOptions);
             if (css.stylesheet) stylesheetTexts.add(css.stylesheet);
             const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(html, entry.name, session, entries, css.rules, imageDimensionByEntryName);
             for (const imageEntryName of imageEntryNames) {
@@ -2366,6 +2393,7 @@ export class ViewerSessionManager {
             .filter(entry => Number.isInteger(entry.chapterIndex));
         const fonts = Array.from(fontFaceMap.values());
         const fontStylesheet = epubFontFaceStylesheet(fonts);
+        throwIfViewerOperationAborted(options.signal);
         return {
             metadata,
             fonts,

@@ -3,6 +3,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { createTtsSynthesisQueue, throwIfTtsCancelled } from './ttsSynthesisQueue.js';
 
 export const SUPERTONIC_VOICES = Object.freeze(['M1', 'M2', 'M3', 'M4', 'M5', 'F1', 'F2', 'F3', 'F4', 'F5']);
 export const SUPERTONIC_LANGUAGES = Object.freeze([
@@ -14,7 +15,7 @@ export const SUPERTONIC_LANGUAGES = Object.freeze([
 const SUPERTONIC_INPUT_MAX_LENGTH = 1000;
 const runtimeCache = new Map();
 const styleCache = new Map();
-let synthesisQueue = Promise.resolve();
+const synthesisQueue = createTtsSynthesisQueue(synthesizeSupertonic);
 
 function supertonicError(code, message) {
     return Object.assign(new Error(message), { code });
@@ -220,7 +221,8 @@ class TextToSpeech {
         };
     }
 
-    async infer(textList, langList, style, totalStep, speed, onProgress) {
+    async infer(textList, langList, style, totalStep, speed, onProgress, signal) {
+        throwIfTtsCancelled(signal);
         const batchSize = textList.length;
         const processed = this.textProcessor.call(textList, langList);
         const textIds = new this.ort.Tensor('int64', processed.textIds, processed.textIdsShape);
@@ -231,17 +233,20 @@ class TextToSpeech {
             text_mask: textMask,
         });
         const duration = Array.from(durationResult.duration.data, value => value / speed);
+        throwIfTtsCancelled(signal);
         const textEncoderResult = await this.textEncoder.run({
             text_ids: textIds,
             style_ttl: style.ttl,
             text_mask: textMask,
         });
         const sampled = this.sampleNoisyLatent(duration);
+        throwIfTtsCancelled(signal);
         const latentMask = new this.ort.Tensor('float32', sampled.mask, sampled.maskShape);
         const totalStepTensor = new this.ort.Tensor('float32', new Float32Array(batchSize).fill(totalStep), [batchSize]);
         let latentTensor = new this.ort.Tensor('float32', sampled.latent, sampled.latentShape);
 
         for (let step = 0; step < totalStep; step += 1) {
+            throwIfTtsCancelled(signal);
             onProgress?.({ phase: 'synthesize', current: step + 1, total: totalStep, percent: Math.round(((step + 1) / totalStep) * 100) });
             const currentStepTensor = new this.ort.Tensor('float32', new Float32Array(batchSize).fill(step), [batchSize]);
             const vectorResult = await this.vectorEstimator.run({
@@ -256,11 +261,13 @@ class TextToSpeech {
             latentTensor = vectorResult.denoised_latent;
         }
 
+        throwIfTtsCancelled(signal);
         const vocoderResult = await this.vocoder.run({ latent: latentTensor });
+        throwIfTtsCancelled(signal);
         return { wav: Float32Array.from(vocoderResult.wav_tts.data), duration };
     }
 
-    async call(text, lang, style, totalStep, speed, onProgress) {
+    async call(text, lang, style, totalStep, speed, onProgress, signal) {
         if (style.ttl.dims[0] !== 1) throw new Error('Single speaker synthesis requires one voice style.');
         const maxLength = lang === 'ko' || lang === 'ja' ? 120 : 300;
         const chunks = chunkText(text, maxLength);
@@ -270,9 +277,10 @@ class TextToSpeech {
         let totalDuration = 0;
 
         for (let index = 0; index < chunks.length; index += 1) {
+            throwIfTtsCancelled(signal);
             const result = await this.infer([chunks[index]], [lang], style, totalStep, speed, progress => {
                 onProgress?.({ ...progress, chunk: index + 1, chunkCount: chunks.length });
-            });
+            }, signal);
             const expectedLength = Math.min(result.wav.length, Math.floor(this.sampleRate * result.duration[0]));
             const wave = result.wav.subarray(0, expectedLength);
             if (waveParts.length > 0) {
@@ -369,11 +377,14 @@ export function createPcm16WavBuffer(audioData, sampleRate) {
 }
 
 async function synthesizeSupertonic(options, runtime = {}) {
+    throwIfTtsCancelled(runtime.signal);
     const normalized = normalizeSupertonicOptions(options);
     const modelDir = runtime.modelDir;
     if (!modelDir) throw supertonicError('SUPERTONIC_MODEL_MISSING', 'Supertonic model is not installed.');
     const loaded = await loadRuntime(modelDir);
+    throwIfTtsCancelled(runtime.signal);
     const style = await loadStyle(modelDir, normalized.voice, loaded.ort);
+    throwIfTtsCancelled(runtime.signal);
     const result = await loaded.textToSpeech.call(
         normalized.text,
         normalized.lang,
@@ -381,6 +392,7 @@ async function synthesizeSupertonic(options, runtime = {}) {
         normalized.totalStep,
         normalized.speed,
         runtime.onProgress,
+        runtime.signal,
     );
     const wavBuffer = createPcm16WavBuffer(result.wav, loaded.textToSpeech.sampleRate);
     return {
@@ -395,11 +407,7 @@ async function synthesizeSupertonic(options, runtime = {}) {
 }
 
 export function createSupertonicTtsDataUrl(options = {}, runtime = {}) {
-    const task = synthesisQueue
-        .catch(() => {})
-        .then(() => synthesizeSupertonic(options, runtime));
-    synthesisQueue = task.catch(() => {});
-    return task;
+    return synthesisQueue(options, runtime);
 }
 
 export function clearSupertonicRuntimeCache() {

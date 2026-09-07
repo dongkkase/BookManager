@@ -135,7 +135,8 @@ export function useFileSelection(fileData = []) {
   const invertSelection = useCallback(() => {
     const allPaths = fileData.map(file => file.path).filter(Boolean);
     setSelectedFiles(prev => {
-      const next = allPaths.filter(path => !prev.includes(path));
+        const selectedPaths = new Set(prev);
+        const next = allPaths.filter(path => !selectedPaths.has(path));
       setActiveSelectedPath(next[next.length - 1] || '');
       setLastSelectedIndex(next.length > 0 ? fileLookup.indexByPath.get(next[next.length - 1]) ?? -1 : -1);
       return next;

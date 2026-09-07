@@ -8,6 +8,8 @@ import https from 'https';
 import http from 'http';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import { BoundedMemoryCache } from './boundedMemoryCache.js';
+import { createTtsRequestRegistry } from './ttsRequestRegistry.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
@@ -60,6 +62,8 @@ import { SCAN_TARGET_EXTENSIONS } from './scanTargets.js';
 import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { searchYes24 } from './yes24Search.js';
+import { searchMunpia } from './munpiaSearch.js';
+import { detectImageMimeType } from './imageMagic.js';
 import { LibraryDB } from './database/library_db.js';
 import {
   LibrarySearchService,
@@ -299,7 +303,7 @@ function resolveAppVersion() {
   }
 }
 
-function requestJsonPost(url, payload = {}, extraHeaders = {}, timeout = 12000) {
+function requestJsonPost(url, payload = {}, extraHeaders = {}, timeout = 12000, runtime = {}) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const body = JSON.stringify(payload);
@@ -307,6 +311,7 @@ function requestJsonPost(url, payload = {}, extraHeaders = {}, timeout = 12000) 
       hostname: target.hostname,
       path: `${target.pathname}${target.search}`,
       method: 'POST',
+      signal: runtime.signal,
       headers: {
         'User-Agent': 'BookManager',
         'Accept': 'application/json',
@@ -316,6 +321,7 @@ function requestJsonPost(url, payload = {}, extraHeaders = {}, timeout = 12000) 
       },
       timeout,
     }, (res) => {
+      res.on('error', reject);
       let responseBody = '';
       res.setEncoding('utf8');
       res.on('data', chunk => { responseBody += chunk; });
@@ -354,7 +360,7 @@ function requestJsonPost(url, payload = {}, extraHeaders = {}, timeout = 12000) 
   });
 }
 
-function requestFormPost(url, form = {}, extraHeaders = {}) {
+function requestFormPost(url, form = {}, extraHeaders = {}, runtime = {}) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const body = new URLSearchParams(form).toString();
@@ -362,6 +368,7 @@ function requestFormPost(url, form = {}, extraHeaders = {}) {
       hostname: target.hostname,
       path: `${target.pathname}${target.search}`,
       method: 'POST',
+      signal: runtime.signal,
       headers: {
         'User-Agent': 'BookManager',
         'Accept': 'application/json',
@@ -371,6 +378,7 @@ function requestFormPost(url, form = {}, extraHeaders = {}) {
       },
       timeout: 12000,
     }, (res) => {
+      res.on('error', reject);
       let responseBody = '';
       res.setEncoding('utf8');
       res.on('data', chunk => { responseBody += chunk; });
@@ -403,7 +411,7 @@ function requestFormPost(url, form = {}, extraHeaders = {}) {
   });
 }
 
-function requestBufferPost(url, payload = {}, extraHeaders = {}, timeout = 30000, maxBytes = 24 * 1024 * 1024) {
+function requestBufferPost(url, payload = {}, extraHeaders = {}, timeout = 30000, maxBytes = 24 * 1024 * 1024, runtime = {}) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const body = JSON.stringify(payload);
@@ -411,6 +419,7 @@ function requestBufferPost(url, payload = {}, extraHeaders = {}, timeout = 30000
       hostname: target.hostname,
       path: `${target.pathname}${target.search}`,
       method: 'POST',
+      signal: runtime.signal,
       headers: {
         'User-Agent': 'BookManager',
         'Accept': 'audio/mpeg,application/json',
@@ -420,6 +429,7 @@ function requestBufferPost(url, payload = {}, extraHeaders = {}, timeout = 30000
       },
       timeout,
     }, (res) => {
+      res.on('error', reject);
       const chunks = [];
       let totalBytes = 0;
       const contentLength = Number(res.headers['content-length']) || 0;
@@ -686,11 +696,11 @@ function normalizeSearchResult(raw = {}, id = '') {
   };
 }
 
-const ridiPublishDateCache = new Map();
-const ridiBookDetailCache = new Map();
-const googleBooksRatingCache = new Map();
-const metadataTranslationCache = new Map();
-const coverTitleIdentificationCache = new Map();
+const ridiPublishDateCache = new BoundedMemoryCache({ maxEntries: 512, maxBytes: 1024 * 1024 });
+const ridiBookDetailCache = new BoundedMemoryCache({ maxEntries: 512, maxBytes: 4 * 1024 * 1024 });
+const googleBooksRatingCache = new BoundedMemoryCache({ maxEntries: 300, maxBytes: 1024 * 1024 });
+const metadataTranslationCache = new BoundedMemoryCache({ maxEntries: 256, maxBytes: 8 * 1024 * 1024 });
+const coverTitleIdentificationCache = new BoundedMemoryCache({ maxEntries: 64, maxBytes: 2 * 1024 * 1024 });
 
 function metadataSearchLog(stage, details = {}) {
   const safeDetails = Object.fromEntries(
@@ -744,11 +754,7 @@ function createCoverTitleThumbnail(imageDataUrl = '') {
 }
 
 function rememberCoverTitleIdentification(cacheKey, result) {
-  coverTitleIdentificationCache.delete(cacheKey);
   coverTitleIdentificationCache.set(cacheKey, result);
-  while (coverTitleIdentificationCache.size > 64) {
-    coverTitleIdentificationCache.delete(coverTitleIdentificationCache.keys().next().value);
-  }
 }
 
 function coverAiCredential(apiKeys = {}, provider = 'Gemini') {
@@ -1283,6 +1289,7 @@ function normalizeApiSource(apiName = '') {
   if (name.includes('amazon') || name.includes('아마존')) return 'Amazon';
     if (name.includes('yes24') || name.includes('예스24')) return 'YES24';
   if (name.includes('알라딘') || name.includes('aladin')) return '알라딘';
+    if (name.includes('문피아') || name.includes('munpia')) return '문피아';
   if (name.includes('vine')) return 'Vine';
   return '리디북스';
 }
@@ -1306,8 +1313,8 @@ function mangaValueForBookType(bookType = 'comic') {
 
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
   const allowed = bookType === 'book' || bookType === 'pdf' || bookType === 'audio'
-    ? new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Amazon'])
-    : new Set(['리디북스', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+    ? new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon'])
+    : new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
   return allowed.has(apiName);
 }
 
@@ -1373,12 +1380,11 @@ async function fetchGoogleBooksStarRating(url = '') {
     try {
       html = await requestTextGeneric(targetUrl, headers, 10000);
     } catch {
-      googleBooksRatingCache.set(targetUrl, '');
+      googleBooksRatingCache.set(targetUrl, '', { ttlMs: 60 * 1000 });
       return '';
     }
   }
   const rating = extractGoogleBooksStarRating(html);
-  if (googleBooksRatingCache.size > 300) googleBooksRatingCache.clear();
   googleBooksRatingCache.set(targetUrl, rating);
   return rating;
 }
@@ -2198,8 +2204,8 @@ const THUMBNAIL_TARGET_WIDTH = 500;
 const THUMBNAIL_WEBP_QUALITY = 82;
 const JPEG2000_THUMBNAIL_EXTENSIONS = new Set(['.jp2', '.jpx', '.j2k', '.jpf']);
 const JPEG_THUMBNAIL_EXTENSIONS = new Set(['.jpg', '.jpeg']);
-const imageDataUrlCache = new Map();
-const apiCoverUrlCache = new Map();
+const imageDataUrlCache = new BoundedMemoryCache({ maxEntries: 300, maxBytes: 32 * 1024 * 1024 });
+const apiCoverUrlCache = new BoundedMemoryCache({ maxEntries: 300, maxBytes: 1024 * 1024 });
 const execFileAsync = promisify(execFile);
 
 async function decodeJpeg2000ThumbnailWithFfmpeg(imageBuffer, sourceExt, ffmpegExe) {
@@ -2304,7 +2310,7 @@ function isEpubCoverCompatibleImage(filePath = '') {
 }
 
 function normalizeApiCoverImageBuffer(buffer, mimeType = '') {
-  const cleanType = String(mimeType || '').split(';')[0].trim().toLowerCase();
+  const cleanType = detectImageMimeType(buffer) || String(mimeType || '').split(';')[0].trim().toLowerCase();
   if (cleanType === 'image/jpeg' || cleanType === 'image/png') {
     return { buffer, mimeType: cleanType };
   }
@@ -2406,7 +2412,6 @@ function imageMimeTypeFromPath(filePath = '') {
 
 function rememberApiCoverUrl(url, cacheUrl) {
   if (!cacheUrl) return cacheUrl;
-  if (apiCoverUrlCache.size > 300) apiCoverUrlCache.clear();
   apiCoverUrlCache.set(url, cacheUrl);
   return cacheUrl;
 }
@@ -2475,7 +2480,8 @@ function audioMimeFromContentType(contentType = '') {
   return cleanType.startsWith('audio/') ? cleanType : 'audio/mpeg';
 }
 
-async function createOpenAiTtsDataUrl(options = {}, apiKeys = {}) {
+async function createOpenAiTtsDataUrl(options = {}, apiKeys = {}, runtime = {}) {
+    runtime.signal?.throwIfAborted();
   const apiKey = String(apiKeys.tts_openai_key || '').trim();
   if (!apiKey) {
     throw Object.assign(new Error('OpenAI TTS API key is missing.'), { code: 'OPENAI_TTS_KEY_MISSING' });
@@ -2485,7 +2491,7 @@ async function createOpenAiTtsDataUrl(options = {}, apiKeys = {}) {
   let response;
   let usedPayload = payload;
   try {
-    response = await requestBufferPost('https://api.openai.com/v1/audio/speech', payload, headers);
+    response = await requestBufferPost('https://api.openai.com/v1/audio/speech', payload, headers, undefined, undefined, runtime);
   } catch (error) {
     const message = String(error.message || '').toLowerCase();
     const canRetryWithFallback = [400, 404].includes(error.statusCode)
@@ -2496,7 +2502,7 @@ async function createOpenAiTtsDataUrl(options = {}, apiKeys = {}) {
       model: OPENAI_TTS_FALLBACK_MODEL,
       voice: OPENAI_TTS_FALLBACK_VOICES.has(payload.voice) ? payload.voice : 'alloy',
     };
-    response = await requestBufferPost('https://api.openai.com/v1/audio/speech', usedPayload, headers);
+    response = await requestBufferPost('https://api.openai.com/v1/audio/speech', usedPayload, headers, undefined, undefined, runtime);
   }
   const { buffer, contentType } = response;
   const mimeType = audioMimeFromContentType(contentType);
@@ -2668,7 +2674,8 @@ function createGoogleServiceAccountJwt(credential = {}) {
   }
 }
 
-async function getGoogleServiceAccountAccessToken(credential = {}) {
+async function getGoogleServiceAccountAccessToken(credential = {}, runtime = {}) {
+    runtime.signal?.throwIfAborted();
   const keyFingerprint = crypto
     .createHash('sha256')
     .update(credential.privateKey)
@@ -2685,7 +2692,7 @@ async function getGoogleServiceAccountAccessToken(credential = {}) {
     tokenData = await requestFormPost(credential.tokenUri, {
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
       assertion: createGoogleServiceAccountJwt(credential),
-    });
+    }, {}, runtime);
   } catch (error) {
     error.code = error.code || 'GOOGLE_TTS_AUTH_FAILED';
     throw error;
@@ -2705,13 +2712,15 @@ async function getGoogleServiceAccountAccessToken(credential = {}) {
   return accessToken;
 }
 
-async function createGoogleTtsDataUrl(options = {}, apiKeys = {}) {
+async function createGoogleTtsDataUrl(options = {}, apiKeys = {}, runtime = {}) {
+    runtime.signal?.throwIfAborted();
   const credential = resolveGoogleTtsCredential(apiKeys.tts_google_key);
   const payload = normalizeGoogleTtsOptions(options);
-  const accessToken = await getGoogleServiceAccountAccessToken(credential);
+  const accessToken = await getGoogleServiceAccountAccessToken(credential, runtime);
+    runtime.signal?.throwIfAborted();
   const data = await requestJsonPost('https://texttospeech.googleapis.com/v1/text:synthesize', payload, {
     Authorization: `Bearer ${accessToken}`,
-  });
+  }, undefined, runtime);
   const audioContent = String(data?.audioContent || '').trim();
   if (!audioContent) {
     throw Object.assign(new Error('Google TTS response did not include audio content.'), { code: 'GOOGLE_TTS_EMPTY_AUDIO' });
@@ -2769,21 +2778,19 @@ function normalizeGoogleTtsError(error = {}) {
 }
 
 async function fetchImageDataUrlFromUrl(imageUrl = '') {
-  const url = String(imageUrl || '').trim();
-  if (!url) return '';
-  if (!/^https?:\/\//i.test(url)) return url;
-  if (imageDataUrlCache.has(url)) return imageDataUrlCache.get(url);
-
-  const imageOrigin = new URL(url).origin;
-  const isRidiImage = /ridicdn\.net|ridibooks\.com/i.test(url);
-  const { buffer, contentType } = await requestBufferGeneric(url, {
-    Referer: isRidiImage ? 'https://ridibooks.com/' : imageOrigin,
-    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
-  }, 12000);
-  const dataUrl = `data:${mimeFromUrl(url, contentType)};base64,${buffer.toString('base64')}`;
-  if (imageDataUrlCache.size > 300) imageDataUrlCache.clear();
-  imageDataUrlCache.set(url, dataUrl);
-  return dataUrl;
+    const url = String(imageUrl || '').trim();
+    if (!url) return '';
+    if (!/^https?:\/\//i.test(url)) return url;
+    return imageDataUrlCache.getOrLoad(url, async () => {
+        const imageOrigin = new URL(url).origin;
+        const isRidiImage = /ridicdn\.net|ridibooks\.com/i.test(url);
+        const { buffer, contentType } = await requestBufferGeneric(url, {
+            Referer: isRidiImage ? 'https://ridibooks.com/' : imageOrigin,
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+        }, 12000);
+        const mimeType = detectImageMimeType(buffer) || mimeFromUrl(url, contentType);
+        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    });
 }
 
 async function enrichResultImages(results = [], cacheDir = '') {
@@ -3130,6 +3137,7 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
   const cancellationRegistry = new TaskCancellationRegistry();
+  const ttsRequestRegistry = createTtsRequestRegistry();
   const runtimeStates = new Map();
   const supertonicModelManager = createSupertonicModelManager({
     getModelDir: () => resolveSupertonicModelDir(getExecutableDir()),
@@ -3734,7 +3742,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const apiName = normalizeApiSource(options.api || options.apiName || options.source || options.apiSource);
     const bookType = normalizeSearchBookType(options.bookType || options.mediaType || options.type);
     const queryText = String(options.query || '').trim();
-    const query = apiName === 'YES24' ? queryText.normalize('NFC') : queryText;
+    const query = apiName === 'YES24' || apiName === '문피아' ? queryText.normalize('NFC') : queryText;
     const page = Number(options.page || 1);
 
     if (!query) return { success: true, api: apiName, actualQuery: query, results: [] };
@@ -3791,6 +3799,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         results = await searchAnilist(query, page);
       } else if (apiName === '리디북스') {
         results = await searchRidibooks(query, page, bookType);
+      } else if (apiName === '문피아') {
+        const items = await searchMunpia(query, page, requestJsonGeneric);
+        results = items.map(item => normalizeSearchResult({
+            ...item,
+            Format: metadataFormatForBookType(bookType),
+            Manga: mangaValueForBookType(bookType),
+        }, item.ID));
       } else if (apiName === '알라딘') {
         results = await searchAladin(query, apiKeys.aladin || '', page, bookType);
       } else if (apiName === 'YES24') {
@@ -3897,7 +3912,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('api:supertonicTts', async (_event, options = {}) => {
+  ipcMain.handle('api:cancelTts', (event, requestId) => ttsRequestRegistry.cancel(event.sender, requestId));
+
+  ipcMain.handle('api:supertonicTts', async (event, options = {}) => {
     const status = supertonicModelManager.status();
     if (!status.installed) {
       return {
@@ -3907,7 +3924,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       };
     }
     try {
-      return await createSupertonicTtsDataUrl(options, { modelDir: status.modelDir });
+      return await ttsRequestRegistry.run(event.sender, options.requestId, signal => (
+        createSupertonicTtsDataUrl(options, { modelDir: status.modelDir, signal })
+      ));
     } catch (error) {
       return {
         success: false,
@@ -3917,10 +3936,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('api:openaiTts', async (_event, options = {}) => {
+  ipcMain.handle('api:openaiTts', async (event, options = {}) => {
     const config = configManager.getConfig() || {};
     try {
-      return await createOpenAiTtsDataUrl(options, config.api_keys || {});
+      return await ttsRequestRegistry.run(event.sender, options.requestId, signal => (
+        createOpenAiTtsDataUrl(options, config.api_keys || {}, { signal })
+      ));
     } catch (error) {
       const normalized = normalizeOpenAiTtsError(error);
       return {
@@ -3931,10 +3952,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('api:googleTts', async (_event, options = {}) => {
+  ipcMain.handle('api:googleTts', async (event, options = {}) => {
     const config = configManager.getConfig() || {};
     try {
-      return await createGoogleTtsDataUrl(options, config.api_keys || {});
+      return await ttsRequestRegistry.run(event.sender, options.requestId, signal => (
+        createGoogleTtsDataUrl(options, config.api_keys || {}, { signal })
+      ));
     } catch (error) {
       const normalized = normalizeGoogleTtsError(error);
       return {
@@ -4074,6 +4097,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   // ========== 캐시/인덱스 관리 ==========
   ipcMain.handle('cache:clearApi', async () => {
+    ridiPublishDateCache.clear();
+    ridiBookDetailCache.clear();
+    googleBooksRatingCache.clear();
     metadataTranslationCache.clear();
     coverTitleIdentificationCache.clear();
     imageDataUrlCache.clear();
@@ -5536,6 +5562,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       runtimeStates.delete(ownerId);
     },
     dispose() {
+      ttsRequestRegistry.dispose();
       removeContentIndexProgressListener();
       return Promise.all([
         librarySearchService.close(),

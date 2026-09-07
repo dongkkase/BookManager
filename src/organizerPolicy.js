@@ -7,13 +7,14 @@ export function defaultOutputPath(filePath) {
     return index >= 0 ? value.slice(0, index) : '';
 }
 
+function organizerPathKey(value, platform) {
+    const normalized = /^win/i.test(platform) ? String(value).replace(/\\/g, '/').toLowerCase() : String(value);
+    return /^(mac|darwin)/i.test(platform) ? normalized.normalize('NFC') : normalized;
+}
+
 export function groupOrganizerItems(items = [], platform = '') {
     const isWindows = /^win/i.test(platform);
-    const isMac = /^(mac|darwin)/i.test(platform);
-    const canonicalPath = value => {
-        const normalized = isWindows ? value.replace(/\\/g, '/').toLowerCase() : value;
-        return isMac ? normalized.normalize('NFC') : normalized;
-    };
+    const canonicalPath = value => organizerPathKey(value, platform);
     const groups = new Map();
 
     items.forEach((item, index) => {
@@ -30,7 +31,11 @@ export function groupOrganizerItems(items = [], platform = '') {
         const directoryKey = directoryPath
             ? canonicalPath(directoryPath)
             : `item:${index}:${String(item.id || '')}`;
-        const id = `organizer-directory:${directoryKey}`;
+        const seriesTitle = String(item.series_title || item.core_title || item.clean_title || '').normalize('NFC').trim();
+        const seriesKey = seriesTitle.replace(/\s+/g, '').toLowerCase();
+        const id = seriesKey
+            ? `organizer-series:${JSON.stringify([directoryKey, seriesKey])}`
+            : `organizer-directory:${directoryKey}`;
 
         if (!groups.has(id)) {
             const directoryParts = directoryPath.split(isWindows ? /[\\/]/ : /\//).filter(Boolean);
@@ -38,9 +43,11 @@ export function groupOrganizerItems(items = [], platform = '') {
             groups.set(id, {
                 id,
                 directoryPath,
-                name: !basename || (isWindows && /^[a-z]:$/i.test(basename))
+                directoryKey,
+                seriesTitle,
+                name: seriesTitle || ((!basename || (isWindows && /^[a-z]:$/i.test(basename)))
                     ? directoryPath || item.name || filePath || String(item.id || '')
-                    : basename,
+                    : basename),
                 items: [],
                 volumes: [],
             });
@@ -68,9 +75,45 @@ export function groupOrganizerItems(items = [], platform = '') {
     });
 }
 
-export function titleOutputPath(item) {
+export function assignOrganizerSeriesOutputPaths(items = [], platform = '') {
+    const groups = groupOrganizerItems(items, platform);
+    const directoryCounts = new Map();
+    for (const group of groups) {
+        directoryCounts.set(group.directoryKey, (directoryCounts.get(group.directoryKey) || 0) + 1);
+    }
+    const outputPaths = new Map();
+    const usedFolderNames = new Map();
+    for (const group of groups) {
+        if (!group.directoryPath || !group.seriesTitle || directoryCounts.get(group.directoryKey) < 2) continue;
+        if (!usedFolderNames.has(group.directoryKey)) usedFolderNames.set(group.directoryKey, new Set());
+        const usedNames = usedFolderNames.get(group.directoryKey);
+        const baseName = sanitizeOrganizerName(group.seriesTitle) || '제목없음_수정필요';
+        let folderName = baseName;
+        let suffix = 2;
+        while (usedNames.has(folderName.normalize('NFC').toLowerCase())) {
+            folderName = `${baseName} (${suffix})`;
+            suffix += 1;
+        }
+        usedNames.add(folderName.normalize('NFC').toLowerCase());
+        const separator = /^win/i.test(platform) && group.directoryPath.includes('\\') ? '\\' : '/';
+        const outputPath = `${group.directoryPath.replace(/[\\/]$/, '')}${separator}${folderName}`;
+        for (const item of group.items) {
+            const isDefaultPath = !item.out_path || organizerPathKey(item.out_path, platform)
+                === organizerPathKey(group.directoryPath, platform);
+            if (!item.out_path_user_set && (item.out_path_auto || isDefaultPath)) outputPaths.set(item, outputPath);
+        }
+    }
+    return items.map(item => {
+        const outputPath = outputPaths.get(item);
+        return outputPath && (item.out_path !== outputPath || !item.out_path_auto)
+            ? { ...item, out_path: outputPath, out_path_auto: true }
+            : item;
+    });
+}
+
+export function titleOutputPath(item, seriesTitle = '') {
     const base = defaultOutputPath(item?.filepath);
-    const title = String(item?.clean_title || '').trim();
+    const title = String(seriesTitle || item?.series_title || item?.clean_title || '').trim();
     const folderName = !title || title === '제목없음' ? '제목없음_수정필요' : title;
     const separator = base.includes('\\') ? '\\' : '/';
     return `${base}${separator}${folderName}`;

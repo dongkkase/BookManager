@@ -660,12 +660,47 @@ export class LibraryDB {
 
     sanitizeFormatColumn() {
         if (!this.tableExists('files') || FILE_EXTENSION_FORMAT_VALUES.length === 0) return;
+        const metaKey = 'file_format_sanitization';
+        const version = `1:${FILE_EXTENSION_FORMAT_VALUES.join(',')}`;
+        const readVersion = this.db.prepare('SELECT value FROM library_meta WHERE key = ?');
+        const readTriggerCount = this.db.prepare(`
+            SELECT COUNT(*) AS count FROM sqlite_master
+            WHERE type = 'trigger' AND name IN ('files_format_dirty_ai', 'files_format_dirty_au')
+        `);
+        const isCurrent = () => readVersion.get(metaKey)?.value === version && readTriggerCount.get().count === 2;
+        if (isCurrent()) return;
+
         const placeholders = FILE_EXTENSION_FORMAT_VALUES.map(() => '?').join(', ');
-        this.db.prepare(`
-            UPDATE files
-            SET format = ''
-            WHERE REPLACE(UPPER(TRIM(COALESCE(format, ''))), '.', '') IN (${placeholders})
-        `).run(...FILE_EXTENSION_FORMAT_VALUES);
+        const extensions = FILE_EXTENSION_FORMAT_VALUES.map(value => `'${value.replace(/'/g, "''")}'`).join(', ');
+        const migrate = this.db.transaction(() => {
+            if (isCurrent()) return;
+            // 외부 도구나 구버전에서 잘못된 값을 쓴 경우에만 다음 연결에서 다시 검사합니다.
+            this.db.exec(`
+                DROP TRIGGER IF EXISTS files_format_dirty_ai;
+                DROP TRIGGER IF EXISTS files_format_dirty_au;
+                CREATE TRIGGER files_format_dirty_ai AFTER INSERT ON files
+                WHEN REPLACE(UPPER(TRIM(COALESCE(new.format, ''))), '.', '') IN (${extensions})
+                BEGIN
+                    INSERT INTO library_meta(key, value) VALUES ('${metaKey}', '')
+                    ON CONFLICT(key) DO UPDATE SET value = '';
+                END;
+                CREATE TRIGGER files_format_dirty_au AFTER UPDATE OF format ON files
+                WHEN REPLACE(UPPER(TRIM(COALESCE(new.format, ''))), '.', '') IN (${extensions})
+                BEGIN
+                    INSERT INTO library_meta(key, value) VALUES ('${metaKey}', '')
+                    ON CONFLICT(key) DO UPDATE SET value = '';
+                END;
+            `);
+            this.db.prepare(`
+                UPDATE files SET format = ''
+                WHERE REPLACE(UPPER(TRIM(COALESCE(format, ''))), '.', '') IN (${placeholders})
+            `).run(...FILE_EXTENSION_FORMAT_VALUES);
+            this.db.prepare(`
+                INSERT INTO library_meta(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            `).run(metaKey, version);
+        });
+        migrate.immediate();
     }
 
     hasSearchIndexSchema(db = this.getConnection()) {

@@ -364,9 +364,19 @@ function setWebdavFileHeaders(res, filePath, stats, extraHeaders = {}) {
     }
 }
 
-function pipeWebdavFileStream(res, filePath, range = {}) {
+export function pipeWebdavFileStream(res, filePath, range = {}) {
+    if (res.destroyed || res.writableEnded) return null;
     const stream = fs.createReadStream(filePath, range);
-    stream.on('error', error => {
+    const stop = () => stream.destroy();
+    const cleanup = () => {
+        res.removeListener('close', stop);
+        res.removeListener('error', stop);
+    };
+    res.once('close', stop);
+    res.once('error', stop);
+    stream.once('close', cleanup);
+    stream.once('error', error => {
+        if (res.destroyed) return;
         if (!res.headersSent) {
             res.status(500).end('File stream failed');
             return;
@@ -374,10 +384,28 @@ function pipeWebdavFileStream(res, filePath, range = {}) {
         res.destroy(error);
     });
     stream.pipe(res);
+    return stream;
 }
 
-function pipeWebdavMultipartRanges(res, filePath, ranges, boundary, contentType, size) {
+export function pipeWebdavMultipartRanges(res, filePath, ranges, boundary, contentType, size) {
+    let activeStream = null;
+    let stopped = false;
+    const stop = () => {
+        stopped = true;
+        activeStream?.destroy();
+        activeStream = null;
+        res.removeListener('close', stop);
+        res.removeListener('error', stop);
+        res.removeListener('finish', stop);
+    };
+    res.once('close', stop);
+    res.once('error', stop);
+    res.once('finish', stop);
     const pipeNext = index => {
+        if (stopped || res.destroyed || res.writableEnded) {
+            stop();
+            return;
+        }
         const range = ranges[index];
         if (!range) {
             res.end(`--${boundary}--\r\n`);
@@ -387,16 +415,31 @@ function pipeWebdavMultipartRanges(res, filePath, ranges, boundary, contentType,
         res.write(`--${boundary}\r\n`);
         res.write(`Content-Type: ${contentType}\r\n`);
         res.write(`Content-Range: bytes ${range.start}-${range.end}/${size}\r\n\r\n`);
+        if (res.destroyed || res.writableEnded) {
+            stop();
+            return;
+        }
 
         const stream = fs.createReadStream(filePath, { start: range.start, end: range.end });
-        stream.on('error', error => {
+        activeStream = stream;
+        stream.once('error', error => {
+            stopped = true;
+            if (res.destroyed) {
+                stop();
+                return;
+            }
             if (!res.headersSent) {
                 res.status(500).end('File stream failed');
                 return;
             }
             res.destroy(error);
         });
-        stream.on('end', () => {
+        stream.once('end', () => {
+            if (activeStream === stream) activeStream = null;
+            if (stopped || res.destroyed || res.writableEnded) {
+                stop();
+                return;
+            }
             res.write('\r\n');
             pipeNext(index + 1);
         });

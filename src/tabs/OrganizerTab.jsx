@@ -12,6 +12,7 @@ import {
   isPlainPrimaryClick,
 } from '../selectionVisualFeedback';
 import {
+    assignOrganizerSeriesOutputPaths,
   changeOrganizerUnit,
   defaultOutputPath,
   filenameOutputPath,
@@ -199,7 +200,7 @@ function OrganizerTab({ config, t, showToast }) {
         for (const item of result.items || []) {
           if (!byPath.has(item.filepath)) byPath.set(item.filepath, hydrateOrganizerItem(item));
         }
-        return [...byPath.values()];
+        return assignOrganizerSeriesOutputPaths([...byPath.values()], runtimePlatform);
       });
       setExpandedItems(prev => {
         const next = new Set(prev);
@@ -286,14 +287,15 @@ function OrganizerTab({ config, t, showToast }) {
   };
 
   const handleOutPathChange = (id, outPath) => {
-    updateItem(id, item => ({ ...item, out_path: outPath }));
+    updateItem(id, item => ({ ...item, out_path: outPath, out_path_user_set: true }));
   };
 
   const handleFolderMenuAction = (item, mode) => {
     setOpenFolderMenuId('');
     updateItem(item.id, source => ({
         ...source,
-        out_path: mode === 'title' ? titleOutputPath(source)
+        out_path_user_set: true,
+        out_path: mode === 'title' ? titleOutputPath(source, item.seriesTitle)
             : mode === 'filename' ? filenameOutputPath(source)
                 : defaultOutputPath(source.filepath),
     }));
@@ -320,15 +322,22 @@ function OrganizerTab({ config, t, showToast }) {
   const handleBatchDefault = () => {
     setFileList(prev => prev.map(item => ({
       ...item,
+        out_path_user_set: item.checked ? true : item.out_path_user_set,
       out_path: item.checked ? defaultOutputPath(item.filepath) : item.out_path,
     })));
   };
 
   const handleBatchTitle = () => {
-    setFileList(prev => prev.map(item => ({
-      ...item,
-      out_path: item.checked ? titleOutputPath(item) : item.out_path,
-    })));
+    setFileList(prev => {
+        const seriesTitles = new Map(groupOrganizerItems(prev, runtimePlatform).flatMap(group => (
+            group.items.map(item => [item.id, group.seriesTitle])
+        )));
+        return prev.map(item => ({
+            ...item,
+            out_path_user_set: item.checked ? true : item.out_path_user_set,
+            out_path: item.checked ? titleOutputPath(item, seriesTitles.get(item.id)) : item.out_path,
+        }));
+    });
   };
 
   const handleBatchUnit = (itemId, unit) => {
@@ -841,7 +850,7 @@ function OrganizerTab({ config, t, showToast }) {
                       <span className="org-icon"><FaIcon name="folder" /></span>
                       <span className="org-name-text">
                         <span className="org-title">{item.name}</span>
-                        <span className="org-original-name">{item.directoryPath}</span>
+                        <span className="org-original-name">{item.items.map(sourceItem => sourceItem.name).join(', ')}</span>
                       </span>
                     </div>
                     <div className="org-col-path org-path-widget">
@@ -961,7 +970,7 @@ function OrganizerTab({ config, t, showToast }) {
                         <span className="org-icon"><FaIcon name="file-zipper" /></span>
                         <span className="org-volume-name">{volume.new_name}{extension}</span>
                         <span className="org-original-name" title={sourceItem.filepath}>
-                            ({sourceItem.name}{volume.original_basename && volume.original_basename !== 'Root_Files' ? ` / ${volume.original_basename}` : ''})
+                            ({volume.original_basename && volume.original_basename !== 'Root_Files' ? volume.original_basename : sourceItem.name})
                         </span>
                         {volume.spinoff_folder && <span className="org-spinoff">SPINOFF</span>}
                       </div>
