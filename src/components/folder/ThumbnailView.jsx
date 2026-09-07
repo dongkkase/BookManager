@@ -8,6 +8,7 @@ import {
   visibleVirtualRows,
 } from '../../folderViewState';
 import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
+import { useFolderNavigationRestore } from '../../hooks/useFolderNavigationRestore';
 import {
   applyImmediateSingleSelection,
   isPlainPrimaryClick,
@@ -39,6 +40,8 @@ const ThumbnailView = ({
   onScroll,
   onClearSelection,
   onVisibleFilesChange,
+    navigationRestore,
+    onNavigationRestore,
   sortKey = 'name',
   sortOrder = 'asc',
   groupKey = 'none',
@@ -87,6 +90,21 @@ const ThumbnailView = ({
         ? visibleVirtualRows(virtualLayout.rows, viewport.scrollTop, viewport.height, rowHeight * 3)
         : [],
     [rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, virtualLayout.rows]);
+    const navigationRevealBounds = useMemo(() => {
+        if (!navigationRestore?.revealPath) return null;
+        return virtualLayout.rows.find(row => row.type === 'file' && row.file.path === navigationRestore.revealPath) || null;
+    }, [navigationRestore?.revealPath, virtualLayout.rows]);
+    useFolderNavigationRestore({
+        containerRef,
+        navigationRestore,
+        onNavigationRestore,
+        viewportReady: viewport.width > 0 && viewport.height > 0,
+        revealBounds: navigationRevealBounds,
+        onScrollPositionChange: position => setViewport(current => current.scrollTop === position.scrollTop ? current : {
+            ...current,
+            scrollTop: position.scrollTop,
+        }),
+    });
 	  const fileIndexByPath = useMemo(() => {
 	    const map = new Map();
 	    groups.flatMap(group => group.files).forEach((file, index) => {
@@ -284,25 +302,28 @@ const ThumbnailView = ({
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
-              <div className="thumbnail-cover-card">
+              <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
                 <CoverImage
-                  key={coverImageKey(file)}
-                  src={file.cover}
-                  alt={file.name || ''}
-                  className="thumb-image"
-                  t={t}
-                  iconSize={24}
-                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                    key={coverImageKey(file)}
+                    src={file.cover}
+                    alt={file.name || ''}
+                    className="thumb-image"
+                    t={t}
+                    iconSize={file.isDirectory ? 48 : 24}
+                    isDirectory={file.isDirectory}
+                    showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
-                {displayRating(file) && (
+                {!file.isDirectory && displayRating(file) && (
                   <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>
                 )}
-                <ViewerStatusBadgeRow
-                  file={file}
-                  t={t}
-                  pageText={displayPages(file) ? `${displayPages(file)}p` : ''}
-                  className="thumbnail-status-row"
-                />
+                {!file.isDirectory && (
+                    <ViewerStatusBadgeRow
+                        file={file}
+                        t={t}
+                        pageText={displayPages(file) ? `${displayPages(file)}p` : ''}
+                        className="thumbnail-status-row"
+                    />
+                )}
                 <span className="thumb-label">{file.name || '-'}</span>
               </div>
 	            </div>
@@ -310,7 +331,7 @@ const ThumbnailView = ({
           })}
         </div>
       ) : groups.map(group => (
-        <React.Fragment key={group.name || 'all'}>
+        <React.Fragment key={`group:${group.name}`}>
           {group.name && (
             <div className="folder-view-group-header">
               <FaIcon name="folder" />
@@ -330,25 +351,28 @@ const ThumbnailView = ({
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
-              <div className="thumbnail-cover-card">
+              <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
                 <CoverImage
-                  key={coverImageKey(file)}
-                  src={file.cover}
-                  alt={file.name || ''}
-                  className="thumb-image"
-                  t={t}
-                  iconSize={24}
-                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                    key={coverImageKey(file)}
+                    src={file.cover}
+                    alt={file.name || ''}
+                    className="thumb-image"
+                    t={t}
+                    iconSize={file.isDirectory ? 48 : 24}
+                    isDirectory={file.isDirectory}
+                    showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
-                {displayRating(file) && (
+                {!file.isDirectory && displayRating(file) && (
                   <span className="thumbnail-rating-badge">★ {displayRating(file)}</span>
                 )}
-                <ViewerStatusBadgeRow
-                  file={file}
-                  t={t}
-                  pageText={displayPages(file) ? `${displayPages(file)}p` : ''}
-                  className="thumbnail-status-row"
-                />
+                {!file.isDirectory && (
+                    <ViewerStatusBadgeRow
+                        file={file}
+                        t={t}
+                        pageText={displayPages(file) ? `${displayPages(file)}p` : ''}
+                        className="thumbnail-status-row"
+                    />
+                )}
                 <span className="thumb-label">{file.name || '-'}</span>
               </div>
 	            </div>

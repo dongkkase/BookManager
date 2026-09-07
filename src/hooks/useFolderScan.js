@@ -74,12 +74,41 @@ function createQuickListFile(folderPath, item) {
   };
 }
 
-async function readQuickListFiles(folderPath) {
-  const items = await window.electronAPI?.readDir?.(folderPath);
-  if (!Array.isArray(items)) return [];
-  return items
-    .filter(item => item?.isFile && QUICK_LIST_TARGET_EXTENSIONS.has(fileExtension(item.name)))
-    .map(item => createQuickListFile(folderPath, item));
+export async function readQuickListFiles(folderPath, options = {}) {
+    const items = await window.electronAPI?.readDir?.(folderPath);
+    if (!Array.isArray(items)) return [];
+    return items
+        .filter(item => (
+            item?.isDirectory
+                ? options.includeDirectories === true && !String(item.name || '').startsWith('.')
+                : item?.isFile && QUICK_LIST_TARGET_EXTENSIONS.has(fileExtension(item.name))
+        ))
+        .map(item => item.isDirectory ? {
+            name: item.name,
+            path: joinPath(folderPath, item.name),
+            folder_path: folderPath,
+            full_path: joinPath(folderPath, item.name),
+            title: item.name,
+            isDirectory: true,
+            is_folder: true,
+            ext: '',
+            size: 0,
+            mtime: 0,
+            ctime: 0,
+            created: '',
+            modified: '',
+            cover: '',
+            thumb_path: '',
+            has_metadata: false,
+            duplicate_matches: [],
+            dup_count: 0,
+            max_ratio: 0,
+            cache_source: 'renderer-quick',
+        } : createQuickListFile(folderPath, item));
+}
+
+function countFolderFiles(files = []) {
+    return Array.isArray(files) ? files.filter(file => !file?.isDirectory).length : 0;
 }
 
 export function rememberFolderFileCacheKey(order = [], cacheKey = '', limit = FOLDER_FILE_CACHE_LIMIT) {
@@ -129,9 +158,15 @@ export function coordinateFolderScanRequest({
     queuedForceScans,
     cacheKey,
     force = false,
+    isCurrent = () => true,
     execute,
 }) {
-    const activeScan = activeScans.get(cacheKey);
+    let activeScan = activeScans.get(cacheKey);
+    if (activeScan && !activeScan.isCurrent()) {
+        activeScans.delete(cacheKey);
+        queuedForceScans.delete(cacheKey);
+        activeScan = undefined;
+    }
     if (activeScan) {
         if (!force || activeScan.force) return activeScan.promise;
 
@@ -140,6 +175,12 @@ export function coordinateFolderScanRequest({
 
         let queuedForcePromise;
         const startForcedScan = () => {
+            if (!isCurrent()) {
+                if (queuedForceScans.get(cacheKey) === queuedForcePromise) {
+                    queuedForceScans.delete(cacheKey);
+                }
+                return [];
+            }
             if (activeScans.get(cacheKey) === activeScan) {
                 activeScans.delete(cacheKey);
             }
@@ -151,6 +192,7 @@ export function coordinateFolderScanRequest({
                 queuedForceScans,
                 cacheKey,
                 force: true,
+                isCurrent,
                 execute,
             });
         };
@@ -165,8 +207,8 @@ export function coordinateFolderScanRequest({
         return queuedForcePromise;
     }
 
-    const promise = Promise.resolve().then(execute);
-    const activeEntry = { force, promise };
+    const promise = Promise.resolve().then(() => isCurrent() ? execute() : []);
+    const activeEntry = { force, promise, isCurrent };
     activeScans.set(cacheKey, activeEntry);
     const releaseActiveScan = () => {
         if (activeScans.get(cacheKey) === activeEntry) {
@@ -183,6 +225,58 @@ export function shouldApplyFolderFileUpdate(currentFile = {}, incomingFile = {})
     if (!Number.isFinite(currentMtime) || currentMtime <= 0) return true;
     if (!Number.isFinite(incomingMtime) || incomingMtime <= 0) return true;
     return incomingMtime >= currentMtime;
+}
+
+export function mergeFolderFilePreservingCover(currentFile, incomingFile) {
+    if (!currentFile) return incomingFile;
+    if (Boolean(currentFile.isDirectory) !== Boolean(incomingFile.isDirectory)) return incomingFile;
+    if (!shouldApplyFolderFileUpdate(currentFile, incomingFile)) return currentFile;
+
+    const merged = { ...currentFile, ...incomingFile };
+    if (!incomingFile.isDirectory) {
+        return {
+            ...merged,
+            cover: incomingFile.cover || currentFile.cover || '',
+            thumb_path: incomingFile.thumb_path || currentFile.thumb_path || '',
+        };
+    }
+
+    const currentMtime = Number(currentFile.mtime) || 0;
+    const incomingMtime = Number(incomingFile.mtime) || 0;
+    const hasIncomingPreview = Boolean(incomingFile.cover || incomingFile.thumb_path)
+        || Object.prototype.hasOwnProperty.call(incomingFile, 'cover_file_path');
+    const directoryChanged = currentMtime > 0 && incomingMtime > 0 && currentMtime !== incomingMtime;
+    const previewSource = hasIncomingPreview ? incomingFile : directoryChanged ? {} : currentFile;
+
+    return {
+        ...merged,
+        mtime: incomingMtime > 0 ? incomingFile.mtime : currentFile.mtime,
+        cover: previewSource.cover || '',
+        thumb_path: previewSource.thumb_path || '',
+        cover_file_path: previewSource.cover_file_path || '',
+        cover_file_mtime: previewSource.cover_file_mtime || 0,
+        cover_file_size: previewSource.cover_file_size || 0,
+    };
+}
+
+export function mergeFolderFileCacheUpdate(currentFile, incomingFile) {
+    if (!incomingFile) return currentFile;
+    return incomingFile.isDirectory
+        ? mergeFolderFilePreservingCover(currentFile, incomingFile)
+        : { ...currentFile, ...incomingFile };
+}
+
+export function mergeFolderScanResults(incomingFiles = [], currentFiles = [], options = {}) {
+    const incoming = Array.isArray(incomingFiles) ? incomingFiles : [];
+    if (options.force === true) return incoming;
+    const currentDirectories = new Map(
+        (Array.isArray(currentFiles) ? currentFiles : [])
+            .filter(file => file?.isDirectory && file?.path)
+            .map(file => [file.path, file]),
+    );
+    return incoming.map(file => file?.isDirectory
+        ? mergeFolderFilePreservingCover(currentDirectories.get(file.path), file)
+        : file);
 }
 
 /**
@@ -214,12 +308,14 @@ export function useFolderScan(t) {
   const queuedForceScansRef = useRef(new Map());
   const pendingScanCacheKeysRef = useRef(new Set());
   const scanRequestIdRef = useRef(0);
+    const scanScopeRef = useRef(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+        scanScopeRef.current = null;
       scanRequestIdRef.current += 1;
       activeScansRef.current.clear();
       queuedForceScansRef.current.clear();
@@ -240,14 +336,7 @@ export function useFolderScan(t) {
 
     return (Array.isArray(incomingFiles) ? incomingFiles : []).map(file => {
       const current = currentByPath.get(file?.path);
-      if (!current) return file;
-      if (!shouldApplyFolderFileUpdate(current, file)) return current;
-      return {
-        ...current,
-        ...file,
-        cover: file.cover || current.cover || '',
-        thumb_path: file.thumb_path || current.thumb_path || '',
-      };
+      return mergeFolderFilePreservingCover(current, file);
     });
   }, []);
 
@@ -256,7 +345,14 @@ export function useFolderScan(t) {
     const enableDupCheck = options.enableDupCheck ?? false;
     const skipArchiveExtraction = options.skipArchiveExtraction === true;
     const dupFolders = (options.dupFolders || []).filter(Boolean).sort();
-    return JSON.stringify({ folderPath, includeSubfolders, enableDupCheck, dupFolders, skipArchiveExtraction });
+    return JSON.stringify({
+        folderPath,
+        includeSubfolders,
+        enableDupCheck,
+        dupFolders,
+        skipArchiveExtraction,
+        ...(options.includeDirectories === true ? { includeDirectories: true } : {}),
+    });
   }, []);
 
   const touchCacheKey = useCallback(cacheKey => {
@@ -280,6 +376,10 @@ export function useFolderScan(t) {
     }
 
     const cacheKey = getCacheKey(folderPath, options);
+        const previousScope = scanScopeRef.current;
+        if (previousScope?.cacheKey !== cacheKey) scanScopeRef.current = { cacheKey };
+        const requestScope = scanScopeRef.current;
+        const isCurrentScope = () => mountedRef.current && scanScopeRef.current === requestScope;
 
     // 캐시에 데이터가 있다면 재사용
     if (!force && hasReusableFolderFileCache(
@@ -287,7 +387,7 @@ export function useFolderScan(t) {
       pendingScanCacheKeysRef.current,
       cacheKey,
     )) {
-      if (currentFolderRef.current && currentFolderRef.current !== folderPath) {
+      if (currentFolderRef.current && (currentFolderRef.current !== folderPath || previousScope !== requestScope)) {
         scanRequestIdRef.current += 1;
         currentFolderRef.current = folderPath;
         setScanning(false);
@@ -298,13 +398,13 @@ export function useFolderScan(t) {
     }
 
     const executeScan = async () => {
-      if (!mountedRef.current) return [];
+      if (!isCurrentScope()) return [];
       const requestId = scanRequestIdRef.current + 1;
       scanRequestIdRef.current = requestId;
       pendingScanCacheKeysRef.current.add(cacheKey);
       currentFolderRef.current = folderPath;
       const isCurrentRequest = () => (
-        mountedRef.current
+        isCurrentScope()
         && scanRequestIdRef.current === requestId
         && currentFolderRef.current === folderPath
       );
@@ -321,10 +421,11 @@ export function useFolderScan(t) {
           dupFolders: options.dupFolders || [],
           force,
           requestId,
+            includeDirectories: options.includeDirectories === true,
         };
 
         if (fastInitial) {
-          const initialFiles = includeSubfolders ? [] : await readQuickListFiles(folderPath);
+          const initialFiles = includeSubfolders ? [] : await readQuickListFiles(folderPath, options);
           if (!isCurrentRequest()) return initialFiles || [];
 
           if (isCurrentRequest()) {
@@ -333,7 +434,7 @@ export function useFolderScan(t) {
               ...limitCache(prev, cacheKey),
               [cacheKey]: initialFiles || [],
             }));
-            const initialCount = initialFiles?.length || 0;
+            const initialCount = countFolderFiles(initialFiles);
             if (includeSubfolders) {
               setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
             } else {
@@ -370,7 +471,7 @@ export function useFolderScan(t) {
               [cacheKey]: mergeFilesPreservingCover(quickFiles || [], prev[cacheKey] || []),
             }));
             pendingScanCacheKeysRef.current.delete(cacheKey);
-            const quickCount = quickFiles?.length || 0;
+            const quickCount = countFolderFiles(quickFiles);
             setStatusMessage(
               t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
             );
@@ -379,7 +480,7 @@ export function useFolderScan(t) {
               setScanning(false);
             }
 
-            if (!Array.isArray(quickFiles) || quickFiles.length === 0) return [];
+            if (countFolderFiles(quickFiles) === 0) return quickFiles || [];
 
             window.electronAPI.scanFolder(folderPath, {
               ...requestOptions,
@@ -397,7 +498,7 @@ export function useFolderScan(t) {
                 ...limitCache(prev, cacheKey),
                 [cacheKey]: mergeFilesPreservingCover(files || [], prev[cacheKey] || []),
               }));
-              const count = files?.length || 0;
+              const count = countFolderFiles(files);
               setStatusMessage(
                 t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
               );
@@ -431,12 +532,12 @@ export function useFolderScan(t) {
         touchCacheKey(cacheKey);
         setFileDataCache(prev => ({
           ...limitCache(prev, cacheKey),
-          [cacheKey]: files || [],
+          [cacheKey]: mergeFolderScanResults(files, prev[cacheKey], { force }),
         }));
         pendingScanCacheKeysRef.current.delete(cacheKey);
         if (!silent) {
           setScanProgress(100);
-          const count = files?.length || 0;
+          const count = countFolderFiles(files);
           setStatusMessage(
             t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
           );
@@ -455,6 +556,7 @@ export function useFolderScan(t) {
       queuedForceScans: queuedForceScansRef.current,
       cacheKey,
       force,
+        isCurrent: isCurrentScope,
       execute: executeScan,
     });
     try {
@@ -473,6 +575,7 @@ export function useFolderScan(t) {
   // --- 스캔 취소 ---
   const cancelScan = useCallback(async () => {
     scanRequestIdRef.current += 1;
+        scanScopeRef.current = null;
     activeScansRef.current.clear();
     queuedForceScansRef.current.clear();
     if (abortController) {
@@ -509,7 +612,7 @@ export function useFolderScan(t) {
         const currentFiles = next[key] || [];
         next[key] = currentFiles.map(file => {
           const updated = updatedByPath.get(file.path);
-          return updated ? { ...file, ...updated } : file;
+          return mergeFolderFileCacheUpdate(file, updated);
         });
       }
       return limitCache(next, preferredKey);
@@ -602,12 +705,7 @@ export function useFolderScan(t) {
             const updated = updatesByPath.get(file.path);
             if (!updated || !shouldApplyFolderFileUpdate(file, updated)) return file;
             changed = true;
-            return {
-              ...file,
-              ...updated,
-              cover: updated.cover || file.cover || '',
-              thumb_path: updated.thumb_path || file.thumb_path || '',
-            };
+            return mergeFolderFilePreservingCover(file, updated);
           });
           if (!changed) continue;
           if (next === prev) next = { ...prev };
@@ -732,7 +830,7 @@ export function useFolderScan(t) {
         }));
         setScanProgress(100);
         setScanning(false);
-        const count = files.length || 0;
+        const count = countFolderFiles(files);
         setStatusMessage(
           t('folder.status.files_found')?.replace('{count}', count) || `${count}개 파일 발견`
         );

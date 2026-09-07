@@ -7,8 +7,59 @@ import {
     normalizeViewMode,
     normalizeViewScales,
     shouldVirtualizeFolderItems,
+    sortFolderFiles,
     visibleVirtualRows,
 } from './folderViewState.js';
+
+test('혼합 목록은 정렬 방향과 관계없이 폴더를 먼저 표시하고 폴더 이름을 자연정렬한다', () => {
+    const files = [
+        { name: '3.cbz', size: 30 },
+        { name: '폴더 10', isDirectory: true },
+        { name: '1.cbz', size: 10 },
+        { name: '폴더 2', isDirectory: true },
+        { name: '2.cbz', size: 20 },
+    ];
+
+    assert.deepEqual(sortFolderFiles(files, 'size', 'asc').map(file => file.name), [
+        '폴더 2', '폴더 10', '1.cbz', '2.cbz', '3.cbz',
+    ]);
+    assert.deepEqual(sortFolderFiles(files, 'size', 'desc').map(file => file.name), [
+        '폴더 10', '폴더 2', '3.cbz', '2.cbz', '1.cbz',
+    ]);
+    assert.equal(files[0].name, '3.cbz');
+});
+
+test('파일 그룹 앞에 폴더를 헤더 없이 표시하고 모든 보기의 항목 순서를 유지한다', () => {
+    const groups = groupFolderFiles([
+        { name: '폴더 10', path: '/폴더 10', isDirectory: true, series: 'B' },
+        { name: '2.cbz', path: '/2.cbz', series: 'A' },
+        { name: '폴더 2', path: '/폴더 2', isDirectory: true },
+        { name: '1.cbz', path: '/1.cbz' },
+    ], 'series', 'name', 'asc', { fallbackGroupName: '분류 없음' });
+
+    assert.deepEqual(groups.map(group => group.name), ['', '분류 없음', 'A']);
+    assert.deepEqual(groups[0].files.map(file => file.name), ['폴더 2', '폴더 10']);
+    assert.deepEqual(groups[1].files.map(file => file.name), ['1.cbz']);
+    const tableRows = buildVirtualTableRows(groups);
+    const gridRows = buildVirtualGridLayout(groups, { columnCount: 2 }).rows;
+    for (const rows of [tableRows, gridRows]) {
+        assert.deepEqual(rows.map(row => row.type), ['file', 'file', 'group', 'file', 'group', 'file']);
+        assert.deepEqual(rows.filter(row => row.type === 'file').map(row => [row.file.name, row.fileIndex]), [
+            ['폴더 2', 0], ['폴더 10', 1], ['1.cbz', 2], ['2.cbz', 3],
+        ]);
+    }
+});
+
+test('폴더만 있는 목록은 파일 그룹을 만들지 않고 그룹 해제 시에도 폴더 순서를 유지한다', () => {
+    const directories = [
+        { name: '폴더 10', isDirectory: true },
+        { name: '폴더 2', isDirectory: true },
+    ];
+    const expected = [{ name: '', files: [directories[1], directories[0]] }];
+
+    assert.deepEqual(groupFolderFiles(directories, 'author_series'), expected);
+    assert.deepEqual(groupFolderFiles(directories, 'none'), expected);
+});
 
 test('모든 보기 모드는 동일한 정렬과 그룹 순서를 사용한다', () => {
     const groups = groupFolderFiles([

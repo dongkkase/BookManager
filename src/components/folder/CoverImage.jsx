@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
 import { SmoothCoverImage } from '../SmoothCoverImage';
+import { FaIcon } from '../FaIcon';
 
 const LOADED_COVER_SRC_CACHE_LIMIT = 512;
 const loadedCoverSrcSet = new Set();
@@ -26,7 +27,7 @@ function coverImageKey(file = {}) {
   ].join('|');
 }
 
-function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true }) {
+function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true, isDirectory = false }) {
   const imageRef = useRef(null);
   const [loaded, setLoaded] = useState(() => isCoverSourceLoaded(src));
   const [failed, setFailed] = useState(false);
@@ -79,6 +80,13 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
   }, [src]);
 
   if (!src || failed) {
+    if (isDirectory) {
+        return (
+            <div className={`${className} folder-item-artwork`} title={t('folder_item_type')}>
+                <FaIcon name="folder" size={iconSize} />
+            </div>
+        );
+    }
     return (
       <div className={`${className} folder-cover-placeholder`} title={t('folder_no_cover')}>
         <CoverArtwork fallbackAlt={t('folder_no_cover')} smooth />
@@ -103,6 +111,11 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
         }}
         onError={() => setFailed(true)}
       />
+        {isDirectory && (
+            <span className="folder-item-cover-badge" title={t('folder_item_type')}>
+                <FaIcon name="folder" size={Math.min(18, Math.max(12, Math.round(iconSize / 2)))} />
+            </span>
+        )}
     </div>
   );
 }

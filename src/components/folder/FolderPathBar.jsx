@@ -10,6 +10,14 @@ export function FolderPathBar({
     onChange,
     onNavigate,
     onOpenChange,
+    canGoBack = false,
+    canGoForward = false,
+    canGoUp = false,
+    onBack,
+    onForward,
+    onUp,
+    onRefresh,
+    refreshDisabled = false,
     shortcutLabel,
     t,
 }) {
@@ -77,11 +85,52 @@ export function FolderPathBar({
         <form
             className="folder-goto-path-bar"
             onSubmit={handleSubmit}
+            onKeyDown={event => {
+                if (event.key === 'Enter') event.stopPropagation();
+            }}
             onBlur={event => {
                 if (!event.currentTarget.contains(event.relatedTarget)) onOpenChange(false);
             }}
             ref={containerRef}
         >
+            <div
+                className="folder-goto-path-navigation"
+                onFocus={() => {
+                    setActiveIndex(-1);
+                    onOpenChange(false);
+                }}
+            >
+                <button
+                    className="folder-goto-path-icon"
+                    type="button"
+                    title={t('folder.goto.back')}
+                    aria-label={t('folder.goto.back')}
+                    disabled={!canGoBack}
+                    onClick={onBack}
+                >
+                    <FaIcon name="angleLeft" size={14} />
+                </button>
+                <button
+                    className="folder-goto-path-icon"
+                    type="button"
+                    title={t('folder.goto.forward')}
+                    aria-label={t('folder.goto.forward')}
+                    disabled={!canGoForward}
+                    onClick={onForward}
+                >
+                    <FaIcon name="angleRight" size={14} />
+                </button>
+                <button
+                    className="folder-goto-path-icon"
+                    type="button"
+                    title={t('folder.goto.up')}
+                    aria-label={t('folder.goto.up')}
+                    disabled={!canGoUp}
+                    onClick={onUp}
+                >
+                    <FaIcon name="angleUp" size={14} />
+                </button>
+            </div>
             <label className="folder-goto-path-label" htmlFor="folder-goto-path-input">
                 <FaIcon name="folderOpen" size={12} />
                 <span>{t('fm_title')}</span>
@@ -163,6 +212,20 @@ export function FolderPathBar({
                 }}
             >
                 {t('folder.goto.go')}
+            </button>
+            <button
+                className="folder-goto-path-icon"
+                type="button"
+                title={`${t('action_refresh')} (F5)`}
+                aria-label={t('action_refresh')}
+                disabled={refreshDisabled}
+                onClick={onRefresh}
+                onFocus={() => {
+                    setActiveIndex(-1);
+                    onOpenChange(false);
+                }}
+            >
+                <FaIcon name="rotateRight" size={12} />
             </button>
         </form>
     );

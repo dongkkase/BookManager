@@ -20,6 +20,7 @@ import {
   replaceBasename,
 } from '../utils/folderPath';
 import { useFolderScan } from '../hooks/useFolderScan';
+import { useFolderMouseNavigation } from '../hooks/useFolderMouseNavigation';
 import { useFileSelection } from '../hooks/useFileSelection';
 import {
   clampDetailHeight,
@@ -70,6 +71,7 @@ import {
 } from '../folderViewState';
 import {
   fileOperationErrorKind,
+    folderEntryOperationTargets,
   protectedRenameName,
 } from '../fileActionPolicy';
 import {
@@ -102,6 +104,14 @@ import {
   addGotoPathHistory,
   normalizeGotoPathHistory,
 } from '../folderPathHistory';
+import {
+    getFolderLocation,
+    moveFolderNavigation,
+    parentFolderPath,
+    pushFolderNavigation,
+    rememberFolderLocation,
+    resolveFolderLocation,
+} from '../folderNavigationState';
 import '../styles/FolderTab.css';
 
 const VISIBLE_COVER_REQUEST_LIMIT = 32;
@@ -404,6 +414,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const viewContainerRef = useRef(null);
   const panelResizingRef = useRef(false);
   const viewScrollPositionsRef = useRef({ table: 0, tile: 0, thumbnail: 0 });
+    const folderLocationsRef = useRef(new Map());
+    const folderLocationContextRef = useRef(null);
+    const folderLocationSequenceRef = useRef(0);
+    const folderLocationRestoreRef = useRef(null);
+    const restoredFolderSelectionRef = useRef(0);
+    const [folderLocationRestore, setFolderLocationRestore] = useState(null);
   const hasShownMissingToastRef = useRef(false);
     const missingCheckRef = useRef(null);
     const missingCheckContextRef = useRef(null);
@@ -437,7 +453,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             keyForFile: coverPreviewRequestKey,
             load: file => window.electronAPI.getFilePreview(coverPreviewFilePath(file), { force: false }),
             onResult: (result, file, context) => {
-                if (!result?.success || !result.file?.cover) return;
+                if (!result?.success || !result.file || (!file.isDirectory && !result.file.cover)) return;
+                if (Boolean(file.isDirectory) !== Boolean(result.file.isDirectory)) return;
                 context.updateCachedFiles(context.folderPath, context.scanOptions, [{
                     ...file,
                     ...result.file,
@@ -506,6 +523,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [recentReadingFiles, setRecentReadingFiles] = useState([]);
   const [recentReadingLoading, setRecentReadingLoading] = useState(false);
   const isRecentReading = folderSource === 'recent-reading';
+    const [folderNavigation, setFolderNavigation] = useState({ entries: [], index: -1 });
+    const folderNavigationRef = useRef(folderNavigation);
+    const folderNavigationRequestRef = useRef(0);
+    const upFolderPath = isRecentReading ? '' : parentFolderPath(selectedFolderPath);
   const gotoPathInputRef = useRef(null);
   const gotoPathHistoryRef = useRef(gotoPathHistory);
   const textInputResolverRef = useRef(null);
@@ -771,6 +792,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const scanOptions = useMemo(() => ({
     includeSubfolders,
+    includeDirectories: true,
     enableDupCheck,
     dupFolders: config?.dup_check_folders || [],
     fastInitial: true,
@@ -962,14 +984,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [loadRecentReading]);
 
   // 필터링된 파일 데이터
-  const currentFolderFileData = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
+    const currentFolderEntries = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
+    const currentFolderFileData = useMemo(
+        () => currentFolderEntries.filter(file => !file.isDirectory),
+        [currentFolderEntries],
+    );
   const isFolderTagSearchActive = folderTagSelections.length > 0
     && folderTagResultScopeKey === folderTagDatabaseScopeKey;
   const normalRawFileData = isRecentReading
     ? recentReadingFiles
     : isLibrarySearchActive
       ? librarySearchResults
-      : currentFolderFileData;
+      : currentFolderEntries;
   const activeRawFileData = useMemo(() => {
     if (isRecentReading) return normalRawFileData;
     if (!isFolderTagSearchActive) return normalRawFileData;
@@ -987,7 +1013,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const fileDataWithViewerStatus = useMemo(() => {
     if (activeRawFileData.length === 0) return activeRawFileData;
     const reader = createViewerStatusReader();
-    return activeRawFileData.map(file => attachViewerStatus(
+    return activeRawFileData.map(file => file.isDirectory ? file : attachViewerStatus(
       isRecentReading
         ? {
             ...file,
@@ -1077,12 +1103,89 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const itemScale = itemScales[viewMode] || 50;
   const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
+    const folderLocationLayoutKey = JSON.stringify([sortKey, sortOrder, groupKey, itemScale, includeSubfolders, localSearchQuery, metadataMissingOnly, viewContainerWidth]);
+    folderLocationContextRef.current = { isRecentReading, isLibrarySearchActive, selectedFiles, activeSelectedPath, viewMode, layoutKey: folderLocationLayoutKey };
+    const rememberCurrentFolderLocation = useCallback(() => {
+        const context = folderLocationContextRef.current;
+        const folderPath = selectedFolderPathRef.current;
+        if (!folderPath || context.isRecentReading || context.isLibrarySearchActive || folderLocationRestoreRef.current) return;
+        const scroller = viewContainerRef.current?.querySelector('.file-table-container, .thumbnail-grid, .tile-grid');
+        if (!scroller) return;
+        rememberFolderLocation(folderLocationsRef.current, folderPath, {
+            selectedPaths: context.selectedFiles,
+            activePath: context.activeSelectedPath,
+            viewMode: context.viewMode,
+            layoutKey: context.layoutKey,
+            scrollTop: scroller.scrollTop,
+            scrollLeft: scroller.scrollLeft,
+            scrollTops: { ...viewScrollPositionsRef.current, [context.viewMode]: scroller.scrollTop },
+        });
+    }, []);
+
+    const cancelFolderLocationRestore = useCallback(() => {
+        folderLocationRestoreRef.current = null;
+        setFolderLocationRestore(null);
+    }, []);
+
+    const prepareFolderLocationRestore = useCallback((folderPath, options = {}) => {
+        rememberCurrentFolderLocation();
+        const location = getFolderLocation(folderLocationsRef.current, folderPath) || {};
+        const request = {
+            id: ++folderLocationSequenceRef.current,
+            folderPath,
+            location,
+            revealPath: options.revealPath || '',
+            ready: false,
+        };
+        viewScrollPositionsRef.current = { table: 0, tile: 0, thumbnail: 0, ...location.scrollTops };
+        folderLocationRestoreRef.current = request;
+        setFolderLocationRestore(request);
+        return request;
+    }, [rememberCurrentFolderLocation]);
+
+    const completeFolderLocationScan = useCallback(request => {
+        if (folderLocationRestoreRef.current !== request || selectedFolderPathRef.current !== request.folderPath) return;
+        const readyRequest = { ...request, ready: true };
+        folderLocationRestoreRef.current = readyRequest;
+        setFolderLocationRestore(readyRequest);
+    }, []);
+
+    const navigationRestore = useMemo(() => {
+        if (!folderLocationRestore?.ready || folderLocationRestore.folderPath !== selectedFolderPath || isRecentReading) return null;
+        return {
+            id: folderLocationRestore.id,
+            ...resolveFolderLocation(folderLocationRestore.location, displayedFileData, {
+                viewMode,
+                layoutKey: folderLocationLayoutKey,
+                revealPath: folderLocationRestore.revealPath,
+            }),
+        };
+    }, [displayedFileData, folderLocationLayoutKey, folderLocationRestore, isRecentReading, selectedFolderPath, viewMode]);
+
+    useEffect(() => {
+        if (!navigationRestore || restoredFolderSelectionRef.current === navigationRestore.id) return;
+        restoredFolderSelectionRef.current = navigationRestore.id;
+        selectPaths(navigationRestore.selectedPaths, { activePath: navigationRestore.activePath });
+    }, [navigationRestore, selectPaths]);
+
+    const handleNavigationRestore = useCallback(id => {
+        if (folderLocationRestoreRef.current?.id !== id) return;
+        cancelFolderLocationRestore();
+    }, [cancelFolderLocationRestore]);
+
+    useEffect(() => {
+        if (isRecentReading || !selectedFolderPath) cancelFolderLocationRestore();
+    }, [cancelFolderLocationRestore, isRecentReading, selectedFolderPath]);
+
   const handleSelectRecentReading = useCallback(() => {
+    rememberCurrentFolderLocation();
+    cancelFolderLocationRestore();
+    folderNavigationRequestRef.current += 1;
     setFolderSource('recent-reading');
     clearSelection();
     resetSearchQuery();
     void loadRecentReading();
-  }, [clearSelection, loadRecentReading, resetSearchQuery]);
+  }, [cancelFolderLocationRestore, clearSelection, loadRecentReading, rememberCurrentFolderLocation, resetSearchQuery]);
 
   const removeRecentReading = useCallback(async filePath => {
     if (!filePath) return;
@@ -1536,11 +1639,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [showToast]);
 
   // 폴더 변경 핸들러
-  const handleFolderChange = useCallback(async (folderPath) => {
+  const handleFolderChange = useCallback(async (folderPath, options = {}) => {
+    folderNavigationRequestRef.current += 1;
     const nextFolderPath = String(folderPath || '');
+    const locationRequest = prepareFolderLocationRestore(nextFolderPath, options);
     setFolderSource('folder');
     selectedFolderPathRef.current = nextFolderPath;
     setSelectedFolderPath(nextFolderPath);
+    const nextNavigation = options.navigationState
+        || pushFolderNavigation(folderNavigationRef.current, nextFolderPath);
+    folderNavigationRef.current = nextNavigation;
+    setFolderNavigation(nextNavigation);
+    setGotoPathDraft(nextFolderPath);
+    setShowGotoPathHistory(false);
     clearSelection();
     resetSearchQuery();
     if (nextFolderPath && config?.folder_last_path !== nextFolderPath) {
@@ -1548,19 +1659,25 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         console.error('마지막 폴더 경로 저장 실패:', error);
       });
     }
-    const files = await scanFolder(nextFolderPath, scanOptions);
+    const files = await scanFolder(nextFolderPath, locationRequest.location.viewMode
+        ? { ...scanOptions, fastInitial: false }
+        : scanOptions);
     if (selectedFolderPathRef.current !== nextFolderPath) return;
-    const localMissing = findMissingVolumes(files || []);
+    completeFolderLocationScan(locationRequest);
+    const localMissing = findMissingVolumes((files || []).filter(file => !file.isDirectory));
     scheduleLocalMissingToast(nextFolderPath, localMissing);
-  }, [config?.folder_last_path, scanOptions, scanFolder, clearSelection, resetSearchQuery, saveConfig, scheduleLocalMissingToast]);
+  }, [completeFolderLocationScan, config?.folder_last_path, prepareFolderLocationRestore, scanOptions, scanFolder, clearSelection, resetSearchQuery, saveConfig, scheduleLocalMissingToast]);
 
   const handleSafeFolderNavigation = useCallback(async (folderPath, options = {}) => {
     if (!folderPath) return false;
+    const requestId = ++folderNavigationRequestRef.current;
     if (options.skipExistsCheck !== true) {
       const stat = await window.electronAPI?.stat?.(folderPath);
       if (!stat?.isDirectory) return false;
     }
-    await handleFolderChange(folderPath);
+    if (requestId !== folderNavigationRequestRef.current) return false;
+    if (options.fromNavigationState && folderNavigationRef.current !== options.fromNavigationState) return false;
+    await handleFolderChange(folderPath, options);
     return true;
   }, [handleFolderChange]);
 
@@ -1581,7 +1698,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const restoreLastFolder = async () => {
       for (const folderPath of uniqueCandidates) {
         if (cancelled) return;
+        const requestId = folderNavigationRequestRef.current + 1;
         if (await handleSafeFolderNavigation(folderPath)) return;
+        if (requestId !== folderNavigationRequestRef.current) return;
       }
     };
     restoreLastFolder();
@@ -1590,10 +1709,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     };
   }, [config, handleSafeFolderNavigation, libraries, preparingDuplicates, scanning]);
 
-  const handlePathNavigation = useCallback(async targetPathValue => {
+  const handlePathNavigation = useCallback(async (targetPathValue, options = {}) => {
     const targetPath = String(targetPathValue || '').trim();
     if (!targetPath) return false;
-    if (await handleSafeFolderNavigation(targetPath)) {
+    const requestId = folderNavigationRequestRef.current + 1;
+    if (await handleSafeFolderNavigation(targetPath, options)) {
+        if (selectedFolderPathRef.current !== targetPath) return true;
       const currentHistory = gotoPathHistoryRef.current;
       const nextHistory = addGotoPathHistory(currentHistory, targetPath, runtimePlatform);
       const historyChanged = nextHistory.length !== currentHistory.length
@@ -1609,6 +1730,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       }
       return true;
     }
+    if (requestId !== folderNavigationRequestRef.current) return false;
+    if (options.fromNavigationState && folderNavigationRef.current !== options.fromNavigationState) return false;
     await window.electronAPI?.showMessage?.({
       type: 'warning',
       title: t('fm_error'),
@@ -1617,6 +1740,24 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     });
     return false;
   }, [config?.lang, config?.language, handleSafeFolderNavigation, runtimePlatform, saveConfig, t]);
+
+    const handleFolderHistoryNavigation = useCallback(async direction => {
+        if (isRecentReading) return;
+        const currentNavigation = folderNavigationRef.current;
+        const nextNavigation = moveFolderNavigation(currentNavigation, direction);
+        if (nextNavigation.index === currentNavigation.index) return;
+        await handlePathNavigation(nextNavigation.entries[nextNavigation.index], {
+            navigationState: nextNavigation,
+            fromNavigationState: currentNavigation,
+        });
+    }, [handlePathNavigation, isRecentReading]);
+
+    const handleParentFolderNavigation = useCallback(async () => {
+        if (isRecentReading) return;
+        const childPath = selectedFolderPathRef.current;
+        const targetPath = parentFolderPath(childPath);
+        if (targetPath) await handlePathNavigation(targetPath, { revealPath: childPath });
+    }, [handlePathNavigation, isRecentReading]);
 
   const focusGotoPathInput = useCallback(() => {
     setContextMenu(null);
@@ -1701,11 +1842,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     && !mainAreaRef.current?.closest('.folder-tab')?.querySelector('.folder-dialog-backdrop')
   ), []);
 
+    useFolderMouseNavigation({
+        isVisible: isFolderTabVisible,
+        canNavigate: () => !isRecentReading && canFocusGotoPath(),
+        onNavigate: handleFolderHistoryNavigation,
+    });
+
   const handleRefresh = useCallback(async () => {
     if (!selectedFolderPath) return;
     resetCoverPreviewQueue();
     const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
-    scheduleLocalMissingToast(selectedFolderPath, findMissingVolumes(files || []));
+    scheduleLocalMissingToast(selectedFolderPath, findMissingVolumes((files || []).filter(file => !file.isDirectory)));
     invalidateMissingVolumesCheck();
     setMissingRefreshVersion(value => value + 1);
   }, [invalidateMissingVolumesCheck, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
@@ -1718,6 +1865,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         paths,
         selectedFolderPath,
         includeSubfolders,
+        includeFolderPreviews: true,
       });
       if (!hasCurrentFolderFile) return;
       pendingMetadataRefreshRef.current = true;
@@ -1922,7 +2070,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       force: true,
     };
     if (includeSubfolders !== nextIncludeSubfolders) setIncludeSubfolders(nextIncludeSubfolders);
+    folderNavigationRequestRef.current += 1;
+    const locationRequest = prepareFolderLocationRestore(folderPath);
+    selectedFolderPathRef.current = folderPath;
     setSelectedFolderPath(folderPath);
+    setFolderSource('folder');
+    const nextNavigation = pushFolderNavigation(folderNavigationRef.current, folderPath);
+    folderNavigationRef.current = nextNavigation;
+    setFolderNavigation(nextNavigation);
+    setGotoPathDraft(folderPath);
+    setShowGotoPathHistory(false);
     clearSelection();
     resetSearchQuery();
     await scanFolder(folderPath, {
@@ -1933,13 +2090,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       reportTaskProgress: false,
       reportFileReady: false,
     });
+    completeFolderLocationScan(locationRequest);
     if (shouldShowSuccessToast) showToast?.({ key: 'setting_update_index_msg' });
   }, [
+    completeFolderLocationScan,
     config?.language,
     config?.lang,
     clearSelection,
     markLibraryScanStatesCancelled,
     preparingDuplicates,
+    prepareFolderLocationRestore,
     refreshLibraryScanStates,
     resetSearchQuery,
     saveConfig,
@@ -2023,6 +2183,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [clearSelection, rangeSelect, runtimePlatform, selectFile, toggleFile]);
 
   const ensureActiveSelectionVisible = useCallback(() => {
+    if (folderLocationRestoreRef.current) return;
     if (!activeSelectedPath) return;
     const container = viewContainerRef.current;
     if (!container) return;
@@ -2037,6 +2198,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [activeSelectedPath]);
 
   useEffect(() => {
+    if (folderLocationRestoreRef.current) return;
     if (!activeSelectedPath) return;
     let frame = 0;
     let nestedFrame = 0;
@@ -2049,13 +2211,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     };
   }, [activeSelectedPath, detailPanelHeight, ensureActiveSelectionVisible, viewMode]);
 
-  const selectedFileObjects = useMemo(() => (
-    selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(Boolean)
-  ), [displayedFileByPath, selectedFiles]);
+    const selectedEntryObjects = useMemo(() => (
+        selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(Boolean)
+    ), [displayedFileByPath, selectedFiles]);
+    const selectedFileObjects = useMemo(
+        () => selectedEntryObjects.filter(file => !file.isDirectory),
+        [selectedEntryObjects],
+    );
+    const hasSelectedDirectories = selectedEntryObjects.some(file => file.isDirectory);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const handleViewModeChange = useCallback(nextMode => {
+    cancelFolderLocationRestore();
     const currentScroller = viewContainerRef.current?.querySelector(
       '.file-table-container, .thumbnail-grid, .tile-grid',
     );
@@ -2070,7 +2238,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         ?? viewScrollPositionsRef.current[viewMode]
         ?? 0;
     });
-  }, [viewMode]);
+  }, [cancelFolderLocationRestore, viewMode]);
 
   const openSelectedInExplorer = useCallback(async () => {
     const target = activeSelectedFile?.full_path || activeSelectedFile?.path || selectedFolderPath;
@@ -2084,6 +2252,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const openFileInViewer = useCallback(async (file) => {
     const target = typeof file === 'string' ? file : file?.full_path || file?.path;
     if (!target) return;
+    if (file?.isDirectory) {
+        await handleSafeFolderNavigation(target);
+        return;
+    }
     const explicitViewerPath = typeSpecificViewerPath(config, target);
     let explicitViewerResult = null;
     if (explicitViewerPath) {
@@ -2116,7 +2288,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       message: viewerErrorMessage(internalResult) || t('msg_failed'),
       language: config?.language || config?.lang || 'ko',
     });
-  }, [config, t]);
+  }, [config, handleSafeFolderNavigation, t]);
 
   const openSelectedInViewer = useCallback(async () => {
     await openFileInViewer(activeSelectedFile);
@@ -2150,12 +2322,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [handleFolderChange, openFileInViewer, showToast, t]);
 
   const deleteSelectedFiles = useCallback(async () => {
-    const targets = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);
+    const entries = folderEntryOperationTargets(selectedEntryObjects);
+    const targets = entries.map(file => file.full_path || file.path);
     if (targets.length === 0) return;
+    const folderCount = entries.filter(file => file.isDirectory).length;
     const response = await window.electronAPI?.showMessage?.({
       type: 'question',
       title: t('dlg_warn'),
-      message: t('dlg_del_file_msg', [targets.length]),
+      message: folderCount > 0
+          ? t('dlg_del_entries_msg', [folderCount, entries.length - folderCount])
+          : t('dlg_del_file_msg', [targets.length]),
       buttons: 'yes-no',
       defaultChoice: 'no',
       language: config?.language || config?.lang || 'ko',
@@ -2171,15 +2347,29 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         message: result.errors?.join('\n') || result.message || t('msg_failed'),
         language: config?.language || config?.lang || 'ko',
       });
-      return;
+    }
+    if (folderCount > 0) {
+        const removedFolders = [];
+        for (const entry of entries.filter(file => file.isDirectory)) {
+            const path = entry.full_path || entry.path;
+            if (await window.electronAPI?.exists?.(path) === false) removedFolders.push(path);
+        }
+        const wasRemoved = path => removedFolders.some(folder => replaceTreePath(path, folder, `${folder}.removed`) !== path);
+        const configPatch = {
+            ...serializeFavorites(favoriteEntries.filter(entry => !wasRemoved(entry.path))),
+            ...syncLibraryConfig({}, libraryEntries.filter(entry => !wasRemoved(entry.path))),
+            dup_check_folders: (config?.dup_check_folders || []).filter(path => !wasRemoved(path)),
+        };
+        if (removedFolders.length > 0) await saveConfig?.(configPatch);
+        setTreeRefreshToken(current => current + 1);
     }
     clearSelection();
-    handleRefresh();
-  }, [clearSelection, config?.language, config?.lang, handleRefresh, runInternalFileAction, selectedFileObjects, t]);
+    await handleRefresh();
+  }, [clearSelection, config?.language, config?.lang, config?.dup_check_folders, favoriteEntries, handleRefresh, libraryEntries, runInternalFileAction, saveConfig, selectedEntryObjects, t]);
 
-  const renameSelectedFile = useCallback(async () => {
-    const target = activeSelectedFile?.full_path || activeSelectedFile?.path;
-    if (!target) return;
+  const renameSelectedFile = useCallback(async (file = activeSelectedFile) => {
+    const target = file?.full_path || file?.path;
+    if (!target || file?.isDirectory) return;
     const oldName = String(target).split(/[\\/]/).pop() || '';
     const inputName = await requestTextInput({
       title: t('msg_rename_title'),
@@ -2260,7 +2450,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const contextPath = contextFile?.full_path || contextFile?.path;
     const targets = selectedFileObjects.length > 0 && (!contextPath || selectedFileSet.has(contextPath))
       ? selectedFileObjects
-      : [contextFile].filter(Boolean);
+      : [contextFile].filter(file => file && !file.isDirectory);
     if (targets.length === 0) return;
 
     const refreshed = [];
@@ -2462,6 +2652,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           if (fallbackFolder && await window.electronAPI?.exists?.(fallbackFolder)) {
             await handleFolderChange(fallbackFolder);
           } else {
+            folderNavigationRequestRef.current += 1;
+            selectedFolderPathRef.current = '';
             setSelectedFolderPath('');
             clearSelection();
           }
@@ -2501,12 +2693,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [config?.language, config?.lang, libraries.length, selectedFileObjects, t]);
 
   const sendSelectedFilesToTab = useCallback(tabId => {
-    const paths = selectedFileObjects.map(file => file.full_path || file.path).filter(Boolean);
+    const paths = folderEntryOperationTargets(selectedEntryObjects)
+        .map(file => file.full_path || file.path);
     if (paths.length === 0) return;
     window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
       detail: { tabId, paths },
     }));
-  }, [selectedFileObjects]);
+  }, [selectedEntryObjects]);
 
   const executeMultiRename = useCallback(async rows => {
     const renameMap = buildRenameMap(rows);
@@ -2537,7 +2730,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (file?.path && !selectedFileSet.has(file.path)) {
       selectFile(file.path, null, index);
     }
-    setContextMenu({ type: 'file', x: event.clientX, y: event.clientY, file });
+    setContextMenu(file?.isDirectory ? {
+        type: 'folder',
+        source: 'list',
+        x: event.clientX,
+        y: event.clientY,
+        folderPath: file.full_path || file.path,
+        file,
+    } : { type: 'file', x: event.clientX, y: event.clientY, file });
   }, [selectFile, selectedFileSet]);
 
   const showFolderContextMenu = useCallback((event, folderPath, siblingPaths = []) => {
@@ -2568,9 +2768,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const refreshContextFolder = useCallback(async folderPath => {
     if (!folderPath) return;
     setTreeRefreshToken(current => current + 1);
-    if (folderPath === selectedFolderPath) {
+    if (selectedFolderPath && isPathInsideLibrary(folderPath, selectedFolderPath)) {
       resetCoverPreviewQueue();
-      await scanFolder(folderPath, { ...scanOptions, force: true });
+      await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
     }
   }, [resetCoverPreviewQueue, scanFolder, scanOptions, selectedFolderPath]);
 
@@ -2606,20 +2806,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
 
     const configPatch = {};
-    if (isFavoriteFolder(favoriteEntries, folderPath)) {
-      const withoutOldPath = removeFavoriteEntry(favoriteEntries, folderPath);
-      Object.assign(configPatch, serializeFavorites(addFavoriteEntry(withoutOldPath, nextPath)));
+    const renamedPath = path => replaceTreePath(path, folderPath, nextPath);
+    if (favoriteEntries.some(entry => renamedPath(entry.path) !== entry.path)) {
+        Object.assign(configPatch, serializeFavorites(favoriteEntries.map(entry => ({
+            ...entry,
+            path: renamedPath(entry.path),
+            name: entry.path === folderPath && entry.name === oldName ? nextName : entry.name,
+        }))));
     }
-    if ((config?.libraries || []).includes(folderPath)) {
-      configPatch.libraries = config.libraries.map(path => path === folderPath ? nextPath : path);
+    if (libraryEntries.some(entry => renamedPath(entry.path) !== entry.path)) {
+        Object.assign(configPatch, syncLibraryConfig({}, libraryEntries.map(entry => ({
+            ...entry,
+            path: renamedPath(entry.path),
+        }))));
     }
-    if ((config?.dup_check_folders || []).includes(folderPath)) {
-      configPatch.dup_check_folders = config.dup_check_folders.map(path => path === folderPath ? nextPath : path);
-    }
-    if (libraryEntries.some(entry => entry.path === folderPath)) {
-      Object.assign(configPatch, syncLibraryConfig({}, libraryEntries.map(entry => (
-        entry.path === folderPath ? { ...entry, path: nextPath } : entry
-      ))));
+    if ((config?.dup_check_folders || []).some(path => renamedPath(path) !== path)) {
+        configPatch.dup_check_folders = config.dup_check_folders.map(renamedPath);
     }
     if (Object.keys(configPatch).length > 0) {
       await saveConfig?.(configPatch);
@@ -2629,8 +2831,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setTreeRefreshToken(current => current + 1);
     if (nextSelection !== selectedFolderPath) {
       await handleFolderChange(nextSelection);
+    } else {
+        await handleRefresh();
+        if (selectedFileSet.has(folderPath)) selectFile(nextPath);
     }
-  }, [config?.dup_check_folders, config?.libraries, favoriteEntries, handleFolderChange, libraryEntries, requestTextInput, runInternalFileAction, saveConfig, selectedFolderPath, showFolderError, t]);
+  }, [config?.dup_check_folders, favoriteEntries, handleFolderChange, handleRefresh, libraryEntries, requestTextInput, runInternalFileAction, saveConfig, selectFile, selectedFileSet, selectedFolderPath, showFolderError, t]);
 
   const markFolderPanelFocus = useCallback(panel => {
     lastFolderPanelRef.current = panel;
@@ -2659,10 +2864,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       await renameContextFolder(selectedFolderPath);
       return;
     }
-    if (selectedFileObjects.length > 0) {
+    if (activeSelectedFile?.isDirectory) {
+        await renameContextFolder(activeSelectedFile.full_path || activeSelectedFile.path);
+    } else if (hasSelectedDirectories) {
+        await renameSelectedFile();
+    } else if (selectedFileObjects.length > 0) {
       setShowMultiRenameDialog(true);
     }
-  }, [isExplorerPanelActive, renameContextFolder, selectedFileObjects.length, selectedFolderPath]);
+  }, [activeSelectedFile, hasSelectedDirectories, isExplorerPanelActive, renameContextFolder, renameSelectedFile, selectedFileObjects.length, selectedFolderPath]);
 
   const deleteContextFolder = useCallback(async menu => {
     const folderPath = menu?.folderPath;
@@ -2696,6 +2905,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (nextSelection && await window.electronAPI?.exists?.(nextSelection)) {
       await handleFolderChange(nextSelection);
     } else {
+      folderNavigationRequestRef.current += 1;
+      selectedFolderPathRef.current = '';
       setSelectedFolderPath('');
       clearSelection();
     }
@@ -2756,26 +2967,30 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'rename-folder') {
       await renameContextFolder(menu.folderPath);
     } else if (action === 'delete-folder') {
-      await deleteContextFolder(menu);
+      if (menu.source === 'list') await deleteSelectedFiles();
+      else await deleteContextFolder(menu);
     } else if (action === 'move-folder-library') {
       await moveContextFolderToLibrary(menu.folderPath);
     } else if (action === 'send-organizer') {
-      sendFolderToTab(menu.folderPath, 'organizer');
+      if (menu.source === 'list') sendSelectedFilesToTab('organizer');
+      else sendFolderToTab(menu.folderPath, 'organizer');
     } else if (action === 'send-renamer') {
-      sendFolderToTab(menu.folderPath, 'renamer');
+      if (menu.source === 'list') sendSelectedFilesToTab('renamer');
+      else sendFolderToTab(menu.folderPath, 'renamer');
     } else if (action === 'send-metadata') {
-      sendFolderToTab(menu.folderPath, 'metadata');
+      if (menu.source === 'list') sendSelectedFilesToTab('metadata');
+      else sendFolderToTab(menu.folderPath, 'metadata');
     } else if (action === 'show-file') {
       const target = menu.file?.full_path || menu.file?.path;
       if (target) await window.electronAPI?.showInFolder?.(target);
     } else if (action === 'view-file') {
-      await openSelectedInViewer();
+      await openFileInViewer(menu.file);
     } else if (action === 'update-files') {
       await forceUpdateSelectedFiles(menu.file);
     } else if (action === 'delete-file') {
       await deleteSelectedFiles();
     } else if (action === 'rename-file') {
-      await renameSelectedFile();
+      await renameSelectedFile(menu.file);
     } else if (action === 'undo-rename') {
       await undoLastRename();
     } else if (action === 'group-series') {
@@ -2783,7 +2998,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'move-library') {
       await openLibraryMoveDialog();
     } else if (action === 'multi-rename') {
-      setShowMultiRenameDialog(true);
+      if (hasSelectedDirectories) await renameSelectedFile(menu.file);
+      else setShowMultiRenameDialog(true);
     } else if (action === 'send-file-organizer') {
       sendSelectedFilesToTab('organizer');
     } else if (action === 'send-file-renamer') {
@@ -2797,7 +3013,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, invertSelection, loadRecentReading, moveContextFolderToLibrary, openFolderPath, openLibraryMoveDialog, openSelectedInViewer, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -2834,9 +3050,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         handleRefreshShortcut();
       } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'a')) {
         event.preventDefault();
+        cancelFolderLocationRestore();
         selectAll();
       } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'i')) {
         event.preventDefault();
+        cancelFolderLocationRestore();
         invertSelection();
       } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'z')) {
         event.preventDefault();
@@ -2848,6 +3066,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         event.preventDefault();
         handleRenameShortcut();
       } else if (event.key === 'Escape') {
+        cancelFolderLocationRestore();
         clearSelection();
         closeContextMenu();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -2856,9 +3075,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         else deleteSelectedFiles();
       } else if (event.key === 'Enter') {
         event.preventDefault();
-        openSelectedInExplorer();
+        if (activeSelectedFile?.isDirectory) openSelectedInViewer();
+        else openSelectedInExplorer();
       } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         event.preventDefault();
+        cancelFolderLocationRestore();
         const nextPath = moveActiveSelection(event.key === 'ArrowUp' ? -1 : 1, event.shiftKey);
         if (nextPath) {
           window.requestAnimationFrame(() => {
@@ -2882,7 +3103,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [activeSelectedPath, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isRecentReading, moveActiveSelection, openSelectedInExplorer, removeRecentReading, runtimePlatform, selectAll, sendSelectedFilesToTab, undoLastRename]);
+  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isRecentReading, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, runtimePlatform, selectAll, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -3167,6 +3388,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       selectedFiles,
       selectedFileSet,
       activeSelectedPath,
+      navigationRestore,
+      onNavigationRestore: handleNavigationRestore,
       sortKey,
       sortOrder,
       groupKey,
@@ -3185,7 +3408,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} navigationRestore={navigationRestore} onNavigationRestore={handleNavigationRestore} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 
@@ -3403,32 +3626,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   </div>
                 )}
               </div>}
-              {isRecentReading ? (
-                <>
-                  <button
-                    className="refresh-btn"
-                    onClick={() => void loadRecentReading()}
-                    title={t('folder.recent.refresh')}
-                  >
-                    {t('folder_refresh_list')}
-                  </button>
-                  <button
-                    className="refresh-btn recent-reading-clear-button"
-                    onClick={() => void clearRecentReading()}
-                    title={t('folder.recent.clear')}
-                    disabled={recentReadingFiles.length === 0}
-                  >
-                    <FaIcon name="trash" size={11} />
-                    <span>{t('folder.recent.clear')}</span>
-                  </button>
-                </>
-              ) : (
+              {isRecentReading && (
                 <button
-                  className="refresh-btn"
-                  onClick={() => handleSmartRefresh(true)}
-                  title={t('folder_refresh_force_tip')}
+                  className="refresh-btn recent-reading-clear-button"
+                  onClick={() => void clearRecentReading()}
+                  title={t('folder.recent.clear')}
+                  disabled={recentReadingFiles.length === 0}
                 >
-                  {t('folder_refresh_list')}
+                  <FaIcon name="trash" size={11} />
+                  <span>{t('folder.recent.clear')}</span>
                 </button>
               )}
             </div>
@@ -3443,11 +3649,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onNavigate={handlePathNavigation}
             onOpenChange={setShowGotoPathHistory}
             shortcutLabel={formatPrimaryShortcut('L', runtimePlatform)}
+            canGoBack={!isRecentReading && folderNavigation.index > 0}
+            canGoForward={!isRecentReading && folderNavigation.index < folderNavigation.entries.length - 1}
+            canGoUp={Boolean(upFolderPath)}
+            onBack={() => void handleFolderHistoryNavigation(-1)}
+            onForward={() => void handleFolderHistoryNavigation(1)}
+            onUp={handleParentFolderNavigation}
+            onRefresh={() => isRecentReading ? loadRecentReading() : handleSmartRefresh(true)}
+            refreshDisabled={isRecentReading ? recentReadingLoading : !selectedFolderPath || scanning || preparingDuplicates}
             t={t}
           />
 
           <div
             className="view-container"
+            onPointerDownCapture={event => {
+                if (event.button < 3) cancelFolderLocationRestore();
+            }}
+            onWheelCapture={cancelFolderLocationRestore}
             ref={viewContainerRef}
             style={{ '--folder-view-width': `${viewContainerWidth}px` }}
             aria-busy={!isRecentReading && scanning}
@@ -3569,6 +3787,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </>
           ) : contextMenu.type === 'folder' ? (
             <>
+              <ContextMenuItem onClick={() => handleContextAction('open-folder')} icon="folderOpen" label={t('action_open_folder')} />
               <ContextMenuItem
                 onClick={() => handleContextAction(
                   isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
@@ -3591,7 +3810,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <ContextMenuItem onClick={() => handleContextAction('send-renamer')} label={t('action_inner_ren')} shortcut="F2" />
               <ContextMenuItem onClick={() => handleContextAction('send-metadata')} label={t('action_meta_edit')} shortcut="F3" />
               <div className="folder-context-menu-separator" />
-              <ContextMenuItem onClick={() => handleContextAction('delete-folder')} label={t('action_del_folder')} shortcut="Del" />
+              <ContextMenuItem onClick={() => handleContextAction('delete-folder')} label={contextMenu.source === 'list' && selectedEntryObjects.length > 1 ? t('action_del_entries') : t('action_del_folder')} shortcut="Del" />
               <ContextMenuItem onClick={() => handleContextAction('refresh-folder')} label={t('action_refresh')} shortcut="F5" />
             </>
           ) : (
@@ -3602,13 +3821,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-metadata')} label={t('action_meta_edit')} shortcut="F3" />
-                  <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
+                  {!hasSelectedDirectories && (
+                      <>
+                          <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
+                          <div className="folder-context-menu-separator" />
+                          <ContextMenuItem onClick={() => handleContextAction('group-series')} label={t('action_group_by_series')} />
+                          <ContextMenuItem onClick={() => handleContextAction('move-library')} label={t('action_move_file_to_library')} />
+                      </>
+                  )}
                   <div className="folder-context-menu-separator" />
-                  <ContextMenuItem onClick={() => handleContextAction('group-series')} label={t('action_group_by_series')} />
-                  <ContextMenuItem onClick={() => handleContextAction('move-library')} label={t('action_move_file_to_library')} />
-                  <div className="folder-context-menu-separator" />
-                  <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t('action_del_files')} shortcut="Del" />
-                  <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t('tf_menu_rename_multi')} shortcut="Shift+R" />
+                  <ContextMenuItem onClick={() => handleContextAction('delete-file')} label={t(hasSelectedDirectories ? 'action_del_entries' : 'action_del_files')} shortcut="Del" />
+                  <ContextMenuItem onClick={() => handleContextAction('multi-rename')} label={t(hasSelectedDirectories ? 'msg_rename_title' : 'tf_menu_rename_multi')} shortcut="Shift+R" />
                   <ContextMenuItem onClick={() => handleContextAction('undo-rename')} label={t('tf_undo_rename')} shortcut={formatPrimaryShortcut('Z', runtimePlatform)} />
                 </>
               )}
@@ -4193,6 +4416,10 @@ function formatBytes(bytes) {
 
 function formatStatus(t, selectedFiles, files, selectedSizeBytes = 0) {
   const selectedSize = formatBytes(selectedSizeBytes);
+    const folderCount = files.filter(file => file.isDirectory).length;
+    if (folderCount > 0) {
+        return t('folder_status_entries', [selectedFiles.length, folderCount, files.length - folderCount, selectedSize]);
+    }
   return t('folder_status_sel', [selectedFiles.length, files.length, selectedSize]);
 }
 

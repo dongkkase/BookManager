@@ -48,7 +48,7 @@ test('하위 폴더 빠른 목록은 경량 재귀 탐색이 끝날 때까지 �
     assert.match(hookSource, /reportTaskProgress:\s*includeSubfolders/);
     assert.match(hookSource, /reportQuickFiles:\s*includeSubfolders/);
     assert.match(hookSource, /resultCacheKey:\s*cacheKey/);
-    assert.match(hookSource, /const initialFiles = includeSubfolders \? \[\] : await readQuickListFiles\(folderPath\)/);
+    assert.match(hookSource, /const initialFiles = includeSubfolders \? \[\] : await readQuickListFiles\(folderPath, options\)/);
     assert.match(hookSource, /onFolderQuickFiles/);
     assert.match(hookSource, /removeQuickFiles\(\)/);
     assert.match(hookSource, /startTransition\(updateCache\)/);

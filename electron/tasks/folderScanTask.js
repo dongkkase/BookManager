@@ -27,6 +27,7 @@ const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const PDF_THUMBNAIL_CACHE_PREFIX = 'pdf-first-page-v2-';
 const QUICK_FILE_BATCH_SIZE = 500;
 const QUICK_FILE_BATCH_INTERVAL_MS = 250;
+const FOLDER_PREVIEW_MAX_DEPTH = 3;
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 const execFileAsync = promisify(execFile);
 let folderScanStdoutBroken = false;
@@ -995,6 +996,32 @@ function createQuickFileData(fullPath) {
   };
 }
 
+function createDirectoryData(fullPath, stats) {
+    const name = path.basename(fullPath);
+    return {
+        name,
+        path: fullPath,
+        folder_path: path.dirname(fullPath),
+        full_path: fullPath,
+        title: name,
+        isDirectory: true,
+        is_folder: true,
+        ext: '',
+        size: 0,
+        mtime: stats?.mtimeMs || 0,
+        ctime: stats?.ctimeMs || 0,
+        created: stats ? new Date(stats.birthtimeMs).toISOString() : '',
+        modified: stats ? new Date(stats.mtimeMs).toISOString() : '',
+        cover: '',
+        thumb_path: '',
+        has_metadata: false,
+        duplicate_matches: [],
+        dup_count: 0,
+        max_ratio: 0,
+        cache_source: 'directory',
+    };
+}
+
 function sortEntriesForPriority(entries = []) {
   return [...entries].sort((left, right) => {
     if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
@@ -1222,6 +1249,7 @@ function attachDuplicateMatches(files, dupCache) {
   }
 
   return files.map(file => {
+    if (file.isDirectory) return file;
     const compareTitle = normalizeFilenameForCompare(file.name || file.full_path);
     const matches = [];
     if (compareTitle.length < 2) {
@@ -1586,8 +1614,76 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
   };
 }
 
+async function createDirectoryPreview(fullPath, stats, options = {}) {
+    const directory = {
+        ...createDirectoryData(fullPath, stats),
+        cover_file_path: '',
+        cover_file_mtime: 0,
+        cover_file_size: 0,
+    };
+    const pendingDirectories = [{ path: fullPath, depth: 0 }];
+    let libraryDb = options.libraryDb || null;
+    let fallback = directory;
+    try {
+        for (let index = 0; index < pendingDirectories.length; index += 1) {
+            throwIfTaskCancelled(options);
+            const current = pendingDirectories[index];
+            pendingDirectories[index] = null;
+            const currentStats = await fs.promises.lstat(current.path).catch(() => null);
+            if (!currentStats?.isDirectory()) continue;
+            const entries = await fs.promises.readdir(current.path, { withFileTypes: true }).catch(() => []);
+            throwIfTaskCancelled(options);
+            const candidateFiles = [];
+            const childDirectories = [];
+            for (const entry of entries) {
+                if (shouldSkipScanDirectoryEntry(entry)) continue;
+                if (entry.isFile() && DEFAULT_TARGET_EXTS.includes(path.extname(entry.name).toLowerCase())) {
+                    candidateFiles.push(entry);
+                } else if (entry.isDirectory() && current.depth < FOLDER_PREVIEW_MAX_DEPTH) {
+                    childDirectories.push(entry);
+                }
+            }
+            throwIfTaskCancelled(options);
+            candidateFiles.sort((left, right) => KO_NUMERIC_COLLATOR.compare(left.name, right.name));
+            for (const candidate of candidateFiles) {
+                throwIfTaskCancelled(options);
+                const filePath = path.join(current.path, candidate.name);
+                const fileStats = await fs.promises.lstat(filePath).catch(() => null);
+                throwIfTaskCancelled(options);
+                if (fileStats?.isFile()) {
+                    if (!libraryDb && options.dbPath) libraryDb = new LibraryDB({ dbPath: options.dbPath });
+                    try {
+                        const file = await createFileData(filePath, fileStats, { ...options, libraryDb });
+                        throwIfTaskCancelled(options);
+                        const preview = {
+                            ...directory,
+                            cover: file.cover || '',
+                            thumb_path: file.thumb_path || '',
+                            cover_file_path: filePath,
+                            cover_file_mtime: file.mtime,
+                            cover_file_size: file.size,
+                        };
+                        if (file.cover) return preview;
+                        if (fallback === directory) fallback = preview;
+                    } catch (error) {
+                        if (error.code === 'TASK_CANCELLED') throw error;
+                    }
+                }
+            }
+            childDirectories.sort((left, right) => KO_NUMERIC_COLLATOR.compare(left.name, right.name));
+            for (const child of childDirectories) {
+                pendingDirectories.push({ path: path.join(current.path, child.name), depth: current.depth + 1 });
+            }
+        }
+        return fallback;
+    } finally {
+        if (!options.libraryDb) await libraryDb?.close();
+    }
+}
+
 export async function inspectFolderFile(fullPath, options = {}) {
   const stats = await fs.promises.stat(fullPath);
+    if (stats.isDirectory()) return createDirectoryPreview(fullPath, stats, options);
   if (!stats.isFile()) {
     return {
       name: path.basename(fullPath),
@@ -1628,6 +1724,7 @@ export async function scanFolder(folderPath, options = {}, event) {
     thumbnailEncoder,
     lang = 'ko',
   } = options;
+    const includeDirectories = options.includeDirectories === true;
   const normalizedExts = targetExts.map(ext => ext.toLowerCase());
   const normalizedExtSet = new Set(normalizedExts);
   const results = [];
@@ -1672,6 +1769,16 @@ export async function scanFolder(folderPath, options = {}, event) {
         const fullPath = path.join(currentPath, entry.name);
 
         if (entry.isDirectory()) {
+            if (includeDirectories && currentPath === rootPath) {
+                const stats = await fs.promises.stat(fullPath).catch(() => null);
+                throwIfTaskCancelled(options);
+                const directory = createDirectoryData(fullPath, stats);
+                results.push(directory);
+                if (options.reportQuickFiles && quickFileCacheKey) {
+                    quickFileBatch.push(directory);
+                    emitQuickFileBatch();
+                }
+            }
           if (includeSubfolders) pendingDirectories.push(fullPath);
         } else if (entry.isFile()) {
           scannedCount += 1;
@@ -1738,6 +1845,7 @@ export async function scanFolder(folderPath, options = {}, event) {
       enableDupCheck,
       dupFolders: (dupFolders || []).filter(Boolean).sort(),
       skipArchiveExtraction,
+        ...(includeDirectories ? { includeDirectories: true } : {}),
     });
     event.sender.send('folder:fileReady', {
       folderPath,
@@ -1765,6 +1873,13 @@ export async function scanFolder(folderPath, options = {}, event) {
       const fullPath = path.join(currentPath, entry.name);
 
       if (entry.isDirectory()) {
+        if (includeDirectories && currentPath === folderPath) {
+            const stats = await fs.promises.stat(fullPath).catch(() => null);
+            throwIfTaskCancelled(options);
+            const directory = createDirectoryData(fullPath, stats);
+            results.push(directory);
+            emitFileReady(directory);
+        }
         if (includeSubfolders) await scanDir(fullPath);
       } else if (entry.isFile()) {
         scannedCount += 1;
@@ -1842,7 +1957,7 @@ export async function scanFolder(folderPath, options = {}, event) {
 
     emitTaskProgress({
       progress: 100,
-      message: taskText(lang, 'task_scan_done', { count: files.length }),
+      message: taskText(lang, 'task_scan_done', { count: matchedCount }),
       currentFile: '',
       currentFileName: '',
     });
@@ -1854,6 +1969,7 @@ export async function scanFolder(folderPath, options = {}, event) {
         enableDupCheck,
         dupFolders: (dupFolders || []).filter(Boolean).sort(),
         skipArchiveExtraction,
+        ...(includeDirectories ? { includeDirectories: true } : {}),
       });
       event.sender.send('scan-complete', {
         files,

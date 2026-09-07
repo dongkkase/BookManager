@@ -7,6 +7,7 @@ import {
     shouldVirtualizeFolderItems,
 } from '../../folderViewState';
 import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
+import { useFolderNavigationRestore } from '../../hooks/useFolderNavigationRestore';
 import {
     applyImmediateSingleSelection,
     isPlainPrimaryClick,
@@ -48,6 +49,8 @@ const FileTableView = forwardRef(({
   onDeselectAll,
   onClearSelection,
   onVisibleFilesChange,
+    navigationRestore,
+    onNavigationRestore,
   onColumnLayoutChange,
   columnLayout,
   scale = 50,
@@ -62,6 +65,7 @@ const FileTableView = forwardRef(({
     const [columnDragGhost, setColumnDragGhost] = useState(null);
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportHeight, setViewportHeight] = useState(0);
+    const [viewportWidth, setViewportWidth] = useState(0);
     const rowHeight = Math.round(36 + Number(scale || 50) * 0.42);
     const coverSize = Math.round(32 + Number(scale || 50) * 0.28);
     const normalizedLayout = useMemo(() => normalizeColumnLayout(columnLayout), [columnLayout]);
@@ -123,6 +127,19 @@ const FileTableView = forwardRef(({
         : [];
     const virtualTopPadding = virtualStartIndex * rowHeight;
     const virtualBottomPadding = Math.max(0, (virtualRows.length - virtualEndIndex) * rowHeight);
+    const navigationRevealBounds = useMemo(() => {
+        if (!navigationRestore?.revealPath || !shouldVirtualize) return null;
+        const index = tableRows.findIndex(row => row.type === 'file' && row.file.path === navigationRestore.revealPath);
+        return index < 0 ? null : { top: index * rowHeight, height: rowHeight };
+    }, [navigationRestore?.revealPath, rowHeight, shouldVirtualize, tableRows]);
+    useFolderNavigationRestore({
+        containerRef: ref,
+        navigationRestore,
+        onNavigationRestore,
+        viewportReady: viewportWidth > 0 && viewportHeight > 0,
+        revealBounds: navigationRevealBounds,
+        onScrollPositionChange: position => setScrollTop(current => current === position.scrollTop ? current : position.scrollTop),
+    });
     const fileIndexByPath = useMemo(() => {
         const map = new Map();
         groupedData.flatMap(group => group.files).forEach((file, index) => {
@@ -301,6 +318,7 @@ const FileTableView = forwardRef(({
         if (!container) return undefined;
         const updateViewportHeight = () => {
             setViewportHeight(Math.max(0, Math.round(container.clientHeight || 0)));
+            setViewportWidth(Math.max(0, Math.round(container.clientWidth || 0)));
         };
         updateViewportHeight();
         if (typeof ResizeObserver !== 'function') {
@@ -381,6 +399,45 @@ const FileTableView = forwardRef(({
 
   const renderCell = (file, column) => {
     const className = centeredColumnKeys.has(column.key) ? 'center-cell' : undefined;
+    if (column.key === 'cover') {
+        return (
+            <td key={column.key} className="cover-cell">
+                <CoverImage
+                    key={coverImageKey(file)}
+                    src={file.cover}
+                    alt={file.name || ''}
+                    className="table-cover-image"
+                    t={t}
+                    iconSize={file.isDirectory ? 24 : 14}
+                    isDirectory={file.isDirectory}
+                    showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                />
+            </td>
+        );
+    }
+    if (file.isDirectory) {
+        if (column.key === 'name' || column.key === 'title') {
+            return (
+                <td key={column.key} className={className}>
+                    <span className="folder-item-name">
+                        <FaIcon name="folder" size={14} title={t('folder_item_type')} />
+                        <span>{file.name || ''}</span>
+                    </span>
+                </td>
+            );
+        }
+        if (column.key === 'ext' || column.key === 'format') {
+            return <td key={column.key} className={className}>{t('folder_item_type')}</td>;
+        }
+        if (column.key === 'created' || column.key === 'modified') {
+            const value = file[column.key] || file[column.key === 'created' ? 'ctime' : 'mtime'];
+            return <td key={column.key} className={className}>{formatDate(value)}</td>;
+        }
+        if (column.key === 'folder_path' || column.key === 'path' || column.key === 'full_path') {
+            return <td key={column.key} className={className}>{file[column.key] || file.path || ''}</td>;
+        }
+        return <td key={column.key} className={className} />;
+    }
     if (column.key === 'viewer_reading_status') {
       return (
         <td key={column.key} className="center-cell folder-status-cell">
@@ -392,21 +449,6 @@ const FileTableView = forwardRef(({
       return (
         <td key={column.key} className="center-cell folder-status-cell">
           <ViewerBookmarkStatusIcon file={file} t={t} />
-        </td>
-      );
-    }
-    if (column.key === 'cover') {
-      return (
-        <td key={column.key} className="cover-cell">
-          <CoverImage
-            key={coverImageKey(file)}
-            src={file.cover}
-            alt={file.name || ''}
-            className="table-cover-image"
-            t={t}
-            iconSize={14}
-            showLoadingIndicator={visibleCoverPathSet.has(file.path)}
-          />
         </td>
       );
     }
@@ -547,7 +589,7 @@ const FileTableView = forwardRef(({
               )}
             </>
           ) : groupedData.map(group => (
-            <React.Fragment key={group.name || 'all'}>
+            <React.Fragment key={`group:${group.name}`}>
               {group.name && (
                 <tr className="group-header-row">
                   <td colSpan={columns.length}>

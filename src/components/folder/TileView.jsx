@@ -8,6 +8,7 @@ import {
   visibleVirtualRows,
 } from '../../folderViewState';
 import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
+import { useFolderNavigationRestore } from '../../hooks/useFolderNavigationRestore';
 import {
   applyImmediateSingleSelection,
   isPlainPrimaryClick,
@@ -39,6 +40,8 @@ const TileView = ({
   onScroll,
   onClearSelection,
   onVisibleFilesChange,
+    navigationRestore,
+    onNavigationRestore,
   sortKey = 'name',
   sortOrder = 'asc',
   groupKey = 'none',
@@ -87,6 +90,21 @@ const TileView = ({
         ? visibleVirtualRows(virtualLayout.rows, viewport.scrollTop, viewport.height, rowHeight * 3)
         : [],
     [rowHeight, shouldVirtualize, viewport.height, viewport.scrollTop, virtualLayout.rows]);
+    const navigationRevealBounds = useMemo(() => {
+        if (!navigationRestore?.revealPath) return null;
+        return virtualLayout.rows.find(row => row.type === 'file' && row.file.path === navigationRestore.revealPath) || null;
+    }, [navigationRestore?.revealPath, virtualLayout.rows]);
+    useFolderNavigationRestore({
+        containerRef,
+        navigationRestore,
+        onNavigationRestore,
+        viewportReady: viewport.width > 0 && viewport.height > 0,
+        revealBounds: navigationRevealBounds,
+        onScrollPositionChange: position => setViewport(current => current.scrollTop === position.scrollTop ? current : {
+            ...current,
+            scrollTop: position.scrollTop,
+        }),
+    });
 	  const fileIndexByPath = useMemo(() => {
 	    const map = new Map();
 	    groups.flatMap(group => group.files).forEach((file, index) => {
@@ -290,22 +308,34 @@ const TileView = ({
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
-              <div className="tile-cover-card">
+              <div className={`tile-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
                 <CoverImage
-                  key={coverImageKey(file)}
-                  src={file.cover}
-                  alt={file.name || ''}
-                  className="tile-image"
-                  t={t}
-                  iconSize={30}
-                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                    key={coverImageKey(file)}
+                    src={file.cover}
+                    alt={file.name || ''}
+                    className="tile-image"
+                    t={t}
+                    iconSize={file.isDirectory ? 42 : 30}
+                    isDirectory={file.isDirectory}
+                    showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
-                <ViewerStatusBadgeRow
-                  file={file}
-                  t={t}
-                  className="tile-status-row"
-                />
+                {!file.isDirectory && (
+                    <ViewerStatusBadgeRow
+                        file={file}
+                        t={t}
+                        className="tile-status-row"
+                    />
+                )}
               </div>
+              {file.isDirectory ? (
+                <div className="tile-info">
+                    <div className="tile-title">{file.name || '-'}</div>
+                    <div className="tile-meta-line">{t('folder_item_type')}</div>
+                    <div className="tile-summary" title={file.full_path || file.path}>
+                        {file.full_path || file.path}
+                    </div>
+                </div>
+              ) : (
               <div className="tile-info">
                 <div className="tile-title">{file.title || file.name || '-'}</div>
                 <div className="tile-meta-line">
@@ -330,12 +360,13 @@ const TileView = ({
                   {firstValue(file.description, file.summary, t('info_no_summary'))}
                 </div>
 	              </div>
+              )}
 	            </div>
             );
           })}
         </div>
       ) : groups.map(group => (
-        <React.Fragment key={group.name || 'all'}>
+        <React.Fragment key={`group:${group.name}`}>
           {group.name && (
             <div className="folder-view-group-header">
               <FaIcon name="folder" />
@@ -355,22 +386,34 @@ const TileView = ({
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
-              <div className="tile-cover-card">
+              <div className={`tile-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
                 <CoverImage
-                  key={coverImageKey(file)}
-                  src={file.cover}
-                  alt={file.name || ''}
-                  className="tile-image"
-                  t={t}
-                  iconSize={30}
-                  showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                    key={coverImageKey(file)}
+                    src={file.cover}
+                    alt={file.name || ''}
+                    className="tile-image"
+                    t={t}
+                    iconSize={file.isDirectory ? 42 : 30}
+                    isDirectory={file.isDirectory}
+                    showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                 />
-                <ViewerStatusBadgeRow
-                  file={file}
-                  t={t}
-                  className="tile-status-row"
-                />
+                {!file.isDirectory && (
+                    <ViewerStatusBadgeRow
+                        file={file}
+                        t={t}
+                        className="tile-status-row"
+                    />
+                )}
               </div>
+              {file.isDirectory ? (
+                <div className="tile-info">
+                    <div className="tile-title">{file.name || '-'}</div>
+                    <div className="tile-meta-line">{t('folder_item_type')}</div>
+                    <div className="tile-summary" title={file.full_path || file.path}>
+                        {file.full_path || file.path}
+                    </div>
+                </div>
+              ) : (
               <div className="tile-info">
                 <div className="tile-title">{file.title || file.name || '-'}</div>
                 <div className="tile-meta-line">
@@ -395,6 +438,7 @@ const TileView = ({
                   {firstValue(file.description, file.summary, t('info_no_summary'))}
                 </div>
 	              </div>
+              )}
 	            </div>
 	            );
 	          })}

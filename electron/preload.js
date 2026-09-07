@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:open-settings', handler);
     return () => ipcRenderer.removeListener('app:open-settings', handler);
   },
+    onHistoryNavigation: callback => {
+        const handler = (_, direction) => callback(direction);
+        ipcRenderer.on('app:history-navigation', handler);
+        return () => ipcRenderer.removeListener('app:history-navigation', handler);
+    },
   getFileAssociationStatus: () => ipcRenderer.invoke('fileAssociations:getStatus'),
   applyFileAssociations: (extensions) => ipcRenderer.invoke('fileAssociations:apply', extensions),
   openFileAssociationSettings: () => ipcRenderer.invoke('fileAssociations:openSettings'),

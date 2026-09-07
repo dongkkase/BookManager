@@ -41,8 +41,12 @@ function folderFileGroupValue(file = {}, groupKey = '', fallbackGroupName = UNCA
 
 export function sortFolderFiles(files = [], sortKey = 'name', sortOrder = 'asc') {
     return [...files].sort((a, b) => {
-        const valueA = a?.[sortKey] ?? '';
-        const valueB = b?.[sortKey] ?? '';
+        const directoryA = a?.isDirectory === true;
+        const directoryB = b?.isDirectory === true;
+        if (directoryA !== directoryB) return directoryA ? -1 : 1;
+        const itemSortKey = directoryA ? 'name' : sortKey;
+        const valueA = a?.[itemSortKey] ?? '';
+        const valueB = b?.[itemSortKey] ?? '';
         const result = typeof valueA === 'number' && typeof valueB === 'number'
             ? valueA - valueB
             : KO_NUMERIC_COLLATOR.compare(String(valueA), String(valueB));
@@ -55,15 +59,21 @@ export function groupFolderFiles(files = [], groupKey = 'none', sortKey = 'name'
     if (!groupKey || groupKey === 'none') return [{ name: '', files: sorted }];
     const fallbackGroupName = String(options.fallbackGroupName || UNCATEGORIZED_GROUP_NAME);
 
+    const directories = [];
     const groups = new Map();
     sorted.forEach(file => {
+        if (file?.isDirectory === true) {
+            directories.push(file);
+            return;
+        }
         const name = folderFileGroupValue(file, groupKey, fallbackGroupName) || fallbackGroupName;
         if (!groups.has(name)) groups.set(name, []);
         groups.get(name).push(file);
     });
-    return [...groups.entries()]
+    const fileGroups = [...groups.entries()]
         .sort(([a], [b]) => KO_NUMERIC_COLLATOR.compare(a, b))
         .map(([name, groupedFiles]) => ({ name, files: groupedFiles }));
+    return directories.length > 0 ? [{ name: '', files: directories }, ...fileGroups] : fileGroups;
 }
 
 export function countGroupedFiles(groups = []) {

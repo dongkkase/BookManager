@@ -29,6 +29,24 @@ export function fileOperationErrorKind(error = {}) {
     return 'general';
 }
 
+export function folderEntryOperationTargets(entries = []) {
+    const normalizePath = value => {
+        const path = String(value || '').replace(/\\/g, '/').replace(/\/+$/, '');
+        return /^[a-z]:\//i.test(path) || path.startsWith('//') ? path.toLowerCase() : path;
+    };
+    const uniqueEntries = new Map();
+    for (const entry of entries) {
+        const key = normalizePath(entry?.full_path || entry?.path);
+        if (key && !uniqueEntries.has(key)) uniqueEntries.set(key, entry);
+    }
+    const folders = [...uniqueEntries.entries()]
+        .filter(([, entry]) => entry.isDirectory)
+        .map(([key]) => key);
+    return [...uniqueEntries.entries()]
+        .filter(([key]) => !folders.some(folder => key !== folder && key.startsWith(`${folder}/`)))
+        .map(([, entry]) => entry);
+}
+
 export function createSeriesMovePlans(files = [], getSeriesName) {
     return files.flatMap(file => {
         const source = file.full_path || file.path;

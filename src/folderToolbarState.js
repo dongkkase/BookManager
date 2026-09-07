@@ -65,7 +65,7 @@ export function filterFolderFiles(files = [], options = {}) {
     const metadataMissingOnly = options.metadataMissingOnly === true;
     if (!query && !metadataMissingOnly) return files;
     return files.filter(file => {
-        if (metadataMissingOnly && hasArchiveMetadata(file)) return false;
+        if (metadataMissingOnly && (file?.isDirectory === true || hasArchiveMetadata(file))) return false;
         if (!query) return true;
         return normalizedSearchValues(file).some(value => value.includes(query));
     });

@@ -143,18 +143,20 @@ export function useFileSelection(fileData = []) {
     });
   }, [fileData, fileLookup]);
 
-  const selectPaths = useCallback((paths = []) => {
-    const validPaths = paths.filter(Boolean);
-    const lastPath = validPaths[validPaths.length - 1];
-    const lastIndex = lastPath ? fileLookup.indexByPath.get(lastPath) ?? -1 : -1;
-    setSelectedFiles(prev => samePathList(prev, validPaths) ? prev : validPaths);
-    setActiveSelectedPath(current => {
-      const nextPath = lastPath || '';
-      return current === nextPath ? current : nextPath;
-    });
-    setLastSelectedIndex(current => current === lastIndex ? current : lastIndex);
-    selectionStartRef.current = lastPath ? { path: lastPath, index: lastIndex } : null;
-  }, [fileLookup]);
+    const selectPaths = useCallback((paths = [], options = {}) => {
+        const validPaths = paths.filter(Boolean);
+        const activePath = validPaths.includes(options.activePath)
+            ? options.activePath
+            : validPaths[validPaths.length - 1];
+        const activeIndex = activePath ? fileLookup.indexByPath.get(activePath) ?? -1 : -1;
+        setSelectedFiles(prev => samePathList(prev, validPaths) ? prev : validPaths);
+        setActiveSelectedPath(current => {
+            const nextPath = activePath || '';
+            return current === nextPath ? current : nextPath;
+        });
+        setLastSelectedIndex(current => current === activeIndex ? current : activeIndex);
+        selectionStartRef.current = activePath ? { path: activePath, index: activeIndex } : null;
+    }, [fileLookup]);
 
   const moveActiveSelection = useCallback((direction, extend = false) => {
     if (fileData.length === 0) return '';

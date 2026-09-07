@@ -813,7 +813,7 @@ body.is-resizing-panel .detail-panel-wrap {
     position: relative;
     z-index: 20;
     display: grid;
-    grid-template-columns: auto minmax(160px, 1fr) auto;
+    grid-template-columns: auto auto minmax(100px, 1fr) auto auto;
     flex: 0 0 auto;
     align-items: center;
     gap: 8px;
@@ -821,6 +821,42 @@ body.is-resizing-panel .detail-panel-wrap {
     padding: 5px 8px;
     background: #242424;
     border-bottom: 1px solid var(--line);
+}
+
+.folder-goto-path-navigation {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.folder-goto-path-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-height);
+    height: var(--control-height);
+    padding: 0;
+    color: #cfd8dd;
+    background: #303030;
+    border: 1px solid #4b4b4b;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.folder-goto-path-icon:hover:not(:disabled) {
+    color: #fff;
+    background: #3b4e5a;
+    border-color: #5d7e92;
+}
+
+.folder-goto-path-icon:focus-visible {
+    outline: 1px solid #8bcdf4;
+    outline-offset: 1px;
+}
+
+.folder-goto-path-icon:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 .folder-goto-path-label {
@@ -1720,8 +1756,8 @@ body.is-reordering-table-column {
 .file-table .cover-cell img {
   display: block;
   width: 100%;
-  height: var(--folder-row-height, 50px);
-  object-fit: cover;
+    height: 100%;
+    object-fit: cover;
   border-radius: 0;
 }
 
@@ -2166,13 +2202,11 @@ body.is-reordering-table-column {
   height: var(--thumb-image-height, 128px);
   border-radius: 5px;
   overflow: visible;
-  transition: transform 120ms ease, filter 120ms ease;
+    transition: transform 300ms ease, filter 120ms ease;
 }
 
-.thumbnail-cover-card::before,
-.thumbnail-cover-card::after,
-.tile-cover-card::before,
-.tile-cover-card::after {
+.folder-item-cover-card::before,
+.folder-item-cover-card::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2182,15 +2216,13 @@ body.is-reordering-table-column {
   pointer-events: none;
 }
 
-.thumbnail-cover-card::before,
-.tile-cover-card::before {
+.folder-item-cover-card::before {
   z-index: 0;
   transform: translate(8px, 8px);
   opacity: 0.62;
 }
 
-.thumbnail-cover-card::after,
-.tile-cover-card::after {
+.folder-item-cover-card::after {
   z-index: 1;
   transform: translate(4px, 4px);
   opacity: 0.78;
@@ -2203,7 +2235,7 @@ body.is-reordering-table-column {
 
 .thumbnail-item:hover .thumbnail-cover-card {
   filter: brightness(1.08);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
 .thumbnail-item:hover .thumb-image {
@@ -2240,13 +2272,14 @@ body.is-reordering-table-column {
 .thumb-image img,
 .tile-image img,
 .table-cover-image img {
-  width: 102%;
-  height: 102%;
-  /* object-fit: cover; */
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
   opacity: 0;
   transition: opacity 140ms ease;
-  margin-left:-1%;
-  margin-top:-1%;
+    margin: 0;
 }
 
 .thumb-image img.loaded,
@@ -2553,7 +2586,7 @@ body.is-reordering-table-column {
 .table-cover-image {
   position: relative;
   width:100%;
-  height:calc(100% - 2px);
+    height: calc(var(--folder-row-height, 50px) - 2px);
   /* width: var(--folder-cover-size, 44px); */
   /* height: var(--folder-cover-size, 48px); */
   margin: auto;
@@ -2562,6 +2595,68 @@ body.is-reordering-table-column {
 
 .folder-cover-loading {
   position: relative;
+}
+
+.folder-item-artwork {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--warn);
+}
+
+.folder-item-cover-badge {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 4px;
+    background: rgba(28, 28, 28, 0.9);
+    color: var(--warn);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.tile-image .folder-item-cover-badge {
+    position: absolute;
+    z-index: 3;
+}
+
+.table-cover-image .folder-item-cover-badge {
+    top: 1px;
+    left: 1px;
+    padding: 2px;
+    border-radius: 3px;
+}
+
+.folder-item-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+}
+
+.folder-item-name > .fa-icon {
+    flex-shrink: 0;
+    color: var(--warn);
+}
+
+.folder-item-name > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.directory-detail-icon {
+    flex: 0 0 150px;
+    min-height: 150px;
+    align-self: flex-start;
+}
+
+.directory-detail-panel .metadata-value {
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .thumb-image.folder-cover-loading,

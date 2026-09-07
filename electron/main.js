@@ -457,6 +457,16 @@ function createMainWindow(config) {
   attachWindowSafetyHandlers(mainWindow, {
     reportFault: reportProcessFault,
   });
+    mainWindow.on('app-command', (_event, command) => {
+        const direction = command === 'browser-backward' ? -1 : command === 'browser-forward' ? 1 : 0;
+        if (!direction || !mainWindow || mainWindow.webContents.isDestroyed()) return;
+        mainWindow.webContents.send('app:history-navigation', direction);
+    });
+    mainWindow.on('swipe', (_event, swipeDirection) => {
+        const direction = swipeDirection === 'left' ? -1 : swipeDirection === 'right' ? 1 : 0;
+        if (!direction || !mainWindow || mainWindow.webContents.isDestroyed()) return;
+        mainWindow.webContents.send('app:history-navigation', direction);
+    });
 
   // 개발 모드 또는 로컬 파일 로드
   if (isDev) {
