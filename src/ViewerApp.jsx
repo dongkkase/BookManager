@@ -3,6 +3,7 @@ import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
+import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
 import { createViewerTtsRequests } from './viewerTtsRequests';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
@@ -1405,10 +1406,18 @@ function viewerReadingLocator(session, state = {}) {
   if (session?.type === 'audio') {
     return { kind: 'audio-time', positionSeconds: Math.max(0, Number(state.positionSeconds) || 0) };
   }
+    if (session?.type === 'epub' || session?.type === 'text') {
+        return {
+            kind: 'normalized',
+            normalizedPosition: state.flowMode === 'scroll'
+                ? clamp(Number(state.scrollPercent) || 0, 0, 100) / 100
+                : clamp((Number(state.pageIndex) || 0) / Math.max(1, (Number(state.pageCount) || 1) - 1), 0, 1),
+        };
+    }
   return {
-    kind: session?.type === 'epub' ? 'epub-page' : session?.type === 'text' ? 'text-page' : 'page',
+    kind: 'page',
     pageIndex: Math.max(0, Number(state.pageIndex) || 0),
-    scrollPercent: clamp(Number(state.scrollPercent) || 0, 0, 100),
+    pageCount: Math.max(0, Number(state.pageCount) || 0),
   };
 }
 
@@ -5342,6 +5351,8 @@ function ReaderSettingsPanel({
 
 function ViewerApp() {
   const [session, setSession] = useState(null);
+    const [readiveResumePending, setReadiveResumePending] = useState(null);
+    const [readiveResumeReady, setReadiveResumeReady] = useState(false);
   const [pages, setPages] = useState([]);
   const [pageIndex, setPageIndex] = useState(0);
   const [selectedPageIndex, setSelectedPageIndex] = useState(0);
@@ -5962,8 +5973,9 @@ function ViewerApp() {
   }, []);
 
   const persistState = useCallback((patch = {}) => {
-    if (!session || session.type === 'audio') return;
+    if (!session || session.type === 'audio' || loading || !readiveResumeReady || !pageCountReadyForNavigation) return;
     const fileState = {
+        updatedAt: Date.now(),
       pageIndex: 'pageIndex' in patch ? patch.pageIndex : pageIndex,
       scrollPercent: 'scrollPercent' in patch ? patch.scrollPercent : scrollPercent,
       pageCount: 'pageCount' in patch ? patch.pageCount : pageCount,
@@ -5983,23 +5995,24 @@ function ViewerApp() {
     window.viewerAPI?.saveReadingState?.(session.id, {
       format: session.type,
       ...fileState,
-      locator: viewerReadingLocator(session, fileState),
+      locator: viewerReadingLocator(session, { ...fileState, flowMode }),
       lastReadAt: Date.now(),
     }).catch(error => {
       console.warn('읽기 상태 저장 실패:', error);
     });
-  }, [flowMode, pageCount, pageIndex, readerSettings, readingDirection, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
+  }, [flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readiveResumeReady, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
 
   const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {
-    if (!session || flowMode !== 'scroll') return;
+    if (!session || flowMode !== 'scroll' || !readiveResumeReady) return;
     const currentState = readJson(storageKey(session, 'state'), {});
     saveJson(storageKey(session, 'state'), {
       ...currentState,
+        updatedAt: Date.now(),
       pageIndex: clamp(Number(nextPageIndex) || 0, 0, Math.max(0, pageCount - 1)),
       scrollPercent: clamp(Number(nextScrollPercent) || 0, 0, 100),
       pageCount,
     });
-  }, [flowMode, pageCount, session]);
+  }, [flowMode, pageCount, readiveResumeReady, session]);
 
   const persistCurrentPosition = useCallback(() => {
     if (!session || session.type === 'audio') return;
@@ -6312,6 +6325,8 @@ function ViewerApp() {
     setInitialRenderLoading(true);
     setInitialRenderSequence(current => current + 1);
     setSession(nextSession);
+        setReadiveResumeReady(false);
+        setReadiveResumePending(null);
     setPages([]);
     setPageData({});
     setPageErrors({});
@@ -6350,7 +6365,16 @@ function ViewerApp() {
     scrollRestoreTokenRef.current += 1;
     scrollRef.current?.scrollTo?.({ top: 0 });
 
-    const savedFileState = readJson(storageKey(nextSession, 'state'), {});
+    const localFileState = readJson(storageKey(nextSession, 'state'), {});
+        let remoteFileState = null;
+        try {
+            remoteFileState = await window.viewerAPI?.getReadiveReadingState?.(nextSession.id);
+        } catch {
+            // An unavailable LAN record must not prevent opening the local book.
+        }
+        if (!isCurrentLoad()) return;
+        const savedFileState = mergeReadiveResumeState(localFileState, remoteFileState);
+        setReadiveResumePending({ sessionId: nextSession.id, state: savedFileState });
     const savedViewerPrefs = readJson(viewerPrefsKey(nextSession), {});
     const savedPrefs = { ...savedFileState, ...savedViewerPrefs };
     const savedPageIndex = Math.max(0, Number(savedFileState.pageIndex) || 0);
@@ -6421,9 +6445,7 @@ function ViewerApp() {
       } else if (nextSession.type !== 'audio') {
         setError(viewerText('viewer.common.unsupported_format', '지원하지 않는 형식입니다.'));
       }
-      if (savedPrefs.flowMode === 'scroll') {
-        restoreSavedScrollPosition(nextSession, savedFileState.scrollPercent);
-      }
+
     } catch (loadError) {
       if (isCurrentLoad() && loadError?.name !== 'AbortError') {
         setError(loadError.message || String(loadError));
@@ -6433,6 +6455,15 @@ function ViewerApp() {
       if (isCurrentLoad()) setLoading(false);
     }
   }, [clearDocumentFrame, clearPageTurnRuntime, restoreSavedScrollPosition, setPageIndexSynced]);
+
+    useEffect(() => {
+        if (!session || readiveResumePending?.sessionId !== session.id || loading || !pageCountReadyForNavigation) return;
+        const savedState = readiveResumePending.state;
+        setPageIndexSynced(resolveReadiveResumePage(savedState, { type: session.type, pageCount, textPages, epubPages }));
+        if (flowMode === 'scroll') restoreSavedScrollPosition(session, savedState.scrollPercent);
+        setReadiveResumePending(null);
+        setReadiveResumeReady(true);
+    }, [epubPages, flowMode, loading, pageCount, pageCountReadyForNavigation, readiveResumePending, restoreSavedScrollPosition, session, setPageIndexSynced, textPages]);
 
   const loadComicPage = useCallback(async (index, options = {}) => {
     if (!session || session.type !== 'comic' || index < 0 || index >= pages.length) return;

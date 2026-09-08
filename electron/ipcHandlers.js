@@ -10,6 +10,7 @@ import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { BoundedMemoryCache } from './boundedMemoryCache.js';
 import { createTtsRequestRegistry } from './ttsRequestRegistry.js';
+import { registerReadiveIpc } from './readive/ipc.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
@@ -3151,6 +3152,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const appDataDir = () => getExecutableDir();
   const apiCacheDbPath = () => resolveApiCacheDbPath(appDataDir());
   const libraryDbPath = () => resolveLibraryDbPath(appDataDir());
+    const readiveService = registerReadiveIpc({
+        ipcMain,
+        configManager,
+        getLibraryDbPath: libraryDbPath,
+        getMainWindow: hooks.getMainWindow || (() => null),
+    });
   const contentIndexDbPath = () => resolveContentIndexDbPath(appDataDir());
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const apiCoverCacheDir = () => resolveApiCoverCacheDir(appDataDir());
@@ -5565,6 +5572,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       ttsRequestRegistry.dispose();
       removeContentIndexProgressListener();
       return Promise.all([
+        readiveService.dispose(),
         librarySearchService.close(),
         contentIndexService.close(),
       ]).then(() => undefined);

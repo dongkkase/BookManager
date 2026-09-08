@@ -133,6 +133,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startExtractTask: (options) => ipcRenderer.invoke('task:extract:start', options),
   stopTask: (taskId) => ipcRenderer.invoke('task:stop', taskId),
   
+    getReadiveStatus: () => ipcRenderer.invoke('readive:status'),
+    setReadiveLibraries: options => ipcRenderer.invoke('readive:setLibraries', options),
+    startReadiveServer: options => ipcRenderer.invoke('readive:start', options),
+    stopReadiveServer: () => ipcRenderer.invoke('readive:stop'),
+    createReadivePairing: options => ipcRenderer.invoke('readive:pairing', options),
+    revokeReadiveDevice: options => ipcRenderer.invoke('readive:revoke', options),
+    scanReadiveTransfer: options => ipcRenderer.invoke('readive:scan', options),
+    enqueueReadiveTransfer: options => ipcRenderer.invoke('readive:enqueue', options),
+    cancelReadiveTransfer: options => ipcRenderer.invoke('readive:cancel', options),
+
   // 서버 관련
   startServer: (serverType, options) => ipcRenderer.invoke('server:start', serverType, options),
   stopServer: (serverType) => ipcRenderer.invoke('server:stop', serverType),

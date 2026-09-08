@@ -243,7 +243,7 @@ function pemBlock(label, derBuffer) {
     return `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----\n`;
 }
 
-function createSelfSignedCertificate({ localIp, days = 825 }) {
+export function createSelfSignedCertificate({ localIp, days = 825 }) {
     const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
         modulusLength: 2048,
         publicExponent: 0x10001,

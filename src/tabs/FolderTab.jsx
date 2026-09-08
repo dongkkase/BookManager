@@ -12,6 +12,8 @@ import { FolderPathBar } from '../components/folder/FolderPathBar';
 import { FolderTagSearchDialog } from '../components/folder/FolderTagSearchDialog';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
+import { ReadiveTransferDialog } from '../components/ReadiveTransferDialog';
+import { resolveReadivePaths } from '../readiveTransferPolicy';
 import { extractCoreTitle } from '../utils/folderUtils';
 import {
   basename,
@@ -507,6 +509,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [showMissingDialog, setShowMissingDialog] = useState(false);
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
+    const [readiveTransferPaths, setReadiveTransferPaths] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
   const [showContentIndexDialog, setShowContentIndexDialog] = useState(false);
   const [gotoPathDraft, setGotoPathDraft] = useState('');
@@ -552,7 +555,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       closeTextInputDialog(null);
       return true;
     }
-    if (showMultiRenameDialog) setShowMultiRenameDialog(false);
+    if (readiveTransferPaths) setReadiveTransferPaths(null);
+    else if (showMultiRenameDialog) setShowMultiRenameDialog(false);
     else if (showFolderTagSearchDialog) setShowFolderTagSearchDialog(false);
     else if (showContentIndexDialog) setShowContentIndexDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
@@ -565,6 +569,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return true;
   }, [
     contextMenu,
+    readiveTransferPaths,
     libraryMoveRequest,
     moveConflict,
     seriesMovePreview,
@@ -2944,7 +2949,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'remove-recent') {
+    if (action === 'send-readive') {
+        const paths = resolveReadivePaths(menu, selectedEntryObjects);
+        if (paths.length) setReadiveTransferPaths(paths);
+    } else if (action === 'remove-recent') {
       await removeRecentReading(menu.file?.full_path || menu.file?.path);
     } else if (action === 'refresh-recent') {
       await loadRecentReading();
@@ -3013,7 +3021,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -3775,10 +3783,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           </div>
         </div>
       </div>
+      {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} showToast={showToast} onClose={() => setReadiveTransferPaths(null)} />}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
           {contextMenu.type === 'library' ? (
             <>
+              <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('sync-library')} label={t('setting_update_index')} />
               <ContextMenuItem onClick={() => handleContextAction('optimize-library')} label={t('menu_optimize_meta')} />
               <div className="folder-context-menu-separator" />
@@ -3787,6 +3797,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </>
           ) : contextMenu.type === 'folder' ? (
             <>
+              <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('open-folder')} icon="folderOpen" label={t('action_open_folder')} />
               <ContextMenuItem
                 onClick={() => handleContextAction(
@@ -3815,6 +3826,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </>
           ) : (
             <>
+              <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('view-file')} label={t('action_view')} />
               {!isRecentReading && (
                 <>

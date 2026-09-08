@@ -202,7 +202,7 @@ function parseReadingLocator(value) {
 }
 
 function readingStateStatus(state = {}) {
-    if (state.status === 'completed') return 'completed';
+    if (['unread', 'reading', 'completed'].includes(state.status)) return state.status;
     const format = String(state.format || '').toLowerCase();
     const isAudio = format === 'audio' || state.duration_seconds > 0 || state.position_seconds > 0;
     if (isAudio) {
@@ -239,7 +239,7 @@ function normalizeReadingStateRow(row = {}) {
         scrollPercent: Math.max(0, Math.min(100, finiteReadingNumber(row.scroll_percent, 0))),
         positionSeconds: Math.max(0, finiteReadingNumber(row.position_seconds, 0)),
         durationSeconds: Math.max(0, finiteReadingNumber(row.duration_seconds, 0)),
-        status: row.status === 'completed' ? 'completed' : 'reading',
+        status: ['unread', 'reading', 'completed'].includes(row.status) ? row.status : 'reading',
         lastReadAt: String(row.last_read_at || ''),
         updatedAt: String(row.updated_at || ''),
         deviceId: String(row.device_id || ''),

@@ -1,0 +1,381 @@
+.readive-panel {
+    padding: 18px;
+    margin-bottom: 22px;
+    border: 1px solid #52525b;
+    border-radius: 8px;
+    background: #18181b;
+    color: #f4f4f5;
+}
+
+.readive-panel h2,
+.readive-dialog h2 {
+    margin: 0;
+    font-size: var(--font-lg, 18px);
+}
+
+.readive-panel p,
+.readive-dialog p {
+    line-height: 1.6;
+}
+
+.readive-panel button,
+.readive-dialog button,
+.readive-panel select,
+.readive-dialog select {
+    min-height: 34px;
+    padding: 6px 12px;
+    border: 1px solid #71717a;
+    border-radius: 5px;
+    background: #27272a;
+    color: #fafafa;
+    font: inherit;
+}
+
+.readive-panel button,
+.readive-dialog button {
+    cursor: pointer;
+}
+
+.readive-panel :disabled,
+.readive-dialog :disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.readive-panel :focus-visible,
+.readive-sharing-panel :focus-visible,
+.readive-dialog :focus-visible {
+    outline: 2px solid #93c5fd;
+    outline-offset: 3px;
+}
+
+.readive-sharing-panel {
+    flex-shrink: 0;
+    margin-bottom: 20px;
+}
+
+.readive-sharing-panel h2,
+.readive-sharing-panel h3,
+.readive-sharing-panel p {
+    margin: 0;
+}
+
+.readive-sharing-panel .sharing-input-select,
+.readive-sharing-panel .sharing-input-url {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.readive-sharing-panel .sharing-btn-copy {
+    flex-shrink: 0;
+}
+
+.readive-sharing-panel .readive-pairing,
+.readive-sharing-panel .readive-qr-card,
+.readive-sharing-panel .readive-pairing-qr {
+    width: 100%;
+}
+
+.readive-sharing-panel .readive-connection-layout {
+    display: grid;
+    grid-template-columns: minmax(min-content, 1.3fr) minmax(0, 1fr);
+    gap: 20px;
+}
+
+.readive-sharing-panel .readive-connection-details,
+.readive-sharing-panel .readive-address-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+    gap: 12px;
+}
+
+.readive-sharing-panel .readive-interface-row,
+.readive-sharing-panel .readive-address-actions,
+.readive-sharing-panel .sharing-input-url {
+    width: 100%;
+}
+
+.readive-sharing-panel .readive-interface-row label {
+    flex-basis: 100%;
+}
+
+.readive-sharing-panel .readive-interface-row select {
+    flex: 1;
+}
+
+.readive-sharing-panel .readive-devices {
+    min-width: 0;
+    padding-left: 20px;
+    border-left: 1px solid #3f3f46;
+}
+
+.readive-sharing-panel .readive-devices > p {
+    margin-top: 10px;
+}
+
+.readive-sharing-panel .readive-device {
+    margin-top: 4px;
+    padding: 4px 0;
+    gap: 6px 8px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.readive-sharing-panel .readive-device + .readive-device {
+    border-top: 1px solid #27272a;
+}
+
+.readive-sharing-panel .readive-device .sharing-btn-copy {
+    min-height: 28px;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.readive-sharing-panel .readive-device .readive-device-unlink {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+    color: #a1a1aa;
+}
+
+.readive-sharing-panel .readive-device > span {
+    min-width: 0;
+    overflow-wrap: normal;
+}
+
+.readive-row,
+.readive-device,
+.readive-entry-heading {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.readive-device {
+    margin-top: 10px;
+    justify-content: space-between;
+}
+
+.readive-address,
+.readive-path {
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.readive-pairing {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.readive-pairing-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.readive-pairing-copy .readive-pairing-actions > p {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.readive-panel .readive-pairing {
+    margin-top: 12px;
+}
+
+.readive-pairing-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.readive-qr-card {
+    max-width: 100%;
+    padding: 8px;
+    border: 1px solid #3f3f46;
+    border-radius: 10px;
+    background: white;
+}
+
+.readive-pairing-qr {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    background: white;
+    image-rendering: pixelated;
+}
+
+.readive-libraries {
+    margin: 22px 0;
+    padding: 12px;
+    border: 1px solid #71717a;
+    border-radius: 6px;
+}
+
+.readive-library {
+    padding: 8px 0;
+}
+
+.readive-library-path {
+    display: block;
+    overflow-wrap: anywhere;
+    color: #d4d4d8;
+    margin-top: 4px;
+}
+
+.readive-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgb(0 0 0 / 65%);
+}
+
+.readive-dialog {
+    display: flex;
+    flex-direction: column;
+    width: min(900px, 100%);
+    max-height: 100%;
+    min-height: 0;
+    border: 1px solid #71717a;
+    border-radius: 10px;
+    background: #18181b;
+    color: #f4f4f5;
+    font-size: var(--font-base, 14px);
+}
+
+.readive-dialog-header,
+.readive-dialog-footer {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+}
+
+.readive-dialog-footer {
+    justify-content: flex-end;
+    border-top: 1px solid #3f3f46;
+}
+
+.readive-dialog-body {
+    overflow: auto;
+    padding: 0 20px 20px;
+    min-height: 0;
+}
+
+.readive-dialog .readive-primary {
+    background: #1d4ed8;
+    border-color: #60a5fa;
+}
+
+.readive-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin: 18px 0;
+    padding: 14px;
+    border: 1px solid #52525b;
+    border-radius: 6px;
+}
+
+.readive-summary dt {
+    color: #d4d4d8;
+}
+
+.readive-summary dd {
+    margin: 6px 0 0;
+    font-size: var(--font-lg, 18px);
+    font-weight: bold;
+}
+
+.readive-entries {
+    max-height: 280px;
+    overflow: auto;
+    border: 1px solid #52525b;
+    border-radius: 5px;
+}
+
+.readive-entry {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #3f3f46;
+}
+
+.readive-entry-skipped {
+    color: #d4d4d8;
+}
+
+.readive-confirm {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding-top: 16px;
+    line-height: 1.5;
+}
+
+.readive-dialog input[type="checkbox"] {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin: 1px 0;
+}
+
+.readive-warning {
+    color: #fde68a;
+}
+
+.readive-error {
+    color: #fca5a5;
+}
+
+.readive-job {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0;
+    border-top: 1px solid #3f3f46;
+    line-height: 1.6;
+}
+
+.readive-job progress {
+    width: 100%;
+    grid-column: 1 / -1;
+}
+
+@media (max-width: 700px) {
+    .readive-overlay {
+        padding: 8px;
+    }
+
+    .readive-dialog-header,
+    .readive-dialog-footer {
+        flex-wrap: wrap;
+    }
+
+    .readive-panel select,
+    .readive-dialog select {
+        max-width: 100%;
+    }
+}

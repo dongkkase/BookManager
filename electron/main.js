@@ -382,6 +382,7 @@ async function initializeApp() {
     getBinPath,
     getFontPath,
     {
+        getMainWindow: () => mainWindow,
       onMetadataSaveSuccess: successfulPaths => viewerController?.refreshAudioMetadata?.(successfulPaths),
     },
   );

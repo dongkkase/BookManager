@@ -31,7 +31,9 @@ test('최근 읽음은 SQLite 기록과 메인·뷰어 IPC를 통해 연결된�
 test('모든 내부 뷰어는 현재 읽기 위치와 형식별 로케이터를 저장한다', () => {
     assert.match(viewerSource, /function viewerReadingLocator/);
     assert.match(viewerSource, /window\.viewerAPI\?\.saveReadingState/);
-    assert.match(viewerSource, /kind:\s*session\?\.type === 'epub' \? 'epub-page'/);
+    assert.match(viewerSource, /session\?\.type === 'epub' \|\| session\?\.type === 'text'/);
+    assert.match(viewerSource, /kind:\s*'normalized'/);
+    assert.match(viewerSource, /normalizedPosition:/);
     assert.match(audiobookSource, /window\.viewerAPI\?\.saveReadingState/);
     assert.match(audiobookSource, /kind:\s*'audio-time'/);
 });

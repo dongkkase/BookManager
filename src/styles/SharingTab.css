@@ -8,6 +8,8 @@
   font-family: var(--font-primary);
   font-size: var(--font-base);
   gap: 20px;
+    word-break: keep-all;
+    overflow-wrap: normal;
 }
 
 .sharing-left-panel {
@@ -272,7 +274,7 @@
   user-select: text;
   -webkit-user-select: text;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+    overflow-wrap: normal;
 }
 
 .sharing-log-console * {

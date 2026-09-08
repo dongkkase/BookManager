@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverArtwork } from '../CoverArtwork';
+import { mergeReadiveResumeState } from '../../readiveViewerResume';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const SKIP_INTERVALS = [5, 10, 15, 30, 60];
@@ -241,6 +242,7 @@ function persistAudioPlaybackState(session, audio, fallbackDuration = 0, fallbac
     const playbackRate = Number(audio?.playbackRate);
     const hasLoadedAudio = Boolean(audio) && Number(audio.readyState) > 0 && Number.isFinite(positionSeconds);
     const state = {
+        updatedAt: Date.now(),
         positionSeconds: hasLoadedAudio ? positionSeconds : Math.max(0, Number(fallbackPosition) || 0),
         durationSeconds: Number(audio?.duration) || fallbackDuration,
         playbackRate: Number.isFinite(playbackRate) ? playbackRate : fallbackRate,
@@ -395,9 +397,13 @@ function AudiobookViewer({
         Promise.all([
             window.viewerAPI.getAudioData(session.id),
             window.viewerAPI.listAudioQueue(session.id),
+            Promise.resolve(window.viewerAPI.getReadiveReadingState?.(session.id)).catch(() => null),
         ])
-            .then(([nextAudioData, nextQueue]) => {
+            .then(([nextAudioData, nextQueue, remoteState]) => {
                 if (!active) return;
+                const resumed = mergeReadiveResumeState(stored, remoteState);
+                restoreTimeRef.current = Math.max(0, Number(resumed.positionSeconds) || 0);
+                restoreDurationRef.current = Math.max(0, Number(resumed.durationSeconds) || 0);
                 setAudioData({ ...nextAudioData, _sessionId: session.id });
                 setQueue(nextQueue && typeof nextQueue === 'object'
                     ? nextQueue

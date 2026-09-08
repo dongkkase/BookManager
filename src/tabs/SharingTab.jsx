@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { ReadiveConnectionPanel } from '../components/ReadiveConnectionPanel';
 import '../styles/SharingTab.css';
 
 const MIN_PORT = 1024;
@@ -287,6 +288,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     return (
         <div className="sharing-tab">
             <div className="sharing-left-panel">
+                <ReadiveConnectionPanel t={t} showToast={showToast} variant="sharing" />
                 <div className="sharing-groupbox">
                     <div className="sharing-groupbox-title">{t('tab_sharing_security_title')}</div>
                     <div className="sharing-groupbox-content">

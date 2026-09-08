@@ -11,6 +11,7 @@ import { ViewerSessionManager } from './viewerSessions.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
 import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
 import { LibraryDB } from './database/library_db.js';
+import { getReadiveReadingState } from './readive/ipc.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -837,6 +838,10 @@ export function setupViewerWindowManager(options = {}) {
         } finally {
             if (context.epubRequestController === controller) context.epubRequestController = null;
         }
+    });
+    ipcMain.handle('viewer:getReadiveReadingState', async (event, sessionId) => {
+        viewerContextForCurrentSessionRequest(event, sessionId);
+        return getReadiveReadingState(sessions.get(sessionId).filePath);
     });
     ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
         const context = viewerContextForSender(event.sender);

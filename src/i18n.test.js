@@ -107,3 +107,13 @@ test('상세 패널 접기와 열기 문구를 세 언어로 제공한다', () =
         assert.equal(translate('folder.detail.expand', language), translations[2]);
     }
 });
+
+test('Readive transfer confirmations and pairing instructions are localized in all supported languages', () => {
+    for (const language of ['ko', 'en', 'ja']) {
+        for (const key of ['send', 'pair_instructions', 'confirm', 'confirm_large', 'hard_limit', 'scan_failed', 'enqueue_failed', 'destination', 'status_queued', 'qr_alt', 'shared_libraries', 'shared_libraries_description', 'no_libraries', 'mobile_requested', 'copy', 'copied', 'pair_ticket', 'manual_instructions', 'copy_failed']) {
+            assert.notEqual(translate(`readive.${key}`, language), `readive.${key}`);
+        }
+        assert.match(translate('readive.confirm_large', language), /100.*30.*2 GiB/);
+        assert.match(translate('readive.hard_limit', language), /1,000.*300.*10 GiB/);
+    }
+});
