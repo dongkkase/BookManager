@@ -110,7 +110,7 @@ export function publicSnapshot(snapshot) {
     return { id: snapshot.id, roots: snapshot.roots, entries: snapshot.entries.map(({ sourcePath, ...entry }) => entry), summary: snapshot.summary, large: snapshot.large, blocked: snapshot.blocked, warnings: snapshot.warnings };
 }
 
-export async function scanReadivePaths(paths, { libraryDb, signal, limits = READIVE_LIMITS, rootPath } = {}) {
+export async function scanReadivePaths(paths, { libraryDb, signal, limits = READIVE_LIMITS, rootPath, preserveAncestors = true } = {}) {
     if (!Array.isArray(paths) || paths.length < 1 || paths.length > limits.hardFiles + limits.hardFolders) throw fail('invalid_roots');
     const requested = [...new Set(paths.map(value => path.resolve(String(value))))];
     const normalized = requested.filter(value => !requested.some(other => other !== value && value.startsWith(other.endsWith(path.sep) ? other : other + path.sep)));
@@ -212,14 +212,14 @@ export async function scanReadivePaths(paths, { libraryDb, signal, limits = READ
     };
     for (const sourcePath of normalized) {
         let rootName = path.basename(sourcePath) || (rootPath ? 'Library' : '');
-        if (!rootName || (!rootPath && names.has(rootName.toLocaleLowerCase('en')))) throw fail('duplicate_root_name');
+        if (!rootName || ((!rootPath || !preserveAncestors) && names.has(rootName.toLocaleLowerCase('en')))) throw fail('duplicate_root_name');
         names.add(rootName.toLocaleLowerCase('en'));
         try {
             await assertNoSymlinks(sourcePath);
             if (rootPath && !withinLibrary(sourcePath)) throw fail('invalid_library_path');
-            const parentId = rootPath && sourcePath !== rootPath ? await addAncestor(path.dirname(sourcePath)) : null;
+            const parentId = rootPath && preserveAncestors && sourcePath !== rootPath ? await addAncestor(path.dirname(sourcePath)) : null;
             const first = snapshot.entries.length;
-            const relativePath = rootPath ? manifestPath(sourcePath) : rootName;
+            const relativePath = rootPath && preserveAncestors ? manifestPath(sourcePath) : rootName;
             await visit(sourcePath, relativePath, parentId, relativePath.split('/').length - 1);
             snapshot.roots.push({ id: snapshot.entries[first].id, name: rootName, path: sourcePath });
         } catch (error) {

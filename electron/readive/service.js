@@ -10,6 +10,9 @@ import { openFrozenAsset, publicSnapshot, scanReadivePaths, selectSnapshotEntrie
 import { exchangeReading, getImportedReadingState, readingRowSignature } from './reading.js';
 import { ReadiveCatalogCache, readReadiveLibraryEntries, registeredReadiveLibraries, resolveReadiveLibraryPath, validateReadiveLibrary } from './catalog.js';
 import { pairingQrDataUrl } from './qr.js';
+import { openReaderAsset, ReadiveReaders } from './readers.js';
+import { ReadiveDestinations } from './destinations.js';
+import { ReadiveManualPairing } from './manualPairing.js';
 
 const PREFIX = '/readive/v1';
 const SCAN_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -23,6 +26,7 @@ function publicJob(job) {
         fileCount: job.manifest.files.length, directoryCount: job.manifest.directories.length,
         totalBytes: job.manifest.totalBytes, completedFileIds: [...job.completedFileIds],
         origin: job.libraryScope ? 'mobile-browse' : 'desktop-push',
+        destination: job.destination || null,
     };
 }
 
@@ -47,7 +51,7 @@ async function readBody(request) {
 }
 
 export class ReadiveService {
-    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onLog = () => {} }) {
+    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
         this.store = new ReadiveStore(directory);
         this.getLibraryDb = getLibraryDb;
         this.getRegisteredLibraries = getRegisteredLibraries;
@@ -61,6 +65,7 @@ export class ReadiveService {
         this.port = null;
         this.certificateSha256 = '';
         this.ticket = null;
+        this.manualPairing = new ReadiveManualPairing({ now: () => this.now(), requestApproval: requestManualApproval });
         this.pairAttempts = new Map();
         this.snapshots = new Map();
         this.scanning = false;
@@ -69,6 +74,8 @@ export class ReadiveService {
         this.lifecyclePending = Promise.resolve();
         this.catalogSecret = crypto.randomBytes(32);
         this.catalogCache = new ReadiveCatalogCache({ now: () => this.now() });
+        this.readers = new ReadiveReaders({ now: () => this.now(), onClose: session => this.abortDeviceTransfers(session.deviceId, `reader-${session.id}`) });
+        this.destinations = new ReadiveDestinations({ now: () => this.now() });
         this.preparations = new Map();
         this.cancelledPreparations = new Map();
         this.preparationTimeoutMs = 10 * 60 * 1000;
@@ -190,7 +197,7 @@ export class ReadiveService {
                     if (controller.signal.aborted) throw fail('scan_cancelled', 409);
                     sourcePaths.push((await resolveReadiveLibraryPath(scope, value)).sourcePath);
                 }
-                const snapshot = await scanReadivePaths(sourcePaths, { libraryDb: await this.getLibraryDb?.(), signal: controller.signal, rootPath: scope.rootPath });
+                const snapshot = await scanReadivePaths(sourcePaths, { libraryDb: await this.getLibraryDb?.(), signal: controller.signal, rootPath: scope.rootPath, preserveAncestors: false });
                 if (snapshot.blocked) throw fail('transfer_hard_limit', 413);
                 if (controller.signal.aborted) throw fail('scan_cancelled', 409);
                 await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
@@ -286,7 +293,10 @@ export class ReadiveService {
 
     async stopServer() {
         this.ticket = null;
+        this.manualPairing.clear();
         this.catalogCache.clear();
+        this.readers.clear();
+        this.destinations.clear();
         this.scanController?.abort();
         for (const responses of this.connections.values()) for (const response of responses) response.destroy();
         this.connections.clear();
@@ -323,6 +333,8 @@ export class ReadiveService {
             return device;
         });
         this.abortDeviceTransfers(deviceId);
+        this.readers.closeDevice(deviceId);
+        this.destinations.clearDevice(deviceId);
         for (const preparation of this.preparations.values()) if (preparation.deviceId === deviceId) preparation.controller.abort();
         if (revokedDevice) this.log('readive.log_device_revoked', { device: revokedDevice.name });
         return { success: true };
@@ -353,7 +365,16 @@ export class ReadiveService {
         }
     }
 
-    async enqueue({ snapshotId, deviceId, excludedIds = [], confirmed, largeConfirmed } = {}) {
+    async requestDestinationPage({ deviceId, parentId = null, cursor = null } = {}) {
+        if (!this.server) throw fail('server_not_running', 409);
+        const state = await this.store.load();
+        if (!this.server) throw fail('server_not_running', 409);
+        const device = state.devices.find(item => item.id === deviceId);
+        if (!device) throw fail('unknown_device', 404);
+        return this.destinations.request(device, parentId, cursor);
+    }
+
+    async enqueue({ snapshotId, deviceId, excludedIds = [], confirmed, largeConfirmed, destination } = {}) {
         const snapshot = this.snapshots.get(snapshotId);
         if (!snapshot || this.now() - Date.parse(snapshot.createdAt) > 30 * 60 * 1000) throw fail('snapshot_expired', 409);
         if (snapshot.blocked || confirmed !== true) throw fail('confirmation_required', 409);
@@ -370,6 +391,7 @@ export class ReadiveService {
                 if (!state.devices.some(device => device.id === deviceId && equalDigest(device.tokenHash, snapshot.tokenHash))) throw fail('unauthorized', 401);
             }
             if (!state.devices.some(device => device.id === deviceId)) throw fail('unknown_device', 404);
+            const target = this.destinations.validate(state.devices.find(device => device.id === deviceId), destination);
             if (state.jobs.filter(job => ['queued', 'accepted'].includes(job.state)).length >= 20) throw fail('too_many_jobs', 409);
             const assets = {};
             state.entryIds ||= {};
@@ -418,7 +440,7 @@ export class ReadiveService {
             }
             const manifest = { version: 1, id: snapshot.id, directories, files, totalBytes: summary.bytes };
             if (Buffer.byteLength(JSON.stringify(manifest)) > 8 * 1024 ** 2) throw fail('manifest_too_large');
-            const fingerprint = digest(JSON.stringify({ deviceId, libraryApproval: snapshot.libraryScope?.approvalId, manifest: { ...manifest, id: undefined } }));
+            const fingerprint = digest(JSON.stringify({ deviceId, destination: target, libraryApproval: snapshot.libraryScope?.approvalId, manifest: { ...manifest, id: undefined } }));
             const previous = state.jobs.find(job => job.fingerprint === fingerprint && ['queued', 'accepted'].includes(job.state));
             if (previous) return { ...publicJob(previous), duplicate: true };
             while (state.jobs.length >= 100) {
@@ -430,7 +452,7 @@ export class ReadiveService {
                 id: crypto.randomUUID(), deviceId, title: snapshot.roots.map(root => root.name).join(', ').slice(0, 200),
                 state: 'queued', createdAt: new Date(this.now()).toISOString(), manifest, assets, summary,
                 fileAssets: Object.fromEntries(entries.filter(entry => entry.kind === 'file').map(entry => [stableIds.get(entry.id), { file: entry.assetId, cover: entry.coverAssetId || null }])),
-                completedFileIds: [], fingerprint,
+                completedFileIds: [], fingerprint, destination: target,
                 ...(snapshot.libraryScope ? { libraryScope: snapshot.libraryScope } : {}),
             };
             if (snapshot.signal?.aborted) throw fail('scan_cancelled', 409);
@@ -462,6 +484,15 @@ export class ReadiveService {
     async dispatch({ method, pathname, query = new URLSearchParams(), body = {}, token = '', remoteAddress, localAddress, signal }) {
         this.validateSource(remoteAddress, localAddress);
         await this.store.load();
+        if (method === 'POST' && pathname === `${PREFIX}/manual-pair`) {
+            if (!this.server) throw fail('server_not_running', 409);
+            return { json: this.manualPairing.begin(body, {
+                serverId: this.store.state.serverId, serverName: this.serverName,
+                host: this.localInterface.address, port: this.port, certificateSha256: this.certificateSha256,
+            }) };
+        }
+        const manualMatch = pathname.match(/^\/readive\/v1\/manual-pair\/([a-f0-9-]+)\/(status|cancel)$/);
+        if (method === 'POST' && manualMatch) return { json: this.manualPairing[manualMatch[2]](manualMatch[1], body) };
         if (method === 'POST' && pathname === `${PREFIX}/pair`) {
             const source = String(remoteAddress);
             let attempt = this.pairAttempts.get(source);
@@ -470,11 +501,12 @@ export class ReadiveService {
             if (this.pairAttempts.size >= 256 && !this.pairAttempts.has(source)) this.pairAttempts.delete(this.pairAttempts.keys().next().value);
             this.pairAttempts.set(source, attempt);
             if (attempt.count > 10) throw fail('pair_rate_limited', 429);
-            if (!this.ticket || Date.parse(this.ticket.expiresAt) < this.now() || typeof body.secret !== 'string'
-                || !equalDigest(this.ticket.hash, digest(body.secret))) throw fail('invalid_pairing_ticket', 401);
+            const qrTicket = this.ticket && Date.parse(this.ticket.expiresAt) > this.now() && typeof body.secret === 'string'
+                && equalDigest(this.ticket.hash, digest(body.secret));
             if (typeof body.deviceId !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.deviceId)
                 || typeof body.deviceName !== 'string' || !body.deviceName.trim() || body.deviceName.length > 100) throw fail('invalid_device');
-            this.ticket = null;
+            if (qrTicket) this.ticket = null;
+            else if (!this.manualPairing.consume(body.secret, body)) throw fail('invalid_pairing_ticket', 401);
             const paired = await this.store.transact(state => {
                 if (state.devices.length >= 32 && !state.devices.some(device => device.id === body.deviceId)) throw fail('too_many_devices', 409);
                 const token = tokenValue();
@@ -483,6 +515,8 @@ export class ReadiveService {
                 return { serverId: state.serverId, serverName: this.serverName, deviceId: body.deviceId, token };
             });
             this.abortDeviceTransfers(body.deviceId);
+            this.readers.closeDevice(body.deviceId);
+            this.destinations.clearDevice(body.deviceId);
             for (const preparation of this.preparations.values()) if (preparation.deviceId === body.deviceId) preparation.controller.abort();
             this.log('readive.log_device_paired', { device: body.deviceName });
             return { json: paired };
@@ -490,6 +524,9 @@ export class ReadiveService {
         const state = this.store.state;
         const device = /^[a-zA-Z0-9_-]{43}$/.test(token) ? state.devices.find(item => equalDigest(item.tokenHash, digest(token))) : null;
         if (!device) throw fail('unauthorized', 401);
+        if (method === 'GET' && pathname === `${PREFIX}/destination-requests`) return { json: { requests: this.destinations.list(device) } };
+        const destinationMatch = pathname.match(/^\/readive\/v1\/destinations\/([a-f0-9-]+)$/);
+        if (method === 'POST' && destinationMatch) return { json: this.destinations.respond(device, destinationMatch[1], body) };
         if (method === 'GET' && pathname === `${PREFIX}/libraries`) {
             const libraries = [];
             for (const registered of registeredReadiveLibraries(state, this.getRegisteredLibraries())) {
@@ -503,7 +540,22 @@ export class ReadiveService {
             }).map(({ library }) => ({ id: library.id, name: library.name }));
             return { json: { libraries: allowed } };
         }
-        const libraryMatch = pathname.match(/^\/readive\/v1\/libraries\/([a-f0-9]{32})\/(entries|prepare|preparations)(?:\/([a-f0-9-]+)(?:\/(cancel))?)?$/);
+        const readerMatch = pathname.match(/^\/readive\/v1\/readers\/([a-f0-9-]+)\/(content|close)$/);
+        if (readerMatch) {
+            const [, readerId, action] = readerMatch;
+            if (method === 'POST' && action === 'close') {
+                const session = this.readers.get(readerId, device, { touch: false, missingAllowed: true });
+                if (session) this.readers.remove(readerId);
+                return { json: { success: true } };
+            }
+            if (method !== 'GET' || action !== 'content') throw fail('not_found', 404);
+            const session = await this.validateReader(readerId, device);
+            const handle = await openReaderAsset(session.asset);
+            await handle.close();
+            await this.validateReader(readerId, device);
+            return { asset: session.asset, deviceId: device.id, readerId, tokenHash: device.tokenHash };
+        }
+        const libraryMatch = pathname.match(/^\/readive\/v1\/libraries\/([a-f0-9]{32})\/(entries|prepare|preparations|read)(?:\/([a-f0-9-]+)(?:\/(cancel))?)?$/);
         if (libraryMatch) {
             const [, libraryId, action, scanId, cancel] = libraryMatch;
             if (action === 'preparations' && scanId) {
@@ -524,6 +576,17 @@ export class ReadiveService {
                 return { json: { state: preparation.state, ...(preparation.error ? { error: preparation.error } : {}) } };
             }
             if (scanId) throw fail('not_found', 404);
+            if (method === 'POST' && action === 'read') {
+                if (!body || typeof body !== 'object' || Object.keys(body).some(key => key !== 'path')) throw fail('invalid_library_path');
+                return { json: await this.readers.open(device, body.path,
+                    async () => (await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId)).scope,
+                    async scope => {
+                        await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
+                        this.validateLibraryPermission(scope);
+                        this.validateDevice(device);
+                        this.validateSource(remoteAddress, localAddress);
+                    }, signal) };
+            }
             if (method === 'POST' && action === 'prepare') return { json: await this.beginPreparation(libraryId, body.paths, device, body.scanId) };
             if (method === 'GET' && action === 'entries') {
                 if ([...query.keys()].some(key => !['path', 'cursor'].includes(key)) || query.getAll('path').length > 1 || query.getAll('cursor').length > 1) throw fail('query_not_allowed');
@@ -620,7 +683,8 @@ export class ReadiveService {
                 remoteAddress: request.socket.remoteAddress, localAddress: request.socket.localAddress, signal: controller.signal,
             });
             if (result.asset) {
-                await this.sendAsset(request, response, result);
+                if (result.readerId) await this.sendReaderAsset(request, response, result);
+                else await this.sendAsset(request, response, result);
                 return;
             }
             this.sendJson(response, 200, result.json);
@@ -639,6 +703,85 @@ export class ReadiveService {
         const bytes = Buffer.from(JSON.stringify(value));
         response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': bytes.length, 'Cache-Control': 'no-store', 'Connection': 'close', 'X-Content-Type-Options': 'nosniff' });
         response.end(bytes);
+    }
+
+    async validateReader(readerId, device) {
+        const session = this.readers.get(readerId, device);
+        await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), session.scope.libraryId, session.scope);
+        this.validateLibraryPermission(session.scope);
+        this.validateDevice(device);
+        if (this.readers.get(readerId, device) !== session) throw fail('reader_expired', 409);
+        return session;
+    }
+
+    async sendReaderAsset(request, response, { asset, deviceId, readerId, tokenHash }) {
+        const device = { id: deviceId, tokenHash };
+        const handle = await openReaderAsset(asset);
+        const controller = new AbortController();
+        const key = `${deviceId}:reader-${readerId}`;
+        let responses;
+        const disconnected = () => controller.abort();
+        try {
+            const session = await this.validateReader(readerId, device);
+            this.validateSource(request.socket.remoteAddress, request.socket.localAddress);
+            if (response.destroyed) throw fail('reader_expired', 409);
+            let start = 0;
+            let end = asset.size - 1;
+            const range = request.headers.range;
+            if (range) {
+                const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+                if (!match || !Number.isSafeInteger(Number(match[1])) || Number(match[1]) >= asset.size
+                    || (match[2] && (!Number.isSafeInteger(Number(match[2])) || Number(match[2]) < Number(match[1]) || Number(match[2]) >= asset.size))) throw fail('invalid_range', 416);
+                start = Number(match[1]);
+                end = match[2] ? Number(match[2]) : end;
+            }
+            responses = this.connections.get(key) || new Set();
+            if (responses.size >= 4) throw fail('too_many_transfers', 429);
+            responses.add(response);
+            this.connections.set(key, responses);
+            response.once('close', disconnected);
+            response.writeHead(range ? 206 : 200, {
+                'Content-Type': asset.mimeType, 'Content-Length': Math.max(0, end - start + 1),
+                'Accept-Ranges': 'bytes', ETag: `"${session.sourceVersion}"`, 'Cache-Control': 'no-store', Connection: 'close',
+                ...(range ? { 'Content-Range': `bytes ${start}-${end}/${asset.size}` } : {}),
+            });
+            let sent = 0;
+            let checkedAt = 0;
+            if (asset.size) {
+                const stream = handle.createReadStream({ start, end, autoClose: false, signal: controller.signal });
+                for await (const chunk of stream) {
+                    if (controller.signal.aborted) throw fail('reader_expired', 409);
+                    const finalChunk = sent + chunk.length === end - start + 1;
+                    if (finalChunk || this.now() - checkedAt >= 1000) {
+                        await this.validateReader(readerId, device);
+                        this.validateSource(request.socket.remoteAddress, request.socket.localAddress);
+                        const current = await openReaderAsset(asset);
+                        await current.close();
+                        const stat = await handle.stat();
+                        if (Object.entries(asset.identity).some(([name, value]) => stat[name] !== value)) throw fail('source_changed', 409);
+                        if (controller.signal.aborted || response.destroyed) throw fail('reader_expired', 409);
+                        checkedAt = this.now();
+                    }
+                    sent += chunk.length;
+                    if (!response.write(chunk)) {
+                        await new Promise((resolve, reject) => {
+                            const cleanup = () => { response.removeListener('drain', drained); response.removeListener('close', closed); };
+                            const drained = () => { cleanup(); resolve(); };
+                            const closed = () => { cleanup(); reject(fail('reader_expired', 409)); };
+                            response.once('drain', drained);
+                            response.once('close', closed);
+                            if (response.destroyed) closed();
+                        });
+                    }
+                }
+            }
+            response.end();
+        } finally {
+            response.removeListener('close', disconnected);
+            responses?.delete(response);
+            if (responses && !responses.size && this.connections.get(key) === responses) this.connections.delete(key);
+            await handle.close();
+        }
     }
 
     async sendAsset(request, response, { asset, deviceId, jobId, tokenHash }) {

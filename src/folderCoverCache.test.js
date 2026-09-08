@@ -4,6 +4,7 @@ import {
     mergeFolderFileCacheUpdate,
     mergeFolderFilePreservingCover,
     mergeFolderScanResults,
+    appendUniqueFolderFiles,
 } from './hooks/useFolderScan.js';
 
 const directory = {
@@ -35,6 +36,23 @@ test('일반 폴더 스캔은 먼저 조회된 표지와 원본 파일 정보를
     assert.deepEqual(merged, { ...directory, cache_source: 'directory' });
     assert.equal(merged.title, 'Series');
     assert.equal(merged.size, 0);
+});
+
+test('스캔 완료와 반복 배치는 같은 경로만 합치고 다른 위치의 같은 이름은 유지한다', () => {
+    const scannedDirectory = { path: directory.path, name: directory.name, isDirectory: true, mtime: directory.mtime, cover: '', thumb_path: '' };
+    const anotherDirectory = { ...scannedDirectory, path: '/other/Series' };
+    const file = { path: '/books/Book.cbz', isDirectory: false };
+    const incoming = [scannedDirectory, scannedDirectory, anotherDirectory, file, file];
+
+    for (const force of [false, true]) {
+        const result = mergeFolderScanResults(incoming, [directory], { force });
+        assert.deepEqual(result.map(row => row.path), [directory.path, anotherDirectory.path, file.path]);
+        assert.equal(result[0].cover, force ? '' : directory.cover);
+        assert.equal(result[2], file);
+    }
+    const current = [directory, directory];
+    assert.deepEqual(appendUniqueFolderFiles(current, incoming), [directory, anotherDirectory, file]);
+    assert.deepEqual(appendUniqueFolderFiles(current, []), [directory]);
 });
 
 test('빠른 목록의 알 수 없는 수정 시각은 폴더 표지의 유효성 정보를 지우지 않는다', () => {

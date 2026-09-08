@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showInFolder: (filePath) => ipcRenderer.invoke('fs:showInFolder', filePath),
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
   openInternalViewer: (filePath) => ipcRenderer.invoke('viewer:open', filePath),
+    getReadingStates: (filePaths) => ipcRenderer.invoke('reading:getStates', filePaths),
   listRecentReading: (limit) => ipcRenderer.invoke('reading:listRecent', limit),
   removeRecentReading: (filePath) => ipcRenderer.invoke('reading:remove', filePath),
   clearRecentReading: () => ipcRenderer.invoke('reading:clear'),
@@ -140,6 +141,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createReadivePairing: options => ipcRenderer.invoke('readive:pairing', options),
     revokeReadiveDevice: options => ipcRenderer.invoke('readive:revoke', options),
     scanReadiveTransfer: options => ipcRenderer.invoke('readive:scan', options),
+    requestReadiveDestinationPage: options => ipcRenderer.invoke('readive:requestDestinationPage', options),
     enqueueReadiveTransfer: options => ipcRenderer.invoke('readive:enqueue', options),
     cancelReadiveTransfer: options => ipcRenderer.invoke('readive:cancel', options),
 

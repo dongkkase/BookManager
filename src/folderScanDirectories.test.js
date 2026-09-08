@@ -36,3 +36,21 @@ test('렌더러의 빠른 목록은 요청한 경우 숨김 폴더를 제외한 
     assert.equal(directories[1].ext, '');
     assert.equal(directories[1].has_metadata, false);
 });
+
+test('빠른 목록은 같은 경로가 반복되어도 한 번만 표시하고 다른 이름의 폴더는 유지한다', async t => {
+    const originalWindow = globalThis.window;
+    const entries = [
+        { name: 'Series', isDirectory: true },
+        { name: 'series', isDirectory: true },
+        { name: 'Book.cbz', isFile: true },
+    ];
+    globalThis.window = { electronAPI: { readDir: async () => Array.from({ length: 7 }, () => entries).flat() } };
+    t.after(() => {
+        if (originalWindow === undefined) delete globalThis.window;
+        else globalThis.window = originalWindow;
+    });
+
+    const rows = await readQuickListFiles('/books', { includeDirectories: true });
+    assert.deepEqual(rows.map(row => row.path), ['/books/Series', '/books/series', '/books/Book.cbz']);
+    assert.deepEqual((await readQuickListFiles('/books')).map(row => row.path), ['/books/Book.cbz']);
+});

@@ -289,6 +289,7 @@ export class LibraryDB {
     constructor(options = {}) {
         this.dbPath = options.dbPath || path.join(options.userDataPath || defaultUserDataPath(), 'library.db');
         this.platform = options.platform || process.platform;
+        this.readOnly = options.readOnly === true;
         this.db = null;
         this.lock = Promise.resolve();
         this.searchIndexAttempted = false;
@@ -298,6 +299,11 @@ export class LibraryDB {
 
     getConnection() {
         if (this.db) return this.db;
+        if (this.readOnly) {
+            const Database = getDatabaseConstructor();
+            this.db = new Database(this.dbPath, { readonly: true, fileMustExist: true });
+            return this.db;
+        }
         fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
         const Database = getDatabaseConstructor();
         this.db = new Database(this.dbPath);
@@ -1320,6 +1326,26 @@ export class LibraryDB {
             return normalizeReadingStateRow(
                 connection.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(normalizedPath),
             );
+        });
+    }
+
+    async listReadingStatesByPaths(filePaths) {
+        if (!Array.isArray(filePaths) || filePaths.length > 500 || filePaths.some(filePath => (
+            typeof filePath !== 'string' || filePath.length === 0 || filePath.length > 32768
+            || filePath.includes('\0') || !path.isAbsolute(filePath)
+        ))) throw new Error('invalid_reading_paths');
+        const normalizedPaths = [...new Set(filePaths.map(filePath => this.normalizeFilePath(path.resolve(filePath))))];
+        if (normalizedPaths.length === 0) return [];
+        return this.withLock(async () => {
+            const connection = this.getConnection();
+            if (this.readOnly && !connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'reading_states'").get()) return [];
+            const rows = connection.prepare(`
+                SELECT *
+                FROM reading_states
+                WHERE deleted_at = '' AND file_path IN (${normalizedPaths.map(() => '?').join(', ')})
+            `).all(...normalizedPaths);
+            const byPath = new Map(rows.map(row => [row.file_path, row]));
+            return normalizedPaths.flatMap(filePath => byPath.has(filePath) ? [normalizeReadingStateRow(byPath.get(filePath))] : []);
         });
     }
 

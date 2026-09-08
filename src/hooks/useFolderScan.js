@@ -77,7 +77,7 @@ function createQuickListFile(folderPath, item) {
 export async function readQuickListFiles(folderPath, options = {}) {
     const items = await window.electronAPI?.readDir?.(folderPath);
     if (!Array.isArray(items)) return [];
-    return items
+    return uniqueFolderFiles(items
         .filter(item => (
             item?.isDirectory
                 ? options.includeDirectories === true && !String(item.name || '').startsWith('.')
@@ -104,7 +104,7 @@ export async function readQuickListFiles(folderPath, options = {}) {
             dup_count: 0,
             max_ratio: 0,
             cache_source: 'renderer-quick',
-        } : createQuickListFile(folderPath, item));
+        } : createQuickListFile(folderPath, item)));
 }
 
 function countFolderFiles(files = []) {
@@ -138,8 +138,20 @@ export function hasReusableFolderFileCache(cache = {}, pendingCacheKeys = new Se
         && Object.prototype.hasOwnProperty.call(cache, cacheKey);
 }
 
+function uniqueFolderFiles(files = []) {
+    const rows = Array.isArray(files) ? files : [];
+    const seenPaths = new Set();
+    const unique = rows.filter(file => {
+        if (!file?.path) return true;
+        if (seenPaths.has(file.path)) return false;
+        seenPaths.add(file.path);
+        return true;
+    });
+    return unique.length === rows.length ? rows : unique;
+}
+
 export function appendUniqueFolderFiles(currentFiles = [], incomingFiles = []) {
-    const current = Array.isArray(currentFiles) ? currentFiles : [];
+    const current = uniqueFolderFiles(currentFiles);
     const incoming = Array.isArray(incomingFiles) ? incomingFiles : [];
     if (incoming.length === 0) return current;
 
@@ -267,7 +279,7 @@ export function mergeFolderFileCacheUpdate(currentFile, incomingFile) {
 }
 
 export function mergeFolderScanResults(incomingFiles = [], currentFiles = [], options = {}) {
-    const incoming = Array.isArray(incomingFiles) ? incomingFiles : [];
+    const incoming = uniqueFolderFiles(incomingFiles);
     if (options.force === true) return incoming;
     const currentDirectories = new Map(
         (Array.isArray(currentFiles) ? currentFiles : [])
@@ -334,7 +346,7 @@ export function useFolderScan(t) {
         .map(file => [file.path, file])
     );
 
-    return (Array.isArray(incomingFiles) ? incomingFiles : []).map(file => {
+    return uniqueFolderFiles(incomingFiles).map(file => {
       const current = currentByPath.get(file?.path);
       return mergeFolderFilePreservingCover(current, file);
     });

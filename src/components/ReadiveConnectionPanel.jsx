@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FaIcon } from './FaIcon';
 import { formatReadiveBytes } from '../readiveTransferPolicy';
-import { copyReadivePairing, getReadivePairingText, readivePairingDeviceRevision } from '../readivePairingClipboard';
+import { getReadivePairingText, readivePairingDeviceRevision } from '../readivePairingClipboard';
 import '../styles/ReadiveTransfer.css';
 
 export function useReadiveStatus() {
@@ -73,7 +73,6 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default' }) {
     const [address, setAddress] = useState('');
     const [pairing, setPairing] = useState(null);
     const panelRef = useRef(null);
-    const currentPairingRef = useRef(null);
     const currentStatusRef = useRef(null);
     const [now, setNow] = useState(Date.now);
     const [busy, setBusy] = useState(false);
@@ -87,7 +86,6 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default' }) {
     const expired = pairing && remainingSeconds === 0;
     const deviceRevision = readivePairingDeviceRevision(status.devices);
     const pairingText = getReadivePairingText(pairing, { running: status.running, statusError, now, deviceRevision });
-    currentPairingRef.current = pairing;
     currentStatusRef.current = { status, statusError };
 
     useEffect(() => {
@@ -112,33 +110,6 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default' }) {
         if (!currentStatus.running || revision !== readivePairingDeviceRevision(currentStatus.devices)) return;
         setNow(Date.now());
         setPairing({ ...result, deviceRevision: revision });
-    };
-
-    const copyPairing = async () => {
-        let currentStatus;
-        try {
-            currentStatus = await refresh();
-        } catch (error) {
-            currentPairingRef.current = null;
-            setPairing(null);
-            throw error;
-        }
-        if (!panelRef.current?.getClientRects().length) return;
-        currentStatusRef.current = { status: currentStatus, statusError: false };
-        const result = await copyReadivePairing({
-            getText: () => {
-                const current = currentStatusRef.current;
-                return getReadivePairingText(currentPairingRef.current, {
-                    running: current.status.running,
-                    statusError: current.statusError,
-                    deviceRevision: readivePairingDeviceRevision(current.status.devices),
-                });
-            },
-            writeText: text => navigator.clipboard.writeText(text),
-        });
-        if (result !== 'unavailable' && panelRef.current?.getClientRects().length) {
-            showToast?.({ key: result === 'copied' ? 'readive.copied' : 'readive.copy_failed' });
-        }
     };
 
     const run = async operation => {
@@ -207,12 +178,9 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default' }) {
                                         {t('readive.remaining', { minutes: Math.floor(remainingSeconds / 60), seconds: String(remainingSeconds % 60).padStart(2, '0') })}
                                     </p>}
                                 </div>
-                                {pairingText && <div className="readive-pairing-copy">
-                                    <div className="readive-pairing-actions">
-                                        <button type="button" className={sharing ? 'sharing-btn-copy' : undefined} disabled={busy} onClick={() => run(copyPairing)}>{t('readive.copy')}</button>
-                                        <p className={sharing ? 'sharing-desc' : undefined}>{t('readive.manual_instructions')}</p>
-                                    </div>
-                                </div>}
+                                {!statusError && <p className={sharing ? 'sharing-desc' : undefined}>
+                                    {t('readive.manual_instructions', { address: status.address, port: status.port })}
+                                </p>}
                             </>
                         )}
                     </div>

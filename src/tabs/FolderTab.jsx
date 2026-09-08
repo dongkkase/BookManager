@@ -65,6 +65,7 @@ import {
   viewerBookmarkStatusText,
   viewerReadingStatusText,
 } from '../viewerStatusState';
+import { createFolderReadingStatesLoader, readingStatePathKey, sameReadingStateFiles } from '../folderReadingStates';
 import {
   MAX_VIEW_SCALE_BY_MODE,
   groupFolderFiles,
@@ -523,8 +524,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [textInputDialog, setTextInputDialog] = useState(null);
   const [viewerStatusVersion, setViewerStatusVersion] = useState(0);
   const [folderSource, setFolderSource] = useState('folder');
-  const [recentReadingFiles, setRecentReadingFiles] = useState([]);
-  const [recentReadingLoading, setRecentReadingLoading] = useState(false);
+    const [recentReadingFiles, setRecentReadingFiles] = useState([]);
+    const [recentReadingLoading, setRecentReadingLoading] = useState(false);
+    const [recentReadingLoaded, setRecentReadingLoaded] = useState(false);
+    const recentReadingRequestRef = useRef(0);
   const isRecentReading = folderSource === 'recent-reading';
     const [folderNavigation, setFolderNavigation] = useState({ entries: [], index: -1 });
     const folderNavigationRef = useRef(folderNavigation);
@@ -959,34 +962,39 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     };
   }, []);
 
-  const loadRecentReading = useCallback(async () => {
-    setRecentReadingLoading(true);
-    try {
-      const files = await window.electronAPI?.listRecentReading?.(RECENT_READING_LIMIT);
-      setRecentReadingFiles(Array.isArray(files) ? files : []);
-    } catch (error) {
-      console.error('최근 읽은 항목 조회 실패:', error);
-      setRecentReadingFiles([]);
-    } finally {
-      setRecentReadingLoading(false);
-    }
-  }, []);
+    const loadRecentReading = useCallback(async () => {
+        const requestId = ++recentReadingRequestRef.current;
+        setRecentReadingLoading(true);
+        try {
+            const files = await window.electronAPI?.listRecentReading?.(RECENT_READING_LIMIT);
+            if (requestId !== recentReadingRequestRef.current) return;
+            setRecentReadingFiles(Array.isArray(files) ? files : []);
+            setRecentReadingLoaded(true);
+        } catch (error) {
+            if (requestId === recentReadingRequestRef.current) {
+                console.error('최근 읽은 항목 조회 실패:', error);
+            }
+        } finally {
+            if (requestId === recentReadingRequestRef.current) setRecentReadingLoading(false);
+        }
+    }, []);
 
-  useEffect(() => {
-    void loadRecentReading();
-    let refreshTimer = 0;
-    const removeListener = window.electronAPI?.onRecentReadingChanged?.(() => {
-      if (refreshTimer) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = 0;
+    useEffect(() => {
         void loadRecentReading();
-      }, 150);
-    });
-    return () => {
-      if (refreshTimer) window.clearTimeout(refreshTimer);
-      removeListener?.();
-    };
-  }, [loadRecentReading]);
+        let refreshTimer = 0;
+        const removeListener = window.electronAPI?.onRecentReadingChanged?.(() => {
+            if (refreshTimer) window.clearTimeout(refreshTimer);
+            refreshTimer = window.setTimeout(() => {
+                refreshTimer = 0;
+                void loadRecentReading();
+            }, 150);
+        });
+        return () => {
+            recentReadingRequestRef.current += 1;
+            if (refreshTimer) window.clearTimeout(refreshTimer);
+            removeListener?.();
+        };
+    }, [loadRecentReading]);
 
   // 필터링된 파일 데이터
     const currentFolderEntries = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
@@ -1015,24 +1023,65 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     librarySearchResults,
     normalRawFileData,
   ]);
+    const readingScopeRef = useRef(null);
+    const readingFilesScope = useMemo(() => {
+        const scopeKey = `${folderSource}:${selectedFolderPath}`;
+        const previous = readingScopeRef.current;
+        if (previous?.scopeKey === scopeKey && sameReadingStateFiles(previous.files, activeRawFileData)) return previous.files;
+        readingScopeRef.current = { scopeKey, files: activeRawFileData };
+        return activeRawFileData;
+    }, [activeRawFileData, folderSource, selectedFolderPath]);
+    const currentReadingScopeRef = useRef(readingFilesScope);
+    currentReadingScopeRef.current = readingFilesScope;
+    const readingStatesLoaderRef = useRef(null);
+    const [readingStatesSnapshot, setReadingStatesSnapshot] = useState(null);
+    useEffect(() => {
+        if (!window.electronAPI?.getReadingStates) return undefined;
+        const loader = createFolderReadingStatesLoader({
+            platform: runtimePlatform,
+            request: paths => window.electronAPI.getReadingStates(paths),
+            onChange: setReadingStatesSnapshot,
+            isCurrent: files => currentReadingScopeRef.current === files,
+        });
+        readingStatesLoaderRef.current = loader;
+        loader.setFiles(currentReadingScopeRef.current);
+        const removeListener = window.electronAPI.onRecentReadingChanged?.(event => loader.refresh(event));
+        const refresh = () => loader.refresh();
+        window.addEventListener('focus', refresh);
+        return () => {
+            loader.dispose();
+            if (readingStatesLoaderRef.current === loader) readingStatesLoaderRef.current = null;
+            removeListener?.();
+            window.removeEventListener('focus', refresh);
+        };
+    }, [runtimePlatform]);
+    useEffect(() => {
+        readingStatesLoaderRef.current?.setFiles(readingFilesScope);
+    }, [readingFilesScope]);
   const fileDataWithViewerStatus = useMemo(() => {
     if (activeRawFileData.length === 0) return activeRawFileData;
     const reader = createViewerStatusReader();
-    return activeRawFileData.map(file => file.isDirectory ? file : attachViewerStatus(
-      isRecentReading
-        ? {
-            ...file,
-            recentReadingText: recentReadingTimeText(
-              file.lastReadAt,
-              t,
-              Date.now(),
-              config?.language || config?.lang || 'ko',
-            ),
-          }
-        : file,
-      reader,
-    ));
-  }, [activeRawFileData, config?.lang, config?.language, isRecentReading, t, viewerStatusVersion]);
+    const statesByPath = readingStatesSnapshot?.files === readingFilesScope ? readingStatesSnapshot.statesByPath : null;
+    return activeRawFileData.map(file => {
+        if (file.isDirectory) return file;
+        const pathKey = readingStatePathKey(file.full_path || file.path, runtimePlatform);
+        const readingFile = statesByPath?.has(pathKey) ? { ...file, readingState: statesByPath.get(pathKey) } : file;
+        return attachViewerStatus(
+            isRecentReading
+                ? {
+                    ...readingFile,
+                    recentReadingText: recentReadingTimeText(
+                        file.lastReadAt,
+                        t,
+                        Date.now(),
+                        config?.language || config?.lang || 'ko',
+                    ),
+                }
+                : readingFile,
+            reader,
+        );
+    });
+  }, [activeRawFileData, config?.lang, config?.language, isRecentReading, readingFilesScope, readingStatesSnapshot, runtimePlatform, t, viewerStatusVersion]);
   const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
   const filteredFileData = useMemo(() => filterFolderFiles(fileDataWithViewerStatus, {
     query: localSearchQuery,
@@ -1192,32 +1241,36 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     void loadRecentReading();
   }, [cancelFolderLocationRestore, clearSelection, loadRecentReading, rememberCurrentFolderLocation, resetSearchQuery]);
 
-  const removeRecentReading = useCallback(async filePath => {
-    if (!filePath) return;
-    const result = await window.electronAPI?.removeRecentReading?.(filePath);
-    if (result?.success !== false) {
-      setRecentReadingFiles(current => current.filter(file => (file.full_path || file.path) !== filePath));
-      clearSelection();
-    }
-  }, [clearSelection]);
+    const removeRecentReading = useCallback(async filePath => {
+        if (!filePath) return;
+        const result = await window.electronAPI?.removeRecentReading?.(filePath);
+        if (result?.success !== false) {
+            recentReadingRequestRef.current += 1;
+            setRecentReadingLoading(false);
+            setRecentReadingFiles(current => current.filter(file => (file.full_path || file.path) !== filePath));
+            clearSelection();
+        }
+    }, [clearSelection]);
 
-  const clearRecentReading = useCallback(async () => {
-    if (recentReadingFiles.length === 0) return;
-    const response = await window.electronAPI?.showMessage?.({
-      type: 'question',
-      title: t('folder.recent.clear'),
-      message: t('folder.recent.clear_confirm'),
-      buttons: 'yes-no',
-      defaultChoice: 'no',
-      language: config?.language || config?.lang || 'ko',
-    });
-    if (response !== 'yes') return;
-    const result = await window.electronAPI?.clearRecentReading?.();
-    if (result?.success !== false) {
-      setRecentReadingFiles([]);
-      clearSelection();
-    }
-  }, [clearSelection, config?.lang, config?.language, recentReadingFiles.length, t]);
+    const clearRecentReading = useCallback(async () => {
+        if (recentReadingFiles.length === 0) return;
+        const response = await window.electronAPI?.showMessage?.({
+            type: 'question',
+            title: t('folder.recent.clear'),
+            message: t('folder.recent.clear_confirm'),
+            buttons: 'yes-no',
+            defaultChoice: 'no',
+            language: config?.language || config?.lang || 'ko',
+        });
+        if (response !== 'yes') return;
+        const result = await window.electronAPI?.clearRecentReading?.();
+        if (result?.success !== false) {
+            recentReadingRequestRef.current += 1;
+            setRecentReadingLoading(false);
+            setRecentReadingFiles([]);
+            clearSelection();
+        }
+    }, [clearSelection, config?.lang, config?.language, recentReadingFiles.length, t]);
 
   useEffect(() => {
     if (isLibrarySearchActive || isRecentReading) clearSelection();
@@ -3678,7 +3731,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             style={{ '--folder-view-width': `${viewContainerWidth}px` }}
             aria-busy={!isRecentReading && scanning}
           >
-             {isRecentReading && recentReadingLoading ? (
+            {isRecentReading && recentReadingLoading && !recentReadingLoaded ? (
                <div className="recent-reading-state" role="status">
                  <FaIcon name="spinner" className="content-index-spinner" size={15} />
                  <span>{t('folder.recent.loading')}</span>

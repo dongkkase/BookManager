@@ -270,3 +270,22 @@ test('파일 준비 이벤트는 현재 파일보다 오래된 결과만 거부�
     assert.equal(shouldApplyFolderFileUpdate({ mtime: 2000 }, { mtime: 0 }), true);
     assert.equal(shouldApplyFolderFileUpdate({ mtime: 2000 }, {}), true);
 });
+
+test('빠른 백그라운드 스캔과 강제 재스캔 결과가 반복되어도 목록 캐시에는 경로별 한 행만 남는다', async () => {
+    for (const options of [
+        { includeSubfolders: true, fastInitial: true, includeDirectories: true },
+        { includeSubfolders: false, force: true, includeDirectories: true },
+    ]) {
+        const harness = createFolderScanHarness();
+        const { scanFolder } = harness.render();
+        const pending = scanFolder('/books', options);
+        await new Promise(resolve => setImmediate(resolve));
+        const directory = { path: '/books/Series', isDirectory: true };
+        harness.calls[0].resolve([directory, directory, directory]);
+        await pending;
+
+        const hook = harness.render();
+        assert.deepEqual(Array.from(hook.getCachedFiles('/books', options)), [directory]);
+        assert.equal(hook.scanning, false);
+    }
+});

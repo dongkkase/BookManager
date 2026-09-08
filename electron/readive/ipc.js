@@ -1,6 +1,8 @@
+import electron from 'electron';
 import path from 'node:path';
 import { LibraryDB } from '../database/library_db.js';
 import { ReadiveService } from './service.js';
+import { approveManualPairing } from './manualPairingApproval.js';
 import { sharingText } from '../servers/shared/sharingCommon.js';
 
 let registeredService = null;
@@ -14,6 +16,7 @@ export function registerReadiveIpc({ ipcMain, configManager, getLibraryDbPath, g
     let libraryDbPath;
     const service = new ReadiveService({
         directory: path.join(configManager.userDataPath, 'readive-link'),
+        requestManualApproval: options => approveManualPairing({ ...options, dialog: electron.dialog, window: getMainWindow?.(), config: configManager.getConfig() || {} }),
         getRegisteredLibraries: () => configManager.getConfig()?.library_entries || configManager.getConfig()?.libraries || [],
         getLibraryDb: async () => {
             const currentPath = getLibraryDbPath();
@@ -40,7 +43,7 @@ export function registerReadiveIpc({ ipcMain, configManager, getLibraryDbPath, g
         },
     });
     registeredService = service;
-    const methods = ['status', 'start', 'stop', 'pairing', 'revoke', 'scan', 'enqueue', 'cancel', 'setLibraries'];
+    const methods = ['status', 'start', 'stop', 'pairing', 'revoke', 'scan', 'enqueue', 'cancel', 'setLibraries', 'requestDestinationPage'];
     const loggedActions = { start: 'readive.start', stop: 'readive.stop', pairing: 'readive.pair', revoke: 'readive.revoke' };
     for (const method of methods) {
         ipcMain.handle(`readive:${method}`, async (event, args = {}) => {

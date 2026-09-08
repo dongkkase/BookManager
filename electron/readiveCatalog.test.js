@@ -154,19 +154,19 @@ test('Readive catalog and job polling recover after a rejected reading request',
     assert.equal((await api(`/libraries/${libraryId}/entries`)).entries[0].name, 'one.txt');
 });
 
-test('Readive mobile preparation preserves selected ancestry and still requires receiver acceptance', async t => {
+test('Readive mobile preparation preserves selected folders and still requires receiver acceptance', async t => {
     const { root, configured, service, api, libraryId, prepare } = await fixture(t);
     await fs.mkdir(path.join(root, 'A', 'Same'), { recursive: true });
     await fs.mkdir(path.join(root, 'B', 'Same'), { recursive: true });
     await fs.writeFile(path.join(root, 'A', 'Same', 'one.txt'), 'one');
     await fs.writeFile(path.join(root, 'B', 'Same', 'two.txt'), 'two');
     await fs.writeFile(path.join(root, 'excluded.txt'), 'excluded');
-    const prepared = await prepare(['A/Same', 'B/Same']);
+    const prepared = await prepare(['A', 'B']);
     assert.equal(prepared.state, 'ready');
     assert.equal(prepared.job.origin, 'mobile-browse');
     assert.equal(prepared.job.state, 'queued');
-    assert.deepEqual(prepared.manifest.files.map(file => file.relativePath), ['Books/A/Same/one.txt', 'Books/B/Same/two.txt']);
-    assert.deepEqual(prepared.manifest.directories.map(entry => entry.relativePath), ['Books', 'Books/A', 'Books/A/Same', 'Books/B', 'Books/B/Same']);
+    assert.deepEqual(prepared.manifest.files.map(file => file.relativePath), ['A/Same/one.txt', 'B/Same/two.txt']);
+    assert.deepEqual(prepared.manifest.directories.map(entry => entry.relativePath), ['A', 'A/Same', 'B', 'B/Same']);
     const fileRoute = `/jobs/${prepared.job.id}/files/${prepared.manifest.files[0].id}`;
     await assert.rejects(api(fileRoute), /accept_required/);
     await api(`/jobs/${prepared.job.id}/accept`, { method: 'POST', body: { manifestId: prepared.manifest.id } });
@@ -184,6 +184,42 @@ test('Readive mobile preparation preserves selected ancestry and still requires 
     const cancelled = await api(`/libraries/${libraryId}/preparations/${later.scanId}/cancel`, { method: 'POST' });
     assert.equal(cancelled.success, true);
     assert.equal((await api(`/jobs/${later.job.id}`)).job.state, 'cancelled');
+});
+
+test('Readive mobile single-file downloads place the file directly at the chosen destination', async t => {
+    const { root, prepare } = await fixture(t);
+    await fs.mkdir(path.join(root, 'Series', 'Volume'), { recursive: true });
+    await fs.writeFile(path.join(root, 'Series', 'Volume', 'one.txt'), 'one');
+    const prepared = await prepare(['Series/Volume/one.txt']);
+    assert.equal(prepared.state, 'ready');
+    assert.equal(prepared.job.directoryCount, 0);
+    assert.deepEqual(prepared.manifest.directories, []);
+    assert.deepEqual(prepared.manifest.files.map(({ name, relativePath, parentId }) => ({ name, relativePath, parentId })), [{ name: 'one.txt', relativePath: 'one.txt', parentId: null }]);
+});
+
+test('Readive mobile selected folders retain only their own descendant hierarchy', async t => {
+    const { root, prepare } = await fixture(t);
+    await fs.mkdir(path.join(root, 'Series', 'Chosen', 'Nested'), { recursive: true });
+    await fs.mkdir(path.join(root, 'Series', 'Chosen', 'Empty'));
+    await fs.writeFile(path.join(root, 'Series', 'Chosen', 'Nested', 'one.txt'), 'one');
+    const prepared = await prepare(['Series/Chosen']);
+    assert.equal(prepared.state, 'ready');
+    assert.deepEqual(prepared.manifest.directories.map(entry => entry.relativePath), ['Chosen', 'Chosen/Empty', 'Chosen/Nested']);
+    assert.deepEqual(prepared.manifest.files.map(entry => entry.relativePath), ['Chosen/Nested/one.txt']);
+    assert.equal(prepared.manifest.directories[0].parentId, null);
+});
+
+test('Readive mobile selection roots reject name collisions and retain the registered library boundary', async t => {
+    const { root, service, prepare } = await fixture(t);
+    await fs.mkdir(path.join(root, 'A', 'Same'), { recursive: true });
+    await fs.mkdir(path.join(root, 'B', 'Same'), { recursive: true });
+    const collision = await prepare(['A/Same', 'B/Same']);
+    assert.equal(collision.state, 'failed');
+    assert.equal(collision.error, 'duplicate_root_name');
+    const outside = await prepare(['../outside.txt']);
+    assert.equal(outside.state, 'failed');
+    assert.equal(outside.error, 'invalid_library_path');
+    assert.equal(service.store.state.jobs.length, 0);
 });
 
 test('Readive binds existing transfers to their roots and rejects changed assets and cancelled scans', async t => {

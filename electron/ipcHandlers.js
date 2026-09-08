@@ -4220,6 +4220,18 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   };
 
+    ipcMain.handle('reading:getStates', async (event, filePaths) => {
+        const window = hooks.getMainWindow?.();
+        if (!window || window.isDestroyed() || window.webContents !== event.sender
+            || (event.senderFrame && event.senderFrame !== event.sender.mainFrame)) throw new Error('reading_untrusted_sender');
+        const db = new LibraryDB({ dbPath: libraryDbPath(), readOnly: true });
+        try {
+            return await db.listReadingStatesByPaths(filePaths);
+        } finally {
+            await db.close();
+        }
+    });
+
   ipcMain.handle('reading:listRecent', async (_event, limit = 50) => {
     const db = new LibraryDB({ dbPath: libraryDbPath() });
     try {

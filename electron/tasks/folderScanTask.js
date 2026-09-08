@@ -1023,11 +1023,16 @@ function createDirectoryData(fullPath, stats) {
 }
 
 function sortEntriesForPriority(entries = []) {
-  return [...entries].sort((left, right) => {
-    if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
-    if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
-    return KO_NUMERIC_COLLATOR.compare(left.name, right.name);
-  });
+    const seenNames = new Set();
+    return [...entries].filter(entry => {
+        if (seenNames.has(entry.name)) return false;
+        seenNames.add(entry.name);
+        return true;
+    }).sort((left, right) => {
+        if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
+        if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+        return KO_NUMERIC_COLLATOR.compare(left.name, right.name);
+    });
 }
 
 function normalizeForCompare(text = '') {

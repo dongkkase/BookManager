@@ -56,9 +56,11 @@ export function summarizeReadiveEntries(entries = []) {
     };
 }
 
-export function canEnqueueReadiveTransfer({ snapshot, summary, deviceId, running, busy, confirmed, largeConfirmed }) {
+export function canEnqueueReadiveTransfer({ snapshot, summary, deviceId, destination, running, busy, confirmed, largeConfirmed }) {
     return Boolean(snapshot?.id && !snapshot.blocked && summary && !summary.blocked
         && summary.files > 0 && deviceId && running && !busy && confirmed
+        && destination?.deviceId === deviceId && destination.name && destination.revision
+        && (destination.collectionId === null || typeof destination.collectionId === 'string')
         && (!summary.large || largeConfirmed));
 }
 

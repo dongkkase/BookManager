@@ -82,11 +82,38 @@ function normalizeBookmarkCount(bookmarkValue) {
     return Math.max(0, Math.floor(numericValue(bookmarkValue, 0)));
 }
 
+function readingTimestamp(value) {
+    const timestamp = typeof value === 'number' ? value : Date.parse(value || '');
+    return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function matchesLocalReadingPosition(file, localState, databaseState) {
+    const localStatus = buildViewerFileStatus(file, localState, [], true);
+    const readStatus = databaseState.status || databaseState.readStatus;
+    if (readStatus && readStatus !== (localStatus.isCompleted ? 'completed' : 'reading')) return false;
+    const fields = localStatus.isAudio
+        ? ['positionSeconds', 'durationSeconds']
+        : ['pageIndex', 'pageCount', 'scrollPercent'];
+    return fields.every(key => numericValue(localState[key]) === numericValue(databaseState[key]));
+}
+
+function selectReadingState(file, localState, hasLocalState) {
+    const databaseState = file?.readingState;
+    if (!databaseState || typeof databaseState !== 'object' || databaseState.deletedAt
+        || (hasLocalState && (readingTimestamp(localState.updatedAt) > readingTimestamp(databaseState.updatedAt)
+            || matchesLocalReadingPosition(file, localState, databaseState)))) {
+        return { state: localState, hasState: hasLocalState };
+    }
+    return { state: databaseState, hasState: true };
+}
+
 function buildViewerFileStatus(file = {}, state = {}, bookmarkValue = [], hasStoredState = false) {
     const filePath = viewerStatusFilePath(file);
+    const isNormalized = state?.locator?.kind === 'normalized';
     const isAudio = resolveBookType(file) === 'audio'
-        || Object.prototype.hasOwnProperty.call(state || {}, 'positionSeconds')
-        || Object.prototype.hasOwnProperty.call(state || {}, 'durationSeconds');
+        || state?.format === 'audio'
+        || state?.locator?.kind === 'audio-time'
+        || (!state?.locator?.kind && (numericValue(state?.positionSeconds) > 0 || numericValue(state?.durationSeconds) > 0));
     const positionSeconds = Math.max(0, numericValue(state?.positionSeconds, 0));
     const durationSeconds = Math.max(0, numericValue(
         firstMetadataValue(file, ['duration_seconds', 'durationSeconds', 'DurationSeconds'])
@@ -98,22 +125,27 @@ function buildViewerFileStatus(file = {}, state = {}, bookmarkValue = [], hasSto
         : 0;
     const pageCount = viewerStatusPageCount(file, state);
     const pageIndex = Math.max(0, Math.floor(numericValue(state?.pageIndex, 0)));
-    const scrollPercent = Math.max(0, Math.min(100, numericValue(state?.scrollPercent, 0)));
+    const scrollPercent = Math.max(0, Math.min(100, isNormalized
+        ? numericValue(state?.locator?.normalizedPosition, numericValue(state?.scrollPercent) / 100) * 100
+        : numericValue(state?.scrollPercent, 0)));
     const bookmarkCount = normalizeBookmarkCount(bookmarkValue);
-    const hasReadingProgress = hasStoredState || (isAudio ? positionSeconds > 0 : pageIndex > 0 || scrollPercent > 0);
+    const readStatus = state?.status || state?.readStatus;
+    const hasReadingProgress = readStatus !== 'unread'
+        && (hasStoredState || (isAudio ? positionSeconds > 0 : pageIndex > 0 || scrollPercent > 0));
     const isCompleted = hasReadingProgress && (
-        isAudio
+        readStatus === 'completed' || (!readStatus && (isAudio
             ? durationSeconds > 0 && (positionSeconds >= durationSeconds - 1 || audioPercent >= 100)
-            : (pageCount > 0 && pageIndex >= pageCount - 1) || scrollPercent >= 99.5
+            : (!isNormalized && pageCount > 0 && pageIndex >= pageCount - 1) || scrollPercent >= 99.5))
     );
     const pagePercent = pageCount > 0 ? ((pageIndex + 1) / pageCount) * 100 : 0;
-    const percent = isAudio
+    const percent = isCompleted ? 100 : isAudio
         ? audioPercent
-        : Math.max(0, Math.min(100, Math.round(Math.max(pagePercent, scrollPercent))));
+        : Math.max(0, Math.min(100, Math.round(isNormalized ? scrollPercent : Math.max(pagePercent, scrollPercent))));
 
     return {
         filePath,
         isAudio,
+        isNormalized,
         positionSeconds,
         durationSeconds,
         pageCount,
@@ -132,9 +164,9 @@ export function readViewerFileStatus(file = {}, storage = null) {
     const filePath = viewerStatusFilePath(file);
     if (!filePath) return buildViewerFileStatus(file);
     const stateKey = `${VIEWER_STATE_PREFIX}${filePath}`;
-    const state = readStoredJson(targetStorage, stateKey, {});
+    const { state, hasState } = selectReadingState(file, readStoredJson(targetStorage, stateKey, {}), hasStoredKey(targetStorage, stateKey));
     const bookmarks = readStoredJson(targetStorage, `${VIEWER_BOOKMARKS_PREFIX}${filePath}`, []);
-    return buildViewerFileStatus(file, state, bookmarks, hasStoredKey(targetStorage, stateKey));
+    return buildViewerFileStatus(file, state, bookmarks, hasState);
 }
 
 export function createViewerStatusReader(storage = null) {
@@ -166,11 +198,12 @@ export function createViewerStatusReader(storage = null) {
 
     return file => {
         const filePath = viewerStatusFilePath(file);
+        const { state, hasState } = selectReadingState(file, stateByPath.get(filePath) || {}, stateByPath.has(filePath));
         return buildViewerFileStatus(
             file,
-            stateByPath.get(filePath) || {},
+            state,
             bookmarkCountByPath.get(filePath) || 0,
-            stateByPath.has(filePath),
+            hasState,
         );
     };
 }
@@ -191,6 +224,9 @@ export function viewerReadingStatusText(status = {}, t) {
 
 export function viewerReadingProgressParts(status = {}) {
     if (!status.hasReadingProgress) return { percentText: '', pageText: '' };
+    if (status.isNormalized) {
+        return { percentText: `${Math.max(0, Math.min(100, Math.round(numericValue(status.percent))))}%`, pageText: '' };
+    }
     if (status.isAudio) {
         const positionText = formatAudioStatusTime(status.positionSeconds);
         const durationText = formatAudioStatusTime(status.durationSeconds);

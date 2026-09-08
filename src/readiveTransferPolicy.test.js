@@ -26,7 +26,7 @@ test('excluding a folder removes all descendants from preview and byte totals', 
 test('large and hard transfer limits are enforced independently of checkbox confirmation', () => {
     const summary = summarizeReadiveEntries(Array.from({ length: 101 }, (_, id) => ({ id, kind: 'file', size: 1 })));
     assert.equal(summary.large, true);
-    const options = { snapshot: { id: 'scan' }, summary, deviceId: 'phone', running: true, confirmed: true };
+    const options = { snapshot: { id: 'scan' }, summary, deviceId: 'phone', running: true, confirmed: true, destination: { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev' } };
     assert.equal(canEnqueueReadiveTransfer(options), false);
     assert.equal(canEnqueueReadiveTransfer({ ...options, largeConfirmed: true }), true);
     assert.equal(canEnqueueReadiveTransfer({ ...options, largeConfirmed: true, busy: true }), false);
@@ -43,4 +43,14 @@ test('server skipped entries are excluded from the confirmation scope and byte t
     const snapshotEntries = [...entries, { id: 'skip', parentId: 'root', kind: 'file', size: 5000, skippedReason: 'unsupported_format' }];
     assert.equal(selectReadiveEntries(snapshotEntries).length, entries.length);
     assert.equal(summarizeReadiveEntries(snapshotEntries).bytes, 360);
+});
+
+
+test('only a confirmed destination for the selected device can enqueue', () => {
+    const options = { snapshot: { id: 'scan' }, summary: summarizeReadiveEntries(entries), deviceId: 'phone', running: true, confirmed: true };
+    assert.equal(canEnqueueReadiveTransfer(options), false);
+    const destination = { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev' };
+    assert.equal(canEnqueueReadiveTransfer({ ...options, destination }), true);
+    assert.equal(canEnqueueReadiveTransfer({ ...options, destination: { ...destination, deviceId: 'other' } }), false);
+    assert.equal(canEnqueueReadiveTransfer({ ...options, destination: { ...destination, revision: '' } }), false);
 });

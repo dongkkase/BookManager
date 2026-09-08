@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 import { canEnqueueReadiveTransfer, formatReadiveBytes, selectReadiveEntries, summarizeReadiveEntries } from '../readiveTransferPolicy';
+import { createReadiveDestinationBrowser } from '../readiveDestinationPolicy';
 import { ReadiveConnectionPanel, ReadiveJobs, useReadiveStatus } from './ReadiveConnectionPanel';
 import '../styles/ReadiveTransfer.css';
 
@@ -24,7 +25,31 @@ export function ReadiveTransferDialog({ paths, t, showToast, onClose }) {
     const includedIds = useMemo(() => new Set(selected.map(entry => entry.id)), [selected]);
     const summary = useMemo(() => summarizeReadiveEntries(selected), [selected]);
     const device = status.devices?.find(item => item.id === deviceId);
-    const canEnqueue = canEnqueueReadiveTransfer({ snapshot, summary, deviceId: device?.id, running: status.running, busy: busy || scanning || Boolean(jobId), confirmed, largeConfirmed });
+    const destinationScope = useRef(null);
+    destinationScope.current = { deviceId: device?.id, running: status.running && !statusError };
+    const destinationBrowser = useMemo(() => createReadiveDestinationBrowser({
+        requestPage: options => window.electronAPI.requestReadiveDestinationPage(options),
+        isDeviceActive: id => destinationScope.current?.running && destinationScope.current.deviceId === id,
+    }), []);
+    const [destinationState, setDestinationState] = useState(destinationBrowser.getSnapshot);
+    const destination = destinationState.selection;
+    const destinationDisabled = busy || Boolean(jobId) || destinationState.loading;
+    const canEnqueue = canEnqueueReadiveTransfer({ snapshot, summary, deviceId: device?.id, destination, running: status.running && !statusError, busy: busy || scanning || Boolean(jobId) || destinationState.loading, confirmed, largeConfirmed });
+
+    useEffect(() => {
+        const unsubscribe = destinationBrowser.subscribe(setDestinationState);
+        return () => { unsubscribe(); destinationBrowser.setDevice('', false); };
+    }, [destinationBrowser]);
+    useEffect(() => {
+        destinationBrowser.setDevice(device?.id ?? '', status.running && !statusError);
+        setConfirmed(false);
+        setLargeConfirmed(false);
+    }, [destinationBrowser, device?.id, status.running, statusError]);
+    const changeDestination = action => {
+        setConfirmed(false);
+        setLargeConfirmed(false);
+        action();
+    };
 
     useEffect(() => {
         let active = true;
@@ -61,13 +86,15 @@ export function ReadiveTransferDialog({ paths, t, showToast, onClose }) {
         setBusy(true);
         setError('');
         try {
-            const result = await window.electronAPI.enqueueReadiveTransfer({ snapshotId: snapshot.id, deviceId, excludedIds, confirmed, largeConfirmed });
+            const { collectionId, name, revision } = destination;
+            const result = await window.electronAPI.enqueueReadiveTransfer({ snapshotId: snapshot.id, deviceId, excludedIds, confirmed, largeConfirmed, destination: { collectionId, name, revision } });
             setJobId(result.id || result.job?.id);
             await refresh();
         } catch {
             setError(t('readive.enqueue_failed'));
             setConfirmed(false);
             setLargeConfirmed(false);
+            destinationBrowser.refresh();
         } finally {
             busyRef.current = false;
             setBusy(false);
@@ -116,7 +143,35 @@ export function ReadiveTransferDialog({ paths, t, showToast, onClose }) {
                     </div>
                     {!status.running && <p role="status">{t('readive.server_required')}</p>}
                     {showConnection && <ReadiveConnectionPanel t={t} showToast={showToast} />}
-                    <p>{t('readive.destination')}</p>
+                    <section className="readive-destination" aria-labelledby="readive-destination-title">
+                        <h3 id="readive-destination-title">{t('readive.destination')}</h3>
+                        <p>{t('readive.destination_description')}</p>
+                        {!device && <p>{t('readive.choose_device')}</p>}
+                        {device && <>
+                            <div className="readive-row">
+                                <button type="button" disabled={destinationDisabled || destinationState.trail.length < 2} onClick={() => changeDestination(() => destinationBrowser.back())}>{t('readive.destination_parent')}</button>
+                                <button type="button" disabled={destinationDisabled || !status.running} onClick={() => changeDestination(() => destinationBrowser.refresh())}>{t('readive.destination_refresh')}</button>
+                                <span className="readive-path">{destinationState.trail.map(entry => entry.name).join(' / ') || device.name}</span>
+                            </div>
+                            {destinationState.loading && <p role="status">{t('readive.destination_loading')}</p>}
+                            {destinationState.error && <p role="alert" className="readive-error">{t('readive.destination_failed')}</p>}
+                            {destinationState.page && <div className="readive-destination-entries" role="group" aria-label={t('readive.destination')}>
+                                {!destinationState.page.entries.length && <p>{t('readive.destination_empty')}</p>}
+                                {destinationState.page.entries.map(entry => entry.kind === 'directory'
+                                    ? <button type="button" className="readive-destination-entry" key={entry.id} disabled={destinationDisabled || destinationState.error} onClick={() => changeDestination(() => destinationBrowser.open(entry.id))}>
+                                        <span className="readive-path">{entry.name}/</span><span>{t('readive.folder')}</span>
+                                    </button>
+                                    : <div className="readive-destination-entry readive-destination-file" key={entry.id}>
+                                        <span className="readive-path">{entry.name}</span><span>{entry.size === null ? t('readive.files') : formatReadiveBytes(entry.size)}</span>
+                                    </div>)}
+                            </div>}
+                            <div className="readive-row">
+                                {destinationState.page?.nextCursor && <button type="button" disabled={destinationDisabled || destinationState.error} onClick={() => changeDestination(() => destinationBrowser.more())}>{t('readive.destination_more')}</button>}
+                                <button type="button" disabled={destinationDisabled || !destinationState.page || destinationState.error || !status.running} onClick={() => changeDestination(() => destinationBrowser.choose())}>{t('readive.destination_choose')}</button>
+                            </div>
+                        </>}
+                        <p role="status" className={destination ? '' : 'readive-warning'}>{destination ? t('readive.destination_selected', { path: destination.name }) : t('readive.destination_required')}</p>
+                    </section>
                     {scanning && <p role="status">{t('readive.scanning')}</p>}
                     {snapshot && <>
                         <dl className="readive-summary" aria-live="polite">

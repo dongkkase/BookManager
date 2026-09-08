@@ -127,3 +127,56 @@ test('빈 폴더만 있는 빠른 스캔도 폴더 행을 스트리밍한다', a
     assert.equal(batches[0].requestId, 8);
     assert.equal(batches[0].matchedCount, 0);
 });
+
+for (const quickListOnly of [false, true]) {
+    for (const includeSubfolders of [false, true]) {
+        test(`중복 디렉터리 엔트리는 한 번만 표시하고 탐색한다 (quick=${quickListOnly}, recursive=${includeSubfolders})`, async t => {
+            const root = createFixture(t);
+            const originalReaddir = fs.promises.readdir;
+            const directoryReads = new Map();
+            t.mock.method(fs.promises, 'readdir', async function (directoryPath, ...args) {
+                directoryReads.set(directoryPath, (directoryReads.get(directoryPath) || 0) + 1);
+                const entries = await originalReaddir.call(this, directoryPath, ...args);
+                return Array.from({ length: 7 }, () => entries).flat();
+            });
+            const events = [];
+            const rows = await scanFolder(root, {
+                quickListOnly,
+                includeSubfolders,
+                includeDirectories: true,
+                skipArchiveExtraction: true,
+                reportQuickFiles: true,
+                reportFileReady: true,
+                resultCacheKey: 'duplicate-directory-entries',
+            }, {
+                sender: {
+                    isDestroyed: () => false,
+                    send: (channel, data) => events.push({ channel, data }),
+                },
+            });
+
+            const expectedPaths = [
+                path.join(root, 'Books.cbz'),
+                path.join(root, 'Empty folder'),
+                path.join(root, 'Root book.cbz'),
+                ...(includeSubfolders ? [path.join(root, 'Books.cbz', 'Nested book.cbz')] : []),
+            ].sort();
+            assert.deepEqual(rows.map(row => row.path).sort(), expectedPaths);
+            const streamedRows = quickListOnly
+                ? events.filter(event => event.channel === 'folder:quickFiles').flatMap(event => event.data.files)
+                : events.filter(event => event.channel === 'folder:fileReady').map(event => event.data.file);
+            assert.deepEqual(streamedRows.map(row => row.path).sort(), expectedPaths);
+            assert.deepEqual(events.find(event => event.channel === 'scan-complete').data.files, rows);
+            const expectedDirectories = [
+                root,
+                ...(includeSubfolders ? [
+                    path.join(root, 'Books.cbz'),
+                    path.join(root, 'Books.cbz', 'Nested folder'),
+                    path.join(root, 'Empty folder'),
+                ] : []),
+            ].sort();
+            assert.deepEqual([...directoryReads.keys()].sort(), expectedDirectories);
+            assert.equal([...directoryReads.values()].every(count => count === 1), true);
+        });
+    }
+}

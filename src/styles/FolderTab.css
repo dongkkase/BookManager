@@ -2423,6 +2423,16 @@ body.is-reordering-table-column {
   z-index: 4;
   top: 5px;
   right: 5px;
+    left: 5px;
+    min-height: 18px;
+}
+
+.thumbnail-status-row .viewer-recent-reading-badge,
+.tile-status-row .viewer-recent-reading-badge {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    max-width: min(104px, 100%);
 }
 
 .detail-panel-status-row {
