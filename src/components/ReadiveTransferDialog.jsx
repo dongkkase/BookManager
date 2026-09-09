@@ -43,7 +43,6 @@ export function ReadiveTransferDialog({ paths, t, onClose, onOpenSharing }) {
     const destinationDisabled = busy || Boolean(jobId) || destinationState.loading;
     const canEnqueue = canEnqueueReadiveTransfer({ snapshot, summary, deviceId: device?.id, destination, running: status.running && !statusError, busy: busy || scanning || Boolean(jobId) || destinationState.loading, largeConfirmed });
     const needsConnection = statusLoaded && (!status.running || !status.devices?.length);
-    const activeStep = !device || !status.running || statusError ? 0 : !destination ? 1 : 2;
     const job = status.jobs?.find(item => item.id === jobId);
     const jobTerminal = ['completed', 'cancelled', 'failed'].includes(job?.status);
     const jobTitle = job?.status === 'completed' ? 'transfer_completed'
@@ -154,22 +153,14 @@ export function ReadiveTransferDialog({ paths, t, onClose, onOpenSharing }) {
 
     return (
         <div className="readive-overlay" onMouseDown={event => event.stopPropagation()}>
-            <section ref={dialogRef} className="readive-dialog" role="dialog" aria-modal="true" aria-labelledby="readive-transfer-title" aria-describedby="readive-transfer-description" tabIndex={-1}>
+            <section ref={dialogRef} className="readive-dialog" role="dialog" aria-modal="true" aria-labelledby="readive-transfer-title" aria-describedby={jobId ? 'readive-transfer-description' : undefined} tabIndex={-1}>
                 <div className="readive-dialog-header">
                     <h2 id="readive-transfer-title"><FaIcon name="towerBroadcast" />{t('readive.send')}</h2>
                     <button type="button" className="readive-icon-button" aria-label={t('btn_close')} title={t('btn_close')} disabled={busy} onClick={onClose}><FaIcon name="xmark" /></button>
                 </div>
                 <div className="readive-dialog-body">
-                    <p id="readive-transfer-description" className="readive-muted">{t(jobId ? jobTerminal ? 'readive.transfer_done_hint' : 'readive.transfer_background' : 'readive.preview_description')}</p>
+                    {jobId && <p id="readive-transfer-description" className="readive-muted">{t(jobTerminal ? 'readive.transfer_done_hint' : 'readive.transfer_background')}</p>}
                     {!jobId && <>
-                        <ol className="readive-steps" aria-label={t('readive.transfer_steps')}>
-                            {['step_device', 'step_destination', 'step_review'].map((key, index) => (
-                                <li key={key} className={index === activeStep ? 'is-current' : index < activeStep ? 'is-complete' : ''} aria-current={index === activeStep ? 'step' : undefined}>
-                                    <span className="readive-step-number">{index < activeStep ? <FaIcon name="check" size={11} /> : index + 1}</span>
-                                    {t(`readive.${key}`)}
-                                </li>
-                            ))}
-                        </ol>
                         <section className="readive-device-section" aria-labelledby="readive-device-title">
                             <div className="readive-section-heading">
                                 <h3 id="readive-device-title">{t('readive.device')}</h3>
@@ -286,7 +277,7 @@ export function ReadiveTransferDialog({ paths, t, onClose, onOpenSharing }) {
                     {!jobId && <p className="readive-footer-hint" role="status">{t(`readive.${nextHint}`)}</p>}
                     <div className="readive-footer-actions">
                         <button type="button" disabled={busy} onClick={onClose}>{t('btn_close')}</button>
-                        {!jobId && <button type="button" className="readive-primary" disabled={!canEnqueue} onClick={start}><FaIcon name={busy ? 'spinner' : 'towerBroadcast'} className={busy ? 'readive-spinner' : undefined} />{t(busy ? 'readive.preparing' : 'readive.start_transfer')}</button>}
+                        {!jobId && <button type="button" className="readive-primary" disabled={!canEnqueue} onClick={start}>{t(busy ? 'readive.preparing' : 'readive.start_transfer')}</button>}
                     </div>
                 </div>
             </section>

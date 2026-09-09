@@ -524,55 +524,6 @@
     line-height: 1.6;
 }
 
-.readive-steps {
-    display: flex;
-    list-style: none;
-    margin: 16px 0;
-    padding: 10px 12px;
-    border: 1px solid var(--border-color, #444);
-    border-radius: 4px;
-    background: var(--bg-primary, #1e1e1e);
-}
-
-.readive-steps li {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    color: var(--text-secondary, #b0b0b0);
-    font-size: var(--font-sm, 12px);
-}
-
-.readive-steps li + li {
-    border-left: 1px solid var(--border-color, #444);
-}
-
-.readive-step-number {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--bg-tertiary, #333);
-    font-size: var(--font-sm, 12px);
-}
-
-.readive-steps .is-current {
-    color: var(--text-primary, #fff);
-    font-weight: 600;
-}
-
-.readive-steps .is-current .readive-step-number {
-    background: var(--accent-primary, #007acc);
-}
-
-.readive-steps .is-complete .readive-step-number {
-    color: #8fd3ac;
-}
-
 .readive-section-heading {
     display: flex;
     align-items: center;
@@ -947,13 +898,5 @@
     .readive-panel select,
     .readive-dialog select {
         max-width: 100%;
-    }
-
-    .readive-steps {
-        padding: 10px 4px;
-    }
-
-    .readive-steps li {
-        gap: 5px;
     }
 }
