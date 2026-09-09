@@ -83,7 +83,31 @@ export function readingRowSignature(row) {
     return JSON.stringify([row.page_index, row.scroll_percent, row.position_seconds, row.status]);
 }
 
-export async function exchangeReading(state, device, records, libraryDb, itemIds) {
+function readingSignature(record) {
+    return { itemId: record.itemId, contentHash: record.contentHash, deviceId: record.deviceId, revision: record.revision };
+}
+
+function knownReadingSignatures(values, allowed, selectedIds) {
+    if (values === undefined) return new Map();
+    if (!Array.isArray(values) || values.length > 500) throw fail('invalid_known_reading');
+    const known = new Map();
+    const seen = new Set();
+    for (const value of values) {
+        if (!value || typeof value.itemId !== 'string' || !value.itemId || value.itemId.length > 100
+            || typeof value.deviceId !== 'string' || !value.deviceId || value.deviceId.length > 100
+            || !/^[a-f0-9]{64}$/.test(value.contentHash) || !Number.isSafeInteger(value.revision) || value.revision < 1
+            || Object.keys(value).some(key => !['itemId', 'contentHash', 'deviceId', 'revision'].includes(key))
+            || seen.has(value.itemId)) throw fail('invalid_known_reading');
+        seen.add(value.itemId);
+        if (selectedIds && !selectedIds.has(value.itemId)) throw fail('unshared_reading_item', 403);
+        if (selectedIds && !allowed.has(value.itemId)) continue;
+        if (allowed.get(value.itemId)?.contentHash !== value.contentHash) throw fail('unshared_reading_item', 403);
+        known.set(value.itemId, value);
+    }
+    return known;
+}
+
+export async function exchangeReading(state, device, records, libraryDb, itemIds, options = {}) {
     if (!Array.isArray(records) || records.length > 2000) throw fail('invalid_reading_batch');
     const sharedItems = Object.values(state.items).filter(item => item.deviceIds.includes(device.id));
     let items = sharedItems;
@@ -117,6 +141,11 @@ export async function exchangeReading(state, device, records, libraryDb, itemIds
         if (allowed.get(next.itemId)?.contentHash !== next.contentHash) throw fail('unshared_reading_item', 403);
         return [next];
     });
+    const known = knownReadingSignatures(options.knownReadings, allowed, selectedIds);
+    const report = options.report || {};
+    report.changed = false;
+    report.readingChanged = false;
+    report.acknowledged = [];
     const db = libraryDb?.getConnection();
     for (const item of items) {
         if (!available.has(item.itemId)) continue;
@@ -132,24 +161,47 @@ export async function exchangeReading(state, device, records, libraryDb, itemIds
                 readStatus: row.status, locator: rowLocator(row),
             };
             const key = `${item.itemId}:${state.serverId}`;
-            if (!state.reading[key] || local.revision > state.reading[key].revision) state.reading[key] = local;
-            delete item.localReadingBaseline;
+            if (!state.reading[key] || local.revision > state.reading[key].revision) {
+                state.reading[key] = local;
+                report.changed = true;
+                report.readingChanged = true;
+            }
+            if (item.localReadingBaseline) {
+                delete item.localReadingBaseline;
+                report.changed = true;
+            }
         }
     }
     for (const next of valid) {
         const key = `${next.itemId}:${device.id}`;
-        if (!state.reading[key] || next.revision > state.reading[key].revision) state.reading[key] = next;
+        if (!state.reading[key] || next.revision > state.reading[key].revision) {
+            state.reading[key] = next;
+            report.changed = true;
+        }
+    }
+    const acknowledged = new Map();
+    for (const next of valid) {
+        const stored = state.reading[`${next.itemId}:${device.id}`];
+        if (stored?.revision === next.revision && stored.contentHash === next.contentHash) acknowledged.set(next.itemId, readingSignature(stored));
+    }
+    report.acknowledged = [...acknowledged.values()];
+    const winnersById = new Map();
+    for (const record of Object.values(state.reading)) {
+        if (allowed.has(record.itemId) && newerReading(record, winnersById.get(record.itemId))) winnersById.set(record.itemId, record);
     }
     const winners = [];
     for (const item of items) {
-        const winner = Object.values(state.reading).filter(record => record.itemId === item.itemId).reduce((current, record) => newerReading(record, current) ? record : current, null);
+        const winner = winnersById.get(item.itemId);
         if (!winner) continue;
-        winners.push(winner);
+        const previous = known.get(item.itemId);
+        if (!previous || previous.contentHash !== winner.contentHash || previous.deviceId !== winner.deviceId || previous.revision !== winner.revision) winners.push(winner);
         const applied = state.appliedReadings[item.itemId];
         if (libraryDb && available.has(item.itemId) && winner.deviceId !== state.serverId && (!applied || newerReading(winner, applied.record))) {
             const row = db.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(libraryDb.normalizeFilePath(item.sourcePath));
             const saved = await libraryDb.upsertReadingState(item.sourcePath, { ...readingStateProjection(winner, row), format: item.format });
             state.appliedReadings[item.itemId] = { record: winner, localRevision: saved.revision };
+            report.changed = true;
+            report.readingChanged = true;
         }
     }
     return winners.slice(0, 2000);

@@ -70,6 +70,7 @@ export class ReadiveService {
         this.snapshots = new Map();
         this.scanning = false;
         this.connections = new Map();
+        this.lastSeenPersistedAt = new Map();
         this.scanController = null;
         this.lifecyclePending = Promise.resolve();
         this.catalogSecret = crypto.randomBytes(32);
@@ -335,6 +336,7 @@ export class ReadiveService {
         this.abortDeviceTransfers(deviceId);
         this.readers.closeDevice(deviceId);
         this.destinations.clearDevice(deviceId);
+        if (revokedDevice) this.lastSeenPersistedAt.delete(`${revokedDevice.id}:${revokedDevice.tokenHash}`);
         for (const preparation of this.preparations.values()) if (preparation.deviceId === deviceId) preparation.controller.abort();
         if (revokedDevice) this.log('readive.log_device_revoked', { device: revokedDevice.name });
         return { success: true };
@@ -600,20 +602,27 @@ export class ReadiveService {
             throw fail('not_found', 404);
         }
         if (method === 'GET' && pathname === `${PREFIX}/jobs`) {
-            return { json: await this.store.transact(next => {
-                const active = next.devices.find(item => item.id === device.id);
+            const result = await this.store.transact(next => {
+                const active = next.devices.find(item => item.id === device.id && equalDigest(item.tokenHash, digest(token)));
                 if (!active) throw fail('unauthorized', 401);
-                active.lastSeenAt = new Date(this.now()).toISOString();
-                return { jobs: next.jobs.filter(job => job.deviceId === device.id).map(publicJob) };
-            }) };
+                const now = this.now();
+                const presenceKey = `${active.id}:${active.tokenHash}`;
+                if (!this.lastSeenPersistedAt.has(presenceKey)) this.lastSeenPersistedAt.set(presenceKey, Date.parse(active.lastSeenAt) || 0);
+                const previous = this.lastSeenPersistedAt.get(presenceKey);
+                active.lastSeenAt = new Date(now).toISOString();
+                return { jobs: next.jobs.filter(job => job.deviceId === device.id).map(publicJob), presenceKey, now, persist: now - previous >= 60000 || now < previous };
+            }, { shouldSave: result => result.persist });
+            if (result.persist) this.lastSeenPersistedAt.set(result.presenceKey, result.now);
+            return { json: { jobs: result.jobs } };
         }
         if (method === 'POST' && pathname === `${PREFIX}/reading`) {
+            const report = {};
             const records = await this.store.transact(async next => {
                 if (!next.devices.some(item => item.id === device.id && equalDigest(item.tokenHash, digest(token)))) throw fail('unauthorized', 401);
-                return exchangeReading(next, device, body.records, await this.getLibraryDb?.(), body.itemIds);
-            });
-            this.onReadingChanged();
-            return { json: { records } };
+                return exchangeReading(next, device, body.records, await this.getLibraryDb?.(), body.itemIds, { knownReadings: body.knownReadings, report });
+            }, { shouldSave: () => report.changed });
+            if (report.readingChanged) this.onReadingChanged();
+            return { json: { records, acknowledged: report.acknowledged } };
         }
         const match = pathname.match(/^\/readive\/v1\/jobs\/([a-f0-9-]+)(?:\/(accept|ack|cancel|files|covers)(?:\/([a-f0-9-]+))?)?$/);
         const job = match && state.jobs.find(item => item.id === match[1] && item.deviceId === device.id);

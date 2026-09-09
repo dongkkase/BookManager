@@ -57,13 +57,13 @@ export class ReadiveStore {
         }
     }
 
-    transact(callback) {
+    transact(callback, { shouldSave = () => true } = {}) {
         const operation = this.pending.then(async () => {
             await this.load();
             const previous = structuredClone(this.state);
             try {
                 const result = await callback(this.state);
-                await this.save();
+                if (shouldSave(result)) await this.save();
                 return result;
             } catch (error) {
                 this.state = previous;

@@ -154,3 +154,18 @@ test('Readive hydration finds the valid replacement item when an older hash reta
     const hydrated = await getImportedReadingState(state, sourcePath, libraryDb);
     assert.equal(hydrated?.pageIndex, 60);
 });
+
+test('Readive known winners still apply an unapplied position and unchanged exchanges reset their change report', async t => {
+    const { state, libraryDb, filePath, record, device } = await fixture(t);
+    state.reading[`${record.itemId}:${device.id}`] = record;
+    const report = {};
+    const options = { knownReadings: [{ itemId: record.itemId, contentHash: record.contentHash, deviceId: record.deviceId, revision: record.revision }], report };
+    assert.deepEqual(await exchangeReading(state, device, [], libraryDb, [record.itemId], options), []);
+    assert.equal((await getImportedReadingState(state, filePath, libraryDb)).pageIndex, 20);
+    assert.equal(report.changed, true);
+    assert.equal(report.readingChanged, true);
+    assert.deepEqual(report.acknowledged, []);
+    assert.deepEqual(await exchangeReading(state, device, [], libraryDb, [record.itemId], options), []);
+    assert.equal(report.changed, false);
+    assert.equal(report.readingChanged, false);
+});
