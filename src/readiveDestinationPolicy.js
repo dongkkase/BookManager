@@ -33,11 +33,13 @@ export function createReadiveDestinationBrowser({ requestPage, isDeviceActive = 
             if (entries.length > 100000 || cursors.size >= 1000) throw new Error('page_limit');
             if (cursor) cursors.add(cursor);
             const nextTrail = trail.length ? [...trail.slice(0, -1), { id: parentId, name: result.name }] : [{ id: parentId, name: result.name }];
-            publish({ page: { ...result, entries }, trail: nextTrail });
+            const name = nextTrail.map(entry => entry.name).join(' / ').slice(0, 512).replace(/[\uD800-\uDBFF]$/, '');
+            const selection = { deviceId, collectionId: parentId, name, revision: result.revision };
+            publish({ page: { ...result, entries }, trail: nextTrail, selection, loading: false });
         } catch {
             if (isCurrent()) publish({ error: true, selection: null });
         } finally {
-            if (isCurrent()) publish({ loading: false });
+            if (isCurrent() && state.loading) publish({ loading: false });
         }
     };
     return {
@@ -69,13 +71,6 @@ export function createReadiveDestinationBrowser({ requestPage, isDeviceActive = 
         more() {
             if (!active() || state.loading || state.error || !state.page?.nextCursor) return;
             void load(state.page.parentId, state.trail, state.page.nextCursor);
-        },
-        choose() {
-            if (!active() || state.loading || state.error || !state.page) return null;
-            const name = state.trail.map(entry => entry.name).join(' / ').slice(0, 512).replace(/[\uD800-\uDBFF]$/, '');
-            const selection = { deviceId: state.deviceId, collectionId: state.page.parentId, name, revision: state.page.revision };
-            publish({ selection });
-            return selection;
         },
         dispose() {
             disposed = true;

@@ -2997,6 +2997,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }));
   }, []);
 
+    const openReadiveSharing = useCallback(() => {
+        setReadiveTransferPaths(null);
+        if (!isFolderTabVisible()) return;
+        window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+            detail: { tabId: 'sharing', focus: 'readive-connection' },
+        }));
+    }, [isFolderTabVisible]);
+
   const handleContextAction = useCallback(async (action) => {
     const menu = contextMenu;
     closeContextMenu();
@@ -3004,7 +3012,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     if (action === 'send-readive') {
         const paths = resolveReadivePaths(menu, selectedEntryObjects);
-        if (paths.length) setReadiveTransferPaths(paths);
+        if (!paths.length) return;
+        try {
+            const status = await window.electronAPI.getReadiveStatus();
+            if (!isFolderTabVisible()) return;
+            if (!status?.running || !status.devices?.length) openReadiveSharing();
+            else setReadiveTransferPaths(paths);
+        } catch {
+            if (!isFolderTabVisible()) return;
+            openReadiveSharing();
+            showToast?.(t('readive.status_failed'));
+        }
     } else if (action === 'remove-recent') {
       await removeRecentReading(menu.file?.full_path || menu.file?.path);
     } else if (action === 'refresh-recent') {
@@ -3074,7 +3092,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, undoLastRename]);
+  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -3836,7 +3854,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           </div>
         </div>
       </div>
-      {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} showToast={showToast} onClose={() => setReadiveTransferPaths(null)} />}
+      {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} onClose={() => setReadiveTransferPaths(null)} onOpenSharing={openReadiveSharing} />}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
           {contextMenu.type === 'library' ? (

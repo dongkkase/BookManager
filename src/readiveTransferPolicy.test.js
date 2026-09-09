@@ -26,7 +26,7 @@ test('excluding a folder removes all descendants from preview and byte totals', 
 test('large and hard transfer limits are enforced independently of checkbox confirmation', () => {
     const summary = summarizeReadiveEntries(Array.from({ length: 101 }, (_, id) => ({ id, kind: 'file', size: 1 })));
     assert.equal(summary.large, true);
-    const options = { snapshot: { id: 'scan' }, summary, deviceId: 'phone', running: true, confirmed: true, destination: { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev' } };
+    const options = { snapshot: { id: 'scan' }, summary, deviceId: 'phone', running: true, destination: { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev' } };
     assert.equal(canEnqueueReadiveTransfer(options), false);
     assert.equal(canEnqueueReadiveTransfer({ ...options, largeConfirmed: true }), true);
     assert.equal(canEnqueueReadiveTransfer({ ...options, largeConfirmed: true, busy: true }), false);
@@ -35,8 +35,11 @@ test('large and hard transfer limits are enforced independently of checkbox conf
 });
 
 test('unknown sizes and empty selection cannot start a transfer', () => {
-    assert.equal(summarizeReadiveEntries([{ kind: 'file', size: NaN }]).blocked, true);
-    assert.equal(canEnqueueReadiveTransfer({ snapshot: { id: 'scan' }, summary: summarizeReadiveEntries([]), deviceId: 'phone', running: true, confirmed: true }), false);
+    const options = { snapshot: { id: 'scan' }, deviceId: 'phone', running: true, destination: { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev' } };
+    const unknownSize = summarizeReadiveEntries([{ kind: 'file', size: NaN }]);
+    assert.equal(unknownSize.blocked, true);
+    assert.equal(canEnqueueReadiveTransfer({ ...options, summary: unknownSize }), false);
+    assert.equal(canEnqueueReadiveTransfer({ ...options, summary: summarizeReadiveEntries([]) }), false);
 });
 
 test('server skipped entries are excluded from the confirmation scope and byte totals', () => {
@@ -46,8 +49,8 @@ test('server skipped entries are excluded from the confirmation scope and byte t
 });
 
 
-test('only a confirmed destination for the selected device can enqueue', () => {
-    const options = { snapshot: { id: 'scan' }, summary: summarizeReadiveEntries(entries), deviceId: 'phone', running: true, confirmed: true };
+test('a valid chosen destination enables normal transfers without a separate general confirmation', () => {
+    const options = { snapshot: { id: 'scan' }, summary: summarizeReadiveEntries(entries), deviceId: 'phone', running: true };
     assert.equal(canEnqueueReadiveTransfer(options), false);
     const destination = { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev' };
     assert.equal(canEnqueueReadiveTransfer({ ...options, destination }), true);

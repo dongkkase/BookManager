@@ -57,6 +57,8 @@ test('Readive IPC sends pairing and device events to server logs without exposin
 
     const pairing = await invoke('pairing');
     const ticket = JSON.parse(pairing.ticket);
+    assert.deepEqual((await invoke('status')).pairing, pairing);
+    assert.deepEqual(await invoke('pairing'), pairing);
     assert.equal(logs.length, 1);
     assert.match(logs[0].message, /QR/i);
     const result = await service.dispatch({
@@ -92,16 +94,22 @@ test('Readive IPC sends pairing and device events to server logs without exposin
     }
 });
 
-test('Readive IPC translates logs using the current configured language', async t => {
-    const { invoke, logs, config } = await fixture(t, 'ko');
+test('Readive IPC translates new-session logs using the current configured language without logging QR lookups', async t => {
+    const { service, invoke, logs, config } = await fixture(t, 'ko');
     await invoke('pairing');
     assert.match(logs[0].message, /QR/);
     assert.match(logs[0].message, /[가-힣]/);
     config.language = 'en';
     await invoke('pairing');
-    assert.match(logs[1].message, /QR/);
-    assert.doesNotMatch(logs[1].message, /[가-힣]/);
-    assert.notEqual(logs[0].message, logs[1].message);
+    assert.equal(logs.length, 1, 'Reading the current QR does not generate another pairing event');
+    await invoke('stop');
+    service.localInterface = local;
+    service.port = 19421;
+    service.server = { close: callback => callback() };
+    await invoke('pairing');
+    assert.match(logs[2].message, /QR/);
+    assert.doesNotMatch(logs[2].message, /[가-힣]/);
+    assert.notEqual(logs[0].message, logs[2].message);
 });
 
 test('Readive IPC logs stopped-server pairing failures with a safe error code', async t => {
@@ -163,6 +171,8 @@ test('Readive IPC rejects untrusted senders and frames before creating a ticket 
     const { service, invoke, logs, webContents, mainFrame, handlers } = await fixture(t);
     await assert.rejects(invoke('pairing', {}, { sender: { mainFrame }, senderFrame: mainFrame }), /readive_untrusted_sender/);
     await assert.rejects(invoke('pairing', {}, { sender: webContents, senderFrame: {} }), /readive_untrusted_frame/);
+    await assert.rejects(invoke('status', {}, { sender: { mainFrame }, senderFrame: mainFrame }), /readive_untrusted_sender/);
+    await assert.rejects(invoke('status', {}, { sender: webContents, senderFrame: {} }), /readive_untrusted_frame/);
     assert.equal(service.ticket, null);
     assert.deepEqual(logs, []);
     await service.dispose();

@@ -1,18 +1,25 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FaIcon } from './FaIcon';
 import { formatReadiveBytes } from '../readiveTransferPolicy';
-import { getReadivePairingText, readivePairingDeviceRevision } from '../readivePairingClipboard';
 import '../styles/ReadiveTransfer.css';
 
 export function useReadiveStatus() {
     const [status, setStatus] = useState({ running: false, devices: [], jobs: [], interfaces: [] });
     const [error, setError] = useState(false);
+    const [statusLoaded, setStatusLoaded] = useState(false);
     const refresh = useCallback(async () => {
-        const result = await window.electronAPI?.getReadiveStatus?.();
-        if (!result) throw new Error('readive-unavailable');
-        setStatus(result);
-        setError(false);
-        return result;
+        try {
+            const result = await window.electronAPI?.getReadiveStatus?.();
+            if (!result) throw new Error('readive-unavailable');
+            setStatus(result);
+            setError(false);
+            return result;
+        } catch (error) {
+            setError(true);
+            throw error;
+        } finally {
+            setStatusLoaded(true);
+        }
     }, []);
     useEffect(() => {
         let active = true;
@@ -28,7 +35,10 @@ export function useReadiveStatus() {
             } catch {
                 if (active) setError(true);
             } finally {
-                if (active) timer = window.setTimeout(poll, 2000);
+                if (active) {
+                    setStatusLoaded(true);
+                    timer = window.setTimeout(poll, 2000);
+                }
             }
         };
         poll();
@@ -37,7 +47,7 @@ export function useReadiveStatus() {
             window.clearTimeout(timer);
         };
     }, []);
-    return { status, refresh, statusError: error };
+    return { status, refresh, statusError: error, statusLoaded };
 }
 
 export function ReadiveJobs({ jobs = [], devices = [], t, onCancel, busy = false }) {
@@ -53,7 +63,7 @@ export function ReadiveJobs({ jobs = [], devices = [], t, onCancel, busy = false
                     <div className="readive-job" key={job.id}>
                         <div>
                             <strong>{devices.find(device => device.id === job.deviceId)?.name || t('readive.device')}</strong>
-                            <span> · {t(`readive.status_${job.status}`)}</span>
+                            <span> · {t(job.status === 'failed' ? 'readive.job_failed' : `readive.status_${job.status}`)}</span>
                             {job.origin === 'mobile-browse' && <div>{t('readive.mobile_requested')}</div>}
                             <div>{t('readive.progress', { received, total })} · {formatReadiveBytes(job.summary?.bytes)}</div>
                             {Boolean(job.failedEntryIds?.length) && <div role="alert">{t('readive.failed_count', { count: job.failedEntryIds.length })}</div>}
@@ -67,53 +77,61 @@ export function ReadiveJobs({ jobs = [], devices = [], t, onCancel, busy = false
     );
 }
 
-export function ReadiveConnectionPanel({ t, showToast, variant = 'default' }) {
+export function ReadiveConnectionPanel({ t, showToast, variant = 'default', attentionRequest = null, isActive = true }) {
     const sharing = variant === 'sharing';
-    const { status, refresh, statusError } = useReadiveStatus();
+    const { status, refresh, statusError, statusLoaded } = useReadiveStatus();
     const [address, setAddress] = useState('');
-    const [pairing, setPairing] = useState(null);
     const panelRef = useRef(null);
-    const currentStatusRef = useRef(null);
-    const [now, setNow] = useState(Date.now);
     const [busy, setBusy] = useState(false);
     const busyRef = useRef(false);
     const [error, setError] = useState('');
     const [revokeId, setRevokeId] = useState('');
+    const [attentionVisible, setAttentionVisible] = useState(false);
+    const consumedAttentionRef = useRef(null);
+    const attentionCancelRef = useRef(null);
     const interfaces = status.interfaces || [];
     const selectedAddress = status.running ? status.address : address || interfaces[0]?.address || '';
-    const expiresAt = Date.parse(pairing?.expiresAt);
-    const remainingSeconds = Number.isFinite(expiresAt) ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : 0;
-    const expired = pairing && remainingSeconds === 0;
-    const deviceRevision = readivePairingDeviceRevision(status.devices);
-    const pairingText = getReadivePairingText(pairing, { running: status.running, statusError, now, deviceRevision });
-    currentStatusRef.current = { status, statusError };
+    const pairing = status.running && !statusError ? status.pairing : null;
+
+    const stopAttention = useCallback(() => {
+        attentionCancelRef.current?.();
+        attentionCancelRef.current = null;
+        setAttentionVisible(false);
+    }, []);
 
     useEffect(() => {
-        if (!status.running || statusError || (pairing?.deviceRevision !== undefined && pairing.deviceRevision !== deviceRevision)) setPairing(null);
-    }, [status.running, statusError, pairing?.deviceRevision, deviceRevision]);
+        stopAttention();
+        if (!sharing || !isActive || !attentionRequest || !statusLoaded || statusError) return;
+        if (consumedAttentionRef.current === attentionRequest) return;
+        consumedAttentionRef.current = attentionRequest;
+        if (status.running || busy) return;
 
-    useEffect(() => {
-        if (expired) setPairing(current => current ? { expiresAt: current.expiresAt } : null);
-    }, [pairing?.expiresAt, expired, status.running, statusError, deviceRevision]);
-
-    useEffect(() => {
-        if (!pairing || expired) return;
-        const timer = window.setInterval(() => setNow(Date.now()), 1000);
-        return () => window.clearInterval(timer);
-    }, [pairing?.expiresAt, expired]);
-
-    const createPairing = async () => {
-        const revision = readivePairingDeviceRevision(currentStatusRef.current.status.devices);
-        setPairing(null);
-        const result = await window.electronAPI.createReadivePairing({});
-        const currentStatus = await refresh();
-        if (!currentStatus.running || revision !== readivePairingDeviceRevision(currentStatus.devices)) return;
-        setNow(Date.now());
-        setPairing({ ...result, deviceRevision: revision });
-    };
+        let frame;
+        let timer;
+        frame = window.requestAnimationFrame(() => {
+            frame = window.requestAnimationFrame(() => {
+                setAttentionVisible(true);
+                panelRef.current?.scrollIntoView({
+                    block: 'nearest',
+                    behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+                });
+                timer = window.setTimeout(() => setAttentionVisible(false), 3600);
+            });
+        });
+        const cancel = () => {
+            window.cancelAnimationFrame(frame);
+            window.clearTimeout(timer);
+        };
+        attentionCancelRef.current = cancel;
+        return () => {
+            cancel();
+            if (attentionCancelRef.current === cancel) attentionCancelRef.current = null;
+        };
+    }, [attentionRequest, sharing, isActive, statusLoaded, statusError, status.running, busy, stopAttention]);
 
     const run = async operation => {
         if (busyRef.current) return;
+        stopAttention();
         busyRef.current = true;
         setBusy(true);
         setError('');
@@ -133,71 +151,67 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default' }) {
     };
 
     return (
-        <section ref={panelRef} className={sharing ? 'sharing-groupbox readive-sharing-panel' : 'readive-panel'} aria-labelledby="readive-connection-title">
+        <section ref={panelRef} className={sharing ? `sharing-groupbox readive-sharing-panel${attentionVisible ? ' is-connection-attention' : ''}` : 'readive-panel'} aria-labelledby="readive-connection-title">
             <h2 id="readive-connection-title" className={sharing ? 'sharing-groupbox-title' : undefined}>{t('readive.title')}</h2>
             <div className={sharing ? 'sharing-groupbox-content' : undefined}>
-                <p className={sharing ? 'sharing-desc' : undefined}>{t('readive.description')}</p>
+                <p className={`readive-connection-description${sharing ? ' sharing-desc' : ''}`}>{t('readive.description')}</p>
+                <div className="readive-connection-toolbar">
+                    <button type="button" className={sharing ? `sharing-btn-toggle${status.running ? ' running' : ''}` : undefined} disabled={busy || !statusLoaded || (!status.running && !selectedAddress)} onClick={() => run(async () => {
+                        if (status.running) {
+                            await window.electronAPI.stopReadiveServer();
+                        } else {
+                            await window.electronAPI.startReadiveServer({ address: selectedAddress });
+                        }
+                    })}>
+                        <FaIcon name={status.running ? 'stopCircle' : 'powerOff'} />
+                        {t(busy ? 'tab_sharing_processing' : status.running ? 'readive.stop' : 'readive.start')}
+                    </button>
+                </div>
                 <div className="readive-connection-layout">
                     <div className="readive-connection-details">
-                        <div className="readive-row readive-interface-row">
-                            <label className={sharing ? 'sharing-label' : undefined} htmlFor="readive-interface">{t('readive.interface')}</label>
-                            <select id="readive-interface" className={sharing ? 'sharing-input-select' : undefined} value={selectedAddress} disabled={busy || status.running} onChange={event => setAddress(event.target.value)}>
-                                {!interfaces.length && <option value="">{t('readive.no_interface')}</option>}
-                                {interfaces.map(item => <option key={item.address} value={item.address}>{item.name} · {item.address}</option>)}
-                            </select>
-                            <button type="button" className={sharing ? `sharing-btn-toggle${status.running ? ' running' : ''}` : undefined} disabled={busy || (!status.running && !selectedAddress)} onClick={() => run(async () => {
-                                if (status.running) {
-                                    await window.electronAPI.stopReadiveServer();
-                                    setPairing(null);
-                                } else {
-                                    await window.electronAPI.startReadiveServer({ address: selectedAddress });
-                                    await createPairing();
-                                }
-                            })}>
-                                {sharing && <FaIcon name={status.running ? 'stopCircle' : 'powerOff'} />}
-                                {t(sharing && busy ? 'tab_sharing_processing' : status.running ? 'readive.stop' : 'readive.start')}
-                            </button>
-                        </div>
-                        {status.running && (
-                            <>
-                                {pairing && (
-                                    <div className="readive-pairing">
-                                        {pairingText && pairing.qrDataUrl && (
-                                            <div className="readive-qr-card">
-                                                <img className="readive-pairing-qr" src={pairing.qrDataUrl} alt={t('readive.qr_alt')} />
-                                            </div>
-                                        )}
-                                        <p className={sharing ? 'sharing-desc' : undefined}>{t(expired ? 'readive.pair_expired' : 'readive.pair_instructions')}</p>
-                                    </div>
-                                )}
-                                <div className="readive-pairing-actions">
-                                    <button type="button" className={sharing ? 'sharing-btn-copy' : undefined} disabled={busy} onClick={() => run(createPairing)}>{t('readive.pair')}</button>
-                                    {pairing && !expired && <p className={sharing ? 'sharing-desc' : undefined}>
-                                        {t('readive.expires', { time: new Date(pairing.expiresAt).toLocaleTimeString() })}
-                                        <br />
-                                        {t('readive.remaining', { minutes: Math.floor(remainingSeconds / 60), seconds: String(remainingSeconds % 60).padStart(2, '0') })}
-                                    </p>}
+                        <div className="readive-pairing">
+                            <div className={`readive-pairing-content${!pairing ? ' readive-pairing-empty' : ''}`}>
+                                <h3 className="readive-pairing-title">{t('readive.pair_title')}</h3>
+                                <p className={sharing ? 'sharing-desc' : undefined}>{t(status.running ? 'readive.pair_instructions' : 'readive.pair_enable_hint')}</p>
+                                <p className={sharing ? 'sharing-desc' : undefined}>{t('readive.pair_once')}</p>
+                            </div>
+                            {pairing?.qrDataUrl && (
+                                <div className="readive-qr-card">
+                                    <img className="readive-pairing-qr" src={pairing.qrDataUrl} alt={t('readive.qr_alt')} />
                                 </div>
-                                {!statusError && <p className={sharing ? 'sharing-desc' : undefined}>
+                            )}
+                        </div>
+                        {statusLoaded && !statusError && !interfaces.length && !status.running && <p className="readive-error">{t('readive.no_interface')}</p>}
+                        <details className="readive-network-settings">
+                            <summary>{t('readive.network_settings')}</summary>
+                            <div className="readive-network-content">
+                                <div className="readive-row readive-interface-row">
+                                    <label className={sharing ? 'sharing-label' : undefined} htmlFor="readive-interface">{t('readive.interface')}</label>
+                                    <select id="readive-interface" className={sharing ? 'sharing-input-select' : undefined} value={selectedAddress} disabled={busy || status.running || !statusLoaded} onChange={event => setAddress(event.target.value)}>
+                                        {!interfaces.length && <option value="">{t('readive.no_interface')}</option>}
+                                        {interfaces.map(item => <option key={item.address} value={item.address}>{item.name} · {item.address}</option>)}
+                                    </select>
+                                </div>
+                                {status.running && !statusError && <p className={sharing ? 'sharing-desc' : undefined}>
                                     {t('readive.manual_instructions', { address: status.address, port: status.port })}
                                 </p>}
-                            </>
-                        )}
+                            </div>
+                        </details>
                     </div>
                     <div className="readive-devices">
                         <h3 className={sharing ? 'sharing-label' : undefined}>{t('readive.devices')}</h3>
                         {!status.devices?.length && <p className={sharing ? 'sharing-desc' : undefined}>{t('readive.no_devices')}</p>}
                         {status.devices?.map(device => (
                             <div className="readive-device" key={device.id}>
-                                <span>{device.name}</span>
+                                <span className="readive-device-name"><FaIcon name="link" />{device.name}</span>
                                 {revokeId === device.id ? <>
-                                    <span>{t('readive.revoke_confirm')}</span>
+                                    <span className="readive-device-confirm">{t('readive.revoke_confirm')}</span>
                                     <button type="button" className={sharing ? 'sharing-btn-copy' : undefined} disabled={busy} onClick={() => run(async () => {
                                         await window.electronAPI.revokeReadiveDevice({ deviceId: device.id });
                                         setRevokeId('');
                                     })}>{t('readive.revoke')}</button>
                                     <button type="button" className={sharing ? 'sharing-btn-copy' : undefined} onClick={() => setRevokeId('')}>{t('btn_cancel')}</button>
-                                </> : <button type="button" className={sharing ? 'sharing-btn-copy readive-device-unlink' : undefined} title={t('readive.unlink')} aria-label={`${device.name} ${t('readive.unlink')}`} disabled={busy} onClick={() => setRevokeId(device.id)}><FaIcon name="unlink" /></button>}
+                                </> : <button type="button" className={`readive-device-unlink${sharing ? ' sharing-btn-copy' : ''}`} title={t('readive.unlink')} aria-label={`${device.name} ${t('readive.unlink')}`} disabled={busy} onClick={() => setRevokeId(device.id)}><FaIcon name="unlink" /></button>}
                             </div>
                         ))}
                     </div>

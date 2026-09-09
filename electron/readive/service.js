@@ -13,8 +13,11 @@ import { pairingQrDataUrl } from './qr.js';
 import { openReaderAsset, ReadiveReaders } from './readers.js';
 import { ReadiveDestinations } from './destinations.js';
 import { ReadiveManualPairing } from './manualPairing.js';
+import { ReadivePreviewRequests, readReadivePreview } from './preview.js';
 
 const PREFIX = '/readive/v1';
+// Existing Readive clients require an ISO timestamp; the server session controls QR validity.
+const SESSION_PAIRING_EXPIRES_AT = '9999-12-31T23:59:59.999Z';
 const SCAN_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const tokenValue = () => crypto.randomBytes(32).toString('base64url');
@@ -65,6 +68,7 @@ export class ReadiveService {
         this.port = null;
         this.certificateSha256 = '';
         this.ticket = null;
+        this.sessionPairing = null;
         this.manualPairing = new ReadiveManualPairing({ now: () => this.now(), requestApproval: requestManualApproval });
         this.pairAttempts = new Map();
         this.snapshots = new Map();
@@ -75,6 +79,7 @@ export class ReadiveService {
         this.lifecyclePending = Promise.resolve();
         this.catalogSecret = crypto.randomBytes(32);
         this.catalogCache = new ReadiveCatalogCache({ now: () => this.now() });
+        this.previewRequests = new ReadivePreviewRequests();
         this.readers = new ReadiveReaders({ now: () => this.now(), onClose: session => this.abortDeviceTransfers(session.deviceId, `reader-${session.id}`) });
         this.destinations = new ReadiveDestinations({ now: () => this.now() });
         this.preparations = new Map();
@@ -99,6 +104,7 @@ export class ReadiveService {
         return {
             running: Boolean(this.server), address: this.localInterface?.address || '', port: this.port,
             url: this.server ? `https://${this.localInterface.address}:${this.port}` : '',
+            pairing: this.server && this.sessionPairing ? { ...this.sessionPairing } : null,
             interfaces: this.interfaces(),
             libraries: registeredReadiveLibraries(state, this.getRegisteredLibraries()).map(library => ({ ...library, shared: true })),
             devices: state.devices.map(({ tokenHash, ...device }) => ({ ...device, deviceId: device.id })),
@@ -275,13 +281,18 @@ export class ReadiveService {
                 server.once('error', reject);
                 server.listen(port, local.address, resolve);
             });
+            this.createSessionPairing();
             this.server = server;
         } catch (error) {
+            this.ticket = null;
+            this.sessionPairing = null;
+            await new Promise(resolve => server.close(() => resolve()));
             this.localInterface = null;
             this.port = null;
             throw error;
         }
         this.log('readive.log_started', { url: `https://${local.address}:${port}` });
+        this.log('readive.log_pairing_created');
         return this.status();
     }
 
@@ -294,8 +305,10 @@ export class ReadiveService {
 
     async stopServer() {
         this.ticket = null;
+        this.sessionPairing = null;
         this.manualPairing.clear();
         this.catalogCache.clear();
+        this.previewRequests.clear();
         this.readers.clear();
         this.destinations.clear();
         this.scanController?.abort();
@@ -313,16 +326,27 @@ export class ReadiveService {
         return { running: false };
     }
 
-    async pairing() {
-        if (!this.server) throw fail('server_not_running', 409);
-        const state = await this.store.load();
+    createSessionPairing() {
         const secret = tokenValue();
-        const ticket = { version: 1, serverId: state.serverId, serverName: this.serverName, host: this.localInterface.address, port: this.port, certificateSha256: this.certificateSha256, secret, expiresAt: new Date(this.now() + 5 * 60 * 1000).toISOString() };
-        this.ticket = { hash: digest(secret), expiresAt: ticket.expiresAt };
+        const ticket = { version: 1, serverId: this.store.state.serverId, serverName: this.serverName, host: this.localInterface.address, port: this.port, certificateSha256: this.certificateSha256, secret, expiresAt: SESSION_PAIRING_EXPIRES_AT };
         const qrPayload = `readive://bookmanager?ticket=${Buffer.from(JSON.stringify(ticket)).toString('base64url')}`;
         const qrDataUrl = pairingQrDataUrl(qrPayload);
-        this.log('readive.log_pairing_created');
-        return { ticket: JSON.stringify(ticket), qrPayload, qrDataUrl, expiresAt: ticket.expiresAt };
+        this.ticket = { hash: digest(secret) };
+        this.sessionPairing = { ticket: JSON.stringify(ticket), qrPayload, qrDataUrl, expiresAt: ticket.expiresAt, sessionScoped: true };
+    }
+
+    async pairing() {
+        const server = this.server;
+        if (!server) throw fail('server_not_running', 409);
+        if (!this.sessionPairing) {
+            await this.store.load();
+            if (this.server !== server) throw fail('server_not_running', 409);
+            if (!this.sessionPairing) {
+                this.createSessionPairing();
+                this.log('readive.log_pairing_created');
+            }
+        }
+        return { ...this.sessionPairing };
     }
 
     async revoke({ deviceId }) {
@@ -503,13 +527,14 @@ export class ReadiveService {
             if (this.pairAttempts.size >= 256 && !this.pairAttempts.has(source)) this.pairAttempts.delete(this.pairAttempts.keys().next().value);
             this.pairAttempts.set(source, attempt);
             if (attempt.count > 10) throw fail('pair_rate_limited', 429);
-            const qrTicket = this.ticket && Date.parse(this.ticket.expiresAt) > this.now() && typeof body.secret === 'string'
-                && equalDigest(this.ticket.hash, digest(body.secret));
+            const qrSession = this.ticket;
+            const qrTicket = this.server && qrSession && typeof body.secret === 'string'
+                && equalDigest(qrSession.hash, digest(body.secret));
             if (typeof body.deviceId !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.deviceId)
                 || typeof body.deviceName !== 'string' || !body.deviceName.trim() || body.deviceName.length > 100) throw fail('invalid_device');
-            if (qrTicket) this.ticket = null;
-            else if (!this.manualPairing.consume(body.secret, body)) throw fail('invalid_pairing_ticket', 401);
+            if (!qrTicket && !this.manualPairing.consume(body.secret, body)) throw fail('invalid_pairing_ticket', 401);
             const paired = await this.store.transact(state => {
+                if (qrTicket && (!this.server || this.ticket !== qrSession)) throw fail('invalid_pairing_ticket', 401);
                 if (state.devices.length >= 32 && !state.devices.some(device => device.id === body.deviceId)) throw fail('too_many_devices', 409);
                 const token = tokenValue();
                 state.devices = state.devices.filter(device => device.id !== body.deviceId);
@@ -556,6 +581,21 @@ export class ReadiveService {
             await handle.close();
             await this.validateReader(readerId, device);
             return { asset: session.asset, deviceId: device.id, readerId, tokenHash: device.tokenHash };
+        }
+        const previewMatch = pathname.match(/^\/readive\/v1\/libraries\/([a-f0-9]{32})\/preview$/);
+        if (method === 'POST' && previewMatch) {
+            if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'path')
+                || typeof body.path !== 'string') throw fail('invalid_library_path');
+            return this.previewRequests.run(async previewSignal => {
+                const libraryId = previewMatch[1];
+                const { scope } = await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId);
+                const result = await readReadivePreview(scope, body.path, await this.getLibraryDb?.(), previewSignal);
+                await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
+                this.validateLibraryPermission(scope);
+                this.validateDevice(device);
+                this.validateSource(remoteAddress, localAddress);
+                return { json: result };
+            }, signal);
         }
         const libraryMatch = pathname.match(/^\/readive\/v1\/libraries\/([a-f0-9]{32})\/(entries|prepare|preparations|read)(?:\/([a-f0-9-]+)(?:\/(cancel))?)?$/);
         if (libraryMatch) {

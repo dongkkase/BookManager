@@ -22,7 +22,7 @@ function formatAddressLabel(item) {
     return `${name}${item?.address || ''}`;
 }
 
-function SharingTab({ config, saveConfig, t, showToast }) {
+function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null, isActive = true }) {
     const text = (key, fallback, values) => {
         const translated = t?.(key, values);
         return translated && translated !== key ? translated : fallback;
@@ -288,7 +288,7 @@ function SharingTab({ config, saveConfig, t, showToast }) {
     return (
         <div className="sharing-tab">
             <div className="sharing-left-panel">
-                <ReadiveConnectionPanel t={t} showToast={showToast} variant="sharing" />
+                <ReadiveConnectionPanel t={t} showToast={showToast} variant="sharing" attentionRequest={attentionRequest} isActive={isActive} />
                 <div className="sharing-groupbox">
                     <div className="sharing-groupbox-title">{t('tab_sharing_security_title')}</div>
                     <div className="sharing-groupbox-content">

@@ -168,7 +168,7 @@ test('manual HTTP dispatch preserves QR tickets and device state until exact one
     for (const secret of [ticket.secret, body.nonce, qr.secret, paired.token]) assert.equal(serialized.includes(secret), false);
 });
 
-test('QR refresh does not replace an approved manual ticket and stop invalidates it', async t => {
+test('session QR lookup does not replace an approved manual ticket and stop invalidates it', async t => {
     const { service, approval, api } = await serviceFixture(t);
     const request = await api('/manual-pair', body);
     approval.resolve(true); await flush();

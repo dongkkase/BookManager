@@ -90,6 +90,7 @@ function isSameStatusState(left = {}, right = {}) {
 function App() {
   const [activeTab, setActiveTab] = useState('folder');
   const [loadedTabs, setLoadedTabs] = useState(() => new Set(['folder']));
+    const [readiveConnectionAttention, setReadiveConnectionAttention] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('basic');
   const [settingsNavigationRequest, setSettingsNavigationRequest] = useState(0);
@@ -374,6 +375,7 @@ function App() {
   const handleTabChange = useCallback((tabId) => {
     const tabIndex = TABS.findIndex(tab => tab.id === tabId);
     if (tabIndex < 0) return;
+        setReadiveConnectionAttention(null);
     setActiveTab(tabId);
     scheduleLastTabSave(tabId, tabIndex, '마지막 탭 저장');
   }, [scheduleLastTabSave]);
@@ -390,6 +392,7 @@ function App() {
       const paths = normalizeDroppedPaths(event.detail?.paths);
       const tabIndex = TABS.findIndex(tab => tab.id === tabId);
       if (tabIndex < 0 || isAppLocked) return;
+            setReadiveConnectionAttention(tabId === 'sharing' && event.detail?.focus === 'readive-connection' ? {} : null);
       setActiveTab(tabId);
       scheduleLastTabSave(tabId, tabIndex, '자동 전달 탭 저장');
       if (paths.length > 0) {
@@ -789,7 +792,7 @@ function App() {
         <div className="app-tab-panel" hidden={activeTab !== 'sharing'}>
           {loadedTabs.has('sharing') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
-              <MemoSharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
+                <MemoSharingTab config={config} saveConfig={setConfig} t={t} showToast={showToast} attentionRequest={readiveConnectionAttention} isActive={activeTab === 'sharing'} />
             </React.Suspense>
           )}
         </div>

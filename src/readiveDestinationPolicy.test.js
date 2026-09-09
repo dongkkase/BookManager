@@ -7,15 +7,17 @@ const folder = id => ({ id, name: id, kind: 'directory', size: null });
 const file = id => ({ id, name: id, kind: 'file', size: 12 });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-test('destination requires an actual page and explicit current-location selection', async () => {
+test('a loaded page automatically becomes the destination and remains unselected while loading', async () => {
     let resolve;
     const browser = createReadiveDestinationBrowser({ requestPage: () => new Promise(done => { resolve = done; }) });
+    const snapshots = [];
+    browser.subscribe(state => snapshots.push(state));
     browser.setDevice('phone', true);
-    assert.equal(browser.choose(), null);
+    assert.equal(browser.getSnapshot().selection, null);
     assert.equal(browser.getSnapshot().loading, true);
     resolve(page(null, [folder('Shelf'), file('Book.txt')])); await tick();
-    assert.equal(browser.getSnapshot().selection, null);
-    assert.deepEqual(browser.choose(), { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev-1' });
+    assert.deepEqual(browser.getSnapshot().selection, { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev-1' });
+    assert.equal(snapshots.some(state => state.loading && state.selection !== null), false, 'Loading and destination selection are published consistently');
     assert.equal(browser.open('Book.txt'), false);
     assert.equal(browser.getSnapshot().selection.collectionId, null);
     browser.dispose();
@@ -27,15 +29,17 @@ test('folder navigation follows returned pages, preserves file rows, and goes ba
         requests.push(value);
         return value.parentId === null ? page(null, [folder('Shelf'), file('Root.txt')]) : page('Shelf', [file('Child.txt')]);
     } });
-    browser.setDevice('phone', true); await tick(); browser.choose();
+    browser.setDevice('phone', true); await tick();
     browser.open('Shelf');
     assert.equal(browser.getSnapshot().selection, null);
     await tick();
-    assert.deepEqual(browser.choose(), { deviceId: 'phone', collectionId: 'Shelf', name: 'Phone / Shelf', revision: 'rev-1' });
+    assert.deepEqual(browser.getSnapshot().selection, { deviceId: 'phone', collectionId: 'Shelf', name: 'Phone / Shelf', revision: 'rev-1' });
     assert.deepEqual(browser.getSnapshot().page.entries.map(entry => entry.id), ['Child.txt']);
-    browser.back(); await tick();
-    assert.deepEqual(requests.map(value => value.parentId), [null, 'Shelf', null]);
+    browser.back();
     assert.equal(browser.getSnapshot().selection, null);
+    await tick();
+    assert.deepEqual(requests.map(value => value.parentId), [null, 'Shelf', null]);
+    assert.deepEqual(browser.getSnapshot().selection, { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev-1' });
     browser.dispose();
 });
 
@@ -53,10 +57,10 @@ test('device switch, offline state and disposal ignore late success and failure'
             await tick();
             assert.equal(browser.getSnapshot().page, null, `${mode}/${outcome}`);
             assert.equal(browser.getSnapshot().error, false);
-            assert.equal(browser.choose(), null);
+            assert.equal(browser.getSnapshot().selection, null);
             if (mode === 'switch') {
                 pending[1].resolve(page()); await tick();
-                assert.equal(browser.choose().deviceId, 'second');
+                assert.equal(browser.getSnapshot().selection.deviceId, 'second');
             }
             browser.dispose();
         }
@@ -69,12 +73,12 @@ test('refresh failure invalidates the selected destination and retry reloads the
         if (++calls === 2) throw new Error('offline');
         return page(null, [folder('Shelf')], null, `rev-${calls}`);
     } });
-    browser.setDevice('phone', true); await tick(); browser.choose();
+    browser.setDevice('phone', true); await tick();
     browser.refresh(); assert.equal(browser.getSnapshot().selection, null); await tick();
     assert.equal(browser.getSnapshot().error, true);
-    assert.equal(browser.choose(), null);
+    assert.equal(browser.getSnapshot().selection, null);
     browser.refresh(); await tick();
-    assert.equal(browser.choose().revision, 'rev-3');
+    assert.equal(browser.getSnapshot().selection.revision, 'rev-3');
     browser.dispose();
 });
 
@@ -84,11 +88,14 @@ test('pagination keeps previous rows, detects repeated cursors and prevents sele
         ? page(null, [file('Book.txt'), folder('Next')], repeat ? cursor : null)
         : page(null, [file('Book.txt')], 'page-2') });
     browser.setDevice('phone', true); await tick();
-    browser.more(); browser.more(); await tick();
+    browser.more(); browser.more();
+    assert.equal(browser.getSnapshot().selection, null);
+    await tick();
     assert.deepEqual(browser.getSnapshot().page.entries.map(entry => entry.id), ['Book.txt', 'Next']);
+    assert.deepEqual(browser.getSnapshot().selection, { deviceId: 'phone', collectionId: null, name: 'Phone', revision: 'rev-1' });
     repeat = true; browser.refresh(); await tick(); browser.more(); await tick();
     assert.equal(browser.getSnapshot().error, true);
-    assert.equal(browser.choose(), null);
+    assert.equal(browser.getSnapshot().selection, null);
     browser.dispose();
 });
 
@@ -96,6 +103,33 @@ test('a changed directory revision cannot be merged with an older page', async (
     const browser = createReadiveDestinationBrowser({ requestPage: async ({ cursor }) => page(null, [folder(cursor ? 'New' : 'Old')], cursor ? null : 'page-2', cursor ? 'new-revision' : 'old-revision') });
     browser.setDevice('phone', true); await tick(); browser.more(); await tick();
     assert.equal(browser.getSnapshot().error, true);
-    assert.equal(browser.choose(), null);
+    assert.equal(browser.getSnapshot().selection, null);
     browser.dispose();
+});
+
+test('loaded destinations are cleared immediately on device changes and offline transitions', async () => {
+    const pending = [];
+    const browser = createReadiveDestinationBrowser({ requestPage: value => new Promise(resolve => pending.push({ value, resolve })) });
+    browser.setDevice('phone', true);
+    pending[0].resolve(page()); await tick();
+    assert.equal(browser.getSnapshot().selection.deviceId, 'phone');
+    browser.setDevice('tablet', true);
+    assert.equal(browser.getSnapshot().selection, null);
+    pending[1].resolve(page()); await tick();
+    assert.equal(browser.getSnapshot().selection.deviceId, 'tablet');
+    browser.setDevice('tablet', false);
+    assert.equal(browser.getSnapshot().selection, null);
+    assert.equal(browser.getSnapshot().page, null);
+    browser.dispose();
+});
+
+test('invalid returned pages cannot become automatically selected destinations', async () => {
+    for (const result of [page('unexpected-parent'), { ...page(), revision: '' }, { ...page(), entries: [folder('duplicate'), folder('duplicate')] }]) {
+        const browser = createReadiveDestinationBrowser({ requestPage: async () => result });
+        browser.setDevice('phone', true); await tick();
+        assert.equal(browser.getSnapshot().error, true);
+        assert.equal(browser.getSnapshot().loading, false);
+        assert.equal(browser.getSnapshot().selection, null);
+        browser.dispose();
+    }
 });

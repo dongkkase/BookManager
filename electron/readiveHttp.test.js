@@ -30,8 +30,15 @@ test('Readive HTTPS verifies pinned identity, emits bounded responses, resumes r
     assert.equal(starts[0].status, 'fulfilled');
     assert.equal(starts[1].status, 'rejected');
     assert.equal(service.server.address().address, local.address);
-    assert.deepEqual(logs, [{ type: 'INFO', key: 'readive.log_started', values: { url: `https://${local.address}:${port}` } }]);
-    const ticket = JSON.parse((await service.pairing()).ticket);
+    assert.deepEqual(logs, [
+        { type: 'INFO', key: 'readive.log_started', values: { url: `https://${local.address}:${port}` } },
+        { type: 'INFO', key: 'readive.log_pairing_created', values: {} },
+    ]);
+    const sessionPairing = starts[0].value.pairing;
+    assert.ok(sessionPairing.qrDataUrl);
+    assert.equal(sessionPairing.sessionScoped, true);
+    assert.deepEqual(await service.pairing(), sessionPairing);
+    const ticket = JSON.parse(sessionPairing.ticket);
     assert.equal(logs.at(-1).key, 'readive.log_pairing_created');
     const ca = await fs.readFile(path.join(root, 'state', 'certificate.pem'));
     const request = (route, { method = 'GET', body, token, headers = {}, pin = ticket.certificateSha256 } = {}) => new Promise((resolve, reject) => {
@@ -69,11 +76,19 @@ test('Readive HTTPS verifies pinned identity, emits bounded responses, resumes r
     });
     await assert.rejects(request('/jobs', { pin: '0'.repeat(64) }), /certificate_pin_mismatch/);
     assert.equal((await request('/jobs')).status, 401);
+    const anonymousStatus = await request('/status');
+    assert.equal(anonymousStatus.status, 401);
+    assert.equal(anonymousStatus.bytes.includes(ticket.secret), false);
     assert.equal(logs.length, 2, 'job polling does not add log entries');
     const paired = await request('/pair', { method: 'POST', body: { secret: ticket.secret, deviceId: 'phone-test', deviceName: 'Test phone' } });
     const token = paired.json.token;
     assert.deepEqual(logs.at(-1), { type: 'INFO', key: 'readive.log_device_paired', values: { device: 'Test phone' } });
-    assert.equal((await request('/pair', { method: 'POST', body: { secret: ticket.secret, deviceId: 'phone-test', deviceName: 'Test phone' } })).status, 401);
+    assert.equal((await request('/pair', { method: 'POST', body: { secret: ticket.secret, deviceId: 'phone-second', deviceName: 'Second phone' } })).status, 200);
+    assert.deepEqual((await service.status()).pairing, sessionPairing);
+    const authenticatedStatus = await request('/status', { token });
+    assert.equal(authenticatedStatus.status, 404);
+    assert.equal(authenticatedStatus.bytes.includes(ticket.secret), false);
+    assert.equal((await request('/pair', { method: 'POST', body: { secret: 'x'.repeat(43), deviceId: 'phone-test', deviceName: 'Test phone' } })).status, 401);
     assert.deepEqual(logs.at(-1), { type: 'ERROR', key: 'readive.log_request_failed', values: { code: 'invalid_pairing_ticket' } });
     assert.equal(JSON.stringify(logs).includes(ticket.secret), false);
     assert.equal(JSON.stringify(logs).includes(token), false);
@@ -154,4 +169,10 @@ test('Readive HTTPS verifies pinned identity, emits bounded responses, resumes r
     assert.deepEqual(logs.at(-1), { type: 'INFO', key: 'readive.log_stopped', values: {} });
     await service.stop();
     assert.equal(logs.filter(log => log.key === 'readive.log_stopped').length, 1, 'stopping an idle server does not repeat the log');
+    assert.equal((await service.status()).pairing, null);
+    const restarted = await service.start({ address: local.address, port });
+    const newTicket = JSON.parse(restarted.pairing.ticket);
+    assert.notEqual(newTicket.secret, ticket.secret);
+    assert.equal((await request('/pair', { method: 'POST', body: { secret: ticket.secret, deviceId: 'phone-stale', deviceName: 'Stale phone' } })).status, 401);
+    assert.equal((await request('/pair', { method: 'POST', body: { secret: newTicket.secret, deviceId: 'phone-current', deviceName: 'Current phone' } })).status, 200);
 });
