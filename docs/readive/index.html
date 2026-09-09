@@ -3,19 +3,20 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Readive - 모바일 만화·전자책·오디오북 리더</title>
-    <meta name="description" content="Readive는 기기와 원격 소스의 책·문서·오디오를 정리하고 읽는 모바일 전용 리더 앱입니다. BookManager 뷰어 UX를 모바일로 확장해 iOS, iPadOS, Android에서 사용할 수 있습니다.">
+    <title>Readive - 내 책을 읽고 듣는 만화·전자책·오디오북 리더</title>
+    <meta name="description" content="내가 가진 만화책, EPUB, PDF, TXT와 오디오북을 Readive에 모으세요. NAS·클라우드 연결, 오프라인 독서, 맞춤 읽기 화면, TTS, 이어듣기와 독서 기록을 지원하는 모바일 리더입니다.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Readive - 모바일 만화·전자책·오디오북 리더">
-    <meta property="og:description" content="기기 파일, SMB/OPDS/FTP/HTTPS를 연결하고 모바일에서 만화·전자책·오디오북을 읽는 앱. BookManager 내장 뷰어 UX를 모바일 환경으로 확장했습니다.">
+    <meta property="og:title" content="Readive - 내가 모은 책, 내 방식으로 읽고 듣기">
+    <meta property="og:description" content="만화·전자책·오디오북을 손안의 서재에. 기기와 NAS·클라우드의 책을 가져와 읽고, 듣고, 나의 독서 기록을 쌓아가세요.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/">
-    <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/readive/main/src/images/app-1024.png">
+    <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <meta property="og:image:alt" content="Readive 앱 아이콘">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Readive - 모바일 만화·전자책·오디오북 리더">
-    <meta name="twitter:description" content="모바일에서 읽기 위한 도서 리더 앱. 로컬/원격 소스를 연결해 책 보관함을 만들고 다양하게 읽을 수 있습니다.">
-    <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/readive/main/src/images/app-1024.png">
+    <meta name="twitter:title" content="Readive - 내가 모은 책, 내 방식으로 읽고 듣기">
+    <meta name="twitter:description" content="내 파일로 채우는 모바일 서재. 만화·전자책·오디오북, 맞춤 읽기 화면, 오프라인 독서와 독서 기록을 한 앱에서.">
+    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <link rel="icon" type="image/x-icon" href="app.ico">
     <link rel="icon" type="image/png" sizes="32x32" href="app.png">
@@ -95,7 +96,7 @@
             min-height: 60vh;
             display: grid;
             align-items: end;
-            padding: 32px clamp(20px, 6vw, 72px) 72px;
+            padding: 96px clamp(20px, 6vw, 72px) 72px;
             position: relative;
             overflow: hidden;
             border-bottom: 1px solid var(--line);
@@ -149,7 +150,7 @@
             position: relative;
             isolation: isolate;
             max-width: none;
-            margin: 0 calc(-1 * clamp(20px, 6vw, 72px)) 56px;
+            margin: 0 calc(-1 * clamp(20px, 6vw, 72px));
             width: auto;
             overflow: hidden;
         }
@@ -315,6 +316,13 @@
             font-size: clamp(1.05rem, 2vw, 1.28rem);
         }
 
+        .hero-message {
+            margin: 20px 0 0;
+            font-size: clamp(1.65rem, 3.5vw, 2.8rem);
+            font-weight: 700;
+            line-height: 1.4;
+        }
+
         .actions {
             display: flex;
             flex-wrap: wrap;
@@ -348,6 +356,17 @@
             background: var(--accent-strong);
         }
 
+        a.button:hover,
+        a.button:focus-visible {
+            border-color: var(--accent);
+            background: #27516d;
+        }
+
+        .button.pending {
+            color: var(--muted);
+            background: rgba(26, 29, 32, 0.72);
+        }
+
         .support-badges {
             display: flex;
             flex-wrap: wrap;
@@ -370,12 +389,13 @@
         }
 
         main {
-            padding: 0px clamp(20px, 6vw, 72px) 72px;
+            padding: 56px clamp(20px, 6vw, 72px) 72px;
         }
 
         section {
             max-width: 1120px;
             margin: 0 auto 56px;
+            scroll-margin-top: 92px;
         }
 
         h2 {
@@ -388,6 +408,108 @@
             margin: 0 0 22px;
             color: var(--muted);
             font-size: 1.05rem;
+        }
+
+        .preview-section {
+            max-width: none;
+        }
+
+        .preview-header,
+        .preview-caption {
+            max-width: 1120px;
+            margin: 0 auto;
+        }
+
+        .preview-caption {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            gap: 24px;
+            margin-top: 22px;
+        }
+
+        .preview-caption h3 {
+            margin: 0 0 6px;
+            font-size: 1.1rem;
+        }
+
+        .preview-caption p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .preview-playback {
+            display: flex;
+            flex: 0 0 auto;
+            align-items: center;
+            gap: 12px;
+            color: var(--muted);
+        }
+
+        .preview-pause {
+            min-height: 36px;
+            padding: 6px 12px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--panel);
+            font: inherit;
+            font-size: 0.88rem;
+            cursor: pointer;
+        }
+
+        .preview-pause:focus-visible,
+        .hero-slide-dot:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 4px;
+        }
+
+        .feature-grid + .note,
+        .split + .note {
+            margin-top: 18px;
+        }
+
+        .section-label {
+            display: inline-block;
+            margin: 0 0 12px;
+            color: var(--green);
+            font-size: 0.88rem;
+            font-weight: 700;
+        }
+
+        .download-panel {
+            padding: clamp(24px, 4vw, 44px);
+            border: 1px solid var(--accent-strong);
+            border-radius: 8px;
+            background: linear-gradient(135deg, #172c3b, var(--panel));
+        }
+
+        .faq-item {
+            padding: 18px 22px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+
+        .faq-item + .faq-item {
+            margin-top: 12px;
+        }
+
+        .faq-item summary {
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .faq-item p {
+            margin: 14px 0 0;
+            color: var(--muted);
+        }
+
+        .footer-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 24px;
+            margin-top: 14px;
         }
 
         .split,
@@ -465,6 +587,8 @@
             .site-top-nav {
                 top: 10px;
                 right: 10px;
+                left: 10px;
+                justify-content: flex-end;
             }
 
             .site-top-link {
@@ -473,8 +597,8 @@
             }
 
             .hero {
-                min-height: 88vh;
-                padding-top: 88px;
+                min-height: 76vh;
+                padding-top: 96px;
             }
 
             .hero-media {
@@ -486,6 +610,40 @@
             .button {
                 width: 100%;
             }
+
+            .split,
+            .feature-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .preview-caption {
+                flex-direction: column;
+                gap: 14px;
+            }
+
+            .hero-slide-nav {
+                width: 36px;
+                height: 36px;
+                font-size: 1.6rem;
+            }
+
+            .hero-slide-dots {
+                bottom: 8px;
+                padding: 8px;
+                border-radius: 999px;
+                background: rgba(16, 18, 20, 0.84);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .hero::before {
+                animation: none;
+            }
+
+            .hero-slide,
+            .hero-preview-bg-layer {
+                transition: none;
+            }
         }
     </style>
 </head>
@@ -493,143 +651,311 @@
     <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
         <a class="site-top-link" href="../">BookManager</a>
         <a class="site-top-link" href="./" aria-current="page">Readive</a>
+        <a class="site-top-link" href="#features">주요 기능</a>
+        <a class="site-top-link" href="#download">다운로드</a>
     </nav>
 
     <header class="hero">
         <div class="hero-inner">
-            <p class="eyebrow">Readive for iOS · Android</p>
+            <p class="eyebrow">만화 · 전자책 · 문서 · 오디오북을 위한 모바일 서재</p>
             <h1>Readive <small>(리디브)</small></h1>
+            <p class="hero-message">내가 모은 책,<br>내 방식으로 읽고 듣기.</p>
             <p class="lead">
-                BookManager의 뷰어 경험을 기반으로, 모바일에서 책을 보관하고 다양한 소스에서 불러와 읽을 수 있도록 만든 리더 앱입니다.
-                로컬 파일 관리, BookManager/SMB/OPDS/FTP/HTTPS 연결, 오디오북 재생, 통계 관리까지 한 화면에서 처리합니다.
+                기기와 NAS, 클라우드에 보관한 책을 손안의 서재에 모으세요.
+                만화와 글에 맞춘 읽기 화면, 오디오북 이어듣기, 나의 독서 기록까지 하나의 앱에서 이어집니다.
             </p>
             <div class="actions">
-                <a class="button primary" href="https://apps.apple.com/kr/app/readive/id6796676237" target="_blank">
+                <a class="button primary" href="https://apps.apple.com/kr/app/readive/id6796676237" target="_blank" rel="noopener noreferrer" aria-label="App Store에서 iPhone 및 iPad용 Readive 다운로드">
                     <img class="button-icon" src="../icon_apple.svg" alt="" aria-hidden="true">
-                    App Store
+                    iPhone · iPad 다운로드
                 </a>
-                <a class="button primary" href="#" data-coming-soon-label="출시 준비중입니다">
+                <span class="button pending">
                     <img class="button-icon" src="../icon_googleplay.svg" alt="" aria-hidden="true">
-                    Google Play
-                </a>
-                <a class="button" href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer" aria-label="Discord 참여">
-                    <img class="button-icon" src="../icon_discord.svg" alt="" aria-hidden="true">
-                    디스코드에 참여하기
-                </a>
+                    Android 출시 준비 중
+                </span>
+                <a class="button" href="#preview">앱 화면 살펴보기</a>
             </div>
-            <div class="support-badges" aria-label="지원 플랫폼 및 언어">
-                <span class="support-badge">iOS</span>
-                <span class="support-badge">Android</span>
-                <span class="support-badge">다국어</span>
+            <div class="support-badges" aria-label="이용 방식 및 지원 언어">
+                <span class="support-badge">무료 시작 · 선택형 Premium</span>
+                <span class="support-badge">저장한 책은 오프라인으로</span>
+                <span class="support-badge">한국어 포함 10개 언어</span>
             </div>
         </div>
     </header>
 
     <main>
-        <section class="hero-preview">
-            <div class="hero-preview-bg" aria-hidden="true">
-                <img class="hero-preview-bg-layer" src="01-home-res.png" alt="" aria-hidden="true" data-hero-bg-current>
-                <img class="hero-preview-bg-layer is-fade" src="" alt="" aria-hidden="true" data-hero-bg-fade>
+        <section id="features" aria-labelledby="features-title">
+            <h2 id="features-title">읽고 싶은 순간, 내 책이 있는 곳</h2>
+            <p class="section-lead">출퇴근길에는 휴대전화로, 집에서는 태블릿으로. 내가 가진 책을 가져와 읽는 시간도, 듣는 시간도 한곳에 모으세요.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>여러 곳의 책을 하나의 보관함에</h3>
+                    <p>기기 파일과 NAS·클라우드의 책을 가져오고, 제목과 책 정보로 검색하세요. 컬렉션으로 읽고 싶은 책을 따로 묶을 수 있습니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>책에 맞게, 취향에 맞게</h3>
+                    <p>만화는 펼쳐 보고, 전자책은 글자와 여백을 조절하고, 오디오북은 편한 속도로 들으세요.</p>
+                </article>
+                <article class="feature">
+                    <h3>잠깐 읽어도 이어지는 독서</h3>
+                    <p>읽던 위치와 재생 위치를 저장하고, 북마크와 독서 기록으로 돌아오세요. 저장한 책은 인터넷 없이도 열 수 있습니다.</p>
+                </article>
             </div>
-            <div class="hero-media" aria-label="Readive 미리보기 이미지">
-                <img class="hero-slide is-active" src="01-home-res.png" alt="Readive 모바일 홈 화면" width="1376" height="768" data-hero-slide>
-                <img class="hero-slide" src="02-library-res.png" alt="Readive 모바일 보관함 화면" width="1376" height="768" data-hero-slide>
-                <img class="hero-slide" src="03-image-reader-res.png" alt="Readive 모바일 만화 뷰어" width="1376" height="768" data-hero-slide>
-                <img class="hero-slide" src="04-text-reader-res.png" alt="Readive 모바일 epub/txt 뷰어" width="1376" height="768" data-hero-slide>
-                <img class="hero-slide" src="05-audio-res.png" alt="Readive 모바일 오디오북 뷰어" width="1376" height="768" data-hero-slide>
-                <img class="hero-slide" src="06-stats-res.png" alt="Readive 모바일 독서 통계" width="1376" height="768" data-hero-slide>
-                <div class="hero-media-controls">
-                    <button class="hero-slide-nav" type="button" data-hero-prev aria-label="이전 화면">‹</button>
-                    <div class="hero-slide-dots" aria-label="슬라이드 번호">
-                        <button class="hero-slide-dot is-active" type="button" data-hero-dot data-hero-index="0" aria-label="1번 화면" aria-current="true"></button>
-                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="1" aria-label="2번 화면" aria-current="false"></button>
-                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="2" aria-label="3번 화면" aria-current="false"></button>
-                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="3" aria-label="4번 화면" aria-current="false"></button>
-                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="4" aria-label="5번 화면" aria-current="false"></button>
-                        <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="5" aria-label="6번 화면" aria-current="false"></button>
+        </section>
+
+        <section id="preview" class="preview-section" aria-labelledby="preview-title">
+            <div class="preview-header">
+                <h2 id="preview-title">손안의 서재를 미리 둘러보세요</h2>
+                <p class="section-lead">홈, 보관함, 만화·전자책·오디오북 리더와 독서 통계까지. 화면을 넘기며 나에게 맞는 읽기 방식을 살펴보세요.</p>
+            </div>
+            <div class="hero-preview">
+                <div class="hero-preview-bg" aria-hidden="true">
+                    <img class="hero-preview-bg-layer" src="01-home-res.png" alt="" aria-hidden="true" data-hero-bg-current>
+                    <img class="hero-preview-bg-layer is-fade" src="01-home-res.png" alt="" aria-hidden="true" data-hero-bg-fade>
+                </div>
+                <div class="hero-media" aria-label="Readive 미리보기 이미지">
+                    <img class="hero-slide is-active" src="01-home-res.png" alt="Readive 휴대전화와 태블릿의 홈 화면 미리보기" width="1376" height="768" data-hero-slide data-title="읽고 듣던 책으로 바로 돌아오기" data-description="홈의 계속 읽기에서 최근 읽던 책과 오디오북을 다시 열어보세요." aria-hidden="false">
+                    <img class="hero-slide" src="02-library-res.png" alt="Readive 보관함과 도서 검색 미리보기" width="1376" height="768" data-hero-slide data-title="쌓인 책도 검색으로 쉽게 찾기" data-description="제목·파일명·책 정보로 검색하고, 표지와 목록으로 내 보관함을 둘러보세요." aria-hidden="true" loading="lazy">
+                    <img class="hero-slide" src="03-image-reader-res.png" alt="Readive 만화책 읽기 화면 미리보기" width="1376" height="768" data-hero-slide data-title="그림과 이야기에 집중하는 만화 읽기" data-description="한 장·두 장·스크롤 보기와 읽기 방향을 책과 화면에 맞춰 조절하세요." aria-hidden="true" loading="lazy">
+                    <img class="hero-slide" src="04-text-reader-res.png" alt="Readive EPUB과 TXT 읽기 화면 미리보기" width="1376" height="768" data-hero-slide data-title="글자와 여백까지 내게 편한 독서" data-description="글자 크기와 줄 간격, 여백을 조절해 오래 읽기 편한 화면을 만드세요. 추가 글꼴은 Premium에서 제공합니다." aria-hidden="true" loading="lazy">
+                    <img class="hero-slide" src="05-audio-res.png" alt="Readive 오디오북 플레이어 미리보기" width="1376" height="768" data-hero-slide data-title="눈을 쉬는 동안에도 이어지는 이야기" data-description="오디오북 재생 속도를 조절하고, 북마크와 수면 타이머로 듣는 시간을 관리하세요." aria-hidden="true" loading="lazy">
+                    <img class="hero-slide" src="06-stats-res.png" alt="Readive 기본 독서 통계와 Premium 인사이트 미리보기" width="1376" height="768" data-hero-slide data-title="읽은 시간과 쌓인 기록을 한눈에" data-description="이번 주 독서와 연속 독서 기록을 확인하세요. 누적·월간·연간 인사이트는 Premium에서 제공합니다." aria-hidden="true" loading="lazy">
+                    <div class="hero-media-controls">
+                        <button class="hero-slide-nav" type="button" data-hero-prev aria-label="이전 화면">‹</button>
+                        <div class="hero-slide-dots" aria-label="슬라이드 번호">
+                            <button class="hero-slide-dot is-active" type="button" data-hero-dot data-hero-index="0" aria-label="홈 화면 보기" aria-current="true"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="1" aria-label="보관함 화면 보기" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="2" aria-label="만화 리더 보기" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="3" aria-label="전자책 리더 보기" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="4" aria-label="오디오북 플레이어 보기" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="5" aria-label="독서 통계 보기" aria-current="false"></button>
+                        </div>
+                        <button class="hero-slide-nav" type="button" data-hero-next aria-label="다음 화면">›</button>
                     </div>
-                    <button class="hero-slide-nav" type="button" data-hero-next aria-label="다음 화면">›</button>
+                </div>
+            </div>
+            <div class="preview-caption">
+                <div>
+                    <h3 data-hero-caption-title>읽고 듣던 책으로 바로 돌아오기</h3>
+                    <p data-hero-caption-description>홈의 계속 읽기에서 최근 읽던 책과 오디오북을 다시 열어보세요.</p>
+                </div>
+                <div class="preview-playback">
+                    <span data-hero-count>1 / 6</span>
+                    <button class="preview-pause" type="button" data-hero-pause>자동 넘김 멈추기</button>
                 </div>
             </div>
         </section>
 
-        <!--
-        <section>
-            <h2>어떤 앱인가요?</h2>
-            <p class="section-lead">
-                Readive는 만화·전자책·문서·오디오북을 모바일에서 효율적으로 열람하도록 만든 읽기 앱입니다.
-                앱 안의 보관함에 항목을 모으면 마지막 읽은 위치, 북마크, 통계를 기반으로 이어 읽기를 이어갈 수 있습니다.
-            </p>
+        <section aria-labelledby="sources-title">
+            <h2 id="sources-title">내 책이 어디에 있든, 보관함으로</h2>
+            <p class="section-lead">기기에서 파일을 고르거나, 평소 사용하는 저장소에 연결하세요. 읽을 책을 미리 내려받아 두면 이동 중에도 네트워크 연결 없이 감상할 수 있습니다.</p>
             <div class="split">
                 <article class="list-panel">
-                    <h3>BookManager와의 연계성</h3>
-                    <p>
-                        BookManager의 내장 뷰어 UX를 기준으로, 터치 제스처와 휴대기기 화면 특성에 맞춰 읽기 흐름을 재구성했습니다.
-                        PC에서 정리한 파일도 Readive 보관함에서 이어서 읽을 수 있습니다.
-                    </p>
+                    <h3>기기 파일과 PC에서 가져오기</h3>
+                    <ul>
+                        <li>기기의 파일 선택 화면에서 책 가져오기</li>
+                        <li>같은 네트워크의 PC 웹 브라우저에서 Readive로 업로드</li>
+                        <li>다운로드할 위치를 고르고 진행 상태 확인</li>
+                        <li>보관함 검색과 컬렉션으로 읽을 책 정리</li>
+                    </ul>
                 </article>
                 <article class="list-panel">
-                    <h3>핵심 사용자 흐름</h3>
-                    <p>
-                        파일 가져오기 → 보관함 등록 → 읽기 모드 선택 → 이어보기/검색/통계 확인으로 이어지는 흐름으로 설계되어,
-                        장시간 읽기에도 동작이 단순합니다.
-                    </p>
+                    <h3>NAS·서버·클라우드 연결</h3>
+                    <ul>
+                        <li>SMB, FTP, WebDAV로 공유 폴더 탐색</li>
+                        <li>OPDS 카탈로그에서 책 목록 탐색과 가져오기</li>
+                        <li>Dropbox, OneDrive의 책 파일 연결</li>
+                        <li>원격 책을 골라 열고, 보관할 책은 기기에 다운로드</li>
+                    </ul>
                 </article>
             </div>
         </section>
 
-        <section>
-            <h2>주요 기능</h2>
+        <section aria-labelledby="reading-title">
+            <h2 id="reading-title">만화는 시원하게, 글은 편안하게</h2>
+            <p class="section-lead">책의 형식과 화면 크기에 맞춰 읽는 방식을 선택하세요. 휴대전화의 한 손 독서부터 태블릿의 펼침 보기까지, 취향에 맞게 조절할 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>로컬/원격 소스 연결</h3>
-                    <p>기기 파일, SMB, FTP, OPDS, HTTPS 원격 소스와 연동해 책 목록을 탐색하고 다운로드를 관리합니다.</p>
+                    <h3>만화와 PDF에 맞는 보기</h3>
+                    <p>한 페이지·두 페이지·스크롤 보기, 읽기 방향과 확대·축소를 조절하세요. 화면에 맞춰 페이지를 보거나 필요한 부분을 크게 볼 수 있습니다.</p>
                 </article>
                 <article class="feature">
-                    <h3>형식 지원</h3>
-                    <p>CBZ·ZIP·CBR·RAR·CB7·7z·CBT·TAR 만화, EPUB, PDF, TXT/Markdown, 오디오 파일을 한 앱에서 처리합니다.</p>
+                    <h3>EPUB·TXT의 글자와 여백</h3>
+                    <p>글자 크기, 줄 간격, 여백과 배경을 내 눈에 편하게 맞추세요. 라이트·다크·E-Ink 테마를 기본으로 사용할 수 있습니다.</p>
                 </article>
                 <article class="feature">
-                    <h3>유연한 읽기 설정</h3>
-                    <p>한 페이지/두 페이지/스크롤, 방향/회전, 확대·축소 설정으로 단말 특성에 맞춰 가독성을 조절합니다.</p>
-                </article>
-                <article class="feature">
-                    <h3>독서 보조 기능</h3>
-                    <p>오디오북 백그라운드 재생, 재생 속도, 수면 타이머, 북마크, 읽기 기록을 제공합니다.</p>
-                </article>
-                <article class="feature">
-                    <h3>오프라인까지 이어지는 읽기</h3>
-                    <p>네트워크 기능을 끈 상태에서도 기기에 저장된 콘텐츠로 오프라인 읽기를 유지할 수 있습니다.</p>
-                </article>
-                <article class="feature">
-                    <h3>추가 준비 기능</h3>
-                    <p>현재 로컬 정리·OCR 번역·사전 연동 기능을 단계적으로 확장 중입니다.</p>
+                    <h3>다시 찾고 싶은 부분 남기기</h3>
+                    <p>책갈피로 읽던 곳을 표시하고, EPUB·TXT에서는 문장에 하이라이트를 남기거나 본문을 검색해 필요한 내용을 다시 찾아보세요.</p>
                 </article>
             </div>
         </section>
 
-        -->
+        <section aria-labelledby="audio-title">
+            <h2 id="audio-title">눈을 쉬는 동안에도, 이야기는 계속</h2>
+            <p class="section-lead">이동하거나 다른 일을 하는 동안에는 듣는 독서로 바꿔보세요. 오디오북을 재생하거나 EPUB·TXT의 본문을 음성으로 들을 수 있습니다.</p>
+            <div class="split">
+                <article class="list-panel">
+                    <h3>내 생활 속 오디오북 플레이어</h3>
+                    <ul>
+                        <li>화면을 잠그거나 다른 앱을 사용해도 백그라운드 재생</li>
+                        <li>재생 속도와 앞뒤 이동 간격 조절</li>
+                        <li>재생 위치 저장과 시간 북마크로 이어듣기</li>
+                        <li>잠들기 전 수면 타이머 설정</li>
+                    </ul>
+                </article>
+                <article class="list-panel">
+                    <h3>전자책을 읽어주는 TTS</h3>
+                    <ul>
+                        <li>EPUB·TXT를 기기의 기본 음성으로 읽어주기</li>
+                        <li>목소리와 읽는 속도를 골라 연속으로 듣기</li>
+                        <li>Premium의 Supertonic 음성으로 읽어주기</li>
+                        <li>Supertonic 모델을 내려받은 뒤 기기에서 오프라인 음성 생성</li>
+                    </ul>
+                </article>
+            </div>
+        </section>
+
+        <section aria-labelledby="records-title">
+            <h2 id="records-title">읽던 곳으로 돌아오고, 읽은 시간을 돌아보기</h2>
+            <p class="section-lead">짧게 읽은 시간도 기록으로 남습니다. 최근 읽은 책과 북마크를 모아 보고, 같은 플랫폼의 다른 기기에서도 읽던 위치를 이어가세요.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>계속 읽기와 북마크</h3>
+                    <p>최근 읽던 책을 홈에서 다시 열고, 책과 오디오북에 남긴 북마크를 모아 확인하세요.</p>
+                </article>
+                <article class="feature">
+                    <h3>쌓이는 나의 독서 기록</h3>
+                    <p>이번 주 독서 시간, 읽은 책과 완독한 책, 연속 독서 기록을 확인하며 나의 독서 습관을 돌아보세요.</p>
+                </article>
+                <article class="feature">
+                    <h3>휴대전화와 태블릿에서 이어가기</h3>
+                    <p>동기화를 켜면 같은 계정·같은 플랫폼의 기기끼리 보관함 정보, 읽던 위치, 북마크와 독서 기록을 공유할 수 있습니다.</p>
+                </article>
+            </div>
+            <p class="note">iPhone·iPad는 iCloud, Android 기기는 Google Drive로 기록을 동기화합니다. iOS와 Android 사이의 동기화는 지원하지 않으며, 책 원본은 각 기기에 별도로 가져와야 합니다.</p>
+        </section>
+
+        <section aria-labelledby="bookmanager-title">
+            <p class="section-label">BookManager 연동 · 1.3.0부터 지원</p>
+            <h2 id="bookmanager-title">PC에서 정리한 서재를 Readive로</h2>
+            <p class="section-lead">BookManager로 PC에 정리한 책을 모바일에서 탐색하고 가져오세요. 책 정보와 읽던 위치도 함께 연결합니다.</p>
+            <div class="split">
+                <article class="list-panel">
+                    <h3>QR로 연결하고, 읽을 책 고르기</h3>
+                    <p>같은 네트워크의 BookManager에 QR로 연결하거나, IP·포트를 직접 입력하고 PC에서 승인한 뒤 공유 라이브러리를 탐색합니다.</p>
+                </article>
+                <article class="list-panel">
+                    <h3>PC의 책을 가져오고, 읽던 위치 이어가기</h3>
+                    <p>Readive에서 파일·폴더를 가져오거나 PC에서 보낸 책을 확인해 수락합니다. 연결된 책의 읽던 위치와 읽기 상태를 주고받을 수 있습니다.</p>
+                </article>
+            </div>
+            <p class="note">연동 중에는 PC의 BookManager와 모바일의 Readive가 실행 중이어야 합니다. Readive는 BookManager 없이도 기기 파일과 원격 저장소로 사용할 수 있습니다.</p>
+            <div class="actions">
+                <a class="button" href="../">BookManager 알아보기</a>
+            </div>
+        </section>
+
+        <section aria-labelledby="formats-title">
+            <h2 id="formats-title">내가 가진 책, 익숙한 파일 그대로</h2>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>만화책·이미지</h3>
+                    <p>CBZ, ZIP, CBR, RAR, CB7, 7Z, CBT, TAR와 이미지 파일</p>
+                </article>
+                <article class="feature">
+                    <h3>전자책·문서</h3>
+                    <p>EPUB, PDF, TXT, Markdown</p>
+                </article>
+                <article class="feature">
+                    <h3>오디오북</h3>
+                    <p>MP3, M4A, M4B, FLAC 등 오디오 파일</p>
+                </article>
+            </div>
+            <p class="note">압축 만화는 비밀번호가 없는 단일 볼륨 파일을 지원합니다. 열람과 재생 가능 여부는 파일 구성과 운영체제에 따라 달라질 수 있습니다.</p>
+        </section>
+
+        <section aria-labelledby="premium-title">
+            <h2 id="premium-title">무료로 시작하고, 취향은 더 넓게</h2>
+            <p class="section-lead">기본 읽기와 듣기부터 사용해 보세요. 더 다양한 꾸미기와 음성, 자세한 독서 기록이 필요하면 Readive Premium을 선택할 수 있습니다.</p>
+            <div class="split">
+                <article class="list-panel">
+                    <h3>기본으로 누리는 독서</h3>
+                    <ul>
+                        <li>파일 가져오기, 보관함 관리와 원격 저장소 연결</li>
+                        <li>만화·전자책·오디오북 감상과 기기 기본 음성 TTS</li>
+                        <li>라이트·다크·E-Ink 테마와 기본 글꼴</li>
+                        <li>북마크, 읽던 위치, 기본 독서 통계와 기록 동기화</li>
+                    </ul>
+                </article>
+                <article class="list-panel">
+                    <h3>Readive Premium</h3>
+                    <ul>
+                        <li>앱 내 광고 제거</li>
+                        <li>추가 테마·글꼴과 사용자 글꼴 가져오기</li>
+                        <li>Supertonic 오프라인 음성 모델</li>
+                        <li>보관함 자세히 보기와 썸네일 표시 개수 확대</li>
+                        <li>누적·월간·연간 독서 인사이트</li>
+                    </ul>
+                </article>
+            </div>
+            <p class="note">무료 버전에는 광고가 표시될 수 있습니다. 구독 상품과 가격은 앱의 Premium 화면 및 이용하는 스토어에서 확인하세요.</p>
+        </section>
+
+        <section aria-labelledby="faq-title">
+            <h2 id="faq-title">시작하기 전에 궁금한 점</h2>
+            <details class="faq-item">
+                <summary>책도 함께 제공되나요?</summary>
+                <p>Readive는 내가 가진 파일을 가져와 읽는 리더입니다. 도서 콘텐츠는 제공하지 않으며, 직접 보유하거나 이용 권한이 있는 책·문서·오디오 파일로 보관함을 채울 수 있습니다.</p>
+            </details>
+            <details class="faq-item">
+                <summary>회원가입이나 BookManager가 꼭 필요한가요?</summary>
+                <p>Readive 자체 회원가입 없이 기기의 파일을 가져와 사용할 수 있습니다. NAS나 클라우드 연결에는 해당 저장소의 계정이 필요할 수 있습니다. BookManager 연동은 PC 라이브러리를 함께 사용하는 선택 기능입니다.</p>
+            </details>
+            <details class="faq-item">
+                <summary>인터넷 없이 읽고 들을 수 있나요?</summary>
+                <p>기기에 가져오거나 다운로드한 책과 오디오북은 오프라인에서도 열 수 있습니다. 원격 저장소 탐색·다운로드와 기록 동기화에는 네트워크가 필요합니다. Supertonic 음성은 Premium에서 모델을 먼저 내려받으면 기기 안에서 생성할 수 있습니다.</p>
+            </details>
+            <details class="faq-item">
+                <summary>다른 기기에도 책 파일이 자동으로 복사되나요?</summary>
+                <p>클라우드 동기화는 보관함 정보와 독서 기록을 연결합니다. 책 원본 파일은 각 기기에 별도로 가져와야 하며, 같은 계정의 iPhone·iPad끼리 또는 Android 기기끼리 사용할 수 있습니다.</p>
+            </details>
+        </section>
+
+        <section id="download" class="download-panel" aria-labelledby="download-title">
+            <h2 id="download-title">지금 읽고 싶은 책 한 권부터</h2>
+            <p class="section-lead">Readive를 설치하고 기기의 책 파일을 가져오세요. 내 방식으로 읽고 듣는 서재가 시작됩니다.</p>
+            <div class="actions">
+                <a class="button primary" href="https://apps.apple.com/kr/app/readive/id6796676237" target="_blank" rel="noopener noreferrer" aria-label="App Store에서 iPhone 및 iPad용 Readive 다운로드">
+                    <img class="button-icon" src="../icon_apple.svg" alt="" aria-hidden="true">
+                    iPhone · iPad 다운로드
+                </a>
+                <span class="button pending">
+                    <img class="button-icon" src="../icon_googleplay.svg" alt="" aria-hidden="true">
+                    Android 출시 준비 중
+                </span>
+                <a class="button" href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer">디스코드에서 소식 보기</a>
+            </div>
+        </section>
     </main>
 
     <footer>
-        <span>Readive is developed by dongkkase.</span>
+        <span>Readive · 내 파일로 채우는 모바일 서재 · Developed by dongkkase</span>
+        <nav class="footer-links" aria-label="프로젝트 및 도움말">
+            <a href="../">BookManager</a>
+            <a href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer">디스코드 커뮤니티</a>
+            <a href="https://devmore.io/readive/legal/privacy.html">개인정보처리방침</a>
+            <a href="https://devmore.io/readive/legal/terms.html">이용약관</a>
+        </nav>
     </footer>
     <script>
-        function handleComingSoonClick(event) {
-            event.preventDefault();
-            const target = event.currentTarget;
-            const message = target.getAttribute('data-coming-soon-label') || '현재 준비중입니다';
-            alert(message);
-        }
-
-        document.querySelectorAll('[data-coming-soon-label]').forEach(anchor => {
-            anchor.addEventListener('click', handleComingSoonClick);
-        });
-
         const heroSlides = [...document.querySelectorAll('[data-hero-slide]')];
-            const heroDots = [...document.querySelectorAll('[data-hero-dot]')];
+        const heroDots = [...document.querySelectorAll('[data-hero-dot]')];
         const heroPrevButton = document.querySelector('[data-hero-prev]');
         const heroNextButton = document.querySelector('[data-hero-next]');
+        const heroPauseButton = document.querySelector('[data-hero-pause]');
+        const heroCaptionTitle = document.querySelector('[data-hero-caption-title]');
+        const heroCaptionDescription = document.querySelector('[data-hero-caption-description]');
+        const heroCount = document.querySelector('[data-hero-count]');
         const heroMedia = document.querySelector('.hero-preview .hero-media');
         const heroBackgroundCurrent = document.querySelector('[data-hero-bg-current]');
         const heroBackgroundFade = document.querySelector('[data-hero-bg-fade]');
@@ -637,6 +963,7 @@
         const heroReferenceSlide = heroSlides[0];
         let heroSlideIndex = 0;
         let heroSlideTimer = null;
+        let heroAutoPlayPaused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
         function setHeroMediaSize() {
             if (!heroMedia || !heroReferenceSlide) {
@@ -660,7 +987,9 @@
             heroSlideIndex = normalizedIndex;
 
             heroSlides.forEach((slide, index) => {
-                slide.classList.toggle('is-active', index === heroSlideIndex);
+                const isActive = index === heroSlideIndex;
+                slide.classList.toggle('is-active', isActive);
+                slide.setAttribute('aria-hidden', isActive ? 'false' : 'true');
             });
 
             heroDots.forEach((dot, index) => {
@@ -671,6 +1000,9 @@
 
             const currentSlide = heroSlides[heroSlideIndex];
             if (currentSlide) {
+                if (heroCaptionTitle) heroCaptionTitle.textContent = currentSlide.dataset.title;
+                if (heroCaptionDescription) heroCaptionDescription.textContent = currentSlide.dataset.description;
+                if (heroCount) heroCount.textContent = `${heroSlideIndex + 1} / ${heroSlides.length}`;
                 setHeroBackground(currentSlide.src);
             }
         }
@@ -699,14 +1031,12 @@
                 heroBackgroundFadeTimer = window.setTimeout(() => {
                     heroBackgroundCurrent.src = src;
                     heroBackgroundFade.classList.remove('is-active');
-                    heroBackgroundFade.src = '';
                     heroBackgroundFadeTimer = null;
                 }, 1000);
             };
 
             image.onerror = () => {
                 heroBackgroundFade.classList.remove('is-active');
-                heroBackgroundFade.src = '';
             };
 
             image.src = src;
@@ -718,6 +1048,10 @@
 
         function startHeroSlideAutoPlay() {
             stopHeroSlideAutoPlay();
+            if (heroAutoPlayPaused || document.hidden || heroSlides.length < 2
+                || heroMedia?.matches(':hover') || heroMedia?.contains(document.activeElement)) {
+                return;
+            }
             heroSlideTimer = window.setInterval(showNextHeroSlide, 5000);
         }
 
@@ -727,6 +1061,23 @@
                 heroSlideTimer = null;
             }
         }
+
+        function updateHeroPauseButton() {
+            if (heroPauseButton) {
+                heroPauseButton.textContent = heroAutoPlayPaused ? '자동 넘김 시작' : '자동 넘김 멈추기';
+            }
+        }
+
+        heroPauseButton?.addEventListener('click', () => {
+            heroAutoPlayPaused = !heroAutoPlayPaused;
+            updateHeroPauseButton();
+            startHeroSlideAutoPlay();
+        });
+
+        heroMedia?.addEventListener('pointerenter', stopHeroSlideAutoPlay);
+        heroMedia?.addEventListener('pointerleave', startHeroSlideAutoPlay);
+        heroMedia?.addEventListener('focusin', stopHeroSlideAutoPlay);
+        heroMedia?.addEventListener('focusout', () => requestAnimationFrame(startHeroSlideAutoPlay));
 
         heroPrevButton?.addEventListener('click', () => {
             setHeroSlide(heroSlideIndex - 1);
@@ -750,6 +1101,7 @@
         });
 
         if (heroSlides.length > 0) {
+            updateHeroPauseButton();
             setHeroMediaSize();
             setHeroSlide(0);
             const initialSlide = heroSlides[0];

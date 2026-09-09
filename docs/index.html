@@ -3,18 +3,18 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>BookManager - 만화책·전자책·오디오북 파일 및 메타데이터 관리</title>
-    <meta name="description" content="BookManager는 Windows와 macOS에서 CBZ, ZIP, EPUB, PDF와 오디오북을 정리하고, ComicInfo.xml 및 지원 오디오 파일의 내부 메타데이터를 관리하는 데스크톱 앱입니다.">
+    <title>BookManager - 만화책·전자책·오디오북 정리부터 감상까지</title>
+    <meta name="description" content="PC·외장하드·NAS의 만화책, EPUB, PDF, TXT와 오디오북을 한곳에서 관리하세요. 라이브러리·본문 단어 검색, 파일 일괄 정리, 메타데이터 편집, 내장 뷰어와 Readive 전송을 지원하는 Windows/macOS 무료 앱입니다.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="BookManager - 만화책·전자책·오디오북 파일 관리">
-    <meta property="og:description" content="CBZ, ZIP, EPUB, PDF와 오디오북 파일 정리, 실제 파일 메타데이터 편집, 라이브러리 검색과 공유 서버를 지원하는 Windows/macOS 데스크톱 앱입니다.">
+    <meta property="og:title" content="BookManager - 흩어진 책을 한곳에, 정리부터 감상까지">
+    <meta property="og:description" content="만화책·전자책·문서·오디오북을 나만의 서재로. 흩어진 파일을 찾고, 책 정보를 채우고, PC에서 읽거나 Readive로 전송하세요. Windows/macOS 무료 데스크톱 앱.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/">
     <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="BookManager - 만화책·전자책·오디오북 파일 관리">
-    <meta name="twitter:description" content="CBZ, EPUB, PDF와 오디오북의 파일 내부 메타데이터를 관리하는 Windows/macOS용 앱입니다.">
+    <meta name="twitter:title" content="BookManager - 흩어진 책을 한곳에, 정리부터 감상까지">
+    <meta name="twitter:description" content="만화책·전자책·오디오북 검색과 일괄 정리부터 내장 뷰어, Readive 전송까지. Windows/macOS에서 나만의 서재를 관리하세요.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <link rel="icon" type="image/x-icon" href="app.ico">
@@ -29,13 +29,10 @@
         "name": "BookManager",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows, macOS",
-        "description": "BookManager is a Windows and macOS desktop app for organizing comic, ebook, and audiobook files, including CBZ, ZIP, EPUB, PDF, ComicInfo.xml and embedded audio metadata editing, library search, playback, and sharing servers.",
+        "description": "BookManager is a free, open-source Windows and macOS desktop app for managing local comics, ebooks, documents, and audiobooks. Search libraries and indexed text, organize archives in batches, edit metadata, read and listen with built-in viewers, and transfer files to Readive.",
         "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
         "url": "https://dongkkase.github.io/BookManager/",
-        "downloadUrl": [
-            "https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-mac.zip",
-            "https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-win.zip"
-        ],
+        "downloadUrl": "https://github.com/dongkkase/BookManager/releases/latest",
         "codeRepository": "https://github.com/dongkkase/BookManager",
         "inLanguage": ["ko", "en", "ja"]
     }
@@ -96,7 +93,7 @@
             min-height: 60vh;
             display: grid;
             align-items: end;
-            padding: 32px clamp(20px, 6vw, 72px) 72px;
+            padding: 96px clamp(20px, 6vw, 72px) 72px;
             position: relative;
             overflow: hidden;
             border-bottom: 1px solid var(--line);
@@ -215,6 +212,13 @@
             font-size: clamp(1.05rem, 2vw, 1.28rem);
         }
 
+        .hero-message {
+            margin: 18px 0 0;
+            font-size: clamp(1.65rem, 3.5vw, 2.8rem);
+            font-weight: 700;
+            line-height: 1.4;
+        }
+
         .actions {
             display: flex;
             flex-wrap: wrap;
@@ -262,6 +266,12 @@
             background: var(--accent-strong);
         }
 
+        .button:hover,
+        .button:focus-visible {
+            border-color: var(--accent);
+            background: #27516d;
+        }
+
         .button-icon {
             display: block;
             width: 1.2em;
@@ -282,6 +292,7 @@
         section {
             max-width: 1120px;
             margin: 0 auto 56px;
+            scroll-margin-top: 80px;
         }
 
         h2 {
@@ -295,6 +306,10 @@
             margin: 0 0 24px;
             color: var(--muted);
             font-size: 1.05rem;
+        }
+
+        .feature-grid + .section-lead {
+            margin-top: 18px;
         }
 
         .demo-section {
@@ -506,19 +521,39 @@
             margin-top: 6px;
         }
 
-        .keywords {
+        .footer-links {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 12px 24px;
+            margin-top: 14px;
         }
 
-        .keyword {
-            padding: 6px 10px;
+        .faq-item {
+            padding: 18px 22px;
             border: 1px solid var(--line);
-            border-radius: 999px;
+            border-radius: 8px;
+            background: var(--panel);
+        }
+
+        .faq-item + .faq-item {
+            margin-top: 12px;
+        }
+
+        .faq-item summary {
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .faq-item p {
+            margin: 14px 0 0;
             color: var(--muted);
-            background: #15181b;
-            font-size: 0.92rem;
+        }
+
+        .download-panel {
+            padding: clamp(24px, 4vw, 44px);
+            border: 1px solid var(--accent-strong);
+            border-radius: 8px;
+            background: linear-gradient(135deg, #172c3b, var(--panel));
         }
 
         .note {
@@ -534,6 +569,10 @@
         }
 
         @media (max-width: 720px) {
+            .split {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
             .site-top-nav {
                 top: 10px;
                 right: 10px;
@@ -590,8 +629,28 @@
                 margin-top: 10px;
             }
 
+            .demo-viewport {
+                display: grid;
+                aspect-ratio: auto;
+            }
+
+            .demo-slide {
+                position: relative;
+                inset: auto;
+                grid-area: 1 / 1;
+                display: grid;
+                grid-template-rows: auto 1fr;
+            }
+
+            .demo-slide img {
+                height: auto;
+                aspect-ratio: 1469 / 1054;
+            }
+
             .demo-caption {
-                padding: 42px 16px 16px;
+                position: static;
+                padding: 16px;
+                background: var(--panel);
             }
 
             .demo-badge {
@@ -601,6 +660,8 @@
             }
 
             .demo-control {
+                top: 0;
+                margin-top: 35.875%;
                 width: 36px;
                 height: 36px;
                 font-size: 1.45rem;
@@ -631,91 +692,105 @@
 <body>
     <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
         <a class="site-top-link" href="./" aria-current="page">BookManager</a>
+        <a class="site-top-link" href="#features">주요 기능</a>
+        <a class="site-top-link" href="#start">시작하기</a>
         <a class="site-top-link" href="readive/">Readive</a>
     </nav>
     <header class="hero">
         <div class="hero-inner">
-            <p class="eyebrow">Windows/macOS desktop app for comics, ebooks, and audiobooks</p>
+            <p class="eyebrow">만화책 · 전자책 · 문서 · 오디오북을 위한 나만의 서재</p>
             <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
-            <p class="lead">CBZ, ZIP, EPUB, PDF와 오디오북 파일을 정리하고 메타데이터를 관리하는 데스크톱 앱입니다. 지원하는 오디오 형식은 편집한 태그와 표지를 실제 파일 내부에 저장합니다.</p>
+            <p class="hero-message">흩어진 책을 한곳에.<br>정리부터 감상까지.</p>
+            <p class="lead">PC, 외장하드, NAS에 모아 둔 책을 한곳에서 찾고 정리하세요. 표지와 책 정보를 채우고, 내장 뷰어로 읽고 듣고, Readive로 모바일에 전송할 수 있습니다.</p>
             <div class="actions">
-                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-mac.zip" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
                     <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
-                    <span>다운로드</span>
+                    <span>macOS 다운로드</span>
                     <span class="button-version" data-release-version>최신 버전</span>
                 </a>
-                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest/download/bookmanager-win.zip" data-platform="win" aria-label="Windows 최신 버전 다운로드">
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="win" aria-label="Windows 최신 버전 다운로드">
                     <img class="button-icon" src="icon_windows.svg" alt="" aria-hidden="true">
-                    <span>다운로드</span>
+                    <span>Windows 다운로드</span>
                     <span class="button-version" data-release-version>최신 버전</span>
                 </a>
-                <a class="button" href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer" aria-label="Discord 참여">
-                    <img class="button-icon" src="icon_discord.svg" alt="" aria-hidden="true">
-                    디스코드에 참여하기
-                </a>
-                <a class="button" href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
-                <a class="button" href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
+                <a class="button" href="#demo">앱 화면 살펴보기</a>
             </div>
-            <div class="support-badges" aria-label="지원 운영체제 및 언어">
-                <span class="support-badge">Windows</span>
-                <span class="support-badge">macOS</span>
-                <span class="support-badge">한국어</span>
-                <span class="support-badge">English</span>
-                <span class="support-badge">日本語</span>
+            <div class="support-badges" aria-label="라이선스 및 지원 언어">
+                <span class="support-badge">무료 · MIT 오픈소스</span>
+                <span class="support-badge">한국어 · English · 日本語</span>
             </div>
         </div>
     </header>
 
     <main>
-        <section class="demo-section" aria-labelledby="demo-title">
+        <section id="features" aria-labelledby="features-title">
+            <h2 id="features-title">책이 쌓일수록, 관리가 쉬워지도록</h2>
+            <p class="section-lead">폴더를 오가며 찾고, 한 권씩 정보를 입력하던 일을 하나의 흐름으로 연결합니다.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>어디에 뒀는지 몰라도 찾기</h3>
+                    <p>여러 드라이브의 라이브러리를 함께 검색하고, 중복 후보와 시리즈의 빠진 권수를 확인하세요.</p>
+                </article>
+                <article class="feature">
+                    <h3>반복되는 정리는 한 번에</h3>
+                    <p>압축 구조와 페이지 이름을 일괄 정리하고, 검색한 책 정보를 같은 시리즈에 함께 적용하세요.</p>
+                </article>
+                <article class="feature">
+                    <h3>정리한 자리에서 바로 감상</h3>
+                    <p>만화와 전자책을 읽고 오디오북을 들으세요. 모바일에서 볼 책은 Readive로 전송할 수 있습니다.</p>
+                </article>
+            </div>
+        </section>
+
+        <section id="demo" class="demo-section" aria-labelledby="demo-title">
             <div class="demo-header">
                 <div>
-                    <h2 id="demo-title" class="text-animate">화면 미리보기</h2>
-                    <p class="section-lead">라이브러리 관리, 압축 파일 정리, 메타데이터 편집, 공유 서버, 책과 오디오북 뷰어를 실제 앱 이미지로 확인할 수 있습니다.</p>
+                    <h2 id="demo-title" class="text-animate">내 서재가 달라지는 과정</h2>
+                    <p class="section-lead">라이브러리 탐색부터 파일 정리, 책 정보 편집, 읽기와 모바일 전송까지 실제 앱 화면으로 살펴보세요.</p>
                 </div>
-                <span class="demo-count" data-demo-count>1 / 10</span>
+                <span class="demo-count" data-demo-count>1 / 11</span>
             </div>
             <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 이미지">
                 <div class="demo-viewport">
                     <figure class="demo-slide active" aria-hidden="false">
                         <img src="demo/demo0.png" alt="BookManager 라이브러리 브라우저 화면" loading="eager">
                         <figcaption class="demo-caption">
-                            <span><strong>라이브러리 브라우저</strong>표지, 메타데이터, 폴더 라이브러리를 한 화면에서 확인합니다.</span>
+                            <span><strong>표지로 둘러보는 나의 라이브러리</strong>폴더에 쌓인 책을 표지와 책 정보로 확인하고, 읽고 싶은 책을 찾습니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo1.png" alt="BookManager 압축 구조 정리 화면" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>압축 구조 정리</strong>권 단위 출력 경로와 압축 파일 구조를 미리 확인합니다.</span>
+                            <span><strong>여러 권이 든 압축 파일도 권별로</strong>나뉠 파일명과 저장 위치를 미리 확인하고 정리합니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo2.png" alt="BookManager 내부 파일명 정리 화면" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>내부 파일명 정리</strong>페이지 순서, 누락 페이지, 이미지 압축 옵션을 함께 점검합니다.</span>
+                            <span><strong>페이지 이름과 순서를 가지런히</strong>변경 전후 이름을 비교하고, 빠진 페이지 번호를 함께 점검합니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo3.png" alt="BookManager 메타데이터 편집 화면" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>메타데이터 편집</strong>권별 정보와 시리즈 일괄 편집 값을 나란히 관리합니다.</span>
+                            <span><strong>한 시리즈의 책 정보를 한 번에</strong>공통 정보를 일괄 적용하고, 각 권의 제목과 권수도 함께 관리합니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo4.png" alt="BookManager 메타데이터 검색 화면" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>메타데이터 검색</strong>외부 검색 결과를 비교하고 선택한 정보를 적용합니다.</span>
+                            <span><strong>책 정보를 일일이 입력하는 수고 줄이기</strong>외부 검색 결과에서 표지와 책 정보를 비교한 뒤 가져옵니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo5.png" alt="BookManager 공유 서버 화면" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>공유 서버</strong>OPDS, Web, WebDAV 주소와 서버 상태를 관리합니다.</span>
+                            <span><strong>다른 기기에서도 내 라이브러리 탐색</strong>OPDS, Web, WebDAV로 연결할 주소와 공유 상태를 확인합니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
                         </figcaption>
                     </figure>
@@ -750,8 +825,8 @@
                     <figure class="demo-slide" aria-hidden="true">
                         <img src="demo/demo10.png" alt="BookManager Readive 파일 전송" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>Readive 파일 전송</strong>PC에서 모바일 앱으로 간편 전송</span>
-                            <em class="demo-badge">파일전송</em>
+                            <span><strong>모바일에서 읽을 책은 Readive로</strong>연결한 기기를 선택해 PC에서 정리한 파일을 전송합니다.</span>
+                            <em class="demo-badge">파일 전송</em>
                         </figcaption>
                     </figure>
                     <button class="demo-control prev" type="button" data-demo-prev aria-label="이전 데모 이미지">&lsaquo;</button>
@@ -768,119 +843,189 @@
                     <button class="demo-dot" type="button" data-demo-dot="7" aria-label="데모 이미지 8"></button>
                     <button class="demo-dot" type="button" data-demo-dot="8" aria-label="데모 이미지 9"></button>
                     <button class="demo-dot" type="button" data-demo-dot="9" aria-label="데모 이미지 10"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="데모 이미지 11"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="데모 이미지 11"></button>
                 </div>
             </div>
         </section>
 
-        <section>
-            <h2 class="text-animate">만화책 파일 정리</h2>
-            <p class="section-lead">BookManager는 만화책 압축 파일을 라이브러리와 뷰어에서 읽기 좋은 형태로 정리합니다. 압축 파일 구조 정리, 평탄화, 내부 이미지 파일명 변경, 누락 페이지 확인을 지원합니다.</p>
+        <section aria-labelledby="library-title">
+            <h2 id="library-title" class="text-animate">제목이 가물가물해도, 기억나는 단어로</h2>
+            <p class="section-lead">PC, 외장하드, NAS의 폴더를 라이브러리로 등록하세요. 여러 폴더를 오가지 않고 파일명과 책 정보, 본문 속 단어로 원하는 책을 찾을 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>CBZ/ZIP 구조 정리</h3>
-                    <p>여러 권이 들어 있는 압축 파일을 권 단위로 정리하고, 복잡한 폴더 구조를 읽기 쉬운 형태로 맞춥니다.</p>
+                    <h3>책 정보와 태그로 좁혀 찾기</h3>
+                    <p>등록한 라이브러리를 함께 검색하고, 작가·장르·출판사·연도 등의 조건을 조합해 원하는 책을 골라 보세요.</p>
                 </article>
                 <article class="feature">
-                    <h3>내부 파일명 변경</h3>
-                    <p>압축 파일 안의 이미지 파일명을 일정한 규칙으로 정리해 페이지 순서 문제를 줄입니다.</p>
+                    <h3>본문에 나온 단어로 책 찾기</h3>
+                    <p>내용 검색 인덱스를 만들면 EPUB, PDF, TXT의 본문 단어로 책 파일을 찾을 수 있습니다. OCR이 필요한 스캔 문서는 제외됩니다.</p>
                 </article>
                 <article class="feature">
-                    <h3>ComicInfo.xml 관리</h3>
-                    <p>제목, 시리즈, 권수, 작가, 출판사, 줄거리, 태그 같은 메타데이터를 ComicInfo.xml로 저장합니다.</p>
+                    <h3>겹친 책과 빠진 권수 확인</h3>
+                    <p>파일명과 권수 정보가 비슷한 중복 후보를 비교하고, 보유한 시리즈의 권·화 번호 사이에서 빠진 번호를 확인하세요.</p>
                 </article>
             </div>
         </section>
 
-        <section>
-            <h2 class="text-animate">전자책 라이브러리 관리</h2>
-            <p class="section-lead">EPUB, PDF, TXT도 라이브러리 단위로 스캔하고 검색할 수 있습니다. 표지, 제목, 작가, 출판사, ISBN, 언어, 설명 같은 정보를 정리해 여러 전자책 환경에서 활용할 수 있습니다.</p>
+        <section aria-labelledby="organize-title">
+            <h2 id="organize-title" class="text-animate">반복되는 파일 정리, 여러 권을 한 번에</h2>
+            <p class="section-lead">여러 권이 한 압축 파일에 섞여 있거나 페이지 이름이 제각각이어도 괜찮습니다. 파일이나 폴더를 끌어다 놓고, 결과를 미리 확인한 뒤 일괄 정리하세요.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>합본을 권·화별 파일로</h3>
+                    <p>한 ZIP 안에 들어 있는 여러 권의 폴더를 각각의 책 파일로 나눕니다. 저장할 이름과 위치도 실행 전에 확인할 수 있습니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>복잡한 압축 구조 정리</h3>
+                    <p>여러 단계로 중첩된 폴더를 정리하고, 이미지를 한곳에 모아 뷰어에서 읽기 좋은 구조로 맞춥니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>페이지 이름과 순서 통일</h3>
+                    <p>내부 이미지 이름을 같은 규칙으로 바꾸고 순서를 조정합니다. 누락된 페이지 번호 확인과 이미지 용량 줄이기도 함께 처리할 수 있습니다.</p>
+                </article>
+            </div>
+            <p class="note">변경 전후의 파일명과 작업 대상을 미리 확인할 수 있습니다. 원본을 함께 보관하려면 작업 전에 환경 설정의 ‘원본 백업’을 켜세요.</p>
+        </section>
+
+        <section aria-labelledby="metadata-title">
+            <h2 id="metadata-title" class="text-animate">파일명만 있던 책에, 표지와 이야기를</h2>
+            <p class="section-lead">리디북스, Google Books, AniList, Comic Vine, Amazon 등에서 책 정보를 찾아 비교하세요. 표지, 제목, 작가, 출판사와 줄거리를 가져와 알아보기 쉬운 서재로 정리할 수 있습니다.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>검색해서 채우는 책 정보</h3>
+                    <p>검색 결과를 편집창으로 가져와 확인한 뒤 적용하세요. 제목을 알기 어려운 책은 AI 원제 찾기로 표지에서 제목 후보를 찾을 수 있습니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>시리즈 공통 정보 일괄 적용</h3>
+                    <p>작가·출판사·장르·줄거리는 같은 시리즈에 함께 적용하고, 각 권의 제목·권수·페이지 수는 파일별로 관리하세요.</p>
+                </article>
+                <article class="feature">
+                    <h3>파일과 함께 보관하는 정보</h3>
+                    <p>지원 형식에 따라 ComicInfo.xml, EPUB·PDF 메타데이터, 오디오 태그와 표지를 파일에 저장합니다. TXT의 책 정보와 표지는 앱에서 별도로 보관합니다.</p>
+                </article>
+            </div>
+            <p class="section-lead">검색 소스는 책 종류에 따라 다르며, 일부 검색 서비스와 AI 기능에는 별도의 API 키 설정이 필요합니다.</p>
+        </section>
+
+        <section aria-labelledby="reader-title">
+            <h2 id="reader-title" class="text-animate">읽고 싶은 책은 바로 열고, 듣고 싶은 책은 재생</h2>
+            <p class="section-lead">만화책, EPUB, PDF, TXT와 오디오북을 내장 뷰어에서 감상하세요. 책갈피와 마지막 읽은 위치를 저장해 다음에 다시 펼치기도 편합니다.</p>
             <div class="split">
                 <div class="list-panel">
-                    <h3>지원 파일</h3>
+                    <h3>내게 맞는 독서 화면</h3>
                     <ul>
-                        <li>만화책: ZIP, CBZ, CBR, RAR, 7Z</li>
-                        <li>전자책: EPUB, PDF</li>
-                        <li>ComicInfo.xml 메타데이터 저장</li>
-                        <li>EPUB OPF 메타데이터 관리</li>
+                        <li>한 장·두 장 보기, 스크롤과 확대·축소</li>
+                        <li>테마와 페이지 전환 효과로 읽기 환경 조정</li>
+                        <li>EPUB, PDF, TXT 안에서 내용 검색과 해당 위치로 이동</li>
+                        <li>EPUB과 TXT의 본문을 TTS로 듣기</li>
                     </ul>
                 </div>
                 <div class="list-panel">
-                    <h3>연동하기 좋은 환경</h3>
+                    <h3>생활에 맞춰 듣는 오디오북</h3>
                     <ul>
-                        <li>Kavita, Komga, YACReader, Panels</li>
-                        <li>Calibre, Calibre-Web, KOReader</li>
-                        <li>Apple Books, Google Play Books</li>
-                        <li>OPDS, Web, WebDAV 공유</li>
+                        <li>재생 속도와 앞뒤 이동 간격 조절</li>
+                        <li>재생목록과 트랙 연속 재생</li>
+                        <li>다시 듣고 싶은 위치에 북마크, 잠들기 전 취침 타이머</li>
+                        <li>책을 정리하는 동안에도 미니 플레이어로 재생</li>
                     </ul>
                 </div>
             </div>
         </section>
 
-        <section>
-            <h2 class="text-animate">오디오북 메타데이터와 재생</h2>
-            <p class="section-lead">오디오북의 임베디드 태그와 표지를 읽어 라이브러리에 표시하고, 지원 형식은 편집 결과를 실제 오디오 파일에 저장합니다. 사용자 지정 표지도 파일 내부의 임베디드 앞표지로 교체됩니다.</p>
+        <section aria-labelledby="sharing-title">
+            <h2 id="sharing-title" class="text-animate">PC에서 정리한 서재를, 내 기기에서도</h2>
+            <p class="section-lead">책을 정리하는 곳과 읽는 기기가 달라도 자연스럽게 연결하세요. Readive로 파일을 보내거나, 사용하는 앱에서 공유 라이브러리를 열 수 있습니다.</p>
             <div class="split">
                 <div class="list-panel">
-                    <h3>파일 내부 저장 지원</h3>
+                    <h3>모바일에서 읽을 책은 Readive로</h3>
                     <ul>
-                        <li>AAC, AIF/AIFF, FLAC</li>
-                        <li>M4A/M4B, MP3</li>
-                        <li>OGA/OGG/OPUS, WAV/WAVE</li>
-                        <li>제목, 시리즈, 앨범, 아티스트, 장르·태그, 트랙·디스크 정보</li>
+                        <li>같은 네트워크의 Readive 기기를 등록하고 연결</li>
+                        <li>선택한 책을 모바일 기기에 전송</li>
+                        <li>Readive에서 BookManager 라이브러리를 탐색하고 가져오기</li>
                     </ul>
+                    <div class="actions">
+                        <a class="button" href="readive/">Readive 알아보기</a>
+                    </div>
                 </div>
                 <div class="list-panel">
-                    <h3>오디오북 뷰어</h3>
+                    <h3>사용하는 앱에서도 라이브러리 탐색</h3>
                     <ul>
-                        <li>재생 속도와 이동 간격 조절</li>
-                        <li>트랙 자동 재생과 재생목록</li>
-                        <li>시간 북마크와 취침 타이머</li>
-                        <li>메인 창의 미니 플레이어</li>
+                        <li>OPDS: 지원하는 전자책 앱에서 책 목록 탐색과 다운로드</li>
+                        <li>Web: 웹 브라우저에서 라이브러리 탐색</li>
+                        <li>WebDAV: 지원하는 앱에서 책 파일에 접근</li>
                     </ul>
+                    <p class="note">공유와 전송은 같은 네트워크에서 시작하세요. 연결하는 동안 BookManager와 해당 공유·연결 서비스가 실행 중이어야 합니다.</p>
                 </div>
             </div>
-            <p class="note">3GP, AMR, CAF, WEBM은 분석은 가능하지만 파일 내부 메타데이터 저장은 지원하지 않습니다. 오디오 태그나 표지를 저장하면 실제 파일이 변경되므로, 원본 보관이 필요하면 환경 설정의 원본 백업을 켜세요.</p>
         </section>
 
-        <section>
-            <h2 class="text-animate">메타데이터 검색</h2>
-            <p class="section-lead">리디북스, 알라딘, Google Books, AniList, Comic Vine, Amazon 등 국내외 소스를 통해 책 정보를 검색하고 편집할 수 있습니다. 만화책, 전자책과 오디오북을 한 라이브러리 안에서 관리할 수 있습니다.</p>
-            <div class="list-panel">
-                <h3>API 및 검색 설정</h3>
-                <ul>
-                    <li>환경설정 &gt; API 및 검색 설정에서 만화책과 전자책에 자주 사용하는 검색 API를 각각 선택할 수 있습니다.</li>
-                    <li>선택한 값은 메타데이터 관리 화면의 검색 API 드롭다운 기본값으로 반영됩니다.</li>
-                    <li>AI 원제 검색 설정은 자주 사용하는 검색 API 선택 아래에서 설정합니다.</li>
-                </ul>
-            </div>
-            <div class="keywords" aria-label="주요 검색어">
-                <span class="keyword">만화책 파일 정리 프로그램</span>
-                <span class="keyword">CBZ 관리 프로그램</span>
-                <span class="keyword">ComicInfo.xml 편집기</span>
-                <span class="keyword">EPUB PDF 라이브러리 관리</span>
-                <span class="keyword">오디오북 메타데이터 편집</span>
-                <span class="keyword">comic book manager</span>
-                <span class="keyword">CBZ organizer</span>
-                <span class="keyword">ebook library manager</span>
-                <span class="keyword">audiobook metadata editor</span>
+        <section aria-labelledby="formats-title">
+            <h2 id="formats-title" class="text-animate">모아 둔 파일, 익숙한 형식 그대로</h2>
+            <p class="section-lead">만화책부터 문서와 오디오북까지 하나의 라이브러리에서 관리합니다. 지원하는 작업과 메타데이터 저장 방식은 파일 형식에 따라 다릅니다.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>만화책</h3>
+                    <p>ZIP, CBZ, RAR, CBR, 7Z, CB7</p>
+                </article>
+                <article class="feature">
+                    <h3>전자책·문서</h3>
+                    <p>EPUB, PDF, TXT</p>
+                </article>
+                <article class="feature">
+                    <h3>오디오북</h3>
+                    <p>MP3, M4A, M4B, FLAC, AAC, AIF/AIFF, OGA/OGG/OPUS, WAV/WAVE 등</p>
+                </article>
             </div>
         </section>
 
-        <section>
-            <h2 class="text-animate">지원 환경</h2>
-            <p class="section-lead">BookManager는 Windows와 macOS에서 사용할 수 있으며, 앱 UI는 한국어, 영어, 일본어를 지원합니다.</p>
+        <section aria-labelledby="faq-title">
+            <h2 id="faq-title" class="text-animate">시작하기 전에 궁금한 점</h2>
+            <details class="faq-item">
+                <summary>무료로 사용할 수 있나요?</summary>
+                <p>BookManager는 MIT 라이선스로 공개된 무료 오픈소스 앱입니다. Windows와 macOS를 지원하며, 앱 언어는 한국어·영어·일본어 중에서 선택할 수 있습니다. 외부 API를 사용하는 검색·AI·TTS 기능은 해당 서비스의 이용 조건과 요금이 적용될 수 있습니다.</p>
+            </details>
+            <details class="faq-item">
+                <summary>NAS의 책도 관리할 수 있나요?</summary>
+                <p>컴퓨터에서 폴더로 접근할 수 있는 NAS나 외장하드를 라이브러리로 등록할 수 있습니다. 표지와 책 정보를 스캔한 뒤 다른 라이브러리와 함께 검색하세요. 파일을 열거나 정리하려면 해당 드라이브에 연결되어 있어야 합니다.</p>
+            </details>
+            <details class="faq-item">
+                <summary>책 정보를 편집하면 원본 파일도 바뀌나요?</summary>
+                <p>쓰기 지원 형식은 저장할 때 실제 파일의 메타데이터를 변경합니다. TXT는 본문을 수정하지 않고 책 정보와 표지를 앱에 별도로 저장하며, RAR/CBR의 메타데이터 직접 저장은 지원하지 않습니다. 오디오북은 AAC, AIF/AIFF, FLAC, M4A/M4B, MP3, OGA/OGG/OPUS, WAV/WAVE의 태그와 표지를 저장할 수 있고, 3GP·AMR·CAF·WEBM은 분석만 지원합니다. 원본 보관이 필요하면 작업 전에 ‘원본 백업’을 켜세요.</p>
+            </details>
+            <details class="faq-item">
+                <summary>지금 쓰는 뷰어나 책 관리 서버와 함께 쓸 수 있나요?</summary>
+                <p>파일 형식별로 외부 뷰어를 지정하거나, 정리한 파일을 다른 앱에서 열 수 있습니다. ComicInfo.xml과 EPUB·PDF 메타데이터 등은 이를 지원하는 뷰어와 서버에서 활용할 수 있습니다. 표시되는 항목은 각 앱의 지원 범위에 따라 다릅니다.</p>
+            </details>
         </section>
 
-        <section>
-            <h2 class="text-animate">설치</h2>
-            <p class="section-lead">릴리즈 페이지에서 Windows 또는 macOS용 파일을 내려받아 실행합니다. 언어는 앱의 환경 설정에서 한국어, 영어, 일본어 중 선택할 수 있습니다. macOS에서 처음 실행할 때 보안 경고가 표시되면 앱의 격리 속성을 제거한 뒤 실행할 수 있습니다.</p>
-            <p class="note">프로그램은 로컬 파일을 직접 정리하는 도구입니다. 대량 작업을 실행하기 전에는 대상 목록과 미리보기를 확인하세요.</p>
+        <section id="start" class="download-panel" aria-labelledby="start-title">
+            <h2 id="start-title">첫 번째 라이브러리부터 시작하세요</h2>
+            <p class="section-lead">운영체제에 맞는 파일을 내려받아 압축을 풀고 실행하세요. 책이 있는 폴더를 라이브러리로 등록하면 내 서재를 둘러볼 준비가 됩니다.</p>
+            <div class="actions">
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
+                    <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
+                    <span>macOS 다운로드</span>
+                    <span class="button-version" data-release-version>최신 버전</span>
+                </a>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="win" aria-label="Windows 최신 버전 다운로드">
+                    <img class="button-icon" src="icon_windows.svg" alt="" aria-hidden="true">
+                    <span>Windows 다운로드</span>
+                    <span class="button-version" data-release-version>최신 버전</span>
+                </a>
+                <a class="button" href="https://github.com/dongkkase/BookManager/wiki">설치 및 사용 설명서</a>
+            </div>
         </section>
     </main>
 
     <footer>
-        <span>BookManager is released under the MIT License.</span>
+        <span>BookManager · 내 파일로 만드는 나만의 서재 · MIT 오픈소스</span>
+        <nav class="footer-links" aria-label="프로젝트 및 도움말">
+            <a href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
+            <a href="https://github.com/dongkkase/BookManager/releases/latest">릴리즈 노트</a>
+            <a href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
+            <a href="https://discord.gg/ND6gpPZHD" target="_blank" rel="noopener noreferrer">디스코드 커뮤니티</a>
+            <a href="readive/">Readive</a>
+        </nav>
     </footer>
     <script>
         function split(el) {
@@ -963,7 +1108,7 @@
                     }
                 });
             } catch (error) {
-                // 기본 latest/download 링크를 그대로 사용합니다.
+                // 조회에 실패하면 최신 릴리즈 페이지에서 다운로드할 수 있습니다.
             }
         }
 
