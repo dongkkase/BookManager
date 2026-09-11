@@ -13,6 +13,7 @@ import { createTtsRequestRegistry } from './ttsRequestRegistry.js';
 import { registerReadiveIpc } from './readive/ipc.js';
 import { inspectCoverEditor, loadCoverEditorImage, applyCoverEditor } from './coverEditor.js';
 import { resolveCoverEditorSevenZPath } from './coverEditorBinary.js';
+import { createPermanentDeleteDialogOptions, deleteFileEntries } from './fileDeletion.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
@@ -72,6 +73,7 @@ import {
   LibrarySearchService,
   isRetryableLibrarySearchWorkerError,
 } from './librarySearchService.js';
+import { filterLibrarySearchFilesByPresence } from './librarySearchFilePresence.js';
 import { ContentIndexService } from './contentIndexService.js';
 import {
   buildLibraryFolderIndexRecords,
@@ -4241,7 +4243,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         throw retryError;
       }
     }
-    return rows.map(normalizeLibrarySearchFileForRenderer);
+    return (await filterLibrarySearchFilesByPresence(rows)).map(normalizeLibrarySearchFileForRenderer);
   });
 
   const broadcastReadingChanged = payload => {
@@ -4388,7 +4390,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       console.warn(`[LibraryTagSearch] Worker transport failed; retrying once: ${error.message}`);
       rows = await searchInWorker();
     }
-    return rows.map(normalizeLibrarySearchFileForRenderer);
+    return (await filterLibrarySearchFilesByPresence(rows)).map(normalizeLibrarySearchFileForRenderer);
   });
 
   ipcMain.handle('folder:searchLibraryContent', async (_event, payload = {}) => {
@@ -4398,12 +4400,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       : (config.libraries || []))
       .filter(Boolean)
       .map(folder => path.resolve(folder)))];
-    const documents = await contentIndexService.search(
+    const matchedDocuments = await contentIndexService.search(
       payload.query || '',
       targetLibraries,
       payload.options || {},
     );
-    if (!Array.isArray(documents) || documents.length === 0) return [];
+    const documents = await filterLibrarySearchFilesByPresence(matchedDocuments);
+    if (documents.length === 0) return [];
 
     const db = new LibraryDB({ dbPath: libraryDbPath() });
     try {
@@ -5352,34 +5355,18 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     };
   });
 
-  // 4. 휴지통으로 이동
-  ipcMain.handle('fs:delete', async (_, filePaths) => {
-    const deleted = [];
-    const fileInfoDeletes = [];
-    const errors = [];
-    for (const filePath of filePaths) {
-      try {
-        if (fs.existsSync(filePath)) {
-          const recursive = fs.statSync(filePath).isDirectory();
-          await shell.trashItem(filePath);
-          deleted.push(filePath);
-          fileInfoDeletes.push({ path: filePath, recursive });
-        }
-      } catch (err) {
-        errors.push(i18nT('fs_delete_failed', [path.basename(filePath), err.message]));
-      }
-    }
-    try {
-      await syncFileInfoPathChanges([], fileInfoDeletes);
-    } catch (error) {
-      errors.push(error.message);
-    }
-    return {
-      success: errors.length === 0,
-      deleted,
-      errors
-    };
-  });
+    // 4. 휴지통으로 이동하고, 실패한 항목은 별도 확인 후 영구 삭제
+    ipcMain.handle('fs:delete', async (event, filePaths) => deleteFileEntries(filePaths, {
+        trashItem: filePath => shell.trashItem(filePath),
+        confirmPermanentDelete: async entries => {
+            const window = BrowserWindow.fromWebContents(event.sender);
+            if (!window || window.isDestroyed()) return false;
+            const result = await dialog.showMessageBox(window, createPermanentDeleteDialogOptions(entries, i18nT));
+            return result.response === 1;
+        },
+        syncDeletedPaths: entries => syncFileInfoPathChanges([], entries),
+        t: i18nT,
+    }));
 
   // 5. 파일 탐색기에서 열기
   ipcMain.handle('fs:openInExplorer', async (_, folderPath) => {

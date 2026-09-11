@@ -66,8 +66,112 @@
 }
 
 .cover-editor-preview h3 {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
     margin: 0 0 8px;
     font-size: var(--font-sm);
+}
+
+.cover-editor-preview-name {
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #aaa;
+    font-size: var(--font-xs);
+    font-weight: 400;
+}
+
+.cover-editor-batch {
+    margin-bottom: 16px;
+}
+
+.cover-editor-batch h3 {
+    margin: 0 0 8px;
+    font-size: var(--font-sm);
+}
+
+.cover-editor-file-list {
+    max-height: 180px;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    border: 1px solid #454545;
+    border-radius: 6px;
+    background: #1e1e1e;
+}
+
+.cover-editor-file-list li + li {
+    border-top: 1px solid #3d3d3d;
+}
+
+.cover-editor-file-choice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 0;
+    color: #e6e6e6;
+    background: transparent;
+    text-align: left;
+    font: inherit;
+}
+
+.cover-editor-file-choice:hover,
+.cover-editor-file-choice[aria-pressed="true"] {
+    background: #293e4b;
+}
+
+.cover-editor-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cover-editor-file-status,
+.cover-editor-file-choice small {
+    color: #b7c8d2;
+    font-size: var(--font-xs);
+    line-height: 1.5;
+}
+
+.cover-editor-file-choice small {
+    grid-column: 1 / -1;
+}
+
+.cover-editor-file-error,
+.cover-editor-file-result {
+    margin: 0;
+    padding: 0 12px 9px;
+    overflow-wrap: anywhere;
+    font-size: var(--font-xs);
+    line-height: 1.5;
+}
+
+.cover-editor-file-error,
+.cover-editor-file-list .has-error .cover-editor-file-status {
+    color: #ffb7b7;
+}
+
+.cover-editor-file-result {
+    color: #b9e5c9;
+}
+
+.cover-editor-file-result p {
+    margin: 3px 0 0;
+}
+
+.cover-editor-batch-summary {
+    margin-top: 12px;
+    padding: 10px 12px;
+    color: #d9e8f2;
+    background: #293e4b;
+    border-radius: 5px;
+    line-height: 1.6;
 }
 
 .cover-editor-image {
@@ -274,4 +378,7 @@
     .cover-editor-dialog { max-height: calc(100vh - 20px); }
     .cover-editor-previews, .cover-editor-modes { gap: 10px; }
     .cover-editor-header, .cover-editor-body, .cover-editor-footer { padding: 12px; }
+    .cover-editor-footer { flex-wrap: wrap; }
+    .cover-editor-footer > span { flex-basis: 100%; }
+    .cover-editor-file-choice { gap: 4px 8px; }
 }

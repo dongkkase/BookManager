@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { transformSync } from 'esbuild';
+import { runCoverEditorBatch } from './coverEditorBatch.js';
 
 const compiled = transformSync(fs.readFileSync(new URL('./components/folder/CoverEditorDialog.jsx', import.meta.url), 'utf8'), { loader: 'jsx', format: 'cjs', target: 'es2022' }).code;
 const childrenOf = node => [node?.props?.children].flat(Infinity).filter(child => child && typeof child === 'object');
@@ -28,7 +29,7 @@ async function fixture(options = {}) {
     const originalDocument = globalThis.document;
     const slots = [];
     const listeners = new Map();
-    const calls = { inspect: [], select: [], preview: [], execute: [], close: 0, restoredFocus: 0, updatesAfterUnmount: 0 };
+    const calls = { inspect: [], select: [], preview: [], execute: [], executeOptions: [], translations: [], exported: [], close: 0, restoredFocus: 0, updatesAfterUnmount: 0 };
     let cursor = 0;
     let effects = [];
     let dirty = false;
@@ -50,6 +51,12 @@ async function fixture(options = {}) {
         },
         useRef(initial) { return slots[cursor++] ??= { current: initial }; },
         useId: () => `cover-editor-${cursor++}`,
+        useMemo(compute, deps) {
+            const index = cursor++;
+            if (!slots[index] || !same(slots[index].deps, deps)) slots[index] = { value: compute(), deps };
+            return slots[index].value;
+        },
+        useCallback(callback, deps) { return react.useMemo(() => callback, deps); },
         useEffect(effect, deps) {
             const index = cursor++;
             if (!slots[index] || !same(slots[index].deps, deps)) {
@@ -91,6 +98,7 @@ async function fixture(options = {}) {
             calls.preview.push(imagePath);
             return options.preview ? options.preview(imagePath) : preview(imagePath);
         },
+        exportMetadataCover: async request => { calls.exported.push(request); return { success: true }; },
     } };
     const mocks = { react, '../FaIcon': { FaIcon: 'Icon' }, '../../styles/CoverEditorDialog.css': {} };
     const module = { exports: {} };
@@ -99,12 +107,14 @@ async function fixture(options = {}) {
         return mocks[name];
     });
     const props = {
-        file: { name: 'book.cbz', path: '/ignored/path.cbz', full_path: '/library/book.cbz' },
-        t: key => key,
+        file: options.file || { name: 'book.cbz', path: '/ignored/path.cbz', full_path: '/library/book.cbz' },
+        ...(options.files ? { files: options.files } : {}),
+        t: (key, values) => { calls.translations.push({ key, values }); return options.t ? options.t(key, values) : key; },
         onClose: () => { calls.close += 1; },
-        onExecute: async request => {
+        onExecute: async (request, executionOptions) => {
             calls.execute.push(request);
-            return options.execute ? options.execute(request) : { success: true, filePath: request.filePath, backupPath: '' };
+            calls.executeOptions.push(executionOptions);
+            return options.execute ? options.execute(request, executionOptions) : { success: true, filePath: request.filePath, backupPath: '' };
         },
     };
     const attach = (node, parent = null) => {
@@ -155,6 +165,9 @@ async function fixture(options = {}) {
         focusListenerCount: () => listeners.get('focusin')?.size || 0,
         tree: () => tree,
         dialog: () => nodes(tree).find(node => node.props.role === 'dialog'),
+        all: predicate => nodes(tree).filter(predicate),
+        text: () => textContent(tree),
+        currentImage: () => nodes(tree).find(node => node.type === 'img' && node.props.alt === 'cover_editor_current'),
         newImage: () => nodes(tree).find(node => node.type === 'img' && node.props.alt === 'cover_editor_new'),
         alert: () => textContent(nodes(tree).find(node => node.props.role === 'alert')),
         browse: async () => { await button('cover_editor_select').props.onClick(); await settle(); },
@@ -170,6 +183,35 @@ function event(extra = {}) {
         ...extra,
     };
 }
+
+function selectedFile(name) {
+    return { name, full_path: `/library/${name}` };
+}
+
+function fileInfo(name, overrides = {}) {
+    const kind = name.endsWith('.epub') ? 'epub' : name.endsWith('.txt') ? 'text' : name.endsWith('.pdf') ? 'pdf' : 'comic';
+    return {
+        ...defaultInfo,
+        filePath: `/library/${name}`,
+        name,
+        version: `version:${name}`,
+        textContentHash: kind === 'text' ? `text-hash:${name}` : '',
+        coverEntry: kind === 'comic' ? `${name}/first.png` : '',
+        coverDataUrl: `data:image/png;base64,cover:${name}`,
+        kind,
+        storage: ['text', 'pdf'].includes(kind) ? 'database' : 'file',
+        canAdd: ['comic', 'epub'].includes(kind),
+        canRenumber: kind === 'comic',
+        ...overrides,
+    };
+}
+
+function fileButton(value, name) {
+    return value.all(node => node.type === 'button' && 'aria-pressed' in node.props && textContent(node).includes(name))[0];
+}
+
+const saveBatchSuccessfully = (requests, options) => runCoverEditorBatch(requests,
+    async request => ({ success: true, filePath: request.filePath }), options);
 
 test('inspection and image selection remain read-only until the exact chosen save operation is submitted', async () => {
     const value = await fixture();
@@ -394,4 +436,310 @@ test('folder refresh cannot move focus behind the cover dialog during or after s
         value.focusElement(backgroundRow);
         assert.equal(document.activeElement, backgroundRow, 'Closing removes the focus listener');
     } finally { value.close(); }
+});
+
+test('batch inspection is sequential, retains failed files, and previews the selected original cover', async () => {
+    const first = deferred();
+    const broken = deferred();
+    const last = deferred();
+    const pending = new Map([['/library/first.cbz', first], ['/library/broken.cbz', broken], ['/library/last.epub', last]]);
+    const value = await fixture({
+        files: ['first.cbz', 'broken.cbz', 'last.epub'].map(selectedFile),
+        inspect: filePath => pending.get(filePath).promise,
+    });
+    try {
+        assert.deepEqual(value.calls.inspect, ['/library/first.cbz']);
+        first.resolve(fileInfo('first.cbz'));
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, ['/library/first.cbz', '/library/broken.cbz']);
+        broken.reject(new Error('The archive cannot be inspected'));
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, ['/library/first.cbz', '/library/broken.cbz', '/library/last.epub']);
+        last.resolve(fileInfo('last.epub'));
+        await value.settle();
+        assert.ok(value.text().includes('The archive cannot be inspected'));
+        for (const name of ['first.cbz', 'broken.cbz', 'last.epub']) assert.ok(fileButton(value, name), name);
+        await fileButton(value, 'last.epub').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, ['/library/first.cbz', '/library/broken.cbz', '/library/last.epub', '/library/last.epub']);
+        assert.equal(fileButton(value, 'last.epub').props['aria-pressed'], true);
+        assert.equal(value.currentImage().props.src, fileInfo('last.epub').coverDataUrl);
+        await value.button('cover_editor_export').props.onClick();
+        assert.equal(value.calls.exported[0].filePath, '/library/last.epub');
+        assert.equal(value.calls.exported[0].coverDataUrl, fileInfo('last.epub').coverDataUrl);
+        assert.deepEqual(value.calls.execute, []);
+    } finally { value.close(); }
+});
+
+test('batch requests share the selected image while preserving each file identity and format capabilities', async () => {
+    const infos = ['first.cbz', 'last.epub'].map(name => fileInfo(name));
+    const value = await fixture({
+        files: infos.map(info => selectedFile(info.name)),
+        inspect: filePath => infos.find(info => info.filePath === filePath),
+        execute: saveBatchSuccessfully,
+    });
+    try {
+        assert.equal(value.input('cover_editor_replace').props.checked, true);
+        await value.browse();
+        value.input('cover_editor_add').props.onChange();
+        value.render();
+        assert.equal(value.input('cover_editor_renumber').props.checked, true);
+        value.input('cover_editor_backup').props.onChange({ target: { checked: false } });
+        value.render();
+        await value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.preview, ['/images/new.png']);
+        assert.equal(value.calls.execute.length, 1);
+        assert.deepEqual(value.calls.execute[0], infos.map(info => ({
+            filePath: info.filePath,
+            version: info.version,
+            textContentHash: info.textContentHash,
+            targetEntry: info.coverEntry,
+            imagePath: '/images/new.png', imageVersion: 'image-version', mode: 'add',
+            renumber: info.canRenumber, backup: false,
+        })));
+        assert.equal(typeof value.calls.executeOptions[0].onProgress, 'function');
+        assert.equal(typeof value.calls.executeOptions[0].shouldCancel, 'function');
+        assert.equal(value.calls.executeOptions[0].shouldCancel(), false);
+    } finally { value.close(); }
+});
+
+test('mixed comic and TXT selection permits only replacement and renumbers only comic requests', async () => {
+    const infos = ['first.cbz', 'notes.txt'].map(name => fileInfo(name));
+    const value = await fixture({
+        files: infos.map(info => selectedFile(info.name)),
+        inspect: filePath => infos.find(info => info.filePath === filePath),
+        execute: saveBatchSuccessfully,
+    });
+    try {
+        assert.equal(value.input('cover_editor_add'), undefined);
+        assert.ok(value.input('cover_editor_renumber'));
+        value.input('cover_editor_renumber').props.onChange({ target: { checked: true } });
+        value.render();
+        await value.browse();
+        await value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        const requests = value.calls.execute[0];
+        assert.equal(requests.length, 2);
+        assert.deepEqual(requests.map(request => request.mode), ['replace', 'replace']);
+        assert.deepEqual(requests.map(request => request.renumber), [true, false]);
+        assert.equal(requests[1].textContentHash, 'text-hash:notes.txt');
+        assert.equal(requests[1].version, 'version:notes.txt');
+    } finally { value.close(); }
+});
+
+test('inspection failures never become save requests and a remaining single valid file keeps batch semantics', async () => {
+    const value = await fixture({
+        files: ['broken.cbz', 'ready.cbz'].map(selectedFile),
+        inspect: filePath => filePath.endsWith('broken.cbz') ? { error: 'Inspection failed for broken.cbz' } : fileInfo('ready.cbz'),
+        execute: saveBatchSuccessfully,
+    });
+    try {
+        assert.ok(value.text().includes('Inspection failed for broken.cbz'));
+        await value.browse();
+        await value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        assert.equal(value.calls.execute.length, 1);
+        assert.ok(Array.isArray(value.calls.execute[0]));
+        assert.deepEqual(value.calls.execute[0].map(request => request.filePath), ['/library/ready.cbz']);
+        assert.ok(fileButton(value, 'broken.cbz'));
+        assert.deepEqual(value.calls.translations.filter(item => item.key === 'cover_editor_batch_summary').at(-1)?.values, [1, 1, 0]);
+    } finally { value.close(); }
+});
+
+test('a batch with no inspectable file cannot save and can still be closed', async () => {
+    const value = await fixture({
+        files: ['broken.cbz', 'locked.epub'].map(selectedFile),
+        inspect: filePath => { throw new Error(`Unreadable: ${filePath}`); },
+    });
+    try {
+        assert.deepEqual(value.calls.inspect, ['/library/broken.cbz', '/library/locked.epub']);
+        assert.ok(value.text().includes('Unreadable: /library/broken.cbz'));
+        assert.ok(value.text().includes('Unreadable: /library/locked.epub'));
+        const save = value.button('cover_editor_batch_save');
+        assert.ok(!save || save.props.disabled);
+        assert.equal(value.dialog().props['aria-busy'], false);
+        value.button('cover_editor_cancel').props.onClick();
+        assert.equal(value.calls.close, 1);
+        assert.deepEqual(value.calls.execute, []);
+    } finally { value.close(); }
+});
+
+test('closing during sequential batch inspection prevents later inspections and state updates', async () => {
+    const first = deferred();
+    const value = await fixture({
+        files: ['first.cbz', 'last.cbz'].map(selectedFile),
+        inspect: () => first.promise,
+    });
+    try {
+        assert.deepEqual(value.calls.inspect, ['/library/first.cbz']);
+        value.button('cover_editor_cancel').props.onClick();
+        value.unmount();
+        first.resolve(fileInfo('first.cbz'));
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, ['/library/first.cbz']);
+        assert.equal(value.calls.updatesAfterUnmount, 0);
+        assert.deepEqual(value.calls.execute, []);
+    } finally { value.close(); }
+});
+
+test('batch progress reports individual failures and still completes subsequent files with a full summary', async () => {
+    const names = ['first.cbz', 'second.cbz', 'third.cbz'];
+    const pending = names.map(() => deferred());
+    const applied = [];
+    const value = await fixture({
+        files: names.map(selectedFile),
+        inspect: filePath => fileInfo(filePath.split('/').at(-1)),
+        execute: (requests, options) => runCoverEditorBatch(requests, request => {
+            applied.push(request.filePath);
+            return pending[applied.length - 1].promise;
+        }, options),
+    });
+    try {
+        await value.browse();
+        const saving = value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        assert.deepEqual(applied, ['/library/first.cbz']);
+        assert.deepEqual(value.calls.translations.filter(item => item.key === 'cover_editor_batch_progress').at(-1)?.values, [0, 3]);
+        pending[0].resolve({ success: false, code: 'COVER_SOURCE_CHANGED' });
+        await value.settle();
+        assert.deepEqual(applied, ['/library/first.cbz', '/library/second.cbz']);
+        assert.deepEqual(value.calls.translations.filter(item => item.key === 'cover_editor_batch_progress').at(-1)?.values, [1, 3]);
+        assert.ok(value.text().includes('cover_editor_source_changed'));
+        assert.equal(value.dialog().props['aria-busy'], true);
+        pending[1].resolve({ success: true, filePath: '/library/second_cover.cbz', backupPath: '/library/bak/second.cbz' });
+        await value.settle();
+        assert.deepEqual(applied, names.map(name => `/library/${name}`));
+        assert.deepEqual(value.calls.translations.filter(item => item.key === 'cover_editor_batch_progress').at(-1)?.values, [2, 3]);
+        pending[2].resolve({ success: true, filePath: '/library/third.cbz' });
+        await saving;
+        await value.settle();
+        assert.equal(value.calls.execute.length, 1);
+        assert.equal(value.dialog().props['aria-busy'], false);
+        assert.deepEqual(value.calls.translations.filter(item => item.key === 'cover_editor_batch_summary').at(-1)?.values, [2, 1, 0]);
+        assert.ok(value.text().includes('/library/second_cover.cbz'));
+        assert.ok(value.text().includes('/library/bak/second.cbz'));
+        assert.equal(value.button('cover_editor_batch_save'), undefined);
+        assert.ok(fileButton(value, 'first.cbz'));
+        assert.ok(fileButton(value, 'third.cbz'));
+    } finally { value.close(); }
+});
+
+test('cancelling a batch waits for the current save, skips remaining files, and blocks all close gestures', async () => {
+    const first = deferred();
+    const applied = [];
+    const value = await fixture({
+        files: ['first.cbz', 'second.cbz', 'third.cbz'].map(selectedFile),
+        inspect: filePath => fileInfo(filePath.split('/').at(-1)),
+        execute: (requests, options) => runCoverEditorBatch(requests, request => {
+            applied.push(request.filePath);
+            return first.promise;
+        }, options),
+    });
+    try {
+        await value.browse();
+        const submit = value.button('cover_editor_batch_save').props.onClick;
+        const saving = submit();
+        await submit();
+        await value.settle();
+        assert.equal(value.calls.execute.length, 1);
+        assert.equal(value.calls.executeOptions[0].shouldCancel(), false);
+        assert.equal(value.button('cover_editor_select').props.disabled, true);
+        assert.equal(value.button('cover_editor_cancel').props.disabled, true);
+        assert.equal(value.all(node => node.type === 'fieldset')[0].props.disabled, true);
+        value.button('cover_editor_close').props.onClick();
+        const escape = event({ key: 'Escape' });
+        value.tree().props.onKeyDown(escape);
+        value.tree().props.onMouseDown({ target: value.tree(), currentTarget: value.tree() });
+        assert.equal(escape.defaultPrevented, true);
+        assert.equal(escape.propagationStopped, true);
+        assert.equal(value.calls.close, 0);
+        value.button('cover_editor_batch_cancel_remaining').props.onClick();
+        assert.equal(value.calls.executeOptions[0].shouldCancel(), true, 'Cancellation is visible before React renders again');
+        value.render();
+        assert.equal(value.dialog().props['aria-busy'], true);
+        assert.ok(value.text().includes('cover_editor_batch_cancelling'));
+        assert.deepEqual(applied, ['/library/first.cbz']);
+        value.button('cover_editor_close').props.onClick();
+        assert.equal(value.calls.close, 0);
+        first.resolve({ success: true, filePath: '/library/first.cbz' });
+        await saving;
+        await value.settle();
+        assert.deepEqual(applied, ['/library/first.cbz']);
+        assert.deepEqual(value.calls.translations.filter(item => item.key === 'cover_editor_batch_summary').at(-1)?.values, [1, 0, 2]);
+        assert.equal(value.dialog().props['aria-busy'], false);
+        value.button('cover_editor_close').props.onClick();
+        assert.equal(value.calls.close, 1);
+    } finally { value.close(); }
+});
+
+test('a files array containing one file preserves the existing single-request contract', async () => {
+    const value = await fixture({ files: [selectedFile('only.cbz')], inspect: () => fileInfo('only.cbz') });
+    try {
+        await value.browse();
+        await value.button('cover_editor_save').props.onClick();
+        await value.settle();
+        assert.equal(Array.isArray(value.calls.execute[0]), false);
+        assert.equal(value.calls.execute[0].filePath, '/library/only.cbz');
+        assert.equal(value.calls.executeOptions[0], undefined);
+    } finally { value.close(); }
+});
+
+test('async original-cover selection ignores obsolete responses and preserves the initially inspected save identity', async () => {
+    for (const obsoleteOutcome of ['resolve', 'reject']) {
+        const infos = ['first.cbz', 'notes.txt'].map(name => fileInfo(name));
+        const counts = new Map();
+        const firstReload = deferred();
+        const notesReload = deferred();
+        const value = await fixture({
+            files: infos.map(info => selectedFile(info.name)),
+            inspect: filePath => {
+                const count = (counts.get(filePath) || 0) + 1;
+                counts.set(filePath, count);
+                if (count === 1) return infos.find(info => info.filePath === filePath);
+                return filePath === infos[0].filePath ? firstReload.promise : notesReload.promise;
+            },
+            execute: saveBatchSuccessfully,
+        });
+        try {
+            assert.equal(value.currentImage().props.src, infos[0].coverDataUrl);
+            const oldSelection = fileButton(value, 'first.cbz').props.onClick();
+            value.render();
+            assert.equal(value.currentImage(), undefined, 'The previously displayed image is cleared while a fresh cover loads');
+            const newSelection = fileButton(value, 'notes.txt').props.onClick();
+            value.render();
+            const refreshedNotes = {
+                ...infos[1],
+                coverDataUrl: 'data:image/png;base64,newest-notes-cover',
+                version: 'changed-source-version',
+                textContentHash: 'changed-text-hash',
+                coverEntry: 'changed-cover-entry.png',
+            };
+            notesReload.resolve(refreshedNotes);
+            await newSelection;
+            await value.settle();
+            assert.equal(value.currentImage().props.src, refreshedNotes.coverDataUrl);
+            if (obsoleteOutcome === 'resolve') firstReload.resolve({ ...infos[0], coverDataUrl: 'data:image/png;base64,obsolete-cover' });
+            else firstReload.reject(new Error('Obsolete selected-cover failure'));
+            await oldSelection;
+            await value.settle();
+            assert.equal(fileButton(value, 'notes.txt').props['aria-pressed'], true);
+            assert.equal(value.currentImage().props.src, refreshedNotes.coverDataUrl);
+            assert.equal(value.text().includes('Obsolete selected-cover failure'), false);
+            await value.browse();
+            await value.button('cover_editor_batch_save').props.onClick();
+            await value.settle();
+            assert.deepEqual(value.calls.execute[0].map(request => ({
+                filePath: request.filePath,
+                version: request.version,
+                textContentHash: request.textContentHash,
+                targetEntry: request.targetEntry,
+            })), infos.map(info => ({
+                filePath: info.filePath,
+                version: info.version,
+                textContentHash: info.textContentHash,
+                targetEntry: info.coverEntry,
+            })));
+        } finally { value.close(); }
+    }
 });

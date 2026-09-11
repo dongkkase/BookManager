@@ -11,7 +11,7 @@ import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { FolderPathBar } from '../components/folder/FolderPathBar';
 import { CoverEditorDialog } from '../components/folder/CoverEditorDialog';
 import { applyCoverReadingAdjustment } from '../../electron/coverReadingState.js';
-import { COMIC_EXTENSIONS, AUDIO_EXTENSIONS, extensionFromFile } from '../metadata/metadataTypes';
+import { supportsCoverEditor, resolveCoverEditorTargets, runCoverEditorBatch } from '../coverEditorBatch';
 import { FolderTagSearchDialog } from '../components/folder/FolderTagSearchDialog';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
@@ -292,12 +292,6 @@ function SlidingSearchPlaceholder({ text }) {
   );
 }
 
-function supportsCoverEditor(file) {
-    if (!file || file.isDirectory || file.is_folder) return false;
-    const extension = extensionFromFile(file);
-    return COMIC_EXTENSIONS.has(extension) || AUDIO_EXTENSIONS.has(extension) || ['.epub', '.pdf', '.txt'].includes(extension);
-}
-
 const FolderSearchInput = React.memo(function FolderSearchInput({
     inputRef,
     onApplyQuery,
@@ -554,7 +548,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   // --- 폴더 상태 ---
   const [selectedFolderPath, setSelectedFolderPath] = useState('');
-  const { scanning, scanProgress, statusMessage, scanFolder, cancelScan, getCachedFiles, updateCachedFiles } = useFolderScan(t);
+  const { scanning, scanProgress, statusMessage, scanFolder, cancelScan, getCachedFiles, updateCachedFiles, clearCache: clearFolderCache } = useFolderScan(t);
   const selectedFolderPathRef = useRef('');
   const mainAreaRef = useRef(null);
   const rightPanelRef = useRef(null);
@@ -2006,7 +2000,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
   }, [selectedFolderPath]);
 
-    folderPollContextRef.current = { folderPath: selectedFolderPath, scanning, preparingDuplicates, scanFolder, scanOptions, invalidateMissingVolumesCheck };
+    folderPollContextRef.current = {
+        folderPath: selectedFolderPath, scanning, preparingDuplicates, scanFolder, scanOptions, invalidateMissingVolumesCheck,
+        refreshSearchResults: () => {
+            if (isLibrarySearchActive) {
+                librarySearchRequestRef.current += 1;
+                setSearchSubmitToken(value => value + 1);
+            }
+            if (isFolderTagSearchActive) void applyFolderTagSearch({ selections: folderTagSelections, matchMode: folderTagMatchMode });
+        },
+    };
     useEffect(() => {
         watchedMtimeRef.current = null;
         if (!selectedFolderPath) return undefined;
@@ -2026,6 +2029,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 if (!isCurrent()) return;
                 context.invalidateMissingVolumesCheck();
                 setMissingRefreshVersion(value => value + 1);
+                folderPollContextRef.current.refreshSearchResults();
             },
         });
         const handleActiveTabChanged = event => {
@@ -2064,25 +2068,75 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         onNavigate: handleFolderHistoryNavigation,
     });
 
+    const removeDeletedEntries = useCallback(paths => {
+        if (!Array.isArray(paths) || paths.length === 0) return;
+        const normalizePath = value => {
+            let normalized = String(value || '');
+            if (/^win/i.test(runtimePlatform)) normalized = normalized.replace(/\\/g, '/').toLowerCase();
+            if (/mac|darwin/i.test(runtimePlatform)) normalized = normalized.normalize('NFC');
+            return normalized.replace(/\/+$/, '');
+        };
+        const deletedPaths = paths.map(normalizePath).filter(Boolean);
+        const keepEntry = file => {
+            const filePath = normalizePath(file.full_path || file.path);
+            return !deletedPaths.some(deleted => filePath === deleted || filePath.startsWith(`${deleted}/`));
+        };
+        librarySearchRequestRef.current += 1;
+        folderTagRequestRef.current += 1;
+        recentReadingRequestRef.current += 1;
+        setLibrarySearchResults(files => files.filter(keepEntry));
+        setFolderTagSearchResults(files => files.filter(keepEntry));
+        setRecentReadingFiles(files => files.filter(keepEntry));
+        setLibrarySearchLoading(false);
+        setFolderTagLoading(false);
+        setRecentReadingLoading(false);
+        setFolderTagFacetScopeKey('');
+        clearFolderCache();
+    }, [clearFolderCache, runtimePlatform]);
+
   const handleRefresh = useCallback(async () => {
-    if (!selectedFolderPath) return;
     resetCoverPreviewQueue();
+    if (isRecentReading) {
+        await loadRecentReading();
+        return;
+    }
+    if (isLibrarySearchActive) {
+        librarySearchRequestRef.current += 1;
+        setSearchSubmitToken(value => value + 1);
+    }
+    const tagRefresh = isFolderTagSearchActive
+        ? applyFolderTagSearch({ selections: folderTagSelections, matchMode: folderTagMatchMode })
+        : Promise.resolve();
+    if (!selectedFolderPath) {
+        await tagRefresh;
+        return;
+    }
     const files = await scanFolder(selectedFolderPath, { ...scanOptions, force: true });
     scheduleLocalMissingToast(selectedFolderPath, findMissingVolumes((files || []).filter(file => !file.isDirectory)));
     invalidateMissingVolumesCheck();
     setMissingRefreshVersion(value => value + 1);
-  }, [invalidateMissingVolumesCheck, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
+    await tagRefresh;
+  }, [applyFolderTagSearch, folderTagMatchMode, folderTagSelections, invalidateMissingVolumesCheck, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, loadRecentReading, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
-    const executeCoverEdit = useCallback(async request => {
-        const result = await runInternalFileAction(() => window.electronAPI.applyCoverEditor(request));
-        if (result?.success) {
-            try {
-                applyCoverReadingAdjustment(window.localStorage, result.readingAdjustment);
-            } catch (error) {
-                result.readingWarning = [t('cover_editor_reading_save_failed'), error.message].filter(Boolean).join(' ');
+    const executeCoverEdit = useCallback(async (request, batchOptions = {}) => {
+        const apply = async item => {
+            const saved = await window.electronAPI.applyCoverEditor(item);
+            if (saved?.success) {
+                try {
+                    applyCoverReadingAdjustment(window.localStorage, saved.readingAdjustment);
+                } catch (error) {
+                    saved.readingWarning = [t('cover_editor_reading_save_failed'), error.message].filter(Boolean).join(' ');
+                }
             }
+            return saved;
+        };
+        const result = await runInternalFileAction(() => Array.isArray(request)
+            ? runCoverEditorBatch(request, apply, batchOptions) : apply(request));
+        const paths = result?.batch ? result.results.filter(item => item.success).map(item => item.filePath)
+            : result?.success ? [result.filePath] : [];
+        if (paths.length > 0) {
             resetCoverPreviewQueue();
-            window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', { detail: { paths: [result.filePath] } }));
+            window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', { detail: { paths } }));
             setTreeRefreshToken(value => value + 1);
             if (isLibrarySearchActive) setSearchSubmitToken(value => value + 1);
             if (isRecentReading) await loadRecentReading();
@@ -2122,12 +2176,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [handleRefresh]);
 
   const handleSmartRefresh = useCallback(async (force = false) => {
-    if (!selectedFolderPath || scanning || preparingDuplicates) return;
+    if (scanning || preparingDuplicates) return;
+    if (isRecentReading || isLibrarySearchActive || isFolderTagSearchActive) {
+        await handleRefresh();
+        return;
+    }
+    if (!selectedFolderPath) return;
     const stat = await window.electronAPI?.stat?.(selectedFolderPath);
     if (!force && stat?.isDirectory && watchedMtimeRef.current === stat.mtime) return;
     if (stat?.isDirectory) watchedMtimeRef.current = stat.mtime;
     await handleRefresh();
-  }, [handleRefresh, preparingDuplicates, scanning, selectedFolderPath]);
+  }, [handleRefresh, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, preparingDuplicates, scanning, selectedFolderPath]);
 
   const handleIncludeSubfoldersChange = useCallback(async () => {
     if (shouldDisableFolderToggles(scanning, preparingDuplicates)) return;
@@ -2576,7 +2635,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const result = await runInternalFileAction(
       () => window.electronAPI?.deleteFiles?.(targets),
     );
-    if (result?.success === false) {
+    removeDeletedEntries(result?.deleted);
+    if (result?.errors?.length || (result?.success === false && !result.cancelled)) {
       await window.electronAPI?.showMessage?.({
         type: 'error',
         title: t('dlg_err'),
@@ -2584,11 +2644,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     }
+    if (result?.cancelled && !result.deleted?.length) {
+      if (result.errors?.length) {
+        if (folderCount > 0) setTreeRefreshToken(current => current + 1);
+        await handleRefresh();
+      }
+      return;
+    }
     if (folderCount > 0) {
         const removedFolders = [];
         for (const entry of entries.filter(file => file.isDirectory)) {
             const path = entry.full_path || entry.path;
-            if (await window.electronAPI?.exists?.(path) === false) removedFolders.push(path);
+            if (result?.deleted?.includes(path)) removedFolders.push(path);
         }
         const wasRemoved = path => removedFolders.some(folder => replaceTreePath(path, folder, `${folder}.removed`) !== path);
         const configPatch = {
@@ -2601,7 +2668,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     clearSelection();
     await handleRefresh();
-  }, [clearSelection, config?.language, config?.lang, config?.dup_check_folders, favoriteEntries, handleRefresh, libraryEntries, runInternalFileAction, saveConfig, selectedEntryObjects, t]);
+  }, [clearSelection, config?.language, config?.lang, config?.dup_check_folders, favoriteEntries, handleRefresh, libraryEntries, removeDeletedEntries, runInternalFileAction, saveConfig, selectedEntryObjects, t]);
 
   const renameSelectedFile = useCallback(async (file = activeSelectedFile) => {
     const target = file?.full_path || file?.path;
@@ -3088,12 +3155,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       await loadRecentReading();
       return;
     }
+    if (isLibrarySearchActive || isFolderTagSearchActive) {
+        await handleRefresh();
+        return;
+    }
     if (isExplorerPanelActive()) {
       await refreshContextFolder(selectedFolderPath);
       return;
     }
     await handleSmartRefresh(true);
-  }, [handleSmartRefresh, isExplorerPanelActive, isRecentReading, loadRecentReading, refreshContextFolder, selectedFolderPath]);
+  }, [handleRefresh, handleSmartRefresh, isExplorerPanelActive, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, loadRecentReading, refreshContextFolder, selectedFolderPath]);
 
   const handleRenameShortcut = useCallback(async () => {
     if (isExplorerPanelActive()) {
@@ -3125,8 +3196,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const result = await runInternalFileAction(
       () => window.electronAPI?.deleteFiles?.([folderPath]),
     );
-    if (!result?.success) {
+    removeDeletedEntries(result?.deleted);
+    if (result?.errors?.length || (!result?.success && !result?.cancelled)) {
       await showFolderError('dlg_del_err', result?.errors?.join('\n') || result?.message || t('msg_failed'));
+    }
+    if (!result?.deleted?.includes(folderPath) && (result?.cancelled || !result?.success)) {
+      if (result?.errors?.length || !result?.cancelled) {
+        setTreeRefreshToken(current => current + 1);
+        await handleRefresh();
+      }
       return;
     }
 
@@ -3146,7 +3224,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       setSelectedFolderPath('');
       clearSelection();
     }
-  }, [clearSelection, config?.language, config?.lang, favoriteEntries, handleFolderChange, libraries, removeFavorite, removeLibrary, runInternalFileAction, showFolderError, t]);
+  }, [clearSelection, config?.language, config?.lang, favoriteEntries, handleFolderChange, handleRefresh, libraries, removeDeletedEntries, removeFavorite, removeLibrary, runInternalFileAction, showFolderError, t]);
 
   const moveContextFolderToLibrary = useCallback(async folderPath => {
     if (!folderPath) return;
@@ -3189,7 +3267,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!menu) return;
 
     if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
-        setCoverEditorTarget(menu.file);
+        const files = resolveCoverEditorTargets(menu.file, selectedEntryObjects);
+        if (files.length > 0) setCoverEditorTarget(files);
     } else if (action === 'send-readive') {
         const paths = resolveReadivePaths(menu, selectedEntryObjects);
         if (!paths.length) return;
@@ -4042,7 +4121,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         </div>
       </div>
       {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} onClose={() => setReadiveTransferPaths(null)} onOpenSharing={openReadiveSharing} />}
-        {coverEditorTarget && <CoverEditorDialog file={coverEditorTarget} t={t} onExecute={executeCoverEdit} onClose={() => setCoverEditorTarget(null)} />}
+        {coverEditorTarget && <CoverEditorDialog files={coverEditorTarget} t={t} onExecute={executeCoverEdit} onClose={() => setCoverEditorTarget(null)} />}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
           {contextMenu.type === 'library' ? (
