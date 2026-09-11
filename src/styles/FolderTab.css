@@ -1399,6 +1399,110 @@ body.is-resizing-panel .detail-panel-wrap {
     outline-offset: -1px;
 }
 
+.folder-search-history {
+    position: absolute;
+    top: calc(100% + 5px);
+    right: 0;
+    z-index: 50;
+    width: max(100%, 300px);
+    color: #dedede;
+    background: #252525;
+    border: 1px solid #555;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px #0006;
+    overflow: hidden;
+    font-size: var(--font-xs);
+    text-align: left;
+}
+
+.folder-search-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #414141;
+}
+
+.folder-search-history-count {
+    margin-left: 4px;
+    color: #999;
+    font-size: var(--font-2xs);
+}
+
+.folder-search-history button {
+    min-height: 28px;
+    margin: 0;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    font-size: inherit;
+    cursor: pointer;
+}
+
+.folder-search-history-header button {
+    flex-shrink: 0;
+    padding: 2px 5px;
+    color: #b9cbd7;
+}
+
+.folder-search-history-list {
+    max-height: min(320px, 45vh);
+    margin: 0;
+    padding: 4px;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.folder-search-history-list li {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.folder-search-history-query {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 7px 8px;
+    text-align: left;
+}
+
+.folder-search-history-query svg {
+    flex-shrink: 0;
+    color: #999;
+}
+
+.folder-search-history-query span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-search-history-delete {
+    flex: 0 0 28px;
+    padding: 5px;
+}
+
+.folder-search-history-empty {
+    padding: 18px 10px;
+    color: #aaa;
+}
+
+.folder-search-history button:hover,
+.folder-search-history button:focus-visible {
+    color: #fff;
+    background: #3a3a3a;
+}
+
+.folder-search-history button:focus-visible {
+    outline: 1px solid #6ca6c7;
+    outline-offset: -1px;
+}
+
 .view-container {
   position: relative;
   flex: 1 1 auto;

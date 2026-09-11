@@ -57,6 +57,21 @@ test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한�
     }
 });
 
+test('최근 검색어는 다른 설정 저장 후에도 유지되고 다시 실행할 때 복원된다', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-search-history-'));
+    try {
+        const manager = new ConfigManager(root, root);
+        manager.loadConfig();
+        manager.saveConfig({ folder_search_history: ['최근 검색', '이전 검색'] });
+        manager.saveConfig({ language: 'en' });
+        assert.deepEqual(new ConfigManager(root, root).loadConfig().folder_search_history, ['최근 검색', '이전 검색']);
+        manager.saveConfig({ folder_search_history: [] });
+        assert.deepEqual(new ConfigManager(root, root).loadConfig().folder_search_history, []);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-yes24-'));
     try {
@@ -199,6 +214,7 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.last_tab_id, 'folder');
         assert.equal(loaded.folder_last_path, '');
         assert.deepEqual(loaded.folder_goto_history, []);
+        assert.deepEqual(loaded.folder_search_history, []);
         assert.equal(loaded.last_meta_api, '리디북스');
         assert.equal(loaded.preferred_meta_api_comic, '리디북스');
         assert.equal(loaded.preferred_meta_api_book, '리디북스');

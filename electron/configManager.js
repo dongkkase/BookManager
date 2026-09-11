@@ -293,6 +293,7 @@ export class ConfigManager {
       folder_detail_panel_height: null,
       folder_last_path: '',
       folder_goto_history: [],
+      folder_search_history: [],
       last_selected_library: '',
       index_last_mtimes: {},
       min_window_width: 1200,

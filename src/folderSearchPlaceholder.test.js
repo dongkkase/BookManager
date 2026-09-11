@@ -45,13 +45,13 @@ test('슬라이드 placeholder는 입력 접근성과 포인터 동작을 보존
     assert.doesNotMatch(folderStyles, /\.search-placeholder-viewport\.is-overflowing[\s\S]*?animation:\s*none;/);
 });
 
-test('폴더 검색은 자동 적용하지 않고 버튼 또는 submit에서만 실행한다', () => {
+test('폴더 검색은 자동 적용하지 않고 제출 또는 기록 선택으로 실행한다', () => {
     assert.doesNotMatch(folderSource, /FOLDER_SEARCH_DEBOUNCE_MS/);
     assert.doesNotMatch(folderSearchInputSource, /setTimeout/);
     assert.equal(folderSearchInputSource.match(/onApplyQuery\s*\(/g)?.length, 1);
     assert.match(folderSearchInputSource, /onChange=\{event\s*=>\s*setSearchQuery\(event\.target\.value\)\}/);
     assert.match(folderSearchInputSource, /<form[\s\S]*?className=\{`search-input-wrap \$\{showSearchScope \? 'has-search-scope' : ''\}`\}[\s\S]*?role="search"[\s\S]*?onSubmit=\{handleSubmit\}\s*>/);
-    assert.match(folderSearchInputSource, /const submitSearch\s*=\s*\(\)\s*=>\s*\{\s*if \(isComposingRef\.current\) return;\s*const inputValue = inputRef\.current\?\.value \?\? searchQuery;\s*onApplyQuery\(inputValue\.trim\(\)\);\s*\};/);
+    assert.match(folderSearchInputSource, /const submitSearch\s*=\s*\(\)\s*=>\s*\{\s*if \(isComposingRef\.current\) return;\s*const inputValue = inputRef\.current\?\.value \?\? searchQuery;\s*executeSearch\(inputValue\.trim\(\)\);\s*\};/);
     assert.match(folderSearchInputSource, /const handleSubmit\s*=\s*event\s*=>\s*\{\s*event\.preventDefault\(\);\s*submitSearch\(\);\s*\};/);
     assert.match(folderSearchInputSource, /type="submit"[\s\S]*?className="search-submit-btn"[\s\S]*?<FaIcon name="search"/);
     assert.match(folderSource, /searchLabel=\{t\('btn_search'\)\}/);
@@ -62,7 +62,7 @@ test('폴더 검색은 자동 적용하지 않고 버튼 또는 submit에서만 
 });
 
 test('폴더 검색 Enter는 IME 조합을 보호하고 지우기는 즉시 적용한다', () => {
-    assert.match(folderSearchInputSource, /const handleKeyDown\s*=\s*event\s*=>\s*\{\s*if \(event\.key !== 'Enter'\) return;\s*if \(\s*event\.nativeEvent\?\.isComposing\s*\|\| event\.nativeEvent\?\.keyCode === 229\s*\|\| isComposingRef\.current\s*\) \{\s*event\.preventDefault\(\);\s*\}\s*\};/);
+    assert.match(folderSearchInputSource, /const handleKeyDown\s*=\s*event\s*=>\s*\{\s*if \(\s*event\.nativeEvent\?\.isComposing\s*\|\| event\.nativeEvent\?\.keyCode === 229\s*\|\| isComposingRef\.current\s*\) \{\s*if \(event\.key === 'Enter'\) event\.preventDefault\(\);\s*return;/);
     assert.match(folderSearchInputSource, /onKeyDown=\{handleKeyDown\}/);
     assert.match(folderSearchInputSource, /onCompositionStart=\{\(\)\s*=>\s*\{\s*isComposingRef\.current = true;/);
     assert.match(folderSearchInputSource, /onCompositionEnd=\{event\s*=>\s*\{\s*isComposingRef\.current = false;/);

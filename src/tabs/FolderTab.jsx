@@ -23,6 +23,7 @@ import {
 } from '../utils/folderPath';
 import { useFolderScan } from '../hooks/useFolderScan';
 import { useFolderMouseNavigation } from '../hooks/useFolderMouseNavigation';
+import { useFolderSearchHistory } from '../hooks/useFolderSearchHistory';
 import { useFileSelection } from '../hooks/useFileSelection';
 import {
   clampDetailHeight,
@@ -303,14 +304,51 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
     searchScopeContentLabel,
     searchScopeAllLabel,
     showSearchScope,
+    searchHistory,
+    onRemoveSearchHistory,
+    onClearSearchHistory,
+    historyLabel,
+    historyEmptyLabel,
+    historyDeleteLabel,
+    historyClearLabel,
 }) {
     const [searchQuery, setSearchQuery] = useState('');
+    const [showHistory, setShowHistory] = useState(false);
     const isComposingRef = useRef(false);
+    const formRef = useRef(null);
+    const historyRef = useRef(null);
+    const pendingHistoryFocusRef = useRef(null);
+    const historyId = React.useId();
+
+    useEffect(() => {
+        if (!showHistory) return;
+        const closeOnOutsideClick = event => {
+            if (!formRef.current?.contains(event.target)) setShowHistory(false);
+        };
+        document.addEventListener('pointerdown', closeOnOutsideClick);
+        return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+    }, [showHistory]);
+
+    useEffect(() => {
+        if (!showHistory || pendingHistoryFocusRef.current === null) return;
+        const items = historyRef.current?.querySelectorAll('.folder-search-history-query');
+        const index = Math.min(pendingHistoryFocusRef.current, (items?.length || 1) - 1);
+        pendingHistoryFocusRef.current = null;
+        if (items?.length) items[index].focus();
+        else inputRef.current?.focus();
+    }, [inputRef, searchHistory, showHistory]);
+
+    const executeSearch = query => {
+        setSearchQuery(query);
+        inputRef.current?.focus();
+        setShowHistory(false);
+        onApplyQuery(query);
+    };
 
     const submitSearch = () => {
         if (isComposingRef.current) return;
         const inputValue = inputRef.current?.value ?? searchQuery;
-        onApplyQuery(inputValue.trim());
+        executeSearch(inputValue.trim());
     };
 
     const handleSubmit = event => {
@@ -319,14 +357,50 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
     };
 
     const handleKeyDown = event => {
-        if (event.key !== 'Enter') return;
         if (
             event.nativeEvent?.isComposing
             || event.nativeEvent?.keyCode === 229
             || isComposingRef.current
         ) {
-            event.preventDefault();
+            if (event.key === 'Enter') event.preventDefault();
+            return;
         }
+        if (event.key === 'ArrowDown' && searchHistory.length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (showHistory) {
+                historyRef.current?.querySelector('.folder-search-history-query')?.focus();
+            } else {
+                pendingHistoryFocusRef.current = 0;
+                setShowHistory(true);
+            }
+        }
+    };
+
+    const handleFormKeyDown = event => {
+        if (event.target.tagName === 'BUTTON') event.stopPropagation();
+        if (event.key === 'Escape' && showHistory && !isComposingRef.current && !event.nativeEvent?.isComposing) {
+            event.preventDefault();
+            event.stopPropagation();
+            inputRef.current?.focus();
+            setShowHistory(false);
+        }
+    };
+
+    const handleHistoryKeyDown = event => {
+        event.stopPropagation();
+        if (event.key === 'Escape') {
+            handleFormKeyDown(event);
+            return;
+        }
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault();
+        const items = [...historyRef.current.querySelectorAll('.folder-search-history-query')];
+        const current = event.target.closest('li')?.querySelector('.folder-search-history-query');
+        const index = items.indexOf(current);
+        const nextIndex = index + (event.key === 'ArrowDown' ? 1 : -1);
+        if (nextIndex < 0 || nextIndex >= items.length) inputRef.current?.focus();
+        else items[nextIndex].focus();
     };
 
     const clearSearch = () => {
@@ -334,13 +408,19 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
         setSearchQuery('');
         onClearQuery();
         inputRef.current?.focus();
+        setShowHistory(false);
     };
 
     return (
         <form
+            ref={formRef}
             className={`search-input-wrap ${showSearchScope ? 'has-search-scope' : ''}`}
             role="search"
             aria-label={searchLabel}
+            onBlur={event => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setShowHistory(false);
+            }}
+            onKeyDown={handleFormKeyDown}
             onSubmit={handleSubmit}
         >
             {showSearchScope && (
@@ -364,6 +444,10 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
                 value={searchQuery}
                 aria-label={searchPlaceholder}
                 aria-busy={librarySearchLoading}
+                aria-controls={showHistory ? historyId : undefined}
+                autoComplete="off"
+                onFocus={() => setShowHistory(true)}
+                onClick={() => setShowHistory(true)}
                 onChange={event => setSearchQuery(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onCompositionStart={() => {
@@ -394,6 +478,57 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
             >
                 <FaIcon name="search" />
             </button>
+            {showHistory && (
+                <div
+                    id={historyId}
+                    ref={historyRef}
+                    className="folder-search-history"
+                    role="region"
+                    aria-label={historyLabel}
+                    onKeyDown={handleHistoryKeyDown}
+                >
+                    <div className="folder-search-history-header">
+                        <span>{historyLabel} <span className="folder-search-history-count">{searchHistory.length}/20</span></span>
+                        {searchHistory.length > 0 && (
+                            <button type="button" onClick={() => {
+                                pendingHistoryFocusRef.current = 0;
+                                onClearSearchHistory();
+                            }}>{historyClearLabel}</button>
+                        )}
+                    </div>
+                    {searchHistory.length === 0 ? (
+                        <div className="folder-search-history-empty">{historyEmptyLabel}</div>
+                    ) : (
+                        <ul className="folder-search-history-list">
+                            {searchHistory.map((query, index) => (
+                                <li key={query}>
+                                    <button
+                                        type="button"
+                                        className="folder-search-history-query"
+                                        title={query}
+                                        onClick={() => executeSearch(query)}
+                                    >
+                                        <FaIcon name="clock" />
+                                        <span>{query}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="folder-search-history-delete"
+                                        aria-label={`${historyDeleteLabel}: ${query}`}
+                                        title={historyDeleteLabel}
+                                        onClick={() => {
+                                            pendingHistoryFocusRef.current = index;
+                                            onRemoveSearchHistory(query);
+                                        }}
+                                    >
+                                        <FaIcon name="trash" />
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
         </form>
     );
 });
@@ -587,6 +722,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   ]);
 
   // --- 검색 상태 ---
+    const handleSearchHistorySaveError = useCallback(error => {
+        console.error('검색 기록 저장 실패:', error);
+        showToast?.(t('folder_search_history_save_error'));
+    }, [showToast, t]);
+    const {
+        searchHistory,
+        rememberSearchQuery,
+        removeSearchQuery,
+        clearSearchHistory,
+    } = useFolderSearchHistory(config, saveConfig, handleSearchHistorySaveError);
   const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
   const [searchSubmitToken, setSearchSubmitToken] = useState(0);
   const [searchResetToken, setSearchResetToken] = useState(0);
@@ -633,7 +778,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setAppliedSearchQuery(query);
     setSearchSubmitToken(token => token + 1);
     setShowContentIndexSearchHint(false);
-  }, []);
+        rememberSearchQuery(query);
+  }, [rememberSearchQuery]);
   const clearAppliedSearchQuery = useCallback(() => {
     setShowContentIndexSearchHint(false);
     setAppliedSearchQuery('');
@@ -3680,6 +3826,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   searchScopeContentLabel={t('folder_search_scope_content')}
                   searchScopeAllLabel={t('folder_search_scope_all')}
                   showSearchScope={!isRecentReading && libraries.length > 0}
+                    searchHistory={searchHistory}
+                    onRemoveSearchHistory={removeSearchQuery}
+                    onClearSearchHistory={clearSearchHistory}
+                    historyLabel={t('folder_search_history')}
+                    historyEmptyLabel={t('folder_search_history_empty')}
+                    historyDeleteLabel={t('folder_search_history_delete')}
+                    historyClearLabel={t('folder_search_history_clear')}
                 />
               </div>
               {!isRecentReading && <div className="content-index-control">
