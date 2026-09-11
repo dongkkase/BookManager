@@ -207,3 +207,41 @@ test('ZIP 일괄 갱신 중 원본 교체는 덮어쓰지 않는다', async t =>
     assert.deepEqual(fs.readFileSync(filePath), replacement);
     assert.deepEqual(fs.readdirSync(directory), ['book.epub']);
 });
+
+test('ZIP 엔트리 이름 변경은 압축 데이터와 descriptor 및 부가정보를 보존한다', async t => {
+    const original = fixture();
+    const { filePath } = temporaryArchive(t, original.buffer);
+    await replaceZipEntries(filePath, [], {
+        renameEntries: [{ from: 'OEBPS/자료.bin', to: 'renamed/0001.bin' }],
+    });
+    const bytes = fs.readFileSync(filePath);
+    const entry = (await listZipEntriesFromFile(filePath, { includeRawRecords: true })).find(item => item.name === 'renamed/0001.bin');
+    assert.ok(entry);
+    assert.deepEqual(getZipEntryCompressedData(bytes, entry), original.compressed);
+    assert.deepEqual(readZipEntry(bytes, entry), original.content);
+    const dataEnd = entry.localHeaderOffset + 30 + bytes.readUInt16LE(entry.localHeaderOffset + 26)
+        + bytes.readUInt16LE(entry.localHeaderOffset + 28) + entry.compressedSize;
+    assert.equal(bytes.readUInt32LE(dataEnd), 0x08074b50);
+    assert.ok(entry.centralRecord.includes(Buffer.from('entry comment')));
+    assert.ok(entry.centralRecord.includes(Buffer.from('test')));
+    assert.deepEqual(bytes.subarray(-original.archiveComment.length), original.archiveComment);
+    checkWith7z(filePath);
+});
+
+test('ZIP 엔트리 삭제와 교차 이름 변경은 원본 경로를 기준으로 한 번 적용한다', async t => {
+    const { filePath } = temporaryArchive(t, Buffer.from('504b0506000000000000000000000000000000000000', 'hex'));
+    await replaceZipEntry(filePath, '001.jpg', 'one');
+    await replaceZipEntry(filePath, '002.jpg', 'two');
+    await replaceZipEntry(filePath, 'remove.txt', 'removed');
+    await replaceZipEntries(filePath, [{ name: '001.jpg', content: 'cover' }], {
+        renameEntries: [{ from: '001.jpg', to: '002.jpg' }, { from: '002.jpg', to: '003.jpg' }],
+        removeEntries: ['remove.txt'],
+    });
+    const bytes = fs.readFileSync(filePath);
+    const entries = listZipEntries(bytes);
+    assert.equal(readZipEntry(bytes, entries.find(entry => entry.name === '001.jpg')).toString(), 'cover');
+    assert.equal(readZipEntry(bytes, entries.find(entry => entry.name === '002.jpg')).toString(), 'one');
+    assert.equal(readZipEntry(bytes, entries.find(entry => entry.name === '003.jpg')).toString(), 'two');
+    assert.equal(entries.some(entry => entry.name === 'remove.txt'), false);
+    checkWith7z(filePath);
+});

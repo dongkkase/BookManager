@@ -462,11 +462,15 @@ function App() {
   }, [activeTab, dropInteractionBlocked, resetFileDropHover]);
 
   const handleGlobalDragEnter = useCallback((event) => {
+    if (document.querySelector('.cover-editor-backdrop')) {
+        resetFileDropHover();
+        return;
+    }
     if (!fileDropHoverEnabled || !isExternalFileDrag(event.dataTransfer)) return;
     event.preventDefault();
     fileDragDepthRef.current += 1;
     setFileDropHoverTab(activeTab);
-  }, [activeTab, fileDropHoverEnabled]);
+  }, [activeTab, fileDropHoverEnabled, resetFileDropHover]);
 
   const handleGlobalDragLeave = useCallback(() => {
     fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
@@ -475,16 +479,22 @@ function App() {
 
   const handleGlobalDragOver = useCallback((event) => {
     event.preventDefault();
+    if (document.querySelector('.cover-editor-backdrop')) {
+        event.dataTransfer.dropEffect = 'none';
+        resetFileDropHover();
+        return;
+    }
     event.dataTransfer.dropEffect = canAcceptGlobalDrop(activeTab, dropInteractionBlocked) ? 'copy' : 'none';
     if (fileDropHoverEnabled && isExternalFileDrag(event.dataTransfer)) {
       if (fileDragDepthRef.current === 0) fileDragDepthRef.current = 1;
       setFileDropHoverTab(activeTab);
     }
-  }, [activeTab, dropInteractionBlocked, fileDropHoverEnabled]);
+  }, [activeTab, dropInteractionBlocked, fileDropHoverEnabled, resetFileDropHover]);
 
   const handleGlobalDrop = useCallback(async (event) => {
     event.preventDefault();
     resetFileDropHover();
+    if (document.querySelector('.cover-editor-backdrop')) return;
     if (!canAcceptGlobalDrop(activeTab, dropInteractionBlocked)) return;
     const paths = normalizeDroppedPaths(
       Array.from(event.dataTransfer.files || []).map(file => file.path),
@@ -494,6 +504,7 @@ function App() {
       path: droppedPath,
       ...(await window.electronAPI?.stat?.(droppedPath)),
     })));
+    if (document.querySelector('.cover-editor-backdrop')) return;
     const classified = classifyDroppedEntries(entries, {
       includeDocuments: activeTab === 'metadata',
       includeViewerFiles: activeTab === 'folder',
@@ -516,6 +527,7 @@ function App() {
       acceptedPaths = resolveMetadataDropPaths(classified, choice);
     }
     if (acceptedPaths.length === 0) return;
+    if (document.querySelector('.cover-editor-backdrop')) return;
     dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths });
   }, [activeTab, dispatchTabAction, dropInteractionBlocked, language, resetFileDropHover, showToast, t]);
 

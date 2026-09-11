@@ -11,6 +11,8 @@ import { promisify } from 'util';
 import { BoundedMemoryCache } from './boundedMemoryCache.js';
 import { createTtsRequestRegistry } from './ttsRequestRegistry.js';
 import { registerReadiveIpc } from './readive/ipc.js';
+import { inspectCoverEditor, loadCoverEditorImage, applyCoverEditor } from './coverEditor.js';
+import { resolveCoverEditorSevenZPath } from './coverEditorBinary.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
@@ -3589,6 +3591,63 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 메타데이터 관리 ==========
+    const coverEditorOptions = async () => {
+        const sevenZExe = await resolveCoverEditorSevenZPath(await getBinPath('7za') || await getBinPath('7z'), { executableDir: getExecutableDir() });
+        return {
+            sevenZExe,
+            dbPath: libraryDbPath(),
+            thumbnailDir: thumbnailDir(),
+            normalizeImage: (buffer, mimeType) => {
+                const image = nativeImage.createFromBuffer(buffer);
+                const { width, height } = image.getSize();
+                if (image.isEmpty() || !width || !height || width * height > 64000000) {
+                    throw new Error('Choose a valid image with no more than 64 million pixels.');
+                }
+                return {
+                    buffer: ['image/jpeg', 'image/png'].includes(mimeType) ? buffer : image.toPNG(),
+                    mimeType: ['image/jpeg', 'image/png'].includes(mimeType) ? mimeType : 'image/png',
+                    width,
+                    height,
+                };
+            },
+            refreshFilePreview: filePath => inspectFolderFile(filePath, {
+                dbPath: libraryDbPath(), thumbnailDir: thumbnailDir(), sevenZExe,
+                force: true, thumbnailEncoder: encodeThumbnail,
+            }),
+        };
+    };
+
+    ipcMain.handle('coverEditor:inspect', async (_event, filePath) => {
+        try {
+            return await inspectCoverEditor(filePath, await coverEditorOptions());
+        } catch (error) {
+            return { error: error.message, code: error.code || '' };
+        }
+    });
+    ipcMain.handle('coverEditor:image', async (_event, filePath) => {
+        try {
+            const { buffer, ...preview } = await loadCoverEditorImage(filePath, await coverEditorOptions());
+            return preview;
+        } catch (error) {
+            return { error: error.message, code: error.code || '' };
+        }
+    });
+    ipcMain.handle('coverEditor:apply', async (_event, request) => {
+        try {
+            const options = await coverEditorOptions();
+            const save = () => applyCoverEditor(request, options);
+            const result = await (hooks.withCoverEdit ? hooks.withCoverEdit(request.filePath, save) : save());
+            try {
+                await hooks.onMetadataSaveSuccess?.([result.filePath]);
+            } catch (error) {
+                console.warn('[CoverEditor] Viewer refresh failed:', error.message);
+            }
+            return result;
+        } catch (error) {
+            return { success: false, error: error.message, code: error.code || '' };
+        }
+    });
+
   ipcMain.handle('metadata:analyze', async (event, paths, options = {}) => {
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     return analyzeMetadataInputs(paths, {

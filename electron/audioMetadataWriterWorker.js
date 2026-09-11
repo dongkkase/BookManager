@@ -16,7 +16,7 @@ try {
     const result = await writeAudioMetadataFileInProcess(
         workerData.filePath,
         workerData.metadata || {},
-        { cover: workerData.cover || null },
+        { cover: workerData.cover || null, coverOnly: workerData.coverOnly === true },
     );
     parentPort.postMessage({ result });
 } catch (error) {

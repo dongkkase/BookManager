@@ -408,20 +408,20 @@ function verifyFrontCover(mismatches, musicFile, cover) {
 
 export async function verifyAudioMetadataWrite(filePath, metadata = {}, options = {}) {
     requireWritableAudioPath(filePath);
-    const expected = normalizeAudioMetadataEdits(metadata);
+    const expected = options.coverOnly === true ? null : normalizeAudioMetadataEdits(metadata);
     const cover = normalizeCover(options.cover);
     const readerMetadata = await readAudioMetadata(filePath, { includeCover: true });
     const musicFile = openTagLibFile(filePath);
     const mismatches = [];
     let pictureCount = 0;
     const readerActual = comparableReaderMetadata(readerMetadata);
-    const readerExpected = expectedReaderMetadata(expected);
+    const readerExpected = expected ? expectedReaderMetadata(expected) : {};
 
     for (const field of Object.keys(readerExpected)) {
         addMismatch(mismatches, `readAudioMetadata.${field}`, readerActual[field], readerExpected[field]);
     }
     try {
-        verifyNativeMetadata(mismatches, musicFile, expected);
+        if (expected) verifyNativeMetadata(mismatches, musicFile, expected);
         verifyFrontCover(mismatches, musicFile, cover);
         pictureCount = musicFile.tag.pictures?.length || 0;
     } finally {
@@ -444,12 +444,12 @@ export async function verifyAudioMetadataWrite(filePath, metadata = {}, options 
 
 export async function writeAudioMetadataFileInProcess(tempFilePath, metadata = {}, options = {}) {
     requireWritableAudioPath(tempFilePath);
-    const normalized = normalizeAudioMetadataEdits(metadata);
+    const normalized = options.coverOnly === true ? null : normalizeAudioMetadataEdits(metadata);
     const cover = normalizeCover(options.cover);
     const musicFile = openTagLibFile(tempFilePath);
 
     try {
-        setEditableFields(musicFile, normalized);
+        if (normalized) setEditableFields(musicFile, normalized);
         if (cover) {
             musicFile.tag.pictures = replaceFrontCover(musicFile.tag.pictures, cover);
         }
@@ -458,7 +458,7 @@ export async function writeAudioMetadataFileInProcess(tempFilePath, metadata = {
         musicFile.dispose();
     }
 
-    return verifyAudioMetadataWrite(tempFilePath, metadata, { cover });
+    return verifyAudioMetadataWrite(tempFilePath, metadata, { cover, coverOnly: options.coverOnly === true });
 }
 
 function reviveWriterResult(result = {}) {
@@ -493,7 +493,7 @@ function writerErrorFromPayload(payload = {}) {
 
 export async function writeAudioMetadataFile(tempFilePath, metadata = {}, options = {}) {
     requireWritableAudioPath(tempFilePath);
-    normalizeAudioMetadataEdits(metadata);
+    if (options.coverOnly !== true) normalizeAudioMetadataEdits(metadata);
     normalizeCover(options.cover);
     if (options.useWorker === false) {
         return writeAudioMetadataFileInProcess(tempFilePath, metadata, options);
@@ -505,6 +505,7 @@ export async function writeAudioMetadataFile(tempFilePath, metadata = {}, option
                 filePath: tempFilePath,
                 metadata,
                 cover: options.cover || null,
+                coverOnly: options.coverOnly === true,
             },
         });
         let settled = false;

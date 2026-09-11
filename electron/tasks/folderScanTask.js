@@ -889,6 +889,7 @@ function hasCurrentCachedThumbnail(cached, ext) {
     return false;
   }
   if (ext !== '.pdf') return true;
+    if (cached.thumb_path === validAudioCoverOverridePath(cached)) return true;
   return path.basename(cached.thumb_path).startsWith(PDF_THUMBNAIL_CACHE_PREFIX);
 }
 
@@ -1306,10 +1307,10 @@ async function safeGetCachedFileInfo(libraryDb, fullPath) {
   }
 }
 
-async function safeUpsertFileInfo(libraryDb, info) {
+async function safeUpsertFileInfo(libraryDb, info, options) {
   if (!libraryDb || libraryDb.__bookManagerUnavailable) return;
   try {
-    await libraryDb.upsertFileInfo(info);
+    return await libraryDb.upsertFileInfo(info, options);
   } catch (error) {
     libraryDb.__bookManagerUnavailable = true;
     console.warn(`[FolderScan] Library DB update failed; continuing without cache: ${error.message}`);
@@ -1346,7 +1347,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
             ? null
             : await safeGetCachedFileInfo(options.libraryDb, fullPath);
   const cacheValid = options.force !== true && isValidCache(cached, stats);
-  const audioCoverOverridePath = bookType === 'audio'
+  let audioCoverOverridePath = bookType === 'audio' || ext === '.pdf'
     ? validAudioCoverOverridePath(cached)
     : '';
   const hasMissingAudioCoverOverride = bookType === 'audio'
@@ -1432,7 +1433,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
       }
       archiveMeta.thumb_path = audioCoverOverridePath;
       archiveMeta.cover_override_path = audioCoverOverridePath;
-    } else if (bookType === 'audio') {
+    } else if (bookType === 'audio' || ext === '.pdf') {
       archiveMeta.cover_override_path = '';
     }
     if (preserveAudioMetadataOverrides) archiveMeta.has_metadata = true;
@@ -1451,7 +1452,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         await discardGeneratedThumbnail(cached.thumb_path, options.thumbnailDir);
       }
       archiveMeta.thumb_path = thumbnailPathForCache;
-      await safeUpsertFileInfo(options.libraryDb, {
+      const saved = await safeUpsertFileInfo(options.libraryDb, {
         path: fullPath,
         mtime: stats.mtimeMs / 1000,
         size: stats.size,
@@ -1509,7 +1510,14 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         disc_number: audioIndexForCache(archiveMeta.discNumber ?? archiveMeta.disc_number),
         disc_total: audioIndexForCache(archiveMeta.discTotal ?? archiveMeta.disc_total),
         mime_type: archiveMeta.mimeType || archiveMeta.mime_type || '',
-      });
+      }, bookType === 'audio' || ext === '.pdf'
+        ? { expectedCoverOverridePath: String(cached?.cover_override_path || '') }
+        : undefined);
+        if (saved && Object.hasOwn(saved, 'cover_override_path')) {
+            audioCoverOverridePath = saved.cover_override_path;
+            archiveMeta.cover_override_path = saved.cover_override_path;
+            archiveMeta.thumb_path = saved.thumb_path;
+        }
     }
   }
 

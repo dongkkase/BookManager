@@ -557,3 +557,63 @@ test('검증 helper는 실제 태그 불일치를 보고한다', async t => {
             && error.mismatches.some(message => message.includes('title')),
     );
 });
+
+test('coverOnly는 worker에서도 기존 태그, 챕터, PCM 데이터와 다른 그림을 보존한다', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bookmanager-cover-only-audio-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const filePath = path.join(root, 'covered.wav');
+    await createTaggedWave(filePath);
+    const original = TagLibFile.createFromPath(filePath);
+    try {
+        original.tag.performers = ['First artist', 'Second artist'];
+        original.tag.composers = ['First composer', 'Second composer'];
+        original.tag.comment = '첫 줄\n둘째 줄';
+        const id3 = original.getTag(TagTypes.Id3v2, true);
+        addId3UserText(id3, 'DISCOGS_ARTISTS', 'Keep alias');
+        addId3UserText(id3, 'USER_CUSTOM_FIELD', 'Keep custom metadata');
+        const chapter = Buffer.concat([Buffer.from('chapter-1\0'), Buffer.alloc(16, 0)]);
+        chapter.writeUInt32BE(1000, 14);
+        id3.addFrame(tagLib.Id3v2UnknownFrame.fromData(
+            new Id3v2FrameIdentifier('CHAP', 'CHAP', undefined),
+            ByteVector.fromByteArray(chapter),
+        ));
+        original.save();
+    } finally {
+        original.dispose();
+    }
+    const snapshot = async () => {
+        const file = TagLibFile.createFromPath(filePath);
+        try {
+            const id3 = file.getTag(TagTypes.Id3v2, false);
+            const frames = id3.frames.map(frame => Buffer.from(frame.render(id3.version).toByteArray()))
+                .filter(buffer => buffer.toString('ascii', 0, 4) !== 'APIC');
+            const source = await fs.readFile(filePath);
+            let pcm;
+            for (let offset = 12; offset + 8 <= source.length;) {
+                const length = source.readUInt32LE(offset + 4);
+                if (source.toString('ascii', offset, offset + 4) === 'data') pcm = source.subarray(offset + 8, offset + 8 + length);
+                offset += 8 + length + length % 2;
+            }
+            assert.ok(pcm?.length);
+            return {
+                frames,
+                pcm,
+                performers: [...file.tag.performers],
+                composers: [...file.tag.composers],
+                comment: file.tag.comment,
+                otherPictures: file.tag.pictures.filter(item => item.type !== PictureType.FrontCover)
+                    .map(item => ({ type: item.type, description: item.description, data: Buffer.from(item.data.toByteArray()) })),
+            };
+        } finally {
+            file.dispose();
+        }
+    };
+    const before = await snapshot();
+    assert.ok(before.frames.some(buffer => buffer.toString('ascii', 0, 4) === 'CHAP'));
+    const result = await writeAudioMetadataFile(filePath, {}, {
+        coverOnly: true,
+        cover: { buffer: NEW_FRONT_COVER, mimeType: 'image/png' },
+    });
+    assert.deepEqual(await snapshot(), before);
+    assert.deepEqual(result.metadata.artworkBuffer, NEW_FRONT_COVER);
+});

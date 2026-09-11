@@ -8,6 +8,7 @@ import {
     normalizeMetadataFormat,
 } from '../metadataFormat.js';
 import { buildLibraryFolderIndexRecords } from '../libraryFolderIndex.js';
+import { remapCoverReadingState } from '../coverReadingState.js';
 
 const require = createRequire(import.meta.url);
 let DatabaseConstructor = null;
@@ -951,18 +952,29 @@ export class LibraryDB {
         };
     }
 
-    async upsertFileInfo(record) {
+    async upsertFileInfo(record, { expectedCoverOverridePath } = {}) {
         return this.withLock(async () => {
             const db = this.getConnection();
             const normalized = this.normalizeFileRecord(record);
             const placeholders = FILE_COLUMNS.map(column => `@${column}`).join(', ');
-            const updates = FILE_COLUMNS.slice(1).map(column => `${column} = excluded.${column}`).join(', ');
+            // Keep cover changes made after the caller read its cache snapshot.
+            const preserveChangedCover = typeof expectedCoverOverridePath === 'string';
+            const updates = FILE_COLUMNS.slice(1).map(column => preserveChangedCover
+                && ['cover_override_path', 'thumb_path'].includes(column)
+                ? `${column} = CASE WHEN COALESCE(files.cover_override_path, '') != @expectedCoverOverridePath THEN files.${column} ELSE excluded.${column} END`
+                : `${column} = excluded.${column}`).join(', ');
             const values = Object.fromEntries(FILE_COLUMNS.map(column => [column, normalized[column] ?? '']));
-            const result = db.prepare(`
+            const statement = db.prepare(`
                 INSERT INTO files (${FILE_COLUMNS.join(', ')})
                 VALUES (${placeholders})
                 ON CONFLICT(path) DO UPDATE SET ${updates}
-            `).run(values);
+                ${preserveChangedCover ? 'RETURNING cover_override_path, thumb_path' : ''}
+            `);
+            if (preserveChangedCover) {
+                const saved = statement.get({ ...values, expectedCoverOverridePath });
+                return { changes: 1, ...saved };
+            }
+            const result = statement.run(values);
             return { changes: result.changes };
         });
     }
@@ -1245,6 +1257,40 @@ export class LibraryDB {
         const deviceId = randomUUID();
         connection.prepare('INSERT OR IGNORE INTO library_meta (key, value) VALUES (?, ?)').run(key, deviceId);
         return connection.prepare('SELECT value FROM library_meta WHERE key = ?').get(key)?.value || deviceId;
+    }
+
+    async commitCoverFileEdit(filePath, { mtime, size, readingAdjustment = null } = {}) {
+        return this.withLock(async () => {
+            const db = this.getConnection();
+            const targetPath = this.normalizeFilePath(path.resolve(filePath));
+            return db.transaction(() => {
+                db.prepare("UPDATE files SET thumb_path = '', cover_override_path = '', mtime = ?, size = ? WHERE path = ?")
+                    .run(mtime, size, targetPath);
+                if (!readingAdjustment) return {};
+                const sourcePath = this.normalizeFilePath(path.resolve(readingAdjustment.sourcePath));
+                const previous = db.prepare("SELECT * FROM reading_states WHERE file_path = ? AND deleted_at = ''").get(sourcePath);
+                if (!previous) return {};
+                const state = remapCoverReadingState(normalizeReadingStateRow(previous), readingAdjustment, new Date().toISOString());
+                const converted = sourcePath !== targetPath;
+                const next = {
+                    ...previous,
+                    item_id: converted ? randomUUID() : previous.item_id,
+                    file_path: targetPath,
+                    locator_json: JSON.stringify(state.locator),
+                    page_index: state.pageIndex,
+                    page_count: state.pageCount,
+                    updated_at: state.updatedAt,
+                    revision: converted ? 1 : previous.revision + 1,
+                };
+                db.prepare(`
+                    INSERT INTO reading_states (${READING_STATE_COLUMNS.join(', ')})
+                    VALUES (${READING_STATE_COLUMNS.map(column => `@${column}`).join(', ')})
+                    ON CONFLICT(file_path) DO UPDATE SET ${READING_STATE_COLUMNS.filter(column => column !== 'file_path')
+                        .map(column => `${column} = excluded.${column}`).join(', ')}
+                `).run(next);
+                return { readingState: normalizeReadingStateRow(next), previousUpdatedAt: previous.updated_at };
+            })();
+        });
     }
 
     async upsertReadingState(filePath, patch = {}) {

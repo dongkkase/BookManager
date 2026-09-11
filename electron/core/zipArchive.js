@@ -583,8 +583,55 @@ function checkZipRewriteCancellation(options) {
     throw error;
 }
 
+function withoutUnicodePathExtra(extra) {
+    const parts = [];
+    for (let offset = 0; offset < extra.length;) {
+        if (offset + 4 > extra.length) throw unsupportedZipRewrite('ZIP extra field is incomplete');
+        const end = offset + 4 + extra.readUInt16LE(offset + 2);
+        if (end > extra.length) throw unsupportedZipRewrite('ZIP extra field is incomplete');
+        if (extra.readUInt16LE(offset) !== 0x7075) parts.push(extra.subarray(offset, end));
+        offset = end;
+    }
+    return Buffer.concat(parts);
+}
+
+async function renameRetainedZipEntry(source, entry, name) {
+    const nameBuffer = Buffer.from(name, 'utf8');
+    if (!nameBuffer.length || nameBuffer.length > 0xffff) throw unsupportedZipRewrite('ZIP entry name is too long or empty');
+    const local = await readFileRange(source, entry.localHeaderOffset, 30);
+    const oldNameLength = local.readUInt16LE(26);
+    const oldExtraLength = local.readUInt16LE(28);
+    const extra = withoutUnicodePathExtra(await readFileRange(source, entry.localHeaderOffset + 30 + oldNameLength, oldExtraLength));
+    const sourcePrefixLength = 30 + oldNameLength + oldExtraLength;
+    local.writeUInt16LE(local.readUInt16LE(6) | UTF8_FLAG, 6);
+    local.writeUInt16LE(nameBuffer.length, 26);
+    local.writeUInt16LE(extra.length, 28);
+    const localPrefix = Buffer.concat([local, nameBuffer, extra]);
+    const originalCentral = entry.centralRecord;
+    const central = Buffer.from(originalCentral.subarray(0, 46));
+    const centralNameLength = central.readUInt16LE(28);
+    const centralExtraLength = central.readUInt16LE(30);
+    const centralExtra = withoutUnicodePathExtra(originalCentral.subarray(46 + centralNameLength, 46 + centralNameLength + centralExtraLength));
+    const comment = originalCentral.subarray(46 + centralNameLength + centralExtraLength);
+    central.writeUInt16LE(central.readUInt16LE(8) | UTF8_FLAG, 8);
+    central.writeUInt16LE(nameBuffer.length, 28);
+    central.writeUInt16LE(centralExtra.length, 30);
+    return {
+        ...entry,
+        name,
+        nameBuffer,
+        flags: entry.flags | UTF8_FLAG,
+        centralRecord: Buffer.concat([central, nameBuffer, centralExtra, comment]),
+        localPrefix,
+        sourcePrefixLength,
+        localRecordLength: entry.localRecordLength - sourcePrefixLength + localPrefix.length,
+    };
+}
+
 export async function replaceZipEntries(filePath, replacements, options = {}) {
-    if (!replacements.length) return;
+    const renames = options.renameEntries || [];
+    const removals = options.removeEntries || [];
+    if (!replacements.length && !renames.length && !removals.length) return;
     const source = await fs.open(filePath, 'r');
     const temporaryPath = path.join(path.dirname(filePath), `.bookmanager-zip-${randomUUID()}.zip-update`);
     let output = null;
@@ -639,7 +686,14 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
             entry.localRecordLength = end - entry.localHeaderOffset;
         }
 
-        let entries = [...sourceEntries];
+        let entries = sourceEntries.filter(entry => !removals.some(name => zipEntryMatchesName(entry.name, name)));
+        const renameByName = new Map(renames.map(rename => [normalizeZipEntryName(rename.from), rename.to]));
+        for (let index = 0; index < entries.length; index += 1) {
+            const name = renameByName.get(normalizeZipEntryName(entries[index].name));
+            if (name !== undefined && name !== entries[index].name) {
+                entries[index] = await renameRetainedZipEntry(source, entries[index], name);
+            }
+        }
         for (const replacement of replacements) {
             entries = entries.filter(entry => !zipEntryMatchesName(entry.name, replacement.name, replacement.options || options));
             entries.push(createEntry(replacement.name, replacement.content, replacement.options));
@@ -666,11 +720,13 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
         for (const entry of entries) {
             checkZipRewriteCancellation(options);
             if (entry.centralRecord) {
-                let copied = 0;
+                let copied = entry.localPrefix?.length || 0;
+                const sourceOffset = entry.localHeaderOffset + (entry.sourcePrefixLength || 0) - copied;
+                if (entry.localPrefix) await writeAll(output, entry.localPrefix, entry.outputOffset);
                 while (copied < entry.localRecordLength) {
                     checkZipRewriteCancellation(options);
                     const length = Math.min(copyBuffer.length, entry.localRecordLength - copied);
-                    const { bytesRead } = await source.read(copyBuffer, 0, length, entry.localHeaderOffset + copied);
+                    const { bytesRead } = await source.read(copyBuffer, 0, length, sourceOffset + copied);
                     if (!bytesRead) throw new Error('ZIP entry could not be read completely');
                     await writeAll(output, copyBuffer.subarray(0, bytesRead), entry.outputOffset + copied);
                     copied += bytesRead;

@@ -12,6 +12,7 @@ import { normalizeExternalUrl } from './externalUrlPolicy.js';
 import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
 import { LibraryDB } from './database/library_db.js';
 import { getReadiveReadingState } from './readive/ipc.js';
+import { createCoverEditViewerGuard } from './coverEditViewerGuard.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -279,6 +280,13 @@ export function setupViewerWindowManager(options = {}) {
         if (!senderWindow || senderWindow.isDestroyed()) return null;
         return Object.values(viewerContexts).find(context => activeViewerWindow(context) === senderWindow) || null;
     };
+    const coverEditGuard = createCoverEditViewerGuard(() => {
+        const context = viewerContexts.reader;
+        if (!activeViewerWindow(context)) return [];
+        return [context.currentSession, context.pendingSession]
+            .filter(session => ['comic', 'epub'].includes(session?.type))
+            .map(session => session.filePath);
+    });
     const setContextSession = (context, session, options = {}) => {
         if (!context || !session) return;
         if (context.currentSession?.id !== session.id) {
@@ -648,6 +656,7 @@ export function setupViewerWindowManager(options = {}) {
     };
 
     const focusContextWindow = (context, session, options = {}) => {
+        coverEditGuard.assertCanOpen(session.filePath);
         const preserveMiniPlayer = options.preserveMiniPlayer === true;
         const preserveCloseRequest = options.preserveCloseRequest === true;
         const wasMiniPlayerActive = context.kind === 'audio' && context.miniPlayerActive;
@@ -939,6 +948,7 @@ export function setupViewerWindowManager(options = {}) {
     return {
         openViewer,
         refreshAudioMetadata,
+        withCoverEdit: (filePath, action) => coverEditGuard.run(filePath, action),
         getWindow: () => (
             activeViewerWindow(viewerContexts.reader)
             || activeViewerWindow(viewerContexts.audio)

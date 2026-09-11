@@ -974,25 +974,28 @@ function updateEpubCoverPageReferences(opfXml = '', opfPath = '', coverPageEntry
   return { opfXml: nextXml, coverPageId };
 }
 
-function buildEpubCoverPageXml(coverPageEntryName = '', coverImageEntryName = '') {
+function buildEpubCoverPageXml(coverPageEntryName = '', coverImageEntryName = '', options = {}) {
   const href = path.posix.relative(
     path.posix.dirname(normalizeArchivePath(coverPageEntryName)),
     normalizeArchivePath(coverImageEntryName),
   ) || path.posix.basename(coverImageEntryName);
+    const imageHref = options.encodeHref ? href.split('/').map(encodeURIComponent).join('/') : href;
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<!DOCTYPE html>',
     '<html xmlns="http://www.w3.org/1999/xhtml">',
     '<head>',
     '    <title>Cover</title>',
-    '    <style type="text/css">',
-    '        html, body { margin: 0; padding: 0; }',
-    '        body { text-align: center; }',
-    '        img { max-width: 100%; height: auto; }',
-    '    </style>',
+    ...(options.inlineStyles ? [] : [
+        '    <style type="text/css">',
+        '        html, body { margin: 0; padding: 0; }',
+        '        body { text-align: center; }',
+        '        img { max-width: 100%; height: auto; }',
+        '    </style>',
+    ]),
     '</head>',
-    '<body>',
-    `    <img src="${encodeXml(href)}" alt="Cover" />`,
+    options.inlineStyles ? '<body style="margin: 0; padding: 0; text-align: center;">' : '<body>',
+    `    <img src="${encodeXml(imageHref)}" alt="Cover"${options.inlineStyles ? ' style="max-width: 100%; height: auto;"' : ''} />`,
     '</body>',
     '</html>',
     '',
@@ -1175,6 +1178,8 @@ export async function loadMetadataCoverAsset(filePath, options = {}) {
     } : null;
   }
   if (isPdf(filePath)) {
+    const overrideAsset = await loadAudioCoverOverrideAsset(filePath, options);
+    if (overrideAsset) return overrideAsset;
     const cover = await extractPdfCoverImage(filePath).catch(() => null);
     return cover?.buffer ? {
       buffer: cover.buffer,
@@ -2415,6 +2420,194 @@ async function injectEpubMetadata(filePath, metadata, lang = 'ko', coverChange =
     replacements.push({ name: epubPackage.opfPath, content: opfXml });
     await replaceZipEntries(filePath, replacements, { shouldCancel: options.shouldCancel });
   return true;
+}
+
+function safeEpubCoverEntryPath(value) {
+    const name = String(value || '');
+    const decoded = decodeUriPath(name);
+    return Boolean(name) && !/[\\\u0000-\u001f]/.test(decoded)
+        && !decoded.startsWith('/') && !/^[a-z][a-z\d+.-]*:/i.test(decoded)
+        && !decoded.split('/').some(part => part === '..' || part === '.');
+}
+
+function safeEpubCoverHref(opfPath, href) {
+    const decoded = decodeUriPath(String(href || '').split('#')[0]);
+    if (!decoded || /[\\\u0000-\u001f]/.test(decoded) || decoded.startsWith('/')
+        || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return false;
+    return safeEpubCoverEntryPath(path.posix.join(path.posix.dirname(opfPath), decoded));
+}
+
+async function assertEpubCoverEditable(filePath, entries) {
+    const names = new Set();
+    for (const entry of entries) {
+        if (!safeEpubCoverEntryPath(entry.name)) throw new Error('EPUB에 안전하지 않은 내부 경로가 있습니다.');
+        const key = normalizeArchivePath(decodeUriPath(entry.name)).toLowerCase();
+        if (names.has(key)) throw new Error('EPUB에 구분할 수 없는 중복 내부 경로가 있습니다.');
+        names.add(key);
+        if (entry.flags & 1) throw new Error('암호화된 EPUB 표지는 편집할 수 없습니다.');
+    }
+    if (findArchiveEntry(entries, 'META-INF/signatures.xml')) {
+        throw new Error('전자 서명이 포함된 EPUB 표지는 편집할 수 없습니다.');
+    }
+    const containerEntry = findArchiveEntry(entries, 'META-INF/container.xml');
+    if (containerEntry) {
+        const container = await readZipEntryFromFile(filePath, containerEntry, { maxBytes: 1024 * 1024 });
+        for (const element of xmlStartTags(container?.toString('utf8'), 'rootfile', { allowPrefix: true })) {
+            if (!safeEpubCoverEntryPath(element.attrs['full-path'])) {
+                throw new Error('EPUB 패키지 경로가 안전하지 않습니다.');
+            }
+        }
+    }
+    const encryptionEntry = findArchiveEntry(entries, 'META-INF/encryption.xml');
+    if (!encryptionEntry) return;
+    const buffer = await readZipEntryFromFile(filePath, encryptionEntry, { maxBytes: 1024 * 1024 });
+    const xml = buffer?.toString('utf8') || '';
+    const encrypted = xmlElementMatches(xml, 'EncryptedData', { allowPrefix: true });
+    const allowedAlgorithms = new Set(['http://www.idpf.org/2008/embedding', 'http://ns.adobe.com/pdf/enc#RC']);
+    if (encrypted.length === 0 || encrypted.length !== xmlStartTags(xml, 'EncryptedData', { allowPrefix: true }).length) {
+        throw new Error('EPUB 암호화 정보를 확인할 수 없습니다.');
+    }
+    for (const element of encrypted) {
+        const algorithms = xmlStartTags(element.rawValue, 'EncryptionMethod', { allowPrefix: true });
+        const resources = xmlStartTags(element.rawValue, 'CipherReference', { allowPrefix: true });
+        const resource = resources[0]?.attrs.uri || '';
+        if (algorithms.length !== 1 || !allowedAlgorithms.has(algorithms[0].attrs.algorithm)
+            || resources.length !== 1 || !safeEpubCoverEntryPath(resource)
+            || !/\.(?:otf|ttf|ttc|woff2?)$/i.test(resource)
+            || !findArchiveEntry(entries, decodeUriPath(resource))) {
+            throw new Error('DRM으로 보호된 EPUB 표지는 편집할 수 없습니다.');
+        }
+    }
+}
+
+function uniqueEpubCoverEntryName(epubPackage, preferred) {
+    const usedNames = new Set([
+        ...epubPackage.entries.map(entry => normalizeArchivePath(entry.name).toLowerCase()),
+        ...xmlStartTags(epubPackage.opfXml, 'item', { allowPrefix: true })
+            .map(item => resolveEpubHref(epubPackage.opfPath, item.attrs.href).toLowerCase()),
+    ]);
+    const extension = path.posix.extname(preferred);
+    const stem = preferred.slice(0, -extension.length);
+    let candidate = preferred;
+    for (let index = 2; usedNames.has(candidate.toLowerCase()); index += 1) {
+        candidate = `${stem}-${index}${extension}`;
+    }
+    return candidate;
+}
+
+async function captureEpubReadingStructure(filePath, entries, opfXml) {
+    const contentBytes = entries.reduce((total, entry) => total + Number(entry.uncompressedSize || 0), 0);
+    if (contentBytes > 64 * 1024 * 1024
+        || xmlStartTags(opfXml, 'itemref', { allowPrefix: true }).length >= 200
+        || entries.filter(entry => isEpubHtmlEntry(entry.name)).length >= 200) return null;
+    try {
+        const { ViewerSessionManager } = await import('../viewerSessions.js');
+        const manager = new ViewerSessionManager();
+        const session = manager.create(filePath, { skipAdjacent: true });
+        return { manager, session, before: await manager.getEpubText(session.id) };
+    } catch {
+        return null;
+    }
+}
+
+async function epubCoverReadingPageOffset(snapshot) {
+    if (!snapshot) return null;
+    try {
+        const { before, manager, session } = snapshot;
+        const after = await manager.getEpubText(session.id);
+        if (before.stylesheet !== after.stylesheet || JSON.stringify(before.fonts) !== JSON.stringify(after.fonts)) return null;
+        const imageOnly = chapter => !String(chapter?.text || '').trim()
+            && chapter?.blocks?.length === 1 && chapter.blocks[0].type === 'image' && Boolean(chapter.blocks[0].src);
+        const chapters = result => (result.chapters || []).map(chapter => ({
+            name: chapter.name,
+            title: imageOnly(chapter) ? '' : chapter.title,
+            text: chapter.text,
+            blocks: chapter.blocks,
+        }));
+        const previous = chapters(before);
+        const current = chapters(after);
+        if (previous.length === 0 || !imageOnly(current[0])) return null;
+        if (JSON.stringify(current.slice(1)) === JSON.stringify(previous)) return 1;
+        if (imageOnly(previous[0]) && JSON.stringify(current.slice(1)) === JSON.stringify(previous.slice(1))) return 0;
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+export async function writeEpubCoverOnly(filePath, imagePath, options = {}) {
+    const mode = options.mode || 'replace';
+    if (!['replace', 'add'].includes(mode)) throw new Error('지원하지 않는 EPUB 표지 변경 방식입니다.');
+    if (!isEpub(filePath)) throw new Error('EPUB 파일만 표지를 편집할 수 있습니다.');
+    const entries = await listZipEntriesFromFile(filePath);
+    await assertEpubCoverEditable(filePath, entries);
+    const epubPackage = await readEpubPackage(filePath);
+    if (!epubPackage) throw new Error(taskText(options.lang, 'metadata_epub_package_not_found'));
+    const opf = epubPackage.opfXml;
+    if (xmlElementMatches(opf, 'package', { allowPrefix: true }).length !== 1
+        || xmlElementMatches(opf, 'metadata', { allowPrefix: true }).length !== 1
+        || xmlStartTags(opf, 'Signature', { allowPrefix: true }).length > 0) {
+        throw new Error('EPUB 패키지 또는 서명 정보를 확인할 수 없습니다.');
+    }
+    for (const element of [
+        ...xmlStartTags(opf, 'item', { allowPrefix: true }),
+        ...xmlStartTags(opf, 'reference', { allowPrefix: true }),
+    ]) {
+        const href = element.attrs.href;
+        if (href && !safeEpubCoverHref(epubPackage.opfPath, href)) {
+            throw new Error('EPUB에 편집할 수 없는 외부 또는 안전하지 않은 참조가 있습니다.');
+        }
+    }
+    const asset = await loadImageAssetFromFile(imagePath);
+    if (!asset || !['image/jpeg', 'image/png'].includes(asset.mimeType)) {
+        throw new Error('EPUB 표지에는 16MB 이하의 유효한 JPEG 또는 PNG 이미지가 필요합니다.');
+    }
+    const extension = asset.mimeType === 'image/png' ? '.png' : '.jpg';
+    const oldCover = findEpubCoverEntry(entries, epubPackage.opfPath, opf);
+    const declaredCoverIds = new Set(xmlStartTags(opf, 'meta', { allowPrefix: true })
+        .filter(item => String(item.attrs.name || '').toLowerCase() === 'cover').map(item => item.attrs.content));
+    const declaredCover = oldCover && xmlStartTags(opf, 'item', { allowPrefix: true }).some(item => (
+        manifestItemMatchesEntry(item.attrs, epubPackage.opfPath, oldCover.name)
+        && (declaredCoverIds.has(item.attrs.id) || String(item.attrs.properties || '').split(/\s+/).includes('cover-image'))
+    ));
+    const reuseCover = mode === 'replace' && declaredCover && imageMimeType(oldCover.name) === asset.mimeType;
+    const directory = path.posix.dirname(epubPackage.opfPath);
+    const coverEntry = reuseCover ? oldCover.name : uniqueEpubCoverEntryName(epubPackage,
+        path.posix.join(directory, 'images', `bookmanager-cover${extension}`));
+    const oldPage = mode === 'replace' ? findEpubCoverPageEntryName(opf, epubPackage.opfPath) : '';
+    const coverPageEntry = oldPage || uniqueEpubCoverEntryName(epubPackage,
+        path.posix.join(directory, 'bookmanager-cover.xhtml'));
+    let opfXml = updateEpubCoverReferences(opf, epubPackage.opfPath, coverEntry, asset.mimeType);
+    const page = updateEpubCoverPageReferences(opfXml, epubPackage.opfPath, coverPageEntry);
+    const encodedCoverHref = fromPath => epubHrefFromEntry(fromPath, coverPageEntry)
+        .split('/').map(encodeURIComponent).join('/');
+    opfXml = page.opfXml.replace(/<(?:[\w.-]+:)?reference\b[^>]*>/gi, tag => (
+        String(tagAttributeValue(tag, 'type')).toLowerCase() === 'cover'
+            ? upsertTagAttribute(tag, 'href', encodedCoverHref(epubPackage.opfPath)) : tag
+    ));
+    const replacements = [
+        { name: coverEntry, content: asset.buffer },
+        { name: coverPageEntry, content: buildEpubCoverPageXml(coverPageEntry, coverEntry, { encodeHref: true, inlineStyles: true }) },
+        { name: epubPackage.opfPath, content: opfXml },
+    ];
+    for (const item of xmlStartTags(opf, 'item', { allowPrefix: true })) {
+        if (!String(item.attrs.properties || '').split(/\s+/).includes('nav')) continue;
+        const navEntry = findArchiveEntry(entries, resolveEpubHref(epubPackage.opfPath, item.attrs.href));
+        if (!navEntry || navEntry.name === coverPageEntry) continue;
+        const navBuffer = await readZipEntryFromFile(filePath, navEntry, { maxBytes: 8 * 1024 * 1024 });
+        if (!navBuffer) throw new Error('EPUB 탐색 문서를 확인할 수 없습니다.');
+        const navXml = navBuffer.toString('utf8');
+        const nextNav = navXml.replace(/<(?:[\w.-]+:)?a\b[^>]*>/gi, tag => {
+            const attrs = parseXmlAttributes(tag);
+            if (!String(attrByLocalName(attrs, 'type')).split(/\s+/).includes('cover')) return tag;
+            return upsertTagAttribute(tag, 'href', encodedCoverHref(navEntry.name));
+        });
+        if (nextNav !== navXml) replacements.push({ name: navEntry.name, content: nextNav });
+    }
+    const readingSnapshot = await captureEpubReadingStructure(filePath, entries, opf);
+    await replaceZipEntries(filePath, replacements, { shouldCancel: options.shouldCancel });
+    const readingPageOffset = await epubCoverReadingPageOffset(readingSnapshot);
+    return { coverEntry, coverPageEntry, readingPageOffset };
 }
 
 async function injectPdfMetadata(filePath, metadata) {

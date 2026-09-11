@@ -6062,6 +6062,19 @@ function ViewerApp() {
     window.requestAnimationFrame(() => applyRestore(0));
   }, []);
 
+    const restoreCoverEditedScrollPage = useCallback((type, targetPageIndex) => {
+        const restoreToken = ++scrollRestoreTokenRef.current;
+        const attribute = type === 'comic' ? 'data-page-index' : 'data-reader-index';
+        const applyRestore = attempt => {
+            if (scrollRestoreTokenRef.current !== restoreToken) return;
+            const node = scrollRef.current;
+            const page = node?.querySelector(`[${attribute}="${Math.max(0, Number(targetPageIndex) || 0)}"]`);
+            if (page) node.scrollTop += page.getBoundingClientRect().top - node.getBoundingClientRect().top;
+            if (attempt < 24) window.requestAnimationFrame(() => applyRestore(attempt + 1));
+        };
+        window.requestAnimationFrame(() => applyRestore(0));
+    }, []);
+
   const clearDocumentFrame = useCallback(() => {
     documentAbortRef.current?.abort();
     documentAbortRef.current = null;
@@ -6459,11 +6472,16 @@ function ViewerApp() {
     useEffect(() => {
         if (!session || readiveResumePending?.sessionId !== session.id || loading || !pageCountReadyForNavigation) return;
         const savedState = readiveResumePending.state;
-        setPageIndexSynced(resolveReadiveResumePage(savedState, { type: session.type, pageCount, textPages, epubPages }));
-        if (flowMode === 'scroll') restoreSavedScrollPosition(session, savedState.scrollPercent);
+        const restoredPageIndex = resolveReadiveResumePage(savedState, { type: session.type, pageCount, textPages, epubPages });
+        setPageIndexSynced(restoredPageIndex);
+        if (flowMode === 'scroll') {
+            if (Number.isInteger(savedState.coverEditPageIndex) && ['comic', 'epub'].includes(session.type)) {
+                restoreCoverEditedScrollPage(session.type, restoredPageIndex);
+            } else restoreSavedScrollPosition(session, savedState.scrollPercent);
+        }
         setReadiveResumePending(null);
         setReadiveResumeReady(true);
-    }, [epubPages, flowMode, loading, pageCount, pageCountReadyForNavigation, readiveResumePending, restoreSavedScrollPosition, session, setPageIndexSynced, textPages]);
+    }, [epubPages, flowMode, loading, pageCount, pageCountReadyForNavigation, readiveResumePending, restoreCoverEditedScrollPage, restoreSavedScrollPosition, session, setPageIndexSynced, textPages]);
 
   const loadComicPage = useCallback(async (index, options = {}) => {
     if (!session || session.type !== 'comic' || index < 0 || index >= pages.length) return;
@@ -7089,7 +7107,9 @@ function ViewerApp() {
     window.requestAnimationFrame(() => {
       const node = scrollRef.current;
       if (node && bookmark.flowMode === 'scroll') {
-        node.scrollTop = ((node.scrollHeight - node.clientHeight) * (Number(bookmark.scrollPercent) || 0)) / 100;
+        if (Number.isInteger(bookmark.coverEditPageIndex) && ['comic', 'epub'].includes(session?.type)) {
+            restoreCoverEditedScrollPage(session.type, targetPageIndex);
+        } else node.scrollTop = ((node.scrollHeight - node.clientHeight) * (Number(bookmark.scrollPercent) || 0)) / 100;
       } else {
         node?.scrollTo?.({ top: 0 });
       }

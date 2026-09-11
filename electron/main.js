@@ -384,6 +384,7 @@ async function initializeApp() {
     {
         getMainWindow: () => mainWindow,
       onMetadataSaveSuccess: successfulPaths => viewerController?.refreshAudioMetadata?.(successfulPaths),
+        withCoverEdit: (filePath, action) => viewerController.withCoverEdit(filePath, action),
     },
   );
   viewerController = setupViewerWindowManager({

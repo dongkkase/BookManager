@@ -9,6 +9,9 @@ import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { FolderPathBar } from '../components/folder/FolderPathBar';
+import { CoverEditorDialog } from '../components/folder/CoverEditorDialog';
+import { applyCoverReadingAdjustment } from '../../electron/coverReadingState.js';
+import { COMIC_EXTENSIONS, AUDIO_EXTENSIONS, extensionFromFile } from '../metadata/metadataTypes';
 import { FolderTagSearchDialog } from '../components/folder/FolderTagSearchDialog';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
@@ -287,6 +290,12 @@ function SlidingSearchPlaceholder({ text }) {
       <span className="search-placeholder-text" ref={textRef}>{text}</span>
     </span>
   );
+}
+
+function supportsCoverEditor(file) {
+    if (!file || file.isDirectory || file.is_folder) return false;
+    const extension = extensionFromFile(file);
+    return COMIC_EXTENSIONS.has(extension) || AUDIO_EXTENSIONS.has(extension) || ['.epub', '.pdf', '.txt'].includes(extension);
 }
 
 const FolderSearchInput = React.memo(function FolderSearchInput({
@@ -646,6 +655,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
     const [readiveTransferPaths, setReadiveTransferPaths] = useState(null);
+    const [coverEditorTarget, setCoverEditorTarget] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
   const [showContentIndexDialog, setShowContentIndexDialog] = useState(false);
   const [gotoPathDraft, setGotoPathDraft] = useState('');
@@ -688,6 +698,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     });
   }), []);
   const closeTopOverlay = useCallback(() => {
+        if (coverEditorTarget) return true;
     if (moveConflict) return true;
     if (textInputDialog) {
       closeTextInputDialog(null);
@@ -706,6 +717,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     else return false;
     return true;
   }, [
+        coverEditorTarget,
     contextMenu,
     readiveTransferPaths,
     libraryMoveRequest,
@@ -2061,6 +2073,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setMissingRefreshVersion(value => value + 1);
   }, [invalidateMissingVolumesCheck, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
+    const executeCoverEdit = useCallback(async request => {
+        const result = await runInternalFileAction(() => window.electronAPI.applyCoverEditor(request));
+        if (result?.success) {
+            try {
+                applyCoverReadingAdjustment(window.localStorage, result.readingAdjustment);
+            } catch (error) {
+                result.readingWarning = [t('cover_editor_reading_save_failed'), error.message].filter(Boolean).join(' ');
+            }
+            resetCoverPreviewQueue();
+            window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', { detail: { paths: [result.filePath] } }));
+            setTreeRefreshToken(value => value + 1);
+            if (isLibrarySearchActive) setSearchSubmitToken(value => value + 1);
+            if (isRecentReading) await loadRecentReading();
+        }
+        return result;
+    }, [isLibrarySearchActive, isRecentReading, loadRecentReading, resetCoverPreviewQueue, runInternalFileAction, t]);
+
   useEffect(() => {
     const handleMetadataSaved = event => {
       const paths = Array.isArray(event.detail?.paths) ? event.detail.paths : [];
@@ -2505,9 +2534,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [openFileInViewer, selectFile]);
 
   const handleDroppedPaths = useCallback(async (paths) => {
+    if (document.querySelector('.cover-editor-backdrop')) return;
     try {
       for (const droppedPath of paths || []) {
         const stat = await window.electronAPI?.stat?.(droppedPath);
+        if (document.querySelector('.cover-editor-backdrop')) return;
         if (stat?.isDirectory) {
           await handleFolderChange(droppedPath);
           return;
@@ -2515,6 +2546,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         if (stat?.isFile) {
           if ((paths?.length || 0) > 1) showToast?.(t('folder.drop.first_file_only'));
           await new Promise(resolve => window.setTimeout(resolve, 0));
+            if (document.querySelector('.cover-editor-backdrop')) return;
           await openFileInViewer(droppedPath);
           return;
         }
@@ -3156,7 +3188,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'send-readive') {
+    if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
+        setCoverEditorTarget(menu.file);
+    } else if (action === 'send-readive') {
         const paths = resolveReadivePaths(menu, selectedEntryObjects);
         if (!paths.length) return;
         try {
@@ -4008,6 +4042,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         </div>
       </div>
       {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} onClose={() => setReadiveTransferPaths(null)} onOpenSharing={openReadiveSharing} />}
+        {coverEditorTarget && <CoverEditorDialog file={coverEditorTarget} t={t} onExecute={executeCoverEdit} onClose={() => setCoverEditorTarget(null)} />}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
           {contextMenu.type === 'library' ? (
@@ -4052,6 +4087,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <>
               <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('view-file')} label={t('action_view')} />
+                {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_title')} />}
               {!isRecentReading && (
                 <>
                   <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
