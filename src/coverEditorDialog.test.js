@@ -134,6 +134,9 @@ async function fixture(options = {}) {
     const render = () => {
         cursor = 0;
         dirty = false;
+        nodes(tree).forEach(node => {
+            if (node.props.ref?.current === node) node.props.ref.current = null;
+        });
         tree = module.exports.CoverEditorDialog(props);
         attach(tree);
         const pending = effects;
@@ -742,4 +745,126 @@ test('async original-cover selection ignores obsolete responses and preserves th
             })));
         } finally { value.close(); }
     }
+});
+
+function helpDialog(value) {
+    return value.all(node => node.props.role === 'dialog' && node.props.className?.split(' ').includes('cover-editor-help-dialog'))[0];
+}
+
+test('cover help opens beside the inert editor and closing it preserves the selected image and save options', async () => {
+    const value = await fixture();
+    try {
+        await value.browse();
+        value.input('cover_editor_add').props.onChange();
+        value.render();
+        value.input('cover_editor_renumber').props.onChange({ target: { checked: false } });
+        value.input('cover_editor_backup').props.onChange({ target: { checked: false } });
+        value.render();
+        const header = childrenOf(value.dialog()).find(node => node.type === 'header');
+        const buttons = nodes(header).filter(node => node.type === 'button');
+        assert.deepEqual(buttons.map(node => node.props['aria-label']), ['cover_editor_help_button', 'cover_editor_close']);
+        assert.equal(textContent(buttons[0]), '?');
+        buttons[0].props.onClick();
+        value.render();
+        const help = helpDialog(value);
+        assert.ok(help);
+        assert.ok(!value.dialog().contains(help), 'The help dialog is outside the inert editor');
+        assert.ok(help.parent.parent === value.dialog().parent, 'Both dialogs share the editor backdrop');
+        assert.equal(value.dialog().props.inert, '');
+        assert.equal(String(value.dialog().props['aria-hidden']), 'true');
+        assert.equal(help.props['aria-labelledby'], `${value.dialog().props['aria-labelledby']}-help`);
+        assert.ok(nodes(help).some(node => node.props.id === help.props['aria-labelledby']));
+        assert.ok(nodes(help).some(node => node.type === 'table'), 'The format and storage guide is present');
+        assert.deepEqual(value.calls.execute, []);
+        const close = nodes(help).find(node => node.type === 'button' && textContent(node) === 'cover_editor_close');
+        assert.ok(close);
+        close.props.onClick();
+        value.render();
+        assert.equal(helpDialog(value), undefined);
+        assert.notEqual(value.dialog().props.inert, '');
+        assert.notEqual(String(value.dialog().props['aria-hidden']), 'true');
+        assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+        assert.equal(value.input('cover_editor_add').props.checked, true);
+        assert.equal(value.input('cover_editor_renumber').props.checked, false);
+        assert.equal(value.input('cover_editor_backup').props.checked, false);
+        assert.deepEqual(value.calls.inspect, ['/library/book.cbz']);
+        assert.deepEqual(value.calls.preview, ['/images/new.png']);
+        assert.equal(value.calls.close, 0);
+        await value.button('cover_editor_save').props.onClick();
+        await value.settle();
+        assert.equal(value.calls.execute.length, 1);
+        assert.equal(value.calls.execute[0].imagePath, '/images/new.png');
+        assert.equal(value.calls.execute[0].mode, 'add');
+        assert.equal(value.calls.execute[0].renumber, false);
+        assert.equal(value.calls.execute[0].backup, false);
+    } finally { value.close(); }
+});
+
+test('help contains focus and keyboard navigation, and Escape returns focus without closing the cover editor', async () => {
+    const value = await fixture();
+    try {
+        value.button('cover_editor_help_button').props.onClick();
+        value.render();
+        const help = helpDialog(value);
+        assert.ok(help.contains(document.activeElement));
+        for (const outside of [value.dialog(), value.button('cover_editor_select'), { tagName: 'DIV', className: 'selected' }]) {
+            const focused = value.focusElement(outside);
+            assert.equal(document.activeElement, help);
+            assert.equal(focused.propagationStopped, true);
+        }
+        const focusable = help.querySelectorAll();
+        assert.ok(focusable.length >= 2);
+        focusable.at(-1).focus();
+        const tab = event({ key: 'Tab' });
+        value.tree().props.onKeyDown(tab);
+        assert.equal(tab.defaultPrevented, true);
+        assert.equal(tab.propagationStopped, true);
+        assert.equal(document.activeElement, focusable[0]);
+        const reverse = event({ key: 'Tab', shiftKey: true });
+        value.tree().props.onKeyDown(reverse);
+        assert.equal(reverse.defaultPrevented, true);
+        assert.equal(document.activeElement, focusable.at(-1));
+        const escape = event({ key: 'Escape' });
+        value.tree().props.onKeyDown(escape);
+        value.render();
+        assert.equal(escape.defaultPrevented, true);
+        assert.equal(escape.propagationStopped, true);
+        assert.equal(helpDialog(value), undefined);
+        assert.equal(value.calls.close, 0);
+        assert.equal(document.activeElement, value.button('cover_editor_help_button'));
+        value.tree().props.onKeyDown(event({ key: 'Escape' }));
+        assert.equal(value.calls.close, 1);
+    } finally { value.close(); }
+});
+
+test('the help header close button and backdrop dismiss only help and leave the cover editor usable', async () => {
+    const value = await fixture();
+    try {
+        for (const gesture of ['header', 'backdrop']) {
+            value.button('cover_editor_help_button').props.onClick();
+            value.render();
+            const help = helpDialog(value);
+            const contentClick = event({ target: help, currentTarget: help.parent });
+            help.parent.props.onMouseDown(contentClick);
+            assert.equal(contentClick.propagationStopped, true);
+            value.render();
+            assert.ok(helpDialog(value), 'Clicking help content does not dismiss it');
+            if (gesture === 'header') {
+                const header = childrenOf(helpDialog(value)).find(node => node.type === 'header');
+                nodes(header).find(node => node.type === 'button' && node.props['aria-label'] === 'cover_editor_close').props.onClick();
+            } else {
+                const backdrop = helpDialog(value).parent;
+                const backdropClick = event({ target: backdrop, currentTarget: backdrop });
+                backdrop.props.onMouseDown(backdropClick);
+                assert.equal(backdropClick.propagationStopped, true);
+            }
+            value.render();
+            assert.equal(helpDialog(value), undefined, gesture);
+            assert.equal(value.calls.close, 0, gesture);
+            assert.equal(document.activeElement, value.button('cover_editor_help_button'), gesture);
+        }
+        assert.deepEqual(value.calls.execute, []);
+        await value.browse();
+        assert.equal(value.button('cover_editor_save').props.disabled, false);
+    } finally { value.close(); }
 });

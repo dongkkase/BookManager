@@ -1924,6 +1924,10 @@ body,
   opacity: 0;
 }
 
+.viewer-app.is-background-immersive .viewer-flipbook-page.is-pdf .viewer-ambient-canvas {
+    opacity: 0;
+}
+
 .viewer-comic-image {
   position: relative;
   z-index: 1;
@@ -2261,9 +2265,18 @@ body,
   max-width: 100%;
 }
 
-.viewer-pdf-stage.is-spread .viewer-pdf-page {
-  flex: 0 1 auto;
-  max-width: 50%;
+.viewer-pdf-stage.is-spread:not(.viewer-flipbook-stage) .viewer-pdf-page {
+    flex: 0 1 auto;
+    max-width: 50%;
+}
+
+.viewer-pdf-stage.viewer-flipbook-stage .viewer-pdf-page {
+    max-width: none;
+}
+
+.viewer-flipbook-page .viewer-pdf-canvas-wrap {
+    max-width: none;
+    box-shadow: none;
 }
 
 .viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-canvas-wrap {

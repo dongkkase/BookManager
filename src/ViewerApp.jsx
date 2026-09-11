@@ -3,6 +3,7 @@ import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
+import { viewerPdfResourceOptions } from './viewerPdfResources';
 import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
 import { createViewerTtsRequests } from './viewerTtsRequests';
 import { useTts } from 'tts-react';
@@ -999,6 +1000,7 @@ function ViewerFlipBookPageContent({ entry }) {
     isNearCurrent: renderState.nearbyBookIndexes?.has(entry.bookIndex) || false,
     shouldRenderHighQuality: renderState.highQualityBookIndexes?.has(entry.bookIndex) || false,
     visualScale: renderState.visualScale,
+    onAmbientReady: renderState.onAmbientReady,
   }) || null;
 }
 
@@ -1020,6 +1022,7 @@ function ViewerFlipBook({
   provideNearbyPageState = false,
   initialRenderLoading = false,
   renderAmbientPage,
+  pdfAmbient = false,
   renderPage,
   onPageIndexChange,
 }) {
@@ -1030,6 +1033,20 @@ function ViewerFlipBook({
   const renderPageRef = useRef(renderPage);
   const pageChangeStateRef = useRef(null);
   renderPageRef.current = renderPage;
+    const pdfAmbientBookKeyRef = useRef(bookKey);
+    pdfAmbientBookKeyRef.current = bookKey;
+    const [pdfAmbientState, setPdfAmbientState] = useState(() => ({ bookKey, sources: {} }));
+    const handlePdfAmbientReady = useCallback((index, source) => {
+        if (pdfAmbientBookKeyRef.current !== bookKey) return;
+        setPdfAmbientState(current => {
+            const sources = current.bookKey === bookKey ? current.sources : {};
+            if (!source && !sources[index]) return current;
+            const next = { ...sources };
+            if (source) next[index] = source;
+            else delete next[index];
+            return { bookKey, sources: next };
+        });
+    }, [bookKey]);
   const normalizedPageCount = Math.max(0, Number(pageCount) || 0);
   const normalizedPageSize = {
     width: Math.max(1, Math.round(Number(pageSize?.width) || 1)),
@@ -1300,6 +1317,7 @@ function ViewerFlipBook({
     nearbyBookIndexes,
     highQualityBookIndexes,
     visualScale: normalizedVisualScale,
+    onAmbientReady: pdfAmbient ? handlePdfAmbientReady : undefined,
   }), [
     currentBookIndexes,
     highQualityBookIndexes,
@@ -1307,6 +1325,8 @@ function ViewerFlipBook({
     nearbyBookIndexes,
     normalizedVisualScale,
     pageRenderDependency,
+    pdfAmbient,
+    handlePdfAmbientReady,
   ]);
   const pageElements = useMemo(() => model.entries.map(entry => (
     <div
@@ -1341,9 +1361,12 @@ function ViewerFlipBook({
     >
       <div className="viewer-flipbook-scale" style={scaleStyle}>
         <FadingFlipBookAmbientLayer
+          key={pdfAmbient ? bookKey : 'ambient'}
           bookStyle={bookStyle}
           entries={ambientEntries}
-          renderPage={renderAmbientPage}
+          renderPage={pdfAmbient ? sourceIndex => (
+            <PdfFlipBookAmbientPage source={pdfAmbientState.bookKey === bookKey ? pdfAmbientState.sources[sourceIndex] : null} />
+          ) : renderAmbientPage}
         />
         <ViewerFlipBookPageRenderContext.Provider value={pageRenderState}>
           <ReactFlipBook
@@ -4181,7 +4204,7 @@ function ImageLightbox({ image, onClose }) {
   );
 }
 
-function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeight, pageSlots, viewMode, zoom, active, recycle = false }) {
+function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeight, pageSlots, viewMode, zoom, active, recycle = false, pageFrameWidth, onAmbientReady }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const ambientCanvasRef = useRef(null);
@@ -4234,11 +4257,11 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
             viewMode,
             baseWidth: baseViewport.width,
             baseHeight: baseViewport.height,
-            availableWidth: Math.max(220, ((Number(containerWidth) || 900) - (slots > 1 ? 24 : 64)) / slots),
+            availableWidth: Number(pageFrameWidth) || Math.max(220, ((Number(containerWidth) || 900) - (slots > 1 ? 24 : 64)) / slots),
             availableHeight: Math.max(220, (Number(containerHeight) || 700) - 80),
             zoom,
         });
-    }, [containerHeight, containerWidth, pageSlots, viewMode, zoom]);
+    }, [containerHeight, containerWidth, pageFrameWidth, pageSlots, viewMode, zoom]);
 
     useEffect(() => {
         if (!recycle || visible) return;
@@ -4353,6 +4376,14 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
     };
   }, [pageNumber, pdfDocument, scaleForPage, visible]);
 
+    useEffect(() => {
+        if (!onAmbientReady || status !== 'ready' || !pageSize) return;
+        const canvas = ambientCanvasRef.current;
+        if (!canvas?.width || !canvas.height) return;
+        onAmbientReady(pageNumber - 1, { canvas, ...pageSize });
+        return () => onAmbientReady(pageNumber - 1, null);
+    }, [onAmbientReady, pageNumber, pageSize, status]);
+
   const canvasWrapStyle = pageSize
     ? {
       width: `${pageSize.width}px`,
@@ -4404,6 +4435,25 @@ function PdfPageCanvas({ pdfDocument, pageNumber, containerWidth, containerHeigh
       <div className="viewer-pdf-page-number">{pageNumber}</div>
     </section>
   );
+}
+
+function PdfFlipBookAmbientPage({ source }) {
+    const canvasRef = useRef(null);
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || !source?.canvas) return;
+        const context = canvas.getContext('2d');
+        if (!context) return;
+        canvas.width = source.canvas.width;
+        canvas.height = source.canvas.height;
+        context.drawImage(source.canvas, 0, 0);
+    }, [source]);
+    if (!source) return null;
+    return (
+        <div className="viewer-flipbook-ambient-frame" style={{ width: `${source.width}px`, height: `${source.height}px` }}>
+            <canvas ref={canvasRef} className="viewer-ambient-canvas viewer-flipbook-ambient-canvas" aria-hidden="true" />
+        </div>
+    );
 }
 
 function slideThumbPageLabel(pageIndexes = []) {
@@ -6418,6 +6468,7 @@ function ViewerApp() {
         const controller = new AbortController();
         documentAbortRef.current = controller;
         const loadedPdfDocument = await loadViewerPdfDocument(pdfjsLib, result.documentUrl, {
+            ...viewerPdfResourceOptions(pdfWorkerUrl, { baseUrl: document.baseURI, development: import.meta.env.DEV }),
             signal: controller.signal,
             onLoadingTask: loadingTask => {
                 if (isCurrentLoad()) pdfLoadingTaskRef.current = loadingTask;
@@ -8536,7 +8587,7 @@ function ViewerApp() {
       ? `has-page-effect is-${pageTurn.phase} effect-${pageTurn.effect} effect-${pageTurn.direction}`
       : '';
     const pdfStageClassName = `viewer-pdf-stage is-${flowMode} is-${viewMode} ${hasSpreadPair ? 'has-spread-pair' : ''} ${pdfEffectClassName}`.trim();
-    const renderPdfPage = (index, slots, keyPrefix = 'page', activeIndex = displayStartIndex, forceActive = false, renderZoom = zoom) => (
+    const renderPdfPage = (index, slots, keyPrefix = 'page', activeIndex = displayStartIndex, forceActive = false, renderZoom = zoom, renderFrameWidth, onAmbientReady) => (
       <PdfPageCanvas
         key={`${session?.id || 'pdf'}-${keyPrefix}-${index}`}
         pdfDocument={pdfDocument}
@@ -8544,6 +8595,8 @@ function ViewerApp() {
         containerWidth={readerViewport.width}
         containerHeight={readerViewport.height}
         pageSlots={slots}
+        pageFrameWidth={renderFrameWidth}
+        onAmbientReady={onAmbientReady}
         viewMode={viewMode}
         zoom={renderZoom}
         active={forceActive || (keyPrefix !== 'flipbook' && flowMode !== 'scroll') || index === activeIndex}
@@ -8569,6 +8622,7 @@ function ViewerApp() {
           className={`viewer-pdf-stage is-${flowMode} is-${viewMode}`.trim()}
           pageClassName="is-pdf"
           pageFormat="pdf"
+          pdfAmbient={backgroundMode === 'immersive' && !initialRenderLoading}
           pageCount={pdfPageCount}
           currentPageIndex={pageIndex}
           spread={spread}
@@ -8577,13 +8631,15 @@ function ViewerApp() {
           visualScale={flipBookVisualScale}
           renderKey={pdfFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
-          renderPage={sourceIndex => renderPdfPage(
+          renderPage={(sourceIndex, _entry, renderState) => renderPdfPage(
             sourceIndex,
             slots,
             'flipbook',
             pageIndex,
             Math.abs(sourceIndex - pageIndex) <= slots + 1,
             flipBookRenderZoom,
+            pageSize.width,
+            renderState.onAmbientReady,
           )}
         />
       );
@@ -8696,7 +8752,7 @@ function ViewerApp() {
     && pageTurn.effect !== 'none'
     && pageTurn.effect !== 'page';
   const flipBookAmbientActive = backgroundMode === 'immersive'
-    && session?.type === 'comic'
+    && ['comic', 'pdf'].includes(session?.type)
     && flowMode === 'spread'
     && readerSettings.pageEffect === 'page';
   const ambientBackdropStyle = backgroundMode === 'immersive'

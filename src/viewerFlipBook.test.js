@@ -527,10 +527,10 @@ test('책넘김 시 이전 배경과 새 배경은 같은 프레임에서 밝기
     assert.match(viewerCss, /\.viewer-flipbook-ambient-fade-layer\.is-visible \{\s*opacity:\s*1;/);
 });
 
-test('책넘김 전용 몰입형 배경에서는 하단 그라데이션이 페이지마다 다시 전환되지 않는다', () => {
+test('만화와 PDF 책넘김 전용 몰입형 배경에서는 하단 그라데이션이 페이지마다 다시 전환되지 않는다', () => {
     assert.match(
         viewerSource,
-        /const flipBookAmbientActive = backgroundMode === 'immersive'[\s\S]*?session\?\.type === 'comic'[\s\S]*?flowMode === 'spread'[\s\S]*?readerSettings\.pageEffect === 'page';/,
+        /const flipBookAmbientActive = backgroundMode === 'immersive'[\s\S]*?\['comic', 'pdf'\]\.includes\(session\?\.type\)[\s\S]*?flowMode === 'spread'[\s\S]*?readerSettings\.pageEffect === 'page';/,
     );
     assert.match(
         viewerSource,

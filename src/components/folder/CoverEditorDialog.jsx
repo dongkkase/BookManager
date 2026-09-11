@@ -2,6 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import '../../styles/CoverEditorDialog.css';
 
+const COVER_HELP_FORMATS = [
+    { formats: 'ZIP · CBZ · 7Z · CB7', storage: 'file', description: 'storage_comic' },
+    { formats: 'EPUB', storage: 'file', description: 'storage_epub' },
+    { formats: 'RAR · CBR', storage: 'copy', description: 'conversion' },
+    { formats: 'MP3 · M4A · M4B · FLAC · AAC · AIF · AIFF · OGG · OGA · OPUS · WAV · WAVE', storage: 'file', description: 'storage_audio' },
+    { formats: 'TXT', storage: 'local', description: 'storage_text' },
+    { formats: 'PDF', storage: 'local', description: 'storage_pdf' },
+    { formats: '3GP · AMR · CAF · WEBM', storage: 'local', description: 'storage_audio_local' },
+];
+
 export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
     const targets = (files?.length ? files : [file]).filter(Boolean);
     const fileKey = JSON.stringify(targets.map(target => target.full_path || target.path));
@@ -25,7 +35,10 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
     const [progress, setProgress] = useState(null);
     const [fileResults, setFileResults] = useState({});
     const [cancelRequested, setCancelRequested] = useState(false);
+    const [helpOpen, setHelpOpen] = useState(false);
     const dialogRef = useRef(null);
+    const helpDialogRef = useRef(null);
+    const helpButtonRef = useRef(null);
     const imageRequestRef = useRef(0);
     const coverRequestRef = useRef(0);
     const selectedPathRef = useRef('');
@@ -58,7 +71,7 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
         mountedRef.current = true;
         const previousFocus = document.activeElement;
         const keepFocusInside = event => {
-            const dialog = dialogRef.current;
+            const dialog = helpDialogRef.current || dialogRef.current;
             if (dialog && !dialog.contains(event.target)) {
                 event.stopPropagation();
                 dialog.focus();
@@ -118,9 +131,15 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
     }, [fileKey]);
 
     useEffect(() => {
-        const dialog = dialogRef.current;
+        const dialog = helpDialogRef.current || dialogRef.current;
         if (dialog && !dialog.contains(document.activeElement)) dialog.focus();
     }, [saving, result]);
+
+    useEffect(() => {
+        if (!helpOpen) return;
+        helpDialogRef.current?.focus();
+        return () => helpButtonRef.current?.focus();
+    }, [helpOpen]);
 
     const selectEntry = async (entry, index) => {
         const requestId = ++coverRequestRef.current;
@@ -184,6 +203,10 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
     };
 
     const close = () => {
+        if (helpOpen) {
+            setHelpOpen(false);
+            return;
+        }
         if (!savingRef.current) onClose();
     };
 
@@ -194,17 +217,18 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
             close();
         }
         if (event.key !== 'Tab') return;
-        const focusable = [...dialogRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')];
+        const activeDialog = helpDialogRef.current || dialogRef.current;
+        const focusable = [...activeDialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')];
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
         if (!first) {
             event.preventDefault();
             return;
         }
-        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === activeDialog)) {
             event.preventDefault();
             last.focus();
-        } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) {
+        } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === activeDialog)) {
             event.preventDefault();
             first.focus();
         }
@@ -302,11 +326,18 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
             onDragOver={event => { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'none'; }}
             onDrop={event => { event.preventDefault(); event.stopPropagation(); }}
             onKeyDown={handleKeyDown}>
-            <section ref={dialogRef} className="cover-editor-dialog" role="dialog" aria-modal="true"
+            <section ref={dialogRef} className="cover-editor-dialog" role="dialog" aria-modal={helpOpen ? undefined : 'true'}
+                aria-hidden={helpOpen ? 'true' : undefined} inert={helpOpen ? '' : undefined}
                 aria-labelledby={titleId} aria-busy={saving} tabIndex={-1}>
                 <header className="cover-editor-header">
                     <div><h2 id={titleId}>{t('cover_editor_title')}</h2><p title={isBatch ? undefined : filePath}>{isBatch ? t('cover_editor_batch_title', [targets.length]) : info?.name || targets[0]?.name || filePath}</p></div>
-                    <button type="button" onClick={close} disabled={saving} aria-label={t('cover_editor_close')}>×</button>
+                    <div className="cover-editor-header-actions">
+                        <button ref={helpButtonRef} type="button" className="cover-editor-help-button" onClick={() => setHelpOpen(true)}
+                            title={t('cover_editor_help_button')} aria-label={t('cover_editor_help_button')} aria-haspopup="dialog">
+                            <span aria-hidden="true">?</span>
+                        </button>
+                        <button type="button" onClick={close} disabled={saving} aria-label={t('cover_editor_close')}>×</button>
+                    </div>
                 </header>
                 <div className="cover-editor-body">
                     {isBatch && <div className="cover-editor-batch">
@@ -398,6 +429,56 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
                     {!result && <button type="button" className="cover-editor-save" onClick={save} disabled={busy || !readyEntries.length || !image}>{saving ? t('cover_editor_saving') : isBatch ? t('cover_editor_batch_save', [readyEntries.length]) : t('cover_editor_save')}</button>}
                 </footer>
             </section>
+            {helpOpen && <div className="cover-editor-help-backdrop"
+                onMouseDown={event => { event.stopPropagation(); if (event.target === event.currentTarget) setHelpOpen(false); }}>
+                <section ref={helpDialogRef} className="cover-editor-dialog cover-editor-help-dialog" role="dialog" aria-modal="true"
+                    aria-labelledby={`${titleId}-help`} aria-describedby={`${titleId}-help-intro`} tabIndex={-1}>
+                    <header className="cover-editor-header">
+                        <h2 id={`${titleId}-help`}>{t('cover_editor_help_title')}</h2>
+                        <button type="button" onClick={() => setHelpOpen(false)} aria-label={t('cover_editor_close')}>×</button>
+                    </header>
+                    <div className="cover-editor-body cover-editor-help-body" tabIndex={0}>
+                        <p id={`${titleId}-help-intro`} className="cover-editor-help-intro">{t('cover_editor_help_intro')}</p>
+                        <section aria-labelledby={`${titleId}-help-formats`}>
+                            <h3 id={`${titleId}-help-formats`}>{t('cover_editor_help_formats_title')}</h3>
+                            <table className="cover-editor-help-table">
+                                <thead><tr>
+                                    <th scope="col">{t('cover_editor_help_format')}</th>
+                                    <th scope="col">{t('cover_editor_help_storage')}</th>
+                                    <th scope="col">{t('cover_editor_help_details')}</th>
+                                </tr></thead>
+                                <tbody>{COVER_HELP_FORMATS.map(row => <tr key={row.formats}>
+                                    <th scope="row">{row.formats}</th>
+                                    <td><span className={`cover-editor-help-storage is-${row.storage}`}>{t(`cover_editor_help_storage_${row.storage}`)}</span></td>
+                                    <td>{t(`cover_editor_${row.description}`)}</td>
+                                </tr>)}</tbody>
+                            </table>
+                            <p className="cover-editor-help-note">{t('cover_editor_help_local_note')}</p>
+                        </section>
+                        <section aria-labelledby={`${titleId}-help-options`}>
+                            <h3 id={`${titleId}-help-options`}>{t('cover_editor_help_options_title')}</h3>
+                            <dl className="cover-editor-help-options">
+                                {['replace', 'add', 'renumber', 'backup', 'export'].map(option => <div key={option}>
+                                    <dt>{t(`cover_editor_${option}`)}</dt>
+                                    <dd>{t(`cover_editor_help_${option}`)}</dd>
+                                </div>)}
+                            </dl>
+                        </section>
+                        <section aria-labelledby={`${titleId}-help-images`}>
+                            <h3 id={`${titleId}-help-images`}>{t('cover_editor_help_images_title')}</h3>
+                            <p>{t('cover_editor_help_images')}</p>
+                        </section>
+                        <section aria-labelledby={`${titleId}-help-batch`}>
+                            <h3 id={`${titleId}-help-batch`}>{t('cover_editor_help_batch_title')}</h3>
+                            <p>{t('cover_editor_help_batch')}</p>
+                            <p>{t('cover_editor_help_batch_cancel')}</p>
+                        </section>
+                    </div>
+                    <footer className="cover-editor-footer">
+                        <button type="button" onClick={() => setHelpOpen(false)}>{t('cover_editor_close')}</button>
+                    </footer>
+                </section>
+            </div>}
         </div>
     );
 }

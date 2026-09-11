@@ -123,6 +123,9 @@ export async function loadViewerPdfDocument(pdfjs, url, options = {}) {
     try {
         loadingTask = pdfjs.getDocument({
             ...(transport ? { range: transport, rangeChunkSize: PDF_RANGE_CHUNK_BYTES } : { data: initialData }),
+            cMapUrl: options.cMapUrl,
+            cMapPacked: options.cMapPacked,
+            standardFontDataUrl: options.standardFontDataUrl,
             disableAutoFetch: true,
             disableStream: true,
         });

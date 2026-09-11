@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { loadViewerPdfDocument } from './viewerPdfLoader.js';
 
-function makePdf(padding = 0) {
+function makePdf(padding = 0, pageObjects) {
     const objects = [
-        '<< /Type /Catalog /Pages 2 0 R >>',
-        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R /Resources << >> >>',
-        '<< /Length 0 >>\nstream\n\nendstream',
+        ...(pageObjects || [
+            '<< /Type /Catalog /Pages 2 0 R >>',
+            '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R /Resources << >> >>',
+            '<< /Length 0 >>\nstream\n\nendstream',
+        ]),
         `<< /Length ${padding} >>\nstream\n${' '.repeat(padding)}\nendstream`,
     ];
     let content = '%PDF-1.4\n';
@@ -22,6 +25,19 @@ function makePdf(padding = 0) {
     content += offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
     content += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
     return new Uint8Array(Buffer.from(content));
+}
+
+function makeKoreanPdf(padding = 0) {
+    const content = 'BT /F1 24 Tf 30 300 Td <B0A1B3AAB4D9> Tj ET';
+    return makePdf(padding, [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+        `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+        '<< /Type /Font /Subtype /Type0 /BaseFont /HYSMyeongJo-Medium /Encoding /KSCms-UHC-H /DescendantFonts [6 0 R] >>',
+        '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /HYSMyeongJo-Medium /CIDSystemInfo << /Registry (Adobe) /Ordering (Korea1) /Supplement 2 >> /FontDescriptor 7 0 R /DW 1000 >>',
+        '<< /Type /FontDescriptor /FontName /HYSMyeongJo-Medium /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>',
+    ]);
 }
 
 function pdfFetch(data, requests, options = {}) {
@@ -39,6 +55,60 @@ function pdfFetch(data, requests, options = {}) {
             headers: { 'Content-Range': `bytes ${begin}-${end}/${data.length}` },
         });
     };
+}
+
+test('이름으로 지정된 한국어 CMap은 외부 CMap 자료가 없으면 글자를 추출하지 못한다', async () => {
+    const document = await pdfjs.getDocument({
+        data: makeKoreanPdf(),
+        verbosity: pdfjs.VerbosityLevel.ERRORS,
+    }).promise;
+    try {
+        const text = await (await document.getPage(1)).getTextContent();
+        assert.deepEqual(text.items, []);
+    } finally {
+        await document.destroy();
+    }
+});
+
+for (const [name, padding, fetchOptions] of [
+    ['작은 전체 데이터', 0, {}],
+    ['큰 파일의 범위 요청', 1024 * 1024, {}],
+    ['후속 범위 요청의 전체 데이터 fallback', 1024 * 1024, { failLaterRanges: true }],
+]) {
+    test(`${name} PDF도 packed CMap과 표준 폰트 옵션으로 한글을 추출한다`, async () => {
+        const requests = [];
+        const documentOptions = [];
+        const assets = {
+            cMapUrl: fileURLToPath(new URL('../node_modules/pdfjs-dist/cmaps/', import.meta.url)),
+            cMapPacked: true,
+            standardFontDataUrl: fileURLToPath(new URL('../node_modules/pdfjs-dist/standard_fonts/', import.meta.url)),
+        };
+        const document = await loadViewerPdfDocument({
+            ...pdfjs,
+            getDocument(options) {
+                documentOptions.push(options);
+                return pdfjs.getDocument(options);
+            },
+        }, 'bookmanager-document://session/test/book.pdf', {
+            ...assets,
+            fetch: pdfFetch(makeKoreanPdf(padding), requests, fetchOptions),
+        });
+        try {
+            const page = await document.getPage(1);
+            const text = await page.getTextContent();
+            assert.equal(text.items.map(item => item.str).join(''), '가나다');
+            assert.equal(documentOptions.length, 1);
+            for (const [key, value] of Object.entries(assets)) {
+                assert.equal(documentOptions[0][key], value, key);
+            }
+            assert.equal(Boolean(documentOptions[0].range), padding > 0);
+            if (padding) assert.ok(requests.length > 1, '실제 PDFDataRangeTransport 경로를 사용한다');
+            if (fetchOptions.failLaterRanges) assert.equal(requests.filter(value => value === 'full').length, 1);
+            else assert.equal(requests.includes('full'), false);
+        } finally {
+            await document.destroy();
+        }
+    });
 }
 
 for (const [name, padding] of [['작은', 0], ['큰', 1024 * 1024]]) {
