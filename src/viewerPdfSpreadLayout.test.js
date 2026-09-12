@@ -30,6 +30,7 @@ test('PDF 책넘김의 두 페이지는 leaf 폭을 유지하고 캔버스와 �
         const renderer = `
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import ViewerPageCurlBook from './src/ViewerPageCurlBook';
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
 const viewerText = (key, fallback) => fallback;
 const pdfjsLib = {};
@@ -70,18 +71,13 @@ function Layout({ width, height, viewMode, visualScale, flipbook, renderZoom = 1
         <div className={'viewer-pdf-stage is-spread is-' + viewMode + (flipbook ? ' viewer-flipbook-stage' : '')}
             data-layout={flipbook ? 'flipbook' : 'normal'} style={flipbook ? { width, height, minHeight: height } : undefined}>
         {flipbook ? <div className="viewer-flipbook-scale" style={{ width: leafWidth * 2, height: leafHeight, transform: 'scale(' + visualScale + ')', transformOrigin: 'center center' }}>
-            <div className="viewer-flipbook" style={{ width: leafWidth * 2, height: leafHeight }}>
-                <div className="stf__parent" style={{ width: leafWidth * 2, height: leafHeight }}>
-                    <div className="stf__wrapper" style={{ width: leafWidth * 2, height: leafHeight }}>
-                        <div className="stf__block" style={{ position: 'relative', width: leafWidth * 2, height: leafHeight }}>
-                            {[0, 1].map(index => <div key={index} className={'viewer-flipbook-page is-pdf is-' + (index ? 'right' : 'left') + '-page'}
-                                style={{ position: 'absolute', left: index * leafWidth, top: 0, width: leafWidth, height: leafHeight }}>
-                                <div className={'viewer-flipbook-page-inner is-' + (index ? 'right' : 'left') + '-page'}>{page(index)}</div>
-                            </div>)}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <ViewerPageCurlBook className="viewer-flipbook" width={leafWidth} height={leafHeight}
+                startPage={0} spread duration={600} style={{ width: leafWidth * 2, height: leafHeight }}>
+                {[0, 1].map(index => <div key={index} className={'viewer-flipbook-page is-pdf is-' + (index ? 'right' : 'left') + '-page'}
+                    data-flipbook-index={index} data-source-page-index={index} style={{ width: leafWidth, height: leafHeight }}>
+                    <div className={'viewer-flipbook-page-inner is-' + (index ? 'right' : 'left') + '-page'}>{page(index)}</div>
+                </div>)}
+            </ViewerPageCurlBook>
         </div> : <div className="viewer-page-transition-layer is-current has-spread-pair"><div className="viewer-spread-pair">{page(0)}{page(1)}</div></div>}
         </div>
     </div>;

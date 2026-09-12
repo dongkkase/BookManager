@@ -232,16 +232,16 @@ test('페이지 전환은 이미지와 고품질 축소의 terminal 상태를 �
 
 test('플립북은 고정 startPage로 초기화하고 준비된 페이지 이동만 외부 effect에서 요청한다', () => {
     const flipBookSource = sourceBetween(viewerSource, 'function ViewerFlipBook({', '\nfunction storageKey(');
-    const reactFlipBookTag = flipBookSource.match(/<ReactFlipBook\b[\s\S]*?>/)?.[0] || '';
+    const pageCurlBookTag = flipBookSource.match(/<ViewerPageCurlBook\b[\s\S]*?>/)?.[0] || '';
 
-    assert.ok(reactFlipBookTag, 'ViewerFlipBook must render ReactFlipBook');
-    assert.doesNotMatch(reactFlipBookTag, /\bcurrentPage\s*=/);
+    assert.ok(pageCurlBookTag, 'ViewerFlipBook must render ViewerPageCurlBook');
+    assert.doesNotMatch(pageCurlBookTag, /\bcurrentPage\s*=/);
     assert.match(
         flipBookSource,
         /const\s+(?:\[\s*)?initialBookIndex\w*(?:\s*\])?\s*=\s*use(?:Ref|State)\(/,
     );
-    assert.match(reactFlipBookTag, /startPage=\{initialBookIndex(?:Ref\.current)?\}/);
-    assert.match(reactFlipBookTag, /renderOnlyPageLengthChange/);
+    assert.match(pageCurlBookTag, /startPage=\{initialBookIndex(?:Ref\.current)?\}/);
+    assert.match(pageCurlBookTag, /preparedPage=\{currentBookIndex\}/);
     assert.match(
         flipBookSource,
         /useEffect\(\(\) => \{[\s\S]*?targetReady[\s\S]*?pageFlip(?:\.flip|\?\.flip\?\.)\(currentBookIndex\)/,

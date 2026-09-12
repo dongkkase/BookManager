@@ -501,12 +501,12 @@ test('몰입형 배경은 책넘김 효과와 함께 유지된다', () => {
     assert.match(i18nSource, /ページめくり効果は2ページ表示で適用され、没入型背景と併用できます。/);
 });
 
-test('책넘김 페이지는 라이브러리 초기화가 끝난 뒤 표시된다', () => {
+test('책넘김 캔버스가 표시되는 동안 정적 페이지는 겹쳐 보이지 않는다', () => {
     assert.match(
         viewerCss,
-        /\.viewer-flipbook > div:first-child:not\(\.stf__parent\) \{\s*visibility:\s*hidden;/,
+        /\.viewer-page-curl-book\[data-curl-animating="true"\] > \.viewer-flipbook-page \{\s*visibility:\s*hidden !important;\s*opacity:\s*0 !important;/,
     );
-    assert.match(viewerCss, /\.viewer-flipbook \.stf__parent,/);
+    assert.match(viewerSource, /\[data-curl-visible="true"\]/);
 });
 
 test('책넘김 몰입형 배경은 플립 변형 밖의 독립 레이어에서 표시된다', () => {

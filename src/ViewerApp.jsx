@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
+import ViewerPageCurlBook from './ViewerPageCurlBook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
@@ -318,7 +318,7 @@ const SWIPE_MIN_DISTANCE = 64;
 const SWIPE_AXIS_LOCK_RATIO = 1.35;
 const SWIPE_MAX_DURATION = 900;
 const READER_TITLE_ONLY_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
-const BOOK_PAGE_TURN_DURATION = 320;
+const BOOK_PAGE_TURN_DURATION = 600;
 const BOOK_AMBIENT_FADE_CLEANUP_BUFFER = 80;
 const PAGE_EFFECT_CLEANUP_BUFFER = 40;
 const PAGE_EFFECT_PREPARE_TIMEOUT = 1800;
@@ -410,7 +410,7 @@ function viewerInitialRenderIsPrepared(root, { format, flowMode, pageIndex }) {
 
   const flipBook = root.querySelector('.viewer-flipbook-stage');
   if (flipBook) {
-    const visibleItems = [...flipBook.querySelectorAll('.stf__item')].filter(item => {
+    const visibleItems = [...flipBook.querySelectorAll('[data-curl-visible="true"]')].filter(item => {
       const style = window.getComputedStyle?.(item);
       const rect = item.getBoundingClientRect?.();
       return style?.display !== 'none'
@@ -1063,7 +1063,7 @@ function ViewerFlipBook({
     getStepSizeForIndex,
     shouldSplitSinglePage,
   }), [getStepSizeForIndex, normalizedPageCount, readingDirection, shouldSplitSinglePage, spread]);
-  // page-flip moves these nodes under its own wrapper, so leaf changes require a fresh React boundary.
+    // Remap the displayed source when the spread structure or page dimensions change.
   const structureKey = useMemo(() => buildFlipBookStructureKey(model.entries), [model.entries]);
   const currentSourceIndex = clamp(Number(currentPageIndex) || 0, 0, Math.max(0, normalizedPageCount - 1));
   const currentBookIndex = model.pageToBookIndex.get(currentSourceIndex) ?? 0;
@@ -1372,32 +1372,21 @@ function ViewerFlipBook({
           ) : renderAmbientPage}
         />
         <ViewerFlipBookPageRenderContext.Provider value={pageRenderState}>
-          <ReactFlipBook
+          <ViewerPageCurlBook
             ref={flipBookRef}
             key={flipBookMountKey}
             className="viewer-flipbook"
             style={bookStyle}
             width={normalizedPageSize.width}
             height={normalizedPageSize.height}
-            size="fixed"
             startPage={initialBookIndexRef.current}
-            flippingTime={BOOK_PAGE_TURN_DURATION}
-            usePortrait={!spread}
-            autoSize={false}
-            showCover={false}
-            drawShadow
-            maxShadowOpacity={0.52}
-            mobileScrollSupport={false}
-            clickEventForward={false}
-            useMouseEvents={false}
-            showPageCorners={false}
-            disableFlipByClick
-            enableKeyboardNav={false}
-            renderOnlyPageLengthChange
+            preparedPage={currentBookIndex}
+            duration={BOOK_PAGE_TURN_DURATION}
+            spread={spread}
             onPageChange={handlePageChange}
           >
             {pageElements}
-          </ReactFlipBook>
+          </ViewerPageCurlBook>
         </ViewerFlipBookPageRenderContext.Provider>
       </div>
     </div>

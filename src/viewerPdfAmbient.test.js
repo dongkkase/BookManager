@@ -34,7 +34,7 @@ test('PDF 책넘김 배경은 본문 캔버스를 재사용하고 leaf 밖에서
         const renderer = `
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ReactFlipBook } from '@vuvandinh203/react-flipbook';
+import ViewerPageCurlBook from './src/ViewerPageCurlBook';
 import { buildFlipBookPageModel, buildFlipBookStructureKey, finishAndTurnFlipBookToPage,
     getFlipBookAmbientEntries, getFlipBookCurrentGroupEntries, getFlipBookNearbyGroupEntries } from './src/viewerFlipBook.js';
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));

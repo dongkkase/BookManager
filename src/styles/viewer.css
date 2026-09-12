@@ -1625,6 +1625,10 @@ body,
   pointer-events: none;
 }
 
+.viewer-app.is-background-immersive .viewer-pdf-stage.has-page-effect.is-animating > .viewer-page-transition-layer {
+    overflow: visible;
+}
+
 .viewer-comic-stage > .viewer-page-transition-layer {
   align-items: center;
   align-items: safe center;
@@ -1699,8 +1703,24 @@ body,
   pointer-events: auto;
 }
 
-.viewer-flipbook > div:first-child:not(.stf__parent) {
-  visibility: hidden;
+.viewer-page-curl-book {
+    position: relative;
+    isolation: isolate;
+}
+
+.viewer-page-curl-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 3;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.viewer-page-curl-book[data-curl-animating="true"] > .viewer-flipbook-page {
+    visibility: hidden !important;
+    opacity: 0 !important;
 }
 
 .viewer-flipbook-scale {
@@ -1770,15 +1790,6 @@ body,
   height: 1px;
   opacity: 0;
   pointer-events: none;
-}
-
-.viewer-flipbook > div,
-.viewer-flipbook .stf__parent,
-.viewer-flipbook .stf__wrapper,
-.viewer-flipbook .stf__block {
-  max-width: none;
-  max-height: none;
-  overflow: visible !important;
 }
 
 .viewer-flipbook-page {
@@ -2413,6 +2424,18 @@ body,
 .viewer-pdf-page-number {
   color: #bdbdbd;
   font-size: 11px;
+}
+
+.viewer-pdf-stage.is-scroll > .viewer-page-transition-layer {
+    gap: 0;
+}
+
+.viewer-pdf-stage.is-scroll .viewer-pdf-page-number {
+    display: none;
+}
+
+.viewer-pdf-stage.is-scroll .viewer-pdf-canvas-wrap {
+    box-shadow: none;
 }
 
 .viewer-text-page {
