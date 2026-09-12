@@ -1447,6 +1447,10 @@ body,
   touch-action: pan-y pinch-zoom;
 }
 
+.viewer-content > :first-child {
+    translate: var(--viewer-zoom-translate, none);
+}
+
 .viewer-app.is-background-immersive .viewer-content {
   background: rgba(10, 10, 10, 0.24);
 }
@@ -2265,9 +2269,16 @@ body,
   max-width: 100%;
 }
 
-.viewer-pdf-stage.is-spread:not(.viewer-flipbook-stage) .viewer-pdf-page {
-    flex: 0 1 auto;
-    max-width: 50%;
+.viewer-pdf-stage.is-spread:not(.viewer-flipbook-stage) {
+    display: grid;
+    width: max-content;
+    min-width: 100%;
+}
+
+.viewer-pdf-stage.is-spread:not(.viewer-flipbook-stage) > .viewer-page-transition-layer {
+    position: relative;
+    grid-area: 1 / 1;
+    height: auto;
 }
 
 .viewer-pdf-stage.viewer-flipbook-stage .viewer-pdf-page {
@@ -2280,14 +2291,20 @@ body,
 }
 
 .viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-canvas-wrap {
-  max-width: 100%;
+    max-width: none;
   box-shadow: none;
+}
+
+.viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-spread-pair {
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
 }
 
 .viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-page {
   width: auto;
-  flex: 0 1 auto;
-  max-width: 50%;
+    flex: 0 0 auto;
+    max-width: none;
 }
 
 .viewer-pdf-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-pdf-page:first-child {

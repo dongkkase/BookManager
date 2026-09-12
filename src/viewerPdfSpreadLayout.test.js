@@ -28,7 +28,7 @@ test('PDF 책넘김의 두 페이지는 leaf 폭을 유지하고 캔버스와 �
         const stagePadding = Number(source.match(/const READER_STAGE_PADDING = (\d+);/)?.[1]);
         assert.ok(stagePadding > 0);
         const renderer = `
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
 const viewerText = (key, fallback) => fallback;
@@ -60,14 +60,15 @@ const approximately = (left, right, message) => check(Math.abs(left - right) <= 
 const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
 const delay = () => new Promise(resolve => setTimeout(resolve, 10));
 const reactRoot = createRoot(document.getElementById('root'));
-function Layout({ width, height, viewMode, visualScale, flipbook }) {
+function Layout({ width, height, viewMode, visualScale, flipbook, renderZoom = 100 }) {
     const leafWidth = Math.max(180, Math.floor((width - ${stagePadding * 2}) / 2));
     const leafHeight = Math.max(260, height - ${stagePadding * 2});
     const page = index => <PdfPageCanvas pdfDocument={pdfDocument} pageNumber={index + 1}
         containerWidth={width} containerHeight={height} pageSlots={2} pageFrameWidth={flipbook ? leafWidth : undefined}
-        viewMode={viewMode} zoom={100} active />;
-    return <div className={'viewer-pdf-stage is-spread is-' + viewMode + (flipbook ? ' viewer-flipbook-stage' : '')}
-        data-layout={flipbook ? 'flipbook' : 'normal'} style={{ width, height, minHeight: height }}>
+        viewMode={viewMode} zoom={renderZoom} active />;
+    return <div className="viewer-content is-page-mode" style={{ width, height }}>
+        <div className={'viewer-pdf-stage is-spread is-' + viewMode + (flipbook ? ' viewer-flipbook-stage' : '')}
+            data-layout={flipbook ? 'flipbook' : 'normal'} style={flipbook ? { width, height, minHeight: height } : undefined}>
         {flipbook ? <div className="viewer-flipbook-scale" style={{ width: leafWidth * 2, height: leafHeight, transform: 'scale(' + visualScale + ')', transformOrigin: 'center center' }}>
             <div className="viewer-flipbook" style={{ width: leafWidth * 2, height: leafHeight }}>
                 <div className="stf__parent" style={{ width: leafWidth * 2, height: leafHeight }}>
@@ -81,7 +82,8 @@ function Layout({ width, height, viewMode, visualScale, flipbook }) {
                     </div>
                 </div>
             </div>
-        </div> : <div className="viewer-page-transition-layer has-spread-pair"><div className="viewer-spread-pair">{page(0)}{page(1)}</div></div>}
+        </div> : <div className="viewer-page-transition-layer is-current has-spread-pair"><div className="viewer-spread-pair">{page(0)}{page(1)}</div></div>}
+        </div>
     </div>;
 }
 async function measure(scenario) {
@@ -93,6 +95,9 @@ async function measure(scenario) {
             && document.querySelectorAll('.viewer-pdf-text-layer span').length === 2) break;
         await delay();
     }
+    const viewport = document.querySelector('.viewer-content');
+    viewport.scrollLeft = 0;
+    viewport.scrollTop = 0;
     const pages = [...document.querySelectorAll('.viewer-pdf-page')];
     check(pages.length === 2, 'Two PDF pages must be mounted');
     const metrics = pages.map((page, index) => {
@@ -104,7 +109,7 @@ async function measure(scenario) {
         const wrapRect = wrap.getBoundingClientRect();
         const canvasRect = canvas.getBoundingClientRect();
         const textRect = text.getBoundingClientRect();
-        const prefix = [scenario.flipbook ? 'flipbook' : 'normal', scenario.viewMode, scenario.width, scenario.visualScale, index].join('/');
+        const prefix = [scenario.flipbook ? 'flipbook' : 'normal', scenario.viewMode, scenario.width, scenario.visualScale, scenario.renderZoom || 100, index].join('/');
         for (const dimension of ['left', 'top', 'width', 'height']) {
             approximately(wrapRect[dimension], canvasRect[dimension], prefix + ' wrap/canvas ' + dimension);
             approximately(textRect[dimension], canvasRect[dimension], prefix + ' text/canvas ' + dimension);
@@ -118,19 +123,31 @@ async function measure(scenario) {
             approximately(pageRect.width, canvasRect.width, prefix + ' PDF page/canvas width');
             check(canvasRect.left >= leafRect.left - 0.75 && canvasRect.right <= leafRect.right + 0.75, prefix + ' canvas crosses its leaf boundary');
         } else {
-            check(getComputedStyle(page).maxWidth === '50%', prefix + ' normal spread lost its two-page width limit');
+            approximately(pageRect.width, canvasRect.width, prefix + ' normal PDF page/canvas width');
         }
         return { left: canvasRect.left, right: canvasRect.right, width: canvasRect.width, height: canvasRect.height, leafWidth, pageWidth: pageRect.width };
     });
     check(metrics[0].right <= metrics[1].left + 0.75, 'The two PDF canvases overlap');
-    return { ...scenario, pages: metrics };
+    if (!scenario.flipbook) {
+        const viewportRect = viewport.getBoundingClientRect();
+        check(metrics[0].left >= viewportRect.left - 0.75, 'The left PDF page overflows outside the scrollable area');
+        check(viewport.scrollWidth >= metrics[1].right - viewportRect.left - 0.75, 'The scrollable width excludes the right PDF page');
+        if (scenario.renderZoom === 200) {
+            check(viewport.scrollWidth > viewport.clientWidth, 'Zoomed spread does not expand the scrollable width');
+            viewport.scrollLeft = viewport.scrollWidth - viewport.clientWidth;
+            check(viewport.scrollLeft > 0, 'Zoomed spread cannot scroll horizontally');
+            const rightCanvasRect = pages[1].querySelector('.viewer-pdf-canvas').getBoundingClientRect();
+            check(rightCanvasRect.right <= viewportRect.right + 0.75, 'The right PDF page cannot be reached by scrolling');
+        }
+    }
+    return { ...scenario, pages: metrics, scrollWidth: viewport.scrollWidth, viewportWidth: viewport.clientWidth };
 }
 window.testDone = (async () => {
     const measurements = [];
     for (const viewport of [{ width: 960, height: 720 }, { width: 720, height: 540 }]) {
         for (const viewMode of ['fit', 'width']) {
             for (const visualScale of [1, 1.5]) measurements.push(await measure({ ...viewport, viewMode, visualScale, flipbook: true }));
-            measurements.push(await measure({ ...viewport, viewMode, visualScale: 1, flipbook: false }));
+            for (const renderZoom of [100, 200]) measurements.push(await measure({ ...viewport, viewMode, visualScale: 1, flipbook: false, renderZoom }));
         }
     }
     reactRoot.unmount();
@@ -174,7 +191,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PDF_SPREAD_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const measurements = JSON.parse(payload).measurements;
-        assert.equal(measurements.length, 12);
+        assert.equal(measurements.length, 16);
         for (const widthCase of measurements.filter(item => item.flipbook && item.viewMode === 'width')) {
             t.diagnostic(JSON.stringify({ viewportWidth: widthCase.width, visualScale: widthCase.visualScale, pageWidth: widthCase.pages[0].pageWidth, canvasWidth: widthCase.pages[0].width, leafWidth: widthCase.pages[0].leafWidth }));
         }

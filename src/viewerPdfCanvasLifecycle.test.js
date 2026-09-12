@@ -23,8 +23,9 @@ test('실제 React PDF 캔버스는 스크롤 key를 유지하며 비가시 자�
         const keyExpression = source.match(/key=\{(flowMode === 'scroll' \? `pdf-scroll-[^\n]+)\}/)?.[1];
         assert.ok(keyExpression, '스크롤용 PDF 부모 key를 찾을 수 없습니다.');
         const renderer = `
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
 const viewerText = (key, fallback) => fallback;
 const pdfjsLib = {};
@@ -64,12 +65,22 @@ const selectPageText = () => {
 };
 let renderCount = 0;
 let cleanupCount = 0;
+let deferRender = false;
+let renderColor = '#123456';
+const pendingRenders = [];
 const page = {
     getViewport: ({ scale }) => ({ width: 300 * scale, height: 400 * scale, transform: [1, 0, 0, 1, 0, 0] }),
     render: ({ canvasContext }) => {
         renderCount += 1;
-        canvasContext.fillStyle = '#123456';
+        canvasContext.fillStyle = renderColor;
         canvasContext.fillRect(0, 0, 100, 100);
+        if (deferRender) {
+            let resolve;
+            const promise = new Promise(done => { resolve = done; });
+            const pending = { resolve, canceled: false };
+            pendingRenders.push(pending);
+            return { promise, cancel() { pending.canceled = true; } };
+        }
         return { promise: Promise.resolve(), cancel() {} };
     },
     getTextContent: async () => ({ items: [{ str: 'Page text', transform: [10, 0, 0, 10, 0, 20], width: 40, height: 10 }] }),
@@ -81,7 +92,7 @@ function render(index, zoom = 100) {
     const flowMode = 'scroll';
     const session = { id: 'same-book' };
     const layer = { index };
-    reactRoot.render(<div key={${keyExpression}}><PdfPageCanvas pdfDocument={pdfDocument} pageNumber={3} containerWidth={900} containerHeight={700} pageSlots={1} viewMode="fit" zoom={zoom} active={false} recycle /></div>);
+    flushSync(() => reactRoot.render(<div key={${keyExpression}}><PdfPageCanvas pdfDocument={pdfDocument} pageNumber={3} containerWidth={900} containerHeight={700} pageSlots={1} viewMode="fit" zoom={zoom} active={false} recycle /></div>));
 }
 window.testDone = (async () => {
     render(0); await wait();
@@ -91,19 +102,57 @@ window.testDone = (async () => {
     const height = wrap.getBoundingClientRect().height;
     check(renderCount === 1 && canvas.width > 0, 'initial render');
     check(document.querySelectorAll('.viewer-pdf-text-layer span').length === 1, 'initial text');
+    const sample = target => [...target.getContext('2d').getImageData(20, 20, 1, 1).data].join(',');
+    const originalPixels = sample(canvas);
+    const originalBitmapWidth = canvas.width;
+    const originalDisplayWidth = canvas.getBoundingClientRect().width;
+    const ambient = document.querySelector('.viewer-ambient-canvas');
+    const originalAmbientPixels = sample(ambient);
+    deferRender = true;
+    renderColor = '#abcdef';
+    render(0, 150);
+    check(canvas.getBoundingClientRect().width === Math.floor(originalDisplayWidth * 1.5), 'zoom CSS size must update in the React commit before asynchronous rendering');
+    check(canvas.width === originalBitmapWidth && sample(canvas) === originalPixels, 'zoom commit cleared the previous bitmap');
+    await wait(); await wait(); await wait();
+    const supersededRender = pendingRenders.at(-1);
+    check(supersededRender && pendingRenders.length === 1, 'deferred zoom render did not start');
+    check(wrap.classList.contains('is-ready') && getComputedStyle(canvas).visibility === 'visible', 'pending zoom hid the last rendered PDF');
+    check(sample(canvas) === originalPixels && sample(ambient) === originalAmbientPixels, 'pending zoom changed the displayed or ambient bitmap');
+    const textLayer = document.querySelector('.viewer-pdf-text-layer');
+    check(Math.abs(textLayer.getBoundingClientRect().width - canvas.getBoundingClientRect().width) < 1, 'old text layer did not scale with the visible PDF');
+    renderColor = '#2468ac';
+    render(0, 160);
+    await wait();
+    check(pendingRenders.length === 1, 'rapid wheel updates should wait before starting another expensive render');
+    render(0, 175);
+    await wait(); await wait(); await wait();
+    check(supersededRender.canceled && pendingRenders.length === 2, 'new zoom did not cancel its predecessor');
+    pendingRenders.at(-1).resolve();
+    await wait();
+    check(sample(canvas) === '36,104,172,255' && canvas.width > originalBitmapWidth, 'completed staging bitmap was not committed');
+    const committedPixels = sample(canvas);
+    const committedWidth = canvas.width;
+    supersededRender.resolve();
+    await wait();
+    check(canvas.width === committedWidth && sample(canvas) === committedPixels, 'late canceled render overwrote the newer bitmap');
+    deferRender = false;
+    renderColor = '#123456';
+    render(0, 100);
+    await wait(); await wait(); await wait();
+    const baselineRenderCount = renderCount;
     render(4); await wait();
-    check(canvas === document.querySelector('.viewer-pdf-canvas') && renderCount === 1, 'scroll remounted canvas');
+    check(canvas === document.querySelector('.viewer-pdf-canvas') && renderCount === baselineRenderCount, 'scroll remounted canvas');
     notify(false); await wait();
     check(canvas.width === 0 && canvas.height === 0, 'offscreen canvas retained');
     check(document.querySelectorAll('.viewer-pdf-text-layer span').length === 0, 'offscreen text retained');
     check(wrap.getBoundingClientRect().height === height, 'placeholder changed height');
     check(cleanupCount > 0, 'page resources retained');
     render(5, 150); await wait();
-    check(renderCount === 1, 'offscreen zoom rendered canvas');
+    check(renderCount === baselineRenderCount, 'offscreen zoom rendered canvas');
     const zoomHeight = wrap.getBoundingClientRect().height;
     check(zoomHeight === Math.floor(height * 1.5), 'offscreen zoom height');
     notify(true); await wait(); await wait();
-    check(renderCount === 2 && canvas.width > 0, 'canvas did not re-render');
+    check(renderCount === baselineRenderCount + 1 && canvas.width > 0, 'canvas did not re-render');
     check(wrap.getBoundingClientRect().height === zoomHeight, 're-entry changed height');
     check(document.querySelectorAll('.viewer-pdf-text-layer span').length === 1, 'text did not recover');
     const baseSelectionListeners = selectionListeners.size;
