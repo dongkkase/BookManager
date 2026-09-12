@@ -21,6 +21,8 @@ test('책넘김은 실제 페이지를 유지하고 이동 취소와 캔버스 �
     const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'viewer-page-curl-test-')));
     let server;
     try {
+        await fs.writeFile(path.join(directory, 'pattern.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect x="4" y="4" width="2" height="2" fill="#c030a0"/></svg>');
+        await fs.writeFile(path.join(directory, 'solid.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#c030a0"/></svg>');
         await fs.writeFile(path.join(directory, 'fixture.jsx'), `
 import React, { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -224,6 +226,88 @@ window.testDone = (async () => {
     expectReleased('Reader completion must release all HTML snapshot canvases');
     results.push('Korean and ruby HTML snapshots animate');
 
+    const embeddedLeaf = document.createElement('div');
+    embeddedLeaf.style.cssText = 'position:absolute;left:0;top:0;width:240px;height:320px';
+    const embeddedReader = document.createElement('article');
+    embeddedReader.className = 'viewer-text-page';
+    embeddedReader.style.cssText = 'width:240px;height:320px;padding:0;margin:0;border:0;background:white';
+    const embeddedFrame = document.createElement('iframe');
+    embeddedFrame.className = 'viewer-epub-original-frame';
+    embeddedFrame.style.cssText = 'width:240px;height:320px;border:0;display:block';
+    const embeddedLoaded = new Promise(resolve => embeddedFrame.addEventListener('load', resolve, { once: true }));
+    const embeddedImageCanvas = document.createElement('canvas');
+    embeddedImageCanvas.width = 40;
+    embeddedImageCanvas.height = 40;
+    embeddedImageCanvas.getContext('2d').fillStyle = '#20c030';
+    embeddedImageCanvas.getContext('2d').fillRect(0, 0, 40, 40);
+    const embeddedImageUrl = embeddedImageCanvas.toDataURL();
+    embeddedImageCanvas.width = 0;
+    embeddedImageCanvas.height = 0;
+    embeddedFrame.srcdoc = '<!doctype html><html style="width:240px;height:320px;overflow:hidden;column-width:240px;column-gap:0;column-fill:auto"><head><style>@font-face{font-family:FixtureOriginalFont;src:url("/@fs/${path.join(projectRoot, 'src/fonts/NanumGothic-Regular.ttf')}")}body{margin:0}p{margin:0;padding:20px;font:18px FixtureOriginalFont,sans-serif;color:black}.page{height:320px;break-after:column;background-image:url("/pattern.svg")}</style></head><body><div class="page" style="background-color:rgb(210,20,20)"><p>첫 번째 원본 페이지</p></div><div class="page" style="background-color:rgb(20,40,210)"><p>두 번째 원본 페이지</p><img style="display:block;margin:20px;width:40px;height:40px" src="' + embeddedImageUrl + '"><svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" style="display:block;margin-left:160px"><image href="/solid.svg" width="40" height="40"/></svg></div></body></html>';
+    embeddedReader.append(embeddedFrame);
+    embeddedLeaf.append(embeddedReader);
+    document.body.append(embeddedLeaf);
+    await embeddedLoaded;
+    await embeddedFrame.contentDocument.fonts.ready;
+    await frames();
+    embeddedFrame.dataset.originalReady = 'true';
+    const snapshotFontRequests = [];
+    const nativeFetch = window.fetch;
+    window.fetch = (...args) => { snapshotFontRequests.push(String(args[0])); return nativeFetch(...args); };
+    for (const [offset, expected] of [[0, [210, 20, 20]], [240, [20, 40, 210]]]) {
+        embeddedFrame.contentDocument.documentElement.scrollLeft = offset;
+        await frames();
+        const snapshot = await snapshotPageCurlLeaf(embeddedLeaf, { width: 240, height: 320 });
+        const context = snapshot.image.getContext('2d');
+        const pixel = [...context.getImageData(120, 200, 1, 1).data];
+        check(expected.every((channel, index) => Math.abs(channel - pixel[index]) <= 3),
+            'Embedded EPUB snapshots must paint the current column, including its background: ' + JSON.stringify({ offset, pixel }));
+        const backgroundPixel = [...context.getImageData(124, 204, 1, 1).data];
+        check(backgroundPixel[0] > 180 && backgroundPixel[1] < 70 && backgroundPixel[2] > 140,
+            'External CSS background images must be inlined into the original EPUB snapshot: ' + JSON.stringify(backgroundPixel));
+        const pixels = context.getImageData(0, 0, 240, 100).data;
+        let glyphPixels = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+            if (pixels[index + 3] > 128 && Math.max(pixels[index], pixels[index + 1], pixels[index + 2]) < 100) glyphPixels += 1;
+        }
+        check(glyphPixels > 80, 'Embedded EPUB snapshots must include the actual text, not an empty iframe');
+        if (offset > 0) {
+            const imagePixel = [...context.getImageData(30, 100, 1, 1).data];
+            check(imagePixel[1] > 150 && imagePixel[0] < 60 && imagePixel[2] < 70,
+                'Images from the iframe realm must be inlined into the snapshot: ' + JSON.stringify(imagePixel));
+            const svgPixel = [...context.getImageData(170, 160, 1, 1).data];
+            check(svgPixel[0] > 180 && svgPixel[1] < 70 && svgPixel[2] > 140,
+                'External SVG image references must be inlined: ' + JSON.stringify(svgPixel));
+        }
+        releasePageCurlSnapshots([snapshot]);
+    }
+    window.fetch = nativeFetch;
+    check(snapshotFontRequests.some(url => url.includes('NanumGothic-Regular.ttf')),
+        'Embedded document font-face rules must be collected from the iframe stylesheet');
+    embeddedFrame.style.transform = 'scale(0.5)';
+    embeddedFrame.style.transformOrigin = 'top left';
+    const scaledSnapshot = await snapshotPageCurlLeaf(embeddedLeaf, { width: 240, height: 320 });
+    const scaledPixel = [...scaledSnapshot.image.getContext('2d').getImageData(60, 100, 1, 1).data];
+    check(scaledPixel[2] > 180 && scaledPixel[0] < 50, 'An iframe transform must retain the current column in a scaled snapshot');
+    releasePageCurlSnapshots([scaledSnapshot]);
+    embeddedFrame.dataset.originalReady = 'false';
+    let rejectedUnreadyFrame = false;
+    try { await snapshotPageCurlLeaf(embeddedLeaf, { width: 240, height: 320 }); }
+    catch { rejectedUnreadyFrame = true; }
+    check(rejectedUnreadyFrame, 'Unready iframe snapshots must use the existing DOM fallback instead of animating a blank image');
+    embeddedFrame.dataset.originalReady = 'true';
+    embeddedFrame.contentDocument.body.style.backgroundImage = 'url("/pattern.svg?unavailable")';
+    window.fetch = (...args) => String(args[0]).includes('?unavailable')
+        ? Promise.reject(new Error('Unavailable snapshot resource')) : nativeFetch(...args);
+    let rejectedMissingResource = false;
+    try { await snapshotPageCurlLeaf(embeddedLeaf, { width: 240, height: 320 }); }
+    catch { rejectedMissingResource = true; }
+    window.fetch = nativeFetch;
+    check(rejectedMissingResource, 'Unavailable embedded assets must use the DOM fallback instead of losing the publisher artwork');
+    embeddedLeaf.remove();
+    expectReleased('Embedded EPUB snapshots must release all temporary canvas backing stores');
+    results.push('original EPUB iframe text and current column snapshots');
+
     renderBook({ spread: false, startPage: 1, preparedPage: 1, width: 240, height: 320 }, 'single');
     await until(() => api().getCurrentPageIndex() === 1 && visibleIndexes().join(',') === '1', 'Single-page mode must show its initial leaf');
     renderBook({ preparedPage: 2 }, 'single');
@@ -305,7 +389,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PAGE_CURL_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const report = JSON.parse(payload);
-        assert.equal(report.results.length, 8);
+        assert.equal(report.results.length, 9);
         assert.ok(report.transientCanvasCount > 1, 'The renderer must exercise actual snapshot allocation');
         t.diagnostic(payload);
     } finally {

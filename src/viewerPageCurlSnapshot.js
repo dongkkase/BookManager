@@ -17,8 +17,56 @@ function inlineImage(image) {
 }
 
 const fontDataCache = new Map();
+const originalResourceCache = new Map();
 
-async function snapshotFontStyles(families) {
+async function inlineOriginalSnapshotResources(clone) {
+    const loadResource = rawUrl => {
+        const resolved = new URL(rawUrl, document.baseURI);
+        const fragment = resolved.hash;
+        resolved.hash = '';
+        const url = resolved.href;
+        if (!originalResourceCache.has(url)) {
+            const pending = fetch(url, { signal: AbortSignal.timeout(600) }).then(response => {
+                if (!response.ok) throw new Error('Page curl embedded resource unavailable.');
+                return response.blob();
+            }).then(blob => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            }));
+            originalResourceCache.set(url, pending);
+            if (originalResourceCache.size > 24) originalResourceCache.delete(originalResourceCache.keys().next().value);
+        }
+        return originalResourceCache.get(url).then(data => `${data}${fragment}`);
+    };
+    const replacements = [];
+    for (const node of [clone, ...clone.querySelectorAll('[style]')]) {
+        for (const property of node.style) {
+            const value = node.style.getPropertyValue(property);
+            if (!value.includes('url(')) continue;
+            replacements.push((async () => {
+                let nextValue = value;
+                for (const [token, doubleQuoted, singleQuoted, bare] of value.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g)) {
+                    const url = (doubleQuoted ?? singleQuoted ?? bare).trim();
+                    if (!url || /^(?:data:|#)/i.test(url)) continue;
+                    nextValue = nextValue.replace(token, `url("${await loadResource(url)}")`);
+                }
+                node.style.setProperty(property, nextValue);
+            })());
+        }
+    }
+    for (const image of clone.querySelectorAll('image')) {
+        for (const attribute of ['href', 'xlink:href']) {
+            const url = image.getAttribute(attribute);
+            if (!url || /^(?:data:|#)/i.test(url)) continue;
+            replacements.push(loadResource(url).then(data => image.setAttribute(attribute, data)));
+        }
+    }
+    await Promise.all(replacements);
+}
+
+async function snapshotFontStyles(families, documents = [document]) {
     const rules = [];
     const visit = styleRules => {
         for (const rule of styleRules) {
@@ -28,8 +76,10 @@ async function snapshotFontStyles(families) {
             } else if (rule.cssRules) visit(rule.cssRules);
         }
     };
-    for (const sheet of document.styleSheets) {
-        try { visit(sheet.cssRules); } catch { /* External stylesheets can disallow CSSOM access. */ }
+    for (const sourceDocument of documents) {
+        for (const sheet of sourceDocument.styleSheets) {
+            try { visit(sheet.cssRules); } catch { /* External stylesheets can disallow CSSOM access. */ }
+        }
     }
     return (await Promise.all(rules.map(async rule => {
         let source = rule.cssText;
@@ -57,29 +107,59 @@ async function snapshotFontStyles(families) {
     }))).join('\n');
 }
 
-async function snapshotReaderPage(node, width, height, pixelRatio) {
+function cloneReaderSnapshot(node, families, documents) {
     const clone = node.cloneNode(true);
     const originals = [node, ...node.querySelectorAll('*')];
     const copies = [clone, ...clone.querySelectorAll('*')];
-    const families = new Set();
     originals.forEach((original, index) => {
         const copy = copies[index];
-        const computed = getComputedStyle(original);
+        const computed = original.ownerDocument.defaultView.getComputedStyle(original);
         for (const property of computed) copy.style.setProperty(property, computed.getPropertyValue(property));
         copy.style.visibility = 'visible';
         copy.style.animation = 'none';
         copy.style.transition = 'none';
         families.add(computed.fontFamily.replace(/["']/g, '').toLowerCase());
-        if (original instanceof HTMLImageElement) {
+        if (original.localName === 'img') {
             copy.removeAttribute('srcset');
             copy.src = inlineImage(original);
         }
+        if (original.localName === 'iframe') {
+            const sourceDocument = original.contentDocument;
+            if (!original.classList.contains('viewer-epub-original-frame')
+                || original.dataset.originalReady !== 'true' || !sourceDocument?.body) {
+                throw new Error('Page curl embedded document is not ready.');
+            }
+            documents.add(sourceDocument);
+            const viewport = document.createElement('div');
+            viewport.style.cssText = copy.style.cssText;
+            viewport.style.overflow = 'hidden';
+            // A cloned document cannot scroll, so move its columns inside the iframe-sized clip.
+            const offset = document.createElement('div');
+            offset.style.transform = `translate(${-sourceDocument.documentElement.scrollLeft}px, ${-sourceDocument.documentElement.scrollTop}px)`;
+            offset.style.transformOrigin = 'top left';
+            const content = cloneReaderSnapshot(sourceDocument.documentElement, families, documents);
+            content.style.overflow = 'visible';
+            content.querySelectorAll('head, script, style, link, meta').forEach(element => element.remove());
+            offset.append(content);
+            viewport.append(offset);
+            copy.replaceWith(viewport);
+        }
     });
+    return clone;
+}
+
+async function snapshotReaderPage(node, width, height, pixelRatio) {
+    const families = new Set();
+    const documents = new Set([node.ownerDocument]);
+    const clone = cloneReaderSnapshot(node, families, documents);
     Object.assign(clone.style, {
         position: 'relative', left: 'auto', top: 'auto', margin: '0', transform: 'none',
         width: `${width}px`, height: `${height}px`,
     });
-    const fontStyles = await snapshotFontStyles(families);
+    const [fontStyles] = await Promise.all([
+        snapshotFontStyles(families, documents),
+        documents.size > 1 ? inlineOriginalSnapshotResources(clone) : undefined,
+    ]);
     const serialized = new XMLSerializer().serializeToString(clone);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><style>${fontStyles.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</style><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
     const image = new Image();

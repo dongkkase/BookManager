@@ -3460,6 +3460,49 @@ body,
   font-size: 13px;
 }
 
+.viewer-reader-effect-settings .viewer-setting-field {
+    margin-bottom: 0;
+}
+
+.viewer-settings-section.viewer-reader-settings-group {
+    min-width: 0;
+    margin: 0 0 16px;
+    padding: 12px;
+    border: 1px solid #454545;
+    border-radius: 8px;
+    background: #202020;
+}
+
+.viewer-reader-settings-group > legend {
+    padding: 0 6px;
+    color: #eeeeee;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.viewer-reader-settings-group:disabled {
+    opacity: 0.5;
+}
+
+.viewer-epub-style-settings .viewer-setting-description {
+    margin: 8px 0 0;
+    color: #aaa;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.viewer-text-page.is-original-reader {
+    padding: 0;
+    background: #fff;
+    color: #000;
+    writing-mode: horizontal-tb;
+}
+
+.viewer-epub-original-scale {
+    flex: 0 0 auto;
+    width: max-content;
+}
+
 .viewer-background-mode {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -3538,6 +3581,64 @@ body,
 .viewer-segmented-buttons button.is-selected {
   background: #3498db;
   color: #ffffff;
+}
+
+.viewer-common-view-settings .viewer-setting-field {
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.viewer-common-view-settings .viewer-setting-field > span {
+    color: #eeeeee;
+    font-weight: 600;
+}
+
+.viewer-segmented-buttons.has-option-icons {
+    gap: 1px;
+    background: #3d3d3d;
+}
+
+.viewer-segmented-buttons.has-option-icons button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 44px;
+    height: auto;
+    padding: 4px;
+    border-right: 0;
+    background: #1d1d1d;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}
+
+.viewer-segmented-buttons.has-option-icons button:hover:not(:disabled):not(.is-selected) {
+    background: #343434;
+}
+
+.viewer-segmented-buttons.has-option-icons button.is-selected {
+    background: #3498db;
+}
+
+.viewer-segmented-buttons.has-option-icons button:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: -3px;
+}
+
+.viewer-segmented-buttons.has-option-icons button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.viewer-segmented-buttons.has-option-icons .viewer-tool-icon-image,
+.viewer-segmented-buttons.has-option-icons .svg-inline--fa {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
 }
 
 .viewer-background-swatches {
@@ -4154,6 +4255,27 @@ body,
   cursor: pointer;
   outline: none;
   pointer-events: auto;
+}
+
+.viewer-slide-toggle {
+    opacity: 0.4;
+    transition: opacity 300ms ease-in-out;
+}
+
+.viewer-slide-toggle:is(:hover, :focus-visible, [aria-expanded="true"]) {
+    opacity: 1;
+}
+
+@media (hover: none) {
+    .viewer-slide-toggle { opacity: 0.65; }
+}
+
+@media (forced-colors: active) {
+    .viewer-slide-toggle { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .viewer-slide-toggle {  }
 }
 
 .viewer-slide-toggle:hover {

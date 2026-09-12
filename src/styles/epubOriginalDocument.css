@@ -1,0 +1,32 @@
+.viewer-epub-original-document {
+    position: relative;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: #fff;
+    color: #000;
+}
+
+.viewer-epub-original-document.is-measure {
+    position: absolute;
+    inset: 0 auto auto 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.viewer-epub-original-frame {
+    display: block;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    transform-origin: top left;
+    color-scheme: normal;
+    background: #fff;
+}
+
+.viewer-epub-original-document.is-fixed-layout .viewer-epub-original-frame {
+    position: absolute;
+    left: 50%;
+    translate: -50% 0;
+    transform-origin: top center;
+}

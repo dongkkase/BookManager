@@ -24,7 +24,8 @@ test('만화책, PDF, EPUB, TXT는 저장한 페이지를 불러오고 페이지
     assert.match(loadSessionSource, /nextSession\.type === 'epub'/);
     assert.match(loadSessionSource, /nextSession\.type === 'text'/);
     assert.match(viewerSource, /const pageCountReadyForNavigation = pageCount > 0 && !\(/);
-    assert.match(viewerSource, /session\?\.type === 'epub'[\s\S]*?&& !epubMeasurementReady/);
+    assert.match(viewerSource, /session\?\.type === 'epub' && !epubLayoutReady/);
+    assert.match(viewerSource, /const epubLayoutReady = isOriginalEpub \? epubOriginalReady :[^;]*epubMeasurementReady/);
     assert.match(normalizationSource, /if \(!pageCountReadyForNavigation\) return;/);
 });
 

@@ -10,6 +10,16 @@ import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import { CoverArtwork } from './components/CoverArtwork';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
+import { ViewerScrollOptions, ViewerScrollPopover } from './components/viewer/ViewerScrollControls';
+import EpubOriginalDocument from './components/viewer/EpubOriginalDocument';
+import { EpubAudioControls } from './components/viewer/EpubAudioControls';
+import { mapEpubAudioTracks } from './epubAudioContext';
+import { useEpubAudioContext } from './useEpubAudioContext';
+import { useEpubAudioPlayback } from './useEpubAudioPlayback';
+import { restoreEpubOriginalScrollPosition } from './epubOriginalScrollRestore';
+import { buildOriginalEpubPages, captureEpubReadingPosition, resolveEpubReadingPosition } from './epubOriginalPagination';
+import { normalizeScrollSettings } from './viewerScroll';
+import { useViewerScroll } from './useViewerScroll';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
@@ -130,13 +140,29 @@ function stopKeyboardShortcutEvent(event) {
 const VIEW_MODES = [
   { id: 'width', label: '가로 맞춤', labelKey: 'viewer.fit.width', key: '7', iconSrc: fitWidthOrHeightIcon },
   { id: 'height', label: '높이 맞춤', labelKey: 'viewer.fit.height', key: '8', iconSrc: fitWidthOrHeightIcon, rotate: 90 },
-  { id: 'fit', label: '전체 크기 맞춤', labelKey: 'viewer.fit.fit', key: '9', iconSrc: showFullSizeIcon },
+  { id: 'fit', label: '전체 맞춤', labelKey: 'viewer.fit.fit', key: '9', iconSrc: showFullSizeIcon },
   { id: 'actual', label: '원본 크기', labelKey: 'viewer.fit.actual', key: '0', iconSrc: fitToPageIcon },
 ];
 const FLOW_MODES = [
-  { id: 'single', label: '한장보기모드', labelKey: 'viewer.read_mode.single', iconSrc: readModeOnePageIcon },
-  { id: 'spread', label: '두장보기모드', labelKey: 'viewer.read_mode.spread', iconSrc: readModeDoublePageIcon },
-  { id: 'scroll', label: '스크롤모드', labelKey: 'viewer.read_mode.scroll', iconSrc: readModeScrollIcon },
+  { id: 'single', label: '한장보기', labelKey: 'viewer.read_mode.single', iconSrc: readModeOnePageIcon },
+  { id: 'spread', label: '두장보기', labelKey: 'viewer.read_mode.spread', iconSrc: readModeDoublePageIcon },
+  { id: 'scroll', label: '스크롤', labelKey: 'viewer.read_mode.scroll', iconSrc: readModeScrollIcon },
+];
+const COVER_DISPLAY_OPTIONS = [
+    { id: 'spread', label: '두장보기에 포함', labelKey: 'viewer.settings.cover_in_spread', iconSrc: readModeDoublePageIcon },
+    { id: 'single', label: '단독 표시', labelKey: 'viewer.settings.cover_alone', iconSrc: readModeOnePageIcon },
+];
+const EPUB_STYLE_OPTIONS = [
+    { id: 'optimized', label: '읽기 최적화', labelKey: 'viewer.settings.epub_style_optimized', icon: 'sliders' },
+    { id: 'original', label: '원본 스타일', labelKey: 'viewer.settings.epub_style_original', icon: 'bookOpen' },
+];
+const READING_DIRECTION_OPTIONS = [
+    { id: 'ltr', label: '왼쪽에서 오른쪽', labelKey: 'viewer.settings.reading_ltr', iconSrc: leftReadIcon, rotate: 180 },
+    { id: 'rtl', label: '오른쪽에서 왼쪽', labelKey: 'viewer.settings.reading_rtl', iconSrc: leftReadIcon },
+];
+const SLIDE_NAV_OPTIONS = [
+    { id: 'show', label: '표시', labelKey: 'viewer.option.visibility_show', iconSrc: slideNavigationIcon },
+    { id: 'hide', label: '숨기기', labelKey: 'viewer.option.visibility_hide', icon: 'eyeSlash' },
 ];
 const THEMES = [
   { id: 'dark', label: '다크', bg: '#181818', fg: '#ededed', headerFg: '#b1b1b1', footerFg: '#a0a0a0' },
@@ -155,6 +181,10 @@ const HIGHLIGHT_COLORS = [
   { id: 'purple', label: '보라', labelKey: 'viewer.context.highlight_color_purple' },
 ];
 const DEFAULT_READER_SETTINGS = {
+    epubStyle: 'optimized',
+    epubOriginalTheme: 'original',
+    epubOriginalVerticalPadding: 40,
+    epubOriginalHorizontalPadding: 40,
   theme: 'dark',
   fontFamily: 'Noto Sans KR',
   fontScale: 100,
@@ -375,6 +405,7 @@ function viewerElementsIncludingSelf(target, selector) {
 function viewerPageTargetIsPrepared(targetLayer, format) {
   if (!targetLayer) return false;
   if (format === 'reader') {
+    if ([...targetLayer.querySelectorAll('.viewer-epub-original-frame')].some(frame => frame.dataset.originalReady !== 'true')) return false;
     const images = [...targetLayer.querySelectorAll('img')];
     return images.every(viewerImageIsPrepared);
   }
@@ -1659,6 +1690,10 @@ function normalizeReaderSettings(settings = {}) {
   const { fontSize: _legacyFontSize, ...readerSettings } = merged;
   return {
     ...readerSettings,
+    epubStyle: merged.epubStyle === 'original' ? 'original' : 'optimized',
+    epubOriginalTheme: THEMES.some(item => item.id === merged.epubOriginalTheme) ? merged.epubOriginalTheme : 'original',
+    epubOriginalVerticalPadding: clampNumber(merged.epubOriginalVerticalPadding, 0, 80, DEFAULT_READER_SETTINGS.epubOriginalVerticalPadding),
+    epubOriginalHorizontalPadding: clampNumber(merged.epubOriginalHorizontalPadding, 0, 80, DEFAULT_READER_SETTINGS.epubOriginalHorizontalPadding),
     fontScale: clampNumber(
       hasFontScale ? settings.fontScale : migratedFontScale,
       READER_FONT_SCALE_MIN,
@@ -2346,6 +2381,25 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '', ex
     return (node.children || []).map((child, index) => renderEpubHtmlNode(child, `${key}-${index}`, markContext));
   }
   const anchorProps = node.id ? { 'data-epub-anchor': node.id } : {};
+    if (node.audioTrackId) {
+        const playing = markContext.audioState?.trackId === node.audioTrackId && markContext.audioState.status === 'playing';
+        const label = viewerText(playing ? 'viewer.epub_audio.pause' : 'viewer.epub_audio.play', playing ? '일시정지' : '재생');
+        return (
+            <button
+                key={key}
+                type="button"
+                className="viewer-epub-audio-inline"
+                data-epub-audio-id={node.audioTrackId}
+                {...anchorProps}
+                {...extraProps}
+                aria-label={label}
+                onClick={event => { event.stopPropagation(); markContext.onAudioRequest?.(node.audioTrackId); }}
+            >
+                <FaIcon name={playing ? 'pause' : 'music'} />
+                {label}
+            </button>
+        );
+    }
   if (tagName === 'br') return <br key={key} />;
   if (tagName === 'hr') {
     return <hr key={key} className={viewerClassName(extraClassName, 'viewer-reader-html-rule', node.className)} {...anchorProps} {...extraProps} />;
@@ -2665,6 +2719,10 @@ function paginateReaderChapter(chapter = {}, options = {}) {
     const rawText = String(block?.text || '');
     const hasPreservedBlankText = rawText.includes('\u00a0') && !rawText.replace(/[\s\u00a0]+/g, '');
     const text = hasPreservedBlankText ? '\u00a0' : rawText.trim();
+    if (!text && block.hasAudio) {
+        addPackedBlock(block, '', { preserveNodes: true, lineCost: 2 });
+        continue;
+    }
     if (!text && String(block?.tagName || '').toLowerCase() === 'hr') {
       addPackedBlock(block, '', {
         preserveNodes: true,
@@ -2752,7 +2810,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
   }));
 }
 
-function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRotate = 0, children, active = false, className = '' }) {
+function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRotate = 0, children, active = false, className = '', ariaExpanded, ariaControls, ariaHasPopup }) {
   const hasText = Boolean(children);
   return (
     <button
@@ -2760,6 +2818,9 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
       className={`viewer-tool-button ${hasText ? 'has-text' : ''} ${active ? 'is-active' : ''} ${className}`.trim()}
       title={title}
       aria-label={title}
+      aria-expanded={ariaExpanded}
+      aria-controls={ariaControls}
+      aria-haspopup={ariaHasPopup}
       disabled={disabled}
       onMouseDown={event => {
         if (event.button === 0) event.preventDefault();
@@ -2975,7 +3036,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', onMovePage, onMoveToPage, onOpenTtsSettings, onToast }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onPlaybackChange }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
@@ -2983,6 +3044,9 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const [openAiState, setOpenAiState] = useState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
   const [open, setOpen] = useState(false);
   const [rateOpen, setRateOpen] = useState(false);
+    useEffect(() => {
+        if (closeMenu) setOpen(false);
+    }, [closeMenu]);
   const [pendingPlayAfterPageMove, setPendingPlayAfterPageMove] = useState(false);
   const [previewingVoiceValue, setPreviewingVoiceValue] = useState('');
   const suppressEndRef = useRef(false);
@@ -3095,6 +3159,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const isActivelyPlaying = isRemoteEngine ? (isOpenAiLoading || isOpenAiPlaying) : state.isPlaying && !state.isPaused;
   const isTtsActive = (isRemoteEngine ? openAiState.status !== 'idle' : state.isPlaying || state.isPaused)
     || Boolean(previewingVoiceValue);
+    useEffect(() => {
+        onPlaybackChange?.(Boolean(isActivelyPlaying || previewingVoiceValue));
+    }, [isActivelyPlaying, onPlaybackChange, previewingVoiceValue]);
+    useEffect(() => () => onPlaybackChange?.(false), [onPlaybackChange]);
   const canMovePrevious = pageIndex > 0;
   const canMoveNext = pageIndex < pageCount - 1;
   const hasOpenAiTtsApiKey = ttsApiKeyState.openai;
@@ -3784,7 +3852,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
         onMouseDown={event => {
           if (event.button === 0) event.preventDefault();
         }}
-        onClick={() => setOpen(current => !current)}
+        onClick={() => {
+            if (!open) onMenuOpen?.();
+            setOpen(current => !current);
+        }}
       >
         <span>{viewerText('viewer.tts.title', 'TTS')}</span>
       </button>
@@ -4021,7 +4092,7 @@ function ViewerHelpModal({ open, onClose }) {
   const shortcutRows = [
     { key: '[ / ]', description: viewerText('viewer.help.shortcut_file', '이전파일과 다음파일로 이동합니다.') },
     { keys: ['← / →', '↑ / ↓', 'PageUp / PageDown'], description: viewerText('viewer.help.shortcut_page_group', '이전장과 다음장으로 이동합니다.') },
-    { key: viewerText('viewer.help.shortcut_wheel_key', '마우스 휠'), description: viewerText('viewer.help.shortcut_wheel', '한장보기와 두장보기에서는 페이지를 넘기고, 스크롤모드에서는 본문을 스크롤합니다.') },
+    { key: viewerText('viewer.help.shortcut_wheel_key', '마우스 휠'), description: viewerText('viewer.help.shortcut_wheel', '한장보기와 두장보기에서는 페이지를 넘기고, 스크롤에서는 본문을 스크롤합니다.') },
     { key: viewerText('viewer.help.shortcut_swipe_key', '스와이프'), description: viewerText('viewer.help.shortcut_swipe', '터치 화면에서 좌우로 스와이프해 이전장과 다음장으로 이동합니다.') },
     { key: 'Home / End', description: viewerText('viewer.help.shortcut_home_end', '첫 페이지와 마지막 페이지로 이동합니다.') },
     {
@@ -4033,7 +4104,7 @@ function ViewerHelpModal({ open, onClose }) {
       ],
       description: viewerText('viewer.help.shortcut_zoom', 'Ctrl/⌘+휠 또는 마우스 버튼+휠은 페이지 위의 포인터를 기준으로 확대/축소합니다. 100% 미만 구간과 페이지 밖 여백에서는 화면 중앙을 기준으로 합니다. 툴바와 +/- 키는 항상 중앙을 기준으로 조절합니다.'),
     },
-    { keys: ['0', '7', '8', '9'], description: viewerText('viewer.help.shortcut_fit_group', '원본 크기, 가로 맞춤, 높이 맞춤, 전체 크기 맞춤으로 전환합니다.') },
+    { keys: ['0', '7', '8', '9'], description: viewerText('viewer.help.shortcut_fit_group', '원본 크기, 가로 맞춤, 높이 맞춤, 전체 맞춤으로 전환합니다.') },
     { key: 'B', description: viewerText('viewer.help.shortcut_bookmark', '현재 페이지를 책갈피로 추가합니다.') },
     { keys: [viewerShortcutLabel(['Mod', 'F']), 'L'], description: viewerText('viewer.help.shortcut_navigation_group', '목차 및 검색 패널을 열고 검색 입력 또는 목차 탭으로 이동합니다.') },
     { keys: ['Enter', 'F11', viewerText('viewer.help.shortcut_double_click_key', '더블클릭')], description: viewerText('viewer.help.shortcut_fullscreen_group', '뷰어 본문 또는 창 전체화면을 전환합니다.') },
@@ -4046,12 +4117,12 @@ function ViewerHelpModal({ open, onClose }) {
     { icon: 'angleRight', title: viewerText('viewer.toolbar.next_page', '다음장'), description: viewerText('viewer.help.toolbar_next_page', '현재 문서의 다음 페이지로 이동합니다.') },
     { iconSrc: fitWidthOrHeightIcon, title: viewerText('viewer.fit.width', '가로 맞춤'), description: viewerText('viewer.help.toolbar_fit_width', '페이지를 뷰어의 가로 폭에 맞춥니다.') },
     { iconSrc: fitWidthOrHeightIcon, rotate: 90, title: viewerText('viewer.fit.height', '높이 맞춤'), description: viewerText('viewer.help.toolbar_fit_height', '페이지를 뷰어의 높이에 맞춥니다.') },
-    { iconSrc: showFullSizeIcon, title: viewerText('viewer.fit.fit', '전체 크기 맞춤'), description: viewerText('viewer.help.toolbar_fit_page', '페이지 전체가 보이도록 크기를 맞춥니다.') },
+    { iconSrc: showFullSizeIcon, title: viewerText('viewer.fit.fit', '전체 맞춤'), description: viewerText('viewer.help.toolbar_fit_page', '페이지 전체가 보이도록 크기를 맞춥니다.') },
     { iconSrc: fitToPageIcon, title: viewerText('viewer.fit.actual', '원본 크기'), description: viewerText('viewer.help.toolbar_actual', '원본 크기 기준으로 표시합니다.') },
     { iconSrc: plusMinusIcon, title: viewerText('viewer.zoom.title', '확대/축소'), description: viewerText('viewer.help.toolbar_zoom', '배율 슬라이더와 리셋 버튼을 열어 확대/축소를 조절합니다.') },
-    { iconSrc: readModeOnePageIcon, title: viewerText('viewer.read_mode.single', '한장보기모드'), description: viewerText('viewer.help.toolbar_single', '한 페이지씩 읽습니다.') },
-    { iconSrc: readModeDoublePageIcon, title: viewerText('viewer.read_mode.spread', '두장보기모드'), description: viewerText('viewer.help.toolbar_spread', '두 페이지를 펼침 형태로 읽습니다.') },
-    { iconSrc: readModeScrollIcon, title: viewerText('viewer.read_mode.scroll', '스크롤모드'), description: viewerText('viewer.help.toolbar_scroll', '문서를 세로로 이어서 스크롤합니다.') },
+    { iconSrc: readModeOnePageIcon, title: viewerText('viewer.read_mode.single', '한장보기'), description: viewerText('viewer.help.toolbar_single', '한 페이지씩 읽습니다.') },
+    { iconSrc: readModeDoublePageIcon, title: viewerText('viewer.read_mode.spread', '두장보기'), description: viewerText('viewer.help.toolbar_spread', '두 페이지를 펼침 형태로 읽습니다.') },
+    { iconSrc: readModeScrollIcon, title: viewerText('viewer.read_mode.scroll', '스크롤'), description: viewerText('viewer.help.toolbar_scroll', '문서를 세로로 이어서 스크롤합니다.') },
     { text: 'TTS', title: viewerText('viewer.tts.title', 'TTS'), description: viewerText('viewer.help.toolbar_tts', 'EPUB/TXT에서 TTS 플로팅 메뉴를 열어 현재 페이지 본문을 읽습니다. 메뉴가 열린 동안 Space로 재생/일시정지를 전환하고, 다음/이전 페이지로 이동하면 새 페이지 본문부터 다시 읽습니다. 페이지 말머리는 읽지 않습니다.') },
     { iconSrc: leftReadIcon, title: viewerText('viewer.toolbar.reading_direction_group', '읽기방향'), description: viewerText('viewer.help.toolbar_direction', '만화책의 좌우 읽기 방향을 전환합니다.') },
     { iconSrc: slideNavigationIcon, title: viewerText('viewer.toolbar.slide_nav_group', '슬라이드 탐색 바'), description: viewerText('viewer.help.toolbar_slide_nav', '하단 페이지 슬라이드 탐색 바를 표시하거나 숨깁니다.') },
@@ -5169,13 +5240,14 @@ function ReaderRangeSetting({ label, value, min, max, step = 1, unit = '', onCha
   );
 }
 
-function ReaderSegmentedSetting({ label, value, options, onChange }) {
+function ReaderSegmentedSetting({ label, value, options, onChange, disabled = false }) {
   const shouldWrap = options.length > 4;
+    const hasIcons = options.some(option => option.iconSrc || option.icon);
   return (
     <div className="viewer-setting-field">
       <span>{label}</span>
       <div
-        className={`viewer-segmented-buttons ${shouldWrap ? 'is-wrapped' : ''}`.trim()}
+        className={`viewer-segmented-buttons ${shouldWrap ? 'is-wrapped' : ''} ${hasIcons ? 'has-option-icons' : ''}`.trim()}
         role="radiogroup"
         aria-label={label}
         style={{ '--viewer-segment-count': options.length }}
@@ -5186,10 +5258,21 @@ function ReaderSegmentedSetting({ label, value, options, onChange }) {
             type="button"
             role="radio"
             aria-checked={value === option.id}
+            disabled={disabled}
             className={value === option.id ? 'is-selected' : ''}
             onClick={() => onChange(option.id)}
           >
-            {viewerText(option.labelKey, option.label)}
+            {option.iconSrc && (
+                <img
+                    className="viewer-tool-icon-image"
+                    src={option.iconSrc}
+                    alt=""
+                    aria-hidden="true"
+                    style={option.rotate ? { transform: `rotate(${option.rotate}deg)` } : undefined}
+                />
+            )}
+            {option.icon && <FaIcon name={option.icon} size={16} />}
+            <span>{viewerText(option.labelKey, option.label)}</span>
           </button>
         ))}
       </div>
@@ -5207,10 +5290,28 @@ function ReaderSettingsPanel({
   onChange,
   onReset,
   onClose,
+    viewMode,
+    flowMode,
+    spreadCoverFirst,
+    readingDirection,
+    slideNavOpen,
+    slideNavAvailable,
+    onViewModeChange,
+    onFlowModeChange,
+    onSpreadCoverFirstChange,
+    onReadingDirectionChange,
+    onSlideNavChange,
+    scrollSettings,
+    onScrollSettingsChange,
+    autoScrolling,
+    onToggleAutoScroll,
+    scrollControlsDisabled,
+    epubOriginalAvailable,
 }) {
   const theme = THEMES.find(item => item.id === settings.theme) || THEMES[0];
   const fontOptions = fontOptionsFromGroups(fontGroups, sessionType);
   const showReaderSettings = sessionType === 'epub' || sessionType === 'text';
+    const originalStyle = sessionType === 'epub' && settings.epubStyle === 'original';
   const showComicSettings = sessionType === 'comic';
   const showPdfSettings = sessionType === 'pdf';
   const showBackgroundSettings = sessionType === 'comic' || sessionType === 'pdf' || sessionType === 'epub' || sessionType === 'text';
@@ -5227,6 +5328,59 @@ function ReaderSettingsPanel({
           <FaIcon name="xmark" />
         </button>
       </div>
+        {showBackgroundSettings && (
+            <section className="viewer-settings-section viewer-common-view-settings">
+                <h3>{viewerText('viewer.settings.common_view', '기본 보기')}</h3>
+                {viewMode && (
+                    <ReaderSegmentedSetting
+                        label={viewerText('viewer.settings.page_fit', '페이지 맞춤')}
+                        value={viewMode}
+                        options={VIEW_MODES}
+                        onChange={onViewModeChange}
+                    />
+                )}
+                {flowMode && (
+                    <ReaderSegmentedSetting
+                        label={viewerText('viewer.settings.view_mode', '보기 모드')}
+                        value={flowMode}
+                        options={FLOW_MODES}
+                        onChange={onFlowModeChange}
+                    />
+                )}
+                {showComicSettings && flowMode === 'spread' && (
+                    <ReaderSegmentedSetting
+                        label={viewerText('viewer.settings.cover_display', '커버 표시')}
+                        value={spreadCoverFirst ? 'single' : 'spread'}
+                        options={COVER_DISPLAY_OPTIONS}
+                        onChange={value => onSpreadCoverFirstChange(value === 'single')}
+                    />
+                )}
+                {flowMode === 'scroll' && (
+                    <ViewerScrollOptions
+                        settings={scrollSettings}
+                        onChange={onScrollSettingsChange}
+                        autoScrolling={autoScrolling}
+                        onToggleAutoScroll={onToggleAutoScroll}
+                        disabled={scrollControlsDisabled}
+                    />
+                )}
+                {showComicSettings && (
+                    <ReaderSegmentedSetting
+                        label={viewerText('viewer.toolbar.reading_direction_group', '읽기방향')}
+                        value={readingDirection}
+                        options={READING_DIRECTION_OPTIONS}
+                        onChange={onReadingDirectionChange}
+                    />
+                )}
+                <ReaderSegmentedSetting
+                    label={viewerText('viewer.toolbar.slide_nav_group', '슬라이드 탐색 바')}
+                    value={slideNavOpen ? 'show' : 'hide'}
+                    options={SLIDE_NAV_OPTIONS}
+                    disabled={!slideNavAvailable}
+                    onChange={value => onSlideNavChange(value === 'show')}
+                />
+            </section>
+        )}
       {showBackgroundSettings && (
         <section className="viewer-settings-section">
           <h3>{viewerText('viewer.settings.background', '배경')}</h3>
@@ -5317,8 +5471,71 @@ function ReaderSettingsPanel({
         </section>
       )}
       {showReaderSettings && (
-        <section className="viewer-settings-section">
-          <h3>{viewerText('viewer.settings.read', '읽기')}</h3>
+        <>
+            {sessionType === 'epub' && (
+                <section className="viewer-settings-section viewer-epub-style-settings">
+                    <ReaderSegmentedSetting
+                        label={viewerText('viewer.settings.epub_style', 'EPUB 표시 방식')}
+                        value={settings.epubStyle}
+                        options={EPUB_STYLE_OPTIONS}
+                        disabled={!epubOriginalAvailable}
+                        onChange={epubStyle => onChange({ epubStyle })}
+                    />
+                    <p className="viewer-setting-description">
+                        {settings.epubStyle === 'original'
+                            ? viewerText('viewer.settings.epub_style_original_help', '책의 글꼴과 배치를 유지하며 테마와 바깥 여백을 조절할 수 있습니다. 원본 테마를 선택하면 책의 색상을 사용합니다.')
+                            : viewerText('viewer.settings.epub_style_optimized_help', '본문을 읽기 편하게 정리하고 원하는 글꼴과 여백으로 조절합니다.')}
+                    </p>
+                </section>
+            )}
+            <section className="viewer-settings-section viewer-reader-effect-settings">
+                <ReaderSegmentedSetting
+                    label={viewerText('viewer.settings.page_effect', '넘김효과')}
+                    value={settings.pageEffect}
+                    options={PAGE_EFFECT_OPTIONS}
+                    onChange={pageEffect => onChange({ pageEffect })}
+                />
+            </section>
+            {originalStyle ? (
+                <fieldset className="viewer-settings-section viewer-reader-settings-group viewer-original-appearance-settings">
+                    <legend>{viewerText('viewer.settings.read', '읽기')}</legend>
+                    <div className="viewer-setting-field">
+                        <span>{viewerText('viewer.settings.theme', '테마')}</span>
+                        <div className="viewer-theme-swatches" aria-label={viewerText('viewer.settings.theme', '테마')}>
+                            {[{ id: 'original', label: '원본', bg: '#ffffff', fg: '#222222' }, ...THEMES].map(item => (
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    className={settings.epubOriginalTheme === item.id ? 'is-selected' : ''}
+                                    style={{ '--viewer-theme-bg': item.bg, '--viewer-theme-fg': item.fg }}
+                                    title={viewerText(`viewer.theme.${item.id}`, item.label)}
+                                    aria-label={viewerText(`viewer.theme.${item.id}`, item.label)}
+                                    aria-pressed={settings.epubOriginalTheme === item.id}
+                                    onClick={() => onChange({ epubOriginalTheme: item.id })}
+                                ><span>{viewerText(`viewer.theme.${item.id}`, item.label)}</span></button>
+                            ))}
+                        </div>
+                    </div>
+                    <ReaderRangeSetting
+                        label={viewerText('viewer.settings.padding_y', '상/하 여백')}
+                        value={settings.epubOriginalVerticalPadding}
+                        min={0}
+                        max={80}
+                        unit="px"
+                        onChange={epubOriginalVerticalPadding => onChange({ epubOriginalVerticalPadding })}
+                    />
+                    <ReaderRangeSetting
+                        label={viewerText('viewer.settings.padding_x', '좌/우 여백')}
+                        value={settings.epubOriginalHorizontalPadding}
+                        min={0}
+                        max={80}
+                        unit="px"
+                        onChange={epubOriginalHorizontalPadding => onChange({ epubOriginalHorizontalPadding })}
+                    />
+                </fieldset>
+            ) : (
+            <fieldset className="viewer-settings-section viewer-reader-settings-group">
+                <legend>{viewerText('viewer.settings.read', '읽기')}</legend>
           <div className="viewer-setting-field">
             <span>{viewerText('viewer.settings.theme', '테마')}</span>
             <div className="viewer-theme-swatches" aria-label={viewerText('viewer.settings.theme', '테마')}>
@@ -5427,14 +5644,10 @@ function ReaderSettingsPanel({
             options={WRAP_OPTIONS}
             onChange={wrapMode => onChange({ wrapMode })}
           />
-          <ReaderSegmentedSetting
-            label={viewerText('viewer.settings.page_effect', '넘김효과')}
-            value={settings.pageEffect}
-            options={PAGE_EFFECT_OPTIONS}
-            onChange={pageEffect => onChange({ pageEffect })}
-          />
-          <button type="button" className="viewer-settings-reset" onClick={onReset}>{viewerText('viewer.settings.reset', '초기화')}</button>
-        </section>
+            </fieldset>
+            )}
+            <button type="button" className="viewer-settings-reset" onClick={onReset}>{viewerText('viewer.settings.reset', '초기화')}</button>
+        </>
       )}
     </aside>
   );
@@ -5458,9 +5671,20 @@ function ViewerApp() {
   const [epubToc, setEpubToc] = useState([]);
   const [epubMetadata, setEpubMetadata] = useState({});
   const [epubStylesheet, setEpubStylesheet] = useState('');
+    const [epubAudioSettings, setEpubAudioSettings] = useState(() => {
+        const saved = readJson('bookmanager-epub-audio', {});
+        return { autoplay: saved.autoplay !== false, volume: clamp(Number.isFinite(saved.volume) ? saved.volume : 0.8, 0, 1), muted: saved.muted === true };
+    });
+    const [epubTtsActive, setEpubTtsActive] = useState(false);
+    const [epubOriginalLayoutState, setEpubOriginalLayoutState] = useState({ key: '', layouts: {} });
+    const epubPositionPendingRef = useRef(null);
+    const epubStablePositionRef = useRef(null);
+    const epubOriginalScrollRestoreRef = useRef({ cancel: null, position: null, generation: 0 });
   const [measuredEpubPagination, setMeasuredEpubPagination] = useState(null);
   const [pdfToc, setPdfToc] = useState([]);
   const [flowMode, setFlowMode] = useState('single');
+    const [scrollSettings, setScrollSettings] = useState(() => normalizeScrollSettings());
+    const [scrollMenuOpen, setScrollMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState('fit');
   const [zoom, setZoom] = useState(100);
   const zoomStep = session?.type === 'comic' ? COMIC_ZOOM_STEP : ZOOM_STEP;
@@ -5544,6 +5768,41 @@ function ViewerApp() {
   const scrollRestoreTokenRef = useRef(0);
   const textSelectionPointerRef = useRef(null);
   const selectionTtsRunRef = useRef(0);
+    const autoScrollUpdateTimeRef = useRef(0);
+    const autoScrollPersistTimeRef = useRef(0);
+    const autoScrollLocalSaveTimeRef = useRef(0);
+    const previousAutoScrollingRef = useRef(false);
+    const persistCurrentPositionRef = useRef(null);
+    const {
+        autoScrolling,
+        toggleAutoScroll,
+        stopAutoScroll,
+        scrollByKeyboard,
+        handleScrollWheel,
+        cancelMotion,
+    } = useViewerScroll({
+        scrollRef,
+        enabled: flowMode === 'scroll' && Boolean(session) && session.type !== 'audio'
+            && !loading && !initialRenderLoading && !error,
+        settings: scrollSettings,
+        sessionKey: session?.id || session?.filePath || '',
+        blocked: Boolean(helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || imageLightbox || lookupPanel || selectionMenu || navigationPanelOpen),
+    });
+    const updateScrollSettings = useCallback(patch => {
+        setScrollSettings(current => normalizeScrollSettings({ ...current, ...patch }));
+    }, []);
+    useEffect(() => {
+        if (flowMode !== 'scroll') setScrollMenuOpen(false);
+    }, [flowMode]);
+    useEffect(() => {
+        if (!scrollMenuOpen) return undefined;
+        const closeOutside = event => {
+            if (event.target?.closest?.('.viewer-scroll-menu, [aria-controls="viewer-scroll-menu"]')) return;
+            setScrollMenuOpen(false);
+        };
+        document.addEventListener('pointerdown', closeOutside);
+        return () => document.removeEventListener('pointerdown', closeOutside);
+    }, [scrollMenuOpen]);
 
   const restoreViewerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -5599,6 +5858,8 @@ function ViewerApp() {
   }, [pageIndex]);
 
   const isReaderDocument = session?.type === 'epub' || session?.type === 'text';
+    const epubOriginalAvailable = session?.type === 'epub' && epubChapters.length > 0 && epubChapters.every(chapter => chapter.original?.html);
+    const isOriginalEpub = Boolean(epubOriginalAvailable && readerSettings.epubStyle === 'original');
   const supportsNavigationPanel = session?.type === 'epub' || session?.type === 'pdf' || session?.type === 'text';
   const theme = THEMES.find(item => item.id === readerSettings.theme) || THEMES[0];
   const lineHeightPercent = readerSettings.lineHeightPercent;
@@ -5673,10 +5934,31 @@ function ViewerApp() {
     session?.type,
     viewMode,
   ]);
+    const epubOriginalScale = Math.max(0.1, (Number(zoom) || 100) / 100);
+    const epubOriginalPageSize = useMemo(() => ({
+        width: Math.max(120, Math.floor(readerPageMetrics.pageFrameWidth / epubOriginalScale)),
+        height: Math.max(160, Math.floor(readerPageMetrics.pageFrameHeight / epubOriginalScale)),
+    }), [epubOriginalScale, readerPageMetrics.pageFrameWidth, readerPageMetrics.pageFrameHeight]);
+    const epubOriginalAppearance = useMemo(() => ({
+        theme: THEMES.find(item => item.id === readerSettings.epubOriginalTheme) || null,
+        verticalPadding: readerSettings.epubOriginalVerticalPadding,
+        horizontalPadding: readerSettings.epubOriginalHorizontalPadding,
+    }), [readerSettings.epubOriginalTheme, readerSettings.epubOriginalVerticalPadding, readerSettings.epubOriginalHorizontalPadding]);
+    const epubOriginalLayoutKey = `${session?.id || ''}:${epubOriginalPageSize.width}:${epubOriginalPageSize.height}:${epubOriginalScale}:${epubOriginalAppearance.verticalPadding}:${epubOriginalAppearance.horizontalPadding}`;
+    const epubOriginalLayouts = useMemo(() => epubOriginalLayoutState.key === epubOriginalLayoutKey
+        ? epubOriginalLayoutState.layouts : {}, [epubOriginalLayoutState, epubOriginalLayoutKey]);
+    const epubOriginalReady = flowMode === 'scroll' || epubChapters.every(chapter => epubOriginalLayouts[chapter.name]);
+    const recordOriginalLayout = useCallback((name, layout) => {
+        setEpubOriginalLayoutState(current => {
+            const layouts = current.key === epubOriginalLayoutKey ? current.layouts : {};
+            if (layouts[name]) return current;
+            return { key: epubOriginalLayoutKey, layouts: { ...layouts, [name]: layout } };
+        });
+    }, [epubOriginalLayoutKey]);
   const textPages = useMemo(() => paginateText(textContent, readerPageMetrics), [readerPageMetrics, textContent]);
   const textReaderItems = useMemo(() => textPages.map(text => ({ text })), [textPages]);
   const estimatedEpubPages = useMemo(() => (
-    epubChapters.flatMap((chapter, chapterIndex) => paginateReaderChapter({
+    epubChapters.flatMap((chapter, chapterIndex) => chapter.originalOnly ? [] : paginateReaderChapter({
       ...chapter,
       chapterIndex,
     }, {
@@ -5736,13 +6018,31 @@ function ViewerApp() {
   const epubMeasurementReady = measuredEpubPagination?.key === epubMeasurementKey
     && Array.isArray(measuredEpubPagination.pages)
     && measuredEpubPagination.pages.length > 0;
-  const epubPages = epubMeasurementReady ? measuredEpubPagination.pages : estimatedEpubPages;
+    const originalEpubPages = useMemo(() => buildOriginalEpubPages(epubChapters, epubOriginalLayouts, { scroll: flowMode === 'scroll' }), [epubChapters, epubOriginalLayouts, flowMode]);
+    const epubPages = isOriginalEpub ? originalEpubPages : epubMeasurementReady ? measuredEpubPagination.pages : estimatedEpubPages;
+    const captureCurrentEpubPosition = useCallback(targetIndex => {
+        const position = captureEpubReadingPosition(epubPages, targetIndex);
+        if (!position || !isOriginalEpub || flowMode !== 'scroll') return position;
+        const node = scrollRef.current;
+        const chapterNode = node?.querySelector(`[data-reader-index="${targetIndex}"]`);
+        if (!chapterNode) return position;
+        const bounds = chapterNode.getBoundingClientRect();
+        return {
+            ...position,
+            chapterProgress: clamp((node.getBoundingClientRect().top - bounds.top) / Math.max(1, bounds.height), 0, 1),
+            textQuote: '',
+        };
+    }, [epubPages, flowMode, isOriginalEpub]);
+    const readerHighlights = useMemo(() => session?.type === 'epub' ? highlights.map(highlight => highlight.epubPosition
+        ? { ...highlight, pageIndex: resolveEpubReadingPosition(epubPages, highlight.epubPosition) } : highlight) : highlights, [epubPages, highlights, session?.type]);
+    const epubLayoutReady = isOriginalEpub ? epubOriginalReady : flowMode === 'scroll' || epubMeasurementBlocks.length === 0 || epubMeasurementReady;
   const epubPageIndexByTarget = useMemo(() => {
     const pageIndexByTarget = new Map();
     epubPages.forEach((page, index) => {
       const entryName = page.name || '';
       const entryKey = epubTargetKey(entryName, '');
       if (entryKey && !pageIndexByTarget.has(entryKey)) pageIndexByTarget.set(entryKey, index);
+      (page.anchors || []).forEach(anchor => pageIndexByTarget.set(epubTargetKey(entryName, anchor), index));
       (page.blocks || []).forEach(block => {
         (block.anchors || []).forEach(anchor => {
           const key = epubTargetKey(entryName, anchor);
@@ -5761,11 +6061,100 @@ function ViewerApp() {
         : [];
   const pageCount = session?.type === 'pdf' ? pdfPageCount : flowItems.length;
   const pageCountReadyForNavigation = pageCount > 0 && !(
-    session?.type === 'epub'
-    && flowMode !== 'scroll'
-    && epubMeasurementBlocks.length > 0
-    && !epubMeasurementReady
+    session?.type === 'epub' && !epubLayoutReady
   );
+    const epubAudioMapping = useMemo(() => mapEpubAudioTracks(epubChapters, epubPages), [epubChapters, epubPages]);
+    const epubAudioPlaylist = useEpubAudioContext({
+        rootRef: scrollRef,
+        mapping: epubAudioMapping,
+        enabled: session?.type === 'epub' && !loading && !initialRenderLoading && !error && epubLayoutReady,
+        sessionKey: session?.id || '',
+        flowMode,
+        pageIndex,
+    });
+    const epubAudioPlayer = useEpubAudioPlayback({
+        playlist: epubAudioPlaylist,
+        pageKey: flowMode === 'scroll' ? 'scroll' : `${flowMode}:${pageIndex}`,
+        sessionKey: session?.id || '',
+        enabled: session?.type === 'epub' && !loading && !epubTtsActive && !selectionTtsLoading,
+        autoplay: epubAudioSettings.autoplay,
+        volume: epubAudioSettings.volume,
+        muted: epubAudioSettings.muted,
+        pauseScope: 'session',
+    });
+    const updateEpubAudioSettings = useCallback(patch => {
+        setEpubAudioSettings(current => {
+            const next = { ...current, ...patch };
+            saveJson('bookmanager-epub-audio', next);
+            return next;
+        });
+    }, []);
+    const requestEpubAudio = trackId => {
+        if (epubAudioPlayer.currentTrack?.id === trackId && ['playing', 'loading'].includes(epubAudioPlayer.status)) epubAudioPlayer.pause();
+        else epubAudioPlayer.playTrack(trackId);
+    };
+    const epubActiveLayoutKey = `${isOriginalEpub ? epubOriginalLayoutKey : epubMeasurementKey}:${readerSettings.epubStyle}:${flowMode}`;
+    useLayoutEffect(() => {
+        if (session?.type !== 'epub' || loading || !readiveResumeReady) return;
+        const previous = epubStablePositionRef.current;
+        if (previous?.sessionId === session.id && previous.key !== epubActiveLayoutKey && !epubPositionPendingRef.current) {
+            epubPositionPendingRef.current = { ...previous };
+        }
+        if (!epubLayoutReady || epubPages.length === 0) return;
+        const pending = epubPositionPendingRef.current;
+        if (pending?.sessionId === session.id && pending.position) {
+            const resolvedIndex = resolveEpubReadingPosition(epubPages, pending.position);
+            const target = flowMode === 'spread' ? Math.floor(resolvedIndex / 2) * 2 : resolvedIndex;
+            if (pageIndex !== target) {
+                setPageIndexSynced(target, { selectedPageIndex: resolvedIndex });
+                return;
+            }
+            if (flowMode === 'scroll' && isOriginalEpub && pending.restoreChapter) {
+                const restore = epubOriginalScrollRestoreRef.current;
+                const generation = ++restore.generation;
+                restore.cancel?.();
+                restore.position = pending.position;
+                const token = ++scrollRestoreTokenRef.current;
+                restore.cancel = restoreEpubOriginalScrollPosition(scrollRef.current, { ...pending.position, pageIndex: target }, {
+                    isCurrent: () => restore.generation === generation && scrollRestoreTokenRef.current === token,
+                    onFinish: () => {
+                        if (restore.generation !== generation) return;
+                        restore.cancel = null;
+                        restore.position = null;
+                        persistCurrentPositionRef.current?.();
+                    },
+                });
+            } else if (flowMode === 'scroll') {
+                window.requestAnimationFrame(() => {
+                    const node = scrollRef.current;
+                    if (!node) return;
+                    if (pending.flowMode === 'scroll' && pending.original === isOriginalEpub) {
+                        node.scrollTop = Math.max(0, node.scrollHeight - node.clientHeight) * (pending.scrollPercent || 0) / 100;
+                    } else {
+                        const chapterNode = node.querySelector(`[data-reader-index="${target}"]`);
+                        if (chapterNode) node.scrollTop += chapterNode.getBoundingClientRect().top - node.getBoundingClientRect().top
+                            + (isOriginalEpub ? chapterNode.getBoundingClientRect().height * (pending.position.chapterProgress || 0) : 0);
+                    }
+                });
+            }
+            epubPositionPendingRef.current = null;
+        }
+        epubStablePositionRef.current = {
+            sessionId: session.id,
+            key: epubActiveLayoutKey,
+            position: epubOriginalScrollRestoreRef.current.position || captureCurrentEpubPosition(pageIndex),
+            original: isOriginalEpub,
+            flowMode,
+            scrollPercent,
+        };
+    }, [captureCurrentEpubPosition, epubActiveLayoutKey, epubLayoutReady, epubPages, flowMode, isOriginalEpub, loading, pageIndex, readiveResumeReady, scrollPercent, session, setPageIndexSynced]);
+    useEffect(() => () => {
+        const restore = epubOriginalScrollRestoreRef.current;
+        restore.generation += 1;
+        restore.cancel?.();
+        restore.cancel = null;
+        restore.position = null;
+    }, [session?.id, flowMode, isOriginalEpub]);
   useEffect(() => {
     if (!initialRenderLoading || !viewerSessionResolved) return undefined;
     if (error || !session || (!loading && pageCount < 1)) {
@@ -5774,10 +6163,7 @@ function ViewerApp() {
     }
     if (loading) return undefined;
     if (
-      session.type === 'epub'
-      && flowMode !== 'scroll'
-      && epubMeasurementBlocks.length > 0
-      && !epubMeasurementReady
+      session.type === 'epub' && !epubLayoutReady
     ) {
       return undefined;
     }
@@ -5825,6 +6211,7 @@ function ViewerApp() {
   }, [
     epubMeasurementBlocks.length,
     epubMeasurementReady,
+    epubLayoutReady,
     error,
     flowMode,
     initialRenderLoading,
@@ -5914,18 +6301,53 @@ function ViewerApp() {
   }, [hasNextBook, showViewerToast, viewerLanguage]);
   const clearNativeSelection = useCallback(() => {
     window.getSelection?.()?.removeAllRanges?.();
+    scrollRef.current?.querySelectorAll('.viewer-epub-original-frame').forEach(frame => frame.contentWindow?.getSelection?.()?.removeAllRanges?.());
   }, []);
   const updateReaderSettings = patch => {
+    cancelMotion();
+    const originalPaddingChanged = isOriginalEpub && ['epubOriginalVerticalPadding', 'epubOriginalHorizontalPadding']
+        .some(key => Object.hasOwn(patch, key) && patch[key] !== readerSettings[key]);
+    if (originalPaddingChanged) {
+        const position = epubOriginalScrollRestoreRef.current.position
+            || epubPositionPendingRef.current?.position
+            || captureCurrentEpubPosition(pageIndexRef.current);
+        epubPositionPendingRef.current = {
+            sessionId: session.id,
+            position,
+            original: true,
+            flowMode,
+            scrollPercent,
+            restoreChapter: flowMode === 'scroll',
+        };
+        if (flowMode === 'scroll') epubOriginalScrollRestoreRef.current.position = position;
+        setActiveSearch(null);
+        setBookSearchResults([]);
+    }
+    if (session?.type === 'epub' && patch.epubStyle && patch.epubStyle !== readerSettings.epubStyle) {
+        epubPositionPendingRef.current = {
+            sessionId: session.id,
+            position: captureCurrentEpubPosition(pageIndexRef.current),
+            original: isOriginalEpub,
+            flowMode,
+            scrollPercent,
+        };
+        setInitialRenderLoading(true);
+        setInitialRenderSequence(current => current + 1);
+        setActiveSearch(null);
+        setBookSearchResults([]);
+    }
     if (patch?.pageEffect === 'page') {
       setFlowMode('spread');
       showViewerToast(viewerText(
         'viewer.toast.page_turn_effect_notice',
-        '책넘김 효과는 두장보기모드에서 적용되며, 몰입형 배경과 함께 사용할 수 있습니다.'
+        '책넘김 효과는 두장보기에서 적용되며, 몰입형 배경과 함께 사용할 수 있습니다.'
       ));
     }
     setReaderSettings(current => normalizeReaderSettings({ ...current, ...patch }));
   };
   const updateFlowMode = nextFlowMode => {
+    cancelMotion();
+    setScrollMenuOpen(false);
     setFlowMode(nextFlowMode);
     if (nextFlowMode !== 'spread' && readerSettings.pageEffect === 'page') {
       setReaderSettings(current => normalizeReaderSettings({ ...current, pageEffect: 'slide' }));
@@ -6096,13 +6518,15 @@ function ViewerApp() {
     });
     useEffect(() => () => scrollZoomAnchorCleanupRef.current?.(), []);
     const setZoomValue = useCallback(value => {
+        cancelMotion();
         const anchor = createScrollZoomAnchor();
         const nextZoom = clamp(Number(value) || 100, ZOOM_MIN, ZOOM_MAX);
         zoomValueRef.current = nextZoom;
         setZoom(nextZoom);
         restoreScrollZoomAnchor(anchor);
-    }, [createScrollZoomAnchor, restoreScrollZoomAnchor]);
+    }, [cancelMotion, createScrollZoomAnchor, restoreScrollZoomAnchor]);
     const adjustZoom = useCallback((delta, event) => {
+        cancelMotion();
         const currentZoom = Number(zoomValueRef.current) || 100;
         const nextZoom = clamp(currentZoom + delta, ZOOM_MIN, ZOOM_MAX);
         let anchor = createScrollZoomAnchor(currentZoom < 100 || nextZoom < 100 ? undefined : event);
@@ -6115,7 +6539,7 @@ function ViewerApp() {
         zoomValueRef.current = nextZoom;
         setZoom(nextZoom);
         restoreScrollZoomAnchor(anchor);
-    }, [createScrollZoomAnchor, restoreScrollZoomAnchor]);
+    }, [cancelMotion, createScrollZoomAnchor, restoreScrollZoomAnchor]);
   const adjustZoomAtPoint = useCallback((delta, event) => {
     adjustZoom(delta, event);
   }, [adjustZoom]);
@@ -6184,9 +6608,15 @@ function ViewerApp() {
   }, []);
 
   const persistState = useCallback((patch = {}) => {
-    if (!session || session.type === 'audio' || loading || !readiveResumeReady || !pageCountReadyForNavigation) return;
+    if (!session || session.type === 'audio' || loading || !readiveResumeReady || !pageCountReadyForNavigation || epubPositionPendingRef.current) return;
+        if (autoScrolling && Object.keys(patch).length === 0) {
+            const now = Date.now();
+            if (now - autoScrollPersistTimeRef.current < 500) return;
+            autoScrollPersistTimeRef.current = now;
+        }
     const fileState = {
         updatedAt: Date.now(),
+        ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition('pageIndex' in patch ? patch.pageIndex : pageIndex) } : {}),
       pageIndex: 'pageIndex' in patch ? patch.pageIndex : pageIndex,
       scrollPercent: 'scrollPercent' in patch ? patch.scrollPercent : scrollPercent,
       pageCount: 'pageCount' in patch ? patch.pageCount : pageCount,
@@ -6200,9 +6630,11 @@ function ViewerApp() {
       readerSettings: 'readerSettings' in patch ? patch.readerSettings : readerSettings,
       viewerBackground: 'viewerBackground' in patch ? patch.viewerBackground : viewerBackground,
       slideNavOpen: 'slideNavOpen' in patch ? patch.slideNavOpen : slideNavOpen,
+      scrollSettings: 'scrollSettings' in patch ? patch.scrollSettings : scrollSettings,
     };
-    saveJson(storageKey(session, 'state'), fileState);
     saveJson(viewerPrefsKey(session), viewerPrefs);
+    if (epubOriginalScrollRestoreRef.current.position) return;
+    saveJson(storageKey(session, 'state'), fileState);
     window.viewerAPI?.saveReadingState?.(session.id, {
       format: session.type,
       ...fileState,
@@ -6211,19 +6643,25 @@ function ViewerApp() {
     }).catch(error => {
       console.warn('읽기 상태 저장 실패:', error);
     });
-  }, [flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readiveResumeReady, scrollPercent, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
+  }, [autoScrolling, captureCurrentEpubPosition, flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readiveResumeReady, scrollPercent, scrollSettings, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
 
   const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {
-    if (!session || flowMode !== 'scroll' || !readiveResumeReady) return;
+    if (!session || flowMode !== 'scroll' || !readiveResumeReady || epubPositionPendingRef.current || epubOriginalScrollRestoreRef.current.position) return;
+        if (autoScrolling) {
+            const now = Date.now();
+            if (now - autoScrollLocalSaveTimeRef.current < 500) return;
+            autoScrollLocalSaveTimeRef.current = now;
+        }
     const currentState = readJson(storageKey(session, 'state'), {});
     saveJson(storageKey(session, 'state'), {
       ...currentState,
         updatedAt: Date.now(),
+        ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition(nextPageIndex) } : {}),
       pageIndex: clamp(Number(nextPageIndex) || 0, 0, Math.max(0, pageCount - 1)),
       scrollPercent: clamp(Number(nextScrollPercent) || 0, 0, 100),
       pageCount,
     });
-  }, [flowMode, pageCount, readiveResumeReady, session]);
+  }, [autoScrolling, captureCurrentEpubPosition, flowMode, pageCount, readiveResumeReady, session]);
 
   const persistCurrentPosition = useCallback(() => {
     if (!session || session.type === 'audio') return;
@@ -6237,6 +6675,7 @@ function ViewerApp() {
       scrollPercent: currentScrollPercent,
     });
   }, [flowMode, persistState, scrollPercent, session]);
+    persistCurrentPositionRef.current = persistCurrentPosition;
 
   useEffect(() => {
     const handleViewerExit = () => persistCurrentPosition();
@@ -6299,9 +6738,10 @@ function ViewerApp() {
   }, []);
 
     const resetScrollZoomOffset = useCallback(() => {
+        cancelMotion();
         scrollZoomAnchorCleanupRef.current?.();
         scrollRef.current?.style.removeProperty('--viewer-zoom-translate');
-    }, []);
+    }, [cancelMotion]);
 
     useEffect(() => {
         resetScrollZoomOffset();
@@ -6548,10 +6988,13 @@ function ViewerApp() {
   useEffect(() => {
     clearPageTurnRuntime();
     setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
-  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, readingDirection, session?.type, viewMode]);
+  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, readerSettings.epubStyle, readerSettings.epubOriginalTheme, readerSettings.epubOriginalVerticalPadding, readerSettings.epubOriginalHorizontalPadding, readingDirection, session?.type, viewMode]);
 
   const loadSession = useCallback(async nextSession => {
     if (!nextSession) return;
+    persistCurrentPositionRef.current?.();
+    cancelMotion();
+    setScrollMenuOpen(false);
     detachedRemoteTtsToken += 1;
     stopDetachedRemoteTtsAudio();
     const loadSequence = loadSequenceRef.current + 1;
@@ -6571,6 +7014,9 @@ function ViewerApp() {
     clearDocumentFrame();
     setTextContent('');
     setEpubChapters([]);
+    setEpubOriginalLayoutState({ key: '', layouts: {} });
+    epubPositionPendingRef.current = null;
+    epubStablePositionRef.current = null;
     setEpubToc([]);
     setEpubMetadata({});
     setEpubStylesheet('');
@@ -6610,6 +7056,7 @@ function ViewerApp() {
         }
         if (!isCurrentLoad()) return;
         const savedFileState = mergeReadiveResumeState(localFileState, remoteFileState);
+        if (savedFileState !== localFileState && nextSession.type === 'epub') delete savedFileState.epubPosition;
         setReadiveResumePending({ sessionId: nextSession.id, state: savedFileState });
     const savedViewerPrefs = readJson(viewerPrefsKey(nextSession), {});
     const savedPrefs = { ...savedFileState, ...savedViewerPrefs };
@@ -6620,6 +7067,7 @@ function ViewerApp() {
     setReadingDirection(savedPrefs.readingDirection || 'ltr');
     setSpreadCoverFirst(savedPrefs.spreadCoverFirst !== false);
     setSlideNavOpen(savedPrefs.slideNavOpen !== false);
+    setScrollSettings(normalizeScrollSettings(savedPrefs.scrollSettings));
     setReaderSettings(normalizeReaderSettings(savedPrefs.readerSettings || {}));
     setViewerBackground(normalizeViewerBackgroundSettings(savedPrefs.viewerBackground || {}));
     setBookmarks(readJson(storageKey(nextSession, 'bookmarks'), []));
@@ -6691,12 +7139,14 @@ function ViewerApp() {
       if (isCurrentLoad() && nextSession.type !== 'pdf') documentAbortRef.current = null;
       if (isCurrentLoad()) setLoading(false);
     }
-  }, [clearDocumentFrame, clearPageTurnRuntime, restoreSavedScrollPosition, setPageIndexSynced]);
+  }, [cancelMotion, clearDocumentFrame, clearPageTurnRuntime, restoreSavedScrollPosition, setPageIndexSynced]);
 
     useEffect(() => {
         if (!session || readiveResumePending?.sessionId !== session.id || loading || !pageCountReadyForNavigation) return;
         const savedState = readiveResumePending.state;
-        const restoredPageIndex = resolveReadiveResumePage(savedState, { type: session.type, pageCount, textPages, epubPages });
+        const restoredPageIndex = session.type === 'epub' && savedState.epubPosition
+            ? resolveEpubReadingPosition(epubPages, savedState.epubPosition)
+            : resolveReadiveResumePage(savedState, { type: session.type, pageCount, textPages, epubPages });
         setPageIndexSynced(restoredPageIndex);
         if (flowMode === 'scroll') {
             if (Number.isInteger(savedState.coverEditPageIndex) && ['comic', 'epub'].includes(session.type)) {
@@ -6897,6 +7347,7 @@ function ViewerApp() {
   useLayoutEffect(() => {
     if (
       session?.type !== 'epub'
+      || isOriginalEpub
       || flowMode === 'scroll'
       || epubMeasurementReady
       || epubMeasurementBlocks.length < 1
@@ -6961,13 +7412,14 @@ function ViewerApp() {
     epubMeasurementBlocks,
     epubMeasurementKey,
     epubMeasurementReady,
+    isOriginalEpub,
     flowMode,
     readerPageMetrics.lineAdvance,
     session?.type,
   ]);
 
   useLayoutEffect(() => {
-    if (session?.type !== 'epub' || flowMode === 'scroll' || epubMeasurementReady || epubPages.length < 1) return undefined;
+    if (isOriginalEpub || session?.type !== 'epub' || flowMode === 'scroll' || epubMeasurementReady || epubPages.length < 1) return undefined;
     let canceled = false;
     let firstFrame = 0;
     let secondFrame = 0;
@@ -7013,6 +7465,7 @@ function ViewerApp() {
   }, [
     epubPages,
     epubMeasurementReady,
+    isOriginalEpub,
     flowMode,
     readerPageFitScale,
     readerSettings.textDirection,
@@ -7076,6 +7529,8 @@ function ViewerApp() {
   const moveAdjacentBook = useCallback(async direction => {
     const hasAdjacentBook = Number(direction) < 0 ? hasPreviousBook : hasNextBook;
     if (!session || !hasAdjacentBook || adjacentLoadingRef.current) return null;
+    persistCurrentPositionRef.current?.();
+    cancelMotion();
     adjacentLoadingRef.current = true;
     setAdjacentLoading(true);
     try {
@@ -7092,7 +7547,7 @@ function ViewerApp() {
       adjacentLoadingRef.current = false;
       setAdjacentLoading(false);
     }
-  }, [hasNextBook, hasPreviousBook, loadSession, session]);
+  }, [cancelMotion, hasNextBook, hasPreviousBook, loadSession, session]);
 
   const openAudioQueueItem = useCallback(async fileName => {
     if (!session || session.type !== 'audio' || adjacentLoadingRef.current) return null;
@@ -7197,13 +7652,6 @@ function ViewerApp() {
       moveAdjacentBook(1);
       return;
     }
-    if (session?.type === 'pdf') {
-      const size = flowMode === 'spread' ? 2 : 1;
-      const nextIndex = clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
-      if (nextIndex === currentIndex) return;
-      goPdfPage(nextIndex);
-      return;
-    }
     if (flowMode === 'scroll') {
       const node = scrollRef.current;
       if (node) {
@@ -7212,13 +7660,20 @@ function ViewerApp() {
           moveAdjacentBook(1);
           return;
         }
-        node.scrollBy({ top: delta > 0 ? node.clientHeight * 0.85 : -node.clientHeight * 0.85, behavior: 'auto' });
+        scrollByKeyboard(delta);
         if (delta > 0 && hasNextBook) {
           window.requestAnimationFrame(() => {
             if (node.scrollTop + node.clientHeight >= node.scrollHeight - 2) showNextBookHint();
           });
         }
       }
+      return;
+    }
+    if (session?.type === 'pdf') {
+      const size = flowMode === 'spread' ? 2 : 1;
+      const nextIndex = clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+      if (nextIndex === currentIndex) return;
+      goPdfPage(nextIndex);
       return;
     }
     const nextIndex = flowMode === 'spread'
@@ -7240,7 +7695,7 @@ function ViewerApp() {
       || triggerComicPageEffect(nextIndex, currentIndex, commitPageIndex);
     if (deferred) return;
     commitPageIndex();
-  }, [flowMode, getStepSizeForIndex, goPdfPage, hasNextBook, isForwardBoundaryIndex, moveAdjacentBook, pageCount, resetPageModeScroll, session?.type, setPageIndexSynced, showNextBookHint, triggerComicPageEffect, triggerReaderPageEffect]);
+  }, [flowMode, getStepSizeForIndex, goPdfPage, hasNextBook, isForwardBoundaryIndex, moveAdjacentBook, pageCount, resetPageModeScroll, scrollByKeyboard, session?.type, setPageIndexSynced, showNextBookHint, triggerComicPageEffect, triggerReaderPageEffect]);
 
   const handleFlipBookPageIndexChange = useCallback(nextIndex => {
     if (flowMode === 'scroll' || pageCount <= 0) return;
@@ -7292,6 +7747,7 @@ function ViewerApp() {
     const bookmark = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       pageIndex: bookmarkPageIndex,
+      ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition(bookmarkPageIndex) } : {}),
       scrollPercent,
       flowMode,
       label: session.type === 'comic' || session.type === 'pdf'
@@ -7302,7 +7758,7 @@ function ViewerApp() {
     const next = [bookmark, ...bookmarks].slice(0, 30);
     setBookmarks(next);
     saveJson(storageKey(session, 'bookmarks'), next);
-  }, [bookmarks, epubPages, flowMode, pageCount, pageIndex, pages, scrollPercent, session, textPages]);
+  }, [bookmarks, captureCurrentEpubPosition, epubPages, flowMode, pageCount, pageIndex, pages, scrollPercent, session, textPages]);
 
   const deleteBookmark = id => {
     if (!session) return;
@@ -7318,14 +7774,20 @@ function ViewerApp() {
   };
 
   const goBookmark = bookmark => {
+    cancelMotion();
         resetScrollZoomOffset();
-    const targetPageIndex = clamp(Number(bookmark.pageIndex) || 0, 0, Math.max(0, pageCount - 1));
+    const targetPageIndex = session?.type === 'epub' && bookmark.epubPosition
+        ? resolveEpubReadingPosition(epubPages, bookmark.epubPosition)
+        : clamp(Number(bookmark.pageIndex) || 0, 0, Math.max(0, pageCount - 1));
     clearPageTurnRuntime();
     setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
     if (session?.type === 'pdf') {
       goPdfPage(targetPageIndex);
       setBookmarkMenuOpen(false);
       return;
+    }
+    if (session?.type === 'epub' && bookmark.epubPosition) {
+        epubPositionPendingRef.current = { sessionId: session.id, position: bookmark.epubPosition, flowMode: bookmark.flowMode, scrollPercent: bookmark.scrollPercent };
     }
     setFlowMode(bookmark.flowMode || flowMode);
     setPageIndexSynced(targetPageIndex);
@@ -7474,10 +7936,28 @@ function ViewerApp() {
     const entryKey = epubTargetKey(entryName, '');
     const resolvedPageIndex = epubPageIndexByTarget.get(targetKey) ?? epubPageIndexByTarget.get(entryKey);
     if (!Number.isInteger(resolvedPageIndex)) return;
+    if (isOriginalEpub && flowMode === 'scroll') scrollRestoreTokenRef.current += 1;
     goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex), {
       selectedPageIndex: resolvedPageIndex,
     });
     if (flowMode !== 'scroll' || !anchor) return;
+    if (isOriginalEpub) {
+        const navigationToken = scrollRestoreTokenRef.current;
+        const scrollToAnchor = attempt => {
+            if (scrollRestoreTokenRef.current !== navigationToken) return;
+            const root = scrollRef.current;
+            const frame = root?.querySelector(`[data-reader-index="${resolvedPageIndex}"] .viewer-epub-original-frame`);
+            const target = frame?.contentDocument?.getElementById(anchor);
+            if (!target || frame.dataset.originalReady !== 'true') {
+                if (attempt < 60) window.requestAnimationFrame(() => scrollToAnchor(attempt + 1));
+                return;
+            }
+            const scale = frame.getBoundingClientRect().width / Math.max(1, frame.clientWidth);
+            root.scrollTop += frame.getBoundingClientRect().top + target.getBoundingClientRect().top * scale - root.getBoundingClientRect().top;
+        };
+        window.requestAnimationFrame(() => scrollToAnchor(0));
+        return;
+    }
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const escapedAnchor = String(anchor).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -7485,9 +7965,10 @@ function ViewerApp() {
         anchorNode?.scrollIntoView?.({ block: 'start' });
       });
     });
-  }, [epubPageIndexByTarget, flowMode, goPageIndex, resolveSpreadNavigationIndex, session?.type]);
+  }, [epubPageIndexByTarget, flowMode, goPageIndex, isOriginalEpub, resolveSpreadNavigationIndex, session?.type]);
 
   const goNavigationPage = useCallback(targetPageIndex => {
+    cancelMotion();
     if (session?.type === 'epub' && targetPageIndex && typeof targetPageIndex === 'object' && targetPageIndex.entryName) {
       goEpubInternalTarget(targetPageIndex);
       return;
@@ -7499,12 +7980,13 @@ function ViewerApp() {
     goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex), {
       selectedPageIndex: resolvedPageIndex,
     });
-  }, [goEpubInternalTarget, goPageIndex, pageCount, resolveSpreadNavigationIndex, session?.type]);
+  }, [cancelMotion, goEpubInternalTarget, goPageIndex, pageCount, resolveSpreadNavigationIndex, session?.type]);
 
   const goSlideNavPage = useCallback(targetPageIndex => {
+    cancelMotion();
     const resolvedPageIndex = clamp(Number(targetPageIndex) || 0, 0, Math.max(0, pageCount - 1));
     goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex));
-  }, [goPageIndex, pageCount, resolveSpreadNavigationIndex]);
+  }, [cancelMotion, goPageIndex, pageCount, resolveSpreadNavigationIndex]);
 
   const goSearchResult = useCallback(result => {
     goNavigationPage(result.pageIndex);
@@ -7522,6 +8004,7 @@ function ViewerApp() {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       text: selectionMenu.text,
       pageIndex: selectionMenu.pageIndex,
+      ...(session.type === 'epub' ? { epubPosition: { ...captureEpubReadingPosition(epubPages, selectionMenu.pageIndex), textQuote: selectionMenu.text.replace(/\s+/g, '').slice(0, 100) } } : {}),
       snippet: selectionMenu.snippet || selectionMenu.text,
       color: normalizeHighlightColor(color),
       createdAt: new Date().toLocaleString(),
@@ -7531,7 +8014,7 @@ function ViewerApp() {
     setNavigationPanelOpen(true);
     setSelectionMenu(null);
     clearNativeSelection();
-  }, [clearNativeSelection, highlights, saveHighlights, selectionMenu, session]);
+  }, [clearNativeSelection, epubPages, highlights, saveHighlights, selectionMenu, session]);
 
   const searchBookFromSelection = useCallback(() => {
     const text = selectionQueryText(selectionMenu?.text);
@@ -7571,9 +8054,10 @@ function ViewerApp() {
   }, [highlights, saveHighlights]);
 
   const goHighlight = useCallback(highlight => {
-    goNavigationPage(highlight.pageIndex);
-    setActiveSearch({ pageIndex: highlight.pageIndex, text: highlight.text });
-  }, [goNavigationPage]);
+    const targetPageIndex = highlight.epubPosition && session?.type === 'epub' ? resolveEpubReadingPosition(epubPages, highlight.epubPosition) : highlight.pageIndex;
+    goNavigationPage(targetPageIndex);
+    setActiveSearch({ pageIndex: targetPageIndex, text: highlight.text });
+  }, [epubPages, session?.type, goNavigationPage]);
 
   const openNavigationSearch = useCallback(() => {
     if (!supportsNavigationPanel) return false;
@@ -7669,6 +8153,7 @@ function ViewerApp() {
       return;
     }
     const sourceSelectionMenu = selectionMenu;
+    epubAudioPlayer.pause();
     const runId = selectionTtsRunRef.current + 1;
     selectionTtsRunRef.current = runId;
     setSelectionTtsLoading(true);
@@ -7727,14 +8212,14 @@ function ViewerApp() {
       finishSelectionTtsLoading();
       showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
     }
-  }, [clearNativeSelection, selectionMenu, selectionTtsLoading, showViewerToast, viewerLanguage]);
+  }, [clearNativeSelection, epubAudioPlayer.pause, selectionMenu, selectionTtsLoading, showViewerToast, viewerLanguage]);
 
   const isViewerInteractiveTarget = useCallback(target => {
     const targetName = target?.tagName?.toLowerCase();
     if (['input', 'select', 'textarea', 'button', 'a'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu'
+      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu, .viewer-scroll-menu, .viewer-scroll-options, .viewer-epub-audio-controls, .viewer-epub-audio-inline'
     ));
   }, []);
 
@@ -7743,14 +8228,15 @@ function ViewerApp() {
     if (['input', 'select', 'textarea'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu'
+      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu, .viewer-scroll-menu, .viewer-scroll-options, .viewer-epub-audio-controls, .viewer-epub-audio-inline'
     ));
   }, []);
 
   const showTextSelectionToolbar = useCallback(({ clientX, clientY, target } = {}) => {
     if (!(session?.type === 'epub' || session?.type === 'text' || session?.type === 'pdf')) return false;
     if (isViewerInteractiveTarget(target)) return false;
-    const selection = window.getSelection?.();
+    const originalFrame = target?.closest?.('.viewer-epub-original-frame');
+    const selection = originalFrame?.contentWindow?.getSelection?.() || window.getSelection?.();
     const selectedText = String(selection?.toString?.() || '').replace(/\s+/g, ' ').trim();
     if (!selection || !selectedText || selection.rangeCount < 1) {
       setSelectionMenu(current => current?.kind === 'text-selection' ? null : current);
@@ -7759,10 +8245,10 @@ function ViewerApp() {
     const anchorElement = elementFromDomNode(selection.anchorNode);
     const focusElement = elementFromDomNode(selection.focusNode);
     const viewerNode = scrollRef.current;
-    if (!viewerNode || (!viewerNode.contains(anchorElement) && !viewerNode.contains(focusElement))) return false;
-    const pageNode = closestSelectionPageNode(selection, target);
+    if (!viewerNode || (!originalFrame && !viewerNode.contains(anchorElement) && !viewerNode.contains(focusElement))) return false;
+    const pageNode = originalFrame?.closest('[data-reader-index], [data-reader-page-index]') || closestSelectionPageNode(selection, target);
     const selectedPageIndex = pageIndexFromSelectionNode(pageNode, pageIndex);
-    const point = selectionFocusPoint(selection, { x: clientX, y: clientY });
+    const point = originalFrame ? { x: clientX, y: clientY } : selectionFocusPoint(selection, { x: clientX, y: clientY });
     const position = selectionToolbarPosition(point);
     setSelectionMenu({
       kind: 'text-selection',
@@ -7817,6 +8303,11 @@ function ViewerApp() {
   const handleScroll = () => {
     const node = scrollRef.current;
     if (!node) return;
+        if (autoScrolling) {
+            const now = window.performance.now();
+            if (now - autoScrollUpdateTimeRef.current < 100) return;
+            autoScrollUpdateTimeRef.current = now;
+        }
     const max = Math.max(1, node.scrollHeight - node.clientHeight);
     const percent = clamp((node.scrollTop / max) * 100, 0, 100);
     let nextVisiblePageIndex = pageIndexRef.current;
@@ -7866,6 +8357,10 @@ function ViewerApp() {
       persistScrollState(percent, nextVisiblePageIndex);
     }
   };
+    useEffect(() => {
+        if (previousAutoScrollingRef.current && !autoScrolling) handleScroll();
+        previousAutoScrollingRef.current = autoScrolling;
+    }, [autoScrolling]);
 
   const handleWheel = useCallback(event => {
     const wheelDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
@@ -7880,14 +8375,17 @@ function ViewerApp() {
       adjustZoomAtPoint(wheelDelta < 0 ? zoomStep : -zoomStep, event);
       return;
     }
-    if (flowMode === 'scroll') return;
+    if (flowMode === 'scroll') {
+        handleScrollWheel(event);
+        return;
+    }
     event.preventDefault();
     event.stopPropagation();
     resetPageModeScroll();
     if (wheelDelta > 0) movePage(1);
     else if (wheelDelta < 0) movePage(-1);
     window.requestAnimationFrame(resetPageModeScroll);
-  }, [adjustZoomAtPoint, flowMode, movePage, resetPageModeScroll, zoomStep]);
+  }, [adjustZoomAtPoint, flowMode, handleScrollWheel, movePage, resetPageModeScroll, zoomStep]);
 
     useEffect(() => {
         const node = scrollRef.current;
@@ -8185,6 +8683,13 @@ function ViewerApp() {
   useEffect(() => {
     if (session?.type === 'audio') return undefined;
     const handler = event => {
+        if (event.key === 'Escape' && scrollMenuOpen) {
+            event.preventDefault();
+            event.stopPropagation();
+            setScrollMenuOpen(false);
+            restoreViewerFocus();
+            return;
+        }
       if (event.key === 'Escape' && (settingsOpen || navigationPanelOpen || helpOpen)) {
         event.preventDefault();
         event.stopPropagation();
@@ -8210,8 +8715,14 @@ function ViewerApp() {
         || imageLightbox
         || lookupPanel
         || document.querySelector('.viewer-tts-menu')
+        || scrollMenuOpen
       );
       if (shortcutsBlockedByOverlay || isViewerShortcutBlockedTarget(event.target)) return;
+        if (event.key === 'Escape' && autoScrolling) {
+            event.preventDefault();
+            stopAutoScroll();
+            return;
+        }
       const arrowKeyPageDelta = viewerArrowKeyPageDelta(event.key, {
         mode: readerSettings.arrowKeyMode,
         readingDirection: session?.type === 'comic' ? readingDirection : 'ltr',
@@ -8269,6 +8780,7 @@ function ViewerApp() {
         event.preventDefault();
         addBookmark();
       } else if (event.key === 'Home') {
+        cancelMotion();
         event.preventDefault();
         event.stopPropagation();
         setAbsolutePageJumpSequence(current => current + 1);
@@ -8277,6 +8789,7 @@ function ViewerApp() {
           window.requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ top: 0, left: 0 }));
         }
       } else if (event.key === 'End') {
+        cancelMotion();
         event.preventDefault();
         event.stopPropagation();
         const lastPageIndex = Math.max(0, pageCount - 1);
@@ -8294,7 +8807,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, bookmarkEditorOpen, bookmarkMenuOpen, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, selectionMenu, session?.type, settingsOpen, toggleFullscreen, toggleToolbarPinned, zoomStep]);
+  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, cancelMotion, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, scrollMenuOpen, selectionMenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -8546,6 +9059,34 @@ function ViewerApp() {
     ...(session?.type === 'epub' && viewMode === 'width' ? { maxWidth: 'none' } : {}),
   };
 
+    const renderOriginalEpubDocument = (item, mode, sourceIndex = pageIndex) => (
+        <div className="viewer-epub-original-scale">
+            <EpubOriginalDocument
+                chapter={item.originalChapter}
+                mode={mode}
+                scale={epubOriginalScale}
+                appearance={epubOriginalAppearance}
+                pageSize={item.originalChapter?.original?.layout === 'pre-paginated'
+                    ? { width: readerPageMetrics.pageFrameWidth, height: readerPageMetrics.pageFrameHeight }
+                    : epubOriginalPageSize}
+                pageOffset={item.originalPageOffset || 0}
+                onAudioRequest={requestEpubAudio}
+                audioState={{ trackId: epubAudioPlayer.currentTrack?.id, status: epubAudioPlayer.status }}
+                audioLabels={{ play: viewerText('viewer.epub_audio.play', '재생'), pause: viewerText('viewer.epub_audio.pause', '일시정지'), loading: viewerText('viewer.epub_audio.loading', '불러오는 중') }}
+                searchQuery={activeSearch?.text || ''}
+                highlights={readerHighlights.filter(highlight => highlight.pageIndex === sourceIndex)}
+                onSelectionChange={({ text, rect }) => {
+                    if (!text.trim() || !rect) return;
+                    const position = selectionToolbarPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height });
+                    setSelectionMenu({ kind: 'text-selection', ...position, text: text.replace(/\s+/g, ' ').trim(), snippet: text.slice(0, 120), pageIndex: sourceIndex });
+                }}
+                onInternalLink={goEpubInternalTarget}
+                onExternalLink={openExternalLink}
+                onImagePreview={openImageLightbox}
+            />
+        </div>
+    );
+
   const renderReaderPageBody = (item, sourceIndex = pageIndex, options = {}) => (
     normalizeReaderBlocks(item).map((block, index) => {
       const measureBlockIndex = Number.isInteger(options.measureBlockIndex) ? options.measureBlockIndex : null;
@@ -8590,24 +9131,28 @@ function ViewerApp() {
         if (block.nodes.length === 1 && block.nodes[0]?.type === 'element') {
           return renderEpubHtmlNode(block.nodes[0], `html-${index}-root`, {
             pageIndex: sourceIndex,
-            highlights,
+            highlights: readerHighlights,
             activeSearch,
             imagePreviewAllowed,
             onImagePreview: openImageLightbox,
             onInternalLink: goEpubInternalTarget,
             onExternalLink: openExternalLink,
+            onAudioRequest: requestEpubAudio,
+            audioState: { trackId: epubAudioPlayer.currentTrack?.id, status: epubAudioPlayer.status },
           }, htmlBlockClassName, measureProps);
         }
         return (
           <div key={`html-${index}`} className={htmlBlockClassName} {...measureProps}>
             {block.nodes.map((node, nodeIndex) => renderEpubHtmlNode(node, `${index}-${nodeIndex}`, {
               pageIndex: sourceIndex,
-              highlights,
+              highlights: readerHighlights,
               activeSearch,
               imagePreviewAllowed,
               onImagePreview: openImageLightbox,
               onInternalLink: goEpubInternalTarget,
               onExternalLink: openExternalLink,
+              onAudioRequest: requestEpubAudio,
+              audioState: { trackId: epubAudioPlayer.currentTrack?.id, status: epubAudioPlayer.status },
             }))}
           </div>
         );
@@ -8622,7 +9167,7 @@ function ViewerApp() {
         >
           {(paragraphs.length > 0 ? paragraphs : ['']).map((paragraph, paragraphIndex) => (
             <p key={`${index}-${paragraphIndex}`}>
-              {renderMarkedText(paragraph, sourceIndex, highlights, activeSearch)}
+              {renderMarkedText(paragraph, sourceIndex, readerHighlights, activeSearch)}
             </p>
           ))}
         </div>
@@ -8631,8 +9176,29 @@ function ViewerApp() {
   );
 
   const renderReaderMeasurementStage = () => {
+    if (isOriginalEpub) {
+        if (flowMode === 'scroll' || epubOriginalReady) return null;
+        return (
+            <div className="viewer-reader-measure-stage" aria-hidden="true">
+                {epubChapters.filter(chapter => !epubOriginalLayouts[chapter.name]).slice(0, 3).map(chapter => (
+                    <EpubOriginalDocument
+                        key={`${epubOriginalLayoutKey}:${chapter.name}`}
+                        chapter={chapter}
+                        mode="measure"
+                        pageSize={chapter.original?.layout === 'pre-paginated'
+                            ? { width: readerPageMetrics.pageFrameWidth, height: readerPageMetrics.pageFrameHeight }
+                            : epubOriginalPageSize}
+                        scale={epubOriginalScale}
+                        appearance={epubOriginalAppearance}
+                        onLayout={layout => recordOriginalLayout(chapter.name, layout)}
+                    />
+                ))}
+            </div>
+        );
+    }
     if (
       session?.type !== 'epub'
+      || isOriginalEpub
       || flowMode === 'scroll'
       || epubMeasurementReady
       || epubMeasurementBlocks.length < 1
@@ -8664,6 +9230,17 @@ function ViewerApp() {
 
   const renderReaderPages = items => {
     const readerTypeClassName = session?.type === 'epub' ? 'is-epub-reader' : 'is-text-reader';
+    if (isOriginalEpub && flowMode === 'scroll') {
+        return (
+            <article className="viewer-text-page is-scroll is-original-reader" style={{ width: epubOriginalPageSize.width * epubOriginalScale, maxWidth: 'none', background: epubOriginalAppearance.theme?.bg }}>
+                {items.map((item, index) => (
+                    <section key={item.name} data-reader-index={index}>
+                        {renderOriginalEpubDocument(item, 'scroll', index)}
+                    </section>
+                ))}
+            </article>
+        );
+    }
     if (flowMode === 'scroll') {
       return (
         <article className={`viewer-text-page viewer-reader-scope is-scroll ${readerTypeClassName}`.trim()} style={readerStyle}>
@@ -8675,7 +9252,16 @@ function ViewerApp() {
         </article>
       );
     }
-    const renderReaderArticle = (item, index, sourceIndex, extraClassName = '') => (
+    const renderReaderArticle = (item, index, sourceIndex, extraClassName = '') => isOriginalEpub ? (
+        <article
+            key={`${sourceIndex}-${index}-${extraClassName || 'page'}`}
+            className={`viewer-text-page is-original-reader ${extraClassName}`.trim()}
+            data-reader-page-index={sourceIndex}
+            style={{ width: epubOriginalPageSize.width * epubOriginalScale, overflow: item.originalChapter?.original?.layout === 'pre-paginated' ? 'auto' : 'hidden', background: epubOriginalAppearance.theme?.bg }}
+        >
+            {renderOriginalEpubDocument(item, 'page', sourceIndex)}
+        </article>
+    ) : (
       <article
         key={`${sourceIndex}-${index}-${extraClassName || 'page'}`}
         className={`viewer-text-page viewer-reader-scope ${readerTypeClassName} ${item.hasImage ? 'has-reader-image' : ''} ${item.standaloneImage ? 'has-epub-image' : ''} ${extraClassName}`.trim()}
@@ -8697,7 +9283,7 @@ function ViewerApp() {
       };
       return (
         <ViewerFlipBook
-          bookKey={`reader-${session?.id || session?.filePath || session?.type || 'reader'}-${viewMode}-${readerSettings.fontFamily}-${readerSettings.fontScale}`}
+          bookKey={`reader-${session?.id || session?.filePath || session?.type || 'reader'}-${viewMode}-${readerSettings.fontFamily}-${readerSettings.fontScale}-${isOriginalEpub ? `${epubOriginalLayoutKey}:${readerSettings.epubOriginalTheme}` : 'optimized'}`}
           className={`viewer-reader-stage is-${viewMode}`.trim()}
           pageClassName="is-reader"
           pageFormat="reader"
@@ -8707,6 +9293,8 @@ function ViewerApp() {
           pageSize={pageSize}
           absoluteNavigationKey={absolutePageJumpSequence}
           onPageIndexChange={handleFlipBookPageIndexChange}
+          provideNearbyPageState={isOriginalEpub}
+          initialRenderLoading={initialRenderLoading}
           renderPage={(sourceIndex, entry) => renderReaderArticle(items[sourceIndex], entry.leafOffset, sourceIndex)}
         />
       );
@@ -8902,7 +9490,9 @@ function ViewerApp() {
   const fullscreenShortcut = viewerShortcutLabel(['F11']);
   const fullscreenTitle = `${viewerText('viewer.toolbar.fullscreen', '전체화면 전환')} (${fullscreenShortcut} / Enter)`;
   const atForwardBoundary = flowMode !== 'scroll' && isForwardBoundaryIndex(pageIndex);
-  const previousPageDisabled = session?.type === 'pdf'
+  const previousPageDisabled = flowMode === 'scroll'
+    ? pageCount <= 0 || scrollPercent <= 0
+    : session?.type === 'pdf'
     ? pageCount <= 0 || pageIndex <= 0
     : flowMode !== 'scroll' && pageIndex <= 0;
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
@@ -9201,7 +9791,15 @@ function ViewerApp() {
                   title={viewerText(option.labelKey, option.label)}
                   iconSrc={option.iconSrc}
                   active={flowMode === option.id}
-                  onClick={runToolbarAction(() => updateFlowMode(option.id))}
+                  className={option.id === 'scroll' && autoScrolling ? 'is-auto-scrolling' : ''}
+                  ariaExpanded={option.id === 'scroll' ? scrollMenuOpen : undefined}
+                  ariaControls={option.id === 'scroll' ? 'viewer-scroll-menu' : undefined}
+                  ariaHasPopup={option.id === 'scroll' ? 'dialog' : undefined}
+                  onClick={runToolbarAction(() => {
+                      const nextMenuOpen = option.id === 'scroll' && (flowMode !== 'scroll' || !scrollMenuOpen);
+                      if (flowMode !== option.id) updateFlowMode(option.id);
+                      setScrollMenuOpen(nextMenuOpen);
+                  })}
                 />
               ))}
             </div>
@@ -9209,6 +9807,7 @@ function ViewerApp() {
           {isReaderDocument && (
             <div className="viewer-tool-cluster viewer-tts-cluster" aria-label={viewerText('viewer.tts.group', 'TTS')}>
               <ViewerTtsControls
+                key={isOriginalEpub ? 'epub-original' : 'optimized'}
                 sessionId={session.id}
                 text={currentTtsText}
                 prefetchPages={ttsPrefetchPages}
@@ -9220,6 +9819,12 @@ function ViewerApp() {
                 onMoveToPage={goPageIndex}
                 onOpenTtsSettings={window.viewerAPI?.openTtsSettings}
                 onToast={showViewerToast}
+                closeMenu={scrollMenuOpen}
+                onPlaybackChange={setEpubTtsActive}
+                onMenuOpen={() => {
+                    setScrollMenuOpen(false);
+                    cancelMotion();
+                }}
               />
             </div>
           )}
@@ -9308,7 +9913,30 @@ function ViewerApp() {
           )}
         </div>
       </header>
-      {session?.type === 'epub' && epubStylesheet ? (
+        <ViewerScrollPopover
+            open={scrollMenuOpen && flowMode === 'scroll'}
+            onClose={() => {
+                setScrollMenuOpen(false);
+                restoreViewerFocus();
+            }}
+            settings={scrollSettings}
+            onChange={updateScrollSettings}
+            autoScrolling={autoScrolling}
+            onToggleAutoScroll={toggleAutoScroll}
+            disabled={loading || initialRenderLoading || pageCount <= 0 || Boolean(error)}
+        />
+        {session?.type === 'epub' && epubAudioMapping.tracks.length > 0 && (
+            <EpubAudioControls
+                player={epubAudioPlayer}
+                tracks={epubAudioPlaylist}
+                settings={epubAudioSettings}
+                onSettingsChange={updateEpubAudioSettings}
+                language={viewerLanguage}
+                suspended={epubTtsActive || selectionTtsLoading}
+                slideNavOpen={slideNavOpen}
+            />
+        )}
+      {session?.type === 'epub' && !isOriginalEpub && epubStylesheet ? (
         <style>{epubStylesheet}</style>
       ) : null}
       <main
@@ -9516,8 +10144,35 @@ function ViewerApp() {
         backgroundSettings={viewerBackground}
         onBackgroundChange={updateViewerBackground}
         onChange={updateReaderSettings}
-        onReset={() => setReaderSettings(normalizeReaderSettings())}
+        onReset={() => isOriginalEpub
+            ? updateReaderSettings({
+                epubOriginalTheme: 'original',
+                epubOriginalVerticalPadding: DEFAULT_READER_SETTINGS.epubOriginalVerticalPadding,
+                epubOriginalHorizontalPadding: DEFAULT_READER_SETTINGS.epubOriginalHorizontalPadding,
+            })
+            : setReaderSettings(normalizeReaderSettings())}
         onClose={runToolbarAction(() => setSettingsOpen(false))}
+        viewMode={supportsViewControls ? viewMode : null}
+        flowMode={supportsFlowControls ? flowMode : null}
+        spreadCoverFirst={spreadCoverFirst}
+        readingDirection={readingDirection}
+        slideNavOpen={slideNavOpen}
+        slideNavAvailable={slideNavAvailable}
+        onViewModeChange={nextViewMode => {
+            resetScrollZoomOffset();
+            setViewMode(nextViewMode);
+            if (nextViewMode === 'actual') setZoom(100);
+        }}
+        onFlowModeChange={updateFlowMode}
+        onSpreadCoverFirstChange={setSpreadCoverFirst}
+        onReadingDirectionChange={setReadingDirection}
+        onSlideNavChange={setSlideNavOpen}
+        scrollSettings={scrollSettings}
+        onScrollSettingsChange={updateScrollSettings}
+        autoScrolling={autoScrolling}
+        onToggleAutoScroll={toggleAutoScroll}
+        scrollControlsDisabled={loading || initialRenderLoading || pageCount <= 0 || Boolean(error)}
+        epubOriginalAvailable={epubOriginalAvailable}
       />
       {bookmarkEditorOpen && (
         <BookmarkEditor

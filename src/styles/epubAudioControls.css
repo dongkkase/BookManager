@@ -1,0 +1,149 @@
+.viewer-epub-audio-controls {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    z-index: 36;
+    color: #e7eef4;
+}
+
+.viewer-epub-audio-controls.has-slide-nav {
+    bottom: 168px;
+}
+
+.viewer-epub-audio-indicator {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 36px;
+    border: 1px solid #616971;
+    border-radius: 18px;
+    background: #222a30e8;
+    color: #c3ccd3;
+    cursor: pointer;
+    box-shadow: 0 2px 8px #0005;
+    opacity: 0.4;
+    transition: opacity 300ms ease-in-out;
+}
+
+.viewer-epub-audio-indicator:is(:hover, :focus-visible, [aria-expanded="true"]) {
+    opacity: 1;
+}
+
+.viewer-epub-audio-indicator:focus-visible {
+    outline: 2px solid #8dd7ff;
+    outline-offset: 2px;
+}
+
+@media (hover: none) {
+    .viewer-epub-audio-indicator { opacity: 0.65; }
+}
+
+@media (forced-colors: active) {
+    .viewer-epub-audio-indicator { opacity: 1; }
+}
+
+.viewer-epub-audio-controls.is-playing .viewer-epub-audio-indicator {
+    color: #8dd7ff;
+    border-color: #4391b8;
+}
+
+.viewer-epub-audio-note {
+    position: absolute;
+    left: 8px;
+    bottom: 21px;
+    opacity: 0;
+    font-size: 13px;
+    pointer-events: none;
+}
+
+.viewer-epub-audio-note.note-two {
+    left: 22px;
+}
+
+.viewer-epub-audio-controls.is-playing .viewer-epub-audio-note {
+    animation: epub-audio-note 1.8s ease-out infinite;
+}
+
+.viewer-epub-audio-controls.is-playing .note-two {
+    animation-delay: 0.9s;
+}
+
+.viewer-epub-audio-levels {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    height: 12px;
+    margin-left: 4px;
+}
+
+.viewer-epub-audio-controls.is-playing .viewer-epub-audio-levels {
+    display: flex;
+}
+
+.viewer-epub-audio-levels i {
+    width: 2px;
+    height: 9px;
+    border-radius: 1px;
+    background: currentColor;
+    animation: epub-audio-level 0.8s ease-in-out infinite alternate;
+}
+
+.viewer-epub-audio-levels i:nth-child(2) { animation-delay: -0.3s; }
+.viewer-epub-audio-levels i:nth-child(3) { animation-delay: -0.6s; }
+
+.viewer-epub-audio-menu {
+    position: absolute;
+    right: 0;
+    bottom: 44px;
+    width: min(320px, calc(100vw - 36px));
+    box-sizing: border-box;
+    padding: 10px;
+    border: 1px solid #535c64;
+    border-radius: 8px;
+    background: #23282def;
+    box-shadow: 0 6px 22px #0007;
+    font-size: 12px;
+}
+
+.viewer-epub-audio-heading,
+.viewer-epub-audio-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.viewer-epub-audio-heading {
+    margin-bottom: 8px;
+}
+
+.viewer-epub-audio-heading > span { flex-shrink: 0; }
+.viewer-epub-audio-heading > small { flex: 1; min-width: 0; color: #b5c3ce; font-size: 10px; }
+.viewer-epub-audio-menu button { flex: 0 0 28px; height: 28px; padding: 0; border: 1px solid #555f68; border-radius: 4px; background: #30383f; color: inherit; cursor: pointer; }
+.viewer-epub-audio-menu button:disabled,
+.viewer-epub-audio-menu select:disabled { opacity: 0.5; cursor: default; }
+.viewer-epub-audio-menu select { flex: 1; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid #555f68; border-radius: 4px; background: #30383f; color: inherit; font: inherit; line-height: normal; }
+.viewer-epub-audio-options { margin-top: 8px; }
+.viewer-epub-audio-options label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.viewer-epub-audio-options label input { margin: 0; }
+.viewer-epub-audio-options > input { flex: 1; width: 50px; min-width: 0; accent-color: #5ab8ea; }
+.viewer-epub-audio-options > small { width: 30px; text-align: right; color: #b5c3ce; }
+.viewer-epub-audio-inline { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 10px; border: 1px solid #6c8fa4; border-radius: 5px; background: #30608022; color: inherit; font: 12px sans-serif; cursor: pointer; }
+
+@keyframes epub-audio-note {
+    0% { opacity: 0; transform: translate(0, 0) rotate(-8deg); }
+    25% { opacity: 0.8; }
+    100% { opacity: 0; transform: translate(5px, -15px) rotate(12deg); }
+}
+
+@keyframes epub-audio-level {
+    from { transform: scaleY(0.35); }
+    to { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .viewer-epub-audio-indicator { t}
+    .viewer-epub-audio-controls.is-playing .viewer-epub-audio-note { animation: none; }
+    .viewer-epub-audio-levels i { animation: none; }
+}

@@ -27,6 +27,7 @@ import {
 } from './web/webLibraryPage.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
 import { ViewerSessionManager } from '../viewerSessions.js';
+import { epubAssetResponseData } from '../epubAudio.js';
 import { AUDIO_EXTENSION_VALUES, inferAudioMimeType } from '../audioMetadata.js';
 
 const execFileAsync = promisify(execFile);
@@ -1185,10 +1186,10 @@ function protocolAssetPathFromEpubSrc(src = '') {
 function rewriteEpubAssetUrlStringForWeb(value = '', sessionId = '') {
     return String(value || '').replace(
         /bookmanager-document:\/\/session\/[^/'")\s]+\/asset\/([^'")\s]+)/g,
-        (_match, assetPath) => webViewerEpubAssetUrl(
-            sessionId,
-            String(assetPath || '').split('/').map(part => decodeURIComponent(part)).join('/'),
-        ),
+        match => {
+            const assetPath = protocolAssetPathFromEpubSrc(match);
+            return assetPath ? `${webViewerEpubAssetUrl(sessionId, assetPath)}${new URL(match).hash}` : match;
+        },
     );
 }
 
@@ -1202,7 +1203,7 @@ function rewriteEpubAssetUrlsForWeb(value, sessionId) {
     for (const [key, childValue] of Object.entries(value)) {
         if (key === 'src' && typeof childValue === 'string') {
             const assetPath = protocolAssetPathFromEpubSrc(childValue);
-            next[key] = assetPath ? webViewerEpubAssetUrl(sessionId, assetPath) : childValue;
+            next[key] = assetPath ? `${webViewerEpubAssetUrl(sessionId, assetPath)}${new URL(childValue).hash}` : childValue;
         } else {
             next[key] = rewriteEpubAssetUrlsForWeb(childValue, sessionId);
         }
@@ -1449,8 +1450,10 @@ export function buildWebApp(config, options = {}, log = () => {}) {
                 formatJsonError(res, 404, 'EPUB asset not found.');
                 return;
             }
-            res.setHeader('Cache-Control', 'public, max-age=86400');
-            res.type(asset.mime).send(asset.buffer);
+            const response = epubAssetResponseData(asset, req.get('range') || '', req.method);
+            res.status(response.status).set(response.headers);
+            if (response.body === null) res.end();
+            else res.send(response.body);
         } catch (error) {
             sendViewerApiError(res, error, 'EPUB asset failed');
         }

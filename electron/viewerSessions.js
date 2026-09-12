@@ -13,6 +13,19 @@ import {
     readAudioMetadata,
 } from './audioMetadata.js';
 import { missingBinaryMessage } from './binaryPolicy.js';
+import {
+    epubOriginalCssParts,
+    rewriteEpubOriginalCssUrls,
+    wrapEpubOriginalCssImport,
+} from './epubOriginal.js';
+import {
+    EPUB_AUDIO_CACHE_BYTES,
+    MAX_EPUB_AUDIO_BYTES,
+    epubAudioMime,
+    isEpubAudioEntry,
+    parseEpubMediaOverlay,
+    prepareEpubInlineAudio,
+} from './epubAudio.js';
 
 const COMIC_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7']);
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.svg']);
@@ -826,7 +839,7 @@ function sanitizeEpubCssSelectorForViewer(selector = '') {
         .replace(/^\s*[>+~]\s*/, '')
         .replace(/\s+/g, ' ')
         .trim();
-    if (!normalized || normalized === ',' || normalized === '>') normalized = '*';
+    if (!normalized || normalized === ',' || normalized === '>') return '';
     return `.viewer-reader-scope ${normalized}`;
 }
 
@@ -1003,6 +1016,15 @@ function epubAnchorsFromNodes(nodes = []) {
     return Array.from(new Set(anchors));
 }
 
+function epubAudioTrackIdsFromNodes(nodes = []) {
+    const ids = [];
+    for (const node of nodes) {
+        if (node?.audioTrackId) ids.push(node.audioTrackId);
+        ids.push(...epubAudioTrackIdsFromNodes(node?.children || []));
+    }
+    return Array.from(new Set(ids));
+}
+
 function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries = [], cssRules = [], imageEntryNames = [], imageDimensionByEntryName = new Map()) {
     const root = { tagName: 'root', children: [] };
     const stack = [root];
@@ -1081,6 +1103,7 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
             hiddenText: epubStyleHidesText(style) || undefined,
             className,
             id: anchorId || undefined,
+            audioTrackId: attrs['data-bookmanager-audio-track'] || undefined,
             href: tagName === 'a' ? (attrs.href || attrs['xlink:href'] || '') : undefined,
             targetEntryName: target?.entryName || undefined,
             targetAnchor: target?.anchor || undefined,
@@ -1110,13 +1133,15 @@ function epubBlocksFromNodes(nodes = []) {
 
     const flushInlineNodes = () => {
         const text = textFromEpubNodes(inlineNodes);
-        if (text || epubNodesContainImage(inlineNodes)) {
+        const audioTracks = epubAudioTrackIdsFromNodes(inlineNodes);
+        if (text || epubNodesContainImage(inlineNodes) || audioTracks.length > 0) {
             blocks.push({
                 type: 'html',
                 text,
                 nodes: inlineNodes,
                 hasImage: epubNodesContainImage(inlineNodes),
                 anchors: epubAnchorsFromNodes(inlineNodes),
+                ...(audioTracks.length > 0 ? { hasAudio: true, audioTracks } : {}),
             });
         }
         inlineNodes = [];
@@ -1142,12 +1167,15 @@ function epubBlocksFromNodes(nodes = []) {
         if (node?.type === 'element' && EPUB_BLOCK_HTML_TAGS.has(node.tagName)) {
             flushInlineNodes();
             if (EPUB_CONTAINER_HTML_TAGS.has(node.tagName) && epubNodeHasBlockChildren(node)) {
-                blocks.push(...epubBlocksFromNodes(node.children));
+                const childBlocks = epubBlocksFromNodes(node.children);
+                if (node.id && childBlocks.length > 0) childBlocks[0].anchors = Array.from(new Set([node.id, ...(childBlocks[0].anchors || [])]));
+                blocks.push(...childBlocks);
                 continue;
             }
             const text = textFromEpubNodes([node]);
             const hasImage = epubNodesContainImage([node]);
-            if (text || hasImage || node.tagName === 'hr') {
+            const audioTracks = epubAudioTrackIdsFromNodes([node]);
+            if (text || hasImage || audioTracks.length > 0 || node.tagName === 'hr') {
                 blocks.push({
                     type: 'html',
                     text,
@@ -1157,6 +1185,7 @@ function epubBlocksFromNodes(nodes = []) {
                     nodes: [node],
                     hasImage,
                     anchors: epubAnchorsFromNodes([node]),
+                    ...(audioTracks.length > 0 ? { hasAudio: true, audioTracks } : {}),
                 });
             }
             continue;
@@ -1204,6 +1233,7 @@ async function readExpandedEpubStylesheet(stylesheetEntryName = '', filePath = '
                 maxBytes: MAX_EPUB_STYLESHEET_BYTES,
             });
             rawCss = cssBuffer.toString('utf8');
+            stylesheetCache.set(`raw:${normalizedKey}`, rawCss);
         } catch (error) {
             if (error?.name === 'AbortError') throw error;
             stylesheetCache.set(cacheKey, '');
@@ -1239,6 +1269,128 @@ async function readEpubCssRulesForHtml(html = '', entryName = '', filePath = '',
         rules: parseEpubCssRules(cssText),
         stylesheet: sanitizeEpubCssForViewer(cssText),
     };
+}
+
+async function readOriginalEpubStylesheet(entryName, session, entries, stylesheetCache, readOptions, importStack = new Set()) {
+    throwIfViewerOperationAborted(readOptions.signal);
+    const entry = findArchiveEntry(entries, entryName);
+    if (!entry || entry.isDir) return '';
+    const normalizedName = normalizeInnerPath(entry.name).toLowerCase();
+    const cacheKey = `original:${normalizedName}`;
+    if (importStack.has(normalizedName) || importStack.size >= 12) return '';
+    if (stylesheetCache.has(cacheKey)) return stylesheetCache.get(cacheKey);
+    importStack.add(normalizedName);
+    try {
+        const rawCacheKey = `raw:${normalizedName}`;
+        let rawCss = stylesheetCache.get(rawCacheKey);
+        if (typeof rawCss !== 'string') {
+            const buffer = await extractArchiveEntry(session.filePath, entry.name, '', {
+                ...readOptions,
+                maxBytes: MAX_EPUB_STYLESHEET_BYTES,
+            });
+            rawCss = buffer.toString('utf8');
+            stylesheetCache.set(rawCacheKey, rawCss);
+        }
+        const cssParts = [];
+        let importCount = 0;
+        for (const part of epubOriginalCssParts(rawCss)) {
+            if (typeof part.css === 'string') {
+                cssParts.push(rewriteEpubOriginalCssUrls(part.css, href => {
+                    if (/^[\w+.-]+:|^\/\//.test(href)) return '';
+                    const asset = findArchiveEntry(entries, resolveEpubHref(entry.name, href));
+                    if (!asset || asset.isDir || (!isImageEntry(asset.name) && !isFontEntry(asset.name))) return '';
+                    const fragment = String(href).includes('#') ? String(href).slice(String(href).indexOf('#')) : '';
+                    return `${epubAssetProtocolUrl(session, asset.name)}${fragment}`;
+                }));
+            } else if (part.href && importCount++ < 32 && !/^[\w+.-]+:|^\/\//.test(part.href)) {
+                const importedName = resolveEpubHref(entry.name, part.href);
+                const importedCss = await readOriginalEpubStylesheet(importedName, session, entries, stylesheetCache, readOptions, importStack);
+                if (importedCss) cssParts.push(wrapEpubOriginalCssImport(importedCss, part.condition));
+            }
+        }
+        const stylesheet = cssParts.join('\n');
+        stylesheetCache.set(cacheKey, stylesheet);
+        return stylesheet;
+    } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        stylesheetCache.set(cacheKey, '');
+        return '';
+    } finally {
+        importStack.delete(normalizedName);
+    }
+}
+
+async function readOriginalEpubCssForHtml(html, entryName, session, entries, stylesheetCache, readOptions) {
+    const stylesheets = [];
+    for (const tag of xmlStartTags(stripEpubHtmlComments(html), 'link')) {
+        const attrs = tagAttributes(tag);
+        if (!String(attrs.rel || '').toLowerCase().split(/\s+/).includes('stylesheet') || !attrs.href) continue;
+        if (/^[\w+.-]+:|^\/\//.test(attrs.href)) continue;
+        const stylesheet = await readOriginalEpubStylesheet(resolveEpubHref(entryName, attrs.href), session, entries, stylesheetCache, readOptions);
+        if (stylesheet) stylesheets.push(attrs.media ? `@media ${attrs.media} {\n${stylesheet}\n}` : stylesheet);
+    }
+    return stylesheets.join('\n');
+}
+
+function epubOriginalLayout(opfXml = '', spineProperties = '') {
+    const properties = String(spineProperties).split(/\s+/);
+    if (properties.includes('rendition:layout-pre-paginated')) return 'pre-paginated';
+    if (properties.includes('rendition:layout-reflowable')) return 'reflowable';
+    for (const match of String(opfXml).matchAll(/<(?:\w+:)?meta\b([^>]*)>([^<]*)<\/(?:\w+:)?meta>/gi)) {
+        const attrs = tagAttributes(match[1]);
+        if (attrs.property === 'rendition:layout') return htmlFragmentText(match[2]) === 'pre-paginated' ? 'pre-paginated' : 'reflowable';
+    }
+    const legacy = xmlStartTags(opfXml, 'meta').map(tagAttributes)
+        .some(attrs => attrs.name === 'fixed-layout' && /^(?:true|yes)$/i.test(attrs.content || ''));
+    return legacy ? 'pre-paginated' : 'reflowable';
+}
+
+function epubOriginalViewport(html = '', opfXml = '') {
+    const viewport = xmlStartTags(stripEpubHtmlComments(html), 'meta').map(tagAttributes)
+        .find(attrs => String(attrs.name || '').toLowerCase() === 'viewport')?.content || '';
+    let width = Number(viewport.match(/(?:^|[,;\s])width\s*=\s*([\d.]+)/i)?.[1]);
+    let height = Number(viewport.match(/(?:^|[,;\s])height\s*=\s*([\d.]+)/i)?.[1]);
+    if (!width || !height) {
+        const resolution = xmlStartTags(opfXml, 'meta').map(tagAttributes)
+            .find(attrs => attrs.name === 'original-resolution')?.content || '';
+        const match = resolution.match(/^(\d+)\s*[x×]\s*(\d+)$/i);
+        width = Number(match?.[1]);
+        height = Number(match?.[2]);
+    }
+    return width > 0 && height > 0 && width <= 50000 && height <= 50000 ? { width, height } : null;
+}
+
+function resolveEpubAudioSource(entryName, href, entries, session) {
+    if (!href || /^[\w+.-]+:|^\/\//.test(String(href).trim())) return null;
+    const asset = findArchiveEntry(entries, resolveEpubHref(entryName, href));
+    if (!asset || asset.isDir || !isEpubAudioEntry(asset.name)) return null;
+    return { src: epubAssetProtocolUrl(session, asset.name), type: epubAudioMime(asset.name), name: asset.name };
+}
+
+async function readEpubMediaOverlayTracks(manifest, entries, session, readOptions) {
+    const byChapter = new Map();
+    const overlayIds = new Set(Array.from(manifest.values()).map(item => item['media-overlay']).filter(Boolean));
+    for (const overlayId of overlayIds) {
+        throwIfViewerOperationAborted(readOptions.signal);
+        const overlayItem = manifest.get(overlayId);
+        const entry = overlayItem?.entryName ? findArchiveEntry(entries, overlayItem.entryName) : null;
+        if (!entry || entry.isDir) continue;
+        try {
+            const buffer = await extractArchiveEntry(session.filePath, entry.name, '', { ...readOptions, maxBytes: 4 * 1024 * 1024 });
+            const tracks = parseEpubMediaOverlay(buffer.toString('utf8'), entry.name,
+                (base, href) => resolveEpubAudioSource(base, href, entries, session),
+                (base, href) => parseEpubInternalHref(base, href));
+            for (const track of tracks) {
+                const key = normalizeInnerPath(track.entryName).toLowerCase();
+                const { entryName: _entryName, ...chapterTrack } = track;
+                if (!byChapter.has(key)) byChapter.set(key, []);
+                byChapter.get(key).push(chapterTrack);
+            }
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error;
+        }
+    }
+    return byChapter;
 }
 
 function xmlStartTags(xml = '', tagName = '') {
@@ -1403,7 +1555,7 @@ function findEpubImageEntryForFilenameText(text = '', entries = []) {
 
 function repairEpubFilenameOnlyCoverPage(results = [], coverEntry, entries = [], session, imageDimensionByEntryName = new Map()) {
     if (!Array.isArray(results) || results.length < 1) return;
-    const firstChapter = results[0];
+    const firstChapter = results.find(chapter => !chapter.originalOnly);
     if (!firstChapter || firstChapter.blocks?.some(block => block.type === 'image' || block.hasImage)) return;
     const text = String(firstChapter.text || '').replace(/\s+/g, ' ').trim();
     const filenameEntry = findEpubImageEntryForFilenameText(text, entries);
@@ -1414,7 +1566,7 @@ function repairEpubFilenameOnlyCoverPage(results = [], coverEntry, entries = [],
         : filenameEntry;
     if (!imageEntry) return;
     const title = String(firstChapter.title || '').trim();
-    const isLikelyCoverPage = results.length === 1
+    const isLikelyCoverPage = results.filter(chapter => !chapter.originalOnly).length === 1
         || /^(?:표지|cover|front cover|cover.xhtml|cover.html|cover.htm)$/i.test(title)
         || /(?:^|\/)cover\.(?:xhtml|html|htm)$/i.test(firstChapter.name || '');
     if (!isLikelyCoverPage) return;
@@ -1860,6 +2012,7 @@ export class ViewerSessionManager {
         this.getAudioLibraryRecord = options.getAudioLibraryRecord || (async () => null);
         this.sessions = new Map();
         this.comicArchiveEntryCaches = new Map();
+        this.epubAudioAssetCache = new Map();
         this.currentSessionId = '';
         this.currentSessionIdsByKind = new Map();
         this.nextSessionSeq = 1;
@@ -1880,6 +2033,9 @@ export class ViewerSessionManager {
             if (!oldestInactiveSessionId) return;
             this.sessions.delete(oldestInactiveSessionId);
             this.comicArchiveEntryCaches.delete(oldestInactiveSessionId);
+            for (const [key, cached] of this.epubAudioAssetCache) {
+                if (cached.sessionId === oldestInactiveSessionId) this.epubAudioAssetCache.delete(key);
+            }
         }
     }
 
@@ -2125,15 +2281,35 @@ export class ViewerSessionManager {
         const entryName = decodeURIComponent(pathParts.slice(2).join('/') || '');
         const session = this.sessions.get(sessionId);
         const assetIsFont = isFontEntry(entryName);
-        if (!session || session.type !== 'epub' || !entryName || (!isImageEntry(entryName) && !assetIsFont)) return null;
+        const assetIsAudio = isEpubAudioEntry(entryName);
+        if (!session || session.type !== 'epub' || !entryName || (!isImageEntry(entryName) && !assetIsFont && !assetIsAudio)) return null;
+        const cacheKey = `${sessionId}:${normalizeInnerPath(entryName)}`;
+        const signature = assetIsAudio ? await archiveFileSignature(session.filePath) : null;
+        const cached = assetIsAudio ? this.epubAudioAssetCache.get(cacheKey) : null;
+        if (cached && archiveFileSignaturesMatch(cached.signature, signature)) {
+            this.epubAudioAssetCache.delete(cacheKey);
+            this.epubAudioAssetCache.set(cacheKey, cached);
+            return cached.asset;
+        }
+        if (cached) this.epubAudioAssetCache.delete(cacheKey);
         const buffer = await extractArchiveEntry(session.filePath, entryName, '', {
-            maxBytes: assetIsFont ? 64 * 1024 * 1024 : 32 * 1024 * 1024,
+            maxBytes: assetIsAudio ? MAX_EPUB_AUDIO_BYTES : assetIsFont ? 64 * 1024 * 1024 : 32 * 1024 * 1024,
         });
-        return {
+        const asset = {
             name: entryName,
-            mime: assetIsFont ? fontMime(entryName) : imageMime(entryName),
+            mime: assetIsAudio ? epubAudioMime(entryName) : assetIsFont ? fontMime(entryName) : imageMime(entryName),
             buffer,
         };
+        if (assetIsAudio && buffer.length <= EPUB_AUDIO_CACHE_BYTES && this.sessions.has(sessionId)) {
+            let cachedBytes = Array.from(this.epubAudioAssetCache.values()).reduce((sum, value) => sum + value.asset.buffer.length, 0);
+            for (const [key, value] of this.epubAudioAssetCache) {
+                if (cachedBytes + buffer.length <= EPUB_AUDIO_CACHE_BYTES) break;
+                cachedBytes -= value.asset.buffer.length;
+                this.epubAudioAssetCache.delete(key);
+            }
+            this.epubAudioAssetCache.set(cacheKey, { sessionId, signature, asset });
+        }
+        return asset;
     }
 
     async getComicPageDataFromRequest(requestUrl = '') {
@@ -2327,6 +2503,13 @@ export class ViewerSessionManager {
         const stylesheetCache = new Map();
         const stylesheetTexts = new Set();
         const fontFaceMap = new Map();
+        const originalResourceUrls = Object.fromEntries(entries
+            .filter(entry => !entry.isDir && (isImageEntry(entry.name) || isFontEntry(entry.name) || isEpubAudioEntry(entry.name)))
+            .map(entry => [normalizeInnerPath(entry.name), epubAssetProtocolUrl(session, entry.name)]));
+        const mediaOverlayTracks = await readEpubMediaOverlayTracks(manifest, entries, session, readOptions);
+        const spinePropertiesByEntryName = new Map(xmlStartTags(opfXml, 'itemref')
+            .map(tagAttributes)
+            .map(attrs => [normalizeInnerPath(manifest.get(attrs.idref)?.entryName || '').toLowerCase(), attrs.properties || '']));
         const imageDimensionByEntryName = await readEpubImageDimensionMap(session.filePath, entries, readOptions);
         addUniqueEpubFontFaces(fontFaceMap, await readEpubFontFacesFromStylesheets(session, session.filePath, entries, readOptions));
         for (const entry of chapters) {
@@ -2334,14 +2517,28 @@ export class ViewerSessionManager {
                 ...readOptions,
                 maxBytes: MAX_EPUB_CHAPTER_BYTES,
             });
-            const html = buffer.toString('utf8');
+            const inlineAudio = prepareEpubInlineAudio(buffer.toString('utf8'), entry.name,
+                (base, href) => resolveEpubAudioSource(base, href, entries, session));
+            const html = inlineAudio.html;
+            const audioTracks = [...inlineAudio.tracks, ...(mediaOverlayTracks.get(normalizeInnerPath(entry.name).toLowerCase()) || [])];
             addUniqueEpubFontFaces(
                 fontFaceMap,
                 extractEpubFontFacesFromCss(extractEpubInlineCss(html), entry.name, entries, session),
             );
             const css = await readEpubCssRulesForHtml(html, entry.name, session.filePath, entries, stylesheetCache, readOptions);
             if (css.stylesheet) stylesheetTexts.add(css.stylesheet);
-            const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(html, entry.name, session, entries, css.rules, imageDimensionByEntryName);
+            const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(inlineAudio.optimizedHtml, entry.name, session, entries, css.rules, imageDimensionByEntryName);
+            for (const track of audioTracks) {
+                const block = track.anchor ? blocks.find(item => item.anchors?.includes(track.anchor)) : blocks[0];
+                if (block) {
+                    block.hasAudio = true;
+                    block.audioTracks = Array.from(new Set([...(block.audioTracks || []), track.id]));
+                    if (track.kind === 'overlay' && block.text) track.text = block.text;
+                }
+            }
+            if (blocks.length < 1 && audioTracks.length > 0) {
+                blocks.push({ type: 'html', text: '', nodes: [], hasAudio: true, audioTracks: audioTracks.map(track => track.id), anchors: audioTracks.map(track => track.anchor).filter(Boolean) });
+            }
             for (const imageEntryName of imageEntryNames) {
                 referencedImageNames.add(normalizeInnerPath(imageEntryName).toLowerCase());
             }
@@ -2350,13 +2547,22 @@ export class ViewerSessionManager {
                 .map(block => block.text)
                 .join('\n\n')
                 .trim();
-            if (!text && !blocks.some(block => block.type === 'image' || block.hasImage)) continue;
+            const originalOnly = !text && !blocks.some(block => block.type === 'image' || block.hasImage || block.hasAudio);
             const tocTitle = tocTitleByEntryName.get(normalizeInnerPath(entry.name).toLowerCase());
             results.push({
                 name: entry.name,
                 title: tocTitle || parseHtmlTitle(html) || path.posix.basename(entry.name),
                 text,
                 blocks,
+                ...(audioTracks.length > 0 ? { audioTracks } : {}),
+                ...(originalOnly ? { originalOnly: true } : {}),
+                original: {
+                    html,
+                    stylesheet: await readOriginalEpubCssForHtml(html, entry.name, session, entries, stylesheetCache, readOptions),
+                    resourceUrls: originalResourceUrls,
+                    layout: epubOriginalLayout(opfXml, spinePropertiesByEntryName.get(normalizeInnerPath(entry.name).toLowerCase())),
+                    viewport: epubOriginalViewport(html, opfXml),
+                },
             });
         }
         const coverMetaId = findEpubCoverMetaId(opfXml);
@@ -2374,6 +2580,13 @@ export class ViewerSessionManager {
                 title: '표지',
                 text: '',
                 blocks: [epubImageBlockFromEntry(session, coverEntry, coverDimensions)],
+                original: {
+                    html: `<html><head></head><body style="margin:0"><img src="${epubAssetProtocolUrl(session, coverEntry.name)}" style="display:block;width:100%;height:100%;object-fit:contain" /></body></html>`,
+                    stylesheet: '',
+                    resourceUrls: originalResourceUrls,
+                    layout: 'pre-paginated',
+                    viewport: coverDimensions?.width > 0 && coverDimensions?.height > 0 ? coverDimensions : null,
+                },
             });
         }
         const normalizedChapters = results.map((chapter, index) => ({

@@ -8,6 +8,7 @@ import {
     resolveAudiobookCloseAction,
 } from './audiobookClosePolicy.js';
 import { ViewerSessionManager } from './viewerSessions.js';
+import { epubAssetResponseData } from './epubAudio.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
 import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
 import { LibraryDB } from './database/library_db.js';
@@ -185,12 +186,8 @@ function registerDocumentProtocol(sessions) {
         try {
             const asset = await sessions.getDocumentAssetFromRequest(request.url);
             if (asset) {
-                return new Response(new Uint8Array(asset.buffer), {
-                    headers: {
-                        'Content-Type': asset.mime,
-                        'Cache-Control': 'private, max-age=3600',
-                    },
-                });
+                const response = epubAssetResponseData(asset, request.headers.get('range') || '', request.method);
+                return new Response(response.body, { status: response.status, headers: response.headers });
             }
             const document = sessions.resolveDocumentRequest(request.url);
             if (!document) return new Response('Not found', { status: 404 });
