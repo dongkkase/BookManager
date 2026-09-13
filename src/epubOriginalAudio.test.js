@@ -25,7 +25,7 @@ test('original EPUB audio proxies keep layout and delegate playback without load
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import EpubOriginalDocument from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
-import { applyEpubOriginalTheme, buildEpubOriginalDocument } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/epubOriginalDocument.js')}`)};
+import { applyEpubOriginalTheme, buildEpubOriginalDocument, getEpubOriginalAnchorRects } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/epubOriginalDocument.js')}`)};
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
 async function until(predicate, message) {
@@ -159,6 +159,80 @@ window.audioProxyTests = (async () => {
     renderFixed('scroll', 60);
     await until(() => fixedReady > 2 && document.querySelector('iframe')?.dataset.originalReady === 'true', 'Changing fixed scroll margins must reconnect layout readiness');
     check(document.querySelector('iframe').contentDocument === fixedDocument, 'Repeated fixed margin changes must not reload the iframe');
+    for (const setting of [
+        { width: 320, height: 400, scale: 1, css: '' },
+        { width: 280, height: 500, scale: 1.25, css: '' },
+        { width: 320, height: 400, scale: 1, css: 'direction:rtl' },
+        { width: 320, height: 400, scale: 1, css: 'writing-mode:vertical-rl' },
+    ]) {
+        const anchorChapter = {
+            name: 'anchor.xhtml',
+            audioTracks: ['visible', 'hidden', 'tail'].map(id => ({ id: id + '-track', kind: 'inline', anchor: id, title: id, sources: [] })),
+            original: { layout: 'reflowable', stylesheet: '', resourceUrls: {}, html: '<html><head><style>body{margin:0;font:16px/20px monospace;' + setting.css + '}p{margin:0}</style></head><body><p id="dialogue">' + 'word '.repeat(180) + '<span id="before">Before</span><audio id="hidden"></audio><a id="empty" style="font-size:0;line-height:0"></a><span id="after">After</span><audio id="visible" controls></audio>Final words<audio id="tail"></audio></p></body></html>' },
+        };
+        const anchorLayouts = {};
+        const renderAnchors = offset => root.render(<>
+            <EpubOriginalDocument chapter={anchorChapter} mode="page" pageOffset={offset} pageSize={setting} scale={setting.scale} appearance={{ horizontalPadding: 40, verticalPadding: 40 }} onLayout={layout => anchorLayouts.main = layout} />
+            <EpubOriginalDocument chapter={anchorChapter} mode="measure" pageSize={setting} scale={setting.scale} appearance={{ horizontalPadding: 40, verticalPadding: 40 }} onLayout={layout => anchorLayouts.measure = layout} />
+        </>);
+        renderAnchors(0);
+        await until(() => anchorLayouts.main && anchorLayouts.measure && [...document.querySelectorAll('iframe')].every(frame => frame.dataset.originalReady === 'true'), 'Audio anchor documents did not become ready');
+        const anchorFrame = document.querySelector('iframe');
+        const anchorDoc = anchorFrame.contentDocument;
+        const layout = anchorLayouts.main;
+        const expectedPage = rect => Math.floor((layout.vertical ? rect.top / anchorFrame.clientHeight : layout.rtl ? (anchorFrame.clientWidth - rect.right) / anchorFrame.clientWidth : rect.left / anchorFrame.clientWidth) + 0.001);
+        const actualHiddenPage = expectedPage(anchorDoc.getElementById('after').getClientRects()[0]);
+        const actualControl = anchorDoc.querySelector('button[data-epub-audio-id="visible-track"]');
+        const actualVisiblePage = expectedPage(actualControl.getBoundingClientRect());
+        check(actualHiddenPage > 0, 'The hidden audio fixture must appear after the first column: ' + JSON.stringify({ setting, layout, rect: anchorDoc.getElementById('after').getBoundingClientRect(), scrollLeft: anchorDoc.documentElement.scrollLeft, scrollTop: anchorDoc.documentElement.scrollTop }));
+        check(layout.anchors.dialogue === 0, 'Containing chapter text must retain its own first-page anchor');
+        check(layout.anchors.hidden === actualHiddenPage, 'Hidden audio must use the adjacent text fragment rather than the multi-column parent bounds');
+        check(layout.anchors.empty === actualHiddenPage, 'Empty SMIL anchors must use their neighboring text position');
+        check(layout.anchors.visible === actualVisiblePage, 'Visible audio must use the actual playback control page');
+        check(JSON.stringify(layout.anchors) === JSON.stringify(anchorLayouts.measure.anchors), 'Measured and visible audio anchors must match with padding, zoom, and reading direction');
+        check(getEpubOriginalAnchorRects(anchorDoc.getElementById('visible'))[0].height === actualControl.getBoundingClientRect().height, 'Audio visibility must use the full control rather than its inline wrapper');
+        check(anchorFrame.dataset.originalEntry === anchorChapter.name, 'Live audio frames must identify their chapter');
+        renderAnchors(actualHiddenPage);
+        await frame(); await frame();
+        const hiddenRect = getEpubOriginalAnchorRects(anchorDoc.getElementById('hidden'))[0];
+        check(hiddenRect.right > 0 && hiddenRect.left < anchorFrame.clientWidth && hiddenRect.bottom > 0 && hiddenRect.top < anchorFrame.clientHeight, 'The mapped audio page must actually contain its text location');
+    }
+    const boundaryMarker = '<audio id="boundary"></audio><a id="boundary-empty" style="font-size:0;line-height:0"></a>';
+    const boundaryCases = [
+        { name: 'forced-end', html: '<p>Current page text' + boundaryMarker + '<span style="display:block;break-before:column">Next page text</span></p>', page: 0 },
+        { name: 'natural-end', html: '<p>' + 'line<br>'.repeat(15) + 'Book line ends here' + boundaryMarker + ' FOLLOWING text moves to the next page.' + ' More content.'.repeat(20) + '</p>', page: 0 },
+        { name: 'exact-edge', html: '<p><span style="display:inline-block;width:240px">End</span>' + boundaryMarker + '<span style="display:block;break-before:column">Next page</span></p>', page: 0 },
+        { name: 'new-paragraph', html: '<p>Previous page</p><p style="break-before:column">' + boundaryMarker + 'New paragraph begins here.</p>', page: 1 },
+        { name: 'rtl-start', css: 'direction:rtl', html: '<p>' + boundaryMarker + 'Right to left page starts here.</p>', page: 0 },
+        { name: 'rtl-end', css: 'direction:rtl', html: '<p>Current page text' + boundaryMarker + '<span style="display:block;break-before:column">Next page</span></p>', page: 0 },
+    ];
+    for (const boundary of boundaryCases) {
+        let boundaryLayout;
+        let boundaryReady = 0;
+        const boundaryChapter = { name: boundary.name + '.xhtml', audioTracks: [{ id: 'boundary-track', kind: 'inline', anchor: 'boundary', sources: [] }], original: { html: '<html><head><style>body{margin:0;font:16px/20px monospace;' + (boundary.css || '') + '}p{margin:0;orphans:1;widows:1}</style></head><body>' + boundary.html + '</body></html>', layout: 'reflowable', stylesheet: '', resourceUrls: {} } };
+        root.render(<EpubOriginalDocument key={boundary.name} chapter={boundaryChapter} pageSize={{ width: 320, height: 400 }} appearance={{ horizontalPadding: 40, verticalPadding: 40 }} onLayout={layout => boundaryLayout = layout} onReady={() => boundaryReady += 1} />);
+        await until(() => boundaryLayout && document.querySelector('iframe')?.dataset.originalReady === 'true', 'Page boundary fixture did not become ready');
+        const boundaryDocument = document.querySelector('iframe').contentDocument;
+        const hidden = boundaryDocument.getElementById('boundary');
+        const beforeMarkup = boundaryDocument.body.innerHTML;
+        const beforeHeight = boundaryDocument.body.getBoundingClientRect().height;
+        const beforeWidth = boundaryDocument.documentElement.scrollWidth;
+        const beforePages = boundaryLayout.pageCount;
+        check(boundaryLayout.anchors.boundary === boundary.page && boundaryLayout.anchors['boundary-empty'] === boundary.page, 'Audio and empty anchors must retain their actual side of the page boundary: ' + boundary.name + ' ' + JSON.stringify(boundaryLayout.anchors));
+        for (let count = 0; count < 30; count += 1) getEpubOriginalAnchorRects(hidden);
+        await frame(); await frame();
+        check(boundaryDocument.body.innerHTML === beforeMarkup, 'Temporary audio position measurement must restore original markup');
+        check(boundaryDocument.body.getBoundingClientRect().height === beforeHeight && boundaryDocument.documentElement.scrollWidth === beforeWidth && boundaryLayout.pageCount === beforePages, 'Audio position probes must not move content or repaginate the chapter');
+        check(boundaryReady === 1 && boundaryDocument.documentElement.scrollLeft === 0 && boundaryDocument.documentElement.scrollTop === 0, 'Repeated audio probes must not restart readiness or move the viewport');
+    }
+    const audioOnlyChapter = { name: 'audio-only.xhtml', audioTracks: [{ id: 'only', kind: 'inline', anchor: 'only', sources: [] }], original: { html: '<html><body><audio id="only" autoplay></audio></body></html>', layout: 'reflowable', stylesheet: '', resourceUrls: {} } };
+    for (const mode of ['page', 'scroll']) {
+        let onlyLayout;
+        root.render(<EpubOriginalDocument key={mode} chapter={audioOnlyChapter} mode={mode} pageSize={{ width: 320, height: 400 }} appearance={{ horizontalPadding: 40, verticalPadding: 40 }} onLayout={layout => onlyLayout = layout} />);
+        await until(() => onlyLayout && document.querySelector('iframe')?.dataset.originalReady === 'true', 'Audio-only chapter did not become ready');
+        check(onlyLayout.pageCount === 1 && onlyLayout.anchors.only === 0, 'Audio-only chapters without controls must retain their single chapter cue');
+        check(getEpubOriginalAnchorRects(document.querySelector('iframe').contentDocument.getElementById('only')).length === 1, 'Only a chapter consisting entirely of hidden audio may use its chapter region');
+    }
     root.unmount();
     return { requests, pageCount: originalPageCount, anchors: layouts.main.anchors, mediaElements: 0 };
 })();

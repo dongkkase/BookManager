@@ -15,6 +15,8 @@ test('audio cues follow their own chapter and anchor when optimized and original
         { name: 'two.xhtml', anchors: ['speech'] },
     ]);
     assert.deepEqual(original.tracks.map(item => item.pageIndex), [0, 2]);
+    assert.deepEqual(original.byChapter.get('one.xhtml').map(item => item.id), ['one']);
+    assert.deepEqual(original.byChapter.get('two.xhtml').map(item => item.id), ['two']);
     const optimized = mapEpubAudioTracks(chapters, [
         { name: 'one.xhtml', blocks: [{ anchors: [] }] },
         { name: 'one.xhtml', blocks: [{ anchors: ['speech'] }] },
@@ -38,4 +40,24 @@ test('missing text anchors use matching passage text and invalid audio never ent
     ]);
     assert.equal(mapped.tracks.length, 1);
     assert.equal(mapped.tracks[0].pageIndex, 1);
+});
+
+test('declared passage triggers take priority over audio elements stored on later pages', () => {
+    const chapter = { name: 'chapter.xhtml', audioTracks: [track('sound', 'audio-at-end', { triggerAnchors: ['passage', 'second-passage'] })] };
+    const mapping = mapEpubAudioTracks([chapter], [
+        { name: chapter.name, blocks: [{ anchors: ['passage'] }] },
+        { name: chapter.name, anchors: ['second-passage'] },
+        { name: chapter.name, blocks: [{ anchors: ['audio-at-end'], audioTracks: ['sound'] }] },
+    ]);
+    assert.equal(mapping.tracks[0].pageIndex, 0);
+    assert.equal(mapping.byPage.get(0)[0].id, 'sound');
+    assert.equal(mapping.byPage.get(1)[0].id, 'sound');
+    assert.equal(mapping.byPage.has(2), false);
+});
+
+test('missing declared triggers do not fall back to the unrelated audio storage location', () => {
+    const chapter = { name: 'chapter.xhtml', audioTracks: [track('sound', 'audio-at-end', { triggerAnchors: ['missing'] })] };
+    const mapping = mapEpubAudioTracks([chapter], [{ name: chapter.name, anchors: ['audio-at-end'] }]);
+    assert.equal(mapping.byPage.size, 0);
+    assert.equal(mapping.byChapter.get(chapter.name).length, 1);
 });

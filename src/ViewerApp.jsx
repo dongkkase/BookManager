@@ -14,6 +14,7 @@ import { ViewerScrollOptions, ViewerScrollPopover } from './components/viewer/Vi
 import EpubOriginalDocument from './components/viewer/EpubOriginalDocument';
 import { EpubAudioControls } from './components/viewer/EpubAudioControls';
 import { mapEpubAudioTracks } from './epubAudioContext';
+import { epubAudioBlockNodes, separateEpubAudioBlockImages, sliceEpubAudioBlock } from './epubAudioPagination';
 import { useEpubAudioContext } from './useEpubAudioContext';
 import { useEpubAudioPlayback } from './useEpubAudioPlayback';
 import { restoreEpubOriginalScrollPosition } from './epubOriginalScrollRestore';
@@ -153,8 +154,8 @@ const COVER_DISPLAY_OPTIONS = [
     { id: 'single', label: '단독 표시', labelKey: 'viewer.settings.cover_alone', iconSrc: readModeOnePageIcon },
 ];
 const EPUB_STYLE_OPTIONS = [
-    { id: 'optimized', label: '읽기 최적화', labelKey: 'viewer.settings.epub_style_optimized', icon: 'sliders' },
     { id: 'original', label: '원본 스타일', labelKey: 'viewer.settings.epub_style_original', icon: 'bookOpen' },
+    { id: 'optimized', label: '읽기 최적화', labelKey: 'viewer.settings.epub_style_optimized', icon: 'sliders' },
 ];
 const READING_DIRECTION_OPTIONS = [
     { id: 'ltr', label: '왼쪽에서 오른쪽', labelKey: 'viewer.settings.reading_ltr', iconSrc: leftReadIcon, rotate: 180 },
@@ -181,7 +182,7 @@ const HIGHLIGHT_COLORS = [
   { id: 'purple', label: '보라', labelKey: 'viewer.context.highlight_color_purple' },
 ];
 const DEFAULT_READER_SETTINGS = {
-    epubStyle: 'optimized',
+    epubStyle: 'original',
     epubOriginalTheme: 'original',
     epubOriginalVerticalPadding: 40,
     epubOriginalHorizontalPadding: 40,
@@ -1690,7 +1691,7 @@ function normalizeReaderSettings(settings = {}) {
   const { fontSize: _legacyFontSize, ...readerSettings } = merged;
   return {
     ...readerSettings,
-    epubStyle: merged.epubStyle === 'original' ? 'original' : 'optimized',
+    epubStyle: EPUB_STYLE_OPTIONS.some(item => item.id === merged.epubStyle) ? merged.epubStyle : DEFAULT_READER_SETTINGS.epubStyle,
     epubOriginalTheme: THEMES.some(item => item.id === merged.epubOriginalTheme) ? merged.epubOriginalTheme : 'original',
     epubOriginalVerticalPadding: clampNumber(merged.epubOriginalVerticalPadding, 0, 80, DEFAULT_READER_SETTINGS.epubOriginalVerticalPadding),
     epubOriginalHorizontalPadding: clampNumber(merged.epubOriginalHorizontalPadding, 0, 80, DEFAULT_READER_SETTINGS.epubOriginalHorizontalPadding),
@@ -2098,7 +2099,7 @@ function splitReaderTextForRemainingPage(text = '', metrics = {}, remainingLines
   );
 }
 
-function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, patch = {}) {
+function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, patch = {}, textOffset = 0) {
   return {
     type: block.type || 'text',
     text,
@@ -2113,6 +2114,8 @@ function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, pa
     anchors: block.anchors,
     hasImage: block.hasImage || block.type === 'image',
     mediaOnly: block.mediaOnly || false,
+    ...(block.hasAudio ? { hasAudio: true, audioTracks: block.audioTracks, nodes: preserveNodes && Array.isArray(block.nodes) ? epubAudioBlockNodes(block) : undefined } : {}),
+    ...(!preserveNodes && block.hasAudio && Array.isArray(block.nodes) ? sliceEpubAudioBlock(block, text, textOffset) : {}),
     ...patch,
   };
 }
@@ -2614,6 +2617,12 @@ function paginateReaderChapter(chapter = {}, options = {}) {
   const metrics = readerPaginationMetrics(options);
   let currentPageBlocks = [];
   let currentPageLineCost = 0;
+    const audioTextOffsets = new WeakMap();
+    const clonePageBlock = (block, text, preserveNodes, patch) => {
+        const offset = audioTextOffsets.get(block) || 0;
+        if (block.hasAudio) audioTextOffsets.set(block, offset + String(text || '').replace(/\s/gu, '').length);
+        return cloneReaderBlockForPage(block, text, preserveNodes, patch, offset);
+    };
 
   const flushTextPage = () => {
     if (currentPageBlocks.length < 1) return;
@@ -2639,7 +2648,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
       flushTextPage();
     }
     const nextSpacingCost = currentPageBlocks.length > 0 ? metrics.paragraphLineCost : 0;
-    currentPageBlocks.push(cloneReaderBlockForPage(block, text, options.preserveNodes !== false, {
+    currentPageBlocks.push(clonePageBlock(block, text, options.preserveNodes !== false, {
       hasImage,
       mediaOnly: options.mediaOnly || block.mediaOnly || (hasImage && (!String(text || '').trim() || block.type === 'image')),
     }));
@@ -2655,7 +2664,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
       pageTexts.forEach((pageText, index) => {
         if (index < pageTexts.length - 1) {
           pages.push({
-            blocks: [cloneReaderBlockForPage(block, pageText, false)],
+            blocks: [clonePageBlock(block, pageText, false)],
             text: pageText,
           });
           return;
@@ -2691,7 +2700,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
         tailPages.forEach((pageText, index) => {
           if (index < tailPages.length - 1) {
             pages.push({
-              blocks: [cloneReaderBlockForPage(block, pageText, false)],
+              blocks: [clonePageBlock(block, pageText, false)],
               text: pageText,
             });
             return;
@@ -2749,6 +2758,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
     const preserveNodes = Array.isArray(block?.nodes);
     if (block.hasImage) {
       const imageOnlyNodes = readerImageOnlyNodesFromBlock(block);
+        const separatedAudio = block.hasAudio ? separateEpubAudioBlockImages(block, imageOnlyNodes) : null;
       const imageOnlyBlock = imageOnlyNodes.length > 0
         ? {
             ...block,
@@ -2756,6 +2766,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
             nodes: imageOnlyNodes,
             hasImage: true,
             mediaOnly: true,
+            ...separatedAudio?.image,
           }
         : null;
       const textOnlyBlock = {
@@ -2763,6 +2774,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
         hasImage: false,
         mediaOnly: false,
         nodes: undefined,
+        ...separatedAudio?.text,
       };
       const textLineCost = estimateReaderBlockLineCost(text, metrics);
       const mediaLineCost = imageOnlyBlock ? estimateReaderMediaLineCost(metrics, imageOnlyBlock) : 0;

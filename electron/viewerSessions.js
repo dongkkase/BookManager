@@ -2529,8 +2529,11 @@ export class ViewerSessionManager {
             if (css.stylesheet) stylesheetTexts.add(css.stylesheet);
             const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(inlineAudio.optimizedHtml, entry.name, session, entries, css.rules, imageDimensionByEntryName);
             for (const track of audioTracks) {
-                const block = track.anchor ? blocks.find(item => item.anchors?.includes(track.anchor)) : blocks[0];
-                if (block) {
+                const anchors = track.triggerAnchors?.length ? track.triggerAnchors : track.anchor ? [track.anchor] : [];
+                const targetBlocks = anchors.length > 0
+                    ? blocks.filter(item => anchors.some(anchor => item.anchors?.includes(anchor)))
+                    : blocks.slice(0, 1);
+                for (const block of targetBlocks) {
                     block.hasAudio = true;
                     block.audioTracks = Array.from(new Set([...(block.audioTracks || []), track.id]));
                     if (track.kind === 'overlay' && block.text) track.text = block.text;

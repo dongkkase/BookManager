@@ -114,6 +114,76 @@ test('EPUB 오디오 parser는 script/comment를 무시하고 생성 anchor 충�
     for (const invalid of ['-1s', '1e99', '00:60:00', '1:90', 'foo']) assert.equal(parseEpubAudioClock(invalid), null);
 });
 
+test('story sound는 같은 문서의 오디오 ID와 여러 본문 트리거를 연결하고 ID 충돌을 피한다', () => {
+    const html = `<html><body>
+        <p id=bookmanager-epub-audio-trigger-1>기존 위치</p>
+        <p data-story-sound="rain">처음 소리가 나는 본문</p>
+        <p><span id="existing-trigger" data-story-sound="rain">두 번째 본문</span></p>
+        <p data-story-sound="missing">없는 오디오</p>
+        <p data-story-sound="other.xhtml#rain">다른 문서 참조</p>
+        <!-- <p data-story-sound="rain">주석</p> -->
+        <script>const example = '<p data-story-sound="rain">문자열</p>';</script>
+        <audio id="rain" src="rain.wav"></audio><audio id="backup" src="backup.wav"></audio>
+        </body></html>`;
+    const resolve = (_base, href) => ({ src: `safe:${href}`, type: 'audio/wav', name: href });
+    const result = prepareEpubInlineAudio(html, 'one.xhtml', resolve);
+    assert.equal(result.tracks.length, 2);
+    const track = result.tracks[0];
+    assert.equal(track.anchor, 'rain');
+    assert.deepEqual(track.triggerAnchors, ['bookmanager-epub-audio-trigger-1-trigger', 'existing-trigger']);
+    for (const output of [result.html, result.optimizedHtml]) {
+        assert.match(output, /<p data-story-sound="rain" id="bookmanager-epub-audio-trigger-1-trigger">/);
+        assert.match(output, /<span data-story-sound="rain" id="existing-trigger">/);
+        assert.match(output, /<p data-story-sound="missing">없는 오디오/);
+        assert.match(output, /<p data-story-sound="other.xhtml#rain">다른 문서 참조/);
+    }
+    assert.match(result.html, /<audio[^>]*id="rain"[^>]*data-bookmanager-audio-track="inline:one.xhtml:1"/);
+    assert.match(result.optimizedHtml, /<span id="rain"><\/span>/);
+    assert.equal(result.tracks[1].triggerAnchors, undefined);
+    assert.match(result.optimizedHtml, /<span id="backup" data-bookmanager-audio-track=/);
+    const otherChapter = prepareEpubInlineAudio('<p data-story-sound="rain">다른 문서</p><audio id="backup" src="backup.wav"></audio>', 'two.xhtml', resolve);
+    assert.equal(otherChapter.tracks[0].triggerAnchors, undefined);
+    assert.match(otherChapter.html, /<p data-story-sound="rain">다른 문서/);
+});
+
+test('story sound가 연결된 EPUB은 장 끝의 audio 대신 실제 본문 블록에 오디오를 보존한다', async t => {
+    const { filePath } = await fixture(t);
+    await replaceZipEntry(filePath, 'OEBPS/text/chapter.xhtml', `<html><body>
+        <div data-story-sound="rain"><p>첫 트리거 본문</p></div>
+        <p>오디오와 연결되지 않은 중간 본문</p>
+        <p><span id="second-trigger" data-story-sound="rain">다음 트리거 본문</span></p>
+        <p data-story-sound="missing">없는 오디오 참조</p>
+        <audio id="rain" style="display:none"><source src="../audio/tone.wav" /></audio>
+        </body></html>`);
+    const manager = new ViewerSessionManager();
+    const session = manager.create(filePath, { skipAdjacent: true });
+    const result = await manager.getEpubText(session.id);
+    const chapter = result.chapters[0];
+    const track = chapter.audioTracks.find(item => item.kind === 'inline');
+    assert.equal(track.anchor, 'rain');
+    assert.deepEqual(track.triggerAnchors, ['bookmanager-epub-audio-trigger-1', 'second-trigger']);
+    const linked = chapter.blocks.filter(block => block.audioTracks?.includes(track.id));
+    assert.equal(linked.length, 2);
+    assert.deepEqual(linked.map(block => block.text), ['첫 트리거 본문', '다음 트리거 본문']);
+    assert.ok(linked.every(block => block.hasAudio));
+    assert.ok(track.triggerAnchors.every(anchor => linked.some(block => block.anchors.includes(anchor))));
+    const assertTextNodes = nodes => {
+        for (const node of nodes || []) {
+            assert.equal(node.audioTrackId, undefined, '본문 트리거는 오디오 버튼용 노드가 되지 않는다');
+            assertTextNodes(node.children);
+        }
+    };
+    linked.forEach(block => assertTextNodes(block.nodes));
+    assert.equal(linked[0].nodes[0].children[0].text, '첫 트리거 본문');
+    assert.equal(linked[1].nodes[0].children[0].children[0].text, '다음 트리거 본문');
+    assert.equal(chapter.blocks.some(block => block.anchors?.includes('rain')), false);
+    assert.equal(chapter.blocks.find(block => block.text.includes('중간 본문')).hasAudio, undefined);
+    assert.match(chapter.original.html, /<audio[^>]*id="rain"/);
+    const nextChapterTrack = result.chapters[1].audioTracks[0];
+    assert.equal(nextChapterTrack.triggerAnchors, undefined);
+    assert.equal(result.chapters[1].blocks[0].hasAudio, true);
+});
+
 test('EPUB 오디오 응답은 전체, 부분, suffix, HEAD와 잘못된 범위를 구분한다', () => {
     const asset = { buffer: Buffer.from('0123456789'), mime: 'audio/wav' };
     assert.equal(epubAssetResponseData(asset).body.toString(), '0123456789');

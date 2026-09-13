@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics } from '../../epubOriginalDocument.js';
+import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics, getEpubOriginalAnchorRects } from '../../epubOriginalDocument.js';
 import '../../styles/epubOriginalDocument.css';
 
 const EMPTY_HIGHLIGHTS = [];
@@ -73,15 +73,8 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
     document.querySelectorAll('[id], a[name]').forEach(node => {
         const id = node.id || node.getAttribute('name');
         if (!id) return;
-        let rect = node.getBoundingClientRect();
-        if (node.hasAttribute('data-epub-audio-anchor') && !rect.width && !rect.height) {
-            let parent = node.parentElement;
-            while (parent && !rect.width && !rect.height) {
-                rect = parent.getBoundingClientRect();
-                parent = parent.parentElement;
-            }
-        }
-        anchors[id] = pageForRect(rect);
+        const rect = getEpubOriginalAnchorRects(node)[0];
+        if (rect) anchors[id] = pageForRect(rect);
     });
     const textByPage = Array.from({ length: pageCount }, () => []);
     const walker = document.createTreeWalker(document.body, viewport.NodeFilter.SHOW_TEXT, {
@@ -252,6 +245,7 @@ export default function EpubOriginalDocument({
         updateTheme();
         if (!fixed) {
             const root = document.documentElement;
+            if (viewport.getComputedStyle(document.body).direction === 'rtl') root.style.setProperty('direction', 'rtl', 'important');
             const writingMode = viewport.getComputedStyle(root).writingMode;
             const bodyWritingMode = viewport.getComputedStyle(document.body).writingMode;
             const verticalWritingMode = writingMode.startsWith('vertical') ? writingMode : bodyWritingMode.startsWith('vertical') ? bodyWritingMode : '';
@@ -445,6 +439,7 @@ export default function EpubOriginalDocument({
                 scrolling="no"
                 tabIndex={mode === 'measure' ? -1 : 0}
                 data-original-ready={ready ? 'true' : 'false'}
+                data-original-entry={chapter?.name || ''}
                 style={{ width: frameWidth, height: frameHeight, top: fixed ? verticalPadding : undefined, backgroundColor: documentColors.bg, transform: `scale(${fixedScale * displayScale})` }}
                 onLoad={handleLoad}
             />

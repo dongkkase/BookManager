@@ -59,9 +59,11 @@ export function parseEpubAudioClock(value = '') {
 export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource = () => null) {
     const source = String(html);
     const searchable = withoutNonContent(source);
-    const existingIds = new Set(Array.from(searchable.matchAll(/\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/gi))
-        .map(match => safeAnchor(decodeHTMLStrict(match[1] ?? match[2] ?? ''))));
+    const openingTags = Array.from(searchable.matchAll(/<[\p{L}_:][\p{L}\p{N}_.:-]*(?:"[^"]*"|'[^']*'|[^'">])*>/gu))
+        .map(match => ({ start: match.index, tag: match[0], attrs: attributes(match[0]) }));
+    const existingIds = new Set(openingTags.map(item => safeAnchor(item.attrs.id || '')).filter(Boolean));
     const tracks = [];
+    const tracksByAudioId = new Map();
     const replacements = [];
     let index = 0;
     const audioPattern = /<(?:\w+:)?audio\b(?:"[^"]*"|'[^']*'|[^'">])*\/>|<(?:\w+:)?audio\b(?:"[^"]*"|'[^']*'|[^'">])*>[\s\S]*?<\/(?:\w+:)?audio\s*>/gi;
@@ -87,7 +89,9 @@ export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource 
         }
         existingIds.add(anchor);
         const title = plainText(attrs.title || attrs['aria-label'] || path.posix.basename(resolved[0].name || '') || `Audio ${index}`).slice(0, 240);
-        tracks.push({ id, kind: 'inline', anchor, title, sources, clipBegin: 0, clipEnd: null, loop: Object.hasOwn(attrs, 'loop') });
+        const track = { id, kind: 'inline', anchor, title, sources, clipBegin: 0, clipEnd: null, loop: Object.hasOwn(attrs, 'loop') };
+        tracks.push(track);
+        if (attrs.id && !tracksByAudioId.has(attrs.id)) tracksByAudioId.set(attrs.id, track);
         const originalOpening = opening.replace(/\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+)/i, '')
             .replace(/\s*\/?>$/, ending => ` id="${escapeAttribute(anchor)}" data-bookmanager-audio-track="${escapeAttribute(id)}"${ending}`);
         replacements.push({
@@ -95,8 +99,34 @@ export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource 
             end: match.index + raw.length,
             original: originalOpening + raw.slice(opening.length),
             optimized: `<span id="${escapeAttribute(anchor)}" data-bookmanager-audio-track="${escapeAttribute(id)}"></span>`,
+            track,
         });
     }
+    const audioReplacements = [...replacements];
+    let triggerIndex = 0;
+    for (const { start, tag, attrs } of openingTags) {
+        const track = tracksByAudioId.get(String(attrs['data-story-sound'] || '').trim());
+        if (!track || audioReplacements.some(item => start >= item.start && start < item.end)) continue;
+        triggerIndex += 1;
+        let anchor = safeAnchor(attrs.id);
+        if (!anchor) {
+            anchor = `bookmanager-epub-audio-trigger-${triggerIndex}`;
+            while (existingIds.has(anchor)) anchor += '-trigger';
+        }
+        existingIds.add(anchor);
+        if (!track.triggerAnchors) track.triggerAnchors = [];
+        if (!track.triggerAnchors.includes(anchor)) track.triggerAnchors.push(anchor);
+        const tagged = tag.replace(/\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+)/i, '')
+            .replace(/\s+data-bookmanager-audio-track\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+)/i, '')
+            .replace(/\s*\/?>$/, ending => ` id="${escapeAttribute(anchor)}"${ending}`);
+        replacements.push({ start, end: start + tag.length, original: tagged, optimized: tagged });
+    }
+    for (const replacement of audioReplacements) {
+        if (replacement.track.triggerAnchors?.length) {
+            replacement.optimized = `<span id="${escapeAttribute(replacement.track.anchor)}"></span>`;
+        }
+    }
+    replacements.sort((left, right) => left.start - right.start);
     const replace = key => {
         let result = '';
         let offset = 0;

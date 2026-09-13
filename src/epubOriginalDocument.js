@@ -7,6 +7,84 @@ export const DEFAULT_EPUB_AUDIO_LABELS = Object.freeze({ play: '재생', pause: 
 const originalThemeStyles = new WeakMap();
 const ORIGINAL_THEME_PROPERTIES = ['color', '-webkit-text-fill-color', 'background-color', 'background-image', 'text-shadow'];
 
+export function getEpubOriginalAnchorRects(node) {
+    const document = node?.ownerDocument;
+    const viewport = document?.defaultView;
+    if (!viewport || !node.isConnected) return [];
+    const control = node.matches('button[data-epub-audio-id]') ? node : node.hasAttribute('data-epub-audio-anchor') ? node.querySelector('button[data-epub-audio-id]') : null;
+    const target = control || node;
+    const style = viewport.getComputedStyle(target);
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return [];
+    const direction = style.direction;
+    const vertical = style.writingMode.startsWith('vertical');
+    const hiddenAudio = node.hasAttribute('data-epub-audio-anchor') && node.getAttribute('data-epub-audio-controls') === 'false';
+    if (style.display === 'none' && !hiddenAudio) return [];
+    let previous;
+    const previousInlineRect = () => {
+        if (previous !== undefined) return previous;
+        previous = null;
+        const scope = node.parentElement?.closest('p, div, section, article, li, td, th, blockquote, figure, figcaption, body');
+        for (let cursor = node; scope && cursor !== scope; cursor = cursor.parentElement) {
+            for (let candidate = cursor.previousSibling; candidate; candidate = candidate.previousSibling) {
+                let fragments = [];
+                if (candidate.nodeType === 3 && candidate.textContent.trim()) {
+                    const range = document.createRange();
+                    range.selectNodeContents(candidate);
+                    fragments = Array.from(range.getClientRects());
+                    range.detach();
+                } else if (candidate.nodeType === 1 && !candidate.matches('style, script, [hidden], [data-epub-audio-id]')) {
+                    fragments = Array.from(candidate.getClientRects());
+                }
+                const usable = fragments.filter(rect => rect.width > 0 && rect.height > 0);
+                if (usable.length) {
+                    previous = usable.at(-1);
+                    return previous;
+                }
+            }
+        }
+        return previous;
+    };
+    const rects = element => Array.from(element.getClientRects()).map(rect => {
+        let left = rect.left;
+        let top = rect.top;
+        if (!rect.width || !rect.height) {
+            const preceding = previousInlineRect();
+            const sameRow = preceding && rect.top <= preceding.bottom + 0.5 && rect.bottom >= preceding.top - 0.5;
+            const sameColumn = preceding && rect.left <= preceding.right + 0.5 && rect.right >= preceding.left - 0.5;
+            if (!rect.width) {
+                if (sameRow && Math.abs(rect.left - preceding.right) < 0.5) left -= 1;
+                else if (!(sameRow && Math.abs(rect.left - preceding.left) < 0.5) && direction === 'rtl') left -= 1;
+            }
+            if (!rect.height) {
+                if (sameColumn && Math.abs(rect.top - preceding.bottom) < 0.5) top -= 1;
+                else if (!(sameColumn && Math.abs(rect.top - preceding.top) < 0.5) && vertical && direction === 'rtl') top -= 1;
+            }
+        }
+        const width = Math.max(1, rect.width);
+        const height = Math.max(1, rect.height);
+        return { left, top, width, height, right: left + width, bottom: top + height };
+    });
+    const direct = rects(target);
+    if (direct.length || !hiddenAudio || control) return direct;
+    let parent = node.parentElement;
+    while (parent) {
+        if (viewport.getComputedStyle(parent).display === 'none') return [];
+        parent = parent.parentElement;
+    }
+    const audioOnly = [...document.body.childNodes].every(child => (
+        child.nodeType === 3 ? !child.textContent.trim() : child.nodeType !== 1 || child.matches('style, [data-epub-audio-controls="false"]')
+    ));
+    if (audioOnly) return rects(document.documentElement).slice(0, 1);
+    const originalStyle = node.getAttribute('style');
+    try {
+        node.style.cssText = 'all:initial!important;display:inline-block!important;position:absolute!important;width:0!important;height:0!important;margin:0!important;padding:0!important;border:0!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;font-size:0!important;line-height:0!important;direction:inherit!important;writing-mode:inherit!important;';
+        return rects(node);
+    } finally {
+        if (originalStyle === null) node.removeAttribute('style');
+        else node.setAttribute('style', originalStyle);
+    }
+}
+
 export function epubOriginalViewportMetrics(pageSize, appearance, scale = 1) {
     const displayScale = Number.isFinite(Number(scale)) && Number(scale) > 0 ? Number(scale) : 1;
     const pageWidth = Math.max(1, Math.round(Number(pageSize?.width) || 600));
