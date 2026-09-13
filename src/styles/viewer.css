@@ -1470,6 +1470,7 @@ body,
 }
 
 .viewer-initial-render-loading-indicator {
+    position: relative;
   display: block;
   padding: 10px;
   border-radius: 5px;
@@ -1482,6 +1483,33 @@ body,
   width: 36px;
   height: 36px;
   filter: invert(1);
+}
+
+.viewer-initial-render-refresh {
+    position: absolute;
+    top: calc(100% + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    white-space: nowrap;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.viewer-initial-render-refresh:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+.viewer-initial-render-refresh:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
 }
 
 .viewer-content.is-drag-panning,
@@ -2795,6 +2823,14 @@ body,
   color: inherit;
 }
 
+.viewer-text-highlight.is-underline {
+    padding: 0;
+    background: transparent;
+    text-decoration: underline;
+    text-decoration-thickness: 0.08em;
+    text-underline-offset: 0.15em;
+}
+
 .viewer-text-highlight.is-yellow,
 .viewer-highlight-swatch.is-yellow {
   --viewer-highlight-bg: rgba(255, 201, 58, 0.48);
@@ -3234,51 +3270,97 @@ body,
   color: #ffffff;
 }
 
+.viewer-navigation-highlight-label > .fa-icon {
+    margin-right: 7px;
+}
+
 .viewer-selection-toolbar {
-  position: fixed;
-  z-index: 110;
-  max-width: calc(100vw - 20px);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 3px;
-  padding: 5px;
-  border: 1px solid rgba(120, 132, 146, 0.58);
-  border-radius: 8px;
-  background: rgba(28, 30, 33, 0.96);
-  color: #f4f7fb;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48);
-  transform: translate(-50%, calc(-100% - 12px));
+    position: fixed;
+    z-index: 110;
+    width: 300px;
+    max-width: calc(100vw - 20px);
+    box-sizing: border-box;
+    padding: 6px;
+    border: 1px solid rgba(120, 132, 146, 0.58);
+    border-radius: 8px;
+    background: rgba(28, 30, 33, 0.96);
+    color: #f4f7fb;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48);
+    transform: translate(-50%, calc(-100% - 12px));
 }
 
 .viewer-selection-toolbar.is-below {
   transform: translate(-50%, 12px);
 }
 
-.viewer-selection-tool {
-  min-width: 0;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: inherit;
-  font-size: calc(12px * var(--font-scale, 1));
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
+.viewer-selection-colors {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    padding-bottom: 5px;
+    margin-bottom: 5px;
+    border-bottom: 1px solid rgba(120, 132, 146, 0.4);
 }
 
-.viewer-selection-tool span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.viewer-selection-color {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.viewer-selection-color .viewer-highlight-swatch {
+    width: 15px;
+    height: 15px;
+}
+
+.viewer-selection-actions {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 3px;
+}
+
+.viewer-selection-tool {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 3px 2px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font-size: calc(11px * var(--font-scale, 1));
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.viewer-selection-tool > span:not(.viewer-selection-tool-icon) {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.viewer-selection-tool-icon {
+    position: relative;
+    display: flex;
+}
+
+.viewer-selection-tool-icon > .fa-icon:last-child {
+    position: absolute;
+    top: 0;
+    left: calc(100% + 3px);
 }
 
 .viewer-selection-tool.is-loading {
@@ -3291,12 +3373,14 @@ body,
   animation: viewerTtsSpin 0.9s linear infinite;
 }
 
+.viewer-selection-color:hover,
+.viewer-selection-color:focus-visible,
 .viewer-selection-tool:hover,
 .viewer-selection-tool:focus-visible,
-.viewer-selection-menu:focus-within > .viewer-selection-tool {
-  background: #3498db;
-  color: #ffffff;
-  outline: none;
+.viewer-selection-menu.is-open > .viewer-selection-tool {
+    background: #3498db;
+    color: #ffffff;
+    outline: none;
 }
 
 .viewer-selection-menu {
@@ -3305,28 +3389,27 @@ body,
 }
 
 .viewer-selection-menu-list {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% - 1px);
-  z-index: 112;
-  min-width: 142px;
-  display: none;
-  gap: 3px;
-  padding: 5px;
-  border: 1px solid rgba(120, 132, 146, 0.58);
-  border-radius: 7px;
-  background: rgba(28, 30, 33, 0.98);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
+    position: absolute;
+    right: 0;
+    top: calc(100% - 1px);
+    z-index: 112;
+    min-width: 142px;
+    display: none;
+    gap: 3px;
+    padding: 5px;
+    border: 1px solid rgba(120, 132, 146, 0.58);
+    border-radius: 7px;
+    background: rgba(28, 30, 33, 0.98);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
 }
 
-.viewer-selection-toolbar.is-below .viewer-selection-menu-list {
-  top: calc(100% - 1px);
-  bottom: auto;
+.viewer-selection-toolbar.has-menus-above .viewer-selection-menu-list {
+    top: auto;
+    bottom: calc(100% - 1px);
 }
 
-.viewer-selection-menu:hover .viewer-selection-menu-list,
-.viewer-selection-menu:focus-within .viewer-selection-menu-list {
-  display: grid;
+.viewer-selection-menu.is-open .viewer-selection-menu-list {
+    display: grid;
 }
 
 .viewer-selection-menu-list button {
@@ -3340,12 +3423,6 @@ body,
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
-}
-
-.viewer-selection-menu-list.is-highlight-colors button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
 }
 
 .viewer-selection-menu-list button:hover,

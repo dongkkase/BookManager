@@ -414,6 +414,7 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
         ::highlight(bookmanager-highlight-blue) { background: rgba(80, 168, 255, 0.46); }
         ::highlight(bookmanager-highlight-pink) { background: rgba(255, 125, 179, 0.48); }
         ::highlight(bookmanager-highlight-purple) { background: rgba(185, 139, 255, 0.48); }
+        ::highlight(bookmanager-highlight-underline) { text-decoration: underline; }
     ` + (fixed ? `
         html { width: ${original.viewport.width}px !important; height: ${original.viewport.height}px !important; overflow: hidden !important; }
     ` : mode === 'scroll' ? `

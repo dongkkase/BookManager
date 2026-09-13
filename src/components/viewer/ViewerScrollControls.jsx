@@ -32,6 +32,7 @@ export function ViewerScrollOptions({
     autoScrolling,
     onToggleAutoScroll,
     disabled = false,
+    autoScrollDisabled = false,
     compact = false,
 }) {
     const id = useId();
@@ -183,7 +184,7 @@ export function ViewerScrollOptions({
                     type="button"
                     className={`viewer-scroll-auto-toggle ${autoScrolling ? 'is-running' : ''}`}
                     onClick={onToggleAutoScroll}
-                    disabled={disabled}
+                    disabled={disabled || autoScrollDisabled}
                     aria-pressed={Boolean(autoScrolling)}
                     title={autoScrolling ? scrollText('auto_stop', '정지') : scrollText('auto_start', '시작')}
                 >
@@ -195,33 +196,18 @@ export function ViewerScrollOptions({
     );
 }
 
-export function ViewerScrollPopover({ open, onClose, ...options }) {
+export function ViewerScrollPopover({ open, ...options }) {
     if (!open) return null;
 
     return (
         <div
             id="viewer-scroll-menu"
             className="viewer-scroll-menu"
-            role="dialog"
+            role="region"
             aria-label={scrollText('title', '스크롤 설정')}
-            onKeyDown={event => {
-                if (event.key !== 'Escape') return;
-                event.preventDefault();
-                event.stopPropagation();
-                onClose();
-            }}
             onClick={event => event.stopPropagation()}
         >
             <ViewerScrollOptions {...options} compact />
-            <button
-                type="button"
-                className="viewer-scroll-close"
-                onClick={onClose}
-                aria-label={scrollText('close', '스크롤 설정 닫기')}
-                title={scrollText('close', '스크롤 설정 닫기')}
-            >
-                <FaIcon name="xmark" size={13} />
-            </button>
         </div>
     );
 }

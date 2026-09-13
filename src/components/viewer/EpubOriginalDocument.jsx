@@ -3,7 +3,7 @@ import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_L
 import '../../styles/epubOriginalDocument.css';
 
 const EMPTY_HIGHLIGHTS = [];
-const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'];
+const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple', 'underline'];
 
 function collectTextRanges(document, queries) {
     const viewport = document.defaultView;

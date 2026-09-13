@@ -52,7 +52,7 @@ test('선택 영역 TTS는 실제 재생 전까지 회전 로딩 아이콘을 �
     assert.match(viewerSource, /utterance\.onend = finishSelectionTtsLoading/);
     assert.match(viewerSource, /aria-busy=\{selectionTtsLoading\}/);
     assert.match(viewerSource, /disabled=\{selectionTtsLoading\}/);
-    assert.match(viewerSource, /name=\{selectionTtsLoading \? 'spinner' : 'play'\}/);
+    assert.match(viewerSource, /name=\{selectionTtsLoading \? 'spinner' : 'volumeHigh'\}/);
     assert.match(viewerSource, /className=\{selectionTtsLoading \? 'viewer-selection-tts-spinner' : ''\}/);
     assert.match(viewerCss, /\.viewer-selection-tts-spinner\s*\{[\s\S]*?animation:\s*viewerTtsSpin 0\.9s linear infinite/);
 });
@@ -70,7 +70,7 @@ test('하이라이트는 색상을 선택해 저장하고 표시한다', () => {
     assert.match(viewerCss, /\.viewer-text-highlight\.is-blue/);
     assert.match(viewerCss, /\.viewer-text-highlight\.is-pink/);
     assert.match(viewerCss, /\.viewer-text-highlight\.is-purple/);
-    assert.match(viewerCss, /\.viewer-selection-menu-list\.is-highlight-colors button/);
+    assert.match(viewerCss, /\.viewer-selection-colors\s*\{/);
     for (const language of ['ko', 'en', 'ja']) {
         for (const key of [
             'viewer.context.highlight_color_yellow',
@@ -78,6 +78,7 @@ test('하이라이트는 색상을 선택해 저장하고 표시한다', () => {
             'viewer.context.highlight_color_blue',
             'viewer.context.highlight_color_pink',
             'viewer.context.highlight_color_purple',
+            'viewer.context.add_underline',
         ]) {
             assert.notEqual(translate(key, language), key, `${language}:${key}`);
         }
@@ -92,6 +93,10 @@ test('선택 툴바 스타일과 다국어 문구를 제공한다', () => {
     for (const language of ['ko', 'en', 'ja']) {
         for (const key of [
             'viewer.context.search_in_book',
+            'viewer.context.search_google',
+            'viewer.context.copy',
+            'viewer.context.copy_success',
+            'viewer.context.copy_failed',
             'viewer.context.dictionary_search',
             'viewer.context.translate',
             'viewer.context.tts_selection',

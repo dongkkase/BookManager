@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ViewerPageCurlBook from './ViewerPageCurlBook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -58,6 +58,7 @@ import { getCurrentLanguage, setLanguage, translate } from './utils/i18n';
 import './styles/viewer.css';
 
 const VIEWER_DIAGNOSTICS_DELAY_MS = 1500;
+const VIEWER_RENDER_REFRESH_DELAY_MS = 60_000;
 
 function viewerImageSource(image) {
     const source = image.currentSrc || image.src || '';
@@ -2237,11 +2238,13 @@ function selectionToolbarPosition(point = {}) {
   const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
   const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
   const margin = 10;
-  const toolbarWidth = Math.min(520, Math.max(260, viewportWidth - (margin * 2)));
+    const toolbarWidth = Math.min(300, viewportWidth - (margin * 2));
   const x = clamp(Number(point.x) || viewportWidth / 2, margin + (toolbarWidth / 2), viewportWidth - margin - (toolbarWidth / 2));
   const y = clamp(Number(point.y) || viewportHeight / 2, margin, viewportHeight - margin);
-  const placement = y < 72 && viewportHeight - y > 96 ? 'below' : 'above';
-  return { x, y, placement };
+    const placement = y < 118 && viewportHeight - y > 130 ? 'below' : 'above';
+    const toolbarBottom = placement === 'below' ? y + 112 : y - 12;
+    const submenuPlacement = viewportHeight - toolbarBottom < 92 ? 'above' : 'below';
+    return { x, y, placement, submenuPlacement };
 }
 
 function selectionQueryText(text = '', maxLength = 1800) {
@@ -2250,6 +2253,7 @@ function selectionQueryText(text = '', maxLength = 1800) {
 
 function normalizeHighlightColor(color) {
   const value = String(color || '').trim();
+    if (value === 'underline') return value;
   return HIGHLIGHT_COLORS.some(item => item.id === value) ? value : DEFAULT_HIGHLIGHT_COLOR;
 }
 
@@ -3048,7 +3052,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onPlaybackChange }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onMenuOpenChange, onPlaybackChange, playbackRef }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
@@ -3059,6 +3063,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     useEffect(() => {
         if (closeMenu) setOpen(false);
     }, [closeMenu]);
+    useEffect(() => {
+        onMenuOpenChange?.(open);
+        return () => onMenuOpenChange?.(false);
+    }, [onMenuOpenChange, open]);
   const [pendingPlayAfterPageMove, setPendingPlayAfterPageMove] = useState(false);
   const [previewingVoiceValue, setPreviewingVoiceValue] = useState('');
   const suppressEndRef = useRef(false);
@@ -3815,6 +3823,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     stopVoicePreview();
     stopCurrentTtsWithoutAutoAdvance();
   }, [stopCurrentTtsWithoutAutoAdvance, stopVoicePreview]);
+
+    useImperativeHandle(playbackRef, () => ({ stop: handleStop }), [handleStop]);
 
   const handleMove = useCallback(direction => {
     const shouldContinue = isActivelyPlaying;
@@ -4915,7 +4925,9 @@ function ViewerNavigationPanel({
             <div key={highlight.id} className="viewer-navigation-list-row">
               <button type="button" className="viewer-navigation-list-item" onClick={() => onHighlightClick(highlight)}>
                 <span className="viewer-navigation-highlight-label">
-                  <i className={`viewer-highlight-swatch is-${normalizeHighlightColor(highlight.color)}`} aria-hidden="true" />
+                    {highlight.color === 'underline' ? <FaIcon name="underline" /> : (
+                        <i className={`viewer-highlight-swatch is-${normalizeHighlightColor(highlight.color)}`} aria-hidden="true" />
+                    )}
                   {highlight.snippet || highlight.text}
                 </span>
                 <small>{Number(highlight.pageIndex) + 1}p</small>
@@ -5318,6 +5330,7 @@ function ReaderSettingsPanel({
     autoScrolling,
     onToggleAutoScroll,
     scrollControlsDisabled,
+    autoScrollDisabled,
     epubOriginalAvailable,
 }) {
   const theme = THEMES.find(item => item.id === settings.theme) || THEMES[0];
@@ -5374,6 +5387,7 @@ function ReaderSettingsPanel({
                         autoScrolling={autoScrolling}
                         onToggleAutoScroll={onToggleAutoScroll}
                         disabled={scrollControlsDisabled}
+                        autoScrollDisabled={autoScrollDisabled}
                     />
                 )}
                 {showComicSettings && (
@@ -5696,7 +5710,7 @@ function ViewerApp() {
   const [pdfToc, setPdfToc] = useState([]);
   const [flowMode, setFlowMode] = useState('single');
     const [scrollSettings, setScrollSettings] = useState(() => normalizeScrollSettings());
-    const [scrollMenuOpen, setScrollMenuOpen] = useState(false);
+    const [ttsMenuOpen, setTtsMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState('fit');
   const [zoom, setZoom] = useState(100);
   const zoomStep = session?.type === 'comic' ? COMIC_ZOOM_STEP : ZOOM_STEP;
@@ -5712,6 +5726,7 @@ function ViewerApp() {
   const [comicSinglePageNames, setComicSinglePageNames] = useState([]);
   const [highlights, setHighlights] = useState([]);
   const [selectionMenu, setSelectionMenu] = useState(null);
+    const [selectionSubmenu, setSelectionSubmenu] = useState(null);
   const [selectionTtsLoading, setSelectionTtsLoading] = useState(false);
   const [navigationPanelOpen, setNavigationPanelOpen] = useState(false);
   const [navigationTab, setNavigationTab] = useState('toc');
@@ -5737,6 +5752,7 @@ function ViewerApp() {
   const [loading, setLoading] = useState(false);
   const [initialRenderLoading, setInitialRenderLoading] = useState(true);
   const [initialRenderSequence, setInitialRenderSequence] = useState(0);
+    const [showInitialRenderRefresh, setShowInitialRenderRefresh] = useState(false);
   const [viewerSessionResolved, setViewerSessionResolved] = useState(false);
   const [adjacentLoading, setAdjacentLoading] = useState(false);
   const [error, setError] = useState('');
@@ -5780,6 +5796,7 @@ function ViewerApp() {
   const scrollRestoreTokenRef = useRef(0);
   const textSelectionPointerRef = useRef(null);
   const selectionTtsRunRef = useRef(0);
+    const ttsPlaybackRef = useRef(null);
     const autoScrollUpdateTimeRef = useRef(0);
     const autoScrollPersistTimeRef = useRef(0);
     const autoScrollLocalSaveTimeRef = useRef(0);
@@ -5798,23 +5815,17 @@ function ViewerApp() {
             && !loading && !initialRenderLoading && !error,
         settings: scrollSettings,
         sessionKey: session?.id || session?.filePath || '',
-        blocked: Boolean(helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || imageLightbox || lookupPanel || selectionMenu || navigationPanelOpen),
+        blocked: Boolean(ttsMenuOpen || helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || imageLightbox || lookupPanel || selectionMenu || navigationPanelOpen),
     });
     const updateScrollSettings = useCallback(patch => {
         setScrollSettings(current => normalizeScrollSettings({ ...current, ...patch }));
     }, []);
-    useEffect(() => {
-        if (flowMode !== 'scroll') setScrollMenuOpen(false);
-    }, [flowMode]);
-    useEffect(() => {
-        if (!scrollMenuOpen) return undefined;
-        const closeOutside = event => {
-            if (event.target?.closest?.('.viewer-scroll-menu, [aria-controls="viewer-scroll-menu"]')) return;
-            setScrollMenuOpen(false);
-        };
-        document.addEventListener('pointerdown', closeOutside);
-        return () => document.removeEventListener('pointerdown', closeOutside);
-    }, [scrollMenuOpen]);
+    const handleToggleAutoScroll = useCallback(() => {
+        if (!toggleAutoScroll()) return;
+        selectionTtsRunRef.current += 1;
+        setSelectionTtsLoading(false);
+        ttsPlaybackRef.current?.stop();
+    }, [toggleAutoScroll]);
 
   const restoreViewerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -6167,6 +6178,16 @@ function ViewerApp() {
         restore.cancel = null;
         restore.position = null;
     }, [session?.id, flowMode, isOriginalEpub]);
+    useEffect(() => {
+        setShowInitialRenderRefresh(false);
+        if (!initialRenderLoading) return undefined;
+
+        const timerId = window.setTimeout(() => {
+            setShowInitialRenderRefresh(true);
+        }, VIEWER_RENDER_REFRESH_DELAY_MS);
+        return () => window.clearTimeout(timerId);
+    }, [initialRenderLoading, initialRenderSequence]);
+
   useEffect(() => {
     if (!initialRenderLoading || !viewerSessionResolved) return undefined;
     if (error || !session || (!loading && pageCount < 1)) {
@@ -6359,7 +6380,6 @@ function ViewerApp() {
   };
   const updateFlowMode = nextFlowMode => {
     cancelMotion();
-    setScrollMenuOpen(false);
     setFlowMode(nextFlowMode);
     if (nextFlowMode !== 'spread' && readerSettings.pageEffect === 'page') {
       setReaderSettings(current => normalizeReaderSettings({ ...current, pageEffect: 'slide' }));
@@ -7006,7 +7026,6 @@ function ViewerApp() {
     if (!nextSession) return;
     persistCurrentPositionRef.current?.();
     cancelMotion();
-    setScrollMenuOpen(false);
     detachedRemoteTtsToken += 1;
     stopDetachedRemoteTtsAudio();
     const loadSequence = loadSequenceRef.current + 1;
@@ -7493,6 +7512,7 @@ function ViewerApp() {
   useEffect(() => {
     selectionTtsRunRef.current += 1;
     setSelectionTtsLoading(false);
+        setSelectionSubmenu(null);
   }, [selectionMenu]);
 
   useEffect(() => {
@@ -8042,6 +8062,18 @@ function ViewerApp() {
     });
   }, [clearNativeSelection, performBookSearch, selectionMenu?.text, supportsNavigationPanel]);
 
+    const copySelectionText = useCallback(async () => {
+        if (!selectionMenu?.text) return;
+        try {
+            await navigator.clipboard.writeText(selectionMenu.text);
+            showViewerToast(viewerText('viewer.context.copy_success', '텍스트를 복사했습니다.'));
+            setSelectionMenu(null);
+            clearNativeSelection();
+        } catch {
+            showViewerToast(viewerText('viewer.context.copy_failed', '텍스트를 복사할 수 없습니다.'));
+        }
+    }, [clearNativeSelection, selectionMenu?.text, showViewerToast]);
+
   const toggleComicSinglePageFromSelection = useCallback(() => {
     if (!session || session.type !== 'comic' || selectionMenu?.kind !== 'comic-flow') return;
     const targetPage = pages[selectionMenu.pageIndex];
@@ -8129,6 +8161,15 @@ function ViewerApp() {
       title: title || viewerText('viewer.lookup.title', '검색'),
     });
   }, [viewerLanguage]);
+
+    const searchGoogleFromSelection = useCallback(() => {
+        const text = selectionQueryText(selectionMenu?.text);
+        if (!text) return;
+        void openLookupWindow(
+            `https://www.google.com/search?q=${encodeURIComponent(text)}`,
+            viewerText('viewer.context.search_google', '구글 검색'),
+        );
+    }, [openLookupWindow, selectionMenu?.text, viewerLanguage]);
 
   const openSelectionDictionary = useCallback(provider => {
     const text = selectionQueryText(selectionMenu?.text);
@@ -8267,6 +8308,7 @@ function ViewerApp() {
       x: position.x,
       y: position.y,
       placement: position.placement,
+            submenuPlacement: position.submenuPlacement,
       text: selectedText,
       pageIndex: clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1)),
       snippet: selectedText.slice(0, 120),
@@ -8695,11 +8737,11 @@ function ViewerApp() {
   useEffect(() => {
     if (session?.type === 'audio') return undefined;
     const handler = event => {
-        if (event.key === 'Escape' && scrollMenuOpen) {
+        if (event.key === 'Escape' && selectionMenu) {
             event.preventDefault();
             event.stopPropagation();
-            setScrollMenuOpen(false);
-            restoreViewerFocus();
+            if (selectionSubmenu) setSelectionSubmenu(null);
+            else setSelectionMenu(null);
             return;
         }
       if (event.key === 'Escape' && (settingsOpen || navigationPanelOpen || helpOpen)) {
@@ -8727,7 +8769,6 @@ function ViewerApp() {
         || imageLightbox
         || lookupPanel
         || document.querySelector('.viewer-tts-menu')
-        || scrollMenuOpen
       );
       if (shortcutsBlockedByOverlay || isViewerShortcutBlockedTarget(event.target)) return;
         if (event.key === 'Escape' && autoScrolling) {
@@ -8819,7 +8860,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, cancelMotion, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, scrollMenuOpen, selectionMenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
+  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, cancelMotion, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -9707,6 +9748,15 @@ function ViewerApp() {
         >
           <span className="viewer-initial-render-loading-indicator">
             <img src={blocksShuffle4Icon} alt="" />
+            {showInitialRenderRefresh && (
+                <button
+                    type="button"
+                    className="viewer-initial-render-refresh"
+                    onClick={() => window.location.reload()}
+                >
+                    {viewerText('action_refresh', '새로고침')}
+                </button>
+            )}
           </span>
         </div>
       )}
@@ -9804,13 +9854,9 @@ function ViewerApp() {
                   iconSrc={option.iconSrc}
                   active={flowMode === option.id}
                   className={option.id === 'scroll' && autoScrolling ? 'is-auto-scrolling' : ''}
-                  ariaExpanded={option.id === 'scroll' ? scrollMenuOpen : undefined}
                   ariaControls={option.id === 'scroll' ? 'viewer-scroll-menu' : undefined}
-                  ariaHasPopup={option.id === 'scroll' ? 'dialog' : undefined}
                   onClick={runToolbarAction(() => {
-                      const nextMenuOpen = option.id === 'scroll' && (flowMode !== 'scroll' || !scrollMenuOpen);
                       if (flowMode !== option.id) updateFlowMode(option.id);
-                      setScrollMenuOpen(nextMenuOpen);
                   })}
                 />
               ))}
@@ -9819,6 +9865,7 @@ function ViewerApp() {
           {isReaderDocument && (
             <div className="viewer-tool-cluster viewer-tts-cluster" aria-label={viewerText('viewer.tts.group', 'TTS')}>
               <ViewerTtsControls
+                playbackRef={ttsPlaybackRef}
                 key={isOriginalEpub ? 'epub-original' : 'optimized'}
                 sessionId={session.id}
                 text={currentTtsText}
@@ -9831,10 +9878,9 @@ function ViewerApp() {
                 onMoveToPage={goPageIndex}
                 onOpenTtsSettings={window.viewerAPI?.openTtsSettings}
                 onToast={showViewerToast}
-                closeMenu={scrollMenuOpen}
                 onPlaybackChange={setEpubTtsActive}
+                onMenuOpenChange={setTtsMenuOpen}
                 onMenuOpen={() => {
-                    setScrollMenuOpen(false);
                     cancelMotion();
                 }}
               />
@@ -9926,15 +9972,12 @@ function ViewerApp() {
         </div>
       </header>
         <ViewerScrollPopover
-            open={scrollMenuOpen && flowMode === 'scroll'}
-            onClose={() => {
-                setScrollMenuOpen(false);
-                restoreViewerFocus();
-            }}
+            open={supportsFlowControls && flowMode === 'scroll' && !ttsMenuOpen}
             settings={scrollSettings}
             onChange={updateScrollSettings}
             autoScrolling={autoScrolling}
-            onToggleAutoScroll={toggleAutoScroll}
+            onToggleAutoScroll={handleToggleAutoScroll}
+            autoScrollDisabled={ttsMenuOpen}
             disabled={loading || initialRenderLoading || pageCount <= 0 || Boolean(error)}
         />
         {session?.type === 'epub' && epubAudioMapping.tracks.length > 0 && (
@@ -10043,106 +10086,123 @@ function ViewerApp() {
             </button>
           </div>
         ) : selectionMenu.kind === 'text-selection' ? (
-          <div
-            className={`viewer-selection-toolbar is-${selectionMenu.placement || 'above'}`}
-            style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
-            role="toolbar"
-            aria-label={viewerText('viewer.context.selection_toolbar', '선택 텍스트 도구')}
-            onPointerDown={event => event.stopPropagation()}
-            onMouseDown={event => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-          >
-            <div className="viewer-selection-menu">
-              <button
-                type="button"
-                className="viewer-selection-tool"
-                title={viewerText('viewer.context.add_highlight', '하이라이트 추가')}
-                aria-haspopup="menu"
-              >
-                <FaIcon name="pen" />
-                <span>{viewerText('viewer.context.add_highlight_short', '하이라이트')}</span>
-                <FaIcon name="angleDown" size={9} />
-              </button>
-              <div className="viewer-selection-menu-list is-highlight-colors" role="menu">
-                {HIGHLIGHT_COLORS.map(color => (
-                  <button
-                    key={color.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => addHighlightFromSelection(color.id)}
-                  >
-                    <span className={`viewer-highlight-swatch is-${color.id}`} aria-hidden="true" />
-                    {viewerText(color.labelKey, color.label)}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="viewer-selection-tool"
-              title={viewerText('viewer.context.search_in_book', '이 책에서 검색')}
-              onClick={searchBookFromSelection}
+            <div
+                className={`viewer-selection-toolbar is-${selectionMenu.placement || 'above'} has-menus-${selectionMenu.submenuPlacement || 'below'}`}
+                style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
+                role="toolbar"
+                aria-label={viewerText('viewer.context.selection_toolbar', '선택 텍스트 도구')}
+                onPointerDown={event => event.stopPropagation()}
+                onMouseDown={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }}
             >
-              <FaIcon name="search" />
-              <span>{viewerText('viewer.context.search_in_book_short', '책 검색')}</span>
-            </button>
-            <div className="viewer-selection-menu">
-              <button
-                type="button"
-                className="viewer-selection-tool"
-                title={viewerText('viewer.context.dictionary_search', '사전 검색')}
-                aria-haspopup="menu"
-              >
-                <FaIcon name="bookOpen" />
-                <span>{viewerText('viewer.context.dictionary_search_short', '사전')}</span>
-                <FaIcon name="angleDown" size={9} />
-              </button>
-              <div className="viewer-selection-menu-list" role="menu">
-                <button type="button" role="menuitem" onClick={() => openSelectionDictionary('google')}>
-                  {viewerText('viewer.context.dictionary_google', 'Google 사전')}
-                </button>
-                <button type="button" role="menuitem" onClick={() => openSelectionDictionary('naver')}>
-                  {viewerText('viewer.context.dictionary_naver', 'Naver 사전')}
-                </button>
-              </div>
+                <div className="viewer-selection-colors" role="group" aria-label={viewerText('viewer.context.add_highlight_short', '하이라이트')}>
+                    {HIGHLIGHT_COLORS.map(color => (
+                        <button
+                            key={color.id}
+                            type="button"
+                            className="viewer-selection-color"
+                            title={viewerText(color.labelKey, color.label)}
+                            aria-label={viewerText(color.labelKey, color.label)}
+                            onClick={() => addHighlightFromSelection(color.id)}
+                        >
+                            <span className={`viewer-highlight-swatch is-${color.id}`} aria-hidden="true" />
+                        </button>
+                    ))}
+                    <button
+                        type="button"
+                        className="viewer-selection-color"
+                        title={viewerText('viewer.context.add_underline', '밑줄 긋기')}
+                        aria-label={viewerText('viewer.context.add_underline', '밑줄 긋기')}
+                        onClick={() => addHighlightFromSelection('underline')}
+                    >
+                        <FaIcon name="underline" size={16} />
+                    </button>
+                </div>
+                <div className="viewer-selection-actions">
+                    <button
+                        type="button"
+                        className={`viewer-selection-tool${selectionTtsLoading ? ' is-loading' : ''}`}
+                        title={viewerText('viewer.context.tts_selection', '선택 영역 TTS 읽기')}
+                        aria-busy={selectionTtsLoading}
+                        disabled={selectionTtsLoading}
+                        onClick={speakSelectionText}
+                    >
+                        <FaIcon
+                            name={selectionTtsLoading ? 'spinner' : 'volumeHigh'}
+                            className={selectionTtsLoading ? 'viewer-selection-tts-spinner' : ''}
+                        />
+                        <span>{viewerText('viewer.context.tts_selection_short', 'TTS')}</span>
+                    </button>
+                    <button type="button" className="viewer-selection-tool" onClick={copySelectionText}>
+                        <FaIcon name="copy" />
+                        <span>{viewerText('viewer.context.copy', '복사')}</span>
+                    </button>
+                    <div className={`viewer-selection-menu${selectionSubmenu === 'search' ? ' is-open' : ''}`}>
+                        <button
+                            type="button"
+                            className="viewer-selection-tool"
+                            aria-haspopup="menu"
+                            aria-expanded={selectionSubmenu === 'search'}
+                            onClick={() => setSelectionSubmenu(current => current === 'search' ? null : 'search')}
+                        >
+                            <span className="viewer-selection-tool-icon"><FaIcon name="search" /><FaIcon name="angleDown" size={8} /></span>
+                            <span>{viewerText('viewer.lookup.title', '검색')}</span>
+                        </button>
+                        <div className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                            <button type="button" role="menuitem" onClick={searchBookFromSelection}>
+                                {viewerText('viewer.context.search_in_book', '이 책에서 검색')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={searchGoogleFromSelection}>
+                                {viewerText('viewer.context.search_google', '구글 검색')}
+                            </button>
+                        </div>
+                    </div>
+                    <div className={`viewer-selection-menu${selectionSubmenu === 'dictionary' ? ' is-open' : ''}`}>
+                        <button
+                            type="button"
+                            className="viewer-selection-tool"
+                            title={viewerText('viewer.context.dictionary_search', '사전 검색')}
+                            aria-haspopup="menu"
+                            aria-expanded={selectionSubmenu === 'dictionary'}
+                            onClick={() => setSelectionSubmenu(current => current === 'dictionary' ? null : 'dictionary')}
+                        >
+                            <span className="viewer-selection-tool-icon"><FaIcon name="bookOpen" /><FaIcon name="angleDown" size={8} /></span>
+                            <span>{viewerText('viewer.context.dictionary_search_short', '사전')}</span>
+                        </button>
+                        <div className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                            <button type="button" role="menuitem" onClick={() => openSelectionDictionary('naver')}>
+                                {viewerText('viewer.context.dictionary_naver', 'Naver 사전')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => openSelectionDictionary('google')}>
+                                {viewerText('viewer.context.dictionary_google', 'Google 사전')}
+                            </button>
+                        </div>
+                    </div>
+                    <div className={`viewer-selection-menu${selectionSubmenu === 'translation' ? ' is-open' : ''}`}>
+                        <button
+                            type="button"
+                            className="viewer-selection-tool"
+                            title={viewerText('viewer.context.translate', '번역')}
+                            aria-haspopup="menu"
+                            aria-expanded={selectionSubmenu === 'translation'}
+                            onClick={() => setSelectionSubmenu(current => current === 'translation' ? null : 'translation')}
+                        >
+                            <span className="viewer-selection-tool-icon"><FaIcon name="language" /><FaIcon name="angleDown" size={8} /></span>
+                            <span>{viewerText('viewer.context.translate_short', '번역')}</span>
+                        </button>
+                        <div className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                            <button type="button" role="menuitem" onClick={() => openSelectionTranslation('google')}>
+                                {viewerText('viewer.context.translate_google', 'Google 번역')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => openSelectionTranslation('deepl')}>
+                                {viewerText('viewer.context.translate_deepl', 'DeepL 번역')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div className="viewer-selection-menu">
-              <button
-                type="button"
-                className="viewer-selection-tool"
-                title={viewerText('viewer.context.translate', '번역')}
-                aria-haspopup="menu"
-              >
-                <FaIcon name="language" />
-                <span>{viewerText('viewer.context.translate_short', '번역')}</span>
-                <FaIcon name="angleDown" size={9} />
-              </button>
-              <div className="viewer-selection-menu-list" role="menu">
-                <button type="button" role="menuitem" onClick={() => openSelectionTranslation('google')}>
-                  {viewerText('viewer.context.translate_google', 'Google 번역')}
-                </button>
-                <button type="button" role="menuitem" onClick={() => openSelectionTranslation('deepl')}>
-                  {viewerText('viewer.context.translate_deepl', 'DeepL 번역')}
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`viewer-selection-tool${selectionTtsLoading ? ' is-loading' : ''}`}
-              title={viewerText('viewer.context.tts_selection', '선택 영역 TTS 읽기')}
-              aria-busy={selectionTtsLoading}
-              disabled={selectionTtsLoading}
-              onClick={speakSelectionText}
-            >
-              <FaIcon
-                name={selectionTtsLoading ? 'spinner' : 'play'}
-                className={selectionTtsLoading ? 'viewer-selection-tts-spinner' : ''}
-              />
-              <span>{viewerText('viewer.context.tts_selection_short', 'TTS')}</span>
-            </button>
-          </div>
         ) : null
       )}
       <ViewerLookupPanel lookup={lookupPanel} onClose={() => setLookupPanel(null)} />
@@ -10182,8 +10242,9 @@ function ViewerApp() {
         scrollSettings={scrollSettings}
         onScrollSettingsChange={updateScrollSettings}
         autoScrolling={autoScrolling}
-        onToggleAutoScroll={toggleAutoScroll}
+        onToggleAutoScroll={handleToggleAutoScroll}
         scrollControlsDisabled={loading || initialRenderLoading || pageCount <= 0 || Boolean(error)}
+        autoScrollDisabled={ttsMenuOpen}
         epubOriginalAvailable={epubOriginalAvailable}
       />
       {bookmarkEditorOpen && (
