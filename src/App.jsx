@@ -768,7 +768,7 @@ function App() {
             <img className="top-store-icon" src={readiveAppleIcon} alt="" />
             <img className="top-store-icon" src={readiveGooglePlayIcon} alt="" />
           </span>
-          Readive
+          통합 모바일 뷰어 Readive
         </button>
       </div>
       
