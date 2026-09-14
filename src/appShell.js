@@ -1,5 +1,5 @@
 export const APP_NAME = 'BookManager';
-export const DISCORD_URL = 'https://discord.gg/ND6gpPZHD';
+export const DISCORD_URL = 'https://discord.gg/DRVUbPewaV';
 export const READIVE_URL = 'https://dongkkase.github.io/BookManager/readive/';
 export const ISSUE_URL = 'https://github.com/dongkkase/BookManager/issues';
 export const MANUAL_URL = 'https://github.com/dongkkase/BookManager/wiki';

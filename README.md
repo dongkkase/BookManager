@@ -3,7 +3,7 @@
 > **The program description on the wiki page is only available in `Korean`. Please use Chrome's translation feature.**
 
 [![프로젝트 페이지](https://img.shields.io/badge/Project-Website-1f7dbc?style=flat-square&logo=githubpages&logoColor=white)](https://dongkkase.github.io/BookManager/)
-[![Discord 참여](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/ND6gpPZHD)
+[![Discord 참여](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/DRVUbPewaV)
 [![전체 릴리즈 다운로드 수](https://img.shields.io/github/downloads/dongkkase/BookManager/total?style=flat-square&logo=github&label=Downloads)](https://github.com/dongkkase/BookManager/releases)
 
 <kbd>![image](https://raw.githubusercontent.com/dongkkase/BookManager/main/demo/demo1.gif)</kbd>

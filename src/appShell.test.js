@@ -43,7 +43,7 @@ test('버그 신고 URL은 원본 저장소 이슈 주소를 유지한다', () =
 });
 
 test('Discord URL은 공식 초대 주소를 사용한다', () => {
-    assert.equal(DISCORD_URL, 'https://discord.gg/ND6gpPZHD');
+    assert.equal(DISCORD_URL, 'https://discord.gg/DRVUbPewaV');
 });
 
 test('매뉴얼 URL은 원본 저장소 Wiki 주소를 사용한다', () => {
