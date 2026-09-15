@@ -1495,7 +1495,28 @@ function bufferByteLength(chunks = []) {
     return chunks.reduce((total, chunk) => total + chunk.length, 0);
 }
 
-export async function writePdfMetadata(filePath, metadata = {}) {
+function buildPdfRatingPacket(original, rootDict, rating) {
+    const reference = /\/Metadata\s+(\d+)\s+(\d+)\s+R\b/.exec(rootDict);
+    let xml = '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>';
+    if (reference) {
+        const stream = findPdfStreams(original).reverse().find(item => item.objectNumber === Number(reference[1]) && item.generation === Number(reference[2]));
+        if (!stream) throw new Error('PDF metadata stream cannot be preserved.');
+        const decoded = decodePdfStreamData(stream.data, parseNamesForKey(stream.dict, 'Filter'));
+        if (!decoded) throw new Error('PDF metadata stream cannot be decoded.');
+        xml = decoded.toString('utf8');
+    }
+    if (!/<\/rdf:RDF\s*>/i.test(xml)) throw new Error('Unsupported PDF metadata XML.');
+    const prefixes = new Set(['xmp']);
+    for (const match of xml.matchAll(/xmlns:([\w.-]+)\s*=\s*["']http:\/\/ns\.adobe\.com\/xap\/1\.0\/["']/g)) prefixes.add(match[1]);
+    for (const prefix of prefixes) {
+        const name = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        xml = xml.replace(new RegExp(`<${name}:Rating\\b[^>]*(?:\\/\\s*>|>[\\s\\S]*?<\\/${name}:Rating\\s*>)`, 'gi'), '')
+            .replace(new RegExp(`\\s+${name}:Rating\\s*=\\s*(?:"[^"]*"|'[^']*')`, 'gi'), '');
+    }
+    return xml.replace(/<\/rdf:RDF\s*>/i, `<rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/"><xmp:Rating>${rating}</xmp:Rating></rdf:Description></rdf:RDF>`);
+}
+
+export async function writePdfMetadata(filePath, metadata = {}, { ratingOnly = false } = {}) {
     const original = await fs.readFile(filePath);
     const trailer = parseTrailer(original);
     if (trailer.encrypted) throw new Error('Encrypted PDF metadata editing is not supported.');
@@ -1508,6 +1529,9 @@ export async function writePdfMetadata(filePath, metadata = {}) {
     const metadataObjectNumber = infoObjectNumber + 1;
     const rootDict = findObjectDictionary(trailer.text, trailer.root.objectNumber, trailer.root.generation);
     const canUpdateCatalog = Boolean(rootDict);
+    if (ratingOnly && (!canUpdateCatalog || !Number.isInteger(metadata.CommunityRating) || metadata.CommunityRating < 1 || metadata.CommunityRating > 10)) {
+        throw new Error('PDF rating cannot be updated.');
+    }
     const newSize = Math.max(metadataObjectNumber, trailer.root.objectNumber) + 1;
     const chunks = [];
     if (original.length > 0 && original[original.length - 1] !== 0x0a) chunks.push(Buffer.from('\n', 'latin1'));
@@ -1520,9 +1544,9 @@ export async function writePdfMetadata(filePath, metadata = {}) {
     };
 
     const infoObject = `${infoObjectNumber} 0 obj\n${buildPdfInfoDictionary(metadata, now)}\nendobj\n`;
-    addObject(infoObjectNumber, 0, infoObject);
+    if (!ratingOnly) addObject(infoObjectNumber, 0, infoObject);
 
-    const xmpBuffer = Buffer.from(buildPdfXmpPacket(metadata, now), 'utf8');
+    const xmpBuffer = Buffer.from(ratingOnly ? buildPdfRatingPacket(original, rootDict, metadata.CommunityRating) : buildPdfXmpPacket(metadata, now), 'utf8');
     addObject(metadataObjectNumber, 0, Buffer.concat([
         Buffer.from(`${metadataObjectNumber} 0 obj\n<< /Type /Metadata /Subtype /XML /Length ${xmpBuffer.length} >>\nstream\n`, 'utf8'),
         xmpBuffer,
@@ -1556,7 +1580,9 @@ export async function writePdfMetadata(filePath, metadata = {}) {
         'trailer',
         `<< /Size ${newSize}`,
         `   /Root ${trailer.root.objectNumber} ${trailer.root.generation} R`,
-        `   /Info ${infoObjectNumber} 0 R`,
+        ...(ratingOnly
+            ? trailer.info ? [`   /Info ${trailer.info.objectNumber} ${trailer.info.generation} R`] : []
+            : [`   /Info ${infoObjectNumber} 0 R`]),
     ];
     if (trailer.idRaw) trailerLines.push(`   ${trailer.idRaw}`);
     if (trailer.startXref) trailerLines.push(`   /Prev ${trailer.startXref}`);

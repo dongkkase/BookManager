@@ -16,7 +16,7 @@ import {
     useDetailContentHeight,
 } from './detailPanelCommon';
 
-const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
+const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -93,7 +93,7 @@ const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => 
                         </div>
 
                         <div className="detail-info-card">
-                            <DetailFieldGroup fields={leftFields} />
+                            <DetailFieldGroup fields={leftFields} onEditRating={onEditRating} t={t} />
                             <section className="detail-extra">
                                 <DetailLine icon="fileLines" label={t('col_summary')} value={selectedFile.description || t('info_no_summary')} plain />
                                 <DetailLine icon="users" label={t('col_characters')} value={selectedFile.characters} inline />

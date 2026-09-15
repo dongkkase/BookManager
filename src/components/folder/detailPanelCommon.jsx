@@ -135,7 +135,7 @@ export function useDetailContentHeight(selectedFile, onContentHeightChange) {
     return { contentRef, scrollRef };
 }
 
-export function DetailFieldGroup({ fields }) {
+export function DetailFieldGroup({ fields, onEditRating, t }) {
     return (
         <div className="metadata-grid">
             {fields.map(([icon, label, value, emptyWhenMissing, type]) => (
@@ -160,6 +160,7 @@ export function DetailFieldGroup({ fields }) {
                                 {formatDetailValue(value)}
                             </span>
                         ) : emptyWhenMissing && !value ? '' : formatDetailValue(value)}
+                        {icon === 'star' && onEditRating && <button type="button" className="detail-rating-edit" aria-label={t('rating_editor_title')} onClick={onEditRating}>{t('rating_edit')}</button>}
                     </div>
                 </React.Fragment>
             ))}

@@ -36,7 +36,7 @@ const FILE_COLUMNS = [
     'path', 'mtime', 'size', 'ext', 'resolution', 'title', 'series', 'series_group',
     'volume', 'number', 'writer', 'creators', 'penciller', 'inker', 'colorist',
     'letterer', 'cover_artist', 'editor', 'publisher', 'imprint', 'genre',
-    'volume_count', 'page_count', 'format', 'manga', 'language', 'rating',
+    'volume_count', 'page_count', 'format', 'manga', 'language', 'rating', 'rating_override',
     'age_rating', 'publish_date', 'summary', 'characters', 'teams', 'locations',
     'story_arc', 'tags', 'notes', 'web', 'isbn', 'book_type', 'thumb_path',
     'cover_override_path', 'has_metadata', 'metadata_override',
@@ -267,6 +267,12 @@ function mergeEquivalentFileRecords(records = [], canonicalPath = '') {
     });
     const preferred = ranked[0] || {};
     const merged = { ...preferred, path: canonicalPath };
+    const ratingOverride = [...records].sort((a, b) => Number(b.storage_rowid || 0) - Number(a.storage_rowid || 0))
+        .find(record => Number(record.rating_override) >= 1 && Number(record.rating_override) <= 10);
+    if (ratingOverride) {
+        merged.rating_override = ratingOverride.rating_override;
+        merged.rating = ratingOverride.rating_override;
+    }
     for (const column of ['mtime', 'size', 'ext', 'resolution', 'book_type']) {
         if (hasStoredFileValue(merged[column])) continue;
         const fallback = ranked.find(record => hasStoredFileValue(record[column]));
@@ -484,6 +490,7 @@ export class LibraryDB {
     ensureSchemaColumns() {
         const fileColumns = this.tableColumns('files');
         const fileColumnDefinitions = {
+            rating_override: 'TEXT',
             isbn: 'TEXT',
             book_type: 'TEXT',
             penciller: 'TEXT',
@@ -962,6 +969,8 @@ export class LibraryDB {
             const updates = FILE_COLUMNS.slice(1).map(column => preserveChangedCover
                 && ['cover_override_path', 'thumb_path'].includes(column)
                 ? `${column} = CASE WHEN COALESCE(files.cover_override_path, '') != @expectedCoverOverridePath THEN files.${column} ELSE excluded.${column} END`
+                : column === 'rating' ? "rating = COALESCE(NULLIF(files.rating_override, ''), excluded.rating)"
+                : column === 'rating_override' ? "rating_override = COALESCE(NULLIF(files.rating_override, ''), excluded.rating_override)"
                 : `${column} = excluded.${column}`).join(', ');
             const values = Object.fromEntries(FILE_COLUMNS.map(column => [column, normalized[column] ?? '']));
             const statement = db.prepare(`
@@ -983,7 +992,10 @@ export class LibraryDB {
         return this.withLock(async () => {
             const db = this.getConnection();
             const placeholders = FILE_COLUMNS.map(column => `@${column}`).join(', ');
-            const updates = FILE_COLUMNS.slice(1).map(column => `${column} = excluded.${column}`).join(', ');
+            const updates = FILE_COLUMNS.slice(1).map(column => column === 'rating'
+                ? "rating = COALESCE(NULLIF(files.rating_override, ''), excluded.rating)"
+                : column === 'rating_override' ? "rating_override = COALESCE(NULLIF(files.rating_override, ''), excluded.rating_override)"
+                : `${column} = excluded.${column}`).join(', ');
             const statement = db.prepare(`
                 INSERT INTO files (${FILE_COLUMNS.join(', ')})
                 VALUES (${placeholders})
@@ -997,6 +1009,24 @@ export class LibraryDB {
             });
             insertMany(records);
             return { successCount: records.length, errorCount: 0 };
+        });
+    }
+
+    async setFileRating(filePath, rating, { storage = 'database' } = {}) {
+        if (!Number.isInteger(rating) || rating < 1 || rating > 10) throw new Error('Rating must be an integer from 1 to 10.');
+        return this.withLock(async () => {
+            const normalizedPath = this.normalizeFilePath(filePath);
+            this.getConnection().prepare(`
+                INSERT INTO files (path, ext, title, rating, rating_override)
+                VALUES (@path, @ext, @title, @rating, @override)
+                ON CONFLICT(path) DO UPDATE SET rating = excluded.rating, rating_override = excluded.rating_override
+            `).run({
+                path: normalizedPath,
+                ext: path.extname(normalizedPath).toLowerCase(),
+                title: path.parse(normalizedPath).name,
+                rating: String(rating),
+                override: storage === 'file' ? '' : String(rating),
+            });
         });
     }
 

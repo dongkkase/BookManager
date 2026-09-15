@@ -9,6 +9,8 @@ import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { FolderPathBar } from '../components/folder/FolderPathBar';
+import { RatingEditorDialog } from '../components/folder/RatingEditorDialog';
+import { supportsRatingEditor } from '../ratingPolicy';
 import { CoverEditorDialog } from '../components/folder/CoverEditorDialog';
 import { applyCoverReadingAdjustment } from '../../electron/coverReadingState.js';
 import { supportsCoverEditor, resolveCoverEditorTargets, runCoverEditorBatch } from '../coverEditorBatch';
@@ -650,6 +652,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [contextMenu, setContextMenu] = useState(null);
     const [readiveTransferPaths, setReadiveTransferPaths] = useState(null);
     const [coverEditorTarget, setCoverEditorTarget] = useState(null);
+    const [ratingEditorTarget, setRatingEditorTarget] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
   const [showContentIndexDialog, setShowContentIndexDialog] = useState(false);
   const [gotoPathDraft, setGotoPathDraft] = useState('');
@@ -692,7 +695,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     });
   }), []);
   const closeTopOverlay = useCallback(() => {
-        if (coverEditorTarget) return true;
+        if (coverEditorTarget || ratingEditorTarget) return true;
     if (moveConflict) return true;
     if (textInputDialog) {
       closeTextInputDialog(null);
@@ -712,6 +715,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return true;
   }, [
         coverEditorTarget,
+        ratingEditorTarget,
     contextMenu,
     readiveTransferPaths,
     libraryMoveRequest,
@@ -2118,6 +2122,25 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     await tagRefresh;
   }, [applyFolderTagSearch, folderTagMatchMode, folderTagSelections, invalidateMissingVolumesCheck, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, loadRecentReading, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
+    const executeRatingEdit = useCallback(async request => {
+        const result = await runInternalFileAction(() => window.electronAPI.saveRating(request));
+        if (result?.success) {
+            const pathKey = value => String(value || '').replace(/\\/g, '/').normalize('NFC');
+            const updateRating = files => files.map(file => pathKey(file.full_path || file.path) === pathKey(result.filePath)
+                ? { ...file, rating: String(result.rating) } : file);
+            setLibrarySearchResults(updateRating);
+            setFolderTagSearchResults(updateRating);
+            setRecentReadingFiles(updateRating);
+            updateCachedFiles(selectedFolderPath, scanOptions, [{
+                path: ratingEditorTarget?.path || result.filePath,
+                rating: String(result.rating),
+            }]);
+            // Rating changes do not affect covers; keep their cache and mounted images intact.
+            showToast?.(t(result.storage === 'file' ? 'rating_saved_file' : 'rating_saved_database'));
+        }
+        return result;
+    }, [ratingEditorTarget, runInternalFileAction, scanOptions, selectedFolderPath, showToast, t, updateCachedFiles]);
+
     const executeCoverEdit = useCallback(async (request, batchOptions = {}) => {
         const apply = async item => {
             const saved = await window.electronAPI.applyCoverEditor(item);
@@ -2593,11 +2616,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [openFileInViewer, selectFile]);
 
   const handleDroppedPaths = useCallback(async (paths) => {
-    if (document.querySelector('.cover-editor-backdrop')) return;
+    if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
     try {
       for (const droppedPath of paths || []) {
         const stat = await window.electronAPI?.stat?.(droppedPath);
-        if (document.querySelector('.cover-editor-backdrop')) return;
+        if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
         if (stat?.isDirectory) {
           await handleFolderChange(droppedPath);
           return;
@@ -2605,7 +2628,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         if (stat?.isFile) {
           if ((paths?.length || 0) > 1) showToast?.(t('folder.drop.first_file_only'));
           await new Promise(resolve => window.setTimeout(resolve, 0));
-            if (document.querySelector('.cover-editor-backdrop')) return;
+            if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
           await openFileInViewer(droppedPath);
           return;
         }
@@ -3266,7 +3289,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
+    if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
+        setRatingEditorTarget(menu.file);
+    } else if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
         const files = resolveCoverEditorTargets(menu.file, selectedEntryObjects);
         if (files.length > 0) setCoverEditorTarget(files);
     } else if (action === 'send-readive') {
@@ -4068,7 +4093,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   : { flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}
               >
                 {!isDetailPanelCollapsed && (
-                  <DetailPanel selectedFile={detailSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
+                  <DetailPanel onEditRating={supportsRatingEditor(detailSelectedFile) ? () => setRatingEditorTarget(detailSelectedFile) : undefined} selectedFile={detailSelectedFile} onContentHeightChange={handleDetailContentHeightChange} t={t} />
                 )}
               </div>
             </>
@@ -4121,6 +4146,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         </div>
       </div>
       {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} onClose={() => setReadiveTransferPaths(null)} onOpenSharing={openReadiveSharing} />}
+        {ratingEditorTarget && <RatingEditorDialog file={ratingEditorTarget} t={t} onSave={executeRatingEdit} onClose={() => setRatingEditorTarget(null)} />}
         {coverEditorTarget && <CoverEditorDialog files={coverEditorTarget} t={t} onExecute={executeCoverEdit} onClose={() => setCoverEditorTarget(null)} />}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
@@ -4166,6 +4192,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <>
               <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('view-file')} label={t('action_view')} />
+                {supportsRatingEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-rating')} icon="star" label={t('rating_editor_title')} />}
                 {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_title')} />}
               {!isRecentReading && (
                 <>

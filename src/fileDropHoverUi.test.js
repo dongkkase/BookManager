@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { canAcceptGlobalDrop, isExternalFileDrag, normalizeDroppedPaths } from './appShell.js';
-import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy.js';
+import { classifyDroppedEntries, resolveMetadataDropPaths, resolveTaskDropMode } from './dropPolicy.js';
 import { translate } from './utils/i18n.js';
 
 const appSource = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
@@ -23,10 +23,11 @@ return { handleGlobalDragEnter, handleGlobalDragOver, handleGlobalDrop, handleDr
 function dropFixture(options = {}) {
     let modalOpen = false;
     let hoverTab = null;
+    let hoverMode = 'append';
     const depth = { current: 0 };
     const calls = { stat: [], dispatch: [], open: [], navigate: [], warning: [], timers: [] };
     const dependencies = {
-        document: { querySelector: selector => selector === '.cover-editor-backdrop' && modalOpen ? {} : null },
+        document: { querySelector: selector => selector === '.cover-editor-backdrop, .rating-editor-backdrop' && modalOpen ? {} : null },
         window: {
             electronAPI: {
                 stat: async filePath => {
@@ -37,21 +38,25 @@ function dropFixture(options = {}) {
                     calls.warning.push(message);
                     return options.warning?.(message);
                 },
+                chooseMetadataDrop: async () => options.choice || 'no',
             },
             setTimeout: callback => { calls.timers.push(callback); },
         },
         useCallback: callback => callback,
         useEffect: () => {},
-        activeTab: 'folder',
-        dropInteractionBlocked: false,
-        fileDropHoverEnabled: true,
+        activeTab: options.tab || 'folder',
+        dropInteractionBlocked: Boolean(options.blocked),
+        fileDropHoverEnabled: !options.blocked,
         fileDragDepthRef: depth,
+        fileDropAreaRef: { current: { getBoundingClientRect: () => ({ top: 100, height: 600 }) } },
         setFileDropHoverTab: value => { hoverTab = value; },
+        setFileDropMode: value => { hoverMode = value; },
         canAcceptGlobalDrop,
         isExternalFileDrag,
         normalizeDroppedPaths,
         classifyDroppedEntries,
         resolveMetadataDropPaths,
+        resolveTaskDropMode,
         dispatchTabAction: (...args) => calls.dispatch.push(args),
         openFileInViewer: async filePath => { calls.open.push(filePath); },
         handleFolderChange: async filePath => { calls.navigate.push(filePath); },
@@ -64,11 +69,13 @@ function dropFixture(options = {}) {
         ...handlers, calls, depth,
         setModalOpen: value => { modalOpen = value; },
         hoverTab: () => hoverTab,
+        hoverMode: () => hoverMode,
     };
 }
 
-function fileDrag(paths = ['/library/book.epub']) {
+function fileDrag(paths = ['/library/book.epub'], clientY = 400) {
     return {
+        clientY,
         defaultPrevented: false,
         preventDefault() { this.defaultPrevented = true; },
         dataTransfer: { types: ['Files'], files: paths.map(path => ({ path })), dropEffect: 'copy' },
@@ -86,7 +93,7 @@ test('드롭을 허용하는 작업 탭은 외부 파일 드래그 중 공통 �
     assert.match(appSource, /fileDropHoverEnabled = canAcceptGlobalDrop\(activeTab, dropInteractionBlocked\)/);
     assert.match(appSource, /canAcceptGlobalDrop\(activeTab, dropInteractionBlocked\)/);
     assert.match(appSource, /isExternalFileDrag\(event\.dataTransfer\)/);
-    assert.match(appSource, /showFileDropHover && <FileDropHoverOverlay opensViewer=\{activeTab === 'folder'\} t=\{t\} \/>/);
+    assert.match(appSource, /showFileDropHover && <FileDropHoverOverlay opensViewer=\{activeTab === 'folder'\} dropMode=\{fileDropMode\} t=\{t\} \/>/);
     assert.match(appSource, /role="status"/);
     assert.match(appSource, /aria-live="polite"/);
 });
@@ -199,4 +206,71 @@ test('폴더 탭의 직접 드롭 요청과 비동기 파일 조회 이후에도
     value.calls.timers.shift()();
     await reopened;
     assert.deepEqual(value.calls.open, ['/library/book.epub']);
+});
+
+test('세 작업 탭은 드래그 위치를 강조하고 실제 드롭 위치로 교체·추가를 결정한다', async () => {
+    for (const tab of ['organizer', 'renamer', 'metadata']) {
+        for (const [clientY, mode] of [[100, 'replace'], [279.99, 'replace'], [280, 'append'], [699, 'append']]) {
+            const value = dropFixture({ tab });
+            value.handleGlobalDragEnter(fileDrag(['/books/new.cbz'], clientY));
+            assert.equal(value.hoverMode(), mode);
+            value.handleGlobalDragOver(fileDrag(['/books/new.cbz'], mode === 'replace' ? 500 : 150));
+            assert.notEqual(value.hoverMode(), mode);
+            await value.handleGlobalDrop(fileDrag(['/books/new.cbz'], clientY));
+            assert.deepEqual(value.calls.dispatch, [[tab, {
+                action: 'drop-paths', activeTab: tab, paths: ['/books/new.cbz'], dropMode: mode,
+            }]]);
+            assert.equal(value.hoverMode(), 'append');
+            assert.equal(value.hoverTab(), null);
+        }
+    }
+});
+
+test('위쪽에 폴더를 드롭해도 교체 모드를 전달하고 메타데이터 폴더 선택에도 유지한다', async () => {
+    for (const tab of ['organizer', 'renamer', 'metadata']) {
+        const value = dropFixture({ tab, stat: () => ({ isDirectory: true }) });
+        await value.handleGlobalDrop(fileDrag(['/books'], 150));
+        assert.deepEqual(value.calls.dispatch[0][1].paths, ['/books']);
+        assert.equal(value.calls.dispatch[0][1].dropMode, 'replace');
+    }
+    const value = dropFixture({ tab: 'metadata', choice: 'yes' });
+    await value.handleGlobalDrop(fileDrag(['/books/new.epub'], 150));
+    assert.deepEqual(value.calls.dispatch[0][1], {
+        action: 'drop-paths', activeTab: 'metadata', paths: ['/books'], dropMode: 'replace',
+    });
+});
+
+test('지원하지 않는 드롭, 취소, 작업 잠금은 교체 요청을 전달하지 않는다', async () => {
+    for (const tab of ['organizer', 'renamer', 'metadata']) {
+        for (const options of [{ blocked: true }, { stat: () => ({ isFile: true }) }]) {
+            const value = dropFixture({ tab, ...options });
+            await value.handleGlobalDrop(fileDrag(['/images/cover.png'], 150));
+            assert.deepEqual(value.calls.dispatch, []);
+        }
+        const empty = dropFixture({ tab });
+        await empty.handleGlobalDrop(fileDrag([], 150));
+        assert.deepEqual(empty.calls.dispatch, []);
+    }
+    const cancelled = dropFixture({ tab: 'metadata', choice: 'cancel' });
+    await cancelled.handleGlobalDrop(fileDrag(['/books/new.epub'], 150));
+    assert.deepEqual(cancelled.calls.dispatch, []);
+});
+
+test('파일 조회를 기다리는 동안 이벤트 좌표가 바뀌어도 원래 드롭 영역을 유지한다', async () => {
+    const pending = deferred();
+    const value = dropFixture({ tab: 'organizer', stat: () => pending.promise });
+    const event = fileDrag(['/books/new.cbz'], 150);
+    const dropping = value.handleGlobalDrop(event);
+    event.clientY = 500;
+    pending.resolve({ isFile: true });
+    await dropping;
+    assert.equal(value.calls.dispatch[0][1].dropMode, 'replace');
+});
+
+test('분할 드롭 안내는 모든 지원 언어로 제공한다', () => {
+    for (const language of ['ko', 'en', 'ja']) {
+        for (const mode of ['replace', 'append']) {
+            assert.notEqual(translate(`drag_drop_${mode}`, language), `drag_drop_${mode}`);
+        }
+    }
 });

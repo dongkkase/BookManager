@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadMetadataImageFile: (filePath) => ipcRenderer.invoke('metadata:imageFile', filePath),
     inspectCoverEditor: filePath => ipcRenderer.invoke('coverEditor:inspect', filePath),
     previewCoverEditorImage: filePath => ipcRenderer.invoke('coverEditor:image', filePath),
+    saveRating: request => ipcRenderer.invoke('rating:save', request),
     applyCoverEditor: request => ipcRenderer.invoke('coverEditor:apply', request),
   exportMetadataCover: (options) => ipcRenderer.invoke('metadata:exportCover', options),
   cacheMetadataRemoteCover: (imageUrl) => ipcRenderer.invoke('metadata:cacheRemoteCover', imageUrl),

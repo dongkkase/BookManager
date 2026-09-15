@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { parseFile, selectCover } from 'music-metadata';
 import tagLib from 'node-taglib-sharp';
+import { readAudioRatingTag } from './audioRating.js';
 
 const { File: TagLibFile } = tagLib;
 
@@ -323,6 +324,7 @@ export function normalizeAudioMetadata(parsed = {}, options = {}) {
     );
 
     return {
+        rating: tagMetadata.rating || '',
         title,
         artist,
         artists,
@@ -379,6 +381,7 @@ function readTagLibMetadata(filePath) {
         audioFile = TagLibFile.createFromPath(filePath, mimeType);
         const tag = audioFile.tag;
         return {
+            rating: readAudioRatingTag(audioFile),
             title: tag.title,
             artist: tag.firstPerformer,
             performers: tag.performers,

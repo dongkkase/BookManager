@@ -52,6 +52,15 @@ const SUPPORTED_AUDIO_DROP_EXTENSION_SET = new Set(SUPPORTED_AUDIO_DROP_EXTENSIO
 const SUPPORTED_TEXT_DROP_EXTENSION_SET = new Set(SUPPORTED_TEXT_DROP_EXTENSIONS);
 const SUPPORTED_VIEWER_DROP_EXTENSION_SET = new Set(SUPPORTED_VIEWER_DROP_EXTENSIONS);
 
+export const REPLACE_DROP_RATIO = 0.3;
+
+export function resolveTaskDropMode(tabId, clientY, bounds) {
+    if (!['organizer', 'renamer', 'metadata'].includes(tabId)) return 'append';
+    if (!bounds || bounds.height <= 0 || !Number.isFinite(clientY)) return 'append';
+    const offset = clientY - bounds.top;
+    return offset >= 0 && offset < bounds.height * REPLACE_DROP_RATIO ? 'replace' : 'append';
+}
+
 function normalizedFileExtension(filePath) {
     const normalized = String(filePath || '')
         .normalize('NFC')

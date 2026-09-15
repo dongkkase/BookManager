@@ -21,7 +21,7 @@ function metadataText(t, key, fallback) {
     return translated && translated !== key ? translated : fallback;
 }
 
-const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
+const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -109,7 +109,7 @@ const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
                         </div>
 
                         <div className="detail-info-card">
-                            <DetailFieldGroup fields={bookFields} />
+                            <DetailFieldGroup fields={bookFields} onEditRating={onEditRating} t={t} />
                             <section className="detail-extra">
                                 <DetailLine icon="fileLines" label={metadataText(t, 't3_f_book_description', '책설명')} value={summary} plain />
                             </section>

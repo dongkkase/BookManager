@@ -708,7 +708,12 @@ function OrganizerTab({ config, t, showToast }) {
       if (isWorking) return;
       if (action === 'add-folder') handleSelectFolder();
       else if (action === 'add-file') handleSelectFiles();
-      else if (action === 'drop-paths' || action === 'load-paths') analyzePaths(event.detail?.paths);
+      else if (action === 'drop-paths' || action === 'load-paths') {
+            const paths = event.detail?.paths;
+            if (!paths?.length) return;
+            if (action === 'drop-paths' && event.detail?.dropMode === 'replace') handleClear();
+            analyzePaths(paths);
+        }
       else if (action === 'run-current') handleExecute();
       else if (action === 'remove-selected') handleRemoveChecked();
       else if (action === 'clear-all') handleClear();

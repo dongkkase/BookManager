@@ -21,7 +21,7 @@ function metadataText(t, key, fallback) {
     return translated && translated !== key ? translated : fallback;
 }
 
-const PdfDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
+const PdfDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -109,7 +109,7 @@ const PdfDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
                         </div>
 
                         <div className="detail-info-card">
-                            <DetailFieldGroup fields={pdfFields} />
+                            <DetailFieldGroup fields={pdfFields} onEditRating={onEditRating} t={t} />
                             <section className="detail-extra">
                                 <DetailLine icon="fileLines" label={metadataText(t, 'pdf_f_subject_description', '주제/설명')} value={summary} plain />
                             </section>

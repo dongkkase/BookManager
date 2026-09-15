@@ -139,3 +139,22 @@ test('메타데이터 드롭 취소는 아무 경로도 전달하지 않는다',
         files: ['/books/a.cbz'],
     }, 'cancel'), []);
 });
+
+test('드롭 영역의 위쪽 30%만 교체하며 경계와 영역 밖은 추가로 처리한다', async () => {
+    const { resolveTaskDropMode } = await import('./dropPolicy.js');
+    for (const tab of ['organizer', 'renamer', 'metadata']) {
+        for (const bounds of [{ top: 100, height: 600 }, { top: 75, height: 250 }]) {
+            assert.equal(resolveTaskDropMode(tab, bounds.top - 1, bounds), 'append');
+            assert.equal(resolveTaskDropMode(tab, bounds.top, bounds), 'replace');
+            assert.equal(resolveTaskDropMode(tab, bounds.top + bounds.height * 0.3 - 0.01, bounds), 'replace');
+            assert.equal(resolveTaskDropMode(tab, bounds.top + bounds.height * 0.3, bounds), 'append');
+            assert.equal(resolveTaskDropMode(tab, bounds.top + bounds.height + 1, bounds), 'append');
+        }
+        assert.equal(resolveTaskDropMode(tab, 0, null), 'append');
+        assert.equal(resolveTaskDropMode(tab, 0, { top: 0, height: 0 }), 'append');
+        assert.equal(resolveTaskDropMode(tab, NaN, { top: 0, height: 500 }), 'append');
+    }
+    for (const tab of ['folder', 'sharing', 'releases']) {
+        assert.equal(resolveTaskDropMode(tab, 100, { top: 100, height: 600 }), 'append');
+    }
+});

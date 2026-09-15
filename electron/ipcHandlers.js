@@ -1,3 +1,4 @@
+import { saveItemRating } from './ratingEditor.js';
 import pkg from 'electron';
 const { ipcMain, app, BrowserWindow, dialog, shell, net, nativeImage } = pkg;
 import fs from 'fs';
@@ -3634,6 +3635,24 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             return { error: error.message, code: error.code || '' };
         }
     });
+    ipcMain.handle('rating:save', async (_event, request) => {
+        try {
+            const result = await saveItemRating(request, {
+                dbPath: libraryDbPath(),
+                sevenZExe: await resolveCoverEditorSevenZPath(await getBinPath('7za') || await getBinPath('7z'), { executableDir: getExecutableDir() }),
+                backup_on: configManager.getConfig()?.backup_on ?? false,
+            });
+            try {
+                await hooks.onMetadataSaveSuccess?.([result.filePath]);
+            } catch (error) {
+                console.warn('[RatingEditor] Viewer refresh failed:', error.message);
+            }
+            return result;
+        } catch (error) {
+            return { success: false, error: error.message, code: error.code || '' };
+        }
+    });
+
     ipcMain.handle('coverEditor:apply', async (_event, request) => {
         try {
             const options = await coverEditorOptions();

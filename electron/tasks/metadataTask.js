@@ -1293,6 +1293,7 @@ function metadataPublishDate(metadata = {}) {
 function metadataFromAudioAnalysis(audio = {}) {
   if (!audio) return {};
   const metadata = {
+    CommunityRating: audio.rating || '',
     Title: audio.title || '',
     Series: audio.series || audio.grouping || audio.album || '',
     Writer: audio.artist || '',
@@ -2623,6 +2624,62 @@ async function injectComicInfoFastZip(filePath, metadata, options = {}) {
     beforeWrite: options.beforeWrite,
   });
   return true;
+}
+
+// Update only the rating so custom XML fields, page annotations and EPUB manifests survive.
+export async function writeArchiveRating(filePath, rating, { sevenZExe } = {}) {
+    if (!Number.isInteger(rating) || rating < 1 || rating > 10) throw new Error('Invalid rating.');
+    if (isEpub(filePath)) {
+        const epub = await readEpubPackage(filePath);
+        if (!epub) throw new Error('EPUB package was not found.');
+        const metadata = xmlElementMatches(epub.opfXml, 'metadata', { allowPrefix: true })[0];
+        if (!metadata) throw new Error('EPUB metadata was not found.');
+        let inner = metadata.rawValue;
+        const keys = new Set(['schema:ratingvalue', 'calibre:rating', 'rating', 'communityrating', 'community-rating']);
+        const elements = [...xmlElementMatches(inner, 'meta', { allowPrefix: true, global: true }),
+            ...xmlSelfClosingElements(inner, 'meta', { allowPrefix: true })];
+        for (const element of elements) {
+            if (!keys.has(String(element.attrs.property || element.attrs.name || '').toLowerCase())) continue;
+            inner = inner.replace(element.tag, '');
+        }
+        const prefix = metadata.tagName.includes(':') ? metadata.tagName.split(':')[0] + ':' : '';
+        inner += `\n<${prefix}meta name="calibre:rating" content="${rating}"/>\n`;
+        const xml = epub.opfXml.replace(metadata.tag, `${metadata.openTag}${inner}${metadata.closeTag}`);
+        if (String(parseEpubMetadata(xml).CommunityRating) !== String(rating)) throw new Error('EPUB rating verification failed.');
+        await replaceZipEntry(filePath, epub.opfPath, xml);
+        return;
+    }
+    const extension = path.extname(filePath).toLowerCase();
+    if (!['.zip', '.cbz', '.7z', '.cb7'].includes(extension)) throw new Error('Archive rating writing is not supported.');
+    const entries = await listArchiveEntries(filePath, sevenZExe);
+    const entry = entries.find(item => !item.isDir && path.posix.basename(item.name.replace(/\\/g, '/')).toLowerCase() === 'comicinfo.xml');
+    const entryName = entry?.name || 'ComicInfo.xml';
+    let xml = entry ? (await extractArchiveFile(filePath, entryName, sevenZExe, { maxBytes: 8 * 1024 * 1024 })).toString('utf8')
+        : '<?xml version="1.0" encoding="utf-8"?>\n<ComicInfo></ComicInfo>';
+    if (/encoding\s*=\s*["'](?!utf-?8)[^"']+/i.test(xml) || !/<ComicInfo\b[^>]*>[\s\S]*<\/ComicInfo\s*>/i.test(xml)) {
+        throw new Error('Unsupported ComicInfo XML.');
+    }
+    const tag = `<CommunityRating>${rating}</CommunityRating>`;
+    const pattern = /<CommunityRating\b[^>]*(?:\/\s*>|>[\s\S]*?<\/CommunityRating\s*>)/gi;
+    xml = xml.replace(pattern, '').replace(/<\/ComicInfo\s*>/i, `${tag}</ComicInfo>`);
+    if (isZipArchive(filePath)) {
+        await replaceZipEntry(filePath, entryName, xml);
+        return;
+    }
+    if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
+    const normalizedEntry = entryName.replace(/\\/g, '/');
+    if (normalizedEntry.startsWith('/') || normalizedEntry.split('/').some(part => part === '..' || part.includes(':'))) {
+        throw new Error('Invalid metadata entry path.');
+    }
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_Rating_'));
+    try {
+        const xmlPath = path.join(tempDir, normalizedEntry);
+        await fsp.mkdir(path.dirname(xmlPath), { recursive: true });
+        await fsp.writeFile(xmlPath, xml, 'utf8');
+        await runProcess(sevenZExe, ['a', '-t7z', filePath, normalizedEntry, '-y'], { cwd: tempDir });
+    } finally {
+        await fsp.rm(tempDir, { recursive: true, force: true });
+    }
 }
 
 async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {

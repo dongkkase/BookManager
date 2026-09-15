@@ -37,7 +37,7 @@ import {
   shouldUseLibraryScanSlide,
 } from './appLockState';
 import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
-import { classifyDroppedEntries, resolveMetadataDropPaths } from './dropPolicy';
+import { classifyDroppedEntries, REPLACE_DROP_RATIO, resolveMetadataDropPaths, resolveTaskDropMode } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
 import { fontVarsForConfig } from './fontPolicy';
 import { installBundledFontFaces } from './bundledFonts';
@@ -64,7 +64,22 @@ function TabLoading({ t }) {
   return <div className="app-tab-loading">{t('msg_loading_list')}</div>;
 }
 
-function FileDropHoverOverlay({ opensViewer, t }) {
+function FileDropHoverOverlay({ opensViewer, dropMode, t }) {
+    if (!opensViewer) {
+        return (
+            <div className="app-file-drop-hover is-split" style={{ '--replace-drop-ratio': `${REPLACE_DROP_RATIO * 100}%` }}>
+                {['replace', 'append'].map(mode => (
+                    <div key={mode} className={`app-file-drop-zone is-${mode} ${dropMode === mode ? 'is-active' : ''}`}>
+                        <div className="app-file-drop-hover-card">
+                            <FaIcon name={mode === 'replace' ? 'folderMinus' : 'fileCirclePlus'} size={28} />
+                            <span>{t(`drag_drop_${mode}`)}</span>
+                        </div>
+                    </div>
+                ))}
+                <span className="app-file-drop-announcement" role="status" aria-live="polite">{t(`drag_drop_${dropMode}`)}</span>
+            </div>
+        );
+    }
   return (
     <div
       className={`app-file-drop-hover ${opensViewer ? 'is-viewer-open' : ''}`.trim()}
@@ -103,6 +118,7 @@ function App() {
   const [serverStatus, setServerStatus] = useState(null);
   const [audioMiniPlayerState, setAudioMiniPlayerState] = useState(null);
   const [fileDropHoverTab, setFileDropHoverTab] = useState(null);
+    const [fileDropMode, setFileDropMode] = useState('append');
   const [updateInfo, setUpdateInfo] = useState({
     available: false,
     latestVersion: '',
@@ -131,6 +147,7 @@ function App() {
   const readyTabsRef = useRef(new Set());
   const pendingTabActionsRef = useRef(new Map());
   const fileDragDepthRef = useRef(0);
+    const fileDropAreaRef = useRef(null);
   const effectiveWorkingTab = useMemo(
     () => resolveEffectiveWorkingTab(workingTab, statusStates, activeTab),
     [activeTab, statusStates, workingTab],
@@ -455,6 +472,7 @@ function App() {
   const resetFileDropHover = useCallback(() => {
     fileDragDepthRef.current = 0;
     setFileDropHoverTab(null);
+        setFileDropMode('append');
   }, []);
 
   useEffect(() => {
@@ -462,7 +480,7 @@ function App() {
   }, [activeTab, dropInteractionBlocked, resetFileDropHover]);
 
   const handleGlobalDragEnter = useCallback((event) => {
-    if (document.querySelector('.cover-editor-backdrop')) {
+    if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) {
         resetFileDropHover();
         return;
     }
@@ -470,6 +488,7 @@ function App() {
     event.preventDefault();
     fileDragDepthRef.current += 1;
     setFileDropHoverTab(activeTab);
+        setFileDropMode(resolveTaskDropMode(activeTab, event.clientY, fileDropAreaRef.current?.getBoundingClientRect()));
   }, [activeTab, fileDropHoverEnabled, resetFileDropHover]);
 
   const handleGlobalDragLeave = useCallback(() => {
@@ -479,7 +498,7 @@ function App() {
 
   const handleGlobalDragOver = useCallback((event) => {
     event.preventDefault();
-    if (document.querySelector('.cover-editor-backdrop')) {
+    if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) {
         event.dataTransfer.dropEffect = 'none';
         resetFileDropHover();
         return;
@@ -488,14 +507,16 @@ function App() {
     if (fileDropHoverEnabled && isExternalFileDrag(event.dataTransfer)) {
       if (fileDragDepthRef.current === 0) fileDragDepthRef.current = 1;
       setFileDropHoverTab(activeTab);
+            setFileDropMode(resolveTaskDropMode(activeTab, event.clientY, fileDropAreaRef.current?.getBoundingClientRect()));
     }
   }, [activeTab, dropInteractionBlocked, fileDropHoverEnabled, resetFileDropHover]);
 
   const handleGlobalDrop = useCallback(async (event) => {
     event.preventDefault();
     resetFileDropHover();
-    if (document.querySelector('.cover-editor-backdrop')) return;
+    if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
     if (!canAcceptGlobalDrop(activeTab, dropInteractionBlocked)) return;
+        const dropMode = resolveTaskDropMode(activeTab, event.clientY, fileDropAreaRef.current?.getBoundingClientRect());
     const paths = normalizeDroppedPaths(
       Array.from(event.dataTransfer.files || []).map(file => file.path),
     );
@@ -504,7 +525,7 @@ function App() {
       path: droppedPath,
       ...(await window.electronAPI?.stat?.(droppedPath)),
     })));
-    if (document.querySelector('.cover-editor-backdrop')) return;
+    if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
     const classified = classifyDroppedEntries(entries, {
       includeDocuments: activeTab === 'metadata',
       includeViewerFiles: activeTab === 'folder',
@@ -527,8 +548,8 @@ function App() {
       acceptedPaths = resolveMetadataDropPaths(classified, choice);
     }
     if (acceptedPaths.length === 0) return;
-    if (document.querySelector('.cover-editor-backdrop')) return;
-    dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths });
+    if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
+    dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths, ...(activeTab !== 'folder' ? { dropMode } : {}) });
   }, [activeTab, dispatchTabAction, dropInteractionBlocked, language, resetFileDropHover, showToast, t]);
 
   const handleSettingsClose = useCallback(async (updatedConfig) => {
@@ -772,7 +793,7 @@ function App() {
         </button>
       </div>
       
-      <div className="app-content">
+      <div className="app-content" ref={fileDropAreaRef}>
         <div className={`app-tab-panel ${activeTab === 'folder' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'folder'}>
           {loadedTabs.has('folder') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
@@ -815,7 +836,7 @@ function App() {
             </React.Suspense>
           )}
         </div>
-        {showFileDropHover && <FileDropHoverOverlay opensViewer={activeTab === 'folder'} t={t} />}
+        {showFileDropHover && <FileDropHoverOverlay opensViewer={activeTab === 'folder'} dropMode={fileDropMode} t={t} />}
         <AppLockOverlay
           isAppLocked={isAppLocked}
           useLibraryScanSlide={useLibraryScanSlide}

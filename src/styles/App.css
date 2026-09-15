@@ -372,6 +372,69 @@ body.is-resizing-panel * {
     filter: drop-shadow(0 0 10px rgba(89, 191, 246, 0.42));
 }
 
+.app-file-drop-hover.is-split {
+    inset: 0;
+    display: grid;
+    grid-template-rows: var(--replace-drop-ratio) 1fr;
+    align-items: stretch;
+    justify-content: stretch;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    animation: none;
+}
+
+.app-file-drop-zone {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    padding: 8px;
+    border: 2px dashed rgba(105, 188, 233, 0.5);
+    background: rgba(20, 40, 52, 0.7);
+}
+
+.app-file-drop-zone.is-replace {
+    border-color: rgba(240, 175, 95, 0.6);
+    background: rgba(65, 43, 24, 0.7);
+}
+
+.app-file-drop-zone.is-active {
+    border-color: #80d2ff;
+    background: rgba(28, 100, 140, 0.8);
+    box-shadow: inset 0 0 32px rgba(105, 188, 233, 0.3);
+}
+
+.app-file-drop-zone.is-replace.is-active {
+    border-color: #ffc477;
+    background: rgba(118, 70, 24, 0.85);
+    box-shadow: inset 0 0 32px rgba(240, 175, 95, 0.3);
+}
+
+.app-file-drop-zone .app-file-drop-hover-card {
+    flex-direction: row;
+    padding: 12px 18px;
+    font-size: clamp(12px, 1.6vw, 16px);
+}
+
+.app-file-drop-zone.is-replace .app-file-drop-hover-card {
+    border-color: #f0af5f;
+}
+
+.app-file-drop-zone.is-replace .app-file-drop-hover-card svg {
+    color: #ffc477;
+    filter: none;
+}
+
+.app-file-drop-announcement {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+}
+
 .app-file-drop-hover.is-viewer-open {
     background: rgba(24, 78, 68, 0.6);
     border-color: #62d5b3;

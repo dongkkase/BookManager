@@ -56,7 +56,7 @@ function fractionValue(current, total) {
     return totalText ? `${currentText} / ${totalText}` : currentText;
 }
 
-const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, t }) => {
+const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -116,6 +116,7 @@ const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, t })
     const summary = detailMetadataValue(selectedFile, 'description', 'summary', 'Summary');
     const tagLabel = metadataText(t, 't3_f_genre_keywords_categories', '장르/키워드/카테고리');
     const audiobookFields = [
+        ['star', t('col_rating'), detailMetadataValue(selectedFile, 'rating', 'CommunityRating')],
         ['user', metadataText(t, 'audio_f_artist', '아티스트'), artist, true],
         ['book', metadataText(t, 'audio_f_album', '앨범'), album],
         ['users', metadataText(t, 'audio_f_album_artist', '앨범 아티스트'), albumArtist],
@@ -166,7 +167,7 @@ const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, t })
                         </div>
 
                         <div className="detail-info-card">
-                            <DetailFieldGroup fields={audiobookFields} />
+                            <DetailFieldGroup fields={audiobookFields} onEditRating={onEditRating} t={t} />
                             <section className="detail-extra audiobook-technical-details">
                                 <DetailLine icon="clock" label={metadataText(t, 'audio_f_duration', '재생 시간')} value={duration} inline />
                                 <DetailLine icon="towerBroadcast" label={metadataText(t, 'audio_f_bitrate', '비트레이트')} value={bitrate} inline />

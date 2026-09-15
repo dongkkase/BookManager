@@ -1521,6 +1521,12 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     }
   }
 
+    // A local rating survives forced scans, including text metadata resolved by content hash.
+    const currentRatingRecord = await safeGetCachedFileInfo(options.libraryDb, fullPath);
+    if (Number(currentRatingRecord?.rating_override) >= 1 && Number(currentRatingRecord.rating_override) <= 10) {
+        archiveMeta.rating = currentRatingRecord.rating_override;
+    }
+
     const series = textMetadata ? archiveMeta.series : archiveMeta.series || filenameMeta.series || '';
     const volume = textMetadata ? archiveMeta.volume : archiveMeta.volume || filenameMeta.volume || '';
   const thumbnailPath = archiveMeta.thumb_path && fs.existsSync(archiveMeta.thumb_path)
