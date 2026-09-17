@@ -94,6 +94,8 @@ import { createCoverPreviewQueue, createFolderPoller } from '../folderAsyncWork'
 import {
   applyConflictChoice,
   createLibraryMovePlans,
+    expandLibraryMovePlans,
+    libraryMoveFolderSources,
 } from '../libraryMovePolicy';
 import { normalizeLibraryKey } from '../folderLibraryStatus';
 import { hasMetadataSavedPathForFolder } from '../folderMetadataRefreshPolicy';
@@ -2864,24 +2866,40 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       ? conflictResponse.conflicts
       : null;
     const resolvedPlans = [];
+    const plannedDestinations = new Map();
+    let batchChoice = null;
     const conflictsByIndex = new Map((conflicts || []).map(conflict => [conflict.index, conflict]));
     for (let index = 0; index < plans.length; index += 1) {
       const plan = plans[index];
-      const conflict = conflicts ? conflictsByIndex.get(index) : await window.electronAPI?.exists?.(plan.dest);
+      const destinationKey = normalizeLibraryKey(plan.dest);
+      const plannedDestination = plannedDestinations.get(destinationKey);
+      const existingConflict = conflicts ? conflictsByIndex.get(index) : await window.electronAPI?.exists?.(plan.dest);
+      const conflict = existingConflict || plannedDestination;
       if (!conflict) {
-        resolvedPlans.push(plan);
+        resolvedPlans.push(batchChoice ? applyConflictChoice(plan, batchChoice) : plan);
+        plannedDestinations.set(destinationKey, plan);
         continue;
       }
-      options.onConflictWait?.(plan);
-      const sourcePreview = await window.electronAPI?.getFilePreview?.(plan.src, { force: false });
-      const destinationPreview = await window.electronAPI?.getFilePreview?.(plan.dest, { force: false });
-      const choice = await requestConflictChoice({
-        plan,
-        source: sourcePreview?.file || { name: basename(plan.src), path: plan.src },
-        destination: destinationPreview?.file || { name: basename(plan.dest), path: plan.dest },
-      });
+      let choice = batchChoice;
+      if (!choice) {
+        options.onConflictWait?.(plan);
+        const destinationPath = plannedDestination ? plannedDestination.src : plan.dest;
+        const [sourcePreview, destinationPreview] = await Promise.all([
+            window.electronAPI?.getFilePreview?.(plan.src, { force: false }),
+            window.electronAPI?.getFilePreview?.(destinationPath, { force: false }),
+        ]);
+        const response = await requestConflictChoice({
+            plan,
+            source: sourcePreview?.file || { name: basename(plan.src), path: plan.src },
+            destination: destinationPreview?.file || { name: basename(destinationPath), path: destinationPath },
+            plannedDestination: Boolean(plannedDestination),
+        });
+        choice = response?.action || 'skip';
+        if (response?.applyToAll) batchChoice = choice;
+      }
       options.onStage?.('conflicts', 12);
-      resolvedPlans.push(applyConflictChoice(plan, choice || 'skip'));
+      resolvedPlans.push(applyConflictChoice(plan, choice));
+      if (choice === 'overwrite') plannedDestinations.set(destinationKey, plan);
     }
 
     options.onStage?.('moving', 25);
@@ -2908,27 +2926,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     try {
       setLibraryMoveRequest(null);
       await saveConfig?.({ last_selected_library: targetLibrary });
-      const folderPlan = plans.find(plan => plan.folderMode);
-      let executablePlans = plans;
-      if (folderPlan) {
-        const destinationExists = await window.electronAPI?.exists?.(folderPlan.dest);
-        if (destinationExists) {
-          emitLibraryMoveProgress(t('library_move_status_conflicts', [1]), 6, folderPlan.src);
-          const expanded = await window.electronAPI?.expandFolderMove?.(folderPlan.src, folderPlan.dest);
-          if (!expanded?.success) {
-            await window.electronAPI?.showMessage?.({
-              type: 'error',
-              title: t('dlg_err'),
-              message: t('dlg_err_occurred', [expanded?.message || t('msg_failed')]),
-              language: config?.language || config?.lang || 'ko',
-            });
-            return;
-          }
-          executablePlans = expanded.plans.map(plan => ({ ...plan, targetLibrary }));
-        } else {
-          executablePlans = [folderPlan];
-        }
-      }
+      const folderPlans = plans.filter(plan => plan.folderMode);
+      const executablePlans = await expandLibraryMovePlans(plans, window.electronAPI);
       const result = await executeLibraryMovePlans(executablePlans, {
         onStage: (stage, progress) => {
           const currentItem = executablePlans[0]?.src || firstMoveItem;
@@ -2945,8 +2944,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (result?.successCount > 0) {
         emitLibraryMoveProgress(t('library_move_status_refreshing'), 70, executablePlans[0]?.src || firstMoveItem);
         let selectedFolderRemoved = false;
-        if (folderPlan) {
-          await window.electronAPI?.removeEmptyTree?.(folderPlan.src);
+        if (folderPlans.length > 0) {
+          for (const plan of folderPlans) await window.electronAPI?.removeEmptyTree?.(plan.src);
         } else if (selectedFolderPath) {
           await window.electronAPI?.removeEmptyTree?.(selectedFolderPath);
           selectedFolderRemoved = !(await window.electronAPI?.exists?.(selectedFolderPath));
@@ -2971,8 +2970,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         if (indexResult?.success === false) throw new Error(indexResult.message || t('msg_failed'));
         await refreshLibraryScanStates(affectedLibraries);
         emitLibraryMoveProgress(t('library_move_status_refreshing'), 94, targetLibrary);
-        if (folderPlan) {
-          await handleFolderChange(folderPlan.dest);
+        if (folderPlans.length > 0) {
+          const destination = folderPlans.length === 1 ? folderPlans[0].dest : targetLibrary;
+          await handleFolderChange(destination);
         } else if (selectedFolderRemoved) {
           const fallbackFolder = parentPath(selectedFolderPath);
           if (fallbackFolder && await window.electronAPI?.exists?.(fallbackFolder)) {
@@ -2996,6 +2996,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           language: config?.language || config?.lang || 'ko',
         });
       }
+    } catch (error) {
+      await window.electronAPI?.showMessage?.({
+        type: 'error',
+        title: t('dlg_err'),
+        message: error.message || t('msg_failed'),
+        language: config?.language || config?.lang || 'ko',
+      });
     } finally {
       clearLibraryMoveProgress();
     }
@@ -3249,8 +3256,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
   }, [clearSelection, config?.language, config?.lang, favoriteEntries, handleFolderChange, handleRefresh, libraries, removeDeletedEntries, removeFavorite, removeLibrary, runInternalFileAction, showFolderError, t]);
 
-  const moveContextFolderToLibrary = useCallback(async folderPath => {
-    if (!folderPath) return;
+  const moveContextFolderToLibrary = useCallback(async menu => {
+    const sources = libraryMoveFolderSources(menu, selectedEntryObjects);
+    if (sources.length === 0) return;
     if (libraries.length === 0) {
       await window.electronAPI?.showMessage?.({
         type: 'warning',
@@ -3260,14 +3268,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       });
       return;
     }
-    const availableLibraries = libraries.filter(library => library !== folderPath);
+    const availableLibraries = libraries.filter(library => !sources.some(source => isPathInsideLibrary(library, source)));
     if (availableLibraries.length === 0) return;
     setLibraryMoveRequest({
-      sources: [folderPath],
+      sources,
       folderMode: true,
       libraries: availableLibraries,
     });
-  }, [config?.language, config?.lang, libraries, t]);
+  }, [config?.language, config?.lang, libraries, selectedEntryObjects, t]);
 
   const sendFolderToTab = useCallback((folderPath, tabId) => {
     if (!folderPath) return;
@@ -3333,7 +3341,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (menu.source === 'list') await deleteSelectedFiles();
       else await deleteContextFolder(menu);
     } else if (action === 'move-folder-library') {
-      await moveContextFolderToLibrary(menu.folderPath);
+      await moveContextFolderToLibrary(menu);
     } else if (action === 'send-organizer') {
       if (menu.source === 'list') sendSelectedFilesToTab('organizer');
       else sendFolderToTab(menu.folderPath, 'organizer');
@@ -4324,6 +4332,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       )}
       {moveConflict && (
         <MoveConflictDialog
+          key={`${moveConflict.plan.src}:${moveConflict.plan.dest}`}
           conflict={moveConflict}
           onChoose={resolveConflictChoice}
           t={t}
@@ -4743,41 +4752,89 @@ function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onCon
 }
 
 function MoveConflictDialog({ conflict, onChoose, t }) {
-  const { plan, source, destination } = conflict;
-  return (
-    <div className="folder-dialog-backdrop">
-      <div className="file-action-dialog move-conflict-dialog">
-        <div className="dialog-titlebar">
-          <span>{t('dlg_conflict_title')}</span>
+    const { plan, source, destination } = conflict;
+    const [applyToAll, setApplyToAll] = useState(false);
+    const dialogRef = useRef(null);
+    const skipRef = useRef(null);
+    const choose = action => onChoose({ action, applyToAll });
+    useEffect(() => {
+        const previousFocus = document.activeElement;
+        skipRef.current?.focus();
+        return () => previousFocus?.focus?.();
+    }, []);
+    return (
+        <div className="folder-dialog-backdrop">
+            <div ref={dialogRef} className="file-action-dialog move-conflict-dialog" role="dialog" aria-modal="true"
+                aria-labelledby="move-conflict-title" aria-describedby="move-conflict-description"
+                onKeyDown={event => {
+                    event.stopPropagation();
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        onChoose({ action: 'skip', applyToAll: false });
+                    }
+                    if (event.key === 'Tab') {
+                        const controls = [...dialogRef.current.querySelectorAll('button, input')];
+                        const first = controls[0];
+                        const last = controls[controls.length - 1];
+                        if (event.shiftKey && document.activeElement === first) {
+                            event.preventDefault();
+                            last?.focus();
+                        } else if (!event.shiftKey && document.activeElement === last) {
+                            event.preventDefault();
+                            first?.focus();
+                        }
+                    }
+                }}>
+                <div className="dialog-titlebar">
+                    <span id="move-conflict-title">{t('dlg_conflict_title')}</span>
+                </div>
+                <div className="move-conflict-body">
+                    <div className="move-conflict-heading">
+                        <strong>{basename(plan.dest)}</strong>
+                        <p id="move-conflict-description">{t('lbl_conflict_desc')}</p>
+                    </div>
+                    <div className="move-conflict-compare">
+                        <ConflictFileCard title={t('move_conflict_source')} file={source} filePath={plan.src} t={t} />
+                        <ConflictFileCard title={t(conflict.plannedDestination ? 'move_conflict_pending' : 'move_conflict_destination')}
+                            file={destination} filePath={plan.dest} t={t} />
+                    </div>
+                </div>
+                <div className="move-conflict-footer">
+                    <label className="move-conflict-apply-all">
+                        <input type="checkbox" checked={applyToAll} onChange={event => setApplyToAll(event.target.checked)} />
+                        <span>{t('move_conflict_apply_all')}</span>
+                    </label>
+                    <div className="move-conflict-actions">
+                        <button type="button" className="move-conflict-overwrite" onClick={() => choose('overwrite')}>
+                            <strong>{t('btn_overwrite')}</strong><span>{t('move_conflict_overwrite_hint')}</span>
+                        </button>
+                        <button type="button" className="move-conflict-rename" onClick={() => choose('rename')}>
+                            <strong>{t('btn_rename_new')}</strong><span>{t('move_conflict_rename_hint')}</span>
+                        </button>
+                        <button ref={skipRef} type="button" onClick={() => choose('skip')}>
+                            <strong>{t('btn_skip')}</strong><span>{t('move_conflict_skip_hint')}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div className="move-conflict-body">
-          <strong className="move-conflict-warning">{t('lbl_conflict_desc')}</strong>
-          <code title={plan.dest}>{plan.dest}</code>
-          <div className="move-conflict-compare">
-            <ConflictFileCard title={t('col_source')} file={source} t={t} />
-            <ConflictFileCard title={t('col_dest')} file={destination} t={t} />
-          </div>
-        </div>
-        <div className="layout-dialog-footer">
-          <button className="danger" onClick={() => onChoose('overwrite')}>{t('btn_overwrite')}</button>
-          <button onClick={() => onChoose('rename')}>{t('btn_rename_new')}</button>
-          <button onClick={() => onChoose('skip')}>{t('btn_skip')}</button>
-        </div>
-      </div>
-    </div>
-  );
+    );
 }
 
-function ConflictFileCard({ title, file, t }) {
-  return (
-    <section className="move-conflict-card">
-      <strong>{title}</strong>
-      <div className="move-conflict-cover">
-        <CoverArtwork src={file?.cover} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} />
-      </div>
-      <span>{formatBytes(file?.size || 0)} | {file?.resolution || '-'}</span>
-    </section>
-  );
+function ConflictFileCard({ title, file, filePath, t }) {
+    return (
+        <section className="move-conflict-card">
+            <strong>{title}</strong>
+            <div className="move-conflict-cover">
+                <CoverArtwork src={file?.cover} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} />
+            </div>
+            <dl className="move-conflict-facts">
+                <div><dt>{t('move_conflict_size')}</dt><dd>{file?.size == null ? '-' : formatBytes(file.size)}</dd></div>
+                <div><dt>{t('move_conflict_resolution')}</dt><dd>{file?.resolution || '-'}</dd></div>
+            </dl>
+            <span className="move-conflict-path" title={filePath}>{filePath}</span>
+        </section>
+    );
 }
 
 function formatBytes(bytes) {

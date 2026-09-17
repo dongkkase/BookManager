@@ -118,7 +118,7 @@
 .rating-editor-submit { width: 100%; border: 0; padding: 12px; border-radius: 9px; background: #f6bf43; color: #2b210e; font-size: 14px; font-weight: 700; cursor: pointer; }
 .rating-editor-submit:disabled { opacity: 0.45; cursor: default; }
 .rating-editor-error { margin-bottom: 16px; color: var(--danger-color, #d75b5b); font-size: 12px; overflow-wrap: anywhere; }
-.detail-rating-edit { margin-left: 10px; padding: 2px 8px; border: 1px solid var(--border-color, #555); border-radius: 4px; background: transparent; color: var(--text-primary, inherit); cursor: pointer; font-size: 11px; }
+.detail-rating-edit { margin-left: auto; padding: 2px 8px; border: 1px solid var(--border-color, #555); border-radius: 4px; background: transparent; color: var(--text-primary, inherit); cursor: pointer; font-size: 11px; }
 
 @keyframes rating-star-burst {
     0%, 100% { transform: scale(1) rotate(0); }

@@ -16,6 +16,7 @@ import {
     readZipEntry,
     replaceZipEntries,
     replaceZipEntry,
+    replaceZipEntryAppendOnly,
 } from './core/zipArchive.js';
 
 const require = createRequire(import.meta.url);
@@ -109,6 +110,32 @@ function temporaryArchive(t, bytes) {
     fs.writeFileSync(filePath, bytes);
     return { directory, filePath };
 }
+
+test('ZIP append update preserves original bytes, descriptors, extra fields and comments', async t => {
+    const original = fixture();
+    const { filePath } = temporaryArchive(t, original.buffer);
+    t.mock.method(fsp, 'readFile', () => { throw new Error('Whole archive reads are forbidden'); });
+    for (const rating of [3, 7]) {
+        const xml = `<ComicInfo><CommunityRating>${rating}</CommunityRating></ComicInfo>`;
+        await replaceZipEntryAppendOnly(filePath, 'ComicInfo.xml', xml);
+        const bytes = fs.readFileSync(filePath);
+        const entries = await listZipEntriesFromFile(filePath, { includeRawRecords: true });
+        assert.equal(entries.length, 2);
+        assert.deepEqual(bytes.subarray(0, original.buffer.length), original.buffer);
+        assert.deepEqual(entries[0].centralRecord, original.centralRecord);
+        assert.deepEqual(readZipEntry(bytes, entries[0]), original.content);
+        assert.equal(readZipEntry(bytes, entries[1]).toString(), xml);
+        assert.deepEqual(bytes.subarray(-original.archiveComment.length), original.archiveComment);
+        checkWith7z(filePath);
+    }
+});
+
+test('ZIP append update rejects unsupported directories before writing', async t => {
+    const original = fixture({ zip64: true });
+    const { filePath } = temporaryArchive(t, original.buffer);
+    await assert.rejects(replaceZipEntryAppendOnly(filePath, 'ComicInfo.xml', '<ComicInfo/>'), { code: 'ZIP_APPEND_UNSUPPORTED' });
+    assert.deepEqual(fs.readFileSync(filePath), original.buffer);
+});
 
 test('일괄 EPUB 갱신은 압축 데이터, descriptor, 부가정보를 제한된 크기로 복사한다', async t => {
     const original = fixture();

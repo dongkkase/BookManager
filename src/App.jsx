@@ -7,6 +7,7 @@ import { FaIcon } from './components/FaIcon';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
+import { useReleaseUpdates } from './hooks/useReleaseUpdates';
 import { useLockScanQueue } from './hooks/useLockScanQueue';
 import { translateKnownText } from './utils/i18n';
 import {
@@ -119,12 +120,8 @@ function App() {
   const [audioMiniPlayerState, setAudioMiniPlayerState] = useState(null);
   const [fileDropHoverTab, setFileDropHoverTab] = useState(null);
     const [fileDropMode, setFileDropMode] = useState('append');
-  const [updateInfo, setUpdateInfo] = useState({
-    available: false,
-    latestVersion: '',
-    url: '',
-    assets: [],
-  });
+    const releaseUpdates = useReleaseUpdates();
+    const updateInfo = useMemo(() => resolveUpdateInfo(appVersion, releaseUpdates.result), [appVersion, releaseUpdates.result]);
   const { config, saveConfig: setConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n(config);
 
@@ -348,21 +345,6 @@ function App() {
       if (typeof cleanup === 'function') cleanup();
     };
   }, []);
-
-  useEffect(() => {
-    if (!appVersion) return undefined;
-    let isMounted = true;
-    window.electronAPI?.getReleases?.()
-      .then(result => {
-        if (isMounted) setUpdateInfo(resolveUpdateInfo(appVersion, result));
-      })
-      .catch(error => {
-        console.error('업데이트 확인 실패:', error);
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [appVersion]);
 
   useEffect(() => {
     const handleToolbarState = (event) => {
@@ -777,6 +759,7 @@ function App() {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           disabled={isAppLocked}
+          releaseNotice={releaseUpdates.unread[0]}
           t={t}
         />
         <button
@@ -832,7 +815,9 @@ function App() {
         <div className="app-tab-panel" hidden={activeTab !== 'releases'}>
           {loadedTabs.has('releases') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
-              <MemoReleaseTab config={config} t={t} />
+              <MemoReleaseTab t={t} isActive={activeTab === 'releases'} releases={releaseUpdates.releases}
+                  loading={releaseUpdates.loading} loadError={releaseUpdates.error} unread={releaseUpdates.unread}
+                  onViewed={releaseUpdates.markViewed} />
             </React.Suspense>
           )}
         </div>

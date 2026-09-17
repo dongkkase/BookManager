@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
-import { normalizeReleaseList, parseReleaseMarkdown } from '../releasePolicy';
+import { parseReleaseMarkdown } from '../releasePolicy';
+import { releaseNotificationKey } from '../releaseNotificationPolicy';
 import '../styles/ReleaseTab.css';
 
 function InlineContent({ tokens, onOpenExternal }) {
@@ -145,34 +146,27 @@ function MarkdownBody({ markdown, onOpenExternal }) {
     });
 }
 
-function ReleaseTab({ t }) {
-    const [releases, setReleases] = useState([]);
-    const [loading, setLoading] = useState(true);
+function ReleaseTab({ t, isActive, releases, loading, loadError, unread, onViewed }) {
     const [error, setError] = useState('');
+    const [highlighted, setHighlighted] = useState(() => new Set());
 
     useEffect(() => {
-        let isMounted = true;
-
-        window.electronAPI?.getReleases?.()
-            .then(result => {
-                if (!isMounted) return;
-                const items = Array.isArray(result) ? result : result?.releases;
-                setReleases(normalizeReleaseList(items));
-                setError(Array.isArray(result) ? '' : String(result?.error || ''));
-            })
-            .catch(loadError => {
-                if (!isMounted) return;
-                setError(loadError.message || 'NETWORK_ERROR');
-                setReleases([]);
-            })
-            .finally(() => {
-                if (isMounted) setLoading(false);
-            });
-
-        return () => {
-            isMounted = false;
+        if (!isActive) {
+            setHighlighted(current => current.size ? new Set() : current);
+            return undefined;
+        }
+        if (loading || loadError || releases.length === 0) return undefined;
+        const markVisible = () => {
+            if (document.visibilityState === 'hidden') return;
+            if (unread.length > 0) {
+                setHighlighted(current => new Set([...current, ...unread.map(releaseNotificationKey)]));
+            }
+            onViewed(releases);
         };
-    }, []);
+        markVisible();
+        document.addEventListener('visibilitychange', markVisible);
+        return () => document.removeEventListener('visibilitychange', markVisible);
+    }, [isActive, loading, loadError, releases, unread, onViewed]);
 
     const openExternal = url => {
         window.electronAPI?.openExternal?.(url).catch(openError => {
@@ -190,16 +184,17 @@ function ReleaseTab({ t }) {
                         <div className="release-error">{t('msg_release_load_fail')}</div>
                     ) : (
                         <>
-                            {error && (
+                            {(error || loadError) && (
                                 <div className="release-error compact">
                                     {t('msg_release_load_fail')}
                                 </div>
                             )}
                             {releases.map(item => (
-                                <article key={item.id} className="release-card">
+                                <article key={item.id} className={`release-card${highlighted.has(releaseNotificationKey(item)) ? ' is-new' : ''}`}>
                                     <div className="release-card-title">
                                         <FaIcon name="archive" size={18} />
                                         <span>{item.name}</span>
+                                        {highlighted.has(releaseNotificationKey(item)) && <span className="release-new-badge">NEW</span>}
                                         {item.date && <span className="release-card-date">({item.date})</span>}
                                     </div>
                                     <div className="release-card-body">

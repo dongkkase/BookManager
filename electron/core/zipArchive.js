@@ -500,15 +500,32 @@ export async function replaceZipEntryAppendOnly(filePath, entryName, content, op
     const handle = await fs.open(filePath, 'r+');
     try {
         const stat = await handle.stat();
-        const sourceEntries = await listZipEntriesFromFile(filePath);
-        if (!sourceEntries.length && stat.size > 0) {
-            throw unsupportedZipAppend('ZIP central directory was not found');
+        const sourceEntries = await listZipEntriesFromFile(filePath, { includeRawRecords: true });
+        let comment = Buffer.alloc(0);
+        if (stat.size > 0) {
+            const tail = await readFileRange(handle, Math.max(0, stat.size - EOCD_TAIL_BYTES), Math.min(stat.size, EOCD_TAIL_BYTES));
+            const end = findEndOfCentralDirectory(tail);
+            if (end < 0 || end + 22 + tail.readUInt16LE(end + 20) !== tail.length) {
+                throw unsupportedZipAppend('ZIP end record is missing or incomplete');
+            }
+            const count = tail.readUInt16LE(end + 10);
+            const centralSize = tail.readUInt32LE(end + 12);
+            const centralOffset = tail.readUInt32LE(end + 16);
+            if (count === ZIP32_MAX_ENTRIES || centralSize === ZIP32_MAX || centralOffset === ZIP32_MAX
+                || tail.readUInt16LE(end + 4) || tail.readUInt16LE(end + 6) || tail.readUInt16LE(end + 8) !== count) {
+                throw unsupportedZipAppend('ZIP64 or split archives are not supported by append-only update');
+            }
+            if (sourceEntries.length !== count || centralOffset + centralSize > stat.size - tail.length + end
+                || sourceEntries.reduce((size, entry) => size + entry.centralRecord.length, 0) !== centralSize) {
+                throw unsupportedZipAppend('ZIP central directory is incomplete or unsupported');
+            }
+            comment = tail.subarray(end + 22);
         }
 
         const entries = [];
         for (const entry of sourceEntries) {
             if (zipEntryMatchesName(entry.name, entryName, options)) continue;
-            if (!canWriteZip32Entry(entry, entry.localHeaderOffset)) {
+            if (!canWriteZip32Entry(entry, entry.localHeaderOffset) || entry.centralRecord.readUInt16LE(34)) {
                 throw unsupportedZipAppend('ZIP64 entries are not supported by append-only update');
             }
             entries.push(entry);
@@ -522,7 +539,8 @@ export async function replaceZipEntryAppendOnly(filePath, entryName, content, op
             if (!canWriteZip32Entry(entry, offset)) {
                 throw unsupportedZipAppend('ZIP64 entries are not supported by append-only update');
             }
-            centralParts.push(centralHeader(entry, offset));
+            // Retained local headers still use their original flags, extra fields and descriptors.
+            centralParts.push(entry === replacement ? centralHeader(entry, offset) : entry.centralRecord);
         }
 
         const central = Buffer.concat(centralParts);
@@ -531,7 +549,8 @@ export async function replaceZipEntryAppendOnly(filePath, entryName, content, op
         }
 
         const eocd = endOfCentralDirectory(centralParts.length, central.length, centralOffset);
-        const appendBuffer = Buffer.concat([local.buffer, replacement.compressed, central, eocd]);
+        eocd.writeUInt16LE(comment.length, 20);
+        const appendBuffer = Buffer.concat([local.buffer, replacement.compressed, central, eocd, comment]);
         await options.beforeWrite?.();
         await writeAll(handle, appendBuffer, stat.size);
         return true;

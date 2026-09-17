@@ -18,6 +18,9 @@ function sameFile(left, right) {
 
 async function writeNativeRating(filePath, rating, options) {
     const extension = path.extname(filePath).toLowerCase();
+    if (['.7z', '.cb7'].includes(extension) && !options.sevenZExe) {
+        options = { ...options, sevenZExe: await options.getSevenZExe?.() };
+    }
     if (['.zip', '.cbz', '.7z', '.cb7', '.epub'].includes(extension)) return writeArchiveRating(filePath, rating, options);
     if (extension === '.pdf') return writePdfMetadata(filePath, { CommunityRating: rating }, { ratingOnly: true });
     if (isAudioMetadataWriteSupported(filePath)) return writeAudioRating(filePath, rating);
@@ -52,14 +55,14 @@ export async function saveItemRating(request, options = {}) {
             await fs.access(realPath, fs.constants.W_OK);
             workingDirectory = await fs.mkdtemp(path.join(path.dirname(realPath), '.bookmanager-rating-'));
             const stagedPath = path.join(workingDirectory, path.basename(realPath));
-            await fs.copyFile(realPath, stagedPath);
+            await fs.copyFile(realPath, stagedPath, fs.constants.COPYFILE_FICLONE);
             await (options.writeNativeRating || writeNativeRating)(stagedPath, rating, options);
             if (!sameFile(originalStat, await fs.stat(realPath))) throw Object.assign(new Error('The file changed while saving. Please try again.'), { code: 'RATING_SOURCE_CHANGED' });
             if (options.backup_on) {
                 const backupDirectory = path.join(path.dirname(realPath), 'bak');
                 await fs.mkdir(backupDirectory, { recursive: true });
                 backupPath = path.join(backupDirectory, `${path.parse(realPath).name}_${randomUUID()}${path.extname(realPath)}`);
-                await fs.copyFile(realPath, backupPath, fs.constants.COPYFILE_EXCL);
+                await fs.copyFile(realPath, backupPath, fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE);
             }
             await fs.rename(stagedPath, realPath);
             storage = 'file';
@@ -74,7 +77,12 @@ export async function saveItemRating(request, options = {}) {
         return { success: true, filePath, rating, storage, fallbackReason, backupPath };
     } finally {
         try {
-            if (workingDirectory) await fs.rm(workingDirectory, { recursive: true, force: true });
+            if (workingDirectory) {
+                await fs.rm(workingDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+            }
+        } catch (error) {
+            // Cleanup failure must not replace the save result or the original save error.
+            console.warn('[RatingEditor] Temporary directory cleanup failed:', workingDirectory, error.message);
         } finally {
             activeFiles.delete(realPath);
             if (!options.libraryDb) await libraryDb.close();

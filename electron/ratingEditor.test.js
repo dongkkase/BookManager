@@ -38,8 +38,13 @@ test('rating saves only ComicInfo rating and preserves pages, custom fields, unr
     const xml = '<ComicInfo><Title>Original</Title><Custom value="keep"/><CommunityRating>2</CommunityRating><Pages><Page Image="0" Bookmark="chapter"/></Pages></ComicInfo>';
     await zip(f.filePath, { 'ComicInfo.xml': xml, '001.jpg': 'page bytes', 'notes.txt': 'notes' });
     const original = await fs.readFile(f.filePath);
-    const result = await saveItemRating({ filePath: f.filePath, rating: 7 }, { ...f, backup_on: true });
+    const result = await saveItemRating({ filePath: f.filePath, rating: 7 }, {
+        ...f,
+        backup_on: true,
+        getSevenZExe: () => { throw new Error('ZIP rating must not resolve 7z'); },
+    });
     assert.equal(result.storage, 'file', result.fallbackReason);
+    assert.deepEqual((await fs.readFile(f.filePath)).subarray(0, original.length), original);
     assert.equal(await entry(f.filePath, 'ComicInfo.xml'), xml.replace('<CommunityRating>2</CommunityRating>', '').replace('</ComicInfo>', '<CommunityRating>7</CommunityRating></ComicInfo>'));
     assert.equal(await entry(f.filePath, '001.jpg'), 'page bytes');
     assert.equal(await entry(f.filePath, 'notes.txt'), 'notes');
@@ -62,8 +67,10 @@ test('EPUB replaces all existing rating aliases without changing other package m
     const f = await fixture(t, '.epub');
     const xml = '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/"><opf:metadata><dc:title>Original</dc:title><opf:meta property="schema:ratingValue">2</opf:meta><opf:meta name="calibre:rating" content="4"/><opf:meta name="custom" content="keep"/></opf:metadata><opf:manifest/><opf:spine/></opf:package>';
     await zip(f.filePath, { mimetype: 'application/epub+zip', 'META-INF/container.xml': '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>', 'OEBPS/content.opf': xml, 'OEBPS/chapter.xhtml': 'chapter' });
+    const original = await fs.readFile(f.filePath);
     const result = await saveItemRating({ filePath: f.filePath, rating: 9 }, f);
     assert.equal(result.storage, 'file', result.fallbackReason);
+    assert.deepEqual((await fs.readFile(f.filePath)).subarray(0, original.length), original);
     const updated = await entry(f.filePath, 'OEBPS/content.opf');
     assert.match(updated, /<dc:title>Original<\/dc:title>/);
     assert.match(updated, /<opf:meta name="custom" content="keep"\/>/);
@@ -95,6 +102,68 @@ test('partial native write failure leaves original intact and DB rating survives
     assert.equal((await scan(f)).rating, '5');
     assert.equal((await f.libraryDb.getFileInfo(f.filePath)).rating_override, '');
     assert.ok(!(await fs.readdir(f.directory)).some(name => name.startsWith('.bookmanager-rating-')));
+});
+
+for (const storage of ['file', 'database']) {
+    test(`busy temporary directory does not turn a successful ${storage} rating save into a failure`, async t => {
+        const f = await fixture(t);
+        await zip(f.filePath, { 'ComicInfo.xml': '<ComicInfo><CommunityRating>3</CommunityRating></ComicInfo>' });
+        const original = await fs.readFile(f.filePath);
+        const remove = fs.rm.bind(fs);
+        const cleanup = t.mock.method(fs, 'rm', async (target, options) => {
+            if (path.basename(target).startsWith('.bookmanager-rating-')) {
+                assert.ok(options.maxRetries > 0);
+                throw Object.assign(new Error('resource busy or locked, rmdir'), { code: 'EBUSY' });
+            }
+            return remove(target, options);
+        });
+        const warning = t.mock.method(console, 'warn', () => {});
+        const options = storage === 'database' ? {
+            ...f,
+            writeNativeRating: async () => { throw new Error('Native metadata is read-only'); },
+        } : f;
+        try {
+            const result = await saveItemRating({ filePath: f.filePath, rating: 9 }, options);
+            assert.equal(result.success, true);
+            assert.equal(result.storage, storage);
+            assert.equal((await scan(f)).rating, '9');
+            if (storage === 'database') assert.deepEqual(await fs.readFile(f.filePath), original);
+            else assert.match(await entry(f.filePath, 'ComicInfo.xml'), /<CommunityRating>9<\/CommunityRating>/);
+            assert.equal(warning.mock.callCount(), 1);
+            const next = await saveItemRating({ filePath: f.filePath, rating: 7 }, options);
+            assert.equal(next.success, true);
+            assert.equal((await scan(f)).rating, '7');
+        } finally {
+            cleanup.mock.restore();
+            warning.mock.restore();
+        }
+    });
+}
+
+test('busy temporary directory preserves the original save error and releases the file lock', async t => {
+    const f = await fixture(t);
+    await zip(f.filePath, { 'notes.txt': 'original' });
+    const remove = fs.rm.bind(fs);
+    const cleanup = t.mock.method(fs, 'rm', async (target, options) => {
+        if (path.basename(target).startsWith('.bookmanager-rating-')) {
+            throw Object.assign(new Error('resource busy or locked, rmdir'), { code: 'EBUSY' });
+        }
+        return remove(target, options);
+    });
+    const warning = t.mock.method(console, 'warn', () => {});
+    try {
+        await assert.rejects(saveItemRating({ filePath: f.filePath, rating: 4 }, {
+            ...f,
+            writeNativeRating: async () => { await fs.writeFile(f.filePath, 'external edit'); },
+        }), { code: 'RATING_SOURCE_CHANGED' });
+        assert.equal(await f.libraryDb.getFileInfo(f.filePath), null);
+        assert.equal(await fs.readFile(f.filePath, 'utf8'), 'external edit');
+        const next = await saveItemRating({ filePath: f.filePath, rating: 7 }, f);
+        assert.equal(next.success, true);
+    } finally {
+        cleanup.mock.restore();
+        warning.mock.restore();
+    }
 });
 
 test('TXT stores a local rating without changing text and retains it when refreshed', async t => {
@@ -235,7 +304,12 @@ test('7z comic rating updates the existing nested ComicInfo entry', async t => {
     await fs.mkdir(path.join(f.directory, 'content'));
     await fs.writeFile(path.join(f.directory, 'content', 'ComicInfo.xml'), '<ComicInfo><Title>Keep</Title><CommunityRating>2</CommunityRating></ComicInfo>');
     await runMetadataProcess(sevenZExe, ['a', '-t7z', f.filePath, 'content/ComicInfo.xml'], { cwd: f.directory });
-    const result = await saveItemRating({ filePath: f.filePath, rating: 7 }, { ...f, sevenZExe });
+    let binaryResolutions = 0;
+    const result = await saveItemRating({ filePath: f.filePath, rating: 7 }, {
+        ...f,
+        getSevenZExe: async () => { binaryResolutions += 1; return sevenZExe; },
+    });
+    assert.equal(binaryResolutions, 1);
     assert.equal(result.storage, 'file', result.fallbackReason);
     const metadata = await inspectFolderFile(f.filePath, { libraryDb: f.libraryDb, sevenZExe, force: true, skipCoverExtraction: true });
     assert.equal(metadata.rating, '7');

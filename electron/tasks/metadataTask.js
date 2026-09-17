@@ -2626,6 +2626,15 @@ async function injectComicInfoFastZip(filePath, metadata, options = {}) {
   return true;
 }
 
+async function replaceRatingZipEntry(filePath, entryName, xml) {
+    try {
+        await replaceZipEntryAppendOnly(filePath, entryName, xml);
+    } catch (error) {
+        if (error.code !== 'ZIP_APPEND_UNSUPPORTED') throw error;
+        await replaceZipEntries(filePath, [{ name: entryName, content: xml }]);
+    }
+}
+
 // Update only the rating so custom XML fields, page annotations and EPUB manifests survive.
 export async function writeArchiveRating(filePath, rating, { sevenZExe } = {}) {
     if (!Number.isInteger(rating) || rating < 1 || rating > 10) throw new Error('Invalid rating.');
@@ -2646,7 +2655,7 @@ export async function writeArchiveRating(filePath, rating, { sevenZExe } = {}) {
         inner += `\n<${prefix}meta name="calibre:rating" content="${rating}"/>\n`;
         const xml = epub.opfXml.replace(metadata.tag, `${metadata.openTag}${inner}${metadata.closeTag}`);
         if (String(parseEpubMetadata(xml).CommunityRating) !== String(rating)) throw new Error('EPUB rating verification failed.');
-        await replaceZipEntry(filePath, epub.opfPath, xml);
+        await replaceRatingZipEntry(filePath, epub.opfPath, xml);
         return;
     }
     const extension = path.extname(filePath).toLowerCase();
@@ -2663,7 +2672,7 @@ export async function writeArchiveRating(filePath, rating, { sevenZExe } = {}) {
     const pattern = /<CommunityRating\b[^>]*(?:\/\s*>|>[\s\S]*?<\/CommunityRating\s*>)/gi;
     xml = xml.replace(pattern, '').replace(/<\/ComicInfo\s*>/i, `${tag}</ComicInfo>`);
     if (isZipArchive(filePath)) {
-        await replaceZipEntry(filePath, entryName, xml);
+        await replaceRatingZipEntry(filePath, entryName, xml);
         return;
     }
     if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));

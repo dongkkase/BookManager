@@ -3639,7 +3639,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         try {
             const result = await saveItemRating(request, {
                 dbPath: libraryDbPath(),
-                sevenZExe: await resolveCoverEditorSevenZPath(await getBinPath('7za') || await getBinPath('7z'), { executableDir: getExecutableDir() }),
+                getSevenZExe: async () => await getBinPath('7za') || await getBinPath('7z'),
                 backup_on: configManager.getConfig()?.backup_on ?? false,
             });
             try {
