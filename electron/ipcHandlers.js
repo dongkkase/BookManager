@@ -5120,6 +5120,36 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return normalizeSaveDialogResult(result);
   });
 
+  ipcMain.handle('tools:textCleaner:load', async (_event, filePath) => {
+    try {
+      const { loadTextCleanerFile } = await import('./textCleanerFile.js');
+      return { ok: true, ...await loadTextCleanerFile(filePath) };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: error?.code || 'LOAD_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  });
+
+  ipcMain.handle('tools:textCleaner:save', async (_event, request = {}) => {
+    try {
+      const { saveTextCleanerFile } = await import('./textCleanerFile.js');
+      return { ok: true, ...await saveTextCleanerFile(request) };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: error?.code || 'SAVE_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  });
+
   // ========== 파일 시스템 ==========
   ipcMain.handle('fs:getRoots', async () => {
     if (process.platform === 'win32') {

@@ -43,6 +43,7 @@ const FileTableView = forwardRef(({
   onSelect,
   onOpenFile,
   onDragSelect,
+  onFileDragStart,
   onContextMenu,
   onScroll,
   onSelectAll,
@@ -570,12 +571,14 @@ const FileTableView = forwardRef(({
                 <tr
                   key={file.path || fileIndex}
                   data-file-path={file.path}
+                  draggable={Boolean(file.full_path || file.path)}
                   className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
                   style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
                   onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
                   onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}
                   onClick={(event) => handleRowClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
+                  onDragStart={(event) => onFileDragStart?.(event, file)}
                   onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
                 >
                   {columns.map(column => renderCell(file, column))}
@@ -604,12 +607,14 @@ const FileTableView = forwardRef(({
 	                <tr
 	                  key={file.path || index}
 	                  data-file-path={file.path}
+                      draggable={Boolean(file.full_path || file.path)}
                       className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
 	                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
 	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
                       onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}
 	                  onClick={(event) => handleRowClick(file, event, fileIndex)}
                       onDoubleClick={(event) => handleRowDoubleClick(file, event, fileIndex)}
+	                  onDragStart={(event) => onFileDragStart?.(event, file)}
 	                  onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	                >
 	                  {columns.map(column => renderCell(file, column))}

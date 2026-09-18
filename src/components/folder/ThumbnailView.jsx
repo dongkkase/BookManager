@@ -36,6 +36,7 @@ const ThumbnailView = ({
   onSelect,
   onOpenFile,
   onDragSelect,
+  onFileDragStart,
   onContextMenu,
   onScroll,
   onClearSelection,
@@ -290,6 +291,7 @@ const ThumbnailView = ({
 	            <div
 	              key={file.path || fileIndex}
 	              data-file-path={file.path}
+                  draggable={Boolean(file.full_path || file.path)}
                   className={`thumbnail-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              style={{
 	                position: 'absolute',
@@ -300,6 +302,7 @@ const ThumbnailView = ({
                   onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
+	              onDragStart={(event) => onFileDragStart?.(event, file)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
@@ -344,11 +347,13 @@ const ThumbnailView = ({
 	            <div
 	              key={file.path || index}
 	              data-file-path={file.path}
+                  draggable={Boolean(file.full_path || file.path)}
                   className={`thumbnail-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
                   onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
+	              onDragStart={(event) => onFileDragStart?.(event, file)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>

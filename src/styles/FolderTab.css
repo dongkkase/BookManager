@@ -3008,6 +3008,21 @@ body.is-reordering-table-column {
   background: #3a7ebf;
 }
 
+.folder-context-menu button:disabled {
+  color: rgba(245, 245, 245, 0.38);
+  background: transparent;
+  cursor: default;
+}
+
+.folder-context-submenu-flyout {
+  min-width: 210px;
+  overflow: visible;
+}
+
+.folder-context-submenu-flyout .folder-context-menu-item {
+  padding-left: 20px;
+}
+
 .folder-context-menu-icon {
   flex: 0 0 16px;
   display: inline-flex;

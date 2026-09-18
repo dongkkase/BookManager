@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { FaIcon } from '../components/FaIcon';
 import { CoverArtwork } from '../components/CoverArtwork';
 import leftSidebarIcon from '../images/left_sidebar.svg';
@@ -19,6 +20,8 @@ import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog'
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { ReadiveTransferDialog } from '../components/ReadiveTransferDialog';
 import { resolveReadivePaths } from '../readiveTransferPolicy';
+import { BOOKMANAGER_PATHS_MIME } from '../appShell';
+import { isTextCleanerPath } from '../fileTools';
 import { extractCoreTitle } from '../utils/folderUtils';
 import {
   basename,
@@ -3034,6 +3037,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }));
   }, [selectedEntryObjects]);
 
+  const handleFileDragStart = useCallback((event, file) => {
+    const targetPath = file?.full_path || file?.path;
+    const draggedEntries = targetPath && selectedFileSet.has(file.path)
+      ? folderEntryOperationTargets(selectedEntryObjects)
+      : [file];
+    const paths = [...new Set(draggedEntries
+      .map(entry => entry?.full_path || entry?.path)
+      .filter(Boolean))];
+    if (paths.length === 0 || !event.dataTransfer) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(BOOKMANAGER_PATHS_MIME, JSON.stringify(paths));
+    event.dataTransfer.setData('text/plain', paths.join('\n'));
+  }, [selectedEntryObjects, selectedFileSet]);
+
   const executeMultiRename = useCallback(async rows => {
     const renameMap = buildRenameMap(rows);
     const targetCount = Object.keys(renameMap).length;
@@ -3377,6 +3397,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       sendSelectedFilesToTab('renamer');
     } else if (action === 'send-file-metadata') {
       sendSelectedFilesToTab('metadata');
+    } else if (action === 'send-file-text-cleaner') {
+      const target = menu.file?.full_path || menu.file?.path;
+      if (isTextCleanerPath(target)) {
+        window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+          detail: { tabId: 'tools', toolId: 'text-cleaner', paths: [target] },
+        }));
+      }
     } else if (action === 'select-all') {
       selectAll();
     } else if (action === 'invert-selection') {
@@ -3767,6 +3794,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       onSelect: handleFileSelect,
       onOpenFile: handleFileOpen,
       onDragSelect: selectPaths,
+      onFileDragStart: handleFileDragStart,
       onContextMenu: showFileContextMenu,
       onClearSelection: clearSelection,
       onVisibleFilesChange: handleVisibleFilesChange,
@@ -3779,7 +3807,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} navigationRestore={navigationRestore} onNavigationRestore={handleNavigationRestore} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} navigationRestore={navigationRestore} onNavigationRestore={handleNavigationRestore} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onFileDragStart={handleFileDragStart} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 
@@ -4207,6 +4235,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-metadata')} label={t('action_meta_edit')} shortcut="F3" />
+                  <ContextMenuSubmenu label={t('tools.context_menu')} icon="fileLines">
+                    <ContextMenuItem
+                      onClick={() => handleContextAction('send-file-text-cleaner')}
+                      disabled={!isTextCleanerPath(contextMenu.file?.full_path || contextMenu.file?.path)}
+                      icon="fileLines"
+                      label={t('tools.item.text_cleaner')}
+                    />
+                  </ContextMenuSubmenu>
                   {!hasSelectedDirectories && (
                       <>
                           <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
@@ -4371,9 +4407,93 @@ function ContextMenu({ x, y, children }) {
   );
 }
 
-function ContextMenuItem({ label, shortcut = '', icon = '', onClick }) {
+function ContextMenuSubmenu({ label, icon = '', children }) {
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState('right');
+  const [position, setPosition] = useState({ left: -10000, top: -10000 });
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const closeTimerRef = useRef(null);
+
+  const cancelClose = () => {
+    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  };
+
+  const showSubmenu = () => {
+    cancelClose();
+    setOpen(true);
+  };
+
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => setOpen(false), 120);
+  };
+
+  useEffect(() => () => cancelClose(), []);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !panelRef.current) return;
+    const gap = 2;
+    const margin = 8;
+    const triggerRect = triggerRef.current.getBoundingClientRect();
+    const panelRect = panelRef.current.getBoundingClientRect();
+    const fitsRight = triggerRect.right + gap + panelRect.width <= window.innerWidth - margin;
+    const nextPlacement = fitsRight ? 'right' : 'left';
+    const nextLeft = fitsRight
+      ? triggerRect.right + gap
+      : Math.max(margin, triggerRect.left - panelRect.width - gap);
+    const nextTop = Math.min(
+      Math.max(margin, triggerRect.top - 4),
+      Math.max(margin, window.innerHeight - panelRect.height - margin),
+    );
+    setPlacement(nextPlacement);
+    setPosition({ left: nextLeft, top: nextTop });
+  }, [open]);
+
   return (
-    <button type="button" className="folder-context-menu-item" onClick={onClick}>
+    <div
+      className="folder-context-submenu"
+      onMouseEnter={showSubmenu}
+      onMouseLeave={scheduleClose}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="folder-context-submenu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+        onFocus={showSubmenu}
+      >
+        {icon && (
+          <span className="folder-context-menu-icon">
+            <FaIcon name={icon} size={12} />
+          </span>
+        )}
+        <span className="folder-context-menu-label">{label}</span>
+        <FaIcon name="chevronRight" size={10} />
+      </button>
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          className={`folder-context-menu folder-context-submenu-flyout is-${placement}`}
+          style={{ left: position.left, top: position.top }}
+          role="menu"
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          {children}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+function ContextMenuItem({ label, shortcut = '', icon = '', onClick, disabled = false }) {
+  return (
+    <button type="button" className="folder-context-menu-item" onClick={onClick} disabled={disabled}>
       {icon && (
         <span className="folder-context-menu-icon">
           <FaIcon name={icon} size={12} />

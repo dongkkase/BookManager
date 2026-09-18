@@ -18,6 +18,8 @@ import {
   RELEASES_URL,
   TABS,
   canAcceptGlobalDrop,
+  canAcceptTabDrop,
+  droppedPathsFromDataTransfer,
   formatAppTitle,
   isExternalFileDrag,
   isFileToolbarEnabled,
@@ -58,6 +60,7 @@ const MemoFolderTab = lazyTab(() => import('./tabs/FolderTab'), 'FolderTab');
 const MemoOrganizerTab = lazyTab(() => import('./tabs/OrganizerTab'));
 const MemoRenamerTab = lazyTab(() => import('./tabs/RenamerTab'));
 const MemoMetadataTab = lazyTab(() => import('./tabs/MetadataTab'));
+const MemoToolsTab = lazyTab(() => import('./tabs/ToolsTab'));
 const MemoSharingTab = lazyTab(() => import('./tabs/SharingTab'));
 const MemoReleaseTab = lazyTab(() => import('./tabs/ReleaseTab'));
 
@@ -379,6 +382,18 @@ function App() {
     scheduleLastTabSave(tabId, tabIndex, '마지막 탭 저장');
   }, [scheduleLastTabSave]);
 
+  const handleTabDrop = useCallback((tabId, dataTransfer) => {
+    if (!canAcceptTabDrop(tabId, isAppLocked)) return;
+    const paths = droppedPathsFromDataTransfer(dataTransfer);
+    if (paths.length === 0) return;
+    handleTabChange(tabId);
+    dispatchTabAction(tabId, {
+      action: tabId === 'folder' ? 'drop-paths' : 'load-paths',
+      activeTab: tabId,
+      paths,
+    });
+  }, [dispatchTabAction, handleTabChange, isAppLocked]);
+
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('bookmanager:active-tab-changed', {
       detail: { activeTab },
@@ -395,7 +410,12 @@ function App() {
       setActiveTab(tabId);
       scheduleLastTabSave(tabId, tabIndex, '자동 전달 탭 저장');
       if (paths.length > 0) {
-        dispatchTabAction(tabId, { action: 'load-paths', activeTab: tabId, paths });
+        dispatchTabAction(tabId, {
+          action: 'load-paths',
+          activeTab: tabId,
+          paths,
+          toolId: event.detail?.toolId,
+        });
       }
     };
     window.addEventListener('bookmanager:navigate', handleNavigate);
@@ -499,8 +519,8 @@ function App() {
     if (document.querySelector('.cover-editor-backdrop, .rating-editor-backdrop')) return;
     if (!canAcceptGlobalDrop(activeTab, dropInteractionBlocked)) return;
         const dropMode = resolveTaskDropMode(activeTab, event.clientY, fileDropAreaRef.current?.getBoundingClientRect());
-    const paths = normalizeDroppedPaths(
-      Array.from(event.dataTransfer.files || []).map(file => file.path),
+      const paths = normalizeDroppedPaths(
+      droppedPathsFromDataTransfer(event.dataTransfer),
     );
     if (paths.length === 0) return;
     const entries = await Promise.all(paths.map(async droppedPath => ({
@@ -758,6 +778,7 @@ function App() {
           tabs={translatedTabs}
           activeTab={activeTab}
           onTabChange={handleTabChange}
+          onTabDrop={handleTabDrop}
           disabled={isAppLocked}
           releaseNotice={releaseUpdates.unread[0]}
           t={t}
@@ -802,6 +823,13 @@ function App() {
           {loadedTabs.has('metadata') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
               <MemoMetadataTab config={config} t={t} showToast={showToast} />
+            </React.Suspense>
+          )}
+        </div>
+        <div className="app-tab-panel" hidden={activeTab !== 'tools'}>
+          {loadedTabs.has('tools') && (
+            <React.Suspense fallback={<TabLoading t={t} />}>
+              <MemoToolsTab t={t} onOpenTab={handleTabChange} />
             </React.Suspense>
           )}
         </div>

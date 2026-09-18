@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFile: (title, filters) => ipcRenderer.invoke('dialog:selectFile', title, filters),
   selectFiles: (title, filters) => ipcRenderer.invoke('dialog:selectFiles', title, filters),
   saveFile: (title, filters, defaultPath) => ipcRenderer.invoke('dialog:saveFile', title, filters, defaultPath),
+  loadTextCleanerFile: (filePath) => ipcRenderer.invoke('tools:textCleaner:load', filePath),
+  saveTextCleanerFile: (request) => ipcRenderer.invoke('tools:textCleaner:save', request),
   
   // 파일 시스템
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),

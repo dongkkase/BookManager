@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { canAcceptGlobalDrop, isExternalFileDrag, normalizeDroppedPaths } from './appShell.js';
+import {
+    canAcceptGlobalDrop,
+    droppedPathsFromDataTransfer,
+    isExternalFileDrag,
+    normalizeDroppedPaths,
+} from './appShell.js';
 import { classifyDroppedEntries, resolveMetadataDropPaths, resolveTaskDropMode } from './dropPolicy.js';
 import { translate } from './utils/i18n.js';
 
@@ -52,6 +57,7 @@ function dropFixture(options = {}) {
         setFileDropHoverTab: value => { hoverTab = value; },
         setFileDropMode: value => { hoverMode = value; },
         canAcceptGlobalDrop,
+        droppedPathsFromDataTransfer,
         isExternalFileDrag,
         normalizeDroppedPaths,
         classifyDroppedEntries,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { FILE_TOOL_CATEGORIES, FILE_TOOLS } from './fileTools.js';
 import { formatTranslation, legacyTranslations, translate, translateKnownText } from './utils/i18n.js';
 
 test('인덱스 및 순차 자리표시자에 동적 값을 삽입한다', () => {
@@ -60,6 +61,27 @@ test('구조 정리 일괄 폴더명 추출 메뉴를 세 언어로 표시한다
     assert.equal(translate('org_batch_folder_name', 'ko'), '일괄: 폴더명 추출');
     assert.equal(translate('org_batch_folder_name', 'en'), 'All: Folder Name');
     assert.equal(translate('org_batch_folder_name', 'ja'), '一括: フォルダ名抽出');
+});
+
+test('파일 도구 카탈로그 문구를 세 언어로 제공한다', () => {
+    const registryKeys = [
+        ...FILE_TOOL_CATEGORIES.map(category => category.labelKey),
+        ...FILE_TOOLS.map(tool => tool.labelKey),
+    ];
+    for (const language of ['ko', 'en', 'ja']) {
+        for (const key of [
+            'tools.tab',
+            'tools.title',
+            'tools.description',
+            'tools.status_legend',
+            'tools.status.available',
+            'tools.status.next',
+            'tools.status.planned',
+            ...registryKeys,
+        ]) {
+            assert.notEqual(translate(key, language), key);
+        }
+    }
 });
 
 test('경로 이동 입력과 최근 기록 문구를 세 언어로 제공한다', () => {

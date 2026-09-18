@@ -36,6 +36,7 @@ const TileView = ({
   onSelect,
   onOpenFile,
   onDragSelect,
+  onFileDragStart,
   onContextMenu,
   onScroll,
   onClearSelection,
@@ -295,6 +296,7 @@ const TileView = ({
 	            <div
 	              key={file.path || fileIndex}
 	              data-file-path={file.path}
+                  draggable={Boolean(file.full_path || file.path)}
                   className={`tile-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              style={{
 	                position: 'absolute',
@@ -306,6 +308,7 @@ const TileView = ({
                   onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
+	              onDragStart={(event) => onFileDragStart?.(event, file)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className={`tile-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
@@ -379,11 +382,13 @@ const TileView = ({
 	            <div
 	              key={file.path || index}
 	              data-file-path={file.path}
+                  draggable={Boolean(file.full_path || file.path)}
                   className={`tile-item ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''}`}
 	              onMouseDown={(event) => handleItemMouseDown(file, event, fileIndex)}
                   onMouseUp={(event) => handleItemMouseUp(file, event, fileIndex)}
 	              onClick={(event) => handleItemClick(file, event, fileIndex)}
                   onDoubleClick={(event) => handleItemDoubleClick(file, event, fileIndex)}
+	              onDragStart={(event) => onFileDragStart?.(event, file)}
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className={`tile-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
