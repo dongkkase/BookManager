@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import TextCleanerEditor from '../components/TextCleanerEditor';
+import TextCleanerSearch from '../components/TextCleanerSearch';
+import { DEFAULT_TEXT_SEARCH_OPTIONS } from '../textCleanerFindReplace';
+import { runTextCleanerSearchJob } from '../textCleanerSearchJob';
 import { droppedPathsFromDataTransfer } from '../appShell';
 import { firstTextCleanerPath } from '../fileTools';
 import {
     closestTextChangeIndex,
     editorScrollTopForTextOffset,
-    findTextMatches,
     mapTextOffsetByCanonical,
     mapTextOffsetThroughChanges,
     textOffsetForEditorScroll,
@@ -352,74 +354,13 @@ function positionSearchHighlight(highlight, editor, text, match, layout, mirrorR
 const EMPTY_SEARCH_RESULT = Object.freeze({
     query: '',
     matches: [],
+    ends: [],
+    error: null,
     totalCount: 0,
     truncated: false,
     pending: false,
     index: -1,
 });
-
-function TextCleanerSearch({ t, query, result, onQueryChange, onMove }) {
-    const inputRef = useRef(null);
-    const hasMatches = result.matches.length > 0;
-    const visibleCount = result.index >= 0 ? result.index + 1 : 0;
-    const totalLabel = result.truncated ? `${result.totalCount}+` : result.totalCount;
-    const status = result.pending
-        ? '…'
-        : query
-            ? `${visibleCount}/${totalLabel}`
-            : '';
-
-    return (
-        <div className="text-cleaner-search">
-            <FaIcon name="search" size={11} />
-            <input
-                ref={inputRef}
-                type="search"
-                value={query}
-                placeholder={t('tools.text_cleaner.search')}
-                aria-label={t('tools.text_cleaner.search')}
-                onChange={event => onQueryChange(event.currentTarget.value)}
-                onKeyDown={event => {
-                    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
-                    event.preventDefault();
-                    onMove(event.shiftKey ? -1 : 1, event.currentTarget);
-                }}
-            />
-            <span className="text-cleaner-search-count">{status}</span>
-            <button
-                type="button"
-                className="text-cleaner-search-clear"
-                disabled={!query}
-                aria-label={t('tools.text_cleaner.clear_search')}
-                onMouseDown={event => event.preventDefault()}
-                onClick={() => {
-                    onQueryChange('');
-                    inputRef.current?.focus({ preventScroll: true });
-                }}
-            >
-                <FaIcon name="xmark" size={10} />
-            </button>
-            <button
-                type="button"
-                disabled={!hasMatches}
-                aria-label={t('tools.text_cleaner.previous_match')}
-                onMouseDown={event => event.preventDefault()}
-                onClick={() => onMove(-1, inputRef.current)}
-            >
-                <FaIcon name="angleUp" size={10} />
-            </button>
-            <button
-                type="button"
-                disabled={!hasMatches}
-                aria-label={t('tools.text_cleaner.next_match')}
-                onMouseDown={event => event.preventDefault()}
-                onClick={() => onMove(1, inputRef.current)}
-            >
-                <FaIcon name="angleDown" size={10} />
-            </button>
-        </div>
-    );
-}
 
 function errorMessage(t, error, fallbackKey) {
     const code = error?.code;
@@ -434,9 +375,10 @@ function errorMessage(t, error, fallbackKey) {
     return error?.message || t(fallbackKey);
 }
 
-export default function TextCleanerTool({ t, onBack, openRequest = null }) {
+export default function TextCleanerTool({ t, onBack, openRequest = null, showToast }) {
     const [fileInfo, setFileInfo] = useState(null);
     const [options, setOptions] = useState(DEFAULT_TEXT_CLEANER_OPTIONS);
+    const [backup, setBackup] = useState(true);
     const [analysisVersion, setAnalysisVersion] = useState(0);
     const [changes, setChanges] = useState([]);
     const [totalChangeCount, setTotalChangeCount] = useState(0);
@@ -454,9 +396,13 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
     const [manualEdited, setManualEdited] = useState(false);
     const [dirty, setDirty] = useState(false);
     const [error, setError] = useState('');
-    const [notice, setNotice] = useState('');
     const [sourceSearchQuery, setSourceSearchQuery] = useState('');
     const [resultSearchQuery, setResultSearchQuery] = useState('');
+    const [sourceSearchOptions, setSourceSearchOptions] = useState(DEFAULT_TEXT_SEARCH_OPTIONS);
+    const [resultSearchOptions, setResultSearchOptions] = useState(DEFAULT_TEXT_SEARCH_OPTIONS);
+    const [replacement, setReplacement] = useState('');
+    const [preserveCase, setPreserveCase] = useState(false);
+    const [replacing, setReplacing] = useState(false);
     const [sourceSearchResult, setSourceSearchResult] = useState(EMPTY_SEARCH_RESULT);
     const [resultSearchResult, setResultSearchResult] = useState(EMPTY_SEARCH_RESULT);
     const [lineCounts, setLineCounts] = useState({ source: 1, result: 1 });
@@ -484,6 +430,8 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
     const viewAnchorOffsetsRef = useRef({ source: 0, result: 0 });
     const loadRequestIdRef = useRef(0);
     const quoteRequestIdRef = useRef(0);
+    const searchJobsRef = useRef({ source: null, result: null, replace: null });
+    const pendingSearchMoveRef = useRef({ source: null, result: null });
     const resultInput = useMemo(() => createTextCleanerInput({
         readText: () => resultAreaRef.current?.value ?? resultTextRef.current,
         onCommit: text => {
@@ -495,7 +443,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
 
     const selectedChange = changes[selectedChangeIndex] || null;
     const selectedQuote = quoteReview.issues[selectedQuoteIndex] || null;
-    const busy = loading || analyzing || saving;
+    const busy = loading || analyzing || saving || replacing;
     const ruleItems = useMemo(() => ([
         { key: 'trimLeadingWhitespace', label: t('tools.text_cleaner.rule_leading') },
         { key: 'collapseRepeatedSpaces', label: t('tools.text_cleaner.rule_spaces') },
@@ -589,6 +537,8 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
 
     useEffect(() => () => {
         resultInput.cancel();
+        for (const job of Object.values(searchJobsRef.current)) job?.abort();
+        searchJobsRef.current = { source: null, result: null, replace: null };
         workerRef.current?.terminate();
         disposeSearchMirror(sourceSearchMirrorRef);
         disposeSearchMirror(resultSearchMirrorRef);
@@ -617,7 +567,6 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
         setQuoteReviewPending(true);
         setQuoteReviewError(false);
         setError('');
-        setNotice('');
 
         worker.onmessage = event => {
             if (workerRef.current !== worker) return;
@@ -626,17 +575,9 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                 setQuoteReviewPending(false);
                 setQuoteReviewError(!event.data.ok);
                 if (event.data.ok) {
-                    const { lineCount, search, query, review } = event.data;
+                    const { lineCount, review } = event.data;
                     setLineCounts(current => current.result === lineCount
                         ? current : { ...current, result: lineCount });
-                    setResultSearchResult(current => ({
-                        ...search,
-                        query,
-                        pending: false,
-                        index: current.query === query && current.index >= 0
-                            ? Math.min(current.index, search.matches.length - 1)
-                            : -1,
-                    }));
                     if (review) {
                         setQuoteReview(review);
                         setSelectedQuoteIndex(index => Math.min(index, Math.max(0, review.issues.length - 1)));
@@ -769,54 +710,53 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
         if (resultAreaRef.current) resultAreaRef.current.value = resultTextRef.current;
     }, [fileInfo]);
 
-    useEffect(() => {
-        clearSearchHighlight('source');
-        if (!sourceSearchQuery) {
-            setSourceSearchResult(EMPTY_SEARCH_RESULT);
-            return undefined;
-        }
-        setSourceSearchResult(current => ({
-            ...current,
-            query: sourceSearchQuery,
-            pending: true,
-            index: -1,
-        }));
+    const startSearch = useCallback((side, query, searchOptions) => {
+        searchJobsRef.current[side]?.abort();
+        const controller = new AbortController();
+        searchJobsRef.current[side] = controller;
+        const setResult = side === 'source' ? setSourceSearchResult : setResultSearchResult;
+        setResult({ ...EMPTY_SEARCH_RESULT, query, options: searchOptions, pending: Boolean(query) });
+        if (!query) return () => controller.abort();
+        const text = side === 'source' ? sourceTextRef.current : resultTextRef.current;
         const timeoutId = window.setTimeout(() => {
-            const searchResult = findTextMatches(sourceTextRef.current, sourceSearchQuery);
-            setSourceSearchResult(current => ({
-                ...searchResult,
-                query: sourceSearchQuery,
-                pending: false,
-                index: current.query === sourceSearchQuery && current.index >= 0
-                    ? Math.min(current.index, searchResult.matches.length - 1)
-                    : -1,
-            }));
+            runTextCleanerSearchJob({ text, query, options: searchOptions }, { signal: controller.signal })
+                .then(search => {
+                    if (controller.signal.aborted) return;
+                    const active = activeSearchMatchRef.current[side];
+                    const index = active ? search.matches.findIndex((start, index) => (
+                        start === active.start && search.ends[index] === active.end
+                    )) : -1;
+                    setResult({ ...search, query, options: searchOptions, index, pending: false, error: null });
+                })
+                .catch(error => {
+                    if (controller.signal.aborted) return;
+                    setResult({ ...EMPTY_SEARCH_RESULT, query, options: searchOptions, error: error.code || 'search_failed' });
+                });
         }, 180);
-        return () => window.clearTimeout(timeoutId);
-    }, [clearSearchHighlight, fileInfo, sourceSearchQuery]);
+        return () => { window.clearTimeout(timeoutId); controller.abort(); };
+    }, []);
+
+    useEffect(() => {
+        return startSearch('source', sourceSearchQuery, sourceSearchOptions);
+    }, [fileInfo, sourceSearchOptions, sourceSearchQuery, startSearch]);
+
+    useEffect(() => {
+        if (analyzing || resultInput.pending) return undefined;
+        return startSearch('result', resultSearchQuery, resultSearchOptions);
+    }, [analyzing, fileInfo, resultInput, resultSearchOptions, resultSearchQuery, resultTextVersion, startSearch]);
 
     useEffect(() => {
         const requestId = ++quoteRequestIdRef.current;
-        if (resultSearchQuery) {
-            setResultSearchResult(current => ({
-                ...current,
-                query: resultSearchQuery,
-                pending: true,
-                index: current.query === resultSearchQuery ? current.index : -1,
-            }));
-        } else {
-            setResultSearchResult(EMPTY_SEARCH_RESULT);
-        }
         if (!fileInfo || analyzing || resultInput.pending) return undefined;
         const timeoutId = window.setTimeout(() => {
             if (requestId !== quoteRequestIdRef.current || resultInput.pending) return;
             workerRef.current?.postMessage({
                 type: 'resultReview', requestId, text: resultTextRef.current,
-                query: resultSearchQuery, inspectQuotes: manualEdited,
+                query: '', inspectQuotes: manualEdited,
             });
         }, 180);
         return () => window.clearTimeout(timeoutId);
-    }, [analyzing, fileInfo, manualEdited, resultInput, resultSearchQuery, resultTextVersion]);
+    }, [analyzing, fileInfo, manualEdited, resultInput, resultTextVersion]);
 
     const mappedEditorOffset = useCallback((side, offset) => {
         const isSource = side === 'source';
@@ -878,10 +818,13 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
         if (!filePath || !confirmDiscard()) return;
         const requestId = loadRequestIdRef.current + 1;
         loadRequestIdRef.current = requestId;
+        for (const job of Object.values(searchJobsRef.current)) job?.abort();
+        searchJobsRef.current = { source: null, result: null, replace: null };
+        pendingSearchMoveRef.current = { source: null, result: null };
+        setReplacing(false);
         resultInput.cancel();
         setLoading(true);
         setError('');
-        setNotice('');
         workerRef.current?.terminate();
         workerRef.current = null;
         if (resizeTimerRef.current !== null) {
@@ -989,6 +932,9 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
     }, [manualEdited, t]);
 
     const handleResultInput = useCallback(() => {
+        searchJobsRef.current.result?.abort();
+        searchJobsRef.current.replace?.abort();
+        pendingSearchMoveRef.current.result = null;
         clearSearchHighlight('result');
         quoteRequestIdRef.current += 1;
         layoutRequestIdRef.current += 1;
@@ -999,23 +945,22 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
             ? current : { ...current, pending: true, index: -1 });
         setManualEdited(true);
         setDirty(true);
-        setNotice('');
     }, [clearSearchHighlight, resultInput]);
 
     const moveSearch = useCallback((side, direction, focusTarget = null) => {
         const isSource = side === 'source';
         const searchResult = isSource ? sourceSearchResult : resultSearchResult;
         const query = isSource ? sourceSearchQuery : resultSearchQuery;
-        const inputPending = !isSource && resultInput.pending;
-        const text = isSource ? sourceTextRef.current : resultInput.flush();
-        const effectiveResult = inputPending || searchResult.pending || searchResult.query !== query
-            ? {
-                ...findTextMatches(text, query),
-                query,
-                pending: false,
-                index: -1,
-            }
-            : searchResult;
+        const searchOptions = isSource ? sourceSearchOptions : resultSearchOptions;
+        if (query && (searchResult.pending || (!isSource && resultInput.pending))) {
+            pendingSearchMoveRef.current[side] = { direction, focusTarget };
+            if (!isSource && resultInput.pending) resultInput.flush();
+            return;
+        }
+        if (searchResult.pending || searchResult.error || searchResult.query !== query
+            || searchResult.options !== searchOptions || (!isSource && resultInput.pending)) return;
+        const text = isSource ? sourceTextRef.current : resultTextRef.current;
+        const effectiveResult = searchResult;
         if (!query || !effectiveResult.matches.length) return;
         const nextIndex = effectiveResult.index < 0
             ? (direction < 0 ? effectiveResult.matches.length - 1 : 0)
@@ -1030,7 +975,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
         if (!editor) return;
         const activeMatch = {
             start: matchOffset,
-            end: matchOffset + query.length,
+            end: effectiveResult.ends[nextIndex],
         };
         const mirrorGeometry = searchMirrorGeometry(editor, text, activeMatch, mirrorRef);
         if (mirrorGeometry) activeMatch.mirrorGeometry = mirrorGeometry;
@@ -1038,7 +983,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
         viewAnchorOffsetsRef.current[side] = matchOffset;
         syncingScrollRef.current = true;
         if (!focusTarget) editor.focus({ preventScroll: true });
-        editor.setSelectionRange(matchOffset, matchOffset + query.length);
+        editor.setSelectionRange(activeMatch.start, activeMatch.end);
         focusTarget?.focus({ preventScroll: true });
         updateSearchHighlight(side);
         if (mirrorGeometry) {
@@ -1060,19 +1005,19 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
             scrollSyncFrameRef.current = null;
             syncingScrollRef.current = false;
         });
-    }, [alignPairedEditor, resultInput, resultSearchQuery, resultSearchResult, sourceSearchQuery, sourceSearchResult, updateSearchHighlight]);
+    }, [alignPairedEditor, resultInput, resultSearchOptions, resultSearchQuery, resultSearchResult, sourceSearchOptions, sourceSearchQuery, sourceSearchResult, updateSearchHighlight]);
 
     const handleSave = useCallback(async () => {
         if (!fileInfo || analyzing) return;
         setSaving(true);
         setError('');
-        setNotice('');
         try {
             const text = resultInput.flush();
             const response = await window.electronAPI?.saveTextCleanerFile?.({
                 filePath: fileInfo.filePath,
                 snapshot: fileInfo.snapshot,
                 text,
+                backup,
             });
             if (!response?.ok) throw response?.error || new Error(t('tools.text_cleaner.error_save'));
             resultTextRef.current = text;
@@ -1083,13 +1028,85 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                 snapshot: response.snapshot,
             }));
             setDirty(false);
-            setNotice(t('tools.text_cleaner.saved', { backup: response.backupPath }));
+            showToast?.(response.backupPath
+                ? { key: 'tools.text_cleaner.saved', values: { backup: response.backupPath } }
+                : { key: 'tools.text_cleaner.saved_without_backup' });
         } catch (saveError) {
             setError(errorMessage(t, saveError, 'tools.text_cleaner.error_save'));
         } finally {
             setSaving(false);
         }
-    }, [analyzing, fileInfo, resultInput, t]);
+    }, [analyzing, backup, fileInfo, resultInput, showToast, t]);
+
+    const handleReplace = useCallback(async all => {
+        if (busy || !resultSearchQuery || searchJobsRef.current.replace) return;
+        const controller = new AbortController();
+        searchJobsRef.current.replace = controller;
+        const text = resultInput.flush();
+        const editor = resultAreaRef.current;
+        const start = activeSearchMatchRef.current.result?.start ?? editor?.selectionStart ?? 0;
+        setReplacing(true);
+        try {
+            const response = await runTextCleanerSearchJob({
+                type: 'replace', text, query: resultSearchQuery, replacement,
+                options: { ...resultSearchOptions, preserveCase }, all, start,
+            }, { signal: controller.signal });
+            if (controller.signal.aborted || resultAreaRef.current !== editor || editor.value !== text) return;
+            searchJobsRef.current.replace = null;
+            if (response.change && response.change.insert !== text.slice(response.change.from, response.change.to)) {
+                editor.replaceText(response.change);
+                resultInput.flush();
+            }
+            const search = response.search;
+            let index = search.matches.findIndex(offset => offset >= response.nextOffset);
+            if (index < 0 && search.matches.length) index = 0;
+            setResultSearchResult({ ...search, query: resultSearchQuery, options: resultSearchOptions, index, pending: false, error: null });
+            clearSearchHighlight('result');
+            if (index >= 0) {
+                const match = { start: search.matches[index], end: search.ends[index] };
+                activeSearchMatchRef.current.result = match;
+                editor.setSelectionRange(match.start, match.end);
+                updateSearchHighlight('result');
+                centerEditorAtTextOffset(editor, match.start);
+                alignPairedEditor('result', match.start);
+            }
+            showToast?.({ key: 'tools.text_cleaner.replaced', values: { count: response.count.toLocaleString() } });
+        } catch (error) {
+            if (!controller.signal.aborted) {
+                setResultSearchResult({ ...EMPTY_SEARCH_RESULT, query: resultSearchQuery, error: error.code || 'search_failed' });
+            }
+        } finally {
+            if (searchJobsRef.current.replace === controller || !controller.signal.aborted) {
+                searchJobsRef.current.replace = null;
+                setReplacing(false);
+            }
+        }
+    }, [alignPairedEditor, busy, clearSearchHighlight, preserveCase, replacement, resultInput, resultSearchOptions, resultSearchQuery, showToast, updateSearchHighlight]);
+
+    const changeSearch = useCallback((side, query, searchOptions) => {
+        searchJobsRef.current[side]?.abort();
+        searchJobsRef.current.replace?.abort();
+        pendingSearchMoveRef.current[side] = null;
+        clearSearchHighlight(side);
+        if (side === 'source') {
+            setSourceSearchQuery(query);
+            setSourceSearchOptions(searchOptions);
+            setSourceSearchResult({ ...EMPTY_SEARCH_RESULT, query, pending: Boolean(query) });
+        } else {
+            setResultSearchQuery(query);
+            setResultSearchOptions(searchOptions);
+            setResultSearchResult({ ...EMPTY_SEARCH_RESULT, query, pending: Boolean(query) });
+        }
+    }, [clearSearchHighlight]);
+
+    useEffect(() => {
+        for (const [side, search] of [['source', sourceSearchResult], ['result', resultSearchResult]]) {
+            const pending = pendingSearchMoveRef.current[side];
+            if (!pending || search.pending) continue;
+            pendingSearchMoveRef.current[side] = null;
+            if (!search.error) moveSearch(side, pending.direction, pending.focusTarget);
+        }
+    }, [moveSearch, resultSearchResult, sourceSearchResult]);
 
     const handleBack = useCallback(() => {
         if (confirmDiscard()) onBack();
@@ -1273,6 +1290,15 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                         <FaIcon name="rotateLeft" size={13} />
                         {t('tools.text_cleaner.reanalyze')}
                     </button>
+                    <label className="text-cleaner-backup-option">
+                        <input
+                            type="checkbox"
+                            checked={backup}
+                            disabled={busy}
+                            onChange={event => setBackup(event.target.checked)}
+                        />
+                        {t('tools.text_cleaner.backup')}
+                    </label>
                     <button type="button" className="text-cleaner-primary" onClick={handleSave} disabled={busy || !dirty}>
                         <FaIcon name={saving ? 'spinner' : 'floppy'} className={saving ? 'fa-spin' : ''} size={13} />
                         {saving ? t('tools.text_cleaner.saving') : t('tools.text_cleaner.save')}
@@ -1299,9 +1325,9 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                 <span className="text-cleaner-coming">{t('tools.text_cleaner.rule_spelling')} · {t('tools.status.planned')}</span>
             </div>
 
-            {(error || notice) && (
-                <div className={`text-cleaner-message ${error ? 'is-error' : 'is-success'}`} role={error ? 'alert' : 'status'}>
-                    {error || notice}
+            {error && (
+                <div className="text-cleaner-message is-error" role="alert">
+                    {error}
                 </div>
             )}
 
@@ -1313,7 +1339,10 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                             t={t}
                             query={sourceSearchQuery}
                             result={sourceSearchResult}
-                            onQueryChange={setSourceSearchQuery}
+                            options={sourceSearchOptions}
+                            disabled={busy}
+                            onQueryChange={query => changeSearch('source', query, sourceSearchOptions)}
+                            onOptionsChange={options => changeSearch('source', sourceSearchQuery, options)}
                             onMove={(direction, focusTarget) => (
                                 moveSearch('source', direction, focusTarget)
                             )}
@@ -1345,10 +1374,15 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                             t={t}
                             query={resultSearchQuery}
                             result={resultSearchResult}
-                            onQueryChange={query => {
-                                clearSearchHighlight('result');
-                                setResultSearchQuery(query);
-                            }}
+                            options={resultSearchOptions}
+                            disabled={busy}
+                            onQueryChange={query => changeSearch('result', query, resultSearchOptions)}
+                            onOptionsChange={options => changeSearch('result', resultSearchQuery, options)}
+                            replacement={replacement}
+                            onReplacementChange={setReplacement}
+                            preserveCase={preserveCase}
+                            onPreserveCaseChange={setPreserveCase}
+                            onReplace={handleReplace}
                             onMove={(direction, focusTarget) => (
                                 moveSearch('result', direction, focusTarget)
                             )}
@@ -1369,9 +1403,9 @@ export default function TextCleanerTool({ t, onBack, openRequest = null }) {
                             )}
                         />
                         <span ref={resultSearchHighlightRef} className="text-cleaner-search-highlight" hidden />
+                        {analyzing && <div className="text-cleaner-analyzing"><FaIcon name="spinner" className="fa-spin" size={16} />{t('tools.text_cleaner.analyzing')}</div>}
                     </div>
                     <footer>{t('tools.text_cleaner.line_count', { count: lineCounts.result.toLocaleString() })}</footer>
-                    {analyzing && <div className="text-cleaner-analyzing"><FaIcon name="spinner" className="fa-spin" size={16} />{t('tools.text_cleaner.analyzing')}</div>}
                 </section>
             </div>
 

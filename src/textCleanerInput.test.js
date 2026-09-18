@@ -47,6 +47,7 @@ function createToolFixture(t) {
         createTextCleanerInput,
         URL,
         DEFAULT_TEXT_CLEANER_OPTIONS: {},
+        DEFAULT_TEXT_SEARCH_OPTIONS: {},
         EMPTY_SEARCH_RESULT: { query: '', matches: [], index: -1, pending: false },
         useState(initial) {
             let value = stateIndex++ === 0 ? { filePath: '/test.txt', snapshot: {} } : initial;

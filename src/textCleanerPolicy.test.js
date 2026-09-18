@@ -341,6 +341,83 @@ test('텍본 정리기는 문장 끝과 빈 줄의 개행을 유지한다', () =
     assert.equal(cleanText(source).text, source);
 });
 
+test('하나의 따옴표 안에 이어지는 문장과 빈 줄을 공백으로 연결한다', () => {
+    const lines = [
+        '전 과장… 천상금뢰지체(天上金雷之體)라고 했었나…. 그런 특이한 영근을 가지고 태어났다고 했고.',
+        '강 대리 역시 귀도음화선근(鬼導陰化仙根)이라는 영근을 개화했다고 했는데….',
+        '오 차장은 일문성체(一紊聖體)라는 육신을 가지고 있었다 했었지.',
+    ];
+    for (const [opening, closing] of [["'", "'"], ['‘', '’'], ['"', '"'], ['“', '”'], ['「', '」'], ['『', '』']]) {
+        for (const newline of ['\n', '\r\n', '\r']) {
+            for (const gap of [newline, newline.repeat(2), newline.repeat(3)]) {
+                const source = opening + lines.join(gap) + closing;
+                const expected = opening + lines.join(' ') + closing;
+                const result = cleanText(source);
+                assert.equal(result.text, expected);
+                assert.equal(result.changes.length, 2);
+                assert.equal(cleanText(result.text).text, expected);
+                assert.equal(cleanText(source, { joinBrokenLines: false }).text, source);
+                for (const change of result.changes) {
+                    assert.equal(change.type, 'lineBreak');
+                    assert.equal(source.slice(change.sourceStart, change.sourceEnd), gap);
+                    assert.equal(change.after, ' ');
+                    assert.equal(result.text.slice(change.resultStart, change.resultEnd), change.after);
+                }
+            }
+        }
+    }
+});
+
+test('큰따옴표 안에서 쉼표 뒤 빈 줄은 공백 하나로 연결한다', () => {
+    const first = '"산이나 숲에서 노숙은 위험합니다. 들짐승이나 산짐승이 습격할 수도 있고,';
+    const last = '또 그렇다고 아무 곳에나 불을 놓으면 산불이 날 수도 있습니다. 제일 좋은 건 아마, 작은 동굴이겠죠. 아, 저런 곳요."';
+    for (const newline of ['\n', '\r\n', '\r']) {
+        assert.equal(cleanText(first + newline.repeat(2) + last).text, first + ' ' + last);
+        assert.equal(cleanText(first + ' ' + newline + '  ' + newline + '  ' + last).text, first + ' ' + last);
+    }
+});
+
+test('인용문을 연결해도 닫는 따옴표 뒤 서술문과 다음 인용문은 분리한다', () => {
+    const source = "앞의 서술문.\n\n'첫 생각.\n\n다음 생각.'\n\n뒤의 서술문.\n\n'다른 생각.\n마지막 생각.'";
+    const expected = "앞의 서술문.\n\n'첫 생각. 다음 생각.'\n\n뒤의 서술문.\n\n'다른 생각. 마지막 생각.'";
+    assert.equal(cleanText(source).text, expected);
+    const closedQuote = `‘${'가'.repeat(38)}’`;
+    const repeated = Array.from({ length: 6 }, () => [closedQuote, '다음 서술문.']).flat().join('\n\n');
+    assert.equal(cleanText(repeated).text, repeated);
+});
+
+test('중첩 인용과 아포스트로피 및 이스케이프된 따옴표를 구분한다', () => {
+    for (const [source, expected] of [
+        ['“그는 ‘안녕!’이라고 했다.\n\n‘다시 만나.’라고도 했다.”', '“그는 ‘안녕!’이라고 했다. ‘다시 만나.’라고도 했다.”'],
+        ['"그는 \'안녕!\'이라고 했다.\n\n\'다시 만나.\'라고도 했다."', '"그는 \'안녕!\'이라고 했다. \'다시 만나.\'라고도 했다."'],
+        ["'Don't stop.\n\nO’Connor stayed.'", "'Don't stop. O’Connor stayed.'"],
+        [String.raw`'그는 \'안녕\'이라고 했다.` + "\n\n다시 만났다.'", String.raw`'그는 \'안녕\'이라고 했다. 다시 만났다.'`],
+    ]) assert.equal(cleanText(source).text, expected);
+});
+
+test('닫히지 않거나 짝이 다른 인용문과 표·코드·제목을 가로지르는 인용문은 합치지 않는다', () => {
+    for (const source of [
+        "'첫 문장.\n\n다음 문장.",
+        "'첫 문장.\n\n다음 문장.\"",
+        "'끝나지 않은 생각.\n\n'새로운 생각.'",
+        '‘끝나지 않은 생각.\n\n‘새로운 생각.’',
+        "'첫 문장.\n\n이름  등급  상태\n\n다음 문장.'",
+        "'첫 문장.\n\n| 이름 | 값 |\n\n다음 문장.'",
+        "'첫 문장.\n\n------ 머리말\n\n다음 문장.'",
+        "'첫 문장.\n\n2150년 01월 01일 : 사건\n\n다음 문장.'",
+        "```\n'첫 문장.\n\n다음 문장.'\n```",
+    ]) assert.equal(cleanText(source).text, source);
+});
+
+test('인용문 속에서 끊긴 단어는 기존 규칙대로 붙이고 문장 사이는 띄운다', () => {
+    assert.equal(cleanText("'숨긴 무\n림고수였다.\n\n다음 이야기다.'").text, "'숨긴 무림고수였다. 다음 이야기다.'");
+    assert.equal(cleanText("'\n첫 문장.\n\n다음 문장.\n'").text, "'첫 문장. 다음 문장.'");
+    const first = `"${'가'.repeat(38)}무`;
+    const last = '림고수였다."';
+    const source = Array.from({ length: 6 }, () => [first, last]).flat().join('\n\n');
+    assert.equal(cleanText(source).text, Array(6).fill(first + last).join('\n\n'));
+});
+
 test('고정 폭으로 보이는 인용문도 문장 끝의 닫는 따옴표 뒤 개행은 유지한다', () => {
     const thought = '아마 암중 호위대는 그냥 자기가 자객들을 처리하기 귀찮아서 부리는 건가.';
     const narration = '황제는 슬프게도 황실에서 가장 암살 위협을 많이 받는 이였다.';

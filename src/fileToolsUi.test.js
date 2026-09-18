@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const appSource = fs.readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
 const toolsTabSource = fs.readFileSync(new URL('./tabs/ToolsTab.jsx', import.meta.url), 'utf8');
+const textCleanerSearchSource = fs.readFileSync(new URL('./components/TextCleanerSearch.jsx', import.meta.url), 'utf8');
 const textCleanerSource = fs.readFileSync(new URL('./tabs/TextCleanerTool.jsx', import.meta.url), 'utf8');
 const textCleanerWorkerSource = fs.readFileSync(new URL('./workers/textCleanerWorker.js', import.meta.url), 'utf8');
 const textCleanerEditorSource = fs.readFileSync(new URL('./textCleanerEditor.js', import.meta.url), 'utf8');
@@ -20,7 +21,7 @@ const ipcSource = fs.readFileSync(new URL('../electron/ipcHandlers.js', import.m
 test('파일 도구 탭은 지연 로딩되고 기존 탭 이동 콜백을 사용한다', () => {
     assert.match(appSource, /lazyTab\(\(\) => import\('\.\/tabs\/ToolsTab'\)\)/);
     assert.match(appSource, /loadedTabs\.has\('tools'\)/);
-    assert.match(appSource, /<MemoToolsTab t=\{t\} onOpenTab=\{handleTabChange\} \/>/);
+    assert.match(appSource, /<MemoToolsTab t=\{t\} onOpenTab=\{handleTabChange\} showToast=\{showToast\} \/>/);
 });
 
 test('파일 도구 화면은 레지스트리 기반 카테고리와 상태를 표시한다', () => {
@@ -68,16 +69,15 @@ test('텍본 정리기 스크롤과 변경 전후 탐색은 서로 위치를 연
 
 test('텍본 정리기는 원본과 결과를 각각 검색하고 라인 수를 표시한다', () => {
     assert.equal((textCleanerSource.match(/<TextCleanerSearch/g) || []).length, 2);
-    assert.match(textCleanerSource, /findTextMatches\(sourceTextRef\.current, sourceSearchQuery\)/);
+    assert.match(textCleanerSource, /startSearch\('source', sourceSearchQuery, sourceSearchOptions\)/);
     assert.match(textCleanerSource, /type: 'resultReview', requestId, text: resultTextRef\.current/);
     assert.match(textCleanerWorkerSource, /findTextMatches\(message\.text, message\.query\)/);
-    assert.match(textCleanerSource, /clear_search/);
+    assert.match(textCleanerSearchSource, /clear_search/);
     assert.match(textCleanerSource, /focusTarget\?\.focus\(\{ preventScroll: true \}\)/);
     assert.equal((textCleanerSource.match(/moveSearch\('(source|result)', direction, focusTarget\)/g) || []).length, 2);
-    assert.match(textCleanerSource, /current\.query === sourceSearchQuery/);
-    assert.match(textCleanerSource, /current\.query === query/);
+    assert.match(textCleanerSource, /searchResult\.query !== query/);
     assert.match(textCleanerSource, /editorScrollTopForTextOffset\([\s\S]*?matchOffset/);
-    assert.match(textCleanerSource, /setSelectionRange\(matchOffset, matchOffset \+ query\.length\)/);
+    assert.match(textCleanerSource, /setSelectionRange\(activeMatch\.start, activeMatch\.end\)/);
     assert.match(textCleanerSource, /positionSearchHighlight\(/);
     assert.match(textCleanerSource, /editorWrappedRowPrefixWidth\(/);
     assert.match(textCleanerSource, /searchMirrorGeometry\(/);

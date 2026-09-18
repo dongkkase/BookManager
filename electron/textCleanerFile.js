@@ -248,7 +248,7 @@ export async function saveTextCleanerFile(request = {}, options = {}) {
         throw textCleanerError('SOURCE_CHANGED', '파일을 연 뒤 원본이 변경되었습니다. 다시 열어 확인해 주세요.');
     }
 
-    const backupPath = textCleanerBackupPath(filePath);
+    const backupPath = request.backup !== false ? textCleanerBackupPath(filePath) : null;
     const tempPath = path.join(
         path.dirname(filePath),
         `.${path.basename(filePath)}.bookmanager-${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`,
@@ -267,12 +267,14 @@ export async function saveTextCleanerFile(request = {}, options = {}) {
             await handle.close();
         }
 
-        if (await pathExists(backupPath)) {
-            rotatedBackupPath = await availableRotatedBackupPath(backupPath, options.now || new Date());
-            await fs.promises.rename(backupPath, rotatedBackupPath);
+        if (backupPath) {
+            if (await pathExists(backupPath)) {
+                rotatedBackupPath = await availableRotatedBackupPath(backupPath, options.now || new Date());
+                await fs.promises.rename(backupPath, rotatedBackupPath);
+            }
+            await fs.promises.rename(filePath, backupPath);
+            sourceMoved = true;
         }
-        await fs.promises.rename(filePath, backupPath);
-        sourceMoved = true;
         await fs.promises.rename(tempPath, filePath);
         tempExists = false;
 

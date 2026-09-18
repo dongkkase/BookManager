@@ -4,6 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createTtsSynthesisQueue, throwIfTtsCancelled } from './ttsSynthesisQueue.js';
+import { normalizeSupertonicReading, planSupertonicSpeech, validateSupertonicStyle } from './supertonicReading.js';
 
 export const SUPERTONIC_VOICES = Object.freeze(['M1', 'M2', 'M3', 'M4', 'M5', 'F1', 'F2', 'F3', 'F4', 'F5']);
 export const SUPERTONIC_LANGUAGES = Object.freeze([
@@ -53,6 +54,7 @@ export function normalizeSupertonicOptions(options = {}) {
             : detectSupertonicLanguage(text),
         speed: Number.isFinite(speed) ? Math.max(0.5, Math.min(2, speed)) : 1.05,
         totalStep: Number.isFinite(totalStep) ? Math.max(2, Math.min(12, Math.round(totalStep))) : 8,
+        ...(options.reading ? { reading: normalizeSupertonicReading(options.reading) } : {}),
     };
 }
 
@@ -221,7 +223,7 @@ class TextToSpeech {
         };
     }
 
-    async infer(textList, langList, style, totalStep, speed, onProgress, signal) {
+    async infer(textList, langList, style, totalStep, speed, onProgress, signal, maxSeconds) {
         throwIfTtsCancelled(signal);
         const batchSize = textList.length;
         const processed = this.textProcessor.call(textList, langList);
@@ -232,7 +234,9 @@ class TextToSpeech {
             style_dp: style.dp,
             text_mask: textMask,
         });
-        const duration = Array.from(durationResult.duration.data, value => value / speed);
+        const duration = Array.from(durationResult.duration.data, value => (
+            maxSeconds ? Math.min(maxSeconds, value / speed) : value / speed
+        ));
         throwIfTtsCancelled(signal);
         const textEncoderResult = await this.textEncoder.run({
             text_ids: textIds,
@@ -267,12 +271,12 @@ class TextToSpeech {
         return { wav: Float32Array.from(vocoderResult.wav_tts.data), duration };
     }
 
-    async call(text, lang, style, totalStep, speed, onProgress, signal) {
+    async call(text, lang, style, totalStep, speed, onProgress, signal, pause = 0.3, maxSeconds = null) {
         if (style.ttl.dims[0] !== 1) throw new Error('Single speaker synthesis requires one voice style.');
         const maxLength = lang === 'ko' || lang === 'ja' ? 120 : 300;
         const chunks = chunkText(text, maxLength);
         const waveParts = [];
-        const silenceLength = Math.floor(0.3 * this.sampleRate);
+        const silenceLength = Math.floor(pause * this.sampleRate);
         let totalLength = 0;
         let totalDuration = 0;
 
@@ -280,13 +284,13 @@ class TextToSpeech {
             throwIfTtsCancelled(signal);
             const result = await this.infer([chunks[index]], [lang], style, totalStep, speed, progress => {
                 onProgress?.({ ...progress, chunk: index + 1, chunkCount: chunks.length });
-            }, signal);
+            }, signal, maxSeconds);
             const expectedLength = Math.min(result.wav.length, Math.floor(this.sampleRate * result.duration[0]));
             const wave = result.wav.subarray(0, expectedLength);
             if (waveParts.length > 0) {
                 waveParts.push(new Float32Array(silenceLength));
                 totalLength += silenceLength;
-                totalDuration += 0.3;
+                totalDuration += pause;
             }
             waveParts.push(wave);
             totalLength += wave.length;
@@ -341,14 +345,17 @@ function flattenStyleData(data) {
     return Float32Array.from(data.flat(Infinity));
 }
 
-async function loadStyle(modelDir, voice, ort) {
-    const cacheKey = `${modelDir}:${voice}`;
+async function loadStyle(modelDir, voice, ort, customStyle = null) {
+    const cacheKey = `${modelDir}:${customStyle ? `custom:${customStyle.id}` : voice}`;
     if (styleCache.has(cacheKey)) return styleCache.get(cacheKey);
-    const parsed = JSON.parse(fs.readFileSync(path.join(modelDir, 'voice_styles', `${voice}.json`), 'utf8'));
+    const parsed = customStyle
+        ? validateSupertonicStyle(customStyle.data)
+        : JSON.parse(fs.readFileSync(path.join(modelDir, 'voice_styles', `${voice}.json`), 'utf8'));
     const style = new Style(
         new ort.Tensor('float32', flattenStyleData(parsed.style_ttl.data), parsed.style_ttl.dims),
         new ort.Tensor('float32', flattenStyleData(parsed.style_dp.data), parsed.style_dp.dims),
     );
+    if (styleCache.size >= 32) styleCache.delete(styleCache.keys().next().value);
     styleCache.set(cacheKey, style);
     return style;
 }
@@ -369,11 +376,73 @@ export function createPcm16WavBuffer(audioData, sampleRate) {
     buffer.writeUInt16LE(16, 34);
     buffer.write('data', 36);
     buffer.writeUInt32LE(dataSize, 40);
+    let peak = 1;
+    for (const value of audioData) {
+        if (Number.isFinite(value)) peak = Math.max(peak, Math.abs(value));
+    }
+    const gain = peak > 1 ? 0.98 / peak : 1;
     for (let index = 0; index < audioData.length; index += 1) {
-        const sample = Math.max(-1, Math.min(1, Number(audioData[index]) || 0));
+        const sample = Number.isFinite(audioData[index]) ? audioData[index] * gain : 0;
         buffer.writeInt16LE(Math.round(sample * 32767), 44 + index * 2);
     }
     return buffer;
+}
+
+export async function renderSupertonicSpeech(plan, synthesize, sampleRate, signal) {
+    const parts = [];
+    let length = 0;
+    let previousPause = 0;
+    let trailingPause = 0;
+    for (const segment of plan) {
+        throwIfTtsCancelled(signal);
+        const result = await synthesize(segment);
+        throwIfTtsCancelled(signal);
+        const maxLength = segment.maxSeconds ? Math.floor(segment.maxSeconds * sampleRate) : result.wav.length;
+        const wave = Float32Array.from(result.wav.subarray(0, maxLength));
+        if (!wave.length) continue;
+        let peak = 1;
+        for (const value of wave) {
+            if (Number.isFinite(value)) peak = Math.max(peak, Math.abs(value));
+        }
+        const gain = segment.volume * (peak > 1 ? 0.98 / peak : 1);
+        const fadeLength = Math.min(Math.floor(sampleRate * (segment.effect ? 0.04 : 0.005)), Math.floor(wave.length / 2));
+        const filterAmount = 1 - Math.exp(-2 * Math.PI * 4500 / sampleRate);
+        let firstStage = 0;
+        let secondStage = 0;
+        for (let index = 0; index < wave.length; index += 1) {
+            const fade = fadeLength ? Math.min(1, index / fadeLength, (wave.length - 1 - index) / fadeLength) : 1;
+            let sample = Number.isFinite(wave[index]) ? wave[index] : 0;
+            if (segment.soften) {
+                firstStage += filterAmount * (sample - firstStage);
+                secondStage += filterAmount * (firstStage - secondStage);
+                sample = secondStage;
+            }
+            wave[index] = sample * gain * fade;
+        }
+        if (parts.length && previousPause > 0) {
+            const silence = new Float32Array(Math.floor(previousPause * sampleRate));
+            parts.push(silence);
+            length += silence.length;
+        }
+        parts.push(wave);
+        length += wave.length;
+        previousPause = Math.max(segment.pause || 0, segment.pauseAfter || 0);
+        trailingPause = segment.pauseAfter || 0;
+    }
+    // Keep a completed dialogue's pause when the next turn is in another request or page.
+    if (trailingPause > 0) {
+        const silence = new Float32Array(Math.floor(trailingPause * sampleRate));
+        parts.push(silence);
+        length += silence.length;
+    }
+    // A skipped-effects-only request still completes playback and page advancement.
+    const wav = new Float32Array(Math.max(length, Math.floor(sampleRate * 0.05)));
+    let offset = 0;
+    for (const part of parts) {
+        wav.set(part, offset);
+        offset += part.length;
+    }
+    return { wav, duration: wav.length / sampleRate };
 }
 
 async function synthesizeSupertonic(options, runtime = {}) {
@@ -383,17 +452,29 @@ async function synthesizeSupertonic(options, runtime = {}) {
     if (!modelDir) throw supertonicError('SUPERTONIC_MODEL_MISSING', 'Supertonic model is not installed.');
     const loaded = await loadRuntime(modelDir);
     throwIfTtsCancelled(runtime.signal);
-    const style = await loadStyle(modelDir, normalized.voice, loaded.ort);
-    throwIfTtsCancelled(runtime.signal);
-    const result = await loaded.textToSpeech.call(
-        normalized.text,
-        normalized.lang,
-        style,
-        normalized.totalStep,
-        normalized.speed,
-        runtime.onProgress,
-        runtime.signal,
-    );
+    const synthesizeSegment = async segment => {
+        const style = await loadStyle(modelDir, segment.voice, loaded.ort, segment.customStyle);
+        throwIfTtsCancelled(runtime.signal);
+        return loaded.textToSpeech.call(
+            segment.text,
+            normalized.lang,
+            style,
+            normalized.reading?.totalStep ?? normalized.totalStep,
+            segment.speed,
+            runtime.onProgress,
+            runtime.signal,
+            segment.pause,
+            segment.maxSeconds,
+        );
+    };
+    const result = normalized.reading
+        ? await renderSupertonicSpeech(
+            planSupertonicSpeech(normalized.text, normalized.reading, normalized.voice),
+            synthesizeSegment,
+            loaded.textToSpeech.sampleRate,
+            runtime.signal,
+        )
+        : await synthesizeSegment({ text: normalized.text, voice: normalized.voice, speed: normalized.speed });
     const wavBuffer = createPcm16WavBuffer(result.wav, loaded.textToSpeech.sampleRate);
     return {
         success: true,

@@ -18,11 +18,7 @@
 !THIRD_PARTY_NOTICES.md
 !탭-메뉴별-핵심-기능.md
 !AGENTS.md
-!dev-docs/
-!dev-docs/**/*.md
-dev-docs/local/
-dev-docs/scratch/
-dev-docs/**/*.local.md
+/dev-docs/
 
 # Dependencies
 node_modules/

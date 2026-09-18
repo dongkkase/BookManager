@@ -93,6 +93,7 @@ test('기존 bak 파일은 날짜가 붙은 이름으로 순환 보관한다', a
         filePath,
         snapshot: loaded.snapshot,
         text: 'second',
+        backup: true,
     }, { now: new Date(2026, 8, 17, 12, 34, 56) });
 
     assert.match(saved.rotatedBackupPath, /novel\.bak\.20260917-123456\.txt$/);
@@ -100,17 +101,74 @@ test('기존 bak 파일은 날짜가 붙은 이름으로 순환 보관한다', a
     assert.equal(await fs.promises.readFile(backupPath, 'utf8'), 'first');
 });
 
-test('원본이 외부에서 바뀌면 저장하지 않는다', async t => {
+for (const existingBackup of [false, true]) {
+    test(`백업을 끄고 저장하면 새 백업을 만들지 않고 기존 백업을 유지한다 (기존 백업: ${existingBackup})`, async t => {
+        const directory = await temporaryDirectory(t);
+        const filePath = path.join(directory, 'novel.txt');
+        const backupPath = textCleanerBackupPath(filePath);
+        await fs.promises.writeFile(filePath, 'original');
+        if (existingBackup) await fs.promises.writeFile(backupPath, 'older');
+        const loaded = await loadTextCleanerFile(filePath);
+
+        const saved = await saveTextCleanerFile({
+            filePath,
+            snapshot: loaded.snapshot,
+            text: '정리 결과',
+            backup: false,
+        });
+
+        assert.equal(saved.backupPath, null);
+        assert.equal(saved.rotatedBackupPath, null);
+        assert.deepEqual(
+            await fs.promises.readFile(filePath),
+            Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('정리 결과')]),
+        );
+        assert.deepEqual(saved.snapshot, (await loadTextCleanerFile(filePath)).snapshot);
+        if (existingBackup) assert.equal(await fs.promises.readFile(backupPath, 'utf8'), 'older');
+        assert.deepEqual((await fs.promises.readdir(directory)).sort(), existingBackup
+            ? ['novel.bak.txt', 'novel.txt'] : ['novel.txt']);
+    });
+}
+
+for (const backup of [true, false]) {
+    test(`결과 교체에 실패하면 원본과 기존 백업을 유지하고 임시 파일을 제거한다 (백업: ${backup})`, async t => {
+        const directory = await temporaryDirectory(t);
+        const filePath = path.join(directory, 'novel.txt');
+        const backupPath = textCleanerBackupPath(filePath);
+        await fs.promises.writeFile(filePath, 'original');
+        await fs.promises.writeFile(backupPath, 'older');
+        const loaded = await loadTextCleanerFile(filePath);
+        const rename = fs.promises.rename;
+        const failure = Object.assign(new Error('Could not replace the file'), { code: 'EACCES' });
+        t.mock.method(fs.promises, 'rename', async (source, target) => {
+            if (source.endsWith('.tmp') && target === filePath) throw failure;
+            return rename(source, target);
+        });
+
+        await assert.rejects(
+            saveTextCleanerFile({ filePath, snapshot: loaded.snapshot, text: 'result', backup }),
+            error => error === failure,
+        );
+
+        assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'original');
+        assert.equal(await fs.promises.readFile(backupPath, 'utf8'), 'older');
+        assert.deepEqual((await fs.promises.readdir(directory)).sort(), ['novel.bak.txt', 'novel.txt']);
+    });
+}
+
+test('원본이 외부에서 바뀌면 백업 옵션과 관계없이 저장하지 않는다', async t => {
     const directory = await temporaryDirectory(t);
     const filePath = path.join(directory, 'novel.txt');
     await fs.promises.writeFile(filePath, 'first');
     const loaded = await loadTextCleanerFile(filePath);
     await fs.promises.writeFile(filePath, 'changed');
 
-    await assert.rejects(
-        saveTextCleanerFile({ filePath, snapshot: loaded.snapshot, text: 'result' }),
-        error => error?.code === 'SOURCE_CHANGED',
-    );
+    for (const backup of [true, false]) {
+        await assert.rejects(
+            saveTextCleanerFile({ filePath, snapshot: loaded.snapshot, text: 'result', backup }),
+            error => error?.code === 'SOURCE_CHANGED',
+        );
+    }
     assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'changed');
     assert.equal(await fs.promises.access(textCleanerBackupPath(filePath)).then(() => true, () => false), false);
 });

@@ -1,6 +1,6 @@
 import { Compartment, EditorSelection, EditorState, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, keymap } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands';
 import { createTextCleanerScroll } from './textCleanerScroll';
 
 const searchMatchEffect = StateEffect.define();
@@ -99,6 +99,15 @@ export function createTextCleanerEditor(parent, getOptions) {
     });
     editor.focus = options => view.contentDOM.focus(options);
     editor.blur = () => view.contentDOM.blur();
+    editor.replaceText = change => {
+        view.dispatch({
+            changes: change,
+            selection: EditorSelection.cursor(change.from + change.insert.length),
+            annotations: isolateHistory.of('full'),
+            userEvent: 'input.replace',
+        });
+        return true;
+    };
     editor.setSelectionRange = (start, end, direction = 'forward') => {
         const from = clampOffset(start);
         const to = Math.max(from, clampOffset(end));

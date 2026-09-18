@@ -55,7 +55,7 @@ function ToolItem({ tool, onOpenTab, onOpenTool, t }) {
     );
 }
 
-export default function ToolsTab({ t, onOpenTab }) {
+export default function ToolsTab({ t, onOpenTab, showToast }) {
     const [activeToolId, setActiveToolId] = useState(null);
     const [openRequest, setOpenRequest] = useState(null);
 
@@ -102,6 +102,7 @@ export default function ToolsTab({ t, onOpenTab }) {
                         t={t}
                         onBack={handleBack}
                         openRequest={openRequest}
+                        showToast={showToast}
                     />
                 </Suspense>
             </FileToolDropArea>

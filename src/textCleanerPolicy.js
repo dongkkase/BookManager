@@ -17,6 +17,77 @@ const KOREAN_PARTICLE_START_PATTERN = /^(?:은|는|이|가|을|를|의|와|과|�
 const HARD_WRAP_LOCAL_WINDOW = 12;
 const HAN_PHRASE_LINE_PATTERN = /^["'“‘「『]?[가-힣]+(?:\(\p{Script=Han}+\)|（\p{Script=Han}+）)(?:\s+[가-힣]+(?:\(\p{Script=Han}+\)|（\p{Script=Han}+）))*[.!?。？！…]*["'”’」』]?$/u;
 const QUOTE_CLOSERS = { '"': '"', "'": "'", '“': '”', '‘': '’', '「': '」', '『': '』' };
+const CLOSING_QUOTES = new Set(Object.values(QUOTE_CLOSERS));
+
+function quotedProseBoundaries(text) {
+    const boundaries = new Map();
+    let candidate = null;
+    let inFence = false;
+    for (const match of text.matchAll(/([^\r\n]*)(?:\r\n|\r|\n|$)/g)) {
+        const line = match[1];
+        const trimmed = line.trim();
+        if (/^\s*```/.test(line)) {
+            inFence = !inFence;
+            candidate = null;
+            continue;
+        }
+        if (!trimmed) continue;
+        if (!candidate && !QUOTE_CLOSERS[trimmed[0]]) continue;
+        if (isProtectedTextLine(line, { inFence, ignoreSymbolRatio: true })
+            || TEXT_HEADING_PATTERN.test(trimmed) || TIMELINE_ENTRY_PATTERN.test(trimmed)
+            || OPENING_LINE_PATTERN.test(trimmed)) {
+            candidate = null;
+            continue;
+        }
+        if (!candidate) {
+            candidate = { stack: [], boundaries: [], lastStart: null, sentenceEnd: false };
+        }
+        let closed = false;
+        for (const quote of line.matchAll(/\\*["'“”‘’「」『』]/g)) {
+            const character = quote[0].at(-1);
+            const slashes = quote[0].length - 1;
+            if (slashes % 2 === 1) continue;
+            const index = quote.index + slashes;
+            const previous = line[index - 1] || '';
+            const next = line[index + 1] || '';
+            if ((character === "'" || character === '’')
+                && WORD_CHARACTER_PATTERN.test(previous) && WORD_CHARACTER_PATTERN.test(next)) continue;
+            const straight = character === '"' || character === "'";
+            // A new quoted paragraph must not close an earlier unfinished quotation.
+            if (candidate.lastStart !== null && candidate.stack.length === 1
+                && QUOTE_CLOSERS[character] === candidate.stack[0]
+                && !line.slice(0, index).trim() && WORD_CHARACTER_PATTERN.test(next)) {
+                candidate = { stack: [], boundaries: [], lastStart: null, sentenceEnd: false };
+            }
+            if (candidate.stack.at(-1) === character) {
+                candidate.stack.pop();
+                if (candidate.stack.length === 0) {
+                    closed = true;
+                    break;
+                }
+            } else {
+                const closingContext = previous && !/\s/u.test(previous)
+                    && (!next || /[\s.,!?。？！…]/u.test(next) || /[.!?。？！…]/u.test(previous));
+                if (!QUOTE_CLOSERS[character] || (straight && closingContext)) {
+                    candidate = null;
+                    break;
+                }
+                candidate.stack.push(QUOTE_CLOSERS[character]);
+            }
+        }
+        if (!candidate) continue;
+        candidate.sentenceEnd ||= SENTENCE_END_PATTERN.test(trimmed);
+        if (candidate.lastStart !== null) candidate.boundaries.push([candidate.lastStart, match.index]);
+        candidate.lastStart = match.index;
+        if (closed) {
+            if (candidate.sentenceEnd) {
+                for (const [start, nextStart] of candidate.boundaries) boundaries.set(start, nextStart);
+            }
+            candidate = null;
+        }
+    }
+    return boundaries;
+}
 
 function isHanPhraseBoundary(previous, next) {
     return /[가-힣]+(?:\(\p{Script=Han}+\)|（\p{Script=Han}+）)$/u.test(previous.trimEnd())
@@ -207,7 +278,7 @@ function shouldJoinHardWrappedBoundary(
     if (!previous || !next || !hardWrap.wrappedLineNumbers.has(lineNumber)) return false;
     if (TIMELINE_ENTRY_PATTERN.test(previous) || TIMELINE_ENTRY_PATTERN.test(next)) return false;
     if (TEXT_HEADING_PATTERN.test(previous) || TEXT_HEADING_PATTERN.test(next)) return false;
-    if (SENTENCE_END_PATTERN.test(previous)) return false;
+    if (SENTENCE_END_PATTERN.test(previous) || CLOSING_QUOTES.has(previous.at(-1))) return false;
     if (OPENING_LINE_PATTERN.test(next)) return false;
     return WORD_CHARACTER_PATTERN.test(next[0] || '') || isHanAnnotationBoundary(previous, next);
 }
@@ -220,6 +291,7 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
     const text = String(sourceText ?? '');
     const options = { ...DEFAULT_TEXT_CLEANER_OPTIONS, ...requestedOptions };
     const hardWrap = options.joinBrokenLines ? detectBlankSeparatedHardWrap(text) : null;
+    const quoteBoundaries = options.joinBrokenLines ? quotedProseBoundaries(text) : new Map();
     const decoratedOffsets = decoratedProseOffsets(text);
     const changes = [];
     const outputChunks = [];
@@ -267,6 +339,7 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
         }
 
         if (!line.newline) return;
+        const quoteJoin = nextLine && quoteBoundaries.get(line.start) === nextLine.start;
         const directJoin = skippedLines.length === 0
             && options.joinBrokenLines
             && nextLine
@@ -286,9 +359,16 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
                 hardWrap,
                 line.number,
             );
-        const join = directJoin || hardWrapJoin;
+        const join = quoteJoin || directJoin || hardWrapJoin;
         if (join) {
-            const separator = joinSeparator(line.cleaned, nextLine.cleaned);
+            const quotePunctuationBoundary = quoteJoin && (
+                /^["'“‘「『]+$/u.test(line.cleaned.trim())
+                || /^["'”’」』]+[.!?。？！…]*$/u.test(nextLine.cleaned.trim())
+            );
+            const separator = quoteJoin && !directJoin && !hardWrapJoin
+                && !quotePunctuationBoundary
+                && !/\s$/u.test(line.cleaned) && !/^\s/u.test(nextLine.cleaned)
+                ? ' ' : joinSeparator(line.cleaned, nextLine.cleaned);
             const boundaryText = line.newline
                 + skippedLines.map(skippedLine => skippedLine.original + skippedLine.newline).join('');
             const lastBoundaryLine = skippedLines.at(-1) || line;
@@ -316,6 +396,16 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
             if (pendingLines.length === 1) {
                 if (final) emitLine(pendingLines.shift());
                 return;
+            }
+            const quoteNextStart = quoteBoundaries.get(pendingLines[0].start);
+            if (quoteNextStart !== undefined) {
+                if (pendingLines.at(-1).start < quoteNextStart && !final) return;
+                const nextIndex = pendingLines.findIndex(line => line.start === quoteNextStart);
+                if (nextIndex > 0) {
+                    emitLine(pendingLines[0], pendingLines[nextIndex], pendingLines.slice(1, nextIndex));
+                    pendingLines.splice(0, nextIndex);
+                    continue;
+                }
             }
             if (!final && pendingLines.length === 2 && !pendingLines[1].cleaned.trim()) return;
 

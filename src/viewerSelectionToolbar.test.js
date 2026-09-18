@@ -36,7 +36,7 @@ test('선택 툴바는 요청된 텍스트 액션을 제공한다', () => {
     assert.match(viewerSource, /function speakDetachedRemoteTts/);
     assert.match(viewerSource, /isRemoteTtsEngine\(settings\.engine\)/);
     assert.match(viewerSource, /await speakDetachedRemoteTts\([\s\S]*?viewerLanguage,[\s\S]*?handleSelectionTtsPlaybackStart/);
-    assert.match(viewerSource, /new window\.SpeechSynthesisUtterance\(text\)/);
+    assert.match(viewerSource, /new window\.SpeechSynthesisUtterance\(normalizeTtsText\(text\)\)/);
 });
 
 test('선택 영역 TTS는 실제 재생 전까지 회전 로딩 아이콘을 표시한다', () => {

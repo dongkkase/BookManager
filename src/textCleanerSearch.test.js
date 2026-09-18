@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { DEFAULT_TEXT_SEARCH_OPTIONS, searchText } from './textCleanerFindReplace.js';
 import {
     buildTextVisualLayout, closestTextChangeIndex, findTextMatches,
     mapTextOffsetByCanonical, mapTextOffsetThroughChanges,
@@ -32,10 +33,12 @@ function createFixture({ manualEdited = false } = {}) {
         resultLayoutRef: { current: buildTextVisualLayout(result) },
         sourceSearchMirrorRef: { current: null }, resultSearchMirrorRef: { current: null },
         sourceSearchQuery: '검색', resultSearchQuery: '검색',
-        sourceSearchResult: { ...findTextMatches(original, '검색'), query: '검색', index: -1 },
-        resultSearchResult: { ...findTextMatches(result, '검색'), query: '검색', index: -1 },
+        sourceSearchOptions: DEFAULT_TEXT_SEARCH_OPTIONS, resultSearchOptions: DEFAULT_TEXT_SEARCH_OPTIONS,
+        sourceSearchResult: { ...searchText(original, '검색'), query: '검색', options: DEFAULT_TEXT_SEARCH_OPTIONS, index: -1 },
+        resultSearchResult: { ...searchText(result, '검색'), query: '검색', options: DEFAULT_TEXT_SEARCH_OPTIONS, index: -1 },
         resultInput: { pending: false, flush: () => result },
         activeSearchMatchRef: { current: {} },
+        pendingSearchMoveRef: { current: {} },
         viewAnchorOffsetsRef: { current: {} },
         layoutStaleRef: { current: false }, syncingScrollRef: { current: false },
         scrollSyncFrameRef: { current: null },
@@ -93,4 +96,30 @@ test('직접 수정한 본문 검색은 해당 결과를 정확히 이동하고 
     const mappedOffset = Math.round(offset / context.resultTextRef.current.length * context.sourceTextRef.current.length);
     assert.deepEqual(fixture.calls.at(-2), ['result', 'center', offset]);
     assert.deepEqual(fixture.calls.at(-1), ['source', 'center', mappedOffset]);
+});
+
+test('정규식 검색 이동은 검색식 길이 대신 실제 일치 길이로 선택한다', () => {
+    const fixture = createFixture({ manualEdited: true });
+    const { context } = fixture;
+    context.resultTextRef.current = 'word1 word123';
+    context.resultSearchQuery = 'word\\d+';
+    context.resultSearchOptions = { regex: true };
+    context.resultSearchResult = {
+        ...searchText(context.resultTextRef.current, context.resultSearchQuery, context.resultSearchOptions),
+        query: context.resultSearchQuery, options: context.resultSearchOptions, index: -1,
+    };
+    fixture.moveSearch('result', 1, fixture.focusTarget);
+    assert.deepEqual(fixture.calls[0], ['result', 'selection', 0, 5]);
+    fixture.calls.length = 0;
+    fixture.moveSearch('result', 1, fixture.focusTarget);
+    assert.deepEqual(fixture.calls[0], ['result', 'selection', 6, 13]);
+});
+
+test('검색 중 Enter는 이동을 예약하고 오래된 검색 결과로 이동하지 않는다', () => {
+    const fixture = createFixture();
+    fixture.context.resultSearchResult.pending = true;
+    fixture.moveSearch('result', -1, fixture.focusTarget);
+    assert.equal(fixture.calls.length, 0);
+    assert.equal(fixture.context.pendingSearchMoveRef.current.result.direction, -1);
+    assert.equal(fixture.context.pendingSearchMoveRef.current.result.focusTarget, fixture.focusTarget);
 });

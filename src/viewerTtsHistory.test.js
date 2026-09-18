@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createViewerTtsRequests } from './viewerTtsRequests.js';
+import { normalizeSupertonicReading, prepareSupertonicPages, splitSupertonicRequests, supertonicReadingCacheKey } from '../electron/supertonicReading.js';
 
 const source = readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
 
@@ -47,17 +48,17 @@ const constants = [
     'OPENAI_TTS_MODEL', 'OPENAI_TTS_MAX_INPUT_LENGTH', 'SUPERTONIC_TTS_MAX_INPUT_LENGTH',
     'REMOTE_TTS_PREFETCH_PAGE_LIMIT', 'REMOTE_TTS_HISTORY_PAGE_LIMIT',
 ].map(declaration).join('\n');
-const pageWindows = Function('flowItems', 'pageIndex', 'flowMode', 'isReaderDocument', `
+const pageWindows = Function('prepareSupertonicPages', 'flowItems', 'pageIndex', 'flowMode', 'isReaderDocument', `
     const useCallback = callback => callback;
     const useMemo = callback => callback();
     ${constants}
     ${textFunctions}
     ${section('function readerItemTtsText(', 'function getPageEffectDirection(')}
-    ${['ttsPageTextAt', 'ttsPageWindow', 'ttsPreviousPages'].map(declaration).join('\n')}
+    ${['ttsPageTexts', 'ttsPageTextAt', 'ttsPageWindow', 'ttsPreviousPages'].map(declaration).join('\n')}
     return { current: ttsPageWindow[0], next: ttsPageWindow.slice(1), previous: ttsPreviousPages };
 `);
 
-const makeHarness = Function('createViewerTtsRequests', 'createSpeech', 'initialEngine', `
+const makeHarness = Function('createViewerTtsRequests', 'normalizeSupertonicReading', 'splitSupertonicRequests', 'supertonicReadingCacheKey', 'createSpeech', 'initialEngine', `
     const useCallback = callback => callback;
     const useMemo = callback => callback();
     const useRef = current => ({ current });
@@ -101,7 +102,7 @@ const makeHarness = Function('createViewerTtsRequests', 'createSpeech', 'initial
         if (options.sessionId) sessionId = options.sessionId;
         if (options.language) language = options.language;
         const pageIndex = current.pageIndex;
-        const speechText = normalizeTtsText(current.text);
+        const speechText = normalizeTtsText(current.text, settings.engine === 'supertonic');
         const prefetchPages = next;
         const previousPages = previous;
         ${[
@@ -119,8 +120,8 @@ const makeHarness = Function('createViewerTtsRequests', 'createSpeech', 'initial
 `);
 
 const items = Array.from({ length: 20 }, (_, index) => `Page ${index} body.`);
-const windowAt = (index, entries = items, mode = 'single') => pageWindows(entries, index, mode, true);
-const harness = (createSpeech, engine = 'openai') => makeHarness(createViewerTtsRequests, createSpeech, engine);
+const windowAt = (index, entries = items, mode = 'single') => pageWindows(prepareSupertonicPages, entries, index, mode, true);
+const harness = (createSpeech, engine = 'openai') => makeHarness(createViewerTtsRequests, normalizeSupertonicReading, splitSupertonicRequests, supertonicReadingCacheKey, createSpeech, engine);
 const cachedIndexes = h => [...h.cache.values()].map(page => page.pageIndex).sort((a, b) => a - b);
 
 test('이전 네 페이지의 완성 음성은 뒤로 이동해도 재합성 없이 재사용하고 다섯 페이지 전 음성은 정리한다', async () => {
@@ -168,7 +169,7 @@ test('빈 페이지는 이전 음성 보관 수에 포함하지 않고 두 장 �
     assert.deepEqual(spread.previous.map(page => page.text), ['Nine', 'Six\n\nSeven', 'Three', 'One']);
     assert.deepEqual(spread.next.map(page => page.pageIndex), [12, 14]);
     assert.deepEqual(windowAt(0, sparse).previous, []);
-    assert.deepEqual(pageWindows(sparse, 10, 'single', false), { current: undefined, next: [], previous: [] });
+    assert.deepEqual(pageWindows(prepareSupertonicPages, sparse, 10, 'single', false), { current: undefined, next: [], previous: [] });
 });
 
 test('모든 생성형 TTS는 정지와 배속 변경에 완성 음성을 유지하고 음성 언어 책 변경에는 비운다', async () => {
@@ -249,5 +250,35 @@ test('페이지 나눔으로 같은 페이지 번호의 본문이 바뀌면 이�
     assert.equal(h.cache.has(old.cacheKey), false);
     const current = await h.load(changed.current);
     assert.notEqual(current.cacheKey, old.cacheKey);
+    assert.equal(h.calls.length, 2);
+});
+
+test('Supertonic 세부 설정 변경은 완성 캐시를 비우고 새 옵션을 합성 요청에 전달한다', async () => {
+    const h = harness(undefined, 'supertonic');
+    const window = windowAt(0, ['그가 말했다. “안녕하세요!”']);
+    h.render(window);
+    await h.load(window.current);
+    assert.match(h.calls[0].text, /“안녕하세요!”/);
+    for (const patch of [
+        { dialogue: { voice: 'F2', speed: 1.2, pause: 0.1 } },
+        { dialogueEnabled: false }, { totalStep: 12 }, { effectsMode: 'skip' },
+        { effectsVolume: 0.3 }, { effectsMaxSeconds: 1 }, { effectsSoften: false },
+    ]) {
+        h.render(window, { settings: { supertonicReading: patch } });
+        assert.equal(h.cache.size, 0);
+        await h.load(window.current);
+        assert.deepEqual(h.calls.at(-1).reading, normalizeSupertonicReading(patch));
+    }
+});
+
+test('따옴표 위치가 바뀌면 같은 글자라도 Supertonic 음성을 다시 생성한다', async () => {
+    const h = harness(undefined, 'supertonic');
+    const first = windowAt(0, ['그가 말했다. “안녕하세요!”']);
+    h.render(first);
+    const old = await h.load(first.current);
+    const changed = windowAt(0, ['“그가 말했다.” 안녕하세요!']);
+    h.render(changed);
+    const current = await h.load(changed.current);
+    assert.notEqual(old.cacheKey, current.cacheKey);
     assert.equal(h.calls.length, 2);
 });

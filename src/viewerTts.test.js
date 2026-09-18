@@ -30,7 +30,7 @@ test('TTS 컨트롤은 리더 문서에서만 표시되고 현재 페이지 텍�
     assert.match(viewerSource, /const isReaderDocument = session\?\.type === 'epub' \|\| session\?\.type === 'text'/);
     assert.match(viewerSource, /const ttsPageWindow = useMemo/);
     assert.match(viewerSource, /const currentTtsText = ttsPageWindow\[0\]\?\.text \|\| ''/);
-    assert.match(viewerSource, /readerItemTtsText\(flowItems\[index\]\)/);
+    assert.match(viewerSource, /prepareSupertonicPages\(flowItems\.map\(readerItemTtsText\)\)/);
     assert.match(viewerSource, /\{isReaderDocument && \(\s*<div className="viewer-tool-cluster viewer-tts-cluster"/);
 });
 
@@ -296,7 +296,7 @@ test('TTS 음성 목록은 설정 언어별 문장으로 각 음성을 미리 �
     assert.match(viewerDropdownSource, /onPreview, previewingValue = '', previewTitle = ''/);
     assert.match(viewerDropdownSource, /className={`viewer-dropdown-option-preview/);
     assert.match(viewerDropdownSource, /onClick=\{\(\) => onPreview\(option\.id\)\}/);
-    assert.match(ttsControlSource, /const previewText = ttsVoicePreviewText\(language\)/);
+    assert.match(ttsControlSource, /const previewText = readingProfile === 'sample'[\s\S]*?: ttsVoicePreviewText\(language\)/);
     assert.match(ttsControlSource, /new window\.SpeechSynthesisUtterance\(previewText\)/);
     assert.match(ttsControlSource, /utterance\.lang = previewVoice\?\.lang \|\| language/);
     assert.match(ttsControlSource, /speakDetachedRemoteTts\(previewText, previewSettings, onToast, language\)/);

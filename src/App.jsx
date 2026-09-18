@@ -829,7 +829,7 @@ function App() {
         <div className="app-tab-panel" hidden={activeTab !== 'tools'}>
           {loadedTabs.has('tools') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
-              <MemoToolsTab t={t} onOpenTab={handleTabChange} />
+              <MemoToolsTab t={t} onOpenTab={handleTabChange} showToast={showToast} />
             </React.Suspense>
           )}
         </div>

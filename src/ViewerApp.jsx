@@ -6,6 +6,8 @@ import { loadViewerPdfDocument } from './viewerPdfLoader';
 import { viewerPdfResourceOptions } from './viewerPdfResources';
 import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
 import { createViewerTtsRequests } from './viewerTtsRequests';
+import { normalizeSupertonicReading, prepareSupertonicPages, splitSupertonicRequests, supertonicReadingCacheKey } from '../electron/supertonicReading.js';
+import { SupertonicTtsSettings } from './components/viewer/SupertonicTtsSettings';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
 import { CoverArtwork } from './components/CoverArtwork';
@@ -509,6 +511,7 @@ function normalizeTtsSettings(settings = {}) {
     rate: clampNumber(settings.rate, 0.5, 2, DEFAULT_TTS_SETTINGS.rate),
     voiceURI: String(settings.voiceURI || ''),
     supertonicVoice: SUPERTONIC_TTS_VOICE_IDS.has(supertonicVoice) ? supertonicVoice : DEFAULT_TTS_SETTINGS.supertonicVoice,
+    supertonicReading: normalizeSupertonicReading(settings.supertonicReading),
     openaiVoice: OPENAI_TTS_VOICE_IDS.has(openaiVoice) ? openaiVoice : DEFAULT_TTS_SETTINGS.openaiVoice,
     googleVoice: GOOGLE_TTS_VOICE_IDS.has(googleVoice) ? googleVoice : DEFAULT_TTS_SETTINGS.googleVoice,
     autoAdvance: settings.autoAdvance === true,
@@ -538,10 +541,10 @@ function removeTtsBracketedText(text = '') {
   return nextResult.replace(TTS_BRACKET_CHARACTER_PATTERN, ' ');
 }
 
-function normalizeTtsText(text = '') {
+function normalizeTtsText(text = '', preserveDialogue = false) {
   return removeTtsBracketedText(text)
     .replace(/\u00a0/g, ' ')
-    .replace(TTS_SPECIAL_CHARACTER_PATTERN, ' ')
+    .replace(preserveDialogue ? /[^\p{L}\p{N}\s.,!?;:。！？、'’"“”「」『』]/gu : TTS_SPECIAL_CHARACTER_PATTERN, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -562,7 +565,8 @@ function systemVoiceMatchesLanguage(voice, language) {
   return Boolean(targetLanguage && voiceLanguage && targetLanguage === voiceLanguage);
 }
 
-function splitTtsTextIntoChunks(text = '', maxLength = OPENAI_TTS_MAX_INPUT_LENGTH) {
+function splitTtsTextIntoChunks(text = '', maxLength = OPENAI_TTS_MAX_INPUT_LENGTH, preserveDialogue = false) {
+    if (preserveDialogue) return splitSupertonicRequests(normalizeTtsText(text, true), maxLength);
   const source = normalizeTtsText(text);
   if (!source) return [];
   if (source.length <= maxLength) return [source];
@@ -621,6 +625,7 @@ function remoteTtsPayload(engine, text, settings, language = 'en') {
       voice: settings.supertonicVoice,
       lang: detectViewerTtsLanguage(text, language),
       speed: 1,
+      reading: normalizeSupertonicReading(settings.supertonicReading),
     };
   }
   if (engine === 'google') {
@@ -666,14 +671,14 @@ function remoteTtsVoiceCacheKey(settings, language) {
     : settings.engine === 'google'
       ? settings.googleVoice
       : settings.openaiVoice;
-  return `${settings.engine}:${voice}:${language}`;
+  return `${settings.engine}:${voice}:${language}${settings.engine === 'supertonic' ? `:${supertonicReadingCacheKey(settings.supertonicReading)}` : ''}`;
 }
 
 function remoteTtsPageCacheKey(page, settings, language) {
   return JSON.stringify([
     remoteTtsVoiceCacheKey(settings, language),
     Number(page?.pageIndex) || 0,
-    normalizeTtsText(page?.text),
+    normalizeTtsText(page?.text, settings.engine === 'supertonic'),
   ]);
 }
 
@@ -819,7 +824,7 @@ async function speakDetachedRemoteTts(
     onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
     return;
   }
-  const chunks = splitTtsTextIntoChunks(text, remoteTtsMaxInputLength(settings.engine));
+  const chunks = splitTtsTextIntoChunks(text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
   if (chunks.length === 0) {
     onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
     return;
@@ -859,7 +864,7 @@ async function speakDetachedRemoteTts(
 }
 
 function readerItemTtsText(item = {}) {
-  if (typeof item === 'string') return normalizeTtsText(item);
+  if (typeof item === 'string') return normalizeTtsText(item, true);
   const parts = [];
   if (Array.isArray(item.blocks) && item.blocks.length > 0) {
     item.blocks.forEach(block => {
@@ -868,7 +873,7 @@ function readerItemTtsText(item = {}) {
   } else if (item.text) {
     parts.push(item.text);
   }
-  return normalizeTtsText(parts.join('\n\n'));
+  return normalizeTtsText(parts.join('\n\n'), true);
 }
 
 function getPageEffectDirection(targetIndex, currentIndex) {
@@ -3094,21 +3099,21 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const remoteTtsPageHandoffRef = useRef(new Set());
   const ttsSettingsRef = useRef(settings);
   const onMoveToPageRef = useRef(onMoveToPage);
-  const speechText = normalizeTtsText(text);
+  const speechText = normalizeTtsText(text, settings.engine === 'supertonic');
   const normalizedPrefetchPages = useMemo(() => prefetchPages
     .slice(0, REMOTE_TTS_PREFETCH_PAGE_LIMIT)
     .map(page => ({
       pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
-      text: normalizeTtsText(page?.text),
+      text: normalizeTtsText(page?.text, settings.engine === 'supertonic'),
     }))
-    .filter(page => page.text), [prefetchPages]);
+    .filter(page => page.text), [prefetchPages, settings.engine]);
     const normalizedPreviousPages = useMemo(() => previousPages
         .slice(0, REMOTE_TTS_HISTORY_PAGE_LIMIT)
         .map(page => ({
             pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
-            text: normalizeTtsText(page?.text),
+            text: normalizeTtsText(page?.text, settings.engine === 'supertonic'),
         }))
-        .filter(page => page.text && page.pageIndex < pageIndex), [pageIndex, previousPages]);
+        .filter(page => page.text && page.pageIndex < pageIndex), [pageIndex, previousPages, settings.engine]);
   const nextSpeakablePage = normalizedPrefetchPages.find(page => page.pageIndex > pageIndex) || null;
   const hasText = speechText.length > 0;
   const hasPlayableText = hasText || Boolean(nextSpeakablePage);
@@ -3165,7 +3170,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const remoteTtsCacheConfigKey = remoteTtsVoiceCacheKey(settings, language);
   const remoteTtsAllowedCacheKeys = useMemo(() => new Set(
     remoteTtsPageWindow.map(page => remoteTtsPageCacheKey(page, settings, language)),
-  ), [language, remoteTtsPageWindow, settings.engine, settings.googleVoice, settings.openaiVoice, settings.supertonicVoice]);
+  ), [language, remoteTtsPageWindow, remoteTtsCacheConfigKey]);
     const remoteTtsRetainedCacheKeys = useMemo(() => new Set([
         ...remoteTtsAllowedCacheKeys,
         ...normalizedPreviousPages.map(page => remoteTtsPageCacheKey(page, settings, language)),
@@ -3272,8 +3277,12 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     })
     : viewerText(`viewer.tts.${remoteLoadingKey}_loading`, remoteLoadingFallback);
   useEffect(() => {
-    saveJson(VIEWER_TTS_SETTINGS_KEY, settings);
-  }, [settings]);
+    try {
+        saveJson(VIEWER_TTS_SETTINGS_KEY, settings);
+    } catch {
+        onToast?.(viewerText('viewer.tts.supertonic_details.save_error', 'TTS 설정을 저장하지 못했습니다. 저장 공간을 확인하거나 가져온 스타일을 해제하세요.'));
+    }
+  }, [onToast, settings]);
 
   useEffect(() => {
     remoteTtsCacheGenerationRef.current += 1;
@@ -3382,7 +3391,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const loadRemoteTtsPageAudio = useCallback(async page => {
     const normalizedPage = {
       pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
-      text: normalizeTtsText(page?.text),
+      text: normalizeTtsText(page?.text, settings.engine === 'supertonic'),
     };
     const cacheKey = remoteTtsPageCacheKey(normalizedPage, settings, language);
     const cachedPage = remoteTtsPageCacheRef.current.get(cacheKey);
@@ -3395,7 +3404,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
         code: remoteTtsCode(settings.engine, 'UNSUPPORTED'),
       });
     }
-    const chunks = splitTtsTextIntoChunks(normalizedPage.text, remoteTtsMaxInputLength(settings.engine));
+    const chunks = splitTtsTextIntoChunks(normalizedPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
     if (chunks.length === 0) {
       throw Object.assign(new Error('There is no text to synthesize.'), { code: 'TTS_NO_TEXT' });
     }
@@ -3529,7 +3538,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
       onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
       return;
     }
-    const chunks = splitTtsTextIntoChunks(initialPage.text, remoteTtsMaxInputLength(settings.engine));
+    const chunks = splitTtsTextIntoChunks(initialPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
     if (chunks.length === 0) {
       onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
@@ -3545,7 +3554,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     try {
       let targetPage = initialPage;
       while (targetPage) {
-        const targetChunks = splitTtsTextIntoChunks(targetPage.text, remoteTtsMaxInputLength(settings.engine));
+        const targetChunks = splitTtsTextIntoChunks(targetPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
         setOpenAiState({ status: 'loading', currentChunk: 1, totalChunks: targetChunks.length });
         const currentPageAudio = await loadRemoteTtsPageAudio(targetPage);
         if (openAiRunRef.current !== runId) return;
@@ -3640,8 +3649,14 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     if (!options.skipState) setPreviewingVoiceValue('');
   }, []);
 
-  const handleVoicePreview = useCallback(async voiceValue => {
-    const previewText = ttsVoicePreviewText(language);
+  const handleVoicePreview = useCallback(async (voiceValue, readingProfile = null) => {
+    const previewText = readingProfile === 'sample'
+        ? viewerText('viewer.tts.supertonic_details.sample_text', '그는 조용히 문을 열었다. “여기 있었구나. 하하하! 으아아아아악!”')
+        : readingProfile === 'narration'
+        ? viewerText('viewer.tts.supertonic_details.narration_sample', '저녁 햇살이 창가에 머물렀다. 그는 읽던 책을 덮고, 천천히 고개를 들었다.')
+        : readingProfile === 'dialogue'
+        ? viewerText('viewer.tts.supertonic_details.dialogue_sample', '여기 있었구나! 한참 찾았잖아. 준비됐으면 같이 나갈까?')
+        : ttsVoicePreviewText(language);
     setPendingPlayAfterPageMove(false);
     stopCurrentTtsWithoutAutoAdvance();
     stopVoicePreview();
@@ -3695,6 +3710,19 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
           : voiceValue.startsWith('google:')
             ? normalizeTtsSettings({ ...settings, engine: 'google', googleVoice: voiceValue.slice('google:'.length) })
             : normalizeTtsSettings({ ...settings, engine: 'openai', openaiVoice: voiceValue.slice('openai:'.length) });
+        if (readingProfile && readingProfile !== 'sample') {
+            previewSettings.supertonicReading = {
+                ...previewSettings.supertonicReading,
+                narration: previewSettings.supertonicReading[readingProfile],
+                dialogueEnabled: false,
+            };
+        } else if (!readingProfile && previewSettings.engine === 'supertonic') {
+            previewSettings.supertonicReading = {
+                ...previewSettings.supertonicReading,
+                narration: { ...previewSettings.supertonicReading.narration, voice: '', customStyle: null },
+                dialogueEnabled: false,
+            };
+        }
         await speakDetachedRemoteTts(previewText, previewSettings, onToast, language);
       }
     } catch {
@@ -3801,7 +3829,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
       setOpen(false);
       return;
     }
-    if (isPlainSpaceKeyEvent(event) && !event.target?.closest?.('.viewer-dropdown-menu, .viewer-tts-rate-popover')) {
+    if (isPlainSpaceKeyEvent(event) && !event.target?.closest?.('.viewer-dropdown-menu, .viewer-tts-rate-popover, .viewer-supertonic-settings')) {
       stopKeyboardShortcutEvent(event);
       handlePlayPause();
       return;
@@ -3995,6 +4023,21 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
               <img className="viewer-tts-action-icon" src={personRunningIcon} alt="" aria-hidden="true" />
             </button>
           </div>
+            {isSupertonicEngine && (
+                <SupertonicTtsSettings
+                    value={settings.supertonicReading}
+                    voices={SUPERTONIC_TTS_VOICES}
+                    baseVoice={settings.supertonicVoice}
+                    text={viewerText}
+                    onChange={supertonicReading => {
+                        setPendingPlayAfterPageMove(false);
+                        stopCurrentTtsWithoutAutoAdvance();
+                        stopVoicePreview();
+                        updateSettings({ supertonicReading });
+                    }}
+                    onPreview={profile => handleVoicePreview(`supertonic:${settings.supertonicVoice}`, profile)}
+                />
+            )}
           {isRemoteEngine && isOpenAiLoading && (
             <div className="viewer-tts-progress" role="status" aria-live="polite">
               <FaIcon name="spinner" className="viewer-tts-progress-spinner" />
@@ -6255,14 +6298,15 @@ function ViewerApp() {
     session,
     viewerSessionResolved,
   ]);
+    const ttsPageTexts = useMemo(() => prepareSupertonicPages(flowItems.map(readerItemTtsText)), [flowItems]);
     const ttsPageTextAt = useCallback(targetPageIndex => {
         const indexes = flowMode === 'spread' ? [targetPageIndex, targetPageIndex + 1] : [targetPageIndex];
         return normalizeTtsText(indexes
             .filter(index => index >= 0 && index < flowItems.length)
-            .map(index => readerItemTtsText(flowItems[index]))
+            .map(index => ttsPageTexts[index])
             .filter(Boolean)
-            .join('\n\n'));
-    }, [flowItems, flowMode]);
+            .join('\n\n'), true);
+    }, [flowItems, flowMode, ttsPageTexts]);
   const ttsPageWindow = useMemo(() => {
     if (!isReaderDocument || flowItems.length < 1) return [];
     const pageStep = flowMode === 'spread' ? 2 : 1;
@@ -8200,7 +8244,7 @@ function ViewerApp() {
 
   const speakSelectionText = useCallback(async () => {
     if (selectionTtsLoading) return;
-    const text = normalizeTtsText(selectionMenu?.text);
+    const text = normalizeTtsText(selectionMenu?.text, true);
     if (!text) {
       showViewerToast(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
@@ -8248,7 +8292,7 @@ function ViewerApp() {
         systemVoiceMatchesLanguage(voice, viewerLanguage)
         && (voice.voiceURI === settings.voiceURI || voice.name === settings.voiceURI)
       ));
-      const utterance = new window.SpeechSynthesisUtterance(text);
+      const utterance = new window.SpeechSynthesisUtterance(normalizeTtsText(text));
       if (selectedVoice) utterance.voice = selectedVoice;
       utterance.lang = selectedVoice?.lang || viewerLanguage;
       utterance.rate = settings.rate;
