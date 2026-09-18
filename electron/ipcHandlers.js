@@ -67,8 +67,9 @@ import { SCAN_TARGET_EXTENSIONS } from './scanTargets.js';
 import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { searchYes24 } from './yes24Search.js';
-import { searchMunpia } from './munpiaSearch.js';
+import { originalMunpiaCoverUrl, searchMunpia } from './munpiaSearch.js';
 import { detectImageMimeType } from './imageMagic.js';
+import { encodeTextCover } from './textCoverEncoder.js';
 import { LibraryDB } from './database/library_db.js';
 import {
   LibrarySearchService,
@@ -2423,7 +2424,7 @@ function rememberApiCoverUrl(url, cacheUrl) {
 }
 
 async function fetchImageCacheFileFromUrl(imageUrl = '', cacheDir = '') {
-  const url = String(imageUrl || '').trim();
+    const url = originalMunpiaCoverUrl(imageUrl);
   if (!url) return '';
   const protocolFile = apiCoverCacheFileFromProtocolUrl(url, cacheDir);
   if (protocolFile) return protocolFile;
@@ -2450,7 +2451,7 @@ async function fetchImageCacheFileFromUrl(imageUrl = '', cacheDir = '') {
 }
 
 async function fetchImageCacheUrlFromUrl(imageUrl = '', cacheDir = '') {
-  const url = String(imageUrl || '').trim();
+    const url = originalMunpiaCoverUrl(imageUrl);
   if (!url) return '';
   if (!/^https?:\/\//i.test(url)) return url;
   if (apiCoverUrlCache.has(url)) return apiCoverUrlCache.get(url);
@@ -2784,7 +2785,7 @@ function normalizeGoogleTtsError(error = {}) {
 }
 
 async function fetchImageDataUrlFromUrl(imageUrl = '') {
-    const url = String(imageUrl || '').trim();
+    const url = originalMunpiaCoverUrl(imageUrl);
     if (!url) return '';
     if (!/^https?:\/\//i.test(url)) return url;
     return imageDataUrlCache.getOrLoad(url, async () => {
@@ -3795,6 +3796,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         thumbnailDir: thumbnailDir(),
         thumbnailEncoder: encodeThumbnail,
         normalizeEpubCoverImage: normalizeEpubCoverImageBuffer,
+        textCoverEncoder: async buffer => encodeTextCover(buffer, {
+            cwebpExe: await getCwebpExe(),
+            normalizeImage: source => {
+                const image = nativeImage.createFromBuffer(source);
+                return image.isEmpty() ? null : image.toPNG();
+            },
+        }),
         refreshFilePreview: filePath => inspectFolderFile(filePath, {
           dbPath: libraryDbPath(),
           thumbnailDir: thumbnailDir(),

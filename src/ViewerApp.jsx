@@ -544,7 +544,7 @@ function removeTtsBracketedText(text = '') {
 function normalizeTtsText(text = '', preserveDialogue = false) {
   return removeTtsBracketedText(text)
     .replace(/\u00a0/g, ' ')
-    .replace(preserveDialogue ? /[^\p{L}\p{N}\s.,!?;:。！？、'’"“”「」『』]/gu : TTS_SPECIAL_CHARACTER_PATTERN, ' ')
+    .replace(preserveDialogue ? /[^\p{L}\p{N}\s.,!?;:。！？、'‘’`"“”「」『』]/gu : TTS_SPECIAL_CHARACTER_PATTERN, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -3651,11 +3651,13 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
 
   const handleVoicePreview = useCallback(async (voiceValue, readingProfile = null) => {
     const previewText = readingProfile === 'sample'
-        ? viewerText('viewer.tts.supertonic_details.sample_text', '그는 조용히 문을 열었다. “여기 있었구나. 하하하! 으아아아아악!”')
+        ? viewerText('viewer.tts.supertonic_details.sample_text', '그는 조용히 문을 열었다. ‘아무도 없겠지.’ “여기 있었구나. 하하하! 으아아아아악!”')
         : readingProfile === 'narration'
         ? viewerText('viewer.tts.supertonic_details.narration_sample', '저녁 햇살이 창가에 머물렀다. 그는 읽던 책을 덮고, 천천히 고개를 들었다.')
         : readingProfile === 'dialogue'
         ? viewerText('viewer.tts.supertonic_details.dialogue_sample', '여기 있었구나! 한참 찾았잖아. 준비됐으면 같이 나갈까?')
+        : readingProfile === 'thought'
+        ? viewerText('viewer.tts.supertonic_details.thought_sample', '이상하다. 분명 여기 두었는데. 조금 더 생각해 보자.')
         : ttsVoicePreviewText(language);
     setPendingPlayAfterPageMove(false);
     stopCurrentTtsWithoutAutoAdvance();
@@ -3715,12 +3717,14 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
                 ...previewSettings.supertonicReading,
                 narration: previewSettings.supertonicReading[readingProfile],
                 dialogueEnabled: false,
+                thoughtEnabled: false,
             };
         } else if (!readingProfile && previewSettings.engine === 'supertonic') {
             previewSettings.supertonicReading = {
                 ...previewSettings.supertonicReading,
                 narration: { ...previewSettings.supertonicReading.narration, voice: '', customStyle: null },
                 dialogueEnabled: false,
+                thoughtEnabled: false,
             };
         }
         await speakDetachedRemoteTts(previewText, previewSettings, onToast, language);

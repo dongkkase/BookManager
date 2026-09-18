@@ -40,19 +40,27 @@ export function SupertonicTtsSettings({ value, voices, baseVoice, text, onChange
         <details className="viewer-supertonic-settings">
             <summary>{t('title', 'Supertonic 낭독 스타일')}</summary>
             <div className="viewer-supertonic-settings-body">
-                <p>{t('description', '일반 문장과 대사에 사용할 스타일을 선택하세요. 선택한 음성에 스타일별 속도와 쉼을 적용합니다.')}</p>
+                <p>{t('description', '일반 문장·대사·속마음에 사용할 스타일을 선택하세요. 선택한 음성에 스타일별 속도와 쉼을 적용합니다.')}</p>
                 <label className="viewer-supertonic-check">
                     <input type="checkbox" checked={value.dialogueEnabled}
                         onChange={event => patch({ dialogueEnabled: event.target.checked })} />
-                    {t('dialogue_enabled', '따옴표 안의 대사 자동 구분')}
+                    {t('dialogue_enabled', '큰따옴표 안의 대사 자동 구분')}
                 </label>
+                <label className="viewer-supertonic-check">
+                    <input type="checkbox" checked={value.thoughtEnabled}
+                        onChange={event => patch({ thoughtEnabled: event.target.checked })} />
+                    {t('thought_enabled', '작은따옴표·백틱 안의 속마음 자동 구분')}
+                </label>
+                <p>{t('thought_hint', '속마음은 조금 느리게 읽습니다. 대사 안의 인용은 대사로 읽으며, 자동 구분을 끄면 일반 문장 설정을 사용합니다.')}</p>
                 <div className="viewer-supertonic-profiles">
-                    {['narration', 'dialogue'].map(name => {
+                    {['narration', 'dialogue', 'thought'].map(name => {
                         const profile = value[name];
-                        const label = name === 'narration' ? t('narration', '일반 문장') : t('dialogue', '대사');
+                        const label = name === 'narration' ? t('narration', '일반 문장')
+                            : name === 'dialogue' ? t('dialogue', '대사') : t('thought', '속마음');
                         const presetId = supertonicReadingPresetId(profile);
                         return (
-                            <fieldset key={name} disabled={importing || (name === 'dialogue' && !value.dialogueEnabled)}>
+                            <fieldset key={name}
+                                disabled={importing || (name === 'dialogue' && !value.dialogueEnabled) || (name === 'thought' && !value.thoughtEnabled)}>
                                 <legend>{label}</legend>
                                 <label className="viewer-supertonic-voice">
                                     <span>{t('style', '낭독 스타일')}</span>
@@ -138,7 +146,7 @@ export function SupertonicTtsSettings({ value, voices, baseVoice, text, onChange
                 {range(t('steps', '합성 단계'), value.totalStep, 2, 12, 1, totalStep => patch({ totalStep }))}
                 <p>{t('steps_hint', '단계가 높을수록 생성 시간이 늘어납니다. 기본값은 8입니다.')}</p>
                 <div className="viewer-supertonic-footer">
-                    <button type="button" onClick={() => onPreview('sample')}>{t('sample', '일반 문장·대사·비명 미리듣기')}</button>
+                    <button type="button" onClick={() => onPreview('sample')}>{t('sample', '일반 문장·대사·속마음·비명 미리듣기')}</button>
                     <button type="button" disabled={importing} onClick={() => {
                         setImportError('');
                         onChange(normalizeSupertonicReading());

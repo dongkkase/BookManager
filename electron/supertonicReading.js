@@ -1,7 +1,11 @@
 const VOICES = new Set(['M1', 'M2', 'M3', 'M4', 'M5', 'F1', 'F2', 'F3', 'F4', 'F5']);
-const QUOTES = { '"': '"', '“': '”', '「': '」', '『': '』' };
+const QUOTES = { '"': '"', '“': '”', '「': '」', '『': '』', "'": "'", '‘': '’', '`': '`' };
 const CLOSING_QUOTES = new Set(Object.values(QUOTES));
+const APOSTROPHES = new Set(["'", '’']);
+const THOUGHT_QUOTES = new Set([...APOSTROPHES, '`']);
+const APOSTROPHE_WORD = /[\p{Script=Latin}\p{N}]/u;
 const DIALOGUE_TURN_PAUSE = 0.45;
+const THOUGHT_TURN_PAUSE = 0.4;
 
 // Reading presets use the selected voice's existing embedding with a prepared tempo and pause.
 export const SUPERTONIC_READING_PRESETS = [
@@ -11,6 +15,7 @@ export const SUPERTONIC_READING_PRESETS = [
     { id: 'conversation', speed: 1.05, pause: 0.18 },
     { id: 'calm_conversation', speed: 0.95, pause: 0.25 },
     { id: 'quick_conversation', speed: 1.15, pause: 0.1 },
+    { id: 'inner_monologue', speed: 0.9, pause: 0.4 },
 ];
 
 export function supertonicReadingPresetId(profile) {
@@ -77,8 +82,10 @@ export function normalizeSupertonicReading(value = {}) {
     const settings = value && typeof value === 'object' ? value : {};
     return {
         dialogueEnabled: settings.dialogueEnabled !== false,
+        thoughtEnabled: settings.thoughtEnabled !== false,
         narration: normalizeProfile(settings.narration, 1, 0.3),
         dialogue: normalizeProfile(settings.dialogue, 1.05, 0.18),
+        thought: normalizeProfile(settings.thought, 0.9, 0.4),
         totalStep: Math.round(bounded(settings.totalStep, 8, 2, 12)),
         effectsMode: ['original', 'shorten', 'skip'].includes(settings.effectsMode) ? settings.effectsMode : 'shorten',
         effectsVolume: bounded(settings.effectsVolume, 0.7, 0.1, 1),
@@ -93,6 +100,7 @@ export function supertonicReadingCacheKey(value) {
         ...reading,
         narration: { ...reading.narration, customStyle: reading.narration.customStyle?.id || null },
         dialogue: { ...reading.dialogue, customStyle: reading.dialogue.customStyle?.id || null },
+        thought: { ...reading.thought, customStyle: reading.thought.customStyle?.id || null },
     });
 }
 
@@ -104,18 +112,26 @@ export function splitSupertonicDialogue(text, initialQuotes = []) {
     let previousGroup = -1;
     const flush = () => {
         if (current) {
-            const dialogue = quotes.length > 0;
+            const role = quotes.length ? (THOUGHT_QUOTES.has(quotes[0]) ? 'thought' : 'dialogue') : 'narration';
             const previous = segments.at(-1);
-            if (previous?.dialogue === dialogue && previousGroup === group) previous.text += current;
-            else segments.push({ text: current, dialogue });
+            if (previous?.role === role && previousGroup === group) previous.text += current;
+            else segments.push({ text: current, dialogue: role === 'dialogue', role });
             previousGroup = group;
         }
         current = '';
     };
-    for (const character of String(text || '')) {
+    const characters = Array.from(String(text || ''));
+    for (let index = 0; index < characters.length; index += 1) {
+        const character = characters[index];
+        // Word-internal apostrophes and unquoted possessives do not open or close thoughts.
+        if (APOSTROPHES.has(character) && APOSTROPHE_WORD.test(characters[index - 1] || '')
+            && (APOSTROPHE_WORD.test(characters[index + 1] || '') || quotes.at(-1) !== character)) {
+            current += character;
+            continue;
+        }
         if (quotes.length && character === quotes[quotes.length - 1]) {
             flush();
-            if (quotes.length === 1 && previousGroup === group && segments.at(-1)?.dialogue) {
+            if (quotes.length === 1 && previousGroup === group && segments.at(-1)) {
                 segments.at(-1).closed = true;
             }
             quotes.pop();
@@ -137,6 +153,7 @@ export function splitSupertonicDialogue(text, initialQuotes = []) {
 }
 
 function quotedSegment(segment, close = true) {
+    if (segment.role === 'thought') return `‘${segment.text}${close ? '’' : ''}`;
     return segment.dialogue ? `“${segment.text}${close ? '”' : ''}` : segment.text;
 }
 
@@ -156,7 +173,7 @@ export function splitSupertonicRequests(text, maxLength = 900) {
     for (const segment of splitSupertonicDialogue(text).segments) {
         let remaining = segment.text.trim();
         while (remaining) {
-            const available = limit - current.length - (current ? 1 : 0) - (segment.dialogue ? 2 : 0);
+            const available = limit - current.length - (current ? 1 : 0) - (segment.role !== 'narration' ? 2 : 0);
             if (available < 8) {
                 requests.push(current);
                 current = '';
@@ -167,6 +184,9 @@ export function splitSupertonicRequests(text, maxLength = 900) {
                 const boundaries = [...remaining.slice(0, available).matchAll(/[\s.!?。！？]/gu)];
                 const last = boundaries.at(-1);
                 if (last && last.index >= available * 0.5) cut = last.index + 1;
+                // Keep the surrounding letters with an apostrophe when splitting a long word.
+                if (cut > 2 && APOSTROPHES.has(remaining[cut])) cut -= 1;
+                else if (cut > 2 && APOSTROPHES.has(remaining[cut - 1])) cut -= 2;
                 const previousCode = remaining.charCodeAt(cut - 1);
                 if (previousCode >= 0xD800 && previousCode <= 0xDBFF) cut -= 1;
             }
@@ -190,6 +210,7 @@ export function planSupertonicSpeech(text, options = {}, defaultVoice = 'M1') {
     const settings = normalizeSupertonicReading(options);
     const plan = [];
     let canMerge = true;
+    let previousRole = 'narration';
     const append = (text, profile, effect = false) => {
         const clean = text.trim();
         if (!/[\p{L}\p{N}]/u.test(clean)) return;
@@ -215,10 +236,14 @@ export function planSupertonicSpeech(text, options = {}, defaultVoice = 'M1') {
         canMerge = true;
     };
     for (const segment of splitSupertonicDialogue(text).segments) {
-        const profile = settings.dialogueEnabled && segment.dialogue ? settings.dialogue : settings.narration;
+        const enabled = (segment.role === 'dialogue' && settings.dialogueEnabled)
+            || (segment.role === 'thought' && settings.thoughtEnabled);
+        const role = enabled ? segment.role : 'narration';
+        const profile = settings[role];
         const segmentStart = plan.length;
         // Keep each outer quotation separate even when it uses the same voice and preset.
-        canMerge = !settings.dialogueEnabled;
+        canMerge = role === 'narration' && previousRole === 'narration';
+        previousRole = role;
         if (settings.effectsMode === 'original') {
             append(segment.text, profile);
         } else {
@@ -233,8 +258,8 @@ export function planSupertonicSpeech(text, options = {}, defaultVoice = 'M1') {
             }
             append(segment.text.slice(start), profile);
         }
-        if (settings.dialogueEnabled && segment.closed && plan.length > segmentStart) {
-            plan.at(-1).pauseAfter = Math.max(profile.pause, DIALOGUE_TURN_PAUSE);
+        if (enabled && segment.closed && plan.length > segmentStart) {
+            plan.at(-1).pauseAfter = Math.max(profile.pause, role === 'thought' ? THOUGHT_TURN_PAUSE : DIALOGUE_TURN_PAUSE);
         }
     }
     return plan;

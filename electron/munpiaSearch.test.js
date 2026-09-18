@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import { detectImageMimeType } from './imageMagic.js';
-import { searchMunpia } from './munpiaSearch.js';
+import { originalMunpiaCoverUrl, searchMunpia } from './munpiaSearch.js';
 import { setLanguage, t } from './utils/i18n.js';
 
 setLanguage('ko');
@@ -103,7 +105,7 @@ test('문피아의 실제 검색 응답을 기존 메타데이터 필드로 변�
     assert.equal(item.Tags, '선협, 천재, 환생, 동양판타지, 상태창');
     assert.equal(item.Count, '202');
     assert.equal(item.Web, 'https://www.munpia.com/novel/detail/482756');
-    assert.equal(item.CoverUrl, sampleNovel.coverUrl);
+    assert.equal(item.CoverUrl, `${sampleNovel.coverUrl}.origin.`);
     for (const field of ['Publisher', 'ISBN', 'PubDate', 'CommunityRating']) {
         assert.equal(item[field] || '', '', field);
     }
@@ -141,6 +143,22 @@ test('문피아 표지 주소의 HTTP와 프로토콜 생략 형식을 HTTPS로 
     }
 });
 
+test('문피아 CDN 표지는 원본 주소로 변환하고 접미사를 중복해서 붙이지 않는다', () => {
+    const base = 'https://cdn1.munpia.com/v2/files/cover/2025/0530/16/Ex9UlbghcAA';
+    for (const source of [base, base.replace('https:', 'http:'), base.replace('https:', ''), `${base}.origin.`]) {
+        assert.equal(originalMunpiaCoverUrl(source), `${base}.origin.`);
+    }
+    assert.equal(originalMunpiaCoverUrl(`${base}?version=1#cover`), `${base}.origin.?version=1#cover`);
+    for (const source of [
+        `${base}.jpg`, 'https://cdn1.munpia.com/cover.jpg',
+        base.replace('cdn1.munpia.com', 'example.com'),
+        base.replace('cdn1.munpia.com', 'cdn1.munpia.com.example.com'),
+        'bookmanager-thumbnail://api-cover/cached.png', '',
+    ]) {
+        assert.equal(originalMunpiaCoverUrl(source), source);
+    }
+});
+
 test('문피아처럼 확장자가 없는 PNG 표지는 응답 MIME과 무관하게 원본 PNG로 보존한다', () => {
     const pngBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ZkAAAAASUVORK5CYII=', 'base64');
     let conversionCount = 0;
@@ -168,6 +186,7 @@ test('문피아 표지를 직접 불러올 때도 PNG 데이터 URL과 원본 �
     const cacheKeys = [];
     const fetchImageDataUrl = vm.runInNewContext(`async ${sourceFunction('fetchImageDataUrlFromUrl')}\nfetchImageDataUrlFromUrl`, {
         URL,
+        originalMunpiaCoverUrl,
         detectImageMimeType,
         imageDataUrlCache: {
             getOrLoad(key, loader) {
@@ -184,8 +203,54 @@ test('문피아 표지를 직접 불러올 때도 PNG 데이터 URL과 원본 �
     const result = await fetchImageDataUrl(sampleNovel.coverUrl);
     assert.ok(result.startsWith('data:image/png;base64,'));
     assert.deepEqual(Buffer.from(result.split(',')[1], 'base64'), pngBuffer);
-    assert.deepEqual(requestedUrls, [sampleNovel.coverUrl]);
-    assert.deepEqual(cacheKeys, [sampleNovel.coverUrl]);
+    assert.deepEqual(requestedUrls, [`${sampleNovel.coverUrl}.origin.`]);
+    assert.deepEqual(cacheKeys, [`${sampleNovel.coverUrl}.origin.`]);
+});
+
+test('이전 문피아 검색 결과도 원본 표지를 요청하며 기존 축소 이미지 캐시를 재사용하지 않는다', async () => {
+    const originalUrl = `${sampleNovel.coverUrl}.origin.`;
+    const hash = createHash('sha1').update(originalUrl).digest('hex');
+    const oldHash = createHash('sha1').update(sampleNovel.coverUrl).digest('hex');
+    const cacheDir = path.join('cache', 'covers');
+    const oldPath = path.join(cacheDir, `${oldHash}.png`);
+    const expectedPath = path.join(cacheDir, `${hash}.png`);
+    const requests = [];
+    const writes = [];
+    const cacheLookups = [];
+    const cache = new Map([[sampleNovel.coverUrl, oldPath]]);
+    const source = Buffer.from('original cover');
+    const fetchCover = vm.runInNewContext([
+        `async ${sourceFunction('fetchImageCacheFileFromUrl')}`,
+        `async ${sourceFunction('fetchImageCacheUrlFromUrl')}`,
+        'fetchImageCacheUrlFromUrl',
+    ].join('\n'), {
+        URL, path, crypto: { createHash }, originalMunpiaCoverUrl,
+        apiCoverUrlCache: cache,
+        apiCoverCacheFileFromProtocolUrl: () => '',
+        findApiCoverCacheFile: async (_directory, key) => {
+            cacheLookups.push(key);
+            return key === oldHash ? oldPath : '';
+        },
+        ensureApiCoverCompatibleCacheFile: async filePath => filePath,
+        requestBufferGeneric: async url => {
+            requests.push(url);
+            return { buffer: source, contentType: 'image/png' };
+        },
+        mimeFromUrl: () => 'image/png',
+        normalizeApiCoverImageBuffer: buffer => ({ buffer, mimeType: 'image/png' }),
+        imageExtensionFromMime: () => '.png',
+        fs: { promises: {
+            mkdir: async () => {},
+            writeFile: async (filePath, buffer) => writes.push({ filePath, buffer }),
+        } },
+        apiCoverCacheUrlForFile: filePath => filePath,
+        rememberApiCoverUrl: (url, filePath) => { cache.set(url, filePath); return filePath; },
+    });
+    assert.equal(await fetchCover(sampleNovel.coverUrl, cacheDir), expectedPath);
+    assert.equal(await fetchCover(originalUrl, cacheDir), expectedPath);
+    assert.deepEqual(requests, [originalUrl]);
+    assert.deepEqual(cacheLookups, [hash]);
+    assert.deepEqual(writes, [{ filePath: expectedPath, buffer: source }]);
 });
 
 test('문피아의 선택 필드가 없는 항목도 제목과 상세 링크를 유지한다', async () => {
@@ -287,7 +352,7 @@ test('문피아 IPC는 키 없이 모든 책 타입을 검색하고 별칭과 �
         assert.equal(result.actualQuery, '환생 수선전');
         assert.equal(result.cached, false);
         assert.equal(result.results[0].id, '482756');
-        assert.equal(result.results[0].coverUrl, sampleNovel.coverUrl);
+        assert.equal(result.results[0].coverUrl, `${sampleNovel.coverUrl}.origin.`);
         assert.equal(result.results[0].link, 'https://www.munpia.com/novel/detail/482756');
         assert.equal(result.results[0].metadata.Format, format);
         assert.equal(result.results[0].metadata.Manga, bookType === 'comic' ? 'YesAndRightToLeft' : '');

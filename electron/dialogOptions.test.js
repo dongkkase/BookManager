@@ -61,8 +61,17 @@ test('모든 선택기 결과에 공통 경로 정규화를 적용한다', () =>
     );
     assert.equal(
         normalizeSaveDialogResult({ filePath: `/tmp/${'한글'.normalize('NFD')}.csv` }, 'darwin'),
-        '/tmp/한글.csv',
+        `/tmp/${'한글'.normalize('NFD')}.csv`,
     );
+});
+
+test('NAS의 NFD 폴더와 파일을 선택해도 실제 경로를 NFC로 바꾸지 않는다', () => {
+    const folderPath = '/Volumes/NAS/_소설/TEXT'.normalize('NFD');
+    const filePath = `${folderPath}/한글 책.txt`.normalize('NFD');
+    assert.equal(normalizeFolderDialogResult({ filePaths: [folderPath] }, 'darwin'), folderPath);
+    assert.equal(normalizeFileDialogResult({ filePaths: [filePath] }, 'darwin'), filePath);
+    assert.deepEqual(normalizeFilesDialogResult({ filePaths: [filePath] }, 'darwin'), [filePath]);
+    assert.deepEqual(normalizeArchiveDialogResult({ filePaths: [filePath] }, 'darwin'), [filePath]);
 });
 
 test('일반 선택기 취소도 기존 상태를 변경하지 않는 값으로 반환한다', () => {

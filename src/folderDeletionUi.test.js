@@ -147,7 +147,7 @@ function refreshFixture(options = {}) {
         callbackSource('applyFolderTagSearch', 'resetSearchQuery'),
         source.slice(recentStart, recentEnd),
         callbackSource('removeDeletedEntries', 'handleRefresh'),
-        callbackSource('handleRefresh', 'executeCoverEdit'),
+        callbackSource('handleRefresh', 'executeRatingEdit'),
         callbackSource('handleSmartRefresh', 'handleIncludeSubfoldersChange'),
         callbackSource('handleRefreshShortcut', 'handleRenameShortcut'),
     ].join('\n');
@@ -305,6 +305,18 @@ test('일반 폴더 새로고침은 기존 옵션을 보존하며 강제 스캔�
     assert.equal(value.state.missingRefreshVersion, 1);
     assert.equal(value.calls.recent, 0);
     assert.equal(value.state.searchSubmitToken, 0);
+});
+
+test('NFD NAS 폴더에서 파일 삭제 후 새로고침은 실제 부모 폴더 경로를 보존한다', async () => {
+    const selectedFolderPath = '/Volumes/NAS/_소설/TEXT'.normalize('NFD');
+    const deletedPath = `${selectedFolderPath}/삭제할 책.txt`.normalize('NFD');
+    const rows = [{ path: deletedPath }, { path: `${selectedFolderPath}/남은 책.txt` }];
+    const value = refreshFixture({ selectedFolderPath, rows });
+    value.removeDeletedEntries([deletedPath]);
+    await value.handleRefresh();
+    assert.deepEqual(value.state.librarySearchResults, [rows[1]]);
+    assert.equal(value.calls.scans[0].path, selectedFolderPath);
+    assert.notEqual(value.calls.scans[0].path, selectedFolderPath.normalize('NFC'));
 });
 
 test('두 삭제 진입점은 삭제 폴더와 하위 파일을 모든 결과에서 즉시 제거하고 취소·유사 경로를 유지한다', async () => {

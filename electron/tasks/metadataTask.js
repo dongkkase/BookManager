@@ -2762,6 +2762,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
                     record: metadataToLibraryRecord(item),
                     coverChange: item.txtCoverChange,
                     thumbnailDir: options.thumbnailDir,
+                    textCoverEncoder: options.textCoverEncoder,
                     expectedContentHash: item.textContentHash,
                 });
                 textMetadataUpdates.push({

@@ -11,13 +11,30 @@ function cleanMunpiaText(value = '') {
         .trim();
 }
 
+export function originalMunpiaCoverUrl(value = '') {
+    const source = String(value || '').trim();
+    try {
+        const url = new URL(source, 'https://www.munpia.com/');
+        if (['http:', 'https:'].includes(url.protocol)
+            && /^cdn\d*\.munpia\.com$/i.test(url.hostname)
+            && /^\/v2\/files\/cover\/.+\/[A-Za-z0-9_-]+(?:\.origin\.)?$/.test(url.pathname)) {
+            url.protocol = 'https:';
+            if (!url.pathname.endsWith('.origin.')) url.pathname += '.origin.';
+            return url.href;
+        }
+    } catch {
+        // 문피아 원본 표지 규칙에 해당하지 않는 주소는 유지합니다.
+    }
+    return source;
+}
+
 function munpiaCoverUrl(value = '') {
     if (!String(value || '').trim()) return '';
     try {
         const url = new URL(String(value).trim(), 'https://www.munpia.com/');
         if (!['http:', 'https:'].includes(url.protocol)) return '';
         url.protocol = 'https:';
-        return url.href;
+        return originalMunpiaCoverUrl(url.href);
     } catch {
         return '';
     }

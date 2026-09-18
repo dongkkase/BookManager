@@ -97,7 +97,7 @@ function coverDirectory(libraryDb, thumbnailDir) {
     return path.join(parent, 'text-thumbnails');
 }
 
-async function writeCover(sourcePath, directory, contentHash) {
+async function writeCover(sourcePath, directory, contentHash, textCoverEncoder) {
     const handle = await fs.open(sourcePath, 'r');
     let buffer;
     try {
@@ -110,7 +110,13 @@ async function writeCover(sourcePath, directory, contentHash) {
     } finally {
         await handle.close();
     }
-    const extension = coverExtension(buffer);
+    let extension = coverExtension(buffer);
+    if (typeof textCoverEncoder === 'function') {
+        buffer = await textCoverEncoder(buffer);
+        extension = coverExtension(buffer);
+        if (extension !== '.webp') throw new Error('The text cover could not be converted to WebP.');
+        if (buffer.length > MAX_COVER_BYTES) throw new Error('The text cover must be no larger than 16 MiB.');
+    }
     await fs.mkdir(directory, { recursive: true });
     const destination = path.join(directory, `${contentHash}-${randomUUID()}${extension}`);
     const temporary = `${destination}.tmp`;
@@ -171,7 +177,7 @@ async function saveWithIdentity(filePath, identity, options) {
     let coverPath = await existingCoverPath(previous);
     let newCover = '';
     if (coverChange?.type === 'file') {
-        newCover = await writeCover(coverChange.filePath, coverDirectory(libraryDb, thumbnailDir), identity.contentHash);
+        newCover = await writeCover(coverChange.filePath, coverDirectory(libraryDb, thumbnailDir), identity.contentHash, options.textCoverEncoder);
         coverPath = newCover;
     } else if (coverChange?.type === 'reset') {
         coverPath = '';

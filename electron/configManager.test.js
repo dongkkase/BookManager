@@ -20,6 +20,33 @@ function writeDataConfig(root, config) {
     return configPath;
 }
 
+test('초기화 시 NAS의 기존 Unicode 경로를 복구하고 다음 설정 로드에도 보존한다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-unicode-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const nfc = '/Volumes/NAS/_소설/TEXT';
+    const nfd = nfc.normalize('NFD');
+    const configPath = writeDataConfig(root, {
+        libraries: [nfc],
+        library_entries: [{ path: nfc, alias: '소설', group: '도서' }],
+        folder_last_path: nfc,
+        language: 'en',
+        api_keys: { custom_provider: 'preserved' },
+    });
+    t.mock.method(fs.promises, 'stat', async value => {
+        if (value === nfd) return { isDirectory: () => true };
+        throw Object.assign(new Error('Missing NFC path'), { code: 'ENOENT' });
+    });
+    const manager = new ConfigManager(root, root, { platform: 'darwin', configPath });
+    await manager.initialize();
+    assert.deepEqual(manager.getConfig().libraries, [nfd]);
+    const loaded = manager.loadConfig();
+    assert.deepEqual(loaded.library_entries, [{ path: nfd, alias: '소설', group: '도서' }]);
+    assert.equal(loaded.folder_last_path, nfd);
+    assert.equal(loaded.language, 'en');
+    assert.equal(loaded.api_keys.custom_provider, 'preserved');
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).libraries, [nfd]);
+});
+
 test('config는 실행 경로의 BookManagerData 폴더에 둔다', () => {
     const manager = new ConfigManager('/user/data', '/portable/app');
     assert.equal(manager.configPath, path.join('/portable/app', 'BookManagerData', 'config.json'));

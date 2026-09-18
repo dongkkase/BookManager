@@ -10,10 +10,13 @@ test('기본 스타일은 오디오북과 일상 대화이며 저장된 수동 �
     const defaults = normalizeSupertonicReading();
     assert.equal(supertonicReadingPresetId(defaults.narration), 'audiobook');
     assert.equal(supertonicReadingPresetId(defaults.dialogue), 'conversation');
+    assert.equal(supertonicReadingPresetId(defaults.thought), 'inner_monologue');
+    assert.equal(defaults.thoughtEnabled, true);
     const previous = { voice: 'F3', speed: 0.85, pause: 0.37, customStyle: null };
     const restored = normalizeSupertonicReading({ narration: previous });
     assert.deepEqual(restored.narration, previous);
     assert.equal(supertonicReadingPresetId(restored.narration), '');
+    assert.deepEqual(restored.thought, { voice: '', speed: 0.9, pause: 0.4, customStyle: null });
     assert.equal(applySupertonicReadingPreset(previous, 'unknown'), previous);
 });
 
@@ -84,6 +87,95 @@ test('중첩 따옴표와 영문 축약형을 구분하고 서술문으로 복�
     assert.equal(splitSupertonicDialogue('」닫는 따옴표만 있는 글').segments[0].dialogue, false);
     assert.deepEqual(planSupertonicSpeech('“첫째”“둘째”').map(part => part.text), ['첫째', '둘째']);
     assert.equal(planSupertonicSpeech('“Don’t say 「hello」.”')[0].pauseAfter, 0.45);
+});
+
+test('작은따옴표와 백틱 속마음은 큰따옴표 대사 및 일반 문장과 다른 설정으로 읽는다', () => {
+    for (const [open, close] of [["'", "'"], ['‘', '’'], ['`', '`']]) {
+        const text = `그가 멈췄다. ${open}왜 그랬을까.${close} "괜찮아." 끝.`;
+        const plan = planSupertonicSpeech(text, { thought: { voice: 'F3' }, dialogue: { voice: 'M2' } });
+        assert.deepEqual(plan.map(part => [part.text, part.voice, part.speed, part.pause, part.pauseAfter]), [
+            ['그가 멈췄다.', 'M1', 1, 0.3, undefined],
+            ['왜 그랬을까.', 'F3', 0.9, 0.4, 0.4],
+            ['괜찮아.', 'M2', 1.05, 0.18, 0.45],
+            ['끝.', 'M1', 1, 0.3, undefined],
+        ]);
+    }
+    const consecutive = planSupertonicSpeech("'첫 생각.' '다음 생각.'");
+    assert.deepEqual(consecutive.map(part => part.text), ['첫 생각.', '다음 생각.']);
+});
+
+test('백틱 독백은 영문 아포스트로피와 구분하고 중첩 인용은 바깥 역할을 따른다', () => {
+    const plan = planSupertonicSpeech('앞. `I don\'t know.` “그는 `괜찮아`라고 했다.” `왜 “괜찮아”라고 했을까.` 뒤.');
+    assert.deepEqual(plan.map(part => [part.text, part.speed]), [
+        ['앞.', 1], ["I don't know.", 0.9], ['그는 괜찮아라고 했다.', 1.05],
+        ['왜 괜찮아라고 했을까.', 0.9], ['뒤.', 1],
+    ]);
+    const disabled = planSupertonicSpeech('앞. `속마음.` 뒤.', { thoughtEnabled: false });
+    assert.equal(disabled.length, 1);
+    assert.equal(disabled[0].text, '앞. 속마음. 뒤.');
+    assert.equal(disabled[0].speed, 1);
+    assert.deepEqual(splitSupertonicDialogue('앞.`first``second`뒤.').segments.map(part => part.role), [
+        'narration', 'thought', 'thought', 'narration',
+    ]);
+});
+
+test('속마음 자동 구분은 대사와 독립적으로 끄고 켤 수 있다', () => {
+    const text = '앞. \'생각.\' "말." 뒤.';
+    const withoutThought = planSupertonicSpeech(text, { thoughtEnabled: false });
+    assert.deepEqual(withoutThought.map(part => [part.text, part.speed]), [['앞. 생각.', 1], ['말.', 1.05], ['뒤.', 1]]);
+    const withoutDialogue = planSupertonicSpeech(text, { dialogueEnabled: false });
+    assert.deepEqual(withoutDialogue.map(part => [part.text, part.speed]), [['앞.', 1], ['생각.', 0.9], ['말. 뒤.', 1]]);
+    const disabled = planSupertonicSpeech(text, { dialogueEnabled: false, thoughtEnabled: false });
+    assert.equal(disabled.length, 1);
+    assert.equal(disabled[0].text, '앞. 생각. 말. 뒤.');
+    assert.equal(disabled[0].pauseAfter, undefined);
+});
+
+test('영문 축약형 소유격은 보존하고 중첩 인용은 바깥쪽 역할을 따른다', () => {
+    for (const text of ["Don't touch John's book. James' room is here.", 'Don’t touch John’s book. James’ room is here.']) {
+        const parsed = splitSupertonicDialogue(text);
+        assert.deepEqual(parsed.quotes, []);
+        assert.equal(parsed.segments.length, 1);
+        assert.equal(parsed.segments[0].role, 'narration');
+        assert.equal(planSupertonicSpeech(text)[0].text, text);
+    }
+    const thought = planSupertonicSpeech("'I don't know.'");
+    assert.equal(thought[0].text, "I don't know.");
+    assert.equal(thought[0].speed, 0.9);
+    const dialogue = planSupertonicSpeech('“그가 \'괜찮아\'라고 했어.”');
+    assert.equal(dialogue.length, 1);
+    assert.equal(dialogue[0].speed, 1.05);
+    const nested = planSupertonicSpeech('‘왜 “괜찮아”라고 했을까.’');
+    assert.equal(nested.length, 1);
+    assert.equal(nested[0].speed, 0.9);
+    assert.equal(nested[0].text, '왜 괜찮아라고 했을까.');
+    for (const apostrophe of ["'", '’']) {
+        for (let padding = 0; padding < 20; padding += 1) {
+            const text = `${'x'.repeat(padding)}don${apostrophe}t${'b'.repeat(20)}`;
+            const plan = splitSupertonicRequests(text, 16).flatMap(request => planSupertonicSpeech(request));
+            assert.equal(plan.map(part => part.text).join(''), text);
+            assert.ok(plan.every(part => part.speed === 1));
+        }
+    }
+});
+
+test('페이지와 긴 합성 요청을 넘겨도 속마음 역할과 원문을 유지한다', () => {
+    const pages = prepareSupertonicPages(["앞. '왜 “그", '말”을 했을까. ', "모르겠네.' 뒤."]);
+    assert.deepEqual(pages, ['앞. ‘왜 그’', '‘말을 했을까. ’', '‘모르겠네.’ 뒤.']);
+    const profile = { thought: { voice: 'F5' } };
+    assert.ok(planSupertonicSpeech(pages[1], profile).every(part => part.voice === 'F5'));
+    assert.deepEqual(planSupertonicSpeech(pages[2], profile).map(part => part.voice), ['F5', 'M1']);
+    const body = '긴 생각이 계속 이어졌다. '.repeat(200);
+    const requests = splitSupertonicRequests(`앞. ‘${body}’ 뒤.`, 90);
+    assert.ok(requests.every(request => request.length <= 90));
+    const plan = requests.flatMap(request => planSupertonicSpeech(request, profile));
+    assert.ok(plan.slice(1, -1).every(part => part.voice === 'F5'));
+    assert.equal(plan.map(part => part.text).join('').replace(/\s/g, ''), `앞.${body}뒤.`.replace(/\s/g, ''));
+    assert.equal(plan.filter(part => part.pauseAfter).length, 1);
+    assert.equal(plan.at(-2).pauseAfter, 0.4);
+    const backtickPages = prepareSupertonicPages(['앞. `왜 “그', '말”을 했을까. ', '모르겠네.` 뒤.']);
+    assert.deepEqual(backtickPages, pages);
+    assert.deepEqual(splitSupertonicRequests('앞. `' + body + '` 뒤.', 90), requests);
 });
 
 test('연속된 대사는 같은 음성이라도 각각 합성하고 대사 끝에 쉼을 남긴다', () => {
@@ -192,4 +284,8 @@ test('음성 스타일은 정확한 텐서 크기와 유한한 숫자만 허용�
     assert.equal(supertonicReadingCacheKey(reading).includes('style_ttl'), false);
     const changed = { ...reading, narration: { ...reading.narration, customStyle: { ...reading.narration.customStyle, id: 'second' } } };
     assert.notEqual(supertonicReadingCacheKey(reading), supertonicReadingCacheKey(changed));
+    const thought = normalizeSupertonicReading({ thought: { customStyle: { id: 'thought', name: 'Thought', data } } });
+    assert.equal(planSupertonicSpeech("'생각.'", thought)[0].customStyle.id, 'thought');
+    assert.equal(supertonicReadingCacheKey(thought).includes('style_ttl'), false);
+    assert.notEqual(supertonicReadingCacheKey(thought), supertonicReadingCacheKey({ ...thought, thoughtEnabled: false }));
 });

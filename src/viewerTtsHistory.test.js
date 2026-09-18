@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createViewerTtsRequests } from './viewerTtsRequests.js';
-import { normalizeSupertonicReading, prepareSupertonicPages, splitSupertonicRequests, supertonicReadingCacheKey } from '../electron/supertonicReading.js';
+import { normalizeSupertonicReading, planSupertonicSpeech, prepareSupertonicPages, splitSupertonicRequests, supertonicReadingCacheKey } from '../electron/supertonicReading.js';
 
 const source = readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
 
@@ -261,6 +261,7 @@ test('Supertonic 세부 설정 변경은 완성 캐시를 비우고 새 옵션�
     assert.match(h.calls[0].text, /“안녕하세요!”/);
     for (const patch of [
         { dialogue: { voice: 'F2', speed: 1.2, pause: 0.1 } },
+        { thought: { voice: 'F4', speed: 0.85, pause: 0.5 } }, { thoughtEnabled: false },
         { dialogueEnabled: false }, { totalStep: 12 }, { effectsMode: 'skip' },
         { effectsVolume: 0.3 }, { effectsMaxSeconds: 1 }, { effectsSoften: false },
     ]) {
@@ -269,6 +270,27 @@ test('Supertonic 세부 설정 변경은 완성 캐시를 비우고 새 옵션�
         await h.load(window.current);
         assert.deepEqual(h.calls.at(-1).reading, normalizeSupertonicReading(patch));
     }
+});
+
+test('속마음 따옴표는 정규화와 페이지 요청에서 유지되고 대사와 캐시가 구분된다', async () => {
+    const h = harness(undefined, 'supertonic');
+    const thought = windowAt(0, ["'혼자 생각했다.'"]);
+    h.render(thought);
+    const old = await h.load(thought.current);
+    assert.equal(h.calls[0].text, '‘혼자 생각했다.’');
+    assert.equal(planSupertonicSpeech(h.calls[0].text, h.calls[0].reading)[0].speed, 0.9);
+    for (const text of ['‘혼자 생각했다.’', '`혼자 생각했다.`']) {
+        const equivalent = windowAt(0, [text]);
+        h.render(equivalent);
+        const cached = await h.load(equivalent.current);
+        assert.equal(cached.cacheKey, old.cacheKey);
+        assert.equal(h.calls.length, 1);
+    }
+    const dialogue = windowAt(0, ['"혼자 생각했다."']);
+    h.render(dialogue);
+    const current = await h.load(dialogue.current);
+    assert.notEqual(old.cacheKey, current.cacheKey);
+    assert.equal(planSupertonicSpeech(h.calls[1].text, h.calls[1].reading)[0].speed, 1.05);
 });
 
 test('따옴표 위치가 바뀌면 같은 글자라도 Supertonic 음성을 다시 생성한다', async () => {

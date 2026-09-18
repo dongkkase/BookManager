@@ -16,12 +16,14 @@ test('macOS POSIX 경로와 이모지를 보존한다', () => {
     );
 });
 
-test('조합형 유니코드 경로를 NFC로 통일한다', () => {
+test('파일 시스템 접근용 경로는 플랫폼에 관계없이 원래 Unicode 형식을 보존한다', () => {
     const decomposed = `/Users/test/${'한글'.normalize('NFD')}/本.cbz`;
-    assert.equal(
-        normalizeNativePath(decomposed, 'darwin'),
-        '/Users/test/한글/本.cbz',
-    );
+    for (const platform of ['darwin', 'linux']) {
+        assert.equal(normalizeNativePath(decomposed, platform), decomposed);
+        assert.equal(normalizeNativePath(decomposed.normalize('NFC'), platform), decomposed.normalize('NFC'));
+    }
+    const windowsPath = `Z:\\${'한글'.normalize('NFD')}\\本.cbz`;
+    assert.equal(normalizeNativePath(windowsPath, 'win32'), windowsPath);
 });
 
 test('UNC NAS 경로의 서버와 공유 이름을 보존한다', () => {

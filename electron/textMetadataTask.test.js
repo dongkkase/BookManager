@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
+import { findBinaryPath } from './binaryPolicy.js';
+import { encodeTextCover } from './textCoverEncoder.js';
 import { applyTxtSeriesCover, shouldAutoUseTxtSearchCover } from '../src/txtMetadataPolicy.js';
 import {
     analyzeMetadataInputs,
@@ -289,4 +291,68 @@ test('TXT save rejects a source changed after analysis while other batch items s
     const analyzed = await analyzeMetadataInputs([source, second], { dbPath });
     assert.notEqual(analyzed.items.find(item => item.filepath === source).metadata.Title, '잘못 연결되면 안 됨');
     assert.equal(analyzed.items.find(item => item.filepath === second).metadata.Title, '정상 저장');
+});
+
+test('TXT metadata saves and reloads a WebP cover and reuses its bytes across series volumes', async t => {
+    const cwebpExe = findBinaryPath('cwebp');
+    if (!cwebpExe) return t.skip('cwebp executable is not available');
+    const { root, dbPath, source, cover } = fixture(t);
+    const originalText = fs.readFileSync(source);
+    const originalImage = fs.readFileSync(new URL('../src/images/app-1024.png', import.meta.url));
+    fs.writeFileSync(cover, originalImage);
+    const options = { dbPath, textCoverEncoder: buffer => encodeTextCover(buffer, { cwebpExe }) };
+    const saved = await saveMetadataItems([{
+        filepath: source,
+        metadata: { Title: 'WebP 표지' },
+        txtCoverChange: { type: 'file', filePath: cover },
+    }], options);
+    assert.deepEqual(saved.stats.error, []);
+    const coverPath = saved.textMetadataUpdates[0].textCoverPath;
+    assert.equal(path.extname(coverPath), '.webp');
+    const encoded = fs.readFileSync(coverPath);
+    const dataUrl = `data:image/webp;base64,${encoded.toString('base64')}`;
+    assert.equal(await loadMetadataCover(source, { dbPath }), dataUrl);
+    const reopened = (await analyzeMetadataInputs([source], { dbPath })).items[0];
+    assert.equal(reopened.coverDataUrl, dataUrl);
+    assert.deepEqual(fs.readFileSync(source), originalText);
+    assert.deepEqual(fs.readFileSync(cover), originalImage);
+
+    const second = path.join(root, 'second.txt');
+    fs.writeFileSync(second, '둘째 권 본문');
+    const reused = await saveMetadataItems([{
+        filepath: second,
+        metadata: { Title: '둘째 권' },
+        txtCoverChange: { type: 'file', filePath: coverPath },
+    }], options);
+    assert.deepEqual(reused.stats.error, []);
+    assert.deepEqual(fs.readFileSync(reused.textMetadataUpdates[0].textCoverPath), encoded);
+});
+
+test('TXT WebP conversion failures preserve saved metadata and cover files', async t => {
+    const { dbPath, source, cover } = fixture(t);
+    const saved = await saveMetadataItems([{
+        filepath: source,
+        metadata: { Title: '저장된 제목' },
+        txtCoverChange: { type: 'file', filePath: cover },
+    }], { dbPath });
+    const coverPath = saved.textMetadataUpdates[0].textCoverPath;
+    for (const textCoverEncoder of [
+        buffer => encodeTextCover(buffer),
+        async () => PNG,
+        async () => { throw new Error('conversion failed'); },
+    ]) {
+        const failed = await saveMetadataItems([{
+            filepath: source,
+            metadata: { Title: '실패한 제목' },
+            txtCoverChange: { type: 'file', filePath: cover },
+        }], { dbPath, textCoverEncoder });
+        assert.equal(failed.stats.error.length, 1);
+        assert.deepEqual(failed.stats.successPaths, []);
+        assert.deepEqual(failed.textMetadataUpdates, []);
+        const reopened = (await analyzeMetadataInputs([source], { dbPath })).items[0];
+        assert.equal(reopened.metadata.Title, '저장된 제목');
+        assert.equal(reopened.textCoverPath, coverPath);
+        assert.deepEqual(fs.readFileSync(coverPath), PNG);
+        assert.deepEqual(fs.readdirSync(path.dirname(coverPath)), [path.basename(coverPath)]);
+    }
 });

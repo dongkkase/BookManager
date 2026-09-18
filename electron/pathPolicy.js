@@ -1,11 +1,7 @@
 import path from 'path';
 
-function normalizeUnicode(value) {
-    return String(value || '').replace(/\0/g, '').normalize('NFC');
-}
-
 export function normalizeNativePath(filePath, platform = process.platform) {
-    const value = normalizeUnicode(filePath);
+    const value = String(filePath || '').replace(/\0/g, '');
     if (!value) return '';
 
     const pathApi = platform === 'win32' ? path.win32 : path.posix;

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { restoreFolderConfigPaths } from './folderConfigPaths.js';
 import {
   migrateLegacyAppDataDir,
   resolveConfigPath,
@@ -207,6 +208,8 @@ export class ConfigManager {
     try {
       fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
       this.config = this.loadConfig();
+        const restored = await restoreFolderConfigPaths(this.config, { platform: this.platform });
+        if (restored !== this.config) this.saveConfig(restored);
     } catch (error) {
       console.error('ConfigManager 초기화 실패:', error);
       this.config = this.getDefaultConfig();

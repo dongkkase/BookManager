@@ -1136,12 +1136,16 @@ body,
 
 .viewer-supertonic-profiles {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     margin-top: 10px;
 }
 
 .viewer-supertonic-profiles fieldset {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 8px;
+    align-items: start;
     min-width: 0;
     margin: 0;
     padding: 8px;
@@ -1151,6 +1155,10 @@ body,
 
 .viewer-supertonic-profiles fieldset:disabled {
     opacity: 0.55;
+}
+
+.viewer-supertonic-profiles fieldset > .viewer-supertonic-advanced {
+    grid-column: 1 / -1;
 }
 
 .viewer-supertonic-profiles legend {

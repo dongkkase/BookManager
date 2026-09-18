@@ -67,6 +67,8 @@ test('TTS 텍스트는 괄호 안의 내용과 특수문자를 제거한다', ()
         normalizeTtsTextForTest('「대화」와 《책 제목》'),
         '대화 와 책 제목',
     );
+    assert.equal(normalizeTtsTextForTest('‘속마음’ "대사" don\'t', true), '‘속마음’ "대사" don\'t');
+    assert.equal(normalizeTtsTextForTest('`속마음` “대사”', true), '`속마음` “대사”');
 });
 
 test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이다', () => {
