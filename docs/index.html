@@ -26,6 +26,7 @@
     {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
+        "@id": "https://dongkkase.github.io/BookManager/#software",
         "name": "BookManager",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows, macOS",
@@ -34,6 +35,14 @@
         "url": "https://dongkkase.github.io/BookManager/",
         "downloadUrl": "https://github.com/dongkkase/BookManager/releases/latest",
         "codeRepository": "https://github.com/dongkkase/BookManager",
+        "sameAs": ["https://github.com/dongkkase/BookManager"],
+        "isAccessibleForFree": true,
+        "offers": {
+            "@type": "Offer",
+            "price": 0,
+            "priceCurrency": "KRW",
+            "url": "https://github.com/dongkkase/BookManager/releases/latest"
+        },
         "inLanguage": ["ko", "en", "ja"]
     }
     </script>
@@ -693,6 +702,7 @@
     <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
         <a class="site-top-link" href="./" aria-current="page">BookManager</a>
         <a class="site-top-link" href="#features">주요 기능</a>
+        <a class="site-top-link" href="#guides">사용 가이드</a>
         <a class="site-top-link" href="#start">시작하기</a>
         <a class="site-top-link" href="readive/">Readive</a>
     </nav>
@@ -741,6 +751,25 @@
                 <article class="feature">
                     <h3>정리한 자리에서 바로 감상</h3>
                     <p>만화와 전자책을 읽고 오디오북을 들으세요. 모바일에서 볼 책은 Readive로 전송할 수 있습니다.</p>
+                </article>
+            </div>
+        </section>
+
+        <section id="guides" aria-labelledby="guides-title">
+            <h2 id="guides-title">필요한 작업부터 따라 해보세요</h2>
+            <p class="section-lead">합본 나누기, 책 정보 편집, NAS 연결을 단계별로 안내합니다. 지원 형식과 작업 전후 예시를 확인하고 내 라이브러리에 적용하세요.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3><a href="guides/split-comic-archives.html">만화책 합본 ZIP을 권별 CBZ로 나누기</a></h3>
+                    <p>압축 파일 속 권별 폴더를 분석하고, 출력 형식과 저장 위치를 확인해 여러 권으로 정리합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3><a href="guides/edit-comic-metadata.html">ComicInfo.xml 메타데이터 일괄 편집</a></h3>
+                    <p>제목·작가·출판사 정보를 검색해 같은 시리즈에 적용하고, 파일별 저장 범위와 표지 편집 방법을 알아봅니다.</p>
+                </article>
+                <article class="feature">
+                    <h3><a href="guides/nas-library.html">NAS 책을 등록하고 모바일에서 이용하기</a></h3>
+                    <p>NAS 폴더를 라이브러리로 등록하고, OPDS·WebDAV 또는 Readive로 다른 기기에서 이용합니다.</p>
                 </article>
             </div>
         </section>
@@ -1025,6 +1054,7 @@
         <nav class="footer-links" aria-label="프로젝트 및 도움말">
             <a href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
             <a href="https://github.com/dongkkase/BookManager/releases/latest">릴리즈 노트</a>
+            <a href="#guides">사용 가이드</a>
             <a href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
             <a href="https://discord.gg/DRVUbPewaV" target="_blank" rel="noopener noreferrer">디스코드 커뮤니티</a>
             <a href="readive/">Readive</a>

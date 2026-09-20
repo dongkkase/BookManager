@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>만화책 합본 ZIP을 권별 CBZ로 나누는 방법 | BookManager</title>
+    <meta name="description" content="BookManager에서 만화책 합본 ZIP을 권별 CBZ로 나누는 방법을 안내합니다. 출력 형식, 원본 백업, 결과 파일명과 저장 위치를 확인하고 압축 파일 구조를 정리하세요.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/guides/split-comic-archives.html">
+    <meta property="og:type" content="article">
+    <meta property="og:locale" content="ko_KR">
+    <meta property="og:site_name" content="BookManager">
+    <meta property="og:title" content="만화책 합본 ZIP을 권별 CBZ로 나누는 방법 | BookManager">
+    <meta property="og:description" content="BookManager에서 만화책 합본 ZIP을 권별 CBZ로 나누는 방법을 안내합니다. 출력 형식, 원본 백업, 결과 파일명과 저장 위치를 확인하고 압축 파일 구조를 정리하세요.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/guides/split-comic-archives.html">
+    <meta property="og:image" content="https://dongkkase.github.io/BookManager/app.png">
+    <meta property="og:image:alt" content="BookManager 앱 아이콘">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="만화책 합본 ZIP을 권별 CBZ로 나누는 방법 | BookManager">
+    <meta name="twitter:description" content="BookManager에서 만화책 합본 ZIP을 권별 CBZ로 나누는 방법을 안내합니다. 출력 형식, 원본 백업, 결과 파일명과 저장 위치를 확인하고 압축 파일 구조를 정리하세요.">
+    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/app.png">
+    <link rel="icon" type="image/png" href="../app.png">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "TechArticle",
+                "@id": "https://dongkkase.github.io/BookManager/guides/split-comic-archives.html#article",
+                "headline": "만화책 합본 ZIP을 권별 CBZ로 나누는 방법",
+                "description": "BookManager에서 만화책 합본 ZIP을 권별 CBZ로 나누는 방법을 안내합니다. 출력 형식, 원본 백업, 결과 파일명과 저장 위치를 확인하고 압축 파일 구조를 정리하세요.",
+                "url": "https://dongkkase.github.io/BookManager/guides/split-comic-archives.html",
+                "mainEntityOfPage": "https://dongkkase.github.io/BookManager/guides/split-comic-archives.html",
+                "inLanguage": "ko",
+                "dateModified": "2026-09-21",
+                "about": {
+                    "@id": "https://dongkkase.github.io/BookManager/#software"
+                }
+            },
+            {
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "BookManager",
+                        "item": "https://dongkkase.github.io/BookManager/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "만화책 합본 ZIP을 권별 CBZ로 나누는 방법",
+                        "item": "https://dongkkase.github.io/BookManager/guides/split-comic-archives.html"
+                    }
+                ]
+            }
+        ]
+    }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101214;
+            --panel: #1a1d20;
+            --text: #eef3f7;
+            --muted: #aeb8c2;
+            --line: #333941;
+            --accent: #77bfee;
+            --green: #55c28d;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+            line-height: 1.8;
+            word-break: keep-all;
+            overflow-wrap: anywhere;
+        }
+        a {
+            color: var(--accent);
+            text-underline-offset: 0.2em;
+        }
+        a:hover {
+            color: #ffffff;
+        }
+        a:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 4px;
+        }
+        .skip-link {
+            position: absolute;
+            top: -100px;
+            left: 16px;
+            z-index: 2;
+            padding: 10px 16px;
+            background: var(--panel);
+        }
+        .skip-link:focus {
+            top: 12px;
+        }
+        .site-header, main, footer {
+            width: min(1120px, calc(100% - 48px));
+            margin-inline: auto;
+        }
+        .site-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding-block: 20px;
+            border-bottom: 1px solid var(--line);
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text);
+            font-weight: 750;
+            text-decoration: none;
+        }
+        .site-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            font-size: 0.92rem;
+        }
+        .intro {
+            max-width: 880px;
+            padding-block: 48px 40px;
+        }
+        .eyebrow {
+            margin: 0 0 12px;
+            color: var(--green);
+            font-size: 0.88rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+        }
+        h1 {
+            margin: 0 0 20px;
+            font-size: clamp(1.9rem, 4.4vw, 3.1rem);
+            line-height: 1.3;
+            letter-spacing: -0.035em;
+            text-wrap: balance;
+        }
+        .lead {
+            margin: 0;
+            color: var(--muted);
+            font-size: 1.12rem;
+        }
+        .updated, figcaption {
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        .guide-layout {
+            display: grid;
+            grid-template-columns: 210px minmax(0, 1fr);
+            align-items: start;
+            gap: 56px;
+            padding-bottom: 56px;
+        }
+        .toc {
+            position: sticky;
+            top: 24px;
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            font-size: 0.92rem;
+        }
+        .toc p {
+            margin: 0 0 12px;
+            font-weight: 700;
+        }
+        .toc ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .toc li + li {
+            margin-top: 10px;
+        }
+        section {
+            margin-bottom: 40px;
+            scroll-margin-top: 24px;
+        }
+        h2 {
+            margin: 0 0 16px;
+            font-size: 1.55rem;
+            line-height: 1.45;
+            letter-spacing: -0.02em;
+        }
+        h3 {
+            margin: 24px 0 10px;
+            font-size: 1.1rem;
+        }
+        p {
+            margin: 0 0 16px;
+        }
+        ol, ul {
+            padding-left: 24px;
+        }
+        li + li {
+            margin-top: 10px;
+        }
+        .note, .download-panel {
+            padding: 20px 24px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+        .note {
+            border-left: 3px solid var(--green);
+        }
+        .note p:last-child, .download-panel p:last-child {
+            margin-bottom: 0;
+        }
+        .table-wrap {
+            overflow-x: auto;
+            margin-block: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        caption {
+            margin-bottom: 10px;
+            text-align: left;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        th, td {
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: var(--panel);
+        }
+        th:first-child {
+            width: 30%;
+        }
+        pre {
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            white-space: pre-wrap;
+            line-height: 1.7;
+            font-size: 0.9rem;
+        }
+        code {
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        figure {
+            margin: 28px 0;
+        }
+        figure img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        figcaption {
+            margin-top: 10px;
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 8px 18px;
+            border: 1px solid #4aa3df;
+            border-radius: 6px;
+            background: #1f7dbc;
+            color: #ffffff;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .button:hover {
+            background: #27516d;
+        }
+        footer {
+            padding-block: 24px 36px;
+            border-top: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        @media (max-width: 780px) {
+            .site-header, main, footer {
+                width: calc(100% - 32px);
+            }
+            .intro {
+                padding-block: 32px;
+            }
+            .guide-layout {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 32px;
+            }
+            .toc {
+                position: static;
+            }
+            th, td {
+                padding: 10px;
+            }
+            .note, .download-panel {
+                padding: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#content">본문으로 바로가기</a>
+    <header class="site-header">
+        <a class="brand" href="../"><img src="../app.png" alt="" width="28" height="28">BookManager</a>
+        <nav class="site-nav" aria-label="프로젝트 및 도움말">
+            <a href="../#guides">사용 가이드</a>
+            <a href="https://github.com/dongkkase/BookManager/wiki">전체 설명서</a>
+            <a href="https://github.com/dongkkase/BookManager/releases/latest">다운로드</a>
+        </nav>
+    </header>
+    <main id="content">
+        <header class="intro">
+            <p class="eyebrow">BOOKMANAGER · 사용 가이드</p>
+            <h1>만화책 합본 ZIP을 권별 CBZ로 나누는 방법</h1>
+            <p class="lead">BookManager의 ‘압축 파일 구조 정리’는 합본 안의 권별 폴더나 압축 파일을 분석해 각각의 책 파일로 만듭니다. 변환 포맷을 CBZ로 설정하면 권별 CBZ로 정리할 수 있습니다.</p>
+            <p class="updated">최종 수정 <time datetime="2026-09-21">2026년 9월 21일</time> · Windows / macOS</p>
+        </header>
+        <div class="guide-layout">
+            <nav class="toc" aria-label="이 가이드의 목차">
+                <p>이 가이드에서</p>
+                <ol>
+                    <li><a href="#prepare">지원 파일과 준비</a></li>
+                    <li><a href="#example">작업 전후 예시</a></li>
+                    <li><a href="#steps">권별로 나누는 순서</a></li>
+                    <li><a href="#check">결과 확인과 제한</a></li>
+                </ol>
+            </nav>
+            <article aria-label="합본 ZIP 나누기 상세 안내">
+                <section id="prepare">
+                    <h2>지원 파일과 준비</h2>
+                    <p>Windows 또는 macOS에서 BookManager를 실행합니다. EPUB·PDF의 페이지를 나누는 기능이 아니라, 이미지가 들어 있는 만화책 압축 파일을 정리하는 기능입니다.</p>
+                    <div class="table-wrap">
+                        <table>
+                            <caption>이 가이드에서 사용하는 입력과 출력</caption>
+                            <thead><tr><th scope="col">항목</th><th scope="col">지원 범위</th></tr></thead>
+                            <tbody>
+                                <tr><th scope="row">입력 파일</th><td>ZIP, CBZ, RAR, CBR, 7Z</td></tr>
+                                <tr><th scope="row">권 구분</th><td>압축 안의 권별 폴더 또는 권별 ZIP·CBZ 등 분석된 묶음</td></tr>
+                                <tr><th scope="row">출력 파일</th><td>환경 설정의 ‘변환 포맷’을 CBZ로 지정한 권별 파일</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="note">
+                        <p><strong>원본을 남기려면 먼저 백업을 켜세요.</strong> 환경 설정의 ‘원본 백업’을 켜면 원본 옆 <code>bak</code> 폴더에 백업합니다. 작업 성공 후 원본 압축 파일이 제거될 수 있으므로, 실행 전에 백업 설정과 결과 저장 위치를 확인하세요.</p>
+                    </div>
+                </section>
+                <section id="example">
+                    <h2>작업 전후 예시</h2>
+                    <p>다음은 권별 폴더가 들어 있는 합본을 나누는 예시입니다. 결과 파일명은 실행 전에 목록에서 확인하고 바꿀 수 있습니다.</p>
+                    <pre><code>작업 전: 예시 만화 합본.zip
+    예시 만화 01권/
+        001.jpg
+        002.jpg
+    예시 만화 02권/
+        001.jpg
+        002.jpg
+
+작업 후: 변환 포맷을 CBZ로 설정
+    예시 만화 01권.cbz
+    예시 만화 02권.cbz</code></pre>
+                    <p>한 압축 파일 안에 권별 ZIP이나 CBZ가 다시 들어 있는 경우에도 내부 압축 파일을 권별 항목으로 분석합니다. 이미 한 권만 들어 있다면 결과도 한 개가 될 수 있습니다.</p>
+                </section>
+                <section id="steps">
+                    <h2>권별로 나누는 순서</h2>
+                    <ol>
+                        <li><strong>출력 형식을 설정합니다.</strong> 환경 설정에서 ‘변환 포맷’을 ‘CBZ’로 선택합니다. ‘변경없음’ 상태에서는 결과가 CBZ로 만들어진다고 가정하지 마세요. 원본 백업도 함께 확인합니다.</li>
+                        <li><strong>파일을 추가합니다.</strong> ‘압축 파일 구조 정리’ 탭에서 ‘파일 추가’ 또는 ‘폴더 추가’를 누릅니다. 파일을 화면에 끌어다 놓을 수도 있습니다.</li>
+                        <li><strong>분석 결과를 펼칩니다.</strong> ‘작업 대상 및 구조’의 상위 행은 작품 그룹, 하위 행은 만들어질 권별 결과 파일입니다. 예상한 권 수와 파일명이 맞는지 확인합니다.</li>
+                        <li><strong>이름과 저장 위치를 정합니다.</strong> ‘완료 저장 경로’를 확인하고, ‘폴더명’과 ‘일괄’ 메뉴로 폴더·권수 표기를 정리합니다. 개별 결과 이름은 하위 행을 선택한 뒤 ‘이름 바꾸기’로 수정할 수 있습니다.</li>
+                        <li><strong>선택한 파일을 처리합니다.</strong> 작업할 원본의 체크 상태를 확인하고 ‘최적화 실행’을 누릅니다.</li>
+                        <li><strong>결과를 열어봅니다.</strong> 결과 로그와 저장 폴더를 확인하고, 생성된 CBZ를 내장 뷰어로 열어 페이지와 순서를 확인합니다.</li>
+                    </ol>
+                    <figure>
+                        <a href="../demo/demo1.png"><img src="../demo/demo1.png" alt="작품 그룹 아래 권별 결과 파일과 완료 저장 경로가 표시된 BookManager 압축 파일 구조 정리 화면" width="1530" height="1128" loading="lazy"></a>
+                        <figcaption>권별 결과와 저장 경로를 확인하는 화면입니다. 이미지를 누르면 크게 볼 수 있으며, 앱 버전에 따라 화면 구성은 다를 수 있습니다.</figcaption>
+                    </figure>
+                </section>
+                <section id="check">
+                    <h2>결과 확인과 제한</h2>
+                    <ul>
+                        <li><strong>‘항목수’는 페이지 수가 아닙니다.</strong> 분석된 권 또는 묶음 수입니다. 페이지 수는 결과를 뷰어로 열거나 메타데이터 관리에서 확인합니다.</li>
+                        <li><strong>이미지 내용으로 권 경계를 추측하지 않습니다.</strong> 권별 폴더 등 구분할 구조가 없다면, 원하는 권 단위로 나뉘었는지 분석 결과를 먼저 확인해야 합니다.</li>
+                        <li><strong>저장된 이름을 확인하세요.</strong> 파일명에 사용할 수 없는 문자는 정리되며, 기존 결과와 이름이 겹치면 번호가 붙을 수 있습니다.</li>
+                        <li><strong>다른 뷰어에서 읽을 수 있습니다.</strong> 정리한 CBZ는 해당 형식을 지원하는 Kavita, Komga, YACReader, Panels 등에서 활용할 수 있습니다.</li>
+                    </ul>
+                    <p>권별 정리가 끝났다면 <a href="edit-comic-metadata.html">ComicInfo.xml에 제목·작가·권수 정보를 채우는 방법</a>으로 이어가세요.</p>
+                </section>
+                <section aria-labelledby="next-title">
+                    <h2 id="next-title">함께 보면 좋은 가이드</h2>
+                    <ul>
+                        <li><a href="edit-comic-metadata.html">ComicInfo.xml로 만화책 메타데이터를 일괄 편집하는 방법</a></li>
+                        <li><a href="nas-library.html">NAS의 책을 등록하고 모바일에서 이용하는 방법</a></li>
+                    </ul>
+                    <p>세부 옵션과 단축키는 <a href="https://github.com/dongkkase/BookManager/wiki/압축-파일-구조-정리">Wiki의 전체 사용 설명</a>을 참고하세요.</p>
+                </section>
+                <section class="download-panel" aria-labelledby="download-title">
+                    <h2 id="download-title">BookManager로 시작하기</h2>
+                    <p>Windows와 macOS에서 사용할 수 있는 무료 오픈소스 앱입니다. 최신 릴리즈에서 운영체제에 맞는 파일을 내려받으세요.</p>
+                    <p><a class="button" href="https://github.com/dongkkase/BookManager/releases/latest">BookManager 다운로드</a></p>
+                </section>
+            </article>
+        </div>
+    </main>
+    <footer>
+        <p>BookManager · 내 파일로 만드는 나만의 서재 · MIT 오픈소스</p>
+        <a href="../#guides">모든 사용 가이드</a> · <a href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
+    </footer>
+</body>
+</html>
