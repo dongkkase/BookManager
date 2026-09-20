@@ -2054,6 +2054,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         };
     }, [resetCoverPreviewQueue, selectedFolderPath]);
 
+    useEffect(() => window.electronAPI?.onRatingsChanged?.(changes => {
+        const pathKey = value => String(value || '').replace(/\\/g, '/').normalize('NFC');
+        const ratings = new Map(changes.map(item => [pathKey(item.filePath), String(item.rating)]));
+        const updateRating = files => files.map(file => ratings.has(pathKey(file.full_path || file.path))
+            ? { ...file, rating: ratings.get(pathKey(file.full_path || file.path)) } : file);
+        setLibrarySearchResults(updateRating);
+        setFolderTagSearchResults(updateRating);
+        setRecentReadingFiles(updateRating);
+        updateCachedFiles(selectedFolderPath, scanOptions, changes.map(item => ({ path: item.filePath, rating: String(item.rating) })));
+    }), [selectedFolderPath, scanOptions, updateCachedFiles]);
+
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
     if (isCheckingMissing || preparingDuplicates) return;

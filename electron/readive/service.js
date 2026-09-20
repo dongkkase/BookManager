@@ -1,3 +1,4 @@
+import { exchangeRatings } from './ratings.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -54,7 +55,7 @@ async function readBody(request) {
 }
 
 export class ReadiveService {
-    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
+    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onRatingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
         this.store = new ReadiveStore(directory);
         this.getLibraryDb = getLibraryDb;
         this.getRegisteredLibraries = getRegisteredLibraries;
@@ -62,6 +63,7 @@ export class ReadiveService {
         this.interfaces = interfaces;
         this.now = now;
         this.onReadingChanged = onReadingChanged;
+        this.onRatingChanged = onRatingChanged;
         this.onLog = onLog;
         this.server = null;
         this.localInterface = null;
@@ -507,6 +509,19 @@ export class ReadiveService {
         if (!current || localAddress !== current.address || !isOnLink(remoteAddress, current)) throw fail('lan_only', 403);
     }
 
+    async recordRatingChange(filePath, previousStat) {
+        const stat = await fs.stat(filePath);
+        const identity = Object.fromEntries(['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs', 'birthtimeMs'].map(key => [key, stat[key]]));
+        await this.store.transact(state => {
+            for (const item of Object.values(state.items)) {
+                const before = item.ratingIdentity || item.identity;
+                if (item.sourcePath === filePath && before && Object.entries(before).every(([key, value]) => previousStat[key] === value)) {
+                    item.ratingIdentity = identity;
+                }
+            }
+        });
+    }
+
     async dispatch({ method, pathname, query = new URLSearchParams(), body = {}, token = '', remoteAddress, localAddress, signal }) {
         this.validateSource(remoteAddress, localAddress);
         await this.store.load();
@@ -654,6 +669,20 @@ export class ReadiveService {
             }, { shouldSave: result => result.persist });
             if (result.persist) this.lastSeenPersistedAt.set(result.presenceKey, result.now);
             return { json: { jobs: result.jobs } };
+        }
+        if (method === 'POST' && pathname === `${PREFIX}/ratings`) {
+            const result = await this.store.transact(async next => {
+                this.validateDevice(device);
+                if (signal?.aborted) throw fail('catalog_cancelled', 409);
+                return exchangeRatings(next, device, body, await this.getLibraryDb?.(), () => {
+                    this.validateDevice(device);
+                    if (signal?.aborted) throw fail('catalog_cancelled', 409);
+                });
+            }, { shouldSave: result => result.changed.length > 0 });
+            if (result.changed.length) {
+                try { this.onRatingChanged(result.changed); } catch { /* A closing window must not undo the saved rating. */ }
+            }
+            return { json: { records: result.records } };
         }
         if (method === 'POST' && pathname === `${PREFIX}/reading`) {
             const report = {};

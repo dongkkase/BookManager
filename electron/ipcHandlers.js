@@ -3639,6 +3639,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     ipcMain.handle('rating:save', async (_event, request) => {
         try {
             const result = await saveItemRating(request, {
+                onRatingSaved: (filePath, previousStat) => readiveService.recordRatingChange(filePath, previousStat),
                 dbPath: libraryDbPath(),
                 getSevenZExe: async () => await getBinPath('7za') || await getBinPath('7z'),
                 backup_on: configManager.getConfig()?.backup_on ?? false,

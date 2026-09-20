@@ -1012,10 +1012,16 @@ export class LibraryDB {
         });
     }
 
-    async setFileRating(filePath, rating, { storage = 'database' } = {}) {
+    async setFileRating(filePath, rating, { storage = 'database', expectedRating } = {}) {
         if (!Number.isInteger(rating) || rating < 1 || rating > 10) throw new Error('Rating must be an integer from 1 to 10.');
         return this.withLock(async () => {
             const normalizedPath = this.normalizeFilePath(filePath);
+            if (expectedRating !== undefined) {
+                const row = this.getConnection().prepare('SELECT rating FROM files WHERE path = ?').get(normalizedPath);
+                const value = Number(row?.rating);
+                const current = Number.isFinite(value) && value > 0 ? Math.min(10, Math.max(1, Math.round(value))) : null;
+                if (!row || current !== expectedRating && current !== rating) return false;
+            }
             this.getConnection().prepare(`
                 INSERT INTO files (path, ext, title, rating, rating_override)
                 VALUES (@path, @ext, @title, @rating, @override)
@@ -1027,6 +1033,7 @@ export class LibraryDB {
                 rating: String(rating),
                 override: storage === 'file' ? '' : String(rating),
             });
+            return true;
         });
     }
 

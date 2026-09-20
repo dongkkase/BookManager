@@ -28,6 +28,10 @@ export function registerReadiveIpc({ ipcMain, configManager, getLibraryDbPath, g
             }
             return libraryDb;
         },
+        onRatingChanged: changes => {
+            const window = getMainWindow?.();
+            if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('rating:changed', changes);
+        },
         onReadingChanged: onReadingChanged || (() => {
             const window = getMainWindow?.();
             if (window && !window.isDestroyed()) window.webContents.send('reading:changed', { source: 'readive' });

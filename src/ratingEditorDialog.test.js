@@ -124,3 +124,39 @@ test('rating entrypoints support book and audio files, excluding directories', (
     assert.deepEqual(Array.from({ length: 5 }, (_, index) => ratingStarFill(1, index)), [50, 0, 0, 0, 0]);
     assert.deepEqual(Array.from({ length: 5 }, (_, index) => ratingStarFill(10, index)), [100, 100, 100, 100, 100]);
 });
+
+test('Readive rating events update visible lists and folder cache without reloading covers', () => {
+    const source = fs.readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8');
+    const start = source.indexOf('    useEffect(() => window.electronAPI?.onRatingsChanged?');
+    const end = source.indexOf('\n  // 누락 권수 확인', start);
+    assert.ok(start >= 0 && end > start);
+    const changed = { full_path: '/books/평점.cbz', rating: '2', thumbnail: 'cached-cover' };
+    const untouched = { path: '/books/other.cbz', rating: '4' };
+    let listener;
+    let cleanup;
+    let unsubscribed = false;
+    const results = [];
+    const cached = [];
+    const update = callback => results.push(callback([changed, untouched]));
+    const context = {
+        useEffect: callback => { cleanup = callback(); },
+        window: { electronAPI: { onRatingsChanged: callback => { listener = callback; return () => { unsubscribed = true; }; } } },
+        setLibrarySearchResults: update,
+        setFolderTagSearchResults: update,
+        setRecentReadingFiles: update,
+        updateCachedFiles: (...args) => cached.push(args),
+        selectedFolderPath: '/books',
+        scanOptions: { includeSubfolders: true },
+    };
+    new Function(...Object.keys(context), source.slice(start, end))(...Object.values(context));
+    listener([{ filePath: changed.full_path.normalize('NFD'), rating: 9 }]);
+    assert.equal(results.length, 3);
+    for (const files of results) {
+        assert.equal(files[0].rating, '9');
+        assert.equal(files[0].thumbnail, 'cached-cover');
+        assert.equal(files[1], untouched);
+    }
+    assert.deepEqual(cached, [['/books', context.scanOptions, [{ path: changed.full_path.normalize('NFD'), rating: '9' }]]]);
+    cleanup();
+    assert.equal(unsubscribed, true);
+});

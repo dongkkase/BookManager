@@ -210,8 +210,10 @@ test('failed stats are retryable and a disposed in-flight scan cannot publish fo
 test('FolderTab resumes polling on activation, uses current busy state, and cleans up its listener', async () => {
     const source = readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8');
     const start = source.indexOf('    useEffect(() => {\n        watchedMtimeRef.current = null;');
-    const effect = source.slice(start, source.indexOf('  // 누락 권수 확인', start));
-    assert.ok(start >= 0);
+    const ending = '    }, [resetCoverPreviewQueue, selectedFolderPath]);';
+    const end = source.indexOf(ending, start);
+    assert.ok(start >= 0 && end > start);
+    const effect = source.slice(start, end + ending.length);
     let hidden = true;
     let calls = 0;
     let cleanup;

@@ -74,6 +74,8 @@ export async function saveItemRating(request, options = {}) {
             throw new Error('The file changed while saving. Please try again.');
         }
         await libraryDb.setFileRating(filePath, rating, { storage });
+        try { await options.onRatingSaved?.(filePath, originalStat); }
+        catch (error) { console.warn('[RatingEditor] Rating sync notification failed:', error.message); }
         return { success: true, filePath, rating, storage, fallbackReason, backupPath };
     } finally {
         try {

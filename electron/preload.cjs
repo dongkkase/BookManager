@@ -73,6 +73,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listRecentReading: (limit) => ipcRenderer.invoke('reading:listRecent', limit),
   removeRecentReading: (filePath) => ipcRenderer.invoke('reading:remove', filePath),
   clearRecentReading: () => ipcRenderer.invoke('reading:clear'),
+    onRatingsChanged: (callback) => {
+        const handler = (_, changes) => callback(changes);
+        ipcRenderer.on('rating:changed', handler);
+        return () => ipcRenderer.removeListener('rating:changed', handler);
+    },
   onRecentReadingChanged: (callback) => {
     const handler = (_, state) => callback(state);
     ipcRenderer.on('reading:changed', handler);
