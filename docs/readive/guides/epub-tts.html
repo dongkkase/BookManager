@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EPUB·TXT 읽기와 TTS 듣기 | Readive</title>
+    <meta name="description" content="Readive에서 EPUB·TXT의 글자 크기와 여백을 조절하고 TTS로 듣는 방법입니다. 기기 기본 음성, Premium Supertonic, 오디오북 재생과 이어듣기의 차이를 설명합니다.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법">
+    <meta property="og:description" content="Readive에서 EPUB·TXT의 글자 크기와 여백을 조절하고 TTS로 듣는 방법입니다. 기기 기본 음성, Premium Supertonic, 오디오북 재생과 이어듣기의 차이를 설명합니다.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html">
+    <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <meta property="og:image:alt" content="Readive 앱 아이콘">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법">
+    <meta name="twitter:description" content="Readive에서 EPUB·TXT의 글자 크기와 여백을 조절하고 TTS로 듣는 방법입니다. 기기 기본 음성, Premium Supertonic, 오디오북 재생과 이어듣기의 차이를 설명합니다.">
+    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <link rel="icon" type="image/x-icon" href="../app.ico">
+    <link rel="icon" type="image/png" href="../app.png">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "TechArticle",
+                "@id": "https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html#article",
+                "headline": "Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법",
+                "description": "Readive에서 EPUB·TXT의 글자 크기와 여백을 조절하고 TTS로 듣는 방법입니다. 기기 기본 음성, Premium Supertonic, 오디오북 재생과 이어듣기의 차이를 설명합니다.",
+                "url": "https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html",
+                "mainEntityOfPage": "https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html",
+                "inLanguage": "ko",
+                "dateModified": "2026-09-21",
+                "about": {
+                    "@id": "https://dongkkase.github.io/BookManager/readive/#software"
+                }
+            },
+            {
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "BookManager",
+                        "item": "https://dongkkase.github.io/BookManager/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Readive",
+                        "item": "https://dongkkase.github.io/BookManager/readive/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": "Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법",
+                        "item": "https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html"
+                    }
+                ]
+            }
+        ]
+    }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101214;
+            --panel: #1a1d20;
+            --text: #eef3f7;
+            --muted: #aeb8c2;
+            --line: #333941;
+            --accent: #77bfee;
+            --green: #55c28d;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+            line-height: 1.8;
+            word-break: keep-all;
+            overflow-wrap: anywhere;
+        }
+        a {
+            color: var(--accent);
+            text-underline-offset: 0.2em;
+        }
+        a:hover {
+            color: #ffffff;
+        }
+        a:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 4px;
+        }
+        .skip-link {
+            position: absolute;
+            top: -100px;
+            left: 16px;
+            z-index: 2;
+            padding: 10px 16px;
+            background: var(--panel);
+        }
+        .skip-link:focus {
+            top: 12px;
+        }
+        .site-header, main, footer {
+            width: min(1120px, calc(100% - 48px));
+            margin-inline: auto;
+        }
+        .site-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding-block: 20px;
+            border-bottom: 1px solid var(--line);
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text);
+            font-weight: 750;
+            text-decoration: none;
+        }
+        .site-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            font-size: 0.92rem;
+        }
+        .intro {
+            max-width: 880px;
+            padding-block: 48px 40px;
+        }
+        .eyebrow {
+            margin: 0 0 12px;
+            color: var(--green);
+            font-size: 0.88rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+        }
+        h1 {
+            margin: 0 0 20px;
+            font-size: clamp(1.9rem, 4.4vw, 3.1rem);
+            line-height: 1.3;
+            letter-spacing: -0.035em;
+            text-wrap: balance;
+        }
+        .lead {
+            margin: 0;
+            color: var(--muted);
+            font-size: 1.12rem;
+        }
+        .updated, figcaption {
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        .guide-layout {
+            display: grid;
+            grid-template-columns: 210px minmax(0, 1fr);
+            align-items: start;
+            gap: 56px;
+            padding-bottom: 56px;
+        }
+        .toc {
+            position: sticky;
+            top: 24px;
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            font-size: 0.92rem;
+        }
+        .toc p {
+            margin: 0 0 12px;
+            font-weight: 700;
+        }
+        .toc ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .toc li + li {
+            margin-top: 10px;
+        }
+        section {
+            margin-bottom: 40px;
+            scroll-margin-top: 24px;
+        }
+        h2 {
+            margin: 0 0 16px;
+            font-size: 1.55rem;
+            line-height: 1.45;
+            letter-spacing: -0.02em;
+        }
+        h3 {
+            margin: 24px 0 10px;
+            font-size: 1.1rem;
+        }
+        p {
+            margin: 0 0 16px;
+        }
+        ol, ul {
+            padding-left: 24px;
+        }
+        li + li {
+            margin-top: 10px;
+        }
+        .note, .download-panel {
+            padding: 20px 24px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+        .note {
+            border-left: 3px solid var(--green);
+        }
+        .note p:last-child, .download-panel p:last-child {
+            margin-bottom: 0;
+        }
+        .table-wrap {
+            overflow-x: auto;
+            margin-block: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        caption {
+            margin-bottom: 10px;
+            text-align: left;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        th, td {
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: var(--panel);
+        }
+        th:first-child {
+            width: 30%;
+        }
+        pre {
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            white-space: pre-wrap;
+            line-height: 1.7;
+            font-size: 0.9rem;
+        }
+        code {
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        figure {
+            margin: 28px 0;
+        }
+        figure img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        figcaption {
+            margin-top: 10px;
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 8px 18px;
+            border: 1px solid #4aa3df;
+            border-radius: 6px;
+            background: #1f7dbc;
+            color: #ffffff;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .button:hover {
+            background: #27516d;
+        }
+        footer {
+            padding-block: 24px 36px;
+            border-top: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        @media (max-width: 780px) {
+            .site-header, main, footer {
+                width: calc(100% - 32px);
+            }
+            .intro {
+                padding-block: 32px;
+            }
+            .guide-layout {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 32px;
+            }
+            .toc {
+                position: static;
+            }
+            th, td {
+                padding: 10px;
+            }
+            .note, .download-panel {
+                padding: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#content">본문으로 바로가기</a>
+    <header class="site-header">
+        <a class="brand" href="../"><img src="../app.png" alt="" width="28" height="28">Readive</a>
+        <nav class="site-nav" aria-label="프로젝트 및 도움말">
+            <a href="../#guides">사용 가이드</a>
+            <a href="../../">BookManager</a>
+            <a href="https://apps.apple.com/kr/app/readive/id6796676237">App Store 다운로드</a>
+        </nav>
+    </header>
+    <main id="content">
+        <header class="intro">
+            <p class="eyebrow">READIVE · 사용 가이드</p>
+            <h1>Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법</h1>
+            <p class="lead">EPUB·TXT는 글자와 여백을 조절해 읽거나, 본문을 음성으로 바꿔 들을 수 있습니다. 먼저 기본 읽기 화면과 기기 음성으로 시작하고, 필요한 경우 Premium의 추가 글꼴과 음성을 선택하세요.</p>
+            <p class="updated">최종 수정 <time datetime="2026-09-21">2026년 9월 21일</time> · iPhone / iPad</p>
+        </header>
+        <div class="guide-layout">
+            <nav class="toc" aria-label="이 가이드의 목차">
+                <p>이 가이드에서</p>
+                <ol>
+                    <li><a href="#prepare">책 준비와 화면 설정</a></li>
+                    <li><a href="#tts">기기 기본 음성으로 듣기</a></li>
+                    <li><a href="#premium">Premium에서 달라지는 점</a></li>
+                    <li><a href="#audiobook">오디오북 파일로 듣기</a></li>
+                    <li><a href="#resume">이어 읽기와 기록 확인</a></li>
+                </ol>
+            </nav>
+            <article aria-label="Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법">
+                <section id="prepare">
+                    <h2>책 준비와 화면 설정</h2>
+                    <ol>
+                        <li><strong>EPUB·TXT를 가져옵니다.</strong> 기기 파일이나 원격 저장소에서 책을 보관함으로 가져옵니다. 처음이라면 <a href="import-books.html">책 가져오기 가이드</a>를 참고하세요.</li>
+                        <li><strong>책을 열고 읽기 설정을 조절합니다.</strong> 글자 크기, 줄 간격, 여백과 배경을 읽기 편한 값으로 맞춥니다.</li>
+                        <li><strong>테마를 고릅니다.</strong> 라이트·다크·E-Ink 테마와 기본 글꼴은 기본 기능으로 사용할 수 있습니다.</li>
+                        <li><strong>다시 볼 부분을 남깁니다.</strong> 북마크와 문장 하이라이트를 사용하고, 필요한 문장은 본문 검색으로 찾습니다.</li>
+                    </ol>
+                    <figure>
+                        <a href="../04-text-reader-res.png"><img src="../04-text-reader-res.png" alt="Readive의 EPUB·TXT 리더에서 본문과 읽기 화면을 확인하는 모습" width="1376" height="768" loading="lazy"></a>
+                        <figcaption>EPUB·TXT는 글자와 여백을 조절해 읽을 수 있습니다. 이미지를 누르면 크게 볼 수 있으며, 앱 버전에 따라 화면 구성은 다를 수 있습니다.</figcaption>
+                    </figure>
+                </section>
+                <section id="tts">
+                    <h2>기기 기본 음성으로 듣기</h2>
+                    <p>TTS는 책의 글자를 음성으로 읽어주는 기능입니다. 이 가이드의 읽어주기 대상은 EPUB·TXT이며, 녹음된 오디오 파일을 재생하는 오디오북과 사용 방식이 다릅니다.</p>
+                    <ol>
+                        <li>Readive에서 듣고 싶은 EPUB·TXT를 엽니다.</li>
+                        <li>읽어주기 기능에서 기기의 기본 음성을 선택합니다.</li>
+                        <li>책의 언어에 맞는 목소리와 읽는 속도를 고릅니다.</li>
+                        <li>본문을 재생하고, 발음과 속도가 편한지 확인하며 조절합니다.</li>
+                    </ol>
+                    <p>기기 기본 음성 TTS는 기본 기능에 포함됩니다. 사용할 목소리가 보이지 않으면 기기의 음성 설정과 해당 언어의 음성 설치 상태를 확인하세요. 오프라인 사용 전에는 필요한 음성이 준비되어 있는지 실제로 재생해 확인합니다.</p>
+                </section>
+                <section id="premium">
+                    <h2>Premium에서 달라지는 점</h2>
+                    <div class="table-wrap">
+                        <table>
+                            <caption>읽기 화면과 TTS의 기본 기능·Premium 비교</caption>
+                            <thead><tr><th scope="col">기능</th><th scope="col">기본 기능</th><th scope="col">Premium 추가 기능</th></tr></thead>
+                            <tbody>
+                                <tr><th scope="row">글자·여백</th><td>글자 크기, 줄 간격과 여백 조절</td><td>기본 설정을 함께 사용</td></tr>
+                                <tr><th scope="row">테마·글꼴</th><td>라이트·다크·E-Ink 테마와 기본 글꼴</td><td>추가 테마·글꼴과 사용자 글꼴 가져오기</td></tr>
+                                <tr><th scope="row">읽어주기</th><td>기기 기본 음성 TTS</td><td>Supertonic 오프라인 음성 모델</td></tr>
+                                <tr><th scope="row">독서 통계</th><td>기본 독서 통계</td><td>누적·월간·연간 독서 인사이트</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h3>Supertonic으로 듣기</h3>
+                    <p>Premium에서 Supertonic 음성을 사용할 수 있습니다. 네트워크에 연결된 상태에서 음성 모델을 먼저 내려받고, 다운로드가 끝난 뒤 해당 음성을 선택해 재생합니다. 모델을 준비한 뒤에는 기기 안에서 오프라인으로 음성을 생성합니다.</p>
+                    <div class="note">
+                        <p><strong>기본 TTS부터 사용해 볼 수 있습니다.</strong> Premium은 선택 사항이며, 무료 버전에는 광고가 표시될 수 있습니다. 구독 상품과 가격은 앱의 Premium 화면 또는 <a href="https://apps.apple.com/kr/app/readive/id6796676237">App Store</a>에서 확인하세요.</p>
+                    </div>
+                </section>
+                <section id="audiobook">
+                    <h2>오디오북 파일로 듣기</h2>
+                    <p>이미 녹음된 MP3·M4A·M4B·FLAC 등의 파일이 있다면 오디오북으로 가져와 재생합니다. 본문을 음성으로 바꾸는 TTS와 달리 준비한 오디오 파일을 그대로 듣습니다.</p>
+                    <ul>
+                        <li>재생 속도와 앞뒤 이동 간격을 조절합니다.</li>
+                        <li>시간 북마크를 남겨 다시 듣고 싶은 부분으로 돌아옵니다.</li>
+                        <li>수면 타이머를 설정해 듣는 시간을 정합니다.</li>
+                        <li>화면을 잠그거나 다른 앱을 사용하는 동안에도 백그라운드로 재생합니다.</li>
+                    </ul>
+                    <p>기기에 저장한 오디오북은 오프라인으로 들을 수 있습니다. 실제 재생 가능 여부는 파일 구성과 운영체제에 따라 달라질 수 있습니다.</p>
+                    <figure>
+                        <a href="../05-audio-res.png"><img src="../05-audio-res.png" alt="Readive 오디오북 플레이어에서 재생 위치와 듣기 기능을 확인하는 화면" width="1376" height="768" loading="lazy"></a>
+                        <figcaption>오디오북은 재생 위치를 저장해 이어듣고, 시간 북마크와 수면 타이머를 사용할 수 있습니다.</figcaption>
+                    </figure>
+                </section>
+                <section id="resume">
+                    <h2>이어 읽기와 기록 확인</h2>
+                    <p>최근 읽던 책과 오디오북은 홈의 계속 읽기에서 다시 열 수 있습니다. 읽던 위치와 재생 위치, 북마크를 활용해 중단했던 곳으로 돌아오세요.</p>
+                    <p>같은 계정의 iPhone·iPad는 iCloud로 보관함 정보와 독서 기록을 동기화할 수 있습니다. 책 원본은 각 기기에 별도로 가져와야 합니다.</p>
+                    <p>PC와 함께 쓴다면 <a href="bookmanager-connection.html#sync">BookManager와 읽던 위치 연결하기</a>를 참고하세요. BookManager 연동으로 주고받는 정보는 읽은 위치와 읽기 상태이며, 북마크와 하이라이트는 포함되지 않습니다.</p>
+                </section>
+                <section aria-labelledby="next-title">
+                    <h2 id="next-title">함께 보면 좋은 가이드</h2>
+                    <ul>
+                        <li><a href="import-books.html">Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법</a></li>
+                        <li><a href="bookmanager-connection.html">Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법</a></li>
+                    </ul>
+                </section>
+                <section class="download-panel" aria-labelledby="download-title">
+                    <h2 id="download-title">Readive로 시작하기</h2>
+                    <p>iPhone·iPad에서 무료로 시작할 수 있으며 선택형 Premium 구독을 제공합니다. 책 파일은 직접 가져와 사용합니다.</p>
+                    <p><a class="button" href="https://apps.apple.com/kr/app/readive/id6796676237">App Store에서 Readive 다운로드</a></p>
+                </section>
+            </article>
+        </div>
+    </main>
+    <footer>
+        <p>Readive · 내 파일로 채우는 모바일 서재</p>
+        <a href="../#guides">모든 사용 가이드</a> · <a href="../">Readive 소개</a> · <a href="../../">BookManager 소개</a>
+    </footer>
+</body>
+</html>

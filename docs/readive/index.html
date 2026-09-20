@@ -18,6 +18,29 @@
     <meta name="twitter:description" content="내 파일로 채우는 모바일 서재. 만화·전자책·오디오북, 맞춤 읽기 화면, 오프라인 독서와 독서 기록을 한 앱에서.">
     <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "MobileApplication",
+        "@id": "https://dongkkase.github.io/BookManager/readive/#software",
+        "name": "Readive",
+        "alternateName": "리디브",
+        "url": "https://dongkkase.github.io/BookManager/readive/",
+        "description": "기기와 NAS·클라우드의 만화책, 전자책, 문서와 오디오북을 가져와 읽고 듣는 모바일 리더입니다. 기본 기능은 무료이며 선택형 Premium 구독을 제공합니다.",
+        "applicationCategory": "ReferenceApplication",
+        "operatingSystem": ["iOS", "iPadOS"],
+        "image": "https://dongkkase.github.io/BookManager/readive/app.png",
+        "downloadUrl": "https://apps.apple.com/kr/app/readive/id6796676237",
+        "sameAs": "https://apps.apple.com/kr/app/readive/id6796676237",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "KRW",
+            "description": "무료 다운로드 · 선택형 Premium 앱 내 구독",
+            "url": "https://apps.apple.com/kr/app/readive/id6796676237"
+        }
+    }
+    </script>
     <link rel="icon" type="image/x-icon" href="app.ico">
     <link rel="icon" type="image/png" sizes="32x32" href="app.png">
     <link rel="icon" type="image/png" sizes="16x16" href="app.png">
@@ -652,6 +675,7 @@
         <a class="site-top-link" href="../">BookManager</a>
         <a class="site-top-link" href="./" aria-current="page">Readive</a>
         <a class="site-top-link" href="#features">주요 기능</a>
+        <a class="site-top-link" href="#guides">사용 가이드</a>
         <a class="site-top-link" href="#download">다운로드</a>
     </nav>
 
@@ -699,6 +723,25 @@
                 <article class="feature">
                     <h3>잠깐 읽어도 이어지는 독서</h3>
                     <p>읽던 위치와 재생 위치를 저장하고, 북마크와 독서 기록으로 돌아오세요. 저장한 책은 인터넷 없이도 열 수 있습니다.</p>
+                </article>
+            </div>
+        </section>
+
+        <section id="guides" aria-labelledby="guides-title">
+            <h2 id="guides-title">책 가져오기부터 이어 읽기까지</h2>
+            <p class="section-lead">처음 사용하는 분을 위해 책을 넣고, 읽고 듣고, PC의 서재와 연결하는 순서를 정리했습니다.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3><a href="guides/import-books.html">기기·NAS의 책 가져오기</a></h3>
+                    <p>기기 파일, PC, NAS와 클라우드에서 책을 가져오고 오프라인으로 읽을 준비를 합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3><a href="guides/epub-tts.html">EPUB·TXT 읽고 듣기</a></h3>
+                    <p>글자와 여백을 조절하고 TTS로 본문을 듣는 방법, 기본 기능과 Premium의 차이를 살펴봅니다.</p>
+                </article>
+                <article class="feature">
+                    <h3><a href="guides/bookmanager-connection.html">BookManager와 연결하기</a></h3>
+                    <p>QR 코드로 PC와 연결해 책을 가져오고, 읽던 위치를 이어가는 방법을 안내합니다.</p>
                 </article>
             </div>
         </section>
@@ -852,6 +895,7 @@
             <p class="note">연동 중에는 PC의 BookManager와 모바일의 Readive가 실행 중이어야 합니다. Readive는 BookManager 없이도 기기 파일과 원격 저장소로 사용할 수 있습니다.</p>
             <div class="actions">
                 <a class="button" href="../">BookManager 알아보기</a>
+                <a class="button" href="guides/bookmanager-connection.html">연결 방법 보기</a>
             </div>
         </section>
 
@@ -942,6 +986,7 @@
         <span>Readive · 내 파일로 채우는 모바일 서재 · Developed by dongkkase</span>
         <nav class="footer-links" aria-label="프로젝트 및 도움말">
             <a href="../">BookManager</a>
+            <a href="#guides">사용 가이드</a>
             <a href="https://discord.gg/DRVUbPewaV" target="_blank" rel="noopener noreferrer">디스코드 커뮤니티</a>
             <a href="https://devmore.io/readive/legal/privacy.html">개인정보처리방침</a>
             <a href="https://devmore.io/readive/legal/terms.html">이용약관</a>

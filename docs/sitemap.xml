@@ -8,7 +8,7 @@
     </url>
     <url>
         <loc>https://dongkkase.github.io/BookManager/readive/</loc>
-        <lastmod>2026-09-14</lastmod>
+        <lastmod>2026-09-21</lastmod>
         <changefreq>weekly</changefreq>
         <priority>0.8</priority>
     </url>
@@ -22,6 +22,18 @@
     </url>
     <url>
         <loc>https://dongkkase.github.io/BookManager/guides/nas-library.html</loc>
+        <lastmod>2026-09-21</lastmod>
+    </url>
+    <url>
+        <loc>https://dongkkase.github.io/BookManager/readive/guides/import-books.html</loc>
+        <lastmod>2026-09-21</lastmod>
+    </url>
+    <url>
+        <loc>https://dongkkase.github.io/BookManager/readive/guides/epub-tts.html</loc>
+        <lastmod>2026-09-21</lastmod>
+    </url>
+    <url>
+        <loc>https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html</loc>
         <lastmod>2026-09-21</lastmod>
     </url>
 </urlset>

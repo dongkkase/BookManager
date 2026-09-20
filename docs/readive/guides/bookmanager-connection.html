@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BookManager 연결·책 전송·이어 읽기 | Readive</title>
+    <meta name="description" content="Readive와 BookManager를 같은 네트워크에서 QR 코드로 연결하는 방법입니다. PC 라이브러리 탐색, 책 다운로드·전송, 읽기 위치 동기화 범위와 연결 문제 확인 순서를 안내합니다.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법">
+    <meta property="og:description" content="Readive와 BookManager를 같은 네트워크에서 QR 코드로 연결하는 방법입니다. PC 라이브러리 탐색, 책 다운로드·전송, 읽기 위치 동기화 범위와 연결 문제 확인 순서를 안내합니다.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html">
+    <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <meta property="og:image:alt" content="Readive 앱 아이콘">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법">
+    <meta name="twitter:description" content="Readive와 BookManager를 같은 네트워크에서 QR 코드로 연결하는 방법입니다. PC 라이브러리 탐색, 책 다운로드·전송, 읽기 위치 동기화 범위와 연결 문제 확인 순서를 안내합니다.">
+    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <link rel="icon" type="image/x-icon" href="../app.ico">
+    <link rel="icon" type="image/png" href="../app.png">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "TechArticle",
+                "@id": "https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html#article",
+                "headline": "Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법",
+                "description": "Readive와 BookManager를 같은 네트워크에서 QR 코드로 연결하는 방법입니다. PC 라이브러리 탐색, 책 다운로드·전송, 읽기 위치 동기화 범위와 연결 문제 확인 순서를 안내합니다.",
+                "url": "https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html",
+                "mainEntityOfPage": "https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html",
+                "inLanguage": "ko",
+                "dateModified": "2026-09-21",
+                "about": {
+                    "@id": "https://dongkkase.github.io/BookManager/readive/#software"
+                }
+            },
+            {
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "BookManager",
+                        "item": "https://dongkkase.github.io/BookManager/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Readive",
+                        "item": "https://dongkkase.github.io/BookManager/readive/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": "Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법",
+                        "item": "https://dongkkase.github.io/BookManager/readive/guides/bookmanager-connection.html"
+                    }
+                ]
+            }
+        ]
+    }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101214;
+            --panel: #1a1d20;
+            --text: #eef3f7;
+            --muted: #aeb8c2;
+            --line: #333941;
+            --accent: #77bfee;
+            --green: #55c28d;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+            line-height: 1.8;
+            word-break: keep-all;
+            overflow-wrap: anywhere;
+        }
+        a {
+            color: var(--accent);
+            text-underline-offset: 0.2em;
+        }
+        a:hover {
+            color: #ffffff;
+        }
+        a:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 4px;
+        }
+        .skip-link {
+            position: absolute;
+            top: -100px;
+            left: 16px;
+            z-index: 2;
+            padding: 10px 16px;
+            background: var(--panel);
+        }
+        .skip-link:focus {
+            top: 12px;
+        }
+        .site-header, main, footer {
+            width: min(1120px, calc(100% - 48px));
+            margin-inline: auto;
+        }
+        .site-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding-block: 20px;
+            border-bottom: 1px solid var(--line);
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text);
+            font-weight: 750;
+            text-decoration: none;
+        }
+        .site-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            font-size: 0.92rem;
+        }
+        .intro {
+            max-width: 880px;
+            padding-block: 48px 40px;
+        }
+        .eyebrow {
+            margin: 0 0 12px;
+            color: var(--green);
+            font-size: 0.88rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+        }
+        h1 {
+            margin: 0 0 20px;
+            font-size: clamp(1.9rem, 4.4vw, 3.1rem);
+            line-height: 1.3;
+            letter-spacing: -0.035em;
+            text-wrap: balance;
+        }
+        .lead {
+            margin: 0;
+            color: var(--muted);
+            font-size: 1.12rem;
+        }
+        .updated, figcaption {
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        .guide-layout {
+            display: grid;
+            grid-template-columns: 210px minmax(0, 1fr);
+            align-items: start;
+            gap: 56px;
+            padding-bottom: 56px;
+        }
+        .toc {
+            position: sticky;
+            top: 24px;
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            font-size: 0.92rem;
+        }
+        .toc p {
+            margin: 0 0 12px;
+            font-weight: 700;
+        }
+        .toc ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .toc li + li {
+            margin-top: 10px;
+        }
+        section {
+            margin-bottom: 40px;
+            scroll-margin-top: 24px;
+        }
+        h2 {
+            margin: 0 0 16px;
+            font-size: 1.55rem;
+            line-height: 1.45;
+            letter-spacing: -0.02em;
+        }
+        h3 {
+            margin: 24px 0 10px;
+            font-size: 1.1rem;
+        }
+        p {
+            margin: 0 0 16px;
+        }
+        ol, ul {
+            padding-left: 24px;
+        }
+        li + li {
+            margin-top: 10px;
+        }
+        .note, .download-panel {
+            padding: 20px 24px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+        .note {
+            border-left: 3px solid var(--green);
+        }
+        .note p:last-child, .download-panel p:last-child {
+            margin-bottom: 0;
+        }
+        .table-wrap {
+            overflow-x: auto;
+            margin-block: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        caption {
+            margin-bottom: 10px;
+            text-align: left;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        th, td {
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: var(--panel);
+        }
+        th:first-child {
+            width: 30%;
+        }
+        pre {
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            white-space: pre-wrap;
+            line-height: 1.7;
+            font-size: 0.9rem;
+        }
+        code {
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        figure {
+            margin: 28px 0;
+        }
+        figure img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        figcaption {
+            margin-top: 10px;
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 8px 18px;
+            border: 1px solid #4aa3df;
+            border-radius: 6px;
+            background: #1f7dbc;
+            color: #ffffff;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .button:hover {
+            background: #27516d;
+        }
+        footer {
+            padding-block: 24px 36px;
+            border-top: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        @media (max-width: 780px) {
+            .site-header, main, footer {
+                width: calc(100% - 32px);
+            }
+            .intro {
+                padding-block: 32px;
+            }
+            .guide-layout {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 32px;
+            }
+            .toc {
+                position: static;
+            }
+            th, td {
+                padding: 10px;
+            }
+            .note, .download-panel {
+                padding: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#content">본문으로 바로가기</a>
+    <header class="site-header">
+        <a class="brand" href="../"><img src="../app.png" alt="" width="28" height="28">Readive</a>
+        <nav class="site-nav" aria-label="프로젝트 및 도움말">
+            <a href="../#guides">사용 가이드</a>
+            <a href="../../">BookManager</a>
+            <a href="https://apps.apple.com/kr/app/readive/id6796676237">App Store 다운로드</a>
+        </nav>
+    </header>
+    <main id="content">
+        <header class="intro">
+            <p class="eyebrow">READIVE · 사용 가이드</p>
+            <h1>Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법</h1>
+            <p class="lead">PC에서 BookManager로 정리한 책을 iPhone·iPad의 Readive로 가져올 수 있습니다. 같은 네트워크에서 기기를 등록하고, 필요한 책을 내려받거나 PC에서 보내면 됩니다.</p>
+            <p class="updated">최종 수정 <time datetime="2026-09-21">2026년 9월 21일</time> · iPhone / iPad</p>
+        </header>
+        <div class="guide-layout">
+            <nav class="toc" aria-label="이 가이드의 목차">
+                <p>이 가이드에서</p>
+                <ol>
+                    <li><a href="#prepare">연결 전 준비</a></li>
+                    <li><a href="#pair">QR 코드로 처음 연결</a></li>
+                    <li><a href="#transfer">책 가져오기와 받기</a></li>
+                    <li><a href="#sync">읽던 위치 이어가기</a></li>
+                    <li><a href="#troubleshoot">연결이 안 될 때</a></li>
+                </ol>
+            </nav>
+            <article aria-label="Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법">
+                <section id="prepare">
+                    <h2>연결 전 준비</h2>
+                    <ul>
+                        <li>PC에서 <a href="../../">BookManager</a>를 실행하고, iPhone·iPad에서 Readive를 실행합니다.</li>
+                        <li>PC와 모바일 기기를 같은 Wi-Fi 또는 같은 사설 네트워크에 연결합니다.</li>
+                        <li>Readive에서 탐색할 폴더를 BookManager의 라이브러리로 먼저 등록합니다.</li>
+                        <li>NAS나 외장 드라이브의 책이라면 PC에서 해당 폴더에 접근할 수 있는지 확인합니다.</li>
+                    </ul>
+                    <div class="note">
+                        <p><strong>‘리디브 연동’을 켜면 됩니다.</strong> Readive 연동은 일반 OPDS·Web·WebDAV 서버와 별도로 동작하므로, 연동을 위해 일반 공유 서버를 먼저 켤 필요는 없습니다.</p>
+                    </div>
+                </section>
+                <section id="pair">
+                    <h2>QR 코드로 처음 연결</h2>
+                    <ol>
+                        <li>BookManager에서 <strong>공유 서버</strong> 탭을 엽니다.</li>
+                        <li><strong>리디브 연동</strong>에서 모바일 기기와 같은 네트워크의 LAN 주소를 선택합니다.</li>
+                        <li><strong>연동 켜기</strong>를 눌러 QR 코드를 표시합니다.</li>
+                        <li>Readive의 BookManager 연결 화면에서 PC의 QR 코드를 스캔합니다.</li>
+                        <li>BookManager의 등록된 기기 목록에 iPhone·iPad가 표시되는지 확인합니다.</li>
+                    </ol>
+                    <p>기기는 처음 한 번만 등록하면 됩니다. 연동을 꺼도 등록한 기기 정보는 유지되지만, 다시 책을 탐색하거나 전송할 때는 연동을 켜야 합니다.</p>
+                    <h3>QR 코드를 사용할 수 없다면</h3>
+                    <ol>
+                        <li>Readive에 BookManager 화면의 IP 주소와 포트를 직접 입력합니다.</li>
+                        <li>Readive와 BookManager 양쪽에 표시된 16자리 확인 코드를 비교합니다.</li>
+                        <li>16자리가 모두 같을 때 BookManager에서 승인합니다. 요청하지 않은 기기이거나 코드가 다르면 거절합니다.</li>
+                    </ol>
+                </section>
+                <section id="transfer">
+                    <h2>책 가져오기와 받기</h2>
+                    <h3>Readive에서 책을 골라 가져오기</h3>
+                    <ol>
+                        <li>연결된 BookManager의 라이브러리 목록을 엽니다.</li>
+                        <li>원하는 라이브러리를 선택하고 책이 있는 하위 폴더로 이동합니다.</li>
+                        <li>읽을 파일을 열거나, 기기의 보관함으로 다운로드합니다.</li>
+                        <li>다운로드 완료 후 보관함에서 책이 열리는지 확인합니다.</li>
+                    </ol>
+                    <p>현재 PC에서 접근할 수 있는 등록 라이브러리가 표시됩니다. NAS나 외장 드라이브의 연결이 끊겼다면 다시 연결한 뒤 확인하세요.</p>
+                    <h3>PC에서 Readive로 보내기</h3>
+                    <ol>
+                        <li>BookManager의 폴더 탭에서 보낼 라이브러리·폴더·파일을 선택합니다.</li>
+                        <li>우클릭 메뉴에서 <strong>리디브로 전송</strong>을 선택합니다.</li>
+                        <li>받을 기기와 Readive 보관함의 저장 폴더를 선택합니다.</li>
+                        <li>파일 목록에서 불필요한 항목을 제외하고, 파일 수와 전체 용량을 확인합니다.</li>
+                        <li><strong>전송 시작</strong>을 누른 뒤 Readive에서 수신 요청을 확인해 받습니다.</li>
+                    </ol>
+                    <p>PC의 책은 복사되며 원본이 삭제되거나 이동되지 않습니다. TXT에 BookManager에서 저장한 책 정보나 사용자 표지가 있다면 함께 전송됩니다.</p>
+                    <p>전송 가능한 형식과 대량 전송 한도는 <a href="https://github.com/dongkkase/BookManager/wiki/Readive-연동">Readive 연동 전체 설명서</a>에서 확인할 수 있습니다. 현재 AIF·AIFF 오디오 파일과 심볼릭 링크는 Readive 전송 대상에 포함되지 않습니다.</p>
+                    <figure>
+                        <a href="../02-library-res.png"><img src="../02-library-res.png" alt="PC에서 가져온 책을 찾아 읽을 수 있는 Readive 보관함 화면" width="1376" height="768" loading="lazy"></a>
+                        <figcaption>다운로드한 책은 Readive 보관함에서 읽을 수 있습니다. 이미지를 누르면 크게 볼 수 있으며, 앱 버전에 따라 화면 구성은 다를 수 있습니다.</figcaption>
+                    </figure>
+                </section>
+                <section id="sync">
+                    <h2>읽던 위치 이어가기</h2>
+                    <p>연동으로 전송하거나 다운로드한 책은 BookManager와 Readive 사이에서 읽은 위치와 읽기 상태를 주고받습니다. 양쪽 기록이 다르면 더 최근에 변경된 기록을 기준으로 이어 읽습니다.</p>
+                    <div class="table-wrap">
+                        <table>
+                            <caption>BookManager 연동으로 연결되는 정보</caption>
+                            <thead><tr><th scope="col">항목</th><th scope="col">동작 방식</th></tr></thead>
+                            <tbody>
+                                <tr><th scope="row">책 파일</th><td>선택해서 다운로드하거나 PC에서 전송합니다.</td></tr>
+                                <tr><th scope="row">읽은 위치·읽기 상태</th><td>연동이 켜져 있고 기기가 같은 네트워크에 있을 때 주고받습니다.</td></tr>
+                                <tr><th scope="row">북마크·하이라이트</th><td>현재 BookManager와의 동기화 대상에는 포함되지 않습니다.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p>기기에 다운로드한 책은 PC와 연결되어 있지 않아도 Readive에서 읽을 수 있습니다. 읽던 위치를 PC와 다시 맞출 때는 같은 네트워크에서 BookManager와 Readive를 실행하고 연동을 켭니다.</p>
+                    <p>Readive의 iCloud 기록 동기화는 iPhone·iPad 사이에서 사용하는 별도 기능입니다. BookManager 연동과 동기화 범위가 같지는 않습니다.</p>
+                </section>
+                <section id="troubleshoot">
+                    <h2>연결이 안 될 때</h2>
+                    <ul>
+                        <li><strong>앱 실행 상태:</strong> BookManager와 Readive가 실행 중이고 ‘리디브 연동’이 켜져 있는지 확인합니다.</li>
+                        <li><strong>네트워크:</strong> 두 기기가 같은 네트워크에 있는지, 선택한 LAN 주소가 현재 사용하는 주소인지 확인합니다.</li>
+                        <li><strong>PC 방화벽:</strong> Readive 연동 포트의 연결을 허용하는지 확인합니다. 기본 포트는 <code>19421</code>입니다.</li>
+                        <li><strong>책 목록:</strong> PC의 라이브러리 등록 상태와 NAS·외장 드라이브 연결 상태를 확인합니다.</li>
+                        <li><strong>기기 등록:</strong> 등록이 풀렸다면 기존 기기 정보를 해제하고 QR 코드 또는 수동 등록으로 다시 연결합니다.</li>
+                    </ul>
+                    <p>BookManager 없이 기기 파일이나 NAS의 책을 직접 가져오려면 <a href="import-books.html">책 가져오기 가이드</a>를 참고하세요.</p>
+                </section>
+                <section aria-labelledby="next-title">
+                    <h2 id="next-title">함께 보면 좋은 가이드</h2>
+                    <ul>
+                        <li><a href="import-books.html">Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법</a></li>
+                        <li><a href="epub-tts.html">Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법</a></li>
+                    </ul>
+                </section>
+                <section class="download-panel" aria-labelledby="download-title">
+                    <h2 id="download-title">Readive로 시작하기</h2>
+                    <p>iPhone·iPad에서 무료로 시작할 수 있으며 선택형 Premium 구독을 제공합니다. 책 파일은 직접 가져와 사용합니다.</p>
+                    <p><a class="button" href="https://apps.apple.com/kr/app/readive/id6796676237">App Store에서 Readive 다운로드</a></p>
+                </section>
+            </article>
+        </div>
+    </main>
+    <footer>
+        <p>Readive · 내 파일로 채우는 모바일 서재</p>
+        <a href="../#guides">모든 사용 가이드</a> · <a href="../">Readive 소개</a> · <a href="../../">BookManager 소개</a>
+    </footer>
+</body>
+</html>

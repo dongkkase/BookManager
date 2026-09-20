@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>기기·NAS의 책 가져오기와 오프라인 독서 | Readive</title>
+    <meta name="description" content="iPhone·iPad의 파일, PC, NAS와 클라우드에서 Readive로 책을 가져오는 방법입니다. SMB·WebDAV·OPDS 연결 방식, 다운로드 후 오프라인 독서와 기록 동기화의 차이를 안내합니다.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/guides/import-books.html">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법">
+    <meta property="og:description" content="iPhone·iPad의 파일, PC, NAS와 클라우드에서 Readive로 책을 가져오는 방법입니다. SMB·WebDAV·OPDS 연결 방식, 다운로드 후 오프라인 독서와 기록 동기화의 차이를 안내합니다.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/guides/import-books.html">
+    <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <meta property="og:image:alt" content="Readive 앱 아이콘">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법">
+    <meta name="twitter:description" content="iPhone·iPad의 파일, PC, NAS와 클라우드에서 Readive로 책을 가져오는 방법입니다. SMB·WebDAV·OPDS 연결 방식, 다운로드 후 오프라인 독서와 기록 동기화의 차이를 안내합니다.">
+    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <link rel="icon" type="image/x-icon" href="../app.ico">
+    <link rel="icon" type="image/png" href="../app.png">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "TechArticle",
+                "@id": "https://dongkkase.github.io/BookManager/readive/guides/import-books.html#article",
+                "headline": "Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법",
+                "description": "iPhone·iPad의 파일, PC, NAS와 클라우드에서 Readive로 책을 가져오는 방법입니다. SMB·WebDAV·OPDS 연결 방식, 다운로드 후 오프라인 독서와 기록 동기화의 차이를 안내합니다.",
+                "url": "https://dongkkase.github.io/BookManager/readive/guides/import-books.html",
+                "mainEntityOfPage": "https://dongkkase.github.io/BookManager/readive/guides/import-books.html",
+                "inLanguage": "ko",
+                "dateModified": "2026-09-21",
+                "about": {
+                    "@id": "https://dongkkase.github.io/BookManager/readive/#software"
+                }
+            },
+            {
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "BookManager",
+                        "item": "https://dongkkase.github.io/BookManager/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Readive",
+                        "item": "https://dongkkase.github.io/BookManager/readive/"
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": "Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법",
+                        "item": "https://dongkkase.github.io/BookManager/readive/guides/import-books.html"
+                    }
+                ]
+            }
+        ]
+    }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101214;
+            --panel: #1a1d20;
+            --text: #eef3f7;
+            --muted: #aeb8c2;
+            --line: #333941;
+            --accent: #77bfee;
+            --green: #55c28d;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+            line-height: 1.8;
+            word-break: keep-all;
+            overflow-wrap: anywhere;
+        }
+        a {
+            color: var(--accent);
+            text-underline-offset: 0.2em;
+        }
+        a:hover {
+            color: #ffffff;
+        }
+        a:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 4px;
+        }
+        .skip-link {
+            position: absolute;
+            top: -100px;
+            left: 16px;
+            z-index: 2;
+            padding: 10px 16px;
+            background: var(--panel);
+        }
+        .skip-link:focus {
+            top: 12px;
+        }
+        .site-header, main, footer {
+            width: min(1120px, calc(100% - 48px));
+            margin-inline: auto;
+        }
+        .site-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding-block: 20px;
+            border-bottom: 1px solid var(--line);
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text);
+            font-weight: 750;
+            text-decoration: none;
+        }
+        .site-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            font-size: 0.92rem;
+        }
+        .intro {
+            max-width: 880px;
+            padding-block: 48px 40px;
+        }
+        .eyebrow {
+            margin: 0 0 12px;
+            color: var(--green);
+            font-size: 0.88rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+        }
+        h1 {
+            margin: 0 0 20px;
+            font-size: clamp(1.9rem, 4.4vw, 3.1rem);
+            line-height: 1.3;
+            letter-spacing: -0.035em;
+            text-wrap: balance;
+        }
+        .lead {
+            margin: 0;
+            color: var(--muted);
+            font-size: 1.12rem;
+        }
+        .updated, figcaption {
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        .guide-layout {
+            display: grid;
+            grid-template-columns: 210px minmax(0, 1fr);
+            align-items: start;
+            gap: 56px;
+            padding-bottom: 56px;
+        }
+        .toc {
+            position: sticky;
+            top: 24px;
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            font-size: 0.92rem;
+        }
+        .toc p {
+            margin: 0 0 12px;
+            font-weight: 700;
+        }
+        .toc ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .toc li + li {
+            margin-top: 10px;
+        }
+        section {
+            margin-bottom: 40px;
+            scroll-margin-top: 24px;
+        }
+        h2 {
+            margin: 0 0 16px;
+            font-size: 1.55rem;
+            line-height: 1.45;
+            letter-spacing: -0.02em;
+        }
+        h3 {
+            margin: 24px 0 10px;
+            font-size: 1.1rem;
+        }
+        p {
+            margin: 0 0 16px;
+        }
+        ol, ul {
+            padding-left: 24px;
+        }
+        li + li {
+            margin-top: 10px;
+        }
+        .note, .download-panel {
+            padding: 20px 24px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+        }
+        .note {
+            border-left: 3px solid var(--green);
+        }
+        .note p:last-child, .download-panel p:last-child {
+            margin-bottom: 0;
+        }
+        .table-wrap {
+            overflow-x: auto;
+            margin-block: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        caption {
+            margin-bottom: 10px;
+            text-align: left;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        th, td {
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: var(--panel);
+        }
+        th:first-child {
+            width: 30%;
+        }
+        pre {
+            padding: 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            white-space: pre-wrap;
+            line-height: 1.7;
+            font-size: 0.9rem;
+        }
+        code {
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        figure {
+            margin: 28px 0;
+        }
+        figure img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        figcaption {
+            margin-top: 10px;
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 8px 18px;
+            border: 1px solid #4aa3df;
+            border-radius: 6px;
+            background: #1f7dbc;
+            color: #ffffff;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .button:hover {
+            background: #27516d;
+        }
+        footer {
+            padding-block: 24px 36px;
+            border-top: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        @media (max-width: 780px) {
+            .site-header, main, footer {
+                width: calc(100% - 32px);
+            }
+            .intro {
+                padding-block: 32px;
+            }
+            .guide-layout {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 32px;
+            }
+            .toc {
+                position: static;
+            }
+            th, td {
+                padding: 10px;
+            }
+            .note, .download-panel {
+                padding: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#content">본문으로 바로가기</a>
+    <header class="site-header">
+        <a class="brand" href="../"><img src="../app.png" alt="" width="28" height="28">Readive</a>
+        <nav class="site-nav" aria-label="프로젝트 및 도움말">
+            <a href="../#guides">사용 가이드</a>
+            <a href="../../">BookManager</a>
+            <a href="https://apps.apple.com/kr/app/readive/id6796676237">App Store 다운로드</a>
+        </nav>
+    </header>
+    <main id="content">
+        <header class="intro">
+            <p class="eyebrow">READIVE · 사용 가이드</p>
+            <h1>Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법</h1>
+            <p class="lead">Readive는 내가 가진 만화책, 전자책과 오디오북을 가져와 사용하는 앱입니다. 책이 저장된 곳에 맞는 방법으로 연결한 뒤, 이동 중 읽을 책은 기기에 내려받아 두세요.</p>
+            <p class="updated">최종 수정 <time datetime="2026-09-21">2026년 9월 21일</time> · iPhone / iPad</p>
+        </header>
+        <div class="guide-layout">
+            <nav class="toc" aria-label="이 가이드의 목차">
+                <p>이 가이드에서</p>
+                <ol>
+                    <li><a href="#choose">가져오는 방법 고르기</a></li>
+                    <li><a href="#device">기기 파일과 PC에서 가져오기</a></li>
+                    <li><a href="#remote">NAS·클라우드에서 가져오기</a></li>
+                    <li><a href="#offline">오프라인 독서 준비</a></li>
+                    <li><a href="#troubleshoot">책이 안 보이거나 안 열릴 때</a></li>
+                </ol>
+            </nav>
+            <article aria-label="Readive에 기기·NAS의 책을 가져오고 오프라인으로 읽는 방법">
+                <section id="choose">
+                    <h2>가져오는 방법 고르기</h2>
+                    <p>먼저 책 파일이 어디에 있는지 확인합니다. 기기에 저장된 책 한 권으로 시작한 뒤, 필요한 원격 저장소를 연결해도 됩니다.</p>
+                    <div class="table-wrap">
+                        <table>
+                            <caption>책이 있는 위치에 따른 가져오기 방식</caption>
+                            <thead><tr><th scope="col">책이 있는 곳</th><th scope="col">가져오는 방법</th></tr></thead>
+                            <tbody>
+                                <tr><th scope="row">iPhone·iPad의 파일</th><td>Readive에서 기기의 파일 선택 화면을 열어 가져오기</td></tr>
+                                <tr><th scope="row">PC의 폴더</th><td>같은 네트워크의 PC 웹 브라우저에서 Readive로 업로드</td></tr>
+                                <tr><th scope="row">NAS·파일 서버</th><td>SMB, FTP, WebDAV로 공유 폴더에 연결</td></tr>
+                                <tr><th scope="row">도서 카탈로그·클라우드</th><td>OPDS 카탈로그 또는 Dropbox·OneDrive 연결</td></tr>
+                                <tr><th scope="row">BookManager 라이브러리</th><td><a href="bookmanager-connection.html">QR 코드로 PC와 연결</a>해 탐색·다운로드</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="note">
+                        <p><strong>책 파일은 직접 준비합니다.</strong> Readive는 도서 콘텐츠를 함께 제공하지 않습니다. 내가 보유하거나 이용 권한이 있는 책·문서·오디오 파일을 가져와 사용하세요.</p>
+                    </div>
+                </section>
+                <section id="device">
+                    <h2>기기 파일과 PC에서 가져오기</h2>
+                    <h3>iPhone·iPad에 있는 파일</h3>
+                    <ol>
+                        <li>Readive의 파일 가져오기 기능에서 기기의 파일 선택 화면을 엽니다.</li>
+                        <li>읽을 책 파일을 선택하고 가져오기가 끝날 때까지 기다립니다.</li>
+                        <li>보관함에서 제목이나 파일명으로 책을 찾아 한 번 열어봅니다.</li>
+                        <li>계속 모아 볼 책은 컬렉션으로 묶어 정리합니다.</li>
+                    </ol>
+                    <h3>PC 웹 브라우저로 업로드</h3>
+                    <ol>
+                        <li>PC와 Readive를 실행한 기기를 같은 네트워크에 연결합니다.</li>
+                        <li>Readive의 웹 업로드 기능을 열고 안내된 주소를 PC 웹 브라우저에 입력합니다.</li>
+                        <li>PC에서 보낼 책 파일을 선택해 업로드합니다.</li>
+                        <li>전송이 완료되면 Readive의 보관함에서 책을 확인합니다.</li>
+                    </ol>
+                    <p>PC 라이브러리를 반복해서 탐색하거나 읽던 위치도 연결하고 싶다면 <a href="bookmanager-connection.html">BookManager 연동 가이드</a>를 참고하세요.</p>
+                    <figure>
+                        <a href="../02-library-res.png"><img src="../02-library-res.png" alt="Readive에서 가져온 책의 표지와 목록을 살펴보고 검색하는 보관함 화면" width="1376" height="768" loading="lazy"></a>
+                        <figcaption>가져온 책은 보관함에서 찾을 수 있습니다. 이미지를 누르면 크게 볼 수 있으며, 앱 버전에 따라 화면 구성은 다를 수 있습니다.</figcaption>
+                    </figure>
+                </section>
+                <section id="remote">
+                    <h2>NAS·클라우드에서 가져오기</h2>
+                    <p>NAS에 연결할 때는 NAS에서 켜 둔 공유 방식과 Readive에서 선택한 연결 방식이 같아야 합니다. 예를 들어 SMB 공유 폴더는 SMB로, WebDAV 서버는 WebDAV로 연결합니다.</p>
+                    <ol>
+                        <li><strong>연결 정보를 확인합니다.</strong> NAS 또는 서버에서 사용하는 공유 방식, 주소와 계정 정보를 확인합니다. 집 안의 NAS에 연결한다면 우선 같은 네트워크에서 시작하세요.</li>
+                        <li><strong>Readive에 저장소를 연결합니다.</strong> SMB·FTP·WebDAV 중 해당하는 방식을 선택해 서버 정보를 입력합니다. Dropbox·OneDrive는 해당 서비스의 계정으로 연결합니다.</li>
+                        <li><strong>책이 있는 위치를 찾습니다.</strong> 공유 폴더를 탐색합니다. OPDS를 사용할 때는 카탈로그의 책 목록에서 고릅니다.</li>
+                        <li><strong>필요한 책을 가져옵니다.</strong> 원격 책을 열어 확인하고, 기기에 보관할 책은 저장할 위치를 골라 다운로드합니다.</li>
+                        <li><strong>완료 상태를 확인합니다.</strong> 다운로드가 끝난 책을 보관함에서 열어봅니다.</li>
+                    </ol>
+                    <p>NAS의 웹 관리 화면 주소와 파일 공유 서버 주소는 다를 수 있습니다. OPDS도 웹페이지 주소가 아닌 카탈로그 주소가 필요합니다. BookManager를 서버로 쓴다면 <a href="../../guides/nas-library.html">PC의 NAS 라이브러리·공유 설정</a>을 참고하세요.</p>
+                </section>
+                <section id="offline">
+                    <h2>오프라인 독서 준비</h2>
+                    <p>기기에 가져오거나 다운로드한 책과 오디오북은 네트워크 연결 없이 열 수 있습니다. 외출하기 전에 다운로드 완료 여부를 확인하고, 연결을 끈 상태에서도 해당 책이 열리는지 확인해 두면 좋습니다.</p>
+                    <ul>
+                        <li>원격 저장소의 목록에 보이는 책이라도 기기에 저장되었는지 별도로 확인합니다.</li>
+                        <li>NAS·클라우드 탐색, 새 파일 다운로드와 기록 동기화에는 네트워크가 필요합니다.</li>
+                        <li>책을 음성으로 들으려면 <a href="epub-tts.html">TTS와 오디오북 준비 방법</a>도 확인합니다.</li>
+                    </ul>
+                    <div class="note">
+                        <p><strong>독서 기록 동기화와 책 파일 복사는 별개입니다.</strong> iPhone·iPad의 iCloud 동기화는 보관함 정보와 독서 기록을 연결합니다. 다른 기기에서도 읽으려면 책 원본 파일을 그 기기에 별도로 가져와야 합니다.</p>
+                    </div>
+                </section>
+                <section id="troubleshoot">
+                    <h2>책이 안 보이거나 안 열릴 때</h2>
+                    <ul>
+                        <li><strong>가져오기·다운로드 상태:</strong> 전송이 끝났는지, 기기에 저장할 공간이 충분한지 확인합니다.</li>
+                        <li><strong>원격 연결:</strong> 서버가 켜져 있고 현재 네트워크에서 접근 가능한지, 연결 방식과 계정 정보가 맞는지 확인합니다.</li>
+                        <li><strong>파일 형식:</strong> 만화는 CBZ·ZIP·CBR·RAR·CB7·7Z·CBT·TAR, 전자책·문서는 EPUB·PDF·TXT·Markdown, 오디오북은 MP3·M4A·M4B·FLAC 등의 형식을 지원합니다.</li>
+                        <li><strong>압축 파일 구성:</strong> 압축 만화는 비밀번호가 없는 단일 볼륨 파일을 사용합니다. 실제 열람·재생 가능 여부는 파일 구성과 운영체제에 따라 달라질 수 있습니다.</li>
+                    </ul>
+                </section>
+                <section aria-labelledby="next-title">
+                    <h2 id="next-title">함께 보면 좋은 가이드</h2>
+                    <ul>
+                        <li><a href="epub-tts.html">Readive에서 EPUB·TXT를 읽고 TTS로 듣는 방법</a></li>
+                        <li><a href="bookmanager-connection.html">Readive와 BookManager를 연결해 PC의 책과 읽던 위치를 가져오는 방법</a></li>
+                    </ul>
+                </section>
+                <section class="download-panel" aria-labelledby="download-title">
+                    <h2 id="download-title">Readive로 시작하기</h2>
+                    <p>iPhone·iPad에서 무료로 시작할 수 있으며 선택형 Premium 구독을 제공합니다. 책 파일은 직접 가져와 사용합니다.</p>
+                    <p><a class="button" href="https://apps.apple.com/kr/app/readive/id6796676237">App Store에서 Readive 다운로드</a></p>
+                </section>
+            </article>
+        </div>
+    </main>
+    <footer>
+        <p>Readive · 내 파일로 채우는 모바일 서재</p>
+        <a href="../#guides">모든 사용 가이드</a> · <a href="../">Readive 소개</a> · <a href="../../">BookManager 소개</a>
+    </footer>
+</body>
+</html>
