@@ -1,6 +1,7 @@
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { ensureElectronNativeDependencies } = require('./ensureElectronNativeDependencies.cjs');
 
 const projectRoot = path.join(__dirname, '..');
 const electronSourceDir = path.join(projectRoot, 'electron');
@@ -193,6 +194,7 @@ function resolveActiveDevServerUrl(server) {
 
 async function startDevServer() {
     stopExistingDevElectronInstances();
+    ensureElectronNativeDependencies();
     const { createServer } = await import('vite');
     viteServer = await createServer({
         root: projectRoot,
@@ -217,6 +219,7 @@ async function startDevServer() {
 
 async function startDistWatch() {
     stopExistingDevElectronInstances();
+    ensureElectronNativeDependencies();
     const { build } = await import('vite');
     console.log('[BookManager] Starting renderer dist watcher.');
     buildWatcher = await build({

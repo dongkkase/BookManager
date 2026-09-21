@@ -32,8 +32,8 @@ async function fixture(t) {
     let pairedToken;
     pairedToken = (await api('/pair', { method: 'POST', token: '', body: { secret: ticket.secret, deviceId: 'test-phone', deviceName: 'Phone' } })).token;
     const libraryId = (await service.status()).libraries[0].id;
-    const prepare = async paths => {
-        const result = await api(`/libraries/${libraryId}/prepare`, { method: 'POST', body: { paths } });
+    const prepare = async (paths, options = {}) => {
+        const result = await api(`/libraries/${libraryId}/prepare`, { method: 'POST', body: { paths, ...options } });
         const initial = await api(`/libraries/${libraryId}/preparations/${result.scanId}`);
         assert.ok(['scanning', 'ready', 'failed'].includes(initial.state));
         await service.preparations.get(result.scanId).promise;
@@ -41,6 +41,88 @@ async function fixture(t) {
     };
     return { directory, root, configured, service, api, libraryId, prepare };
 }
+
+test('Readive v2 preparation lists files without reading their contents and resolves only the accepted file', async t => {
+    const { root, service, api, prepare } = await fixture(t);
+    await fs.writeFile(path.join(root, 'one.cbz'), 'first book');
+    await fs.writeFile(path.join(root, 'two.cbz'), 'second book');
+    const originalOpen = fs.open;
+    let reads = 0;
+    t.mock.method(fs, 'open', async (...args) => {
+        const handle = await originalOpen(...args);
+        const createReadStream = handle.createReadStream.bind(handle);
+        handle.createReadStream = options => { reads += 1; return createReadStream(options); };
+        return handle;
+    });
+    const ready = await prepare([''], { manifestVersion: 2 });
+    assert.equal(ready.state, 'ready');
+    assert.equal(reads, 0, 'Showing the destination must not read the entire selected library');
+    assert.equal(ready.manifest.version, 2);
+    const file = ready.manifest.files[0];
+    assert.equal(file.sha256, null);
+    assert.equal(file.itemId, null);
+    assert.match(file.sourceVersion, /^[a-f0-9]{64}$/);
+    const route = `/jobs/${ready.job.id}`;
+    await assert.rejects(api(`${route}/resolve/${file.id}`, { method: 'POST', body: {} }), /accept_required/);
+    await api(`${route}/accept`, { method: 'POST', body: { manifestId: ready.manifest.id, largeConfirmed: true } });
+    await assert.rejects(api(`${route}/files/${file.id}`), /file_not_ready/);
+    assert.equal((await api(`${route}/resolve/${file.id}`, { method: 'POST', body: {} })).state, 'scanning');
+    await Promise.all([...service.fileHashRequests.values()].map(request => request.promise));
+    const resolved = await api(`${route}/resolve/${file.id}`, { method: 'POST', body: {} });
+    assert.equal(resolved.state, 'ready');
+    assert.equal(resolved.sourceVersion, file.sourceVersion);
+    assert.equal(resolved.file.sha256, crypto.createHash('sha256').update('first book').digest('hex'));
+    assert.equal(reads, 1, 'The second book remains unread while the first can download');
+    assert.deepEqual((await api(route)).manifest, ready.manifest, 'Review and resume keep an immutable manifest');
+    assert.deepEqual(await api(`${route}/resolve/${file.id}`, { method: 'POST', body: {} }), resolved);
+    service.store.state = null;
+    await service.store.load();
+    service.assetHashCache.clear();
+    assert.deepEqual(await api(`${route}/resolve/${file.id}`, { method: 'POST', body: {} }), resolved, 'A persisted resolution survives reloading the server store');
+    assert.equal(reads, 1);
+    assert.ok(service.store.state.items[resolved.file.sha256].deviceIds.includes('test-phone'));
+});
+
+test('Readive deferred files reject a changed source and never register an unverified hash', async t => {
+    const { root, service, api, prepare } = await fixture(t);
+    const source = path.join(root, 'one.cbz');
+    await fs.writeFile(source, 'original');
+    const ready = await prepare(['one.cbz'], { manifestVersion: 2 });
+    const route = `/jobs/${ready.job.id}`;
+    await api(`${route}/accept`, { method: 'POST', body: { manifestId: ready.manifest.id, largeConfirmed: true } });
+    await fs.writeFile(source, 'modified');
+    await api(`${route}/resolve/${ready.manifest.files[0].id}`, { method: 'POST', body: {} });
+    await Promise.all([...service.fileHashRequests.values()].map(request => request.promise));
+    const result = await api(`${route}/resolve/${ready.manifest.files[0].id}`, { method: 'POST', body: {} });
+    assert.deepEqual(result, { state: 'failed', error: 'source_changed' });
+    assert.deepEqual(service.store.state.items, {});
+});
+
+test('Readive deferred verification cannot publish after cancellation, revocation, or library removal', async t => {
+    for (const mode of ['cancel', 'revoke', 'remove-library']) {
+        const { root, configured, service, api, prepare } = await fixture(t);
+        await fs.writeFile(path.join(root, 'one.cbz'), 'original');
+        const ready = await prepare(['one.cbz'], { manifestVersion: 2 });
+        const route = `/jobs/${ready.job.id}`;
+        await api(`${route}/accept`, { method: 'POST', body: { manifestId: ready.manifest.id, largeConfirmed: true } });
+        let release;
+        let entered;
+        const enteredPromise = new Promise(resolve => { entered = resolve; });
+        const gate = new Promise(resolve => { release = resolve; });
+        service.getLibraryDb = async () => { entered(); await gate; return null; };
+        await api(`${route}/resolve/${ready.manifest.files[0].id}`, { method: 'POST', body: {} });
+        const requests = [...service.fileHashRequests.values()];
+        await enteredPromise;
+        if (mode === 'cancel') await service.cancel({ jobId: ready.job.id });
+        else if (mode === 'revoke') await service.revoke({ deviceId: 'test-phone' });
+        else configured.splice(0);
+        release();
+        await Promise.all(requests.map(request => request.promise));
+        assert.deepEqual(service.store.state.items, {}, mode);
+        assert.equal(service.store.state.jobs.find(job => job.id === ready.job.id).resolvedFiles, undefined, mode);
+        await assert.rejects(api(`${route}/files/${ready.manifest.files[0].id}`), /job_cancelled|unauthorized|library_unavailable/);
+    }
+});
 
 test('Readive catalog automatically exposes registered supported paths only to paired devices', async t => {
     const { directory, root, configured, service, api, libraryId } = await fixture(t);

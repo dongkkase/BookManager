@@ -505,6 +505,8 @@ body.is-resizing-panel * {
   justify-content: center;
   gap: 12px;
   background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   color: #fff;
   font-size: var(--font-md);
   font-weight: bold;
@@ -513,8 +515,12 @@ body.is-resizing-panel * {
   animation: app-lock-fade-in 100ms ease-out;
 }
 
-.app-lock-working-image {
-  object-fit: contain;
+.app-lock-working-image,
+.app-library-indexing-image {
+    width: 150px;
+    height: 150px;
+    flex-shrink: 0;
+    object-fit: contain;
 }
 
 .app-lock-thumbnail-stage {
@@ -616,6 +622,8 @@ body.is-resizing-panel * {
   gap: 12px;
   padding: 72px 32px 110px;
   background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   pointer-events: all;
   animation: app-lock-fade-in 100ms ease-out;
 }
@@ -669,7 +677,8 @@ body.is-resizing-panel * {
 }
 
 .app-library-scan-stage.is-indexing {
-  height: 132px;
+    height: 150px;
+    flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -679,16 +688,13 @@ body.is-resizing-panel * {
 
 .app-library-indexing-visual {
   width: min(360px, calc(100vw - 96px));
-  min-height: 104px;
+    min-height: 150px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .app-library-indexing-image {
-  width: 132px;
-  height: 96px;
-  object-fit: contain;
   filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.52));
 }
 

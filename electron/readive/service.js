@@ -7,7 +7,7 @@ import https from 'node:https';
 import { createSelfSignedCertificate } from '../servers/sharingServers.js';
 import { ReadiveStore } from './store.js';
 import { fail, isOnLink, listReadiveInterfaces, transferSizePolicy } from './policy.js';
-import { openFrozenAsset, publicSnapshot, scanReadivePaths, selectSnapshotEntries, summarizeEntries } from './manifest.js';
+import { openFrozenAsset, publicSnapshot, resolveFrozenAssetHash, scanReadivePaths, selectSnapshotEntries, summarizeEntries } from './manifest.js';
 import { exchangeReading, getImportedReadingState, readingRowSignature } from './reading.js';
 import { ReadiveCatalogCache, readReadiveLibraryEntries, registeredReadiveLibraries, resolveReadiveLibraryPath, validateReadiveLibrary } from './catalog.js';
 import { pairingQrDataUrl } from './qr.js';
@@ -39,6 +39,27 @@ function normalizeFormat(extension) {
     if (['txt', 'text', 'log', 'md'].includes(extension)) return 'text';
     if (['epub', 'pdf', 'image'].includes(extension)) return extension;
     return 'audio';
+}
+
+function registerTransferItem(state, asset, format, deviceId, libraryDb) {
+    const sourceKey = process.platform === 'win32' ? asset.sourcePath.toLowerCase() : asset.sourcePath;
+    const previousHash = state.pathContentHashes[sourceKey] || Object.values(state.items).find(existing => (
+        (process.platform === 'win32' ? existing.sourcePath.toLowerCase() : existing.sourcePath) === sourceKey
+    ))?.contentHash;
+    const item = state.items[asset.sha256] || { itemId: crypto.randomUUID(), contentHash: asset.sha256, deviceIds: [] };
+    if (previousHash && previousHash !== asset.sha256 && libraryDb) {
+        const row = libraryDb.getConnection().prepare('SELECT * FROM reading_states WHERE file_path = ?')
+            .get(libraryDb.normalizeFilePath(asset.sourcePath));
+        if (row) item.localReadingBaseline = { revision: row.revision, signature: readingRowSignature(row) };
+        else delete item.localReadingBaseline;
+    }
+    state.pathContentHashes[sourceKey] = asset.sha256;
+    item.sourcePath = asset.sourcePath;
+    item.identity = asset.identity;
+    item.format = normalizeFormat(format);
+    if (!item.deviceIds.includes(deviceId)) item.deviceIds.push(deviceId);
+    state.items[asset.sha256] = item;
+    return item;
 }
 
 async function readBody(request) {
@@ -74,6 +95,8 @@ export class ReadiveService {
         this.manualPairing = new ReadiveManualPairing({ now: () => this.now(), requestApproval: requestManualApproval });
         this.pairAttempts = new Map();
         this.snapshots = new Map();
+        this.assetHashCache = new Map();
+        this.fileHashRequests = new Map();
         this.scanning = false;
         this.connections = new Map();
         this.lastSeenPersistedAt = new Map();
@@ -163,12 +186,13 @@ export class ReadiveService {
         return { success: true };
     }
 
-    async beginPreparation(libraryId, paths, device, requestedScanId) {
+    async beginPreparation(libraryId, paths, device, requestedScanId, manifestVersion = 1) {
+        if (![1, 2].includes(manifestVersion)) throw fail('invalid_manifest_version');
         if (requestedScanId !== undefined && (typeof requestedScanId !== 'string' || !SCAN_ID.test(requestedScanId))) throw fail('invalid_scan_id');
         if (!Array.isArray(paths) || !paths.length || paths.length > 1300 || paths.some(value => typeof value !== 'string' || value.length > 2048)) throw fail('invalid_library_path');
         this.prunePreparations();
         const scanId = requestedScanId || crypto.randomUUID();
-        const requestHash = digest(JSON.stringify(paths));
+        const requestHash = digest(JSON.stringify({ paths, manifestVersion }));
         const existing = () => {
             if (this.cancelledPreparations.has(this.preparationKey(device, libraryId, scanId))) return true;
             const preparation = this.preparations.get(scanId);
@@ -206,7 +230,8 @@ export class ReadiveService {
                     if (controller.signal.aborted) throw fail('scan_cancelled', 409);
                     sourcePaths.push((await resolveReadiveLibraryPath(scope, value)).sourcePath);
                 }
-                const snapshot = await scanReadivePaths(sourcePaths, { libraryDb: await this.getLibraryDb?.(), signal: controller.signal, rootPath: scope.rootPath, preserveAncestors: false });
+                const snapshot = await scanReadivePaths(sourcePaths, { libraryDb: await this.getLibraryDb?.(), signal: controller.signal, rootPath: scope.rootPath, preserveAncestors: false, hashCache: this.assetHashCache, deferFileHashes: manifestVersion === 2 });
+                snapshot.manifestVersion = manifestVersion;
                 if (snapshot.blocked) throw fail('transfer_hard_limit', 413);
                 if (controller.signal.aborted) throw fail('scan_cancelled', 409);
                 await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
@@ -310,6 +335,9 @@ export class ReadiveService {
         this.sessionPairing = null;
         this.manualPairing.clear();
         this.catalogCache.clear();
+        this.assetHashCache.clear();
+        for (const request of this.fileHashRequests.values()) request.controller.abort();
+        this.fileHashRequests.clear();
         this.previewRequests.clear();
         this.readers.clear();
         this.destinations.clear();
@@ -369,6 +397,12 @@ export class ReadiveService {
     }
 
     abortDeviceTransfers(deviceId, jobId) {
+        for (const [key, request] of this.fileHashRequests) {
+            if (request.deviceId === deviceId && (!jobId || request.jobId === jobId)) {
+                request.controller.abort();
+                this.fileHashRequests.delete(key);
+            }
+        }
         for (const [key, responses] of this.connections) {
             if (key.startsWith(`${deviceId}:`) && (!jobId || key === `${deviceId}:${jobId}`)) {
                 for (const response of responses) response.destroy();
@@ -383,7 +417,7 @@ export class ReadiveService {
         this.scanController = new AbortController();
         try {
             const libraryDb = await this.getLibraryDb?.();
-            const snapshot = await scanReadivePaths(paths, { libraryDb, signal: this.scanController.signal });
+            const snapshot = await scanReadivePaths(paths, { libraryDb, signal: this.scanController.signal, hashCache: this.assetHashCache });
             while (this.snapshots.size >= 5) this.snapshots.delete(this.snapshots.keys().next().value);
             this.snapshots.set(snapshot.id, snapshot);
             return publicSnapshot(snapshot);
@@ -439,34 +473,20 @@ export class ReadiveService {
                     await handle.close();
                     assets[id] = snapshot.assets[id];
                 }
-                const sourceKey = process.platform === 'win32' ? entry.sourcePath.toLowerCase() : entry.sourcePath;
-                const previousHash = state.pathContentHashes[sourceKey] || Object.values(state.items).find(existing => (
-                    (process.platform === 'win32' ? existing.sourcePath.toLowerCase() : existing.sourcePath) === sourceKey
-                ))?.contentHash;
-                const item = state.items[entry.contentHash] || { itemId: crypto.randomUUID(), contentHash: entry.contentHash, deviceIds: [] };
-                if (previousHash && previousHash !== entry.contentHash && libraryDb) {
-                    const row = libraryDb.getConnection().prepare('SELECT * FROM reading_states WHERE file_path = ?')
-                        .get(libraryDb.normalizeFilePath(entry.sourcePath));
-                    if (row) item.localReadingBaseline = { revision: row.revision, signature: readingRowSignature(row) };
-                    else delete item.localReadingBaseline;
-                }
-                state.pathContentHashes[sourceKey] = entry.contentHash;
-                item.sourcePath = entry.sourcePath;
-                item.identity = snapshot.assets[entry.assetId].identity;
-                item.format = normalizeFormat(entry.format);
-                if (!item.deviceIds.includes(deviceId)) item.deviceIds.push(deviceId);
-                state.items[entry.contentHash] = item;
+                const asset = snapshot.assets[entry.assetId];
+                const item = entry.contentHash ? registerTransferItem(state, asset, entry.format, deviceId, libraryDb) : null;
                 const metadata = entry.metadataAssetId ? snapshot.assets[entry.metadataAssetId] : null;
                 const cover = entry.coverAssetId ? snapshot.assets[entry.coverAssetId] : null;
                 files.push({
-                    id: stableIds.get(entry.id), itemId: item.itemId, parentId: entry.parentId ? stableIds.get(entry.parentId) : null, name: entry.name, relativePath: entry.relativePath,
+                    id: stableIds.get(entry.id), itemId: item?.itemId ?? null, parentId: entry.parentId ? stableIds.get(entry.parentId) : null, name: entry.name, relativePath: entry.relativePath,
                     size: entry.size, sha256: entry.contentHash, format: entry.format,
+                    ...(!entry.contentHash ? { sourceVersion: digest(JSON.stringify(asset.identity)) } : {}),
                     metadata: metadata ? JSON.parse(Buffer.from(metadata.base64, 'base64').toString('utf8')) : null,
                     metadataHash: metadata?.sha256 || null,
                     cover: cover ? { size: cover.size, sha256: cover.sha256, mimeType: cover.mimeType } : null,
                 });
             }
-            const manifest = { version: 1, id: snapshot.id, directories, files, totalBytes: summary.bytes };
+            const manifest = { version: snapshot.manifestVersion || 1, id: snapshot.id, directories, files, totalBytes: summary.bytes };
             if (Buffer.byteLength(JSON.stringify(manifest)) > 8 * 1024 ** 2) throw fail('manifest_too_large');
             const fingerprint = digest(JSON.stringify({ deviceId, destination: target, libraryApproval: snapshot.libraryScope?.approvalId, manifest: { ...manifest, id: undefined } }));
             const previous = state.jobs.find(job => job.fingerprint === fingerprint && ['queued', 'accepted'].includes(job.state));
@@ -502,6 +522,61 @@ export class ReadiveService {
         });
         this.abortDeviceTransfers(deviceId, jobId);
         return { success: true };
+    }
+
+    async resolveTransferFile(job, fileId, device) {
+        const file = job.manifest.files.find(entry => entry.id === fileId);
+        if (!file) throw fail('asset_not_found', 404);
+        const asset = job.assets[job.fileAssets[fileId].file];
+        const key = `${job.id}:${fileId}`;
+        const resolved = job.resolvedFiles?.[fileId] || (file.sha256 ? file : null);
+        if (resolved) {
+            const handle = await openFrozenAsset(asset);
+            await handle.close();
+            this.validateDevice(device);
+            return { state: 'ready', file: resolved, sourceVersion: file.sourceVersion };
+        }
+        const pending = this.fileHashRequests.get(key);
+        if (pending?.error) {
+            this.fileHashRequests.delete(key);
+            return { state: 'failed', error: pending.error };
+        }
+        if (!pending) {
+            for (const [oldKey, request] of this.fileHashRequests) if (request.error) this.fileHashRequests.delete(oldKey);
+            if (this.fileHashRequests.size >= 4) throw fail('too_many_transfers', 429);
+            const request = { jobId: job.id, deviceId: device.id, controller: new AbortController(), error: null, promise: null };
+            this.fileHashRequests.set(key, request);
+            const timeout = setTimeout(() => request.controller.abort(), this.preparationTimeoutMs);
+            timeout.unref?.();
+            request.promise = (async () => {
+                try {
+                    const sha256 = await resolveFrozenAssetHash(asset, { signal: request.controller.signal, hashCache: this.assetHashCache });
+                    const libraryDb = await this.getLibraryDb?.();
+                    await this.store.transact(async state => {
+                        if (request.controller.signal.aborted) throw fail('scan_cancelled', 409);
+                        if (!state.devices.some(entry => entry.id === device.id && equalDigest(entry.tokenHash, device.tokenHash))) throw fail('unauthorized', 401);
+                        const current = state.jobs.find(entry => entry.id === job.id);
+                        if (!current || current.state !== 'accepted') throw fail('job_cancelled', 409);
+                        await this.validateJobLibrary(current, state);
+                        const currentAsset = current.assets[current.fileAssets[fileId].file];
+                        const handle = await openFrozenAsset(currentAsset);
+                        await handle.close();
+                        if (request.controller.signal.aborted) throw fail('scan_cancelled', 409);
+                        currentAsset.sha256 = sha256;
+                        const item = registerTransferItem(state, currentAsset, file.format, device.id, libraryDb);
+                        const { sourceVersion, ...details } = file;
+                        current.resolvedFiles ||= {};
+                        current.resolvedFiles[fileId] = { ...details, itemId: item.itemId, sha256 };
+                    });
+                    this.fileHashRequests.delete(key);
+                } catch (error) {
+                    request.error = request.controller.signal.aborted ? 'scan_cancelled' : error.code || 'internal_error';
+                } finally {
+                    clearTimeout(timeout);
+                }
+            })();
+        }
+        return { state: 'scanning' };
     }
 
     validateSource(remoteAddress, localAddress) {
@@ -644,7 +719,7 @@ export class ReadiveService {
                         this.validateSource(remoteAddress, localAddress);
                     }, signal) };
             }
-            if (method === 'POST' && action === 'prepare') return { json: await this.beginPreparation(libraryId, body.paths, device, body.scanId) };
+            if (method === 'POST' && action === 'prepare') return { json: await this.beginPreparation(libraryId, body.paths, device, body.scanId, body.manifestVersion) };
             if (method === 'GET' && action === 'entries') {
                 if ([...query.keys()].some(key => !['path', 'cursor'].includes(key)) || query.getAll('path').length > 1 || query.getAll('cursor').length > 1) throw fail('query_not_allowed');
                 const { scope } = await validateReadiveLibrary(state, this.getRegisteredLibraries(), libraryId);
@@ -693,7 +768,7 @@ export class ReadiveService {
             if (report.readingChanged) this.onReadingChanged();
             return { json: { records, acknowledged: report.acknowledged } };
         }
-        const match = pathname.match(/^\/readive\/v1\/jobs\/([a-f0-9-]+)(?:\/(accept|ack|cancel|files|covers)(?:\/([a-f0-9-]+))?)?$/);
+        const match = pathname.match(/^\/readive\/v1\/jobs\/([a-f0-9-]+)(?:\/(accept|ack|cancel|files|covers|resolve)(?:\/([a-f0-9-]+))?)?$/);
         const job = match && state.jobs.find(item => item.id === match[1] && item.deviceId === device.id);
         if (!job) throw fail('not_found', 404);
         const action = match[2];
@@ -722,9 +797,11 @@ export class ReadiveService {
             }) };
         }
         if (job.state !== 'accepted' && job.state !== 'completed') throw fail('accept_required', 409);
+        if (method === 'POST' && action === 'resolve') return { json: await this.resolveTransferFile(job, match[3], device) };
         if (method === 'GET' && (action === 'files' || action === 'covers')) {
             const assetId = job.fileAssets[match[3]]?.[action === 'files' ? 'file' : 'cover'];
             if (!assetId || !job.assets[assetId]) throw fail('asset_not_found', 404);
+            if (!job.assets[assetId].sha256) throw fail('file_not_ready', 409);
             return { asset: job.assets[assetId], deviceId: device.id, jobId: job.id, tokenHash: device.tokenHash };
         }
         if (method === 'POST' && action === 'ack') {
@@ -737,6 +814,8 @@ export class ReadiveService {
                     current.state = 'completed';
                 } else {
                     if (!current.manifest.files.some(file => file.id === body.fileId)) throw fail('unknown_file', 404);
+                    const asset = current.assets[current.fileAssets[body.fileId].file];
+                    if (!asset.sha256) throw fail('file_not_ready', 409);
                     if (!current.completedFileIds.includes(body.fileId)) current.completedFileIds.push(body.fileId);
                 }
                 return { success: true };

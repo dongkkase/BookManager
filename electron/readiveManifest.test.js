@@ -16,6 +16,61 @@ async function fixture(t) {
 
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
+test('Readive reuses unchanged file hashes but rechecks changed and replaced sources', async t => {
+    const root = await fixture(t);
+    const filePath = path.join(root, 'book.cbz');
+    await fs.writeFile(filePath, 'first');
+    const hashCache = new Map();
+    const originalOpen = fs.open;
+    let reads = 0;
+    t.mock.method(fs, 'open', async (...args) => {
+        const handle = await originalOpen(...args);
+        const createReadStream = handle.createReadStream.bind(handle);
+        handle.createReadStream = options => { reads += 1; return createReadStream(options); };
+        return handle;
+    });
+    const scanHash = async () => (await scanReadivePaths([filePath], { hashCache })).entries[0].contentHash;
+    assert.equal(await scanHash(), hash('first'));
+    assert.equal(await scanHash(), hash('first'));
+    assert.equal(reads, 1, 'Repeated preparation must not read unchanged file contents again');
+
+    const stat = await fs.stat(filePath);
+    await fs.writeFile(filePath, 'other');
+    await fs.utimes(filePath, stat.atime, stat.mtime);
+    assert.equal(await scanHash(), hash('other'), 'ctime detects same-size changes even if mtime is restored');
+    await fs.rename(filePath, path.join(root, 'old.cbz'));
+    await fs.writeFile(filePath, 'newer');
+    assert.equal(await scanHash(), hash('newer'));
+    assert.equal(reads, 3);
+    await fs.rm(filePath);
+    await fs.symlink(path.join(root, 'old.cbz'), filePath);
+    await assert.rejects(scanHash(), /symlink_not_allowed/);
+    await assert.rejects(scanReadivePaths([path.join(root, 'old.cbz')], { hashCache, signal: AbortSignal.abort() }), /scan_cancelled/);
+});
+
+test('Readive preparation reads large files in bounded batches without changing the digest', async t => {
+    const root = await fixture(t);
+    const filePath = path.join(root, 'large.cbz');
+    const bytes = Buffer.alloc(4 * 1024 ** 2, 37);
+    await fs.writeFile(filePath, bytes);
+    const originalOpen = fs.open;
+    let chunks = 0;
+    t.mock.method(fs, 'open', async (...args) => {
+        const handle = await originalOpen(...args);
+        const createReadStream = handle.createReadStream.bind(handle);
+        handle.createReadStream = options => {
+            const stream = createReadStream(options);
+            stream.on('data', () => { chunks += 1; });
+            return stream;
+        };
+        return handle;
+    });
+    const snapshot = await scanReadivePaths([filePath]);
+    assert.equal(snapshot.entries[0].contentHash, hash(bytes));
+    assert.equal(snapshot.summary.bytes, bytes.length);
+    assert.ok(chunks <= 4, `Expected at most four reads for 4 MiB, received ${chunks}`);
+});
+
 test('Readive manifests preserve nesting and empty directories with TXT raw metadata and cover budgets', async t => {
     const root = await fixture(t);
     await fs.mkdir(path.join(root, 'Books', 'Empty'), { recursive: true });

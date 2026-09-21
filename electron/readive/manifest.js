@@ -58,27 +58,52 @@ export async function openFrozenAsset(asset) {
     }
 }
 
-async function inspectAsset(filePath, maxBytes, signal) {
+async function inspectAsset(filePath, maxBytes, signal, hashCache, deferHash = false) {
     await assertNoSymlinks(filePath);
     const handle = await fs.open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
     try {
         const before = await handle.stat();
         if (!before.isFile() || before.size > maxBytes) throw fail('transfer_hard_limit');
-        const hash = crypto.createHash('sha256');
-        let bytes = 0;
-        for await (const chunk of handle.createReadStream({ autoClose: false, signal })) {
-            if (signal?.aborted) throw fail('scan_cancelled', 409);
-            bytes += chunk.length;
-            if (bytes > maxBytes) throw fail('transfer_hard_limit');
-            hash.update(chunk);
+        if (signal?.aborted) throw fail('scan_cancelled', 409);
+        const identity = fileIdentity(before);
+        const cached = hashCache?.get(filePath);
+        let contentHash;
+        let bytes = before.size;
+        if (deferHash) {
+            contentHash = null;
+        } else if (cached && Object.entries(identity).every(([key, value]) => cached.identity[key] === value)) {
+            contentHash = cached.sha256;
+        } else {
+            const hash = crypto.createHash('sha256');
+            bytes = 0;
+            for await (const chunk of handle.createReadStream({ autoClose: false, signal, highWaterMark: 1024 ** 2 })) {
+                if (signal?.aborted) throw fail('scan_cancelled', 409);
+                bytes += chunk.length;
+                if (bytes > maxBytes) throw fail('transfer_hard_limit');
+                hash.update(chunk);
+            }
+            contentHash = hash.digest('hex');
         }
         const after = await handle.stat();
-        const identity = fileIdentity(before);
-        if (Object.entries(identity).some(([key, value]) => after[key] !== value)) throw fail('source_changed', 409);
-        return { id: crypto.randomUUID(), sourcePath: filePath, identity, size: bytes, sha256: hash.digest('hex') };
+        if (bytes !== before.size || Object.entries(identity).some(([key, value]) => after[key] !== value)) throw fail('source_changed', 409);
+        if (signal?.aborted) throw fail('scan_cancelled', 409);
+        if (hashCache && contentHash) {
+            hashCache.delete(filePath);
+            while (hashCache.size >= 2048) hashCache.delete(hashCache.keys().next().value);
+            hashCache.set(filePath, { identity, sha256: contentHash });
+        }
+        return { id: crypto.randomUUID(), sourcePath: filePath, identity, size: bytes, sha256: contentHash };
     } finally {
         await handle.close();
     }
+}
+
+export async function resolveFrozenAssetHash(asset, { signal, hashCache } = {}) {
+    const handle = await openFrozenAsset(asset);
+    await handle.close();
+    const checked = await inspectAsset(asset.sourcePath, asset.size, signal, hashCache);
+    if (Object.entries(asset.identity).some(([key, value]) => checked.identity[key] !== value)) throw fail('source_changed', 409);
+    return checked.sha256;
 }
 
 export function summarizeEntries(entries) {
@@ -110,7 +135,7 @@ export function publicSnapshot(snapshot) {
     return { id: snapshot.id, roots: snapshot.roots, entries: snapshot.entries.map(({ sourcePath, ...entry }) => entry), summary: snapshot.summary, large: snapshot.large, blocked: snapshot.blocked, warnings: snapshot.warnings };
 }
 
-export async function scanReadivePaths(paths, { libraryDb, signal, limits = READIVE_LIMITS, rootPath, preserveAncestors = true } = {}) {
+export async function scanReadivePaths(paths, { libraryDb, signal, limits = READIVE_LIMITS, rootPath, preserveAncestors = true, hashCache, deferFileHashes = false } = {}) {
     if (!Array.isArray(paths) || paths.length < 1 || paths.length > limits.hardFiles + limits.hardFolders) throw fail('invalid_roots');
     const requested = [...new Set(paths.map(value => path.resolve(String(value))))];
     const normalized = requested.filter(value => !requested.some(other => other !== value && value.startsWith(other.endsWith(path.sep) ? other : other + path.sep)));
@@ -175,7 +200,7 @@ export async function scanReadivePaths(paths, { libraryDb, signal, limits = READ
         entry.size = stat.size;
         entry.format = IMAGE_EXTENSIONS.has(extension) ? 'image' : extension.slice(1);
         if (transferSizePolicy(summarizeEntries(snapshot.entries), limits).blocked) throw fail('transfer_hard_limit');
-        const asset = await inspectAsset(sourcePath, limits.hardBytes, signal);
+        const asset = await inspectAsset(sourcePath, limits.hardBytes, signal, hashCache, deferFileHashes && extension !== '.txt');
         entry.assetId = asset.id;
         entry.contentHash = asset.sha256;
         snapshot.assets[asset.id] = { ...asset, kind: 'file', entryId: entry.id, mimeType: 'application/octet-stream' };
@@ -191,7 +216,7 @@ export async function scanReadivePaths(paths, { libraryDb, signal, limits = READ
                 snapshot.assets[metadataId] = { id: metadataId, entryId: entry.id, kind: 'metadata', size: bytes.length, sha256: sha256(bytes), mimeType: 'application/json', base64: bytes.toString('base64') };
                 entry.coverState = stored.coverPath ? 'present' : 'removed';
                 if (stored.coverPath) {
-                    const cover = await inspectAsset(stored.coverPath, limits.coverBytes, signal);
+                    const cover = await inspectAsset(stored.coverPath, limits.coverBytes, signal, hashCache);
                     const coverHandle = await openFrozenAsset(cover);
                     const signature = Buffer.alloc(32);
                     let signatureLength;
