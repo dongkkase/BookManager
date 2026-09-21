@@ -1,29 +1,29 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>BookManager - 만화책·전자책·오디오북 정리부터 감상까지</title>
-    <meta name="description" content="PC·외장하드·NAS의 만화책, EPUB, PDF, TXT와 오디오북을 한곳에서 관리하세요. 라이브러리·본문 단어 검색, 파일 일괄 정리, 메타데이터 편집, 내장 뷰어와 Readive 전송을 지원하는 Windows/macOS 무료 앱입니다.">
+    <title>BookManager - Organize and enjoy comics, ebooks and audiobooks</title>
+    <meta name="description" content="Manage comics, EPUB, PDF, TXT and audiobooks from your computer, external drives and NAS. A free Windows and macOS app with library and text search, batch file tools, metadata editing, built-in readers and transfers to Readive.">
     <meta name="robots" content="index, follow">
-    <link rel="canonical" href="https://dongkkase.github.io/BookManager/">
+    <link rel="canonical" href="https://dongkkase.github.io/BookManager/en/">
     <link rel="alternate" hreflang="ko" href="https://dongkkase.github.io/BookManager/">
     <link rel="alternate" hreflang="en" href="https://dongkkase.github.io/BookManager/en/">
     <link rel="alternate" hreflang="x-default" href="https://dongkkase.github.io/BookManager/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="BookManager - 흩어진 책을 한곳에, 정리부터 감상까지">
-    <meta property="og:description" content="만화책·전자책·문서·오디오북을 나만의 서재로. 흩어진 파일을 찾고, 책 정보를 채우고, PC에서 읽거나 Readive로 전송하세요. Windows/macOS 무료 데스크톱 앱.">
-    <meta property="og:url" content="https://dongkkase.github.io/BookManager/">
+    <meta property="og:title" content="BookManager - Your books together, from organizing to reading">
+    <meta property="og:description" content="Build a personal library of comics, ebooks, documents and audiobooks. Find your files, add book details, read on your computer or send books to Readive. Free for Windows and macOS.">
+    <meta property="og:url" content="https://dongkkase.github.io/BookManager/en/">
     <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="BookManager - 흩어진 책을 한곳에, 정리부터 감상까지">
-    <meta name="twitter:description" content="만화책·전자책·오디오북 검색과 일괄 정리부터 내장 뷰어, Readive 전송까지. Windows/macOS에서 나만의 서재를 관리하세요.">
+    <meta name="twitter:title" content="BookManager - Your books together, from organizing to reading">
+    <meta name="twitter:description" content="Search and organize comics, ebooks and audiobooks, read with built-in viewers and send books to Readive. Manage your personal library on Windows and macOS.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
-    <link rel="icon" type="image/x-icon" href="app.ico">
-    <link rel="icon" type="image/png" sizes="32x32" href="app.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="app.png">
-    <link rel="apple-touch-icon" href="app.png">
+    <link rel="icon" type="image/x-icon" href="../app.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="../app.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../app.png">
+    <link rel="apple-touch-icon" href="../app.png">
     <script>document.documentElement.classList.add('js');</script>
     <script type="application/ld+json">
     {
@@ -35,10 +35,12 @@
         "operatingSystem": "Windows, macOS",
         "description": "BookManager is a free, open-source Windows and macOS desktop app for managing local comics, ebooks, documents, and audiobooks. Search libraries and indexed text, organize archives in batches, edit metadata, read and listen with built-in viewers, and transfer files to Readive.",
         "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
-        "url": "https://dongkkase.github.io/BookManager/",
+        "url": "https://dongkkase.github.io/BookManager/en/",
         "downloadUrl": "https://github.com/dongkkase/BookManager/releases/latest",
         "codeRepository": "https://github.com/dongkkase/BookManager",
-        "sameAs": ["https://github.com/dongkkase/BookManager"],
+        "sameAs": [
+            "https://github.com/dongkkase/BookManager"
+        ],
         "isAccessibleForFree": true,
         "offers": {
             "@type": "Offer",
@@ -46,7 +48,11 @@
             "priceCurrency": "KRW",
             "url": "https://github.com/dongkkase/BookManager/releases/latest"
         },
-        "inLanguage": ["ko", "en", "ja"]
+        "inLanguage": [
+            "ko",
+            "en",
+            "ja"
+        ]
     }
     </script>
     <style>
@@ -124,15 +130,15 @@
             background:
                 linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
                 linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
-                url("bg.webp"),
+                url("../bg.webp"),
                 #101214;
             background-size: cover;
             background-position: center;
             background-repeat: no-repeat;
             z-index: -1;
-            
+
             /* 이동 속도는 60초, 블러 속도는 10초로 별개 지정 */
-            animation: 
+            animation:
                 moveHeroBg 60s ease-in-out infinite alternate,
                 blurHeroBg 4s ease-in-out infinite alternate;
         }
@@ -604,24 +610,24 @@
                 background-image: none;
                 background-color: var(--bg);
             }
-            
+
             /* 가상 요소를 모바일에 맞게 수정 */
             .hero::before {
                 /* 모바일 그라데이션 및 이미지 복제 */
                 background:
                     linear-gradient(180deg, rgba(10, 12, 13, 0.68) 0%, rgba(10, 12, 13, 0.94) 56%, rgba(10, 12, 13, 0.98) 100%),
                     linear-gradient(90deg, rgba(10, 12, 13, 0.66), rgba(10, 12, 13, 0.34)),
-                    url("bg.webp");
+                    url("../bg.webp");
                 background-size: cover;
                 background-position: center top;
                 background-repeat: no-repeat;
-                
+
                 /* 미묘한 움직임을 위해 크기와 위치를 더 늘림 */
-                width: 130%; 
+                width: 130%;
                 height: 130%;
                 top: -15%;
                 left: -15%;
-                
+
                 /* 애니메이션은 동일하게 유지 (가상 요소의 새로운 크기와 위치로 작동) */
                 animation:
                     moveHeroBg 60s ease-in-out infinite alternate,
@@ -702,38 +708,38 @@
     </style>
 </head>
 <body>
-    <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
+    <nav class="site-top-nav" aria-label="Product navigation">
         <a class="site-top-link" href="./" aria-current="page">BookManager</a>
-        <a class="site-top-link" href="#features">주요 기능</a>
-        <a class="site-top-link" href="#guides">사용 가이드</a>
-        <a class="site-top-link" href="#start">시작하기</a>
-        <a class="site-top-link" href="readive/">Readive</a>
-        <a class="site-top-link" href="en/" lang="en" hreflang="en" aria-label="View this page in English">English</a>
+        <a class="site-top-link" href="#features">Features</a>
+        <a class="site-top-link" href="#guides">Guides</a>
+        <a class="site-top-link" href="#start">Get started</a>
+        <a class="site-top-link" href="../readive/en/">Readive</a>
+        <a class="site-top-link" href="../" lang="ko" hreflang="ko" aria-label="한국어 페이지 보기">한국어</a>
     </nav>
     <header class="hero">
         <div class="hero-inner">
-            <p class="eyebrow">만화책 · 전자책 · 문서 · 오디오북을 위한 나만의 서재</p>
+            <p class="eyebrow">Your personal library for comics, ebooks, documents and audiobooks</p>
             <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
-            <p class="hero-message">흩어진 책을 한곳에.<br>정리부터 감상까지.</p>
-            <p class="lead">PC, 외장하드, NAS에 모아 둔 책을 한곳에서 찾고 정리하세요. 표지와 책 정보를 채우고, 내장 뷰어로 읽고 듣고, Readive로 모바일에 전송할 수 있습니다.</p>
+            <p class="hero-message">All your books together.<br>Ready to read and enjoy.</p>
+            <p class="lead">Find and organize books across your computer, external drives and NAS. Add covers and book details, read and listen with built-in viewers, and send books to your mobile device with Readive.</p>
             <div class="actions">
-                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
-                    <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
-                    <span>macOS 다운로드</span>
-                    <span class="button-version" data-release-version>최신 버전</span>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="Download the latest version for macOS">
+                    <img class="button-icon" src="../icon_apple.svg" alt="" aria-hidden="true">
+                    <span>Download for macOS</span>
+                    <span class="button-version" data-release-version>Latest version</span>
                 </a>
-                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="win" aria-label="Windows 최신 버전 다운로드">
-                    <img class="button-icon" src="icon_windows.svg" alt="" aria-hidden="true">
-                    <span>Windows 다운로드</span>
-                    <span class="button-version" data-release-version>최신 버전</span>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="win" aria-label="Download the latest version for Windows">
+                    <img class="button-icon" src="../icon_windows.svg" alt="" aria-hidden="true">
+                    <span>Download for Windows</span>
+                    <span class="button-version" data-release-version>Latest version</span>
                 </a>
-                <a class="button" href="#demo">앱 화면 살펴보기</a>
+                <a class="button" href="#demo">Explore the app</a>
             </div>
-            <div class="support-badges" aria-label="라이선스, 지원 언어 및 다운로드 통계">
-                <span class="support-badge">무료 · MIT 오픈소스</span>
-                <span class="support-badge">한국어 · English · 日本語</span>
-                <a class="support-badge" href="https://github.com/dongkkase/BookManager/releases" title="전체 GitHub 릴리즈 첨부 파일의 누적 다운로드 수">
-                    <img src="https://img.shields.io/github/downloads/dongkkase/BookManager/total?style=flat&amp;label=downloads&amp;labelColor=101214&amp;color=55c28d" alt="GitHub 릴리즈 누적 다운로드 수" height="20">
+            <div class="support-badges" aria-label="License, supported languages and download statistics">
+                <span class="support-badge">Free · MIT open source</span>
+                <span class="support-badge">Korean · English · Japanese</span>
+                <a class="support-badge" href="https://github.com/dongkkase/BookManager/releases" title="Total downloads of assets across all GitHub releases">
+                    <img src="https://img.shields.io/github/downloads/dongkkase/BookManager/total?style=flat&amp;label=downloads&amp;labelColor=101214&amp;color=55c28d" alt="Total GitHub release downloads" height="20">
                 </a>
             </div>
         </div>
@@ -741,39 +747,39 @@
 
     <main>
         <section id="features" aria-labelledby="features-title">
-            <h2 id="features-title">책이 쌓일수록, 관리가 쉬워지도록</h2>
-            <p class="section-lead">폴더를 오가며 찾고, 한 권씩 정보를 입력하던 일을 하나의 흐름으로 연결합니다.</p>
+            <h2 id="features-title">Keep a growing library organized</h2>
+            <p class="section-lead">Find books across folders and edit their details in one place, with batch tools for repetitive tasks.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>어디에 뒀는지 몰라도 찾기</h3>
-                    <p>여러 드라이브의 라이브러리를 함께 검색하고, 중복 후보와 시리즈의 빠진 권수를 확인하세요.</p>
+                    <h3>Find books wherever you saved them</h3>
+                    <p>Search libraries across multiple drives, compare possible duplicates and check for missing volumes in a series.</p>
                 </article>
                 <article class="feature">
-                    <h3>반복되는 정리는 한 번에</h3>
-                    <p>압축 구조와 페이지 이름을 일괄 정리하고, 검색한 책 정보를 같은 시리즈에 함께 적용하세요.</p>
+                    <h3>Handle repetitive tasks in batches</h3>
+                    <p>Clean up archive structures and page names, and apply book details to an entire series at once.</p>
                 </article>
                 <article class="feature">
-                    <h3>정리한 자리에서 바로 감상</h3>
-                    <p>만화와 전자책을 읽고 오디오북을 들으세요. 모바일에서 볼 책은 Readive로 전송할 수 있습니다.</p>
+                    <h3>Read right where you organize</h3>
+                    <p>Read comics and ebooks, or listen to audiobooks. Send books to Readive when you want to read on your mobile device.</p>
                 </article>
             </div>
         </section>
 
         <section id="guides" aria-labelledby="guides-title">
-            <h2 id="guides-title">필요한 작업부터 따라 해보세요</h2>
-            <p class="section-lead">합본 나누기, 책 정보 편집, NAS 연결을 단계별로 안내합니다. 지원 형식과 작업 전후 예시를 확인하고 내 라이브러리에 적용하세요.</p>
+            <h2 id="guides-title">Start with the task you need</h2>
+            <p class="section-lead">Follow step-by-step guides to split collections, edit book details and connect a NAS. Check supported formats and before-and-after examples. These guides are currently available in Korean.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3><a href="guides/split-comic-archives.html">만화책 합본 ZIP을 권별 CBZ로 나누기</a></h3>
-                    <p>압축 파일 속 권별 폴더를 분석하고, 출력 형식과 저장 위치를 확인해 여러 권으로 정리합니다.</p>
+                    <h3><a href="../guides/split-comic-archives.html" hreflang="ko">Split a comic ZIP collection into individual CBZ volumes (Korean)</a></h3>
+                    <p>Analyze volume folders inside an archive, then choose the output format and destination to create separate books.</p>
                 </article>
                 <article class="feature">
-                    <h3><a href="guides/edit-comic-metadata.html">ComicInfo.xml 메타데이터 일괄 편집</a></h3>
-                    <p>제목·작가·출판사 정보를 검색해 같은 시리즈에 적용하고, 파일별 저장 범위와 표지 편집 방법을 알아봅니다.</p>
+                    <h3><a href="../guides/edit-comic-metadata.html" hreflang="ko">Batch edit ComicInfo.xml metadata (Korean)</a></h3>
+                    <p>Find titles, authors and publishers and apply them to a series. Learn which details each format can save and how to edit covers.</p>
                 </article>
                 <article class="feature">
-                    <h3><a href="guides/nas-library.html">NAS 책을 등록하고 모바일에서 이용하기</a></h3>
-                    <p>NAS 폴더를 라이브러리로 등록하고, OPDS·WebDAV 또는 Readive로 다른 기기에서 이용합니다.</p>
+                    <h3><a href="../guides/nas-library.html" hreflang="ko">Add books from a NAS and read on mobile (Korean)</a></h3>
+                    <p>Add a NAS folder as a library and access your books on other devices through OPDS, WebDAV or Readive.</p>
                 </article>
             </div>
         </section>
@@ -781,287 +787,287 @@
         <section id="demo" class="demo-section" aria-labelledby="demo-title">
             <div class="demo-header">
                 <div>
-                    <h2 id="demo-title" class="text-animate">내 서재가 달라지는 과정</h2>
-                    <p class="section-lead">라이브러리 탐색부터 파일 정리, 책 정보 편집, 읽기와 모바일 전송까지 실제 앱 화면으로 살펴보세요.</p>
+                    <h2 id="demo-title" class="text-animate">See your library take shape</h2>
+                    <p class="section-lead">Explore the app, from browsing and organizing files to editing book details, reading and sending books to mobile. Screenshots show the Korean interface.</p>
                 </div>
                 <span class="demo-count" data-demo-count>1 / 11</span>
             </div>
-            <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 이미지">
+            <div class="demo-slider" data-demo-slider aria-label="BookManager screenshots">
                 <div class="demo-viewport">
                     <figure class="demo-slide active" aria-hidden="false">
-                        <img src="demo/demo0.png" alt="BookManager 라이브러리 브라우저 화면" loading="eager">
+                        <img src="../demo/demo0.png" alt="BookManager library browser" loading="eager">
                         <figcaption class="demo-caption">
-                            <span><strong>표지로 둘러보는 나의 라이브러리</strong>폴더에 쌓인 책을 표지와 책 정보로 확인하고, 읽고 싶은 책을 찾습니다.</span>
-                            <em class="demo-badge">관리 프로그램</em>
+                            <span><strong>Browse your library by cover</strong>See covers and details for books in your folders, and find your next read.</span>
+                            <em class="demo-badge">Library manager</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo1.png" alt="BookManager 압축 구조 정리 화면" loading="lazy">
+                        <img src="../demo/demo1.png" alt="BookManager archive organizer" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>여러 권이 든 압축 파일도 권별로</strong>나뉠 파일명과 저장 위치를 미리 확인하고 정리합니다.</span>
-                            <em class="demo-badge">관리 프로그램</em>
+                            <span><strong>Split collections into individual volumes</strong>Preview output filenames and destinations before organizing your files.</span>
+                            <em class="demo-badge">Library manager</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo2.png" alt="BookManager 내부 파일명 정리 화면" loading="lazy">
+                        <img src="../demo/demo2.png" alt="BookManager archive file renamer" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>페이지 이름과 순서를 가지런히</strong>변경 전후 이름을 비교하고, 빠진 페이지 번호를 함께 점검합니다.</span>
-                            <em class="demo-badge">관리 프로그램</em>
+                            <span><strong>Put page names and order in place</strong>Compare filenames before and after renaming, and check for missing page numbers.</span>
+                            <em class="demo-badge">Library manager</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo3.png" alt="BookManager 메타데이터 편집 화면" loading="lazy">
+                        <img src="../demo/demo3.png" alt="BookManager metadata editor" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>한 시리즈의 책 정보를 한 번에</strong>공통 정보를 일괄 적용하고, 각 권의 제목과 권수도 함께 관리합니다.</span>
-                            <em class="demo-badge">관리 프로그램</em>
+                            <span><strong>Edit a whole series at once</strong>Apply shared details in batches while managing each volume&#x27;s title and number.</span>
+                            <em class="demo-badge">Library manager</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo4.png" alt="BookManager 메타데이터 검색 화면" loading="lazy">
+                        <img src="../demo/demo4.png" alt="BookManager metadata search" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>책 정보를 일일이 입력하는 수고 줄이기</strong>외부 검색 결과에서 표지와 책 정보를 비교한 뒤 가져옵니다.</span>
-                            <em class="demo-badge">관리 프로그램</em>
+                            <span><strong>Spend less time entering book details</strong>Compare covers and details from external search results before importing them.</span>
+                            <em class="demo-badge">Library manager</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo5.png" alt="BookManager 공유 서버 화면" loading="lazy">
+                        <img src="../demo/demo5.png" alt="BookManager sharing server" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>다른 기기에서도 내 라이브러리 탐색</strong>OPDS, Web, WebDAV로 연결할 주소와 공유 상태를 확인합니다.</span>
-                            <em class="demo-badge">관리 프로그램</em>
+                            <span><strong>Browse your library on other devices</strong>Check connection addresses and sharing status for OPDS, Web and WebDAV.</span>
+                            <em class="demo-badge">Library manager</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo6.png" alt="BookManager 만화 뷰어 화면" loading="lazy">
+                        <img src="../demo/demo6.png" alt="BookManager comic reader" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>만화 뷰어</strong>양면 보기와 확대 비율을 조정하며 CBZ 파일을 읽습니다.</span>
-                            <em class="demo-badge">뷰어</em>
+                            <span><strong>Comic reader</strong>Read CBZ files with adjustable two-page viewing and zoom.</span>
+                            <em class="demo-badge">Reader</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo7.png" alt="BookManager PDF 뷰어 화면" loading="lazy">
+                        <img src="../demo/demo7.png" alt="BookManager PDF reader" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>PDF 뷰어</strong>PDF 페이지를 책처럼 넘기며 열람합니다.</span>
-                            <em class="demo-badge">뷰어</em>
+                            <span><strong>PDF reader</strong>Turn PDF pages as you would in a book.</span>
+                            <em class="demo-badge">Reader</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo8.png" alt="BookManager EPUB 뷰어 설정 화면" loading="lazy">
+                        <img src="../demo/demo8.png" alt="BookManager EPUB reader settings" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>EPUB 뷰어</strong>목차, 검색, TTS, 테마 설정을 열람 화면에서 조정합니다.</span>
-                            <em class="demo-badge">뷰어</em>
+                            <span><strong>EPUB reader</strong>Access the table of contents, search, text-to-speech and themes while reading.</span>
+                            <em class="demo-badge">Reader</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo9.png" alt="BookManager 오디오북 뷰어 화면" loading="lazy">
+                        <img src="../demo/demo9.png" alt="BookManager audiobook player" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>오디오북 뷰어</strong>재생 속도, 북마크, 취침 타이머와 재생목록을 관리합니다.</span>
-                            <em class="demo-badge">뷰어</em>
+                            <span><strong>Audiobook player</strong>Manage playback speed, bookmarks, a sleep timer and playlists.</span>
+                            <em class="demo-badge">Reader</em>
                         </figcaption>
                     </figure>
                     <figure class="demo-slide" aria-hidden="true">
-                        <img src="demo/demo10.png" alt="BookManager Readive 파일 전송" loading="lazy">
+                        <img src="../demo/demo10.png" alt="BookManager file transfer to Readive" loading="lazy">
                         <figcaption class="demo-caption">
-                            <span><strong>모바일에서 읽을 책은 Readive로</strong>연결한 기기를 선택해 PC에서 정리한 파일을 전송합니다.</span>
-                            <em class="demo-badge">파일 전송</em>
+                            <span><strong>Send your next read to Readive</strong>Choose a connected device and send the files you organized on your computer.</span>
+                            <em class="demo-badge">File transfer</em>
                         </figcaption>
                     </figure>
-                    <button class="demo-control prev" type="button" data-demo-prev aria-label="이전 데모 이미지">&lsaquo;</button>
-                    <button class="demo-control next" type="button" data-demo-next aria-label="다음 데모 이미지">&rsaquo;</button>
+                    <button class="demo-control prev" type="button" data-demo-prev aria-label="Previous screenshot">&lsaquo;</button>
+                    <button class="demo-control next" type="button" data-demo-next aria-label="Next screenshot">&rsaquo;</button>
                 </div>
-                <div class="demo-dots" aria-label="데모 이미지 선택">
-                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="데모 이미지 1"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="데모 이미지 2"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="데모 이미지 3"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="데모 이미지 4"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="데모 이미지 5"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="데모 이미지 6"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="데모 이미지 7"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="데모 이미지 8"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="데모 이미지 9"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="데모 이미지 10"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="데모 이미지 11"></button>
+                <div class="demo-dots" aria-label="Choose a screenshot">
+                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="Screenshot 1"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="Screenshot 2"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="Screenshot 3"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="Screenshot 4"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="Screenshot 5"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="Screenshot 6"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="Screenshot 7"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="Screenshot 8"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="Screenshot 9"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="Screenshot 10"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="Screenshot 11"></button>
                 </div>
             </div>
         </section>
 
         <section aria-labelledby="library-title">
-            <h2 id="library-title" class="text-animate">제목이 가물가물해도, 기억나는 단어로</h2>
-            <p class="section-lead">PC, 외장하드, NAS의 폴더를 라이브러리로 등록하세요. 여러 폴더를 오가지 않고 파일명과 책 정보, 본문 속 단어로 원하는 책을 찾을 수 있습니다.</p>
+            <h2 id="library-title" class="text-animate">Remember a word, find the book</h2>
+            <p class="section-lead">Add folders from your computer, external drives and NAS as libraries. Search filenames, book details and words in the text without switching between folders.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>책 정보와 태그로 좁혀 찾기</h3>
-                    <p>등록한 라이브러리를 함께 검색하고, 작가·장르·출판사·연도 등의 조건을 조합해 원하는 책을 골라 보세요.</p>
+                    <h3>Narrow your search with details and tags</h3>
+                    <p>Search across your libraries and combine filters such as author, genre, publisher and year.</p>
                 </article>
                 <article class="feature">
-                    <h3>본문에 나온 단어로 책 찾기</h3>
-                    <p>내용 검색 인덱스를 만들면 EPUB, PDF, TXT의 본문 단어로 책 파일을 찾을 수 있습니다. OCR이 필요한 스캔 문서는 제외됩니다.</p>
+                    <h3>Find books by words in their text</h3>
+                    <p>Build a content search index to find EPUB, PDF and TXT files by words in their text. Scanned documents that require OCR are excluded.</p>
                 </article>
                 <article class="feature">
-                    <h3>겹친 책과 빠진 권수 확인</h3>
-                    <p>파일명과 권수 정보가 비슷한 중복 후보를 비교하고, 보유한 시리즈의 권·화 번호 사이에서 빠진 번호를 확인하세요.</p>
+                    <h3>Check for duplicates and missing volumes</h3>
+                    <p>Compare possible duplicates with similar filenames and volume details, and find gaps in a series&#x27; volume or chapter numbers.</p>
                 </article>
             </div>
         </section>
 
         <section aria-labelledby="organize-title">
-            <h2 id="organize-title" class="text-animate">반복되는 파일 정리, 여러 권을 한 번에</h2>
-            <p class="section-lead">여러 권이 한 압축 파일에 섞여 있거나 페이지 이름이 제각각이어도 괜찮습니다. 파일이나 폴더를 끌어다 놓고, 결과를 미리 확인한 뒤 일괄 정리하세요.</p>
+            <h2 id="organize-title" class="text-animate">Organize multiple books at once</h2>
+            <p class="section-lead">Collections in a single archive and inconsistent page names are easier to manage in batches. Drag in files or folders, preview the results and apply your changes.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>합본을 권·화별 파일로</h3>
-                    <p>한 ZIP 안에 들어 있는 여러 권의 폴더를 각각의 책 파일로 나눕니다. 저장할 이름과 위치도 실행 전에 확인할 수 있습니다.</p>
+                    <h3>Split collections by volume or chapter</h3>
+                    <p>Turn volume folders inside a ZIP into separate book files. Check output names and destinations before you begin.</p>
                 </article>
                 <article class="feature">
-                    <h3>복잡한 압축 구조 정리</h3>
-                    <p>여러 단계로 중첩된 폴더를 정리하고, 이미지를 한곳에 모아 뷰어에서 읽기 좋은 구조로 맞춥니다.</p>
+                    <h3>Simplify complex archive structures</h3>
+                    <p>Clean up nested folders and gather images into a structure that works well in your reader.</p>
                 </article>
                 <article class="feature">
-                    <h3>페이지 이름과 순서 통일</h3>
-                    <p>내부 이미지 이름을 같은 규칙으로 바꾸고 순서를 조정합니다. 누락된 페이지 번호 확인과 이미지 용량 줄이기도 함께 처리할 수 있습니다.</p>
+                    <h3>Make page names and order consistent</h3>
+                    <p>Rename images with a shared naming rule and adjust their order. You can also check for missing page numbers and reduce image file sizes.</p>
                 </article>
             </div>
-            <p class="note">변경 전후의 파일명과 작업 대상을 미리 확인할 수 있습니다. 원본을 함께 보관하려면 작업 전에 환경 설정의 ‘원본 백업’을 켜세요.</p>
+            <p class="note">Preview filenames and the files affected before applying changes. To keep your originals, enable the original backup option in Settings before starting.</p>
         </section>
 
         <section aria-labelledby="metadata-title">
-            <h2 id="metadata-title" class="text-animate">파일명만 있던 책에, 표지와 이야기를</h2>
-            <p class="section-lead">리디북스, Google Books, AniList, Comic Vine, Amazon 등에서 책 정보를 찾아 비교하세요. 표지, 제목, 작가, 출판사와 줄거리를 가져와 알아보기 쉬운 서재로 정리할 수 있습니다.</p>
+            <h2 id="metadata-title" class="text-animate">Give your files covers and stories</h2>
+            <p class="section-lead">Find and compare book details from RIDI, Google Books, AniList, Comic Vine, Amazon and more. Import covers, titles, authors, publishers and summaries to make your library easier to browse.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>검색해서 채우는 책 정보</h3>
-                    <p>검색 결과를 편집창으로 가져와 확인한 뒤 적용하세요. 제목을 알기 어려운 책은 AI 원제 찾기로 표지에서 제목 후보를 찾을 수 있습니다.</p>
+                    <h3>Search for book details</h3>
+                    <p>Import search results into the editor, review them and apply your changes. If a title is hard to identify, use AI title lookup to suggest possible titles from the cover.</p>
                 </article>
                 <article class="feature">
-                    <h3>시리즈 공통 정보 일괄 적용</h3>
-                    <p>작가·출판사·장르·줄거리는 같은 시리즈에 함께 적용하고, 각 권의 제목·권수·페이지 수는 파일별로 관리하세요.</p>
+                    <h3>Apply shared details to a series</h3>
+                    <p>Apply authors, publishers, genres and summaries across a series, while managing each file&#x27;s title, volume number and page count separately.</p>
                 </article>
                 <article class="feature">
-                    <h3>파일과 함께 보관하는 정보</h3>
-                    <p>지원 형식에 따라 ComicInfo.xml, EPUB·PDF 메타데이터, 오디오 태그와 표지를 파일에 저장합니다. TXT의 책 정보와 표지는 앱에서 별도로 보관합니다.</p>
+                    <h3>Keep metadata with your files</h3>
+                    <p>Depending on the format, save ComicInfo.xml, EPUB and PDF metadata, or audio tags and covers in the files themselves. For TXT files, book details and covers are stored separately in the app.</p>
                 </article>
             </div>
-            <p class="section-lead">검색 소스는 책 종류에 따라 다르며, 일부 검색 서비스와 AI 기능에는 별도의 API 키 설정이 필요합니다.</p>
+            <p class="section-lead">Search sources vary by book type. Some search services and AI features require you to configure your own API keys.</p>
         </section>
 
         <section aria-labelledby="reader-title">
-            <h2 id="reader-title" class="text-animate">읽고 싶은 책은 바로 열고, 듣고 싶은 책은 재생</h2>
-            <p class="section-lead">만화책, EPUB, PDF, TXT와 오디오북을 내장 뷰어에서 감상하세요. 책갈피와 마지막 읽은 위치를 저장해 다음에 다시 펼치기도 편합니다.</p>
+            <h2 id="reader-title" class="text-animate">Open a book or press play</h2>
+            <p class="section-lead">Enjoy comics, EPUB, PDF, TXT and audiobooks with built-in readers and players. Save bookmarks and your last reading position to pick up where you left off.</p>
             <div class="split">
                 <div class="list-panel">
-                    <h3>내게 맞는 독서 화면</h3>
+                    <h3>A reading view that suits you</h3>
                     <ul>
-                        <li>한 장·두 장 보기, 스크롤과 확대·축소</li>
-                        <li>테마와 페이지 전환 효과로 읽기 환경 조정</li>
-                        <li>EPUB, PDF, TXT 안에서 내용 검색과 해당 위치로 이동</li>
-                        <li>EPUB과 TXT의 본문을 TTS로 듣기</li>
+                        <li>Single-page and two-page views, scrolling and zoom</li>
+                        <li>Themes and page transitions to adjust your reading experience</li>
+                        <li>Search within EPUB, PDF and TXT files and jump to matching text</li>
+                        <li>Listen to EPUB and TXT with text-to-speech</li>
                     </ul>
                 </div>
                 <div class="list-panel">
-                    <h3>생활에 맞춰 듣는 오디오북</h3>
+                    <h3>Audiobooks that fit your day</h3>
                     <ul>
-                        <li>재생 속도와 앞뒤 이동 간격 조절</li>
-                        <li>재생목록과 트랙 연속 재생</li>
-                        <li>다시 듣고 싶은 위치에 북마크, 잠들기 전 취침 타이머</li>
-                        <li>책을 정리하는 동안에도 미니 플레이어로 재생</li>
+                        <li>Adjust playback speed and skip intervals</li>
+                        <li>Playlists and continuous track playback</li>
+                        <li>Bookmark moments to revisit and set a sleep timer</li>
+                        <li>Keep listening with the mini player while organizing books</li>
                     </ul>
                 </div>
             </div>
         </section>
 
         <section aria-labelledby="sharing-title">
-            <h2 id="sharing-title" class="text-animate">PC에서 정리한 서재를, 내 기기에서도</h2>
-            <p class="section-lead">책을 정리하는 곳과 읽는 기기가 달라도 자연스럽게 연결하세요. Readive로 파일을 보내거나, 사용하는 앱에서 공유 라이브러리를 열 수 있습니다.</p>
+            <h2 id="sharing-title" class="text-animate">Take your desktop library to your devices</h2>
+            <p class="section-lead">Organize on your computer and read on the device you prefer. Send files to Readive or open your shared library in a compatible app.</p>
             <div class="split">
                 <div class="list-panel">
-                    <h3>모바일에서 읽을 책은 Readive로</h3>
+                    <h3>Send your next read to Readive</h3>
                     <ul>
-                        <li>같은 네트워크의 Readive 기기를 등록하고 연결</li>
-                        <li>선택한 책을 모바일 기기에 전송</li>
-                        <li>Readive에서 BookManager 라이브러리를 탐색하고 가져오기</li>
+                        <li>Pair and connect Readive devices on the same network</li>
+                        <li>Send selected books to your mobile device</li>
+                        <li>Browse and import books from your BookManager library in Readive</li>
                     </ul>
                     <div class="actions">
-                        <a class="button" href="readive/">Readive 알아보기</a>
+                        <a class="button" href="../readive/en/">Explore Readive</a>
                     </div>
                 </div>
                 <div class="list-panel">
-                    <h3>사용하는 앱에서도 라이브러리 탐색</h3>
+                    <h3>Browse your library in other apps</h3>
                     <ul>
-                        <li>OPDS: 지원하는 전자책 앱에서 책 목록 탐색과 다운로드</li>
-                        <li>Web: 웹 브라우저에서 라이브러리 탐색</li>
-                        <li>WebDAV: 지원하는 앱에서 책 파일에 접근</li>
+                        <li>OPDS: Browse and download books in compatible ebook apps</li>
+                        <li>Web: Browse your library in a web browser</li>
+                        <li>WebDAV: Access book files in compatible apps</li>
                     </ul>
-                    <p class="note">공유와 전송은 같은 네트워크에서 시작하세요. 연결하는 동안 BookManager와 해당 공유·연결 서비스가 실행 중이어야 합니다.</p>
+                    <p class="note">Start sharing and transferring on the same network. Keep BookManager and the relevant sharing or connection service running while connected.</p>
                 </div>
             </div>
         </section>
 
         <section aria-labelledby="formats-title">
-            <h2 id="formats-title" class="text-animate">모아 둔 파일, 익숙한 형식 그대로</h2>
-            <p class="section-lead">만화책부터 문서와 오디오북까지 하나의 라이브러리에서 관리합니다. 지원하는 작업과 메타데이터 저장 방식은 파일 형식에 따라 다릅니다.</p>
+            <h2 id="formats-title" class="text-animate">Keep the file formats you already use</h2>
+            <p class="section-lead">Manage comics, documents and audiobooks in one library. Available tools and metadata storage depend on the file format.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>만화책</h3>
+                    <h3>Comics</h3>
                     <p>ZIP, CBZ, RAR, CBR, 7Z, CB7</p>
                 </article>
                 <article class="feature">
-                    <h3>전자책·문서</h3>
+                    <h3>Ebooks and documents</h3>
                     <p>EPUB, PDF, TXT</p>
                 </article>
                 <article class="feature">
-                    <h3>오디오북</h3>
-                    <p>MP3, M4A, M4B, FLAC, AAC, AIF/AIFF, OGA/OGG/OPUS, WAV/WAVE 등</p>
+                    <h3>Audiobooks</h3>
+                    <p>MP3, M4A, M4B, FLAC, AAC, AIF/AIFF, OGA/OGG/OPUS, WAV/WAVE and more</p>
                 </article>
             </div>
         </section>
 
         <section aria-labelledby="faq-title">
-            <h2 id="faq-title" class="text-animate">시작하기 전에 궁금한 점</h2>
+            <h2 id="faq-title" class="text-animate">Before you get started</h2>
             <details class="faq-item">
-                <summary>무료로 사용할 수 있나요?</summary>
-                <p>BookManager는 MIT 라이선스로 공개된 무료 오픈소스 앱입니다. Windows와 macOS를 지원하며, 앱 언어는 한국어·영어·일본어 중에서 선택할 수 있습니다. 외부 API를 사용하는 검색·AI·TTS 기능은 해당 서비스의 이용 조건과 요금이 적용될 수 있습니다.</p>
+                <summary>Is BookManager free?</summary>
+                <p>BookManager is a free, open-source app released under the MIT license. It supports Windows and macOS, with Korean, English and Japanese interfaces. Search, AI and text-to-speech features that use external APIs may be subject to those services&#x27; terms and fees.</p>
             </details>
             <details class="faq-item">
-                <summary>NAS의 책도 관리할 수 있나요?</summary>
-                <p>컴퓨터에서 폴더로 접근할 수 있는 NAS나 외장하드를 라이브러리로 등록할 수 있습니다. 표지와 책 정보를 스캔한 뒤 다른 라이브러리와 함께 검색하세요. 파일을 열거나 정리하려면 해당 드라이브에 연결되어 있어야 합니다.</p>
+                <summary>Can I manage books on a NAS?</summary>
+                <p>Yes. Add a NAS or external drive as a library if your computer can access it as a folder. Scan covers and book details, then search alongside your other libraries. The drive must be connected to open or organize its files.</p>
             </details>
             <details class="faq-item">
-                <summary>책 정보를 편집하면 원본 파일도 바뀌나요?</summary>
-                <p>쓰기 지원 형식은 저장할 때 실제 파일의 메타데이터를 변경합니다. TXT는 본문을 수정하지 않고 책 정보와 표지를 앱에 별도로 저장하며, RAR/CBR의 메타데이터 직접 저장은 지원하지 않습니다. 오디오북은 AAC, AIF/AIFF, FLAC, M4A/M4B, MP3, OGA/OGG/OPUS, WAV/WAVE의 태그와 표지를 저장할 수 있고, 3GP·AMR·CAF·WEBM은 분석만 지원합니다. 원본 보관이 필요하면 작업 전에 ‘원본 백업’을 켜세요.</p>
+                <summary>Does editing book details change the original files?</summary>
+                <p>For formats that support writing, saving changes updates metadata in the actual files. TXT book details and covers are stored separately in the app without changing the text, and direct metadata writing to RAR/CBR is not supported. Audiobook tags and covers can be saved in AAC, AIF/AIFF, FLAC, M4A/M4B, MP3, OGA/OGG/OPUS and WAV/WAVE; 3GP, AMR, CAF and WEBM support analysis only. Enable the original backup option before starting if you need to keep the originals.</p>
             </details>
             <details class="faq-item">
-                <summary>지금 쓰는 뷰어나 책 관리 서버와 함께 쓸 수 있나요?</summary>
-                <p>파일 형식별로 외부 뷰어를 지정하거나, 정리한 파일을 다른 앱에서 열 수 있습니다. ComicInfo.xml과 EPUB·PDF 메타데이터 등은 이를 지원하는 뷰어와 서버에서 활용할 수 있습니다. 표시되는 항목은 각 앱의 지원 범위에 따라 다릅니다.</p>
+                <summary>Can I use it with my existing reader or library server?</summary>
+                <p>You can choose an external reader for each file format or open organized files in other apps. Compatible readers and servers can use ComicInfo.xml and EPUB or PDF metadata. The details displayed depend on each app&#x27;s support.</p>
             </details>
         </section>
 
         <section id="start" class="download-panel" aria-labelledby="start-title">
-            <h2 id="start-title">첫 번째 라이브러리부터 시작하세요</h2>
-            <p class="section-lead">운영체제에 맞는 파일을 내려받아 압축을 풀고 실행하세요. 책이 있는 폴더를 라이브러리로 등록하면 내 서재를 둘러볼 준비가 됩니다.</p>
+            <h2 id="start-title">Start with your first library</h2>
+            <p class="section-lead">Download the file for your operating system, extract it and launch the app. Add a folder containing your books as a library and start browsing.</p>
             <div class="actions">
-                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
-                    <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
-                    <span>macOS 다운로드</span>
-                    <span class="button-version" data-release-version>최신 버전</span>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="Download the latest version for macOS">
+                    <img class="button-icon" src="../icon_apple.svg" alt="" aria-hidden="true">
+                    <span>Download for macOS</span>
+                    <span class="button-version" data-release-version>Latest version</span>
                 </a>
-                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="win" aria-label="Windows 최신 버전 다운로드">
-                    <img class="button-icon" src="icon_windows.svg" alt="" aria-hidden="true">
-                    <span>Windows 다운로드</span>
-                    <span class="button-version" data-release-version>최신 버전</span>
+                <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="win" aria-label="Download the latest version for Windows">
+                    <img class="button-icon" src="../icon_windows.svg" alt="" aria-hidden="true">
+                    <span>Download for Windows</span>
+                    <span class="button-version" data-release-version>Latest version</span>
                 </a>
-                <a class="button" href="https://github.com/dongkkase/BookManager/wiki">설치 및 사용 설명서</a>
+                <a class="button" href="https://github.com/dongkkase/BookManager/wiki" hreflang="ko">Installation and user guide (Korean)</a>
             </div>
         </section>
     </main>
 
     <footer>
-        <span>BookManager · 내 파일로 만드는 나만의 서재 · MIT 오픈소스</span>
-        <nav class="footer-links" aria-label="프로젝트 및 도움말">
-            <a href="https://github.com/dongkkase/BookManager">GitHub 저장소</a>
-            <a href="https://github.com/dongkkase/BookManager/releases/latest">릴리즈 노트</a>
-            <a href="#guides">사용 가이드</a>
-            <a href="https://github.com/dongkkase/BookManager/wiki">사용 설명서</a>
-            <a href="https://discord.gg/DRVUbPewaV" target="_blank" rel="noopener noreferrer">디스코드 커뮤니티</a>
-            <a href="readive/">Readive</a>
+        <span>BookManager · A personal library for your own files · MIT open source</span>
+        <nav class="footer-links" aria-label="Project and help links">
+            <a href="https://github.com/dongkkase/BookManager">GitHub repository</a>
+            <a href="https://github.com/dongkkase/BookManager/releases/latest">Release notes</a>
+            <a href="#guides">Guides</a>
+            <a href="https://github.com/dongkkase/BookManager/wiki" hreflang="ko">User guide (Korean)</a>
+            <a href="https://discord.gg/DRVUbPewaV" target="_blank" rel="noopener noreferrer">Discord community</a>
+            <a href="../readive/en/">Readive</a>
         </nav>
     </footer>
     <script>
@@ -1141,7 +1147,7 @@
                     if (version) {
                         const versionEl = button.querySelector('[data-release-version]');
                         if (versionEl) versionEl.textContent = version;
-                        button.setAttribute('aria-label', `${platform === 'mac' ? 'macOS' : 'Windows'} ${version} 다운로드`);
+                        button.setAttribute('aria-label', `Download ${platform === 'mac' ? 'macOS' : 'Windows'} ${version}`);
                     }
                 });
             } catch (error) {
