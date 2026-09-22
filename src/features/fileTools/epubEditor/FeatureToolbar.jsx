@@ -49,41 +49,50 @@ export default function FeatureToolbar({ editor, actions, project, defaultColor 
     const onKeyDown = event => {
         if (event.target.closest('[popover]')) return;
         if (event.target.tagName !== 'BUTTON' || event.altKey || event.metaKey || event.ctrlKey) return;
-        const controls = [...event.currentTarget.querySelectorAll('button:not(:disabled), select:not(:disabled)')].filter(control => !control.closest('[popover]'));
+        const controls = [...event.currentTarget.querySelectorAll('button:not(:disabled), select:not(:disabled)')].filter(control => !control.closest('[popover], [hidden]'));
         const index = toolbarFocusIndex(controls.indexOf(event.target), event.key, controls.length);
         if (index >= 0) { event.preventDefault(); controls[index].focus(); }
     };
-    return <>
-        <div className="ee-toolbar ee-feature-toolbar" role="toolbar" aria-label={l('format')} onKeyDown={onKeyDown} onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}>
-            <div className="ee-command-group" role="group" aria-label={l('undo')}>
-                <CommandButton command="undo" action={actions.undo} disabled={!editor.can().undo() && !canUndoStructure} /><CommandButton command="redo" action={actions.redo} disabled={!editor.can().redo() && !canRedoStructure} />
+    return <div className="ee-toolbar ee-feature-toolbar" role="toolbar" aria-label={l('toolbarCategory')} onKeyDown={onKeyDown} onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}>
+        <div className="ee-toolbar-section" role="group" aria-label={l('formatTools')}>
+            <span className="ee-toolbar-label">{l('formatTools')}</span>
+            <div className="ee-toolbar-panel">
+                <div className="ee-command-group" role="group" aria-label={l('undo')}>
+                    <CommandButton command="undo" action={actions.undo} disabled={!editor.can().undo() && !canUndoStructure} /><CommandButton command="redo" action={actions.redo} disabled={!editor.can().redo() && !canRedoStructure} />
+                </div>
+                <div className="ee-command-group" role="group" aria-label={l('format')}>
+                    <ParagraphMenu editor={editor} actions={actions} formats={paragraphFormats} onApplyFormat={onApplyParagraphFormat} />
+                    <StyleMenu editor={editor} />
+                </div>
+                <FontControls editor={editor} project={project} />
+                <div className="ee-command-group" role="group" aria-label={l('format')}>
+                    {['bold', 'italic', 'underline', 'strike'].map(key => button(key, editor.isActive(key)))}
+                    {['superscript', 'subscript'].map(key => <CommandButton key={key} command={key} action={actions[key]} active={editor.isActive(key)} disabled={!canApplyScript(editor, key)} />)}
+                    <CommandButton command="color" action={actions.color} disabled={!editor.can().setColor('#000000')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').color || defaultColor }} />
+                    <CommandButton command="textBackground" action={actions.textBackground} disabled={!editor.can().setBackgroundColor('#fff176')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').backgroundColor || 'transparent' }} />
+                    <HighlightMenu editor={editor} />
+                    {button('reset')}
+                </div>
+                <div className="ee-command-group" role="group" aria-label={l('alignment')}>
+                    {['left', 'center', 'right', 'justify'].map(key => button(key, editor.isActive({ textAlign: key })))}
+                </div>
+                <div className="ee-command-group" role="group" aria-label={l('paragraphIndent')}><IndentControls editor={editor} actions={actions} /></div>
+                <div className="ee-command-group" role="group" aria-label={l('paragraph')}>
+                    {['bulletList', 'orderedList', 'blockquote', 'codeBlock'].map(key => button(key, editor.isActive(key)))}
+                </div>
             </div>
-            <div className="ee-command-group" role="group" aria-label={l('format')}>
-                <ParagraphMenu editor={editor} actions={actions} formats={paragraphFormats} onApplyFormat={onApplyParagraphFormat} />
-                <StyleMenu editor={editor} />
-            </div>
-            <FontControls editor={editor} project={project} />
-            <div className="ee-command-group" role="group" aria-label={l('format')}>
-                {['bold', 'italic', 'underline', 'strike'].map(key => button(key, editor.isActive(key)))}
-                {['superscript', 'subscript'].map(key => <CommandButton key={key} command={key} action={actions[key]} active={editor.isActive(key)} disabled={!canApplyScript(editor, key)} />)}
-                <CommandButton command="color" action={actions.color} disabled={!editor.can().setColor('#000000')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').color || defaultColor }} />
-                <CommandButton command="textBackground" action={actions.textBackground} disabled={!editor.can().setBackgroundColor('#fff176')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').backgroundColor || 'transparent' }} />
-                <HighlightMenu editor={editor} />
-                {button('reset')}
-            </div>
-            <div className="ee-command-group" role="group" aria-label={l('alignment')}>
-                {['left', 'center', 'right', 'justify'].map(key => button(key, editor.isActive({ textAlign: key })))}
-            </div>
-            <div className="ee-command-group" role="group" aria-label={l('paragraphIndent')}><IndentControls editor={editor} actions={actions} /></div>
-            <div className="ee-command-group" role="group" aria-label={l('paragraph')}>
-                {['bulletList', 'orderedList', 'blockquote', 'codeBlock'].map(key => button(key, editor.isActive(key)))}
-            </div>
-            <div className="ee-command-group" role="group" aria-label={l('insert')}>
-                {['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media', 'specialCharacters', 'emoji', 'link', 'horizontalRule', 'columns'].map(key => button(key, undefined, ['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media'].includes(key)))}
-            </div>
-            <div className="ee-command-group">{button('importText')}{button('splitChapter')}<CommandButton command="mergeChapters" action={actions.mergeChapters} disabled={!canMergeChapters} />{button('search')}{button('shortcuts')}</div>
         </div>
-    </>;
+        <div className="ee-toolbar-section" role="group" aria-label={l('insert')}>
+            <span className="ee-toolbar-label">{l('insert')}</span>
+            <div className="ee-toolbar-panel">
+                <div className="ee-command-group" role="group" aria-label={l('insert')}>
+                    {['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media', 'specialCharacters', 'emoji', 'link', 'horizontalRule', 'columns'].map(key => button(key, undefined, ['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media'].includes(key)))}
+                </div>
+                <div className="ee-command-group">{button('importText', undefined, true)}{button('splitChapter')}<CommandButton command="mergeChapters" action={actions.mergeChapters} disabled={!canMergeChapters} /></div>
+                <div className="ee-command-group"><CommandButton command="search" action={actions.search} showLabel /><CommandButton command="shortcuts" action={actions.shortcuts} /></div>
+            </div>
+        </div>
+    </div>;
 }
 
 export function ShortcutHelp({ actions, onClose }) {

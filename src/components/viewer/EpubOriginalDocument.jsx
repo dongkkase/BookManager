@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics, getEpubOriginalAnchorRects } from '../../epubOriginalDocument.js';
+import EpubInlineMedia from './EpubInlineMedia.jsx';
 import '../../styles/epubOriginalDocument.css';
 
 const EMPTY_HIGHLIGHTS = [];
@@ -120,6 +121,7 @@ export default function EpubOriginalDocument({
     mode = 'page',
     pageSize: suppliedPageSize,
     pageOffset = 0,
+    mediaActive = true,
     scale = 1,
     appearance,
     onLayout,
@@ -147,6 +149,7 @@ export default function EpubOriginalDocument({
     const fixedScale = fixed ? Math.min(width / original.viewport.width, height / original.viewport.height) : 1;
     const [contentHeight, setContentHeight] = useState(height);
     const [documentColors, setDocumentColors] = useState({ bg: '#fff', fg: '#000' });
+    const [mediaLayout, setMediaLayout] = useState({ bounds: {}, items: [] });
     const srcDoc = useMemo(() => buildEpubOriginalDocument(chapter, { mode, pageSize }), [chapter, mode, pageSize]);
     callbacksRef.current = { onLayout, onReady, onInternalLink, onExternalLink, onImagePreview, onSelectionChange, onAudioRequest, audioState, audioLabels, mode, pageOffset, theme: appearance?.theme || null };
 
@@ -178,6 +181,38 @@ export default function EpubOriginalDocument({
     }, []);
     useEffect(updateAudioControls, [updateAudioControls, ready, audioState?.trackId, audioState?.status, audioLabels?.play, audioLabels?.pause, audioLabels?.loading, mode, onAudioRequest]);
 
+    const updateMediaLayout = useCallback(() => {
+        const frame = frameRef.current;
+        const document = frame?.contentDocument;
+        const container = frame?.parentElement;
+        if (!document?.body || !container || mode === 'measure') return;
+        const frameRect = frame.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const parentScaleX = containerRect.width / container.offsetWidth || 1;
+        const parentScaleY = containerRect.height / container.offsetHeight || 1;
+        const scaleX = frameRect.width / frame.clientWidth / parentScaleX;
+        const scaleY = frameRect.height / frame.clientHeight / parentScaleY;
+        const next = {
+            bounds: {
+                left: (frameRect.left - containerRect.left) / parentScaleX,
+                top: (frameRect.top - containerRect.top) / parentScaleY,
+                width: frameRect.width / parentScaleX,
+                height: frameRect.height / parentScaleY,
+            },
+            items: [...document.querySelectorAll('[data-epub-media-url]')].flatMap((node, index) => {
+                const rect = node.getBoundingClientRect();
+                if (!rect.width || !rect.height || rect.right <= 0 || rect.bottom <= 0 || rect.left >= frame.clientWidth || rect.top >= frame.clientHeight) return [];
+                return [{
+                    key: index,
+                    url: node.dataset.epubMediaUrl,
+                    title: node.dataset.epubMediaTitle,
+                    style: { left: rect.left * scaleX, top: rect.top * scaleY, width: rect.width * scaleX, height: rect.height * scaleY },
+                }];
+            }),
+        };
+        setMediaLayout(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+    }, [mode]);
+
     const showOffset = useCallback(() => {
         const document = frameRef.current?.contentDocument;
         const layout = layoutRef.current;
@@ -185,7 +220,12 @@ export default function EpubOriginalDocument({
         const offset = Math.max(0, Math.min(layout.pageCount - 1, Number(callbacksRef.current.pageOffset) || 0));
         document.documentElement.scrollLeft = layout.vertical ? 0 : offset * width * (layout.rtl ? -1 : 1);
         document.documentElement.scrollTop = layout.vertical ? offset * height : 0;
-    }, [fixed, mode, width, height]);
+        updateMediaLayout();
+    }, [fixed, mode, width, height, updateMediaLayout]);
+
+    useLayoutEffect(() => {
+        if (ready) updateMediaLayout();
+    }, [ready, mediaActive, contentHeight, pageOffset, displayScale, fixedScale, horizontalPadding, verticalPadding, updateMediaLayout]);
 
     useEffect(() => {
         setReady(false);
@@ -387,6 +427,7 @@ export default function EpubOriginalDocument({
             const changed = JSON.stringify(nextLayout) !== JSON.stringify(layoutRef.current);
             layoutRef.current = nextLayout;
             showOffset();
+            updateMediaLayout();
             if (changed) callbacksRef.current.onLayout?.(nextLayout);
             return nextLayout;
         };
@@ -407,7 +448,7 @@ export default function EpubOriginalDocument({
             cancelAnimationFrame(resizeFrame);
             resizeFrame = requestAnimationFrame(measure);
         }, true);
-    }, [chapter?.name, fixed, fixedScale, original, mode, pageSize, width, height, showOffset, srcDoc, updateAudioControls, updateTheme]);
+    }, [chapter?.name, fixed, fixedScale, original, mode, pageSize, width, height, showOffset, srcDoc, updateAudioControls, updateTheme, updateMediaLayout]);
 
     useEffect(() => {
         const initialized = initializedFrameRef.current;
@@ -443,6 +484,13 @@ export default function EpubOriginalDocument({
                 style={{ width: frameWidth, height: frameHeight, top: fixed ? verticalPadding : undefined, backgroundColor: documentColors.bg, transform: `scale(${fixedScale * displayScale})` }}
                 onLoad={handleLoad}
             />
+            {ready && mediaActive && mode !== 'measure' && mediaLayout.items.length > 0 && (
+                <div className="viewer-epub-original-media-layer" style={mediaLayout.bounds}>
+                    {mediaLayout.items.map(item => (
+                        <EpubInlineMedia key={`${chapter?.name}:${item.key}`} url={item.url} title={item.title} style={item.style} />
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

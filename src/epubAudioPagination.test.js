@@ -34,6 +34,22 @@ const audioBlock = () => ({
     nodes: [element('p', [element('strong', [text('가'.repeat(200))]), audio('middle'), text('가'.repeat(200)), audio('end')], { id: 'paragraph' })],
 });
 
+test('inline video blocks survive pagination and measured repacking without splitting into text', () => {
+    const video = {
+        type: 'html', hasVideo: true, text: 'Video title '.repeat(80), anchors: ['video'],
+        nodes: [element('figure', [], { id: 'video', mediaUrl: 'https://youtu.be/jNQXAC9IVRw' })],
+    };
+    const chapter = { name: 'video.xhtml', blocks: [{ type: 'text', text: 'Before '.repeat(80) }, video, { type: 'text', text: 'After' }] };
+    const pages = paginateReaderChapter(chapter, options);
+    const videos = pages.flatMap(page => page.blocks).filter(block => block.hasVideo);
+    assert.equal(videos.length, 1);
+    assert.deepEqual(videos[0].nodes, video.nodes);
+    assert.deepEqual(videos[0].anchors, ['video']);
+    const measured = readerMeasureBlocksFromPages(pages);
+    const repacked = buildMeasuredReaderPages(measured, measured.map((block, index) => ({ index, firstHeight: block.hasVideo ? 320 : 80, outerHeight: block.hasVideo ? 320 : 80 })), { pageContentHeight: 360 });
+    assert.equal(repacked.flatMap(page => page.blocks).filter(block => block.hasVideo).length, 1);
+});
+
 test('inline controls in repeated text stay on their actual split pages across page sizes', () => {
     for (const [linesPerPage, expected] of [[8, [1, 2]], [12, [0, 1]], [20, [0, 0]]]) {
         const block = audioBlock();

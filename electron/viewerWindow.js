@@ -14,6 +14,7 @@ import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.
 import { LibraryDB } from './database/library_db.js';
 import { getReadiveReadingState } from './readive/ipc.js';
 import { createCoverEditViewerGuard } from './coverEditViewerGuard.js';
+import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -556,6 +557,7 @@ export function setupViewerWindowManager(options = {}) {
             show: false,
         });
         context.window = viewerWindow;
+        installEditorMediaHeaders(viewerWindow.webContents, options.appId || 'com.bookmanager.app');
 
         const sendFullscreenState = () => {
             if (viewerWindow.isDestroyed() || context.window !== viewerWindow) return;

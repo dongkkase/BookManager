@@ -18,7 +18,7 @@ export const shortcuts = {
     deleteRow: 'Mod-Alt-Backspace', deleteColumn: 'Mod-Alt-Delete', deleteTable: 'Mod-Alt-Shift-Delete',
     toggleHeaderRow: 'Mod-Alt-Shift-H', toggleHeaderColumn: 'Mod-Alt-Shift-J',
     commonCss: 'Mod-Alt-S', chapterCss: 'Mod-Alt-Shift-S', source: 'Mod-Alt-U', preview: 'Mod-Alt-W', previewViewer: 'Mod-Alt-Shift-W',
-    shortcuts: 'Alt-0', toolbar: 'Alt-F10',
+    shortcuts: 'Alt-0', toolbar: 'Alt-F10', focusMode: 'Mod-Shift-F',
 };
 export function shortcutLabel(command) {
     const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);

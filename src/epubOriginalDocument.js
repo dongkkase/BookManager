@@ -1,4 +1,5 @@
 import { epubOriginalCssParts, rewriteEpubOriginalCssUrls } from '../electron/epubOriginal.js';
+import { parseMediaUrl } from '../electron/epubEditor/authoring.js';
 
 const RESOURCE_SCHEME = /^(?:bookmanager-document:\/\/|\/api\/viewer\/epub-asset\/)/i;
 const VISUAL_RESOURCE_ENTRY = /\.(?:jpe?g|png|webp|bmp|gif|svg|avif|apng|ttf|otf|woff2?|eot)$/i;
@@ -334,6 +335,19 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
     const fixed = original.layout === 'pre-paginated' && original.viewport?.width > 0 && original.viewport?.height > 0;
     const scrollViewport = mode === 'scroll' && !fixed ? { width, height } : undefined;
     const document = new DOMParser().parseFromString(String(original.html || ''), 'text/html');
+    document.querySelectorAll('iframe, object, embed').forEach(node => {
+        const source = node.getAttribute('src') || node.getAttribute('data') || '';
+        const media = parseMediaUrl(source.startsWith('//') ? `https:${source}` : source);
+        if (!media) return;
+        const link = document.createElement('a');
+        link.href = media.url;
+        link.textContent = node.getAttribute('title') || media.provider;
+        if (node.id) link.id = node.id;
+        const figure = document.createElement('figure');
+        figure.className = 'external-media';
+        figure.append(link);
+        node.replaceWith(figure);
+    });
     document.querySelectorAll('script, iframe, frame, frameset, object, embed, applet, portal, form, input, button, select, textarea, base, link, video, track, source').forEach(node => node.remove());
     document.querySelectorAll('meta[http-equiv]').forEach(node => node.remove());
     document.querySelectorAll('*').forEach(node => {
@@ -369,6 +383,21 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
     document.querySelectorAll('style').forEach(node => {
         node.textContent = rewriteEpubOriginalCss(node.textContent, entryName, resources, scrollViewport);
     });
+    document.querySelectorAll('[data-epub-media-url], [data-epub-media-title]').forEach(node => {
+        node.removeAttribute('data-epub-media-url');
+        node.removeAttribute('data-epub-media-title');
+    });
+    document.querySelectorAll('figure.external-media, figure[data-media-url]').forEach(figure => {
+        const link = [...figure.querySelectorAll('a[data-original-external-link]')]
+            .find(node => parseMediaUrl(node.dataset.originalExternalLink));
+        const media = parseMediaUrl(figure.getAttribute('data-media-url') || link?.dataset.originalExternalLink);
+        if (!media) return;
+        const slot = document.createElement('div');
+        slot.dataset.epubMediaUrl = media.url;
+        slot.dataset.epubMediaTitle = figure.getAttribute('data-title') || figure.querySelector('figcaption')?.textContent || link?.textContent || media.provider;
+        if (link?.id) slot.id = link.id;
+        figure.replaceChildren(slot);
+    });
     replaceEpubAudioElements(document, chapter?.audioTracks);
     const csp = document.createElement('meta');
     csp.httpEquiv = 'Content-Security-Policy';
@@ -394,6 +423,14 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
     const layoutStyle = document.createElement('style');
     layoutStyle.dataset.originalLayout = 'true';
     layoutStyle.textContent = `
+        [data-epub-media-url] {
+            display: block !important; box-sizing: border-box !important;
+            width: 100% !important; aspect-ratio: 16 / 9 !important;
+            max-height: ${Math.max(1, (fixed ? original.viewport.height : height) - 32)}px !important;
+            break-inside: avoid !important; background: #101214 !important;
+            writing-mode: horizontal-tb !important;
+        }
+        figure.external-media, figure[data-media-url] { break-inside: avoid; }
         [data-epub-audio-controls="false"] { display: none !important; }
         [data-epub-audio-controls="true"] { max-width: 100%; vertical-align: middle; }
         button.bookmanager-epub-audio-control {

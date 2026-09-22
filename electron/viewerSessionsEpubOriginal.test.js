@@ -50,6 +50,29 @@ async function createOriginalEpub(t) {
     return { root, epubPath, html };
 }
 
+test('EPUB video embeds become inline media in optimized chapters including video-only pages', async t => {
+    const { epubPath } = await createOriginalEpub(t);
+    await replaceZipEntry(epubPath, 'OEBPS/text/two.xhtml', `<html><body>
+        <iframe id="youtube" title="Video title" src="//www.youtube.com/embed/jNQXAC9IVRw?start=30"></iframe>
+        <object id="vimeo" data="https://player.vimeo.com/video/123456789?h=a1b2c3d4e5"></object>
+        <embed src="https://www.youtube-nocookie.com/embed/jNQXAC9IVRw" />
+        <iframe src="https://www.youtube.com.evil.test/embed/jNQXAC9IVRw"></iframe>
+        <iframe src="javascript:alert(1)"></iframe>
+    </body></html>`);
+    const manager = new ViewerSessionManager();
+    const session = manager.create(epubPath, { skipAdjacent: true });
+    const chapter = (await manager.getEpubText(session.id)).chapters.find(item => item.name.endsWith('/two.xhtml'));
+    const links = nodes => nodes.flatMap(node => [node.mediaUrl, ...links(node.children || [])]).filter(Boolean);
+    assert.deepEqual(chapter.blocks.flatMap(block => links(block.nodes || [])), [
+        'https://www.youtube.com/watch?v=jNQXAC9IVRw&t=30',
+        'https://vimeo.com/123456789/a1b2c3d4e5',
+        'https://www.youtube.com/watch?v=jNQXAC9IVRw',
+    ]);
+    assert.ok(chapter.blocks.some(block => block.anchors.includes('youtube')));
+    assert.ok(chapter.blocks.every(block => block.hasVideo));
+    assert.ok(!chapter.originalOnly);
+});
+
 test('원본 EPUB 자료는 DOM과 출판사 CSS를 보존하고 각 CSS 위치에서 자산 경로를 해결한다', async t => {
     const { epubPath, html } = await createOriginalEpub(t);
     const manager = new ViewerSessionManager();

@@ -26,7 +26,7 @@ export function FontSelect({ project, value, onChange }) {
     </select>;
 }
 
-export default function Inspector({ hidden, tab, setTab, project, update, editor, chapter, assetUrls, onAddAsset, onCss, onChapterCss, onFootnote, onMedia, onFormat, editing }) {
+export default function Inspector({ hidden, onClose, tab, setTab, project, update, editor, chapter, assetUrls, onAddAsset, onCss, onChapterCss, onFootnote, onMedia, onFormat, editing }) {
     const patchStyle = patch => update(current => ({ ...current, style: { ...current.style, ...patch } }));
     const patchCover = patch => update(current => ({ ...current, cover: { ...current.cover, ...patch } }));
     const patchChapter = patch => update(current => ({ ...current, chapters: current.chapters.map(item => item.id === chapter.id ? { ...item, ...patch } : item) }));
@@ -45,10 +45,11 @@ export default function Inspector({ hidden, tab, setTab, project, update, editor
     }}>
         <div className="ee-panel-tabs" role="tablist" aria-label={l('inspector')}>
             {['properties', 'styles', 'book'].map(name => <button key={name} role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>{l(name === 'properties' ? 'chapterAndElement' : name === 'styles' ? 'bookDefaults' : name)}</button>)}
+            {onClose && <button type="button" className="ee-panel-close" aria-label={l('close')} onClick={onClose}>×</button>}
         </div>
         <div className="ee-panel-body">
             {tab === 'properties' && <>
-                {hasElement ? <section className="ee-element-properties" data-element-properties>
+                {hasElement ? <section className="ee-element-properties" data-element-properties tabIndex={-1} role="group" aria-label={`${l('selection')} · ${l(media ? 'media' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}`}>
                     <h3>{l('selection')}<span>{l(media ? 'media' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}</span></h3>
                     {media ? <>
                         <p className="ee-note-text">{media.title || media.url}</p>
@@ -68,9 +69,9 @@ export default function Inspector({ hidden, tab, setTab, project, update, editor
                         <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
                     </> : image ? <>
                         <NumberField label={l('width')} value={image.width} min={10} max={100} onChange={width => setImage({ width })} />
-                        <Field label={l('alt')}><textarea rows={3} value={image.alt} disabled={image.decorative} onChange={event => setImage({ alt: event.target.value })} /></Field>
+                        <Field label={l('alt')}><textarea rows={3} maxLength={2000} value={image.alt} disabled={image.decorative} onChange={event => setImage({ alt: event.target.value })} /></Field>
                         <label className="ee-check"><input type="checkbox" checked={image.decorative} onChange={event => setImage({ decorative: event.target.checked })} />{l('decorative')}</label>
-                        <Field label={l('caption')}><input value={image.caption} onChange={event => setImage({ caption: event.target.value })} /></Field>
+                        <Field label={l('caption')}><input maxLength={2000} value={image.caption} placeholder={l('imageCaptionPlaceholder')} onChange={event => setImage({ caption: event.target.value })} /></Field>
                         <button className="ee-button ee-danger" onClick={() => editor.chain().deleteSelection().run()}>{l('remove')}</button>
                     </> : null}
                     {table && <>

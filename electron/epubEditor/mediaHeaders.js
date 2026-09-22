@@ -10,9 +10,22 @@ export function editorMediaRequestHeaders(details, ownerId, appId) {
     return { ...Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'referer')), Referer: `https://${appId.toLowerCase()}/` };
 }
 
+const mediaHeaderOwners = new WeakMap();
+
 export function installEditorMediaHeaders(webContents, appId) {
     const ownerId = webContents.id;
-    webContents.session.webRequest.onBeforeSendHeaders({ urls: ['https://www.youtube-nocookie.com/embed/*'] }, (details, callback) => {
-        callback({ requestHeaders: editorMediaRequestHeaders(details, ownerId, appId) });
-    });
+    const session = webContents.session;
+    let owners = mediaHeaderOwners.get(session);
+    if (!owners) {
+        owners = new Map();
+        mediaHeaderOwners.set(session, owners);
+        session.webRequest.onBeforeSendHeaders({ urls: ['https://www.youtube-nocookie.com/embed/*'] }, (details, callback) => {
+            const requestAppId = owners.get(details.webContentsId);
+            callback({ requestHeaders: requestAppId
+                ? editorMediaRequestHeaders(details, details.webContentsId, requestAppId)
+                : details.requestHeaders });
+        });
+    }
+    owners.set(ownerId, appId);
+    webContents.once?.('destroyed', () => owners.delete(ownerId));
 }

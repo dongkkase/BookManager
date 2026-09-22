@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { atScrollEdge, createChapterScrollGate, scrollPreviewBy, wheelPixels } from './chapterScroll.js';
+import { atScrollEdge, createChapterScrollGate, scrollPreviewBy, scrollPreviewCanvasAtEdge, wheelPixels } from './chapterScroll.js';
 
 test('wheel units support mice, trackpads and page scrolling without intercepting zoom or horizontal gestures', () => {
     assert.equal(wheelPixels({ deltaY: 40 }, 700), 40);
@@ -61,6 +61,63 @@ test('an unloaded preview, invalid input and a short chapter do not create an ou
     scrollPreviewBy(frame, 100);
     assert.equal(page.scrollTop, 0);
     assert.equal(scrollPreviewBy(frame, NaN), false);
+});
+
+test('an oversized preview reveals the remaining canvas only after its document reaches the matching edge', () => {
+    const page = { scrollTop: 300, scrollHeight: 2000, clientHeight: 600 };
+    const canvas = { scrollTop: 100, scrollHeight: 900, clientHeight: 400 };
+    const frame = { contentDocument: { scrollingElement: page }, clientWidth: 400, getBoundingClientRect: () => ({ width: 400 }), closest: () => canvas };
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 120), false);
+    assert.equal(canvas.scrollTop, 100);
+    page.scrollTop = 1400;
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 120), true);
+    assert.equal(canvas.scrollTop, 220);
+    assert.equal(page.scrollTop, 1400);
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 1000), true);
+    assert.equal(canvas.scrollTop, 500);
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 120), false);
+    page.scrollTop = 0;
+    assert.equal(scrollPreviewCanvasAtEdge(frame, -1000), true);
+    assert.equal(canvas.scrollTop, 0);
+    assert.equal(scrollPreviewCanvasAtEdge(frame, -120), false);
+});
+
+test('iframe input is converted into the outer canvas coordinate scale', () => {
+    const page = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600 };
+    const canvas = { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 };
+    const frame = { contentDocument: { scrollingElement: page }, clientWidth: 400, getBoundingClientRect: () => ({ width: 200 }), closest: () => canvas };
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 120, true), true);
+    assert.equal(canvas.scrollTop, 60);
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 120), true);
+    assert.equal(canvas.scrollTop, 180);
+    frame.getBoundingClientRect = () => ({ width: 800 });
+    page.scrollTop = 0;
+    assert.equal(scrollPreviewCanvasAtEdge(frame, -40, true), true);
+    assert.equal(canvas.scrollTop, 100);
+});
+
+test('reaching the canvas edge consumes the gesture before chapter navigation is permitted', () => {
+    const page = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600 };
+    const canvas = { scrollTop: 100, scrollHeight: 900, clientHeight: 400 };
+    const frame = { contentDocument: { scrollingElement: page }, clientWidth: 400, getBoundingClientRect: () => ({ width: 400 }), closest: () => canvas };
+    const gate = createChapterScrollGate();
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 1000, true), true);
+    assert.equal(gate.push(1000, 0, false), false);
+    assert.equal(canvas.scrollTop, 500);
+    assert.equal(scrollPreviewCanvasAtEdge(frame, 120, true), false);
+    assert.equal(gate.push(120, 50, atScrollEdge(page, 1) && atScrollEdge(canvas, 1)), false);
+    assert.equal(gate.push(120, 300, atScrollEdge(page, 1) && atScrollEdge(canvas, 1)), true);
+});
+
+test('fit previews and unavailable canvases do not intercept document scrolling', () => {
+    const page = { scrollTop: 0, scrollHeight: 600, clientHeight: 600 };
+    const canvas = { scrollTop: 0, scrollHeight: 400, clientHeight: 400 };
+    const frame = { contentDocument: { scrollingElement: page }, clientWidth: 400, getBoundingClientRect: () => ({ width: 200 }), closest: () => canvas };
+    for (const delta of [-120, 120, 0, NaN, Infinity]) assert.equal(scrollPreviewCanvasAtEdge(frame, delta, true), false);
+    assert.equal(canvas.scrollTop, 0);
+    assert.equal(scrollPreviewCanvasAtEdge(null, 120), false);
+    assert.equal(scrollPreviewCanvasAtEdge({ contentDocument: null }, 120), false);
+    assert.equal(scrollPreviewCanvasAtEdge({ contentDocument: { scrollingElement: page } }, 120), false);
 });
 
 for (const direction of [-1, 1]) {

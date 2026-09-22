@@ -68,17 +68,21 @@ async function inlineOriginalSnapshotResources(clone) {
 
 async function snapshotFontStyles(families, documents = [document]) {
     const rules = [];
-    const visit = styleRules => {
+    const visit = (styleRules, loadedFamilies) => {
         for (const rule of styleRules) {
             if (rule.type === CSSRule.FONT_FACE_RULE) {
                 const family = rule.style.getPropertyValue('font-family').replace(/["']/g, '').toLowerCase();
-                if ([...families].some(value => value.includes(family))) rules.push(rule);
-            } else if (rule.cssRules) visit(rule.cssRules);
+                if (loadedFamilies.has(family) && families.has(family)) rules.push(rule);
+            } else if (rule.cssRules) visit(rule.cssRules, loadedFamilies);
         }
     };
     for (const sourceDocument of documents) {
+        // Unused fallback fonts can add megabytes to every leaf without painting any text.
+        const loadedFamilies = new Set([...sourceDocument.fonts]
+            .filter(face => face.status === 'loaded')
+            .map(face => face.family.replace(/["']/g, '').toLowerCase()));
         for (const sheet of sourceDocument.styleSheets) {
-            try { visit(sheet.cssRules); } catch { /* External stylesheets can disallow CSSOM access. */ }
+            try { visit(sheet.cssRules, loadedFamilies); } catch { /* External stylesheets can disallow CSSOM access. */ }
         }
     }
     return (await Promise.all(rules.map(async rule => {
@@ -112,13 +116,25 @@ function cloneReaderSnapshot(node, families, documents) {
     const originals = [node, ...node.querySelectorAll('*')];
     const copies = [clone, ...clone.querySelectorAll('*')];
     originals.forEach((original, index) => {
+        const media = original.closest('.viewer-epub-inline-media');
+        if (media && media !== original) return;
         const copy = copies[index];
         const computed = original.ownerDocument.defaultView.getComputedStyle(original);
         for (const property of computed) copy.style.setProperty(property, computed.getPropertyValue(property));
         copy.style.visibility = 'visible';
         copy.style.animation = 'none';
         copy.style.transition = 'none';
-        families.add(computed.fontFamily.replace(/["']/g, '').toLowerCase());
+        if (media === original) {
+            // Remote players cannot be copied into a canvas; replace only their snapshot contents.
+            const placeholder = document.createElement('div');
+            placeholder.style.cssText = 'display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;height:100%;padding:12px;overflow:hidden;background:#101214;color:#fff;font:14px/1.4 sans-serif;text-align:center;text-indent:0;writing-mode:horizontal-tb;';
+            placeholder.textContent = `▶ ${original.dataset.epubMediaTitle || original.querySelector('iframe')?.title || ''}`.trim();
+            copy.replaceChildren(placeholder);
+            return;
+        }
+        if ([...original.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim())) {
+            computed.fontFamily.split(',').forEach(family => families.add(family.replace(/["']/g, '').trim().toLowerCase()));
+        }
         if (original.localName === 'img') {
             copy.removeAttribute('srcset');
             copy.src = inlineImage(original);

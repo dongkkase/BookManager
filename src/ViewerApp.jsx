@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import ViewerPageCurlBook from './ViewerPageCurlBook';
+import ViewerPageCurlBook, { PAGE_CURL_SNAPSHOT_TIMEOUT } from './ViewerPageCurlBook';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
@@ -14,6 +14,7 @@ import { CoverArtwork } from './components/CoverArtwork';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
 import { ViewerScrollOptions, ViewerScrollPopover } from './components/viewer/ViewerScrollControls';
 import EpubOriginalDocument from './components/viewer/EpubOriginalDocument';
+import EpubInlineMedia from './components/viewer/EpubInlineMedia';
 import { EpubAudioControls } from './components/viewer/EpubAudioControls';
 import { mapEpubAudioTracks } from './epubAudioContext';
 import { epubAudioBlockNodes, separateEpubAudioBlockImages, sliceEpubAudioBlock } from './epubAudioPagination';
@@ -2119,6 +2120,7 @@ function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, pa
     attributes: block.attributes,
     anchors: block.anchors,
     hasImage: block.hasImage || block.type === 'image',
+    ...(block.hasVideo ? { hasVideo: true } : {}),
     mediaOnly: block.mediaOnly || false,
     ...(block.hasAudio ? { hasAudio: true, audioTracks: block.audioTracks, nodes: preserveNodes && Array.isArray(block.nodes) ? epubAudioBlockNodes(block) : undefined } : {}),
     ...(!preserveNodes && block.hasAudio && Array.isArray(block.nodes) ? sliceEpubAudioBlock(block, text, textOffset) : {}),
@@ -2393,6 +2395,17 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '', ex
     return (node.children || []).map((child, index) => renderEpubHtmlNode(child, `${key}-${index}`, markContext));
   }
   const anchorProps = node.id ? { 'data-epub-anchor': node.id } : {};
+    if (node.mediaUrl) {
+        return <EpubInlineMedia
+            key={key}
+            url={node.mediaUrl}
+            title={node.mediaTitle}
+            active={markContext.mediaActive}
+            className={extraClassName}
+            {...anchorProps}
+            {...extraProps}
+        />;
+    }
     if (node.audioTrackId) {
         const playing = markContext.audioState?.trackId === node.audioTrackId && markContext.audioState.status === 'playing';
         const label = viewerText(playing ? 'viewer.epub_audio.pause' : 'viewer.epub_audio.play', playing ? '일시정지' : '재생');
@@ -2737,6 +2750,10 @@ function paginateReaderChapter(chapter = {}, options = {}) {
     const rawText = String(block?.text || '');
     const hasPreservedBlankText = rawText.includes('\u00a0') && !rawText.replace(/[\s\u00a0]+/g, '');
     const text = hasPreservedBlankText ? '\u00a0' : rawText.trim();
+    if (block.hasVideo) {
+        addPackedBlock(block, text, { preserveNodes: true, lineCost: estimateReaderMediaLineCost(metrics, block) });
+        continue;
+    }
     if (!text && block.hasAudio) {
         addPackedBlock(block, '', { preserveNodes: true, lineCost: 2 });
         continue;
@@ -6894,11 +6911,12 @@ function ViewerApp() {
       clearPageTurnRuntime();
       pageTurnPendingRef.current = true;
       bookPageTurnTargetRef.current = targetIndex;
+      const snapshotTimeout = format === 'reader' ? PAGE_CURL_SNAPSHOT_TIMEOUT.reader : PAGE_CURL_SNAPSHOT_TIMEOUT.image;
       pageTurnTimerRef.current = window.setTimeout(() => {
         bookPageTurnTargetRef.current = null;
         pageTurnPendingRef.current = false;
         pageTurnTimerRef.current = null;
-      }, PAGE_EFFECT_PREPARE_TIMEOUT + BOOK_PAGE_TURN_DURATION + BOOK_AMBIENT_FADE_CLEANUP_BUFFER);
+      }, PAGE_EFFECT_PREPARE_TIMEOUT + snapshotTimeout + BOOK_PAGE_TURN_DURATION + BOOK_AMBIENT_FADE_CLEANUP_BUFFER);
       setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
       return false;
     }
@@ -8320,7 +8338,7 @@ function ViewerApp() {
     if (['input', 'select', 'textarea', 'button', 'a'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu, .viewer-scroll-menu, .viewer-scroll-options, .viewer-epub-audio-controls, .viewer-epub-audio-inline'
+      '.viewer-toolbar, .viewer-slide-nav, .viewer-dropdown, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu, .viewer-scroll-menu, .viewer-scroll-options, .viewer-epub-audio-controls, .viewer-epub-audio-inline, .viewer-epub-inline-media'
     ));
   }, []);
 
@@ -8329,7 +8347,7 @@ function ViewerApp() {
     if (['input', 'select', 'textarea'].includes(targetName)) return true;
     if (target?.isContentEditable) return true;
     return Boolean(target?.closest?.(
-      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu, .viewer-scroll-menu, .viewer-scroll-options, .viewer-epub-audio-controls, .viewer-epub-audio-inline'
+      '[contenteditable="true"], [role="textbox"], .viewer-slide-nav, .viewer-dropdown-menu, .viewer-bookmark-menu, .viewer-modal-backdrop, .viewer-image-lightbox-backdrop, .viewer-settings-panel, .viewer-navigation-panel, .viewer-context-menu, .viewer-selection-toolbar, .viewer-lookup-panel, .viewer-zoom-menu, .viewer-tts-menu, .viewer-scroll-menu, .viewer-scroll-options, .viewer-epub-audio-controls, .viewer-epub-audio-inline, .viewer-epub-inline-media'
     ));
   }, []);
 
@@ -9160,6 +9178,7 @@ function ViewerApp() {
     ...(session?.type === 'epub' && viewMode === 'width' ? { maxWidth: 'none' } : {}),
   };
 
+    const isEpubMediaPageActive = sourceIndex => flowMode === 'scroll' || (sourceIndex >= pageIndex && sourceIndex < pageIndex + (flowMode === 'spread' ? 2 : 1));
     const renderOriginalEpubDocument = (item, mode, sourceIndex = pageIndex) => (
         <div className="viewer-epub-original-scale">
             <EpubOriginalDocument
@@ -9171,6 +9190,7 @@ function ViewerApp() {
                     ? { width: readerPageMetrics.pageFrameWidth, height: readerPageMetrics.pageFrameHeight }
                     : epubOriginalPageSize}
                 pageOffset={item.originalPageOffset || 0}
+                mediaActive={isEpubMediaPageActive(sourceIndex)}
                 onAudioRequest={requestEpubAudio}
                 audioState={{ trackId: epubAudioPlayer.currentTrack?.id, status: epubAudioPlayer.status }}
                 audioLabels={{ play: viewerText('viewer.epub_audio.play', '재생'), pause: viewerText('viewer.epub_audio.pause', '일시정지'), loading: viewerText('viewer.epub_audio.loading', '불러오는 중') }}
@@ -9238,6 +9258,7 @@ function ViewerApp() {
             onImagePreview: openImageLightbox,
             onInternalLink: goEpubInternalTarget,
             onExternalLink: openExternalLink,
+            mediaActive: measureBlockIndex === null && isEpubMediaPageActive(sourceIndex),
             onAudioRequest: requestEpubAudio,
             audioState: { trackId: epubAudioPlayer.currentTrack?.id, status: epubAudioPlayer.status },
           }, htmlBlockClassName, measureProps);
@@ -9252,6 +9273,7 @@ function ViewerApp() {
               onImagePreview: openImageLightbox,
               onInternalLink: goEpubInternalTarget,
               onExternalLink: openExternalLink,
+              mediaActive: measureBlockIndex === null && isEpubMediaPageActive(sourceIndex),
               onAudioRequest: requestEpubAudio,
               audioState: { trackId: epubAudioPlayer.currentTrack?.id, status: epubAudioPlayer.status },
             }))}

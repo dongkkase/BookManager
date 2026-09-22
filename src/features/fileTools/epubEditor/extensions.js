@@ -11,84 +11,11 @@ import { BlockStyle, InlineStyle, Highlight, Superscript, Subscript } from './ri
 import { Media } from './media';
 import { editorText as l } from './labels';
 import { newId, safeLink } from '../../../../electron/epubEditor/model';
+import { createImageExtension } from './imageNode';
+import './imageNodes.css';
 
 export function editorExtensions(getAssetUrl) {
-    const Image = Node.create({
-        name: 'image', group: 'block', atom: true, draggable: true,
-        addAttributes() {
-            return {
-                assetId: { default: '' }, alt: { default: '' }, caption: { default: '' },
-                width: { default: 100 }, align: { default: 'center' }, decorative: { default: false },
-            };
-        },
-        parseHTML() {
-            return [{ tag: 'figure[data-asset-id]', getAttrs: element => {
-                const assetId = element.getAttribute('data-asset-id');
-                if (!getAssetUrl(assetId)) return false;
-                return {
-                    assetId, alt: element.querySelector('img')?.getAttribute('alt') || '',
-                    caption: element.querySelector('figcaption')?.textContent || '',
-                    width: Math.max(10, Math.min(100, Number(element.getAttribute('data-width')) || 100)),
-                    align: ['left', 'right'].includes(element.getAttribute('data-align')) ? element.getAttribute('data-align') : 'center',
-                    decorative: element.getAttribute('data-decorative') === 'true',
-                };
-            } }];
-        },
-        renderHTML({ node }) {
-            const a = node.attrs;
-            return ['figure', { 'data-id': a.id, 'data-asset-id': a.assetId, 'data-width': a.width, 'data-align': a.align, 'data-decorative': String(a.decorative) }, ['img', { src: getAssetUrl(a.assetId), alt: a.alt }], ['figcaption', {}, a.caption]];
-        },
-        addNodeView() {
-            return ({ node, editor, getPos }) => {
-                let current = node;
-                const dom = document.createElement('figure');
-                dom.className = 'ee-image-node';
-                const image = document.createElement('img');
-                image.draggable = true;
-                const caption = document.createElement('figcaption');
-                const handle = document.createElement('span');
-                handle.className = 'ee-image-resize';
-                handle.setAttribute('aria-hidden', 'true');
-                dom.append(image, caption, handle);
-                const draw = () => {
-                    image.src = getAssetUrl(current.attrs.assetId) || '';
-                    image.alt = current.attrs.alt;
-                    dom.style.width = `${current.attrs.width}%`;
-                    dom.style.marginLeft = current.attrs.align === 'left' ? '0' : 'auto';
-                    dom.style.marginRight = current.attrs.align === 'right' ? '0' : 'auto';
-                    caption.textContent = current.attrs.caption;
-                    caption.hidden = !current.attrs.caption;
-                };
-                let cleanup = () => {};
-                handle.addEventListener('pointerdown', event => {
-                    event.preventDefault();
-                    const start = event.clientX;
-                    const initial = dom.getBoundingClientRect().width;
-                    const parent = dom.parentElement.getBoundingClientRect().width;
-                    let width = current.attrs.width;
-                    const move = e => { width = Math.max(10, Math.min(100, Math.round((initial + e.clientX - start) / parent * 100))); dom.style.width = `${width}%`; };
-                    const up = () => {
-                        cleanup();
-                        const pos = getPos();
-                        if (typeof pos === 'number') editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, width }));
-                    };
-                    cleanup = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
-                    document.addEventListener('pointermove', move);
-                    document.addEventListener('pointerup', up, { once: true });
-                });
-                draw();
-                return {
-                    dom,
-                    update(next) { if (next.type.name !== 'image') return false; current = next; draw(); return true; },
-                    selectNode() { dom.classList.add('ProseMirror-selectednode'); },
-                    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); },
-                    stopEvent(event) { return event.target === handle; },
-                    ignoreMutation() { return true; },
-                    destroy() { cleanup(); },
-                };
-            };
-        },
-    });
+    const Image = createImageExtension(getAssetUrl, l);
     const CellStyle = Extension.create({
         name: 'cellStyle',
         addGlobalAttributes() {

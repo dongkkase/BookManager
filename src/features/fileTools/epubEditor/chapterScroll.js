@@ -15,6 +15,17 @@ export function scrollPreviewBy(frame, delta) {
     return true;
 }
 
+export function scrollPreviewCanvasAtEdge(frame, delta, insideFrame = false) {
+    const page = frame?.contentDocument?.scrollingElement;
+    const canvas = frame?.closest?.('.ee-preview-canvas');
+    if (!page || !canvas || !Number.isFinite(delta) || !delta) return false;
+    const direction = Math.sign(delta);
+    if (!atScrollEdge(page, direction) || atScrollEdge(canvas, direction)) return false;
+    const scale = insideFrame ? frame.getBoundingClientRect().width / frame.clientWidth || 1 : 1;
+    canvas.scrollTop = Math.max(0, Math.min(canvas.scrollHeight - canvas.clientHeight, canvas.scrollTop + delta * scale));
+    return true;
+}
+
 // Only a new gesture starting at an edge may change chapters. Reaching the edge
 // from inside the chapter consumes the gesture, including its inertial tail.
 export function createChapterScrollGate() {

@@ -13,6 +13,7 @@ import {
     readAudioMetadata,
 } from './audioMetadata.js';
 import { missingBinaryMessage } from './binaryPolicy.js';
+import { parseMediaUrl } from './epubEditor/authoring.js';
 import {
     epubOriginalCssParts,
     rewriteEpubOriginalCssUrls,
@@ -999,6 +1000,10 @@ function epubNodesContainImage(nodes = []) {
     });
 }
 
+function epubNodesContainVideo(nodes = []) {
+    return nodes.some(node => node?.mediaUrl || epubNodesContainVideo(node?.children || []));
+}
+
 function epubStyleHidesText(style = {}) {
     if (String(style?.display || '').trim().toLowerCase() === 'none') return true;
     const fontSize = String(style?.fontSize || '').trim().toLowerCase();
@@ -1051,6 +1056,20 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
                     break;
                 }
             }
+            continue;
+        }
+        if (['iframe', 'object', 'embed'].includes(sourceTagName)) {
+            const attrs = tagAttributes(token);
+            const source = attrs.src || attrs.data || '';
+            const media = parseMediaUrl(source.startsWith('//') ? `https:${source}` : source);
+            if (media) currentParent.children.push({
+                type: 'element',
+                tagName: 'div',
+                id: sanitizeEpubIdentifier(attrs.id || '') || undefined,
+                mediaUrl: media.url,
+                mediaTitle: attrs.title || media.provider,
+                children: [{ type: 'text', text: attrs.title || media.provider }],
+            });
             continue;
         }
         const isAllowedTag = EPUB_ALLOWED_HTML_TAGS.has(sourceTagName);
@@ -1108,6 +1127,7 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
             targetEntryName: target?.entryName || undefined,
             targetAnchor: target?.anchor || undefined,
             externalHref: externalHref || undefined,
+            ...(tagName === 'figure' && attrs['data-media-url'] ? { mediaUrl: parseMediaUrl(attrs['data-media-url'])?.url, mediaTitle: attrs['data-title'] } : {}),
             attributes: safeAttributes,
             children: [],
         };
@@ -1117,6 +1137,27 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
         }
     }
 
+    const prepareMedia = nodes => {
+        for (const node of nodes) {
+            if (node.tagName === 'figure' && (node.mediaUrl || node.className?.split(/\s+/).includes('external-media'))) {
+                const findMedia = children => {
+                    for (const child of children) {
+                        const media = parseMediaUrl(child.externalHref) || findMedia(child.children || []);
+                        if (media) return media;
+                    }
+                    return null;
+                };
+                const media = parseMediaUrl(node.mediaUrl) || findMedia(node.children);
+                if (media) {
+                    node.mediaUrl = media.url;
+                    node.mediaTitle = node.mediaTitle || textFromEpubNodes(node.children.filter(child => child.tagName === 'figcaption')) || media.provider;
+                    node.children = [{ type: 'text', text: node.mediaTitle }];
+                }
+            }
+            prepareMedia(node.children || []);
+        }
+    };
+    prepareMedia(root.children);
     return root.children;
 }
 
@@ -1134,12 +1175,13 @@ function epubBlocksFromNodes(nodes = []) {
     const flushInlineNodes = () => {
         const text = textFromEpubNodes(inlineNodes);
         const audioTracks = epubAudioTrackIdsFromNodes(inlineNodes);
-        if (text || epubNodesContainImage(inlineNodes) || audioTracks.length > 0) {
+        if (text || epubNodesContainImage(inlineNodes) || epubNodesContainVideo(inlineNodes) || audioTracks.length > 0) {
             blocks.push({
                 type: 'html',
                 text,
                 nodes: inlineNodes,
                 hasImage: epubNodesContainImage(inlineNodes),
+                ...(epubNodesContainVideo(inlineNodes) ? { hasVideo: true } : {}),
                 anchors: epubAnchorsFromNodes(inlineNodes),
                 ...(audioTracks.length > 0 ? { hasAudio: true, audioTracks } : {}),
             });
@@ -1174,8 +1216,9 @@ function epubBlocksFromNodes(nodes = []) {
             }
             const text = textFromEpubNodes([node]);
             const hasImage = epubNodesContainImage([node]);
+            const hasVideo = epubNodesContainVideo([node]);
             const audioTracks = epubAudioTrackIdsFromNodes([node]);
-            if (text || hasImage || audioTracks.length > 0 || node.tagName === 'hr') {
+            if (text || hasImage || hasVideo || audioTracks.length > 0 || node.tagName === 'hr') {
                 blocks.push({
                     type: 'html',
                     text,
@@ -1184,6 +1227,7 @@ function epubBlocksFromNodes(nodes = []) {
                     className: node.className,
                     nodes: [node],
                     hasImage,
+                    ...(hasVideo ? { hasVideo: true } : {}),
                     anchors: epubAnchorsFromNodes([node]),
                     ...(audioTracks.length > 0 ? { hasAudio: true, audioTracks } : {}),
                 });

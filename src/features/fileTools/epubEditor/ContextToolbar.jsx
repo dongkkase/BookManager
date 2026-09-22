@@ -3,6 +3,7 @@ import { CommandButton, IndentControls } from './FeatureToolbar';
 import { editorText as l } from './labels';
 import { selectionContext, placeContextToolbar, toolbarFocusIndex } from './contextTools';
 import { canApplyScript } from './richFormatting';
+import { imageAlignmentPatch, imageTextWrapPatch } from './imageNode';
 
 export default function ContextToolbar({ editor, stageRef, enabled, actions, defaultColor, linkOpen, linkForm, onCloseLink, apiRef }) {
     const shell = useRef(null);
@@ -24,11 +25,14 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
         let frame;
         const stage = stageRef.current;
         if (!enabled || !stage || editor.isDestroyed) { setContext(null); setPanel(null); return; }
+        selecting.current = false;
+        dismissed.current = null;
         const editorDom = editor.view.dom;
         const update = () => {
             frame = null;
             if (editor.isDestroyed || !editor.isEditable || editor.view.composing || selecting.current || !stage.getClientRects().length) { setContext(null); return; }
             const active = document.activeElement;
+            if (editorDom.contains(active) && active?.matches('input, textarea, select')) { setContext(null); return; }
             const inTools = shell.current?.contains(active) || trigger.current?.contains(active);
             if (!linkOpen && (!editor.view.dom.contains(active) && !inTools)) { setContext(null); return; }
             if (!linkOpen && dismissed.current?.eq(editor.state.selection)) { setContext(null); return; }
@@ -173,8 +177,9 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
                 {kind === 'text' && <>{['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript'].map(key => button(key, editor.isActive(key), undefined, ['superscript', 'subscript'].includes(key) ? !canApplyScript(editor, key) : !editor.can().toggleMark(key)))}<CommandButton command="color" action={() => run('color')} disabled={!editor.can().setColor('#000000')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').color || defaultColor }} /><CommandButton command="textBackground" action={() => run('textBackground')} disabled={!editor.can().setBackgroundColor('#fff176')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').backgroundColor || 'transparent' }} />{button('highlight', editor.isActive('highlight'))}{button('textStyles')}<i />{button('link')}{button('footnote')}{button('reset')}<i /><IndentControls editor={editor} actions={actions} /></>}
                 {kind === 'link' && <><span className="ee-context-link" title={context.href.startsWith('epub:') ? l('internal') : context.href}>{context.href.startsWith('epub:') ? l('internal') : context.href}</span>{button('editLink', undefined, () => run('link'))}{button('unlink', undefined, () => editor.chain().focus().extendMarkRange('link').unsetLink().run())}</>}
                 {kind === 'image' && <>
-                    {['left', 'center', 'right'].map(align => button(`image${align}`, image.align === align, () => editor.chain().focus().updateAttributes('image', { align }).run()))}
-                    {button('imageProperties')}{button('remove', undefined, remove)}
+                    {['left', 'center', 'right'].map(align => button(`image${align}`, image.align === align && (!image.textWrap || image.textWrap === 'none'), () => editor.chain().focus().updateAttributes('image', imageAlignmentPatch(align)).run()))}
+                    {['left', 'right'].map(side => button(side === 'left' ? 'imageTextLeft' : 'imageTextRight', image.textWrap === side, () => editor.chain().focus().updateAttributes('image', imageTextWrapPatch(image, side)).run()))}
+                    <i />{button('imageAlt')}{button('imageSize')}{button('imageEdit')}{button('imageProperties')}{button('remove', undefined, remove)}
                 </>}
                 {kind === 'audio' && <>{button('audioProperties')}{button('remove', undefined, remove)}</>}
                 {kind === 'media' && <>{button('editMedia')}{button('openMedia')}{button('remove', undefined, remove)}</>}

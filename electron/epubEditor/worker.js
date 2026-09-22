@@ -6,6 +6,7 @@ try {
     const progress = value => parentPort.postMessage({ type: 'progress', value });
     let result;
     if (operation === 'open') result = await openProjectPackage(filePath, assetDirectory);
+    else if (operation === 'validateEditedImage') result = (await import('./editedImage.js')).validateEditedImage(workerData.data);
     else if (operation === 'textImport') result = await (await import('./textImport.js')).readTextImport(filePath, workerData.encoding);
     else if (operation === 'save') await saveProjectPackage(filePath, project, assetDirectory, progress);
     else if (operation === 'export') await exportEpubPackage(filePath, project, assetDirectory, progress);

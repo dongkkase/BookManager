@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { EditorState, Selection } from '@tiptap/pm/state';
 import { closeHistory } from '@tiptap/pm/history';
@@ -6,7 +7,9 @@ import { FaIcon } from '../../../components/FaIcon';
 import { getCurrentLanguage } from '../../../utils/i18n';
 import { isFilePathDrag, droppedPathsFromDataTransfer } from '../../../appShell';
 import { createChapter, duplicateChapter, newId, paragraph, validateProject, inspectProject, textContent, chapterXhtml, safeLink, walkDocument } from '../../../../electron/epubEditor/model';
-import { editorExtensions, findEditorMatches } from './extensions';
+import { editorExtensions } from './extensions';
+import SearchPanel from './SearchPanel';
+import { SearchHighlights, configureEditorSearch } from './search';
 import { editorText as l } from './labels';
 import Inspector from './Inspector';
 import FeatureToolbar, { ShortcutHelp } from './FeatureToolbar';
@@ -34,9 +37,15 @@ import useChapterDrag from './useChapterDrag';
 import { CHAPTER_DRAG } from './chapterDrag';
 import useEditorZoom from './useEditorZoom';
 import { ZOOM_PRESETS } from './editorZoom';
+import useWorkspacePanels from './useWorkspacePanels';
+import useAssetDropIndicator from './useAssetDropIndicator';
+import PreviewViewport, { PreviewDeviceToolbar } from './PreviewViewport.jsx';
+import RecentProjects from './RecentProjects';
+import ImageAttributesDialog from './ImageAttributesDialog';
 import './epubEditor.css';
 
 const SourceWorkspace = lazy(() => import('./SourceWorkspace'));
+const ImageEditorDialog = lazy(() => import('./ImageEditorDialog'));
 
 async function request(payload) {
     if (!window.electronAPI?.epubEditor) throw Object.assign(new Error(l('browserOnly')), { code: 'browserOnly' });
@@ -58,18 +67,43 @@ export default function EpubEditorTool({ onBack, showToast, registerBeforeLeave 
     const [recent, setRecent] = useState([]);
     const [busy, setBusy] = useState(false);
     const [notice, setNotice] = useState(null);
+    const homeTask = useRef(false);
+    const listRequest = useRef(0);
     const refresh = useCallback(() => {
-        if (window.electronAPI?.epubEditor) request({ action: 'list' }).then(result => setRecent(result.projects)).catch(error => setNotice({ text: l(error.code) }));
+        const sequence = ++listRequest.current;
+        if (window.electronAPI?.epubEditor) request({ action: 'list' }).then(result => { if (sequence === listRequest.current) setRecent(result.projects); }).catch(error => { if (sequence === listRequest.current) setNotice({ text: l(error.code) }); });
     }, []);
     useEffect(() => { if (!session) refresh(); }, [session, refresh]);
     const open = async payload => {
+        if (homeTask.current) return;
+        homeTask.current = true;
+        listRequest.current += 1;
         setBusy(true);
         setNotice(null);
         try {
             const result = await request({ ...payload, operationId: newId('op'), language: getCurrentLanguage() });
             if (!result.canceled) setSession(result);
-        } catch (error) { setNotice({ text: l(error.code) }); }
-        finally { setBusy(false); }
+            else refresh();
+        } catch (error) { setNotice({ text: l(error.code) }); refresh(); }
+        finally { homeTask.current = false; setBusy(false); }
+    };
+    const manageRecovery = async (action, item) => {
+        if (homeTask.current) return null;
+        homeTask.current = true;
+        listRequest.current += 1;
+        setBusy(true);
+        setNotice(null);
+        try {
+            const result = await request({ action, id: item.id, language: getCurrentLanguage() });
+            setRecent(result.projects);
+            setNotice({ type: 'success', text: l(action === 'recoveryDelete' ? 'projectDeleted' : 'projectDuplicated') });
+            return result;
+        } catch (error) {
+            const message = l(error.code);
+            setNotice({ text: message });
+            if (error.code === 'RECOVERY_MISSING') refresh();
+            return { error: message };
+        } finally { homeTask.current = false; setBusy(false); }
     };
     const rejectDrop = event => {
         if (event.defaultPrevented || event.dataTransfer.types.includes('application/x-prosemirror')) return;
@@ -81,7 +115,7 @@ export default function EpubEditorTool({ onBack, showToast, registerBeforeLeave 
     };
     return <section className="epub-editor-tool" onDragOver={rejectDrop} onDrop={rejectDrop}>
         {session ? <Workspace key={session.sessionId} initial={session} onHome={() => setSession(null)} onBack={onBack} showToast={showToast} registerBeforeLeave={registerBeforeLeave} /> : <>
-            <header className="ee-welcome-header"><button className="ee-button" onClick={onBack}><FaIcon name="chevronLeft" />{l('back')}</button><span className="ee-brand"><FaIcon name="bookOpen" />{l('editor')}</span><button className="ee-button" disabled={busy} onClick={() => open({ action: 'open' })}><FaIcon name="folderOpen" />{l('open')}</button></header>
+            <header className="ee-welcome-header"><button className="ee-button" disabled={busy} onClick={onBack}><FaIcon name="chevronLeft" />{l('back')}</button><span className="ee-brand"><FaIcon name="bookOpen" />{l('editor')}</span><button className="ee-button" disabled={busy} onClick={() => open({ action: 'open' })}><FaIcon name="folderOpen" />{l('open')}</button></header>
             <Notice value={notice} onClose={() => setNotice(null)} />
             <div className="ee-welcome-scroll"><div className="ee-welcome-intro"><span className="ee-eyebrow">BOOKMANAGER / EPUB STUDIO</span><h1>{l('welcome')}</h1><p>{l('introduction')}</p></div>
                 <div className="ee-template-grid">{['blank', 'essay', 'guide'].map((template, index) => <button key={template} className={`ee-template is-${template}`} disabled={busy} onClick={() => open({ action: 'create', template })}>
@@ -89,7 +123,7 @@ export default function EpubEditorTool({ onBack, showToast, registerBeforeLeave 
                     <div className="ee-template-info"><div><h2>{l(template)}</h2><p>{l(`${template}Hint`)}</p></div><FaIcon name="plus" size={16} /></div>
                 </button>)}</div>
                 {busy && <p role="status" className="ee-loading">{l('working')}</p>}
-                {recent.length > 0 && <section className="ee-recent"><h2>{l('recent')}</h2>{recent.map(item => <button disabled={busy} key={item.id} onClick={() => open({ action: 'restore', id: item.id })}><FaIcon name="book" /><span>{item.title}<small>{new Date(item.updatedAt).toLocaleString()}</small></span><FaIcon name="chevronRight" /></button>)}</section>}
+                <RecentProjects projects={recent} busy={busy} onOpen={id => open({ action: 'restore', id })} onManage={manageRecovery} />
                 <p className="ee-local"><FaIcon name="desktop" />{l('local')}</p>
             </div>
         </>}
@@ -132,14 +166,20 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     const [mode, setMode] = useState('design');
     const [sourceTab, setSourceTab] = useState('source');
     const [dialog, setDialog] = useState(null);
+    const [imageEditTarget, setImageEditTarget] = useState(null);
     const [paragraphFormats, setParagraphFormats] = useState([]);
     const [paragraphFormatSeed, setParagraphFormatSeed] = useState(null);
     const [footnoteText, setFootnoteText] = useState('');
     const [leftTab, setLeftTab] = useState('chapters');
     const [rightTab, setRightTab] = useState('properties');
-    const [showStructure, setShowStructure] = useState(true);
-    const [showInspector, setShowInspector] = useState(true);
-    const [viewport, setViewport] = useState('medium');
+    const { workspaceRef, compact, focusMode, setFocusMode, showStructure, setShowStructure, showInspector, setShowInspector } = useWorkspacePanels();
+    const [chapterQuery, setChapterQuery] = useState('');
+    const [assetQuery, setAssetQuery] = useState('');
+    const [assetKind, setAssetKind] = useState('all');
+    const [viewport, setViewport] = useState({ id: 'responsive', width: 768, height: 1024 });
+    const [previewZoom, setPreviewZoom] = useState('fit');
+    const [previewScale, setPreviewScale] = useState(1);
+    const [previewTheme, setPreviewTheme] = useState('light');
     const [zoom, setZoom] = useState(100);
     const [dirty, setDirty] = useState(false);
     const [recoveryRevision, setRecoveryRevision] = useState(project.revision);
@@ -152,6 +192,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     const [importResult, setImportResult] = useState(null);
     const [dropTarget, setDropTarget] = useState(null);
     const pendingDrop = useRef(null);
+    const draggedAsset = useRef(null);
     const textTarget = useRef(null);
     const [issues, setIssues] = useState(null);
     const [exportedPath, setExportedPath] = useState(null);
@@ -214,7 +255,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         while (currentEditor && !currentEditor.isDestroyed && currentEditor.view.composing) await new Promise(resolve => setTimeout(resolve, 30));
         return commitEditor();
     }, [commitEditor]);
-    const extensions = useMemo(() => editorExtensions(id => assetUrls.current[id]), [assetUrls]);
+    const extensions = useMemo(() => [...editorExtensions(id => assetUrls.current[id]), SearchHighlights], [assetUrls]);
     const editor = useEditor({
         extensions, content: project.chapters[0].content,
         immediatelyRender: true,
@@ -248,6 +289,10 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         },
     }, []);
     editorRef.current = editor;
+    const assetDrop = useAssetDropIndicator({ editor, stageRef, chapterId, mode, disabled: !!busy || !!dialog || !['write', 'design'].includes(mode) });
+    useEffect(() => {
+        if (!searchOpen || !['write', 'design'].includes(mode)) configureEditorSearch(editor, '');
+    }, [editor, chapterId, searchOpen, mode]);
     const recover = useCallback(async () => {
         const snapshot = await flush();
         const result = await request({ action: 'recover', sessionId: initial.sessionId, project: snapshot });
@@ -292,7 +337,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     useEffect(() => { stageRef.current?.querySelectorAll('.ee-paper audio').forEach(audio => audio.pause()); editor?.emit('mediaPlaybackStop'); }, [mode, chapterId]);
     useEffect(() => { editor?.setEditable(!busy && ['write', 'design'].includes(mode), false); }, [editor, busy, mode]);
     useEffect(() => {
-        const reset = () => setDropTarget(null);
+        const reset = () => { setDropTarget(null); draggedAsset.current = null; };
         for (const name of ['dragend', 'drop', 'blur']) window.addEventListener(name, reset);
         return () => { for (const name of ['dragend', 'drop', 'blur']) window.removeEventListener(name, reset); };
     }, []);
@@ -310,7 +355,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         const cached = states.current.get(id);
         let state = cached?.state || EditorState.create({ schema: editor.schema, doc: editor.schema.nodeFromJSON(next.content), plugins: editor.state.plugins });
         if (edge) state = state.apply(state.tr.setSelection(edge === 'end' ? Selection.atEnd(state.doc) : Selection.atStart(state.doc)).setMeta('addToHistory', false));
-        chapterScroll.enter({ id, edge, scroll: cached?.scroll, previewScroll: cached?.previewScroll });
+        chapterScroll.enter({ id, edge, scroll: cached?.scroll, previewScroll: cached?.previewScroll, previewCanvasScroll: cached?.previewCanvasScroll, previewCanvasLeft: cached?.previewCanvasLeft });
         editor.view.updateState(state);
         chapterRef.current = id;
         setChapterId(id);
@@ -325,7 +370,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             catch (error) { report(error); }
         }
     };
-    const editorZoom = useEditorZoom({ stageRef, chapterId, mode, zoom, setZoom, disabled: !!busy || !!dialog || !!dropTarget });
+    const editorZoom = useEditorZoom({ stageRef, chapterId, mode, zoom: mode === 'preview' ? previewZoom === 'fit' ? previewScale * 100 : previewZoom : zoom, setZoom: mode === 'preview' ? setPreviewZoom : setZoom, minimum: mode === 'preview' ? 5 : 50, disabled: !!busy || !!dialog || !!dropTarget });
     const chapterScroll = useChapterScroll({ stageRef, editor, chapterId, mode, disabled: !!busy || !!dialog || !!dropTarget, onNavigate: navigateChapter, onZoom: editorZoom.onWheel });
     const changeStructure = async fn => {
         await flush();
@@ -339,7 +384,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         setHistoryTick(value => value + 1);
         if (!chapters.some(item => item.id === chapterRef.current)) await selectChapter(chapters[0].id);
     };
-    const chapterDrag = useChapterDrag({ disabled: !!busy || !!dialog || leftTab !== 'chapters' || !showStructure, onMove: fn => { void changeStructure(fn).catch(report); } });
+    const chapterDrag = useChapterDrag({ disabled: !!busy || !!dialog || leftTab !== 'chapters' || !showStructure || !!chapterQuery.trim(), onMove: fn => { void changeStructure(fn).catch(report); } });
     const captureStates = () => new Map(states.current).set(chapterRef.current, { state: editor.state, scroll: stageRef.current?.scrollTop || 0 });
     const activateContent = (chapters, selectedId, affectedIds, savedStates) => {
         clearTimeout(commitTimer.current);
@@ -376,6 +421,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         setHistoryTick(value => value + 1);
         setMode('design');
         setLeftTab('chapters');
+        setChapterQuery('');
         setShowStructure(true);
     };
     const restoreStructure = async direction => {
@@ -488,18 +534,46 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         if (kind === 'audio') editor.chain().focus().insertContent({ type: 'audio', attrs: { assetId: result.asset.id, title: result.asset.name, kind: 'effect', loop: false } }).run();
         setLeftTab('assets');
     });
+    const openImageEditor = () => {
+        if (!editor.isActive('image')) return;
+        const image = editor.getAttributes('image');
+        setImageEditTarget({ nodeId: image.id, assetId: image.assetId, chapterId: chapterRef.current });
+        setDialog('imageEdit');
+    };
+    const applyEditedImage = async blob => {
+        const findTarget = () => {
+            let target;
+            if (imageEditTarget?.chapterId !== chapterRef.current || editor.isDestroyed) return null;
+            editor.state.doc.descendants((node, pos) => { if (node.type.name === 'image' && node.attrs.id === imageEditTarget.nodeId && node.attrs.assetId === imageEditTarget.assetId) target = { node, pos }; });
+            return target;
+        };
+        if (!findTarget()) throw Object.assign(new Error(), { code: 'IMAGE_SELECTION_REQUIRED' });
+        await flush();
+        const result = await request({ action: 'editImage', sessionId: initial.sessionId, assetId: imageEditTarget.assetId, data: new Uint8Array(await blob.arrayBuffer()) });
+        await loadAsset(result.asset);
+        const target = findTarget();
+        if (!target) throw Object.assign(new Error(), { code: 'IMAGE_SELECTION_REQUIRED' });
+        update(current => ({ ...current, assets: [...current.assets, result.asset] }));
+        editor.view.dispatch(closeHistory(editor.state.tr).setNodeMarkup(target.pos, undefined, { ...target.node.attrs, assetId: result.asset.id }));
+        editor.view.dispatch(closeHistory(editor.state.tr));
+        editor.commands.focus();
+    };
     const insertDroppedAssets = (assets, target) => {
         if (!target || target.chapterId !== chapterRef.current || editor.isDestroyed) return;
         const transaction = assetDropTransaction(editor.state, assets, target.position);
         if (transaction) { editor.view.dispatch(transaction); editor.view.focus(); }
     };
-    const importDroppedAssets = (paths, target) => runTask('importAssets', async () => {
+    const importAssets = (source, target) => runTask('importAssets', async () => {
         pendingDrop.current = target;
-        setImportResult(null);
         try {
             await flush();
-            const result = await request({ action: 'importAssets', sessionId: initial.sessionId, paths });
-            if (result.assets.length) update(current => ({ ...current, assets: [...current.assets, ...result.assets] }));
+            const result = await request({ ...source, sessionId: initial.sessionId });
+            if (result.canceled) return;
+            if (result.assets.length) {
+                update(current => ({ ...current, assets: [...current.assets, ...result.assets] }));
+                setAssetQuery('');
+                setAssetKind('all');
+            }
             const loaded = [];
             for (const asset of result.assets) {
                 try { await loadAsset(asset); loaded.push(asset); }
@@ -512,7 +586,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             await recover();
         } finally { pendingDrop.current = null; }
     });
-    const isBodyDrop = event => ['write', 'design'].includes(mode) && !!event.target.closest?.('.ee-stage') && !event.target.closest?.('input, textarea, .ee-footnotes');
+    const isBodyDrop = event => ['write', 'design'].includes(mode) && !!event.target.closest?.('.ee-stage') && !event.target.closest?.('input, textarea, button, .ee-footnotes, .ee-paper-label');
     const handleAssetDragOver = event => {
         const internal = event.dataTransfer.types.includes(ASSET_DRAG);
         if (!internal && !isFilePathDrag(event.dataTransfer)) {
@@ -522,20 +596,28 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         event.preventDefault();
         event.stopPropagation();
         const target = isBodyDrop(event) ? 'body' : 'assets';
-        const accepted = !busyRef.current && !dialog && (!internal || target === 'body');
+        const asset = internal ? draggedAsset.current || readAssetDrag(event.dataTransfer, initial.sessionId, projectRef.current.assets) : null;
+        const allowed = !busyRef.current && !dialog && (!internal || target === 'body' && !!asset);
+        const position = allowed && target === 'body' ? assetDrop.show({ left: event.clientX, top: event.clientY }) : null;
+        const accepted = allowed && (target !== 'body' || !!position);
+        if (!accepted || target !== 'body') assetDrop.clear();
         event.dataTransfer.dropEffect = accepted ? 'copy' : 'none';
         setDropTarget(accepted ? target : null);
+    };
+    const captureAssetDragOver = event => {
+        if (event.dataTransfer.types.includes(ASSET_DRAG) || isFilePathDrag(event.dataTransfer)) handleAssetDragOver(event);
     };
     const handleAssetDrop = event => {
         const internal = event.dataTransfer.types.includes(ASSET_DRAG);
         if (!internal && !isFilePathDrag(event.dataTransfer)) return;
         event.preventDefault();
+        event.stopPropagation();
         setDropTarget(null);
+        assetDrop.clear();
+        draggedAsset.current = null;
         if (busyRef.current || dialog) return;
-        const target = isBodyDrop(event) ? {
-            chapterId: chapterRef.current,
-            position: editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? editor.state.doc.content.size,
-        } : null;
+        const position = isBodyDrop(event) ? assetDrop.locate({ left: event.clientX, top: event.clientY }) : null;
+        const target = position ? { chapterId: chapterRef.current, position: position.position } : null;
         if (internal) {
             const asset = readAssetDrag(event.dataTransfer, initial.sessionId, projectRef.current.assets);
             if (asset) insertDroppedAssets([asset], target);
@@ -543,32 +625,13 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         } else {
             const paths = droppedPathsFromDataTransfer(event.dataTransfer);
             if (!paths.length) { setNotice({ text: l('INVALID_ASSET_PATH') }); return; }
-            void importDroppedAssets(paths, target);
+            void importAssets({ action: 'importAssets', paths }, target);
         }
     };
     const switchMode = async next => { await flush(); setMode(next); };
     const checkBook = async () => { const snapshot = await flush(); setIssues(inspectProject(snapshot)); };
-    const find = () => {
-        const matches = findEditorMatches(editor, query);
-        const next = matches.find(match => match.from >= editor.state.selection.to) || matches[0];
-        if (!next) { setNotice({ text: l('noMatches') }); return; }
-        editor.chain().focus().setTextSelection(next).scrollIntoView().run();
-    };
-    const replace = all => {
-        const matches = findEditorMatches(editor, query);
-        if (!matches.length) { setNotice({ text: l('noMatches') }); return; }
-        if (all) {
-            let transaction = editor.state.tr;
-            for (const match of matches.reverse()) transaction = replacement ? transaction.insertText(replacement, match.from, match.to) : transaction.delete(match.from, match.to);
-            editor.view.dispatch(transaction);
-        } else {
-            const match = matches.find(item => item.from === editor.state.selection.from && item.to === editor.state.selection.to);
-            if (match) editor.view.dispatch(replacement ? editor.state.tr.insertText(replacement, match.from, match.to) : editor.state.tr.delete(match.from, match.to));
-            else find();
-        }
-    };
     const openFootnote = () => { setFootnoteText(editor.getAttributes('footnote').text || ''); setDialog('footnote'); };
-    const editAction = fn => () => { setMode('design'); fn(); };
+    const editAction = fn => () => { setMode(current => ['write', 'design'].includes(current) ? current : 'design'); fn(); };
     const openElementProperties = () => {
         setShowInspector(true);
         setRightTab('properties');
@@ -576,13 +639,14 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             const panel = stageRef.current?.closest('.ee-workspace')?.querySelector('.ee-inspector .ee-panel-body');
             if (!panel) return;
             panel.scrollTop = 0;
-            const target = panel.querySelector('[data-element-properties] input:not([type="color"]):not(:disabled), [data-element-properties] textarea:not(:disabled), [data-element-properties] select:not(:disabled)');
+            const target = panel.querySelector('[data-element-properties]');
             target?.focus({ preventScroll: true });
             target?.scrollIntoView({ block: 'nearest' });
         });
     };
     const focusTextFormatting = () => {
-        stageRef.current?.parentElement.querySelector('.ee-font-controls select')?.focus();
+        if (compact) setShowInspector(false);
+        requestAnimationFrame(() => stageRef.current?.parentElement.querySelector('.ee-font-controls select')?.focus());
     };
     const useParagraphFormat = format => {
         editor.commands.focus();
@@ -599,12 +663,13 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         ...Object.fromEntries(['superscript', 'subscript'].map(key => [key, editAction(() => { editor.commands.focus(); toggleScript(editor, key); })])),
         color: editAction(() => { if (editor.can().setColor('#000000')) setDialog('textColor'); }),
         textBackground: editAction(() => { if (editor.can().setBackgroundColor('#fff176')) setDialog('textBackground'); }),
-        ...Object.fromEntries(['paragraphFormat', 'textStyles', 'highlight'].map(key => [key, editAction(() => stageRef.current?.parentElement.querySelector(`[data-editor-menu="${key}"]`)?.click())])),
+        ...Object.fromEntries(['paragraphFormat', 'textStyles', 'highlight'].map(key => [key, editAction(() => { requestAnimationFrame(() => stageRef.current?.parentElement.querySelector(`[data-editor-menu="${key}"]`)?.click()); })])),
         paragraphFormats: editAction(() => { setParagraphFormatSeed(null); setDialog('paragraphFormats'); }),
         paragraphFormatCreate: editAction(() => { setParagraphFormatSeed(paragraphFormatFromSelection(editor)); setDialog('paragraphFormats'); }),
         specialCharacters: editAction(() => setDialog('characters')), emoji: editAction(() => setDialog('emoji')),
         media: editAction(() => setDialog('media')), editMedia: editAction(() => setDialog('media')),
         imageProperties: openElementProperties, audioProperties: openElementProperties, cellProperties: openElementProperties,
+        imageAlt: editAction(() => setDialog('imageAlt')), imageSize: editAction(() => setDialog('imageSize')), imageEdit: editAction(openImageEditor),
         openMedia: () => { const media = parseMediaUrl(editor.getAttributes('media').url); if (media) window.electronAPI?.openExternal?.(media.url); },
         paragraph: editAction(() => { if (editor.can().setParagraph()) editor.chain().focus().clearParagraphFormat().setParagraph().run(); }),
         ...Object.fromEntries([1, 2, 3, 4, 5, 6].map(level => [`heading${level}`, editAction(() => { if (editor.can().setHeading({ level })) editor.chain().focus().clearParagraphFormat().setHeading({ level }).run(); })])),
@@ -625,10 +690,21 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         footnote: editAction(openFootnote), selectCells: () => { if (editor.isActive('table')) setDialog('range'); },
         ...Object.fromEntries(tableCommands.map(key => [key, () => { if (editor.can()[key]()) editor.chain().focus()[key]().run(); }])),
         link: editAction(() => { if (!linkOpen) editor.commands.scrollIntoView(); setLinkValue(editor.getAttributes('link').href || 'https://'); setLinkOpen(value => !value); }),
-        search: editAction(() => { setSearchOpen(true); requestAnimationFrame(() => stageRef.current?.parentElement.querySelector('.ee-search input')?.focus()); }),
+        search: editAction(() => {
+            if (compact) { setShowStructure(false); setShowInspector(false); }
+            if (!searchOpen && !editor.state.selection.empty) {
+                const selected = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, '\n');
+                if (selected.length <= 200 && !selected.includes('\n')) setQuery(selected);
+            }
+            setSearchOpen(true);
+            requestAnimationFrame(() => stageRef.current?.parentElement.querySelector('.ee-search input')?.focus());
+        }),
         commonCss: () => { setSourceTab('commonCss'); switchMode('source'); }, chapterCss: () => { setSourceTab('chapterCss'); switchMode('source'); },
         source: () => { setSourceTab('source'); switchMode('source'); }, preview: () => switchMode('preview'), previewViewer: previewInViewer,
-        shortcuts: () => setDialog('shortcuts'), toolbar: () => { if (!contextToolbarRef.current?.focus()) stageRef.current?.parentElement.querySelector('.ee-toolbar button:not(:disabled)')?.focus(); },
+        focusMode: () => setFocusMode(value => !value),
+        shortcuts: () => setDialog('shortcuts'), toolbar: () => {
+            if (!contextToolbarRef.current?.focus()) [...(stageRef.current?.parentElement.querySelectorAll('.ee-toolbar button:not(:disabled)') || [])].find(button => !button.closest('[hidden], [popover]') && button.getClientRects().length)?.focus();
+        },
     };
     useEffect(() => {
         const keydown = event => {
@@ -638,7 +714,8 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             if (event.key === 'Escape' && event.target.closest('.ee-toolbar, .ee-table-toolbar, .ee-search')) { setSearchOpen(false); setLinkOpen(false); editor.commands.focus(); return; }
             const command = Object.keys(shortcuts).find(key => matchesShortcut(event, shortcuts[key]));
             if (!command || !actions[command]) return;
-            const global = ['save', 'saveAs', 'shortcuts', 'toolbar', 'importText', 'mergeChapters', 'previewViewer'].includes(command);
+            if (command === 'search' && mode === 'source') return;
+            const global = ['save', 'saveAs', 'shortcuts', 'toolbar', 'importText', 'mergeChapters', 'previewViewer', 'focusMode', 'search'].includes(command);
             if (!global && (!['write', 'design'].includes(mode) || !event.target.closest('.tiptap, .ee-toolbar, .ee-table-toolbar, .ee-context-toolbar') || event.target.closest('input, textarea, select'))) return;
             event.preventDefault();
             event.stopPropagation();
@@ -663,50 +740,57 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         if (['heading', 'image', 'table', 'columns', 'audio', 'media', 'footnote'].includes(node.type.name)) outline.push({ node, position });
     });
     const status = dirty || project.revision > recoveryRevision ? 'unsaved' : project.revision === savedRevision ? 'saved' : 'recovered';
+    const matchingChapters = useMemo(() => project.chapters.map((item, index) => ({ item, index })).filter(({ item }) => item.title.toLocaleLowerCase().includes(chapterQuery.trim().toLocaleLowerCase())), [project.chapters, chapterQuery]);
+    const matchingAssets = useMemo(() => project.assets.filter(asset => (assetKind === 'all' || asset.kind === assetKind) && asset.name.toLocaleLowerCase().includes(assetQuery.trim().toLocaleLowerCase())), [project.assets, assetQuery, assetKind]);
     const s = project.style;
     const paperStyle = { '--book-font': s.font, '--book-size': `${s.fontSize}px`, '--book-line': s.lineHeight, '--book-gap': `${s.paragraphGap}em`, '--book-indent': `${s.indent}em`, '--book-color': s.color, '--book-accent': s.accent, '--book-bg': s.background, '--book-heading': `${s.headingScale}em`, zoom: zoom / 100 };
     if (!editor) return <div className="ee-loading">{l('working')}</div>;
     const linkForm = linkOpen ? <form className="ee-link-form" onSubmit={event => { event.preventDefault(); if (!safeLink(linkValue)) { setNotice({ text: l('INVALID_LINK') }); return; } const chain = editor.chain().focus().extendMarkRange('link'); if (editor.state.selection.empty && !editor.isActive('link')) chain.insertContent({ type: 'text', text: linkTargets.find(item => item.href === linkValue)?.title || linkValue, marks: [{ type: 'link', attrs: { href: linkValue } }] }); else chain.setLink({ href: linkValue }); chain.run(); setLinkOpen(false); }}><input aria-label={l('linkTarget')} placeholder={l('external')} value={linkValue.startsWith('epub:') ? '' : linkValue} onChange={event => setLinkValue(event.target.value)} /><select aria-label={l('internal')} value={linkValue.startsWith('epub:') ? linkValue : ''} onChange={event => setLinkValue(event.target.value)}><option value="">{l('internal')}</option>{linkTargets.map(item => <option key={item.href} value={item.href}>{item.title}</option>)}</select><button className="ee-button" type="submit">{l('apply')}</button><button type="button" className="ee-button" onClick={() => { editor.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkOpen(false); }}>{l('unlink')}</button><IconButton icon="xmark" label={l('close')} onClick={() => { setLinkOpen(false); editor.view.focus(); }} /></form> : null;
-    return <div className={`ee-studio${dropTarget ? ` is-drop-${dropTarget}` : ''}`} onDragEnter={handleAssetDragOver} onDragOver={handleAssetDragOver} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null); }} onDropCapture={handleAssetDrop} onDrop={event => { if (event.defaultPrevented) event.stopPropagation(); }}>
+    return <div ref={workspaceRef} className={`ee-studio${compact ? ' is-compact' : ''}${focusMode ? ' is-focused' : ''}${dropTarget ? ` is-drop-${dropTarget}` : ''}`} onDragEnterCapture={captureAssetDragOver} onDragOverCapture={captureAssetDragOver} onDragEnter={handleAssetDragOver} onDragOver={handleAssetDragOver} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setDropTarget(null); assetDrop.clear(); } }} onDropCapture={handleAssetDrop} onDrop={event => { if (event.defaultPrevented) event.stopPropagation(); }}>
         <style>{project.assets.filter(asset => asset.kind === 'font').map(asset => `@font-face{font-family:font-${asset.id};src:url("${assetUrls.current[asset.id]}");}`).join('\n') + authoringCss('.ee-paper .tiptap ') + authoringCss('.ee-format-menu ')}</style>
         <header className="ee-header">
             <IconButton icon="chevronLeft" label={l('back')} disabled={!!busy} onClick={() => leave(onBack)} />
-            <div className="ee-book-identity"><span className="ee-book-mark"><FaIcon name="bookOpen" size={18} /></span><div><strong>{project.metadata.title || l('newBook')}</strong><small className={`ee-save-status is-${status}`}>{l(status)}</small></div></div>
+            <div className="ee-book-identity"><span className="ee-book-mark"><FaIcon name="bookOpen" size={18} /></span><div><strong title={project.metadata.title}>{project.metadata.title || l('newBook')}</strong><small className={`ee-save-status is-${status}`} title={l(`${status}Hint`)}>{l(status)}</small></div></div>
             <div className="ee-header-actions"><button className="ee-button" title={shortcutLabel('shortcuts')} onClick={actions.shortcuts}><EditorIcon command="shortcuts" />{l('shortcuts')}</button><button className="ee-button" disabled={!!busy} onClick={() => leave(onHome)}>{l('leave')}</button><button className="ee-button" disabled={!!busy} title={shortcutLabel('save')} onClick={() => save()}><FaIcon name="floppy" />{l('save')}</button><IconButton icon="copy" label={`${l('saveAs')} (${shortcutLabel('saveAs')})`} disabled={!!busy} onClick={() => save(true)} /><button className="ee-button" disabled={!!busy} title={shortcutLabel('inspect')} onClick={checkBook}><FaIcon name="circleCheck" />{l('inspect')}</button><button className="ee-button ee-primary" disabled={!!busy} title={shortcutLabel('export')} onClick={exportBook}><FaIcon name="download" />{l('export')}</button></div>
         </header>
         <Notice value={notice} onClose={() => setNotice(null)} />
         {importResult && <section className="ee-import-result" role="status"><div className="ee-section-heading"><p>{importResult.assets.length} {l('assetsImported')}</p><IconButton icon="xmark" label={l('close')} onClick={() => setImportResult(null)} /></div>{importResult.rejected.length > 0 && <><p>{l('assetsRejected')}</p><ul>{importResult.rejected.map((item, index) => <li key={index}>{item.name || l('file')} — {l(item.code)}</li>)}</ul></>}</section>}
         <div className={`ee-workspace${showStructure ? '' : ' without-structure'}${showInspector ? '' : ' without-inspector'}`} inert={busy ? '' : undefined}>
-            <aside className="ee-sidebar" hidden={!showStructure}><div className="ee-panel-tabs" role="tablist" aria-label={l('chapters')}>{['chapters', 'outline', 'assets'].map(tab => <button key={tab} role="tab" aria-selected={leftTab === tab} onClick={() => setLeftTab(tab)}>{l(tab)}</button>)}</div>
+            <aside className="ee-sidebar" aria-label={l('chapters')} hidden={!showStructure}><div className="ee-panel-tabs" role="tablist" aria-label={l('chapters')}>{['chapters', 'outline', 'assets'].map(tab => <button key={tab} role="tab" aria-selected={leftTab === tab} onClick={() => setLeftTab(tab)}>{l(tab)}</button>)}{compact && <IconButton icon="xmark" label={l('close')} onClick={() => setShowStructure(false)} />}</div>
                 <div className={`ee-panel-body${leftTab === 'chapters' ? ' is-chapters' : ''}`}>
                     {leftTab === 'chapters' && <>
-                        <div className="ee-section-heading"><h3>{l('chapters')} <span>{project.chapters.length}</span></h3><IconButton icon="plus" label={l('addChapter')} onClick={async () => { const item = createChapter(`${l('chapter')} ${project.chapters.length + 1}`); await changeStructure(items => [...items, item]); await selectChapter(item.id); }} /></div>
+                        <div className="ee-section-heading"><h3>{l('chapters')} <span>{project.chapters.length}</span></h3><IconButton icon="plus" label={l('addChapter')} onClick={async () => { setChapterQuery(''); const item = createChapter(`${l('chapter')} ${project.chapters.length + 1}`); await changeStructure(items => [...items, item]); await selectChapter(item.id); }} /></div>
                         <div className="ee-chapter-import-actions"><button className="ee-button" title={shortcutLabel('importText')} onClick={actions.importText}><EditorIcon command="importText" />{l('importText')}</button><button className="ee-button" title={shortcutLabel('splitChapter')} disabled={!['write', 'design'].includes(mode)} onMouseDown={event => event.preventDefault()} onClick={actions.splitChapter}><EditorIcon command="splitChapter" />{l('splitChapter')}</button><button className="ee-button" title={shortcutLabel('mergeChapters')} disabled={project.chapters.length < 2} onClick={actions.mergeChapters}><EditorIcon command="mergeChapters" />{l('mergeChapters')}</button></div>
-                        <div className="ee-chapter-list" {...chapterDrag.listProps}>{project.chapters.map((item, index) => <button key={item.id} {...chapterDrag.rowProps(item.id)} className={`ee-chapter${chapter.id === item.id ? ' is-active' : ''}${chapterDrag.rowClass(item.id)}`} onClick={() => selectChapter(item.id)}><span className="ee-chapter-number">{String(index + 1).padStart(2, '0')}</span><span>{item.title || l('chapter')}<small>{chapterCharacters(item.content).toLocaleString()} {l('chars')}</small></span><FaIcon name="gripVertical" size={10} /></button>)}</div>
-                        <div className="ee-chapter-actions"><IconButton icon="copy" label={l('duplicate')} onClick={async () => { await flush(); const original = projectRef.current.chapters.find(item => item.id === chapterRef.current); const copy = duplicateChapter(original); copy.title += ' (2)'; await changeStructure(items => { const next = [...items]; next.splice(items.findIndex(item => item.id === original.id) + 1, 0, copy); return next; }); await selectChapter(copy.id); }} />{[-1, 1].map(direction => <IconButton key={direction} icon={direction < 0 ? 'angleUp' : 'angleDown'} label={l(direction < 0 ? 'moveUp' : 'moveDown')} disabled={project.chapters.findIndex(item => item.id === chapter.id) + direction < 0 || project.chapters.findIndex(item => item.id === chapter.id) + direction >= project.chapters.length} onClick={() => changeStructure(items => { const next = [...items]; const index = next.findIndex(item => item.id === chapter.id); [next[index], next[index + direction]] = [next[index + direction], next[index]]; return next; })} />)}<IconButton icon="trash" label={l('remove')} disabled={project.chapters.length < 2} onClick={() => { if (window.confirm(l('deleteChapter'))) changeStructure(items => items.filter(item => item.id !== chapter.id)); }} /></div>
+                        <div className="ee-panel-search"><input type="search" aria-label={l('chapterSearch')} placeholder={l('chapterSearch')} value={chapterQuery} onChange={event => setChapterQuery(event.target.value)} /><span>{matchingChapters.length} / {project.chapters.length}</span></div>
+                        <div className="ee-chapter-list" {...chapterDrag.listProps}>{!matchingChapters.length && <p className="ee-empty-state">{l('chapterNoResults')}</p>}{matchingChapters.map(({ item, index }) => <button key={item.id} {...chapterDrag.rowProps(item.id)} aria-current={chapter.id === item.id ? 'true' : undefined} title={item.title} className={`ee-chapter${chapter.id === item.id ? ' is-active' : ''}${chapterDrag.rowClass(item.id)}`} onClick={() => { selectChapter(item.id); if (compact) setShowStructure(false); }}><span className="ee-chapter-number">{String(index + 1).padStart(2, '0')}</span><span>{item.title || l('chapter')}<small>{chapterCharacters(item.content).toLocaleString()} {l('chars')}</small></span><FaIcon name="gripVertical" size={10} /></button>)}</div>
+                        <div className="ee-chapter-actions"><IconButton icon="copy" label={l('duplicate')} onClick={async () => { setChapterQuery(''); await flush(); const original = projectRef.current.chapters.find(item => item.id === chapterRef.current); const copy = duplicateChapter(original); copy.title += ' (2)'; await changeStructure(items => { const next = [...items]; next.splice(items.findIndex(item => item.id === original.id) + 1, 0, copy); return next; }); await selectChapter(copy.id); }} />{[-1, 1].map(direction => <IconButton key={direction} icon={direction < 0 ? 'angleUp' : 'angleDown'} label={l(direction < 0 ? 'moveUp' : 'moveDown')} disabled={project.chapters.findIndex(item => item.id === chapter.id) + direction < 0 || project.chapters.findIndex(item => item.id === chapter.id) + direction >= project.chapters.length} onClick={() => changeStructure(items => { const next = [...items]; const index = next.findIndex(item => item.id === chapter.id); [next[index], next[index + direction]] = [next[index + direction], next[index]]; return next; })} />)}<IconButton icon="trash" label={l('remove')} disabled={project.chapters.length < 2} onClick={() => { if (window.confirm(l('deleteChapter'))) changeStructure(items => items.filter(item => item.id !== chapter.id)); }} /></div>
                         <div className="ee-chapter-actions"><IconButton icon="rotateLeft" label={l('undoBook')} disabled={!history.current.undo.length} onClick={() => restoreStructure('undo')} /><IconButton icon="rotateRight" label={l('redoBook')} disabled={!history.current.redo.length} onClick={() => restoreStructure('redo')} /></div>
                     </>}
-                    {leftTab === 'outline' && <><h3>{chapter.title}</h3>{outline.map(({ node, position }) => <button className="ee-outline-item" key={position} onClick={() => { setMode('design'); editor.chain().focus().setNodeSelection(position).scrollIntoView().run(); }}><FaIcon name={node.type.name === 'image' ? 'image' : node.type.name === 'table' ? 'tableCells' : 'layers'} /><span>{node.type.name === 'heading' ? node.textContent || l('heading') : l(node.type.name)}</span></button>)}</>}
+                    {leftTab === 'outline' && <><h3>{chapter.title}</h3>{!outline.length && <p className="ee-empty-state">{l('outlineEmpty')}</p>}{outline.map(({ node, position }) => <button className="ee-outline-item" key={position} onClick={() => { setMode('design'); editor.chain().focus().setNodeSelection(position).scrollIntoView().run(); }}><FaIcon name={node.type.name === 'image' ? 'image' : node.type.name === 'table' ? 'tableCells' : 'layers'} /><span>{node.type.name === 'heading' ? node.textContent || l('heading') : l(node.type.name)}</span></button>)}</>}
                     {leftTab === 'assets' && <>
                         <h3>{l('assets')}</h3>
                         <div className="ee-asset-actions">
-                            <button className="ee-button" onClick={() => addAsset('image')}><FaIcon name="image" />{l('addImage')}</button>
+                            <button className="ee-button" onClick={() => importAssets({ action: 'addAsset', kind: 'image', multiple: true })}><FaIcon name="image" />{l('importImage')}</button>
                             <button className="ee-button" onClick={() => addAsset('font')}><FaIcon name="file" />{l('addFont')}</button>
                             <button className="ee-button" onClick={actions.addAudio}><EditorIcon command="addAudio" />{l('addAudio')}</button>
                         </div>
                         <div className="ee-asset-drop-zone"><FaIcon name="download" /><span>{l('dropIntoAssets')}</span><small>PNG · JPEG · MP3 · M4A · TTF · OTF · WOFF · WOFF2</small></div>
                         <p className="ee-muted">{l(project.assets.length ? 'assetHint' : 'noAssets')}</p>
-                        <div className="ee-assets">{project.assets.map(asset => <button
+                        {project.assets.length > 0 && <div className="ee-asset-filters"><input type="search" aria-label={l('assetSearch')} placeholder={l('assetSearch')} value={assetQuery} onChange={event => setAssetQuery(event.target.value)} /><select aria-label={l('assetFilter')} value={assetKind} onChange={event => setAssetKind(event.target.value)}>{['all', 'image', 'audio', 'font'].map(kind => <option key={kind} value={kind}>{l(kind === 'all' ? 'chars_all' : kind)}</option>)}</select><small>{matchingAssets.length} / {project.assets.length}</small></div>}
+                        {project.assets.length > 0 && !matchingAssets.length && <p className="ee-empty-state">{l('assetNoResults')}</p>}
+                        <div className="ee-assets">{matchingAssets.map(asset => <button
                             key={asset.id}
                             aria-label={asset.name}
                             title={asset.kind === 'font' ? asset.name : `${asset.name} · ${l('assetDragHint')}`}
                             draggable={asset.kind === 'image' || asset.kind === 'audio'}
                             onDragStart={event => {
+                                draggedAsset.current = asset;
                                 event.dataTransfer.setData(ASSET_DRAG, JSON.stringify({ sessionId: initial.sessionId, assetId: asset.id }));
                                 event.dataTransfer.effectAllowed = 'copy';
                             }}
                             onClick={() => {
                                 setMode('design');
+                                if (compact) setShowStructure(false);
                                 if (asset.kind === 'image') editor.chain().focus().insertContent({ type: 'image', attrs: { assetId: asset.id, width: 100, align: 'center', alt: '' } }).run();
                                 else if (asset.kind === 'audio') editor.chain().focus().insertContent({ type: 'audio', attrs: { assetId: asset.id, title: asset.name, kind: 'effect', loop: false } }).run();
                                 else update(current => ({ ...current, style: { ...current.style, font: `font-${asset.id}` } }));
@@ -714,23 +798,22 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                         >{asset.kind === 'image' ? <img draggable={false} src={assetUrls.current[asset.id]} alt="" /> : <strong style={{ fontFamily: `font-${asset.id}` }}>{asset.kind === 'audio' ? <EditorIcon command="addAudio" /> : 'Aa'}</strong>}<span>{asset.name}</span></button>)}</div>
                     </>}
                 </div>
-                <button className="ee-sidebar-book" onClick={() => setRightTab('book')}><FaIcon name="book" />{l('book')}<FaIcon name="chevronRight" size={10} /></button>
+                <button className="ee-sidebar-book" onClick={() => { setRightTab('book'); setShowInspector(true); }}><FaIcon name="book" />{l('book')}<FaIcon name="chevronRight" size={10} /></button>
             </aside>
             <main className={`ee-main is-${mode}`}>
                 <div className="ee-mode-bar">
-                    <IconButton icon="list" label={l('toggleStructure')} active={showStructure} aria-expanded={showStructure} onClick={() => setShowStructure(value => !value)} />
+                    <IconButton data-panel-toggle="structure" icon="list" label={l('toggleStructure')} active={showStructure} aria-expanded={showStructure} onClick={() => setShowStructure(!showStructure)} />
                     <div className="ee-modes" role="tablist" aria-label={l('editor')}>{['write', 'design', 'preview', 'source'].map(value => <React.Fragment key={value}><button role="tab" aria-selected={mode === value} onClick={() => switchMode(value)}><EditorIcon command={value} />{l(value)}</button>{value === 'preview' && <button type="button" disabled={!!busy} title={`${l('viewerPreviewHint')} (${shortcutLabel('previewViewer')})`} onClick={previewInViewer}><EditorIcon command="previewViewer" />{l('previewViewer')}</button>}</React.Fragment>)}</div>
-                    {mode === 'preview' && <div className="ee-preview-sizes" role="group" aria-label={`${l('preview')} ${l('width')}`}>
-                        {['narrow', 'medium', 'wide'].map(value => <button type="button" key={value} aria-pressed={viewport === value} onClick={() => setViewport(value)}><EditorIcon command={value} /><span>{l(value)}</span></button>)}
-                    </div>}
-                    {mode !== 'source' && <select className="ee-zoom" aria-label={l('zoom')} title={l('zoomHint')} value={zoom} onChange={event => { chapterScroll.enter(null); editorZoom.change(Number(event.target.value)); }}>{[...new Set([...ZOOM_PRESETS, zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value}%</option>)}</select>}
-                    <IconButton icon="sliders" label={l('toggleInspector')} active={showInspector} aria-expanded={showInspector} onClick={() => setShowInspector(value => !value)} />
+                    {['write', 'design'].includes(mode) && <select className="ee-zoom" aria-label={l('zoom')} title={l('zoomHint')} value={zoom} onChange={event => { chapterScroll.enter(null); editorZoom.change(Number(event.target.value)); }}>{[...new Set([...ZOOM_PRESETS, zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value}%</option>)}</select>}
+                    <button type="button" className="ee-focus-toggle ee-button" aria-pressed={focusMode} title={`${l('focusModeHint')} (${shortcutLabel('focusMode')})`} onClick={actions.focusMode}><EditorIcon command="focusMode" />{l(focusMode ? 'exitFocusMode' : 'focusMode')}</button>
+                    <IconButton data-panel-toggle="inspector" icon="sliders" label={l('toggleInspector')} active={showInspector} aria-expanded={showInspector} onClick={() => setShowInspector(!showInspector)} />
                 </div>
+                {mode === 'preview' && <PreviewDeviceToolbar viewport={viewport} onViewportChange={value => { chapterScroll.enter(null); setViewport(value); }} zoom={previewZoom} scale={previewScale} onZoomChange={value => { chapterScroll.enter(null); if (value === 'fit') setPreviewZoom('fit'); else { setPreviewZoom(value); editorZoom.change(value); } }} theme={previewTheme} onThemeChange={setPreviewTheme} />}
                 {['write', 'design'].includes(mode) && <>
                     <FeatureToolbar editor={editor} project={project} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} canMergeChapters={project.chapters.length > 1} canUndoStructure={atomicHistoryAvailable('undo')} canRedoStructure={atomicHistoryAvailable('redo')} paragraphFormats={paragraphFormats} onApplyParagraphFormat={useParagraphFormat} />
-                    {searchOpen && <div className="ee-search"><input aria-label={l('find')} placeholder={l('find')} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') find(); }} /><input aria-label={l('replacement')} placeholder={l('replacement')} value={replacement} onChange={event => setReplacement(event.target.value)} /><button className="ee-button" onClick={find}>{l('next')}</button><button className="ee-button" onClick={() => replace(false)}>{l('replace')}</button><button className="ee-button" onClick={() => replace(true)}>{l('replaceAll')}</button><IconButton icon="xmark" label={l('close')} onClick={() => setSearchOpen(false)} /></div>}
+                    {searchOpen && <SearchPanel editor={editor} chapterId={chapterId} query={query} onQueryChange={setQuery} replacement={replacement} onReplacementChange={setReplacement} disabled={!!busy} onClose={() => setSearchOpen(false)} />}
                 </>}
-                <div className="ee-stage" ref={stageRef}>
+                <div className="ee-stage" ref={stageRef} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) assetDrop.clear(); }}>
                     {mode !== 'source' && (chapterIndex > 0 || mode === 'preview') && <button type="button" className="ee-chapter-boundary is-previous" disabled={chapterIndex === 0} onClick={() => navigateChapter(-1)}><FaIcon name="angleUp" /><span><strong>{l('previousChapter')}{chapterIndex > 0 && ` · ${project.chapters[chapterIndex - 1].title || l('chapter')}`}</strong><small>{l('scrollPreviousChapter')}</small></span></button>}
                     <div className="ee-paper" hidden={!['write', 'design'].includes(mode)} style={paperStyle}>
                         <div className="ee-paper-label">{String(project.chapters.findIndex(item => item.id === chapter.id) + 1).padStart(2, '0')} / {l('chapter')}</div>
@@ -739,7 +822,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                         {outline.some(item => item.node.type.name === 'footnote') && <section className="ee-footnotes"><h3>{l('footnote')}</h3>{outline.filter(item => item.node.type.name === 'footnote').map(({ node, position }, index) => <button key={node.attrs.id} onClick={() => { editor.commands.setNodeSelection(position); setFootnoteText(node.attrs.text); setDialog('footnote'); }}><sup>{index + 1}</sup><span>{node.attrs.text || l('FOOTNOTE_EMPTY')}</span></button>)}</section>}
 
                     </div>
-                    {mode === 'preview' && <div className={`ee-preview is-${viewport}`} style={{ zoom: zoom / 100 }}><iframe key={chapter.id} title={l('preview')} sandbox="allow-same-origin" srcDoc={previewSource} onLoad={event => {
+                    {mode === 'preview' && <PreviewViewport viewport={viewport} zoom={previewZoom} onScaleChange={setPreviewScale} theme={previewTheme}><iframe key={chapter.id} title={l('preview')} sandbox="allow-same-origin" srcDoc={previewSource} onLoad={event => {
                         const doc = event.currentTarget.contentDocument;
                         chapterScroll.onPreviewLoad(event.currentTarget);
                         if (previewAnchor.current) { doc?.getElementById(previewAnchor.current)?.scrollIntoView(); previewAnchor.current = null; }
@@ -754,17 +837,19 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                             if (match[1] === chapterRef.current) { if (match[2]) doc.getElementById(match[2])?.scrollIntoView(); else doc.documentElement.scrollTop = 0; }
                             else { previewAnchor.current = match[2]; selectChapter(match[1]); }
                         });
-                    }} /><p className="ee-muted">{l('readingHint')}</p></div>}
+                    }} /></PreviewViewport>}
                     {mode === 'source' && <Suspense fallback={<p className="ee-muted">{l('working')}</p>}><SourceWorkspace codeStates={codeStates.current} project={project} chapter={chapter} tab={sourceTab} setTab={setSourceTab} update={update} onPreview={() => switchMode('preview')} onViewerPreview={previewInViewer} busy={!!busy} /></Suspense>}
                     {mode !== 'source' && (chapterIndex < project.chapters.length - 1 || mode === 'preview') && <button type="button" className="ee-chapter-boundary is-next" disabled={chapterIndex === project.chapters.length - 1} onClick={() => navigateChapter(1)}><FaIcon name="angleDown" /><span><strong>{l('nextChapter')}{chapterIndex < project.chapters.length - 1 && ` · ${project.chapters[chapterIndex + 1].title || l('chapter')}`}</strong><small>{l('scrollNextChapter')}</small></span></button>}
                 </div>
                 <ContextToolbar editor={editor} stageRef={stageRef} enabled={!busy && !dialog && ['write', 'design'].includes(mode)} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} linkOpen={linkOpen} linkForm={linkForm} onCloseLink={() => setLinkOpen(false)} apiRef={contextToolbarRef} />
                 <footer className="ee-document-footer"><span aria-live="polite">{chapterIndex + 1} / {project.chapters.length} · {chapter.title}</span><span>{chapterCharacters(chapter.content).toLocaleString()} {l('chars')}<i />EPUB 3</span></footer>
             </main>
-            <Inspector hidden={!showInspector} tab={rightTab} setTab={setRightTab} project={project} update={update} editor={editor} chapter={chapter} assetUrls={assetUrls.current} onAddAsset={addAsset} onCss={actions.commonCss} onChapterCss={actions.chapterCss} onFootnote={openFootnote} onMedia={actions.media} onFormat={focusTextFormatting} editing={['write', 'design'].includes(mode)} />
+            <Inspector onClose={compact ? () => setShowInspector(false) : undefined} hidden={!showInspector} tab={rightTab} setTab={setRightTab} project={project} update={update} editor={editor} chapter={chapter} assetUrls={assetUrls.current} onAddAsset={addAsset} onCss={actions.commonCss} onChapterCss={actions.chapterCss} onFootnote={openFootnote} onMedia={actions.media} onFormat={focusTextFormatting} editing={['write', 'design'].includes(mode)} />
         </div>
-        {issues && <section className="ee-checks"><div className="ee-section-heading"><h3>{l('inspect')}<small>{l('checkHint')}</small></h3><IconButton icon="xmark" label={l('close')} onClick={() => setIssues(null)} /></div>{issues.length ? <div className="ee-check-list">{issues.map((issue, index) => <button key={index} className={`is-${issue.severity}`} onClick={async () => { if (issue.chapterId) await selectChapter(issue.chapterId); if (issue.code.startsWith('CSS_')) { setSourceTab(issue.chapterId ? 'chapterCss' : 'commonCss'); setMode('source'); } else { setMode('design'); setRightTab(issue.chapterId ? 'properties' : 'book'); } if (issue.nodeId) editor.state.doc.descendants((node, pos) => { if (node.attrs.id === issue.nodeId) editor.chain().focus().setNodeSelection(pos).scrollIntoView().run(); }); }}><span>{l(issue.severity === 'error' ? 'failure' : 'warning')}</span>{l(issue.code)}</button>)}</div> : <p>{l('checked')}</p>}</section>}
+        {issues && <section className="ee-checks"><div className="ee-section-heading"><h3>{l('inspect')}<small>{l('checkHint')}</small></h3><IconButton icon="xmark" label={l('close')} onClick={() => setIssues(null)} /></div>{issues.length > 0 && <p className="ee-check-summary">{l('failure')} {issues.filter(issue => issue.severity === 'error').length} · {l('warning')} {issues.filter(issue => issue.severity !== 'error').length}</p>}{issues.length ? <div className="ee-check-list">{issues.map((issue, index) => <button key={index} className={`is-${issue.severity}`} onClick={async () => { if (issue.chapterId) await selectChapter(issue.chapterId); if (issue.code.startsWith('CSS_')) { setSourceTab(issue.chapterId ? 'chapterCss' : 'commonCss'); setMode('source'); } else { setMode('design'); setRightTab(issue.chapterId ? 'properties' : 'book'); setShowInspector(true); } if (issue.nodeId) editor.state.doc.descendants((node, pos) => { if (node.attrs.id === issue.nodeId) editor.chain().focus().setNodeSelection(pos).scrollIntoView().run(); }); }}><span>{l(issue.severity === 'error' ? 'failure' : 'warning')}</span><span className="ee-check-detail"><strong>{issue.chapterId ? project.chapters.find(item => item.id === issue.chapterId)?.title || l('chapter') : l('book')}</strong>{l(issue.code)}</span><FaIcon name="chevronRight" size={10} /></button>)}</div> : <p>{l('checked')}</p>}</section>}
         {exportedPath && <div className="ee-export-result"><span>{exportedPath}</span><button className="ee-button" onClick={() => window.electronAPI?.openInternalViewer?.(exportedPath)}>{l('openResult')}</button></div>}
+        {['imageAlt', 'imageSize'].includes(dialog) && <ImageAttributesDialog editor={editor} mode={dialog === 'imageAlt' ? 'alt' : 'size'} onClose={() => setDialog(null)} />}
+        {dialog === 'imageEdit' && imageEditTarget && <Suspense fallback={<EditorDialog title={l('imageEdit')} onClose={() => setDialog(null)}><p role="status">{l('working')}</p></EditorDialog>}><ImageEditorDialog src={assetUrls.current[imageEditTarget.assetId]} loadSource={async () => { const result = await request({ action: 'asset', sessionId: initial.sessionId, assetId: imageEditTarget.assetId }); return new Blob([result.data], { type: result.mime }); }} onApply={applyEditedImage} onClose={() => { setDialog(null); setImageEditTarget(null); }} /></Suspense>}
         {dialog === 'mergeChapters' && <MergeChaptersDialog chapters={project.chapters} chapterId={chapterId} onMerge={mergeChapters} onClose={() => setDialog(null)} />}
         {dialog === 'textImport' && <TextImportDialog readText={options => request({ action: 'readText', sessionId: initial.sessionId, operationId: newId('op'), ...options })} onApply={applyTextImport} onClose={() => setDialog(null)} />}
         {dialog === 'table' && <TablePicker onClose={() => setDialog(null)} onInsert={(rows, cols, withHeaderRow) => { setDialog(null); editor.chain().focus().insertTable({ rows, cols, withHeaderRow }).run(); }} />}
@@ -785,6 +870,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         }} />}
         {dialog === 'footnote' && <EditorDialog title={l('footnote')} onClose={() => setDialog(null)} onSubmit={event => { event.preventDefault(); if (editor.isActive('footnote')) editor.chain().focus().updateAttributes('footnote', { text: footnoteText }).run(); else editor.chain().focus().insertContent({ type: 'footnote', attrs: { id: newId(), text: footnoteText } }).run(); setDialog(null); }} footer={<button className="ee-button ee-primary" type="submit">{l('apply')}</button>}><p className="ee-muted">{l('footnoteHint')}</p><label className="ee-field"><span>{l('footnoteText')}</span><textarea rows={6} maxLength={20000} value={footnoteText} onChange={event => setFootnoteText(event.target.value)} autoFocus /></label></EditorDialog>}
         {busy && <div className="ee-busy" role="status"><FaIcon name="spinner" /><span>{l(busy === 'previewViewer' ? 'viewerPreviewPreparing' : 'working')}</span>{['save', 'export', 'previewViewer'].includes(busy) && <><progress max="100" value={progress} /><button className="ee-button" onClick={() => request({ action: 'cancel', operationId: operationRef.current }).catch(report)}>{l('cancel')}</button></>}</div>}
+        {assetDrop.indicator && createPortal(<div aria-hidden="true" className={`ee-asset-drop-cursor${assetDrop.indicator.inline ? ' is-inline' : ' is-block'}${assetDrop.indicator.alignEnd ? ' align-end' : ''}${assetDrop.indicator.labelBelow ? ' label-below' : ''}`} style={assetDrop.indicator.rect}><span>{l('dropInsertionPoint')}</span></div>, document.body)}
         {dropTarget && <div className="ee-drop-hint" role="status"><FaIcon name="download" /><span>{l(dropTarget === 'body' ? 'dropIntoBody' : 'dropIntoAssets')}</span></div>}
     </div>;
 }

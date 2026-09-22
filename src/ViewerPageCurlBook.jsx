@@ -2,6 +2,8 @@ import React, { Children, cloneElement, forwardRef, useImperativeHandle, useLayo
 import { drawPageCurlFrame } from './viewerPageCurlRenderer';
 import { releasePageCurlSnapshots, snapshotPageCurlLeaf } from './viewerPageCurlSnapshot';
 
+export const PAGE_CURL_SNAPSHOT_TIMEOUT = { reader: 3000, image: 800 };
+
 const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     children, startPage = 0, preparedPage = startPage, width, height, spread = true,
     duration = 600, onPageChange, className = '', style,
@@ -67,6 +69,10 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
             const slots = spread ? 2 : 1;
             const pixelRatio = Math.min(2, window.devicePixelRatio || 1, 4096 / Math.max(width * slots, height));
             const indexes = [from, target].flatMap(index => Array.from({ length: slots }, (_, offset) => index + offset));
+            // Reader snapshots embed fonts and rasterize HTML, unlike ready image/canvas leaves.
+            const prepareTimeout = indexes.some(index => rootRef.current
+                .querySelector(`[data-flipbook-index="${index}"] .viewer-text-page`))
+                ? PAGE_CURL_SNAPSHOT_TIMEOUT.reader : PAGE_CURL_SNAPSHOT_TIMEOUT.image;
             const pendingSnapshots = Promise.allSettled(indexes.map((index, offset) => snapshotPageCurlLeaf(
                 rootRef.current.querySelector(`[data-flipbook-index="${index}"]`),
                 { width, height, x: offset % slots * width, pixelRatio },
@@ -74,10 +80,11 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
             let prepareTimer;
             const results = await Promise.race([
                 pendingSnapshots,
-                new Promise(resolve => { prepareTimer = setTimeout(() => resolve(null), 800); }),
+                new Promise(resolve => { prepareTimer = setTimeout(() => resolve(null), prepareTimeout); }),
             ]);
             clearTimeout(prepareTimer);
             if (!results) {
+                if (sequence === runtime.sequence && rootRef.current) console.warn('[Viewer] Page curl snapshot preparation timed out.');
                 pendingSnapshots.then(lateResults => releasePageCurlSnapshots(
                     lateResults.filter(result => result.status === 'fulfilled').map(result => result.value),
                 ));
@@ -90,6 +97,7 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
                 return;
             }
             if (snapshots.length !== indexes.length) {
+                console.warn('[Viewer] Page curl snapshot failed:', results.filter(result => result.status === 'rejected').map(result => String(result.reason)).join('; '));
                 releasePageCurlSnapshots(snapshots);
                 commit(target);
                 return;
@@ -114,7 +122,8 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
                 context.clearRect(0, 0, scene.width, height);
                 try {
                     drawPageCurlFrame(context, { ...scene, progress });
-                } catch {
+                } catch (error) {
+                    console.warn('[Viewer] Page curl rendering failed:', error);
                     commit(target);
                     return;
                 }

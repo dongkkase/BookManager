@@ -140,6 +140,8 @@ export function validateProject(project) {
             string(attrs.caption || '');
             number(attrs.width, 10, 100);
             if (!['left', 'center', 'right'].includes(attrs.align)) throw projectError('INVALID_DOCUMENT');
+            if (attrs.textWrap != null && !['none', 'left', 'right'].includes(attrs.textWrap)) throw projectError('INVALID_DOCUMENT');
+            if (attrs.decorative != null && typeof attrs.decorative !== 'boolean') throw projectError('INVALID_DOCUMENT');
         }
         if (node.type === 'columns' && ![2, 3].includes(node.content?.length)) throw projectError('INVALID_DOCUMENT');
         if (node.type === 'listItem' && node.content?.[0]?.type !== 'paragraph') throw projectError('INVALID_DOCUMENT');
@@ -334,7 +336,8 @@ export function renderChapterBody(chapter, project, resolveAsset = asset => `../
             const asset = assets.get(a.assetId);
             if (!asset) return '';
             const margin = a.align === 'center' ? '0 auto' : a.align === 'right' ? '0 0 0 auto' : '0 auto 0 0';
-            return `<figure${id} style="width:${a.width}%;margin:${margin}"><img src="${xml(resolveAsset(asset))}" alt="${xml(a.decorative ? '' : a.alt || '')}"${a.decorative ? ' role="presentation"' : ''} />${a.caption ? `<figcaption>${xml(a.caption)}</figcaption>` : ''}</figure>`;
+            const wrap = a.textWrap === 'left' ? 'float:right;margin:0 0 .75em 1.2em' : a.textWrap === 'right' ? 'float:left;margin:0 1.2em .75em 0' : `margin:${margin}`;
+            return `<figure${id}${a.textWrap && a.textWrap !== 'none' ? ` data-text-wrap="${a.textWrap}"` : ''} style="width:${a.width}%;${wrap}"><img src="${xml(resolveAsset(asset))}" alt="${xml(a.decorative ? '' : a.alt || '')}"${a.decorative ? ' role="presentation"' : ''} />${a.caption ? `<figcaption>${xml(a.caption)}</figcaption>` : ''}</figure>`;
         }
         if (node.type === 'footnote') {
             notes.push(a);

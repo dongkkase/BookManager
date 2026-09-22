@@ -26,6 +26,8 @@ export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, ope
             const { action, sessionId, project, operationId } = request;
             let result;
             if (action === 'list') result = { projects: await editor.recoveries() };
+            else if (action === 'recoveryDelete') result = await editor.deleteRecovery(request.id);
+            else if (action === 'recoveryDuplicate') result = await editor.duplicateRecovery(owner, request.id, request.language);
             else if (action === 'cssPresetList') result = await editor.cssPresets();
             else if (action === 'cssPresetSave') result = await editor.changeCssPreset(request.preset, request.revision);
             else if (action === 'cssPresetDelete') result = await editor.changeCssPreset({ id: request.presetId }, request.revision, true);
@@ -41,6 +43,7 @@ export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, ope
             else if (action === 'restore') result = await editor.restore(owner, request.id);
             else if (action === 'recover') result = await editor.recovery(owner, sessionId, project);
             else if (action === 'asset') result = await editor.asset(owner, sessionId, request.assetId);
+            else if (action === 'editImage') result = await editor.editImage(owner, sessionId, request.assetId, request.data);
             else if (action === 'importAssets') result = await editor.importAssets(owner, sessionId, request.paths);
             else if (action === 'cancel') result = await editor.cancel(owner, operationId);
             else if (action === 'close') { await editor.close(owner, sessionId); result = {}; }
@@ -66,10 +69,12 @@ export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, ope
                 if (selected.canceled) return { ok: true, canceled: true };
                 result = await editor.open(owner, selected.filePaths[0], operationId, progress);
             } else if (action === 'addAsset') {
+                editor.session(sessionId, owner);
                 const kind = ['font', 'audio'].includes(request.kind) ? request.kind : 'image';
-                const selected = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: kind === 'audio' ? 'Audio' : kind === 'font' ? 'Font' : 'Image', extensions: kind === 'audio' ? ['mp3', 'm4a'] : kind === 'font' ? ['ttf', 'otf', 'woff', 'woff2'] : ['png', 'jpg', 'jpeg'] }] });
-                if (selected.canceled) return { ok: true, canceled: true };
-                result = await editor.addAsset(owner, sessionId, selected.filePaths[0], kind);
+                const multiple = kind === 'image' && request.multiple === true;
+                const selected = await dialog.showOpenDialog(window, { properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: kind === 'audio' ? 'Audio' : kind === 'font' ? 'Font' : 'Image', extensions: kind === 'audio' ? ['mp3', 'm4a'] : kind === 'font' ? ['ttf', 'otf', 'woff', 'woff2'] : ['png', 'jpg', 'jpeg'] }] });
+                if (selected.canceled || !selected.filePaths?.length) return { ok: true, canceled: true };
+                result = multiple ? await editor.importAssets(owner, sessionId, selected.filePaths, kind) : await editor.addAsset(owner, sessionId, selected.filePaths[0], kind);
             } else if (action === 'previewViewer') {
                 if (typeof openViewerPreview !== 'function') throw Object.assign(new Error('VIEWER_UNAVAILABLE'), { code: 'VIEWER_UNAVAILABLE' });
                 const preview = await editor.preview(owner, sessionId, project, operationId, progress);

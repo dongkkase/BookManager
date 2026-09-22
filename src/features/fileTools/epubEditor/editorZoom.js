@@ -1,7 +1,7 @@
 export const ZOOM_PRESETS = [50, 75, 90, 100, 110, 125, 150, 175, 200];
 
-export function clampZoom(value) {
-    return Math.min(200, Math.max(50, Math.round(value)));
+export function clampZoom(value, minimum = 50) {
+    return Math.min(200, Math.max(minimum, Math.round(value)));
 }
 
 export function zoomWheelPixels(event, pageHeight) {
@@ -9,7 +9,7 @@ export function zoomWheelPixels(event, pageHeight) {
     return event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pageHeight : 1);
 }
 
-export function createZoomWheel() {
+export function createZoomWheel(minimum = 50) {
     let distance = 0;
     let lastTime = -Infinity;
     let direction = 0;
@@ -24,7 +24,7 @@ export function createZoomWheel() {
             distance += Math.abs(delta);
             const steps = Math.min(4, Math.floor(distance / 40));
             distance %= 40;
-            return clampZoom(current - direction * steps * 5);
+            return steps ? clampZoom(current - direction * steps * 5, minimum) : current;
         },
     };
 }

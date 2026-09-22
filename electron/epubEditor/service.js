@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
@@ -8,6 +9,8 @@ import { identifyAsset, verifyAssets, validateAudio } from './package.js';
 import { validateCssPreset, validatePresetLibrary, presetError, MAX_CSS_PRESETS, MAX_PRESET_FILE_BYTES } from './cssPresets.js';
 import { ContentTemplateLibrary } from './templateLibrary.js';
 import { normalizeParagraphFormat, validateParagraphFormatLibrary, paragraphFormatError, MAX_PARAGRAPH_FORMATS, MAX_PARAGRAPH_FORMAT_BYTES } from './paragraphFormats.js';
+
+const RECOVERY_ID = /^s_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 async function fingerprint(filePath) {
     try {
@@ -195,33 +198,117 @@ export class EpubEditorService {
         return structuredClone(project);
     }
 
-    async recoveries() {
+    async recoveries(limit = 20) {
         const directories = await fs.readdir(this.root, { withFileTypes: true }).catch(() => []);
         const result = [];
         for (const directory of directories) {
-            if (!directory.isDirectory() || !/^s_[a-f0-9-]{36}$/.test(directory.name)) continue;
+            if (!directory.isDirectory() || !RECOVERY_ID.test(directory.name)) continue;
             try {
                 const filePath = path.join(this.root, directory.name, 'recovery.json');
-                if ((await fs.stat(filePath)).size > MAX_DOCUMENT_BYTES + 16384) continue;
+                const stat = await fs.lstat(filePath);
+                if (!stat.isFile() || stat.size > MAX_DOCUMENT_BYTES + 16384) continue;
                 const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+                if (typeof data.project?.metadata?.title !== 'string' || typeof data.updatedAt !== 'string') continue;
                 result.push({ id: directory.name, title: data.project.metadata.title, updatedAt: data.updatedAt, savedPath: data.savedPath });
             } catch { /* Incomplete recovery writes are not offered. */ }
         }
-        return result.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 20);
+        return result.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+    }
+
+    async manageRecovery(id, action) {
+        if (typeof id !== 'string' || !RECOVERY_ID.test(id)) throw projectError('INVALID_PROJECT');
+        return this.exclusive('recovery-management', () => this.exclusive(id, async () => {
+            if (this.sessions.has(id)) throw projectError('PROJECT_BUSY');
+            return action();
+        }));
+    }
+
+    async recoveryDirectory(id) {
+        const directory = path.join(this.root, id);
+        const stat = await fs.lstat(directory).catch(error => {
+            if (error.code === 'ENOENT') throw projectError('RECOVERY_MISSING');
+            throw error;
+        });
+        if (!stat.isDirectory()) throw projectError('INVALID_PROJECT');
+        return directory;
+    }
+
+    async readRecovery(id) {
+        const directory = await this.recoveryDirectory(id);
+        const filePath = path.join(directory, 'recovery.json');
+        const stat = await fs.lstat(filePath).catch(error => {
+            if (error.code === 'ENOENT') throw projectError('RECOVERY_MISSING');
+            throw error;
+        });
+        if (!stat.isFile()) throw projectError('INVALID_PROJECT');
+        if (stat.size > MAX_DOCUMENT_BYTES + 16384) throw projectError('PROJECT_TOO_LARGE');
+        let data;
+        try { data = JSON.parse(await fs.readFile(filePath, 'utf8')); } catch (error) {
+            if (error instanceof SyntaxError) throw projectError('INVALID_PROJECT');
+            throw error;
+        }
+        validateProject(data.project);
+        const assetDirectory = path.join(directory, 'assets');
+        if (!(await fs.lstat(assetDirectory)).isDirectory()) throw projectError('INVALID_PROJECT');
+        for (const asset of data.project.assets) {
+            const assetStat = await fs.lstat(path.join(assetDirectory, assetFilename(asset))).catch(() => null);
+            if (!assetStat?.isFile()) throw projectError('ASSET_MISSING');
+        }
+        await verifyAssets(data.project, assetDirectory);
+        return { ...data, id, directory, assetDirectory, catalog: new Map(data.project.assets.map(asset => [asset.id, asset])) };
     }
 
     async restore(owner, id) {
-        if (!/^s_[a-f0-9-]{36}$/.test(id)) throw projectError('INVALID_PROJECT');
-        if ([...this.sessions.values()].some(session => session.id === id)) throw projectError('PROJECT_BUSY');
-        const directory = path.join(this.root, id);
-        const filePath = path.join(directory, 'recovery.json');
-        if ((await fs.stat(filePath)).size > MAX_DOCUMENT_BYTES + 16384) throw projectError('PROJECT_TOO_LARGE');
-        const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
-        validateProject(data.project);
-        const session = { ...data, id, owner, directory, assetDirectory: path.join(directory, 'assets'), catalog: new Map(data.project.assets.map(asset => [asset.id, asset])) };
-        await verifyAssets(session.project, session.assetDirectory);
-        this.sessions.set(id, session);
-        return this.snapshot(session);
+        return this.manageRecovery(id, async () => {
+            const session = { ...await this.readRecovery(id), owner };
+            this.sessions.set(id, session);
+            return this.snapshot(session);
+        });
+    }
+
+    async deleteRecovery(id) {
+        return this.manageRecovery(id, async () => {
+            const directory = await this.recoveryDirectory(id);
+            await fs.rm(directory, { recursive: true });
+            return { projects: await this.recoveries() };
+        });
+    }
+
+    async duplicateRecovery(owner, id, language = 'ko') {
+        return this.manageRecovery(id, async () => {
+            const source = await this.readRecovery(id);
+            const names = new Set((await this.recoveries(Infinity)).map(item => item.title));
+            const locale = ['ko', 'en', 'ja'].includes(language) ? language : 'ko';
+            const title = source.project.metadata.title.trim() || { ko: '제목 없는 책', en: 'Untitled book', ja: '無題の本' }[locale];
+            const copyLabel = { ko: '복사본', en: 'Copy', ja: 'コピー' }[locale];
+            let duplicatedTitle;
+            for (let index = 1; !duplicatedTitle || names.has(duplicatedTitle); index += 1) {
+                const suffix = ` (${copyLabel}${index > 1 ? ` ${index}` : ''})`;
+                const baseTitle = title.slice(0, 2000 - suffix.length).replace(/[\uD800-\uDBFF]$/, '');
+                duplicatedTitle = `${baseTitle}${suffix}`;
+            }
+            const session = await this.newSession(owner);
+            try {
+                session.project = structuredClone(source.project);
+                session.project.id = `p_${randomUUID()}`;
+                session.project.revision = 0;
+                session.project.metadata.identifier = `urn:uuid:${randomUUID()}`;
+                session.project.metadata.title = duplicatedTitle;
+                validateProject(session.project);
+                for (const asset of session.project.assets) {
+                    const filename = assetFilename(asset);
+                    await fs.copyFile(path.join(source.assetDirectory, filename), path.join(session.assetDirectory, filename), constants.COPYFILE_EXCL);
+                }
+                await verifyAssets(session.project, session.assetDirectory);
+                await this.persist(session);
+            } catch (error) {
+                await fs.rm(session.directory, { recursive: true, force: true });
+                throw error;
+            } finally {
+                this.sessions.delete(session.id);
+            }
+            return { projects: await this.recoveries(), duplicatedId: session.id };
+        });
     }
 
     async recovery(owner, id, project) {
@@ -301,20 +388,54 @@ export class EpubEditorService {
         });
     }
 
-    async importAssets(owner, id, paths) {
+    async importAssets(owner, id, paths, kind) {
         this.session(id, owner);
         if (!Array.isArray(paths) || !paths.length || paths.length > 100) throw projectError('INVALID_ASSET_BATCH');
         const assets = [];
         const rejected = [];
         for (const filePath of new Set(paths)) {
             try {
-                const { asset } = await this.addAsset(owner, id, filePath);
+                const { asset } = await this.addAsset(owner, id, filePath, kind);
                 assets.push(asset);
             } catch (error) {
                 rejected.push({ name: typeof filePath === 'string' ? path.basename(filePath) : '', code: error.code || 'FILE_FAILED' });
             }
         }
         return { assets, rejected };
+    }
+
+    async editImage(owner, id, assetId, input) {
+        return this.exclusive(`${id}:assets`, async () => {
+            const session = this.session(id, owner);
+            const source = session.catalog.get(assetId);
+            if (!source) throw projectError('ASSET_MISSING');
+            if (source.kind !== 'image') throw projectError('INVALID_ASSET');
+            if (!(input instanceof ArrayBuffer) && !(input instanceof Uint8Array && input.buffer instanceof ArrayBuffer)) throw projectError('INVALID_ASSET');
+            if (input.byteLength > 20 * 1024 * 1024) throw projectError('ASSET_TOO_LARGE');
+            if (session.catalog.size >= 1000) throw projectError('TOO_MANY_ASSETS');
+            if (input.byteLength + [...session.catalog.values()].reduce((sum, asset) => sum + asset.size, 0) > MAX_PROJECT_BYTES) throw projectError('PROJECT_TOO_LARGE');
+            const data = Buffer.from(input instanceof ArrayBuffer ? new Uint8Array(input) : input);
+            const type = identifyAsset(data);
+            if (type.extension !== 'png') throw projectError('INVALID_ASSET');
+            await this.runWorker(owner, `edited-image-${randomUUID()}`, { operation: 'validateEditedImage', data });
+            this.session(id, owner);
+            const stem = path.parse(source.name).name.slice(0, 1900).replace(/[\uD800-\uDBFF]$/, '') || 'image';
+            const asset = { id: `a_${randomUUID()}`, ...type, name: `${stem}-edited.png`, size: data.length };
+            const filePath = path.join(session.assetDirectory, assetFilename(asset));
+            let created = false;
+            try {
+                const handle = await fs.open(filePath, 'wx');
+                created = true;
+                try { await handle.writeFile(data); await handle.sync(); }
+                finally { await handle.close(); }
+                this.session(id, owner);
+                session.catalog.set(asset.id, asset);
+                return { asset };
+            } catch (error) {
+                if (created) await fs.rm(filePath, { force: true }).catch(() => {});
+                throw error;
+            }
+        });
     }
 
     async asset(owner, id, assetId) {

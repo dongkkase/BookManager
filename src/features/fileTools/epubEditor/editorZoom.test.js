@@ -48,3 +48,13 @@ test('zoom remains bounded and a large wheel event cannot jump across the entire
     assert.equal(clampZoom(250), 200);
     assert.equal(clampZoom(25), 50);
 });
+
+test('device previews zoom from a small fit scale without jumping to the editing minimum', () => {
+    const wheel = createZoomWheel(5);
+    assert.equal(wheel.next(17.25, -5, 0), 17.25);
+    assert.equal(wheel.next(17.25, -35, 16), 22);
+    assert.equal(wheel.next(10, 80, 32), 5);
+    assert.equal(wheel.next(5, 40, 48), 5);
+    assert.equal(clampZoom(2, 5), 5);
+    assert.equal(clampZoom(250, 5), 200);
+});

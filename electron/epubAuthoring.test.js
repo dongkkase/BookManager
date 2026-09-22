@@ -8,6 +8,30 @@ import { createProject, paragraph, validateProject, inspectProject } from './epu
 import { EpubEditorService } from './epubEditor/service.js';
 import { listZipEntries, readZipEntry } from './core/zipArchive.js';
 import { editorMediaRequestHeaders, installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
+import { EventEmitter } from 'node:events';
+import { ViewerSessionManager } from './viewerSessions.js';
+
+test('editor and viewer windows share one media header listener and unregister destroyed owners', () => {
+    let listener;
+    let registrations = 0;
+    const session = { webRequest: { onBeforeSendHeaders: (_filter, callback) => { registrations += 1; listener = callback; } } };
+    const editor = Object.assign(new EventEmitter(), { id: 1, session });
+    const viewer = Object.assign(new EventEmitter(), { id: 2, session });
+    installEditorMediaHeaders(editor, 'com.bookmanager.app');
+    installEditorMediaHeaders(viewer, 'com.bookmanager.app');
+    assert.equal(registrations, 1);
+    const headersFor = id => {
+        let headers;
+        listener({ webContentsId: id, resourceType: 'subFrame', url: 'https://www.youtube-nocookie.com/embed/jNQXAC9IVRw', requestHeaders: {} }, result => { headers = result.requestHeaders; });
+        return headers;
+    };
+    assert.equal(headersFor(1).Referer, 'https://com.bookmanager.app/');
+    assert.equal(headersFor(2).Referer, 'https://com.bookmanager.app/');
+    assert.deepEqual(headersFor(3), {});
+    viewer.emit('destroyed');
+    assert.deepEqual(headersFor(2), {});
+    assert.equal(headersFor(1).Referer, 'https://com.bookmanager.app/');
+});
 
 test('installed app identifies only its own YouTube player requests and preserves existing web referrers', () => {
     const request = { webContentsId: 12, resourceType: 'subFrame', url: 'https://www.youtube-nocookie.com/embed/jNQXAC9IVRw', requestHeaders: { Accept: 'text/html' } };
@@ -74,6 +98,12 @@ test('new authoring features survive recovery, save and reopen and export valid 
     assert.match(xhtml, /Video &lt;title&gt; &amp; test/);
     assert.match(xhtml, /href="https:\/\/www.youtube.com\/watch\?v=dQw4w9WgXcQ&amp;t=90"/);
     assert.doesNotMatch(xhtml, /<iframe|<script|<oembed/);
+    const reader = new ViewerSessionManager();
+    const session = reader.create(exported, { skipAdjacent: true });
+    const book = await reader.getEpubText(session.id);
+    const links = nodes => nodes.flatMap(node => [node.mediaUrl, ...links(node.children || [])]).filter(Boolean);
+    assert.ok(book.chapters.some(chapter => chapter.blocks.some(block => links(block.nodes || []).includes('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90'))));
+    assert.ok(book.chapters.some(chapter => chapter.original.html.includes('class="external-media"')));
     assert.match(read('EPUB/styles/book.css'), /\.bm-style-note/);
     assert.match(read('EPUB/nav.xhtml'), /#n_heading/);
     project.chapters[0].content.content = [project.chapters[0].content.content[2]];

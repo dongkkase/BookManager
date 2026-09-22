@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { clampZoom, createZoomWheel, zoomWheelPixels } from './editorZoom';
 
 function zoomAnchor(stage, preview, event) {
@@ -7,12 +7,13 @@ function zoomAnchor(stage, preview, event) {
     const doc = preview ? preview.contentDocument : stage.ownerDocument;
     const content = preview ? doc?.body : surface;
     if (!content) return null;
-    const stageRect = stage.getBoundingClientRect();
+    const scrollSurface = preview?.closest('.ee-preview-canvas') || stage;
+    const stageRect = scrollSurface.getBoundingClientRect();
     const surfaceRect = surface.getBoundingClientRect();
     const scale = () => preview ? preview.getBoundingClientRect().width / preview.clientWidth : 1;
     const insideFrame = event?.target?.ownerDocument === doc && !!preview;
-    const screenX = event ? insideFrame ? surfaceRect.left + event.clientX * scale() : event.clientX : stageRect.left + stage.clientWidth / 2;
-    const screenY = event ? insideFrame ? surfaceRect.top + event.clientY * scale() : event.clientY : stageRect.top + stage.clientHeight / 2;
+    const screenX = event ? insideFrame ? surfaceRect.left + event.clientX * scale() : event.clientX : stageRect.left + scrollSurface.clientWidth / 2;
+    const screenY = event ? insideFrame ? surfaceRect.top + event.clientY * scale() : event.clientY : stageRect.top + scrollSurface.clientHeight / 2;
     const x = preview ? (screenX - surfaceRect.left) / scale() : screenX;
     const y = preview ? (screenY - surfaceRect.top) / scale() : screenY;
     const caret = doc.caretRangeFromPoint?.(x, y);
@@ -34,8 +35,8 @@ function zoomAnchor(stage, preview, event) {
     return () => {
         const after = point();
         if (!before || !after) return;
-        stage.scrollLeft += after.x - before.x;
-        stage.scrollTop += after.y - before.y;
+        scrollSurface.scrollLeft += after.x - before.x;
+        scrollSurface.scrollTop += after.y - before.y;
         // The iframe has its own scroll range when the outer stage reaches a boundary.
         const remainder = point();
         if (preview && remainder && doc.scrollingElement) {
@@ -45,10 +46,10 @@ function zoomAnchor(stage, preview, event) {
     };
 }
 
-export default function useEditorZoom({ stageRef, chapterId, mode, zoom, setZoom, disabled }) {
+export default function useEditorZoom({ stageRef, chapterId, mode, zoom, setZoom, minimum = 50, disabled }) {
     const currentZoom = useRef(zoom);
     currentZoom.current = zoom;
-    const wheel = useRef(createZoomWheel());
+    const wheel = useMemo(() => createZoomWheel(minimum), [minimum]);
     const pending = useRef(null);
     const restoreFrame = useRef(null);
     useLayoutEffect(() => {
@@ -63,19 +64,20 @@ export default function useEditorZoom({ stageRef, chapterId, mode, zoom, setZoom
     }, [zoom, chapterId, mode]);
 
     const change = (value, event, preview) => {
-        const next = clampZoom(value);
+        if (value === currentZoom.current) return;
+        const next = clampZoom(value, minimum);
         if (disabled || mode === 'source' || next === currentZoom.current || !stageRef.current) return;
         if (!pending.current) pending.current = { chapterId, mode, restore: zoomAnchor(stageRef.current, mode === 'preview' ? preview || stageRef.current.querySelector('iframe') : null, event) };
         currentZoom.current = next;
         setZoom(next);
     };
     return {
-        change: value => { wheel.current.reset(); change(value); },
+        change: value => { wheel.reset(); change(value); },
         onWheel: (event, preview) => {
             const delta = zoomWheelPixels(event, stageRef.current?.clientHeight || 1);
-            if (delta === null || mode === 'source' || event.defaultPrevented) { cancelAnimationFrame(restoreFrame.current); wheel.current.reset(); return false; }
+            if (delta === null || mode === 'source' || event.defaultPrevented) { cancelAnimationFrame(restoreFrame.current); wheel.reset(); return false; }
             if (event.cancelable) event.preventDefault();
-            if (!disabled) change(wheel.current.next(currentZoom.current, delta, event.timeStamp), event, preview);
+            if (!disabled) change(wheel.next(currentZoom.current, delta, event.timeStamp), event, preview);
             return true;
         },
     };

@@ -27,6 +27,8 @@ test('책넘김은 실제 페이지를 유지하고 이동 취소와 캔버스 �
 import React, { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import ViewerPageCurlBook from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/ViewerPageCurlBook.jsx')}`)};
+import EpubInlineMedia from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubInlineMedia.jsx')}`)};
+import EpubOriginalDocument from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
 import { releasePageCurlSnapshots, snapshotPageCurlLeaf } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/viewerPageCurlSnapshot.js')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/viewer.css')}`)};
 const check = (condition, message) => { if (!condition) throw new Error(message); };
@@ -50,6 +52,10 @@ document.createElement = (name, ...args) => {
 const colors = ['#e63232', '#269e4b', '#305fd7', '#d69f25', '#944ad1', '#1a969b', '#d16c27', '#895140'];
 const changes = [];
 const results = [];
+window.mediaFixtureLoads = 0;
+window.addEventListener('message', event => {
+    if (event.origin === 'https://www.youtube-nocookie.com' && event.data === 'media-fixture-loaded') window.mediaFixtureLoads += 1;
+});
 const bookRef = React.createRef();
 const root = createRoot(document.getElementById('root'));
 function Leaf({ index }) {
@@ -308,6 +314,82 @@ window.testDone = (async () => {
     expectReleased('Embedded EPUB snapshots must release all temporary canvas backing stores');
     results.push('original EPUB iframe text and current column snapshots');
 
+    for (const mode of ['optimized', 'original']) {
+        const mediaChapter = {
+            name: 'media.xhtml', original: { resourceUrls: {}, layout: 'pre-paginated', viewport: { width: 240, height: 320 },
+                html: '<html><head><style>body{margin:0;font:16px sans-serif}p{margin:12px}figure{margin:0}</style></head><body><p>Video page</p><figure class="external-media"><figcaption>Video fixture</figcaption><p><a href="https://youtu.be/jNQXAC9IVRw">YouTube</a></p></figure><p>Text after video</p></body></html>' },
+        };
+        const mediaLeaves = Array.from({ length: 4 }, (_, index) => <div key={index} className="viewer-flipbook-page fixture-leaf" data-flipbook-index={index}>
+            <article className="viewer-text-page" style={{ width: 240, height: 320, padding: 0, margin: 0, background: '#fff' }}>
+                {mode === 'original'
+                    ? <EpubOriginalDocument chapter={mediaChapter} pageSize={{ width: 240, height: 320 }} mediaActive={index < 2} />
+                    : <><p>Video page {index}</p><EpubInlineMedia url="https://youtu.be/jNQXAC9IVRw" title="Video fixture" active={index < 2} /><p>Text after video</p></>}
+            </article>
+        </div>);
+        const key = 'media-' + mode;
+        const loadsBeforeMount = window.mediaFixtureLoads;
+        renderBook({ spread: true, width: 240, height: 320, startPage: 0, preparedPage: 0 }, key, mediaLeaves);
+        await frames();
+        await until(() => api().getCurrentPageIndex() === 0
+            && document.querySelectorAll('.viewer-epub-inline-media iframe').length === 2
+            && [...document.querySelectorAll('.viewer-epub-original-frame')].every(frame => frame.dataset.originalReady === 'true'), 'Inline media pages did not initialize: ' + mode);
+        const livePlayers = [...document.querySelectorAll('.viewer-epub-inline-media iframe')];
+        await until(() => window.mediaFixtureLoads >= loadsBeforeMount + 2, 'Remote media fixtures did not load');
+        for (const player of livePlayers) {
+            check(player.contentDocument === null, 'The fixture must use a cross-origin player');
+            Object.defineProperty(player, 'contentDocument', { configurable: true, get() { throw new Error('Snapshots must not read remote player documents'); } });
+        }
+        const playerLoads = window.mediaFixtureLoads;
+        for (const pageIndex of [0, 2]) {
+            const leaf = document.querySelector('[data-flipbook-index="' + pageIndex + '"]');
+            const snapshot = await snapshotPageCurlLeaf(leaf, { width: 240, height: 320 });
+            const pixel = [...snapshot.image.getContext('2d').getImageData(10, 80, 1, 1).data];
+            check(pixel[3] > 240 && pixel[0] < 40 && pixel[1] < 40 && pixel[2] < 40, 'Video snapshot must preserve its reserved area: ' + mode + ':' + pageIndex + ':' + pixel);
+            releasePageCurlSnapshots([snapshot]);
+        }
+        check(livePlayers.every(player => player.isConnected), 'Snapshot replacement must not remove live players: ' + mode);
+        check(window.mediaFixtureLoads === playerLoads, 'Snapshots must not reload players or create new media requests');
+        for (const destination of [2, 0]) {
+            renderBook({ preparedPage: destination }, key, mediaLeaves);
+            await frames();
+            const beforeMediaFlip = changes.length;
+            api().flip(destination);
+            await until(() => painted(overlay()) && document.querySelector('[data-curl-animating="true"]'), 'Pages containing a player must animate in both directions: ' + mode);
+            check(changes.length === beforeMediaFlip, 'Media must not cause an immediate page commit');
+            await until(() => api().getCurrentPageIndex() === destination, 'Media page curl did not finish');
+            expectReleased('Media page curl must release its snapshots');
+        }
+        if (mode === 'optimized') {
+            const nativeDecode = HTMLImageElement.prototype.decode;
+            let delayedSnapshots = 0;
+            HTMLImageElement.prototype.decode = async function (...args) {
+                if (this.src.startsWith('data:image/svg+xml')) {
+                    delayedSnapshots += 1;
+                    await new Promise(resolve => setTimeout(resolve, 900));
+                }
+                return nativeDecode.apply(this, args);
+            };
+            try {
+                renderBook({ preparedPage: 2 }, key, mediaLeaves);
+                await frames();
+                const beforeSlowMediaFlip = changes.length;
+                const startedAt = performance.now();
+                api().flip(2);
+                await until(() => painted(overlay()) && document.querySelector('[data-curl-animating="true"]'), 'Reader snapshots taking longer than 800ms must still animate');
+                check(delayedSnapshots === 4 && performance.now() - startedAt >= 900, 'The slow-reader regression must delay all four snapshot decodes');
+                check(changes.length === beforeSlowMediaFlip, 'Slow media snapshot preparation must not commit before drawing');
+                await until(() => api().getCurrentPageIndex() === 2 && visibleIndexes().join(',') === '2,3', 'Slow media page curl did not finish');
+                check(changes.slice(beforeSlowMediaFlip).join(',') === '2', 'Slow media page curl must commit exactly once');
+                expectReleased('Slow media page curl must release its snapshots');
+                results.push('slow EPUB media snapshots finish preparation and animate');
+            } finally {
+                HTMLImageElement.prototype.decode = nativeDecode;
+            }
+        }
+        livePlayers.forEach(player => { delete player.contentDocument; });
+        results.push(mode + ' EPUB inline media pages animate without accessing remote player documents');
+    }
+
     renderBook({ spread: false, startPage: 1, preparedPage: 1, width: 240, height: 320 }, 'single');
     await until(() => api().getCurrentPageIndex() === 1 && visibleIndexes().join(',') === '1', 'Single-page mode must show its initial leaf');
     renderBook({ preparedPage: 2 }, 'single');
@@ -358,6 +440,7 @@ app.setPath('userData', ${JSON.stringify(path.join(directory, 'profile'))});
 app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
     const window = new BrowserWindow({ show: false, width: 1000, height: 760, webPreferences: { backgroundThrottling: false, preload: ${JSON.stringify(path.join(directory, 'preload.cjs'))} } });
+    window.webContents.session.protocol.handle('https', () => new Response('<html><body>Test video<script>parent.postMessage("media-fixture-loaded", "*")</script></body></html>', { headers: { 'Content-Type': 'text/html' } }));
     ipcMain.handle('page-curl-fixture:capture', async () => (await window.webContents.capturePage()).toDataURL());
     window.webContents.on('console-message', (_event, level, message) => {
         if (level >= 2) process.stderr.write(message + '\\n');
@@ -389,7 +472,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PAGE_CURL_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const report = JSON.parse(payload);
-        assert.equal(report.results.length, 9);
+        assert.equal(report.results.length, 12);
         assert.ok(report.transientCanvasCount > 1, 'The renderer must exercise actual snapshot allocation');
         t.diagnostic(payload);
     } finally {

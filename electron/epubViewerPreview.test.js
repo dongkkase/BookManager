@@ -165,7 +165,7 @@ async function viewerHarness() {
     const source = (await fs.readFile(new URL('./viewerWindow.js', import.meta.url), 'utf8')).replace(/^import[\s\S]*?;\n/gm, '').replace('export function setupViewerWindowManager', 'function setupViewerWindowManager');
     const setup = vm.runInNewContext(`${source}\nsetupViewerWindowManager`, {
         path, console, process, AbortController, setTimeout, clearTimeout,
-        ViewerSessionManager, createCoverEditViewerGuard, BrowserWindow: FakeWindow,
+        ViewerSessionManager, createCoverEditViewerGuard, BrowserWindow: FakeWindow, installEditorMediaHeaders: () => {},
         protocol: { handle: () => {} }, ipcMain: { handle: (channel, fn) => handlers.set(channel, fn), on: () => {} },
         screen: { getAllDisplays: () => [], getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } }) },
         LibraryDB: class { async upsertReadingState(filePath) { records.push(filePath); } },

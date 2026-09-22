@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { atScrollEdge, createChapterScrollGate, scrollPreviewBy, wheelPixels } from './chapterScroll';
+import { atScrollEdge, createChapterScrollGate, scrollPreviewBy, scrollPreviewCanvasAtEdge, wheelPixels } from './chapterScroll';
 
 export default function useChapterScroll({ stageRef, editor, chapterId, mode, disabled, onNavigate, onZoom }) {
     const options = useRef(null);
@@ -21,8 +21,13 @@ export default function useChapterScroll({ stageRef, editor, chapterId, mode, di
         stopFollowing();
         const preview = options.current.mode === 'preview';
         const doc = preview && frameChapter.current === target.id && frame.current?.isConnected && frame.current.contentDocument;
+        const canvas = preview && stage.querySelector('.ee-preview-canvas');
         const position = () => {
             place(stage, preview ? 0 : target.edge || target.scroll);
+            if (canvas) {
+                place(canvas, target.edge || target.previewCanvasScroll);
+                canvas.scrollLeft = target.edge ? 0 : target.previewCanvasLeft || 0;
+            }
             if (doc?.scrollingElement) place(doc.scrollingElement, target.edge || target.previewScroll);
             if (target.edge === 'end') {
                 if (!preview && !stage.querySelector('.ee-footnotes')) {
@@ -68,6 +73,11 @@ export default function useChapterScroll({ stageRef, editor, chapterId, mode, di
                 }
             }
             const previewScroll = current.mode === 'preview' ? frame.current?.contentDocument?.scrollingElement : null;
+            if (previewScroll && scrollPreviewCanvasAtEdge(frame.current, delta, root !== stage)) {
+                gate.current.push(delta, event.timeStamp, false);
+                if (event.cancelable) event.preventDefault();
+                return;
+            }
             const boundary = atScrollEdge(previewScroll || stage, direction);
             const navigate = gate.current.push(delta, event.timeStamp, boundary);
             if (!boundary) {
@@ -136,7 +146,10 @@ export default function useChapterScroll({ stageRef, editor, chapterId, mode, di
     useEffect(() => () => { stopFollowing(); frameCleanup.current?.(); }, []);
 
     return {
-        capture: () => ({ scroll: stageRef.current?.scrollTop || 0, previewScroll: frame.current?.contentDocument?.scrollingElement?.scrollTop || 0 }),
+        capture: () => {
+            const canvas = stageRef.current?.querySelector('.ee-preview-canvas');
+            return { scroll: stageRef.current?.scrollTop || 0, previewScroll: frame.current?.contentDocument?.scrollingElement?.scrollTop || 0, previewCanvasScroll: canvas?.scrollTop || 0, previewCanvasLeft: canvas?.scrollLeft || 0 };
+        },
         enter: target => { stopFollowing(); entry.current = target; },
         onPreviewLoad: element => {
             if (!element.isConnected) return;
