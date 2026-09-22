@@ -16,6 +16,15 @@ export const FILE_TOOLS = Object.freeze([
         target: { type: 'tool', toolId: 'text-cleaner' },
     },
     {
+        id: 'epub-editor',
+        category: 'text',
+        labelKey: 'tools.item.epub_editor',
+        icon: 'bookOpen',
+        tone: 'green',
+        status: 'available',
+        target: { type: 'tool', toolId: 'epub-editor' },
+    },
+    {
         id: 'text-encoding',
         category: 'text',
         labelKey: 'tools.item.text_encoding',

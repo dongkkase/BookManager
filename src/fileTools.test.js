@@ -23,7 +23,7 @@ test('사용 가능한 도구만 실제 이동 대상을 제공한다', () => {
 
     assert.deepEqual(
         available.map(tool => `${tool.target?.type}:${tool.target?.toolId || tool.target?.tabId}`),
-        ['tool:text-cleaner', 'tab:organizer', 'tab:renamer', 'tab:metadata'],
+        ['tool:text-cleaner', 'tool:epub-editor', 'tab:organizer', 'tab:renamer', 'tab:metadata'],
     );
     for (const tool of unavailable) assert.equal(tool.target, undefined, tool.id);
 });

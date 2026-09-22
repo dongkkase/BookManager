@@ -6713,7 +6713,7 @@ function ViewerApp() {
       scrollSettings: 'scrollSettings' in patch ? patch.scrollSettings : scrollSettings,
     };
     saveJson(viewerPrefsKey(session), viewerPrefs);
-    if (epubOriginalScrollRestoreRef.current.position) return;
+    if (epubOriginalScrollRestoreRef.current.position || session.preview) return;
     saveJson(storageKey(session, 'state'), fileState);
     window.viewerAPI?.saveReadingState?.(session.id, {
       format: session.type,

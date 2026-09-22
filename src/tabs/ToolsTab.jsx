@@ -5,6 +5,7 @@ import { FILE_TOOL_CATEGORIES, fileToolsByCategory, firstTextCleanerPath } from 
 import '../styles/ToolsTab.css';
 
 const TextCleanerTool = lazy(() => import('./TextCleanerTool'));
+const EpubEditorTool = lazy(() => import('../features/fileTools/epubEditor/EpubEditorTool'));
 
 function ToolItem({ tool, onOpenTab, onOpenTool, t }) {
     const isAvailable = tool.status === 'available';
@@ -58,9 +59,15 @@ function ToolItem({ tool, onOpenTab, onOpenTool, t }) {
 export default function ToolsTab({ t, onOpenTab, showToast }) {
     const [activeToolId, setActiveToolId] = useState(null);
     const [openRequest, setOpenRequest] = useState(null);
+    const beforeToolChange = useRef(null);
+    const registerBeforeLeave = useCallback(handler => {
+        beforeToolChange.current = handler;
+        return () => { if (beforeToolChange.current === handler) beforeToolChange.current = null; };
+    }, []);
 
-    const openTextCleanerPath = useCallback(filePath => {
+    const openTextCleanerPath = useCallback(async filePath => {
         if (!filePath) return;
+        if (beforeToolChange.current && !await beforeToolChange.current()) return;
         setActiveToolId('text-cleaner');
         setOpenRequest(current => ({ path: filePath, token: (current?.token || 0) + 1 }));
     }, []);
@@ -93,6 +100,14 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
         event.stopPropagation();
         event.dataTransfer.dropEffect = 'none';
     }, []);
+
+    if (activeToolId === 'epub-editor') {
+        return (
+            <Suspense fallback={<div className="file-tools-loading">{t('tools.loading')}</div>}>
+                <EpubEditorTool t={t} onBack={handleBack} showToast={showToast} registerBeforeLeave={registerBeforeLeave} />
+            </Suspense>
+        );
+    }
 
     if (activeToolId === 'text-cleaner') {
         return (

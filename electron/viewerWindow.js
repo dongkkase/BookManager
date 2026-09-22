@@ -233,6 +233,13 @@ export function setupViewerWindowManager(options = {}) {
     } = options;
 
     const sessions = new ViewerSessionManager({ getSevenZPath, getAudioLibraryRecord });
+    const previewReleases = new Map();
+    const releasePreview = session => {
+        const release = previewReleases.get(session?.id);
+        if (!release) return;
+        previewReleases.delete(session.id);
+        Promise.resolve().then(release).catch(error => console.warn(`[ViewerPreview] Cleanup failed: ${error.message}`));
+    };
     let readingStateDb = null;
     registerDocumentProtocol(sessions);
     registerComicProtocol(sessions);
@@ -289,6 +296,7 @@ export function setupViewerWindowManager(options = {}) {
         if (context.currentSession?.id !== session.id) {
             context.epubRequestController?.abort();
             context.epubRequestController = null;
+            releasePreview(context.currentSession);
         }
         if (context.kind === 'audio' && context.currentSession?.id !== session.id) {
             if (options.preserveCloseRequest !== true) {
@@ -314,7 +322,7 @@ export function setupViewerWindowManager(options = {}) {
 
     const recordReadingState = async (session, state = {}) => {
         const dbPath = getLibraryDbPath?.();
-        if (!session?.filePath || !dbPath) return null;
+        if (!session?.filePath || session.preview || !dbPath) return null;
         try {
             if (!readingStateDb) readingStateDb = new LibraryDB({ dbPath });
             const saved = await readingStateDb.upsertReadingState(session.filePath, {
@@ -639,6 +647,8 @@ export function setupViewerWindowManager(options = {}) {
                 context.closeDialogPromise = null;
             }
             context.window = null;
+            releasePreview(context.currentSession);
+            releasePreview(context.pendingSession);
             context.pendingSession = null;
             context.currentSession = null;
         });
@@ -687,6 +697,21 @@ export function setupViewerWindowManager(options = {}) {
         sendSession(context, session);
         void recordReadingState(session, { lastReadAt: Date.now() });
         return { success: true, session };
+    };
+
+    const openPreview = async (filePath, onRelease) => {
+        const session = sessions.create(filePath, { skipAdjacent: true });
+        session.preview = true;
+        previewReleases.set(session.id, onRelease);
+        try {
+            const context = contextForSession(session);
+            focusContextWindow(context, session);
+            sendSession(context, session);
+            return { success: true, session };
+        } catch (error) {
+            releasePreview(session);
+            throw error;
+        }
     };
 
     const refreshAudioMetadata = async successfulPaths => {
@@ -847,6 +872,7 @@ export function setupViewerWindowManager(options = {}) {
     });
     ipcMain.handle('viewer:getReadiveReadingState', async (event, sessionId) => {
         viewerContextForCurrentSessionRequest(event, sessionId);
+        if (sessions.get(sessionId).preview) return null;
         return getReadiveReadingState(sessions.get(sessionId).filePath);
     });
     ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
@@ -944,6 +970,7 @@ export function setupViewerWindowManager(options = {}) {
 
     return {
         openViewer,
+        openPreview,
         refreshAudioMetadata,
         withCoverEdit: (filePath, action) => coverEditGuard.run(filePath, action),
         getWindow: () => (

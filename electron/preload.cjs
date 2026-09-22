@@ -54,6 +54,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (title, filters, defaultPath) => ipcRenderer.invoke('dialog:saveFile', title, filters, defaultPath),
   loadTextCleanerFile: (filePath) => ipcRenderer.invoke('tools:textCleaner:load', filePath),
   saveTextCleanerFile: (request) => ipcRenderer.invoke('tools:textCleaner:save', request),
+    epubEditor: request => ipcRenderer.invoke('tools:epubEditor', request),
+    onEpubEditorProgress: callback => {
+        const handler = (_, progress) => callback(progress);
+        ipcRenderer.on('tools:epubEditor:progress', handler);
+        return () => ipcRenderer.removeListener('tools:epubEditor:progress', handler);
+    },
+    onEpubEditorFlush: callback => {
+        const handler = () => callback();
+        ipcRenderer.on('tools:epubEditor:flush', handler);
+        return () => ipcRenderer.removeListener('tools:epubEditor:flush', handler);
+    },
   
   // 파일 시스템
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),

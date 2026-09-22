@@ -34,6 +34,7 @@ import {
 } from './fileAssociations.js';
 import { setupFileAssociationIPC } from './fileAssociationIpc.js';
 import { BoundedMemoryCache } from './boundedMemoryCache.js';
+import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
 
 installConsolePipeGuard();
 
@@ -383,6 +384,7 @@ async function initializeApp() {
     getFontPath,
     {
         getMainWindow: () => mainWindow,
+        openViewerPreview: (filePath, onRelease) => viewerController.openPreview(filePath, onRelease),
       onMetadataSaveSuccess: successfulPaths => viewerController?.refreshAudioMetadata?.(successfulPaths),
         withCoverEdit: (filePath, action) => viewerController.withCoverEdit(filePath, action),
     },
@@ -456,6 +458,7 @@ function createMainWindow(config) {
     mainWindow.setMenu(null);
   }
   const windowOwnerId = mainWindow.webContents.id;
+    installEditorMediaHeaders(mainWindow.webContents, APP_ID);
   attachWindowSafetyHandlers(mainWindow, {
     reportFault: reportProcessFault,
   });
