@@ -26,76 +26,78 @@ export function FontSelect({ project, value, onChange }) {
     </select>;
 }
 
-export default function Inspector({ hidden, tab, setTab, project, update, editor, chapter, assetUrls, onAddAsset, onCss, onFootnote, onMedia, onReset }) {
+export default function Inspector({ hidden, tab, setTab, project, update, editor, chapter, assetUrls, onAddAsset, onCss, onChapterCss, onFootnote, onMedia, onFormat, editing }) {
     const patchStyle = patch => update(current => ({ ...current, style: { ...current.style, ...patch } }));
     const patchCover = patch => update(current => ({ ...current, cover: { ...current.cover, ...patch } }));
     const patchChapter = patch => update(current => ({ ...current, chapters: current.chapters.map(item => item.id === chapter.id ? { ...item, ...patch } : item) }));
-    const selectedImage = editor?.isActive('image');
-    const audio = editor?.isActive('audio') ? editor.getAttributes('audio') : null;
-    const media = editor?.isActive('media') ? editor.getAttributes('media') : null;
-    const footnote = editor?.isActive('footnote') ? editor.getAttributes('footnote') : null;
+    const selectedImage = editing && editor?.isActive('image');
+    const audio = editing && editor?.isActive('audio') ? editor.getAttributes('audio') : null;
+    const media = editing && editor?.isActive('media') ? editor.getAttributes('media') : null;
+    const footnote = editing && editor?.isActive('footnote') ? editor.getAttributes('footnote') : null;
     const image = selectedImage ? editor.getAttributes('image') : null;
     const setImage = patch => editor.chain().updateAttributes('image', patch).run();
     const cell = editor?.isActive('tableHeader') ? editor.getAttributes('tableHeader') : editor?.getAttributes('tableCell') || {};
-    const textStyle = editor?.getAttributes('textStyle') || {};
+    const table = editing && editor?.isActive('table');
+    const hasElement = !!(image || audio || media || footnote || table);
     const coverUrl = project.cover.mode === 'image' ? assetUrls[project.cover.assetId] : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(coverSvg(project))}`;
-    return <aside className="ee-inspector" hidden={hidden}>
-        <div className="ee-panel-tabs" role="tablist" aria-label={l('properties')}>
-            {['properties', 'styles', 'book'].map(name => <button key={name} role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>{l(name)}</button>)}
+    return <aside className="ee-inspector" aria-label={l('inspector')} hidden={hidden} onKeyDown={event => {
+        if (editing && !event.isComposing && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); editor.commands.focus(); }
+    }}>
+        <div className="ee-panel-tabs" role="tablist" aria-label={l('inspector')}>
+            {['properties', 'styles', 'book'].map(name => <button key={name} role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>{l(name === 'properties' ? 'chapterAndElement' : name === 'styles' ? 'bookDefaults' : name)}</button>)}
         </div>
         <div className="ee-panel-body">
             {tab === 'properties' && <>
-                <h3>{l('selection')}<span>{l(media ? 'media' : audio ? 'audio' : footnote ? 'footnote' : selectedImage ? 'image' : editor?.isActive('table') ? 'table' : 'paragraph')}</span></h3>
-                {media ? <>
-                    <p className="ee-note-text">{media.title || media.url}</p>
-                    <p className="ee-muted">{l('mediaExportHint')}</p>
-                    <button className="ee-button" onClick={onMedia}>{l('editMedia')}</button>
-                    <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
-                </> : audio ? <>
-                    <Field label={l('audioTitle')}><input value={audio.title} onChange={event => editor.commands.updateAttributes('audio', { title: event.target.value })} /></Field>
-                    <Field label={l('audioKind')}><select value={audio.kind} onChange={event => editor.commands.updateAttributes('audio', { kind: event.target.value })}><option value="effect">{l('effect')}</option><option value="background">{l('backgroundAudio')}</option></select></Field>
-                    <label className="ee-check"><input type="checkbox" checked={audio.loop} onChange={event => editor.commands.updateAttributes('audio', { loop: event.target.checked })} />{l('loop')}</label>
-                    <p className="ee-muted">{l('audioHint')}</p>
-                    <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
-                </> : footnote ? <>
-                    <p className="ee-muted">{l('footnoteHint')}</p>
-                    <p className="ee-note-text">{footnote.text}</p>
-                    <button className="ee-button" onClick={onFootnote}>{l('footnoteText')}</button>
-                    <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
-                </> : image ? <>
-                    <NumberField label={l('width')} value={image.width} min={10} max={100} onChange={width => setImage({ width })} />
-                    <Field label={l('alignment')}><select value={image.align} onChange={event => setImage({ align: event.target.value })}>{['left', 'center', 'right'].map(value => <option key={value} value={value}>{l(value)}</option>)}</select></Field>
-                    <Field label={l('alt')}><textarea rows={3} value={image.alt} disabled={image.decorative} onChange={event => setImage({ alt: event.target.value })} /></Field>
-                    <label className="ee-check"><input type="checkbox" checked={image.decorative} onChange={event => setImage({ decorative: event.target.checked })} />{l('decorative')}</label>
-                    <Field label={l('caption')}><input value={image.caption} onChange={event => setImage({ caption: event.target.value })} /></Field>
-                    <button className="ee-button ee-danger" onClick={() => editor.chain().deleteSelection().run()}>{l('remove')}</button>
-                </> : <>
-                    <Field label={l('font')}><FontSelect project={project} value={textStyle.fontFamily || project.style.font} onChange={font => editor.chain().setFontFamily(font).run()} /></Field>
-                    <Field label={l('fontSize')}><select value={textStyle.fontSize || ''} onChange={event => event.target.value ? editor.chain().setFontSize(event.target.value).run() : editor.chain().unsetFontSize().run()}><option value="">{l('styles')}</option>{[12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 72].map(size => <option key={size} value={`${size}px`}>{size}</option>)}</select></Field>
-                    <ColorField label={l('color')} value={textStyle.color || project.style.color} onChange={value => editor.chain().setColor(value).run()} />
-                    <ColorField label={l('textBackground')} value={textStyle.backgroundColor || '#ffffff'} onChange={value => editor.chain().setBackgroundColor(value).run()} />
-                    <button className="ee-button" onClick={() => editor.commands.unsetBackgroundColor()}>{l('clearTextBackground')}</button>
-                    <Field label={l('alignment')}><select value={editor?.getAttributes('paragraph').textAlign || editor?.getAttributes('heading').textAlign || 'left'} onChange={event => editor.chain().setTextAlign(event.target.value).run()}>{['left', 'center', 'right', 'justify'].map(value => <option key={value} value={value}>{l(value)}</option>)}</select></Field>
-                    <button className="ee-button" onClick={onReset}>{l('reset')}</button>
-                </>}
-                {editor?.isActive('table') && <section className="ee-property-section"><h3>{l('table')}</h3><p className="ee-muted">{l('tableSelectionHint')}</p>
-                    <ColorField label={l('cellBackground')} value={cell.backgroundColor || '#ffffff'} onChange={value => editor.commands.setCellAttribute('backgroundColor', value)} />
-                    <button className="ee-button" onClick={() => editor.commands.setCellAttribute('backgroundColor', null)}>{l('clearCellBackground')}</button>
-                    <Field label={l('verticalAlign')}><select value={cell.verticalAlign || 'top'} onChange={event => editor.commands.setCellAttribute('verticalAlign', event.target.value)}>{['top', 'middle', 'bottom'].map(key => <option value={key} key={key}>{l(key)}</option>)}</select></Field>
-                    <NumberField label={l('cellPadding')} min={0} max={32} value={cell.cellPadding ?? 9} onChange={value => editor.commands.setCellAttribute('cellPadding', value)} />
-                </section>}
-                <section className="ee-property-section"><h3>{l('toc')}</h3>
+                {hasElement ? <section className="ee-element-properties" data-element-properties>
+                    <h3>{l('selection')}<span>{l(media ? 'media' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}</span></h3>
+                    {media ? <>
+                        <p className="ee-note-text">{media.title || media.url}</p>
+                        <p className="ee-muted">{l('mediaExportHint')}</p>
+                        <button className="ee-button" onClick={onMedia}>{l('editMedia')}</button>
+                        <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
+                    </> : audio ? <>
+                        <Field label={l('audioTitle')}><input value={audio.title} onChange={event => editor.commands.updateAttributes('audio', { title: event.target.value })} /></Field>
+                        <Field label={l('audioKind')}><select value={audio.kind} onChange={event => editor.commands.updateAttributes('audio', { kind: event.target.value })}><option value="effect">{l('effect')}</option><option value="background">{l('backgroundAudio')}</option></select></Field>
+                        <label className="ee-check"><input type="checkbox" checked={audio.loop} onChange={event => editor.commands.updateAttributes('audio', { loop: event.target.checked })} />{l('loop')}</label>
+                        <p className="ee-muted">{l('audioHint')}</p>
+                        <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
+                    </> : footnote ? <>
+                        <p className="ee-muted">{l('footnoteHint')}</p>
+                        <p className="ee-note-text">{footnote.text}</p>
+                        <button className="ee-button" onClick={onFootnote}>{l('footnoteText')}</button>
+                        <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
+                    </> : image ? <>
+                        <NumberField label={l('width')} value={image.width} min={10} max={100} onChange={width => setImage({ width })} />
+                        <Field label={l('alt')}><textarea rows={3} value={image.alt} disabled={image.decorative} onChange={event => setImage({ alt: event.target.value })} /></Field>
+                        <label className="ee-check"><input type="checkbox" checked={image.decorative} onChange={event => setImage({ decorative: event.target.checked })} />{l('decorative')}</label>
+                        <Field label={l('caption')}><input value={image.caption} onChange={event => setImage({ caption: event.target.value })} /></Field>
+                        <button className="ee-button ee-danger" onClick={() => editor.chain().deleteSelection().run()}>{l('remove')}</button>
+                    </> : null}
+                    {table && <>
+                        <p className="ee-muted">{l('tableSelectionHint')}</p>
+                        <ColorField label={l('cellBackground')} value={cell.backgroundColor || '#ffffff'} onChange={value => editor.commands.setCellAttribute('backgroundColor', value)} />
+                        <button className="ee-button" onClick={() => editor.commands.setCellAttribute('backgroundColor', null)}>{l('clearCellBackground')}</button>
+                        <Field label={l('verticalAlign')}><select value={cell.verticalAlign || 'top'} onChange={event => editor.commands.setCellAttribute('verticalAlign', event.target.value)}>{['top', 'middle', 'bottom'].map(key => <option value={key} key={key}>{l(key)}</option>)}</select></Field>
+                        <NumberField label={l('cellPadding')} min={0} max={32} value={cell.cellPadding ?? 9} onChange={value => editor.commands.setCellAttribute('cellPadding', value)} />
+                    </>}
+                </section> : <div className="ee-inspector-guide">
+                    <p>{l(editing ? 'textFormattingLocation' : 'elementEditingLocation')}</p>
+                    {editing && <button type="button" className="ee-button" onClick={onFormat}>{l('focusTextFormatting')}</button>}
+                </div>}
+                <section className="ee-property-section"><h3>{l('currentChapterSettings')}</h3><p className="ee-inspector-chapter">{chapter.title || l('chapter')}</p>
                     <label className="ee-check"><input type="checkbox" checked={chapter.inToc} onChange={event => patchChapter({ inToc: event.target.checked })} />{l('inToc')}</label>
-                    <Field label={l('tocTitle')}><input value={chapter.tocTitle} placeholder={chapter.title} onChange={event => patchChapter({ tocTitle: event.target.value })} /></Field>
+                    <Field label={l('tocTitle')}><input disabled={!chapter.inToc} value={chapter.tocTitle} placeholder={chapter.title} onChange={event => patchChapter({ tocTitle: event.target.value })} /></Field>
+                    <button type="button" className="ee-button" onClick={onChapterCss}>{l('chapterCss')}</button>
                 </section>
             </>}
             {tab === 'styles' && <>
-                <h3>{l('styles')}</h3><button className="ee-button" onClick={onCss}>{l('commonCss')} / {l('chapterCss')}</button><p className="ee-muted">{l('styleHint')}</p>
+                <h3>{l('bookDefaults')}</h3><p className="ee-muted">{l('bookDefaultsHint')}</p>
                 <div className="ee-style-presets">{Object.entries(STYLE_PRESETS).map(([name, style]) => <button key={name} style={{ '--preset-color': style.accent, '--preset-bg': style.background }} onClick={() => patchStyle(style)}><strong>Aa</strong><span>{l(name)}</span></button>)}</div>
                 <Field label={l('font')}><FontSelect project={project} value={project.style.font} onChange={font => patchStyle({ font })} /></Field>
                 <button className="ee-button" onClick={() => onAddAsset('font')}>{l('addFont')}</button>
                 {[['fontSize', 10, 32, 1], ['lineHeight', 1, 3, 0.05], ['paragraphGap', 0, 3, 0.1], ['indent', 0, 3, 0.1], ['headingScale', 1, 3, 0.1]].map(([key, min, max, step]) => <NumberField key={key} label={l(key)} value={project.style[key]} min={min} max={max} step={step} onChange={value => patchStyle({ [key]: value })} />)}
                 {['color', 'accent', 'background'].map(key => <ColorField key={key} label={l(key)} value={project.style[key]} onChange={value => patchStyle({ [key]: value })} />)}
+                <section className="ee-property-section"><h3>{l('commonCss')}</h3><p className="ee-muted">{l('commonCssScopeHint')}</p><button type="button" className="ee-button" onClick={onCss}>{l('commonCss')}</button></section>
             </>}
             {tab === 'book' && <>
                 <h3>{l('book')}</h3>

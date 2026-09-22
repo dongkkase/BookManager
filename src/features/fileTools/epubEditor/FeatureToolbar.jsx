@@ -28,7 +28,23 @@ export function IndentControls({ editor, actions }) {
     </>;
 }
 
-export default function FeatureToolbar({ editor, actions, defaultColor = '#282923', canUndoStructure = false, canRedoStructure = false, canMergeChapters = false, paragraphFormats = [], onApplyParagraphFormat }) {
+function FontControls({ editor, project }) {
+    const textStyle = editor.getAttributes('textStyle');
+    const fonts = [{ value: 'serif', name: l('serif') }, { value: 'sans-serif', name: l('sans') }, { value: 'monospace', name: l('mono') }, ...project.assets.filter(asset => asset.kind === 'font').map(asset => ({ value: `font-${asset.id}`, name: asset.name }))];
+    const sizes = [...new Set([12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 72].map(size => `${size}px`).concat(textStyle.fontSize || []))];
+    return <div className="ee-command-group ee-font-controls" role="group" aria-label={l('font')}>
+        <EditorTooltip label={l('selectionFontHint')}><select aria-label={l('font')} value={textStyle.fontFamily || ''} disabled={!editor.can().setFontFamily('serif')} onChange={event => event.target.value ? editor.chain().focus().setFontFamily(event.target.value).run() : editor.chain().focus().unsetFontFamily().run()}>
+            <option value="">{l('defaultFont')}</option>
+            {fonts.map(font => <option key={font.value} value={font.value}>{font.name}</option>)}
+        </select></EditorTooltip>
+        <EditorTooltip label={l('selectionFontHint')}><select className="ee-font-size" aria-label={l('fontSize')} value={textStyle.fontSize || ''} disabled={!editor.can().setFontSize('16px')} onChange={event => event.target.value ? editor.chain().focus().setFontSize(event.target.value).run() : editor.chain().focus().unsetFontSize().run()}>
+            <option value="">{l('defaultFontSize')}</option>
+            {sizes.map(size => <option key={size} value={size}>{size.replace('px', '')} px</option>)}
+        </select></EditorTooltip>
+    </div>;
+}
+
+export default function FeatureToolbar({ editor, actions, project, defaultColor = '#282923', canUndoStructure = false, canRedoStructure = false, canMergeChapters = false, paragraphFormats = [], onApplyParagraphFormat }) {
     const button = (command, active, showLabel = false) => <CommandButton key={command} command={command} action={actions[command]} active={active} showLabel={showLabel} />;
     const onKeyDown = event => {
         if (event.target.closest('[popover]')) return;
@@ -45,6 +61,9 @@ export default function FeatureToolbar({ editor, actions, defaultColor = '#28292
             <div className="ee-command-group" role="group" aria-label={l('format')}>
                 <ParagraphMenu editor={editor} actions={actions} formats={paragraphFormats} onApplyFormat={onApplyParagraphFormat} />
                 <StyleMenu editor={editor} />
+            </div>
+            <FontControls editor={editor} project={project} />
+            <div className="ee-command-group" role="group" aria-label={l('format')}>
                 {['bold', 'italic', 'underline', 'strike'].map(key => button(key, editor.isActive(key)))}
                 {['superscript', 'subscript'].map(key => <CommandButton key={key} command={key} action={actions[key]} active={editor.isActive(key)} disabled={!canApplyScript(editor, key)} />)}
                 <CommandButton command="color" action={actions.color} disabled={!editor.can().setColor('#000000')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').color || defaultColor }} />

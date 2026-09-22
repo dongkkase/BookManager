@@ -569,6 +569,21 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     };
     const openFootnote = () => { setFootnoteText(editor.getAttributes('footnote').text || ''); setDialog('footnote'); };
     const editAction = fn => () => { setMode('design'); fn(); };
+    const openElementProperties = () => {
+        setShowInspector(true);
+        setRightTab('properties');
+        requestAnimationFrame(() => {
+            const panel = stageRef.current?.closest('.ee-workspace')?.querySelector('.ee-inspector .ee-panel-body');
+            if (!panel) return;
+            panel.scrollTop = 0;
+            const target = panel.querySelector('[data-element-properties] input:not([type="color"]):not(:disabled), [data-element-properties] textarea:not(:disabled), [data-element-properties] select:not(:disabled)');
+            target?.focus({ preventScroll: true });
+            target?.scrollIntoView({ block: 'nearest' });
+        });
+    };
+    const focusTextFormatting = () => {
+        stageRef.current?.parentElement.querySelector('.ee-font-controls select')?.focus();
+    };
     const useParagraphFormat = format => {
         editor.commands.focus();
         const applied = applyParagraphFormat(editor, format);
@@ -589,6 +604,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         paragraphFormatCreate: editAction(() => { setParagraphFormatSeed(paragraphFormatFromSelection(editor)); setDialog('paragraphFormats'); }),
         specialCharacters: editAction(() => setDialog('characters')), emoji: editAction(() => setDialog('emoji')),
         media: editAction(() => setDialog('media')), editMedia: editAction(() => setDialog('media')),
+        imageProperties: openElementProperties, audioProperties: openElementProperties, cellProperties: openElementProperties,
         openMedia: () => { const media = parseMediaUrl(editor.getAttributes('media').url); if (media) window.electronAPI?.openExternal?.(media.url); },
         paragraph: editAction(() => { if (editor.can().setParagraph()) editor.chain().focus().clearParagraphFormat().setParagraph().run(); }),
         ...Object.fromEntries([1, 2, 3, 4, 5, 6].map(level => [`heading${level}`, editAction(() => { if (editor.can().setHeading({ level })) editor.chain().focus().clearParagraphFormat().setHeading({ level }).run(); })])),
@@ -711,7 +727,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                     <IconButton icon="sliders" label={l('toggleInspector')} active={showInspector} aria-expanded={showInspector} onClick={() => setShowInspector(value => !value)} />
                 </div>
                 {['write', 'design'].includes(mode) && <>
-                    <FeatureToolbar editor={editor} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} canMergeChapters={project.chapters.length > 1} canUndoStructure={atomicHistoryAvailable('undo')} canRedoStructure={atomicHistoryAvailable('redo')} paragraphFormats={paragraphFormats} onApplyParagraphFormat={useParagraphFormat} />
+                    <FeatureToolbar editor={editor} project={project} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} canMergeChapters={project.chapters.length > 1} canUndoStructure={atomicHistoryAvailable('undo')} canRedoStructure={atomicHistoryAvailable('redo')} paragraphFormats={paragraphFormats} onApplyParagraphFormat={useParagraphFormat} />
                     {searchOpen && <div className="ee-search"><input aria-label={l('find')} placeholder={l('find')} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') find(); }} /><input aria-label={l('replacement')} placeholder={l('replacement')} value={replacement} onChange={event => setReplacement(event.target.value)} /><button className="ee-button" onClick={find}>{l('next')}</button><button className="ee-button" onClick={() => replace(false)}>{l('replace')}</button><button className="ee-button" onClick={() => replace(true)}>{l('replaceAll')}</button><IconButton icon="xmark" label={l('close')} onClick={() => setSearchOpen(false)} /></div>}
                 </>}
                 <div className="ee-stage" ref={stageRef}>
@@ -745,7 +761,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                 <ContextToolbar editor={editor} stageRef={stageRef} enabled={!busy && !dialog && ['write', 'design'].includes(mode)} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} linkOpen={linkOpen} linkForm={linkForm} onCloseLink={() => setLinkOpen(false)} apiRef={contextToolbarRef} />
                 <footer className="ee-document-footer"><span aria-live="polite">{chapterIndex + 1} / {project.chapters.length} · {chapter.title}</span><span>{chapterCharacters(chapter.content).toLocaleString()} {l('chars')}<i />EPUB 3</span></footer>
             </main>
-            <Inspector hidden={!showInspector} tab={rightTab} setTab={setRightTab} project={project} update={update} editor={editor} chapter={chapter} assetUrls={assetUrls.current} onAddAsset={addAsset} onCss={actions.commonCss} onFootnote={openFootnote} onMedia={actions.media} onReset={actions.reset} />
+            <Inspector hidden={!showInspector} tab={rightTab} setTab={setRightTab} project={project} update={update} editor={editor} chapter={chapter} assetUrls={assetUrls.current} onAddAsset={addAsset} onCss={actions.commonCss} onChapterCss={actions.chapterCss} onFootnote={openFootnote} onMedia={actions.media} onFormat={focusTextFormatting} editing={['write', 'design'].includes(mode)} />
         </div>
         {issues && <section className="ee-checks"><div className="ee-section-heading"><h3>{l('inspect')}<small>{l('checkHint')}</small></h3><IconButton icon="xmark" label={l('close')} onClick={() => setIssues(null)} /></div>{issues.length ? <div className="ee-check-list">{issues.map((issue, index) => <button key={index} className={`is-${issue.severity}`} onClick={async () => { if (issue.chapterId) await selectChapter(issue.chapterId); if (issue.code.startsWith('CSS_')) { setSourceTab(issue.chapterId ? 'chapterCss' : 'commonCss'); setMode('source'); } else { setMode('design'); setRightTab(issue.chapterId ? 'properties' : 'book'); } if (issue.nodeId) editor.state.doc.descendants((node, pos) => { if (node.attrs.id === issue.nodeId) editor.chain().focus().setNodeSelection(pos).scrollIntoView().run(); }); }}><span>{l(issue.severity === 'error' ? 'failure' : 'warning')}</span>{l(issue.code)}</button>)}</div> : <p>{l('checked')}</p>}</section>}
         {exportedPath && <div className="ee-export-result"><span>{exportedPath}</span><button className="ee-button" onClick={() => window.electronAPI?.openInternalViewer?.(exportedPath)}>{l('openResult')}</button></div>}

@@ -88,6 +88,10 @@
 .ee-sidebar, .ee-inspector { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg-secondary, #242a2d); }
 .ee-sidebar { grid-column: 1; border-right: 1px solid var(--border-color, #3b4146); }
 .ee-inspector { grid-column: 3; border-left: 1px solid var(--border-color, #3b4146); }
+.ee-inspector-guide { padding: 12px; border: 1px solid var(--border-color, #3b4146); border-radius: 6px; background: var(--ee-accent-soft); font-size: 12px; line-height: 1.7; }
+.ee-inspector-guide p { margin: 0 0 10px; }
+.ee-inspector-guide p:last-child { margin-bottom: 0; }
+.ee-inspector-chapter { margin: 0 0 12px; overflow-wrap: anywhere; color: var(--text-secondary, #9ca4a6); font-size: 12px; }
 .ee-panel-tabs { display: flex; flex: 0 0 43px; border-bottom: 1px solid var(--border-color, #3b4146); }
 .ee-panel-tabs button { flex: 1; color: var(--text-secondary, #9ca4a6); background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: 11px; }
 .ee-panel-tabs button[aria-selected="true"] { color: var(--text-primary, #e8e9e6); border-bottom-color: var(--ee-accent); background: var(--ee-accent-soft); }
@@ -226,12 +230,9 @@
 .epub-editor-tool .ee-context-actions select { width: auto; max-width: 130px; height: 32px; padding: 3px 6px; font-size: 11px; }
 .epub-editor-tool select.ee-indent-select { width: auto; max-width: 210px; }
 .ee-context-link, .ee-context-note { overflow: hidden; max-width: 200px; margin: 0 8px; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.ee-context-menu, .ee-context-properties { border-top: 1px solid var(--border-color, #3b4146); margin-top: 5px; padding: 6px; }
+.ee-context-menu { border-top: 1px solid var(--border-color, #3b4146); margin-top: 5px; padding: 6px; }
 .ee-context-menu { display: grid; grid-template-columns: 1fr; }
 .ee-context-menu .ee-command { justify-content: flex-start; width: 100%; }
-.ee-context-properties { width: 290px; max-width: 100%; }
-.ee-context-properties .ee-field { margin: 8px 0; }
-.ee-context-properties .ee-muted { margin: 8px 0; line-height: 1.6; }
 .ee-context-toolbar .ee-link-form { width: 460px; max-width: 100%; border: 0; }
 .ee-context-toolbar .ee-link-form input { flex-basis: 100%; width: 100%; }
 .ee-context-toolbar .ee-link-form select { flex: 1; width: 150px; }
@@ -260,6 +261,8 @@
 .ee-menu-trigger { display: inline-flex; align-items: center; gap: 6px; min-width: 100px; }
 .ee-feature-toolbar { max-height: 35vh; overflow: auto; flex-shrink: 0; }
 .ee-feature-toolbar .ee-command-group { flex-wrap: wrap; max-width: 100%; }
+.ee-font-controls select { width: 120px; max-width: 150px; height: 31px; font-size: 11px; padding: 4px 6px; }
+.ee-font-controls .ee-font-size { width: 90px; }
 .ee-menu-trigger.is-icon-only { min-width: 39px; width: auto; }
 .ee-menu-trigger > span:last-child { font-size: 9px; opacity: .7; margin-left: auto; }
 .ee-format-menu { position: fixed; inset: auto; margin: 0; width: min(300px, calc(100vw - 16px)); padding: 7px; overflow: auto; border: 1px solid var(--border-color, #48524b); border-radius: 8px; background: var(--bg-secondary, #242a2d); color: var(--text-primary, #e8e9e6); box-shadow: 0 8px 28px #0005; }

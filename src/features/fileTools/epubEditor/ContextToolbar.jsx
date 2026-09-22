@@ -1,6 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CommandButton, IndentControls } from './FeatureToolbar';
-import { ColorField, Field, NumberField } from './Inspector';
 import { editorText as l } from './labels';
 import { selectionContext, placeContextToolbar, toolbarFocusIndex } from './contextTools';
 import { canApplyScript } from './richFormatting';
@@ -18,7 +17,7 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
     const callbacks = useRef({ onCloseLink });
     callbacks.current = { onCloseLink };
     const focusFirst = () => requestAnimationFrame(() => {
-        const area = shell.current?.querySelector('.ee-context-properties, .ee-context-menu, .ee-link-form') || shell.current;
+        const area = shell.current?.querySelector('.ee-context-menu, .ee-link-form') || shell.current;
         area?.querySelector('input:not([type="color"]):not(:disabled), textarea:not(:disabled), select:not(:disabled), button:not(:disabled)')?.focus();
     });
     useEffect(() => {
@@ -151,10 +150,7 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
         setPanel(null);
     };
     const image = editor.getAttributes('image');
-    const audio = editor.getAttributes('audio');
-    const cell = editor.isActive('tableHeader') ? editor.getAttributes('tableHeader') : editor.getAttributes('tableCell');
     const remove = () => { editor.chain().focus().deleteSelection().run(); setPanel(null); };
-    const patch = (type, values) => editor.commands.updateAttributes(type, values);
     const onKeyDown = event => {
         if (event.key === 'Escape') {
             event.preventDefault(); event.stopPropagation();
@@ -178,30 +174,17 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
                 {kind === 'link' && <><span className="ee-context-link" title={context.href.startsWith('epub:') ? l('internal') : context.href}>{context.href.startsWith('epub:') ? l('internal') : context.href}</span>{button('editLink', undefined, () => run('link'))}{button('unlink', undefined, () => editor.chain().focus().extendMarkRange('link').unsetLink().run())}</>}
                 {kind === 'image' && <>
                     {['left', 'center', 'right'].map(align => button(`image${align}`, image.align === align, () => editor.chain().focus().updateAttributes('image', { align }).run()))}
-                    <select aria-label={l('width')} value={image.width} onChange={event => patch('image', { width: Number(event.target.value) })}>{[...new Set([25, 50, 75, 100, image.width])].sort((a, b) => a - b).map(width => <option key={width} value={width}>{width}%</option>)}</select>
-                    {menuButton('imageProperties', 'image')}{button('remove', undefined, remove)}
+                    {button('imageProperties')}{button('remove', undefined, remove)}
                 </>}
-                {kind === 'audio' && <><select aria-label={l('audioKind')} value={audio.kind} onChange={event => patch('audio', { kind: event.target.value })}><option value="effect">{l('effect')}</option><option value="background">{l('backgroundAudio')}</option></select>{button('loop', audio.loop, () => editor.chain().focus().updateAttributes('audio', { loop: !audio.loop }).run())}{menuButton('audioProperties', 'audio')}{button('remove', undefined, remove)}</>}
+                {kind === 'audio' && <>{button('audioProperties')}{button('remove', undefined, remove)}</>}
                 {kind === 'media' && <>{button('editMedia')}{button('openMedia')}{button('remove', undefined, remove)}</>}
                 {kind === 'footnote' && <><span className="ee-context-note" title={editor.getAttributes('footnote').text}>{editor.getAttributes('footnote').text || l('footnote')}</span>{button('footnote', undefined, () => run('footnote'))}{button('remove', undefined, remove)}</>}
-                {kind === 'table' && <>{menuButton('tableRows', 'rows')}{menuButton('tableColumns', 'columns')}{button('selectCells')}{button('mergeCells', undefined, undefined, !editor.can().mergeCells())}{button('splitCell', undefined, undefined, !editor.can().splitCell())}{menuButton('cellProperties', 'cell')}{button('deleteTable')}</>}
+                {kind === 'table' && <>{menuButton('tableRows', 'rows')}{menuButton('tableColumns', 'columns')}{button('selectCells')}{button('mergeCells', undefined, undefined, !editor.can().mergeCells())}{button('splitCell', undefined, undefined, !editor.can().splitCell())}{button('cellProperties')}{button('deleteTable')}</>}
                 {['image', 'audio', 'media', 'table'].includes(kind) && <><i />{button('paragraphBefore', undefined, () => adjacent('before'))}{button('paragraphAfter', undefined, () => adjacent('after'))}</>}
                 {kind === 'block' && <>{['paragraph', 'heading1', 'heading2', 'heading3', 'bulletList', 'orderedList', 'blockquote', 'templates', 'addImage', 'addTable', 'addAudio', 'media', 'specialCharacters', 'emoji', 'footnote', 'horizontalRule', 'columns', 'splitChapter'].map(command => button(command))}<i /><IndentControls editor={editor} actions={actions} /></>}
             </div>}
             {['rows', 'columns'].includes(panel) && <div className="ee-context-menu" role="group" aria-label={l(panel === 'rows' ? 'tableRows' : 'tableColumns')}>
                 {(panel === 'rows' ? ['addRowBefore', 'addRowAfter', 'toggleHeaderRow', 'deleteRow'] : ['addColumnBefore', 'addColumnAfter', 'toggleHeaderColumn', 'deleteColumn']).map(command => <CommandButton key={command} command={command} showLabel disabled={!editor.can()[command]()} action={() => run(command)} />)}
-            </div>}
-            {panel === 'image' && <div className="ee-context-properties" role="group" aria-label={l('imageProperties')}>
-                <Field label={l('alt')}><textarea rows={2} value={image.alt} disabled={image.decorative} onChange={event => patch('image', { alt: event.target.value })} /></Field>
-                <label className="ee-check"><input type="checkbox" checked={image.decorative} onChange={event => patch('image', { decorative: event.target.checked })} />{l('decorative')}</label>
-                <Field label={l('caption')}><input value={image.caption} onChange={event => patch('image', { caption: event.target.value })} /></Field>
-            </div>}
-            {panel === 'audio' && <div className="ee-context-properties" role="group" aria-label={l('audioProperties')}><Field label={l('audioTitle')}><input value={audio.title} onChange={event => patch('audio', { title: event.target.value })} /></Field><p className="ee-muted">{l('audioHint')}</p></div>}
-            {panel === 'cell' && <div className="ee-context-properties" role="group" aria-label={l('cellProperties')}>
-                <ColorField label={l('cellBackground')} value={cell.backgroundColor || '#ffffff'} onChange={value => editor.commands.setCellAttribute('backgroundColor', value)} />
-                <button type="button" className="ee-button" onClick={() => editor.commands.setCellAttribute('backgroundColor', null)}>{l('clearCellBackground')}</button>
-                <Field label={l('verticalAlign')}><select value={cell.verticalAlign || 'top'} onChange={event => editor.commands.setCellAttribute('verticalAlign', event.target.value)}>{['top', 'middle', 'bottom'].map(value => <option key={value} value={value}>{l(value)}</option>)}</select></Field>
-                <NumberField label={l('cellPadding')} min={0} max={32} value={cell.cellPadding ?? 9} onChange={value => editor.commands.setCellAttribute('cellPadding', value)} />
             </div>}
         </div>}
     </>;
