@@ -236,3 +236,15 @@ test('replacement is blocked for read-only, composing and destroyed editors', ()
     assert.equal(replaceEditorSearch(editor, 'new', true), 0);
     assert.equal(editor.state.doc, original);
 });
+
+test('book replacement stops at the chapter end so navigation can continue to another chapter', () => {
+    const editor = mockEditor(document(paragraph(text('cat cat'))));
+    configureEditorSearch(editor, 'cat');
+    assert.equal(replaceEditorSearch(editor, 'catcat', false, { wrap: false }), 1);
+    assert.equal(editor.state.selection.from, 8);
+    assert.equal(replaceEditorSearch(editor, 'catcat', false, { wrap: false }), 1);
+    assert.equal(editor.state.doc.textContent, 'catcat catcat');
+    assert.equal(editor.state.selection.empty, true);
+    assert.equal(editor.state.selection.from, 14);
+    assert.equal(searchPluginKey.getState(editor.state).activeIndex, -1);
+});

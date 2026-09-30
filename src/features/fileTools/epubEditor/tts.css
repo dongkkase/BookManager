@@ -1,0 +1,30 @@
+.ee-dialog.ee-tts-dialog { width: min(900px, calc(100vw - 48px)); max-height: min(900px, calc(100vh - 48px)); }
+.ee-tts-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.ee-tts-fields section { min-width: 0; }
+.ee-tts-fields h3 { font-size: 13px; margin: 0 0 10px; }
+.ee-tts-fields .ee-muted { margin: 8px 0; }
+.ee-tts-modes, .ee-tts-listen { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ee-tts-modes [aria-pressed="true"] { background: #789d8733; border-color: #93bd9e; }
+.ee-tts-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ee-tts-comparison .ee-field { margin: 0 0 10px; min-width: 0; }
+.ee-tts-comparison textarea { font-family: inherit; line-height: 1.65; min-height: 140px; resize: vertical; }
+.ee-tts-dictionary { padding-top: 16px; border-top: 1px solid var(--border-color, #3b4146); }
+.ee-tts-dictionary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ee-tts-dictionary-heading h3 { margin: 0; }
+.ee-tts-dictionary-heading small { color: var(--text-secondary, #9ca4a6); font-weight: 400; white-space: nowrap; }
+.ee-tts-dictionary-list { max-height: 250px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; }
+.ee-tts-dictionary-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; padding: 7px 0; }
+.ee-tts-dictionary-row .ee-field { margin: 0; min-width: 0; }
+.ee-tts-dictionary-row input { width: 100%; min-width: 0; }
+.ee-tts-dictionary-row > button { margin-bottom: 1px; }
+.ee-tts-empty { padding: 12px; background: var(--bg-primary, #1b2023); border-radius: 6px; }
+.ee-tts-footer-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.ee-tts-footer-actions > div { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.ee-tts-error { color: var(--color-error, #ffb4ab); font-size: 12px; line-height: 1.6; margin: 0 0 10px; }
+@media (max-width: 650px) {
+    .ee-dialog.ee-tts-dialog { width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
+    .ee-tts-comparison { grid-template-columns: minmax(0, 1fr); }
+    .ee-tts-comparison textarea { min-height: 100px; }
+    .ee-tts-dictionary-heading { align-items: flex-start; }
+    .ee-tts-dictionary-row { gap: 6px; }
+}

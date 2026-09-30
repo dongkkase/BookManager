@@ -75,6 +75,8 @@ import {
   viewerReadingStatusText,
 } from '../viewerStatusState';
 import { createFolderReadingStatesLoader, readingStatePathKey, sameReadingStateFiles } from '../folderReadingStates';
+import { applyReadingActionStates, resolveReadingActionPaths } from '../folderReadingActions';
+import { createLibraryMoveProgress } from '../libraryMoveProgress';
 import {
   MAX_VIEW_SCALE_BY_MODE,
   groupFolderFiles,
@@ -127,6 +129,7 @@ import {
     resolveFolderLocation,
 } from '../folderNavigationState';
 import '../styles/FolderTab.css';
+import '../styles/FolderDialogs.css';
 
 const VISIBLE_COVER_REQUEST_LIMIT = 32;
 const COVER_PREVIEW_QUEUE_LIMIT = 96;
@@ -655,6 +658,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [showMissingDialog, setShowMissingDialog] = useState(false);
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
+    const [readingActionBusy, setReadingActionBusy] = useState(false);
+    const readingActionBusyRef = useRef(false);
     const [readiveTransferPaths, setReadiveTransferPaths] = useState(null);
     const [coverEditorTarget, setCoverEditorTarget] = useState(null);
     const [ratingEditorTarget, setRatingEditorTarget] = useState(null);
@@ -2860,6 +2865,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       libraryTaskMode: 'move',
       currentItem,
       currentItemName,
+        currentItemCover: options.currentItemCover || '',
       slideItemReady: options.slideItemReady ?? Boolean(currentItem),
     });
   }, []);
@@ -2918,7 +2924,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     options.onStage?.('moving', 25);
     return runInternalFileAction(
-      () => window.electronAPI?.executeLibraryMove?.(resolvedPlans),
+      () => window.electronAPI?.executeLibraryMove?.(resolvedPlans, { requestId: options.requestId }),
     );
   }, [requestConflictChoice, runInternalFileAction]);
 
@@ -2936,6 +2942,21 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const targetLibrary = plans[0]?.targetLibrary;
     if (!targetLibrary) return;
     const firstMoveItem = plans[0]?.src || plans[0]?.full_path || plans[0]?.path || '';
+    const requestId = `library-move-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const moveProgress = createLibraryMoveProgress({
+        requestId,
+        files: selectedEntryObjects,
+        getPreview: filePath => window.electronAPI?.getFilePreview?.(filePath, { force: false }),
+        onProgress: data => emitLibraryMoveProgress(
+            t(data.libraryPhase === 'indexing' ? 'library_move_status_indexing_progress' : 'library_move_status_moving_progress', [
+                data.processedCount, data.totalCount, data.percent,
+            ]),
+            data.progress,
+            data.currentFile,
+            data,
+        ),
+    });
+    const removeMoveProgress = window.electronAPI?.onTaskProgress?.(moveProgress.handle);
     emitLibraryMoveProgress(t('library_move_status_prepare'), 2, firstMoveItem);
     try {
       setLibraryMoveRequest(null);
@@ -2943,6 +2964,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       const folderPlans = plans.filter(plan => plan.folderMode);
       const executablePlans = await expandLibraryMovePlans(plans, window.electronAPI);
       const result = await executeLibraryMovePlans(executablePlans, {
+        requestId,
         onStage: (stage, progress) => {
           const currentItem = executablePlans[0]?.src || firstMoveItem;
           if (stage === 'conflicts') {
@@ -2980,6 +3002,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         const indexResult = await window.electronAPI?.applyLibraryMoveIndex?.({
           completedMoves,
           libraries,
+            requestId,
         });
         if (indexResult?.success === false) throw new Error(indexResult.message || t('msg_failed'));
         await refreshLibraryScanStates(affectedLibraries);
@@ -3018,9 +3041,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     } finally {
+        removeMoveProgress?.();
+        moveProgress.dispose();
       clearLibraryMoveProgress();
     }
-  }, [clearLibraryMoveProgress, clearSelection, config?.language, config?.lang, emitLibraryMoveProgress, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedFolderPath, showToast, t]);
+  }, [clearLibraryMoveProgress, clearSelection, config?.language, config?.lang, emitLibraryMoveProgress, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedEntryObjects, selectedFolderPath, showToast, t]);
 
   const openLibraryMoveDialog = useCallback(async () => {
     if (libraries.length === 0) {
@@ -3323,12 +3348,43 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         }));
     }, [isFolderTabVisible]);
 
+    const changeReadingProgress = useCallback(async (menu, action) => {
+        if (readingActionBusyRef.current) return;
+        const paths = resolveReadingActionPaths(menu, selectedEntryObjects);
+        if (paths.length === 0) return;
+        readingActionBusyRef.current = true;
+        setReadingActionBusy(true);
+        showToast?.(t('folder.reading.updating'));
+        try {
+            const result = await window.electronAPI.updateReadingProgress(paths, action);
+            applyReadingActionStates(window.localStorage, result.states, runtimePlatform);
+            setViewerStatusVersion(version => version + 1);
+            readingStatesLoaderRef.current?.refresh();
+            if (result.errors.length > 0) {
+                const summary = t('folder.reading.partial', [result.states.length, result.errors.length]);
+                const viewerOpen = result.errors.some(error => error.code === 'READING_VIEWER_OPEN');
+                showToast?.(viewerOpen ? `${summary} ${t('folder.reading.viewer_open')}` : summary);
+            } else if (result.states.length > 0) {
+                showToast?.(t(action === 'mark-read' ? 'folder.reading.marked' : 'folder.reading.reset_done', [result.states.length]));
+            } else {
+                showToast?.(t('folder.reading.no_files'));
+            }
+        } catch (error) {
+            showToast?.(t('folder.reading.failed', [error?.message || t('msg_failed')]));
+        } finally {
+            readingActionBusyRef.current = false;
+            setReadingActionBusy(false);
+        }
+    }, [runtimePlatform, selectedEntryObjects, showToast, t]);
+
   const handleContextAction = useCallback(async (action) => {
     const menu = contextMenu;
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
+    if (action === 'mark-read' || action === 'reset-progress') {
+        await changeReadingProgress(menu, action);
+    } else if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
         setRatingEditorTarget(menu.file);
     } else if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
         const files = resolveCoverEditorTargets(menu.file, selectedEntryObjects);
@@ -3422,7 +3478,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
+  }, [addFavorite, changeReadingProgress, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -4202,6 +4258,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('sync-library')} label={t('setting_update_index')} />
               <ContextMenuItem onClick={() => handleContextAction('optimize-library')} label={t('menu_optimize_meta')} />
+                <div className="folder-context-menu-separator" />
+                <ContextMenuItem onClick={() => handleContextAction('mark-read')} disabled={readingActionBusy} label={t('folder.reading.mark_read')} />
+                <ContextMenuItem onClick={() => handleContextAction('reset-progress')} disabled={readingActionBusy} label={t('folder.reading.reset_progress')} />
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('open-explorer')} icon="folderOpen" label={t('action_open_exp')} />
               <ContextMenuItem onClick={() => handleContextAction('remove-library')} label={t('folder.sidebar.remove_library')} />
@@ -4210,6 +4269,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <>
               <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('open-folder')} icon="folderOpen" label={t('action_open_folder')} />
+                <div className="folder-context-menu-separator" role="separator" />
+                <ContextMenuItem onClick={() => handleContextAction('mark-read')} disabled={readingActionBusy} label={t('folder.reading.mark_read')} />
+                <ContextMenuItem onClick={() => handleContextAction('reset-progress')} disabled={readingActionBusy} label={t('folder.reading.reset_progress')} />
+                <div className="folder-context-menu-separator" role="separator" />
               <ContextMenuItem
                 onClick={() => handleContextAction(
                   isFavoriteFolder(favoriteEntries, contextMenu.folderPath)
@@ -4233,14 +4296,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <ContextMenuItem onClick={() => handleContextAction('send-metadata')} label={t('action_meta_edit')} shortcut="F3" />
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('delete-folder')} label={contextMenu.source === 'list' && selectedEntryObjects.length > 1 ? t('action_del_entries') : t('action_del_folder')} shortcut="Del" />
+                <div className="folder-context-menu-separator" role="separator" />
               <ContextMenuItem onClick={() => handleContextAction('refresh-folder')} label={t('action_refresh')} shortcut="F5" />
             </>
           ) : (
             <>
               <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('view-file')} label={t('action_view')} />
+                <div className="folder-context-menu-separator" role="separator" />
+                <ContextMenuItem onClick={() => handleContextAction('mark-read')} disabled={readingActionBusy} label={t('folder.reading.mark_read')} />
+                <ContextMenuItem onClick={() => handleContextAction('reset-progress')} disabled={readingActionBusy} label={t('folder.reading.reset_progress')} />
+                <div className="folder-context-menu-separator" role="separator" />
                 {supportsRatingEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-rating')} icon="star" label={t('rating_editor_title')} />}
                 {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_title')} />}
+                {(supportsRatingEditor(contextMenu.file) || supportsCoverEditor(contextMenu.file)) && (
+                    <div className="folder-context-menu-separator" role="separator" />
+                )}
               {!isRecentReading && (
                 <>
                   <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
@@ -4316,6 +4387,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       {showMultiRenameDialog && (
         <MultiRenameDialog
           files={selectedFileObjects}
+            confirmLast
           onExecute={executeMultiRename}
           onClose={() => setShowMultiRenameDialog(false)}
           t={t}
@@ -4560,6 +4632,7 @@ function ContentIndexDialog({
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
       <section
         className="content-index-dialog"
+        data-folder-modal
         role="dialog"
         aria-modal="true"
         aria-labelledby="content-index-dialog-title"
@@ -4650,9 +4723,9 @@ function LayoutEditDialog({ layout, onApply, onClose, t }) {
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="layout-dialog layout-edit-dialog" onMouseDown={event => event.stopPropagation()}>
+      <div className="layout-dialog layout-edit-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar">
-          <span>▣ {t('dlg_edit_lay_title')}</span>
+          <span>{t('dlg_edit_lay_title')}</span>
           <button onClick={onClose}>×</button>
         </div>
         <div className="layout-dialog-body">
@@ -4677,8 +4750,8 @@ function LayoutEditDialog({ layout, onApply, onClose, t }) {
           </div>
         </div>
         <div className="layout-dialog-footer">
-          <button className="primary" onClick={() => onApply(draft)}>{t('btn_ok')}</button>
           <button className="secondary" onClick={onClose}>{t('btn_cancel')}</button>
+            <button className="primary" onClick={() => onApply(draft)}>{t('btn_ok')}</button>
         </div>
       </div>
     </div>
@@ -4690,7 +4763,7 @@ function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="layout-delete-dialog" onMouseDown={event => event.stopPropagation()}>
+      <div className="layout-delete-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar">
           <span>{t('menu_del_layout')}</span>
           <button onClick={onClose}>×</button>
@@ -4706,8 +4779,8 @@ function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
           </select>
         </div>
         <div className="layout-dialog-footer">
-          <button onClick={() => onDelete(selected)}>{t('btn_ok')}</button>
           <button className="dialog-cancel-button" onClick={onClose}>{t('btn_cancel')}</button>
+            <button className="danger" onClick={() => onDelete(selected)}>{t('btn_ok')}</button>
         </div>
       </div>
     </div>
@@ -4734,6 +4807,7 @@ function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
       <form
         className="text-input-dialog"
+        data-folder-modal
         onSubmit={submit}
         onMouseDown={event => event.stopPropagation()}
         onKeyDown={event => {
@@ -4756,8 +4830,8 @@ function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-
           />
         </div>
         <div className="layout-dialog-footer">
-          <button type="submit" className="text-input-confirm">{t('btn_ok')}</button>
           <button type="button" className="text-input-cancel" onClick={onClose}>{t('btn_cancel')}</button>
+            <button type="submit" className="text-input-confirm">{t('btn_ok')}</button>
         </div>
       </form>
     </div>
@@ -4767,7 +4841,7 @@ function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-
 function MovePreviewDialog({ plans, onConfirm, onClose, t }) {
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="file-action-dialog" onMouseDown={event => event.stopPropagation()}>
+      <div className="file-action-dialog series-move-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar">
           <span>{t('action_group_by_series')}</span>
           <button onClick={onClose}>×</button>
@@ -4784,8 +4858,8 @@ function MovePreviewDialog({ plans, onConfirm, onClose, t }) {
           </div>
         </div>
         <div className="layout-dialog-footer">
-          <button onClick={onConfirm}>{t('btn_ok')}</button>
-          <button className="dialog-cancel-button" onClick={onClose}>{t('btn_cancel')}</button>
+            <button className="series-move-cancel" onClick={onClose}>{t('btn_cancel')}</button>
+            <button className="series-move-confirm" onClick={onConfirm}>{t('btn_ok')}</button>
         </div>
       </div>
     </div>
@@ -4803,7 +4877,7 @@ function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onCon
 
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="file-action-dialog library-move-dialog" onMouseDown={event => event.stopPropagation()}>
+      <div className="file-action-dialog library-move-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar library-move-titlebar">
           <span className="library-move-title"><FaIcon name="folderOpen" size={13} />{t('dlg_move_lib_title')}</span>
           <button className="library-move-close" onClick={onClose} aria-label={t('btn_cancel')}><FaIcon name="xmark" size={13} /></button>
@@ -4874,8 +4948,8 @@ function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onCon
           </section>
         </div>
         <div className="layout-dialog-footer library-move-footer">
-          <button className="library-move-confirm" disabled={!selected || plans.length === 0} onClick={() => onConfirm(plans)}>{t('btn_ok')}</button>
           <button className="library-move-cancel" onClick={onClose}>{t('btn_cancel')}</button>
+            <button className="library-move-confirm" disabled={!selected || plans.length === 0} onClick={() => onConfirm(plans)}>{t('btn_ok')}</button>
         </div>
       </div>
     </div>
@@ -4895,7 +4969,7 @@ function MoveConflictDialog({ conflict, onChoose, t }) {
     }, []);
     return (
         <div className="folder-dialog-backdrop">
-            <div ref={dialogRef} className="file-action-dialog move-conflict-dialog" role="dialog" aria-modal="true"
+            <div ref={dialogRef} className="file-action-dialog move-conflict-dialog" data-folder-modal role="dialog" aria-modal="true"
                 aria-labelledby="move-conflict-title" aria-describedby="move-conflict-description"
                 onKeyDown={event => {
                     event.stopPropagation();

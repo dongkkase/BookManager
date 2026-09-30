@@ -10,6 +10,7 @@ export function MissingVolumesDialog({ missingData = [], onClose, onGoToFolder, 
       <div
         ref={dialogRef}
         className="missing-dialog"
+        data-folder-modal
         role="dialog"
         aria-modal="true"
         aria-labelledby="missing-volumes-title"
@@ -17,7 +18,7 @@ export function MissingVolumesDialog({ missingData = [], onClose, onGoToFolder, 
         onMouseDown={event => event.stopPropagation()}
       >
         <div className="dialog-titlebar">
-          <span id="missing-volumes-title">▣ {t?.('tf_dlg_missing_title')}</span>
+          <span id="missing-volumes-title">{t?.('tf_dlg_missing_title')}</span>
           <button aria-label={t?.('btn_close')} onClick={onClose}>×</button>
         </div>
         <div className="missing-dialog-desc">

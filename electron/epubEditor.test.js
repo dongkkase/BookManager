@@ -9,6 +9,7 @@ import { EpubEditorService } from './epubEditor/service.js';
 import { writePackage, openProjectPackage, epubTextEntries } from './epubEditor/package.js';
 import { createProject, paragraph, validateProject, inspectProject, duplicateChapter, newId } from './epubEditor/model.js';
 import { listZipEntries, readZipEntry } from './core/zipArchive.js';
+import { ViewerSessionManager } from './viewerSessions.js';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', 'base64');
 // A locally synthesized 0.1-second tone, encoded as MPEG Layer 3.
@@ -331,7 +332,7 @@ test('merged table dimensions and column widths survive project save and EPUB ou
     assert.ok(html.includes('<col style="width:20.0000%" /><col style="width:30.0000%" /><col style="width:50.0000%" />'));
 });
 
-test('audio assets, position and loop settings survive source removal, reopen and EPUB packaging', async t => {
+test('audio assets, position, visibility, volume and loop survive recovery, reopen and EPUB packaging', async t => {
     const { root, service, state } = await fixture(t);
     const file = path.join(root, 'effect.mp3');
     const bytes = mp3;
@@ -341,6 +342,13 @@ test('audio assets, position and loop settings survive source removal, reopen an
     await assert.rejects(service.addAsset(1, state.sessionId, path.join(root, 'invalid.mp3'), 'audio'), { code: 'INVALID_ASSET' });
     state.project.assets.push(asset);
     state.project.chapters[0].content.content.push({ type: 'audio', attrs: { id: newId(), assetId: asset.id, title: '문이 열리는 소리 & 배경', kind: 'background', loop: true } }, paragraph('소리 뒤의 문장'));
+    state.project.chapters[0].content.content.push(
+        { type: 'audio', attrs: { id: 'n_hidden_audio', assetId: asset.id, title: '숨은 배경음', kind: 'background', loop: true, controls: false, volume: 0.35 } },
+        { type: 'audio', attrs: { id: 'n_silent_audio', assetId: asset.id, title: '무음 효과', kind: 'effect', loop: false, controls: true, volume: 0 } },
+    );
+    state.project.revision += 1;
+    await service.recovery(1, state.sessionId, state.project);
+    assert.deepEqual(service.session(state.sessionId, 1).project, state.project);
     const target = path.join(root, 'audio.bmepub');
     await service.write(1, state.sessionId, state.project, target, 'save', 'save-audio');
     await fs.unlink(file);
@@ -358,8 +366,78 @@ test('audio assets, position and loop settings survive source removal, reopen an
     assert.ok(html.indexOf('<audio ') < html.indexOf('소리 뒤의 문장'));
     assert.ok(read('EPUB/package.opf').includes('media-type="audio/mpeg"'));
     assert.ok(entries.some(entry => entry.name === `EPUB/assets/${asset.id}.mp3`));
+    const hidden = html.match(/<figure id="n_hidden_audio"[\s\S]*?<\/figure>/)?.[0];
+    assert.ok(hidden);
+    assert.match(hidden, /data-bookmanager-audio-controls="false"/);
+    assert.match(hidden, /data-bookmanager-audio-volume="0.35"/);
+    assert.match(hidden, /data-bookmanager-audio-kind="background"/);
+    assert.match(hidden, /loop="loop"/);
+    assert.doesNotMatch(hidden, /<figcaption| controls="controls"/);
+    const silent = html.match(/<figure id="n_silent_audio"[\s\S]*?<\/figure>/)?.[0];
+    assert.match(silent, /controls="controls"/);
+    assert.match(silent, /data-bookmanager-audio-volume="0"/);
+    assert.doesNotMatch(silent, / loop=/);
+    assert.match(read('EPUB/styles/book.css'), /\.audio\[data-bookmanager-audio-controls="false"\]\{display:block;margin:0;padding:0;border:0;height:0/);
+    const viewer = new ViewerSessionManager();
+    const session = viewer.create(epub, { skipAdjacent: true });
+    const book = await viewer.getEpubText(session.id);
+    const chapter = book.chapters.find(item => item.audioTracks?.length === 3);
+    assert.ok(chapter);
+    assert.deepEqual(chapter.audioTracks.map(track => [track.controls, track.volume, track.loop]), [[true, 1, true], [false, 0.35, true], [true, 0, false]]);
+    assert.ok(chapter.blocks.some(block => block.audioTracks?.includes(chapter.audioTracks[1].id)));
+    assert.ok(!chapter.text.includes('숨은 배경음'));
     reopened.project.assets = [];
     assert.ok(inspectProject(reopened.project).some(issue => issue.code === 'AUDIO_MISSING'));
+});
+
+test('audio settings accept legacy defaults and reject invalid visibility or volume', () => {
+    const project = createProject();
+    const attrs = { assetId: 'a_sound', title: '', kind: 'effect', loop: false };
+    const check = settings => {
+        project.chapters[0].content.content = [{ type: 'audio', attrs: { ...attrs, ...settings } }];
+        return validateProject(project);
+    };
+    for (const settings of [{}, { controls: false, volume: 0 }, { controls: true, volume: 1 }, { controls: false, volume: 0.35 }]) assert.doesNotThrow(() => check(settings));
+    for (const controls of ['false', 0, 1, {}]) assert.throws(() => check({ controls }));
+    for (const volume of [-0.1, 1.1, NaN, Infinity, '0.5', false, {}]) assert.throws(() => check({ volume }));
+});
+
+test('text-bound audio survives recovery, saving and EPUB export without a separate block player', async t => {
+    const { root, service, state } = await fixture(t);
+    const file = path.join(root, 'range.mp3');
+    await fs.writeFile(file, mp3);
+    const { asset } = await service.addAsset(1, state.sessionId, file, 'audio');
+    state.project.assets.push(asset);
+    const attrs = { id: 'ar_scene', assetId: asset.id, title: '장면 배경음', kind: 'background', loop: true, controls: false, volume: 0.4 };
+    state.project.chapters[0].content.content = ['비가 내렸다.', '멀리서 천둥이 울렸다.', '우산을 펼쳤다.'].map(text => ({
+        type: 'paragraph', content: [{ type: 'text', text, marks: [{ type: 'audioRange', attrs: { ...attrs } }] }],
+    }));
+    state.project.revision += 1;
+    await service.recovery(1, state.sessionId, state.project);
+    await service.close(1, state.sessionId);
+    const restored = await service.restore(1, state.sessionId);
+    assert.deepEqual(restored.project, state.project);
+    const target = path.join(root, 'range.bmepub');
+    await service.write(1, restored.sessionId, restored.project, target, 'save', 'range-save');
+    await fs.unlink(file);
+    const reopened = await service.open(2, target, 'range-open');
+    assert.deepEqual(reopened.project, state.project);
+    const epub = path.join(root, 'range.epub');
+    await service.write(2, reopened.sessionId, reopened.project, epub, 'export', 'range-export');
+    const buffer = await fs.readFile(epub);
+    const html = readZipEntry(buffer, listZipEntries(buffer).find(entry => entry.name === `EPUB/text/${state.project.chapters[0].id}.xhtml`)).toString();
+    assert.equal((html.match(/<audio\b/g) || []).length, 1);
+    assert.equal((html.match(/<span data-bookmanager-audio-range="ar_scene">/g) || []).length, 3);
+    assert.doesNotMatch(html, /<figure|<figcaption/);
+    const viewer = new ViewerSessionManager();
+    const session = viewer.create(epub, { skipAdjacent: true });
+    const book = await viewer.getEpubText(session.id);
+    const chapter = book.chapters.find(item => item.audioTracks?.length);
+    assert.equal(chapter.audioTracks[0].rangeId, 'ar_scene');
+    assert.equal(chapter.audioTracks[0].volume, 0.4);
+    assert.equal(chapter.audioTracks[0].loop, true);
+    assert.equal(chapter.audioTracks[0].controls, false);
+    assert.ok(!chapter.text.includes('장면 배경음'));
 });
 
 test('legacy projects without optional CSS fields remain editable and exportable', () => {

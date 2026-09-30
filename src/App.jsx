@@ -301,6 +301,7 @@ function App() {
       }
       if (shouldCollectLibraryScanSlideItem(tabId, state)) {
         pushLockScanItem({
+            src: state.currentItemCover || '',
           path: state.currentItem || '',
           name: state.currentItemName || state.currentItem || '',
         });

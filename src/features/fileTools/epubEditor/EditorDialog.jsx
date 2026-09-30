@@ -15,7 +15,7 @@ function tabStops(dialog) {
         .sort((a, b) => (a.tabIndex > 0 ? a.tabIndex : Infinity) - (b.tabIndex > 0 ? b.tabIndex : Infinity));
 }
 
-export default function EditorDialog({ title, onClose, children, footer, className = '', onKeyDown, onSubmit }) {
+export default function EditorDialog({ title, onClose, children, footer, className = '', onKeyDown, onSubmit, onDragEnter, onDragOver, onDragLeave, onDrop }) {
     const titleId = useId();
     const ref = useRef(null);
     const closeButton = useRef(null);
@@ -64,7 +64,7 @@ export default function EditorDialog({ title, onClose, children, footer, classNa
         }
     };
     const Content = onSubmit ? 'form' : 'div';
-    return <dialog className={`ee-dialog ${className}`} ref={ref} aria-labelledby={titleId} aria-modal="true" onKeyDown={handleKeyDown}>
+    return <dialog className={`ee-dialog ${className}`} ref={ref} aria-labelledby={titleId} aria-modal="true" onKeyDown={handleKeyDown} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
         <header><h2 id={titleId}>{title}</h2><button ref={closeButton} type="button" className="ee-dialog-close" aria-label={l('close')} aria-keyshortcuts="Escape" title={`${l('close')} (Esc)`} onClick={onClose}><span aria-hidden="true">×</span></button></header>
         <Content className="ee-dialog-content" onSubmit={onSubmit}>
             <div className="ee-dialog-body">{children}</div>

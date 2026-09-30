@@ -3,11 +3,15 @@ import { inspectCss, safeCss } from './css.js';
 import { paragraphIndentCss, validIndentLevel, validFirstLineIndent } from './paragraphIndent.js';
 import { BLOCK_STYLES, INLINE_STYLES, HIGHLIGHTS, authoringCss, parseMediaUrl } from './authoring.js';
 import { normalizeParagraphFormat, paragraphFormatCss } from './paragraphFormats.js';
+import { annotateTtsDocument, validTtsMark, validTtsSettings } from './tts.js';
+import { DIVIDER_STYLES, validDividerStyle, dividerCss } from './dividers.js';
 
 export const PROJECT_VERSION = 1;
 export const PROJECT_EXTENSION = 'bmepub';
 export const MAX_PROJECT_BYTES = 128 * 1024 * 1024;
-export const MAX_DOCUMENT_BYTES = 192 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = 384 * 1024 * 1024;
+export const MAX_DOCUMENT_NODES = 3000000;
+export const MAX_CHAPTERS = 2000;
 export const STYLE_PRESETS = Object.freeze({
     literary: { font: 'serif', fontSize: 18, lineHeight: 1.9, paragraphGap: 0.8, indent: 0, color: '#282923', accent: '#58705b', background: '#fffdf8', headingScale: 1.7 },
     modern: { font: 'sans-serif', fontSize: 17, lineHeight: 1.75, paragraphGap: 1.1, indent: 0, color: '#263449', accent: '#4369a8', background: '#ffffff', headingScale: 1.9 },
@@ -25,7 +29,7 @@ const CHILDREN = {
     tableCell: BLOCK, tableHeader: BLOCK, columns: ['column'], column: BLOCK,
     text: [], hardBreak: [], horizontalRule: [], image: [], audio: [], media: [], footnote: [],
 };
-const MARKS = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'link', 'textStyle', 'inlineStyle', 'highlight', 'superscript', 'subscript']);
+const MARKS = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'link', 'textStyle', 'inlineStyle', 'highlight', 'superscript', 'subscript', 'tts', 'audioRange']);
 const ASSET_TYPES = {
     mp3: ['audio', 'audio/mpeg'], m4a: ['audio', 'audio/mp4'],
     png: ['image', 'image/png'], jpg: ['image', 'image/jpeg'],
@@ -79,12 +83,31 @@ export function safeLink(href = '') {
 }
 
 export function validateProject(project) {
+    return validateProjectWithCache(project);
+}
+
+// Use only with immutable chapter snapshots. External input must be copied first.
+export function createProjectValidator() {
+    const chapters = new WeakMap();
+    return project => validateProjectWithCache(project, chapters);
+}
+
+function validateProjectWithCache(project, cache) {
     if (!project || project.format !== 'bookmanager-epub-project' || project.version !== PROJECT_VERSION) throw projectError('PROJECT_VERSION');
     if (!ID.test(project.id) || !Number.isSafeInteger(project.revision) || project.revision < 0) throw projectError('INVALID_PROJECT');
-    if (new TextEncoder().encode(JSON.stringify(project)).length > MAX_DOCUMENT_BYTES) throw projectError('PROJECT_TOO_LARGE');
+    if (!Array.isArray(project.chapters) || !project.chapters.length || project.chapters.length > MAX_CHAPTERS || !Array.isArray(project.assets) || project.assets.length > 1000) throw projectError('INVALID_PROJECT');
+    const encoder = new TextEncoder();
+    const chapterBytes = new Map();
+    let bytes = encoder.encode(JSON.stringify({ ...project, chapters: [] })).length + project.chapters.length - 1;
+    for (const chapter of project.chapters) {
+        const size = cache?.get(chapter)?.bytes ?? encoder.encode(JSON.stringify(chapter)).length;
+        chapterBytes.set(chapter, size);
+        bytes += size;
+    }
+    if (bytes > MAX_DOCUMENT_BYTES) throw projectError('PROJECT_TOO_LARGE');
     for (const key of ['title', 'author', 'language', 'publisher', 'date', 'description', 'rights', 'isbn', 'identifier']) string(project.metadata?.[key], key === 'description' ? 20000 : 2000);
-    if (!Array.isArray(project.chapters) || !project.chapters.length || project.chapters.length > 1000 || !Array.isArray(project.assets) || project.assets.length > 1000) throw projectError('INVALID_PROJECT');
     string(project.commonCss ?? '', 100000);
+    if (project.tts != null && !validTtsSettings(project.tts)) throw projectError('INVALID_PROJECT');
     const ids = new Set();
     let assetBytes = 0;
     for (const asset of project.assets) {
@@ -103,14 +126,16 @@ export function validateProject(project) {
     string(project.cover.assetId, 80);
     string(project.cover.subtitle, 300);
     let nodes = 0;
+    const audioRanges = new Map();
     function visit(node, depth = 0) {
-        if (++nodes > 1000000 || depth > 40 || !node || !Object.hasOwn(CHILDREN, node.type)) throw projectError('INVALID_DOCUMENT');
+        if (++nodes > MAX_DOCUMENT_NODES || depth > 40 || !node || !Object.hasOwn(CHILDREN, node.type)) throw projectError('INVALID_DOCUMENT');
         if (node.type === 'text') {
             string(node.text, 2 * 1024 * 1024);
             if (!node.text.length) throw projectError('INVALID_DOCUMENT');
         }
         const attrs = node.attrs || {};
         if (attrs.id != null && !ID.test(attrs.id)) throw projectError('INVALID_DOCUMENT');
+        if (attrs.dividerStyle != null && (node.type !== 'horizontalRule' || !validDividerStyle(attrs.dividerStyle))) throw projectError('INVALID_DOCUMENT');
         if (attrs.indentLevel != null && (!['paragraph', 'heading'].includes(node.type) || !validIndentLevel(attrs.indentLevel))) throw projectError('INVALID_DOCUMENT');
         if (attrs.firstLineIndent != null && (!['paragraph', 'heading'].includes(node.type) || !validFirstLineIndent(attrs.firstLineIndent))) throw projectError('INVALID_DOCUMENT');
         if (attrs.textAlign != null && !['left', 'center', 'right', 'justify'].includes(attrs.textAlign)) throw projectError('INVALID_DOCUMENT');
@@ -133,6 +158,8 @@ export function validateProject(project) {
             if (!ID.test(attrs.assetId)) throw projectError('INVALID_ASSET');
             string(attrs.title ?? '', 2000);
             if (!['effect', 'background'].includes(attrs.kind) || typeof attrs.loop !== 'boolean') throw projectError('INVALID_DOCUMENT');
+            if (attrs.controls != null && typeof attrs.controls !== 'boolean') throw projectError('INVALID_DOCUMENT');
+            if (attrs.volume != null) number(attrs.volume, 0, 1);
         }
         if (node.type === 'image') {
             if (!ID.test(attrs.assetId)) throw projectError('INVALID_ASSET');
@@ -157,9 +184,21 @@ export function validateProject(project) {
             if (attrs.colwidth != null && (!Array.isArray(attrs.colwidth) || attrs.colwidth.some(width => !Number.isFinite(width) || width < 0 || width > 10000))) throw projectError('INVALID_DOCUMENT');
         }
         if (node.marks != null && !Array.isArray(node.marks)) throw projectError('INVALID_DOCUMENT');
+        if (node.marks?.filter(mark => mark?.type === 'tts').length > 1) throw projectError('INVALID_DOCUMENT');
+        if (node.marks?.filter(mark => mark?.type === 'audioRange').length > 1) throw projectError('INVALID_DOCUMENT');
         for (const mark of node.marks || []) {
             if (!MARKS.has(mark.type)) throw projectError('INVALID_DOCUMENT');
             const a = mark.attrs || {};
+            if (mark.type === 'audioRange') {
+                if (!['text', 'hardBreak'].includes(node.type) || !ID.test(a.id) || !ID.test(a.assetId)
+                    || !['effect', 'background'].includes(a.kind) || typeof a.loop !== 'boolean' || typeof a.controls !== 'boolean') throw projectError('INVALID_DOCUMENT');
+                string(a.title, 2000);
+                number(a.volume, 0, 1);
+                const signature = JSON.stringify([a.assetId, a.title, a.kind, a.loop, a.controls, a.volume]);
+                if (audioRanges.has(a.id) && audioRanges.get(a.id) !== signature) throw projectError('INVALID_DOCUMENT');
+                audioRanges.set(a.id, signature);
+            }
+            if (mark.type === 'tts' && (!['text', 'hardBreak'].includes(node.type) || !validTtsMark(a))) throw projectError('INVALID_DOCUMENT');
             if (mark.type === 'link' && !safeLink(a.href)) throw projectError('INVALID_LINK');
             if (mark.type === 'inlineStyle' && !Object.hasOwn(INLINE_STYLES, a.preset)) throw projectError('INVALID_DOCUMENT');
             if (mark.type === 'highlight' && !Object.hasOwn(HIGHLIGHTS, a.preset)) throw projectError('INVALID_DOCUMENT');
@@ -180,11 +219,20 @@ export function validateProject(project) {
     for (const chapter of project.chapters) {
         if (!ID.test(chapter.id) || !chapter.id.startsWith('c_') || ids.has(chapter.id) || chapter.content?.type !== 'doc') throw projectError('INVALID_PROJECT');
         ids.add(chapter.id);
+        const cached = cache?.get(chapter);
+        if (cached) {
+            nodes += cached.nodes;
+            if (nodes > MAX_DOCUMENT_NODES) throw projectError('INVALID_DOCUMENT');
+            continue;
+        }
         string(chapter.css ?? '', 100000);
         string(chapter.title);
         string(chapter.tocTitle);
         if (typeof chapter.inToc !== 'boolean') throw projectError('INVALID_PROJECT');
+        const previousNodes = nodes;
+        audioRanges.clear();
         visit(chapter.content);
+        cache?.set(chapter, { bytes: chapterBytes.get(chapter), nodes: nodes - previousNodes });
     }
     return project;
 }
@@ -202,6 +250,8 @@ export function duplicateChapter(chapter) {
     const copy = structuredClone(chapter);
     copy.id = newId('c');
     const idMap = new Map();
+    const ttsIds = new Map();
+    const audioRangeIds = new Map();
     walkDocument(copy.content, node => {
         if (node.attrs?.id) {
             const id = newId();
@@ -211,6 +261,14 @@ export function duplicateChapter(chapter) {
     });
     walkDocument(copy.content, node => {
         for (const mark of node.marks || []) {
+            if (mark.type === 'audioRange') {
+                if (!audioRangeIds.has(mark.attrs.id)) audioRangeIds.set(mark.attrs.id, newId('ar'));
+                mark.attrs.id = audioRangeIds.get(mark.attrs.id);
+            }
+            if (mark.type === 'tts') {
+                if (!ttsIds.has(mark.attrs.id)) ttsIds.set(mark.attrs.id, newId('tts'));
+                mark.attrs.id = ttsIds.get(mark.attrs.id);
+            }
             if (mark.type !== 'link') continue;
             const [target, anchor] = mark.attrs.href.split('#');
             if (target === `epub:${chapter.id}`) mark.attrs.href = `epub:${copy.id}${anchor && idMap.has(anchor) ? `#${idMap.get(anchor)}` : ''}`;
@@ -261,6 +319,7 @@ export function inspectProject(project) {
                 if (!node.attrs.alt?.trim() && !node.attrs.decorative) issue('warning', 'ALT_MISSING', chapter.id, node.attrs.id);
             }
             for (const mark of node.marks || []) {
+                if (mark.type === 'audioRange' && assets.get(mark.attrs.assetId)?.kind !== 'audio') issue('error', 'AUDIO_MISSING', chapter.id, mark.attrs.id);
                 const font = mark.type === 'textStyle' && mark.attrs?.fontFamily;
                 if (font && font.startsWith('font-') && assets.get(font.slice(5))?.kind !== 'font') issue('error', 'FONT_MISSING', chapter.id, node.attrs?.id);
             }
@@ -288,6 +347,26 @@ export function assetFilename(asset) {
 export function renderChapterBody(chapter, project, resolveAsset = asset => `../assets/${assetFilename(asset)}`) {
     const assets = new Map(project.assets.map(asset => [asset.id, asset]));
     const notes = [];
+    const renderedAudioRanges = new Set();
+    const withAudioRange = (node, value) => {
+        const attrs = node.marks?.find(mark => mark.type === 'audioRange')?.attrs;
+        if (!attrs) return value;
+        const asset = assets.get(attrs.assetId);
+        if (!asset) return value;
+        let audio = '';
+        if (!renderedAudioRanges.has(attrs.id)) {
+            renderedAudioRanges.add(attrs.id);
+            audio = `<audio${attrs.controls ? ' controls="controls"' : ' hidden="hidden"'} preload="none"${attrs.loop ? ' loop="loop"' : ''} data-bookmanager-audio-range="${xml(attrs.id)}" data-bookmanager-audio-controls="${attrs.controls}" data-bookmanager-audio-volume="${attrs.volume}" data-bookmanager-audio-kind="${attrs.kind}" title="${xml(attrs.title || asset.name)}" src="${xml(resolveAsset(asset))}">${xml(attrs.title || asset.name)}</audio>`;
+        }
+        return `${audio}<span data-bookmanager-audio-range="${xml(attrs.id)}">${value}</span>`;
+    };
+    const dictionary = project.tts?.dictionary || [];
+    const ttsContext = { nextId: 0, usedIds: new Set() };
+    const withTts = (node, value) => {
+        const attrs = node.marks?.find(mark => mark.type === 'tts')?.attrs;
+        if (!attrs || !validTtsMark(attrs)) return value;
+        return `<span data-bm-tts="${attrs.mode}" data-bm-tts-id="${xml(attrs.id)}"${attrs.mode === 'replace' ? ` data-bm-tts-text="${xml(attrs.text)}"` : ''}>${value}</span>`;
+    };
     function render(node) {
         const a = node.attrs || {};
         const id = a.id ? ` id="${xml(a.id)}"` : '';
@@ -312,7 +391,7 @@ export function renderChapterBody(chapter, project, resolveAsset = asset => `../
                     if (css) value = `<span style="${xml(css)}">${value}</span>`;
                 }
             }
-            return value;
+            return withAudioRange(node, withTts(node, value));
         }
         const tag = { paragraph: 'p', heading: `h${a.level}`, blockquote: 'blockquote', bulletList: 'ul', orderedList: 'ol', listItem: 'li', table: 'table', tableRow: 'tr', tableCell: 'td', tableHeader: 'th', column: 'div', columns: 'div' }[node.type];
         if (tag) {
@@ -337,7 +416,7 @@ export function renderChapterBody(chapter, project, resolveAsset = asset => `../
             if (!asset) return '';
             const margin = a.align === 'center' ? '0 auto' : a.align === 'right' ? '0 0 0 auto' : '0 auto 0 0';
             const wrap = a.textWrap === 'left' ? 'float:right;margin:0 0 .75em 1.2em' : a.textWrap === 'right' ? 'float:left;margin:0 1.2em .75em 0' : `margin:${margin}`;
-            return `<figure${id}${a.textWrap && a.textWrap !== 'none' ? ` data-text-wrap="${a.textWrap}"` : ''} style="width:${a.width}%;${wrap}"><img src="${xml(resolveAsset(asset))}" alt="${xml(a.decorative ? '' : a.alt || '')}"${a.decorative ? ' role="presentation"' : ''} />${a.caption ? `<figcaption>${xml(a.caption)}</figcaption>` : ''}</figure>`;
+            return `<figure${id}${a.textWrap && a.textWrap !== 'none' ? ` data-text-wrap="${a.textWrap}"` : ''} style="width:${a.width}%;${wrap}"><img src="${xml(resolveAsset(asset))}" alt="${xml(a.decorative ? '' : a.alt || '')}"${a.decorative ? ' role="presentation"' : ''} />${a.caption ? `<figcaption>${renderText(a.caption)}</figcaption>` : ''}</figure>`;
         }
         if (node.type === 'footnote') {
             notes.push(a);
@@ -346,16 +425,23 @@ export function renderChapterBody(chapter, project, resolveAsset = asset => `../
         if (node.type === 'audio') {
             const asset = assets.get(a.assetId);
             if (!asset) return '';
-            return `<figure${id} class="audio ${a.kind}"><figcaption>${xml(a.title || asset.name)}</figcaption><audio controls="controls" preload="none"${a.loop ? ' loop="loop"' : ''} src="${xml(resolveAsset(asset))}">${xml(a.title || asset.name)}</audio></figure>`;
+            const controls = a.controls !== false;
+            return `<figure${id} class="audio ${a.kind}" data-bookmanager-audio-controls="${controls}">${controls ? `<figcaption>${renderText(a.title || asset.name)}</figcaption>` : ''}<audio${controls ? ' controls="controls"' : ''} preload="none"${a.loop ? ' loop="loop"' : ''} data-bookmanager-audio-controls="${controls}" data-bookmanager-audio-volume="${a.volume ?? 1}" data-bookmanager-audio-kind="${a.kind}" title="${xml(a.title || asset.name)}" src="${xml(resolveAsset(asset))}">${xml(a.title || asset.name)}</audio></figure>`;
         }
-        if (node.type === 'hardBreak') return '<br />';
-        if (node.type === 'horizontalRule') return `<hr${id} />`;
+        if (node.type === 'hardBreak') return withAudioRange(node, withTts(node, '<br />'));
+        if (node.type === 'horizontalRule') {
+            if (!validDividerStyle(a.dividerStyle)) return `<hr${id} />`;
+            const classes = ` class="bm-divider bm-divider-${a.dividerStyle}"`;
+            const symbol = DIVIDER_STYLES[a.dividerStyle].symbol;
+            return symbol ? `<div${id}${classes} role="separator"><span aria-hidden="true">${xml(symbol)}</span></div>` : `<hr${id}${classes} />`;
+        }
         if (node.type === 'codeBlock') return `<pre${id}><code>${body}</code></pre>`;
         return body;
     }
-    const body = render(chapter.content);
-    const footnotes = notes.map((note, index) => `<aside id="note-${xml(note.id)}" epub:type="footnote" role="doc-footnote"><p><a href="#${xml(note.id)}" role="doc-backlink">${index + 1} ↩</a> ${xml(note.text).replace(/\n/g, '<br />')}</p></aside>`).join('\n');
-    return `<h1 class="chapter-title">${xml(chapter.title)}</h1>\n${body}${footnotes ? `<section class="footnotes" aria-label="${project.metadata.language.startsWith('ko') ? '각주' : 'Footnotes'}">${footnotes}</section>` : ''}`;
+    const renderText = value => render(annotateTtsDocument({ type: 'doc', content: String(value || '').split('\n').flatMap((line, index) => [...(index ? [{ type: 'hardBreak' }] : []), ...(line ? [{ type: 'text', text: line }] : [])]) }, dictionary, ttsContext));
+    const body = render(annotateTtsDocument(chapter.content, dictionary, ttsContext));
+    const footnotes = notes.map((note, index) => `<aside id="note-${xml(note.id)}" epub:type="footnote" role="doc-footnote"><p><a href="#${xml(note.id)}" role="doc-backlink">${index + 1} ↩</a> ${renderText(note.text)}</p></aside>`).join('\n');
+    return `<h1 class="chapter-title">${renderText(chapter.title)}</h1>\n${body}${footnotes ? `<section class="footnotes" aria-label="${project.metadata.language.startsWith('ko') ? '각주' : 'Footnotes'}">${footnotes}</section>` : ''}`;
 }
 
 export function bookCss(project, resolveAsset = asset => `../assets/${assetFilename(asset)}`) {
@@ -375,9 +461,11 @@ table{border-collapse:collapse;width:100%;table-layout:fixed;margin:1em 0;}td,th
 .columns{display:flex;gap:1.5em;margin:1em 0;}.column{flex:1;min-width:0;}
 @media(max-width:480px){.columns{display:block;}.column{margin-bottom:1em;}}
 audio{width:100%;max-width:100%;}.audio{margin:1em 0;padding:1em;border:1px solid #aeb5b0;}.footnotes{margin-top:2em;border-top:1px solid #aeb5b0;font-size:.85em;}.footnotes p{text-indent:0;margin:.8em 0;}
+.audio[data-bookmanager-audio-controls="false"]{display:block;margin:0;padding:0;border:0;height:0;min-height:0;line-height:0;}.audio[data-bookmanager-audio-controls="false"]>audio,.audio[data-bookmanager-audio-controls="false"]>figcaption{display:none;}
 pre{white-space:pre-wrap;background:#eeeeea;padding:1em;}hr{border:0;border-top:1px solid #b8bdb7;margin:1.8em 0;}
 .external-media{border:1px solid #aeb5b0;border-radius:6px;padding:1em;margin:1em 0;}.external-media p{text-indent:0;margin:.5em 0 0;overflow-wrap:anywhere;}
 ${authoringCss()}
+${dividerCss()}
 ${safeCss(project.commonCss)}
 `;
 }

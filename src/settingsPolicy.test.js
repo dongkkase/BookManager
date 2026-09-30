@@ -182,6 +182,21 @@ test('safe thread limit follows the original CPU rule', () => {
     assert.equal(safeThreadLimit(8), 6);
 });
 
+test('hardware acceleration defaults to enabled and keeps an explicit opt-out', () => {
+    assert.equal(normalizeSettingsConfig({}).hardware_acceleration, true);
+    assert.equal(normalizeSettingsConfig({ hardware_acceleration: false }).hardware_acceleration, false);
+    assert.equal(normalizeSettingsConfig({ hardware_acceleration: true }).hardware_acceleration, true);
+    assert.equal(normalizeSettingsConfig({ hardware_acceleration: 'false' }).hardware_acceleration, true);
+});
+
+test('only an effective hardware acceleration change asks for a restart', () => {
+    assert.equal(settingsEffects({}, { hardware_acceleration: true }).restartRecommended, false);
+    assert.equal(settingsEffects({}, { hardware_acceleration: false }).restartRecommended, true);
+    assert.equal(settingsEffects({ hardware_acceleration: true }, { hardware_acceleration: false }).restartRecommended, true);
+    assert.equal(settingsEffects({ hardware_acceleration: false }, { hardware_acceleration: true }).restartRecommended, true);
+    assert.equal(settingsEffects({ hardware_acceleration: false }, { hardware_acceleration: false }).restartRecommended, false);
+});
+
 test('settings side effects identify task reset and library changes without restart prompts', () => {
     assert.deepEqual(settingsEffects(
         { target_format: 'none', lang: 'ko', libraries: ['/A'] },

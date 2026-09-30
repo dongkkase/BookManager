@@ -326,7 +326,7 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
             onDragOver={event => { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'none'; }}
             onDrop={event => { event.preventDefault(); event.stopPropagation(); }}
             onKeyDown={handleKeyDown}>
-            <section ref={dialogRef} className="cover-editor-dialog" role="dialog" aria-modal={helpOpen ? undefined : 'true'}
+            <section ref={dialogRef} className="cover-editor-dialog" data-folder-modal role="dialog" aria-modal={helpOpen ? undefined : 'true'}
                 aria-hidden={helpOpen ? 'true' : undefined} inert={helpOpen ? '' : undefined}
                 aria-labelledby={titleId} aria-busy={saving} tabIndex={-1}>
                 <header className="cover-editor-header">
@@ -431,7 +431,7 @@ export function CoverEditorDialog({ file, files, onExecute, onClose, t }) {
             </section>
             {helpOpen && <div className="cover-editor-help-backdrop"
                 onMouseDown={event => { event.stopPropagation(); if (event.target === event.currentTarget) setHelpOpen(false); }}>
-                <section ref={helpDialogRef} className="cover-editor-dialog cover-editor-help-dialog" role="dialog" aria-modal="true"
+                <section ref={helpDialogRef} className="cover-editor-dialog cover-editor-help-dialog" data-folder-modal role="dialog" aria-modal="true"
                     aria-labelledby={`${titleId}-help`} aria-describedby={`${titleId}-help-intro`} tabIndex={-1}>
                     <header className="cover-editor-header">
                         <h2 id={`${titleId}-help`}>{t('cover_editor_help_title')}</h2>

@@ -123,7 +123,12 @@ export function configureEditorSearch(editor, query, caseSensitive = false) {
 export function moveEditorSearch(editor, direction = 1) {
     if (!editor || editor.isDestroyed) return false;
     const matches = searchPluginKey.getState(editor.state)?.matches || [];
-    const match = matches[adjacentSearchIndex(matches, editor.state.selection, direction)];
+    return selectEditorSearchMatch(editor, adjacentSearchIndex(matches, editor.state.selection, direction));
+}
+
+export function selectEditorSearchMatch(editor, index) {
+    if (!editor || editor.isDestroyed) return false;
+    const match = searchPluginKey.getState(editor.state)?.matches[index];
     if (!match) return false;
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, match.from, match.to)).scrollIntoView().setMeta('addToHistory', false));
     return true;
@@ -146,7 +151,7 @@ export function replaceSearchMatches(state, matches, replacement) {
     return { transaction, count };
 }
 
-export function replaceEditorSearch(editor, replacement, all = false) {
+export function replaceEditorSearch(editor, replacement, all = false, { wrap = true } = {}) {
     if (!editor || editor.isDestroyed || !editor.isEditable || editor.view.composing) return 0;
     const search = searchPluginKey.getState(editor.state);
     if (!search?.matches.length) return 0;
@@ -159,7 +164,7 @@ export function replaceEditorSearch(editor, replacement, all = false) {
     if (!all) {
         const after = transaction.mapping.map(selected.to, 1);
         const matches = findDocumentMatches(transaction.doc, search.query, { caseSensitive: search.caseSensitive });
-        const next = matches.find(match => match.from >= after) || matches[0];
+        const next = matches.find(match => match.from >= after) || (wrap ? matches[0] : null);
         transaction.setSelection(TextSelection.create(transaction.doc, next?.from ?? after, next?.to ?? after));
     }
     if (count || transaction.selectionSet) editor.view.dispatch(transaction.scrollIntoView());

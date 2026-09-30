@@ -2,6 +2,10 @@ export const DEFAULT_TEXT_CLEANER_OPTIONS = Object.freeze({
     trimLeadingWhitespace: true,
     collapseRepeatedSpaces: true,
     joinBrokenLines: true,
+    removeBlankLines: false,
+    indentParagraphs: false,
+    paragraphIndentSize: 2,
+    indentExcludeQuotes: false,
 });
 
 export const MAX_RECORDED_TEXT_CHANGES = 10000;
@@ -290,6 +294,11 @@ function changePreview(value) {
 export function cleanText(sourceText = '', requestedOptions = {}) {
     const text = String(sourceText ?? '');
     const options = { ...DEFAULT_TEXT_CLEANER_OPTIONS, ...requestedOptions };
+    const requestedIndentSize = Number(options.paragraphIndentSize);
+    const indentSize = Number.isFinite(requestedIndentSize)
+        ? Math.max(1, Math.min(8, Math.floor(requestedIndentSize)))
+        : DEFAULT_TEXT_CLEANER_OPTIONS.paragraphIndentSize;
+    const paragraphIndent = ' '.repeat(indentSize);
     const hardWrap = options.joinBrokenLines ? detectBlankSeparatedHardWrap(text) : null;
     const quoteBoundaries = options.joinBrokenLines ? quotedProseBoundaries(text) : new Map();
     const decoratedOffsets = decoratedProseOffsets(text);
@@ -305,6 +314,7 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
     let hanQuoteCloser = null;
     let sourceOffset = 0;
     let lineNumber = 1;
+    let atParagraphStart = true;
     const pendingLines = [];
 
     const appendOutput = value => {
@@ -322,15 +332,39 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
         if (changes.length < MAX_RECORDED_TEXT_CHANGES) changes.push(change);
     };
     const emitLine = (line, nextLine = null, skippedLines = []) => {
+        if (options.removeBlankLines && !line.protected && !line.original.trim()) {
+            if (line.original || line.newline) {
+                recordChange({
+                    id: `blank-line-${line.number}`,
+                    type: 'blankLine',
+                    line: line.number,
+                    before: changePreview((line.original + line.newline).replace(/\r/g, '\\r').replace(/\n/g, '\\n')),
+                    after: '',
+                    sourceStart: line.start,
+                    sourceEnd: line.start + line.original.length + line.newline.length,
+                    resultStart: resultOffset,
+                    resultEnd: resultOffset,
+                });
+            }
+            return false;
+        }
         const lineResultStart = resultOffset;
-        appendOutput(line.cleaned);
-        if (line.original !== line.cleaned) {
+        const indentLine = options.indentParagraphs && atParagraphStart
+            && !line.protected && line.cleaned.trim().length > 0
+            && !(options.indentExcludeQuotes && /^[\s]*["'“”‘’「」『』]/u.test(line.cleaned));
+        const resultLine = indentLine
+            ? paragraphIndent + line.cleaned.replace(/^[^\S\r\n]+/u, '')
+            : line.cleaned;
+        appendOutput(resultLine);
+        if (line.original !== resultLine) {
+            const type = indentLine && line.original.match(/^[^\S\r\n]*/u)[0] !== paragraphIndent
+                ? 'indentation' : 'whitespace';
             recordChange({
-                id: `whitespace-${line.number}`,
-                type: 'whitespace',
+                id: `${type}-${line.number}`,
+                type,
                 line: line.number,
                 before: changePreview(line.original),
-                after: changePreview(line.cleaned),
+                after: changePreview(resultLine),
                 sourceStart: line.start,
                 sourceEnd: line.start + line.original.length,
                 resultStart: lineResultStart,
@@ -389,6 +423,7 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
         } else {
             appendOutput(line.newline);
         }
+        atParagraphStart = !join;
         return join;
     };
     const flushPendingLines = final => {

@@ -41,7 +41,7 @@ export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, ope
             else if (action === 'templateImport') result = await editor.importContentTemplate(owner, sessionId, request.templateId, request.revision);
             else if (action === 'create') result = await editor.create(owner, request.template, request.language);
             else if (action === 'restore') result = await editor.restore(owner, request.id);
-            else if (action === 'recover') result = await editor.recovery(owner, sessionId, project);
+            else if (action === 'recover') result = await editor.recovery(owner, sessionId, project, request.changes);
             else if (action === 'asset') result = await editor.asset(owner, sessionId, request.assetId);
             else if (action === 'editImage') result = await editor.editImage(owner, sessionId, request.assetId, request.data);
             else if (action === 'importAssets') result = await editor.importAssets(owner, sessionId, request.paths);
@@ -58,9 +58,15 @@ export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, ope
                 editor.session(sessionId, owner);
                 let filePath;
                 if (!request.sourceId) {
-                    const selected = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: 'Text', extensions: ['txt'] }] });
-                    if (selected.canceled) return { ok: true, canceled: true };
-                    filePath = selected.filePaths[0];
+                    if (request.paths !== undefined) {
+                        if (!Array.isArray(request.paths) || request.paths.length !== 1) throw Object.assign(new Error('TEXT_SINGLE_FILE_REQUIRED'), { code: 'TEXT_SINGLE_FILE_REQUIRED' });
+                        [filePath] = request.paths;
+                        if (typeof filePath !== 'string' || !path.isAbsolute(filePath) || filePath.includes('\0') || path.extname(filePath).toLowerCase() !== '.txt') throw Object.assign(new Error('TEXT_FILE_REQUIRED'), { code: 'TEXT_FILE_REQUIRED' });
+                    } else {
+                        const selected = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: 'Text', extensions: ['txt'] }] });
+                        if (selected.canceled || !selected.filePaths?.length) return { ok: true, canceled: true };
+                        filePath = selected.filePaths[0];
+                    }
                 }
                 result = await editor.readText(owner, sessionId, { filePath, sourceId: request.sourceId, encoding: request.encoding, operationId });
             }

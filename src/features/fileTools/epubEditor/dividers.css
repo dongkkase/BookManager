@@ -1,0 +1,10 @@
+.ee-divider-dialog .ee-divider-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap: 10px; padding: 3px; }
+.ee-divider-dialog .ee-divider-card { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: 14px 12px 10px; gap: 10px; border: 1px solid var(--border-color, #46504a); border-radius: 7px; background: var(--bg-primary, #1c2225); color: var(--text-primary, #e8e9e6); cursor: pointer; }
+.ee-divider-dialog .ee-divider-card:hover { border-color: #789d87; }
+.ee-divider-dialog .ee-divider-card.is-selected { border-color: #9bc7ab; background: #789d8720; box-shadow: inset 0 0 0 1px #9bc7ab; }
+.ee-divider-dialog .ee-divider-card:focus-visible { outline: 2px solid #b6ddc4; outline-offset: 2px; }
+.ee-divider-preview { display: flex; align-items: center; justify-content: center; height: 44px; min-width: 0; padding: 0 5px; font-size: 18px; }
+.ee-divider-dialog .ee-divider-preview .bm-divider { margin: 0 auto; }
+.ee-divider-name { font-size: 12px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
+.ee-divider-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.ee-paper .tiptap .bm-divider.ProseMirror-selectednode { outline: 2px solid var(--book-accent, #58705b); outline-offset: 6px; }

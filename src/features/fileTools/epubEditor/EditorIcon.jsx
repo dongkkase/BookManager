@@ -1,4 +1,5 @@
 import React from 'react';
+import { QUOTE_CHARACTERS, QUOTE_PAIRS } from './quotes';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
     faFileImport, faScissors, faLayerGroup, faIndent, faOutdent,
@@ -11,10 +12,10 @@ import {
     faRotateLeft, faRotateRight, faHeading, faParagraph,
     faFileCode, faEye, faFloppyDisk, faCopy, faDownload,
     faCircleCheck, faMagnifyingGlass, faTrash, faBorderAll,
-    faPen, faSliders, faPalette, faLinkSlash, faRepeat,
+    faPen, faPenToSquare, faSliders, faPalette, faLinkSlash, faRepeat,
     faMobileScreenButton, faTabletScreenButton, faDesktop, faBookOpen, faFont,
     faSubscript, faHighlighter, faFillDrip, faVideo, faFaceSmile, faSection, faArrowUpRightFromSquare,
-    faUpRightAndDownLeftFromCenter,
+    faUpRightAndDownLeftFromCenter, faVolumeHigh, faExpand, faCompress,
 } from '@fortawesome/free-solid-svg-icons';
 
 const icons = {
@@ -31,18 +32,20 @@ const icons = {
     left: faAlignLeft, center: faAlignCenter, right: faAlignRight, justify: faAlignJustify,
     bulletList: faListUl, orderedList: faListOl, blockquote: faQuoteLeft,
     codeBlock: faCode, reset: faEraser, horizontalRule: faMinus,
+    removeBlankLines: faEraser,
     addImage: faImage, addTable: faTableCells, footnote: faSuperscript,
-    addAudio: faMusic, link: faLink, columns: faTableColumns,
+    addAudio: faMusic, attachAudio: faMusic, editAudioRange: faSliders, unlinkAudioRange: faLinkSlash, link: faLink, columns: faTableColumns,
     templates: faObjectGroup,
-    search: faMagnifyingGlass, shortcuts: faKeyboard, toolbar: faSliders, focusMode: faPen,
+    tts: faVolumeHigh,
+    search: faMagnifyingGlass, shortcuts: faKeyboard, toolbar: faSliders, focusMode: faExpand, exitFocusMode: faCompress,
     selectCells: faBorderAll, mergeCells: faObjectGroup, splitCell: faObjectUngroup,
     addRowBefore: faArrowUp, addRowAfter: faArrowDown,
     addColumnBefore: faArrowLeft, addColumnAfter: faArrowRight,
     deleteRow: faTableColumns, deleteColumn: faTableColumns, deleteTable: faTrash,
     toggleHeaderRow: faTableColumns, toggleHeaderColumn: faTableColumns,
     save: faFloppyDisk, saveAs: faCopy, export: faDownload, inspect: faCircleCheck,
-    commonCss: faPalette, chapterCss: faFileCode, source: faCode, preview: faEye, previewViewer: faBookOpen,
-    write: faPen, design: faSliders,
+    commonCss: faPalette, chapterCss: faFileCode, source: faFileCode, preview: faEye, previewViewer: faBookOpen,
+    edit: faPenToSquare,
     narrow: faMobileScreenButton, medium: faTabletScreenButton, wide: faDesktop,
     editLink: faPen, unlink: faLinkSlash, remove: faTrash, loop: faRepeat,
     imageProperties: faSliders, audioProperties: faSliders, cellProperties: faSliders,
@@ -65,6 +68,8 @@ function ImageLayoutIcon({ command }) {
 }
 
 export default function EditorIcon({ command }) {
+    const quote = QUOTE_CHARACTERS.find(item => item.command === command) || QUOTE_PAIRS.find(item => item.command === command || item.shortcutCommand === command);
+    if (quote) return <span className="ee-command-icon ee-quote-icon" aria-hidden="true">{quote.value || quote.display}</span>;
     if (Object.hasOwn(imageAlignments, command) || ['imageTextLeft', 'imageTextRight'].includes(command)) return <ImageLayoutIcon command={command} />;
     if (command === 'imageAlt') return <span className="ee-command-icon" aria-hidden="true"><span className="ee-image-alt-icon">ALT</span></span>;
     const icon = icons[command];

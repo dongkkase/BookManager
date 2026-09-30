@@ -3,7 +3,7 @@ import test from 'node:test';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { splitChapterDocument, splitProjectChapter, importTextChapters, mergeProjectChapters, contentHistoryEntry, restoredChapters } from './chapterOperations.js';
-import { createChapter, createProject, inspectProject, newId, textContent, validateProject, walkDocument } from '../../../../electron/epubEditor/model.js';
+import { createChapter, createProject, inspectProject, newId, textContent, validateProject, walkDocument, MAX_CHAPTERS } from '../../../../electron/epubEditor/model.js';
 import { textImportDocument } from '../../../../electron/epubEditor/textImport.js';
 import { TEXT_CHAPTER_PARAGRAPHS } from '../../../../electron/epubEditor/textImportLimits.js';
 import { remapCssIds } from '../../../../electron/epubEditor/css.js';
@@ -31,7 +31,7 @@ const schema = new Schema({
         column: { content: 'block+' },
         horizontalRule: { group: 'block' },
     },
-    marks: { bold: {}, italic: {}, link: { attrs: { href: {} } } },
+    marks: { bold: {}, italic: {}, link: { attrs: { href: {} } }, audioRange: { attrs: { id: {}, assetId: {}, title: {}, kind: {}, loop: {}, controls: {}, volume: {} } } },
 });
 const p = (text, attrs) => schema.node('paragraph', { id: newId(), ...attrs }, text ? schema.text(text) : null);
 const doc = (...nodes) => schema.node('doc', null, nodes);
@@ -50,6 +50,23 @@ test('split a marked paragraph without losing text, alignment or shared IDs', ()
     assert.equal(after.content[0].attrs.textAlign, 'center');
     assert.notEqual(before.content[0].attrs.id, after.content[0].attrs.id);
     assert.equal(JSON.stringify(document.toJSON()), original);
+});
+
+test('splitting a text audio range keeps its sound settings and makes the new chapter independent', () => {
+    const attrs = { id: 'ar_scene', assetId: 'a_sound', title: '소리', kind: 'background', loop: true, controls: false, volume: 0.25 };
+    const mark = schema.mark('audioRange', attrs);
+    const document = doc(schema.node('paragraph', { id: newId() }, schema.text('앞부분뒷부분', [mark])), schema.node('paragraph', { id: newId() }, schema.text('다음 문단', [mark])));
+    const { before, after } = splitChapterDocument(stateAt(document, 4));
+    const original = before.content[0].content[0].marks[0].attrs;
+    const next = after.content[0].content[0].marks[0].attrs;
+    assert.equal(original.id, attrs.id);
+    assert.notEqual(next.id, attrs.id);
+    assert.equal(next.id, after.content[1].content[0].marks[0].attrs.id);
+    assert.deepEqual({ ...next, id: attrs.id }, attrs);
+    assert.equal(textContent(before) + textContent(after), '앞부분뒷부분\n다음 문단');
+    const project = createProject();
+    project.chapters = [chapterWith(schema.nodeFromJSON(before)), chapterWith(schema.nodeFromJSON(after))];
+    assert.doesNotThrow(() => validateProject(project));
 });
 
 test('heading boundaries create no phantom blocks and set the new title', () => {
@@ -182,9 +199,9 @@ test('large TXT imports create ordered chapters, retain all paragraphs and suppo
     assert.equal(inserted.chapters[0], existing[0]);
     assert.equal(inserted.chapters.at(-1), existing[1]);
     assert.equal(inserted.chapters.length, existing.length + incoming.chapterCount);
-    const full = Array.from({ length: 999 }, () => chapterWith(doc(p('본문'))));
+    const full = Array.from({ length: MAX_CHAPTERS - 1 }, () => chapterWith(doc(p('본문'))));
     assert.throws(() => importTextChapters(full, full[0].id, state, incoming.document, '초과', 'chapter', 1), { code: 'CHAPTER_LIMIT' });
-    assert.equal(full.length, 999);
+    assert.equal(full.length, MAX_CHAPTERS - 1);
 });
 
 test('chapter split and text import undo/redo restore content and preserve later metadata edits', () => {
@@ -219,9 +236,14 @@ test('atomic history protects body and CSS edits made after a split', () => {
 
 test('chapter limit prevents insert and split without changing existing content', () => {
     const document = doc(p('앞뒤'));
-    const chapters = Array.from({ length: 1000 }, () => chapterWith(document));
+    const chapters = Array.from({ length: MAX_CHAPTERS }, () => chapterWith(document));
     assert.throws(() => splitProjectChapter(chapters, chapters[0].id, stateAt(document, 2)), { code: 'CHAPTER_LIMIT' });
     assert.throws(() => importTextChapters(chapters, chapters[0].id, stateAt(document, 2), textImportDocument('글').document, '제목', 'chapter', 2), { code: 'CHAPTER_LIMIT' });
+    const available = chapters.slice(0, -1);
+    const imported = importTextChapters(available, available[0].id, stateAt(document, 2), textImportDocument('글').document, '제목', 'chapter', 2);
+    assert.equal(imported.chapters.length, MAX_CHAPTERS);
+    validateProject({ ...createProject(), chapters: imported.chapters });
+    assert.throws(() => validateProject({ ...createProject(), chapters: [...imported.chapters, createChapter()] }), { code: 'INVALID_PROJECT' });
 });
 
 test('merge a range in book order, preserving unrelated chapters, first-chapter metadata and every block', () => {
@@ -351,4 +373,27 @@ test('merge rejects missing, single or reversed ranges and empty result titles w
     for (const [start, end] of [[chapters[0].id, chapters[0].id], [chapters[1].id, chapters[0].id], ['missing', chapters[1].id], [chapters[0].id, 'missing']]) assert.throws(() => mergeProjectChapters(chapters, start, end), { code: 'MERGE_RANGE_REQUIRED' });
     assert.throws(() => mergeProjectChapters(chapters, chapters[0].id, chapters[1].id, { title: '   ' }), { code: 'CHAPTER_TITLE_REQUIRED' });
     assert.equal(JSON.stringify(chapters), original);
+});
+
+test('chapter history and link updates preserve unaffected document branches in a large book', () => {
+    const document = doc(p('앞 문단'), p('뒤 문단'));
+    const source = chapterWith(document);
+    const anchor = document.child(1).attrs.id;
+    const linked = chapterWith(doc(p('그대로 둘 문단'), schema.node('paragraph', { id: newId() }, schema.text('이동할 링크', [schema.mark('link', { href: `epub:${source.id}#${anchor}` })]))));
+    const untouched = Array.from({ length: 800 }, () => chapterWith(doc(p('편집하지 않은 본문'))));
+    let serialized = 0;
+    for (const chapter of untouched) Object.defineProperty(chapter.content, 'toJSON', { value() { serialized += 1; return { type: this.type, content: this.content }; } });
+    const before = [source, linked, ...untouched];
+    const split = splitProjectChapter(before, source.id, stateAt(document, document.child(0).nodeSize + 1));
+    assert.equal(split.chapters[2].content.content[0], linked.content.content[0]);
+    assert.notEqual(split.chapters[2].content.content[1], linked.content.content[1]);
+    assert.equal(linked.content.content[1].content[0].marks[0].attrs.href, `epub:${source.id}#${anchor}`);
+    const history = contentHistoryEntry(before, split.chapters, source.id);
+    assert.equal(history.ids.length, 3);
+    assert.equal(serialized, 0);
+    assert.equal(restoredChapters(split.chapters, history)[2], untouched[0]);
+    const merged = mergeProjectChapters(split.chapters, source.id, split.selectedId);
+    assert.equal(merged.chapters[1].content.content[0], linked.content.content[0]);
+    assert.equal(merged.chapters[2], untouched[0]);
+    assert.equal(serialized, 0);
 });

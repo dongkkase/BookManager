@@ -44,9 +44,9 @@ export function textImportDocument(source) {
     const text = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/\f/g, '\n\n');
     if (/[\u0000-\u0008\u000b\u000e-\u001f\ufffe\uffff]/u.test(text)) throw projectError('TEXT_NOT_PLAIN');
     if (!text.trim()) throw projectError('TEXT_EMPTY');
-    if (text.length > MAX_TEXT_IMPORT_CHARACTERS) throw projectError('TEXT_TOO_LARGE');
+    if (text.length > MAX_TEXT_IMPORT_CHARACTERS) throw projectError('TEXT_CHARACTERS_TOO_LARGE');
     const lines = text.split('\n', MAX_TEXT_IMPORT_PARAGRAPHS + 1);
-    if (lines.length > MAX_TEXT_IMPORT_PARAGRAPHS) throw projectError('TEXT_TOO_LARGE');
+    if (lines.length > MAX_TEXT_IMPORT_PARAGRAPHS) throw projectError('TEXT_PARAGRAPHS_TOO_LARGE');
     if (lines.some(line => line.length > MAX_TEXT_PARAGRAPH_CHARACTERS)) throw projectError('TEXT_PARAGRAPH_TOO_LARGE');
     const document = { type: 'doc', content: lines.map(line => ({ ...paragraph(line), attrs: { id: newId() } })) };
     return { document, chapterCount: splitTextImportDocument(document).length, preview: text.slice(0, 4000), characters: text.length, paragraphs: lines.length };
@@ -77,6 +77,6 @@ export async function readTextImport(filePath, encoding = 'auto') {
         const text = decodeInChunks(buffer, detected);
         return { ...info, encoding: detected, ...textImportDocument(text) };
     } catch (error) {
-        return { ...info, error: ['TEXT_NOT_PLAIN', 'TEXT_EMPTY', 'TEXT_TOO_LARGE', 'TEXT_PARAGRAPH_TOO_LARGE'].includes(error.code) ? error.code : 'TEXT_ENCODING' };
+        return { ...info, error: ['TEXT_NOT_PLAIN', 'TEXT_EMPTY', 'TEXT_CHARACTERS_TOO_LARGE', 'TEXT_PARAGRAPHS_TOO_LARGE', 'TEXT_PARAGRAPH_TOO_LARGE'].includes(error.code) ? error.code : 'TEXT_ENCODING' };
     }
 }

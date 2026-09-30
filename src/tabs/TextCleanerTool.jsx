@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import TextCleanerEditor from '../components/TextCleanerEditor';
 import TextCleanerSearch from '../components/TextCleanerSearch';
+import TextCleanerRecentFiles from '../components/TextCleanerRecentFiles';
 import { DEFAULT_TEXT_SEARCH_OPTIONS } from '../textCleanerFindReplace';
 import { runTextCleanerSearchJob } from '../textCleanerSearchJob';
 import { droppedPathsFromDataTransfer } from '../appShell';
@@ -15,6 +16,11 @@ import {
 } from '../textCleanerNavigation';
 import { DEFAULT_TEXT_CLEANER_OPTIONS } from '../textCleanerPolicy';
 import { createTextCleanerInput } from '../textCleanerInput';
+import { rememberTextCleanerFile } from '../textCleanerRecentFiles';
+import { TEXT_CLEANER_QUOTE_PAIRS } from '../textCleanerInsertion';
+import { shortcutLabel } from '../features/fileTools/epubEditor/shortcuts';
+
+const TextCleanerInsertDialog = lazy(() => import('../components/TextCleanerInsertDialog'));
 
 function formatBytes(bytes = 0) {
     if (bytes < 1024) return `${bytes} B`;
@@ -377,6 +383,7 @@ function errorMessage(t, error, fallbackKey) {
 
 export default function TextCleanerTool({ t, onBack, openRequest = null, showToast }) {
     const [fileInfo, setFileInfo] = useState(null);
+    const [insertDialog, setInsertDialog] = useState(null);
     const [options, setOptions] = useState(DEFAULT_TEXT_CLEANER_OPTIONS);
     const [backup, setBackup] = useState(true);
     const [analysisVersion, setAnalysisVersion] = useState(0);
@@ -448,6 +455,11 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
         { key: 'trimLeadingWhitespace', label: t('tools.text_cleaner.rule_leading') },
         { key: 'collapseRepeatedSpaces', label: t('tools.text_cleaner.rule_spaces') },
         { key: 'joinBrokenLines', label: t('tools.text_cleaner.rule_line_breaks') },
+        {
+            key: 'removeBlankLines',
+            label: t('tools.text_cleaner.rule_blank_lines'),
+            hint: t('tools.text_cleaner.rule_blank_lines_hint'),
+        },
     ]), [t]);
 
     const updateSearchHighlight = useCallback(side => {
@@ -823,6 +835,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
         pendingSearchMoveRef.current = { source: null, result: null };
         setReplacing(false);
         resultInput.cancel();
+        setInsertDialog(null);
         setLoading(true);
         setError('');
         workerRef.current?.terminate();
@@ -859,6 +872,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
             const response = await window.electronAPI?.loadTextCleanerFile?.(filePath);
             if (requestId !== loadRequestIdRef.current) return;
             if (!response?.ok) throw response?.error || new Error(t('tools.text_cleaner.error_load'));
+            rememberTextCleanerFile(response);
             sourceTextRef.current = response.text;
             resultTextRef.current = response.text;
             setFileInfo({
@@ -921,9 +935,9 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     }, []);
 
-    const handleRuleChange = useCallback(key => {
+    const handleRuleChange = useCallback((key, value) => {
         if (manualEdited && !window.confirm(t('tools.text_cleaner.confirm_reanalyze'))) return;
-        setOptions(current => ({ ...current, [key]: !current[key] }));
+        setOptions(current => ({ ...current, [key]: value ?? !current[key] }));
     }, [manualEdited, t]);
 
     const handleReanalyze = useCallback(() => {
@@ -1020,6 +1034,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                 backup,
             });
             if (!response?.ok) throw response?.error || new Error(t('tools.text_cleaner.error_save'));
+            rememberTextCleanerFile(fileInfo);
             resultTextRef.current = text;
             setFileInfo(current => ({
                 ...current,
@@ -1107,6 +1122,11 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
             if (!search.error) moveSearch(side, pending.direction, pending.focusTarget);
         }
     }, [moveSearch, resultSearchResult, sourceSearchResult]);
+
+    const handleInsert = useCallback((value, pair = false) => {
+        if (busy) return false;
+        return resultAreaRef.current?.insertContent(value, pair) || false;
+    }, [busy]);
 
     const handleBack = useCallback(() => {
         if (confirmDiscard()) onBack();
@@ -1244,23 +1264,36 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
             >
-                <header className="text-cleaner-toolbar">
-                    <button type="button" className="text-cleaner-back" onClick={handleBack}>
+                <header className="text-cleaner-toolbar text-cleaner-welcome-header">
+                    <button type="button" className="text-cleaner-back" onClick={handleBack} disabled={loading}>
                         <FaIcon name="chevronLeft" size={12} />
                         {t('tools.back')}
                     </button>
-                    <h1>{t('tools.item.text_cleaner')}</h1>
-                </header>
-                <div className="text-cleaner-empty-card">
-                    <span className="text-cleaner-empty-icon"><FaIcon name="fileLines" size={28} /></span>
-                    <h2>{t('tools.text_cleaner.empty_title')}</h2>
-                    <p>{t('tools.text_cleaner.empty_description')}</p>
-                    <button type="button" className="text-cleaner-primary" onClick={handleChooseFile} disabled={loading}>
+                    <span className="text-cleaner-brand"><FaIcon name="fileLines" size={16} />{t('tools.item.text_cleaner')}</span>
+                    <button type="button" className="text-cleaner-button" onClick={handleChooseFile} disabled={loading}>
                         <FaIcon name={loading ? 'spinner' : 'folderOpen'} className={loading ? 'fa-spin' : ''} size={14} />
                         {loading ? t('tools.text_cleaner.loading') : t('tools.text_cleaner.choose_file')}
                     </button>
-                    <small>{t('tools.text_cleaner.empty_hint')}</small>
-                    {error && <div className="text-cleaner-message is-error" role="alert">{error}</div>}
+                </header>
+                <div className="text-cleaner-welcome-scroll">
+                    <div className="text-cleaner-welcome-intro">
+                        <span className="text-cleaner-eyebrow">BOOKMANAGER / TEXT CLEANER</span>
+                        <h1>{t('tools.text_cleaner.empty_title')}</h1>
+                        <p>{t('tools.text_cleaner.empty_description')}</p>
+                    </div>
+                    <div className="text-cleaner-open-area">
+                        <button type="button" className="text-cleaner-open-card" onClick={handleChooseFile} disabled={loading}
+                            aria-label={t('tools.text_cleaner.choose_file')}>
+                            <span className="text-cleaner-open-art"><FaIcon name={loading ? 'spinner' : 'fileLines'} className={loading ? 'fa-spin' : ''} size={32} /></span>
+                            <span className="text-cleaner-open-info">
+                                <strong>{loading ? t('tools.text_cleaner.loading') : t('tools.text_cleaner.choose_file')}</strong>
+                                <small>{t('tools.text_cleaner.empty_hint')}</small>
+                            </span>
+                            <FaIcon name="chevronRight" size={16} />
+                        </button>
+                        {error && <div className="text-cleaner-message is-error" role="alert">{error}</div>}
+                    </div>
+                    <TextCleanerRecentFiles t={t} busy={loading} onOpen={loadFile} />
                 </div>
             </section>
         );
@@ -1309,7 +1342,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
             <div className="text-cleaner-options" aria-label={t('tools.text_cleaner.rules')}>
                 <strong>{t('tools.text_cleaner.rules')}</strong>
                 {ruleItems.map(rule => (
-                    <label key={rule.key}>
+                    <label key={rule.key} title={rule.hint}>
                         <input
                             type="checkbox"
                             checked={options[rule.key]}
@@ -1319,6 +1352,36 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                         {rule.label}
                     </label>
                 ))}
+                <span className="text-cleaner-indent-option">
+                    <label title={t('tools.text_cleaner.rule_indent_hint')}>
+                        <input
+                            type="checkbox"
+                            checked={options.indentParagraphs}
+                            disabled={busy}
+                            onChange={() => handleRuleChange('indentParagraphs')}
+                        />
+                        {t('tools.text_cleaner.rule_indent')}
+                    </label>
+                    <select
+                        aria-label={t('tools.text_cleaner.indent_size')}
+                        value={options.paragraphIndentSize}
+                        disabled={busy || !options.indentParagraphs}
+                        onChange={event => handleRuleChange('paragraphIndentSize', Number(event.target.value))}
+                    >
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map(count => (
+                            <option key={count} value={count}>{t('tools.text_cleaner.indent_spaces', { count })}</option>
+                        ))}
+                    </select>
+                    <label title={t('tools.text_cleaner.indent_exclude_quotes_hint')}>
+                        <input
+                            type="checkbox"
+                            checked={options.indentExcludeQuotes}
+                            disabled={busy || !options.indentParagraphs}
+                            onChange={() => handleRuleChange('indentExcludeQuotes')}
+                        />
+                        {t('tools.text_cleaner.indent_exclude_quotes')}
+                    </label>
+                </span>
                 <button type="button" onClick={() => setReviewPanel('quotes')} className="text-cleaner-quote-summary">
                     {t('tools.text_cleaner.quote_review')}{' · '}{quoteReviewPending ? t('tools.text_cleaner.quote_checking') : quoteReview.total}
                 </button>
@@ -1330,6 +1393,19 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                     {error}
                 </div>
             )}
+
+            <div className="text-cleaner-insert-toolbar" role="group" aria-label={t('tools.text_cleaner.insert_title')}>
+                <strong>{t('tools.text_cleaner.insert_title')}</strong>
+                <button type="button" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => setInsertDialog('symbols')}>{t('tools.text_cleaner.insert_symbols')}</button>
+                <button type="button" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => setInsertDialog('emoji')}>{t('tools.text_cleaner.insert_emoji')}</button>
+                {TEXT_CLEANER_QUOTE_PAIRS.map(pair => <button type="button" key={pair.open} disabled={busy}
+                    title={`${t('tools.text_cleaner.wrap_quote', { pair: pair.open + pair.close })}${pair.shortcutCommand ? ` (${shortcutLabel(pair.shortcutCommand)})` : ''}`}
+                    aria-label={t('tools.text_cleaner.wrap_quote', { pair: pair.open + pair.close })}
+                    onMouseDown={event => event.preventDefault()}
+                    onClick={() => { if (handleInsert(pair.open, true)) resultAreaRef.current?.focus({ preventScroll: true }); }}>{pair.open}…{pair.close}</button>)}
+                <button type="button" disabled={busy} onMouseDown={event => event.preventDefault()}
+                    onClick={() => { if (handleInsert('\n')) resultAreaRef.current?.focus({ preventScroll: true }); }}>{t('tools.text_cleaner.insert_newline')}</button>
+            </div>
 
             <div className="text-cleaner-workspace">
                 <section className="text-cleaner-editor-pane">
@@ -1393,6 +1469,10 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                             ref={resultAreaRef}
                             label={t('tools.text_cleaner.result')}
                             readOnly={busy}
+                            quoteToolbar={{
+                                label: t('tools.text_cleaner.insert_quotes'),
+                                quoteLabel: pair => t('tools.text_cleaner.wrap_quote', { pair: pair.open + pair.close }),
+                            }}
                             onInput={handleResultInput}
                             onCompositionStart={resultInput.compositionStart}
                             onCompositionEnd={resultInput.compositionEnd}
@@ -1439,7 +1519,12 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                 {selectedChange ? (
                     <div className="text-cleaner-change-detail">
                         <span className="text-cleaner-change-type">
-                            {selectedChange.type === 'lineBreak' ? t('tools.text_cleaner.type_line_break') : t('tools.text_cleaner.type_whitespace')}
+                            {selectedChange.type === 'blankLine'
+                                ? t('tools.text_cleaner.type_blank_line')
+                                : selectedChange.type === 'lineBreak'
+                                    ? t('tools.text_cleaner.type_line_break')
+                                    : selectedChange.type === 'indentation'
+                                        ? t('tools.text_cleaner.type_indent') : t('tools.text_cleaner.type_whitespace')}
                             {' · '}{t('tools.text_cleaner.line_number', { line: selectedChange.line })}
                         </span>
                         <label>
@@ -1449,7 +1534,8 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                         <span className="text-cleaner-change-arrow">→</span>
                         <label>
                             {t('tools.text_cleaner.after')}
-                            <textarea readOnly value={selectedChange.after || t('tools.text_cleaner.joined')} />
+                            <textarea readOnly value={selectedChange.after || t(selectedChange.type === 'blankLine'
+                                ? 'tools.text_cleaner.deleted' : 'tools.text_cleaner.joined')} />
                         </label>
                     </div>
                 ) : (
@@ -1481,6 +1567,9 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                             </> : <p>{t('tools.text_cleaner.no_quote_issues')}</p>}
                 </div>}
             </section>
+            {insertDialog && <Suspense fallback={<p role="status">{t('tools.text_cleaner.loading')}</p>}>
+                <TextCleanerInsertDialog t={t} emoji={insertDialog === 'emoji'} busy={busy} onInsert={handleInsert} onClose={() => setInsertDialog(null)} />
+            </Suspense>}
         </section>
     );
 }

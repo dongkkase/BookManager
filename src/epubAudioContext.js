@@ -6,8 +6,12 @@ function triggerAnchors(track) {
 }
 
 function pageHasAudioAnchor(page, track) {
+    if (track.rangeId) {
+        const containsRange = nodes => nodes?.some(node => node.audioRangeId === track.rangeId || containsRange(node.children));
+        if ((page.blocks || []).some(block => containsRange(block.nodes))) return true;
+    }
     const triggers = triggerAnchors(track);
-    if (triggers.length) {
+    if (track.rangeId || triggers.length) {
         return triggers.some(anchor => page.anchors?.includes(anchor)
             || (page.blocks || []).some(block => block.anchors?.includes(anchor)));
     }
@@ -34,7 +38,7 @@ export function mapEpubAudioTracks(chapters = [], pages = []) {
             tracks.push(mapped);
             if (!byChapter.has(chapter.name)) byChapter.set(chapter.name, []);
             byChapter.get(chapter.name).push(mapped);
-            const pageIndexes = triggerAnchors(track).length ? matches.map(match => match.index) : [pageIndex];
+            const pageIndexes = track.rangeId || triggerAnchors(track).length ? matches.map(match => match.index) : [pageIndex];
             for (const index of pageIndexes) {
                 if (!byPage.has(index)) byPage.set(index, []);
                 byPage.get(index).push(mapped);
@@ -61,11 +65,13 @@ function isVisiblePage(page, root) {
 
 function audioAnchorBounds(page, track, frame) {
     const document = frame?.contentDocument;
+    const rangeNodes = track.rangeId ? [...(document || page).querySelectorAll('[data-bookmanager-audio-range]')]
+        .filter(node => node.getAttribute('data-bookmanager-audio-range') === track.rangeId && node.localName !== 'audio') : [];
     const triggers = triggerAnchors(track);
     const anchors = triggers.length ? triggers : track.anchor ? [track.anchor] : [];
-    if (!anchors.length) return [page.getBoundingClientRect()];
+    if (!track.rangeId && !anchors.length) return [page.getBoundingClientRect()];
     const candidates = frame ? [] : [...page.querySelectorAll('[data-epub-anchor]')];
-    const rects = anchors.flatMap(anchor => {
+    const rects = track.rangeId ? rangeNodes.flatMap(audioRangeRects) : anchors.flatMap(anchor => {
         const target = frame ? document?.getElementById(anchor) : candidates.find(node => node.dataset.epubAnchor === anchor);
         return target ? getEpubOriginalAnchorRects(target) : [];
     });
@@ -79,6 +85,47 @@ function audioAnchorBounds(page, track, frame) {
         top: outer.top + rect.top * scaleY,
         bottom: outer.top + rect.bottom * scaleY,
     }));
+}
+
+function audioRangeRects(node) {
+    const document = node.ownerDocument;
+    const viewport = document.defaultView;
+    const walker = document.createTreeWalker(node, 4);
+    const range = document.createRange();
+    const rects = [];
+    while (walker.nextNode()) {
+        const text = walker.currentNode;
+        if (!text.textContent.trim()) continue;
+        const style = viewport.getComputedStyle(text.parentElement);
+        if (style.visibility === 'hidden' || style.visibility === 'collapse') continue;
+        let transparent = false;
+        for (let parent = text.parentElement; parent; parent = parent.parentElement) {
+            if (viewport.getComputedStyle(parent).opacity === '0') {
+                transparent = true;
+                break;
+            }
+        }
+        if (transparent) continue;
+        range.selectNodeContents(text);
+        rects.push(...Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0));
+    }
+    range.detach();
+    return rects;
+}
+
+export function epubAudioViewportReady(root, { flowMode, pageIndex }) {
+    if (!root) return false;
+    const attribute = flowMode === 'scroll' ? 'data-reader-index' : 'data-reader-page-index';
+    const viewport = root.getBoundingClientRect();
+    const pages = [...root.querySelectorAll(`[${attribute}]`)].filter(page => {
+        const index = Number(page.getAttribute(attribute));
+        return (flowMode === 'scroll' || index === pageIndex || (flowMode === 'spread' && index === pageIndex + 1))
+            && isVisiblePage(page, root) && intersects(page.getBoundingClientRect(), viewport);
+    });
+    return (flowMode === 'scroll' || pages.length > 0) && pages.every(page => {
+        const frame = page.querySelector('.viewer-epub-original-frame');
+        return !frame || frame.dataset.originalReady === 'true';
+    });
 }
 
 export function visibleEpubAudioTracks(root, mapping, { flowMode, pageIndex }) {

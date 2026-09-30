@@ -35,7 +35,10 @@ export function separateEpubAudioBlockImages(block, imageNodes) {
     };
     const nodes = (block.nodes || []).map(withoutImages).filter(Boolean);
     const audioTracks = [];
-    visitNodes(nodes, node => { if (node.audioTrackId) audioTracks.push(node.audioTrackId); });
+    visitNodes(nodes, node => {
+        if (node.audioTrackId) audioTracks.push(node.audioTrackId);
+        if (node.audioRangeTrackId) audioTracks.push(node.audioRangeTrackId);
+    });
     return {
         image: { nodes: images, anchors: [...imageIds], audioTracks: [] },
         text: { nodes, anchors: (block.anchors || []).filter(anchor => !imageIds.has(anchor)), audioTracks },
@@ -69,10 +72,13 @@ export function sliceEpubAudioBlock(block, text, textOffset = 0) {
         if (!children.length && !keepAnchor) return null;
         if (keepAnchor && node.id) anchors.add(node.id);
         if (keepAnchor && node.audioTrackId) audioTracks.add(node.audioTrackId);
+        if (children.length && node.audioRangeTrackId) audioTracks.add(node.audioRangeTrackId);
         return {
             ...node,
             id: keepAnchor ? node.id : undefined,
             audioTrackId: keepAnchor ? node.audioTrackId : undefined,
+            audioRangeId: children.length ? node.audioRangeId : undefined,
+            audioRangeTrackId: children.length ? node.audioRangeTrackId : undefined,
             children,
         };
     };

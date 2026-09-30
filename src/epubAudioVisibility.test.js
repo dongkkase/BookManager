@@ -27,6 +27,7 @@ import { createRoot } from 'react-dom/client';
 import EpubOriginalDocument from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
 import { mapEpubAudioTracks, visibleEpubAudioTracks } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/epubAudioContext.js')}`)};
 import { useEpubAudioContext } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/useEpubAudioContext.js')}`)};
+import { getEpubOriginalAnchorRects } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/epubOriginalDocument.js')}`)};
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const tick = () => new Promise(resolve => requestAnimationFrame(resolve));
 async function until(predicate, message) {
@@ -50,8 +51,8 @@ const root = createRoot(container);
 let readyCount = 0;
 let observed = [];
 let lastPlaylist = [];
-function Probe({ pageIndex, flowMode }) {
-    const tracks = useEpubAudioContext({ rootRef, mapping, enabled: true, sessionKey: 'test', flowMode, pageIndex });
+function Probe({ pageIndex, flowMode, audioMapping = mapping }) {
+    const tracks = useEpubAudioContext({ rootRef, mapping: audioMapping, enabled: true, sessionKey: 'test', flowMode, pageIndex });
     useLayoutEffect(() => { lastPlaylist = tracks; observed.push({ pageIndex, ids: tracks.map(track => track.id) }); });
     return null;
 }
@@ -64,6 +65,16 @@ const render = async (index, flowMode = 'single', scale = 1) => { root.render(<>
 </>); await tick(); await tick(); };
 const ready = () => [...container.querySelectorAll('iframe')].length > 0 && [...container.querySelectorAll('iframe')].every(frame => frame.dataset.originalReady === 'true');
 const visible = (pageIndex, flowMode = 'single') => visibleEpubAudioTracks(container, mapping, { pageIndex, flowMode }).map(track => track.id);
+const checkHiddenRangeStyles = (node, audioMapping) => {
+    for (const target of [node, node.parentElement]) {
+        for (const [property, value] of [['opacity', '0'], ['visibility', 'hidden'], ['visibility', 'collapse']]) {
+            target.style[property] = value;
+            check(visibleEpubAudioTracks(container, audioMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 0, 'Invisible range text must not play audio: ' + property + '=' + value);
+            target.style.removeProperty(property);
+            check(visibleEpubAudioTracks(container, audioMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 1, 'Restored range text must be audible again');
+        }
+    }
+};
 window.visibilityTests = (async () => {
     await render(0);
     await until(ready, 'The first page did not load');
@@ -134,6 +145,60 @@ window.visibilityTests = (async () => {
         const cues = visibleEpubAudioTracks(container, storyMapping, { pageIndex, flowMode: 'single' }).map(track => track.id);
         check(cues.join() === (pageIndex === 0 ? 'story' : ''), 'A declared scene must trigger sound independently of the audio storage page: ' + JSON.stringify({ pageIndex, cues }));
     }
+    const hiddenChapter = {
+        name: 'editor-hidden.xhtml', audioTracks: [{ ...audio('editor-hidden', 'hidden-sound'), controls: false, volume: 0.3, loop: true }],
+        original: { layout: 'reflowable', resourceUrls: {}, stylesheet: '', html: '<html><head><style>body{margin:0;font:16px/20px sans-serif}.leaf{height:320px;break-after:column}p{margin:0}.audio{margin:30px;padding:20px;border:1px solid}.audio[data-bookmanager-audio-controls="false"]{height:0;line-height:0;margin:0;padding:0;border:0}.audio audio{display:none}</style></head><body><section class="leaf">Before cue</section><section class="leaf"><figure id="hidden-wrapper" class="audio background" data-bookmanager-audio-controls="false"><figcaption>HIDDEN_CAPTION</figcaption><audio id="hidden-sound" controls data-bookmanager-audio-controls="false"></audio></figure><p id="after-hidden">Text after the cue</p></section></body></html>' },
+    };
+    const hiddenMapping = mapEpubAudioTracks([hiddenChapter], [{ name: hiddenChapter.name }, { name: hiddenChapter.name, anchors: ['hidden-sound'] }]);
+    for (const pageIndex of [0, 1, 0]) {
+        root.render(<article key="editor-hidden" data-reader-page-index={pageIndex}>
+            <EpubOriginalDocument chapter={hiddenChapter} pageOffset={pageIndex} pageSize={{ width: 320, height: 400 }}
+                appearance={{ verticalPadding: 40, horizontalPadding: 40 }} onReady={() => readyCount += 1} />
+        </article>);
+        await tick(); await tick();
+        await until(ready, 'The hidden editor cue did not load');
+        const doc = container.querySelector('iframe').contentDocument;
+        check(!doc.querySelector('button, figcaption, figure'), 'Hidden editor audio must remove its player, caption and decorative figure');
+        check(doc.getElementById('hidden-wrapper') && doc.getElementById('hidden-sound'), 'Hidden figure and audio link anchors must survive');
+        check(JSON.stringify(getEpubOriginalAnchorRects(doc.getElementById('hidden-wrapper'))) === JSON.stringify(getEpubOriginalAnchorRects(doc.getElementById('hidden-sound'))), 'Hidden figure links must resolve to the audio position');
+        const cues = visibleEpubAudioTracks(container, hiddenMapping, { pageIndex, flowMode: 'single' }).map(track => track.id);
+        check(cues.join() === (pageIndex === 1 ? 'editor-hidden' : ''), 'Hidden editor sound must follow its own page: ' + JSON.stringify({ pageIndex, cues }));
+        check(!doc.body.textContent.includes('HIDDEN_CAPTION'), 'Hidden captions must not enter selection or TTS');
+    }
+    const rangeChapter = {
+        name: 'range.xhtml', audioTracks: [{ ...audio('range-track', 'range-storage'), rangeId: 'r_rain', triggerAnchors: ['range-start'], controls: false, loop: true }],
+        original: { layout: 'reflowable', resourceUrls: {}, stylesheet: '', html: '<html><head><style>body{margin:0;font:16px/20px monospace}.leaf{height:320px;break-after:column}p{margin:0;orphans:1;widows:1}</style></head><body><section class="leaf">Before range<audio id="range-storage" data-bookmanager-audio-range="r_rain"></audio></section><p><span id="range-start" data-bookmanager-audio-range="r_rain">' + 'range words '.repeat(250) + '</span></p><section id="range-tail" style="height:1200px">After range</section></body></html>' },
+    };
+    const rangeMapping = mapEpubAudioTracks([rangeChapter], [0, 1, 2].map(index => ({ name: rangeChapter.name, anchors: index === 1 ? ['range-start'] : [] })));
+    const renderRangePage = async index => {
+        root.render(<><article key="range" data-reader-page-index={index}>
+            <EpubOriginalDocument chapter={rangeChapter} pageOffset={index} pageSize={{ width: 320, height: 400 }} appearance={{ verticalPadding: 40, horizontalPadding: 40 }} />
+        </article><Probe pageIndex={index} flowMode="single" audioMapping={rangeMapping} /></>);
+        await tick(); await tick();
+        await until(ready, 'The range page did not load');
+    };
+    await renderRangePage(1);
+    await until(() => lastPlaylist[0]?.id === 'range-track', 'The range start did not activate audio');
+    observed = [];
+    await renderRangePage(2);
+    await until(() => observed.some(item => item.pageIndex === 2), 'The continuing range page did not render');
+    check(observed.filter(item => item.pageIndex === 2).every(item => item.ids.join() === 'range-track'), 'A continuing range must never emit a transient empty playlist on page changes');
+    check(visibleEpubAudioTracks(container, rangeMapping, { pageIndex: 2, flowMode: 'single' }).length === 1, 'The portion after a range start anchor must remain audible on the next column');
+    await renderRangePage(0);
+    await until(() => lastPlaylist.length === 0, 'Leaving the selected range must stop its audio');
+    check(visibleEpubAudioTracks(container, rangeMapping, { pageIndex: 0, flowMode: 'single' }).length === 0, 'The storage audio must never activate a range cue');
+    root.render(<article key="range-scroll" data-reader-index="0"><EpubOriginalDocument chapter={rangeChapter} mode="scroll" pageSize={{ width: 320, height: 400 }} appearance={{ verticalPadding: 40, horizontalPadding: 40 }} /></article>);
+    container.style.height = '260px';
+    await tick(); await tick();
+    await until(ready, 'The range scroll document did not load');
+    check(visibleEpubAudioTracks(container, rangeMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 0, 'Range scroll playback must wait for selected text');
+    container.scrollTop = 700;
+    check(visibleEpubAudioTracks(container, rangeMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 1, 'Range scroll playback must use all text lines when its start has left the viewport');
+    const rangeFrame = container.querySelector('iframe');
+    checkHiddenRangeStyles(rangeFrame.contentDocument.getElementById('range-start'), rangeMapping);
+    const tailTop = container.scrollTop + rangeFrame.getBoundingClientRect().top - container.getBoundingClientRect().top + rangeFrame.contentDocument.getElementById('range-tail').getBoundingClientRect().top;
+    container.scrollTop = tailTop + 50;
+    check(visibleEpubAudioTracks(container, rangeMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 0, 'Range scroll playback must stop after the last selected text line');
     root.unmount();
     container.style.height = '480px';
     container.scrollTop = 0;
@@ -143,6 +208,22 @@ window.visibilityTests = (async () => {
     check(visible(0, 'scroll').length === 0, 'Optimized cues outside the scroll viewport must remain silent');
     container.scrollTop = 550;
     check(visible(0, 'scroll').join() === 'one', 'Optimized cues must follow the visible control');
+    container.scrollTop = 0;
+    container.innerHTML = '<article data-reader-page-index="0" data-reader-index="0" style="height:1400px"><p style="height:700px;margin:0">Before hidden audio</p><p style="margin:0"><span data-epub-anchor="sound" data-epub-audio-id="one" data-epub-audio-anchor="sound" data-epub-audio-controls="false" style="display:inline-block;width:0;height:0;padding:0;margin:0;border:0;overflow:hidden;line-height:0"></span>After hidden audio</p></article>';
+    check(visible(0, 'scroll').length === 0, 'Hidden optimized cues outside the viewport must remain silent');
+    container.scrollTop = 550;
+    check(visible(0, 'scroll').join() === 'one', 'Hidden optimized markers must activate at their text location without a player: ' + JSON.stringify({ scrollTop: container.scrollTop, marker: getEpubOriginalAnchorRects(container.querySelector('[data-epub-anchor]')), page: container.querySelector('article').getBoundingClientRect(), viewport: container.getBoundingClientRect() }));
+    check(container.querySelectorAll('button').length === 0, 'Hidden optimized markers must contain no controls');
+    container.scrollTop = 0;
+    container.style.height = '260px';
+    container.innerHTML = '<article data-reader-page-index="0" data-reader-index="0" style="width:280px;font:16px/20px monospace"><p style="height:400px;margin:0">Before range</p><p style="margin:0"><span data-bookmanager-audio-range="r_rain">' + 'range words '.repeat(250) + '</span></p><p id="optimized-tail" style="height:1200px;margin:0">After range</p></article>';
+    const optimizedRangeMapping = mapEpubAudioTracks([rangeChapter], [{ name: rangeChapter.name, blocks: [{ nodes: [{ audioRangeId: 'r_rain', children: [{ type: 'text', text: 'range' }] }] }] }]);
+    check(visibleEpubAudioTracks(container, optimizedRangeMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 0, 'Optimized range audio must wait for visible text');
+    container.scrollTop = 700;
+    check(visibleEpubAudioTracks(container, optimizedRangeMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 1, 'Optimized range audio must continue after its first line leaves view');
+    checkHiddenRangeStyles(container.querySelector('[data-bookmanager-audio-range]'), optimizedRangeMapping);
+    container.scrollTop += container.querySelector('#optimized-tail').getBoundingClientRect().top + 50;
+    check(visibleEpubAudioTracks(container, optimizedRangeMapping, { pageIndex: 0, flowMode: 'scroll' }).length === 0, 'Optimized range audio must stop after the final text line');
     return { readyCount, checks: 13 };
 })();
 `);

@@ -21,7 +21,7 @@ const schema = new Schema({ nodes: {
     image: { group: 'block', atom: true, attrs: { assetId: {}, width: { default: 100 }, align: { default: 'center' }, alt: { default: '' } } },
     columns: { group: 'block', content: 'column{2,3}', attrs: { id } }, column: { content: 'block+' },
     ...Object.fromEntries(Object.entries(tableNodes({ tableGroup: 'block', cellContent: 'block+', cellAttributes: {} })).map(([name, spec]) => [({ table_row: 'tableRow', table_cell: 'tableCell', table_header: 'tableHeader' }[name] || name), { ...spec, content: spec.content?.replaceAll('table_row', 'tableRow').replaceAll('table_cell', 'tableCell').replaceAll('table_header', 'tableHeader') }])),
-}, marks: { bold: {}, link: { attrs: { href: {} } } } });
+}, marks: { bold: {}, link: { attrs: { href: {} } }, tts: { attrs: { id: {}, mode: {}, text: { default: '' } } } } });
 const p = text => schema.node('paragraph', null, text ? schema.text(text) : null);
 const doc = (...nodes) => schema.node('doc', null, nodes);
 const stateAt = (document, from, to = from) => EditorState.create({ doc: document, selection: TextSelection.create(document, from, to), plugins: [history()] });
@@ -99,6 +99,24 @@ test('node capture retains image attributes and repeated insertion preserves reg
 test('template shortcut works with Korean physical-key input without conflicting with existing commands', () => {
     assert.equal(matchesShortcut({ key: 'ㅣ', code: 'KeyL', metaKey: true, ctrlKey: false, altKey: true, shiftKey: true }, shortcuts.templates), true);
     assert.equal(new Set(Object.values(shortcuts)).size, Object.keys(shortcuts).length);
+});
+
+test('repeated template insertion preserves readings while assigning distinct selection identities', () => {
+    const attrs = { id: 'tts_source', mode: 'replace', text: '씨 플러스 플러스' };
+    const document = doc(schema.node('paragraph', null, [schema.text('C', [schema.mark('tts', attrs)]), schema.text('++', [schema.mark('bold'), schema.mark('tts', attrs)])]));
+    const template = captureTemplate(stateAt(document, 1, 4), 'c_source').content;
+    let state = stateAt(doc(p('')), 1);
+    state = state.apply(templateInsertionTransaction(state, template, 'c_target'));
+    state = state.apply(templateInsertionTransaction(state, template, 'c_target'));
+    const annotations = [];
+    state.doc.descendants(node => {
+        for (const mark of node.marks) if (mark.type.name === 'tts') annotations.push(mark.attrs);
+    });
+    assert.equal(annotations.length, 4);
+    assert.equal(annotations[0].id, annotations[1].id);
+    assert.equal(annotations[2].id, annotations[3].id);
+    assert.notEqual(annotations[0].id, annotations[2].id);
+    assert.ok(annotations.every(annotation => annotation.id !== attrs.id && annotation.text === attrs.text));
 });
 
 test('partial selection inside a column or a list heading keeps a valid enclosing structure', () => {

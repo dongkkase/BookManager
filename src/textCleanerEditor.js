@@ -2,6 +2,8 @@ import { Compartment, EditorSelection, EditorState, StateEffect, StateField } fr
 import { Decoration, EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands';
 import { createTextCleanerScroll } from './textCleanerScroll';
+import { handleTextCleanerQuoteKey, insertTextCleanerContent, textCleanerQuotePairs } from './textCleanerInsertion';
+import { createTextCleanerSelectionToolbar } from './textCleanerSelectionToolbar';
 
 const searchMatchEffect = StateEffect.define();
 const searchMatchField = StateField.define({
@@ -26,6 +28,7 @@ export function createTextCleanerEditor(parent, getOptions) {
     let cachedText = '';
     let highlightedMatch = null;
     let resetting = false;
+    let selectionToolbar = null;
 
     const editorConfiguration = () => {
         const options = getOptions();
@@ -47,20 +50,24 @@ export function createTextCleanerEditor(parent, getOptions) {
             EditorState.tabSize.of(4),
             EditorView.lineWrapping,
             history(),
+            textCleanerQuotePairs,
             keymap.of([...defaultKeymap, ...historyKeymap]),
             searchMatchField,
             EditorView.updateListener.of(update => {
+                selectionToolbar?.update(update);
                 if (!update.docChanged || resetting) return;
                 highlightedMatch = null;
                 getOptions().onInput?.();
             }),
             EditorView.domEventHandlers({
+                keydown: handleTextCleanerQuoteKey,
                 compositionstart() { getOptions().onCompositionStart?.(); },
                 compositionend() { getOptions().onCompositionEnd?.(); },
             }),
         ],
     });
     const view = new EditorView({ parent, state: createState('') });
+    if (getOptions().quoteToolbar) selectionToolbar = createTextCleanerSelectionToolbar(view, getOptions);
     const editor = view.scrollDOM;
     const scroll = createTextCleanerScroll(editor, () => getOptions().onScroll?.());
     const clampOffset = offset => Math.min(view.state.doc.length, Math.max(0, Math.round(offset) || 0));
@@ -84,6 +91,7 @@ export function createTextCleanerEditor(parent, getOptions) {
                     cachedDocument = view.state.doc;
                     cachedText = value;
                     highlightedMatch = null;
+                    selectionToolbar?.refresh();
                 } finally {
                     resetting = false;
                 }
@@ -99,6 +107,7 @@ export function createTextCleanerEditor(parent, getOptions) {
     });
     editor.focus = options => view.contentDOM.focus(options);
     editor.blur = () => view.contentDOM.blur();
+    editor.insertContent = (value, pair = false) => insertTextCleanerContent(view, value, pair);
     editor.replaceText = change => {
         view.dispatch({
             changes: change,
@@ -139,6 +148,7 @@ export function createTextCleanerEditor(parent, getOptions) {
         element: editor,
         configure: () => view.dispatch({ effects: configuration.reconfigure(editorConfiguration()) }),
         destroy() {
+            selectionToolbar?.destroy();
             scroll.destroy();
             view.destroy();
         },

@@ -43,7 +43,7 @@ function blockRect(view, $position, editorRect) {
     return { left, top: top - LINE_WIDTH / 2, width: right - left, height: LINE_WIDTH };
 }
 
-export function resolveAssetDropPosition(view, point) {
+export function resolveAssetDropPosition(view, point, { blockOnly = false } = {}) {
     if (!view || view.isDestroyed || view.editable === false || !Number.isFinite(point?.left) || !Number.isFinite(point?.top)) return null;
     try {
         const { doc } = view.state;
@@ -80,6 +80,15 @@ export function resolveAssetDropPosition(view, point) {
             if (!$position.depth) return null;
             position = nearestContainerPosition(view, $position.parent, $position.start(), coords);
             if (position === null) return null;
+            $position = doc.resolve(position);
+        }
+        if (blockOnly && $position.parent.inlineContent) {
+            const rect = readRect(view.nodeDOM($position.before()));
+            if (!rect) return null;
+            const candidates = coords.top < (rect.top + rect.bottom) / 2 ? [$position.before(), $position.after()] : [$position.after(), $position.before()];
+            const boundary = candidates.find(pos => { const resolved = doc.resolve(pos); return acceptsAssets(resolved.parent, resolved.index(), view.state.schema); });
+            if (boundary == null) return null;
+            position = boundary;
             $position = doc.resolve(position);
         }
         const inline = $position.parent.inlineContent;

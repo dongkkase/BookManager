@@ -109,8 +109,6 @@ protocol.registerSchemesAsPrivileged([
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_ID);
-  app.commandLine.appendSwitch('ignore-gpu-blocklist');
-  app.commandLine.appendSwitch('enable-gpu-rasterization');
 }
 
 // 앱 사용자 데이터 디렉토리
@@ -387,6 +385,7 @@ async function initializeApp() {
         openViewerPreview: (filePath, onRelease) => viewerController.openPreview(filePath, onRelease),
       onMetadataSaveSuccess: successfulPaths => viewerController?.refreshAudioMetadata?.(successfulPaths),
         withCoverEdit: (filePath, action) => viewerController.withCoverEdit(filePath, action),
+        getOpenViewerPaths: () => viewerController?.getOpenViewerPaths() || [],
     },
   );
   viewerController = setupViewerWindowManager({

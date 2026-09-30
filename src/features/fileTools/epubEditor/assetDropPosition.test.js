@@ -57,6 +57,19 @@ test('wrapped text and zoomed editor geometry remain in viewport pixels', () => 
     assert.deepEqual(resolveAssetDropPosition(view, { left: 212, top: 170 }).rect, { left: 210.25, top: 152.25, width: 3, height: 33 });
 });
 
+test('element moves snap above or below a paragraph while asset insertion keeps its text caret', () => {
+    const doc = schema.node('doc', null, [paragraph('abcd'), paragraph('efgh')]);
+    const view = createView(doc, { nodes: { 0: rect(120, 100, 680, 140), 6: rect(120, 180, 680, 220) } });
+    const before = resolveAssetDropPosition(view, { left: 180, top: 110 }, { blockOnly: true });
+    const after = resolveAssetDropPosition(view, { left: 180, top: 130 }, { blockOnly: true });
+    assert.equal(before.position, 0);
+    assert.equal(after.position, 6);
+    assert.equal(before.inline, false);
+    assert.equal(after.inline, false);
+    assert.equal(resolveAssetDropPosition(view, { left: 180, top: 110 }).position, 3);
+    assert.equal(resolveAssetDropPosition(view, { left: 180, top: 110 }).inline, true);
+});
+
 test('a gap between paragraphs shows a horizontal line at the actual block insertion position', () => {
     const doc = schema.node('doc', null, [paragraph('abcd'), paragraph('efgh')]);
     const view = createView(doc, {

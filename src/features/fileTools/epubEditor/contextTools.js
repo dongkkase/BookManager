@@ -4,10 +4,12 @@ import { CellSelection } from '@tiptap/pm/tables';
 export function selectionContext(state) {
     const selection = state.selection;
     const { from, to, $from } = selection;
-    if (selection instanceof NodeSelection && ['image', 'audio', 'media', 'footnote', 'table'].includes(selection.node.type.name)) {
+    if (selection instanceof NodeSelection && ['image', 'audio', 'media', 'footnote', 'table', 'horizontalRule'].includes(selection.node.type.name)) {
         return { kind: selection.node.type.name, anchor: from, from, to, before: from, after: to };
     }
     if (selection instanceof TextSelection && !selection.empty && state.doc.textBetween(from, to).trim()) return { kind: 'text', from, to };
+    const audioRange = selection.empty && ($from.nodeAfter?.marks.find(mark => mark.type.name === 'audioRange') || $from.marks().find(mark => mark.type.name === 'audioRange') || $from.nodeBefore?.marks.find(mark => mark.type.name === 'audioRange'));
+    if (audioRange) return { kind: 'audioRange', from, to };
     const link = selection.empty && $from.marks().find(mark => mark.type.name === 'link');
     if (link) return { kind: 'link', href: link.attrs.href, from, to };
     let cell = selection instanceof CellSelection ? selection.$headCell.pos : null;

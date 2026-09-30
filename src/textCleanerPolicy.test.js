@@ -537,6 +537,231 @@ test('규칙은 개별적으로 끌 수 있다', () => {
     assert.equal(result.changes.length, 0);
 });
 
+test('빈 줄 삭제는 기본으로 꺼져 있고 본문 줄의 개행은 유지한다', () => {
+    const lines = ['제목', '', '첫 문단', '', '', '다음 문단.', '', '"대사입니다."'];
+    const source = lines.join('\n');
+
+    assert.equal(cleanText(source).text, source);
+    assert.equal(cleanText(source, { removeBlankLines: false }).text, source);
+    const result = cleanText(source, { removeBlankLines: true });
+    assert.equal(result.text, ['제목', '첫 문단', '다음 문단.', '"대사입니다."'].join('\n'));
+    assert.equal(result.changeCount, 4);
+    assert.ok(result.changes.every(change => change.type === 'blankLine'));
+});
+
+test('다른 규칙을 꺼도 공백만 있는 줄을 삭제하고 본문 공백과 개행 형식은 유지한다', () => {
+    for (const newline of ['\n', '\r\n', '\r']) {
+        const lines = ['', '  첫  문장.', ' \t', '\u3000\u00a0', '  다음 문장.', '', ' \t'];
+        const source = lines.join(newline);
+        const options = {
+            trimLeadingWhitespace: false,
+            collapseRepeatedSpaces: false,
+            joinBrokenLines: false,
+            removeBlankLines: true,
+        };
+        const result = cleanText(source, options);
+
+        assert.equal(result.text, ['  첫  문장.', '  다음 문장.', ''].join(newline));
+        assert.deepEqual(result.changes.map(change => change.line), [1, 3, 4, 6, 7]);
+        assert.equal(result.changeCount, 5);
+        assert.equal(cleanText(result.text, options).changeCount, 0);
+        assert.equal(cleanText(source, { ...options, removeBlankLines: false }).text, source);
+    }
+});
+
+test('빈 문서와 빈 줄뿐인 문서를 처리하고 마지막 본문 줄의 개행은 중복 집계하지 않는다', () => {
+    for (const [source, expected, count] of [
+        ['', '', 0],
+        ['\n', '', 1],
+        [' \t', '', 1],
+        ['\r\n \t\r\n\r\n', '', 3],
+        ['본문.', '본문.', 0],
+        ['본문.\n', '본문.\n', 0],
+        ['본문.\n\n\n', '본문.\n', 2],
+    ]) {
+        const result = cleanText(source, { removeBlankLines: true });
+        assert.equal(result.text, expected);
+        assert.equal(result.changeCount, count);
+    }
+});
+
+test('빈 줄 삭제에서도 코드 블록 내부와 보호된 본문 줄은 유지한다', () => {
+    const code = ['```', '  code', '', ' \t', '```'].join('\n');
+    const table = ['| 이름 | 값 |', '\t항목\t값', '┌────┬────┐', '-----'].join('\n');
+    const source = '\n' + code + '\n\n' + table + '\n\n본문.';
+    const result = cleanText(source, { removeBlankLines: true });
+
+    assert.equal(result.text, code + '\n' + table + '\n본문.');
+    assert.equal(result.changeCount, 3);
+    assert.equal(result.protectedLineCount, cleanText(source).protectedLineCount);
+    const unfinishedCode = '```\ncode\n\n \t';
+    assert.equal(cleanText(unfinishedCode, { removeBlankLines: true }).text, unfinishedCode);
+});
+
+test('빈 줄 삭제는 기존 문장·인용문 연결 뒤에 적용하고 변경 좌표를 유지한다', () => {
+    const source = '  첫  문장.\r\n \t\r\n숨긴 무\n림고수였다.\n\n"첫 문장.\n\n다음 문장."\r마지막 문장.\r\n';
+    const result = cleanText(source, { removeBlankLines: true });
+    assert.equal(result.text, '첫 문장.\r\n숨긴 무림고수였다.\n"첫 문장. 다음 문장."\r마지막 문장.\r\n');
+    assert.deepEqual(result.changes.map(change => change.type), [
+        'whitespace', 'blankLine', 'lineBreak', 'blankLine', 'lineBreak',
+    ]);
+
+    let reconstructed = '';
+    let sourceOffset = 0;
+    for (const change of result.changes) {
+        assert.ok(change.sourceStart >= sourceOffset);
+        reconstructed += source.slice(sourceOffset, change.sourceStart);
+        assert.equal(reconstructed.length, change.resultStart);
+        reconstructed += change.after;
+        assert.equal(reconstructed.length, change.resultEnd);
+        if (change.type === 'blankLine') {
+            const removed = source.slice(change.sourceStart, change.sourceEnd);
+            assert.equal(removed.trim(), '');
+            assert.equal(change.before, removed.replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
+        }
+        sourceOffset = change.sourceEnd;
+    }
+    reconstructed += source.slice(sourceOffset);
+    assert.equal(reconstructed, result.text);
+});
+
+test('빈 줄 삭제는 상세 표시 제한을 넘어서도 전체에 적용한다', () => {
+    const blankCount = MAX_RECORDED_TEXT_CHANGES + 5;
+    const source = Array(blankCount + 1).fill('문장.').join('\n\n');
+    const result = cleanText(source, { removeBlankLines: true });
+
+    assert.equal(result.text, Array(blankCount + 1).fill('문장.').join('\n'));
+    assert.equal(result.changeCount, blankCount);
+    assert.equal(result.changes.length, MAX_RECORDED_TEXT_CHANGES);
+    assert.equal(result.changesTruncated, true);
+});
+
+test('문단 들여쓰기는 기본으로 꺼져 있고 켜면 문단 시작에 공백 두 칸을 넣는다', () => {
+    const source = '첫 문단.\n\n"다음 문단."\n';
+    assert.equal(cleanText(source).text, source);
+    const result = cleanText(source, { indentParagraphs: true });
+
+    assert.equal(result.text, '  첫 문단.\n\n  "다음 문단."\n');
+    assert.equal(result.changeCount, 2);
+    assert.ok(result.changes.every(change => change.type === 'indentation'));
+});
+
+test('문단 들여쓰기는 기존 공백·탭을 선택한 폭으로 맞추고 중복 적용하지 않는다', () => {
+    const source = '\t첫 문단.\n\u3000다음 문단.\n      마지막 문단.';
+    for (let size = 1; size <= 8; size += 1) {
+        for (const trimLeadingWhitespace of [false, true]) {
+            for (const collapseRepeatedSpaces of [false, true]) {
+                const options = {
+                    indentParagraphs: true,
+                    paragraphIndentSize: size,
+                    trimLeadingWhitespace,
+                    collapseRepeatedSpaces,
+                };
+                const result = cleanText(source, options);
+                assert.equal(result.text, ['첫 문단.', '다음 문단.', '마지막 문단.']
+                    .map(line => ' '.repeat(size) + line).join('\n'));
+                const repeated = cleanText(result.text, options);
+                assert.equal(repeated.text, result.text);
+                assert.equal(repeated.changeCount, 0);
+            }
+        }
+    }
+});
+
+test('문단 들여쓰기는 연결된 문장과 여러 줄 인용문의 시작에만 적용한다', () => {
+    const source = '숨긴 무\n림고수였다.\n\n"첫 문장.\n\n다음 문장."';
+    const result = cleanText(source, { indentParagraphs: true, paragraphIndentSize: 4 });
+
+    assert.equal(result.text, '    숨긴 무림고수였다.\n\n    "첫 문장. 다음 문장."');
+    assert.deepEqual(result.changes.filter(change => change.type === 'indentation')
+        .map(change => change.line), [1, 4]);
+    assert.equal(result.changes.filter(change => change.type === 'lineBreak').length, 2);
+    const separate = cleanText(source, { indentParagraphs: true, joinBrokenLines: false });
+    assert.equal(separate.text, '  숨긴 무\n  림고수였다.\n\n  "첫 문장.\n\n  다음 문장."');
+});
+
+test('문단 들여쓰기는 원본 개행 형식과 빈 줄을 유지한다', () => {
+    const source = '\r\n첫 문단.\r다음 문단.\n\n마지막 문단.\r\n';
+    assert.equal(cleanText(source, { indentParagraphs: true }).text,
+        '\r\n  첫 문단.\r  다음 문단.\n\n  마지막 문단.\r\n');
+    for (const blank of ['', '\n', ' \t\r\n\u3000']) {
+        const options = { indentParagraphs: true, trimLeadingWhitespace: false, collapseRepeatedSpaces: false };
+        assert.equal(cleanText(blank, options).text, blank);
+        assert.equal(cleanText(blank, options).changeCount, 0);
+    }
+});
+
+test('문단 들여쓰기와 빈 줄 삭제를 함께 사용해도 표와 코드 블록은 보호한다', () => {
+    const protectedText = [
+        '```', '  code', '', ' \t', '```',
+        '| 이름 | 값 |', '\t항목\t값', '┌────┬────┐', '-----',
+    ].join('\n');
+    const source = '\n' + protectedText + '\n\n본문.\n\n다음 문단.';
+    const result = cleanText(source, { indentParagraphs: true, removeBlankLines: true });
+
+    assert.equal(result.text, protectedText + '\n  본문.\n  다음 문단.');
+    assert.equal(result.protectedLineCount, cleanText(source).protectedLineCount);
+    const unfinishedCode = '```\ncode\n\n \t';
+    assert.equal(cleanText(unfinishedCode, { indentParagraphs: true }).text, unfinishedCode);
+});
+
+test('문단 들여쓰기와 다른 정리 규칙을 함께 적용한 변경 좌표로 결과를 재구성할 수 있다', () => {
+    const source = '  첫  문장.\r\n \t\r\n숨긴 무\n림고수였다.\n\n"첫 문장.\n\n다음 문장."\r마지막 문장.\r\n';
+    const result = cleanText(source, { indentParagraphs: true, removeBlankLines: true });
+    assert.equal(result.text, '  첫 문장.\r\n  숨긴 무림고수였다.\n  "첫 문장. 다음 문장."\r  마지막 문장.\r\n');
+    assert.equal(result.changes[0].type, 'whitespace');
+
+    let reconstructed = '';
+    let sourceOffset = 0;
+    for (const change of result.changes) {
+        assert.ok(change.sourceStart >= sourceOffset);
+        reconstructed += source.slice(sourceOffset, change.sourceStart);
+        assert.equal(reconstructed.length, change.resultStart);
+        reconstructed += change.after;
+        assert.equal(reconstructed.length, change.resultEnd);
+        sourceOffset = change.sourceEnd;
+    }
+    reconstructed += source.slice(sourceOffset);
+    assert.equal(reconstructed, result.text);
+});
+
+test('따옴표 제외는 따옴표로 시작하는 문단에만 적용하며 기본으로 꺼져 있다', () => {
+    const quotes = ['"대사입니다."', "'생각입니다.'", '“대사입니다.”', '‘생각입니다.’', '「대사입니다.」', '『대사입니다.』', '”닫는 따옴표로 시작.'];
+    const source = ['본문 안의 “인용”입니다.', ...quotes, '마지막 문단.'].join('\n');
+    const result = cleanText(source, { indentParagraphs: true, indentExcludeQuotes: true });
+    assert.equal(result.text, ['  본문 안의 “인용”입니다.', ...quotes, '  마지막 문단.'].join('\n'));
+    assert.equal(result.changes.filter(change => change.type === 'indentation').length, 2);
+    assert.equal(cleanText('"대사입니다."', { indentParagraphs: true }).text, '  "대사입니다."');
+    assert.equal(cleanText(source, { indentExcludeQuotes: true }).text, source);
+});
+
+test('따옴표 제외는 개행 연결과 앞 공백 정리 설정을 따른다', () => {
+    const source = '  “첫 문장.\n\n다음 문장.”\n\n본문.';
+    assert.equal(cleanText(source, { indentParagraphs: true, indentExcludeQuotes: true, removeBlankLines: true }).text,
+        '“첫 문장. 다음 문장.”\n  본문.');
+    assert.equal(cleanText('   「대사입니다.」', {
+        indentParagraphs: true, indentExcludeQuotes: true, trimLeadingWhitespace: false, collapseRepeatedSpaces: false,
+    }).text, '   「대사입니다.」');
+});
+
+test('문단 들여쓰기 폭은 유효한 범위로 제한한다', () => {
+    for (const [paragraphIndentSize, expected] of [[0, 1], [-4, 1], [100, 8], [3.9, 3], [NaN, 2], [Infinity, 2], ['invalid', 2]]) {
+        assert.equal(cleanText('본문.', { indentParagraphs: true, paragraphIndentSize }).text,
+            ' '.repeat(expected) + '본문.');
+    }
+});
+
+test('문단 들여쓰기는 상세 기록 제한 이후 문단에도 적용한다', () => {
+    const count = MAX_RECORDED_TEXT_CHANGES + 5;
+    const source = Array(count).fill('문장.').join('\n');
+    const result = cleanText(source, { indentParagraphs: true });
+
+    assert.equal(result.text, Array(count).fill('  문장.').join('\n'));
+    assert.equal(result.changeCount, count);
+    assert.equal(result.changes.length, MAX_RECORDED_TEXT_CHANGES);
+    assert.equal(result.changesTruncated, true);
+});
+
 test('대량 변경은 전체 건수를 집계하되 상세 기록 수를 제한한다', () => {
     const source = Array.from({ length: MAX_RECORDED_TEXT_CHANGES + 5 }, () => '  문장.').join('\n');
     const result = cleanText(source);

@@ -1,3 +1,5 @@
+import { epubTtsText, sliceEpubTtsEdits } from '../electron/epubTts.js';
+import { selectionEpubTtsText } from './viewerEpubTts.js';
 import React, { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ViewerPageCurlBook, { PAGE_CURL_SNAPSHOT_TIMEOUT } from './ViewerPageCurlBook';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -566,9 +568,9 @@ function systemVoiceMatchesLanguage(voice, language) {
   return Boolean(targetLanguage && voiceLanguage && targetLanguage === voiceLanguage);
 }
 
-function splitTtsTextIntoChunks(text = '', maxLength = OPENAI_TTS_MAX_INPUT_LENGTH, preserveDialogue = false) {
-    if (preserveDialogue) return splitSupertonicRequests(normalizeTtsText(text, true), maxLength);
-  const source = normalizeTtsText(text);
+function splitTtsTextIntoChunks(text = '', maxLength = OPENAI_TTS_MAX_INPUT_LENGTH, preserveDialogue = false, prepared = false) {
+    const source = prepared ? String(text || '').trim() : normalizeTtsText(text, preserveDialogue);
+    if (preserveDialogue) return splitSupertonicRequests(source, maxLength);
   if (!source) return [];
   if (source.length <= maxLength) return [source];
 
@@ -679,7 +681,7 @@ function remoteTtsPageCacheKey(page, settings, language) {
   return JSON.stringify([
     remoteTtsVoiceCacheKey(settings, language),
     Number(page?.pageIndex) || 0,
-    normalizeTtsText(page?.text, settings.engine === 'supertonic'),
+    String(page?.text || '').trim(),
   ]);
 }
 
@@ -819,13 +821,14 @@ async function speakDetachedRemoteTts(
   language = 'en',
   onPlaybackStart,
   shouldStartPlayback,
+  prepared = false,
 ) {
   const createRemoteTts = getRemoteTtsApi(settings.engine);
   if (typeof createRemoteTts !== 'function') {
     onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
     return;
   }
-  const chunks = splitTtsTextIntoChunks(text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
+  const chunks = splitTtsTextIntoChunks(text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic', prepared);
   if (chunks.length === 0) {
     onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
     return;
@@ -865,16 +868,17 @@ async function speakDetachedRemoteTts(
 }
 
 function readerItemTtsText(item = {}) {
-  if (typeof item === 'string') return normalizeTtsText(item, true);
-  const parts = [];
-  if (Array.isArray(item.blocks) && item.blocks.length > 0) {
-    item.blocks.forEach(block => {
-      if (block?.text) parts.push(block.text);
-    });
-  } else if (item.text) {
-    parts.push(item.text);
-  }
-  return normalizeTtsText(parts.join('\n\n'), true);
+    if (typeof item === 'string') return normalizeTtsText(item, true);
+    if (typeof item.ttsText === 'string') return item.ttsText;
+    const parts = [];
+    if (Array.isArray(item.blocks) && item.blocks.length > 0) {
+        item.blocks.forEach(block => {
+            if (block?.text) parts.push(epubTtsText(block.text, block.ttsEdits));
+        });
+    } else if (item.text) {
+        parts.push(epubTtsText(item.text, item.ttsEdits));
+    }
+    return parts.join('\n\n').trim();
 }
 
 function getPageEffectDirection(targetIndex, currentIndex) {
@@ -2117,6 +2121,7 @@ function cloneReaderBlockForPage(block = {}, text = '', preserveNodes = true, pa
     style: block.style,
     className: block.className,
     nodes: preserveNodes ? block.nodes : undefined,
+    ...(block.ttsEdits?.length ? { ttsEdits: sliceEpubTtsEdits(block.ttsEdits, text, textOffset) } : {}),
     attributes: block.attributes,
     anchors: block.anchors,
     hasImage: block.hasImage || block.type === 'image',
@@ -2407,6 +2412,12 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '', ex
         />;
     }
     if (node.audioTrackId) {
+        if (node.audioControls === false) {
+            return <span key={key} {...anchorProps} {...extraProps}
+                data-epub-audio-id={node.audioTrackId} data-epub-audio-anchor={node.id}
+                data-epub-audio-controls="false" aria-hidden="true"
+                style={{ display: 'inline-block', width: 0, height: 0, padding: 0, margin: 0, border: 0, overflow: 'hidden', lineHeight: 0 }} />;
+        }
         const playing = markContext.audioState?.trackId === node.audioTrackId && markContext.audioState.status === 'playing';
         const label = viewerText(playing ? 'viewer.epub_audio.pause' : 'viewer.epub_audio.play', playing ? '일시정지' : '재생');
         return (
@@ -2474,6 +2485,8 @@ function renderEpubHtmlNode(node, key, markContext = {}, extraClassName = '', ex
     ),
     style: node.style || undefined,
     ...(node.attributes || {}),
+    ...(node.audioControls === false ? { 'data-epub-audio-wrapper': 'hidden' } : {}),
+    ...(node.audioRangeId ? { 'data-bookmanager-audio-range': node.audioRangeId } : {}),
     ...anchorProps,
     ...extraProps,
   };
@@ -2642,7 +2655,7 @@ function paginateReaderChapter(chapter = {}, options = {}) {
     const audioTextOffsets = new WeakMap();
     const clonePageBlock = (block, text, preserveNodes, patch) => {
         const offset = audioTextOffsets.get(block) || 0;
-        if (block.hasAudio) audioTextOffsets.set(block, offset + String(text || '').replace(/\s/gu, '').length);
+        if (block.hasAudio || block.ttsEdits?.length) audioTextOffsets.set(block, offset + String(text || '').replace(/\s/gu, '').length);
         return cloneReaderBlockForPage(block, text, preserveNodes, patch, offset);
     };
 
@@ -3116,19 +3129,19 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const remoteTtsPageHandoffRef = useRef(new Set());
   const ttsSettingsRef = useRef(settings);
   const onMoveToPageRef = useRef(onMoveToPage);
-  const speechText = normalizeTtsText(text, settings.engine === 'supertonic');
+  const speechText = String(text || '').trim();
   const normalizedPrefetchPages = useMemo(() => prefetchPages
     .slice(0, REMOTE_TTS_PREFETCH_PAGE_LIMIT)
     .map(page => ({
       pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
-      text: normalizeTtsText(page?.text, settings.engine === 'supertonic'),
+      text: String(page?.text || '').trim(),
     }))
     .filter(page => page.text), [prefetchPages, settings.engine]);
     const normalizedPreviousPages = useMemo(() => previousPages
         .slice(0, REMOTE_TTS_HISTORY_PAGE_LIMIT)
         .map(page => ({
             pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
-            text: normalizeTtsText(page?.text, settings.engine === 'supertonic'),
+            text: String(page?.text || '').trim(),
         }))
         .filter(page => page.text && page.pageIndex < pageIndex), [pageIndex, previousPages, settings.engine]);
   const nextSpeakablePage = normalizedPrefetchPages.find(page => page.pageIndex > pageIndex) || null;
@@ -3408,7 +3421,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const loadRemoteTtsPageAudio = useCallback(async page => {
     const normalizedPage = {
       pageIndex: Math.max(0, Number(page?.pageIndex) || 0),
-      text: normalizeTtsText(page?.text, settings.engine === 'supertonic'),
+      text: String(page?.text || '').trim(),
     };
     const cacheKey = remoteTtsPageCacheKey(normalizedPage, settings, language);
     const cachedPage = remoteTtsPageCacheRef.current.get(cacheKey);
@@ -3421,7 +3434,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
         code: remoteTtsCode(settings.engine, 'UNSUPPORTED'),
       });
     }
-    const chunks = splitTtsTextIntoChunks(normalizedPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
+    const chunks = splitTtsTextIntoChunks(normalizedPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic', true);
     if (chunks.length === 0) {
       throw Object.assign(new Error('There is no text to synthesize.'), { code: 'TTS_NO_TEXT' });
     }
@@ -3555,7 +3568,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
       onToast?.(remoteTtsToastMessage({ code: remoteTtsCode(settings.engine, 'UNSUPPORTED') }, settings.engine));
       return;
     }
-    const chunks = splitTtsTextIntoChunks(initialPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
+    const chunks = splitTtsTextIntoChunks(initialPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic', true);
     if (chunks.length === 0) {
       onToast?.(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
@@ -3571,7 +3584,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     try {
       let targetPage = initialPage;
       while (targetPage) {
-        const targetChunks = splitTtsTextIntoChunks(targetPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic');
+        const targetChunks = splitTtsTextIntoChunks(targetPage.text, remoteTtsMaxInputLength(settings.engine), settings.engine === 'supertonic', true);
         setOpenAiState({ status: 'loading', currentChunk: 1, totalChunks: targetChunks.length });
         const currentPageAudio = await loadRemoteTtsPageAudio(targetPage);
         if (openAiRunRef.current !== runId) return;
@@ -6322,11 +6335,11 @@ function ViewerApp() {
     const ttsPageTexts = useMemo(() => prepareSupertonicPages(flowItems.map(readerItemTtsText)), [flowItems]);
     const ttsPageTextAt = useCallback(targetPageIndex => {
         const indexes = flowMode === 'spread' ? [targetPageIndex, targetPageIndex + 1] : [targetPageIndex];
-        return normalizeTtsText(indexes
+        return indexes
             .filter(index => index >= 0 && index < flowItems.length)
             .map(index => ttsPageTexts[index])
             .filter(Boolean)
-            .join('\n\n'), true);
+            .join('\n\n').trim();
     }, [flowItems, flowMode, ttsPageTexts]);
   const ttsPageWindow = useMemo(() => {
     if (!isReaderDocument || flowItems.length < 1) return [];
@@ -8266,7 +8279,7 @@ function ViewerApp() {
 
   const speakSelectionText = useCallback(async () => {
     if (selectionTtsLoading) return;
-    const text = normalizeTtsText(selectionMenu?.text, true);
+    const text = typeof selectionMenu?.ttsText === 'string' ? selectionMenu.ttsText : normalizeTtsText(selectionMenu?.text, true);
     if (!text) {
       showViewerToast(viewerText('viewer.tts.no_text', '읽을 텍스트가 없습니다.'));
       return;
@@ -8297,6 +8310,7 @@ function ViewerApp() {
             viewerLanguage,
             handleSelectionTtsPlaybackStart,
             () => selectionTtsRunRef.current === runId,
+            true,
           );
         } finally {
           finishSelectionTtsLoading();
@@ -8314,7 +8328,7 @@ function ViewerApp() {
         systemVoiceMatchesLanguage(voice, viewerLanguage)
         && (voice.voiceURI === settings.voiceURI || voice.name === settings.voiceURI)
       ));
-      const utterance = new window.SpeechSynthesisUtterance(normalizeTtsText(text));
+      const utterance = new window.SpeechSynthesisUtterance(text);
       if (selectedVoice) utterance.voice = selectedVoice;
       utterance.lang = selectedVoice?.lang || viewerLanguage;
       utterance.rate = settings.rate;
@@ -8376,6 +8390,7 @@ function ViewerApp() {
       placement: position.placement,
             submenuPlacement: position.submenuPlacement,
       text: selectedText,
+      ttsText: selectionEpubTtsText(selection),
       pageIndex: clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1)),
       snippet: selectedText.slice(0, 120),
     });
@@ -9196,10 +9211,10 @@ function ViewerApp() {
                 audioLabels={{ play: viewerText('viewer.epub_audio.play', '재생'), pause: viewerText('viewer.epub_audio.pause', '일시정지'), loading: viewerText('viewer.epub_audio.loading', '불러오는 중') }}
                 searchQuery={activeSearch?.text || ''}
                 highlights={readerHighlights.filter(highlight => highlight.pageIndex === sourceIndex)}
-                onSelectionChange={({ text, rect }) => {
+                onSelectionChange={({ text, ttsText, rect }) => {
                     if (!text.trim() || !rect) return;
                     const position = selectionToolbarPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height });
-                    setSelectionMenu({ kind: 'text-selection', ...position, text: text.replace(/\s+/g, ' ').trim(), snippet: text.slice(0, 120), pageIndex: sourceIndex });
+                    setSelectionMenu({ kind: 'text-selection', ...position, ttsText, text: text.replace(/\s+/g, ' ').trim(), snippet: text.slice(0, 120), pageIndex: sourceIndex });
                 }}
                 onInternalLink={goEpubInternalTarget}
                 onExternalLink={openExternalLink}
@@ -9211,9 +9226,10 @@ function ViewerApp() {
   const renderReaderPageBody = (item, sourceIndex = pageIndex, options = {}) => (
     normalizeReaderBlocks(item).map((block, index) => {
       const measureBlockIndex = Number.isInteger(options.measureBlockIndex) ? options.measureBlockIndex : null;
-      const measureProps = measureBlockIndex !== null
-        ? { 'data-reader-measure-block-index': measureBlockIndex }
-        : {};
+      const measureProps = {
+        ...(measureBlockIndex !== null ? { 'data-reader-measure-block-index': measureBlockIndex } : {}),
+        ...(block.ttsEdits?.length ? { 'data-bm-tts-edits': JSON.stringify(block.ttsEdits) } : {}),
+      };
       const imagePreviewAllowed = Boolean(session?.type === 'epub' && block.hasImage && !readerBlockPreventsImageExpansion(block));
       const htmlBlockClassName = viewerClassName(
         'viewer-reader-html-block',

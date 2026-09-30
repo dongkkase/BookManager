@@ -8,6 +8,8 @@ import { replaceZipEntry } from './core/zipArchive.js';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { buildWebApp } from './servers/webServer.js';
 import { epubAssetResponseData, parseEpubAudioClock, prepareEpubInlineAudio } from './epubAudio.js';
+import { epubTtsText } from './epubTts.js';
+import { mapEpubAudioTracks } from '../src/epubAudioContext.js';
 
 function makeWav() {
     const samples = 3200;
@@ -112,6 +114,102 @@ test('EPUB 오디오 parser는 script/comment를 무시하고 생성 anchor 충�
     assert.equal(parseEpubAudioClock('2.5min'), 150);
     assert.equal(parseEpubAudioClock('npt=0.25s'), 0.25);
     for (const invalid of ['-1s', '1e99', '00:60:00', '1:90', 'foo']) assert.equal(parseEpubAudioClock(invalid), null);
+});
+
+test('audio appearance and volume metadata preserve defaults and bound malformed values', () => {
+    const resolve = (_base, href) => ({ src: `safe:${href}`, type: 'audio/wav', name: href });
+    const result = prepareEpubInlineAudio([
+        '<audio src="legacy.wav" controls></audio>',
+        '<audio src="hidden.wav" controls loop data-bookmanager-audio-controls="false" data-bookmanager-audio-volume="0.35"></audio>',
+        '<audio src="silent.wav" data-bookmanager-audio-controls="true" data-bookmanager-audio-volume="0"></audio>',
+        ...['-2', '9', 'invalid', ''].map(value => `<audio src="${value}.wav" data-bookmanager-audio-volume="${value}"></audio>`),
+    ].join(''), 'chapter.xhtml', resolve);
+    assert.deepEqual(result.tracks.map(track => track.controls), [true, false, true, false, false, false, false]);
+    assert.deepEqual(result.tracks.map(track => track.volume), [1, 0.35, 0, 0, 1, 1, 1]);
+    assert.equal(result.tracks[1].loop, true);
+    assert.match(result.optimizedHtml, /data-bookmanager-audio-track="inline:chapter.xhtml:2" data-bookmanager-audio-controls="false"/);
+});
+
+test('text range audio connects every marked fragment and never uses its stored audio position', async t => {
+    const { filePath } = await fixture(t);
+    const html = `<html><body>
+        <p>Before <span data-bookmanager-audio-range="r_rain">First <strong>range</strong> fragment</span></p>
+        <p><span id="second-range" data-bookmanager-audio-range="r_rain">Second fragment</span> after</p>
+        <audio id="stored" src="../audio/tone.wav" data-bookmanager-audio-range="r_rain" data-bookmanager-audio-volume="0.3" loop></audio>
+        <audio id="orphaned" src="../audio/tone.wav" data-bookmanager-audio-range="r_missing"></audio>
+        </body></html>`;
+    const parsed = prepareEpubInlineAudio(html, 'chapter.xhtml', (_base, href) => ({ src: `safe:${href}`, type: 'audio/wav' }));
+    assert.equal(parsed.tracks[0].rangeId, 'r_rain');
+    assert.deepEqual(parsed.tracks[0].triggerAnchors, ['bookmanager-epub-audio-trigger-1', 'second-range']);
+    assert.deepEqual(parsed.tracks[1].triggerAnchors, []);
+    assert.match(parsed.optimizedHtml, /<span id="stored"><\/span>/);
+    assert.match(parsed.optimizedHtml, /<span id="orphaned"><\/span>/);
+    await replaceZipEntry(filePath, 'OEBPS/text/chapter.xhtml', html);
+    const manager = new ViewerSessionManager();
+    const session = manager.create(filePath, { skipAdjacent: true });
+    const chapter = (await manager.getEpubText(session.id)).chapters[0];
+    const rangeTrack = chapter.audioTracks.find(track => track.rangeId === 'r_rain');
+    const blocks = chapter.blocks.filter(block => block.audioTracks?.includes(rangeTrack.id));
+    assert.equal(blocks.length, 2);
+    assert.deepEqual(blocks.map(block => block.text), ['Before First range fragment', 'Second fragment after']);
+    const flatten = nodes => nodes.flatMap(node => [node, ...flatten(node.children || [])]);
+    assert.ok(blocks.every(block => flatten(block.nodes).some(node => node.audioRangeId === 'r_rain' && node.audioRangeTrackId === rangeTrack.id)));
+    assert.ok(!chapter.blocks.some(block => block.audioTracks?.includes(chapter.audioTracks.find(track => track.rangeId === 'r_missing').id)));
+});
+
+test('visible range controls survive optimization without becoming playback triggers or joining selected words', async t => {
+    const { filePath } = await fixture(t);
+    const html = `<html><body><p>앞 <span data-bookmanager-audio-range="r_words">첫 단어 </span><span data-bookmanager-audio-range="r_words"><strong>둘째 </strong></span>뒤</p>
+        <p><audio id="range-player" controls="controls" data-bookmanager-audio-controls="true" data-bookmanager-audio-range="r_words" src="../audio/tone.wav"></audio></p></body></html>`;
+    const prepared = prepareEpubInlineAudio(html, 'chapter.xhtml', (_base, href) => ({ src: `safe:${href}`, type: 'audio/wav' }));
+    assert.match(prepared.optimizedHtml, /<span id="range-player" data-bookmanager-audio-track="inline:chapter.xhtml:1" data-bookmanager-audio-controls="true"><\/span>/);
+    await replaceZipEntry(filePath, 'OEBPS/text/chapter.xhtml', html);
+    const manager = new ViewerSessionManager();
+    const session = manager.create(filePath, { skipAdjacent: true });
+    const chapter = (await manager.getEpubText(session.id)).chapters[0];
+    const cue = chapter.audioTracks.find(track => track.rangeId === 'r_words');
+    const textBlock = chapter.blocks.find(block => block.text);
+    const storageBlock = chapter.blocks.find(block => !block.text && block.audioTracks?.includes(cue.id));
+    assert.equal(textBlock.text, '앞 첫 단어 둘째 뒤');
+    assert.equal(epubTtsText(textBlock.text, textBlock.ttsEdits), '앞 첫 단어 둘째 뒤');
+    assert.ok(storageBlock);
+    const flatten = nodes => nodes.flatMap(node => [node, ...flatten(node.children || [])]);
+    assert.equal(flatten(storageBlock.nodes).find(node => node.audioTrackId === cue.id).audioControls, undefined);
+    const mapping = mapEpubAudioTracks([chapter], [{ name: chapter.name, blocks: [textBlock] }, { name: chapter.name, blocks: [storageBlock] }]);
+    assert.equal(mapping.byPage.get(0)[0].id, cue.id);
+    assert.equal(mapping.byPage.has(1), false);
+});
+
+test('hidden editor audio removes captions and player spacing while preserving its reading position', async t => {
+    const { filePath } = await fixture(t);
+    await replaceZipEntry(filePath, 'OEBPS/text/chapter.xhtml', `<html><body>
+        <p id="before">앞의 문장</p>
+        <figure id="hidden-figure" class="audio background" data-bookmanager-audio-controls="false">
+            <figcaption>HIDDEN_AUDIO_CAPTION</figcaption>
+            <audio id="hidden-audio" src="../audio/tone.wav" loop data-bookmanager-audio-controls="false" data-bookmanager-audio-volume="0.25"></audio>
+        </figure>
+        <p id="after">뒤의 문장</p>
+        <figure class="audio effect" data-bookmanager-audio-controls="true"><figcaption>VISIBLE_AUDIO_CAPTION</figcaption>
+            <audio id="visible-audio" src="../audio/tone.wav" controls data-bookmanager-audio-controls="true"></audio>
+        </figure></body></html>`);
+    const manager = new ViewerSessionManager();
+    const session = manager.create(filePath, { skipAdjacent: true });
+    const { chapters } = await manager.getEpubText(session.id);
+    const chapter = chapters[0];
+    const hidden = chapter.audioTracks.find(track => track.anchor === 'hidden-audio');
+    assert.equal(hidden.controls, false);
+    assert.equal(hidden.volume, 0.25);
+    assert.equal(hidden.loop, true);
+    assert.ok(!chapter.text.includes('HIDDEN_AUDIO_CAPTION'));
+    assert.ok(chapter.text.includes('VISIBLE_AUDIO_CAPTION'));
+    const block = chapter.blocks.find(item => item.audioTracks?.includes(hidden.id));
+    assert.equal(block.text, '뒤의 문장');
+    assert.ok(block.anchors.includes('hidden-figure'));
+    assert.ok(block.anchors.includes('hidden-audio'));
+    const flatten = nodes => nodes.flatMap(node => [node, ...flatten(node.children || [])]);
+    const marker = flatten(block.nodes).find(node => node.audioTrackId === hidden.id);
+    assert.equal(marker.audioControls, false);
+    assert.ok(!chapter.blocks.some(item => !item.text && item.audioTracks?.includes(hidden.id)));
 });
 
 test('story sound는 같은 문서의 오디오 ID와 여러 본문 트리거를 연결하고 ID 충돌을 피한다', () => {

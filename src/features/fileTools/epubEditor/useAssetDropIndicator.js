@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveAssetDropPosition } from './assetDropPosition';
 
-export default function useAssetDropIndicator({ editor, stageRef, chapterId, mode, disabled }) {
+export default function useAssetDropIndicator({ editor, stageRef, chapterId, mode, disabled, blockOnly = false }) {
     const [indicator, setIndicator] = useState(null);
     const pointer = useRef(null);
     const frame = useRef(null);
@@ -29,7 +29,7 @@ export default function useAssetDropIndicator({ editor, stageRef, chapterId, mod
         }
         if (bounds.right <= bounds.left) return null;
         if (point.left < bounds.left || point.left > bounds.right || point.top < bounds.top || point.top > bounds.bottom) return null;
-        const target = resolveAssetDropPosition(editor.view, point);
+        const target = resolveAssetDropPosition(editor.view, point, { blockOnly });
         if (!target) return null;
         const left = Math.max(target.rect.left, bounds.left);
         const top = Math.max(target.rect.top, bounds.top);
@@ -37,7 +37,7 @@ export default function useAssetDropIndicator({ editor, stageRef, chapterId, mod
         const bottom = Math.min(target.rect.top + target.rect.height, bounds.bottom);
         if (right <= left || bottom <= top) return null;
         return { ...target, rect: { left, top, width: right - left, height: bottom - top }, alignEnd: right > bounds.right - 120, labelBelow: top < bounds.top + 30 };
-    }, [editor, stageRef, disabled]);
+    }, [editor, stageRef, disabled, blockOnly]);
     const show = useCallback(point => {
         pointer.current = point;
         const target = locate(point);

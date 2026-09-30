@@ -12,6 +12,7 @@ export function getEpubOriginalAnchorRects(node) {
     const document = node?.ownerDocument;
     const viewport = document?.defaultView;
     if (!viewport || !node.isConnected) return [];
+    if (node.getAttribute('data-epub-audio-wrapper') === 'hidden') return getEpubOriginalAnchorRects(node.querySelector('[data-epub-audio-anchor]'));
     const control = node.matches('button[data-epub-audio-id]') ? node : node.hasAttribute('data-epub-audio-anchor') ? node.querySelector('button[data-epub-audio-id]') : null;
     const target = control || node;
     const style = viewport.getComputedStyle(target);
@@ -73,7 +74,7 @@ export function getEpubOriginalAnchorRects(node) {
         parent = parent.parentElement;
     }
     const audioOnly = [...document.body.childNodes].every(child => (
-        child.nodeType === 3 ? !child.textContent.trim() : child.nodeType !== 1 || child.matches('style, [data-epub-audio-controls="false"]')
+        child.nodeType === 3 ? !child.textContent.trim() : child.nodeType !== 1 || child.matches('style, [data-epub-audio-controls="false"], [data-epub-audio-wrapper="hidden"]')
     ));
     if (audioOnly) return rects(document.documentElement).slice(0, 1);
     const originalStyle = node.getAttribute('style');
@@ -301,7 +302,7 @@ function replaceEpubAudioElements(document, tracks) {
         proxy.id = String(track.anchor);
         proxy.dataset.epubAudioId = String(track.id);
         proxy.dataset.epubAudioAnchor = String(track.anchor);
-        const controls = audio.hasAttribute('controls');
+        const controls = track.controls ?? (audio.getAttribute('data-bookmanager-audio-controls') === 'false' ? false : audio.hasAttribute('controls'));
         proxy.dataset.epubAudioControls = String(controls);
         if (controls) {
             const button = document.createElement('button');
@@ -323,6 +324,13 @@ function replaceEpubAudioElements(document, tracks) {
             proxy.append(button);
         }
         audio.replaceWith(proxy);
+    });
+    document.querySelectorAll('figure[data-bookmanager-audio-controls="false"]').forEach(figure => {
+        const wrapper = document.createElement('span');
+        if (figure.id) wrapper.id = figure.id;
+        wrapper.dataset.epubAudioWrapper = 'hidden';
+        wrapper.append(...figure.querySelectorAll('[data-epub-audio-anchor]'));
+        figure.replaceWith(wrapper);
     });
 }
 
@@ -432,6 +440,7 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
         }
         figure.external-media, figure[data-media-url] { break-inside: avoid; }
         [data-epub-audio-controls="false"] { display: none !important; }
+        [data-epub-audio-wrapper="hidden"] { display: contents !important; }
         [data-epub-audio-controls="true"] { max-width: 100%; vertical-align: middle; }
         button.bookmanager-epub-audio-control {
             box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px;

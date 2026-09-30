@@ -1,3 +1,5 @@
+import { epubDomTtsSlice, selectionEpubTtsText } from '../../viewerEpubTts.js';
+import { renderTtsSegments } from '../../../electron/epubEditor/tts.js';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics, getEpubOriginalAnchorRects } from '../../epubOriginalDocument.js';
 import EpubInlineMedia from './EpubInlineMedia.jsx';
@@ -78,9 +80,11 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
         if (rect) anchors[id] = pageForRect(rect);
     });
     const textByPage = Array.from({ length: pageCount }, () => []);
+    const ttsByPage = Array.from({ length: pageCount }, () => []);
+    const ttsState = {};
     const walker = document.createTreeWalker(document.body, viewport.NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-            if (!node.textContent.trim() || node.parentElement?.closest('style, script, [hidden], svg, [data-epub-audio-id]')) return viewport.NodeFilter.FILTER_REJECT;
+            if (!node.textContent || node.parentElement?.closest('style, script, [hidden], svg, [data-epub-audio-id]')) return viewport.NodeFilter.FILTER_REJECT;
             return viewport.NodeFilter.FILTER_ACCEPT;
         },
     });
@@ -109,11 +113,15 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
                 else high = middle - 1;
             }
             textByPage[page].push(node.textContent.slice(start, low));
+            const block = node.parentElement?.closest('p, div, li, td, th, h1, h2, h3, h4, h5, h6, blockquote');
+            if (ttsState.previousBlock && block !== ttsState.previousBlock) ttsByPage[page].push({ text: '\n' });
+            ttsByPage[page].push(...epubDomTtsSlice(node, start, low, ttsState));
+            ttsState.previousBlock = block;
             start = low;
         }
     }
     range.detach();
-    return { pageCount, anchors, textByPage: textByPage.map(parts => parts.join(' ').replace(/\s+/g, ' ').trim()), vertical, rtl };
+    return { pageCount, anchors, textByPage: textByPage.map(parts => parts.join(' ').replace(/\s+/g, ' ').trim()), ttsByPage: ttsByPage.map(segments => renderTtsSegments(segments, { preserveDialogue: true })), vertical, rtl };
 }
 
 export default function EpubOriginalDocument({
@@ -404,6 +412,7 @@ export default function EpubOriginalDocument({
                 const scale = frame.getBoundingClientRect().width / (frame.clientWidth || width);
                 callbacksRef.current.onSelectionChange?.({
                     text,
+                    ttsText: selectionEpubTtsText(selection),
                     entryName: chapter?.name || '',
                     pageOffset: callbacksRef.current.pageOffset,
                     rect: bounds ? { left: translated.clientX, top: translated.clientY, width: bounds.width * scale, height: bounds.height * scale } : null,

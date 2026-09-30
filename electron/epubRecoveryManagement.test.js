@@ -65,7 +65,7 @@ test('recovery duplicate copies all content and assets independently and clears 
     assert.notEqual(result.duplicatedId, f.sessionId);
     assert.equal(f.service.sessions.size, 0);
     assert.deepEqual(await fs.readFile(path.join(f.directory, 'recovery.json')), originalRecovery);
-    const data = JSON.parse(await fs.readFile(path.join(f.service.root, result.duplicatedId, 'recovery.json'), 'utf8'));
+    const data = await f.service.readRecovery(result.duplicatedId);
     assert.equal(data.savedPath, null);
     assert.equal(data.savedHash, null);
     assert.equal(data.savedRevision, -1);

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { editorText as l } from './labels';
 import { STYLE_PRESETS, coverSvg } from '../../../../electron/epubEditor/model';
+import { normalizeAudioVolume } from './audioNode';
+import { audioRangeAtSelection } from './audioRanges';
 
 export function Field({ label, children }) {
     return <label className="ee-field"><span>{label}</span>{children}</label>;
@@ -26,19 +28,20 @@ export function FontSelect({ project, value, onChange }) {
     </select>;
 }
 
-export default function Inspector({ hidden, onClose, tab, setTab, project, update, editor, chapter, assetUrls, onAddAsset, onCss, onChapterCss, onFootnote, onMedia, onFormat, editing }) {
+export default function Inspector({ hidden, onClose, tab, setTab, project, update, editor, chapter, assetUrls, onAddAsset, onCss, onChapterCss, onFootnote, onMedia, onAudioRange, onUnlinkAudioRange, onFormat, editing }) {
     const patchStyle = patch => update(current => ({ ...current, style: { ...current.style, ...patch } }));
     const patchCover = patch => update(current => ({ ...current, cover: { ...current.cover, ...patch } }));
     const patchChapter = patch => update(current => ({ ...current, chapters: current.chapters.map(item => item.id === chapter.id ? { ...item, ...patch } : item) }));
     const selectedImage = editing && editor?.isActive('image');
     const audio = editing && editor?.isActive('audio') ? editor.getAttributes('audio') : null;
+    const audioRange = editing && editor ? audioRangeAtSelection(editor.state) : null;
     const media = editing && editor?.isActive('media') ? editor.getAttributes('media') : null;
     const footnote = editing && editor?.isActive('footnote') ? editor.getAttributes('footnote') : null;
     const image = selectedImage ? editor.getAttributes('image') : null;
     const setImage = patch => editor.chain().updateAttributes('image', patch).run();
     const cell = editor?.isActive('tableHeader') ? editor.getAttributes('tableHeader') : editor?.getAttributes('tableCell') || {};
     const table = editing && editor?.isActive('table');
-    const hasElement = !!(image || audio || media || footnote || table);
+    const hasElement = !!(image || audio || audioRange || media || footnote || table);
     const coverUrl = project.cover.mode === 'image' ? assetUrls[project.cover.assetId] : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(coverSvg(project))}`;
     return <aside className="ee-inspector" aria-label={l('inspector')} hidden={hidden} onKeyDown={event => {
         if (editing && !event.isComposing && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); editor.commands.focus(); }
@@ -49,17 +52,24 @@ export default function Inspector({ hidden, onClose, tab, setTab, project, updat
         </div>
         <div className="ee-panel-body">
             {tab === 'properties' && <>
-                {hasElement ? <section className="ee-element-properties" data-element-properties tabIndex={-1} role="group" aria-label={`${l('selection')} · ${l(media ? 'media' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}`}>
-                    <h3>{l('selection')}<span>{l(media ? 'media' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}</span></h3>
+                {hasElement ? <section className="ee-element-properties" data-element-properties tabIndex={-1} role="group" aria-label={`${l('selection')} · ${l(media ? 'media' : audioRange ? 'audioRange' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}`}>
+                    <h3>{l('selection')}<span>{l(media ? 'media' : audioRange ? 'audioRange' : audio ? 'audio' : footnote ? 'footnote' : image ? 'image' : 'table')}</span></h3>
                     {media ? <>
                         <p className="ee-note-text">{media.title || media.url}</p>
                         <p className="ee-muted">{l('mediaExportHint')}</p>
                         <button className="ee-button" onClick={onMedia}>{l('editMedia')}</button>
                         <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
+                    </> : audioRange ? <>
+                        <p className="ee-note-text">{audioRange.title || l('audioRange')}</p>
+                        <p className="ee-muted">{l('audioRangeHint')}</p>
+                        <button className="ee-button" onClick={onAudioRange}>{l('editAudioRange')}</button>
+                        <button className="ee-button ee-danger" onClick={onUnlinkAudioRange}>{l('unlinkAudioRange')}</button>
                     </> : audio ? <>
                         <Field label={l('audioTitle')}><input value={audio.title} onChange={event => editor.commands.updateAttributes('audio', { title: event.target.value })} /></Field>
                         <Field label={l('audioKind')}><select value={audio.kind} onChange={event => editor.commands.updateAttributes('audio', { kind: event.target.value })}><option value="effect">{l('effect')}</option><option value="background">{l('backgroundAudio')}</option></select></Field>
+                        <label className="ee-check"><input type="checkbox" checked={audio.controls !== false} onChange={event => editor.commands.updateAttributes('audio', { controls: event.target.checked })} />{l('audioControls')}</label>
                         <label className="ee-check"><input type="checkbox" checked={audio.loop} onChange={event => editor.commands.updateAttributes('audio', { loop: event.target.checked })} />{l('loop')}</label>
+                        <Field label={l('audioVolume')}><div className="ee-range ee-audio-volume"><input type="range" aria-label={l('audioVolume')} aria-valuetext={`${Math.round(normalizeAudioVolume(audio.volume) * 100)}%`} min={0} max={100} step={1} value={Math.round(normalizeAudioVolume(audio.volume) * 100)} onChange={event => editor.commands.updateAttributes('audio', { volume: Number(event.target.value) / 100 })} /><output>{Math.round(normalizeAudioVolume(audio.volume) * 100)}%</output></div></Field>
                         <p className="ee-muted">{l('audioHint')}</p>
                         <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
                     </> : footnote ? <>

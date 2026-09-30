@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t as i18nT } from './utils/i18n.js';
+import { copyLibraryMovePath } from './libraryMoveCopy.js';
 
 const fsp = fs.promises;
 
@@ -270,11 +271,12 @@ async function nextAvailableDestination(dest) {
   return `${base}_${counter}${ext}`;
 }
 
-async function movePathAsync(src, dest) {
+async function movePathAsync(src, dest, onProgress) {
   try {
     await fsp.rename(src, dest);
   } catch (error) {
     if (error.code !== 'EXDEV') throw error;
+    if (onProgress) return copyLibraryMovePath(src, dest, onProgress);
     const sourceStats = await fsp.stat(src);
     if (sourceStats.isDirectory()) {
       await fsp.cp(src, dest, { recursive: true });
@@ -286,52 +288,77 @@ async function movePathAsync(src, dest) {
   }
 }
 
-export async function executeLibraryMoveAsync(movePlans = []) {
+export async function executeLibraryMoveAsync(movePlans = [], { onProgress } = {}) {
   let successCount = 0;
   let skippedCount = 0;
   const errors = [];
   const completedMoves = [];
   const cleanupRoots = new Set();
+    let processedCount = 0;
+    let lastProgressAt = 0;
+    let lastFile = '';
+    const report = (src, dest, copiedBytes = 0, totalBytes = 0, force = false) => {
+        if (typeof onProgress !== 'function') return;
+        const now = Date.now();
+        if (!force && src === lastFile && now - lastProgressAt < 100) return;
+        lastProgressAt = now;
+        lastFile = src;
+        const fraction = totalBytes > 0 ? Math.min(0.999, copiedBytes / totalBytes) : 0;
+        try {
+            onProgress({
+                processedCount, totalCount: movePlans.length, currentFile: src, destinationFile: dest,
+                copiedBytes, totalBytes, progress: (processedCount + fraction) / Math.max(1, movePlans.length) * 100,
+            });
+        } catch { /* Progress listeners must not interrupt file moves. */ }
+    };
 
   for (const plan of movePlans) {
     let { src, dest } = plan;
-    if (!await pathExists(src)) continue;
-
-    if (await pathExists(dest) && path.normalize(src) !== path.normalize(dest)) {
-      const choice = plan.conflictAction || 'skip';
-      if (choice === 'skip') {
-        skippedCount++;
-        continue;
-      }
-      if (choice === 'overwrite') {
-        try {
-          const destinationStats = await fsp.stat(dest);
-          if (destinationStats.isDirectory()) {
-            await fsp.rm(dest, { recursive: true, force: true });
-          } else {
-            await fsp.unlink(dest);
-          }
-        } catch (_error) {
-          errors.push(i18nT('fs_delete_existing_failed', [path.basename(dest)]));
-          continue;
-        }
-      } else if (choice === 'rename') {
-        dest = await nextAvailableDestination(dest);
-      }
-    }
-
+    report(src, dest, 0, 0, true);
     try {
-      const destDir = path.dirname(dest);
-      await fsp.mkdir(destDir, { recursive: true });
-      await movePathAsync(src, dest);
-      successCount++;
-      completedMoves.push({ src, dest });
-      const cleanupRoot = plan.cleanupRoot;
-      if (cleanupRoot && path.normalize(cleanupRoot) === path.normalize(path.dirname(src))) {
-        cleanupRoots.add(cleanupRoot);
-      }
-    } catch (error) {
-      errors.push(i18nT('fs_move_failed', [path.basename(src), error.message]));
+        if (!await pathExists(src)) continue;
+
+        if (await pathExists(dest) && path.normalize(src) !== path.normalize(dest)) {
+          const choice = plan.conflictAction || 'skip';
+          if (choice === 'skip') {
+            skippedCount++;
+            continue;
+          }
+          if (choice === 'overwrite') {
+            try {
+              const destinationStats = await fsp.stat(dest);
+              if (destinationStats.isDirectory()) {
+                await fsp.rm(dest, { recursive: true, force: true });
+              } else {
+                await fsp.unlink(dest);
+              }
+            } catch (_error) {
+              errors.push(i18nT('fs_delete_existing_failed', [path.basename(dest)]));
+              continue;
+            }
+          } else if (choice === 'rename') {
+            dest = await nextAvailableDestination(dest);
+          }
+        }
+
+        try {
+          const destDir = path.dirname(dest);
+          await fsp.mkdir(destDir, { recursive: true });
+          await movePathAsync(src, dest, typeof onProgress === 'function' ? data => {
+              report(data.currentFile, data.destinationFile, data.copiedBytes, data.totalBytes);
+          } : undefined);
+          successCount++;
+          completedMoves.push({ src, dest });
+          const cleanupRoot = plan.cleanupRoot;
+          if (cleanupRoot && path.normalize(cleanupRoot) === path.normalize(path.dirname(src))) {
+            cleanupRoots.add(cleanupRoot);
+          }
+        } catch (error) {
+          errors.push(i18nT('fs_move_failed', [path.basename(src), error.message]));
+        }
+    } finally {
+        processedCount += 1;
+        report(src, dest, 0, 0, true);
     }
   }
 

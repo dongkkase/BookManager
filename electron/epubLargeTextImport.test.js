@@ -16,11 +16,11 @@ import { listZipEntries, readZipEntry } from './core/zipArchive.js';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const bookText = project => project.chapters.map(chapter => textContent(chapter.content)).join('\n');
 
-test('20 MiB TXT with over 200,000 nodes survives worker import, recovery, save, reopen and EPUB export', async t => {
+test('20 MiB TXT with over 800,000 paragraphs survives worker import, recovery, save, reopen and EPUB export', async t => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bookmanager-large-txt-'));
     const service = new EpubEditorService(path.join(root, 'work'));
     t.after(async () => { await service.dispose(); await fs.rm(root, { recursive: true, force: true }); });
-    const line = `${'가나다라마바사아자차카타파하'.repeat(4)} <>& 끝\n\n`;
+    const line = '가나다라마바사아자차카타파하 <>& 끝\n\n';
     const source = `${line.repeat(Math.ceil(20 * 1024 * 1024 / Buffer.byteLength(line)))}마지막 본문`;
     const expectedHash = hash(source);
     const filePath = path.join(root, '큰 원고.txt');
@@ -29,7 +29,7 @@ test('20 MiB TXT with over 200,000 nodes survives worker import, recovery, save,
     const started = performance.now();
     const read = await service.readText(1, session.sessionId, { filePath, operationId: 'large-read' });
     assert.equal(read.error, undefined);
-    assert.ok(read.paragraphs > 200000);
+    assert.ok(read.paragraphs > 800000);
     assert.equal(read.preview.length, 4000);
     assert.equal(read.characters, source.length);
     const schema = getSchema([StarterKit, ParagraphIndent]);

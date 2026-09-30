@@ -79,6 +79,7 @@ export default function FeatureToolbar({ editor, actions, project, defaultColor 
                 <div className="ee-command-group" role="group" aria-label={l('paragraphIndent')}><IndentControls editor={editor} actions={actions} /></div>
                 <div className="ee-command-group" role="group" aria-label={l('paragraph')}>
                     {['bulletList', 'orderedList', 'blockquote', 'codeBlock'].map(key => button(key, editor.isActive(key)))}
+                    <CommandButton command="removeBlankLines" action={actions.removeBlankLines} aria-haspopup="dialog" showLabel />
                 </div>
             </div>
         </div>
@@ -86,10 +87,10 @@ export default function FeatureToolbar({ editor, actions, project, defaultColor 
             <span className="ee-toolbar-label">{l('insert')}</span>
             <div className="ee-toolbar-panel">
                 <div className="ee-command-group" role="group" aria-label={l('insert')}>
-                    {['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media', 'specialCharacters', 'emoji', 'link', 'horizontalRule', 'columns'].map(key => button(key, undefined, ['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media'].includes(key)))}
+                    {['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'attachAudio', 'media', 'specialCharacters', 'emoji', 'link', 'horizontalRule', 'columns'].map(key => button(key, undefined, ['templates', 'addImage', 'addTable', 'footnote', 'addAudio', 'media', 'horizontalRule'].includes(key)))}
                 </div>
                 <div className="ee-command-group">{button('importText', undefined, true)}{button('splitChapter')}<CommandButton command="mergeChapters" action={actions.mergeChapters} disabled={!canMergeChapters} /></div>
-                <div className="ee-command-group"><CommandButton command="search" action={actions.search} showLabel /><CommandButton command="shortcuts" action={actions.shortcuts} /></div>
+                <div className="ee-command-group"><CommandButton command="search" action={actions.search} showLabel /><CommandButton command="tts" action={actions.tts} aria-haspopup="dialog" showLabel /><CommandButton command="shortcuts" action={actions.shortcuts} /></div>
             </div>
         </div>
     </div>;

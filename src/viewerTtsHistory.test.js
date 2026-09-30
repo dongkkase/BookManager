@@ -1,3 +1,4 @@
+import { epubTtsText } from '../electron/epubTts.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -48,7 +49,7 @@ const constants = [
     'OPENAI_TTS_MODEL', 'OPENAI_TTS_MAX_INPUT_LENGTH', 'SUPERTONIC_TTS_MAX_INPUT_LENGTH',
     'REMOTE_TTS_PREFETCH_PAGE_LIMIT', 'REMOTE_TTS_HISTORY_PAGE_LIMIT',
 ].map(declaration).join('\n');
-const pageWindows = Function('prepareSupertonicPages', 'flowItems', 'pageIndex', 'flowMode', 'isReaderDocument', `
+const pageWindows = Function('epubTtsText', 'prepareSupertonicPages', 'flowItems', 'pageIndex', 'flowMode', 'isReaderDocument', `
     const useCallback = callback => callback;
     const useMemo = callback => callback();
     ${constants}
@@ -102,7 +103,7 @@ const makeHarness = Function('createViewerTtsRequests', 'normalizeSupertonicRead
         if (options.sessionId) sessionId = options.sessionId;
         if (options.language) language = options.language;
         const pageIndex = current.pageIndex;
-        const speechText = normalizeTtsText(current.text, settings.engine === 'supertonic');
+        const speechText = String(current.text || '').trim();
         const prefetchPages = next;
         const previousPages = previous;
         ${[
@@ -120,7 +121,7 @@ const makeHarness = Function('createViewerTtsRequests', 'normalizeSupertonicRead
 `);
 
 const items = Array.from({ length: 20 }, (_, index) => `Page ${index} body.`);
-const windowAt = (index, entries = items, mode = 'single') => pageWindows(prepareSupertonicPages, entries, index, mode, true);
+const windowAt = (index, entries = items, mode = 'single') => pageWindows(epubTtsText, prepareSupertonicPages, entries, index, mode, true);
 const harness = (createSpeech, engine = 'openai') => makeHarness(createViewerTtsRequests, normalizeSupertonicReading, splitSupertonicRequests, supertonicReadingCacheKey, createSpeech, engine);
 const cachedIndexes = h => [...h.cache.values()].map(page => page.pageIndex).sort((a, b) => a - b);
 
@@ -169,7 +170,7 @@ test('빈 페이지는 이전 음성 보관 수에 포함하지 않고 두 장 �
     assert.deepEqual(spread.previous.map(page => page.text), ['Nine', 'Six\n\nSeven', 'Three', 'One']);
     assert.deepEqual(spread.next.map(page => page.pageIndex), [12, 14]);
     assert.deepEqual(windowAt(0, sparse).previous, []);
-    assert.deepEqual(pageWindows(prepareSupertonicPages, sparse, 10, 'single', false), { current: undefined, next: [], previous: [] });
+    assert.deepEqual(pageWindows(epubTtsText, prepareSupertonicPages, sparse, 10, 'single', false), { current: undefined, next: [], previous: [] });
 });
 
 test('모든 생성형 TTS는 정지와 배속 변경에 완성 음성을 유지하고 음성 언어 책 변경에는 비운다', async () => {
@@ -303,4 +304,22 @@ test('따옴표 위치가 바뀌면 같은 글자라도 Supertonic 음성을 다
     const current = await h.load(changed.current);
     assert.notEqual(old.cacheKey, current.cacheKey);
     assert.equal(h.calls.length, 2);
+});
+
+test('모든 생성형 TTS가 교정된 괄호·기호를 그대로 합성하고 문자열별 캐시를 구분한다', async () => {
+    for (const engine of ['openai', 'google', 'supertonic']) {
+        const h = harness(undefined, engine);
+        const corrected = windowAt(0, [{ blocks: [{ text: '(C++) CPU', ttsEdits: [
+            { start: 0, end: 5, mode: 'read', id: 'read' },
+            { start: 5, end: 8, mode: 'replace', id: 'replace', text: '(씨피유++)' },
+        ] }] }]);
+        h.render(corrected);
+        const first = await h.load(corrected.current);
+        assert.equal(h.calls[0].text, '(C++) (씨피유++)');
+        const changed = { current: { pageIndex: 0, text: '(C) (씨피유)' }, next: [], previous: [] };
+        h.render(changed);
+        const second = await h.load(changed.current);
+        assert.notEqual(first.cacheKey, second.cacheKey);
+        assert.equal(h.calls.length, 2);
+    }
 });

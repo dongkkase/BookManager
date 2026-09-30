@@ -64,6 +64,7 @@ export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource 
     const existingIds = new Set(openingTags.map(item => safeAnchor(item.attrs.id || '')).filter(Boolean));
     const tracks = [];
     const tracksByAudioId = new Map();
+    const tracksByRangeId = new Map();
     const replacements = [];
     let index = 0;
     const audioPattern = /<(?:\w+:)?audio\b(?:"[^"]*"|'[^']*'|[^'">])*\/>|<(?:\w+:)?audio\b(?:"[^"]*"|'[^']*'|[^'">])*>[\s\S]*?<\/(?:\w+:)?audio\s*>/gi;
@@ -89,7 +90,17 @@ export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource 
         }
         existingIds.add(anchor);
         const title = plainText(attrs.title || attrs['aria-label'] || path.posix.basename(resolved[0].name || '') || `Audio ${index}`).slice(0, 240);
-        const track = { id, kind: 'inline', anchor, title, sources, clipBegin: 0, clipEnd: null, loop: Object.hasOwn(attrs, 'loop') };
+        const controls = attrs['data-bookmanager-audio-controls'] === 'false' ? false
+            : attrs['data-bookmanager-audio-controls'] === 'true' || Object.hasOwn(attrs, 'controls');
+        const rawVolume = attrs['data-bookmanager-audio-volume'];
+        const volume = rawVolume?.trim() && Number.isFinite(Number(rawVolume)) ? Math.min(1, Math.max(0, Number(rawVolume))) : 1;
+        const track = { id, kind: 'inline', anchor, title, sources, controls, volume, clipBegin: 0, clipEnd: null, loop: Object.hasOwn(attrs, 'loop') };
+        const rangeId = safeAnchor(attrs['data-bookmanager-audio-range']);
+        if (rangeId) {
+            track.rangeId = rangeId;
+            track.triggerAnchors = [];
+            if (!tracksByRangeId.has(rangeId)) tracksByRangeId.set(rangeId, track);
+        }
         tracks.push(track);
         if (attrs.id && !tracksByAudioId.has(attrs.id)) tracksByAudioId.set(attrs.id, track);
         const originalOpening = opening.replace(/\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+)/i, '')
@@ -98,14 +109,15 @@ export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource 
             start: match.index,
             end: match.index + raw.length,
             original: originalOpening + raw.slice(opening.length),
-            optimized: `<span id="${escapeAttribute(anchor)}" data-bookmanager-audio-track="${escapeAttribute(id)}"></span>`,
+            optimized: `<span id="${escapeAttribute(anchor)}" data-bookmanager-audio-track="${escapeAttribute(id)}" data-bookmanager-audio-controls="${controls}"></span>`,
             track,
         });
     }
     const audioReplacements = [...replacements];
     let triggerIndex = 0;
     for (const { start, tag, attrs } of openingTags) {
-        const track = tracksByAudioId.get(String(attrs['data-story-sound'] || '').trim());
+        const rangeTrack = /^<(?:\w+:)?span\b/i.test(tag) ? tracksByRangeId.get(safeAnchor(attrs['data-bookmanager-audio-range'])) : null;
+        const track = rangeTrack || tracksByAudioId.get(String(attrs['data-story-sound'] || '').trim());
         if (!track || audioReplacements.some(item => start >= item.start && start < item.end)) continue;
         triggerIndex += 1;
         let anchor = safeAnchor(attrs.id);
@@ -118,11 +130,11 @@ export function prepareEpubInlineAudio(html = '', entryName = '', resolveSource 
         if (!track.triggerAnchors.includes(anchor)) track.triggerAnchors.push(anchor);
         const tagged = tag.replace(/\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+)/i, '')
             .replace(/\s+data-bookmanager-audio-track\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]+)/i, '')
-            .replace(/\s*\/?>$/, ending => ` id="${escapeAttribute(anchor)}"${ending}`);
+            .replace(/\s*\/?>$/, ending => ` id="${escapeAttribute(anchor)}"${rangeTrack ? ` data-bookmanager-audio-range-track="${escapeAttribute(track.id)}"` : ''}${ending}`);
         replacements.push({ start, end: start + tag.length, original: tagged, optimized: tagged });
     }
     for (const replacement of audioReplacements) {
-        if (replacement.track.triggerAnchors?.length) {
+        if (replacement.track.rangeId ? !replacement.track.controls : replacement.track.triggerAnchors?.length) {
             replacement.optimized = `<span id="${escapeAttribute(replacement.track.anchor)}"></span>`;
         }
     }

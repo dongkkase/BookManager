@@ -6,12 +6,14 @@ export const shortcuts = {
     heading4: 'Mod-Alt-4', heading5: 'Mod-Alt-5', heading6: 'Mod-Alt-6', paragraphFormat: 'Mod-Alt-Shift-P',
     textStyles: 'Mod-Alt-Shift-T', textBackground: 'Mod-Alt-Shift-B', highlight: 'Mod-Alt-Shift-F',
     superscript: 'Mod-Alt-Shift-6', subscript: 'Mod-Alt-Shift-5', media: 'Mod-Alt-Shift-Y', specialCharacters: 'Mod-Alt-Shift-7', emoji: 'Mod-Alt-Shift-8',
+    doubleQuotes: "Mod-Shift-'", singleQuotes: "Mod-'",
     bulletList: 'Mod-Shift-8', orderedList: 'Mod-Shift-7', blockquote: 'Mod-Shift-B', codeBlock: 'Mod-Alt-C',
     left: 'Mod-Shift-L', center: 'Mod-Shift-E', right: 'Mod-Shift-R', justify: 'Mod-Shift-J',
     increaseIndent: 'Mod-]', decreaseIndent: 'Mod-[', firstLineIndent: 'Mod-Alt-Shift-I', hangingIndent: 'Mod-Alt-Shift-O', noFirstLineIndent: 'Mod-Alt-Shift-0', inheritFirstLineIndent: 'Mod-Alt-Shift-D',
     link: 'Mod-K', search: 'Mod-F', color: 'Mod-Alt-Shift-C', reset: 'Mod-Alt-X', horizontalRule: 'Mod-Alt-H', columns: 'Mod-Alt-D',
     addImage: 'Mod-Alt-I', addTable: 'Mod-Alt-T', footnote: 'Mod-Alt-N', addAudio: 'Mod-Alt-A',
     templates: 'Mod-Alt-Shift-L',
+    tts: 'Mod-Alt-Shift-R',
     paragraphFormats: 'Mod-Alt-Shift-G',
     addRowBefore: 'Mod-Alt-ArrowUp', addRowAfter: 'Mod-Alt-ArrowDown', addColumnBefore: 'Mod-Alt-ArrowLeft', addColumnAfter: 'Mod-Alt-ArrowRight',
     mergeCells: 'Mod-Alt-M', splitCell: 'Mod-Alt-P', selectCells: 'Mod-Alt-R',
@@ -29,5 +31,5 @@ export function matchesShortcut(event, shortcut) {
     const parts = shortcut.split('-');
     const key = parts.at(-1);
     return !!(event.metaKey || event.ctrlKey) === parts.includes('Mod') && event.altKey === parts.includes('Alt') && event.shiftKey === parts.includes('Shift') &&
-        (event.code === ({ '[': 'BracketLeft', ']': 'BracketRight' }[key] || (key.length === 1 ? (/\d/.test(key) ? `Digit${key}` : `Key${key.toUpperCase()}`) : key)) || event.key.toLowerCase() === key.toLowerCase());
+        (event.code === ({ '[': 'BracketLeft', ']': 'BracketRight', "'": 'Quote' }[key] || (key.length === 1 ? (/\d/.test(key) ? `Digit${key}` : `Key${key.toUpperCase()}`) : key)) || event.key.toLowerCase() === key.toLowerCase());
 }

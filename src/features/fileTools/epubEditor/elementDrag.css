@@ -1,0 +1,8 @@
+.ee-element-drag-handle { position: fixed; z-index: 35; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid #789d8780; border-radius: 5px; background: var(--bg-secondary, #242a2d); color: var(--text-primary, #e8e9e6); box-shadow: 0 2px 6px #0002; cursor: grab; touch-action: none; }
+.ee-element-drag-handle:hover { border-color: #9bc7ab; background: var(--bg-hover, #36413b); }
+.ee-element-drag-handle:focus-visible { outline: 2px solid #9bc7ab; outline-offset: 2px; }
+.ee-element-drag-handle:active { cursor: grabbing; }
+.ee-element-drag-handle.is-dragging { cursor: grabbing; border-color: #9bc7ab; }
+.ee-stage.is-element-dragging .ProseMirror-selectednode { outline: 2px dashed #58705b; outline-offset: 4px; }
+.ee-stage.is-element-dragging .ProseMirror-dropcursor-block, .ee-stage.is-element-dragging .ProseMirror-dropcursor-inline { display: none; }
+.ee-element-drag-status { position: fixed; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

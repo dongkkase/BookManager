@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openWithViewer: (viewerPath, filePath) => ipcRenderer.invoke('fs:openWithViewer', viewerPath, filePath),
   openInternalViewer: (filePath) => ipcRenderer.invoke('viewer:open', filePath),
     getReadingStates: (filePaths) => ipcRenderer.invoke('reading:getStates', filePaths),
+    updateReadingProgress: (paths, action) => ipcRenderer.invoke('reading:updateProgress', paths, action),
   listRecentReading: (limit) => ipcRenderer.invoke('reading:listRecent', limit),
   removeRecentReading: (filePath) => ipcRenderer.invoke('reading:remove', filePath),
   clearRecentReading: () => ipcRenderer.invoke('reading:clear'),
@@ -89,7 +90,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),
   removeEmptyTree: (rootPath) => ipcRenderer.invoke('fs:removeEmptyTree', rootPath),
   findLibraryMoveConflicts: (movePlans) => ipcRenderer.invoke('fs:findLibraryMoveConflicts', movePlans),
-  executeLibraryMove: (movePlans) => ipcRenderer.invoke('fs:executeLibraryMove', movePlans),
+  executeLibraryMove: (movePlans, options) => ipcRenderer.invoke('fs:executeLibraryMove', movePlans, options),
   extractCoreTitle: (filename) => ipcRenderer.invoke('parser:extractCoreTitle', filename),
   
   // 폴더 스캔

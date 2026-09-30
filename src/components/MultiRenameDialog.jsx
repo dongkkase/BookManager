@@ -16,7 +16,7 @@ function basename(filePath = '') {
   return String(filePath || '').split(/[\\/]/).pop() || '';
 }
 
-function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
+function MultiRenameDialog({ files, onExecute, onClose, t, exists, confirmLast = false }) {
   const renameFiles = useMemo(() => (
     files.map(file => {
       const fullPath = file.full_path || file.path || '';
@@ -262,9 +262,11 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
     </th>
   );
 
+    const confirmButton = <button type="button" className="primary" disabled={!canExecute} onClick={execute}>{t('btn_ok')}</button>;
+
   return (
     <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="file-action-dialog multi-rename-launch-dialog" onMouseDown={event => event.stopPropagation()}>
+      <div className="file-action-dialog multi-rename-launch-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
         <div className="dialog-titlebar multi-rename-titlebar">
           <span className="multi-rename-title">
             <span className="multi-rename-title-icon"><FaIcon name="tableCells" size={9} /></span>
@@ -364,8 +366,9 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists }) {
           )}
         </div>
         <div className="layout-dialog-footer multi-rename-footer">
-          <button type="button" className="primary" disabled={!canExecute} onClick={execute}>{t('btn_ok')}</button>
+            {!confirmLast && confirmButton}
           <button type="button" className="multi-rename-cancel" disabled={executing} onClick={onClose}>{t('btn_cancel')}</button>
+            {confirmLast && confirmButton}
         </div>
       </div>
     </div>

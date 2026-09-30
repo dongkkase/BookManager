@@ -56,7 +56,7 @@ test('plain text import preserves blank lines, tabs and literal markup with boun
 
 test('empty, binary, invalid encoding and oversized files are rejected before import', async t => {
     const { write, root } = await fixture(t);
-    for (const [text, code] of [[' \r\n\t', 'TEXT_EMPTY'], ['GIF\u0000data', 'TEXT_NOT_PLAIN'], ['a'.repeat(MAX_TEXT_IMPORT_CHARACTERS + 1), 'TEXT_TOO_LARGE'], [Array(MAX_TEXT_IMPORT_PARAGRAPHS + 1).fill('a').join('\n'), 'TEXT_TOO_LARGE'], ['가'.repeat(MAX_TEXT_PARAGRAPH_CHARACTERS + 1), 'TEXT_PARAGRAPH_TOO_LARGE']]) assert.throws(() => textImportDocument(text), { code });
+    for (const [text, code] of [[' \r\n\t', 'TEXT_EMPTY'], ['GIF\u0000data', 'TEXT_NOT_PLAIN'], ['a'.repeat(MAX_TEXT_IMPORT_CHARACTERS + 1), 'TEXT_CHARACTERS_TOO_LARGE'], [Array(MAX_TEXT_IMPORT_PARAGRAPHS + 1).fill('a').join('\n'), 'TEXT_PARAGRAPHS_TOO_LARGE'], ['가'.repeat(MAX_TEXT_PARAGRAPH_CHARACTERS + 1), 'TEXT_PARAGRAPH_TOO_LARGE']]) assert.throws(() => textImportDocument(text), { code });
     assert.equal((await readTextImport(await write(Buffer.from([0xef, 0xbb, 0xbf, 0xff])))).error, 'TEXT_ENCODING');
     const large = await write('x');
     await fs.truncate(large, MAX_TEXT_IMPORT_BYTES + 1);
@@ -64,6 +64,20 @@ test('empty, binary, invalid encoding and oversized files are rejected before im
     await assert.rejects(readTextImport(await write('text', 'book.pdf')), { code: 'TEXT_FILE_REQUIRED' });
     await assert.rejects(readTextImport(path.join(root, 'missing.txt')), { code: 'ENOENT' });
     await assert.rejects(readTextImport(large, 'unknown'), { code: 'TEXT_ENCODING' });
+});
+
+test('TXT import accepts text beyond the old character limit and reports decoded limits separately', async t => {
+    const { write } = await fixture(t);
+    const source = `${'a'.repeat(99999)}\n`.repeat(301);
+    const result = textImportDocument(source);
+    assert.equal(result.characters, 30100000);
+    assert.equal(textContent(result.document), source);
+    const tooManyParagraphs = await readTextImport(await write('a\n'.repeat(MAX_TEXT_IMPORT_PARAGRAPHS)));
+    assert.equal(tooManyParagraphs.error, 'TEXT_PARAGRAPHS_TOO_LARGE');
+    assert.equal(tooManyParagraphs.document, undefined);
+    const tooManyCharacters = await readTextImport(await write('a'.repeat(MAX_TEXT_IMPORT_CHARACTERS + 1)));
+    assert.equal(tooManyCharacters.error, 'TEXT_CHARACTERS_TOO_LARGE');
+    assert.equal(tooManyCharacters.document, undefined);
 });
 
 test('large text is partitioned at paragraph boundaries without changing text, blank lines or IDs', () => {
@@ -158,4 +172,69 @@ test('IPC uses the native text picker, honors cancellation and ignores renderer 
     const reloaded = await handler({ sender }, { ...payload, sourceId: read.sourceId, encoding: 'utf-8' });
     assert.equal(reloaded.preview, '선택한 본문');
     assert.equal(calls, 2);
+});
+
+test('IPC reads a dropped TXT without opening the picker and re-decodes it by session source ID', async t => {
+    const { root, write } = await fixture(t);
+    const filePath = await write(Buffer.from([0xb0, 0xa1, 0xb3, 0xaa, 0xb4, 0xd9]), '끌어온 원고.TXT');
+    let handler;
+    let pickerCalls = 0;
+    const sender = new EventEmitter();
+    Object.assign(sender, { id: 7, isDestroyed: () => false, send: () => {} });
+    const controller = registerEpubEditorIpc({
+        ipcMain: { handle: (channel, fn) => { handler = fn; } }, app: { getPath: () => root }, BrowserWindow: { fromWebContents: () => null },
+        dialog: { showOpenDialog: async () => { pickerCalls += 1; return { canceled: true }; } },
+    });
+    t.after(() => controller.dispose());
+    const session = await handler({ sender }, { action: 'create', template: 'blank', language: 'ko' });
+    const before = structuredClone(session.project);
+    const payload = { action: 'readText', sessionId: session.sessionId, operationId: 'drop' };
+    const read = await handler({ sender }, { ...payload, paths: [filePath], encoding: 'utf-8' });
+    assert.equal(read.ok, true);
+    assert.equal(read.error, 'TEXT_ENCODING');
+    assert.equal(read.name, '끌어온 원고.TXT');
+    assert.equal(read.filePath, undefined);
+    const decoded = await handler({ sender }, { ...payload, sourceId: read.sourceId, encoding: 'euc-kr' });
+    assert.equal(decoded.preview, '가나다');
+    assert.equal(decoded.sourceId, read.sourceId);
+    assert.deepEqual(session.project, before);
+    assert.equal(pickerCalls, 0);
+});
+
+test('IPC rejects invalid TXT drops and other owners while retaining the previous source after a failed read', async t => {
+    const { root, write } = await fixture(t);
+    const filePath = await write('기존 원고');
+    const directory = path.join(root, 'folder.txt');
+    await fs.mkdir(directory);
+    let handler;
+    let pickerCalls = 0;
+    const sender = new EventEmitter();
+    Object.assign(sender, { id: 7, isDestroyed: () => false, send: () => {} });
+    const controller = registerEpubEditorIpc({
+        ipcMain: { handle: (channel, fn) => { handler = fn; } }, app: { getPath: () => root }, BrowserWindow: { fromWebContents: () => null },
+        dialog: { showOpenDialog: async () => { pickerCalls += 1; return { canceled: true }; } },
+    });
+    t.after(() => controller.dispose());
+    const session = await handler({ sender }, { action: 'create', template: 'blank', language: 'ko' });
+    const payload = { action: 'readText', sessionId: session.sessionId, operationId: 'drop' };
+    const read = await handler({ sender }, { ...payload, paths: [filePath] });
+    for (const [paths, code] of [
+        [[], 'TEXT_SINGLE_FILE_REQUIRED'], [[filePath, filePath], 'TEXT_SINGLE_FILE_REQUIRED'],
+        [filePath, 'TEXT_SINGLE_FILE_REQUIRED'], [[null], 'TEXT_FILE_REQUIRED'],
+        [['relative.txt'], 'TEXT_FILE_REQUIRED'], [[filePath + '\0.txt'], 'TEXT_FILE_REQUIRED'],
+        [[await write('text', 'book.epub')], 'TEXT_FILE_REQUIRED'], [[directory], 'TEXT_FILE_REQUIRED'],
+        [[path.join(root, 'missing.txt')], 'ENOENT'],
+    ]) {
+        const result = await handler({ sender }, { ...payload, paths });
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, code);
+    }
+    const other = new EventEmitter();
+    Object.assign(other, { id: 8, isDestroyed: () => false, send: () => {} });
+    const denied = await handler({ sender: other }, { ...payload, paths: [filePath] });
+    assert.equal(denied.error.code, 'SESSION_CLOSED');
+    const decoded = await handler({ sender }, { ...payload, sourceId: read.sourceId, encoding: 'utf-8' });
+    assert.equal(decoded.ok, true);
+    assert.equal(decoded.preview, '기존 원고');
+    assert.equal(pickerCalls, 0);
 });

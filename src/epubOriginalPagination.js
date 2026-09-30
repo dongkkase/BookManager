@@ -68,6 +68,7 @@ export function buildOriginalEpubPages(chapters, layouts, { scroll = false } = {
                 : typeof layout.textByPage?.[originalPageOffset] === 'string'
                     ? layout.textByPage[originalPageOffset]
                     : '',
+            ...(!scroll && measured && typeof layout?.ttsByPage?.[originalPageOffset] === 'string' ? { ttsText: layout.ttsByPage[originalPageOffset] } : scroll || !measured ? { blocks: chapter.blocks } : {}),
             anchors: anchorsByPage[originalPageOffset],
         }));
     });

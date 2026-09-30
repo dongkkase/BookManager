@@ -152,6 +152,36 @@ test('duplicated templates share immutable resources until the last reference is
     assert.deepEqual(await fs.readdir(path.join(root, 'template-assets')), []);
 });
 
+test('text-only audio ranges carry their sound asset into another book', async t => {
+    const { root, service, sessionId } = await setup(t);
+    const file = path.join(root, 'range-sound.mp3');
+    await fs.writeFile(file, mp3);
+    const { asset } = await service.addAsset(1, sessionId, file, 'audio');
+    const attrs = { id: 'ar_template', assetId: asset.id, title: '범위 배경음', kind: 'background', loop: true, controls: false, volume: 0.2 };
+    const item = { ...sample(), content: { type: 'doc', content: ['장면의 시작', '장면의 끝'].map(text => ({
+        type: 'paragraph', content: [{ type: 'text', text, marks: [{ type: 'audioRange', attrs: { ...attrs } }] }],
+    })) } };
+    const library = await service.saveContentTemplate(1, sessionId, item, 0);
+    const stored = library.templates[0];
+    assert.equal(stored.assets.length, 1);
+    assert.equal(stored.assets[0].kind, 'audio');
+    const target = await service.create(2, 'blank', 'ko');
+    const imported = await service.importContentTemplate(2, target.sessionId, stored.id, library.revision);
+    target.project.assets = imported.assets;
+    target.project.chapters[0].content = prepareTemplateContent(imported.content).content;
+    const marks = target.project.chapters[0].content.content.map(node => node.content[0].marks[0].attrs);
+    assert.equal(marks[0].id, marks[1].id);
+    assert.notEqual(marks[0].id, attrs.id);
+    assert.notEqual(marks[0].assetId, attrs.assetId);
+    assert.equal(marks[0].assetId, imported.assets[0].id);
+    assert.equal(marks[0].volume, 0.2);
+    assert.equal(inspectProject(target.project).some(issue => issue.severity === 'error'), false);
+    await fs.unlink(file);
+    await service.deleteContentTemplate(stored.id, library.revision);
+    assert.deepEqual((await service.asset(2, target.sessionId, marks[0].assetId)).data, mp3);
+    await service.write(2, target.sessionId, target.project, path.join(root, 'range-template.epub'), 'export', 'range-template-export');
+});
+
 test('asset-copy failures roll back files and leave the previous library and project catalog intact', async t => {
     const { root, service, sessionId } = await setup(t);
     const file = path.join(root, 'image.png');

@@ -3954,6 +3954,28 @@ body.is-reordering-table-column {
   border-color: #4b4d52;
 }
 
+.series-move-dialog .file-action-dialog-body {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.series-move-dialog .file-action-list {
+    flex: 0 0 auto;
+    max-height: none;
+}
+
+.series-move-dialog .file-action-list > div {
+    min-width: 0;
+    gap: 6px;
+    padding: 10px 12px;
+    overflow-wrap: anywhere;
+}
+
+.series-move-dialog .file-action-list > div:last-child {
+    border-bottom: none;
+}
+
 .library-move-titlebar {
   min-height: 42px;
   padding: 0 12px;
@@ -3990,6 +4012,7 @@ body.is-reordering-table-column {
 }
 
 .library-move-body {
+    flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -4104,7 +4127,7 @@ body.is-reordering-table-column {
 
 .library-move-preview-section {
   flex: 1 1 auto;
-  min-height: 0;
+    min-height: 140px;
   grid-template-rows: auto minmax(0, 1fr);
 }
 

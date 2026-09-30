@@ -975,6 +975,11 @@ export function setupViewerWindowManager(options = {}) {
         openPreview,
         refreshAudioMetadata,
         withCoverEdit: (filePath, action) => coverEditGuard.run(filePath, action),
+        getOpenViewerPaths: () => Object.values(viewerContexts)
+            .filter(context => context.window && !context.window.isDestroyed())
+            .flatMap(context => [context.currentSession, context.pendingSession])
+            .filter(session => session && !session.preview)
+            .map(session => session.filePath),
         getWindow: () => (
             activeViewerWindow(viewerContexts.reader)
             || activeViewerWindow(viewerContexts.audio)

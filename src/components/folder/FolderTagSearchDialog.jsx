@@ -107,6 +107,7 @@ function FolderTagSearchDialog({
         <div className="folder-dialog-backdrop" onMouseDown={onClose}>
             <section
                 className="folder-tag-search-dialog"
+                data-folder-modal
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="folder-tag-search-title"

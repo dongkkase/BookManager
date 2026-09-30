@@ -6,7 +6,7 @@ import { closeHistory } from '@tiptap/pm/history';
 import { FaIcon } from '../../../components/FaIcon';
 import { getCurrentLanguage } from '../../../utils/i18n';
 import { isFilePathDrag, droppedPathsFromDataTransfer } from '../../../appShell';
-import { createChapter, duplicateChapter, newId, paragraph, validateProject, inspectProject, textContent, chapterXhtml, safeLink, walkDocument } from '../../../../electron/epubEditor/model';
+import { createChapter, duplicateChapter, newId, paragraph, createProjectValidator, inspectProject, textContent, chapterXhtml, safeLink, walkDocument } from '../../../../electron/epubEditor/model';
 import { editorExtensions } from './extensions';
 import SearchPanel from './SearchPanel';
 import { SearchHighlights, configureEditorSearch } from './search';
@@ -14,20 +14,28 @@ import { editorText as l } from './labels';
 import Inspector from './Inspector';
 import FeatureToolbar, { ShortcutHelp } from './FeatureToolbar';
 import ContextToolbar from './ContextToolbar';
+import ElementDragHandle from './ElementDragHandle';
 import EditorIcon from './EditorIcon';
 import EditorDialog from './EditorDialog';
 import TextColorDialog from './TextColorDialog';
 import CharacterDialog from './CharacterDialog';
+import QuoteContextMenu from './QuoteContextMenu';
+import { QUOTE_CHARACTERS, QUOTE_PAIRS, insertQuote, insertQuotePair, wrapWithQuotes } from './quotes';
 import MediaDialog from './MediaDialog';
+import DividerDialog from './DividerDialog';
 import ContentTemplates from './ContentTemplates';
 import ParagraphFormatsDialog from './ParagraphFormatsDialog';
 import { applyParagraphFormat, paragraphFormatFromSelection, selectedParagraphFormat } from './paragraphFormats';
 import { templateInsertionTransaction } from './templateInsertion';
 import { authoringCss, parseMediaUrl } from '../../../../electron/epubEditor/authoring';
+import { dividerCss } from '../../../../electron/epubEditor/dividers';
 import { clearAuthorFormatting, toggleScript } from './richFormatting';
 import { normalizePastedColor } from './textColors';
 import TextImportDialog from './TextImportDialog';
 import MergeChaptersDialog from './MergeChaptersDialog';
+import BlankLinesDialog from './BlankLinesDialog';
+import { applyBlankLineUpdates } from './blankLines';
+import { createRecoverySync } from './recoverySync';
 import { splitProjectChapter, importTextChapters, mergeProjectChapters, contentHistoryEntry, restoredChapters } from './chapterOperations';
 import { TablePicker, TableRangeDialog, tableCommands } from './TableTools';
 import { shortcuts, shortcutLabel, matchesShortcut } from './shortcuts';
@@ -40,8 +48,13 @@ import { ZOOM_PRESETS } from './editorZoom';
 import useWorkspacePanels from './useWorkspacePanels';
 import useAssetDropIndicator from './useAssetDropIndicator';
 import PreviewViewport, { PreviewDeviceToolbar } from './PreviewViewport.jsx';
+import { attachPreviewAudio } from './previewAudio';
 import RecentProjects from './RecentProjects';
 import ImageAttributesDialog from './ImageAttributesDialog';
+import TtsDialog from './TtsDialog';
+import AudioRangeDialog from './AudioRangeDialog';
+import { audioRangeTransaction, captureAudioRangeSelection } from './audioRanges';
+import { ttsAnnotationTransaction, ttsHistoryEntry, restoreTtsSettings } from './ttsEditing';
 import './epubEditor.css';
 
 const SourceWorkspace = lazy(() => import('./SourceWorkspace'));
@@ -161,9 +174,15 @@ function Workspace({ initial, ...props }) {
 function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, registerBeforeLeave }) {
     const [project, setProject] = useState(initial.project);
     const projectRef = useRef(project);
+    const validateEditingProject = useMemo(() => {
+        const validate = createProjectValidator();
+        validate(initial.project);
+        return validate;
+    }, [initial.project]);
+    const syncRecovery = useMemo(() => createRecoverySync(initial.project, payload => request({ action: 'recover', sessionId: initial.sessionId, ...payload })), [initial.project, initial.sessionId]);
     const [chapterId, setChapterId] = useState(project.chapters[0].id);
     const chapterRef = useRef(chapterId);
-    const [mode, setMode] = useState('design');
+    const [mode, setMode] = useState('edit');
     const [sourceTab, setSourceTab] = useState('source');
     const [dialog, setDialog] = useState(null);
     const [imageEditTarget, setImageEditTarget] = useState(null);
@@ -197,6 +216,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     const [issues, setIssues] = useState(null);
     const [exportedPath, setExportedPath] = useState(null);
     const [searchOpen, setSearchOpen] = useState(false);
+    const [searchScope, setSearchScope] = useState('chapter');
     const [query, setQuery] = useState('');
     const [replacement, setReplacement] = useState('');
     const [linkOpen, setLinkOpen] = useState(false);
@@ -214,6 +234,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     const stageRef = useRef(null);
     const contextToolbarRef = useRef(null);
     const previewAnchor = useRef(null);
+    const previewAudioCleanup = useRef(null);
     const operationRef = useRef(null);
     const taskRef = useRef(Promise.resolve());
     const chapter = project.chapters.find(item => item.id === chapterId) || project.chapters[0];
@@ -271,7 +292,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             setSelectionTick(value => value + 1);
         },
         editorProps: {
-            attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': l('write'), spellcheck: 'false' },
+            attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': l('manuscript'), spellcheck: 'false' },
             transformPastedHTML: html => {
                 const document = new DOMParser().parseFromString(html, 'text/html');
                 document.querySelectorAll('script,style,iframe,object,embed').forEach(node => node.remove());
@@ -289,17 +310,17 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         },
     }, []);
     editorRef.current = editor;
-    const assetDrop = useAssetDropIndicator({ editor, stageRef, chapterId, mode, disabled: !!busy || !!dialog || !['write', 'design'].includes(mode) });
+    const assetDrop = useAssetDropIndicator({ editor, stageRef, chapterId, mode, disabled: !!busy || !!dialog || mode !== 'edit' });
     useEffect(() => {
-        if (!searchOpen || !['write', 'design'].includes(mode)) configureEditorSearch(editor, '');
+        if (!searchOpen || mode !== 'edit') configureEditorSearch(editor, '');
     }, [editor, chapterId, searchOpen, mode]);
     const recover = useCallback(async () => {
         const snapshot = await flush();
-        const result = await request({ action: 'recover', sessionId: initial.sessionId, project: snapshot });
+        const result = await syncRecovery(snapshot);
         recoveryRef.current = Math.max(recoveryRef.current, result.revision);
         setRecoveryRevision(recoveryRef.current);
         return snapshot;
-    }, [flush, initial.sessionId]);
+    }, [flush, syncRecovery]);
     useEffect(() => registerBeforeLeave?.(async () => {
         try {
             await taskRef.current;
@@ -335,7 +356,8 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         return () => { window.removeEventListener('beforeunload', beforeUnload); unsubscribe?.(); };
     }, [recover, report]);
     useEffect(() => { stageRef.current?.querySelectorAll('.ee-paper audio').forEach(audio => audio.pause()); editor?.emit('mediaPlaybackStop'); }, [mode, chapterId]);
-    useEffect(() => { editor?.setEditable(!busy && ['write', 'design'].includes(mode), false); }, [editor, busy, mode]);
+    useEffect(() => () => { previewAudioCleanup.current?.(); previewAudioCleanup.current = null; }, [mode, chapterId]);
+    useEffect(() => { editor?.setEditable(!busy && mode === 'edit', false); }, [editor, busy, mode]);
     useEffect(() => {
         const reset = () => { setDropTarget(null); draggedAsset.current = null; };
         for (const name of ['dragend', 'drop', 'blur']) window.addEventListener(name, reset);
@@ -390,6 +412,8 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         clearTimeout(commitTimer.current);
         pendingRef.current = false;
         setDirty(false);
+        // History entries retain these maps, including each chapter's typing history.
+        states.current = new Map(states.current);
         for (const id of affectedIds) {
             states.current.delete(id);
             codeStates.current.delete(`chapterCss-${id}`);
@@ -405,13 +429,15 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         setSelectionTick(value => value + 1);
         requestAnimationFrame(() => { if (stageRef.current) stageRef.current.scrollTop = cached?.scroll || 0; editor.view.focus(); });
     };
-    const applyContentStructure = result => {
+    const applyContentStructure = (result, { preserveWorkspace = false, operation } = {}) => {
         const current = projectRef.current;
-        const chapters = result.chapters.map(item => current.chapters.includes(item) ? item : { ...item, content: editor.schema.nodeFromJSON(item.content).toJSON() });
+        const existing = new Set(current.chapters);
+        const chapters = result.chapters.map(item => existing.has(item) ? item : { ...item, content: editor.schema.nodeFromJSON(item.content).toJSON() });
         const next = { ...current, chapters, revision: current.revision + 1 };
-        validateProject(next);
+        validateEditingProject(next);
         const savedStates = captureStates();
         const entry = contentHistoryEntry(current.chapters, chapters, chapterRef.current, savedStates);
+        if (operation) entry.operation = operation;
         history.current.undo.push(entry);
         if (history.current.undo.length > 30) history.current.undo.shift();
         history.current.redo = [];
@@ -419,10 +445,12 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         install(next);
         activateContent(chapters, result.selectedId, entry.ids);
         setHistoryTick(value => value + 1);
-        setMode('design');
-        setLeftTab('chapters');
-        setChapterQuery('');
-        setShowStructure(true);
+        if (!preserveWorkspace) {
+            setMode('edit');
+            setLeftTab('chapters');
+            setChapterQuery('');
+            setShowStructure(true);
+        }
     };
     const restoreStructure = async direction => {
         try {
@@ -432,24 +460,86 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             const current = projectRef.current;
             const entry = from.at(-1);
             const chapters = restoredChapters(current.chapters, entry);
+            const restored = restoreTtsSettings({ ...current, chapters }, entry);
             setNotice(null);
             const atomic = !Array.isArray(entry);
             const savedStates = captureStates();
-            history.current[direction === 'undo' ? 'redo' : 'undo'].push(atomic ? contentHistoryEntry(current.chapters, chapters, chapterRef.current, savedStates) : current.chapters);
+            const inverse = entry.ttsSnapshot ? ttsHistoryEntry(current, restored, chapterRef.current, savedStates) : atomic ? contentHistoryEntry(current.chapters, chapters, chapterRef.current, savedStates) : current.chapters;
+            if (entry.operation) inverse.operation = entry.operation;
+            history.current[direction === 'undo' ? 'redo' : 'undo'].push(inverse);
             from.pop();
-            install({ ...current, chapters, revision: current.revision + 1 });
+            install({ ...restored, revision: current.revision + 1 });
             setHistoryTick(value => value + 1);
             if (atomic) {
                 states.current = savedStates;
                 activateContent(chapters, entry.focusId, entry.ids, entry.editorStates);
+                if (['removeBlankLines', 'replaceBookSearch'].includes(entry.operation)) editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false));
             } else if (!chapters.some(item => item.id === chapterRef.current)) await selectChapter(chapters[0].id);
         } catch (error) { report(error); }
     };
     const atomicHistoryAvailable = direction => !!history.current[direction].length && !Array.isArray(history.current[direction].at(-1));
+    const restoreEditing = direction => {
+        const current = commitEditor();
+        const entry = history.current[direction].at(-1);
+        if (entry?.ttsSnapshot || ['removeBlankLines', 'replaceBookSearch'].includes(entry?.operation)) {
+            let ready = false;
+            try {
+                const checked = ['removeBlankLines', 'replaceBookSearch'].includes(entry.operation) ? { ...entry, ids: [...new Set([...entry.ids, chapterRef.current])] } : entry;
+                restoredChapters(current.chapters, checked);
+                restoreTtsSettings(current, entry);
+                ready = true;
+            } catch {}
+            if (ready) return restoreStructure(direction);
+        }
+        return editor.can()[direction]() ? editor.chain().focus()[direction]().run() : atomicHistoryAvailable(direction) && restoreStructure(direction);
+    };
+    const applyTtsSettings = async ({ dictionary, annotation }) => {
+        await flush();
+        const current = projectRef.current;
+        const transaction = ttsAnnotationTransaction(editor.state, annotation);
+        const content = transaction.doc.toJSON();
+        const dictionaryChanged = JSON.stringify(current.tts?.dictionary || []) !== JSON.stringify(dictionary);
+        if (!transaction.docChanged && !dictionaryChanged) { setDialog(null); return; }
+        const next = {
+            ...current,
+            tts: { ...current.tts, dictionary },
+            chapters: transaction.docChanged ? current.chapters.map(item => item.id === chapterRef.current ? { ...item, content } : item) : current.chapters,
+            revision: current.revision + 1,
+        };
+        validateEditingProject(next);
+        const savedStates = captureStates();
+        const entry = ttsHistoryEntry(current, next, chapterRef.current, savedStates);
+        history.current.undo.push(entry);
+        if (history.current.undo.length > 30) history.current.undo.shift();
+        history.current.redo = [];
+        states.current = savedStates;
+        install(next);
+        activateContent(next.chapters, chapterRef.current, entry.ids);
+        editor.view.dispatch(editor.state.tr.setSelection(Selection.fromJSON(editor.state.doc, transaction.selection.toJSON())).setMeta('addToHistory', false));
+        setHistoryTick(value => value + 1);
+        setDialog(null);
+    };
     const openTextImport = async () => {
         await flush();
         textTarget.current = { chapterId: chapterRef.current, position: editor.state.selection.from };
         setDialog('textImport');
+    };
+    const openBlankLines = async () => {
+        try { await flush(); setDialog('blankLines'); }
+        catch (error) { report(error); }
+    };
+    const applyBlankLines = async (result, revision) => {
+        await flush();
+        if (projectRef.current.revision !== revision) throw Object.assign(new Error(), { code: 'CHAPTER_HISTORY_CHANGED' });
+        if (result.count) {
+            applyContentStructure({
+                chapters: applyBlankLineUpdates(projectRef.current.chapters, result.updates),
+                selectedId: chapterRef.current,
+            }, { preserveWorkspace: true, operation: 'removeBlankLines' });
+            editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false));
+            setNotice({ type: 'success', text: l('blankLinesRemoved').replace('{count}', result.count.toLocaleString()) });
+        }
+        setDialog(null);
     };
     const applyTextImport = async (document, title, placement) => {
         await flush();
@@ -491,9 +581,24 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         taskRef.current = task;
         return task;
     };
+    const replaceBookSearch = calculate => runTask('replaceBookSearch', async () => {
+        const snapshot = await flush();
+        const result = await calculate(snapshot.chapters);
+        await flush();
+        if (projectRef.current.revision !== snapshot.revision) throw Object.assign(new Error(), { code: 'CHAPTER_HISTORY_CHANGED' });
+        if (result.count) {
+            const updates = new Map(result.updates.map(item => [item.id, item.content]));
+            applyContentStructure({
+                chapters: snapshot.chapters.map(item => updates.has(item.id) ? { ...item, content: updates.get(item.id) } : item),
+                selectedId: chapterRef.current,
+            }, { preserveWorkspace: true, operation: 'replaceBookSearch' });
+            editor.view.dispatch(closeHistory(editor.state.tr).setMeta('addToHistory', false));
+        }
+        setNotice({ type: 'success', text: l('searchBookReplaced').replace('{count}', result.count.toLocaleString()).replace('{chapters}', result.updates.length.toLocaleString()) });
+    });
     const save = (saveAs = false) => runTask('save', async operationId => {
         const snapshot = await flush();
-        const result = await request({ action: 'save', sessionId: initial.sessionId, project: snapshot, saveAs, operationId });
+        const result = await syncRecovery.save(snapshot, () => request({ action: 'save', sessionId: initial.sessionId, project: snapshot, saveAs, operationId }));
         if (!result.canceled) {
             setSavedRevision(result.revision);
             if (!result.recoveryWarning) { recoveryRef.current = result.revision; setRecoveryRevision(result.revision); }
@@ -534,6 +639,25 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         if (kind === 'audio') editor.chain().focus().insertContent({ type: 'audio', attrs: { assetId: result.asset.id, title: result.asset.name, kind: 'effect', loop: false } }).run();
         setLeftTab('assets');
     });
+    const importRangeAudio = async () => {
+        await flush();
+        const result = await request({ action: 'addAsset', sessionId: initial.sessionId, kind: 'audio' });
+        if (result.canceled) return null;
+        await loadAsset(result.asset);
+        update(current => ({ ...current, assets: [...current.assets, result.asset] }));
+        return result.asset;
+    };
+    const applyAudioRange = async (snapshot, settings, source) => {
+        await flush();
+        editor.view.dispatch(audioRangeTransaction(editor.state, snapshot, settings, source));
+        editor.view.focus();
+        setDialog(null);
+    };
+    const openAudioRange = () => { commitEditor(); setDialog('audioRange'); };
+    const unlinkAudioRange = () => {
+        const snapshot = captureAudioRangeSelection(editor.state);
+        if (snapshot.existing) void applyAudioRange(snapshot, null).catch(report);
+    };
     const openImageEditor = () => {
         if (!editor.isActive('image')) return;
         const image = editor.getAttributes('image');
@@ -586,7 +710,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             await recover();
         } finally { pendingDrop.current = null; }
     });
-    const isBodyDrop = event => ['write', 'design'].includes(mode) && !!event.target.closest?.('.ee-stage') && !event.target.closest?.('input, textarea, button, .ee-footnotes, .ee-paper-label');
+    const isBodyDrop = event => mode === 'edit' && !!event.target.closest?.('.ee-stage') && !event.target.closest?.('input, textarea, button, .ee-footnotes, .ee-paper-label');
     const handleAssetDragOver = event => {
         const internal = event.dataTransfer.types.includes(ASSET_DRAG);
         if (!internal && !isFilePathDrag(event.dataTransfer)) {
@@ -605,9 +729,11 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         setDropTarget(accepted ? target : null);
     };
     const captureAssetDragOver = event => {
+        if (dialog === 'textImport' && event.target.closest?.('.ee-text-import')) return;
         if (event.dataTransfer.types.includes(ASSET_DRAG) || isFilePathDrag(event.dataTransfer)) handleAssetDragOver(event);
     };
     const handleAssetDrop = event => {
+        if (dialog === 'textImport' && event.target.closest?.('.ee-text-import')) return;
         const internal = event.dataTransfer.types.includes(ASSET_DRAG);
         if (!internal && !isFilePathDrag(event.dataTransfer)) return;
         event.preventDefault();
@@ -631,7 +757,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     const switchMode = async next => { await flush(); setMode(next); };
     const checkBook = async () => { const snapshot = await flush(); setIssues(inspectProject(snapshot)); };
     const openFootnote = () => { setFootnoteText(editor.getAttributes('footnote').text || ''); setDialog('footnote'); };
-    const editAction = fn => () => { setMode(current => ['write', 'design'].includes(current) ? current : 'design'); fn(); };
+    const editAction = fn => () => { setMode('edit'); fn(); };
     const openElementProperties = () => {
         setShowInspector(true);
         setRightTab('properties');
@@ -656,8 +782,8 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     };
     const actions = {
         save: () => save(), saveAs: () => save(true), export: exportBook, inspect: checkBook,
-        undo: () => editor.can().undo() ? editor.chain().focus().undo().run() : atomicHistoryAvailable('undo') && restoreStructure('undo'),
-        redo: () => editor.can().redo() ? editor.chain().focus().redo().run() : atomicHistoryAvailable('redo') && restoreStructure('redo'),
+        undo: () => restoreEditing('undo'),
+        redo: () => restoreEditing('redo'),
         importText: openTextImport, splitChapter, mergeChapters: openMergeChapters,
         ...Object.fromEntries(['bold', 'italic', 'underline', 'strike'].map(key => [key, editAction(() => editor.chain().focus().toggleMark(key).run())])),
         ...Object.fromEntries(['superscript', 'subscript'].map(key => [key, editAction(() => { editor.commands.focus(); toggleScript(editor, key); })])),
@@ -667,6 +793,9 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         paragraphFormats: editAction(() => { setParagraphFormatSeed(null); setDialog('paragraphFormats'); }),
         paragraphFormatCreate: editAction(() => { setParagraphFormatSeed(paragraphFormatFromSelection(editor)); setDialog('paragraphFormats'); }),
         specialCharacters: editAction(() => setDialog('characters')), emoji: editAction(() => setDialog('emoji')),
+        ...Object.fromEntries(QUOTE_CHARACTERS.map(({ command }) => [command, editAction(() => { editor.commands.focus(); insertQuote(editor, command); })])),
+        ...Object.fromEntries(QUOTE_PAIRS.map(({ command }) => [command, editAction(() => { editor.commands.focus(); wrapWithQuotes(editor, command); })])),
+        ...Object.fromEntries(QUOTE_PAIRS.map(({ shortcutCommand }) => [shortcutCommand, editAction(() => { editor.commands.focus(); insertQuotePair(editor, shortcutCommand); })])),
         media: editAction(() => setDialog('media')), editMedia: editAction(() => setDialog('media')),
         imageProperties: openElementProperties, audioProperties: openElementProperties, cellProperties: openElementProperties,
         imageAlt: editAction(() => setDialog('imageAlt')), imageSize: editAction(() => setDialog('imageSize')), imageEdit: editAction(openImageEditor),
@@ -683,10 +812,17 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         bulletList: editAction(() => editor.chain().focus().toggleBulletList().run()), orderedList: editAction(() => editor.chain().focus().toggleOrderedList().run()),
         blockquote: editAction(() => editor.chain().focus().toggleBlockquote().run()), codeBlock: editAction(() => editor.chain().focus().toggleCodeBlock().run()),
         reset: editAction(() => { editor.commands.focus(); clearAuthorFormatting(editor); }),
-        horizontalRule: editAction(() => editor.chain().focus().setHorizontalRule().run()),
+        horizontalRule: editAction(() => setDialog('divider')),
         columns: editAction(() => editor.chain().focus().insertContent({ type: 'columns', content: [1, 2].map(() => ({ type: 'column', content: [paragraph()] })) }).run()),
-        addImage: editAction(() => addAsset('image')), addAudio: editAction(() => addAsset('audio')), addTable: editAction(() => setDialog('table')),
+        addImage: editAction(() => addAsset('image')), addAudio: editAction(() => {
+            const snapshot = captureAudioRangeSelection(editor.state);
+            if (snapshot.existing || snapshot.text) openAudioRange();
+            else addAsset('audio');
+        }), addTable: editAction(() => setDialog('table')),
+        attachAudio: editAction(openAudioRange), editAudioRange: editAction(openAudioRange), unlinkAudioRange: editAction(unlinkAudioRange),
         templates: editAction(() => { commitEditor(); setDialog('templates'); }),
+        tts: editAction(() => { commitEditor(); setDialog('tts'); }),
+        removeBlankLines: editAction(openBlankLines),
         footnote: editAction(openFootnote), selectCells: () => { if (editor.isActive('table')) setDialog('range'); },
         ...Object.fromEntries(tableCommands.map(key => [key, () => { if (editor.can()[key]()) editor.chain().focus()[key]().run(); }])),
         link: editAction(() => { if (!linkOpen) editor.commands.scrollIntoView(); setLinkValue(editor.getAttributes('link').href || 'https://'); setLinkOpen(value => !value); }),
@@ -716,7 +852,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             if (!command || !actions[command]) return;
             if (command === 'search' && mode === 'source') return;
             const global = ['save', 'saveAs', 'shortcuts', 'toolbar', 'importText', 'mergeChapters', 'previewViewer', 'focusMode', 'search'].includes(command);
-            if (!global && (!['write', 'design'].includes(mode) || !event.target.closest('.tiptap, .ee-toolbar, .ee-table-toolbar, .ee-context-toolbar') || event.target.closest('input, textarea, select'))) return;
+            if (!global && (mode !== 'edit' || !event.target.closest('.tiptap, .ee-toolbar, .ee-table-toolbar, .ee-context-toolbar') || event.target.closest('input, textarea, select'))) return;
             event.preventDefault();
             event.stopPropagation();
             actions[command]();
@@ -747,7 +883,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     if (!editor) return <div className="ee-loading">{l('working')}</div>;
     const linkForm = linkOpen ? <form className="ee-link-form" onSubmit={event => { event.preventDefault(); if (!safeLink(linkValue)) { setNotice({ text: l('INVALID_LINK') }); return; } const chain = editor.chain().focus().extendMarkRange('link'); if (editor.state.selection.empty && !editor.isActive('link')) chain.insertContent({ type: 'text', text: linkTargets.find(item => item.href === linkValue)?.title || linkValue, marks: [{ type: 'link', attrs: { href: linkValue } }] }); else chain.setLink({ href: linkValue }); chain.run(); setLinkOpen(false); }}><input aria-label={l('linkTarget')} placeholder={l('external')} value={linkValue.startsWith('epub:') ? '' : linkValue} onChange={event => setLinkValue(event.target.value)} /><select aria-label={l('internal')} value={linkValue.startsWith('epub:') ? linkValue : ''} onChange={event => setLinkValue(event.target.value)}><option value="">{l('internal')}</option>{linkTargets.map(item => <option key={item.href} value={item.href}>{item.title}</option>)}</select><button className="ee-button" type="submit">{l('apply')}</button><button type="button" className="ee-button" onClick={() => { editor.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkOpen(false); }}>{l('unlink')}</button><IconButton icon="xmark" label={l('close')} onClick={() => { setLinkOpen(false); editor.view.focus(); }} /></form> : null;
     return <div ref={workspaceRef} className={`ee-studio${compact ? ' is-compact' : ''}${focusMode ? ' is-focused' : ''}${dropTarget ? ` is-drop-${dropTarget}` : ''}`} onDragEnterCapture={captureAssetDragOver} onDragOverCapture={captureAssetDragOver} onDragEnter={handleAssetDragOver} onDragOver={handleAssetDragOver} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setDropTarget(null); assetDrop.clear(); } }} onDropCapture={handleAssetDrop} onDrop={event => { if (event.defaultPrevented) event.stopPropagation(); }}>
-        <style>{project.assets.filter(asset => asset.kind === 'font').map(asset => `@font-face{font-family:font-${asset.id};src:url("${assetUrls.current[asset.id]}");}`).join('\n') + authoringCss('.ee-paper .tiptap ') + authoringCss('.ee-format-menu ')}</style>
+        <style>{project.assets.filter(asset => asset.kind === 'font').map(asset => `@font-face{font-family:font-${asset.id};src:url("${assetUrls.current[asset.id]}");}`).join('\n') + authoringCss('.ee-paper .tiptap ') + authoringCss('.ee-format-menu ') + dividerCss('.ee-paper .tiptap ')}</style>
         <header className="ee-header">
             <IconButton icon="chevronLeft" label={l('back')} disabled={!!busy} onClick={() => leave(onBack)} />
             <div className="ee-book-identity"><span className="ee-book-mark"><FaIcon name="bookOpen" size={18} /></span><div><strong title={project.metadata.title}>{project.metadata.title || l('newBook')}</strong><small className={`ee-save-status is-${status}`} title={l(`${status}Hint`)}>{l(status)}</small></div></div>
@@ -760,13 +896,13 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                 <div className={`ee-panel-body${leftTab === 'chapters' ? ' is-chapters' : ''}`}>
                     {leftTab === 'chapters' && <>
                         <div className="ee-section-heading"><h3>{l('chapters')} <span>{project.chapters.length}</span></h3><IconButton icon="plus" label={l('addChapter')} onClick={async () => { setChapterQuery(''); const item = createChapter(`${l('chapter')} ${project.chapters.length + 1}`); await changeStructure(items => [...items, item]); await selectChapter(item.id); }} /></div>
-                        <div className="ee-chapter-import-actions"><button className="ee-button" title={shortcutLabel('importText')} onClick={actions.importText}><EditorIcon command="importText" />{l('importText')}</button><button className="ee-button" title={shortcutLabel('splitChapter')} disabled={!['write', 'design'].includes(mode)} onMouseDown={event => event.preventDefault()} onClick={actions.splitChapter}><EditorIcon command="splitChapter" />{l('splitChapter')}</button><button className="ee-button" title={shortcutLabel('mergeChapters')} disabled={project.chapters.length < 2} onClick={actions.mergeChapters}><EditorIcon command="mergeChapters" />{l('mergeChapters')}</button></div>
+                        <div className="ee-chapter-import-actions"><button className="ee-button" title={shortcutLabel('importText')} onClick={actions.importText}><EditorIcon command="importText" />{l('importText')}</button><button className="ee-button" title={shortcutLabel('splitChapter')} disabled={mode !== 'edit'} onMouseDown={event => event.preventDefault()} onClick={actions.splitChapter}><EditorIcon command="splitChapter" />{l('splitChapter')}</button><button className="ee-button" title={shortcutLabel('mergeChapters')} disabled={project.chapters.length < 2} onClick={actions.mergeChapters}><EditorIcon command="mergeChapters" />{l('mergeChapters')}</button></div>
                         <div className="ee-panel-search"><input type="search" aria-label={l('chapterSearch')} placeholder={l('chapterSearch')} value={chapterQuery} onChange={event => setChapterQuery(event.target.value)} /><span>{matchingChapters.length} / {project.chapters.length}</span></div>
                         <div className="ee-chapter-list" {...chapterDrag.listProps}>{!matchingChapters.length && <p className="ee-empty-state">{l('chapterNoResults')}</p>}{matchingChapters.map(({ item, index }) => <button key={item.id} {...chapterDrag.rowProps(item.id)} aria-current={chapter.id === item.id ? 'true' : undefined} title={item.title} className={`ee-chapter${chapter.id === item.id ? ' is-active' : ''}${chapterDrag.rowClass(item.id)}`} onClick={() => { selectChapter(item.id); if (compact) setShowStructure(false); }}><span className="ee-chapter-number">{String(index + 1).padStart(2, '0')}</span><span>{item.title || l('chapter')}<small>{chapterCharacters(item.content).toLocaleString()} {l('chars')}</small></span><FaIcon name="gripVertical" size={10} /></button>)}</div>
                         <div className="ee-chapter-actions"><IconButton icon="copy" label={l('duplicate')} onClick={async () => { setChapterQuery(''); await flush(); const original = projectRef.current.chapters.find(item => item.id === chapterRef.current); const copy = duplicateChapter(original); copy.title += ' (2)'; await changeStructure(items => { const next = [...items]; next.splice(items.findIndex(item => item.id === original.id) + 1, 0, copy); return next; }); await selectChapter(copy.id); }} />{[-1, 1].map(direction => <IconButton key={direction} icon={direction < 0 ? 'angleUp' : 'angleDown'} label={l(direction < 0 ? 'moveUp' : 'moveDown')} disabled={project.chapters.findIndex(item => item.id === chapter.id) + direction < 0 || project.chapters.findIndex(item => item.id === chapter.id) + direction >= project.chapters.length} onClick={() => changeStructure(items => { const next = [...items]; const index = next.findIndex(item => item.id === chapter.id); [next[index], next[index + direction]] = [next[index + direction], next[index]]; return next; })} />)}<IconButton icon="trash" label={l('remove')} disabled={project.chapters.length < 2} onClick={() => { if (window.confirm(l('deleteChapter'))) changeStructure(items => items.filter(item => item.id !== chapter.id)); }} /></div>
                         <div className="ee-chapter-actions"><IconButton icon="rotateLeft" label={l('undoBook')} disabled={!history.current.undo.length} onClick={() => restoreStructure('undo')} /><IconButton icon="rotateRight" label={l('redoBook')} disabled={!history.current.redo.length} onClick={() => restoreStructure('redo')} /></div>
                     </>}
-                    {leftTab === 'outline' && <><h3>{chapter.title}</h3>{!outline.length && <p className="ee-empty-state">{l('outlineEmpty')}</p>}{outline.map(({ node, position }) => <button className="ee-outline-item" key={position} onClick={() => { setMode('design'); editor.chain().focus().setNodeSelection(position).scrollIntoView().run(); }}><FaIcon name={node.type.name === 'image' ? 'image' : node.type.name === 'table' ? 'tableCells' : 'layers'} /><span>{node.type.name === 'heading' ? node.textContent || l('heading') : l(node.type.name)}</span></button>)}</>}
+                    {leftTab === 'outline' && <><h3>{chapter.title}</h3>{!outline.length && <p className="ee-empty-state">{l('outlineEmpty')}</p>}{outline.map(({ node, position }) => <button className="ee-outline-item" key={position} onClick={() => { setMode('edit'); editor.chain().focus().setNodeSelection(position).scrollIntoView().run(); }}><FaIcon name={node.type.name === 'image' ? 'image' : node.type.name === 'table' ? 'tableCells' : 'layers'} /><span>{node.type.name === 'heading' ? node.textContent || l('heading') : l(node.type.name)}</span></button>)}</>}
                     {leftTab === 'assets' && <>
                         <h3>{l('assets')}</h3>
                         <div className="ee-asset-actions">
@@ -789,7 +925,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                                 event.dataTransfer.effectAllowed = 'copy';
                             }}
                             onClick={() => {
-                                setMode('design');
+                                setMode('edit');
                                 if (compact) setShowStructure(false);
                                 if (asset.kind === 'image') editor.chain().focus().insertContent({ type: 'image', attrs: { assetId: asset.id, width: 100, align: 'center', alt: '' } }).run();
                                 else if (asset.kind === 'audio') editor.chain().focus().insertContent({ type: 'audio', attrs: { assetId: asset.id, title: asset.name, kind: 'effect', loop: false } }).run();
@@ -803,19 +939,19 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             <main className={`ee-main is-${mode}`}>
                 <div className="ee-mode-bar">
                     <IconButton data-panel-toggle="structure" icon="list" label={l('toggleStructure')} active={showStructure} aria-expanded={showStructure} onClick={() => setShowStructure(!showStructure)} />
-                    <div className="ee-modes" role="tablist" aria-label={l('editor')}>{['write', 'design', 'preview', 'source'].map(value => <React.Fragment key={value}><button role="tab" aria-selected={mode === value} onClick={() => switchMode(value)}><EditorIcon command={value} />{l(value)}</button>{value === 'preview' && <button type="button" disabled={!!busy} title={`${l('viewerPreviewHint')} (${shortcutLabel('previewViewer')})`} onClick={previewInViewer}><EditorIcon command="previewViewer" />{l('previewViewer')}</button>}</React.Fragment>)}</div>
-                    {['write', 'design'].includes(mode) && <select className="ee-zoom" aria-label={l('zoom')} title={l('zoomHint')} value={zoom} onChange={event => { chapterScroll.enter(null); editorZoom.change(Number(event.target.value)); }}>{[...new Set([...ZOOM_PRESETS, zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value}%</option>)}</select>}
-                    <button type="button" className="ee-focus-toggle ee-button" aria-pressed={focusMode} title={`${l('focusModeHint')} (${shortcutLabel('focusMode')})`} onClick={actions.focusMode}><EditorIcon command="focusMode" />{l(focusMode ? 'exitFocusMode' : 'focusMode')}</button>
+                    <div className="ee-modes" role="tablist" aria-label={l('editor')}>{['edit', 'preview', 'source'].map(value => <React.Fragment key={value}><button role="tab" aria-selected={mode === value} onClick={() => switchMode(value)}><EditorIcon command={value} />{l(value)}</button>{value === 'preview' && <button type="button" disabled={!!busy} title={`${l('viewerPreviewHint')} (${shortcutLabel('previewViewer')})`} onClick={previewInViewer}><EditorIcon command="previewViewer" />{l('previewViewer')}</button>}</React.Fragment>)}</div>
+                    {mode === 'edit' && <select className="ee-zoom" aria-label={l('zoom')} title={l('zoomHint')} value={zoom} onChange={event => { chapterScroll.enter(null); editorZoom.change(Number(event.target.value)); }}>{[...new Set([...ZOOM_PRESETS, zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value}%</option>)}</select>}
+                    <button type="button" className="ee-focus-toggle ee-button" aria-pressed={focusMode} title={`${l('focusModeHint')} (${shortcutLabel('focusMode')})`} onClick={actions.focusMode}><EditorIcon command={focusMode ? 'exitFocusMode' : 'focusMode'} />{l(focusMode ? 'exitFocusMode' : 'focusMode')}</button>
                     <IconButton data-panel-toggle="inspector" icon="sliders" label={l('toggleInspector')} active={showInspector} aria-expanded={showInspector} onClick={() => setShowInspector(!showInspector)} />
                 </div>
                 {mode === 'preview' && <PreviewDeviceToolbar viewport={viewport} onViewportChange={value => { chapterScroll.enter(null); setViewport(value); }} zoom={previewZoom} scale={previewScale} onZoomChange={value => { chapterScroll.enter(null); if (value === 'fit') setPreviewZoom('fit'); else { setPreviewZoom(value); editorZoom.change(value); } }} theme={previewTheme} onThemeChange={setPreviewTheme} />}
-                {['write', 'design'].includes(mode) && <>
+                {mode === 'edit' && <>
                     <FeatureToolbar editor={editor} project={project} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} canMergeChapters={project.chapters.length > 1} canUndoStructure={atomicHistoryAvailable('undo')} canRedoStructure={atomicHistoryAvailable('redo')} paragraphFormats={paragraphFormats} onApplyParagraphFormat={useParagraphFormat} />
-                    {searchOpen && <SearchPanel editor={editor} chapterId={chapterId} query={query} onQueryChange={setQuery} replacement={replacement} onReplacementChange={setReplacement} disabled={!!busy} onClose={() => setSearchOpen(false)} />}
+                    {searchOpen && <SearchPanel editor={editor} chapters={project.chapters} chapterId={chapterId} scope={searchScope} onScopeChange={setSearchScope} onSelectChapter={async id => { await selectChapter(id); return chapterRef.current === id; }} onReplaceBook={replaceBookSearch} query={query} onQueryChange={setQuery} replacement={replacement} onReplacementChange={setReplacement} disabled={!!busy} onClose={() => setSearchOpen(false)} />}
                 </>}
                 <div className="ee-stage" ref={stageRef} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) assetDrop.clear(); }}>
                     {mode !== 'source' && (chapterIndex > 0 || mode === 'preview') && <button type="button" className="ee-chapter-boundary is-previous" disabled={chapterIndex === 0} onClick={() => navigateChapter(-1)}><FaIcon name="angleUp" /><span><strong>{l('previousChapter')}{chapterIndex > 0 && ` · ${project.chapters[chapterIndex - 1].title || l('chapter')}`}</strong><small>{l('scrollPreviousChapter')}</small></span></button>}
-                    <div className="ee-paper" hidden={!['write', 'design'].includes(mode)} style={paperStyle}>
+                    <div className="ee-paper" hidden={mode !== 'edit'} style={paperStyle}>
                         <div className="ee-paper-label">{String(project.chapters.findIndex(item => item.id === chapter.id) + 1).padStart(2, '0')} / {l('chapter')}</div>
                         <input className="ee-chapter-title" aria-label={l('chapterTitle')} placeholder={l('chapterTitle')} value={chapter.title} onChange={event => update(current => ({ ...current, chapters: current.chapters.map(item => item.id === chapter.id ? { ...item, title: event.target.value } : item) }))} />
                         <EditorContent editor={editor} />
@@ -826,6 +962,8 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                         const doc = event.currentTarget.contentDocument;
                         chapterScroll.onPreviewLoad(event.currentTarget);
                         if (previewAnchor.current) { doc?.getElementById(previewAnchor.current)?.scrollIntoView(); previewAnchor.current = null; }
+                        previewAudioCleanup.current?.();
+                        previewAudioCleanup.current = attachPreviewAudio(event.currentTarget);
                         doc?.addEventListener('click', click => {
                             const anchor = click.target.closest('a');
                             if (!anchor) return;
@@ -841,16 +979,19 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                     {mode === 'source' && <Suspense fallback={<p className="ee-muted">{l('working')}</p>}><SourceWorkspace codeStates={codeStates.current} project={project} chapter={chapter} tab={sourceTab} setTab={setSourceTab} update={update} onPreview={() => switchMode('preview')} onViewerPreview={previewInViewer} busy={!!busy} /></Suspense>}
                     {mode !== 'source' && (chapterIndex < project.chapters.length - 1 || mode === 'preview') && <button type="button" className="ee-chapter-boundary is-next" disabled={chapterIndex === project.chapters.length - 1} onClick={() => navigateChapter(1)}><FaIcon name="angleDown" /><span><strong>{l('nextChapter')}{chapterIndex < project.chapters.length - 1 && ` · ${project.chapters[chapterIndex + 1].title || l('chapter')}`}</strong><small>{l('scrollNextChapter')}</small></span></button>}
                 </div>
-                <ContextToolbar editor={editor} stageRef={stageRef} enabled={!busy && !dialog && ['write', 'design'].includes(mode)} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} linkOpen={linkOpen} linkForm={linkForm} onCloseLink={() => setLinkOpen(false)} apiRef={contextToolbarRef} />
+                <ElementDragHandle editor={editor} stageRef={stageRef} chapterId={chapterId} enabled={!busy && !dialog && mode === 'edit'} />
+                <ContextToolbar editor={editor} stageRef={stageRef} enabled={!busy && !dialog && mode === 'edit'} actions={actions} defaultColor={editor.isActive('heading') ? project.style.accent : project.style.color} linkOpen={linkOpen} linkForm={linkForm} onCloseLink={() => setLinkOpen(false)} apiRef={contextToolbarRef} />
+                <QuoteContextMenu editor={editor} enabled={mode === 'edit' && !dialog && !busy} actions={actions} />
                 <footer className="ee-document-footer"><span aria-live="polite">{chapterIndex + 1} / {project.chapters.length} · {chapter.title}</span><span>{chapterCharacters(chapter.content).toLocaleString()} {l('chars')}<i />EPUB 3</span></footer>
             </main>
-            <Inspector onClose={compact ? () => setShowInspector(false) : undefined} hidden={!showInspector} tab={rightTab} setTab={setRightTab} project={project} update={update} editor={editor} chapter={chapter} assetUrls={assetUrls.current} onAddAsset={addAsset} onCss={actions.commonCss} onChapterCss={actions.chapterCss} onFootnote={openFootnote} onMedia={actions.media} onFormat={focusTextFormatting} editing={['write', 'design'].includes(mode)} />
+            <Inspector onClose={compact ? () => setShowInspector(false) : undefined} hidden={!showInspector} tab={rightTab} setTab={setRightTab} project={project} update={update} editor={editor} chapter={chapter} assetUrls={assetUrls.current} onAddAsset={addAsset} onCss={actions.commonCss} onChapterCss={actions.chapterCss} onFootnote={openFootnote} onMedia={actions.media} onAudioRange={openAudioRange} onUnlinkAudioRange={unlinkAudioRange} onFormat={focusTextFormatting} editing={mode === 'edit'} />
         </div>
-        {issues && <section className="ee-checks"><div className="ee-section-heading"><h3>{l('inspect')}<small>{l('checkHint')}</small></h3><IconButton icon="xmark" label={l('close')} onClick={() => setIssues(null)} /></div>{issues.length > 0 && <p className="ee-check-summary">{l('failure')} {issues.filter(issue => issue.severity === 'error').length} · {l('warning')} {issues.filter(issue => issue.severity !== 'error').length}</p>}{issues.length ? <div className="ee-check-list">{issues.map((issue, index) => <button key={index} className={`is-${issue.severity}`} onClick={async () => { if (issue.chapterId) await selectChapter(issue.chapterId); if (issue.code.startsWith('CSS_')) { setSourceTab(issue.chapterId ? 'chapterCss' : 'commonCss'); setMode('source'); } else { setMode('design'); setRightTab(issue.chapterId ? 'properties' : 'book'); setShowInspector(true); } if (issue.nodeId) editor.state.doc.descendants((node, pos) => { if (node.attrs.id === issue.nodeId) editor.chain().focus().setNodeSelection(pos).scrollIntoView().run(); }); }}><span>{l(issue.severity === 'error' ? 'failure' : 'warning')}</span><span className="ee-check-detail"><strong>{issue.chapterId ? project.chapters.find(item => item.id === issue.chapterId)?.title || l('chapter') : l('book')}</strong>{l(issue.code)}</span><FaIcon name="chevronRight" size={10} /></button>)}</div> : <p>{l('checked')}</p>}</section>}
+        {issues && <section className="ee-checks"><div className="ee-section-heading"><h3>{l('inspect')}<small>{l('checkHint')}</small></h3><IconButton icon="xmark" label={l('close')} onClick={() => setIssues(null)} /></div>{issues.length > 0 && <p className="ee-check-summary">{l('failure')} {issues.filter(issue => issue.severity === 'error').length} · {l('warning')} {issues.filter(issue => issue.severity !== 'error').length}</p>}{issues.length ? <div className="ee-check-list">{issues.map((issue, index) => <button key={index} className={`is-${issue.severity}`} onClick={async () => { if (issue.chapterId) await selectChapter(issue.chapterId); if (issue.code.startsWith('CSS_')) { setSourceTab(issue.chapterId ? 'chapterCss' : 'commonCss'); setMode('source'); } else { setMode('edit'); setRightTab(issue.chapterId ? 'properties' : 'book'); setShowInspector(true); } if (issue.nodeId) editor.state.doc.descendants((node, pos) => { if (node.attrs.id === issue.nodeId) editor.chain().focus().setNodeSelection(pos).scrollIntoView().run(); }); }}><span>{l(issue.severity === 'error' ? 'failure' : 'warning')}</span><span className="ee-check-detail"><strong>{issue.chapterId ? project.chapters.find(item => item.id === issue.chapterId)?.title || l('chapter') : l('book')}</strong>{l(issue.code)}</span><FaIcon name="chevronRight" size={10} /></button>)}</div> : <p>{l('checked')}</p>}</section>}
         {exportedPath && <div className="ee-export-result"><span>{exportedPath}</span><button className="ee-button" onClick={() => window.electronAPI?.openInternalViewer?.(exportedPath)}>{l('openResult')}</button></div>}
         {['imageAlt', 'imageSize'].includes(dialog) && <ImageAttributesDialog editor={editor} mode={dialog === 'imageAlt' ? 'alt' : 'size'} onClose={() => setDialog(null)} />}
         {dialog === 'imageEdit' && imageEditTarget && <Suspense fallback={<EditorDialog title={l('imageEdit')} onClose={() => setDialog(null)}><p role="status">{l('working')}</p></EditorDialog>}><ImageEditorDialog src={assetUrls.current[imageEditTarget.assetId]} loadSource={async () => { const result = await request({ action: 'asset', sessionId: initial.sessionId, assetId: imageEditTarget.assetId }); return new Blob([result.data], { type: result.mime }); }} onApply={applyEditedImage} onClose={() => { setDialog(null); setImageEditTarget(null); }} /></Suspense>}
         {dialog === 'mergeChapters' && <MergeChaptersDialog chapters={project.chapters} chapterId={chapterId} onMerge={mergeChapters} onClose={() => setDialog(null)} />}
+        {dialog === 'blankLines' && <BlankLinesDialog project={project} chapterId={chapterId} onApply={applyBlankLines} onClose={() => setDialog(null)} />}
         {dialog === 'textImport' && <TextImportDialog readText={options => request({ action: 'readText', sessionId: initial.sessionId, operationId: newId('op'), ...options })} onApply={applyTextImport} onClose={() => setDialog(null)} />}
         {dialog === 'table' && <TablePicker onClose={() => setDialog(null)} onInsert={(rows, cols, withHeaderRow) => { setDialog(null); editor.chain().focus().insertTable({ rows, cols, withHeaderRow }).run(); }} />}
         {dialog === 'range' && <TableRangeDialog editor={editor} onClose={() => setDialog(null)} />}
@@ -860,6 +1001,9 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
         {dialog === 'textBackground' && <TextColorDialog editor={editor} background defaultColor={project.style.color} onClose={() => setDialog(null)} />}
         {['characters', 'emoji'].includes(dialog) && <CharacterDialog editor={editor} emoji={dialog === 'emoji'} onClose={() => setDialog(null)} />}
         {dialog === 'media' && <MediaDialog editor={editor} onClose={() => setDialog(null)} />}
+        {dialog === 'divider' && <DividerDialog editor={editor} onClose={() => setDialog(null)} />}
+        {dialog === 'audioRange' && <AudioRangeDialog editor={editor} project={project} assetUrls={assetUrls.current} onImport={importRangeAudio} onApply={applyAudioRange} onClose={() => setDialog(null)} />}
+        {dialog === 'tts' && <TtsDialog editor={editor} project={project} onApply={applyTtsSettings} onClose={() => setDialog(null)} onPreviewViewer={() => { setDialog(null); void previewInViewer(); }} />}
         {dialog === 'templates' && <ContentTemplates editor={editor} chapterId={chapterId} chapterTitle={chapter.title} projectAssets={project.assets} projectUrls={assetUrls.current} request={payload => request({ ...payload, sessionId: initial.sessionId })} onClose={() => setDialog(null)} onInsert={async value => {
             const transaction = templateInsertionTransaction(editor.state, value.content, chapterId);
             await Promise.all(value.assets.map(loadAsset));
@@ -869,7 +1013,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             editor.commands.focus();
         }} />}
         {dialog === 'footnote' && <EditorDialog title={l('footnote')} onClose={() => setDialog(null)} onSubmit={event => { event.preventDefault(); if (editor.isActive('footnote')) editor.chain().focus().updateAttributes('footnote', { text: footnoteText }).run(); else editor.chain().focus().insertContent({ type: 'footnote', attrs: { id: newId(), text: footnoteText } }).run(); setDialog(null); }} footer={<button className="ee-button ee-primary" type="submit">{l('apply')}</button>}><p className="ee-muted">{l('footnoteHint')}</p><label className="ee-field"><span>{l('footnoteText')}</span><textarea rows={6} maxLength={20000} value={footnoteText} onChange={event => setFootnoteText(event.target.value)} autoFocus /></label></EditorDialog>}
-        {busy && <div className="ee-busy" role="status"><FaIcon name="spinner" /><span>{l(busy === 'previewViewer' ? 'viewerPreviewPreparing' : 'working')}</span>{['save', 'export', 'previewViewer'].includes(busy) && <><progress max="100" value={progress} /><button className="ee-button" onClick={() => request({ action: 'cancel', operationId: operationRef.current }).catch(report)}>{l('cancel')}</button></>}</div>}
+        {busy && <div className="ee-busy" role="status"><FaIcon name="spinner" className="ee-busy-spinner" /><span>{l(busy === 'previewViewer' ? 'viewerPreviewPreparing' : 'working')}</span>{['save', 'export', 'previewViewer'].includes(busy) && <><progress max="100" value={progress} /><button className="ee-button" onClick={() => request({ action: 'cancel', operationId: operationRef.current }).catch(report)}>{l('cancel')}</button></>}</div>}
         {assetDrop.indicator && createPortal(<div aria-hidden="true" className={`ee-asset-drop-cursor${assetDrop.indicator.inline ? ' is-inline' : ' is-block'}${assetDrop.indicator.alignEnd ? ' align-end' : ''}${assetDrop.indicator.labelBelow ? ' label-below' : ''}`} style={assetDrop.indicator.rect}><span>{l('dropInsertionPoint')}</span></div>, document.body)}
         {dropTarget && <div className="ee-drop-hint" role="status"><FaIcon name="download" /><span>{l(dropTarget === 'body' ? 'dropIntoBody' : 'dropIntoAssets')}</span></div>}
     </div>;

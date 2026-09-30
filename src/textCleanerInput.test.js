@@ -45,6 +45,7 @@ function createToolFixture(t) {
     }
     TextCleanerTool({ t: key => key });`, {
         createTextCleanerInput,
+        rememberTextCleanerFile: () => {},
         URL,
         DEFAULT_TEXT_CLEANER_OPTIONS: {},
         DEFAULT_TEXT_SEARCH_OPTIONS: {},

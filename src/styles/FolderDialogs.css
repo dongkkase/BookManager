@@ -1,0 +1,250 @@
+/* Folder-tab dialogs opt in explicitly; the rating editor keeps its own theme. */
+.folder-tab [data-folder-modal] {
+    --dialog-bg: #242424;
+    --dialog-surface: #1b1b1b;
+    --dialog-border: #454545;
+    --dialog-text: #f0f0f0;
+    --dialog-muted: #b5b5b5;
+    --dialog-primary: #0078d7;
+    --dialog-primary-hover: #168be4;
+    --dialog-button: #3d3d3d;
+    --dialog-button-hover: #4b4b4b;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    max-width: calc(100vw - 40px);
+    max-height: calc(100dvh - 40px);
+    overflow: hidden;
+    color: var(--dialog-text);
+    background: var(--dialog-bg);
+    border: 1px solid var(--dialog-border);
+    border-radius: 8px;
+    box-shadow: 0 18px 48px rgb(0 0 0 / 50%);
+    font-size: var(--font-sm);
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+.folder-tab :is(.folder-dialog-backdrop, .readive-overlay, .cover-editor-help-backdrop):has(> [data-folder-modal]) {
+    padding: 20px;
+    background: rgb(0 0 0 / 50%);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.folder-tab [data-folder-modal] > :is(.dialog-titlebar, .cover-editor-header, .readive-dialog-header) {
+    flex: 0 0 auto;
+    min-height: 44px;
+    gap: 12px;
+    padding: 8px 16px;
+    color: var(--dialog-text);
+    background: #202020;
+    border-bottom: 1px solid var(--dialog-border);
+    font-size: var(--font-md);
+    font-weight: 600;
+}
+
+.folder-tab [data-folder-modal] :is(.dialog-titlebar, .cover-editor-header, .readive-dialog-header) h2 {
+    margin: 0;
+    font-size: var(--font-md);
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.folder-tab [data-folder-modal] :is(.dialog-titlebar, .cover-editor-header, .readive-dialog-header) button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    min-height: 28px;
+    padding: 0;
+    color: var(--dialog-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: var(--font-xl);
+    line-height: 1;
+}
+
+.folder-tab [data-folder-modal] :is(.dialog-titlebar, .cover-editor-header, .readive-dialog-header) button:hover:not(:disabled) {
+    color: #fff;
+    background: var(--dialog-button-hover);
+}
+
+.folder-tab [data-folder-modal] :is(.library-move-title, .readive-dialog-header h2) > svg {
+    color: #75bde9;
+}
+
+.folder-tab [data-folder-modal] .cover-editor-header p {
+    margin: 3px 0 0;
+    color: var(--dialog-muted);
+    font-size: var(--font-xs);
+    font-weight: 400;
+}
+
+.folder-tab [data-folder-modal] > :is(.file-action-dialog-body, .text-input-dialog-body, .layout-dialog-body, .layout-delete-body, .content-index-dialog-body, .multi-rename-body, .move-conflict-body, .cover-editor-body, .readive-dialog-body) {
+    min-height: 0;
+    padding: 16px;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.folder-tab [data-folder-modal] > :is(.layout-dialog-footer, .cover-editor-footer, .readive-dialog-footer, .move-conflict-footer) {
+    flex: 0 0 auto;
+    min-height: 0;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--dialog-border);
+    background: #202020;
+}
+
+.folder-tab [data-folder-modal] > :is(.layout-dialog-footer, .cover-editor-footer, .readive-dialog-footer) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.folder-tab [data-folder-modal] :is(.layout-dialog-footer, .cover-editor-footer, .readive-footer-actions) button {
+    flex: 0 0 auto;
+    min-width: 80px;
+    min-height: var(--control-height-lg);
+    height: auto;
+    padding: 6px 14px;
+    color: var(--dialog-text);
+    background: var(--dialog-button);
+    border: 1px solid var(--dialog-border);
+    border-radius: 4px;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.folder-tab [data-folder-modal] :is(.layout-dialog-footer, .cover-editor-footer, .readive-footer-actions) button:hover:not(:disabled) {
+    color: #fff;
+    background: var(--dialog-button-hover);
+    border-color: #606060;
+}
+
+.folder-tab [data-folder-modal] :is(.layout-dialog-footer, .cover-editor-footer, .readive-footer-actions) button:is(.primary, .text-input-confirm, .series-move-confirm, .library-move-confirm, .cover-editor-save, .readive-primary) {
+    color: #fff;
+    background: var(--dialog-primary);
+    border-color: var(--dialog-primary);
+}
+
+.folder-tab [data-folder-modal] :is(.layout-dialog-footer, .cover-editor-footer, .readive-footer-actions) button:is(.primary, .text-input-confirm, .series-move-confirm, .library-move-confirm, .cover-editor-save, .readive-primary):hover:not(:disabled) {
+    background: var(--dialog-primary-hover);
+    border-color: var(--dialog-primary-hover);
+}
+
+.folder-tab [data-folder-modal] :is(.layout-dialog-footer button.danger, .move-conflict-overwrite) {
+    color: #ffb4ab;
+    background: #442a28;
+    border-color: #80504a;
+}
+
+.folder-tab [data-folder-modal] :is(.layout-dialog-footer button.danger, .move-conflict-overwrite):hover:not(:disabled) {
+    color: #fff;
+    background: #663832;
+    border-color: #a15f55;
+}
+
+.folder-tab [data-folder-modal] button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.folder-tab [data-folder-modal] :is(button, input, select, textarea):focus-visible {
+    outline: 2px solid #4db8ff;
+    outline-offset: 2px;
+}
+
+.folder-tab [data-folder-modal] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea) {
+    min-height: 32px;
+    padding: 5px 10px;
+    color: var(--dialog-text);
+    background: var(--dialog-surface);
+    border: 1px solid var(--dialog-border);
+    border-radius: 4px;
+    font-size: var(--font-sm);
+    font-weight: 400;
+}
+
+.folder-tab [data-folder-modal] :is(.file-action-list, .layout-column-list, .multi-rename-preview, .library-move-preview, .content-index-summary > div, .library-move-summary-item, .library-move-option-card, .cover-editor-options, .move-conflict-card) {
+    background: var(--dialog-surface);
+    border-color: var(--dialog-border);
+    border-radius: 4px;
+}
+
+.folder-tab [data-folder-modal] :is(.library-move-title, .library-move-summary-item strong, .library-move-section-label, .multi-rename-rules, .multi-rename-preview th, .multi-rename-preview td, .multi-rename-options label, .multi-rename-patterns label) {
+    font-weight: 600;
+}
+
+.folder-tab [data-folder-modal] .missing-dialog-desc {
+    padding: 16px 16px 10px;
+}
+
+.folder-tab [data-folder-modal] .missing-list {
+    min-height: 0;
+    margin: 0 16px 16px;
+    background: var(--dialog-surface);
+    border: 1px solid var(--dialog-border);
+    border-radius: 4px;
+}
+
+.folder-tab [data-folder-modal] .folder-tag-search-toolbar {
+    padding: 12px 16px;
+    background: var(--dialog-bg);
+}
+
+.folder-tab [data-folder-modal] :is(.folder-tag-search-footer > span, .cover-editor-footer > span, .readive-footer-hint) {
+    flex: 1 1 160px;
+    margin: 0;
+    color: var(--dialog-muted);
+    font-size: var(--font-xs);
+}
+
+.folder-tab [data-folder-modal] .move-conflict-actions {
+    gap: 8px;
+}
+
+.folder-tab [data-folder-modal] .move-conflict-actions button {
+    border-radius: 4px;
+    font-size: var(--font-sm);
+}
+
+.folder-tab [data-folder-modal] .move-conflict-actions button:not(.move-conflict-overwrite):not(.move-conflict-rename) {
+    color: var(--dialog-text);
+    background: var(--dialog-button);
+    border-color: var(--dialog-border);
+}
+
+.folder-tab [data-folder-modal] .move-conflict-actions button span {
+    font-size: var(--font-xs);
+}
+
+.folder-tab [data-folder-modal] .move-conflict-rename {
+    color: #fff;
+    background: var(--dialog-primary);
+    border-color: var(--dialog-primary);
+}
+
+.folder-tab [data-folder-modal] .move-conflict-rename span {
+    color: #e0efff;
+}
+
+@media (max-width: 520px) {
+    .folder-tab [data-folder-modal] .content-index-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .folder-tab [data-folder-modal] .missing-row {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+    }
+
+    .folder-tab [data-folder-modal] :is(.cover-editor-previews, .cover-editor-modes) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

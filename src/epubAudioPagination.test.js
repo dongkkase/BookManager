@@ -149,3 +149,39 @@ test('flattened parent SMIL anchors become actual DOM markers on only their star
     assert.ok(html[2].includes('data-epub-audio-id="inline:chapter.xhtml:end"'));
     assert.ok(html[2].includes('data-epub-anchor="end"'));
 });
+
+test('hidden optimized controls keep split-page anchors without rendering a player', async () => {
+    const block = audioBlock();
+    flatNodes(block.nodes).filter(node => node.audioTrackId).forEach(node => { node.audioControls = false; });
+    const chapter = { name: 'chapter.xhtml', blocks: [block], audioTracks: [track('middle'), track('end')] };
+    const pages = paginateReaderChapter(chapter, options);
+    assert.deepEqual(mapEpubAudioTracks([chapter], pages).tracks.map(item => item.pageIndex), [1, 2]);
+    const renderer = await transformWithEsbuild(between('function renderEpubHtmlNode(', 'function isReaderTitleOnlyBlock('), 'epub-audio-renderer.jsx', { loader: 'jsx' });
+    const renderNode = new Function('React', 'FaIcon', 'viewerText', 'renderMarkedText', 'viewerClassName', 'READER_ALLOWED_HTML_TAGS', `${renderer.code}\nreturn renderEpubHtmlNode;`)(React, () => null, (_key, fallback) => fallback, value => value, (...values) => values.filter(Boolean).join(' '), new Set(['p', 'span', 'strong']));
+    const html = pages.map(page => renderToStaticMarkup(React.createElement(React.Fragment, null, page.blocks.flatMap(item => item.nodes || []).map((node, index) => renderNode(node, index)))));
+    assert.ok(html.every(markup => !markup.includes('<button')));
+    assert.match(html[1], /data-epub-anchor="middle"[^>]*data-epub-audio-controls="false"[^>]*width:0;height:0/);
+    assert.match(html[2], /data-epub-anchor="end"[^>]*data-epub-audio-controls="false"/);
+});
+
+test('text range audio survives every split fragment and measured page without duplicating a player', async () => {
+    const cue = { ...track('range', 'stored'), rangeId: 'r_rain', triggerAnchors: ['range-start'] };
+    const block = { type: 'html', text: '앞'.repeat(80) + '범'.repeat(400) + '뒤'.repeat(80), hasAudio: true, audioTracks: [cue.id], anchors: ['range-start'],
+        nodes: [element('p', [text('앞'.repeat(80)), element('span', [element('strong', [text('범'.repeat(200))]), text('범'.repeat(200))], { id: 'range-start', audioRangeId: cue.rangeId, audioRangeTrackId: cue.id }), text('뒤'.repeat(80))])] };
+    const chapter = { name: 'chapter.xhtml', blocks: [block], audioTracks: [cue] };
+    const pages = paginateReaderChapter(chapter, options);
+    const mapping = mapEpubAudioTracks([chapter], pages);
+    assert.deepEqual([...mapping.byPage.keys()], [0, 1, 2]);
+    assert.ok(pages.slice(0, 3).every(page => page.blocks.some(item => item.hasAudio && item.audioTracks.includes(cue.id))));
+    assert.ok(!mapping.byPage.has(3));
+    assert.ok(pages.every(page => controls(page).length === 0));
+    assert.equal(pages.flatMap(page => flatNodes(page.blocks.flatMap(item => item.nodes || []))).filter(node => node.id === 'range-start').length, 1);
+    const measured = readerMeasureBlocksFromPages(pages);
+    const repacked = buildMeasuredReaderPages(measured, measured.map((_, index) => ({ index, firstHeight: 60, outerHeight: 60 })), { pageContentHeight: 80 });
+    assert.deepEqual([...mapEpubAudioTracks([chapter], repacked).byPage.keys()], [0, 1, 2]);
+    const renderer = await transformWithEsbuild(between('function renderEpubHtmlNode(', 'function isReaderTitleOnlyBlock('), 'epub-audio-renderer.jsx', { loader: 'jsx' });
+    const renderNode = new Function('React', 'FaIcon', 'viewerText', 'renderMarkedText', 'viewerClassName', 'READER_ALLOWED_HTML_TAGS', `${renderer.code}\nreturn renderEpubHtmlNode;`)(React, () => null, (_key, fallback) => fallback, value => value, (...values) => values.filter(Boolean).join(' '), new Set(['p', 'span', 'strong']));
+    const html = pages.map(page => renderToStaticMarkup(React.createElement(React.Fragment, null, page.blocks.flatMap(item => item.nodes || []).map((node, index) => renderNode(node, index)))));
+    assert.ok(html.slice(0, 3).every(markup => markup.includes('data-bookmanager-audio-range="r_rain"') && !markup.includes('<button')));
+    assert.ok(!html[3].includes('data-bookmanager-audio-range'));
+});

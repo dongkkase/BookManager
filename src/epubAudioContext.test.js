@@ -61,3 +61,17 @@ test('missing declared triggers do not fall back to the unrelated audio storage 
     assert.equal(mapping.byPage.size, 0);
     assert.equal(mapping.byChapter.get(chapter.name).length, 1);
 });
+
+test('range fragments map to every optimized page without requiring the first span anchor', () => {
+    const cue = track('rain', 'stored', { rangeId: 'r_rain', triggerAnchors: ['first-fragment'] });
+    const missing = track('missing', 'missing-stored', { rangeId: 'r_missing', triggerAnchors: [] });
+    const chapter = { name: 'chapter.xhtml', audioTracks: [cue, missing] };
+    const rangeNode = { type: 'element', tagName: 'span', audioRangeId: 'r_rain', children: [{ type: 'text', text: 'continued' }] };
+    const mapping = mapEpubAudioTracks([chapter], [
+        { name: chapter.name, blocks: [{ anchors: ['first-fragment'], nodes: [rangeNode] }] },
+        { name: chapter.name, blocks: [{ anchors: [], nodes: [rangeNode] }] },
+        { name: chapter.name, anchors: ['stored', 'missing-stored'] },
+    ]);
+    assert.deepEqual([...mapping.byPage.keys()], [0, 1]);
+    assert.ok([...mapping.byPage.values()].every(tracks => tracks.length === 1 && tracks[0].id === 'rain'));
+});

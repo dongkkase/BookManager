@@ -6,11 +6,11 @@ export function normalizeEpubAudioPlaylist(tracks) {
         const clipBegin = Math.max(0, Number.isFinite(Number(track?.clipBegin)) ? Number(track.clipBegin) : 0);
         const clipEnd = track?.clipEnd == null || !Number.isFinite(Number(track.clipEnd)) ? null : Number(track.clipEnd);
         if (!sources.length || (clipEnd !== null && clipEnd <= clipBegin)) return [];
-        return [{ ...track, sources, clipBegin, clipEnd, loop: Boolean(track.loop) }];
+        return [{ ...track, sources, clipBegin, clipEnd, loop: Boolean(track.loop), volume: clampVolume(track.volume ?? 1) }];
     });
 }
 
-const trackKey = track => JSON.stringify([track.id || '', track.sources, track.clipBegin, track.clipEnd, track.loop]);
+const trackKey = track => JSON.stringify([track.id || '', track.sources, track.clipBegin, track.clipEnd, track.loop, track.rangeId || '']);
 
 export function createEpubAudioPlayback({
     createAudio = () => new Audio(),
@@ -66,7 +66,7 @@ export function createEpubAudioPlayback({
     const applyVolume = slot => {
         if (slot.disposed) return;
         slot.audio.muted = muted;
-        slot.audio.volume = clampVolume(slot.gain * volume);
+        slot.audio.volume = clampVolume(slot.gain * volume * slot.track.volume);
     };
     const release = slot => {
         if (!slot || slot.disposed) return;
@@ -297,11 +297,11 @@ export function createEpubAudioPlayback({
             const signature = JSON.stringify(next.map(trackKey));
             const pageChanged = key !== playlistKey;
             const playlistChanged = signature !== playlistSignature;
-            if (pageChanged) finishedTracks.clear();
-            else if (playlistChanged) {
+            if (pageChanged || playlistChanged) {
                 const visibleKeys = new Set(next.map(trackKey));
+                const continuedRangeKeys = new Set(next.filter(track => track.rangeId).map(trackKey));
                 for (const finishedKey of finishedTracks) {
-                    if (!visibleKeys.has(finishedKey)) finishedTracks.delete(finishedKey);
+                    if (!visibleKeys.has(finishedKey) || (pageChanged && !continuedRangeKeys.has(finishedKey))) finishedTracks.delete(finishedKey);
                 }
             }
             if (pageChanged && pauseScope !== 'session') manualPaused = false;
@@ -311,6 +311,13 @@ export function createEpubAudioPlayback({
             playlistKey = key;
             playlistSignature = signature;
             playlist = next;
+            if (active) {
+                const current = playlist.find(track => trackKey(track) === active.key);
+                if (current) {
+                    active.track = current;
+                    applyVolume(active);
+                }
+            }
             if (!pageChanged && !playlistChanged) {
                 if (autoplayChanged) reconcile();
                 emit();

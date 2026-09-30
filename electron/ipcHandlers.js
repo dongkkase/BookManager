@@ -1,4 +1,5 @@
 import { saveItemRating } from './ratingEditor.js';
+import { updateReadingProgress } from './readingActions.js';
 import pkg from 'electron';
 const { ipcMain, app, BrowserWindow, dialog, shell, net, nativeImage } = pkg;
 import fs from 'fs';
@@ -4359,6 +4360,20 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+    ipcMain.handle('reading:updateProgress', async (event, paths, action) => {
+        const window = hooks.getMainWindow?.();
+        if (!window || window.isDestroyed() || window.webContents !== event.sender
+            || (event.senderFrame && event.senderFrame !== event.sender.mainFrame)) throw new Error('reading_untrusted_sender');
+        const db = new LibraryDB({ dbPath: libraryDbPath() });
+        try {
+            const result = await updateReadingProgress(db, paths, action, { getOpenViewerPaths: hooks.getOpenViewerPaths });
+            if (result.states.length > 0) broadcastReadingChanged({ progressChanged: true });
+            return result;
+        } finally {
+            await db.close();
+        }
+    });
+
   ipcMain.handle('reading:remove', async (_event, filePath) => {
     const db = new LibraryDB({ dbPath: libraryDbPath() });
     try {
@@ -5530,11 +5545,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // 8. 라이브러리로 파일 이동 처리 (충돌 해결 지원)
-  ipcMain.handle('fs:executeLibraryMove', async (_event, movePlans) => {
-    return executeLibraryMoveAsync(movePlans);
+  ipcMain.handle('fs:executeLibraryMove', async (event, movePlans, options = {}) => {
+    return executeLibraryMoveAsync(movePlans, {
+        onProgress: progress => {
+            if (!event.sender.isDestroyed()) event.sender.send('task:progress', {
+                task: 'folder:libraryMove', requestId: options.requestId, libraryPhase: 'moving', ...progress,
+            });
+        },
+    });
   });
 
-  ipcMain.handle('folder:applyLibraryMoveIndex', async (_event, payload = {}) => {
+  ipcMain.handle('folder:applyLibraryMoveIndex', async (event, payload = {}) => {
     const completedMoves = Array.isArray(payload.completedMoves) ? payload.completedMoves : [];
     if (completedMoves.length === 0) {
       return { success: true, skipped: true, movedCount: 0 };
@@ -5556,42 +5577,58 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const targetEntries = [];
     const fileInfoMoves = [];
     const touchedLibraries = new Set();
+    let processedCount = 0;
+    const reportProgress = (currentFile, fraction = 0) => {
+        if (!event.sender.isDestroyed()) event.sender.send('task:progress', {
+            task: 'folder:libraryMove', requestId: payload.requestId, libraryPhase: 'indexing',
+            currentFile, processedCount, totalCount: completedMoves.length,
+            progress: (processedCount + fraction) / completedMoves.length * 100,
+        });
+    };
 
     for (const move of completedMoves) {
-      const sourcePath = move?.src ? path.resolve(move.src) : '';
-      const destinationPath = move?.dest ? path.resolve(move.dest) : '';
-      if (!sourcePath || !destinationPath) continue;
+        reportProgress(move?.dest || '');
+        try {
+            const sourcePath = move?.src ? path.resolve(move.src) : '';
+            const destinationPath = move?.dest ? path.resolve(move.dest) : '';
+            if (!sourcePath || !destinationPath) continue;
 
-      const sourceLibrary = findContainingLibraryPath(sourcePath, libraryPaths);
-      const destinationLibrary = findContainingLibraryPath(destinationPath, libraryPaths);
-      let destinationStats = null;
-      try {
-        destinationStats = fs.statSync(destinationPath);
-      } catch {
-        destinationStats = null;
-      }
-      const recursive = destinationStats?.isDirectory?.() === true;
+            const sourceLibrary = findContainingLibraryPath(sourcePath, libraryPaths);
+            const destinationLibrary = findContainingLibraryPath(destinationPath, libraryPaths);
+            let destinationStats = null;
+            try {
+              destinationStats = fs.statSync(destinationPath);
+            } catch {
+              destinationStats = null;
+            }
+            const recursive = destinationStats?.isDirectory?.() === true;
 
-      if (sourceLibrary) {
-        touchedLibraries.add(sourceLibrary);
-        if (recursive) sourcePrefixes.push(sourcePath);
-        else sourcePaths.push(sourcePath);
-      }
+            if (sourceLibrary) {
+              touchedLibraries.add(sourceLibrary);
+              if (recursive) sourcePrefixes.push(sourcePath);
+              else sourcePaths.push(sourcePath);
+            }
 
-      if (!destinationLibrary || !destinationStats) continue;
-      touchedLibraries.add(destinationLibrary);
-      fileInfoMoves.push({ src: sourcePath, dest: destinationPath, recursive });
+            if (!destinationLibrary || !destinationStats) continue;
+            touchedLibraries.add(destinationLibrary);
+            fileInfoMoves.push({ src: sourcePath, dest: destinationPath, recursive });
 
-      const filePaths = recursive
-        ? await scanArchivePaths(destinationPath)
-        : (
-            destinationStats.isFile()
-            && INDEX_EXTENSIONS.has(path.extname(destinationPath).toLowerCase())
-              ? [destinationPath]
-              : []
-          );
-      if (filePaths.length === 0) continue;
-      targetEntries.push(...await buildArchiveIndexEntries(filePaths, destinationLibrary));
+            const filePaths = recursive
+              ? await scanArchivePaths(destinationPath)
+              : (
+                  destinationStats.isFile()
+                  && INDEX_EXTENSIONS.has(path.extname(destinationPath).toLowerCase())
+                    ? [destinationPath]
+                    : []
+                );
+            if (filePaths.length === 0) continue;
+            targetEntries.push(...await buildArchiveIndexEntries(filePaths, destinationLibrary, {
+                onProgress: progress => reportProgress(progress.currentPath, progress.completedCount / Math.max(1, progress.totalCount)),
+            }));
+        } finally {
+            processedCount += 1;
+            reportProgress(move?.dest || '');
+        }
     }
 
     const db = new LibraryDB({ dbPath: libraryDbPath() });

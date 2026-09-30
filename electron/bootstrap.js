@@ -1,7 +1,14 @@
 import { app } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
 import { installRuntimeLogging } from './utils/runtimeLog.js';
+import { configureHardwareAcceleration } from './hardwareAcceleration.js';
+
+// Apply the saved preference synchronously before Electron is ready.
+configureHardwareAcceleration(app, app.isPackaged
+    ? path.dirname(process.execPath)
+    : fileURLToPath(new URL('..', import.meta.url)));
 
 installRuntimeLogging({
     appTarget: app,

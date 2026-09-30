@@ -153,7 +153,7 @@ export function ReadiveTransferDialog({ paths, t, onClose, onOpenSharing }) {
 
     return (
         <div className="readive-overlay" onMouseDown={event => event.stopPropagation()}>
-            <section ref={dialogRef} className="readive-dialog" role="dialog" aria-modal="true" aria-labelledby="readive-transfer-title" aria-describedby={jobId ? 'readive-transfer-description' : undefined} tabIndex={-1}>
+            <section ref={dialogRef} className="readive-dialog" data-folder-modal role="dialog" aria-modal="true" aria-labelledby="readive-transfer-title" aria-describedby={jobId ? 'readive-transfer-description' : undefined} tabIndex={-1}>
                 <div className="readive-dialog-header">
                     <h2 id="readive-transfer-title"><FaIcon name="towerBroadcast" />{t('readive.send')}</h2>
                     <button type="button" className="readive-icon-button" aria-label={t('btn_close')} title={t('btn_close')} disabled={busy} onClick={onClose}><FaIcon name="xmark" /></button>

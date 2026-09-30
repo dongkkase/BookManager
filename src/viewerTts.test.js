@@ -45,7 +45,7 @@ test('뷰어 툴바 매뉴얼은 TTS 플로팅 메뉴 사용법을 안내한다'
 test('TTS 텍스트는 페이지 말머리를 제외하고 본문만 사용한다', () => {
     assert.doesNotMatch(readerItemTtsTextSource, /parts\.push\(item\.title\)/);
     assert.match(readerItemTtsTextSource, /if \(Array\.isArray\(item\.blocks\) && item\.blocks\.length > 0\)/);
-    assert.match(readerItemTtsTextSource, /if \(block\?\.text\) parts\.push\(block\.text\)/);
+    assert.match(readerItemTtsTextSource, /if \(block\?\.text\) parts\.push\(epubTtsText\(block\.text, block\.ttsEdits\)\)/);
     assert.match(readerItemTtsTextSource, /else if \(item\.text\)/);
 });
 

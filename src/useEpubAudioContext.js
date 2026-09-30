@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { visibleEpubAudioTracks } from './epubAudioContext.js';
+import { epubAudioViewportReady, visibleEpubAudioTracks } from './epubAudioContext.js';
 
 export function useEpubAudioContext({ rootRef, mapping, enabled, sessionKey, flowMode, pageIndex }) {
     const [visible, setVisible] = useState({ sessionKey: '', mapping: null, flowMode: '', pageIndex: -1, tracks: [] });
@@ -10,6 +10,7 @@ export function useEpubAudioContext({ rootRef, mapping, enabled, sessionKey, flo
         }
         let frame;
         const update = () => {
+            if (!epubAudioViewportReady(rootRef.current, { flowMode, pageIndex })) return;
             const tracks = visibleEpubAudioTracks(rootRef.current, mapping, { flowMode, pageIndex });
             setVisible(current => current.sessionKey === sessionKey
                 && current.mapping === mapping && current.flowMode === flowMode && current.pageIndex === pageIndex
@@ -32,6 +33,8 @@ export function useEpubAudioContext({ rootRef, mapping, enabled, sessionKey, flo
             window.removeEventListener('resize', schedule);
         };
     }, [enabled, flowMode, mapping, pageIndex, rootRef, sessionKey]);
-    return enabled && visible.sessionKey === sessionKey && visible.mapping === mapping
-        && visible.flowMode === flowMode && visible.pageIndex === pageIndex ? visible.tracks : [];
+    if (!enabled || visible.sessionKey !== sessionKey) return [];
+    if (visible.mapping === mapping && visible.flowMode === flowMode && visible.pageIndex === pageIndex) return visible.tracks;
+    // Keep a playing range through layout changes until the new text fragments can be measured.
+    return visible.tracks.flatMap(track => track.rangeId ? mapping.tracks.filter(candidate => candidate.id === track.id && candidate.rangeId === track.rangeId) : []);
 }

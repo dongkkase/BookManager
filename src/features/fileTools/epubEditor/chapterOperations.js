@@ -1,8 +1,34 @@
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
-import { createChapter, newId, paragraph, projectError, textContent, walkDocument } from '../../../../electron/epubEditor/model.js';
+import { createChapter, newId, paragraph, projectError, textContent, walkDocument, MAX_CHAPTERS } from '../../../../electron/epubEditor/model.js';
 import { remapCssIds } from '../../../../electron/epubEditor/css.js';
 import { splitTextImportDocument } from '../../../../electron/epubEditor/textImportLimits.js';
+
+const linkTargets = new WeakMap();
+function rewriteLinks(chapter, targets, rewrite) {
+    let linked = linkTargets.get(chapter.content);
+    if (!linked) {
+        linked = new Set();
+        walkDocument(chapter.content, node => {
+            for (const mark of node.marks || []) if (mark.type === 'link' && mark.attrs?.href?.startsWith('epub:')) linked.add(mark.attrs.href.slice(5).split('#')[0]);
+        });
+        linkTargets.set(chapter.content, linked);
+    }
+    if (![...targets].some(id => linked.has(id))) return chapter;
+    const visit = node => {
+        const marks = node.marks?.map(mark => {
+            if (mark.type !== 'link' || !mark.attrs?.href?.startsWith('epub:')) return mark;
+            const href = rewrite(mark.attrs.href);
+            return href === mark.attrs.href ? mark : { ...mark, attrs: { ...mark.attrs, href } };
+        });
+        const content = node.content?.map(visit);
+        const changedMarks = marks?.some((mark, index) => mark !== node.marks[index]);
+        const changedContent = content?.some((child, index) => child !== node.content[index]);
+        return changedMarks || changedContent ? { ...node, ...(changedMarks ? { marks } : {}), ...(changedContent ? { content } : {}) } : node;
+    };
+    const content = visit(chapter.content);
+    return content === chapter.content ? chapter : { ...chapter, content };
+}
 
 export function hasChapterContent(doc) {
     let found = false;
@@ -46,13 +72,21 @@ export function splitChapterDocument(state) {
         if (leftIds.has(item.attrs.id)) item.attrs.id = newId();
         else movedIds.add(item.attrs.id);
     });
+    const audioRangeIds = new Map();
+    walkDocument(after, item => {
+        for (const mark of item.marks || []) {
+            if (mark.type !== 'audioRange') continue;
+            if (!audioRangeIds.has(mark.attrs.id)) audioRangeIds.set(mark.attrs.id, newId('ar'));
+            mark.attrs.id = audioRangeIds.get(mark.attrs.id);
+        }
+    });
     try { state.schema.nodeFromJSON(before).check(); state.schema.nodeFromJSON(after).check(); }
     catch { throw projectError('SPLIT_CONTAINER'); }
     return { before, after, movedIds };
 }
 
 export function splitProjectChapter(chapters, chapterId, state) {
-    if (chapters.length >= 1000) throw projectError('CHAPTER_LIMIT');
+    if (chapters.length >= MAX_CHAPTERS) throw projectError('CHAPTER_LIMIT');
     const source = chapters.find(item => item.id === chapterId);
     if (!source) throw projectError('INVALID_PROJECT');
     const { before, after, movedIds } = splitChapterDocument(state);
@@ -62,18 +96,11 @@ export function splitProjectChapter(chapters, chapterId, state) {
     while (chapters.some(item => item.title === title)) title = `${(heading || source.title).slice(0, 1980)} (${suffix++})`;
     const next = { ...createChapter(title), css: source.css || '', inToc: source.inToc, content: after };
     const result = chapters.flatMap(item => item.id === chapterId ? [{ ...item, content: before }, next] : [item]);
-    const updated = result.map(item => {
-        let changed = false;
-        const content = structuredClone(item.content);
-        walkDocument(content, node => {
-            for (const mark of node.marks || []) {
-                if (mark.type !== 'link') continue;
-                const [target, anchor] = mark.attrs.href.split('#');
-                if (target === `epub:${chapterId}` && movedIds.has(anchor)) { mark.attrs.href = `epub:${next.id}#${anchor}`; changed = true; }
-            }
-        });
-        return changed ? { ...item, content } : item;
-    });
+    const targets = new Set([chapterId]);
+    const updated = result.map(item => rewriteLinks(item, targets, href => {
+        const [target, anchor] = href.split('#');
+        return target === `epub:${chapterId}` && movedIds.has(anchor) ? `epub:${next.id}#${anchor}` : href;
+    }));
     return { chapters: updated, selectedId: next.id };
 }
 
@@ -99,7 +126,7 @@ export function importTextChapters(chapters, chapterId, state, document, title, 
     }
     if (placement !== 'chapter') throw projectError('INVALID_OPERATION');
     const fillEmpty = chapters.length === 1 && !hasChapterContent(chapters[0].content);
-    if (chapters.length - (fillEmpty ? 1 : 0) + documents.length > 1000) throw projectError('CHAPTER_LIMIT');
+    if (chapters.length - (fillEmpty ? 1 : 0) + documents.length > MAX_CHAPTERS) throw projectError('CHAPTER_LIMIT');
     const imported = documents.map((part, partIndex) => {
         const nodes = state.schema.nodeFromJSON(part);
         nodes.check();
@@ -167,34 +194,28 @@ export function mergeProjectChapters(chapters, startId, endId, { title, keepTitl
     if (css.length > 100000) throw projectError('MERGE_CSS_TOO_LARGE');
     const merged = { ...first, title: mergedTitle, content: { type: 'doc', content }, css };
     const result = [...chapters.slice(0, start), merged, ...chapters.slice(end + 1)];
-    const updated = result.map(chapter => {
-        let changed = false;
-        const document = structuredClone(chapter.content);
-        walkDocument(document, node => {
-            for (const mark of node.marks || []) {
-                if (mark.type !== 'link' || !mark.attrs?.href?.startsWith('epub:')) continue;
-                const [chapterId, anchor] = mark.attrs.href.slice(5).split('#');
-                const target = targets.get(chapterId);
-                if (!target) continue;
-                const destination = anchor ? target.replacements.get(anchor) || anchor : chapterId === first.id ? null : target.boundary;
-                const href = `epub:${first.id}${destination ? `#${destination}` : ''}`;
-                if (mark.attrs.href !== href) { mark.attrs.href = href; changed = true; }
-            }
-        });
-        return changed ? { ...chapter, content: document } : chapter;
-    });
+    const targetIds = new Set(targets.keys());
+    const updated = result.map(chapter => rewriteLinks(chapter, targetIds, href => {
+        const [chapterId, anchor] = href.slice(5).split('#');
+        const target = targets.get(chapterId);
+        if (!target) return href;
+        const destination = anchor ? target.replacements.get(anchor) || anchor : chapterId === first.id ? null : target.boundary;
+        return `epub:${first.id}${destination ? `#${destination}` : ''}`;
+    }));
     return { chapters: updated, selectedId: first.id };
 }
 
-const body = chapter => chapter ? JSON.stringify([chapter.content, chapter.css || '']) : null;
+const sameBody = (before, after) => before === after || !!before && !!after && (before.css || '') === (after.css || '') && (before.content === after.content || JSON.stringify(before.content) === JSON.stringify(after.content));
 export function contentHistoryEntry(before, after, focusId, editorStates) {
-    const ids = [...new Set([...before, ...after].map(item => item.id))].filter(id => body(before.find(item => item.id === id)) !== body(after.find(item => item.id === id)));
+    const previous = new Map(before.map(item => [item.id, item]));
+    const next = new Map(after.map(item => [item.id, item]));
+    const ids = [...new Set([...previous.keys(), ...next.keys()])].filter(id => !sameBody(previous.get(id), next.get(id)));
     return { chapters: before, ids, expected: after, focusId, editorStates };
 }
 
 export function restoredChapters(current, entry) {
     if (Array.isArray(entry)) return entry.map(item => current.find(existing => existing.id === item.id) || item);
-    if (entry.ids.some(id => body(current.find(item => item.id === id)) !== body(entry.expected.find(item => item.id === id)))) throw projectError('CHAPTER_HISTORY_CHANGED');
+    if (entry.ids.some(id => !sameBody(current.find(item => item.id === id), entry.expected.find(item => item.id === id)))) throw projectError('CHAPTER_HISTORY_CHANGED');
     return entry.chapters.map(item => {
         const existing = current.find(value => value.id === item.id);
         return existing ? entry.ids.includes(item.id) ? { ...existing, title: existing.title === entry.expected.find(value => value.id === item.id)?.title ? item.title : existing.title, content: item.content, css: item.css } : existing : item;

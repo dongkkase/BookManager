@@ -4,11 +4,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
-import { createProject, validateProject, projectError, assetFilename, MAX_DOCUMENT_BYTES, MAX_PROJECT_BYTES } from './model.js';
+import { createProject, validateProject, createProjectValidator, projectError, assetFilename, MAX_DOCUMENT_BYTES, MAX_PROJECT_BYTES } from './model.js';
 import { identifyAsset, verifyAssets, validateAudio } from './package.js';
 import { validateCssPreset, validatePresetLibrary, presetError, MAX_CSS_PRESETS, MAX_PRESET_FILE_BYTES } from './cssPresets.js';
 import { ContentTemplateLibrary } from './templateLibrary.js';
 import { normalizeParagraphFormat, validateParagraphFormatLibrary, paragraphFormatError, MAX_PARAGRAPH_FORMATS, MAX_PARAGRAPH_FORMAT_BYTES } from './paragraphFormats.js';
+
+import { atomicJson, writeRecovery, readRecoveryChapters } from './recoveryStore.js';
+import { applyProjectChanges } from './projectChanges.js';
 
 const RECOVERY_ID = /^s_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
@@ -24,18 +27,6 @@ async function fingerprint(filePath) {
         if (error.code === 'ENOENT') return null;
         throw error;
     }
-}
-
-async function atomicJson(filePath, value) {
-    const temporary = `${filePath}.${randomUUID()}.tmp`;
-    try {
-        const handle = await fs.open(temporary, 'wx');
-        try {
-            await handle.writeFile(JSON.stringify(value));
-            await handle.sync();
-        } finally { await handle.close(); }
-        await fs.rename(temporary, filePath);
-    } finally { await fs.rm(temporary, { force: true }).catch(() => {}); }
 }
 
 export class EpubEditorService {
@@ -162,11 +153,11 @@ export class EpubEditorService {
 
     async readText(owner, id, { filePath, sourceId, encoding = 'auto', operationId }) {
         const session = this.session(id, owner);
-        if (filePath) session.textSource = { id: `text_${randomUUID()}`, filePath };
-        else if (!sourceId || session.textSource?.id !== sourceId) throw projectError('TEXT_SOURCE_MISSING');
-        const source = session.textSource;
+        if (!filePath && (!sourceId || session.textSource?.id !== sourceId)) throw projectError('TEXT_SOURCE_MISSING');
+        const source = filePath ? { id: `text_${randomUUID()}`, filePath } : session.textSource;
         const result = await this.runWorker(owner, operationId, { operation: 'textImport', filePath: source.filePath, encoding });
         this.session(id, owner);
+        if (filePath) session.textSource = source;
         return { ...result, sourceId: source.id };
     }
 
@@ -182,20 +173,22 @@ export class EpubEditorService {
     }
 
     async persist(session) {
-        await atomicJson(path.join(session.directory, 'recovery.json'), {
+        session.recoveryFiles = await writeRecovery(session.directory, {
             project: session.project, savedPath: session.savedPath, savedHash: session.savedHash,
             savedRevision: session.savedRevision, updatedAt: new Date().toISOString(),
-        });
+        }, session.recoveryFiles);
     }
 
-    acceptProject(session, project) {
-        validateProject(project);
+    acceptProject(session, project, incremental = false) {
+        const snapshot = incremental ? project : structuredClone(project);
+        session.validateProject ||= createProjectValidator();
+        session.validateProject(snapshot);
         if (project.id !== session.project.id) throw projectError('INVALID_PROJECT');
         for (const asset of project.assets) {
             const original = session.catalog.get(asset.id);
             if (!original || original.extension !== asset.extension || original.size !== asset.size || original.mime !== asset.mime || original.kind !== asset.kind) throw projectError('INVALID_ASSET');
         }
-        return structuredClone(project);
+        return snapshot;
     }
 
     async recoveries(limit = 20) {
@@ -247,6 +240,8 @@ export class EpubEditorService {
             if (error instanceof SyntaxError) throw projectError('INVALID_PROJECT');
             throw error;
         }
+        const recovered = await readRecoveryChapters(directory, data);
+        data.project = recovered.project;
         validateProject(data.project);
         const assetDirectory = path.join(directory, 'assets');
         if (!(await fs.lstat(assetDirectory)).isDirectory()) throw projectError('INVALID_PROJECT');
@@ -255,7 +250,7 @@ export class EpubEditorService {
             if (!assetStat?.isFile()) throw projectError('ASSET_MISSING');
         }
         await verifyAssets(data.project, assetDirectory);
-        return { ...data, id, directory, assetDirectory, catalog: new Map(data.project.assets.map(asset => [asset.id, asset])) };
+        return { ...data, recoveryFiles: recovered.recoveryFiles, id, directory, assetDirectory, catalog: new Map(data.project.assets.map(asset => [asset.id, asset])) };
     }
 
     async restore(owner, id) {
@@ -311,10 +306,13 @@ export class EpubEditorService {
         });
     }
 
-    async recovery(owner, id, project) {
+    async recovery(owner, id, project, changes) {
         const session = this.session(id, owner);
-        const snapshot = this.acceptProject(session, project);
+        const patch = changes == null ? null : structuredClone(changes);
+        const full = patch ? null : this.acceptProject(session, project);
         return this.exclusive(id, async () => {
+            this.session(id, owner);
+            const snapshot = patch ? this.acceptProject(session, applyProjectChanges(session.project, patch), true) : full;
             if (snapshot.revision >= session.project.revision) {
                 const previous = session.project;
                 session.project = snapshot;

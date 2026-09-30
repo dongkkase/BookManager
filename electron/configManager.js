@@ -181,6 +181,7 @@ export class ConfigManager {
       ...raw,
       lang,
       language: lang,
+        hardware_acceleration: raw.hardware_acceleration !== false,
       viewer_path: String(raw.viewer_path || defaults.viewer_path).trim(),
       viewer_paths: this.normalizeViewerPaths(raw.viewer_paths || defaults.viewer_paths),
       font_family: fontFamily === 'Default' ? defaults.font_family : fontFamily,
@@ -235,6 +236,7 @@ export class ConfigManager {
       renamer_default_exif_opt: false,
       max_threads: defaultThreads,
       play_sound: true,
+        hardware_acceleration: true,
       viewer_path: '',
       viewer_paths: {
         comic: '',

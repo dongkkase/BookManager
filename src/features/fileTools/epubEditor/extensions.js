@@ -7,11 +7,16 @@ import UniqueID from '@tiptap/extension-unique-id';
 import { ParagraphIndent } from './paragraphIndent';
 import { ParagraphFormat } from './paragraphFormats';
 import { EditorTab } from './editorTab';
+import { QuotePairs } from './quotes';
+import { TtsMark } from './ttsEditing';
+import { StyledDivider } from './dividers';
 import { BlockStyle, InlineStyle, Highlight, Superscript, Subscript } from './richFormatting';
 import { Media } from './media';
 import { editorText as l } from './labels';
 import { newId, safeLink } from '../../../../electron/epubEditor/model';
 import { createImageExtension } from './imageNode';
+import { createAudioExtension } from './audioNode';
+import { createAudioRangeExtension } from './audioRanges';
 import './imageNodes.css';
 
 export function editorExtensions(getAssetUrl) {
@@ -48,29 +53,7 @@ export function editorExtensions(getAssetUrl) {
             };
         },
     });
-    const Audio = Node.create({
-        name: 'audio', group: 'block', atom: true, draggable: true,
-        addAttributes() { return { assetId: { default: '' }, title: { default: '' }, kind: { default: 'effect' }, loop: { default: false } }; },
-        parseHTML() { return [{ tag: 'figure[data-audio-asset]', getAttrs: element => {
-            const assetId = element.getAttribute('data-audio-asset');
-            return getAssetUrl(assetId) ? { assetId, title: element.getAttribute('data-title') || '', kind: element.getAttribute('data-kind') === 'background' ? 'background' : 'effect', loop: element.getAttribute('data-loop') === 'true' } : false;
-        } }]; },
-        renderHTML({ node }) { return ['figure', { 'data-audio-asset': node.attrs.assetId, 'data-title': node.attrs.title, 'data-kind': node.attrs.kind, 'data-loop': String(node.attrs.loop), class: 'ee-audio-node' }, ['figcaption', {}, node.attrs.title || l('audio')], ['audio', { src: getAssetUrl(node.attrs.assetId), controls: 'controls', preload: 'none', ...(node.attrs.loop ? { loop: 'loop' } : {}) }]]; },
-        addNodeView() {
-            return ({ node }) => {
-                const dom = document.createElement('figure');
-                dom.className = 'ee-audio-node';
-                const caption = document.createElement('figcaption');
-                const audio = document.createElement('audio');
-                audio.controls = true;
-                audio.preload = 'none';
-                const draw = () => { caption.textContent = `${l(node.attrs.kind === 'background' ? 'backgroundAudio' : 'effect')} · ${node.attrs.title || l('audio')}`; const url = getAssetUrl(node.attrs.assetId); if (audio.getAttribute('src') !== url) audio.src = url; audio.loop = node.attrs.loop; };
-                dom.append(caption, audio);
-                draw();
-                return { dom, update(next) { if (next.type.name !== 'audio') return false; node = next; draw(); return true; }, stopEvent(event) { return event.target === audio; }, ignoreMutation() { return true; }, destroy() { audio.pause(); audio.removeAttribute('src'); audio.load(); } };
-            };
-        },
-    });
+    const Audio = createAudioExtension(getAssetUrl, l);
     const Columns = Node.create({
         name: 'columns', group: 'block', content: 'column{2,3}', isolating: true,
         parseHTML() { return [{ tag: 'div.ee-columns' }]; },
@@ -82,12 +65,12 @@ export function editorExtensions(getAssetUrl) {
         renderHTML({ HTMLAttributes }) { return ['div', mergeAttributes(HTMLAttributes, { class: 'ee-column' }), 0]; },
     });
     return [
-        StarterKit.configure({ heading: { levels: [1, 2, 3, 4, 5, 6] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, protocols: ['epub'], isAllowedUri: url => safeLink(url) } }),
+        StarterKit.configure({ horizontalRule: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, protocols: ['epub'], isAllowedUri: url => safeLink(url) } }),
         TableKit.configure({ table: { resizable: true, lastColumnResizable: true } }), TextStyle, Color, BackgroundColor, FontFamily, FontSize,
         TextAlign.configure({ types: ['heading', 'paragraph'] }),
         UniqueID.configure({ types: ['paragraph', 'heading', 'image', 'table', 'columns', 'blockquote', 'footnote', 'audio', 'media'], generateID: () => newId() }),
-        Image, Footnote, Audio, Media, Columns, Column, CellStyle, ParagraphIndent, ParagraphFormat, EditorTab,
-        BlockStyle, InlineStyle, Highlight, Superscript, Subscript,
+        Image, Footnote, Audio, Media, Columns, Column, CellStyle, ParagraphIndent, ParagraphFormat, EditorTab, QuotePairs,
+        BlockStyle, InlineStyle, Highlight, Superscript, Subscript, TtsMark, StyledDivider, createAudioRangeExtension(getAssetUrl, l),
     ];
 }
 

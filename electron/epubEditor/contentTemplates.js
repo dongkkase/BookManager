@@ -74,6 +74,7 @@ export function templateAssetIds(content) {
     const ids = new Set();
     walkDocument(content, node => {
         if (['image', 'audio'].includes(node.type)) ids.add(node.attrs.assetId);
+        for (const mark of node.marks || []) if (mark.type === 'audioRange') ids.add(mark.attrs.assetId);
         for (const mark of node.marks || []) if (mark.type === 'textStyle' && mark.attrs?.fontFamily?.startsWith('font-')) ids.add(mark.attrs.fontFamily.slice(5));
     });
     return ids;
@@ -84,6 +85,7 @@ export function remapTemplateAssets(content, mapping) {
     walkDocument(result, node => {
         if (['image', 'audio'].includes(node.type) && mapping.has(node.attrs.assetId)) node.attrs.assetId = mapping.get(node.attrs.assetId);
         for (const mark of node.marks || []) {
+            if (mark.type === 'audioRange' && mapping.has(mark.attrs.assetId)) mark.attrs.assetId = mapping.get(mark.attrs.assetId);
             const font = mark.type === 'textStyle' && mark.attrs?.fontFamily;
             if (typeof font === 'string' && font.startsWith('font-') && mapping.has(font.slice(5))) mark.attrs.fontFamily = `font-${mapping.get(font.slice(5))}`;
         }
@@ -95,6 +97,8 @@ export function remapTemplateAssets(content, mapping) {
 export function prepareTemplateContent(content, sourceChapterId = TEMPLATE_CHAPTER, destinationChapterId = TEMPLATE_CHAPTER) {
     const result = copy(content);
     const ids = new Map();
+    const ttsIds = new Map();
+    const audioRangeIds = new Map();
     let removedLinks = 0;
     walkDocument(result, node => {
         if (node.attrs?.id) { const id = newId(); ids.set(node.attrs.id, id); node.attrs.id = id; }
@@ -102,6 +106,14 @@ export function prepareTemplateContent(content, sourceChapterId = TEMPLATE_CHAPT
     walkDocument(result, node => {
         if (!node.marks) return;
         node.marks = node.marks.filter(mark => {
+            if (mark.type === 'audioRange') {
+                if (!audioRangeIds.has(mark.attrs.id)) audioRangeIds.set(mark.attrs.id, newId('ar'));
+                mark.attrs.id = audioRangeIds.get(mark.attrs.id);
+            }
+            if (mark.type === 'tts') {
+                if (!ttsIds.has(mark.attrs.id)) ttsIds.set(mark.attrs.id, newId('tts'));
+                mark.attrs.id = ttsIds.get(mark.attrs.id);
+            }
             if (mark.type !== 'link' || !mark.attrs?.href?.startsWith('epub:')) return true;
             const [chapter, anchor] = mark.attrs.href.slice(5).split('#');
             if (chapter !== sourceChapterId || !anchor || !ids.has(anchor)) { removedLinks += 1; return false; }

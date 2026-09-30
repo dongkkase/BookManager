@@ -326,6 +326,68 @@ test('volume and mute update active fades and stopping immediately clears all so
     assert.equal(h.state().status, 'paused');
 });
 
+test('track volume multiplies the reader volume throughout fades, loops and live changes', async () => {
+    const h = harness({ volume: 0.8 });
+    const cue = track('quiet', { volume: 0.25, controls: false, loop: true, clipEnd: 2 });
+    h.controller.setPlaylist([cue], { key: 1 });
+    await flush();
+    h.step(200);
+    assert.equal(h.audios[0].volume, 0.1);
+    h.step(200);
+    assert.equal(h.audios[0].volume, 0.2);
+    h.controller.setVolume(0.4);
+    assert.equal(h.audios[0].volume, 0.1);
+    h.audios[0].currentTime = 2;
+    h.audios[0].dispatch('timeupdate');
+    await flush();
+    h.step(400);
+    assert.equal(h.audios[0].currentTime, 0);
+    assert.equal(h.audios[0].volume, 0.1);
+    h.controller.setPlaylist([{ ...cue, volume: 0 }], { key: 1 });
+    assert.equal(h.audios[0].volume, 0);
+    assert.equal(h.audios[0].playCount, 2);
+    h.controller.setPlaylist([track('next', { volume: 0.5 })], { key: 2 });
+    await flush();
+    h.step(200);
+    assert.equal(h.audios[0].volume, 0);
+    assert.equal(h.audios[1].volume, 0.1);
+    h.controller.dispose();
+});
+
+test('range audio keeps playback and completed effects across page changes until the range leaves view', async () => {
+    const h = harness();
+    const cue = track('range', { rangeId: 'r_rain', clipEnd: 2 });
+    h.controller.setPlaylist([cue], { key: 1 });
+    await flush();
+    h.step(400);
+    h.audios[0].currentTime = 1;
+    h.controller.setPlaylist([cue], { key: 2 });
+    assert.equal(h.audios.length, 1);
+    assert.equal(h.audios[0].playCount, 1);
+    assert.equal(h.audios[0].currentTime, 1);
+    h.audios[0].currentTime = 2;
+    h.audios[0].dispatch('timeupdate');
+    h.controller.setPlaylist([cue], { key: 3 });
+    h.controller.setPlaylist([cue], { key: 2 });
+    assert.equal(h.state().status, 'ended');
+    assert.equal(h.audios.length, 1);
+    h.controller.setPlaylist([], { key: 4 });
+    h.controller.setPlaylist([cue], { key: 3 });
+    await flush();
+    assert.equal(h.audios.length, 2);
+    assert.equal(h.audios[1].currentTime, 0);
+    h.controller.dispose();
+});
+
+test('hidden tracks respect disabled autoplay and normalize their volume', () => {
+    assert.deepEqual(normalizeEpubAudioPlaylist([undefined, null, -2, 3, NaN, 0].map(volume => track('a', { volume }))).map(item => item.volume), [1, 1, 0, 1, 1, 0]);
+    const h = harness({ autoplay: false });
+    h.controller.setPlaylist([track('hidden', { controls: false, volume: 0.5, loop: true })], { key: 1 });
+    assert.equal(h.audios.length, 0);
+    assert.equal(h.state().status, 'paused');
+    h.controller.dispose();
+});
+
 test('rapidly crossing another page preserves the audible outgoing fade until it finishes', async () => {
     const h = harness();
     h.controller.setPlaylist([track('a')], { key: 1 });await flush();h.step(400);

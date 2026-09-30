@@ -1,3 +1,4 @@
+import { collectEpubTtsEdits, epubTtsAnnotation } from './epubTts.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
@@ -470,6 +471,12 @@ function findImageEntryForHref(entryName = '', attrs = {}, entries = []) {
 
 function safeEpubHtmlAttributes(tagName = '', attrs = {}) {
     const props = {};
+    const tts = epubTtsAnnotation(attrs);
+    if (tts) {
+        props['data-bm-tts'] = tts.mode;
+        props['data-bm-tts-id'] = tts.id;
+        if (tts.mode === 'replace') props['data-bm-tts-text'] = tts.text;
+    }
     const normalizedTagName = String(tagName || '').toLowerCase();
     if (normalizedTagName === 'td' || normalizedTagName === 'th') {
         const colSpan = sanitizePositiveIntegerAttribute(attrs.colspan, 1, 100);
@@ -979,17 +986,17 @@ function normalizeEpubTextNode(value = '') {
     return text.trim() ? text : '';
 }
 
-function textFromEpubNodes(nodes = []) {
+function textFromEpubNodes(nodes = [], preserveEdges = false) {
     const text = nodes.map(node => {
         if (!node) return '';
         if (node.type === 'text') return node.text || '';
         if (node.hiddenText) return '';
         if (node.tagName === 'br') return '\n';
         if (node.tagName === 'img') return '';
-        return textFromEpubNodes(node.children || []);
+        return textFromEpubNodes(node.children || [], preserveEdges || Boolean(node.audioRangeId) || Boolean(epubTtsAnnotation(node.attributes)));
     }).join('').replace(/[ \t\r\f\v]+/g, ' ').replace(/\n{3,}/g, '\n\n');
     if (/\u00a0/.test(text) && !text.replace(/[\s\u00a0]+/g, '')) return '\u00a0';
-    return text.trim();
+    return preserveEdges ? text : text.trim();
 }
 
 function epubNodesContainImage(nodes = []) {
@@ -1025,6 +1032,7 @@ function epubAudioTrackIdsFromNodes(nodes = []) {
     const ids = [];
     for (const node of nodes) {
         if (node?.audioTrackId) ids.push(node.audioTrackId);
+        if (node?.audioRangeTrackId) ids.push(node.audioRangeTrackId);
         ids.push(...epubAudioTrackIdsFromNodes(node?.children || []));
     }
     return Array.from(new Set(ids));
@@ -1123,6 +1131,8 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
             className,
             id: anchorId || undefined,
             audioTrackId: attrs['data-bookmanager-audio-track'] || undefined,
+            ...(attrs['data-bookmanager-audio-range-track'] ? { audioRangeId: attrs['data-bookmanager-audio-range'], audioRangeTrackId: attrs['data-bookmanager-audio-range-track'] } : {}),
+            ...(attrs['data-bookmanager-audio-controls'] === 'false' ? { audioControls: false } : {}),
             href: tagName === 'a' ? (attrs.href || attrs['xlink:href'] || '') : undefined,
             targetEntryName: target?.entryName || undefined,
             targetAnchor: target?.anchor || undefined,
@@ -1139,6 +1149,14 @@ function parseSafeEpubHtmlNodes(fragment = '', entryName = '', session, entries 
 
     const prepareMedia = nodes => {
         for (const node of nodes) {
+            if (node.tagName === 'figure' && node.audioControls === false) {
+                const audioMarkers = children => children.flatMap(child => child.audioTrackId ? [child] : audioMarkers(child.children || []));
+                node.children = audioMarkers(node.children || []);
+                node.tagName = 'span';
+                node.className = undefined;
+                node.style = { display: 'contents' };
+                node.hiddenText = undefined;
+            }
             if (node.tagName === 'figure' && (node.mediaUrl || node.className?.split(/\s+/).includes('external-media'))) {
                 const findMedia = children => {
                     for (const child of children) {
@@ -1238,6 +1256,27 @@ function epubBlocksFromNodes(nodes = []) {
     }
 
     flushInlineNodes();
+    const hiddenAudioOnly = nodes => nodes.every(node => node.audioTrackId
+        ? node.audioControls === false
+        : node.type === 'element' && !['img', 'br', 'hr'].includes(node.tagName) && hiddenAudioOnly(node.children || []));
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+        const block = blocks[index];
+        if (!block.hasAudio || block.text || block.hasImage || block.hasVideo || !hiddenAudioOnly(block.nodes || [])) continue;
+        const next = blocks[index + 1];
+        const previous = blocks[index - 1];
+        const target = next?.nodes?.length ? next : previous?.nodes?.length ? previous : null;
+        if (!target) continue;
+        const prepend = target === next;
+        const edge = prepend ? target.nodes[0] : target.nodes.at(-1);
+        const parent = edge?.type === 'element' && !edge.audioTrackId && !['img', 'br', 'hr'].includes(edge.tagName) ? edge : null;
+        const nodes = parent ? parent.children : target.nodes;
+        if (prepend) nodes.unshift(...block.nodes);
+        else nodes.push(...block.nodes);
+        target.hasAudio = true;
+        target.audioTracks = Array.from(new Set([...(target.audioTracks || []), ...block.audioTracks]));
+        target.anchors = Array.from(new Set([...(target.anchors || []), ...(block.anchors || [])]));
+        blocks.splice(index, 1);
+    }
     return blocks;
 }
 
@@ -2572,6 +2611,10 @@ export class ViewerSessionManager {
             const css = await readEpubCssRulesForHtml(html, entry.name, session.filePath, entries, stylesheetCache, readOptions);
             if (css.stylesheet) stylesheetTexts.add(css.stylesheet);
             const { blocks, imageEntryNames } = epubReaderBlocksFromHtml(inlineAudio.optimizedHtml, entry.name, session, entries, css.rules, imageDimensionByEntryName);
+            for (const block of blocks) {
+                const edits = collectEpubTtsEdits(block.nodes);
+                if (edits.length) block.ttsEdits = edits;
+            }
             for (const track of audioTracks) {
                 const anchors = track.triggerAnchors?.length ? track.triggerAnchors : track.anchor ? [track.anchor] : [];
                 const targetBlocks = anchors.length > 0

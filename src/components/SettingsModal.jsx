@@ -880,6 +880,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
 
               <div className="settings-separator" />
 
+                {renderCheck('hardware_acceleration', t('hardware_acceleration'), t('hardware_acceleration_desc'))}
               {renderCheck('play_sound', t('play_sound'))}
               {renderCheck('backup_on', t('backup'))}
               {renderCheck('flatten_folders', t('flatten'), t('flatten_desc'))}
