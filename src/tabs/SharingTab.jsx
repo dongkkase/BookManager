@@ -332,6 +332,7 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                 <div className="sharing-groupbox mt-20">
                     <div className="sharing-groupbox-title">{t('tab_sharing_opds_title')}</div>
                     <div className="sharing-groupbox-content">
+                        <div className="sharing-desc">{t('reading_lists.shared_hint')}</div>
                         <div className="sharing-row">
                             <label className="sharing-label" htmlFor="opds-port">{t('tab_sharing_port')}</label>
                             <input

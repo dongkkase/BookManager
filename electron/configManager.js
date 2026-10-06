@@ -182,6 +182,8 @@ export class ConfigManager {
       lang,
       language: lang,
         hardware_acceleration: raw.hardware_acceleration !== false,
+        telemetry_error_reports: raw.telemetry_error_reports === undefined ? defaults.telemetry_error_reports : raw.telemetry_error_reports === true,
+        telemetry_usage_stats: raw.telemetry_usage_stats === undefined ? defaults.telemetry_usage_stats : raw.telemetry_usage_stats === true,
       viewer_path: String(raw.viewer_path || defaults.viewer_path).trim(),
       viewer_paths: this.normalizeViewerPaths(raw.viewer_paths || defaults.viewer_paths),
       font_family: fontFamily === 'Default' ? defaults.font_family : fontFamily,
@@ -237,6 +239,8 @@ export class ConfigManager {
       max_threads: defaultThreads,
       play_sound: true,
         hardware_acceleration: true,
+        telemetry_error_reports: true,
+        telemetry_usage_stats: true,
       viewer_path: '',
       viewer_paths: {
         comic: '',

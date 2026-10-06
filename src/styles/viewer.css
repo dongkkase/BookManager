@@ -1641,6 +1641,11 @@ body,
   visibility: hidden;
 }
 
+.viewer-content[aria-busy="true"] {
+    opacity: 0;
+    pointer-events: none;
+}
+
 .viewer-initial-render-loading-indicator {
     position: relative;
   display: block;

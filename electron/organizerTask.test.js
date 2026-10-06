@@ -8,7 +8,7 @@ import { spawnSync } from 'child_process';
 
 import { listZipEntriesFromFile, readZipEntry, replaceZipEntry } from './core/zipArchive.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
-import { assignOrganizerSeriesOutputPaths } from '../src/organizerPolicy.js';
+import { assignOrganizerSeriesOutputPaths, changeOrganizerUnit, organizerExtractedTitleName, organizerFolderName } from '../src/organizerPolicy.js';
 
 function find7z() {
     for (const candidate of [
@@ -1012,6 +1012,51 @@ test('Organizer는 제목의 부대, 부, 장 숫자를 권수로 오인하지 �
             assert.equal(analyzed.items[0].core_title, item.cleanTitle);
             assert.equal(analyzed.items[0].volumes.length, 1);
             assert.equal(analyzed.items[0].volumes[0].new_name, item.newName);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Organizer는 NFD 제목의 비율과 실제 권수를 폴더명과 추출 제목에 보존한다', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-title-ratio-'));
+    const title = '남녀비 1：5 세계에서도 평범하게 살 수 있을 줄 알았어？';
+    try {
+        const directory = path.join(root, title.normalize('NFD'));
+        fs.mkdirSync(directory);
+        for (const [suffix, expectedSuffix] of [['', ''], [' 1권', ' 01권'], [' 02권', ' 02권'], [' 1~3권', ' 01~03권']]) {
+            const filename = `${title}${suffix}.cbz`.normalize('NFD');
+            const source = path.join(directory, filename);
+            fs.writeFileSync(source, Buffer.alloc(0));
+            await replaceZipEntry(source, '001.jpg', Buffer.from('page-1'));
+            const analyzed = await analyzeOrganizerInputs([source], { sevenZExe: '', lang: 'ko' });
+            assert.deepEqual(analyzed.skippedFiles, []);
+            assert.equal(analyzed.items.length, 1);
+            const [item] = analyzed.items;
+            assert.equal(item.clean_title, title);
+            assert.equal(item.core_title, title);
+            assert.equal(item.series_title, title);
+            assert.equal(item.volumes.length, 1);
+            const [volume] = item.volumes;
+            assert.equal(volume.new_name, `${title}${expectedSuffix}`);
+            assert.equal(organizerExtractedTitleName(volume), `${title}${expectedSuffix}`);
+            assert.equal(organizerFolderName(item, volume).normalize('NFC'), `${title}${expectedSuffix}`);
+            assert.equal(changeOrganizerUnit(volume.new_name, 'volume', 'ko'), `${title}${expectedSuffix}`);
+        }
+
+        const nestedSource = path.join(directory, `${title} 1~4권.zip`.normalize('NFD'));
+        fs.writeFileSync(nestedSource, Buffer.alloc(0));
+        for (const suffix of ['', ' 04권']) {
+            await replaceZipEntry(nestedSource, `${title}${suffix}/001.jpg`.normalize('NFD'), Buffer.from('page-1'));
+        }
+        const analyzed = await analyzeOrganizerInputs([nestedSource], { sevenZExe: '', lang: 'ko' });
+        assert.deepEqual(analyzed.skippedFiles, []);
+        assert.equal(analyzed.items.length, 1);
+        const [item] = analyzed.items;
+        assert.deepEqual(item.volumes.map(volume => volume.new_name).sort(), [title, `${title} 04권`].sort());
+        for (const volume of item.volumes) {
+            assert.equal(organizerExtractedTitleName(volume), volume.new_name);
+            assert.equal(organizerFolderName(item, volume).normalize('NFC'), volume.new_name);
         }
     } finally {
         fs.rmSync(root, { recursive: true, force: true });

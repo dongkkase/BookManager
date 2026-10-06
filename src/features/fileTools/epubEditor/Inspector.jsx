@@ -3,6 +3,7 @@ import { editorText as l } from './labels';
 import { STYLE_PRESETS, coverSvg } from '../../../../electron/epubEditor/model';
 import { normalizeAudioVolume } from './audioNode';
 import { audioRangeAtSelection } from './audioRanges';
+import ImageWidthField from './ImageWidthField';
 
 export function Field({ label, children }) {
     return <label className="ee-field"><span>{label}</span>{children}</label>;
@@ -78,7 +79,7 @@ export default function Inspector({ hidden, onClose, tab, setTab, project, updat
                         <button className="ee-button" onClick={onFootnote}>{l('footnoteText')}</button>
                         <button className="ee-button ee-danger" onClick={() => editor.commands.deleteSelection()}>{l('remove')}</button>
                     </> : image ? <>
-                        <NumberField label={l('width')} value={image.width} min={10} max={100} onChange={width => setImage({ width })} />
+                        <ImageWidthField key={image.id || editor.state.selection.from} value={image} editor={editor} onChange={setImage} />
                         <Field label={l('alt')}><textarea rows={3} maxLength={2000} value={image.alt} disabled={image.decorative} onChange={event => setImage({ alt: event.target.value })} /></Field>
                         <label className="ee-check"><input type="checkbox" checked={image.decorative} onChange={event => setImage({ decorative: event.target.checked })} />{l('decorative')}</label>
                         <Field label={l('caption')}><input maxLength={2000} value={image.caption} placeholder={l('imageCaptionPlaceholder')} onChange={event => setImage({ caption: event.target.value })} /></Field>
@@ -95,7 +96,8 @@ export default function Inspector({ hidden, onClose, tab, setTab, project, updat
                     <p>{l(editing ? 'textFormattingLocation' : 'elementEditingLocation')}</p>
                     {editing && <button type="button" className="ee-button" onClick={onFormat}>{l('focusTextFormatting')}</button>}
                 </div>}
-                <section className="ee-property-section"><h3>{l('currentChapterSettings')}</h3><p className="ee-inspector-chapter">{chapter.title || l('chapter')}</p>
+                <section className="ee-property-section"><h3>{l('currentChapterSettings')}</h3>
+                    <Field label={l('chapterTitle')}><input maxLength={2000} value={chapter.title} placeholder={l('chapterTitle')} onChange={event => patchChapter({ title: event.target.value })} /></Field>
                     <label className="ee-check"><input type="checkbox" checked={chapter.inToc} onChange={event => patchChapter({ inToc: event.target.checked })} />{l('inToc')}</label>
                     <Field label={l('tocTitle')}><input disabled={!chapter.inToc} value={chapter.tocTitle} placeholder={chapter.title} onChange={event => patchChapter({ tocTitle: event.target.value })} /></Field>
                     <button type="button" className="ee-button" onClick={onChapterCss}>{l('chapterCss')}</button>

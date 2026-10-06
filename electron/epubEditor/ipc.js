@@ -1,11 +1,14 @@
 import path from 'node:path';
+import { registerObservedHandler } from '../observabilityOperations.js';
+
+const TELEMETRY_FEATURES = new Map([['save', 'epub-save'], ['export', 'epub-export'], ['importEpub', 'epub-import']]);
 
 export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, openViewerPreview }) {
     let servicePromise;
     const owners = new Set();
     const pendingUnloads = new Map();
     const service = () => servicePromise ||= import('./service.js').then(({ EpubEditorService }) => new EpubEditorService(path.join(app.getPath('userData'), 'epub-editor')));
-    ipcMain.handle('tools:epubEditor', async (event, request = {}) => {
+    registerObservedHandler(ipcMain, 'tools:epubEditor', (_event, request) => TELEMETRY_FEATURES.get(request?.action), async (event, request = {}) => {
         const owner = event.sender.id;
         const window = BrowserWindow.fromWebContents(event.sender);
         const progress = value => { if (!event.sender.isDestroyed()) event.sender.send('tools:epubEditor:progress', { operationId: request.operationId, value }); };
@@ -70,15 +73,17 @@ export function registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, ope
                 }
                 result = await editor.readText(owner, sessionId, { filePath, sourceId: request.sourceId, encoding: request.encoding, operationId });
             }
-            else if (action === 'open') {
-                const selected = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: 'BookManager EPUB project', extensions: ['bmepub'] }] });
-                if (selected.canceled) return { ok: true, canceled: true };
-                result = await editor.open(owner, selected.filePaths[0], operationId, progress);
+            else if (action === 'open' || action === 'importEpub') {
+                const importing = action === 'importEpub';
+                const selected = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: importing ? 'EPUB' : 'BookManager EPUB project', extensions: [importing ? 'epub' : 'bmepub'] }] });
+                if (selected.canceled || !selected.filePaths?.length) return { ok: true, canceled: true };
+                if (importing && event.sender.isDestroyed()) throw Object.assign(new Error('SESSION_CLOSED'), { code: 'SESSION_CLOSED' });
+                result = importing ? await editor.importEpub(owner, selected.filePaths[0], operationId, request.language, progress) : await editor.open(owner, selected.filePaths[0], operationId, progress);
             } else if (action === 'addAsset') {
                 editor.session(sessionId, owner);
                 const kind = ['font', 'audio'].includes(request.kind) ? request.kind : 'image';
                 const multiple = kind === 'image' && request.multiple === true;
-                const selected = await dialog.showOpenDialog(window, { properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: kind === 'audio' ? 'Audio' : kind === 'font' ? 'Font' : 'Image', extensions: kind === 'audio' ? ['mp3', 'm4a'] : kind === 'font' ? ['ttf', 'otf', 'woff', 'woff2'] : ['png', 'jpg', 'jpeg'] }] });
+                const selected = await dialog.showOpenDialog(window, { properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: kind === 'audio' ? 'Audio' : kind === 'font' ? 'Font' : 'Image', extensions: kind === 'audio' ? ['mp3', 'm4a'] : kind === 'font' ? ['ttf', 'otf', 'woff', 'woff2'] : ['png', 'jpg', 'jpeg', 'webp'] }] });
                 if (selected.canceled || !selected.filePaths?.length) return { ok: true, canceled: true };
                 result = multiple ? await editor.importAssets(owner, sessionId, selected.filePaths, kind) : await editor.addAsset(owner, sessionId, selected.filePaths[0], kind);
             } else if (action === 'previewViewer') {

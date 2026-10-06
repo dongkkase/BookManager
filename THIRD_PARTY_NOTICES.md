@@ -1,5 +1,12 @@
 # Third-Party Notices
 
+## Sentry JavaScript SDK
+
+Optional error reporting uses @sentry/node 10.75.3 and its supporting Sentry packages.
+Copyright (c) 2023 Functional Software, Inc. dba Sentry. Licensed under MIT.
+The SDK and its dependencies retain their license files in the distributed packages.
+Source: https://github.com/getsentry/sentry-javascript
+
 ## Supertonic inference reference implementation
 
 The local Supertonic TTS inference code is adapted from the Supertonic Node.js reference implementation.
@@ -97,6 +104,8 @@ ProseMirror and the following supporting packages.
 - use-sync-external-store: Copyright (c) Meta Platforms, Inc. and affiliates.
 - uuid: Copyright (c) 2010-2020 Robert Kieffer and other contributors
 - csstype: Copyright (c) 2017-2018 Fredrik Nicol
+- @xmldom/xmldom 0.9.12 (EPUB import): Copyright 2019-present Christopher J. Brody
+  and other contributors; Copyright 2012-2017 @jindw and other contributors
 - @types/react, @types/react-dom, @types/use-sync-external-store:
   Copyright (c) Microsoft Corporation.
 

@@ -18,6 +18,7 @@ export function registerReadiveIpc({ ipcMain, configManager, getLibraryDbPath, g
         directory: path.join(configManager.userDataPath, 'readive-link'),
         requestManualApproval: options => approveManualPairing({ ...options, dialog: electron.dialog, window: getMainWindow?.(), config: configManager.getConfig() || {} }),
         getRegisteredLibraries: () => configManager.getConfig()?.library_entries || configManager.getConfig()?.libraries || [],
+        getConfig: () => configManager.getConfig() || {},
         getLibraryDb: async () => {
             const currentPath = getLibraryDbPath();
             if (!currentPath) return null;

@@ -1,5 +1,8 @@
 import { saveItemRating } from './ratingEditor.js';
+import { saveConfigWithTelemetryConsent } from './observabilityConsent.js';
+import { registerObservedHandler } from './observabilityOperations.js';
 import { updateReadingProgress } from './readingActions.js';
+import { registerReadingListsIpc } from './readingLists.js';
 import pkg from 'electron';
 const { ipcMain, app, BrowserWindow, dialog, shell, net, nativeImage } = pkg;
 import fs from 'fs';
@@ -19,6 +22,7 @@ import { resolveCoverEditorSevenZPath } from './coverEditorBinary.js';
 import { createPermanentDeleteDialogOptions, deleteFileEntries } from './fileDeletion.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
+import { readFolderDetails } from './folderDetails.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
@@ -3502,7 +3506,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     });
   });
 
-  ipcMain.handle('organizer:execute', async (event, items, options = {}) => {
+  registerObservedHandler(ipcMain, 'organizer:execute', 'archive-organizer', async (event, items, options = {}) => {
     const taskId = 'organizer';
     const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
@@ -3560,7 +3564,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     });
   });
 
-  ipcMain.handle('renamer:execute', async (event, items, options = {}) => {
+  registerObservedHandler(ipcMain, 'renamer:execute', 'archive-renamer', async (event, items, options = {}) => {
     const taskId = 'renamer';
     const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
@@ -3786,7 +3790,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     };
   });
 
-  ipcMain.handle('metadata:save', async (event, items, options = {}) => {
+  registerObservedHandler(ipcMain, 'metadata:save', 'metadata-save', async (event, items, options = {}) => {
     const taskId = 'metadata';
     const controller = cancellationRegistry.start(event.sender.id, taskId);
     const config = configManager.getConfig() || {};
@@ -4074,7 +4078,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // Legacy preload aliases kept for older migrated UI paths.
-  ipcMain.handle('task:organize:start', async (event, options = {}) => {
+  registerObservedHandler(ipcMain, 'task:organize:start', 'archive-organizer', async (event, options = {}) => {
     const paths = options.paths || options.files || [];
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const items = options.items || (await analyzeOrganizerInputs(paths, { ...options, sevenZExe }, (progress) => {
@@ -4085,7 +4089,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     });
   });
 
-  ipcMain.handle('task:rename:start', async (event, options = {}) => {
+  registerObservedHandler(ipcMain, 'task:rename:start', 'archive-renamer', async (event, options = {}) => {
     const paths = options.paths || options.files || [];
     const sevenZExe = options.sevenZExe || await getBinPath('7za') || await getBinPath('7z');
     const items = options.items || (await analyzeRenamerInputs(paths, { ...options, sevenZExe }, (progress) => {
@@ -4109,7 +4113,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 공유 서버 ==========
-  ipcMain.handle('server:start', async (event, serverType, options = {}) => {
+  registerObservedHandler(ipcMain, 'server:start', 'sharing-start', async (event, serverType, options = {}) => {
     const sendServerLog = log => {
         if (!event.sender.isDestroyed()) {
             event.sender.send('server:log', { ...log, status: getSharingServerStatus() });
@@ -4322,6 +4326,24 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         } finally {
             await db.close();
         }
+    });
+
+    registerReadingListsIpc({
+        ipcMain,
+        getMainWindow: hooks.getMainWindow,
+        createLibrary: () => new LibraryDB({ dbPath: libraryDbPath() }),
+        normalizeFile: normalizeLibrarySearchFileForRenderer,
+        loadPreview: async filePath => inspectFolderFile(filePath, {
+            dbPath: libraryDbPath(),
+            thumbnailDir: thumbnailDir(),
+            sevenZExe: await getBinPath('7za') || await getBinPath('7z'),
+            thumbnailEncoder: encodeThumbnail,
+        }),
+        broadcast: () => {
+            for (const window of BrowserWindow.getAllWindows()) {
+                if (!window.isDestroyed()) window.webContents.send('reading:listsChanged');
+            }
+        },
     });
 
   ipcMain.handle('reading:listRecent', async (_event, limit = 50) => {
@@ -4991,9 +5013,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         ...(updates.api_keys || {}),
       },
     };
-    configManager.saveConfig(nextConfig);
+    const savedConfig = saveConfigWithTelemetryConsent(configManager, nextConfig);
     setLanguage(nextLang);
-    const savedConfig = configManager.getConfig();
     const savedApiKeys = savedConfig.api_keys || {};
     BrowserWindow.getAllWindows().forEach(window => {
       if (!window.isDestroyed()) {
@@ -5161,7 +5182,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
-  ipcMain.handle('tools:textCleaner:save', async (_event, request = {}) => {
+  registerObservedHandler(ipcMain, 'tools:textCleaner:save', 'text-cleaner', async (_event, request = {}) => {
     try {
       const { saveTextCleanerFile } = await import('./textCleanerFile.js');
       return { ok: true, ...await saveTextCleanerFile(request) };
@@ -5480,6 +5501,26 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       return { success: false, message: error.message };
     }
   });
+
+    const folderDetailRequests = new Map();
+    ipcMain.handle('fs:folderDetails', async (event, folderPath, requestId) => {
+        const senderId = event.sender.id;
+        folderDetailRequests.set(senderId, requestId);
+        try {
+            const details = await readFolderDetails(folderPath, {
+                dbPath: libraryDbPath(),
+                shouldCancel: () => event.sender.isDestroyed() || folderDetailRequests.get(senderId) !== requestId,
+            });
+            return { success: true, details };
+        } catch (error) {
+            return { success: false, cancelled: error.code === 'TASK_CANCELLED', message: error.message };
+        } finally {
+            if (folderDetailRequests.get(senderId) === requestId) folderDetailRequests.delete(senderId);
+        }
+    });
+    ipcMain.handle('fs:cancelFolderDetails', (event, requestId) => {
+        if (folderDetailRequests.get(event.sender.id) === requestId) folderDetailRequests.delete(event.sender.id);
+    });
 
   ipcMain.handle('fs:filePreview', async (_, filePath, options = {}) => {
     try {

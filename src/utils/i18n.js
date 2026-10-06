@@ -1,9 +1,11 @@
 import { legacyTranslations } from './i18nData.js';
+import { readingListTranslations } from './readingListTranslations.js';
 
 export const SUPPORTED_LANGUAGES = ['ko', 'en', 'ja'];
 
 const EXTRA_TRANSLATIONS = {
   ko: {
+    reading_lists: readingListTranslations.ko,
     tools: {
       tab: '파일 도구',
       title: '파일 도구',
@@ -298,6 +300,19 @@ const EXTRA_TRANSLATIONS = {
         label: '상세',
         collapse: '상세 패널 접기',
         expand: '상세 패널 열기',
+        file_count: '파일 수',
+        folder_count: '하위 폴더 수',
+        reading_time: '예상 독서 시간',
+        loading: '집계 중…',
+        scope: '하위 폴더 포함 · 숨김 항목 제외',
+        reading_basis: '페이지당 {0}초 기준 · 오디오북은 재생 시간 합산',
+        partial_pages: '{0}페이지 (미확인 파일 {1}개)',
+        partial_time: '{0} (미확인 파일 {1}개)',
+        minutes: '{0}분',
+        hours_minutes: '{0}시간 {1}분',
+        missing_pages: '미확인 파일의 페이지 수와 독서 시간은 합계에서 제외됩니다. 폴더 스캔 후 다시 선택하면 갱신됩니다.',
+        unreadable: '읽을 수 없는 하위 폴더 {0}개는 합계에서 제외되었습니다.',
+        error: '폴더 정보를 불러오지 못했습니다. 폴더를 다시 선택해 주세요.',
       },
       drop: {
         open_in_viewer: '지원 파일은 뷰어로 열고, 폴더는 해당 위치로 이동합니다',
@@ -802,6 +817,7 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   en: {
+    reading_lists: readingListTranslations.en,
     tools: {
       tab: 'File Tools',
       title: 'File Tools',
@@ -1096,6 +1112,19 @@ const EXTRA_TRANSLATIONS = {
         label: 'Details',
         collapse: 'Collapse details panel',
         expand: 'Open details panel',
+        file_count: 'Files',
+        folder_count: 'Subfolders',
+        reading_time: 'Estimated reading time',
+        loading: 'Calculating…',
+        scope: 'Includes subfolders · Hidden items excluded',
+        reading_basis: '{0} seconds per page · Audiobooks use playback duration',
+        partial_pages: '{0} pages ({1} files unknown)',
+        partial_time: '{0} ({1} files unknown)',
+        minutes: '{0} min',
+        hours_minutes: '{0} hr {1} min',
+        missing_pages: 'Files with unknown page counts are excluded from the page and time totals. Scan the folder and select it again to update.',
+        unreadable: '{0} unreadable subfolders were excluded from the totals.',
+        error: 'Could not load folder details. Select the folder again to retry.',
       },
       drop: {
         open_in_viewer: 'Drop a supported file to open it in the viewer, or a folder to navigate to it',
@@ -1600,6 +1629,7 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   ja: {
+    reading_lists: readingListTranslations.ja,
     tools: {
       tab: 'ファイルツール',
       title: 'ファイルツール',
@@ -1894,6 +1924,19 @@ const EXTRA_TRANSLATIONS = {
         label: '詳細',
         collapse: '詳細パネルを折りたたむ',
         expand: '詳細パネルを開く',
+        file_count: 'ファイル数',
+        folder_count: 'サブフォルダー数',
+        reading_time: '予想読書時間',
+        loading: '集計中…',
+        scope: 'サブフォルダーを含む · 隠し項目を除外',
+        reading_basis: '1ページ{0}秒で計算 · オーディオブックは再生時間を合算',
+        partial_pages: '{0}ページ（未確認ファイル{1}件）',
+        partial_time: '{0}（未確認ファイル{1}件）',
+        minutes: '{0}分',
+        hours_minutes: '{0}時間{1}分',
+        missing_pages: 'ページ数が不明なファイルはページ数と時間の合計から除外されます。フォルダーをスキャンして再選択すると更新されます。',
+        unreadable: '読み取れないサブフォルダー{0}件は合計から除外されました。',
+        error: 'フォルダー情報を読み込めませんでした。フォルダーを再選択してください。',
       },
       drop: {
         open_in_viewer: '対応ファイルはビューアで開き、フォルダーはその場所へ移動します',

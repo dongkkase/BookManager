@@ -44,6 +44,7 @@ import { classifyDroppedEntries, REPLACE_DROP_RATIO, resolveMetadataDropPaths, r
 import { settingsEffects } from './settingsPolicy';
 import { fontVarsForConfig } from './fontPolicy';
 import { installBundledFontFaces } from './bundledFonts';
+import { trackTelemetry } from './telemetry.js';
 import {
   initialAudioMiniPlayerState,
   reduceAudioMiniPlayerState,
@@ -125,7 +126,7 @@ function App() {
     const [fileDropMode, setFileDropMode] = useState('append');
     const releaseUpdates = useReleaseUpdates();
     const updateInfo = useMemo(() => resolveUpdateInfo(appVersion, releaseUpdates.result), [appVersion, releaseUpdates.result]);
-  const { config, saveConfig: setConfig } = useConfig();
+  const { config, saveConfig: setConfig, reloadConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n(config);
 
   useEffect(() => {
@@ -375,19 +376,20 @@ function App() {
     }, 250);
   }, [setConfig]);
 
-  const handleTabChange = useCallback((tabId) => {
+  const handleTabChange = useCallback((tabId, source = 'menu') => {
     const tabIndex = TABS.findIndex(tab => tab.id === tabId);
     if (tabIndex < 0) return;
         setReadiveConnectionAttention(null);
     setActiveTab(tabId);
+        if (tabId !== activeTab) trackTelemetry('menu_opened', { menu: tabId, source });
     scheduleLastTabSave(tabId, tabIndex, '마지막 탭 저장');
-  }, [scheduleLastTabSave]);
+  }, [activeTab, scheduleLastTabSave]);
 
   const handleTabDrop = useCallback((tabId, dataTransfer) => {
     if (!canAcceptTabDrop(tabId, isAppLocked)) return;
     const paths = droppedPathsFromDataTransfer(dataTransfer);
     if (paths.length === 0) return;
-    handleTabChange(tabId);
+    handleTabChange(tabId, 'drop');
     dispatchTabAction(tabId, {
       action: tabId === 'folder' ? 'drop-paths' : 'load-paths',
       activeTab: tabId,
@@ -409,6 +411,7 @@ function App() {
       if (tabIndex < 0 || isAppLocked) return;
             setReadiveConnectionAttention(tabId === 'sharing' && event.detail?.focus === 'readive-connection' ? {} : null);
       setActiveTab(tabId);
+            if (tabId !== activeTab) trackTelemetry('menu_opened', { menu: tabId, source: 'navigation' });
       scheduleLastTabSave(tabId, tabIndex, '자동 전달 탭 저장');
       if (paths.length > 0) {
         dispatchTabAction(tabId, {
@@ -421,13 +424,14 @@ function App() {
     };
     window.addEventListener('bookmanager:navigate', handleNavigate);
     return () => window.removeEventListener('bookmanager:navigate', handleNavigate);
-  }, [dispatchTabAction, isAppLocked, scheduleLastTabSave]);
+  }, [activeTab, dispatchTabAction, isAppLocked, scheduleLastTabSave]);
 
-  const openSettings = useCallback((tab = 'basic') => {
+  const openSettings = useCallback((tab = 'basic', source = 'menu') => {
     setSettingsInitialTab(tab);
     setSettingsNavigationRequest(current => current + 1);
     setShowSettings(true);
-  }, []);
+        if (!showSettings) trackTelemetry('menu_opened', { menu: 'settings', source });
+  }, [showSettings]);
 
   const handleSettings = useCallback(() => {
     openSettings('basic');
@@ -435,14 +439,14 @@ function App() {
 
   useEffect(() => {
     const handleOpenSettings = event => {
-      openSettings(event.detail?.tab || 'basic');
+      openSettings(event.detail?.tab || 'basic', 'navigation');
     };
     window.addEventListener('bookmanager:open-settings', handleOpenSettings);
     return () => window.removeEventListener('bookmanager:open-settings', handleOpenSettings);
   }, [openSettings]);
 
   useEffect(() => window.electronAPI?.onOpenSettings?.(request => {
-    openSettings(request?.tab || 'basic');
+    openSettings(request?.tab || 'basic', 'navigation');
   }), [openSettings]);
 
   const showToast = useCallback((input, duration = 2500) => {
@@ -565,7 +569,29 @@ function App() {
     if (updatedConfig) {
       const requestedLang = updatedConfig.language || updatedConfig.lang;
       if (requestedLang) await changeLanguage(requestedLang);
-      const savedConfig = await setConfig(updatedConfig);
+            let savedConfig;
+            try {
+                savedConfig = await setConfig(updatedConfig);
+            } catch (error) {
+                const savedLang = config?.language || config?.lang || 'ko';
+                await changeLanguage(savedLang);
+                await reloadConfig();
+                setShowSettings(true);
+                const messages = {
+                    ko: '설정을 저장하지 못했습니다. 다시 저장해 주세요.',
+                    en: 'Could not save settings. Please save again.',
+                    ja: '設定を保存できませんでした。もう一度保存してください。',
+                };
+                const pausedMessages = {
+                    ko: ' 끄기로 한 오류 보고·사용 통계는 앱을 닫을 때까지 꺼진 상태입니다.',
+                    en: ' Reporting you turned off stays off until the app closes.',
+                    ja: ' オフにしたエラー報告・利用統計は、アプリを閉じるまで停止したままです。',
+                };
+                const reportingPaused = typeof error?.message === 'string' && error.message.includes('CONFIG_SAVE_FAILED:')
+                    && (updatedConfig.telemetry_error_reports === false || updatedConfig.telemetry_usage_stats === false);
+                showToast(`${messages[savedLang] || messages.ko}${reportingPaused ? pausedMessages[savedLang] || pausedMessages.ko : ''}`, 6000);
+                return;
+            }
       const effects = settingsEffects(config || {}, savedConfig || updatedConfig);
       const nextLang = savedConfig?.language || savedConfig?.lang || requestedLang;
       if (nextLang) await changeLanguage(nextLang);
@@ -603,7 +629,7 @@ function App() {
         if (response === 'yes') await window.electronAPI?.relaunchApp?.();
       }
     }
-  }, [changeLanguage, config, setConfig, showToast, t]);
+  }, [changeLanguage, config, reloadConfig, setConfig, showToast, t]);
 
   const handleSettingsLanguagePreview = useCallback((nextLanguage) => {
     changeLanguage(nextLanguage).catch(error => {

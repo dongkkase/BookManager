@@ -56,6 +56,16 @@ test('초기화는 예전 EPUB 위치를 제거하고 책갈피와 뷰어 설정
     assert.equal(status.bookmarkCount, 1);
 });
 
+test('읽고 싶은 책의 혼합 선택은 상위 폴더와 별도 선택한 하위 파일을 모두 유지한다', () => {
+    const folder = { path: '/books/series', isDirectory: true };
+    const child = { path: '/books/series/book.txt' };
+    const selected = [folder, child, child];
+    const options = { preserveNestedEntries: true };
+    assert.deepEqual(resolveReadingActionPaths({ type: 'folder', source: 'list', file: folder }, selected, options), [folder.path, child.path]);
+    assert.deepEqual(resolveReadingActionPaths({ type: 'file', file: child }, selected, options), [folder.path, child.path]);
+    assert.deepEqual(resolveReadingActionPaths({ type: 'folder', folderPath: folder.path }, selected, options), [folder.path]);
+});
+
 test('전체 분량이 없는 파일도 완료로 표시하고 다음 뷰어에서 마지막 페이지로 이동한다', () => {
     for (const extension of ['cbz', 'pdf', 'txt', 'epub']) {
         const filePath = `/books/book.${extension}`;

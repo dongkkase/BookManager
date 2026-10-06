@@ -1,19 +1,26 @@
 import { Node } from '@tiptap/core';
 import { NodeSelection } from '@tiptap/pm/state';
 import { closeHistory } from '@tiptap/pm/history';
+import { clampImageWidth, imageWidthCss, imageWidthUnit } from '../../../../electron/epubEditor/imageSizing.js';
 
 export function imageAlignmentPatch(align) {
     return { align, textWrap: 'none' };
 }
 
 export function imageTextWrapPatch(attrs, textWrap) {
-    return attrs.textWrap === textWrap ? { textWrap: 'none' } : { textWrap, width: Math.min(attrs.width || 100, 50) };
+    return attrs.textWrap === textWrap ? { textWrap: 'none' } : { textWrap, width: imageWidthUnit(attrs) === 'px' ? attrs.width : Math.min(attrs.width || 100, 50) };
+}
+
+export function imageContainerWidth(editor) {
+    const selection = editor?.state.selection;
+    if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'image') return 0;
+    return editor.view.nodeDOM(selection.from)?.parentElement?.clientWidth || 0;
 }
 
 function imageStyle(attrs) {
     const side = attrs.textWrap === 'left' ? 'right' : attrs.textWrap === 'right' ? 'left' : 'none';
     const margin = side === 'right' ? '0 0 .75em 1.2em' : side === 'left' ? '0 1.2em .75em 0' : attrs.align === 'center' ? '0 auto' : attrs.align === 'right' ? '0 0 0 auto' : '0 auto 0 0';
-    return `width:${attrs.width}%;float:${side};margin:${margin}`;
+    return `width:${imageWidthCss(attrs)};float:${side};margin:${margin};max-width:100%`;
 }
 
 export function createImageExtension(getAssetUrl, label = key => key) {
@@ -22,7 +29,7 @@ export function createImageExtension(getAssetUrl, label = key => key) {
         addAttributes() {
             return {
                 assetId: { default: '' }, alt: { default: '' }, caption: { default: '' },
-                width: { default: 100 }, align: { default: 'center' }, decorative: { default: false }, textWrap: { default: 'none' },
+                width: { default: 100 }, widthUnit: { default: '%' }, align: { default: 'center' }, decorative: { default: false }, textWrap: { default: 'none' },
             };
         },
         parseHTML() {
@@ -32,7 +39,8 @@ export function createImageExtension(getAssetUrl, label = key => key) {
                 return {
                     assetId, alt: element.querySelector('img')?.getAttribute('alt') || '',
                     caption: element.querySelector('figcaption')?.textContent || '',
-                    width: Math.max(10, Math.min(100, Number(element.getAttribute('data-width')) || 100)),
+                    width: clampImageWidth(element.getAttribute('data-width'), element.getAttribute('data-width-unit')),
+                    widthUnit: element.getAttribute('data-width-unit') === 'px' ? 'px' : '%',
                     align: ['left', 'right'].includes(element.getAttribute('data-align')) ? element.getAttribute('data-align') : 'center',
                     decorative: element.getAttribute('data-decorative') === 'true',
                     textWrap: ['left', 'right'].includes(element.getAttribute('data-text-wrap')) ? element.getAttribute('data-text-wrap') : 'none',
@@ -41,7 +49,7 @@ export function createImageExtension(getAssetUrl, label = key => key) {
         },
         renderHTML({ node }) {
             const a = node.attrs;
-            return ['figure', { 'data-id': a.id, 'data-asset-id': a.assetId, 'data-width': a.width, 'data-align': a.align, 'data-decorative': String(a.decorative), 'data-text-wrap': a.textWrap, style: imageStyle(a) }, ['img', { src: getAssetUrl(a.assetId), alt: a.decorative ? '' : a.alt, ...(a.decorative ? { role: 'presentation' } : {}) }], ...(a.caption ? [['figcaption', {}, a.caption]] : [])];
+            return ['figure', { 'data-id': a.id, 'data-asset-id': a.assetId, 'data-width': a.width, 'data-width-unit': imageWidthUnit(a), 'data-align': a.align, 'data-decorative': String(a.decorative), 'data-text-wrap': a.textWrap, style: imageStyle(a) }, ['img', { src: getAssetUrl(a.assetId), alt: a.decorative ? '' : a.alt, ...(a.decorative ? { role: 'presentation' } : {}) }], ...(a.caption ? [['figcaption', {}, a.caption]] : [])];
         },
         addNodeView() {
             return ({ node, editor, getPos }) => {
@@ -141,8 +149,14 @@ export function createImageExtension(getAssetUrl, label = key => key) {
                     const start = event.clientX;
                     const initial = dom.getBoundingClientRect().width;
                     const parent = dom.parentElement.getBoundingClientRect().width;
+                    const unit = imageWidthUnit(current.attrs);
+                    const scale = parent / dom.parentElement.clientWidth || 1;
                     let width = current.attrs.width;
-                    const move = e => { width = Math.max(10, Math.min(100, Math.round((initial + e.clientX - start) / parent * 100))); dom.style.width = `${width}%`; };
+                    const move = e => {
+                        const pixels = initial + e.clientX - start;
+                        width = clampImageWidth(Math.round(unit === 'px' ? pixels / scale : pixels / parent * 100), unit);
+                        dom.style.width = `${width}${unit}`;
+                    };
                     const up = () => {
                         cleanup();
                         const pos = getPos();

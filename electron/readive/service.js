@@ -15,6 +15,7 @@ import { openReaderAsset, ReadiveReaders } from './readers.js';
 import { ReadiveDestinations } from './destinations.js';
 import { ReadiveManualPairing } from './manualPairing.js';
 import { ReadivePreviewRequests, readReadivePreview } from './preview.js';
+import { ReadiveReadingCatalog } from './readingCatalog.js';
 
 const PREFIX = '/readive/v1';
 // Existing Readive clients require an ISO timestamp; the server session controls QR validity.
@@ -76,7 +77,7 @@ async function readBody(request) {
 }
 
 export class ReadiveService {
-    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onRatingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
+    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], getConfig = () => ({}), serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onRatingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
         this.store = new ReadiveStore(directory);
         this.getLibraryDb = getLibraryDb;
         this.getRegisteredLibraries = getRegisteredLibraries;
@@ -104,6 +105,12 @@ export class ReadiveService {
         this.lifecyclePending = Promise.resolve();
         this.catalogSecret = crypto.randomBytes(32);
         this.catalogCache = new ReadiveCatalogCache({ now: () => this.now() });
+        this.readingCatalog = new ReadiveReadingCatalog({
+            getState: () => this.store.state,
+            getLibraryDb: () => this.getLibraryDb?.(),
+            getRegisteredLibraries: () => this.getRegisteredLibraries(),
+            getConfig,
+        });
         this.previewRequests = new ReadivePreviewRequests();
         this.readers = new ReadiveReaders({ now: () => this.now(), onClose: session => this.abortDeviceTransfers(session.deviceId, `reader-${session.id}`) });
         this.destinations = new ReadiveDestinations({ now: () => this.now() });
@@ -144,12 +151,23 @@ export class ReadiveService {
 
     async validateJobLibrary(job, state = this.store.state) {
         if (job?.libraryScope) {
-            await validateReadiveLibrary(state, this.getRegisteredLibraries(), job.libraryScope.libraryId, job.libraryScope);
+            await this.validateCatalogScope(job.libraryScope, state);
             this.validateLibraryPermission(job.libraryScope, state);
         }
     }
 
+    async validateCatalogScope(scope, state = this.store.state) {
+        for (const source of scope.sourceScopes || [scope]) {
+            await validateReadiveLibrary(state, this.getRegisteredLibraries(), source.libraryId, source);
+        }
+    }
+
     validateLibraryPermission(scope, state = this.store.state) {
+        if (scope?.sourceScopes) {
+            if (!this.readingCatalog.has(scope.libraryId) || !scope.sourceScopes.length) throw fail('library_unavailable', 409);
+            for (const source of scope.sourceScopes) this.validateLibraryPermission(source, state);
+            return;
+        }
         if (!scope || !registeredReadiveLibraries(state, this.getRegisteredLibraries()).some(item => item.id === scope.libraryId && item.path === scope.rootPath)) throw fail('library_unavailable', 409);
     }
 
@@ -173,7 +191,7 @@ export class ReadiveService {
         this.prunePreparations();
         const preparation = this.preparations.get(scanId);
         if (preparation && (preparation.deviceId !== device.id || preparation.tokenHash !== device.tokenHash || preparation.scope.libraryId !== libraryId)) throw fail('not_found', 404);
-        if (!preparation && !registeredReadiveLibraries(this.store.state, this.getRegisteredLibraries()).some(library => library.id === libraryId)) throw fail('library_unavailable', 409);
+        if (!preparation && !this.readingCatalog.has(libraryId) && !registeredReadiveLibraries(this.store.state, this.getRegisteredLibraries()).some(library => library.id === libraryId)) throw fail('library_unavailable', 409);
         if (preparation) {
             preparation.controller.abort();
             preparation.state = 'failed';
@@ -202,7 +220,8 @@ export class ReadiveService {
         };
         if (existing()) return { scanId };
         if (this.scanning) throw fail('scan_in_progress', 409);
-        const { scope } = await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId);
+        const readingSelection = this.readingCatalog.has(libraryId) ? await this.readingCatalog.selection(libraryId, paths) : null;
+        const { scope } = readingSelection || await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId);
         this.validateLibraryPermission(scope);
         this.validateDevice(device);
         if (existing()) return { scanId };
@@ -225,8 +244,8 @@ export class ReadiveService {
         deadline.unref?.();
         preparation.promise = (async () => {
             try {
-                const sourcePaths = [];
-                for (const value of paths) {
+                const sourcePaths = readingSelection ? [...readingSelection.sourcePaths] : [];
+                for (const value of readingSelection ? [] : paths) {
                     if (controller.signal.aborted) throw fail('scan_cancelled', 409);
                     sourcePaths.push((await resolveReadiveLibraryPath(scope, value)).sourcePath);
                 }
@@ -234,7 +253,7 @@ export class ReadiveService {
                 snapshot.manifestVersion = manifestVersion;
                 if (snapshot.blocked) throw fail('transfer_hard_limit', 413);
                 if (controller.signal.aborted) throw fail('scan_cancelled', 409);
-                await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
+                await this.validateCatalogScope(scope);
                 if (!this.store.state.devices.some(item => item.id === device.id && equalDigest(item.tokenHash, device.tokenHash))) throw fail('unauthorized', 401);
                 snapshot.libraryScope = scope;
                 snapshot.signal = controller.signal;
@@ -449,7 +468,7 @@ export class ReadiveService {
         return this.store.transact(async state => {
             if (snapshot.signal?.aborted) throw fail('scan_cancelled', 409);
             if (snapshot.libraryScope) {
-                await validateReadiveLibrary(state, this.getRegisteredLibraries(), snapshot.libraryScope.libraryId, snapshot.libraryScope);
+                await this.validateCatalogScope(snapshot.libraryScope, state);
                 if (!state.devices.some(device => device.id === deviceId && equalDigest(device.tokenHash, snapshot.tokenHash))) throw fail('unauthorized', 401);
             }
             if (!state.devices.some(device => device.id === deviceId)) throw fail('unknown_device', 404);
@@ -655,7 +674,9 @@ export class ReadiveService {
             const allowed = libraries.filter(({ scope }) => {
                 try { this.validateLibraryPermission(scope); return true; } catch { return false; }
             }).map(({ library }) => ({ id: library.id, name: library.name }));
-            return { json: { libraries: allowed } };
+            const readingLists = await this.readingCatalog.libraries();
+            this.validateDevice(device);
+            return { json: { libraries: [...allowed, ...readingLists] } };
         }
         const readerMatch = pathname.match(/^\/readive\/v1\/readers\/([a-f0-9-]+)\/(content|close)$/);
         if (readerMatch) {
@@ -678,6 +699,12 @@ export class ReadiveService {
                 || typeof body.path !== 'string') throw fail('invalid_library_path');
             return this.previewRequests.run(async previewSignal => {
                 const libraryId = previewMatch[1];
+                if (this.readingCatalog.has(libraryId)) {
+                    const result = await this.readingCatalog.preview(libraryId, body.path, previewSignal);
+                    this.validateDevice(device);
+                    this.validateSource(remoteAddress, localAddress);
+                    return { json: result };
+                }
                 const { scope } = await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId);
                 const result = await readReadivePreview(scope, body.path, await this.getLibraryDb?.(), previewSignal);
                 await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
@@ -697,7 +724,7 @@ export class ReadiveService {
                 const preparation = this.preparations.get(scanId);
                 if (!preparation || preparation.deviceId !== device.id || preparation.tokenHash !== device.tokenHash || preparation.scope.libraryId !== libraryId) throw fail('not_found', 404);
                 if (method !== 'GET' || cancel) throw fail('not_found', 404);
-                await validateReadiveLibrary(state, this.getRegisteredLibraries(), libraryId, preparation.scope);
+                await this.validateCatalogScope(preparation.scope, state);
                 this.validateLibraryPermission(preparation.scope);
                 this.validateDevice(device);
                 if (preparation.state === 'ready') {
@@ -710,6 +737,15 @@ export class ReadiveService {
             if (scanId) throw fail('not_found', 404);
             if (method === 'POST' && action === 'read') {
                 if (!body || typeof body !== 'object' || Object.keys(body).some(key => key !== 'path')) throw fail('invalid_library_path');
+                if (this.readingCatalog.has(libraryId)) {
+                    const resolved = await this.readingCatalog.resolve(libraryId, body.path, signal);
+                    return { json: await this.readers.open(device, resolved.relativePath, async () => resolved.scope, async scope => {
+                        await this.validateCatalogScope(scope);
+                        this.validateLibraryPermission(scope);
+                        this.validateDevice(device);
+                        this.validateSource(remoteAddress, localAddress);
+                    }, signal) };
+                }
                 return { json: await this.readers.open(device, body.path,
                     async () => (await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId)).scope,
                     async scope => {
@@ -722,6 +758,13 @@ export class ReadiveService {
             if (method === 'POST' && action === 'prepare') return { json: await this.beginPreparation(libraryId, body.paths, device, body.scanId, body.manifestVersion) };
             if (method === 'GET' && action === 'entries') {
                 if ([...query.keys()].some(key => !['path', 'cursor'].includes(key)) || query.getAll('path').length > 1 || query.getAll('cursor').length > 1) throw fail('query_not_allowed');
+                if (this.readingCatalog.has(libraryId)) {
+                    const result = await this.catalogCache.run(catalogSignal => this.readingCatalog.entries(libraryId, query.get('path') || '', query.get('cursor') || '', {
+                        secret: this.catalogSecret, cache: this.catalogCache, signal: catalogSignal,
+                    }), signal);
+                    this.validateDevice(device);
+                    return { json: result };
+                }
                 const { scope } = await validateReadiveLibrary(state, this.getRegisteredLibraries(), libraryId);
                 const result = await readReadiveLibraryEntries(scope, query.get('path') || '', query.get('cursor') || '', { secret: this.catalogSecret, cache: this.catalogCache, signal });
                 await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);

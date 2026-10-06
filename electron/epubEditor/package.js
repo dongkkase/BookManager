@@ -3,7 +3,8 @@ import { safeCss } from './css.js';
 import path from 'node:path';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { crc32, listZipEntries, getZipEntryCompressedData } from '../core/zipArchive.js';
-import { MAX_PROJECT_BYTES, MAX_DOCUMENT_BYTES, validateProject, inspectProject, projectError, assetFilename, chapterXhtml, bookCss, coverSvg, xml, walkDocument, textContent } from './model.js';
+import { MAX_PROJECT_BYTES, MAX_DOCUMENT_BYTES, validateProject, inspectProject, projectError, assetFilename, chapterXhtml, chapterBodyTitle, bookCss, coverSvg, xml, walkDocument, textContent } from './model.js';
+import { webpDimensions } from './webp.js';
 
 export async function writePackage(filePath, entries, onProgress = () => {}) {
     const file = await fs.open(filePath, 'wx');
@@ -94,7 +95,7 @@ export async function openProjectPackage(filePath, assetDirectory) {
     let total = 0;
     for (const entry of entries) {
         if (names.has(entry.name) || (entry.flags & 1) || ![0, 8].includes(entry.method) || (entry.externalAttrs >>> 16 & 0xf000) === 0xa000) throw projectError('INVALID_PROJECT');
-        if (entry.name !== 'project.json' && !/^assets\/[a-z][a-z0-9_-]{0,79}\.(png|jpg|ttf|otf|woff2?|mp3|m4a)$/i.test(entry.name)) throw projectError('INVALID_PROJECT');
+        if (entry.name !== 'project.json' && !/^assets\/[a-z][a-z0-9_-]{0,79}\.(png|jpg|webp|ttf|otf|woff2?|mp3|m4a)$/i.test(entry.name)) throw projectError('INVALID_PROJECT');
         names.add(entry.name);
         total += entry.uncompressedSize;
     }
@@ -125,6 +126,7 @@ export function identifyAsset(buffer) {
     if (buffer.length < 12 || buffer.length > 20 * 1024 * 1024) throw projectError('INVALID_ASSET');
     if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return { extension: 'png', mime: 'image/png', kind: 'image' };
     if (buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) return { extension: 'jpg', mime: 'image/jpeg', kind: 'image' };
+    if (webpDimensions(buffer)) return { extension: 'webp', mime: 'image/webp', kind: 'image' };
     if (buffer.toString('ascii', 0, 3) === 'ID3' || (buffer[0] === 255 && (buffer[1] & 0xe0) === 0xe0 && (buffer[1] & 6) !== 0 && (buffer[2] & 0xf0) !== 0xf0)) return { extension: 'mp3', mime: 'audio/mpeg', kind: 'audio' };
     if (buffer.toString('ascii', 4, 8) === 'ftyp' && ['M4A ', 'isom', 'mp41', 'mp42'].includes(buffer.toString('ascii', 8, 12))) return { extension: 'm4a', mime: 'audio/mp4', kind: 'audio' };
     const signatures = { OTTO: 'otf', wOFF: 'woff', wOF2: 'woff2' };
@@ -166,8 +168,9 @@ export function epubTextEntries(project, modified = new Date().toISOString().rep
     const toc = project.chapters.filter(chapter => chapter.inToc).map(chapter => {
         const headings = [];
         const stack = [];
+        const title = chapterBodyTitle(chapter);
         walkDocument(chapter.content, node => {
-            if (node.type !== 'heading' || !node.attrs?.id || !textContent(node).trim()) return;
+            if (node === title || node.type !== 'heading' || !node.attrs?.id || !textContent(node).trim()) return;
             const item = { node, children: [] };
             while (stack.length && stack.at(-1).node.attrs.level >= node.attrs.level) stack.pop();
             (stack.length ? stack.at(-1).children : headings).push(item);

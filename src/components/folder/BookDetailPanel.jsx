@@ -11,6 +11,7 @@ import {
     DetailPanelStatusBadges,
     detailMetadataValue,
     detailPublicationDate,
+    detailReadingTime,
     formatDate,
     formatSize,
     useDetailContentHeight,
@@ -68,6 +69,7 @@ const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRat
         ['tag', metadataText(t, 't3_f_isbn', 'ISBN'), isbn],
         ['language', metadataText(t, 't3_f_iso', '언어 코드 (ISO)'), language],
         ['star', metadataText(t, 't3_f_rating', '평점'), rating],
+        ['clock', t('folder.detail.reading_time'), detailReadingTime(selectedFile, t)],
     ];
 
     return (

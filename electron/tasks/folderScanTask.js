@@ -114,6 +114,18 @@ function normalizeArchivePath(value = '') {
   return path.posix.normalize(String(value || '').replace(/\\/g, '/').replace(/^\/+/, ''));
 }
 
+function compareComicPageNames(left, right) {
+    const leftName = String(left || '').replace(/\\/g, '/').replace(/^\/+/, '').normalize('NFC');
+    const rightName = String(right || '').replace(/\\/g, '/').replace(/^\/+/, '').normalize('NFC');
+    const leftHasFirstPagePrefix = path.posix.basename(leftName).startsWith('!');
+    const rightHasFirstPagePrefix = path.posix.basename(rightName).startsWith('!');
+
+    if (leftHasFirstPagePrefix !== rightHasFirstPagePrefix) {
+        return leftHasFirstPagePrefix ? -1 : 1;
+    }
+    return leftName.localeCompare(rightName, 'ko', { numeric: true, sensitivity: 'base' });
+}
+
 function decodeUriPath(value = '') {
   try {
     return decodeURIComponent(value);
@@ -558,7 +570,7 @@ async function extractWith7Zip(filePath, sevenZExe, options = {}) {
   const comicInfoName = entries.find(name => path.basename(name).toLowerCase() === 'comicinfo.xml');
   const imageName = entries
     .filter(name => IMAGE_EXTS.includes(path.extname(name).toLowerCase()))
-    .sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))[0];
+    .sort(compareComicPageNames)[0];
   const result = {};
 
   if (comicInfoName) {
@@ -660,7 +672,7 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
       if (!options.skipCoverExtraction) {
         const imageEntry = entries
           .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.isDirectory)
-          .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))[0];
+          .sort((a, b) => compareComicPageNames(a.name, b.name))[0];
         if (imageEntry) {
           const imageBuffer = await readZipEntryFromFile(filePath, imageEntry, {
             maxBytes: MAX_INLINE_COVER_BYTES,

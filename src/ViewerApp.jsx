@@ -8,6 +8,7 @@ import { loadViewerPdfDocument } from './viewerPdfLoader';
 import { viewerPdfResourceOptions } from './viewerPdfResources';
 import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
 import { createViewerTtsRequests } from './viewerTtsRequests';
+import { reportViewerTtsUsage } from './viewerTtsTelemetry';
 import { normalizeSupertonicReading, prepareSupertonicPages, splitSupertonicRequests, supertonicReadingCacheKey } from '../electron/supertonicReading.js';
 import { SupertonicTtsSettings } from './components/viewer/SupertonicTtsSettings';
 import { useTts } from 'tts-react';
@@ -822,6 +823,7 @@ async function speakDetachedRemoteTts(
   onPlaybackStart,
   shouldStartPlayback,
   prepared = false,
+    onPlaybackUsage,
 ) {
   const createRemoteTts = getRemoteTtsApi(settings.engine);
   if (typeof createRemoteTts !== 'function') {
@@ -858,7 +860,10 @@ async function speakDetachedRemoteTts(
         token,
         settings.engine,
         settings.rate,
-        notifyPlaybackStart,
+        () => {
+            onPlaybackUsage?.(result.model);
+            notifyPlaybackStart();
+        },
       );
       if (playbackResult === 'cancelled') return;
     }
@@ -3087,7 +3092,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onMenuOpenChange, onPlaybackChange, playbackRef }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', sessionPreview = false, onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onMenuOpenChange, onPlaybackChange, playbackRef }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
@@ -3165,6 +3170,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     return matchingAvailableVoices.find(voice => voice.voiceURI === settings.voiceURI || voice.name === settings.voiceURI) || undefined;
   }, [matchingAvailableVoices, settings.voiceURI]);
 
+    const reportTtsUsage = useCallback((engine, model) => {
+        if (!sessionPreview) reportViewerTtsUsage({ sessionId, engine, model });
+    }, [sessionId, sessionPreview]);
+
   const {
     state,
     play,
@@ -3179,6 +3188,9 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     volume: 1,
     markTextAsSpoken: true,
     markBackgroundColor: 'rgba(52, 152, 219, 0.28)',
+        onStart: () => {
+            if (settings.engine === 'system') reportTtsUsage('system');
+        },
     onEnd: () => {
       if (settings.engine !== 'system') return;
       if (suppressEndRef.current || !settings.autoAdvance || !nextSpeakablePage) return;
@@ -3443,6 +3455,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     remoteTtsPageRequestsRef.current.set(cacheKey, requests);
     const pagePromise = (async () => {
       const audioDataUrls = [];
+        const audioModels = [];
       for (const chunk of chunks) {
         const result = await requests.run(createRemoteTts, remoteTtsPayload(settings.engine, chunk, settings, language));
         if (!result?.success || !result.dataUrl) {
@@ -3451,12 +3464,14 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
           });
         }
         audioDataUrls.push(result.dataUrl);
+            audioModels.push(result.model);
       }
       const cachedResult = {
         cacheKey,
         pageIndex: normalizedPage.pageIndex,
         text: normalizedPage.text,
         audioDataUrls,
+            audioModels,
       };
       if (
         remoteTtsCacheGenerationRef.current === cacheGeneration
@@ -3479,7 +3494,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     }
   }, [language, settings]);
 
-  const playOpenAiAudioDataUrl = useCallback((dataUrl, runId, engine) => new Promise((resolve, reject) => {
+    const playOpenAiAudioDataUrl = useCallback((dataUrl, runId, engine, model) => new Promise((resolve, reject) => {
     if (typeof Audio !== 'function') {
       reject(Object.assign(new Error('Remote TTS is not available.'), {
         code: remoteTtsCode(engine, 'UNSUPPORTED'),
@@ -3489,6 +3504,11 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     const audio = new Audio(dataUrl);
     applyTtsAudioPlaybackRate(audio, ttsRateRef.current);
     let settled = false;
+        const notifyPlaybackStart = () => {
+            if (settled || openAiRunRef.current !== runId) return;
+            reportTtsUsage(engine, model);
+            setOpenAiState(current => ({ ...current, status: 'playing' }));
+        };
     const cleanup = () => {
       audio.onplaying = null;
       audio.onpause = null;
@@ -3511,11 +3531,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     const cancel = () => finish('cancelled');
     openAiPlaybackCancelRef.current = cancel;
     openAiAudioRef.current = audio;
-    audio.onplaying = () => {
-      if (openAiRunRef.current === runId) {
-        setOpenAiState(current => ({ ...current, status: 'playing' }));
-      }
-    };
+        audio.onplaying = notifyPlaybackStart;
     audio.onpause = () => {
       if (!audio.ended && openAiRunRef.current === runId) {
         setOpenAiState(current => ({ ...current, status: 'paused' }));
@@ -3528,16 +3544,12 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     const playPromise = audio.play();
     if (playPromise?.then) {
       playPromise
-        .then(() => {
-          if (openAiRunRef.current === runId) {
-            setOpenAiState(current => ({ ...current, status: 'playing' }));
-          }
-        })
+        .then(notifyPlaybackStart)
         .catch(fail);
     } else if (openAiRunRef.current === runId) {
-      setOpenAiState(current => ({ ...current, status: 'playing' }));
+        notifyPlaybackStart();
     }
-  }), []);
+    }), [reportTtsUsage]);
 
   const openAiTtsErrorMessage = useCallback(error => remoteTtsToastMessage(error, settings.engine), [language, settings.engine]);
 
@@ -3592,7 +3604,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
         for (let index = 0; index < audioDataUrls.length; index += 1) {
           if (openAiRunRef.current !== runId) return;
           setOpenAiState({ status: 'loading', currentChunk: index + 1, totalChunks: audioDataUrls.length });
-          const playbackResult = await playOpenAiAudioDataUrl(audioDataUrls[index], runId, settings.engine);
+            const playbackResult = await playOpenAiAudioDataUrl(audioDataUrls[index], runId, settings.engine, currentPageAudio.audioModels[index]);
           if (playbackResult === 'cancelled' || openAiRunRef.current !== runId) return;
         }
         const liveSettings = ttsSettingsRef.current;
@@ -8292,14 +8304,19 @@ function ViewerApp() {
     const finishSelectionTtsLoading = () => {
       if (selectionTtsRunRef.current === runId) setSelectionTtsLoading(false);
     };
-    const handleSelectionTtsPlaybackStart = () => {
-      if (selectionTtsRunRef.current !== runId) return;
-      setSelectionTtsLoading(false);
-      setSelectionMenu(current => current === sourceSelectionMenu ? null : current);
-      clearNativeSelection();
-    };
     try {
       const settings = normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS));
+        const reportSelectionTtsUsage = model => {
+            if (selectionTtsRunRef.current !== runId || session?.preview) return;
+            reportViewerTtsUsage({ sessionId: session?.id, engine: settings.engine, model });
+        };
+        const handleSelectionTtsPlaybackStart = () => {
+            if (selectionTtsRunRef.current !== runId) return;
+            if (settings.engine === 'system') reportSelectionTtsUsage();
+            setSelectionTtsLoading(false);
+            setSelectionMenu(current => current === sourceSelectionMenu ? null : current);
+            clearNativeSelection();
+        };
       if (isRemoteTtsEngine(settings.engine)) {
         window.speechSynthesis?.cancel?.();
         try {
@@ -8311,6 +8328,7 @@ function ViewerApp() {
             handleSelectionTtsPlaybackStart,
             () => selectionTtsRunRef.current === runId,
             true,
+            reportSelectionTtsUsage,
           );
         } finally {
           finishSelectionTtsLoading();
@@ -8345,7 +8363,7 @@ function ViewerApp() {
       finishSelectionTtsLoading();
       showViewerToast(viewerText('viewer.tts.error', 'TTS 재생 중 오류가 발생했습니다.'));
     }
-  }, [clearNativeSelection, epubAudioPlayer.pause, selectionMenu, selectionTtsLoading, showViewerToast, viewerLanguage]);
+    }, [clearNativeSelection, epubAudioPlayer.pause, selectionMenu, selectionTtsLoading, session?.id, session?.preview, showViewerToast, viewerLanguage]);
 
   const isViewerInteractiveTarget = useCallback(target => {
     const targetName = target?.tagName?.toLowerCase();
@@ -9607,6 +9625,7 @@ function ViewerApp() {
     if (error) return <div className="viewer-state viewer-error">{error}</div>;
     if (!session) return <div className="viewer-state">{viewerText('viewer.common.no_book', 'No book')}</div>;
     if (loading && (session.type === 'text' || session.type === 'epub')) return <div className="viewer-state">{viewerText('viewer.common.loading', 'Loading...')}</div>;
+    if (session.type === 'epub' && (!epubLayoutReady || !readiveResumeReady)) return <div className="viewer-state">{viewerText('viewer.common.loading', 'Loading...')}</div>;
     if (session.type === 'comic') return renderComic();
     if (session.type === 'pdf') return renderPdf();
     if (session.type === 'text') return renderReaderPages(textReaderItems);
@@ -9954,6 +9973,7 @@ function ViewerApp() {
                 playbackRef={ttsPlaybackRef}
                 key={isOriginalEpub ? 'epub-original' : 'optimized'}
                 sessionId={session.id}
+                sessionPreview={session.preview === true}
                 text={currentTtsText}
                 prefetchPages={ttsPrefetchPages}
                 previousPages={ttsPreviousPages}
@@ -10082,6 +10102,7 @@ function ViewerApp() {
       ) : null}
       <main
         className={contentClassName}
+        aria-busy={session?.type === 'epub' && initialRenderLoading && !error ? true : undefined}
         ref={scrollRef}
         tabIndex={-1}
         onScroll={handleScroll}

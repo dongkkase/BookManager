@@ -1897,6 +1897,58 @@ body.is-reordering-table-column {
   display: none;
 }
 
+.detail-panel-wrap {
+    transition: height 220ms ease-out, flex-basis 220ms ease-out;
+}
+
+body.is-resizing-panel .detail-panel-wrap {
+    transition: none;
+}
+
+.detail-panel-transition {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    isolation: isolate;
+    overflow: hidden;
+}
+
+.detail-panel-layer {
+    position: absolute;
+    inset: 0;
+    isolation: isolate;
+}
+
+.detail-panel-layer.is-outgoing {
+    pointer-events: none;
+    animation: detail-panel-fade-out 220ms ease-out forwards;
+}
+
+.detail-panel-layer.is-outgoing .folder-detail-bg {
+    animation-play-state: paused;
+}
+
+@keyframes detail-panel-fade-out {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .detail-panel-wrap {
+        transition: none;
+    }
+
+    .detail-panel-layer.is-outgoing {
+        display: none;
+        animation: none;
+    }
+}
+
 .folder-detail-panel {
   position: relative;
   width: 100%;
@@ -2771,6 +2823,13 @@ body.is-reordering-table-column {
 .directory-detail-panel .metadata-value {
     white-space: normal;
     overflow-wrap: anywhere;
+}
+
+.directory-detail-note {
+    margin-top: 8px;
+    color: #b0b0b0;
+    font-size: var(--font-xs);
+    line-height: 1.5;
 }
 
 .thumb-image.folder-cover-loading,

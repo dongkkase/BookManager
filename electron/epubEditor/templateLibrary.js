@@ -128,7 +128,7 @@ export class ContentTemplateLibrary {
     async collectUnusedAssets(library) {
         const used = new Set(library.templates.flatMap(item => item.assets.map(assetFilename)));
         const files = await fs.readdir(this.assetDirectory).catch(() => []);
-        await Promise.all(files.filter(file => /^a_[a-f0-9-]{36}\.(png|jpg|mp3|m4a|ttf|otf|woff2?)$/.test(file) && !used.has(file)).map(file => fs.rm(path.join(this.assetDirectory, file), { force: true }).catch(() => {})));
+        await Promise.all(files.filter(file => /^a_[a-f0-9-]{36}\.(png|jpg|webp|mp3|m4a|ttf|otf|woff2?)$/.test(file) && !used.has(file)).map(file => fs.rm(path.join(this.assetDirectory, file), { force: true }).catch(() => {})));
     }
 
     async import(session, id, revision) {

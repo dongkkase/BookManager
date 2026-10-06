@@ -155,6 +155,7 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
             <h2 id="readive-connection-title" className={sharing ? 'sharing-groupbox-title' : undefined}>{t('readive.title')}</h2>
             <div className={sharing ? 'sharing-groupbox-content' : undefined}>
                 <p className={`readive-connection-description${sharing ? ' sharing-desc' : ''}`}>{t('readive.description')}</p>
+                <p className={sharing ? 'sharing-desc' : undefined}>{t('reading_lists.shared_hint')}</p>
                 <div className="readive-connection-toolbar">
                     <button type="button" className={sharing ? `sharing-btn-toggle${status.running ? ' running' : ''}` : undefined} disabled={busy || !statusLoaded || (!status.running && !selectedAddress)} onClick={() => run(async () => {
                         if (status.running) {

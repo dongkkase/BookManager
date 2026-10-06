@@ -257,6 +257,82 @@ test('메타데이터 분석은 표지를 지연 로드할 수 있다', async ()
     }
 });
 
+for (const { label, extension, imageNames, expectedImage } of [
+    {
+        label: 'ZIP의 느낌표 표지를 밑줄 이미지보다 먼저 선택한다',
+        extension: '.zip',
+        imageNames: ['__ridi__0.jpg', '!000.jpg'],
+        expectedImage: '!000.jpg',
+    },
+    {
+        label: 'CBZ 하위 폴더의 느낌표 표지를 먼저 선택한다',
+        extension: '.cbz',
+        imageNames: ['__ridi__0.jpg', 'pages/!000.jpg'],
+        expectedImage: 'pages/!000.jpg',
+    },
+    {
+        label: 'CBZ의 여러 느낌표 표지를 숫자 순서로 선택한다',
+        extension: '.cbz',
+        imageNames: ['__ridi__0.jpg', '!10.jpg', '!2.jpg'],
+        expectedImage: '!2.jpg',
+    },
+    {
+        label: '느낌표 표지가 없는 ZIP에서 기존 숫자 순서를 유지한다',
+        extension: '.zip',
+        imageNames: ['__ridi__10.jpg', '__ridi__2.jpg'],
+        expectedImage: '__ridi__2.jpg',
+    },
+]) {
+    test(`메타데이터 표지 로드와 분석은 ${label}`, async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-cover-order-'));
+        try {
+            const source = path.join(root, `Book${extension}`);
+            fs.writeFileSync(source, Buffer.alloc(0));
+            for (const imageName of imageNames) {
+                await replaceZipEntry(source, imageName, Buffer.from(imageName));
+            }
+            const expectedCover = `data:image/jpeg;base64,${Buffer.from(expectedImage).toString('base64')}`;
+
+            assert.equal(await loadMetadataCover(source, {}), expectedCover);
+            const analyzed = await analyzeMetadataInputs([source], { includeCovers: true });
+            assert.equal(analyzed.items.length, 1);
+            assert.equal(analyzed.items[0].coverDataUrl, expectedCover);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+}
+
+test('메타데이터 표지 로드와 분석은 7z 하위 폴더의 느낌표 표지를 숫자 순서로 선택한다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-7z-cover-order-'));
+    try {
+        const input = path.join(root, 'input');
+        fs.mkdirSync(path.join(input, 'pages'), { recursive: true });
+        for (const imageName of ['__ridi__0.jpg', 'pages/!10.jpg', 'pages/!2.jpg']) {
+            fs.writeFileSync(path.join(input, imageName), Buffer.from(imageName));
+        }
+        const source = path.join(root, 'Book.7z');
+        assert.equal(spawnSync(sevenZExe, ['a', '-t7z', source, '*'], {
+            cwd: input,
+            stdio: 'ignore',
+        }).status, 0);
+        const expectedCover = `data:image/jpeg;base64,${Buffer.from('pages/!2.jpg').toString('base64')}`;
+
+        assert.equal(await loadMetadataCover(source, { sevenZExe }), expectedCover);
+        const analyzed = await analyzeMetadataInputs([source], { sevenZExe, includeCovers: true });
+        assert.equal(analyzed.items.length, 1);
+        assert.equal(analyzed.items[0].coverDataUrl, expectedCover);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('메타데이터 분석은 DB의 전역 후보와 설정 언어 기본값을 반환한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-publishers-'));
     try {

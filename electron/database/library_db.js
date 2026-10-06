@@ -9,6 +9,7 @@ import {
 } from '../metadataFormat.js';
 import { buildLibraryFolderIndexRecords } from '../libraryFolderIndex.js';
 import { remapCoverReadingState } from '../coverReadingState.js';
+import { initializeReadingLists, moveReadingListPaths, deleteReadingListPaths } from '../readingLists.js';
 
 const require = createRequire(import.meta.url);
 let DatabaseConstructor = null;
@@ -326,6 +327,7 @@ export class LibraryDB {
         this.migrateLegacyTables();
         this.normalizeStoredFilePaths();
         this.sanitizeFormatColumn();
+        initializeReadingLists(this.db);
         this.db.pragma('optimize');
         return this.db;
     }
@@ -1944,11 +1946,13 @@ export class LibraryDB {
                         if (textPath) linkTextPath.run(destinationPath, textPath.content_hash);
                         result.movedFileInfoCount += 1;
                     }
+                    moveReadingListPaths(db, move);
                 }
                 for (const entry of fileInfoDeletes) {
                     result.deletedFileInfoCount += entry.recursive
                         ? deleteFilePrefix.run(entry.path, prefixLike(entry.path)).changes
                         : deleteFile.run(entry.path).changes;
+                    deleteReadingListPaths(db, entry);
                 }
                 for (const entry of targetEntries) {
                     const insertResult = insertFileStub.run(fileValues({
@@ -2160,6 +2164,17 @@ export class LibraryDB {
                 if (!previous || (!previous.series && row.series)) filesByPath.set(key, row);
             }
             return [...filesByPath.values()];
+        });
+    }
+
+    async getFolderDetailMetadata(folderPath) {
+        return this.withLock(async () => {
+            const normalized = this.normalizeFilePath(path.resolve(folderPath));
+            const prefix = normalized.endsWith(path.sep) ? normalized : `${normalized}${path.sep}`;
+            return this.getConnection().prepare(`
+                SELECT path, page_count, duration_seconds FROM files
+                WHERE path LIKE ? ESCAPE '\\'
+            `).all(`${escapeLikeValue(prefix)}%`);
         });
     }
 

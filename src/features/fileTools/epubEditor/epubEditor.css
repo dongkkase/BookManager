@@ -58,6 +58,8 @@
 .ee-eyebrow { color: var(--ee-accent); font-size: 10px; letter-spacing: 2.8px; font-weight: 600; }
 .ee-welcome-intro h1 { margin: 16px 0 12px; font-size: clamp(24px, 3vw, 38px); font-weight: 500; letter-spacing: -1.5px; }
 .ee-welcome-intro p { color: var(--text-secondary, #9ca4a6); font-size: 13px; line-height: 1.8; }
+.ee-epub-import { margin-top: 20px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.ee-epub-import p { flex: 1 1 300px; }
 .ee-template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; max-width: 960px; margin: 0 auto; }
 .ee-template { padding: 0; overflow: hidden; color: inherit; background: var(--bg-secondary, #252a2d); border: 1px solid var(--border-color, #3b4146); border-radius: 10px; text-align: left; transition: border-color .15s, transform .15s; }
 .ee-template:hover:not(:disabled) { border-color: var(--ee-accent); transform: translateY(-3px); }

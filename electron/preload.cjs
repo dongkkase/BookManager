@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // 설정 관련
   getConfig: () => ipcRenderer.invoke('config:get'),
+    getTelemetryStatus: () => ipcRenderer.invoke('telemetry:status'),
+    trackTelemetry: event => ipcRenderer.send('telemetry:event', event),
+    reportTelemetryError: error => ipcRenderer.send('telemetry:error', error),
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
   onOpenSettings: (callback) => {
     const handler = (_, request) => callback(request);
@@ -83,6 +86,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getReadingStates: (filePaths) => ipcRenderer.invoke('reading:getStates', filePaths),
     updateReadingProgress: (paths, action) => ipcRenderer.invoke('reading:updateProgress', paths, action),
   listRecentReading: (limit) => ipcRenderer.invoke('reading:listRecent', limit),
+    readingLists: request => ipcRenderer.invoke('reading:lists', request),
+    onReadingListsChanged: callback => {
+        const handler = () => callback();
+        ipcRenderer.on('reading:listsChanged', handler);
+        return () => ipcRenderer.removeListener('reading:listsChanged', handler);
+    },
   removeRecentReading: (filePath) => ipcRenderer.invoke('reading:remove', filePath),
   clearRecentReading: () => ipcRenderer.invoke('reading:clear'),
     onRatingsChanged: (callback) => {
@@ -104,6 +113,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   exportCsv: (filePath, headers, rows) => ipcRenderer.invoke('fs:exportCsv', { filePath, headers, rows }),
   getFilePreview: (filePath, options) => ipcRenderer.invoke('fs:filePreview', filePath, options),
+    getFolderDetails: (folderPath, requestId) => ipcRenderer.invoke('fs:folderDetails', folderPath, requestId),
+    cancelFolderDetails: requestId => ipcRenderer.invoke('fs:cancelFolderDetails', requestId),
   expandFolderMove: (sourceRoot, destinationRoot) => ipcRenderer.invoke('fs:expandFolderMove', sourceRoot, destinationRoot),
   removeEmptyTree: (rootPath) => ipcRenderer.invoke('fs:removeEmptyTree', rootPath),
   findLibraryMoveConflicts: (movePlans) => ipcRenderer.invoke('fs:findLibraryMoveConflicts', movePlans),

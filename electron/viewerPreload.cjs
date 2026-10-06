@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('viewerAPI', {
+    reportTelemetryError: error => ipcRenderer.send('telemetry:error', error),
+    reportTtsUsage: payload => ipcRenderer.send('viewer:tts-used', payload),
   getCurrentSession: () => ipcRenderer.invoke('viewer:getCurrentSession'),
   openAdjacent: (sessionId, direction) => ipcRenderer.invoke('viewer:openAdjacent', sessionId, direction),
   openAudioQueueItem: (sessionId, fileName) => ipcRenderer.invoke('viewer:openAudioQueueItem', sessionId, fileName),

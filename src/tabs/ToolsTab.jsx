@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 
 import { FaIcon } from '../components/FaIcon';
 import { isFilePathDrag } from '../appShell';
 import { FILE_TOOL_CATEGORIES, fileToolsByCategory, firstTextCleanerPath } from '../fileTools';
+import { trackTelemetry } from '../telemetry.js';
 import '../styles/ToolsTab.css';
 
 const TextCleanerTool = lazy(() => import('./TextCleanerTool'));
@@ -65,17 +66,23 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
         return () => { if (beforeToolChange.current === handler) beforeToolChange.current = null; };
     }, []);
 
-    const openTextCleanerPath = useCallback(async filePath => {
+    const openTextCleanerPath = useCallback(async (filePath, source = 'navigation') => {
         if (!filePath) return;
         if (beforeToolChange.current && !await beforeToolChange.current()) return;
         setActiveToolId('text-cleaner');
+        if (activeToolId !== 'text-cleaner') trackTelemetry('tool_opened', { tool: 'text-cleaner', source });
         setOpenRequest(current => ({ path: filePath, token: (current?.token || 0) + 1 }));
-    }, []);
+    }, [activeToolId]);
 
     const handleOpenTool = useCallback(toolId => {
         setOpenRequest(null);
         setActiveToolId(toolId);
-    }, []);
+        if (toolId !== activeToolId) trackTelemetry('tool_opened', { tool: toolId, source: 'catalog' });
+    }, [activeToolId]);
+
+    const handleOpenTab = useCallback(tabId => {
+        onOpenTab(tabId, 'catalog');
+    }, [onOpenTab]);
 
     const handleBack = useCallback(() => {
         setOpenRequest(null);
@@ -87,7 +94,7 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
             const detail = event.detail;
             if (detail?.activeTab !== 'tools' || !['load-paths', 'drop-paths'].includes(detail.action)) return;
             if ((detail.toolId || activeToolId) !== 'text-cleaner') return;
-            openTextCleanerPath(firstTextCleanerPath(detail.paths));
+            openTextCleanerPath(firstTextCleanerPath(detail.paths), detail.action === 'drop-paths' ? 'drop' : 'navigation');
         };
         window.addEventListener('bookmanager:action', handleAction);
         window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'tools' } }));
@@ -154,7 +161,7 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
                                     <ToolItem
                                         key={tool.id}
                                         tool={tool}
-                                        onOpenTab={onOpenTab}
+                                        onOpenTab={handleOpenTab}
                                         onOpenTool={handleOpenTool}
                                         t={t}
                                     />

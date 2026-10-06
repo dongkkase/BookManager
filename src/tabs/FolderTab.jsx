@@ -4,6 +4,9 @@ import { FaIcon } from '../components/FaIcon';
 import { CoverArtwork } from '../components/CoverArtwork';
 import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
+import { ReadingCollectionsDialog } from '../components/folder/ReadingCollections';
+import { useReadingLists } from '../hooks/useReadingLists';
+import '../styles/ReadingLists.css';
 import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
 import { TileView } from '../components/folder/TileView';
@@ -602,16 +605,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             queueLimit: COVER_PREVIEW_QUEUE_LIMIT,
             requestLimit: VISIBLE_COVER_REQUEST_LIMIT,
             keyForFile: coverPreviewRequestKey,
-            load: file => window.electronAPI.getFilePreview(coverPreviewFilePath(file), { force: false }),
+            load: file => file.collectionId
+                ? window.electronAPI.readingLists({ operation: 'preview', id: file.collectionId })
+                : window.electronAPI.getFilePreview(coverPreviewFilePath(file), { force: false }),
             onResult: (result, file, context) => {
                 if (!result?.success || !result.file || (!file.isDirectory && !result.file.cover)) return;
                 if (Boolean(file.isDirectory) !== Boolean(result.file.isDirectory)) return;
-                context.updateCachedFiles(context.folderPath, context.scanOptions, [{
+                const updatedFile = {
                     ...file,
                     ...result.file,
                     path: file.path,
                     full_path: file.full_path || result.file.full_path || result.file.path,
-                }]);
+                };
+                if (context.updateFilePreview) context.updateFilePreview(updatedFile);
+                else context.updateCachedFiles(context.folderPath, context.scanOptions, [updatedFile]);
             },
         });
     }
@@ -680,11 +687,25 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const [recentReadingLoading, setRecentReadingLoading] = useState(false);
     const [recentReadingLoaded, setRecentReadingLoaded] = useState(false);
     const recentReadingRequestRef = useRef(0);
-  const isRecentReading = folderSource === 'recent-reading';
+    const isRecentReading = folderSource === 'recent-reading';
+    const readingListKind = ['recent-added', 'recent-updated', 'wishlist', 'collections', 'collection'].includes(folderSource) ? folderSource : '';
+    const isCollectionView = readingListKind === 'collections' || readingListKind === 'collection';
+    const isReadingList = isRecentReading || Boolean(readingListKind);
+    const [selectedCollectionId, setSelectedCollectionId] = useState('');
+    const collectionFolderOriginRef = useRef(null);
+    const [collectionDialog, setCollectionDialog] = useState(null);
+    const [listMembershipBusy, setListMembershipBusy] = useState(false);
+    const listMembershipBusyRef = useRef(false);
+    const readingLists = useReadingLists(readingListKind === 'collection' ? selectedCollectionId : readingListKind === 'wishlist' ? 'want-to-read' : readingListKind, t);
+    const { mutate: mutateList, refresh: refreshReadingList } = readingLists;
+    const activeCollection = readingLists.collections.find(collection => collection.id === selectedCollectionId);
+    const readingListTitle = isRecentReading ? t('folder.recent.title')
+        : readingListKind === 'collection' ? activeCollection?.name || t('reading_lists.collections')
+            : t(`reading_lists.${readingListKind.replaceAll('-', '_')}`);
     const [folderNavigation, setFolderNavigation] = useState({ entries: [], index: -1 });
     const folderNavigationRef = useRef(folderNavigation);
     const folderNavigationRequestRef = useRef(0);
-    const upFolderPath = isRecentReading ? '' : parentFolderPath(selectedFolderPath);
+    const upFolderPath = isReadingList ? '' : parentFolderPath(selectedFolderPath);
   const gotoPathInputRef = useRef(null);
   const gotoPathHistoryRef = useRef(gotoPathHistory);
   const textInputResolverRef = useRef(null);
@@ -705,7 +726,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     });
   }), []);
   const closeTopOverlay = useCallback(() => {
-        if (coverEditorTarget || ratingEditorTarget) return true;
+        if (coverEditorTarget || ratingEditorTarget || collectionDialog) return true;
     if (moveConflict) return true;
     if (textInputDialog) {
       closeTextInputDialog(null);
@@ -726,6 +747,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [
         coverEditorTarget,
         ratingEditorTarget,
+        collectionDialog,
     contextMenu,
     readiveTransferPaths,
     libraryMoveRequest,
@@ -783,8 +805,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     () => JSON.stringify(folderTagDatabaseScopes),
     [folderTagDatabaseScopes],
   );
-  const searchPlaceholder = isRecentReading
-    ? t('folder.recent.search')
+  const searchPlaceholder = isReadingList
+    ? t(isRecentReading ? 'folder.recent.search' : 'reading_lists.search')
     : libraries.length === 0
       ? t('folder_search_ph')
       : searchScope === 'content'
@@ -793,7 +815,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           ? t('folder_search_all_ph')
           : t('folder_search_library_ph');
   const normalizedSearchQuery = appliedSearchQuery.trim();
-  const isLibrarySearchActive = !isRecentReading && normalizedSearchQuery.length > 0 && libraries.length > 0;
+  const isLibrarySearchActive = !isReadingList && normalizedSearchQuery.length > 0 && libraries.length > 0;
   const applySearchQuery = useCallback(query => {
     setAppliedSearchQuery(query);
     setSearchSubmitToken(token => token + 1);
@@ -978,10 +1000,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     useEffect(() => resetCoverPreviewQueue, [resetCoverPreviewQueue]);
 
+    const coverPreviewScope = readingListKind === 'wishlist' || isCollectionView
+        ? `reading-list:${readingListKind}:${selectedCollectionId}:${readingLists.previewRevision}`
+        : isLibrarySearchActive || isReadingList ? '' : selectedFolderPath;
+
   useEffect(() => {
     selectedFolderPathRef.current = selectedFolderPath;
-        coverPreviewQueueRef.current.setScope(isLibrarySearchActive || isRecentReading ? '' : selectedFolderPath);
-    }, [isLibrarySearchActive, isRecentReading, selectedFolderPath]);
+        coverPreviewQueueRef.current.setScope(coverPreviewScope);
+    }, [coverPreviewScope, selectedFolderPath]);
 
   useEffect(() => {
     const nextHistory = normalizeGotoPathHistory(config?.folder_goto_history, runtimePlatform);
@@ -1162,6 +1188,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         };
     }, [loadRecentReading]);
 
+    const refreshActiveReadingList = useCallback(() => (
+        isRecentReading ? loadRecentReading() : refreshReadingList()
+    ), [isRecentReading, loadRecentReading, refreshReadingList]);
+
   // 필터링된 파일 데이터
     const currentFolderEntries = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
     const currentFolderFileData = useMemo(
@@ -1170,13 +1200,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     );
   const isFolderTagSearchActive = folderTagSelections.length > 0
     && folderTagResultScopeKey === folderTagDatabaseScopeKey;
-  const normalRawFileData = isRecentReading
-    ? recentReadingFiles
+  const normalRawFileData = isReadingList
+    ? isRecentReading ? recentReadingFiles : readingLists.files
     : isLibrarySearchActive
       ? librarySearchResults
       : currentFolderEntries;
   const activeRawFileData = useMemo(() => {
-    if (isRecentReading) return normalRawFileData;
+    if (isReadingList) return normalRawFileData;
     if (!isFolderTagSearchActive) return normalRawFileData;
     if (!isLibrarySearchActive) return folderTagSearchResults;
     const searchResultPaths = new Set(librarySearchResults.map(file => file.full_path || file.path));
@@ -1185,7 +1215,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     folderTagSearchResults,
     isFolderTagSearchActive,
     isLibrarySearchActive,
-    isRecentReading,
+    isReadingList,
     librarySearchResults,
     normalRawFileData,
   ]);
@@ -1251,23 +1281,30 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
   const filteredFileData = useMemo(() => filterFolderFiles(fileDataWithViewerStatus, {
     query: localSearchQuery,
-    metadataMissingOnly: !isRecentReading && metadataMissingOnly,
-  }), [fileDataWithViewerStatus, isRecentReading, localSearchQuery, metadataMissingOnly]);
+    metadataMissingOnly: (!isReadingList || isCollectionView) && metadataMissingOnly,
+  }), [fileDataWithViewerStatus, isCollectionView, isReadingList, localSearchQuery, metadataMissingOnly]);
   const folderTagSearchButtonLabel = folderTagSelections.length > 0
     ? `${t('folder_tag_search_button_title')} · ${t('folder_tag_selected_count', [folderTagSelections.length])}`
     : t('folder_tag_search_button_title');
 
   const handleVisibleFilesChange = useCallback((visibleFiles = []) => {
-    if (!selectedFolderPath || isLibrarySearchActive || isRecentReading) return;
-        if (!window.electronAPI?.getFilePreview) return;
+        if (!coverPreviewScope) return;
+        if (!window.electronAPI?.getFilePreview && readingListKind !== 'collections') return;
         const queue = coverPreviewQueueRef.current;
-        queue.setScope(selectedFolderPath);
-        queue.enqueue(Array.isArray(visibleFiles) ? visibleFiles : [], {
+        queue.setScope(coverPreviewScope);
+        const files = Array.isArray(visibleFiles) ? visibleFiles : [];
+        if (readingListKind === 'wishlist' || isCollectionView) {
+            queue.enqueue(files.filter(file => file.isDirectory && file.exists !== false), {
+                updateFilePreview: readingLists.updateFilePreview,
+            });
+            return;
+        }
+        queue.enqueue(files, {
             folderPath: selectedFolderPath,
             scanOptions,
             updateCachedFiles,
         });
-    }, [isLibrarySearchActive, isRecentReading, scanOptions, selectedFolderPath, updateCachedFiles]);
+    }, [coverPreviewScope, isCollectionView, readingListKind, readingLists.updateFilePreview, scanOptions, selectedFolderPath, updateCachedFiles]);
   const savedLayouts = useMemo(
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
@@ -1275,10 +1312,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const groupedFileData = useMemo(
     () => isRecentReading
       ? groupFolderFiles(filteredFileData, 'none', 'lastReadAt', 'desc')
+      : readingListKind && !isCollectionView
+        ? groupFolderFiles(filteredFileData, 'none', 'readingListAddedAt', 'desc')
       : groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder, {
           fallbackGroupName: t('folder_group_uncategorized'),
         }),
-    [filteredFileData, groupKey, isRecentReading, sortKey, sortOrder, t],
+    [filteredFileData, groupKey, isCollectionView, isRecentReading, readingListKind, sortKey, sortOrder, t],
   );
   const displayedFileData = useMemo(
     () => groupedFileData.flatMap(group => group.files),
@@ -1301,7 +1340,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     moveActiveSelection,
   } = useFileSelection(displayedFileData);
   const activeSelectedFile = selectedFileData();
-  const detailSelectedFile = activeSelectedFile || null;
+  const detailSelectedFile = activeSelectedFile?.collectionId ? null : activeSelectedFile || null;
   const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
   const fileSizeByPath = useMemo(() => {
     const sizes = new Map();
@@ -1324,11 +1363,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
     const folderLocationLayoutKey = JSON.stringify([sortKey, sortOrder, groupKey, itemScale, includeSubfolders, localSearchQuery, metadataMissingOnly, viewContainerWidth]);
-    folderLocationContextRef.current = { isRecentReading, isLibrarySearchActive, selectedFiles, activeSelectedPath, viewMode, layoutKey: folderLocationLayoutKey };
+    folderLocationContextRef.current = { isReadingList, isLibrarySearchActive, selectedFiles, activeSelectedPath, viewMode, layoutKey: folderLocationLayoutKey };
     const rememberCurrentFolderLocation = useCallback(() => {
         const context = folderLocationContextRef.current;
         const folderPath = selectedFolderPathRef.current;
-        if (!folderPath || context.isRecentReading || context.isLibrarySearchActive || folderLocationRestoreRef.current) return;
+        if (!folderPath || context.isReadingList || context.isLibrarySearchActive || folderLocationRestoreRef.current) return;
         const scroller = viewContainerRef.current?.querySelector('.file-table-container, .thumbnail-grid, .tile-grid');
         if (!scroller) return;
         rememberFolderLocation(folderLocationsRef.current, folderPath, {
@@ -1371,7 +1410,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, []);
 
     const navigationRestore = useMemo(() => {
-        if (!folderLocationRestore?.ready || folderLocationRestore.folderPath !== selectedFolderPath || isRecentReading) return null;
+        if (!folderLocationRestore?.ready || folderLocationRestore.folderPath !== selectedFolderPath || isReadingList) return null;
         return {
             id: folderLocationRestore.id,
             ...resolveFolderLocation(folderLocationRestore.location, displayedFileData, {
@@ -1380,7 +1419,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 revealPath: folderLocationRestore.revealPath,
             }),
         };
-    }, [displayedFileData, folderLocationLayoutKey, folderLocationRestore, isRecentReading, selectedFolderPath, viewMode]);
+    }, [displayedFileData, folderLocationLayoutKey, folderLocationRestore, isReadingList, selectedFolderPath, viewMode]);
 
     useEffect(() => {
         if (!navigationRestore || restoredFolderSelectionRef.current === navigationRestore.id) return;
@@ -1394,10 +1433,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, [cancelFolderLocationRestore]);
 
     useEffect(() => {
-        if (isRecentReading || !selectedFolderPath) cancelFolderLocationRestore();
-    }, [cancelFolderLocationRestore, isRecentReading, selectedFolderPath]);
+        if (isReadingList || !selectedFolderPath) cancelFolderLocationRestore();
+    }, [cancelFolderLocationRestore, isReadingList, selectedFolderPath]);
 
   const handleSelectRecentReading = useCallback(() => {
+    collectionFolderOriginRef.current = null;
     rememberCurrentFolderLocation();
     cancelFolderLocationRestore();
     folderNavigationRequestRef.current += 1;
@@ -1406,6 +1446,38 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     resetSearchQuery();
     void loadRecentReading();
   }, [cancelFolderLocationRestore, clearSelection, loadRecentReading, rememberCurrentFolderLocation, resetSearchQuery]);
+
+    const handleSelectReadingList = useCallback((kind, collectionId = '') => {
+        collectionFolderOriginRef.current = null;
+        rememberCurrentFolderLocation();
+        cancelFolderLocationRestore();
+        folderNavigationRequestRef.current += 1;
+        setFolderSource(kind);
+        setSelectedCollectionId(collectionId);
+        clearSelection();
+        resetSearchQuery();
+        setContextMenu(null);
+        if (kind === readingListKind && collectionId === selectedCollectionId) void refreshReadingList();
+    }, [cancelFolderLocationRestore, clearSelection, readingListKind, refreshReadingList, rememberCurrentFolderLocation, resetSearchQuery, selectedCollectionId]);
+
+    const changeListMembership = useCallback(async (action, paths) => {
+        if (!paths.length || listMembershipBusyRef.current) return;
+        listMembershipBusyRef.current = true;
+        setListMembershipBusy(true);
+        try {
+            const result = await mutateList({ operation: action.endsWith('-remove') ? 'remove' : 'add', paths, id: action.startsWith('wishlist-') ? 'want-to-read' : selectedCollectionId });
+            clearSelection();
+            const message = action.endsWith('-remove') ? 'removed' : result.matchedCount === 0 ? 'no_books' : 'added';
+            showToast?.(result.errors?.length
+                ? t('reading_lists.partial', [result.errors.length])
+                : t(`reading_lists.${action.startsWith('wishlist-') ? `wishlist_${message}` : message}`, [result.changes]));
+        } catch (error) {
+            showToast?.(error.message || t('reading_lists.save_failed'));
+        } finally {
+            listMembershipBusyRef.current = false;
+            setListMembershipBusy(false);
+        }
+    }, [clearSelection, mutateList, selectedCollectionId, showToast, t]);
 
     const removeRecentReading = useCallback(async filePath => {
         if (!filePath) return;
@@ -1439,8 +1511,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, [clearSelection, config?.lang, config?.language, recentReadingFiles.length, t]);
 
   useEffect(() => {
-    if (isLibrarySearchActive || isRecentReading) clearSelection();
-  }, [clearSelection, isLibrarySearchActive, isRecentReading, normalizedSearchQuery, searchSubmitToken]);
+    if (isLibrarySearchActive || isReadingList) clearSelection();
+  }, [clearSelection, isLibrarySearchActive, isReadingList, normalizedSearchQuery, searchSubmitToken]);
 
   useEffect(() => {
     if (!config || restoredLayoutRef.current) return;
@@ -1866,6 +1938,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const handleFolderChange = useCallback(async (folderPath, options = {}) => {
     folderNavigationRequestRef.current += 1;
     const nextFolderPath = String(folderPath || '');
+    if (options.collectionId) {
+        collectionFolderOriginRef.current = { id: options.collectionId, path: nextFolderPath };
+    } else if (!isPathInsideLibrary(nextFolderPath, collectionFolderOriginRef.current?.path)) {
+        collectionFolderOriginRef.current = null;
+    }
     const locationRequest = prepareFolderLocationRestore(nextFolderPath, options);
     setFolderSource('folder');
     selectedFolderPathRef.current = nextFolderPath;
@@ -1966,7 +2043,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [config?.lang, config?.language, handleSafeFolderNavigation, runtimePlatform, saveConfig, t]);
 
     const handleFolderHistoryNavigation = useCallback(async direction => {
-        if (isRecentReading) return;
+        if (direction < 0 && readingListKind === 'collection') {
+            handleSelectReadingList('collections');
+            return;
+        }
+        if (isReadingList) return;
+        const origin = collectionFolderOriginRef.current;
+        if (direction < 0 && origin?.path === selectedFolderPathRef.current) {
+            handleSelectReadingList('collection', origin.id);
+            return;
+        }
         const currentNavigation = folderNavigationRef.current;
         const nextNavigation = moveFolderNavigation(currentNavigation, direction);
         if (nextNavigation.index === currentNavigation.index) return;
@@ -1974,14 +2060,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             navigationState: nextNavigation,
             fromNavigationState: currentNavigation,
         });
-    }, [handlePathNavigation, isRecentReading]);
+    }, [handlePathNavigation, handleSelectReadingList, isReadingList, readingListKind]);
 
     const handleParentFolderNavigation = useCallback(async () => {
-        if (isRecentReading) return;
+        if (readingListKind === 'collection') {
+            handleSelectReadingList('collections');
+            return;
+        }
+        if (isReadingList) return;
         const childPath = selectedFolderPathRef.current;
+        const origin = collectionFolderOriginRef.current;
+        if (origin?.path === childPath) {
+            handleSelectReadingList('collection', origin.id);
+            return;
+        }
         const targetPath = parentFolderPath(childPath);
         if (targetPath) await handlePathNavigation(targetPath, { revealPath: childPath });
-    }, [handlePathNavigation, isRecentReading]);
+    }, [handlePathNavigation, handleSelectReadingList, isReadingList, readingListKind]);
 
   const focusGotoPathInput = useCallback(() => {
     setContextMenu(null);
@@ -2089,7 +2184,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     useFolderMouseNavigation({
         isVisible: isFolderTabVisible,
-        canNavigate: () => !isRecentReading && canFocusGotoPath(),
+        canNavigate: () => (!isReadingList || isCollectionView) && canFocusGotoPath(),
         onNavigate: handleFolderHistoryNavigation,
     });
 
@@ -2121,8 +2216,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const handleRefresh = useCallback(async () => {
     resetCoverPreviewQueue();
-    if (isRecentReading) {
-        await loadRecentReading();
+    if (isReadingList) {
+        await refreshActiveReadingList();
         return;
     }
     if (isLibrarySearchActive) {
@@ -2141,7 +2236,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     invalidateMissingVolumesCheck();
     setMissingRefreshVersion(value => value + 1);
     await tagRefresh;
-  }, [applyFolderTagSearch, folderTagMatchMode, folderTagSelections, invalidateMissingVolumesCheck, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, loadRecentReading, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
+  }, [applyFolderTagSearch, folderTagMatchMode, folderTagSelections, invalidateMissingVolumesCheck, isFolderTagSearchActive, isLibrarySearchActive, isReadingList, refreshActiveReadingList, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
     const executeRatingEdit = useCallback(async request => {
         const result = await runInternalFileAction(() => window.electronAPI.saveRating(request));
@@ -2183,10 +2278,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', { detail: { paths } }));
             setTreeRefreshToken(value => value + 1);
             if (isLibrarySearchActive) setSearchSubmitToken(value => value + 1);
-            if (isRecentReading) await loadRecentReading();
+            if (isReadingList) await refreshActiveReadingList();
         }
         return result;
-    }, [isLibrarySearchActive, isRecentReading, loadRecentReading, resetCoverPreviewQueue, runInternalFileAction, t]);
+    }, [isLibrarySearchActive, isReadingList, refreshActiveReadingList, resetCoverPreviewQueue, runInternalFileAction, t]);
 
   useEffect(() => {
     const handleMetadataSaved = event => {
@@ -2221,7 +2316,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const handleSmartRefresh = useCallback(async (force = false) => {
     if (scanning || preparingDuplicates) return;
-    if (isRecentReading || isLibrarySearchActive || isFolderTagSearchActive) {
+    if (isReadingList || isLibrarySearchActive || isFolderTagSearchActive) {
         await handleRefresh();
         return;
     }
@@ -2230,7 +2325,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!force && stat?.isDirectory && watchedMtimeRef.current === stat.mtime) return;
     if (stat?.isDirectory) watchedMtimeRef.current = stat.mtime;
     await handleRefresh();
-  }, [handleRefresh, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, preparingDuplicates, scanning, selectedFolderPath]);
+  }, [handleRefresh, isFolderTagSearchActive, isLibrarySearchActive, isReadingList, preparingDuplicates, scanning, selectedFolderPath]);
 
   const handleIncludeSubfoldersChange = useCallback(async () => {
     if (shouldDisableFolderToggles(scanning, preparingDuplicates)) return;
@@ -2548,7 +2643,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [activeSelectedPath, detailPanelHeight, ensureActiveSelectionVisible, viewMode]);
 
     const selectedEntryObjects = useMemo(() => (
-        selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(Boolean)
+        selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(file => file && !file.collectionId)
     ), [displayedFileByPath, selectedFiles]);
     const selectedFileObjects = useMemo(
         () => selectedEntryObjects.filter(file => !file.isDirectory),
@@ -2577,6 +2672,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [cancelFolderLocationRestore, viewMode]);
 
   const openSelectedInExplorer = useCallback(async () => {
+    if (activeSelectedFile?.collectionId) return;
     const target = activeSelectedFile?.full_path || activeSelectedFile?.path || selectedFolderPath;
     if (target) await window.electronAPI?.showInFolder?.(target);
   }, [activeSelectedFile, selectedFolderPath]);
@@ -2586,10 +2682,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   const openFileInViewer = useCallback(async (file) => {
+    if (file?.collectionId) {
+        handleSelectReadingList('collection', file.collectionId);
+        return;
+    }
     const target = typeof file === 'string' ? file : file?.full_path || file?.path;
     if (!target) return;
     if (file?.isDirectory) {
-        await handleSafeFolderNavigation(target);
+        await handleSafeFolderNavigation(target, readingListKind === 'collection' ? { collectionId: selectedCollectionId } : {});
         return;
     }
     const explicitViewerPath = typeSpecificViewerPath(config, target);
@@ -2624,7 +2724,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       message: viewerErrorMessage(internalResult) || t('msg_failed'),
       language: config?.language || config?.lang || 'ko',
     });
-  }, [config, handleSafeFolderNavigation, t]);
+  }, [config, handleSafeFolderNavigation, handleSelectReadingList, readingListKind, selectedCollectionId, t]);
 
   const openSelectedInViewer = useCallback(async () => {
     await openFileInViewer(activeSelectedFile);
@@ -3074,6 +3174,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [selectedEntryObjects]);
 
   const handleFileDragStart = useCallback((event, file) => {
+    if (file?.collectionId) {
+        event.preventDefault();
+        return;
+    }
     const targetPath = file?.full_path || file?.path;
     const draggedEntries = targetPath && selectedFileSet.has(file.path)
       ? folderEntryOperationTargets(selectedEntryObjects)
@@ -3119,7 +3223,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (file?.path && !selectedFileSet.has(file.path)) {
       selectFile(file.path, null, index);
     }
-    setContextMenu(file?.isDirectory ? {
+    setContextMenu(file?.collectionId ? {
+        type: 'collection', x: event.clientX, y: event.clientY, file,
+    } : file?.isDirectory ? {
         type: 'folder',
         source: 'list',
         x: event.clientX,
@@ -3237,8 +3343,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   const handleRefreshShortcut = useCallback(async () => {
-    if (isRecentReading) {
-      await loadRecentReading();
+    if (isReadingList) {
+      await refreshActiveReadingList();
       return;
     }
     if (isLibrarySearchActive || isFolderTagSearchActive) {
@@ -3250,9 +3356,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       return;
     }
     await handleSmartRefresh(true);
-  }, [handleRefresh, handleSmartRefresh, isExplorerPanelActive, isFolderTagSearchActive, isLibrarySearchActive, isRecentReading, loadRecentReading, refreshContextFolder, selectedFolderPath]);
+  }, [handleRefresh, handleSmartRefresh, isExplorerPanelActive, isFolderTagSearchActive, isLibrarySearchActive, isReadingList, refreshActiveReadingList, refreshContextFolder, selectedFolderPath]);
 
   const handleRenameShortcut = useCallback(async () => {
+    if (activeSelectedFile?.collectionId) {
+        setCollectionDialog({ initialCollectionId: activeSelectedFile.collectionId, initialAction: 'rename' });
+        return;
+    }
     if (isExplorerPanelActive()) {
       await renameContextFolder(selectedFolderPath);
       return;
@@ -3382,7 +3492,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     closeContextMenu();
     if (!menu) return;
 
-    if (action === 'mark-read' || action === 'reset-progress') {
+    if (action === 'wishlist-add' || action === 'wishlist-remove' || action === 'collection-remove') {
+        await changeListMembership(action, resolveReadingActionPaths(menu, selectedEntryObjects, { preserveNestedEntries: true }));
+    } else if (action === 'collection-add') {
+        const paths = resolveReadingActionPaths(menu, selectedEntryObjects, { preserveNestedEntries: true });
+        if (paths.length) setCollectionDialog({ paths });
+    } else if (action === 'mark-read' || action === 'reset-progress') {
         await changeReadingProgress(menu, action);
     } else if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
         setRatingEditorTarget(menu.file);
@@ -3478,7 +3593,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, changeReadingProgress, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
+  }, [addFavorite, changeListMembership, changeReadingProgress, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, hasSelectedDirectories, invertSelection, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -3537,7 +3652,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
         if (isRecentReading) removeRecentReading(activeSelectedPath);
-        else deleteSelectedFiles();
+        else if (activeSelectedFile?.collectionId) {
+            setCollectionDialog({ initialCollectionId: activeSelectedFile.collectionId, initialAction: 'delete' });
+        }
+        else if (readingListKind === 'wishlist' || readingListKind === 'collection') {
+            void changeListMembership(readingListKind === 'wishlist' ? 'wishlist-remove' : 'collection-remove', selectedEntryObjects.map(file => file.full_path || file.path));
+        } else if (!isReadingList) deleteSelectedFiles();
       } else if (event.key === 'Enter') {
         event.preventDefault();
         if (activeSelectedFile?.isDirectory) openSelectedInViewer();
@@ -3568,7 +3688,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isRecentReading, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, runtimePlatform, selectAll, sendSelectedFilesToTab, undoLastRename]);
+  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, runtimePlatform, selectAll, sendSelectedFilesToTab, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -3942,6 +4062,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 recentReadingSelected={isRecentReading}
                 recentReadingCount={recentReadingFiles.length}
                 onSelectRecentReading={handleSelectRecentReading}
+                readingListSelected={readingListKind}
+                wishlistCount={readingLists.wishlistCount}
+                collectionCount={readingLists.collections.length}
+                onSelectReadingList={handleSelectReadingList}
                 libraryScanStateMap={libraryScanStateMap}
                 refreshToken={treeRefreshToken}
                 t={t}
@@ -4005,13 +4129,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 />
               </button>
               
-              {isRecentReading ? (
-                <div className="recent-reading-toolbar-title">
-                  <FaIcon name="clock" size={12} />
-                  <strong>{t('folder.recent.title')}</strong>
-                  <span>{recentReadingFiles.length}</span>
+              {isReadingList && !isCollectionView && (
+                <div className="recent-reading-toolbar-title" title={readingListKind.startsWith('recent-') ? t('reading_lists.recent_hint') : undefined}>
+                  <FaIcon name={readingListKind === 'wishlist' ? 'bookmark' : readingListKind.startsWith('collection') ? 'layers' : 'clock'} size={12} />
+                  <strong>{readingListTitle}</strong>
+                  <span>{isRecentReading ? recentReadingFiles.length : readingListKind === 'collections' ? readingLists.collections.length : readingLists.files.length}</span>
                 </div>
-              ) : (
+              )}
+              {(!isReadingList || isCollectionView) && (
                 <FolderToolbar
                   t={t}
                   sortKey={sortKey}
@@ -4033,7 +4158,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
             
             <div className="right-toolbar-right">
-              {!isRecentReading && (
+              {isCollectionView && <button type="button" className="refresh-btn recent-reading-clear-button" onClick={() => setCollectionDialog({})}>
+                  <FaIcon name={readingLists.collections.length ? 'gear' : 'plus'} size={12} />
+                  {t(readingLists.collections.length ? 'reading_lists.manage' : 'reading_lists.create')}
+              </button>}
+              {!isReadingList && (
                 <button
                   type="button"
                   className={`folder-tag-search-btn ${folderTagSelections.length > 0 ? 'active' : ''}`}
@@ -4066,7 +4195,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   searchScopeMetadataLabel={t('folder_search_scope_metadata')}
                   searchScopeContentLabel={t('folder_search_scope_content')}
                   searchScopeAllLabel={t('folder_search_scope_all')}
-                  showSearchScope={!isRecentReading && libraries.length > 0}
+                  showSearchScope={!isReadingList && libraries.length > 0}
                     searchHistory={searchHistory}
                     onRemoveSearchHistory={removeSearchQuery}
                     onClearSearchHistory={clearSearchHistory}
@@ -4076,7 +4205,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                     historyClearLabel={t('folder_search_history_clear')}
                 />
               </div>
-              {!isRecentReading && <div className="content-index-control">
+              {!isReadingList && <div className="content-index-control">
                 <button
                   type="button"
                   className={`content-index-btn ${contentIndexRunning ? 'is-running' : ''}`}
@@ -4113,8 +4242,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
           </div>
 
+          {readingListKind.startsWith('recent-') && <p className="reading-list-note">{t('reading_lists.recent_hint')}</p>}
           <FolderPathBar
             value={gotoPathDraft}
+            virtualLocation={isCollectionView ? `${t('reading_lists.collections')}${readingListKind === 'collection' ? ` / ${activeCollection?.name || ''}` : ''}` : ''}
             history={gotoPathHistory}
             inputRef={gotoPathInputRef}
             isOpen={showGotoPathHistory}
@@ -4122,14 +4253,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onNavigate={handlePathNavigation}
             onOpenChange={setShowGotoPathHistory}
             shortcutLabel={formatPrimaryShortcut('L', runtimePlatform)}
-            canGoBack={!isRecentReading && folderNavigation.index > 0}
-            canGoForward={!isRecentReading && folderNavigation.index < folderNavigation.entries.length - 1}
-            canGoUp={Boolean(upFolderPath)}
+            canGoBack={readingListKind === 'collection' || (!isReadingList && (folderNavigation.index > 0 || Boolean(collectionFolderOriginRef.current)))}
+            canGoForward={!isReadingList && folderNavigation.index < folderNavigation.entries.length - 1}
+            canGoUp={readingListKind === 'collection' || Boolean(upFolderPath)}
             onBack={() => void handleFolderHistoryNavigation(-1)}
             onForward={() => void handleFolderHistoryNavigation(1)}
             onUp={handleParentFolderNavigation}
-            onRefresh={() => isRecentReading ? loadRecentReading() : handleSmartRefresh(true)}
-            refreshDisabled={isRecentReading ? recentReadingLoading : !selectedFolderPath || scanning || preparingDuplicates}
+            onRefresh={() => isReadingList ? refreshActiveReadingList() : handleSmartRefresh(true)}
+            refreshDisabled={isReadingList ? (isRecentReading ? recentReadingLoading : readingLists.loading) : !selectedFolderPath || scanning || preparingDuplicates}
             t={t}
           />
 
@@ -4141,20 +4272,25 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onWheelCapture={cancelFolderLocationRestore}
             ref={viewContainerRef}
             style={{ '--folder-view-width': `${viewContainerWidth}px` }}
-            aria-busy={!isRecentReading && scanning}
+            aria-busy={isReadingList ? (isRecentReading ? recentReadingLoading : readingLists.loading) : scanning}
           >
-            {isRecentReading && recentReadingLoading && !recentReadingLoaded ? (
+            {readingListKind && readingLists.error ? (
+                <div className="recent-reading-state" role="alert">
+                    <span>{readingLists.error}</span>
+                    <button type="button" onClick={() => void refreshReadingList()}>{t('action_refresh')}</button>
+                </div>
+            ) : (isRecentReading && recentReadingLoading && !recentReadingLoaded) || (readingListKind && readingLists.loading && !readingLists.files.length) ? (
                <div className="recent-reading-state" role="status">
                  <FaIcon name="spinner" className="content-index-spinner" size={15} />
                  <span>{t('folder.recent.loading')}</span>
                </div>
-             ) : isRecentReading && filteredFileData.length === 0 ? (
+             ) : isReadingList && filteredFileData.length === 0 ? (
                <div className="recent-reading-state">
                  <FaIcon name="bookOpen" size={22} />
-                 <span>{t('folder.recent.empty')}</span>
+                 <span>{t(isRecentReading ? 'folder.recent.empty' : readingListKind === 'collections' ? 'reading_lists.collections_empty' : readingListKind === 'wishlist' ? 'reading_lists.wishlist_empty' : 'reading_lists.empty')}</span>
                </div>
              ) : renderViewStack()}
-             {!isRecentReading && scanning && (
+             {!isReadingList && scanning && (
                <FolderScanFeedback
                  compact={filteredFileData.length > 0}
                  message={statusMessage}
@@ -4164,7 +4300,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
              )}
           </div>
           
-          {activeSelectedFile && (
+          {detailSelectedFile && (
             <>
               <div className={`folder-detail-resizer-row ${isDetailPanelCollapsed ? 'is-collapsed' : 'is-expanded'}`}>
                 <div
@@ -4204,7 +4340,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
           <div className="right-bottom-bar">
             <div className="status-info">
-              {!isRecentReading && scanning
+              {!isReadingList && scanning
                 ? statusMessage || t('msg_loading_list')
                 : librarySearchLoading && isLibrarySearchActive
                 ? t('folder_searching_libraries')
@@ -4251,8 +4387,38 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} onClose={() => setReadiveTransferPaths(null)} onOpenSharing={openReadiveSharing} />}
         {ratingEditorTarget && <RatingEditorDialog file={ratingEditorTarget} t={t} onSave={executeRatingEdit} onClose={() => setRatingEditorTarget(null)} />}
         {coverEditorTarget && <CoverEditorDialog files={coverEditorTarget} t={t} onExecute={executeCoverEdit} onClose={() => setCoverEditorTarget(null)} />}
+        {collectionDialog && (
+            <ReadingCollectionsDialog paths={collectionDialog.paths || null} collections={readingLists.collections} t={t}
+                initialCollectionId={collectionDialog.initialCollectionId} initialAction={collectionDialog.initialAction}
+                mutate={async request => {
+                    const result = await mutateList(request);
+                    if (request.operation === 'delete' && request.id === selectedCollectionId && readingListKind === 'collection') {
+                        handleSelectReadingList('collections');
+                    }
+                    return result;
+                }} onClose={() => setCollectionDialog(null)} />
+        )}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y}>
+            {contextMenu.type === 'collection' ? <>
+                <ContextMenuItem label={t('reading_lists.open')} icon="folderOpen" onClick={() => {
+                    handleSelectReadingList('collection', contextMenu.file.collectionId);
+                }} />
+                {['rename', 'delete'].map(action => <ContextMenuItem key={action} label={t(`reading_lists.${action}`)} onClick={() => {
+                    setCollectionDialog({ initialCollectionId: contextMenu.file.collectionId, initialAction: action });
+                    closeContextMenu();
+                }} />)}
+            </> : <>
+            <ContextMenuSubmenu label={t('reading_lists.add')} icon="plus">
+                <ContextMenuItem onClick={() => handleContextAction('wishlist-add')} disabled={listMembershipBusy} label={t('reading_lists.wishlist_add')} />
+                <ContextMenuItem onClick={() => handleContextAction('wishlist-remove')} disabled={listMembershipBusy} label={t('reading_lists.wishlist_remove')} />
+                {readingListKind === 'collection' && (contextMenu.type === 'file' || contextMenu.source === 'list') ? (
+                    <ContextMenuItem onClick={() => handleContextAction('collection-remove')} disabled={listMembershipBusy} label={t('reading_lists.collection_remove')} />
+                ) : (
+                    <ContextMenuItem onClick={() => handleContextAction('collection-add')} label={t('reading_lists.collection_add')} />
+                )}
+            </ContextMenuSubmenu>
+            <div className="folder-context-menu-separator" />
           {contextMenu.type === 'library' ? (
             <>
               <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
@@ -4312,7 +4478,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 {(supportsRatingEditor(contextMenu.file) || supportsCoverEditor(contextMenu.file)) && (
                     <div className="folder-context-menu-separator" role="separator" />
                 )}
-              {!isRecentReading && (
+              {!isReadingList && (
                 <>
                   <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
@@ -4353,6 +4519,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               />
             </>
           )}
+            </>}
         </ContextMenu>
       )}
       

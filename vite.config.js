@@ -3,12 +3,13 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pdfAssetsPlugin from './vitePdfAssetsPlugin.js';
+import telemetryConfigPlugin from './viteTelemetryConfigPlugin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export default defineConfig({
-    plugins: [react(), pdfAssetsPlugin()],
+    plugins: [react(), pdfAssetsPlugin(), telemetryConfigPlugin()],
   base: './',
   resolve: {
     alias: {

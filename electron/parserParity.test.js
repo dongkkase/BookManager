@@ -54,6 +54,31 @@ test('쉼표는 표시 제목과 코어 시리즈명에 보존한다', () => {
     );
 });
 
+test('제목의 비율은 보존하고 비율 안의 숫자는 권수로 추출하지 않는다', () => {
+    for (const ratio of ['1：5', '1:5', '1 ： 5', '1.5：2.5']) {
+        const title = `남녀비 ${ratio} 세계에서도 평범하게 살 수 있을 줄 알았어？`;
+        for (const normalization of ['NFC', 'NFD']) {
+            const normalizedTitle = title.normalize(normalization);
+            assert.equal(cleanDisplayTitle(`${normalizedTitle} 02권.cbz`), title);
+            assert.equal(extractCoreTitle(`${normalizedTitle} 02권.cbz`), title);
+            assert.deepEqual(resolveTitles(`/books/${normalizedTitle}/${normalizedTitle}.cbz`), [title, title]);
+            for (const [suffix, expected] of [
+                ['', title],
+                [' 02권', `${title} 02권`],
+                [' 2.5권', `${title} 02.5권`],
+                [' 1~3권', `${title} 01~03권`],
+                [' 12화', `${title} 12화`],
+                [' 02', `${title} 02권`],
+                [' (03)', `${title} 03권`],
+            ]) {
+                const filename = `${title}${suffix}.cbz`.normalize(normalization);
+                assert.equal(formatLeafName(normalizedTitle, filename, 0, 1, 'ko'), expected, filename);
+            }
+            assert.equal(formatLeafName(normalizedTitle, normalizedTitle, 0, 1, 'en'), title);
+        }
+    }
+});
+
 test('소수 권수, part, 외전 표기의 leaf 이름이 Python parser와 같다', () => {
     assert.equal(formatLeafName('작품명', '작품명 2.5권', 0, 10, 'ko'), '작품명 02.5권');
     assert.equal(formatLeafName('Series', 'Part 2', 0, 10, 'en'), 'Series v02');

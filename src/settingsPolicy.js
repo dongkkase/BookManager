@@ -173,6 +173,8 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         max_threads: Math.min(threadMax, Math.max(1, Number(config.max_threads) || Math.floor(coreCount / 2) || 1)),
         play_sound: config.play_sound !== false,
         hardware_acceleration: config.hardware_acceleration !== false,
+        telemetry_error_reports: config.telemetry_error_reports === undefined || config.telemetry_error_reports === true,
+        telemetry_usage_stats: config.telemetry_usage_stats === undefined || config.telemetry_usage_stats === true,
         pass_skip_meta: Boolean(config.pass_skip_meta),
         completion_sound: String(config.completion_sound || 'Default.wav'),
         viewer_path: String(config.viewer_path || '').trim(),

@@ -34,11 +34,11 @@ test('Ctrl 또는 Cmd+L은 일반 입력 단축키 필터 전에 경로 입력�
 });
 
 test('경로 입력은 키보드 조작 가능한 최근 경로 콤보박스를 제공한다', () => {
-    assert.match(pathBarSource, /role="combobox"/);
+    assert.match(pathBarSource, /role=\{virtualLocation \? undefined : 'combobox'\}/);
     assert.match(pathBarSource, /role="listbox"/);
     assert.match(pathBarSource, /role="option"/);
     assert.match(pathBarSource, /aria-label=\{t\('folder\.goto\.recent'\)\}/);
-    assert.match(pathBarSource, /onClick=\{\(\) => onOpenChange\(true\)\}/);
+    assert.match(pathBarSource, /onClick=\{\(\) => \{ if \(!virtualLocation\) onOpenChange\(true\); \}\}/);
     assert.match(pathBarSource, /event\.key === 'ArrowDown'/);
     assert.match(pathBarSource, /event\.key === 'ArrowUp'/);
     assert.match(pathBarSource, /event\.key === 'Escape'/);

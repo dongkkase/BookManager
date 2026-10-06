@@ -16,6 +16,7 @@ import {
   installBundledFontFaces,
 } from '../bundledFonts';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
+import { TelemetrySettings } from './TelemetrySettings';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -942,6 +943,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 </div>
               ))}
               </fieldset>
+
+                <TelemetrySettings config={localConfig} onChange={handleChange} />
 
                 <fieldset className="settings-fieldset settings-file-association-fieldset">
                     <legend>{label('file_association_title', '파일 연결')}</legend>

@@ -35,6 +35,9 @@ import {
 import { setupFileAssociationIPC } from './fileAssociationIpc.js';
 import { BoundedMemoryCache } from './boundedMemoryCache.js';
 import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
+import { configureTelemetry, flushTelemetry, reportTelemetryError } from './telemetry.js';
+import { readTelemetryAppVersion, readTelemetryServiceConfig } from './observabilityConfig.js';
+import { setupTelemetryIPC } from './observabilityIpc.js';
 
 installConsolePipeGuard();
 
@@ -257,9 +260,15 @@ function launchFilePathsFromArguments(argv, workingDirectory = process.cwd()) {
   });
 }
 
-const reportProcessFault = createProcessFaultReporter({
+const reportLocalProcessFault = createProcessFaultReporter({
   getLogPath: getProcessLogPath,
 });
+
+function reportProcessFault(eventName, details, context) {
+    reportLocalProcessFault(eventName, details, context);
+    if (eventName === 'render-process-gone' && details?.reason === 'clean-exit') return;
+    reportTelemetryError(details, { source: eventName });
+}
 
 installProcessSafetyHandlers({
   appTarget: app,
@@ -371,6 +380,14 @@ async function initializeApp() {
 
   // i18n 초기화
   const config = configManager.loadConfig();
+    configureTelemetry({
+        config,
+        storageDir: path.dirname(configManager.configPath),
+        appVersion: readTelemetryAppVersion(app.getAppPath(), app.getVersion()),
+        isPackaged: app.isPackaged,
+        serviceConfig: readTelemetryServiceConfig(app.getAppPath()),
+    });
+    setupTelemetryIPC({ ipcMain, distIndexPath: DIST_INDEX_PATH, devServerUrl: useDevServer ? DEV_SERVER_URL : '' });
   await setupI18n(config?.lang || 'ko');
 
   // IPC 핸들러 설정
@@ -637,6 +654,7 @@ app.on('before-quit', async event => {
         if (!sharingServersStopped && hasRunningServer) {
           await stopAllSharingServers(undefined, configManager?.getConfig?.() || {});
         }
+        await flushTelemetry(1000);
     } finally {
         sharingServersStopped = true;
         viewerController?.prepareForAppQuit?.();

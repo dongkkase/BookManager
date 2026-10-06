@@ -147,7 +147,7 @@ export function targetExtension(item, targetFormat) {
 }
 
 export function changeOrganizerUnit(name, unit, lang = 'ko') {
-    const match = String(name || '').match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
+    const match = String(name || '').normalize('NFC').match(/^(.*?)\s*(?:v|c)?([\d.\-~]+)\s*(?:권|화|巻|話|vol\.?|ch\.?|volume|chapter)?(?:\s*(외전|번외|side\s*story|spin[\s-]*off|special|특별편|한정판|limited(?:\s+edition)?))?\s*$/i);
     if (!match) return String(name || '').trim();
     let base = match[1].trim();
     const number = match[2].trim();
@@ -217,13 +217,22 @@ export function organizerFolderName(item, volume) {
         || originalPathLeaf === 'Root_Files'
         || item?.volumes?.length === 1;
     if (!volumeToken && canUseFileName) volumeToken = organizerVolumeToken(fileName);
-    if (!volumeToken) return withoutIncompleteMarker;
+    const padding = Math.max(2, String(item?.volumes?.length || 1).length);
+    const padVolumeToken = token => token.replace(/\d+(?:\.\d+)?/g, number => (
+        number.replace(/^\d+/, integer => integer.padStart(padding, '0'))
+    ));
+    const folderVolumeToken = organizerVolumeToken(withoutIncompleteMarker);
     const folderVolumeKey = organizerVolumeTokenKey(withoutIncompleteMarker);
-    if (folderVolumeKey && folderVolumeKey === organizerVolumeTokenKey(volumeToken)) {
-        return withoutIncompleteMarker;
+    if (!volumeToken || (folderVolumeKey && folderVolumeKey === organizerVolumeTokenKey(volumeToken))) {
+        if (!folderVolumeToken) return withoutIncompleteMarker;
+        const normalizedFolderName = withoutIncompleteMarker.normalize('NFC');
+        const tokenIndex = normalizedFolderName.lastIndexOf(folderVolumeToken);
+        return normalizedFolderName.slice(0, tokenIndex)
+            + padVolumeToken(folderVolumeToken)
+            + normalizedFolderName.slice(tokenIndex + folderVolumeToken.length);
     }
     const separator = /\s$/u.test(withoutIncompleteMarker) ? '' : ' ';
-    return `${withoutIncompleteMarker}${separator}${volumeToken}`;
+    return `${withoutIncompleteMarker}${separator}${padVolumeToken(volumeToken)}`;
 }
 
 export function preserveOrganizerExtractedTitle(volume) {

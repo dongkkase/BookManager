@@ -73,6 +73,8 @@ const makeHarness = Function('createViewerTtsRequests', 'normalizeSupertonicRead
     };
     const calls = [];
     const cancelled = [];
+    const usage = [];
+    const reportTtsUsage = (...payload) => usage.push(payload);
     const createAudio = payload => {
         calls.push(payload);
         return createSpeech ? createSpeech(payload, calls.length) : Promise.resolve({
@@ -115,7 +117,7 @@ const makeHarness = Function('createViewerTtsRequests', 'normalizeSupertonicRead
         ${effectContaining('remoteTtsAllowedCacheKeysRef.current = remoteTtsAllowedCacheKeys;')}
     }
     return {
-        render, load: loadRemoteTtsPageAudio, stop: cancelRemoteTtsRequests, calls, cancelled,
+        render, load: loadRemoteTtsPageAudio, stop: cancelRemoteTtsRequests, calls, cancelled, usage,
         cache: remoteTtsPageCacheRef.current, pending: remoteTtsPagePromiseRef.current,
     };
 `);
@@ -143,6 +145,22 @@ test('이전 네 페이지의 완성 음성은 뒤로 이동해도 재합성 없
     h.render(windowAt(0));
     assert.notEqual(await h.load(windowAt(0).current), completed[0]);
     assert.equal(h.calls.length, 7);
+});
+
+test('미리 생성한 음성 캐시는 실제 OpenAI 폴백 모델을 청크별로 보존한다', async () => {
+    const h = harness((_payload, count) => Promise.resolve({
+        success: true, dataUrl: `audio-${count}`, model: count === 1 ? 'gpt-4o-mini-tts' : 'tts-1',
+    }));
+    const current = windowAt(0, ['Long text. '.repeat(600)]);
+    h.render(current);
+    const cached = await h.load(current.current);
+    assert.ok(cached.audioDataUrls.length > 1);
+    assert.equal(cached.audioModels.length, cached.audioDataUrls.length);
+    assert.equal(cached.audioModels[0], 'gpt-4o-mini-tts');
+    assert.ok(cached.audioModels.slice(1).every(model => model === 'tts-1'));
+    assert.equal(await h.load(current.current), cached);
+    assert.equal(h.calls.length, cached.audioDataUrls.length);
+    assert.deepEqual(h.usage, []);
 });
 
 test('완성 음성은 이전 네 페이지와 현재 페이지 및 다음 세 페이지 범위만 남는다', async () => {

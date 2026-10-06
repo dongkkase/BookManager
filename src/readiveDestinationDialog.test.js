@@ -560,7 +560,7 @@ test('opening sharing from the transfer dialog closes it before navigating', () 
 test('sharing attention survives the first lazy mount and resets on manual or ordinary navigation', () => {
     const source = fs.readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
     const navigateBody = source.match(/const handleNavigate = \(event\) => \{([\s\S]*?)\n    \};/)?.[1];
-    const tabChangeBody = source.match(/const handleTabChange = useCallback\(\(tabId\) => \{([\s\S]*?)\n  \},/)?.[1];
+    const tabChangeBody = source.match(/const handleTabChange = useCallback\(\(tabId, source = 'menu'\) => \{([\s\S]*?)\n  \},/)?.[1];
     const sharingView = source.match(/<div className="app-tab-panel" hidden=\{activeTab !== 'sharing'\}>[\s\S]*?<\/div>/)?.[0];
     assert.ok(navigateBody);
     assert.ok(tabChangeBody);
@@ -570,7 +570,7 @@ test('sharing attention survives the first lazy mount and resets on manual or or
         activeTab: 'folder', loadedTabs: new Set(['folder']), readiveConnectionAttention: null,
         setActiveTab: value => { scope.activeTab = value; },
         setReadiveConnectionAttention: value => { scope.readiveConnectionAttention = value; },
-        scheduleLastTabSave() {}, dispatchTabAction() {},
+        scheduleLastTabSave() {}, dispatchTabAction() {}, trackTelemetry() {}, source: 'menu',
         React: { createElement: hooks().react.createElement, Suspense: 'Suspense' },
         MemoSharingTab: 'Sharing', TabLoading: 'Loading', config: {}, setConfig() {}, t: key => key, showToast() {},
     };

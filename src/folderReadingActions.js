@@ -1,7 +1,7 @@
 import { folderEntryOperationTargets } from './fileActionPolicy.js';
 import { readingStatePathKey } from './folderReadingStates.js';
 
-export function resolveReadingActionPaths(menu, selectedEntries = []) {
+export function resolveReadingActionPaths(menu, selectedEntries = [], { preserveNestedEntries = false } = {}) {
     if (!menu) return [];
     if (menu.type === 'library' || (menu.type === 'folder' && menu.source !== 'list')) {
         return menu.folderPath ? [menu.folderPath] : [];
@@ -9,7 +9,9 @@ export function resolveReadingActionPaths(menu, selectedEntries = []) {
     const target = menu.file?.full_path || menu.file?.path || menu.folderPath;
     const entries = selectedEntries.some(entry => (entry.full_path || entry.path) === target)
         ? selectedEntries : target ? [{ ...menu.file, path: target }] : [];
-    return folderEntryOperationTargets(entries).map(entry => entry.full_path || entry.path);
+    return preserveNestedEntries
+        ? [...new Set(entries.map(entry => entry.full_path || entry.path).filter(Boolean))]
+        : folderEntryOperationTargets(entries).map(entry => entry.full_path || entry.path);
 }
 
 export function applyReadingActionStates(storage, states, platform = '') {

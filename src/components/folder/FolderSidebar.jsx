@@ -36,7 +36,7 @@ function readStoredSidebarCollapseState() {
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', wishlistCount = 0, collectionCount = 0, onSelectReadingList, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
   const [roots, setRoots] = useState([]);
@@ -468,6 +468,24 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                 </span>
               )}
             </li>
+                {[
+                    ['recent-added', 'calendar', 0],
+                    ['recent-updated', 'rotateRight', 0],
+                    ['wishlist', 'bookmark', wishlistCount],
+                    ['collections', 'layers', collectionCount],
+                ].map(([kind, icon, count]) => (
+                    <li key={kind} className={`recent-reading-list-item ${readingListSelected === kind || (kind === 'collections' && readingListSelected === 'collection') ? 'selected' : ''}`}>
+                        <button type="button" className="reading-list-nav-button" onClick={event => {
+                            applySidebarSelection(event);
+                            setSelectedSource(kind);
+                            setOptimisticSelectedPath('');
+                            onSelectReadingList?.(kind);
+                        }} aria-current={readingListSelected === kind || (kind === 'collections' && readingListSelected === 'collection') ? 'page' : undefined}>
+                            <span className="recent-reading-list-main"><FaIcon name={icon} size={12} /><span>{t(`reading_lists.${kind.replaceAll('-', '_')}`)}</span></span>
+                            {count > 0 && <span className="recent-reading-count">{count}</span>}
+                        </button>
+                    </li>
+                ))}
           </ul>
         )}
       </div>
@@ -546,7 +564,7 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
   // 폴더 트리 뷰 (재귀 렌더링)
   const renderTreeNode = (node, depth = 0, siblings = []) => {
     const isExpanded = expandedFolders.has(node.path);
-    const isActive = (optimisticSelectedPath || selectedFolderPath) === node.path;
+    const isActive = !recentReadingSelected && !readingListSelected && (optimisticSelectedPath || selectedFolderPath) === node.path;
     const children = folderCache[node.path] || [];
     
     // 이 노드가 자식을 가질 가능성이 있는지 (일단 폴더면 있다고 가정, 로드 후 비어있으면 없는 것으로 표시)

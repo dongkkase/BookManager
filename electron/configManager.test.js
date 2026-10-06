@@ -20,6 +20,73 @@ function writeDataConfig(root, config) {
     return configPath;
 }
 
+test('오류 보고와 사용 통계는 미설정 시 기본으로 켜지며 명시적인 false와 잘못된 값은 끈다', () => {
+    const manager = new ConfigManager('/user/data', '/portable/app');
+    const defaults = manager.getDefaultConfig();
+    assert.equal(defaults.telemetry_error_reports, true);
+    assert.equal(defaults.telemetry_usage_stats, true);
+    const missing = manager.normalizeConfig({});
+    assert.equal(missing.telemetry_error_reports, true);
+    assert.equal(missing.telemetry_usage_stats, true);
+
+    for (const value of [undefined, true]) {
+        const normalized = manager.normalizeConfig({
+            telemetry_error_reports: value,
+            telemetry_usage_stats: value,
+        });
+        assert.equal(normalized.telemetry_error_reports, true);
+        assert.equal(normalized.telemetry_usage_stats, true);
+    }
+    for (const value of [null, false, 'true', 'false', 0, 1, {}, []]) {
+        const normalized = manager.normalizeConfig({
+            telemetry_error_reports: value,
+            telemetry_usage_stats: value,
+        });
+        assert.equal(normalized.telemetry_error_reports, false);
+        assert.equal(normalized.telemetry_usage_stats, false);
+    }
+});
+
+test('오류 보고와 사용 통계 해제는 독립적으로 저장되며 다른 설정 저장과 재시작에도 유지된다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-telemetry-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ConfigManager(root, root);
+    const initial = manager.loadConfig();
+    assert.equal(initial.telemetry_error_reports, true);
+    assert.equal(initial.telemetry_usage_stats, true);
+
+    manager.saveConfig({ telemetry_usage_stats: false });
+    manager.saveConfig({ language: 'en' });
+    const errorOnly = new ConfigManager(root, root).loadConfig();
+    assert.equal(errorOnly.telemetry_error_reports, true);
+    assert.equal(errorOnly.telemetry_usage_stats, false);
+
+    manager.saveConfig({ telemetry_error_reports: false, telemetry_usage_stats: true });
+    const usageOnly = new ConfigManager(root, root).loadConfig();
+    assert.equal(usageOnly.telemetry_error_reports, false);
+    assert.equal(usageOnly.telemetry_usage_stats, true);
+
+    manager.saveConfig({ telemetry_usage_stats: false });
+    manager.saveConfig({ language: 'ja' });
+    const optedOut = new ConfigManager(root, root).loadConfig();
+    assert.equal(optedOut.telemetry_error_reports, false);
+    assert.equal(optedOut.telemetry_usage_stats, false);
+});
+
+test('기존 설정에서 누락된 수집 항목만 기본값으로 보정하고 저장된 false는 유지한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-telemetry-migration-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, { language: 'en', telemetry_error_reports: false });
+    const manager = new ConfigManager(root, root);
+    const loaded = manager.loadConfig();
+    assert.equal(loaded.telemetry_error_reports, false);
+    assert.equal(loaded.telemetry_usage_stats, true);
+    manager.saveConfig({ play_sound: false });
+    const restarted = new ConfigManager(root, root).loadConfig();
+    assert.equal(restarted.telemetry_error_reports, false);
+    assert.equal(restarted.telemetry_usage_stats, true);
+});
+
 test('초기화 시 NAS의 기존 Unicode 경로를 복구하고 다음 설정 로드에도 보존한다', async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-unicode-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));

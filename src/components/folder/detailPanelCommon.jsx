@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { FaIcon } from '../FaIcon';
+import { resolveBookType } from '../../metadata/metadataTypes';
 import {
     formatDetailValue,
     splitMetadataValues,
@@ -36,6 +37,21 @@ export function detailMetadataValue(file, ...keys) {
         }
     }
     return '';
+}
+
+export function detailReadingTime(file, t) {
+    const isAudio = resolveBookType(file || {}) === 'audio';
+    const keys = isAudio
+        ? ['duration_seconds', 'durationSeconds', 'DurationSeconds']
+        : ['page_count', 'pages', 'pageCount', 'PageCount', 'total_pages'];
+    const value = Number(detailMetadataValue(file, ...keys));
+    if (!Number.isFinite(value) || value <= 0) return '-';
+    const seconds = isAudio ? value : Math.floor(value) * 20;
+    if (seconds <= 0) return '-';
+    const minutes = Math.ceil(seconds / 60);
+    return minutes >= 60
+        ? t('folder.detail.hours_minutes', [Math.floor(minutes / 60).toLocaleString(), minutes % 60])
+        : t('folder.detail.minutes', [minutes]);
 }
 
 function publishDateParts(value = '') {

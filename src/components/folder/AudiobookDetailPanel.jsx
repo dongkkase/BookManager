@@ -10,6 +10,7 @@ import {
     DetailLine,
     DetailPanelStatusBadges,
     detailMetadataValue,
+    detailReadingTime,
     formatDate,
     formatSize,
     useDetailContentHeight,
@@ -117,6 +118,7 @@ const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEd
     const tagLabel = metadataText(t, 't3_f_genre_keywords_categories', '장르/키워드/카테고리');
     const audiobookFields = [
         ['star', t('col_rating'), detailMetadataValue(selectedFile, 'rating', 'CommunityRating')],
+        ['clock', t('folder.detail.reading_time'), detailReadingTime(selectedFile, t)],
         ['user', metadataText(t, 'audio_f_artist', '아티스트'), artist, true],
         ['book', metadataText(t, 'audio_f_album', '앨범'), album],
         ['users', metadataText(t, 'audio_f_album_artist', '앨범 아티스트'), albumArtist],

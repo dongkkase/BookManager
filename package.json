@@ -36,6 +36,7 @@
     "wait-on": "^7.2.0"
   },
   "dependencies": {
+    "@sentry/node": "10.75.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-css": "6.3.1",
     "@codemirror/lang-html": "6.4.12",
@@ -56,6 +57,7 @@
     "@tiptap/react": "3.31.3",
     "@tiptap/starter-kit": "3.31.3",
     "@vuvandinh203/react-flipbook": "^1.0.2",
+    "@xmldom/xmldom": "0.9.12",
     "better-sqlite3": "^9.4.3",
     "css-tree": "3.2.1",
     "entities": "^6.0.1",
@@ -92,6 +94,7 @@
         "filter": [
           "i18n.js",
           "i18nData.js",
+          "readingListTranslations.js",
           "folderUtils.js"
         ]
       },

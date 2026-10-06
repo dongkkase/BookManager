@@ -29,3 +29,6 @@
 .ee-image-width-controls { display: flex; align-items: center; gap: 12px; }
 .ee-image-width-controls input[type="range"] { flex: 1; min-width: 0; }
 .ee-image-width-controls input[type="number"] { width: 85px; }
+.ee-image-width-controls select { width: 65px; }
+.ee-inspector .ee-image-width-controls { flex-wrap: wrap; gap: 8px; }
+.ee-inspector .ee-image-width-controls input[type="range"] { flex-basis: 100%; }

@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { readSharedReadingList, sharedReadingLists } from './shared/readingCatalog.js';
 import {
     ARCHIVE_MIME_TYPES,
     archiveImageEntries,
@@ -93,8 +94,8 @@ ${entries.join('\n')}
 </feed>`;
 }
 
-function makeOpdsFolderEntry({ folderPath, title, thumbnailHref = '', updatedIso }) {
-    const folderUrl = `/opds?dir=${encodeURIComponent(folderPath)}`;
+function makeOpdsFolderEntry({ folderPath, title, thumbnailHref = '', href, updatedIso }) {
+    const folderUrl = href || `/opds?dir=${encodeURIComponent(folderPath)}`;
     const thumbnailLinks = thumbnailHref ? `
     <link rel="http://opds-spec.org/image/thumbnail" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />
     <link rel="http://opds-spec.org/image" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />` : '';
@@ -436,7 +437,8 @@ function catalogEntries(catalog, roots, options, updatedIso) {
     const folderEntries = catalog.folders.map(folder => makeOpdsFolderEntry({
         folderPath: folder.path,
         title: folder.title,
-        thumbnailHref: folder.sample ? thumbnailHrefForRecord(folder.sample, roots, options) : '',
+        href: folder.href,
+        thumbnailHref: folder.thumbnailHref || (folder.sample ? thumbnailHrefForRecord(folder.sample, roots, options) : ''),
         updatedIso,
     }));
     const fileEntries = catalog.files.map(file => makeOpdsFileEntry(file, {
@@ -447,20 +449,63 @@ function catalogEntries(catalog, roots, options, updatedIso) {
     return [...folderEntries, ...fileEntries];
 }
 
+const readingListHref = (id, collectionId = '') => `/opds?list=${encodeURIComponent(id)}${collectionId ? `&collection=${encodeURIComponent(collectionId)}` : ''}`;
+
+async function opdsReadingCatalog(id, collectionId, roots, options) {
+    if (!options.dbPath) throw new Error('list_not_found');
+    const { LibraryDB } = await import('../database/library_db.js');
+    const db = new LibraryDB({ dbPath: options.dbPath });
+    try {
+        const result = await readSharedReadingList(db, id, collectionId);
+        if (result.collections) return {
+            folders: result.collections.map(collection => ({
+                title: collection.name,
+                href: readingListHref('collections', collection.id),
+                thumbnailHref: `/reading-thumbnail?collection=${encodeURIComponent(collection.id)}`,
+            })),
+            files: [],
+        };
+        const folders = [];
+        const files = [];
+        for (const row of result.rows) {
+            const record = normalizeStoredRecord(row);
+            if (!record.path || !isWithinRoot(record.path, roots)) continue;
+            let stat;
+            try { stat = await fs.promises.stat(record.path); } catch { continue; }
+            if (stat.isDirectory()) folders.push({ path: record.path, title: path.basename(record.path) });
+            else if (stat.isFile() && OPDS_PUBLICATION_EXTENSIONS.has(path.extname(record.path).toLowerCase())) {
+                files.push({ ...record, size: stat.size, mtime: stat.mtimeMs });
+            }
+        }
+        return { folders, files, title: result.collection?.name };
+    } finally {
+        await db.close();
+    }
+}
+
 export function buildOpdsApp(config, log = () => {}, options = {}) {
     const app = express();
     const rootEntries = normalizeSharingRootEntries(config);
     const roots = rootEntries.map(entry => entry.root);
+    const readingLists = options.dbPath ? sharedReadingLists(config) : [];
 
     app.get('/', (_req, res) => res.redirect('/opds'));
 
     app.get('/opds', async (req, res) => {
-        if (roots.length === 0) {
+        if (roots.length === 0 && readingLists.length === 0) {
             res.status(503).type('text/plain').send(sharingText(config, 'sharing_no_libraries', '공유할 라이브러리 폴더가 없습니다.'));
             return;
         }
 
         const requestedDir = req.query.dir;
+        const requestedList = req.query.list;
+        const collectionId = req.query.collection || '';
+        const readingList = readingLists.find(list => list.id === requestedList);
+        if ((requestedList !== undefined && (!readingList || requestedDir !== undefined))
+            || typeof collectionId !== 'string' || (collectionId && requestedList !== 'collections')) {
+            res.status(404).type('text/plain').send('Reading list not found');
+            return;
+        }
         const currentDir = resolveOpdsDirectory(requestedDir, roots);
         if (requestedDir && !currentDir) {
             res.status(404).type('text/plain').send(sharingText(config, 'sharing_folder_not_found', '폴더를 찾을 수 없습니다.'));
@@ -469,22 +514,58 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
 
         try {
             const updatedIso = new Date().toISOString();
-            const catalog = await opdsCatalog(currentDir, roots, rootEntries, options, log);
+            const catalog = readingList
+                ? await opdsReadingCatalog(readingList.id, collectionId, roots, options)
+                : await opdsCatalog(currentDir, roots, rootEntries, options, log);
+            if (!readingList && !currentDir) {
+                catalog.folders.push(...readingLists.map(list => ({ title: list.name, href: readingListHref(list.id) })));
+            }
             const entries = catalogEntries(catalog, roots, options, updatedIso);
+            const title = readingList ? catalog.title || readingList.name : currentDir ? `Folder: ${path.basename(currentDir) || currentDir}` : 'BookManager Library';
+            const links = readingList ? [
+                `  <link rel="self" type="application/atom+xml;profile=opds-catalog;kind=acquisition" href="${escapeXml(readingListHref(readingList.id, collectionId))}" />`,
+                '  <link rel="start" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="/opds" />',
+                `  <link rel="up" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="${escapeXml(collectionId ? readingListHref('collections') : '/opds')}" title="Up" />`,
+            ] : opdsNavigationLinks(currentDir, roots);
 
             log(sharingText(config, 'sharing_opds_browse', 'OPDS 탐색: {name}', {
-                name: currentDir ? path.basename(currentDir) : sharingText(config, 'sharing_library_root', '라이브러리 루트'),
+                name: readingList ? title : currentDir ? path.basename(currentDir) : sharingText(config, 'sharing_library_root', '라이브러리 루트'),
             }));
             res.set('Content-Type', 'application/xml; charset=utf-8').send(makeOpdsFeed({
-                title: currentDir ? `Folder: ${path.basename(currentDir) || currentDir}` : 'BookManager Library',
-                id: currentDir ? stableOpdsId(currentDir) : 'urn:bookmanager:opds:root',
+                title,
+                id: readingList ? stableOpdsId(readingListHref(readingList.id, collectionId)) : currentDir ? stableOpdsId(currentDir) : 'urn:bookmanager:opds:root',
                 entries,
-                links: opdsNavigationLinks(currentDir, roots),
+                links,
                 updatedIso,
             }));
         } catch (error) {
+            if (error.message === 'list_not_found') {
+                res.status(404).type('text/plain').send('Reading list not found');
+                return;
+            }
             log(`OPDS catalog error: ${error.message}`, 'ERROR');
             res.status(500).type('text/plain').send('OPDS catalog failed');
+        }
+    });
+
+    app.get('/reading-thumbnail', async (req, res) => {
+        if (typeof req.query.collection !== 'string' || !req.query.collection) return res.sendStatus(404);
+        try {
+            const catalog = await opdsReadingCatalog('collections', req.query.collection, roots, options);
+            for (const record of catalog.files) {
+                const href = thumbnailHrefForRecord(record, roots, options);
+                if (href) return res.redirect(href);
+            }
+            for (const folder of catalog.folders) {
+                const children = await opdsCatalog(folder.path, roots, rootEntries, options, log);
+                for (const record of children.files) {
+                    const href = thumbnailHrefForRecord(record, roots, options);
+                    if (href) return res.redirect(href);
+                }
+            }
+            return res.sendStatus(404);
+        } catch {
+            return res.sendStatus(404);
         }
     });
 

@@ -366,6 +366,27 @@ export class EpubEditorService {
         }
     }
 
+    async importEpub(owner, filePath, operationId, language, onProgress) {
+        const session = await this.newSession(owner);
+        try {
+            const initialHash = await fingerprint(filePath);
+            this.session(session.id, owner);
+            const result = await this.runWorker(owner, operationId, { operation: 'importEpub', filePath, assetDirectory: session.assetDirectory, language }, onProgress);
+            this.session(session.id, owner);
+            if (await fingerprint(filePath) !== initialHash) throw projectError('EXTERNAL_CHANGE');
+            this.session(session.id, owner);
+            session.project = result.project;
+            session.catalog = new Map(session.project.assets.map(asset => [asset.id, asset]));
+            await this.persist(session);
+            this.session(session.id, owner);
+            return { ...this.snapshot(session), importWarnings: result.warnings };
+        } catch (error) {
+            this.sessions.delete(session.id);
+            await fs.rm(session.directory, { recursive: true, force: true });
+            throw error;
+        }
+    }
+
     async addAsset(owner, id, filePath, kind) {
         return this.exclusive(`${id}:assets`, async () => {
             const session = this.session(id, owner);

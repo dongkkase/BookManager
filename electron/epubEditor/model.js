@@ -5,6 +5,7 @@ import { BLOCK_STYLES, INLINE_STYLES, HIGHLIGHTS, authoringCss, parseMediaUrl } 
 import { normalizeParagraphFormat, paragraphFormatCss } from './paragraphFormats.js';
 import { annotateTtsDocument, validTtsMark, validTtsSettings } from './tts.js';
 import { DIVIDER_STYLES, validDividerStyle, dividerCss } from './dividers.js';
+import { imageWidthCss, imageWidthMaximum } from './imageSizing.js';
 
 export const PROJECT_VERSION = 1;
 export const PROJECT_EXTENSION = 'bmepub';
@@ -32,7 +33,7 @@ const CHILDREN = {
 const MARKS = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'link', 'textStyle', 'inlineStyle', 'highlight', 'superscript', 'subscript', 'tts', 'audioRange']);
 const ASSET_TYPES = {
     mp3: ['audio', 'audio/mpeg'], m4a: ['audio', 'audio/mp4'],
-    png: ['image', 'image/png'], jpg: ['image', 'image/jpeg'],
+    png: ['image', 'image/png'], jpg: ['image', 'image/jpeg'], webp: ['image', 'image/webp'],
     ttf: ['font', 'font/ttf'], otf: ['font', 'font/otf'], woff: ['font', 'font/woff'], woff2: ['font', 'font/woff2'],
 };
 
@@ -165,7 +166,8 @@ function validateProjectWithCache(project, cache) {
             if (!ID.test(attrs.assetId)) throw projectError('INVALID_ASSET');
             string(attrs.alt || '');
             string(attrs.caption || '');
-            number(attrs.width, 10, 100);
+            if (attrs.widthUnit != null && !['%', 'px'].includes(attrs.widthUnit)) throw projectError('INVALID_DOCUMENT');
+            number(attrs.width, 1, imageWidthMaximum(attrs.widthUnit));
             if (!['left', 'center', 'right'].includes(attrs.align)) throw projectError('INVALID_DOCUMENT');
             if (attrs.textWrap != null && !['none', 'left', 'right'].includes(attrs.textWrap)) throw projectError('INVALID_DOCUMENT');
             if (attrs.decorative != null && typeof attrs.decorative !== 'boolean') throw projectError('INVALID_DOCUMENT');
@@ -244,6 +246,13 @@ export function walkDocument(node, callback) {
 
 export function textContent(node) {
     return node.type === 'text' ? node.text : (node.content || []).map(textContent).join(node.type === 'doc' ? '\n' : '');
+}
+
+export function chapterBodyTitle(chapter) {
+    const first = chapter.content?.content?.find(node => !(node.type === 'paragraph' && (node.content || []).every(child => child.type === 'hardBreak' || child.type === 'text' && !child.text.trim())));
+    const normalize = value => value.normalize('NFC').replace(/\s+/g, ' ').trim();
+    const title = normalize(chapter.title || '');
+    return first?.type === 'heading' && title && normalize(textContent(first)) === title ? first : null;
 }
 
 export function duplicateChapter(chapter) {
@@ -416,7 +425,7 @@ export function renderChapterBody(chapter, project, resolveAsset = asset => `../
             if (!asset) return '';
             const margin = a.align === 'center' ? '0 auto' : a.align === 'right' ? '0 0 0 auto' : '0 auto 0 0';
             const wrap = a.textWrap === 'left' ? 'float:right;margin:0 0 .75em 1.2em' : a.textWrap === 'right' ? 'float:left;margin:0 1.2em .75em 0' : `margin:${margin}`;
-            return `<figure${id}${a.textWrap && a.textWrap !== 'none' ? ` data-text-wrap="${a.textWrap}"` : ''} style="width:${a.width}%;${wrap}"><img src="${xml(resolveAsset(asset))}" alt="${xml(a.decorative ? '' : a.alt || '')}"${a.decorative ? ' role="presentation"' : ''} />${a.caption ? `<figcaption>${renderText(a.caption)}</figcaption>` : ''}</figure>`;
+            return `<figure${id}${a.textWrap && a.textWrap !== 'none' ? ` data-text-wrap="${a.textWrap}"` : ''} style="width:${imageWidthCss(a)};${wrap};max-width:100%"><img src="${xml(resolveAsset(asset))}" alt="${xml(a.decorative ? '' : a.alt || '')}"${a.decorative ? ' role="presentation"' : ''} />${a.caption ? `<figcaption>${renderText(a.caption)}</figcaption>` : ''}</figure>`;
         }
         if (node.type === 'footnote') {
             notes.push(a);
@@ -441,7 +450,8 @@ export function renderChapterBody(chapter, project, resolveAsset = asset => `../
     const renderText = value => render(annotateTtsDocument({ type: 'doc', content: String(value || '').split('\n').flatMap((line, index) => [...(index ? [{ type: 'hardBreak' }] : []), ...(line ? [{ type: 'text', text: line }] : [])]) }, dictionary, ttsContext));
     const body = render(annotateTtsDocument(chapter.content, dictionary, ttsContext));
     const footnotes = notes.map((note, index) => `<aside id="note-${xml(note.id)}" epub:type="footnote" role="doc-footnote"><p><a href="#${xml(note.id)}" role="doc-backlink">${index + 1} ↩</a> ${renderText(note.text)}</p></aside>`).join('\n');
-    return `<h1 class="chapter-title">${renderText(chapter.title)}</h1>\n${body}${footnotes ? `<section class="footnotes" aria-label="${project.metadata.language.startsWith('ko') ? '각주' : 'Footnotes'}">${footnotes}</section>` : ''}`;
+    const title = chapterBodyTitle(chapter) ? '' : `<h1 class="chapter-title">${renderText(chapter.title)}</h1>\n`;
+    return `${title}${body}${footnotes ? `<section class="footnotes" aria-label="${project.metadata.language.startsWith('ko') ? '각주' : 'Footnotes'}">${footnotes}</section>` : ''}`;
 }
 
 export function bookCss(project, resolveAsset = asset => `../assets/${assetFilename(asset)}`) {

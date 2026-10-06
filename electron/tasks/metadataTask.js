@@ -73,6 +73,18 @@ function naturalCompare(a, b) {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }
 
+function compareComicPageNames(left, right) {
+    const leftName = String(left || '').replace(/\\/g, '/').replace(/^\/+/, '').normalize('NFC');
+    const rightName = String(right || '').replace(/\\/g, '/').replace(/^\/+/, '').normalize('NFC');
+    const leftHasFirstPagePrefix = path.posix.basename(leftName).startsWith('!');
+    const rightHasFirstPagePrefix = path.posix.basename(rightName).startsWith('!');
+
+    if (leftHasFirstPagePrefix !== rightHasFirstPagePrefix) {
+        return leftHasFirstPagePrefix ? -1 : 1;
+    }
+    return leftName.localeCompare(rightName, 'ko', { numeric: true, sensitivity: 'base' });
+}
+
 function isMetadataFile(filePath) {
   return METADATA_EXTS.has(path.extname(filePath).toLowerCase());
 }
@@ -1192,7 +1204,7 @@ export async function loadMetadataCoverAsset(filePath, options = {}) {
   const entries = await listArchiveEntries(filePath, sevenZExe);
   const imageEntry = entries
     .filter(entry => !entry.isDir && isImage(entry.name))
-    .sort((a, b) => naturalCompare(a.name, b.name))[0];
+    .sort((a, b) => compareComicPageNames(a.name, b.name))[0];
   if (!imageEntry) return null;
   try {
     const buffer = await extractArchiveFile(filePath, imageEntry.name, sevenZExe, { maxBytes: MAX_METADATA_COVER_BYTES });
@@ -1849,7 +1861,7 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         const entries = isDocument(filePath) ? [] : await listArchiveEntries(filePath, sevenZExe);
         const imageEntries = entries
           .filter(entry => !entry.isDir && isImage(entry.name))
-          .sort((a, b) => naturalCompare(a.name, b.name));
+          .sort((a, b) => compareComicPageNames(a.name, b.name));
         const comicInfoEntry = entries.find(entry => !entry.isDir && path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
         const pageCount = pdfAnalysis?.pageCount || imageEntries.length;
         let metadata = options.includeInferredMetadata === false

@@ -52,6 +52,13 @@ test('일괄 이름 복원은 기존 파일명과 분석된 제목을 구분한�
     );
 });
 
+test('비율이 있는 NFD 제목의 권수 단위만 변경한다', () => {
+    const title = '남녀비 1：5 세계에서도 평범하게 살 수 있을 줄 알았어？';
+    assert.equal(changeOrganizerUnit(title, 'volume', 'ko'), title);
+    assert.equal(changeOrganizerUnit(`${title} 02권`.normalize('NFD'), 'chapter', 'ko'), `${title} 02화`);
+    assert.equal(changeOrganizerUnit(`${title} 03화`.normalize('NFD'), 'volume', 'ko'), `${title} 03권`);
+});
+
 test('같은 폴더의 루트 이미지 압축 파일은 일괄 복원 시 각 원본 파일명을 사용한다', () => {
     const items = ['01', '02', '03', '04'].map(number => ({
         id: number,
@@ -142,10 +149,14 @@ test('일괄 폴더명 추출은 파일의 부모 폴더명에서 정확히 (미
 test('일괄 폴더명 추출은 기존 파일의 권수만 보존한다', () => {
     const item = { filepath: '/보관함/(미완)작품/묶음.zip' };
     const cases = [
+        [{ original_basename: '기존 제목 1권' }, '작품 01권'],
         [{ original_basename: '기존 제목 01권' }, '작품 01권'],
-        [{ original_basename: '기존 제목 제1권' }, '작품 제1권'],
-        [{ original_basename: '스캔본', original_path: '내부/기존 제목 2.5권/스캔본' }, '작품 2.5권'],
-        [{ original_path: '내부/기존 제목 1~3권' }, '작품 1~3권'],
+        [{ original_basename: '기존 제목 제1권' }, '작품 제01권'],
+        [{ original_basename: '기존 제목 001권' }, '작품 001권'],
+        [{ original_basename: '기존 제목 123권' }, '작품 123권'],
+        [{ original_basename: '스캔본', original_path: '내부/기존 제목 2.5권/스캔본' }, '작품 02.5권'],
+        [{ original_path: '내부/기존 제목 1~3권' }, '작품 01~03권'],
+        [{ original_basename: '기존 제목 제1권～제3권' }, '작품 제01권～제03권'],
         [{ original_path: '내부 1~10권/기존 제목 04권' }, '작품 04권'],
         [{ original_basename: '기존 제목 12화' }, '작품'],
         [{ original_basename: '기존 제목 2024' }, '작품'],
@@ -221,7 +232,26 @@ test('폴더명 추출 권수는 em dash 범위를 보존한다', () => {
             { filepath: '/보관함/작품/묶음.zip' },
             { original_basename: '기존 제목 1—3권' },
         ),
-        '작품 1—3권',
+        '작품 01—03권',
+    );
+});
+
+test('폴더명에 이미 포함된 권수도 중복 없이 패딩하며 제목의 숫자는 유지한다', () => {
+    const title = '남녀비 1：5 세계에서도 평범하게 살 수 있을 줄 알았어？';
+    for (const normalization of ['NFC', 'NFD']) {
+        for (const [suffix, expected] of [['1권', '01권'], ['1~3권', '01~03권'], ['2.5권', '02.5권']]) {
+            const item = { filepath: `/books/${title} ${suffix}/책.zip`.normalize(normalization) };
+            const volume = { original_basename: `기존 제목 ${suffix}`.normalize(normalization) };
+            assert.equal(organizerFolderName(item, volume).normalize('NFC'), `${title} ${expected}`);
+            assert.equal(organizerFolderName(item).normalize('NFC'), `${title} ${expected}`);
+        }
+    }
+    assert.equal(
+        organizerFolderName(
+            { filepath: `/books/${title}/묶음.zip`, volumes: Array.from({ length: 100 }, () => ({})) },
+            { original_basename: '1권' },
+        ),
+        `${title} 001권`,
     );
 });
 

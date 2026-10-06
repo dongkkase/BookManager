@@ -68,7 +68,7 @@ export function editorExtensions(getAssetUrl) {
         StarterKit.configure({ horizontalRule: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, protocols: ['epub'], isAllowedUri: url => safeLink(url) } }),
         TableKit.configure({ table: { resizable: true, lastColumnResizable: true } }), TextStyle, Color, BackgroundColor, FontFamily, FontSize,
         TextAlign.configure({ types: ['heading', 'paragraph'] }),
-        UniqueID.configure({ types: ['paragraph', 'heading', 'image', 'table', 'columns', 'blockquote', 'footnote', 'audio', 'media'], generateID: () => newId() }),
+        UniqueID.configure({ types: ['paragraph', 'heading', 'image', 'table', 'columns', 'blockquote', 'footnote', 'audio', 'media', 'listItem', 'bulletList', 'orderedList', 'tableCell', 'tableHeader', 'codeBlock', 'horizontalRule', 'column'], generateID: () => newId() }),
         Image, Footnote, Audio, Media, Columns, Column, CellStyle, ParagraphIndent, ParagraphFormat, EditorTab, QuotePairs,
         BlockStyle, InlineStyle, Highlight, Superscript, Subscript, TtsMark, StyledDivider, createAudioRangeExtension(getAssetUrl, l),
     ];

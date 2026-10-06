@@ -4,6 +4,7 @@ import { basename } from '../../utils/folderPath';
 
 export function FolderPathBar({
     value,
+    virtualLocation = '',
     history,
     inputRef,
     isOpen,
@@ -58,6 +59,7 @@ export function FolderPathBar({
 
     const handleSubmit = event => {
         event.preventDefault();
+        if (virtualLocation) return;
         const selectedPath = activeIndex >= 0 ? history[activeIndex] : value;
         if (activeIndex >= 0) onChange(selectedPath);
         setActiveIndex(-1);
@@ -65,6 +67,7 @@ export function FolderPathBar({
     };
 
     const handleInputKeyDown = event => {
+        if (virtualLocation) return;
         if (event.key === 'ArrowDown') {
             event.preventDefault();
             onOpenChange(true);
@@ -142,20 +145,21 @@ export function FolderPathBar({
                     ref={inputRef}
                     className="goto-path-input"
                     type="text"
-                    value={value}
+                    value={virtualLocation || value}
+                    readOnly={Boolean(virtualLocation)}
                     placeholder={t('folder.goto.placeholder')}
                     aria-label={t('folder.goto.input_label')}
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-expanded={isOpen}
-                    aria-controls={listboxId}
-                    aria-activedescendant={activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
+                    role={virtualLocation ? undefined : 'combobox'}
+                    aria-autocomplete={virtualLocation ? undefined : 'list'}
+                    aria-expanded={virtualLocation ? undefined : isOpen}
+                    aria-controls={virtualLocation ? undefined : listboxId}
+                    aria-activedescendant={!virtualLocation && activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
                     autoComplete="off"
                     onFocus={() => {
                         setActiveIndex(-1);
-                        onOpenChange(true);
+                        if (!virtualLocation) onOpenChange(true);
                     }}
-                    onClick={() => onOpenChange(true)}
+                    onClick={() => { if (!virtualLocation) onOpenChange(true); }}
                     onChange={event => {
                         onChange(event.target.value);
                         onOpenChange(true);
@@ -163,10 +167,10 @@ export function FolderPathBar({
                     }}
                     onKeyDown={handleInputKeyDown}
                 />
-                <span className="folder-goto-path-arrow" aria-hidden="true">
+                {!virtualLocation && <span className="folder-goto-path-arrow" aria-hidden="true">
                     <FaIcon name="angleDown" size={10} />
-                </span>
-                {isOpen && (
+                </span>}
+                {!virtualLocation && isOpen && (
                     <div
                         className="folder-goto-path-history"
                         id={listboxId}
@@ -206,6 +210,7 @@ export function FolderPathBar({
             <button
                 className="folder-goto-path-submit"
                 type="submit"
+                disabled={Boolean(virtualLocation)}
                 onFocus={() => {
                     setActiveIndex(-1);
                     onOpenChange(false);

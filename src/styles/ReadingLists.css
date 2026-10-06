@@ -1,0 +1,44 @@
+.folder-tab .reading-list-nav-button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.reading-list-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line);
+}
+
+.reading-list-actions button {
+    padding: 6px 10px;
+    color: var(--text);
+    background: var(--panel-bg-3);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.reading-list-actions button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.reading-list-note {
+    margin: 0;
+    padding: 8px 12px;
+    color: var(--muted);
+    font-size: var(--font-xs);
+}

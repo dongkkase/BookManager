@@ -1,5 +1,7 @@
 import path from 'path';
 
+const TITLE_RATIO_PATTERN = /\d+(?:\.\d+)?(?:\s*[:：]\s*\d+(?:\.\d+)?)+/g;
+
 // difflib is not a built-in Node.js module, so we implement a simple similarity function
 function getSimilarity(a, b) {
   a = String(a || '').normalize('NFC');
@@ -144,7 +146,10 @@ export function extractCoreTitle(text) {
   cleaned = cleaned.replace(/번외편?|외전|스핀오프|특별편?|합본/g, '');
   cleaned = cleaned.replace(/권\~/gi, '');
   cleaned = cleaned.replace(/\d+\s*[~-]\s*\d+/g, ' ');
-  cleaned = cleaned.replace(/[：:—\-\/]/g, ' ');
+    cleaned = cleaned.replace(
+        new RegExp(`${TITLE_RATIO_PATTERN.source}|[：:—/-]`, 'g'),
+        match => /^\d/.test(match) ? match : ' '
+    );
   cleaned = cleaned.replace(/\d+\s*(?:권|화)/g, ' ');
   cleaned = cleaned.replace(/완결[!?.~]*/g, ' ');
   cleaned = cleaned.replace(/\s+(완|화)[!?.~]*(?=\s|$)/g, ' ');
@@ -338,7 +343,7 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
     leafClean.length > 25 && /^[a-fA-F0-9\-_]+$/.test(leafClean);
 
   if (isHash || !/[가-힣a-zA-Z]/.test(leafClean)) {
-    let cleanForNums = leafClean.replace(/[\[\(].*?[\]\)]/g, '');
+    let cleanForNums = leafClean.replace(/[\[\(].*?[\]\)]/g, '').replace(TITLE_RATIO_PATTERN, ' ');
     cleanForNums = cleanForNums.replace(
       /\d+(?:\.\d+)?\s*(?:px|p|pt|mb|gb|kb|k)(?![a-zA-Z])/gi,
       ''
@@ -358,7 +363,7 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
   }
 
   const cleanNoBrackets = leafClean.replace(/[\[\(].*?[\]\)]/g, '');
-  let cleanForNums = cleanNoBrackets.replace(
+  let cleanForNums = cleanNoBrackets.replace(TITLE_RATIO_PATTERN, ' ').replace(
     /\d+(?:\.\d+)?\s*(?:px|p|pt|mb|gb|kb|k)(?![a-zA-Z])/gi,
     ''
   );
@@ -390,7 +395,7 @@ export function formatLeafName(parentCore, leafName, index, totalItems, lang = '
     if (nums.length > 0) {
       targetNum = nums[nums.length - 1];
     } else {
-      const leafCleanNoPx = leafClean.replace(
+      const leafCleanNoPx = leafClean.replace(TITLE_RATIO_PATTERN, ' ').replace(
         /\d+(?:\.\d+)?\s*(?:px|p|pt|mb|gb|kb|k)(?![a-zA-Z])/gi,
         ''
       );

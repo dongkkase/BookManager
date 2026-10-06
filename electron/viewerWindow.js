@@ -15,6 +15,9 @@ import { LibraryDB } from './database/library_db.js';
 import { getReadiveReadingState } from './readive/ipc.js';
 import { createCoverEditViewerGuard } from './coverEditViewerGuard.js';
 import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
+import { observeOperation } from './observabilityOperations.js';
+import { reportTelemetryError } from './telemetry.js';
+import { setupViewerTtsTelemetry } from './viewerTelemetry.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -285,6 +288,12 @@ export function setupViewerWindowManager(options = {}) {
         if (!senderWindow || senderWindow.isDestroyed()) return null;
         return Object.values(viewerContexts).find(context => activeViewerWindow(context) === senderWindow) || null;
     };
+    setupViewerTtsTelemetry({
+        ipcMain,
+        distIndexPath,
+        devServerUrl: isDev ? devServerUrl : '',
+        getSessionForSender: sender => viewerContextForSender(sender)?.currentSession,
+    });
     const coverEditGuard = createCoverEditViewerGuard(() => {
         const context = viewerContexts.reader;
         if (!activeViewerWindow(context)) return [];
@@ -626,10 +635,14 @@ export function setupViewerWindowManager(options = {}) {
         viewerWindow.on('maximize', scheduleViewerWindowStateSave);
         viewerWindow.on('unmaximize', scheduleViewerWindowStateSave);
         viewerWindow.on('close', handleViewerWindowClose);
-        viewerWindow.webContents.on('render-process-gone', () => {
+        viewerWindow.webContents.on('render-process-gone', (_event, details) => {
+            if (details?.reason !== 'clean-exit') reportTelemetryError({}, { source: 'render-process-gone', format: context.currentSession?.type });
             if (context.window !== viewerWindow || context.kind !== 'audio') return;
             context.closeRequestVersion += 1;
             clearAudioMiniPlayer(context);
+        });
+        viewerWindow.webContents.on('unresponsive', () => {
+            reportTelemetryError({}, { source: 'renderer-unresponsive', format: context.currentSession?.type });
         });
         viewerWindow.on('closed', () => {
             context.closingWindows.delete(viewerWindow);
@@ -691,7 +704,7 @@ export function setupViewerWindowManager(options = {}) {
         return window;
     };
 
-    const openViewer = async filePath => {
+    const openViewer = async filePath => observeOperation('viewer-open', async () => {
         const session = sessions.create(filePath);
         const context = contextForSession(session);
         console.info(`[ViewerWindow] Opening ${session.type} session ${session.id}: ${session.filePath}`);
@@ -699,7 +712,7 @@ export function setupViewerWindowManager(options = {}) {
         sendSession(context, session);
         void recordReadingState(session, { lastReadAt: Date.now() });
         return { success: true, session };
-    };
+    }, { resultFormat: result => result.session?.type });
 
     const openPreview = async (filePath, onRelease) => {
         const session = sessions.create(filePath, { skipAdjacent: true });

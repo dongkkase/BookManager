@@ -44,7 +44,7 @@ test('image import selects multiple images, preserves selection order and ignore
     f.select({ canceled: false, filePaths: [second, first, second] });
     const result = await f.invoke();
     assert.equal(result.ok, true);
-    assert.deepEqual(f.dialogs, [{ properties: ['openFile', 'multiSelections'], filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg'] }] }]);
+    assert.deepEqual(f.dialogs, [{ properties: ['openFile', 'multiSelections'], filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }]);
     assert.deepEqual(result.assets.map(asset => asset.name), ['두 번째.png', '첫 번째.png']);
     assert.ok(result.assets.every(asset => asset.kind === 'image'));
     assert.deepEqual(result.rejected, []);
@@ -69,6 +69,21 @@ test('image import rejects corrupt and disguised non-image files while keeping v
     assert.deepEqual(result.assets.map(asset => asset.name), ['first.png', 'last.png']);
     assert.deepEqual(result.rejected, [{ name: 'broken.png', code: 'INVALID_ASSET' }, { name: 'font.png', code: 'INVALID_ASSET' }]);
     assert.equal((await f.files()).length, 2);
+});
+
+test('image and cover pickers accept WebP files with their original MIME and bytes', async t => {
+    const f = await fixture(t);
+    const webp = Buffer.from('UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vz0AAA=', 'base64');
+    const file = await f.write('cover.webp', webp);
+    for (const multiple of [true, false]) {
+        f.select({ canceled: false, filePaths: [file] });
+        const result = await f.invoke({ multiple });
+        assert.equal(result.ok, true);
+        const asset = multiple ? result.assets[0] : result.asset;
+        assert.equal(asset.mime, 'image/webp');
+        assert.equal(asset.extension, 'webp');
+        assert.deepEqual((await f.invoke({ action: 'asset', assetId: asset.id })).data, webp);
+    }
 });
 
 test('canceled and empty image selections do not register assets', async t => {

@@ -115,7 +115,7 @@ test('텍본 파일 입출력 IPC는 두 preload와 메인 프로세스에 연�
         assert.match(source, /saveTextCleanerFile:[\s\S]*tools:textCleaner:save/);
     }
     assert.match(ipcSource, /ipcMain\.handle\('tools:textCleaner:load'/);
-    assert.match(ipcSource, /ipcMain\.handle\('tools:textCleaner:save'/);
+    assert.match(ipcSource, /registerObservedHandler\(ipcMain, 'tools:textCleaner:save', 'text-cleaner'/);
 });
 
 test('폴더 항목을 탭으로 드래그하거나 우클릭해 텍본 정리기로 전달할 수 있다', () => {

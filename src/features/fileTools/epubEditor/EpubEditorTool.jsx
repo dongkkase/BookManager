@@ -6,7 +6,7 @@ import { closeHistory } from '@tiptap/pm/history';
 import { FaIcon } from '../../../components/FaIcon';
 import { getCurrentLanguage } from '../../../utils/i18n';
 import { isFilePathDrag, droppedPathsFromDataTransfer } from '../../../appShell';
-import { createChapter, duplicateChapter, newId, paragraph, createProjectValidator, inspectProject, textContent, chapterXhtml, safeLink, walkDocument } from '../../../../electron/epubEditor/model';
+import { createChapter, duplicateChapter, newId, paragraph, createProjectValidator, inspectProject, textContent, chapterXhtml, chapterBodyTitle, safeLink, walkDocument } from '../../../../electron/epubEditor/model';
 import { editorExtensions } from './extensions';
 import SearchPanel from './SearchPanel';
 import { SearchHighlights, configureEditorSearch } from './search';
@@ -81,7 +81,15 @@ export default function EpubEditorTool({ onBack, showToast, registerBeforeLeave 
     const [busy, setBusy] = useState(false);
     const [notice, setNotice] = useState(null);
     const homeTask = useRef(false);
+    const homeOperation = useRef(null);
+    const [homeProgress, setHomeProgress] = useState(0);
     const listRequest = useRef(0);
+    useEffect(() => window.electronAPI?.onEpubEditorProgress?.(event => {
+        if (event.operationId === homeOperation.current) setHomeProgress(event.value);
+    }), []);
+    useEffect(() => {
+        if (!session) return registerBeforeLeave?.(async () => !homeTask.current);
+    }, [registerBeforeLeave, session]);
     const refresh = useCallback(() => {
         const sequence = ++listRequest.current;
         if (window.electronAPI?.epubEditor) request({ action: 'list' }).then(result => { if (sequence === listRequest.current) setRecent(result.projects); }).catch(error => { if (sequence === listRequest.current) setNotice({ text: l(error.code) }); });
@@ -92,13 +100,15 @@ export default function EpubEditorTool({ onBack, showToast, registerBeforeLeave 
         homeTask.current = true;
         listRequest.current += 1;
         setBusy(true);
+        setHomeProgress(0);
+        homeOperation.current = newId('op');
         setNotice(null);
         try {
-            const result = await request({ ...payload, operationId: newId('op'), language: getCurrentLanguage() });
+            const result = await request({ ...payload, operationId: homeOperation.current, language: getCurrentLanguage() });
             if (!result.canceled) setSession(result);
             else refresh();
-        } catch (error) { setNotice({ text: l(error.code) }); refresh(); }
-        finally { homeTask.current = false; setBusy(false); }
+        } catch (error) { if (error.code !== 'CANCELED') setNotice({ text: l(error.code) }); refresh(); }
+        finally { homeTask.current = false; homeOperation.current = null; setBusy(false); }
     };
     const manageRecovery = async (action, item) => {
         if (homeTask.current) return null;
@@ -130,12 +140,12 @@ export default function EpubEditorTool({ onBack, showToast, registerBeforeLeave 
         {session ? <Workspace key={session.sessionId} initial={session} onHome={() => setSession(null)} onBack={onBack} showToast={showToast} registerBeforeLeave={registerBeforeLeave} /> : <>
             <header className="ee-welcome-header"><button className="ee-button" disabled={busy} onClick={onBack}><FaIcon name="chevronLeft" />{l('back')}</button><span className="ee-brand"><FaIcon name="bookOpen" />{l('editor')}</span><button className="ee-button" disabled={busy} onClick={() => open({ action: 'open' })}><FaIcon name="folderOpen" />{l('open')}</button></header>
             <Notice value={notice} onClose={() => setNotice(null)} />
-            <div className="ee-welcome-scroll"><div className="ee-welcome-intro"><span className="ee-eyebrow">BOOKMANAGER / EPUB STUDIO</span><h1>{l('welcome')}</h1><p>{l('introduction')}</p></div>
+            <div className="ee-welcome-scroll"><div className="ee-welcome-intro"><span className="ee-eyebrow">BOOKMANAGER / EPUB STUDIO</span><h1>{l('welcome')}</h1><p>{l('introduction')}</p><div className="ee-epub-import"><button className="ee-button ee-primary" disabled={busy} onClick={() => open({ action: 'importEpub' })}><FaIcon name="folderOpen" />{l('importEpub')}</button><p>{l('importEpubHint')}</p></div></div>
                 <div className="ee-template-grid">{['blank', 'essay', 'guide'].map((template, index) => <button key={template} className={`ee-template is-${template}`} disabled={busy} onClick={() => open({ action: 'create', template })}>
                     <div className="ee-template-art"><div className="ee-template-cover"><span>0{index + 1} /</span><strong>{l(template)}</strong><div className="ee-template-lines" /><span>BOOKMANAGER</span></div></div>
                     <div className="ee-template-info"><div><h2>{l(template)}</h2><p>{l(`${template}Hint`)}</p></div><FaIcon name="plus" size={16} /></div>
                 </button>)}</div>
-                {busy && <p role="status" className="ee-loading">{l('working')}</p>}
+                {busy && <div role="status" className="ee-loading">{l('working')}{homeProgress > 0 && ` ${homeProgress}%`}{homeOperation.current && homeProgress > 0 && homeProgress < 100 && <button className="ee-button" onClick={() => request({ action: 'cancel', operationId: homeOperation.current }).catch(error => setNotice({ text: l(error.code) }))}>{l('cancel')}</button>}</div>}
                 <RecentProjects projects={recent} busy={busy} onOpen={id => open({ action: 'restore', id })} onManage={manageRecovery} />
                 <p className="ee-local"><FaIcon name="desktop" />{l('local')}</p>
             </div>
@@ -184,7 +194,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
     const chapterRef = useRef(chapterId);
     const [mode, setMode] = useState('edit');
     const [sourceTab, setSourceTab] = useState('source');
-    const [dialog, setDialog] = useState(null);
+    const [dialog, setDialog] = useState(initial.importWarnings ? 'epubImport' : null);
     const [imageEditTarget, setImageEditTarget] = useState(null);
     const [paragraphFormats, setParagraphFormats] = useState([]);
     const [paragraphFormatSeed, setParagraphFormatSeed] = useState(null);
@@ -890,6 +900,11 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
             <div className="ee-header-actions"><button className="ee-button" title={shortcutLabel('shortcuts')} onClick={actions.shortcuts}><EditorIcon command="shortcuts" />{l('shortcuts')}</button><button className="ee-button" disabled={!!busy} onClick={() => leave(onHome)}>{l('leave')}</button><button className="ee-button" disabled={!!busy} title={shortcutLabel('save')} onClick={() => save()}><FaIcon name="floppy" />{l('save')}</button><IconButton icon="copy" label={`${l('saveAs')} (${shortcutLabel('saveAs')})`} disabled={!!busy} onClick={() => save(true)} /><button className="ee-button" disabled={!!busy} title={shortcutLabel('inspect')} onClick={checkBook}><FaIcon name="circleCheck" />{l('inspect')}</button><button className="ee-button ee-primary" disabled={!!busy} title={shortcutLabel('export')} onClick={exportBook}><FaIcon name="download" />{l('export')}</button></div>
         </header>
         <Notice value={notice} onClose={() => setNotice(null)} />
+        {dialog === 'epubImport' && <EditorDialog title={l('epubImported')} onClose={() => setDialog(null)} footer={<button className="ee-button ee-primary" onClick={() => setDialog(null)}>{l('close')}</button>}>
+            <p>{l('epubImportedHint')}</p>
+            <p>{l('epubImportedCount').replace('{chapters}', project.chapters.length).replace('{assets}', project.assets.length)}</p>
+            {initial.importWarnings.map(item => <details key={item.code}><summary>{l(item.code)} ({item.count})</summary><ul>{item.names.map(name => <li key={name}>{name}</li>)}</ul></details>)}
+        </EditorDialog>}
         {importResult && <section className="ee-import-result" role="status"><div className="ee-section-heading"><p>{importResult.assets.length} {l('assetsImported')}</p><IconButton icon="xmark" label={l('close')} onClick={() => setImportResult(null)} /></div>{importResult.rejected.length > 0 && <><p>{l('assetsRejected')}</p><ul>{importResult.rejected.map((item, index) => <li key={index}>{item.name || l('file')} — {l(item.code)}</li>)}</ul></>}</section>}
         <div className={`ee-workspace${showStructure ? '' : ' without-structure'}${showInspector ? '' : ' without-inspector'}`} inert={busy ? '' : undefined}>
             <aside className="ee-sidebar" aria-label={l('chapters')} hidden={!showStructure}><div className="ee-panel-tabs" role="tablist" aria-label={l('chapters')}>{['chapters', 'outline', 'assets'].map(tab => <button key={tab} role="tab" aria-selected={leftTab === tab} onClick={() => setLeftTab(tab)}>{l(tab)}</button>)}{compact && <IconButton icon="xmark" label={l('close')} onClick={() => setShowStructure(false)} />}</div>
@@ -910,7 +925,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                             <button className="ee-button" onClick={() => addAsset('font')}><FaIcon name="file" />{l('addFont')}</button>
                             <button className="ee-button" onClick={actions.addAudio}><EditorIcon command="addAudio" />{l('addAudio')}</button>
                         </div>
-                        <div className="ee-asset-drop-zone"><FaIcon name="download" /><span>{l('dropIntoAssets')}</span><small>PNG · JPEG · MP3 · M4A · TTF · OTF · WOFF · WOFF2</small></div>
+                        <div className="ee-asset-drop-zone"><FaIcon name="download" /><span>{l('dropIntoAssets')}</span><small>PNG · JPEG · WebP · MP3 · M4A · TTF · OTF · WOFF · WOFF2</small></div>
                         <p className="ee-muted">{l(project.assets.length ? 'assetHint' : 'noAssets')}</p>
                         {project.assets.length > 0 && <div className="ee-asset-filters"><input type="search" aria-label={l('assetSearch')} placeholder={l('assetSearch')} value={assetQuery} onChange={event => setAssetQuery(event.target.value)} /><select aria-label={l('assetFilter')} value={assetKind} onChange={event => setAssetKind(event.target.value)}>{['all', 'image', 'audio', 'font'].map(kind => <option key={kind} value={kind}>{l(kind === 'all' ? 'chars_all' : kind)}</option>)}</select><small>{matchingAssets.length} / {project.assets.length}</small></div>}
                         {project.assets.length > 0 && !matchingAssets.length && <p className="ee-empty-state">{l('assetNoResults')}</p>}
@@ -953,7 +968,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                     {mode !== 'source' && (chapterIndex > 0 || mode === 'preview') && <button type="button" className="ee-chapter-boundary is-previous" disabled={chapterIndex === 0} onClick={() => navigateChapter(-1)}><FaIcon name="angleUp" /><span><strong>{l('previousChapter')}{chapterIndex > 0 && ` · ${project.chapters[chapterIndex - 1].title || l('chapter')}`}</strong><small>{l('scrollPreviousChapter')}</small></span></button>}
                     <div className="ee-paper" hidden={mode !== 'edit'} style={paperStyle}>
                         <div className="ee-paper-label">{String(project.chapters.findIndex(item => item.id === chapter.id) + 1).padStart(2, '0')} / {l('chapter')}</div>
-                        <input className="ee-chapter-title" aria-label={l('chapterTitle')} placeholder={l('chapterTitle')} value={chapter.title} onChange={event => update(current => ({ ...current, chapters: current.chapters.map(item => item.id === chapter.id ? { ...item, title: event.target.value } : item) }))} />
+                        {!chapterBodyTitle(chapter) && <input className="ee-chapter-title" aria-label={l('chapterTitle')} placeholder={l('chapterTitle')} value={chapter.title} onChange={event => update(current => ({ ...current, chapters: current.chapters.map(item => item.id === chapter.id ? { ...item, title: event.target.value } : item) }))} />}
                         <EditorContent editor={editor} />
                         {outline.some(item => item.node.type.name === 'footnote') && <section className="ee-footnotes"><h3>{l('footnote')}</h3>{outline.filter(item => item.node.type.name === 'footnote').map(({ node, position }, index) => <button key={node.attrs.id} onClick={() => { editor.commands.setNodeSelection(position); setFootnoteText(node.attrs.text); setDialog('footnote'); }}><sup>{index + 1}</sup><span>{node.attrs.text || l('FOOTNOTE_EMPTY')}</span></button>)}</section>}
 

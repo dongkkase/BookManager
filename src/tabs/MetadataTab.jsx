@@ -3192,7 +3192,7 @@ function MetadataSearchDialog({
       moveSelectedResult(event.key === 'ArrowUp' ? -1 : 1);
       return;
     }
-    if (isDialogTextInput) return;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || isDialogTextInput) return;
     if (code === 'KeyS' && !state.loading && dialogQuery.trim()) {
       event.preventDefault();
       event.stopPropagation();

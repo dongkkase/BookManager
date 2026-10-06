@@ -293,6 +293,105 @@ test('폴더 스캔은 CBZ 썸네일과 ComicInfo를 외부 7z 없이 추출한�
     }
 });
 
+for (const { label, extension, imageNames, expectedImage } of [
+    {
+        label: 'ZIP의 느낌표 표지를 밑줄 이미지보다 먼저 선택한다',
+        extension: '.zip',
+        imageNames: ['__ridi__0.jpg', '!000.jpg'],
+        expectedImage: '!000.jpg',
+    },
+    {
+        label: 'CBZ 하위 폴더의 느낌표 표지를 먼저 선택한다',
+        extension: '.cbz',
+        imageNames: ['__ridi__0.jpg', 'pages/!000.jpg'],
+        expectedImage: 'pages/!000.jpg',
+    },
+    {
+        label: 'CBZ의 여러 느낌표 표지를 숫자 순서로 선택한다',
+        extension: '.cbz',
+        imageNames: ['__ridi__0.jpg', '!10.jpg', '!2.jpg'],
+        expectedImage: '!2.jpg',
+    },
+    {
+        label: '느낌표 표지가 없는 ZIP에서 기존 숫자 순서를 유지한다',
+        extension: '.zip',
+        imageNames: ['__ridi__10.jpg', '__ridi__2.jpg'],
+        expectedImage: '__ridi__2.jpg',
+    },
+]) {
+    test(`폴더 스캔 썸네일은 ${label}`, async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-thumbnail-order-'));
+        const libraryDir = path.join(root, 'library');
+        const archivePath = path.join(libraryDir, `Book${extension}`);
+        const encodedImages = [];
+
+        try {
+            fs.mkdirSync(libraryDir, { recursive: true });
+            fs.writeFileSync(archivePath, Buffer.alloc(0));
+            for (const imageName of imageNames) {
+                await replaceZipEntry(archivePath, imageName, PNG_1X1);
+            }
+
+            const files = await scanFolder(libraryDir, {
+                thumbnailDir: path.join(root, 'thumbnails'),
+                sevenZExe: '',
+                thumbnailEncoder: async (imageBuffer, { imageName }) => {
+                    encodedImages.push(imageName);
+                    return { buffer: imageBuffer, extension: '.png' };
+                },
+            });
+
+            assert.equal(files.length, 1);
+            assert.deepEqual(encodedImages, [expectedImage]);
+            assert.deepEqual(fs.readFileSync(files[0].thumb_path), PNG_1X1);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+}
+
+test('폴더 스캔 썸네일은 7z 하위 폴더의 느낌표 표지를 숫자 순서로 선택한다', async t => {
+    const sevenZExe = find7z();
+    if (!sevenZExe) {
+        t.skip('7z executable is not available');
+        return;
+    }
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-7z-thumbnail-order-'));
+    const inputDir = path.join(root, 'input');
+    const libraryDir = path.join(root, 'library');
+    const archivePath = path.join(libraryDir, 'Book.7z');
+    const encodedImages = [];
+
+    try {
+        fs.mkdirSync(path.join(inputDir, 'pages'), { recursive: true });
+        fs.mkdirSync(libraryDir, { recursive: true });
+        for (const imageName of ['__ridi__0.jpg', 'pages/!10.jpg', 'pages/!2.jpg']) {
+            fs.writeFileSync(path.join(inputDir, imageName), PNG_1X1);
+        }
+        const created = spawnSync(sevenZExe, ['a', '-t7z', archivePath, '*'], {
+            cwd: inputDir,
+            stdio: 'ignore',
+        });
+        assert.equal(created.status, 0);
+
+        const files = await scanFolder(libraryDir, {
+            thumbnailDir: path.join(root, 'thumbnails'),
+            sevenZExe,
+            thumbnailEncoder: async (imageBuffer, { imageName }) => {
+                encodedImages.push(imageName);
+                return { buffer: imageBuffer, extension: '.png' };
+            },
+        });
+
+        assert.equal(files.length, 1);
+        assert.deepEqual(encodedImages, ['pages/!2.jpg']);
+        assert.deepEqual(fs.readFileSync(files[0].thumb_path), PNG_1X1);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('폴더 스캔은 표지 추출만 건너뛰고 ComicInfo는 유지할 수 있다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-skip-cover-scan-'));
     const libraryDir = path.join(root, 'library');
