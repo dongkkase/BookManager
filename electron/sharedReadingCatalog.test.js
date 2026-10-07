@@ -31,7 +31,7 @@ async function fixture(t) {
         const stat = await fs.stat(file);
         await db.upsertFileInfo({ path: file, title: path.basename(file), size: stat.size, mtime: stat.mtimeMs, thumb_path: file === first ? thumbnail : '' });
         db.getConnection().prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?')
-            .run(`2026-01-0${index + 1}`, `2026-02-0${4 - index}`, file);
+            .run(new Date(Date.now() - (4 - index) * 86400000).toISOString(), new Date(Date.now() - (index + 1) * 86400000).toISOString(), file);
         await db.upsertReadingState(file, { format: 'text', lastReadAt: `2026-03-0${index + 1}T00:00:00.000Z` });
     }
     const request = value => readingListsRequest(db, value);

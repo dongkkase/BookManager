@@ -43,7 +43,6 @@ test('폴더 탭은 최근 읽음을 가상 목록으로 표시하고 기록 삭
     assert.match(folderSidebarSource, /onSelectRecentReading/);
     assert.match(folderTabSource, /const RECENT_READING_LIMIT = 50/);
     assert.match(folderTabSource, /folderSource === 'recent-reading'/);
-    assert.match(folderTabSource, /groupFolderFiles\(filteredFileData, 'none', 'lastReadAt', 'desc'\)/);
     assert.match(folderTabSource, /action === 'remove-recent'/);
     assert.match(folderTabSource, /if \(isRecentReading\) removeRecentReading\(activeSelectedPath\)/);
     assert.match(folderTabSource, /folder\.recent\.clear_confirm/);

@@ -138,14 +138,61 @@ test('최근 추가 시점은 재스캔으로 바뀌지 않고 최근 변경에�
     await db.upsertFileInfo({ path: files[0], mtime: 2000, title: 'Original' });
     await db.upsertFileInfo({ path: files[1], mtime: 1000 });
     const sql = db.getConnection();
-    sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?').run('2026-01-01', '2026-01-01', files[0]);
-    sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?').run('2026-02-01', '2026-02-01', files[1]);
+    const earlier = new Date(Date.now() - 2 * 86400000).toISOString();
+    const later = new Date(Date.now() - 86400000).toISOString();
+    sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?').run(earlier, earlier, files[0]);
+    sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?').run(later, later, files[1]);
     await db.upsertFileInfo({ path: files[0], mtime: 2000, title: 'Original' });
-    assert.equal(sql.prepare('SELECT updated_at FROM reading_file_activity WHERE path = ?').get(files[0]).updated_at, '2026-01-01');
+    assert.equal(sql.prepare('SELECT updated_at FROM reading_file_activity WHERE path = ?').get(files[0]).updated_at, earlier);
     await db.upsertFileInfo({ path: files[0], mtime: 2000, title: 'Changed' });
-    assert.equal(sql.prepare('SELECT added_at FROM reading_file_activity WHERE path = ?').get(files[0]).added_at, '2026-01-01');
+    assert.equal(sql.prepare('SELECT added_at FROM reading_file_activity WHERE path = ?').get(files[0]).added_at, earlier);
     assert.deepEqual((await request({ operation: 'list', id: 'recent-added' })).rows.map(file => file.path), [files[1], files[0]]);
     assert.deepEqual((await request({ operation: 'list', id: 'recent-updated' })).rows.map(file => file.path), files);
+});
+
+test('최근 목록과 배지는 14일 경계를 포함하고 오래되거나 기록이 없는 항목을 제외한다', async t => {
+    const { db, files, request } = await fixture(t);
+    for (const file of files) await db.upsertFileInfo({ path: file });
+    const now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const cutoff = new Date(now - 14 * 86400000).toISOString();
+    const older = new Date(now - 14 * 86400000 - 1).toISOString();
+    const sql = db.getConnection();
+    const update = sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?');
+    update.run(cutoff, older, files[0]);
+    update.run(older, cutoff, files[1]);
+    sql.prepare('INSERT INTO reading_file_activity VALUES (?, ?, ?)').run('/missing-db-entry.epub', cutoff, cutoff);
+    assert.deepEqual((await request({ operation: 'list', id: 'recent-added' })).rows.map(file => file.path), [files[0]]);
+    assert.deepEqual((await request({ operation: 'list', id: 'recent-updated' })).rows.map(file => file.path), [files[1]]);
+    const overview = await request({ operation: 'overview' });
+    assert.equal(overview.recentAddedCount, 1);
+    assert.equal(overview.recentUpdatedCount, 1);
+    update.run('', '', files[0]);
+    update.run('', '', files[1]);
+    assert.equal((await request({ operation: 'list', id: 'recent-added' })).rows.length, 0);
+    assert.equal((await request({ operation: 'list', id: 'recent-updated' })).rows.length, 0);
+    assert.equal((await request({ operation: 'overview' })).recentAddedCount, 0);
+});
+
+test('최근 목록과 배지는 각각 최신 1000개로 제한한다', async t => {
+    const { db, folder, request } = await fixture(t);
+    const files = Array.from({ length: 1005 }, (_, index) => ({ path: path.join(folder, `${index}.epub`) }));
+    await db.upsertFileInfoBulk(files);
+    const sql = db.getConnection();
+    const now = Date.now();
+    const update = sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?');
+    sql.transaction(() => files.forEach((file, index) => update.run(
+        new Date(now - index * 1000).toISOString(),
+        new Date(now - (files.length - index) * 1000).toISOString(),
+        file.path,
+    )))();
+    const added = (await request({ operation: 'list', id: 'recent-added' })).rows;
+    const updated = (await request({ operation: 'list', id: 'recent-updated' })).rows;
+    assert.deepEqual(added.map(file => file.path), files.slice(0, 1000).map(file => file.path));
+    assert.deepEqual(updated.map(file => file.path), files.slice(5).reverse().map(file => file.path));
+    const overview = await request({ operation: 'overview' });
+    assert.equal(overview.recentAddedCount, added.length);
+    assert.equal(overview.recentUpdatedCount, updated.length);
 });
 
 test('폴더 이동 후 컬렉션과 읽고 싶은 책의 경로 및 추가 시점을 보존한다', async t => {

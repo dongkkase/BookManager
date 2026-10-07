@@ -3,6 +3,20 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readingActionFormat } from './readingActions.js';
 
+const RECENT_ACTIVITY_LIMIT = 1000;
+const RECENT_ACTIVITY_DAYS = 14;
+
+function recentActivityCutoff() {
+    return new Date(Date.now() - RECENT_ACTIVITY_DAYS * 86400000).toISOString();
+}
+
+function recentActivityCount(db, column, cutoff) {
+    return db.prepare(`SELECT COUNT(*) AS count FROM (
+        SELECT activity.path FROM reading_file_activity activity JOIN files ON files.path = activity.path
+        WHERE activity.${column} >= ? LIMIT ?
+    )`).get(cutoff, RECENT_ACTIVITY_LIMIT).count;
+}
+
 export function initializeReadingLists(db) {
     db.exec(`
         CREATE TABLE IF NOT EXISTS reading_lists (
@@ -145,7 +159,13 @@ export async function readingListsRequest(library, request = {}) {
             const lists = db.prepare(`SELECT lists.id, lists.name, lists.kind, lists.created_at, COUNT(members.path) AS count
                 FROM reading_lists lists LEFT JOIN reading_list_members members ON members.list_id = lists.id
                 GROUP BY lists.id ORDER BY lists.created_at, lists.name`).all();
-            return { collections: lists.filter(list => list.kind === 'collection'), wishlistCount: lists.find(list => list.kind === 'wishlist')?.count || 0 };
+            const cutoff = recentActivityCutoff();
+            return {
+                collections: lists.filter(list => list.kind === 'collection'),
+                wishlistCount: lists.find(list => list.kind === 'wishlist')?.count || 0,
+                recentAddedCount: recentActivityCount(db, 'added_at', cutoff),
+                recentUpdatedCount: recentActivityCount(db, 'updated_at', cutoff),
+            };
         }
         if (operation === 'preview') {
             requireList(db, request.id, true);
@@ -157,7 +177,8 @@ export async function readingListsRequest(library, request = {}) {
                 const column = request.id === 'recent-added' ? 'added_at' : 'updated_at';
                 const rows = db.prepare(`SELECT files.*, activity.${column} AS list_added_at
                     FROM reading_file_activity activity JOIN files ON files.path = activity.path
-                    WHERE activity.${column} != '' ORDER BY activity.${column} DESC, files.path LIMIT 200`).all();
+                    WHERE activity.${column} >= ? ORDER BY activity.${column} DESC, files.path LIMIT ?`)
+                    .all(recentActivityCutoff(), RECENT_ACTIVITY_LIMIT);
                 return { rows };
             }
             requireList(db, request.id);

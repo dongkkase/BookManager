@@ -36,7 +36,7 @@ function readStoredSidebarCollapseState() {
  * 좌측 사이드바 컴포넌트
  * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', wishlistCount = 0, collectionCount = 0, onSelectReadingList, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
   const [roots, setRoots] = useState([]);
@@ -462,15 +462,13 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                 <FaIcon name="clock" size={12} />
                 <span>{t('folder.sidebar.recent_reading')}</span>
               </span>
-              {recentReadingCount > 0 && (
                 <span className="recent-reading-count" aria-label={t('folder.recent.count', [recentReadingCount])}>
-                  {recentReadingCount}
+                    {recentReadingCount}
                 </span>
-              )}
             </li>
                 {[
-                    ['recent-added', 'calendar', 0],
-                    ['recent-updated', 'rotateRight', 0],
+                    ['recent-added', 'calendar', recentAddedCount],
+                    ['recent-updated', 'rotateRight', recentUpdatedCount],
                     ['wishlist', 'bookmark', wishlistCount],
                     ['collections', 'layers', collectionCount],
                 ].map(([kind, icon, count]) => (
@@ -482,7 +480,7 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                             onSelectReadingList?.(kind);
                         }} aria-current={readingListSelected === kind || (kind === 'collections' && readingListSelected === 'collection') ? 'page' : undefined}>
                             <span className="recent-reading-list-main"><FaIcon name={icon} size={12} /><span>{t(`reading_lists.${kind.replaceAll('-', '_')}`)}</span></span>
-                            {count > 0 && <span className="recent-reading-count">{count}</span>}
+                            <span className="recent-reading-count" aria-label={t('reading_lists.count', [count])}>{count}</span>
                         </button>
                     </li>
                 ))}

@@ -4,7 +4,7 @@ import { mergeFolderFileCacheUpdate } from './useFolderScan.js';
 const EMPTY_FILES = [];
 
 export function useReadingLists(listId, t) {
-    const [overview, setOverview] = useState({ collections: [], wishlistCount: 0, previewRevision: 0 });
+    const [overview, setOverview] = useState({ collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0, previewRevision: 0 });
     const [overviewError, setOverviewError] = useState('');
     const [snapshot, setSnapshot] = useState({ id: '', files: EMPTY_FILES, previewRevision: 0 });
     const [loading, setLoading] = useState(false);
@@ -53,7 +53,13 @@ export function useReadingLists(listId, t) {
         try {
             const result = await window.electronAPI?.readingLists?.({ operation: 'list', id: listId });
             if (!result?.success) throw new Error(result?.error || 'unavailable');
-            if (sequence === requestRef.current) setSnapshot({ id: listId, files: result.files, previewRevision: sequence });
+            if (sequence === requestRef.current) {
+                setSnapshot({ id: listId, files: result.files, previewRevision: sequence });
+                if (listId === 'recent-added' || listId === 'recent-updated') {
+                    const countKey = listId === 'recent-added' ? 'recentAddedCount' : 'recentUpdatedCount';
+                    setOverview(current => ({ ...current, [countKey]: result.files.length }));
+                }
+            }
         } catch {
             if (sequence === requestRef.current) setError(t('reading_lists.load_failed'));
         } finally {
@@ -73,15 +79,22 @@ export function useReadingLists(listId, t) {
         };
         void refreshOverview();
         const unsubscribe = window.electronAPI?.onReadingListsChanged?.(reload);
+        const unsubscribeScan = window.electronAPI?.onScanComplete?.(reload);
+        const timer = window.setInterval(() => {
+            void refreshOverview();
+            if (listId.startsWith('recent-')) void refresh();
+        }, 60000);
         window.addEventListener('focus', reload);
         window.addEventListener('bookmanager:metadata-saved', reload);
         return () => {
             overviewRef.current += 1;
             unsubscribe?.();
+            unsubscribeScan?.();
+            window.clearInterval(timer);
             window.removeEventListener('focus', reload);
             window.removeEventListener('bookmanager:metadata-saved', reload);
         };
-    }, [refresh, refreshOverview]);
+    }, [listId, refresh, refreshOverview]);
     const mutate = useCallback(async request => {
         const result = await window.electronAPI?.readingLists?.(request);
         if (!result?.success) {

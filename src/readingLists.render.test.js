@@ -35,7 +35,8 @@ async function until(predicate, message) {
     }
     throw new Error(message);
 }
-const book = { path: '/fixture/book.epub', full_path: '/fixture/book.epub', name: 'book.epub', title: 'Test book', ext: '.epub', size: 200, exists: true, readingListAddedAt: '2026-01-01' };
+const daysAgo = days => new Date(Date.now() - days * 86400000).toISOString();
+const book = { path: '/fixture/book.epub', full_path: '/fixture/book.epub', name: 'book.epub', title: 'Test book', ext: '.epub', size: 200, exists: true, readingListAddedAt: daysAgo(2) };
 const folder = { path: '/fixture/series', full_path: '/fixture/series', name: 'series', title: 'series', isDirectory: true, is_folder: true, size: 0, exists: true, readingListAddedAt: '2026-01-02' };
 const childBook = { ...book, path: '/fixture/series/child.epub', full_path: '/fixture/series/child.epub', name: 'child.epub' };
 const entries = new Map([book, folder, childBook].map(entry => [entry.path, entry]));
@@ -51,11 +52,18 @@ const previewRequests = [];
 const pendingPreviews = [];
 let folderCover = coverSource;
 let holdPreviews = false;
+const recentFiles = [
+    { ...book, lastReadAt: daysAgo(20), readingState: { status: 'reading', scrollPercent: 25 } },
+    { ...childBook, title: 'A child', readingListAddedAt: daysAgo(0.5), lastReadAt: daysAgo(2), readingState: { status: 'completed' } },
+    { ...book, path: '/fixture/other.pdf', full_path: '/fixture/other.pdf', name: 'other.pdf', title: 'Z other', ext: '.pdf', readingListAddedAt: daysAgo(10), lastReadAt: daysAgo(0.5) },
+];
+let holdRecentUpdates = false;
 let releaseRecent;
 let changed;
 window.electronAPI = {
-    getRoots: async () => [], getSpecialPaths: async () => ({}), getReadingStates: async () => [],
-    listRecentReading: async () => [], getLibraryScanStates: async () => ({}),
+    getRoots: async () => [], getSpecialPaths: async () => ({}),
+    getReadingStates: async paths => recentFiles.filter(file => paths.includes(file.path) && file.readingState).map(file => ({ ...file.readingState, filePath: file.path })),
+    listRecentReading: async () => recentFiles, getLibraryScanStates: async () => ({}),
     stat: async filePath => ({ isDirectory: filePath === '/fixture' || filePath === folder.path, isFile: entries.has(filePath) && filePath !== folder.path }),
     readDir: async filePath => (filePath === '/fixture' ? [folder, book] : [childBook]).map(entry => ({ ...entry, isFile: !entry.isDirectory })),
     scanFolder: async filePath => { scannedPaths.push(filePath); return filePath === folder.path ? [childBook] : [folder, book]; },
@@ -71,15 +79,15 @@ window.electronAPI = {
     readingLists: async request => {
         requests.push(request);
         const { operation, id } = request;
-        if (operation === 'overview') return { success: true, collections: collections.map(c => ({ ...c, count: books.get(c.id).length })), wishlistCount: books.get('want-to-read').length };
+        if (operation === 'overview') return { success: true, collections: collections.map(c => ({ ...c, count: books.get(c.id).length })), wishlistCount: books.get('want-to-read').length, recentAddedCount: recentFiles.length, recentUpdatedCount: recentFiles.length };
         if (operation === 'preview') {
             const members = books.get(id) || [];
             const cover = members.find(entry => !entry.isDirectory && entry.cover)?.cover || (members.some(entry => entry.isDirectory) ? folderCover : '');
             return { success: true, file: { isDirectory: true, is_folder: true, cover } };
         }
         if (operation === 'list') {
-            if (id === 'recent-updated') return await new Promise(resolve => { releaseRecent = () => resolve({ success: true, files: [{ ...book, name: 'stale.epub' }] }); });
-            return { success: true, files: id === 'recent-added' ? [book] : [...(books.get(id) || [])] };
+            if (id === 'recent-updated' && holdRecentUpdates) return await new Promise(resolve => { releaseRecent = () => resolve({ success: true, files: [{ ...book, name: 'stale.epub' }] }); });
+            return { success: true, files: id === 'recent-added' ? recentFiles : id === 'recent-updated' ? recentFiles.map((file, index) => ({ ...file, readingListAddedAt: daysAgo(index + 0.5) })) : [...(books.get(id) || [])] };
         }
         if (operation === 'create') {
             collections.push({ id: 'collection-1', name: request.name }); books.set('collection-1', []);
@@ -103,6 +111,15 @@ const setInput = (element, value) => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
 };
+const selectOption = async (label, value) => {
+    const select = document.querySelector('.recent-list-toolbar select[aria-label="' + label + '"]');
+    check(select, 'Missing select: ' + label);
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await frame();
+};
+const rowPaths = () => [...document.querySelectorAll('tr[data-file-path]')].map(row => row.dataset.filePath);
+const badge = label => [...document.querySelectorAll('.sidebar-section-reading li')].find(item => item.querySelector('.recent-reading-list-main')?.textContent.trim() === label)?.querySelector('.recent-reading-count')?.textContent;
 const rowFor = filePath => [...document.querySelectorAll('tr[data-file-path]')].find(row => row.dataset.filePath === filePath);
 const collectionPath = 'collection://collection-1';
 const collectionCoverImage = () => [...document.querySelectorAll('.view-container [data-file-path]')].find(item => item.dataset.filePath === collectionPath)?.querySelector('img');
@@ -150,7 +167,47 @@ window.readingListTests = (async () => {
     changed();
     await until(() => !rowFor(folder.path), 'Preview restored a removed wishlist entry');
     await click('최근 추가됨');
-    await until(() => document.querySelector('tr[data-file-path]'), 'Recently added books did not load');
+    await until(() => rowPaths().length === 3, 'Recently added books did not load');
+    check(badge('최근 추가됨') === '3' && badge('최근 업데이트 됨') === '3' && badge('최근 읽음') === '3', 'Recent menu badges missing');
+    check(document.querySelector('.reading-list-note').textContent.includes('1,000'), 'Recent activity limit hint missing');
+    check(rowPaths()[0] === childBook.path, 'Default added date sorting failed');
+    await selectOption('추가 날짜', '7');
+    check(rowPaths().length === 2 && badge('최근 추가됨') === '3', 'Date filter changed total badge');
+    await selectOption('읽기 상태', 'completed');
+    check(rowPaths().length === 1 && rowFor(childBook.path), 'Reading status filter failed');
+    await selectOption('파일 형식', '.pdf');
+    check(rowPaths().length === 0, 'Combined filters did not show empty result');
+    await click('초기화', document.querySelector('.recent-list-toolbar'));
+    await selectOption('정렬 기준', 'name');
+    check(rowPaths()[0] === book.path, 'Name sorting failed');
+    await selectOption('정렬 방향', 'desc');
+    check(rowPaths()[0] === '/fixture/other.pdf', 'Descending sorting failed');
+    await selectOption('추가 날짜', '7');
+    await click('최근 업데이트 됨');
+    await until(() => rowPaths().length === 3 && document.querySelector('select[aria-label="업데이트 날짜"]'), 'Updated list did not load');
+    check(document.querySelector('select[aria-label="업데이트 날짜"]').value === '14', 'Added filters leaked into updated list');
+    await selectOption('업데이트 날짜', '1');
+    check(rowPaths().length === 1 && rowFor(book.path), 'Update date filter used the wrong date');
+    await click('최근 추가됨');
+    await until(() => rowPaths().length === 2 && document.querySelector('select[aria-label="추가 날짜"]')?.value === '7', 'Added filters were not retained');
+    check(document.querySelector('select[aria-label="정렬 방향"]').value === 'desc', 'Added sorting was not retained');
+    [...document.querySelectorAll('.sidebar-section-reading li')].find(item => item.querySelector('.recent-reading-list-main')?.textContent.trim() === '최근 읽음').click();
+    await until(() => document.querySelector('select[aria-label="읽은 날짜"]'), 'Read list filters missing');
+    check(rowPaths().length === 3 && document.querySelector('select[aria-label="읽은 날짜"]').value === '0', 'Read list lost its all-time default');
+    await selectOption('정렬 기준', 'progress');
+    check(rowPaths()[0] === childBook.path, 'Reading progress sorting failed');
+    await selectOption('읽은 날짜', '7');
+    check(rowPaths().length === 2 && !rowFor(book.path), 'Read date filter failed');
+    await click('최근 추가됨');
+    await until(() => document.querySelector('select[aria-label="추가 날짜"]'), 'Added toolbar missing');
+    await click('초기화', document.querySelector('.recent-list-toolbar'));
+    const nameHeader = [...document.querySelectorAll('th')].find(header => header.textContent.includes(t('col_name')));
+    nameHeader.click(); await frame();
+    check(rowPaths()[0] === book.path && document.querySelector('select[aria-label="정렬 기준"]').value === 'name', 'Table header sorting is not connected');
+    check(document.querySelector('.recent-list-result-count').textContent === '3 / 3개 표시', 'Filtered result count missing');
+    const toolbar = document.querySelector('.recent-list-toolbar');
+    check(toolbar.scrollWidth <= toolbar.clientWidth, 'Recent toolbar overflowed');
+    if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_RECENT'); });
     await contextAction('읽고 싶은 책 추가');
     await until(() => books.get('want-to-read').length === 1, 'Wishlist mutation was not called');
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
@@ -241,6 +298,7 @@ window.readingListTests = (async () => {
     await until(() => document.querySelector('tr[data-file-path]'), 'Deleting collection removed wishlist');
     await contextAction('읽고 싶은 책 삭제');
     await until(() => !document.querySelector('tr[data-file-path]'), 'Wishlist did not refresh after removal');
+    holdRecentUpdates = true;
     await click('최근 업데이트 됨');
     await until(() => releaseRecent, 'Recent request missing');
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
@@ -291,10 +349,10 @@ app.whenReady().then(async () => {
     const window = new BrowserWindow({ show: false, width: 1100, height: 800, webPreferences: { backgroundThrottling: false } });
     window.webContents.on('console-message', async (_event, level, message) => {
         if (level >= 2) console.error(message);
-        if (message === 'CAPTURE_READING_MODAL' || message === 'CAPTURE_READING_COLLECTION') {
+        if (['CAPTURE_READING_MODAL', 'CAPTURE_READING_COLLECTION', 'CAPTURE_READING_RECENT'].includes(message)) {
             const screenshot = await window.webContents.capturePage();
             const filename = ${JSON.stringify(process.env.BOOKMANAGER_READING_SCREENSHOT || '/tmp/bookmanager-reading-lists.png')};
-            require('node:fs').writeFileSync(message === 'CAPTURE_READING_COLLECTION' ? filename.replace('.png', '-collections.png') : filename, screenshot.toPNG());
+            require('node:fs').writeFileSync(message === 'CAPTURE_READING_RECENT' ? filename.replace('.png', '-recent.png') : message === 'CAPTURE_READING_COLLECTION' ? filename.replace('.png', '-collections.png') : filename, screenshot.toPNG());
             await window.webContents.executeJavaScript('window.continueReadingTest()');
         }
     });

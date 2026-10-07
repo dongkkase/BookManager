@@ -31,7 +31,7 @@ function recentReadingFixture({ mutationSuccess = true, confirmation = 'yes' } =
     const loaderEnd = source.indexOf('  // 필터링된 파일 데이터', loaderStart);
     const mutationStart = source.indexOf('  const removeRecentReading =');
     const mutationEnd = source.indexOf('  useEffect', mutationStart);
-    const loadingCondition = source.match(/\{(isRecentReading && recentReadingLoading[^?]+)\?\s*\(\s*<div className="recent-reading-state"/)?.[1];
+    const loadingCondition = source.match(/\((isRecentReading && recentReadingLoading && !recentReadingLoaded)\)/)?.[1];
     assert.ok(stateStart >= 0 && stateEnd > stateStart && loaderStart >= 0 && loaderEnd > loaderStart && loadingCondition);
     const slots = [];
     const requests = [];
@@ -46,6 +46,7 @@ function recentReadingFixture({ mutationSuccess = true, confirmation = 'yes' } =
     let writes = 0;
     const context = vm.createContext({
         RECENT_READING_LIMIT: 50,
+        refreshReadingList: () => {},
         config: { language: 'ko' },
         clearSelection: () => {},
         t: key => key,

@@ -6,6 +6,8 @@ import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { ReadingCollectionsDialog } from '../components/folder/ReadingCollections';
 import { useReadingLists } from '../hooks/useReadingLists';
+import { RecentReadingToolbar } from '../components/folder/RecentReadingToolbar';
+import { defaultRecentListOptions, filterRecentListFiles, recentListExtension, sortRecentListFiles } from '../recentReadingListState';
 import '../styles/ReadingLists.css';
 import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
@@ -691,6 +693,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const readingListKind = ['recent-added', 'recent-updated', 'wishlist', 'collections', 'collection'].includes(folderSource) ? folderSource : '';
     const isCollectionView = readingListKind === 'collections' || readingListKind === 'collection';
     const isReadingList = isRecentReading || Boolean(readingListKind);
+    const isRecentList = isRecentReading || readingListKind.startsWith('recent-');
+    const [recentListOptionsByKind, setRecentListOptionsByKind] = useState({});
+    const recentListOptions = useMemo(() => recentListOptionsByKind[folderSource] || defaultRecentListOptions(folderSource), [folderSource, recentListOptionsByKind]);
     const [selectedCollectionId, setSelectedCollectionId] = useState('');
     const collectionFolderOriginRef = useRef(null);
     const [collectionDialog, setCollectionDialog] = useState(null);
@@ -1279,10 +1284,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     });
   }, [activeRawFileData, config?.lang, config?.language, isRecentReading, readingFilesScope, readingStatesSnapshot, runtimePlatform, t, viewerStatusVersion]);
   const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
-  const filteredFileData = useMemo(() => filterFolderFiles(fileDataWithViewerStatus, {
-    query: localSearchQuery,
-    metadataMissingOnly: (!isReadingList || isCollectionView) && metadataMissingOnly,
-  }), [fileDataWithViewerStatus, isCollectionView, isReadingList, localSearchQuery, metadataMissingOnly]);
+    const recentListExtensions = useMemo(() => [...new Set([
+        ...activeRawFileData.map(recentListExtension), recentListOptions.extension,
+    ].filter(Boolean))].sort(), [activeRawFileData, recentListOptions.extension]);
+    const filteredFileData = useMemo(() => {
+        const files = filterFolderFiles(fileDataWithViewerStatus, {
+            query: localSearchQuery,
+            metadataMissingOnly: (!isReadingList || isCollectionView) && metadataMissingOnly,
+        });
+        return isRecentList ? filterRecentListFiles(files, folderSource, recentListOptions) : files;
+    }, [fileDataWithViewerStatus, folderSource, isCollectionView, isReadingList, isRecentList, localSearchQuery, metadataMissingOnly, recentListOptions]);
   const folderTagSearchButtonLabel = folderTagSelections.length > 0
     ? `${t('folder_tag_search_button_title')} · ${t('folder_tag_selected_count', [folderTagSelections.length])}`
     : t('folder_tag_search_button_title');
@@ -1310,14 +1321,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     [config?.folder_saved_layouts],
   );
   const groupedFileData = useMemo(
-    () => isRecentReading
-      ? groupFolderFiles(filteredFileData, 'none', 'lastReadAt', 'desc')
+    () => isRecentList
+      ? [{ name: '', files: sortRecentListFiles(filteredFileData, recentListOptions) }]
       : readingListKind && !isCollectionView
         ? groupFolderFiles(filteredFileData, 'none', 'readingListAddedAt', 'desc')
       : groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder, {
           fallbackGroupName: t('folder_group_uncategorized'),
         }),
-    [filteredFileData, groupKey, isCollectionView, isRecentReading, readingListKind, sortKey, sortOrder, t],
+    [filteredFileData, groupKey, isCollectionView, isRecentList, readingListKind, recentListOptions, sortKey, sortOrder, t],
   );
   const displayedFileData = useMemo(
     () => groupedFileData.flatMap(group => group.files),
@@ -1339,6 +1350,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectPaths,
     moveActiveSelection,
   } = useFileSelection(displayedFileData);
+    const changeRecentListOptions = useCallback(patch => {
+        clearSelection();
+        setRecentListOptionsByKind(current => ({
+            ...current,
+            [folderSource]: { ...(current[folderSource] || defaultRecentListOptions(folderSource)), ...patch },
+        }));
+    }, [clearSelection, folderSource]);
   const activeSelectedFile = selectedFileData();
   const detailSelectedFile = activeSelectedFile?.collectionId ? null : activeSelectedFile || null;
   const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
@@ -3844,13 +3862,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [detailPanelHeight, saveConfig, updateViewContainerWidth]);
 
   const handleSort = useCallback((key, toggleSameKey = true) => {
+        if (isRecentList) {
+            changeRecentListOptions({
+                sortKey: key,
+                sortOrder: recentListOptions.sortKey === key && toggleSameKey && recentListOptions.sortOrder === 'asc' ? 'desc' : 'asc',
+            });
+            return;
+        }
     if (sortKey === key && toggleSameKey) {
       setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
       setSortOrder('asc');
     }
-  }, [sortKey]);
+  }, [changeRecentListOptions, isRecentList, recentListOptions, sortKey]);
 
   const handleToggleSortOrder = useCallback(() => {
     setSortOrder(current => current === 'asc' ? 'desc' : 'asc');
@@ -3994,7 +4019,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       case 'thumbnail': return <ThumbnailView {...props} scale={itemScale} />;
       case 'tile': return <TileView {...props} scale={itemScale} />;
       case 'table':
-      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} navigationRestore={navigationRestore} onNavigationRestore={handleNavigationRestore} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onFileDragStart={handleFileDragStart} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={sortKey} sortOrder={sortOrder} groupKey={groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
+      default: return <FileTableView ref={fileTableRef} files={filteredFileData} groupedData={groupedFileData} selectedFiles={selectedFiles} selectedFileSet={selectedFileSet} activeSelectedPath={activeSelectedPath} navigationRestore={navigationRestore} onNavigationRestore={handleNavigationRestore} onSelect={handleFileSelect} onOpenFile={handleFileOpen} onDragSelect={selectPaths} onFileDragStart={handleFileDragStart} onContextMenu={showFileContextMenu} onClearSelection={clearSelection} onVisibleFilesChange={handleVisibleFilesChange} onScroll={props.onScroll} onSort={handleSort} t={t} sortKey={isRecentList ? recentListOptions.sortKey : sortKey} sortOrder={isRecentList ? recentListOptions.sortOrder : sortOrder} groupKey={isRecentList ? 'none' : groupKey} columnLayout={columnLayout} onColumnLayoutChange={handleColumnLayoutChange} scale={itemScale} />;
     }
   };
 
@@ -4063,6 +4088,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 recentReadingCount={recentReadingFiles.length}
                 onSelectRecentReading={handleSelectRecentReading}
                 readingListSelected={readingListKind}
+                recentAddedCount={readingLists.recentAddedCount}
+                recentUpdatedCount={readingLists.recentUpdatedCount}
                 wishlistCount={readingLists.wishlistCount}
                 collectionCount={readingLists.collections.length}
                 onSelectReadingList={handleSelectReadingList}
@@ -4130,7 +4157,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               </button>
               
               {isReadingList && !isCollectionView && (
-                <div className="recent-reading-toolbar-title" title={readingListKind.startsWith('recent-') ? t('reading_lists.recent_hint') : undefined}>
+                <div className="recent-reading-toolbar-title" title={readingListKind.startsWith('recent-') ? t(`reading_lists.${readingListKind === 'recent-added' ? 'recent_added_hint' : 'recent_updated_hint'}`) : undefined}>
                   <FaIcon name={readingListKind === 'wishlist' ? 'bookmark' : readingListKind.startsWith('collection') ? 'layers' : 'clock'} size={12} />
                   <strong>{readingListTitle}</strong>
                   <span>{isRecentReading ? recentReadingFiles.length : readingListKind === 'collections' ? readingLists.collections.length : readingLists.files.length}</span>
@@ -4242,7 +4269,16 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
           </div>
 
-          {readingListKind.startsWith('recent-') && <p className="reading-list-note">{t('reading_lists.recent_hint')}</p>}
+            {isRecentList && <RecentReadingToolbar
+                kind={folderSource}
+                options={recentListOptions}
+                extensions={recentListExtensions}
+                onChange={changeRecentListOptions}
+                count={filteredFileData.length}
+                total={activeRawFileData.length}
+                t={t}
+            />}
+            {isRecentList && <p className="reading-list-note">{t(`reading_lists.${isRecentReading ? 'recent_reading_hint' : readingListKind === 'recent-added' ? 'recent_added_hint' : 'recent_updated_hint'}`)}</p>}
           <FolderPathBar
             value={gotoPathDraft}
             virtualLocation={isCollectionView ? `${t('reading_lists.collections')}${readingListKind === 'collection' ? ` / ${activeCollection?.name || ''}` : ''}` : ''}
