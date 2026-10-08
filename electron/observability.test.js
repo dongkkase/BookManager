@@ -8,6 +8,7 @@ import { readTelemetryAppVersion, readTelemetryServiceConfig, telemetryServiceCo
 import { isTelemetrySenderAllowed } from './observabilityIpc.js';
 import { observeOperation, operationOutcome, reportOperationError } from './observabilityOperations.js';
 import { saveConfigWithTelemetryConsent } from './observabilityConsent.js';
+import { attachOperationErrors, getOperationErrors } from './operationDiagnostics.js';
 
 test('only the app main frame can report telemetry; embedded books and foreign URLs cannot', () => {
     const distIndexPath = path.join(os.tmpdir(), 'Book Manager', 'dist', 'index.html');
@@ -91,6 +92,65 @@ test('operation failures propagate unchanged and expected file validation does n
     await observeOperation('text-cleaner', async () => ({ ok: false, error: { code: 'SOURCE_CHANGED' } }), handled.options);
     assert.equal(handled.events[1].event, 'feature_failed');
     assert.deepEqual(handled.errors, []);
+});
+
+test('batch failures retain original diagnostics without extending the serialized task result', async () => {
+    const { errors, options } = operationHarness();
+    const failure = Object.assign(new Error('private book path'), {
+        code: 'PROCESS_FAILED', telemetryStage: 'extract', telemetryTool: '7z', exitCode: 2,
+    });
+    const result = { stats: { error: ['local result message'] }, cancelled: false };
+    const before = JSON.stringify(result);
+    assert.equal(attachOperationErrors(result, [failure]), result);
+    assert.deepEqual(getOperationErrors(result), [failure]);
+    assert.equal(await observeOperation('archive-organizer', async () => result, options), result);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].error, failure);
+    assert.equal(errors[0].context.feature, 'archive-organizer');
+    assert.equal(JSON.stringify(result), before);
+    assert.deepEqual(getOperationErrors(JSON.parse(before)), []);
+});
+
+test('batch reporting skips expected failures, deduplicates causes and caps reports per operation', async () => {
+    const { errors, options } = operationHarness();
+    const failure = (code, message, telemetryStage = 'extract') => Object.assign(new Error(message), {
+        code, telemetryStage, stack: `Error: ${message}\n    at processItem (app:///electron/tasks/organizerTask.js:100:5)`,
+    });
+    const failures = [
+        failure('EACCES', 'private file one'),
+        failure('TASK_CANCELLED', 'cancelled'),
+        failure('PROCESS_FAILED', 'private file two'),
+        failure('PROCESS_FAILED', 'private file three'),
+        failure('ARCHIVE_NO_IMAGES', 'private file four', 'inspect'),
+        failure('TOOL_MISSING', 'private file five', 'prepare'),
+        failure('EIO', 'private file six', 'write-output'),
+    ];
+    await observeOperation('archive-organizer', async () => attachOperationErrors({ stats: { error: ['failed'] } }, failures), options);
+    assert.deepEqual(errors.map(({ error }) => error), [failures[2], failures[4], failures[5]]);
+    const expected = operationHarness();
+    await observeOperation('archive-organizer', async () => attachOperationErrors({ stats: { error: ['failed'] } }, [failures[0]]), expected.options);
+    assert.deepEqual(expected.errors, []);
+});
+
+test('missing executable errors are reported while ordinary missing files remain expected', () => {
+    const reports = [];
+    reportOperationError({ code: 'ENOENT' }, 'archive-organizer', error => reports.push(error));
+    const missingTool = { code: 'ENOENT', telemetryTool: '7z', telemetryStage: 'extract' };
+    reportOperationError(missingTool, 'archive-organizer', error => reports.push(error));
+    assert.deepEqual(reports, [missingTool]);
+});
+
+test('retained diagnostics respect cancellation and consent changes with a safe legacy fallback', async () => {
+    const { errors, options } = operationHarness();
+    const failure = new Error('private details');
+    const result = attachOperationErrors({ stats: { error: ['failed'] }, cancelled: true }, [failure]);
+    await observeOperation('archive-organizer', async () => result, options);
+    assert.deepEqual(errors, []);
+    result.cancelled = false;
+    await observeOperation('archive-organizer', async () => result, { ...options, isSessionCurrent: () => false });
+    assert.deepEqual(errors, []);
+    await observeOperation('archive-organizer', async () => ({ stats: { error: ['private text'] } }), options);
+    assert.deepEqual(errors[0].error, { name: 'Error', code: 'TASK_FAILED' });
 });
 
 test('completion does not cross a consent change or create an orphan result after the start was dropped', async () => {

@@ -5,6 +5,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, isGarbageFolderName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import { attachOperationErrors } from '../operationDiagnostics.js';
 import { createOrganizerRenameBatches } from '../organizerRenamePolicy.js';
 import { listZipEntries, listZipEntriesFromFile, readZipEntry, readZipEntryFromFile } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
@@ -115,6 +116,19 @@ async function directUnsupportedInputs(paths) {
   return skipped;
 }
 
+function withErrorStage(error, stage) {
+    const original = error instanceof Error ? error : new Error(String(error));
+    if (!original.telemetryStage) original.telemetryStage = stage;
+    return original;
+}
+
+function withProcessDetails(error, tool, exitCode, signal) {
+    if (tool === '7z' || tool === 'cwebp') error.telemetryTool = tool;
+    if (Number.isInteger(exitCode)) error.exitCode = exitCode;
+    if (signal) error.signal = signal;
+    return error;
+}
+
 function runProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const captureOutput = options.captureOutput !== false;
@@ -129,10 +143,14 @@ function runProcess(command, args, options = {}) {
       child.stdout.on('data', data => { stdout += data.toString(); });
       child.stderr.on('data', data => { stderr += data.toString(); });
     }
-    child.on('error', reject);
-    child.on('close', code => {
+    child.on('error', error => reject(withProcessDetails(error, options.telemetryTool)));
+    child.on('close', (code, signal) => {
       if (code === 0 || code === 1) resolve({ code, stdout, stderr });
-      else reject(new Error(stderr || stdout || `${command} exited with ${code}`));
+      else {
+        const error = new Error(stderr || stdout || `${command} exited with ${code}`);
+        error.code = 'PROCESS_FAILED';
+        reject(withProcessDetails(error, options.telemetryTool, code, signal));
+      }
     });
   });
 }
@@ -152,6 +170,7 @@ async function withSevenZipArchivePath(filePath, operation) {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_7z_'));
   const ext = normalizedExt(filePath) || '.archive';
   const aliasPath = path.join(tempDir, `archive${ext}`);
+  let operationError;
   try {
     try {
       await fsp.link(filePath, aliasPath);
@@ -159,8 +178,15 @@ async function withSevenZipArchivePath(filePath, operation) {
       await fsp.copyFile(filePath, aliasPath);
     }
     return await operation(aliasPath);
+  } catch (error) {
+    operationError = error;
+    throw error;
   } finally {
-    await fsp.rm(tempDir, { recursive: true, force: true });
+    try {
+      await fsp.rm(tempDir, { recursive: true, force: true });
+    } catch (error) {
+      if (!operationError) throw withErrorStage(error, 'cleanup');
+    }
   }
 }
 
@@ -187,7 +213,7 @@ async function listWith7z(filePath, sevenZExe) {
   if (!sevenZExe) return [];
   const { stdout } = await withSevenZipArchivePath(
     filePath,
-    archivePath => runProcess(sevenZExe, ['l', '-slt', archivePath]),
+    archivePath => runProcess(sevenZExe, ['l', '-slt', archivePath], { telemetryTool: '7z' }),
   );
   const entries = [];
   let current = null;
@@ -425,7 +451,7 @@ async function countNestedArchiveImagesWith7z(sourcePath, group, sevenZExe) {
   try {
     await withSevenZipArchivePath(
       sourcePath,
-      archivePath => runQuietProcess(sevenZExe, ['x', archivePath, group.source_inner_path || group.inner_path, `-o${tempDir}`, '-y']),
+      archivePath => runQuietProcess(sevenZExe, ['x', archivePath, group.source_inner_path || group.inner_path, `-o${tempDir}`, '-y'], { telemetryTool: '7z' }),
     );
     const nestedPath = await findExtractedArchive(tempDir, group.inner_path);
     if (!nestedPath) return null;
@@ -789,7 +815,7 @@ async function convertImagesToWebp(rootDir, cwebpExe, quality = 85) {
         const webpPath = path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.webp`);
         const tempPath = await uniquePath(path.join(currentDir, `${path.basename(entry.name, path.extname(entry.name))}.tmp.webp`));
         try {
-          await runQuietProcess(cwebpExe, [fullPath, '-o', tempPath, '-q', String(Math.max(1, Math.min(100, Number(quality) || 85)))]);
+          await runQuietProcess(cwebpExe, [fullPath, '-o', tempPath, '-q', String(Math.max(1, Math.min(100, Number(quality) || 85)))], { telemetryTool: 'cwebp' });
           if (!await isUsableConvertedWebp(tempPath)) {
             await fsp.rm(tempPath, { force: true }).catch(() => {});
             continue;
@@ -836,7 +862,7 @@ async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
     await fsp.mkdir(destination, { recursive: true });
     await withSevenZipArchivePath(
       archivePath,
-      safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y']),
+      safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y'], { telemetryTool: '7z' }),
     );
     await fsp.rm(archivePath, { force: true });
 
@@ -946,7 +972,7 @@ async function renameOrganizerArchiveDirectly(sourcePath, renamePairs, finalPath
       for (const pair of batch) {
         args.push(pair.oldPath, pair.newPath);
       }
-      await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args]);
+      await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args], { telemetryTool: '7z' });
     }
 
     if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
@@ -1075,7 +1101,11 @@ async function tryProcessOrganizerItemDirectly(item, sourceExt, targetExt, optio
 
 async function processOrganizerItem(item, options) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
+  if (!sevenZExe) {
+    const error = new Error(missingBinaryMessage('7z'));
+    error.code = 'TOOL_MISSING';
+    throw withErrorStage(withProcessDetails(error, '7z'), 'prepare');
+  }
 
   const sourcePath = item.filepath;
   const filename = path.basename(sourcePath);
@@ -1088,19 +1118,27 @@ async function processOrganizerItem(item, options) {
   const created = [];
   const tempArchives = [];
   const reservedTargets = [];
-
-  await fsp.mkdir(tempBase, { recursive: true });
+  let stage = 'prepare';
+  let operationError;
 
   try {
+    await fsp.mkdir(tempBase, { recursive: true });
     if (options.shouldCancel?.()) return { cancelled: true, message: filename, created: [] };
+    stage = 'extract';
     await withSevenZipArchivePath(
       sourcePath,
-      archivePath => runQuietProcess(sevenZExe, ['x', archivePath, `-o${tempBase}`, '-y']),
+      archivePath => runQuietProcess(sevenZExe, ['x', archivePath, `-o${tempBase}`, '-y'], { telemetryTool: '7z' }),
     );
+    stage = 'extract-nested';
     await extractNestedArchives(tempBase, sevenZExe, options.shouldCancel);
+    stage = 'inspect';
     const actualRoot = await getActualRoot(tempBase);
     const leaves = await getImageLeaves(actualRoot);
-    if (leaves.length === 0) throw new Error(taskText(options.lang, 'task_no_images_or_extract_failed'));
+    if (leaves.length === 0) {
+      const error = new Error(taskText(options.lang, 'task_no_images_or_extract_failed'));
+      error.code = 'ARCHIVE_NO_IMAGES';
+      throw error;
+    }
 
     const volumes = item.volumes || [];
     const archiveType = targetExt === '.7z' ? '-t7z' : '-tzip';
@@ -1113,6 +1151,7 @@ async function processOrganizerItem(item, options) {
       const leaf = leaves[index];
       const volumeName = safeName(volumes[index]?.new_name || `${item.clean_title || path.basename(sourcePath, path.extname(sourcePath))} ${String(index + 1).padStart(2, '0')}권`);
       const outDir = item.out_path || path.dirname(sourcePath);
+      stage = 'write-output';
       await fsp.mkdir(outDir, { recursive: true });
       const targetPath = await uniquePath(
         path.join(outDir, `${volumeName}${targetExt}`),
@@ -1123,8 +1162,10 @@ async function processOrganizerItem(item, options) {
       tempArchives.push(tempArchive);
 
       if (options.webp_conversion || options.webpConversion) {
+        stage = 'convert-images';
         await convertImagesToWebp(leaf, options.cwebpExe, options.img_quality ?? options.jpg_quality ?? 85);
       }
+      stage = 'flatten';
       const packRoot = options.flatten_folders || options.flattenFolders
         ? await createFlatStaging(leaf, tempBase, options)
         : leaf;
@@ -1133,7 +1174,9 @@ async function processOrganizerItem(item, options) {
         releasePaths(reservedTargets, options.reservedOutputPaths);
         return { cancelled: true, message: filename, created: [] };
       }
-      await runQuietProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot });
+      stage = 'pack';
+      await runQuietProcess(sevenZExe, ['a', archiveType, tempArchive, '*', '-mx=0', '-mmt=on'], { cwd: packRoot, telemetryTool: '7z' });
+      stage = 'write-output';
       await movePreparedFile(tempArchive, targetPath, options);
       created.push(targetPath);
     }
@@ -1145,27 +1188,34 @@ async function processOrganizerItem(item, options) {
     }
 
     if (options.backup_on) {
+      stage = 'backup';
       const backupDir = path.join(path.dirname(sourcePath), 'bak');
       await fsp.mkdir(backupDir, { recursive: true });
       await fsp.copyFile(sourcePath, await uniquePath(path.join(backupDir, filename)));
     }
 
     if (options.deleteOriginal !== false) {
+      stage = 'remove-source';
       await fsp.unlink(sourcePath);
     }
 
     return { success: true, message: filename, created };
   } catch (error) {
+    operationError = withErrorStage(error, stage);
     for (const createdPath of created) {
       await fsp.rm(createdPath, { force: true }).catch(() => {});
     }
     releasePaths(reservedTargets, options.reservedOutputPaths);
-    throw error;
+    throw operationError;
   } finally {
     for (const tempArchive of tempArchives) {
       await fsp.rm(tempArchive, { force: true }).catch(() => {});
     }
-    await fsp.rm(tempBase, { recursive: true, force: true });
+    try {
+      await fsp.rm(tempBase, { recursive: true, force: true });
+    } catch (error) {
+      if (!operationError) throw withErrorStage(error, 'cleanup');
+    }
   }
 }
 
@@ -1178,6 +1228,7 @@ export async function executeOrganizer(items, options = {}, onProgress) {
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], skip: [], error: [] };
   const createdFiles = [];
+  const errors = [];
   let cancelled = false;
   let completed = 0;
   const externalShouldCancel = options.shouldCancel;
@@ -1231,6 +1282,7 @@ export async function executeOrganizer(items, options = {}, onProgress) {
       continue;
     }
     if (outcome.error) {
+      errors.push(outcome.error);
       stats.error.push(`${item.name || item.filepath} - ${outcome.error.message}`);
       continue;
     }
@@ -1239,5 +1291,5 @@ export async function executeOrganizer(items, options = {}, onProgress) {
   }
 
   if (!cancelled) onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
-  return { stats, createdFiles, cancelled };
+  return attachOperationErrors({ stats, createdFiles, cancelled }, errors);
 }

@@ -246,10 +246,132 @@ test('Sentry uses the real SDK with no automatic integrations and strips SDK or 
     const lines = requests[0].body.split('\n').map(line => JSON.parse(line));
     assert.deepEqual(Object.keys(lines[0]).sort(), ['event_id', 'sent_at']);
     assert.deepEqual(lines[1], { type: 'event' });
-    assert.deepEqual(lines[2].exception.values, [{ type: 'TypeError', value: 'TypeError (ENOENT): details omitted', stacktrace: { frames: [{ filename: 'app:///electron/telemetry.js', lineno: 42, colno: 3, in_app: true }] } }]);
+    assert.deepEqual(lines[2].exception.values, [{ type: 'TypeError', value: 'TypeError (ENOENT): File or directory not found', stacktrace: { frames: [{ filename: 'app:///electron/telemetry.js', lineno: 42, colno: 3, in_app: true }] } }]);
     assert.deepEqual(lines[2].tags, { feature: 'viewer-open', source: 'renderer', os: process.platform, error_code: 'ENOENT' });
+    assert.equal(lines[2].fingerprint, undefined);
     assert.doesNotMatch(requests[0].body, /Secret Book|private|Users|user|contexts|breadcrumbs|contents|request|distinct_id/);
     assert.deepEqual(fs.readdirSync(storageDir), []);
+});
+
+test('safe tool diagnostics and trusted frames survive the final Sentry envelope without raw process details', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    const error = Object.assign(new Error('Secret Book C:\\private\\book.cbz token=secret'), {
+        code: 'PROCESS_FAILED',
+        telemetryStage: 'extract',
+        telemetryTool: '7z',
+        exitCode: 2,
+        signal: 'SIGTERM',
+        syscall: 'spawn',
+        path: 'C:\\private\\book.cbz',
+        stderr: 'Secret Book token=secret',
+        stdout: 'private contents',
+        command: 'C:\\private\\7z.exe x C:\\private\\book.cbz',
+        stack: `Error: Secret Book\n    at privateFunction (${path.join(APP_ROOT, 'electron/tasks/organizerTask.js')}:42:3)\n    at C:\\private\\book.cbz:1:1`,
+    });
+    telemetry.reportTelemetryError(error, { source: 'ipc', feature: 'archive-organizer' });
+    telemetry.reportTelemetryError({ ...error, stack: '' }, { source: 'ipc', feature: 'archive-organizer' });
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 2);
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    for (const event of events) {
+        assert.deepEqual(event.tags, {
+            feature: 'archive-organizer', source: 'ipc', os: process.platform,
+            error_code: 'PROCESS_FAILED', error_stage: 'extract', error_tool: '7z', signal: 'SIGTERM', syscall: 'spawn', exit_code: 2,
+        });
+        assert.equal(event.exception.values[0].value, 'Error (PROCESS_FAILED): External tool failed');
+    }
+    assert.deepEqual(events[0].exception.values[0].stacktrace.frames, [{ filename: 'app:///electron/tasks/organizerTask.js', lineno: 42, colno: 3, in_app: true }]);
+    assert.deepEqual(events[0].fingerprint, ['{{ default }}', 'PROCESS_FAILED', 'error_stage:extract', 'error_tool:7z', 'exit_code:2', 'signal:SIGTERM', 'syscall:spawn']);
+    assert.deepEqual(events[1].fingerprint, ['bookmanager', 'archive-organizer', 'ipc', 'Error', 'PROCESS_FAILED', 'error_stage:extract', 'error_tool:7z', 'exit_code:2', 'signal:SIGTERM', 'syscall:spawn']);
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /Secret Book|private|token|stderr|stdout|command/);
+});
+
+test('shared subprocess stack locations retain default grouping while distinguishing stages and exit codes', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    const stack = `Error: private details\n    at closeCallback (${path.join(APP_ROOT, 'electron/tasks/organizerTask.js')}:42:3)`;
+    for (const [telemetryStage, exitCode] of [['extract', 2], ['pack', 2], ['pack', 7]]) {
+        telemetry.reportTelemetryError({ name: 'Error', code: 'PROCESS_FAILED', telemetryStage, telemetryTool: '7z', exitCode, stack }, { source: 'ipc', feature: 'archive-organizer' });
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 3);
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.deepEqual(events.map(event => event.fingerprint), [
+        ['{{ default }}', 'PROCESS_FAILED', 'error_stage:extract', 'error_tool:7z', 'exit_code:2'],
+        ['{{ default }}', 'PROCESS_FAILED', 'error_stage:pack', 'error_tool:7z', 'exit_code:2'],
+        ['{{ default }}', 'PROCESS_FAILED', 'error_stage:pack', 'error_tool:7z', 'exit_code:7'],
+    ]);
+    for (const event of events) {
+        assert.deepEqual(event.exception.values[0].stacktrace, events[0].exception.values[0].stacktrace);
+    }
+});
+
+test('Sentry revalidates hostile diagnostics injected after beforeSend at the final transport boundary', async t => {
+    const sdk = await import('@sentry/node');
+    const { telemetry, requests } = setup(t, {
+        loadSentry: async () => ({ NodeClient: class extends sdk.NodeClient {
+            constructor(options) {
+                super({
+                    ...options,
+                    transport: transportOptions => {
+                        const transport = options.transport(transportOptions);
+                        return {
+                            ...transport,
+                            send: envelope => transport.send([envelope[0], envelope[1].map(([header, item]) => [header, header.type === 'event' ? {
+                                ...item,
+                                tags: {
+                                    ...item.tags,
+                                    error_code: 'private-code', error_stage: '/private/stage', error_tool: 'C:\\private\\7z.exe',
+                                    exit_code: '2 secret', signal: 'SIGTERM secret', syscall: 'spawn C:\\private\\7z.exe',
+                                    stderr: 'Secret Book token=secret',
+                                },
+                                exception: { values: [{ type: 'Error', value: 'Secret Book token=secret' }] },
+                                extra: { stderr: 'Secret Book token=secret' },
+                            } : item])]),
+                        };
+                    },
+                });
+            }
+        } }),
+    }, { telemetry_error_reports: true });
+    telemetry.reportTelemetryError({ name: 'Error', code: 'PROCESS_FAILED', telemetryStage: 'pack', telemetryTool: '7z', exitCode: 2 }, { source: 'ipc', feature: 'archive-organizer' });
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 1);
+    const event = JSON.parse(requests[0].body.split('\n')[2]);
+    assert.deepEqual(event.tags, { feature: 'archive-organizer', source: 'ipc', os: process.platform });
+    assert.equal(event.exception.values[0].value, 'Error: details omitted');
+    assert.deepEqual(event.fingerprint, ['bookmanager', 'archive-organizer', 'ipc', 'Error', 'unknown']);
+    assert.doesNotMatch(requests[0].body, /private|secret|Secret Book|stderr|extra|error_stage|exit_code|signal|syscall/);
+});
+
+test('error summaries use fixed descriptions and reject unknown diagnostic values and invalid exit codes', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    const cases = [
+        [{ code: 'TOOL_MISSING' }, 'Error (TOOL_MISSING): Required tool was not found'],
+        [{ code: 'ARCHIVE_NO_IMAGES' }, 'Error (ARCHIVE_NO_IMAGES): Archive contains no images'],
+        [{ code: 'EBUSY', syscall: 'rename' }, 'Error (EBUSY): Resource is busy'],
+        [{ telemetryStage: 'convert-images', telemetryTool: 'cwebp' }, 'Error: Image conversion failed'],
+        [{ telemetryTool: '7z' }, 'Error: External tool failed'],
+        [{ code: '/private/code', telemetryStage: 'Secret Book', telemetryTool: '/private/7z', signal: 'secret', syscall: 'spawn /private/7z' }, 'Error: details omitted'],
+        ...['2', 2.5, Infinity, NaN, -2147483649, 4294967296].map(exitCode => [{ exitCode }, 'Error: details omitted']),
+        ...[-2147483648, 0, 3221225477, 4294967295].map(exitCode => [{ exitCode }, 'Error: details omitted']),
+    ];
+    for (const [diagnostics] of cases) {
+        telemetry.reportTelemetryError({ name: 'Error', message: 'Secret Book token=secret', stderr: '/private/book', ...diagnostics }, { source: 'ipc' });
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, cases.length);
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    for (const [index, event] of events.entries()) {
+        const [diagnostics, description] = cases[index];
+        assert.equal(event.exception.values[0].value, description);
+        if (Number.isInteger(diagnostics.exitCode) && diagnostics.exitCode >= -2147483648 && diagnostics.exitCode <= 4294967295) {
+            assert.equal(event.tags.exit_code, diagnostics.exitCode);
+        } else {
+            assert.equal(event.tags.exit_code, undefined);
+        }
+    }
+    assert.deepEqual(events[5].tags, { source: 'ipc', os: process.platform });
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /Secret Book|private|secret|stderr/);
 });
 
 test('usage and error reporting remain independently selectable', async t => {

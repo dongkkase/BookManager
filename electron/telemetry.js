@@ -16,7 +16,53 @@ const TTS_MODELS = new Map([
 ]);
 const SOURCES = new Set(['main', 'ipc', 'renderer', 'viewer', 'react', 'renderer-react', 'viewer-react', 'viewer-load', 'menu', 'navigation', 'catalog', 'drop', 'uncaughtException', 'unhandledRejection', 'child-process-gone', 'gpu-process-crashed', 'render-process-gone', 'associated-file-open-failed', 'renderer-unresponsive', 'renderer-load-failed']);
 const ERROR_NAMES = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'URIError', 'EvalError', 'AggregateError', 'AbortError']);
-const ERROR_CODES = new Set(['EACCES', 'ENOENT', 'EPERM', 'EIO', 'ENOSPC', 'EMFILE', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ERR_MODULE_NOT_FOUND', 'SQLITE_BUSY', 'SQLITE_CORRUPT', 'SQLITE_FULL', 'TASK_FAILED']);
+const ERROR_DESCRIPTIONS = new Map([
+    ['EACCES', 'Permission denied'],
+    ['ENOENT', 'File or directory not found'],
+    ['EPERM', 'Operation not permitted'],
+    ['EIO', 'Input or output operation failed'],
+    ['ENOSPC', 'No space left on device'],
+    ['EMFILE', 'Too many open files'],
+    ['EBUSY', 'Resource is busy'],
+    ['EEXIST', 'File or directory already exists'],
+    ['ENOTDIR', 'A path component is not a directory'],
+    ['EISDIR', 'A file operation received a directory'],
+    ['ENOTEMPTY', 'Directory is not empty'],
+    ['ENAMETOOLONG', 'File path is too long'],
+    ['EINVAL', 'Invalid operation argument'],
+    ['EXDEV', 'Operation cannot cross filesystem boundaries'],
+    ['ENOMEM', 'Insufficient memory'],
+    ['EPIPE', 'Process pipe is closed'],
+    ['ETIMEDOUT', 'Operation timed out'],
+    ['ECONNRESET', 'Connection was reset'],
+    ['ECONNREFUSED', 'Connection was refused'],
+    ['ERR_MODULE_NOT_FOUND', 'Required module was not found'],
+    ['SQLITE_BUSY', 'Database is busy'],
+    ['SQLITE_CORRUPT', 'Database is corrupt'],
+    ['SQLITE_FULL', 'Database storage is full'],
+    ['TASK_FAILED', 'Operation failed'],
+    ['PROCESS_FAILED', 'External tool failed'],
+    ['TOOL_MISSING', 'Required tool was not found'],
+    ['ARCHIVE_NO_IMAGES', 'Archive contains no images'],
+]);
+const ERROR_STAGE_DESCRIPTIONS = new Map([
+    ['prepare', 'Operation preparation failed'],
+    ['extract', 'Archive extraction failed'],
+    ['extract-nested', 'Nested archive extraction failed'],
+    ['inspect', 'Archive inspection failed'],
+    ['convert-images', 'Image conversion failed'],
+    ['flatten', 'Archive layout conversion failed'],
+    ['pack', 'Archive creation failed'],
+    ['write-output', 'Output write failed'],
+    ['backup', 'Backup creation failed'],
+    ['remove-source', 'Source removal failed'],
+    ['cleanup', 'Temporary file cleanup failed'],
+    ['direct-copy', 'Archive copy failed'],
+    ['direct-rename', 'Archive rename failed'],
+]);
+const ERROR_TOOLS = new Set(['7z', 'cwebp']);
+const ERROR_SIGNALS = new Set(['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGILL', 'SIGTRAP', 'SIGABRT', 'SIGIOT', 'SIGBUS', 'SIGFPE', 'SIGKILL', 'SIGUSR1', 'SIGSEGV', 'SIGUSR2', 'SIGPIPE', 'SIGALRM', 'SIGTERM', 'SIGCHLD', 'SIGCONT', 'SIGSTOP', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU', 'SIGURG', 'SIGXCPU', 'SIGXFSZ', 'SIGVTALRM', 'SIGPROF', 'SIGWINCH', 'SIGIO', 'SIGPWR', 'SIGSYS', 'SIGINFO', 'SIGBREAK']);
+const ERROR_SYSCALLS = new Set(['access', 'chmod', 'chown', 'close', 'copyfile', 'fstat', 'fsync', 'ftruncate', 'link', 'lstat', 'mkdir', 'open', 'opendir', 'read', 'readdir', 'readlink', 'realpath', 'rename', 'rmdir', 'scandir', 'spawn', 'stat', 'symlink', 'unlink', 'utime', 'write']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APP_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const MAX_PENDING = 40;
@@ -39,6 +85,17 @@ function allowedProperties(input = {}) {
         properties.duration_ms = Math.min(Math.round(input.duration_ms), 86400000);
     }
     return properties;
+}
+
+function allowedErrorDiagnostics(input = {}) {
+    const tags = {};
+    for (const [key, values] of [['error_code', ERROR_DESCRIPTIONS], ['error_stage', ERROR_STAGE_DESCRIPTIONS], ['error_tool', ERROR_TOOLS], ['signal', ERROR_SIGNALS], ['syscall', ERROR_SYSCALLS]]) {
+        if (values.has(input[key])) tags[key] = input[key];
+    }
+    if (Number.isInteger(input.exit_code) && input.exit_code >= -2147483648 && input.exit_code <= 4294967295) {
+        tags.exit_code = input.exit_code;
+    }
+    return tags;
 }
 
 function cleanServiceConfig(value = {}) {
@@ -340,7 +397,8 @@ export function createTelemetry(options = {}) {
     function sanitizeSentryEvent(event = {}) {
         const exception = event.exception?.values?.[0] || {};
         const type = ERROR_NAMES.has(exception.type) ? exception.type : 'Error';
-        const code = ERROR_CODES.has(event.tags?.error_code) ? event.tags.error_code : null;
+        const diagnostics = allowedErrorDiagnostics(event.tags);
+        const code = diagnostics.error_code;
         const frames = [];
         for (const frame of (exception.stacktrace?.frames || []).slice(-32)) {
             const filename = trustedFilename(frame.filename);
@@ -348,9 +406,13 @@ export function createTelemetry(options = {}) {
                 frames.push({ filename, lineno: frame.lineno, colno: frame.colno, in_app: true });
             }
         }
-        const tags = { ...allowedProperties(event.tags), os: platform };
+        const tags = { ...allowedProperties(event.tags), os: platform, ...diagnostics };
         delete tags.duration_ms;
-        if (code) tags.error_code = code;
+        const description = ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || (tags.error_tool ? 'External tool failed' : 'details omitted');
+        const diagnosticFingerprint = ['error_stage', 'error_tool', 'exit_code', 'signal', 'syscall'].filter(key => tags[key] !== undefined).map(key => `${key}:${tags[key]}`);
+        const fingerprint = !frames.length
+            ? ['bookmanager', tags.feature || 'app', tags.source || 'unknown', type, code || 'unknown', ...diagnosticFingerprint]
+            : diagnosticFingerprint.length ? ['{{ default }}', code || 'unknown', ...diagnosticFingerprint] : null;
         return {
             event_id: /^[0-9a-f]{32}$/i.test(event.event_id) ? event.event_id : uuid().replace(/-/g, ''),
             timestamp: now() / 1000,
@@ -359,8 +421,8 @@ export function createTelemetry(options = {}) {
             release: `bookmanager@${version}`,
             environment,
             tags,
-            ...(!frames.length ? { fingerprint: ['bookmanager', tags.feature || 'app', tags.source || 'unknown', type, code || 'unknown'] } : {}),
-            exception: { values: [{ type, value: `${type}${code ? ` (${code})` : ''}: details omitted`, ...(frames.length ? { stacktrace: { frames } } : {}) }] },
+            ...(fingerprint ? { fingerprint } : {}),
+            exception: { values: [{ type, value: `${type}${code ? ` (${code})` : ''}: ${description}`, ...(frames.length ? { stacktrace: { frames } } : {}) }] },
         };
     }
 
@@ -409,8 +471,17 @@ export function createTelemetry(options = {}) {
             if (!enabled('errors') || outstandingErrors >= 20 || pending.size >= MAX_PENDING || !consumeRate('errors')) return false;
             const type = ERROR_NAMES.has(error?.name) ? error.name : 'Error';
             const frames = stackFrames(error?.stack);
-            const tags = allowedProperties(context);
-            if (ERROR_CODES.has(error?.code)) tags.error_code = error.code;
+            const tags = {
+                ...allowedProperties(context),
+                ...allowedErrorDiagnostics({
+                    error_code: error?.code,
+                    error_stage: error?.telemetryStage,
+                    error_tool: error?.telemetryTool,
+                    exit_code: error?.exitCode,
+                    signal: error?.signal,
+                    syscall: error?.syscall,
+                }),
+            };
             const event = sanitizeSentryEvent({
                 tags,
                 exception: { values: [{ type, ...(frames.length ? { stacktrace: { frames } } : {}) }] },

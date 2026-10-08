@@ -1,4 +1,5 @@
 import { captureTelemetrySession, isTelemetrySessionCurrent, reportTelemetryError, trackTelemetryEvent } from './telemetry.js';
+import { getOperationErrors } from './operationDiagnostics.js';
 
 const CANCEL_CODES = new Set(['ABORT_ERR', 'CANCELED', 'CANCELLED', 'ERR_CANCELED', 'OPERATION_CANCELLED', 'TASK_CANCELLED']);
 const EXPECTED_CODES = new Set([
@@ -24,9 +25,38 @@ export function operationOutcome(result) {
     return 'feature_completed';
 }
 
+function isExpectedOperationError(error) {
+    const missingTool = error?.code === 'ENOENT' && ['7z', 'cwebp'].includes(error?.telemetryTool);
+    return isCancelledOperation(error) || (EXPECTED_CODES.has(error?.code) && !missingTool);
+}
+
 export function reportOperationError(error, feature, report = reportTelemetryError) {
-    if (isCancelledOperation(error) || EXPECTED_CODES.has(error?.code)) return;
+    if (isExpectedOperationError(error)) return;
     report(error, { feature, source: 'ipc' });
+}
+
+function reportResultErrors(result, feature, report) {
+    const errors = getOperationErrors(result);
+    if (errors.length === 0) {
+        const error = result?.error && typeof result.error === 'object'
+            ? result.error
+            : { name: 'Error', code: 'TASK_FAILED' };
+        reportOperationError(error, feature, report);
+        return;
+    }
+    const reported = new Set();
+    for (const error of errors) {
+        if (isExpectedOperationError(error)) continue;
+        const key = JSON.stringify([
+            error.name, error.code, error.telemetryStage, error.telemetryTool,
+            error.exitCode, error.signal, error.syscall,
+            typeof error.stack === 'string' ? error.stack.split('\n').filter(line => /^\s+at /.test(line)).join('\n') : '',
+        ]);
+        if (reported.has(key)) continue;
+        reportOperationError(error, feature, report);
+        reported.add(key);
+        if (reported.size >= 3) break;
+    }
 }
 
 export async function observeOperation(feature, action, options = {}) {
@@ -45,7 +75,7 @@ export async function observeOperation(feature, action, options = {}) {
             track({ event: outcome, ...properties, ...(options.resultFormat ? { format: options.resultFormat(result) } : {}), duration_ms: Math.max(0, now() - started) });
         }
         if (outcome === 'feature_failed' && isCurrent('errors')) {
-            reportOperationError(typeof result?.error === 'object' ? result.error : { name: 'Error', code: 'TASK_FAILED' }, feature, report);
+            reportResultErrors(result, feature, report);
         }
         return result;
     } catch (error) {
