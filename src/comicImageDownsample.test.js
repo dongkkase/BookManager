@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
     comicDownsampleTarget,
     paintComicDownsample,
@@ -130,11 +131,9 @@ test('paintComicDownsample uses Lanczos3 in a staging Canvas and commits the com
     assert.equal(resizeCalls.length, 1);
     assert.equal(resizeCalls[0].source.id, 'source');
     assert.equal(resizeCalls[0].destination.id, 'staging');
-    assert.deepEqual(resizeCalls[0].options, {
-        cancelToken,
-        filter: 'lanczos3',
-        unsharpAmount: 0,
-    });
+    assert.equal(typeof resizeCalls[0].options.cancelToken.then, 'function');
+    assert.equal(resizeCalls[0].options.filter, 'lanczos3');
+    assert.equal(resizeCalls[0].options.unsharpAmount, 0);
     assert.deepEqual(draws, [{
         input: 'staging',
         output: 'output',
@@ -161,6 +160,7 @@ test('paintComicDownsample keeps the previous Canvas when resizing fails and rel
         canvas: output,
         target: { width: 400, height: 600 },
         createCanvas: () => staging,
+        cancelToken: new Promise(() => {}),
         resizer: {
             async resize() {
                 throw resizeError;
@@ -172,6 +172,84 @@ test('paintComicDownsample keeps the previous Canvas when resizing fails and rel
     assert.equal(output.height, 480);
     assert.equal(staging.width, 1);
     assert.equal(staging.height, 1);
+});
+
+test('paintComicDownsample handles real Pica cancellation during image decoding without a global rejection', () => {
+    for (const cancelMethod of ['resolve', 'reject']) {
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+        import assert from 'node:assert/strict';
+        import createPica from 'pica';
+        import { paintComicDownsample } from ${JSON.stringify(new URL('./comicImageDownsample.js', import.meta.url).href)};
+
+        const unhandled = [];
+        process.on('unhandledRejection', error => unhandled.push(error));
+        process.on('rejectionHandled', () => {});
+
+        let finishDecode;
+        let notifyDecode;
+        const decoding = new Promise(resolve => { notifyDecode = resolve; });
+        globalThis.createImageBitmap = () => {
+            notifyDecode();
+            return new Promise(resolve => { finishDecode = () => resolve({ close() {} }); });
+        };
+
+        const resizer = createPica({ features: ['js'] });
+        resizer.init = async () => resizer;
+        Object.assign(resizer.capabilities, {
+            canvas: true,
+            create_image_bitmap: true,
+            bug_image_bitmap_orientation_region: false,
+        });
+        resizer.resize_features.cib = false;
+
+        let drawCount = 0;
+        const output = {
+            width: 320,
+            height: 480,
+            getContext: () => ({ drawImage() { drawCount += 1; } }),
+        };
+        const staging = { width: 0, height: 0, getContext: () => ({}) };
+        const source = new (class HTMLImageElement {
+            naturalWidth = 1600;
+            naturalHeight = 2400;
+        })();
+        let cancel;
+        const cancelToken = new Promise((resolve, reject) => {
+            cancel = ${JSON.stringify(cancelMethod)} === 'resolve' ? resolve : reject;
+        });
+        const abortError = Object.assign(new Error('Comic image resize canceled.'), { name: 'AbortError' });
+        const rendering = paintComicDownsample({
+            source,
+            canvas: output,
+            target: { width: 800, height: 1200 },
+            createCanvas: () => staging,
+            cancelToken,
+            resizer,
+        });
+        const canceled = assert.rejects(rendering, error => error === abortError);
+
+        await decoding;
+        cancel(abortError);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(unhandled.length, 0, 'Cancellation must be handled while image decoding is pending.');
+        finishDecode();
+        await canceled;
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(unhandled.length, 0);
+        assert.equal(drawCount, 0);
+        assert.equal(output.width, 320);
+        assert.equal(output.height, 480);
+        assert.equal(staging.width, 1);
+        assert.equal(staging.height, 1);
+        `], {
+            cwd: new URL('../', import.meta.url),
+            encoding: 'utf8',
+            timeout: 10_000,
+        });
+
+        assert.equal(result.error, undefined);
+        assert.equal(result.status, 0, `${cancelMethod}: ${result.stdout}\n${result.stderr}`);
+    }
 });
 
 test('paintComicDownsample handles cancellation during resizer initialization', async () => {

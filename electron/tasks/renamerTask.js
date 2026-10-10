@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import { attachOperationErrors } from '../operationDiagnostics.js';
 import {
     listZipEntriesFromFile,
     readZipEntryFromFile,
@@ -477,6 +478,25 @@ async function directUnsupportedInputs(paths) {
   return skipped;
 }
 
+function withErrorStage(error, stage) {
+    const original = error instanceof Error ? error : new Error(String(error));
+    if (!original.telemetryStage) original.telemetryStage = stage;
+    return original;
+}
+
+function withProcessDetails(error, tool, exitCode, signal) {
+    if (tool === '7z' || tool === 'cwebp') error.telemetryTool = tool;
+    if (Number.isInteger(exitCode)) error.exitCode = exitCode;
+    if (signal) error.signal = signal;
+    return error;
+}
+
+function missingToolError(tool, message) {
+    const error = new Error(message);
+    error.code = 'TOOL_MISSING';
+    return withProcessDetails(error, tool);
+}
+
 function runProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     if (options.shouldCancel?.()) {
@@ -508,16 +528,20 @@ function runProcess(command, args, options = {}) {
     }
     child.on('error', error => {
       clearCancelTimer();
-      reject(cancelledByRequest || options.shouldCancel?.() ? taskCancelledError() : error);
+      reject(cancelledByRequest || options.shouldCancel?.() ? taskCancelledError() : withProcessDetails(error, options.telemetryTool));
     });
-    child.on('close', code => {
+    child.on('close', (code, signal) => {
       clearCancelTimer();
       if (cancelledByRequest || options.shouldCancel?.()) {
         reject(taskCancelledError());
         return;
       }
       if (code === 0 || code === 1) resolve({ code, stdout, stderr });
-      else reject(new Error(stderr || stdout || `${command} exited with ${code}`));
+      else {
+        const error = new Error(stderr || stdout || `${command} exited with ${code}`);
+        error.code = 'PROCESS_FAILED';
+        reject(withProcessDetails(error, options.telemetryTool, code, signal));
+      }
     });
   });
 }
@@ -550,6 +574,7 @@ async function isUsableConvertedFile(filePath, expectedExtension = '') {
 async function listWith7z(filePath, sevenZExe, options = {}) {
   if (!sevenZExe) return [];
   const { stdout } = await runProcess(sevenZExe, ['l', '-slt', filePath], {
+    telemetryTool: '7z',
     shouldCancel: options.shouldCancel,
   });
   const entries = [];
@@ -927,6 +952,7 @@ async function packArchive(sevenZExe, archiveType, outputPath, cwd, level = 0, o
   await fsp.rm(outputPath, { force: true }).catch(() => {});
   await runQuietProcess(sevenZExe, ['a', archiveType, outputPath, '*', ...archiveCompressionArgs(level)], {
     cwd,
+    telemetryTool: '7z',
     shouldCancel: options.shouldCancel,
   });
   return (await fsp.stat(outputPath)).size;
@@ -1102,9 +1128,11 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
     ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
     : path.join(path.dirname(sourcePath), outputName);
   let tempArchive = tempArchivePathNearSource(sourcePath, 'RenameOnly', finalPath);
+  let stage = 'direct-copy';
 
   try {
     await fsp.copyFile(sourcePath, tempArchive);
+    stage = 'direct-rename';
     for (let index = 0; index < pairs.length; index += 20) {
       if (options.shouldCancel?.()) return { cancelled: true, message: filename };
       const args = [];
@@ -1112,16 +1140,19 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
         args.push(pair.oldPath, pair.newPath);
       }
       await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args], {
+        telemetryTool: '7z',
         shouldCancel: options.shouldCancel,
       });
     }
 
     if (options.backup_on) {
+      stage = 'backup';
       const backupDir = path.join(path.dirname(sourcePath), 'bak');
       await fsp.mkdir(backupDir, { recursive: true });
       await fsp.copyFile(sourcePath, await uniquePath(path.join(backupDir, filename)));
     }
 
+    stage = 'write-output';
     if (options.deleteOriginal === false) {
       await renameWithBusyRetry(tempArchive, finalPath, options);
       tempArchive = '';
@@ -1142,6 +1173,8 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
     }
 
     return { success: true, message: filename, outputPath: finalPath };
+  } catch (error) {
+    throw withErrorStage(error, stage);
   } finally {
     if (tempArchive) await rmWithBusyRetry(tempArchive, options).catch(() => {});
   }
@@ -1149,7 +1182,7 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
 
 async function processRenamerItem(item, options) {
   const sevenZExe = options.sevenZExe;
-  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
+  if (!sevenZExe) throw withErrorStage(missingToolError('7z', missingBinaryMessage('7z')), 'prepare');
 
   const sourcePath = item.filepath;
   const filename = path.basename(sourcePath);
@@ -1165,7 +1198,9 @@ async function processRenamerItem(item, options) {
   const hasEntryDeletes = plannedEntries.some(entry => entry.deleteChecked);
   const plannedMoves = plannedEntries.filter(entry => !entry.deleteChecked);
   if (plannedEntries.length > 0 && plannedMoves.length === 0) {
-    throw new Error(taskText(options.lang, 'task_error_no_remaining_entries'));
+    const error = new Error(taskText(options.lang, 'task_error_no_remaining_entries'));
+    error.code = 'ARCHIVE_NO_ENTRIES';
+    throw withErrorStage(error, 'prepare');
   }
   const renamePairs = plannedMoves
     .filter(pair => pair.oldPath !== pair.newPath);
@@ -1189,15 +1224,19 @@ async function processRenamerItem(item, options) {
   const holdingDir = path.join(tempBase, '.bookmanager_rename_tmp');
   const archiveType = targetExt === '.7z' ? '-t7z' : '-tzip';
   let tempArchive = '';
-
-  await fsp.mkdir(holdingDir, { recursive: true });
+  let stage = 'prepare';
+  let operationError;
 
   try {
+    await fsp.mkdir(holdingDir, { recursive: true });
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
+    stage = 'extract';
     await runQuietProcess(sevenZExe, ['x', sourcePath, `-o${tempBase}`, '-y'], {
+      telemetryTool: '7z',
       shouldCancel: options.shouldCancel,
     });
 
+    stage = 'delete-entries';
     for (const entry of plannedEntries) {
       if (!entry.deleteChecked || !entry.originalPath) continue;
       const deleteAbs = archiveEntryPath(tempBase, entry.originalPath);
@@ -1205,6 +1244,7 @@ async function processRenamerItem(item, options) {
       await fsp.rm(deleteAbs, { force: true }).catch(() => {});
     }
 
+    stage = 'rename-entries';
     const moves = [];
     for (let index = 0; index < plannedMoves.length; index += 1) {
       const entry = plannedMoves[index];
@@ -1223,9 +1263,11 @@ async function processRenamerItem(item, options) {
     }
 
     for (const move of moves) {
+      stage = 'rename-entries';
       const sourceExtension = path.extname(move.oldAbs).toLowerCase();
       if ((options.webp_conversion || options.webpConversion) && sourceExtension !== '.webp') {
-        if (!options.cwebpExe) throw new Error('cwebp executable not found.');
+        stage = 'convert-images';
+        if (!options.cwebpExe) throw missingToolError('cwebp', 'cwebp executable not found.');
         const convertedTempAbs = `${move.tempAbs}.webp.tmp`;
         let useConverted = false;
         try {
@@ -1237,6 +1279,7 @@ async function processRenamerItem(item, options) {
             String(imageQuality(options)),
             ...(item.exifOpt ? ['-metadata', 'none'] : []),
           ], {
+            telemetryTool: 'cwebp',
             shouldCancel: options.shouldCancel,
           });
           const [sourceStat, convertedStat] = await Promise.all([
@@ -1254,6 +1297,7 @@ async function processRenamerItem(item, options) {
           move.tempAbs = convertedTempAbs;
         } else {
           await fsp.rm(convertedTempAbs, { force: true }).catch(() => {});
+          stage = 'rename-entries';
           move.targetAbs = replacePathExtension(move.targetAbs, sourceExtension);
           await fsp.mkdir(path.dirname(move.targetAbs), { recursive: true });
           await fsp.rename(move.oldAbs, move.tempAbs);
@@ -1262,12 +1306,14 @@ async function processRenamerItem(item, options) {
         await fsp.rename(move.oldAbs, move.tempAbs);
       }
     }
+    stage = 'rename-entries';
     for (const move of moves) {
       if (options.shouldCancel?.()) return { cancelled: true, message: filename };
       if (fs.existsSync(move.targetAbs)) await fsp.rm(move.targetAbs, { force: true });
       await fsp.rename(move.tempAbs, move.targetAbs);
     }
 
+    stage = 'cleanup';
     await fsp.rm(holdingDir, { recursive: true, force: true });
     await removeEmptyDirs(tempBase).catch(() => {});
     const hasActualStructuralChange = targetExt !== sourceExt
@@ -1275,14 +1321,17 @@ async function processRenamerItem(item, options) {
       || Boolean(options.flattenFolders)
       || moves.some(move => normalizeInnerPath(path.relative(tempBase, move.targetAbs)) !== move.originalPath);
 
+    stage = 'prepare';
     const outputName = `${path.basename(sourcePath, sourceExt)}${targetExt}`;
     const finalPath = options.deleteOriginal === false
       ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
       : path.join(path.dirname(sourcePath), outputName);
     tempArchive = tempArchivePathNearSource(sourcePath, 'Renamed', finalPath);
 
+    stage = 'optimize-images';
     await optimizeExtractedImages(tempBase, item, options);
     if (options.shouldCancel?.()) return { cancelled: true, message: filename };
+    stage = 'pack';
     const packResult = await packArchiveWithSizeFallback(
       sevenZExe,
       archiveType,
@@ -1307,11 +1356,13 @@ async function processRenamerItem(item, options) {
     }
 
     if (options.backup_on) {
+      stage = 'backup';
       const backupDir = path.join(path.dirname(sourcePath), 'bak');
       await fsp.mkdir(backupDir, { recursive: true });
       await fsp.copyFile(sourcePath, await uniquePath(path.join(backupDir, filename)));
     }
 
+    stage = 'write-output';
     if (options.deleteOriginal === false) {
       await renameWithBusyRetry(tempArchive, finalPath, options);
     } else {
@@ -1331,9 +1382,16 @@ async function processRenamerItem(item, options) {
     }
 
     return { success: true, message: filename, outputPath: finalPath };
+  } catch (error) {
+    operationError = withErrorStage(error, stage);
+    throw operationError;
   } finally {
     if (tempArchive) await rmWithBusyRetry(tempArchive, options).catch(() => {});
-    await fsp.rm(tempBase, { recursive: true, force: true });
+    try {
+      await fsp.rm(tempBase, { recursive: true, force: true });
+    } catch (error) {
+      if (!operationError) throw withErrorStage(error, 'cleanup');
+    }
   }
 }
 
@@ -1342,6 +1400,7 @@ export async function executeRenamer(items, options = {}, onProgress) {
   const stats = { success: [], skip: [], error: [] };
   const outputFiles = [];
   const pathMap = {};
+  const errors = [];
   let cancelled = false;
 
   for (let index = 0; index < targets.length; index += 1) {
@@ -1376,6 +1435,7 @@ export async function executeRenamer(items, options = {}, onProgress) {
         cancelled = true;
         break;
       }
+      errors.push(withErrorStage(error, 'prepare'));
       stats.error.push(`${item.name || item.filepath} - ${error.message}`);
     }
     if (options.shouldCancel?.()) {
@@ -1385,10 +1445,10 @@ export async function executeRenamer(items, options = {}, onProgress) {
   }
 
   if (!cancelled) onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
-  return {
+  return attachOperationErrors({
     stats,
     outputFiles,
     cancelled,
     pathMap,
-  };
+  }, errors);
 }

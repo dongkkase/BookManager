@@ -74,6 +74,7 @@ import { createSoundCommand, normalizeSoundFilename } from './soundPolicy.js';
 import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { searchYes24 } from './yes24Search.js';
 import { originalMunpiaCoverUrl, searchMunpia } from './munpiaSearch.js';
+import { searchKmas } from './kmasSearch.js';
 import { detectImageMimeType } from './imageMagic.js';
 import { encodeTextCover } from './textCoverEncoder.js';
 import { LibraryDB } from './database/library_db.js';
@@ -526,10 +527,10 @@ function requestJsonWithElectronNet(url, headers = {}, timeout = 12000) {
   });
 }
 
-function requestTextWithElectronNet(url, headers = {}, timeout = 12000) {
+function requestTextWithElectronNet(url, headers = {}, timeout = 12000, options = {}) {
   return new Promise((resolve, reject) => {
     const request = net.request({
-      method: 'GET',
+      method: options.method || 'GET',
       url,
       useSessionCookies: true,
     });
@@ -556,15 +557,17 @@ function requestTextWithElectronNet(url, headers = {}, timeout = 12000) {
       clearTimeout(timer);
       reject(error);
     });
+    if (options.body) request.write(options.body);
     request.end();
   });
 }
 
-function requestTextGeneric(url, headers = {}, timeout = 12000, redirects = 3) {
+function requestTextGeneric(url, headers = {}, timeout = 12000, redirects = 3, options = {}) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const transport = target.protocol === 'http:' ? http : https;
-    const req = transport.get(url, {
+    const req = transport.request(url, {
+        method: options.method || 'GET',
       headers: {
         'User-Agent': 'BookManager',
         'Accept': 'text/html, text/plain, */*',
@@ -578,7 +581,9 @@ function requestTextGeneric(url, headers = {}, timeout = 12000, redirects = 3) {
       res.on('end', () => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects > 0) {
           const nextUrl = new URL(res.headers.location, url).toString();
-          requestTextGeneric(nextUrl, headers, timeout, redirects - 1).then(resolve, reject);
+          const nextOptions = res.statusCode === 303 || ([301, 302].includes(res.statusCode) && options.method === 'POST')
+            ? {} : options;
+          requestTextGeneric(nextUrl, headers, timeout, redirects - 1, nextOptions).then(resolve, reject);
           return;
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -590,7 +595,17 @@ function requestTextGeneric(url, headers = {}, timeout = 12000, redirects = 3) {
     });
     req.on('timeout', () => req.destroy(new Error(i18nT('request_timeout'))));
     req.on('error', reject);
+    if (options.body) req.write(options.body);
+    req.end();
   });
+}
+
+async function requestKmasText(url, headers = {}, timeout = 12000, options = {}) {
+    try {
+        return await requestTextWithElectronNet(url, headers, timeout, options);
+    } catch {
+        return requestTextGeneric(url, headers, timeout, 3, options);
+    }
 }
 
 function requestBufferGeneric(url, headers = {}, timeout = 12000, redirects = 3, maxBytes = 12 * 1024 * 1024) {
@@ -1303,6 +1318,7 @@ function normalizeApiSource(apiName = '') {
     if (name.includes('yes24') || name.includes('예스24')) return 'YES24';
   if (name.includes('알라딘') || name.includes('aladin')) return '알라딘';
     if (name.includes('문피아') || name.includes('munpia')) return '문피아';
+    if (name.includes('한국웹툰') || name.includes('kmas')) return '한국웹툰';
   if (name.includes('vine')) return 'Vine';
   return '리디북스';
 }
@@ -1327,7 +1343,7 @@ function mangaValueForBookType(bookType = 'comic') {
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
   const allowed = bookType === 'book' || bookType === 'pdf' || bookType === 'audio'
     ? new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon'])
-    : new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+    : new Set(['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
   return allowed.has(apiName);
 }
 
@@ -3845,7 +3861,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const apiName = normalizeApiSource(options.api || options.apiName || options.source || options.apiSource);
     const bookType = normalizeSearchBookType(options.bookType || options.mediaType || options.type);
     const queryText = String(options.query || '').trim();
-    const query = apiName === 'YES24' || apiName === '문피아' ? queryText.normalize('NFC') : queryText;
+    const query = apiName === 'YES24' || apiName === '문피아' || apiName === '한국웹툰' ? queryText.normalize('NFC') : queryText;
     const page = Number(options.page || 1);
 
     if (!query) return { success: true, api: apiName, actualQuery: query, results: [] };
@@ -3886,6 +3902,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             api: apiName,
             actualQuery,
             results: await enrichResultImages(cachedResults, apiCoverCacheDir()),
+            ...(apiName === '한국웹툰' ? { hasNext: cachedResults.some(item => item.kmasHasNext) } : {}),
             cached: true,
           };
         }
@@ -3902,6 +3919,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         results = await searchAnilist(query, page);
       } else if (apiName === '리디북스') {
         results = await searchRidibooks(query, page, bookType);
+      } else if (apiName === '한국웹툰') {
+        const items = await searchKmas(query, page, requestKmasText);
+        results = items.map(item => normalizeSearchResult(item, item.ID));
       } else if (apiName === '문피아') {
         const items = await searchMunpia(query, page, requestJsonGeneric);
         results = items.map(item => normalizeSearchResult({
@@ -3959,7 +3979,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       if (writeCacheDb) writeCacheDb.close();
     }
 
-    return { success: true, api: apiName, actualQuery, results, cached: false };
+    return {
+        success: true, api: apiName, actualQuery, results, cached: false,
+        ...(apiName === '한국웹툰' ? { hasNext: results.some(item => item.kmasHasNext) } : {}),
+    };
   });
 
   ipcMain.handle('api:ridiBookDetail', async (_event, bookId) => getRidiBookDetail(bookId));

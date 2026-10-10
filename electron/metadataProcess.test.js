@@ -44,3 +44,42 @@ test('외부 메타데이터 작업 취소는 실행 중인 프로세스도 종�
         clearTimeout(timer);
     }
 });
+
+test('메타데이터 도구 실패는 종료 코드와 도구 식별자를 보존한다', async () => {
+    await assert.rejects(runMetadataProcess(process.execPath, ['-e', "process.stderr.write('private diagnostic'); process.exit(2);"], {
+        telemetryTool: '7z',
+    }), error => {
+        assert.equal(error.message, 'private diagnostic');
+        assert.equal(error.code, 'PROCESS_FAILED');
+        assert.equal(error.telemetryTool, '7z');
+        assert.equal(error.exitCode, 2);
+        assert.equal(error.signal, undefined);
+        return true;
+    });
+});
+
+test('메타데이터 도구 시작 실패는 원래 코드와 시스템 호출을 유지한다', async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-metadata-missing-tool-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const command = path.join(directory, 'missing-7z');
+    await assert.rejects(runMetadataProcess(command, [], { telemetryTool: '7z' }), error => {
+        assert.equal(error.code, 'ENOENT');
+        assert.equal(error.telemetryTool, '7z');
+        assert.equal(error.syscall, `spawn ${command}`);
+        assert.match(error.stack, /ENOENT/);
+        assert.equal(error.exitCode, undefined);
+        return true;
+    });
+});
+
+test('메타데이터 도구의 예기치 않은 종료 신호를 종료 코드와 구분한다', { skip: process.platform === 'win32' }, async () => {
+    await assert.rejects(runMetadataProcess(process.execPath, ['-e', "process.kill(process.pid, 'SIGTERM');"], {
+        telemetryTool: '7z',
+    }), error => {
+        assert.equal(error.code, 'PROCESS_FAILED');
+        assert.equal(error.telemetryTool, '7z');
+        assert.equal(error.signal, 'SIGTERM');
+        assert.equal(error.exitCode, undefined);
+        return true;
+    });
+});

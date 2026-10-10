@@ -5,6 +5,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { missingBinaryMessage } from '../binaryPolicy.js';
+import { attachOperationErrors } from '../operationDiagnostics.js';
 import { runMetadataProcess as runProcess } from '../metadataProcess.js';
 import {
   listZipEntries,
@@ -1452,6 +1453,21 @@ function metadataToLibraryRecord(item = {}) {
   };
 }
 
+function withErrorStage(error, stage) {
+    const original = error instanceof Error ? error : new Error(String(error));
+    if (!original.telemetryStage) original.telemetryStage = stage;
+    return original;
+}
+
+async function closeMetadataDatabase(libraryDb, shouldClose, operationError) {
+    if (!shouldClose) return;
+    try {
+        await libraryDb?.close();
+    } catch (error) {
+        if (!operationError) throw withErrorStage(error, 'cleanup');
+    }
+}
+
 async function createLibraryDbHandle(options = {}) {
   if (options.libraryDb) return { libraryDb: options.libraryDb, shouldClose: false };
   if (!options.dbPath) return { libraryDb: null, shouldClose: false };
@@ -1631,6 +1647,8 @@ async function writeAudioMetadataItem(item, requestedPath, token, options = {}) 
   let filePath = requestedPath;
   let tempPath = '';
   let sourceHoldingPath = '';
+  let stage = 'prepare';
+  let operationError;
   try {
     existing = await libraryDb?.getFileInfo(requestedPath).catch(() => null);
     filePath = existingAudioSourcePath(requestedPath, existing);
@@ -1640,20 +1658,26 @@ async function writeAudioMetadataItem(item, requestedPath, token, options = {}) 
       `.${path.basename(filePath, extension)}.bookmanager_metadata_${token}${extension}`,
     );
     sourceHoldingPath = `${filePath}.bookmanager.metadata.${token}.old`;
+    stage = 'write-metadata';
     const coverChange = await resolveEmbeddedAudioCoverChange(item, existing, options);
+    stage = 'direct-copy';
     await copyAudioFileForEditing(filePath, tempPath);
+    stage = 'write-metadata';
     const writeResult = await writeAudioMetadataFile(tempPath, item.metadata || {}, {
       cover: coverChange?.cover || null,
     });
     if (options.shouldCancel?.()) return { cancelled: true };
 
     if (options.backup_on) {
+      stage = 'backup';
       await createMetadataBackup(filePath, path.extname(filePath), token);
     }
 
+    stage = 'write-output';
     await createAudioRollbackFile(filePath, sourceHoldingPath);
     try {
       await fsp.rename(tempPath, filePath);
+      stage = 'write-database';
       await persistWrittenAudioMetadata(
         item,
         filePath,
@@ -1663,7 +1687,7 @@ async function writeAudioMetadataItem(item, requestedPath, token, options = {}) 
         libraryDb,
       );
     } catch (error) {
-      await restoreAudioSourceAfterFailure(filePath, sourceHoldingPath, error);
+      await restoreAudioSourceAfterFailure(filePath, sourceHoldingPath, withErrorStage(error, stage));
     }
 
     await fsp.rm(sourceHoldingPath, { force: true }).catch(error => {
@@ -1681,6 +1705,9 @@ async function writeAudioMetadataItem(item, requestedPath, token, options = {}) 
       );
     }
     return { cancelled: false };
+  } catch (error) {
+    operationError = withErrorStage(error, stage);
+    throw operationError;
   } finally {
     if (tempPath) await fsp.rm(tempPath, { force: true }).catch(() => {});
     if (sourceHoldingPath && fs.existsSync(sourceHoldingPath)) {
@@ -1690,13 +1717,14 @@ async function writeAudioMetadataItem(item, requestedPath, token, options = {}) 
         await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
       }
     }
-    if (shouldClose) await libraryDb?.close();
+    await closeMetadataDatabase(libraryDb, shouldClose, operationError);
   }
 }
 
 async function persistDocumentMetadata(item, options = {}) {
   const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
   if (!libraryDb) throw new Error(taskText(options.lang, 'metadata_document_write_unsupported'));
+  let operationError;
   try {
     const filePath = item.filepath || item.path || '';
     const stat = await fsp.stat(filePath);
@@ -1710,8 +1738,11 @@ async function persistDocumentMetadata(item, options = {}) {
       size: stat.size,
     });
     return { coverChanged: false };
+  } catch (error) {
+    operationError = withErrorStage(error, 'write-database');
+    throw operationError;
   } finally {
-    if (shouldClose) await libraryDb.close();
+    await closeMetadataDatabase(libraryDb, shouldClose, operationError);
   }
 }
 
@@ -2384,7 +2415,7 @@ async function readExistingComicInfoMetadata(filePath, sevenZExe) {
 
   if (!sevenZExe) return null;
   try {
-    const result = await runProcess(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml'], { binary: true });
+    const result = await runProcess(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml'], { binary: true, telemetryTool: '7z' });
     return result.buffer.length ? parseComicInfo(result.buffer.toString('utf8')) : null;
   } catch {
     return null;
@@ -2714,21 +2745,34 @@ async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {
     return true;
   }
 
-  if (!sevenZExe) throw new Error(missingBinaryMessage('7z'));
+  if (!sevenZExe) {
+    const error = new Error(missingBinaryMessage('7z'));
+    error.code = 'TOOL_MISSING';
+    error.telemetryTool = '7z';
+    throw error;
+  }
 
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_Metadata_'));
+  let operationError;
   try {
     const xmlPath = path.join(tempDir, 'ComicInfo.xml');
     await fsp.writeFile(xmlPath, createComicInfoXml(metadata), 'utf8');
     try {
-      await runProcess(sevenZExe, ['d', filePath, 'ComicInfo.xml', '-y']);
+      await runProcess(sevenZExe, ['d', filePath, 'ComicInfo.xml', '-y'], { telemetryTool: '7z' });
     } catch {
       // ComicInfo.xml이 없으면 삭제 단계는 실패할 수 있으므로 무시합니다.
     }
-    await runProcess(sevenZExe, ['a', filePath, 'ComicInfo.xml', '-mx=0', '-mmt=on'], { cwd: tempDir });
+    await runProcess(sevenZExe, ['a', filePath, 'ComicInfo.xml', '-mx=0', '-mmt=on'], { cwd: tempDir, telemetryTool: '7z' });
     return true;
+  } catch (error) {
+    operationError = withErrorStage(error, 'write-metadata');
+    throw operationError;
   } finally {
-    await fsp.rm(tempDir, { recursive: true, force: true });
+    try {
+      await fsp.rm(tempDir, { recursive: true, force: true });
+    } catch (error) {
+      if (!operationError) throw withErrorStage(error, 'cleanup');
+    }
   }
 }
 
@@ -2743,6 +2787,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
   const targets = (items || []).filter(item => item.checked !== false);
   const stats = { success: [], successPaths: [], skip: [], error: [] };
     const textMetadataUpdates = [];
+  const errors = [];
   let cancelled = false;
 
   for (let index = 0; index < targets.length; index += 1) {
@@ -2764,10 +2809,14 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       `.${path.basename(filePath, extension)}.bookmanager_metadata_${token}${extension}`,
     );
     const sourceHoldingPath = `${filePath}.bookmanager.metadata.${token}.old`;
+    let stage = 'prepare';
     try {
         if (isTextMetadataPath(filePath)) {
+            stage = 'write-database';
             const { libraryDb, shouldClose } = await createLibraryDbHandle(options);
+            let operationError;
             try {
+                stage = 'write-metadata';
                 const saved = await saveTextMetadata(filePath, {
                     libraryDb,
                     metadata: item.metadata || {},
@@ -2785,8 +2834,11 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
                 });
                 recordMetadataSaveSuccess(stats, item, filePath);
                 continue;
+            } catch (error) {
+                operationError = withErrorStage(error, stage);
+                throw operationError;
             } finally {
-                if (shouldClose) await libraryDb.close();
+                await closeMetadataDatabase(libraryDb, shouldClose, operationError);
             }
         }
       if (isAudioPath(filePath)) {
@@ -2795,6 +2847,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
           stats.skip.push(`${item.name || filePath} - ${support.message}`);
           continue;
         }
+        stage = 'write-database';
         const result = await writeAudioMetadataItem(
           item,
           filePath,
@@ -2810,6 +2863,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       }
 
       if (isDocument(filePath) && !isEpub(filePath) && !isPdf(filePath)) {
+        stage = 'write-database';
         await persistDocumentMetadata(item, options);
         await refreshChangedAudioCoverThumbnail(item, filePath, options);
         recordMetadataSaveSuccess(stats, item, filePath);
@@ -2822,6 +2876,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         continue;
       }
 
+      stage = 'inspect';
       if (!isEpub(filePath) && !isPdf(filePath) && !(await hasComicInfoMetadataChanges(filePath, item.metadata || {}, sevenZExe))) {
         recordMetadataSaveSuccess(stats, item, filePath);
         continue;
@@ -2830,12 +2885,15 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       if (isZipArchive(filePath)) {
         let backupCreated = false;
         try {
+          stage = 'write-metadata';
           await injectComicInfoFastZip(filePath, item.metadata || {}, {
             lang: options.lang,
             beforeWrite: async () => {
               if (options.backup_on && !backupCreated) {
+                stage = 'backup';
                 await createMetadataBackup(filePath, extension, token);
                 backupCreated = true;
+                stage = 'write-metadata';
               }
             },
           });
@@ -2847,7 +2905,9 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         }
       }
 
+      stage = 'direct-copy';
       await fsp.copyFile(filePath, tempArchive);
+      stage = 'write-metadata';
       if (isEpub(filePath)) {
         await injectEpubMetadata(tempArchive, item.metadata || {}, options.lang, item.epubCoverChange || null, options);
       } else if (isPdf(filePath)) {
@@ -2861,9 +2921,11 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       }
 
       if (options.backup_on) {
+        stage = 'backup';
         await createMetadataBackup(filePath, extension, token);
       }
 
+      stage = 'write-output';
       await fsp.rm(sourceHoldingPath, { force: true }).catch(() => {});
       await fsp.rename(filePath, sourceHoldingPath);
       try {
@@ -2883,7 +2945,10 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
       recordMetadataSaveSuccess(stats, item, filePath);
     } catch (error) {
         if (error.code === 'TASK_CANCELLED') cancelled = true;
-        else stats.error.push(`${item.name || filePath} - ${error.message}`);
+        else {
+            errors.push(withErrorStage(error, stage));
+            stats.error.push(`${item.name || filePath} - ${error.message}`);
+        }
     } finally {
       await fsp.rm(tempArchive, { force: true }).catch(() => {});
       if (fs.existsSync(sourceHoldingPath) && !fs.existsSync(filePath)) {
@@ -2899,5 +2964,5 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
   if (!cancelled) {
     onProgress?.({ progress: 100, message: taskText(options.lang, 'task_done') });
   }
-  return { stats, cancelled, textMetadataUpdates };
+  return attachOperationErrors({ stats, cancelled, textMetadataUpdates }, errors);
 }

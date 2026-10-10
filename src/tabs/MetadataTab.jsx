@@ -3122,6 +3122,11 @@ function MetadataSearchDialog({
     return candidates.find(value => value !== undefined && value !== null && String(value).trim() !== '') || '';
   };
 
+    const authorNames = (item) => [...new Set([
+        metadataValue(item, 'author', 'Writer'),
+        metadataValue(item, 'Penciller'),
+    ].map(value => String(value).trim()).filter(Boolean))].join(', ');
+
   const publicationDate = selected && (
     metadataValue(selected, 'PubDate')
     || [metadataValue(selected, 'Year'), metadataValue(selected, 'Month'), metadataValue(selected, 'Day')].filter(Boolean).join('-')
@@ -3349,7 +3354,7 @@ function MetadataSearchDialog({
                     {state.apiSource === UNIFIED_METADATA_API_SOURCE && (
                         <span>{apiSourceLabel(result.apiSource)}</span>
                     )}
-                    <span>{result.author || '-'}</span>
+                    <span>{authorNames(result) || '-'}</span>
                     <span>{result.publisher || '-'}</span>
                     <span className="meta-api-rating"><FaIcon name="star" size={11} />{result.rating || '-'}</span>
                   </span>
@@ -3399,7 +3404,7 @@ function MetadataSearchDialog({
                     <RemoteCoverImage src={selected.coverCacheUrl || selected.coverDataUrl || selected.coverUrl} className="meta-api-large-cover" fallbackClassName="meta-api-large-no-cover" size={48} />
                     <div className="meta-api-preview-card">
                       <dl>
-                        <dt>{detailLabel('user', text('meta_writer', '작가'))}</dt><dd>{renderValue(metadataValue(selected, 'author', 'Writer'))}</dd>
+                        <dt>{detailLabel('user', text('meta_writer', '작가'))}</dt><dd>{renderValue(authorNames(selected))}</dd>
                         <dt>{detailLabel('building', text('meta_publisher', '출판사'))}</dt><dd>{renderValue(metadataValue(selected, 'publisher', 'Publisher'))}</dd>
                         {(bookType === 'book' || selectedIsbn) && (
                           <>

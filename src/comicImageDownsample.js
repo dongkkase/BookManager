@@ -17,6 +17,22 @@ function positivePixelDimension(value) {
     return numericValue == null ? null : Math.max(1, Math.floor(numericValue));
 }
 
+function observeResizeCancellation(cancelToken) {
+    if (!cancelToken) return cancelToken;
+
+    return {
+        then(onFulfilled, onRejected) {
+            const cancellation = cancelToken.then(onFulfilled, onRejected);
+            // Pica can reject this promise while image decoding still delays its cancellation handler.
+            cancellation.catch(() => {});
+            return cancellation;
+        },
+        catch(onRejected) {
+            return this.then(undefined, onRejected);
+        },
+    };
+}
+
 export function comicDownsampleTarget({
     naturalWidth,
     naturalHeight,
@@ -115,7 +131,7 @@ export async function paintComicDownsample({
             throw error;
         }
         await resizer.resize(source, stagingCanvas, {
-            cancelToken,
+            cancelToken: observeResizeCancellation(cancelToken),
             filter: 'lanczos3',
             unsharpAmount: 0,
         });

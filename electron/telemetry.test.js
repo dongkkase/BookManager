@@ -354,6 +354,10 @@ test('error summaries use fixed descriptions and reject unknown diagnostic value
         [{ code: '/private/code', telemetryStage: 'Secret Book', telemetryTool: '/private/7z', signal: 'secret', syscall: 'spawn /private/7z' }, 'Error: details omitted'],
         ...['2', 2.5, Infinity, NaN, -2147483649, 4294967296].map(exitCode => [{ exitCode }, 'Error: details omitted']),
         ...[-2147483648, 0, 3221225477, 4294967295].map(exitCode => [{ exitCode }, 'Error: details omitted']),
+        [{ code: 'ARCHIVE_NO_ENTRIES' }, 'Error (ARCHIVE_NO_ENTRIES): No archive entries would remain'],
+        [{ telemetryStage: 'rename-entries' }, 'Error: Archive entry rename failed'],
+        [{ telemetryStage: 'delete-entries' }, 'Error: Archive entry removal failed'],
+        [{ telemetryStage: 'optimize-images' }, 'Error: Image optimization failed'],
     ];
     for (const [diagnostics] of cases) {
         telemetry.reportTelemetryError({ name: 'Error', message: 'Secret Book token=secret', stderr: '/private/book', ...diagnostics }, { source: 'ipc' });
@@ -372,6 +376,35 @@ test('error summaries use fixed descriptions and reject unknown diagnostic value
     }
     assert.deepEqual(events[5].tags, { source: 'ipc', os: process.platform });
     assert.doesNotMatch(requests.map(request => request.body).join(''), /Secret Book|private|secret|stderr/);
+});
+
+test('metadata diagnostics retain safe stages and output-limit codes without book metadata', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    const cases = [
+        [{ telemetryStage: 'write-metadata' }, 'Error: Metadata write failed'],
+        [{ telemetryStage: 'write-database', code: 'SQLITE_BUSY' }, 'Error (SQLITE_BUSY): Database is busy'],
+        [{ telemetryStage: 'write-database', code: 'ERR_DLOPEN_FAILED' }, 'Error (ERR_DLOPEN_FAILED): Native module could not be loaded'],
+        [{ telemetryStage: 'inspect', telemetryTool: '7z', code: 'PROCESS_OUTPUT_TOO_LARGE' }, 'Error (PROCESS_OUTPUT_TOO_LARGE): External tool output exceeded the size limit'],
+    ];
+    for (const [diagnostics] of cases) {
+        telemetry.reportTelemetryError({
+            name: 'Error', message: 'Private Title by Private Author',
+            metadata: { Title: 'Private Title', Writer: 'Private Author' },
+            path: '/private/book', stderr: 'private output', ...diagnostics,
+        }, { source: 'ipc', feature: 'metadata-save' });
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, cases.length);
+    for (const [index, request] of requests.entries()) {
+        const event = JSON.parse(request.body.split('\n')[2]);
+        const [diagnostics, description] = cases[index];
+        assert.equal(event.exception.values[0].value, description);
+        assert.equal(event.tags.feature, 'metadata-save');
+        assert.equal(event.tags.error_stage, diagnostics.telemetryStage);
+        assert.equal(event.tags.error_code, diagnostics.code);
+        assert.equal(event.tags.error_tool, diagnostics.telemetryTool);
+        assert.doesNotMatch(request.body, /Private Title|Private Author|private|stderr|Writer/);
+    }
 });
 
 test('usage and error reporting remain independently selectable', async t => {

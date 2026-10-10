@@ -33,17 +33,20 @@ test('API source별 필수 키 요구 여부를 판정한다', () => {
   assert.equal(requiredApiKeyForSource('Amazon'), '');
   assert.equal(requiredApiKeyForSource('리디북스'), '');
     assert.equal(requiredApiKeyForSource('문피아'), '');
+    assert.equal(requiredApiKeyForSource('한국웹툰'), '');
   assert.equal(apiSourceHasRequiredKey('Google Books', { google: '' }), false);
   assert.equal(apiSourceHasRequiredKey('Google Books', { google: 'key' }), true);
   assert.equal(apiSourceHasRequiredKey('Amazon', {}), true);
   assert.equal(apiSourceHasRequiredKey('리디북스', {}), true);
     assert.equal(apiSourceHasRequiredKey('문피아', {}), true);
+    assert.equal(apiSourceHasRequiredKey('한국웹툰', {}), true);
 });
 
 test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 도서를 분리한다', () => {
   assert.deepEqual(metadataApiSourcesForBookType('comic').map(source => source.value), [
     '리디북스',
     '문피아',
+    '한국웹툰',
     'YES24',
     '알라딘',
     'Google Books',
@@ -118,6 +121,19 @@ test('책 타입별 기본 검색 API 설정을 선택한다', () => {
   assert.equal(preferredMetadataApiSource({ preferred_meta_api_book: 'Amazon' }, 'audio'), 'Amazon');
 });
 
+test('한국웹툰은 키 없이 만화책 검색과 기본 제공자로 선택할 수 있다', () => {
+    assert.deepEqual(ALL_METADATA_API_SOURCES.filter(source => source.value === '한국웹툰'), [
+        { value: '한국웹툰', labelKey: 'api_source_kmas' },
+    ]);
+    assert.equal(normalizeMetadataApiSourceForBookType('한국웹툰', 'comic'), '한국웹툰');
+    assert.equal(preferredMetadataApiSource({ preferred_meta_api_comic: '한국웹툰' }, 'comic'), '한국웹툰');
+    assert.equal(preferredMetadataApiSource({ last_meta_api: '한국웹툰' }, 'comic'), '한국웹툰');
+    for (const bookType of ['book', 'pdf', 'audio']) {
+        assert.equal(normalizeMetadataApiSourceForBookType('한국웹툰', bookType), '리디북스');
+        assert.equal(preferredMetadataApiSource({ last_meta_api: '한국웹툰' }, bookType), '리디북스');
+    }
+});
+
 test('통합검색은 모든 책 타입에서 선택할 수 있고 실제 API 목록에 포함되지 않는다', () => {
     for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
         const searchSources = metadataSearchSourcesForBookType(bookType);
@@ -138,7 +154,7 @@ test('통합검색은 모든 책 타입에서 선택할 수 있고 실제 API �
 
 test('통합검색 대상은 책 타입과 API 키 등록 여부를 함께 반영한다', () => {
     assert.deepEqual(enabledMetadataApiSourcesForBookType('comic').map(source => source.value), [
-        '리디북스', '문피아', 'Anilist',
+        '리디북스', '문피아', '한국웹툰', 'Anilist',
     ]);
     for (const bookType of ['book', 'pdf', 'audio']) {
         assert.deepEqual(enabledMetadataApiSourcesForBookType(bookType).map(source => source.value), [
@@ -148,7 +164,7 @@ test('통합검색 대상은 책 타입과 API 키 등록 여부를 함께 반�
     assert.deepEqual(enabledMetadataApiSourcesForBookType('comic', {
         yes24: 'yk_live_test', aladin: ' ', google: 'key', vine: '',
     }).map(source => source.value), [
-        '리디북스', '문피아', 'YES24', 'Google Books', 'Anilist',
+        '리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist',
     ]);
     const apiKeys = { yes24: 'key', aladin: 'key', google: 'key', vine: 'key' };
     for (const bookType of ['comic', 'book', 'pdf', 'audio']) {

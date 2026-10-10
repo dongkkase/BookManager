@@ -5,6 +5,7 @@ export const UNIFIED_METADATA_API_SOURCE = '통합검색';
 export const COMIC_METADATA_API_SOURCES = [
   { value: '리디북스', labelKey: 'api_source_ridi' },
     { value: '문피아', labelKey: 'api_source_munpia' },
+    { value: '한국웹툰', labelKey: 'api_source_kmas' },
     { value: 'YES24', labelKey: 'api_source_yes24' },
   { value: '알라딘', labelKey: 'api_source_aladin' },
   { value: 'Google Books', labelKey: 'api_source_google' },

@@ -46,7 +46,7 @@ test('registered keys enable their providers and comic search includes Anilist i
         calls.push(request.apiSource);
         return { success: true, results: [] };
     });
-    assert.deepEqual(calls, ['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+    assert.deepEqual(calls, ['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
 });
 
 test('search requests run at most three at a time and collect responses in provider order', async () => {

@@ -2,6 +2,13 @@ import { spawn } from 'child_process';
 
 const MAX_STDERR_BYTES = 64 * 1024;
 
+function withProcessDetails(error, options, exitCode, signal) {
+    if (options.telemetryTool === '7z') error.telemetryTool = '7z';
+    if (Number.isInteger(exitCode)) error.exitCode = exitCode;
+    if (signal) error.signal = signal;
+    return error;
+}
+
 export function runMetadataProcess(command, args, options = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
@@ -26,7 +33,7 @@ export function runMetadataProcess(command, args, options = {}) {
         };
         const stop = (message, code) => {
             if (failure || settled) return;
-            failure = Object.assign(new Error(message), { code });
+            failure = withProcessDetails(Object.assign(new Error(message), { code }), options);
             chunks.length = 0;
             child.stdout.destroy();
             child.stderr.destroy();
@@ -62,9 +69,9 @@ export function runMetadataProcess(command, args, options = {}) {
             settled = true;
             cleanup();
             chunks.length = 0;
-            reject(failure || error);
+            reject(failure || withProcessDetails(error, options));
         });
-        child.once('close', code => {
+        child.once('close', (code, signal) => {
             if (settled) return;
             settled = true;
             cleanup();
@@ -76,7 +83,9 @@ export function runMetadataProcess(command, args, options = {}) {
             chunks.length = 0;
             const errorText = stderr.toString('utf8');
             if (code !== 0 && code !== 1) {
-                reject(new Error(errorText || (options.binary ? '' : buffer.toString('utf8')) || `${command} exited with ${code}`));
+                const error = new Error(errorText || (options.binary ? '' : buffer.toString('utf8')) || `${command} exited with ${code}`);
+                error.code = 'PROCESS_FAILED';
+                reject(withProcessDetails(error, options, code, signal));
                 return;
             }
             resolve(options.binary

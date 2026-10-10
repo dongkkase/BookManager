@@ -211,6 +211,28 @@ test('문피아 기본 검색 API를 저장 후 다시 불러온다', () => {
     }
 });
 
+test('한국웹툰 기본 검색 API는 만화책 설정에서 저장 후 다시 불러온다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-kmas-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ConfigManager(root, root);
+    manager.loadConfig();
+    manager.saveConfig({
+        preferred_meta_api_comic: '한국웹툰',
+        preferred_meta_api_book: '한국웹툰',
+        preferred_meta_api_pdf: '한국웹툰',
+        last_meta_api: '한국웹툰',
+    });
+    const loaded = new ConfigManager(root, root).loadConfig();
+    assert.equal(loaded.preferred_meta_api_comic, '한국웹툰');
+    assert.equal(loaded.preferred_meta_api_book, '리디북스');
+    assert.equal(loaded.preferred_meta_api_pdf, '리디북스');
+    assert.equal(loaded.last_meta_api, '한국웹툰');
+    const migrated = manager.normalizeConfig({ last_meta_api: '한국웹툰' });
+    assert.equal(migrated.preferred_meta_api_comic, '한국웹툰');
+    assert.equal(migrated.preferred_meta_api_book, '리디북스');
+    assert.equal(migrated.preferred_meta_api_pdf, '리디북스');
+});
+
 test('통합검색 기본 API 설정을 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-unified-search-'));
     try {
