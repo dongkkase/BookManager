@@ -11,6 +11,7 @@ import { classifyDroppedEntries, resolveMetadataDropPaths, resolveTaskDropMode }
 import { translate } from './utils/i18n.js';
 
 const appSource = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
+const overlaySource = readFileSync(new URL('./components/FileDropHoverOverlay.jsx', import.meta.url), 'utf8');
 const appStyles = readFileSync(new URL('./styles/App.css', import.meta.url), 'utf8');
 const folderSource = readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8');
 
@@ -100,14 +101,14 @@ test('드롭을 허용하는 작업 탭은 외부 파일 드래그 중 공통 �
     assert.match(appSource, /canAcceptGlobalDrop\(activeTab, dropInteractionBlocked\)/);
     assert.match(appSource, /isExternalFileDrag\(event\.dataTransfer\)/);
     assert.match(appSource, /showFileDropHover && <FileDropHoverOverlay opensViewer=\{activeTab === 'folder'\} dropMode=\{fileDropMode\} t=\{t\} \/>/);
-    assert.match(appSource, /role="status"/);
-    assert.match(appSource, /aria-live="polite"/);
+    assert.match(overlaySource, /role="status"/);
+    assert.match(overlaySource, /aria-live="polite"/);
 });
 
 test('폴더 탭 드롭존은 파일이 뷰어로 열린다는 안내를 구분해 표시한다', () => {
-    assert.match(appSource, /name=\{opensViewer \? 'bookOpen' : 'fileCirclePlus'\}/);
-    assert.match(appSource, /t\(opensViewer \? 'folder\.drop\.open_in_viewer' : 'drag_drop'\)/);
-    assert.match(appSource, /opensViewer \? 'is-viewer-open' : ''/);
+    assert.match(overlaySource, /name=\{opensViewer \? 'bookOpen' : 'fileCirclePlus'\}/);
+    assert.match(overlaySource, /t\(opensViewer \? 'folder\.drop\.open_in_viewer' : 'drag_drop'\)/);
+    assert.match(overlaySource, /opensViewer \? 'is-viewer-open' : ''/);
     assert.match(appStyles, /\.app-file-drop-hover\.is-viewer-open\s*\{/);
 
     const expected = {

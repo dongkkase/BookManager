@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -56,6 +57,34 @@ async function assertNoWorkingFiles(directory) {
     assert.deepEqual((await fs.readdir(directory)).filter(name => name.startsWith('.bookmanager-cover-') || name.endsWith('.zip-update')), []);
 }
 
+test('표지 이미지 검증은 빈 파일, 용량 초과와 지원하지 않는 형식을 오류 코드로 구분한다', async t => {
+    const f = await fixture(t);
+    await fs.writeFile(f.imagePath, '');
+    await assert.rejects(loadCoverEditorImage(f.imagePath), { code: 'COVER_IMAGE_INVALID' });
+    await fs.truncate(f.imagePath, 16 * 1024 * 1024 + 1);
+    await assert.rejects(loadCoverEditorImage(f.imagePath), { code: 'COVER_IMAGE_TOO_LARGE' });
+    await fs.writeFile(f.imagePath, 'not an image');
+    await assert.rejects(loadCoverEditorImage(f.imagePath), { code: 'COVER_IMAGE_UNSUPPORTED_FORMAT' });
+});
+
+test('표지 이미지 변환 결과 검증은 번역 가능한 오류 코드를 반환한다', async t => {
+    const f = await fixture(t);
+    for (const normalized of [
+        { buffer: PNG, mimeType: 'image/webp' },
+        { buffer: Buffer.alloc(0), mimeType: 'image/png' },
+        { buffer: Buffer.alloc(16 * 1024 * 1024 + 1), mimeType: 'image/png' },
+    ]) {
+        await assert.rejects(loadCoverEditorImage(f.imagePath, {
+            normalizeImage() { return normalized; },
+        }), { code: 'COVER_IMAGE_CONVERSION_FAILED' });
+    }
+    for (const code of ['COVER_IMAGE_INVALID', 'COVER_IMAGE_TOO_MANY_PIXELS']) {
+        await assert.rejects(loadCoverEditorImage(f.imagePath, {
+            normalizeImage() { throw Object.assign(new Error('Image validation failed'), { code }); },
+        }), { code });
+    }
+});
+
 test('ZIP/CBZ 표지 교체는 원래 바이트를 백업하고 본문과 메타데이터를 보존한다', async t => {
     for (const extension of ['.zip', '.cbz']) {
         const f = await fixture(t, extension);
@@ -64,6 +93,7 @@ test('ZIP/CBZ 표지 교체는 원래 바이트를 백업하고 본문과 메타
         const before = await contents(f.filePath);
         await f.libraryDb.upsertFileInfo({ path: f.filePath, title: 'Original title', thumb_path: 'old-thumbnail.png' });
         const descriptor = await inspectCoverEditor(f.filePath, f);
+        assert.equal(descriptor.size, original.length);
         const refreshed = [];
         const result = await applyCoverEditor({ ...descriptor, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace', targetEntry: descriptor.coverEntry }, {
             ...f,
@@ -81,6 +111,7 @@ test('ZIP/CBZ 표지 교체는 원래 바이트를 백업하고 본문과 메타
         assert.deepEqual(refreshed, [f.filePath]);
         assert.equal((await f.libraryDb.getFileInfo(f.filePath)).thumb_path, '');
         const updated = await inspectCoverEditor(f.filePath, f);
+        assert.equal(updated.size, (await fs.stat(f.filePath)).size);
         assert.equal(updated.coverDataUrl, `data:image/png;base64,${PNG.toString('base64')}`);
         assert.notEqual(updated.version, descriptor.version);
         await assertNoWorkingFiles(f.directory);
@@ -315,25 +346,89 @@ test('먼저 시작한 폴더 스캔은 이후 저장된 PDF와 오디오 로컬
     }
 });
 
-test('표지 파일 교체 후 DB 갱신 실패 시 원본 파일과 기존 DB 기록을 복원한다', async t => {
+test('백업을 사용하는 표지 저장은 원본의 중복 복구 사본을 만들지 않는다', async t => {
+    const f = await fixture(t);
+    await comicFixture(f);
+    const original = await fs.readFile(f.filePath);
+    const descriptor = await inspectCoverEditor(f.filePath, f);
+    const copyFile = fs.copyFile;
+    const copies = [];
+    t.mock.method(fs, 'copyFile', async (...args) => {
+        copies.push(args);
+        return copyFile(...args);
+    });
+    const saved = await applyCoverEditor({ ...descriptor, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace' }, f);
+    assert.equal(saved.success, true);
+    assert.equal(copies.length, 2);
+    assert.ok(copies.every(([source, , flags]) => source === f.filePath
+        && (flags & constants.COPYFILE_EXCL) && (flags & constants.COPYFILE_FICLONE)));
+    assert.equal(copies[1][1], saved.backupPath);
+    assert.deepEqual(await fs.readFile(saved.backupPath), original);
+    assert.deepEqual((await contents(f.filePath))[descriptor.coverEntry], PNG);
+    await assertNoWorkingFiles(f.directory);
+});
+
+test('표지 파일 교체 후 DB 갱신 실패 시 백업 설정과 무관하게 원본 파일과 기존 DB 기록을 복원한다', async t => {
+    for (const backup of [true, false]) {
+        await t.test(`backup=${backup}`, async child => {
+            const f = await fixture(child);
+            await comicFixture(f);
+            await f.libraryDb.upsertFileInfo({ path: f.filePath, title: 'Original title', thumb_path: 'original.png' });
+            const original = await fs.readFile(f.filePath);
+            const record = await f.libraryDb.getFileInfo(f.filePath);
+            const descriptor = await inspectCoverEditor(f.filePath, f);
+            f.libraryDb.getConnection().exec("CREATE TRIGGER reject_cover_service BEFORE UPDATE ON files BEGIN SELECT RAISE(ABORT, 'cover service DB failure'); END;");
+            await assert.rejects(applyCoverEditor({ ...descriptor, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace', backup }, f), /cover service DB failure/);
+            assert.deepEqual(await fs.readFile(f.filePath), original);
+            assert.deepEqual(await f.libraryDb.getFileInfo(f.filePath), record);
+            const backupDirectory = path.join(f.directory, 'bak');
+            if (backup) {
+                const backupNames = await fs.readdir(backupDirectory);
+                assert.equal(backupNames.length, 1);
+                assert.deepEqual(await fs.readFile(path.join(backupDirectory, backupNames[0])), original);
+            } else {
+                await assert.rejects(fs.stat(backupDirectory), { code: 'ENOENT' });
+            }
+            await assertNoWorkingFiles(f.directory);
+            f.libraryDb.getConnection().exec('DROP TRIGGER reject_cover_service');
+            const retry = await inspectCoverEditor(f.filePath, f);
+            const saved = await applyCoverEditor({ ...retry, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace', backup: false }, f);
+            assert.equal(saved.success, true);
+        });
+    }
+});
+
+test('DB 오류 후 백업 복구에 실패해도 원본 백업을 보존하고 복구 경로를 알린다', async t => {
     const f = await fixture(t);
     await comicFixture(f);
     await f.libraryDb.upsertFileInfo({ path: f.filePath, title: 'Original title', thumb_path: 'original.png' });
     const original = await fs.readFile(f.filePath);
     const record = await f.libraryDb.getFileInfo(f.filePath);
     const descriptor = await inspectCoverEditor(f.filePath, f);
+    const backupDirectory = path.join(f.directory, 'bak');
+    const copyFile = fs.copyFile;
+    let recoverySource = '';
+    t.mock.method(fs, 'copyFile', async (source, destination, ...args) => {
+        if (path.dirname(source) === backupDirectory) {
+            recoverySource = source;
+            await fs.writeFile(destination, 'incomplete recovery copy');
+            throw Object.assign(new Error('recovery copy failed'), { code: 'EIO' });
+        }
+        return copyFile(source, destination, ...args);
+    });
     f.libraryDb.getConnection().exec("CREATE TRIGGER reject_cover_service BEFORE UPDATE ON files BEGIN SELECT RAISE(ABORT, 'cover service DB failure'); END;");
-    await assert.rejects(applyCoverEditor({ ...descriptor, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace' }, f), /cover service DB failure/);
-    assert.deepEqual(await fs.readFile(f.filePath), original);
+    await assert.rejects(applyCoverEditor({ ...descriptor, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace' }, f), error => {
+        assert.ok(recoverySource);
+        assert.match(error.message, /cover service DB failure/);
+        assert.ok(error.message.includes(`original file retained at ${recoverySource}`));
+        assert.match(error.message, /recovery copy failed/);
+        return true;
+    });
     assert.deepEqual(await f.libraryDb.getFileInfo(f.filePath), record);
-    const backupNames = await fs.readdir(path.join(f.directory, 'bak'));
-    assert.equal(backupNames.length, 1);
-    assert.deepEqual(await fs.readFile(path.join(f.directory, 'bak', backupNames[0])), original);
+    assert.deepEqual(await fs.readdir(backupDirectory), [path.basename(recoverySource)]);
+    assert.deepEqual(await fs.readFile(recoverySource), original);
+    assert.deepEqual((await contents(f.filePath))[descriptor.coverEntry], PNG);
     await assertNoWorkingFiles(f.directory);
-    f.libraryDb.getConnection().exec('DROP TRIGGER reject_cover_service');
-    const retry = await inspectCoverEditor(f.filePath, f);
-    const saved = await applyCoverEditor({ ...retry, imagePath: f.imagePath, imageVersion: f.imageVersion, mode: 'replace', backup: false }, f);
-    assert.equal(saved.success, true);
 });
 
 test('7z와 CB7 조회는 원본 버전을 변경하지 않고 같은 컨테이너에 표지를 저장한다', async t => {

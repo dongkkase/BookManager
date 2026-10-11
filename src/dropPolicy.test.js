@@ -10,6 +10,7 @@ import {
     isSupportedDroppedFilePath,
     isSupportedTextDropPath,
     isSupportedViewerDropPath,
+    resolveFileDropMode,
     resolveMetadataDropPaths,
 } from './dropPolicy.js';
 
@@ -154,7 +155,20 @@ test('드롭 영역의 위쪽 30%만 교체하며 경계와 영역 밖은 추가
         assert.equal(resolveTaskDropMode(tab, 0, { top: 0, height: 0 }), 'append');
         assert.equal(resolveTaskDropMode(tab, NaN, { top: 0, height: 500 }), 'append');
     }
-    for (const tab of ['folder', 'sharing', 'releases']) {
+    for (const tab of ['folder', 'tools', 'sharing', 'releases']) {
         assert.equal(resolveTaskDropMode(tab, 100, { top: 100, height: 600 }), 'append');
     }
+});
+
+test('도구가 직접 사용하는 드롭 위치도 같은 30% 경계로 교체와 추가를 구분한다', () => {
+    for (const bounds of [{ top: 100, height: 600 }, { top: 75, height: 250 }]) {
+        assert.equal(resolveFileDropMode(bounds.top - 1, bounds), 'append');
+        assert.equal(resolveFileDropMode(bounds.top, bounds), 'replace');
+        assert.equal(resolveFileDropMode(bounds.top + bounds.height * 0.3 - 0.01, bounds), 'replace');
+        assert.equal(resolveFileDropMode(bounds.top + bounds.height * 0.3, bounds), 'append');
+        assert.equal(resolveFileDropMode(bounds.top + bounds.height + 1, bounds), 'append');
+    }
+    assert.equal(resolveFileDropMode(0, null), 'append');
+    assert.equal(resolveFileDropMode(0, { top: 0, height: 0 }), 'append');
+    assert.equal(resolveFileDropMode(NaN, { top: 0, height: 500 }), 'append');
 });

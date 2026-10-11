@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
 const PATH_LIST_KEYS = ['libraries', 'dup_check_folders', 'library_entries', 'favorites', 'folder_favorites', 'folder_goto_history'];
-const PATH_KEYS = ['folder_last_path', 'last_folder_path', 'last_selected_folder_path', 'last_selected_library'];
+const PATH_KEYS = ['folder_last_path', 'last_folder_path', 'last_selected_folder_path', 'last_selected_library', 'last_library_move_target'];
 
 export async function restoreFolderConfigPaths(config, {
     platform = process.platform,

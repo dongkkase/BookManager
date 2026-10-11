@@ -17,9 +17,7 @@ import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { FolderPathBar } from '../components/folder/FolderPathBar';
 import { RatingEditorDialog } from '../components/folder/RatingEditorDialog';
 import { supportsRatingEditor } from '../ratingPolicy';
-import { CoverEditorDialog } from '../components/folder/CoverEditorDialog';
-import { applyCoverReadingAdjustment } from '../../electron/coverReadingState.js';
-import { supportsCoverEditor, resolveCoverEditorTargets, runCoverEditorBatch } from '../coverEditorBatch';
+import { supportsCoverEditor, resolveCoverEditorTargets } from '../coverEditorBatch';
 import { FolderTagSearchDialog } from '../components/folder/FolderTagSearchDialog';
 import { MissingVolumesDialog } from '../components/folder/MissingVolumesDialog';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
@@ -670,7 +668,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const [readingActionBusy, setReadingActionBusy] = useState(false);
     const readingActionBusyRef = useRef(false);
     const [readiveTransferPaths, setReadiveTransferPaths] = useState(null);
-    const [coverEditorTarget, setCoverEditorTarget] = useState(null);
     const [ratingEditorTarget, setRatingEditorTarget] = useState(null);
   const [showMultiRenameDialog, setShowMultiRenameDialog] = useState(false);
   const [showContentIndexDialog, setShowContentIndexDialog] = useState(false);
@@ -681,6 +678,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [showGotoPathHistory, setShowGotoPathHistory] = useState(false);
   const [seriesMovePreview, setSeriesMovePreview] = useState(null);
   const [libraryMoveRequest, setLibraryMoveRequest] = useState(null);
+    const lastLibraryMoveTargetRef = useRef(null);
   const [moveConflict, setMoveConflict] = useState(null);
   const [textInputDialog, setTextInputDialog] = useState(null);
   const [viewerStatusVersion, setViewerStatusVersion] = useState(0);
@@ -731,7 +729,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     });
   }), []);
   const closeTopOverlay = useCallback(() => {
-        if (coverEditorTarget || ratingEditorTarget || collectionDialog) return true;
+        if (ratingEditorTarget || collectionDialog) return true;
     if (moveConflict) return true;
     if (textInputDialog) {
       closeTextInputDialog(null);
@@ -750,7 +748,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     else return false;
     return true;
   }, [
-        coverEditorTarget,
         ratingEditorTarget,
         collectionDialog,
     contextMenu,
@@ -2275,51 +2272,26 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         return result;
     }, [ratingEditorTarget, runInternalFileAction, scanOptions, selectedFolderPath, showToast, t, updateCachedFiles]);
 
-    const executeCoverEdit = useCallback(async (request, batchOptions = {}) => {
-        const apply = async item => {
-            const saved = await window.electronAPI.applyCoverEditor(item);
-            if (saved?.success) {
-                try {
-                    applyCoverReadingAdjustment(window.localStorage, saved.readingAdjustment);
-                } catch (error) {
-                    saved.readingWarning = [t('cover_editor_reading_save_failed'), error.message].filter(Boolean).join(' ');
-                }
-            }
-            return saved;
-        };
-        const result = await runInternalFileAction(() => Array.isArray(request)
-            ? runCoverEditorBatch(request, apply, batchOptions) : apply(request));
-        const paths = result?.batch ? result.results.filter(item => item.success).map(item => item.filePath)
-            : result?.success ? [result.filePath] : [];
-        if (paths.length > 0) {
-            resetCoverPreviewQueue();
-            window.dispatchEvent(new CustomEvent('bookmanager:metadata-saved', { detail: { paths } }));
+    useEffect(() => {
+        const handleMetadataSaved = event => {
+            const paths = Array.isArray(event.detail?.paths) ? event.detail.paths : [];
+            if (paths.length === 0) return;
             setTreeRefreshToken(value => value + 1);
-            if (isLibrarySearchActive) setSearchSubmitToken(value => value + 1);
-            if (isReadingList) await refreshActiveReadingList();
-        }
-        return result;
-    }, [isLibrarySearchActive, isReadingList, refreshActiveReadingList, resetCoverPreviewQueue, runInternalFileAction, t]);
-
-  useEffect(() => {
-    const handleMetadataSaved = event => {
-      const paths = Array.isArray(event.detail?.paths) ? event.detail.paths : [];
-      if (!selectedFolderPath || paths.length === 0) return;
-      const hasCurrentFolderFile = hasMetadataSavedPathForFolder({
-        paths,
-        selectedFolderPath,
-        includeSubfolders,
-        includeFolderPreviews: true,
-      });
-      if (!hasCurrentFolderFile) return;
-      pendingMetadataRefreshRef.current = true;
-      if (!isFolderTabVisible()) return;
-      pendingMetadataRefreshRef.current = false;
-      handleRefresh();
-    };
-    window.addEventListener('bookmanager:metadata-saved', handleMetadataSaved);
-    return () => window.removeEventListener('bookmanager:metadata-saved', handleMetadataSaved);
-  }, [handleRefresh, includeSubfolders, isFolderTabVisible, selectedFolderPath]);
+            const hasCurrentFolderFile = hasMetadataSavedPathForFolder({
+                paths,
+                selectedFolderPath,
+                includeSubfolders,
+                includeFolderPreviews: true,
+            });
+            if (!hasCurrentFolderFile && !isLibrarySearchActive && !isFolderTagSearchActive && !isReadingList) return;
+            pendingMetadataRefreshRef.current = true;
+            if (!isFolderTabVisible()) return;
+            pendingMetadataRefreshRef.current = false;
+            handleRefresh();
+        };
+        window.addEventListener('bookmanager:metadata-saved', handleMetadataSaved);
+        return () => window.removeEventListener('bookmanager:metadata-saved', handleMetadataSaved);
+    }, [handleRefresh, includeSubfolders, isFolderTabVisible, isFolderTagSearchActive, isLibrarySearchActive, isReadingList, selectedFolderPath]);
 
   useEffect(() => {
     const handleActiveTabChanged = event => {
@@ -3059,6 +3031,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     const targetLibrary = plans[0]?.targetLibrary;
     if (!targetLibrary) return;
+        lastLibraryMoveTargetRef.current = targetLibrary;
     const firstMoveItem = plans[0]?.src || plans[0]?.full_path || plans[0]?.path || '';
     const requestId = `library-move-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const moveProgress = createLibraryMoveProgress({
@@ -3078,7 +3051,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     emitLibraryMoveProgress(t('library_move_status_prepare'), 2, firstMoveItem);
     try {
       setLibraryMoveRequest(null);
-      await saveConfig?.({ last_selected_library: targetLibrary });
+        await saveConfig?.({ last_selected_library: targetLibrary, last_library_move_target: targetLibrary });
       const folderPlans = plans.filter(plan => plan.folderMode);
       const executablePlans = await expandLibraryMovePlans(plans, window.electronAPI);
       const result = await executeLibraryMovePlans(executablePlans, {
@@ -3164,6 +3137,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       clearLibraryMoveProgress();
     }
   }, [clearLibraryMoveProgress, clearSelection, config?.language, config?.lang, emitLibraryMoveProgress, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedEntryObjects, selectedFolderPath, showToast, t]);
+
+    const rememberLibraryMoveTarget = useCallback(targetLibrary => {
+        lastLibraryMoveTargetRef.current = targetLibrary;
+        saveConfig?.({ last_library_move_target: targetLibrary }).catch(error => {
+            console.error('마지막 이동 대상 라이브러리 저장 실패:', error);
+        });
+    }, [saveConfig]);
 
   const openLibraryMoveDialog = useCallback(async () => {
     if (libraries.length === 0) {
@@ -3520,8 +3500,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
         setRatingEditorTarget(menu.file);
     } else if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
-        const files = resolveCoverEditorTargets(menu.file, selectedEntryObjects);
-        if (files.length > 0) setCoverEditorTarget(files);
+        const paths = resolveCoverEditorTargets(menu.file, selectedEntryObjects).map(file => file.full_path || file.path);
+        if (paths.length > 0) {
+            window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+                detail: { tabId: 'tools', toolId: 'cover-editor', paths, source: 'folder', mode: 'append' },
+            }));
+        }
     } else if (action === 'send-readive') {
         const paths = resolveReadivePaths(menu, selectedEntryObjects);
         if (!paths.length) return;
@@ -4422,7 +4406,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       </div>
       {readiveTransferPaths && <ReadiveTransferDialog paths={readiveTransferPaths} t={t} onClose={() => setReadiveTransferPaths(null)} onOpenSharing={openReadiveSharing} />}
         {ratingEditorTarget && <RatingEditorDialog file={ratingEditorTarget} t={t} onSave={executeRatingEdit} onClose={() => setRatingEditorTarget(null)} />}
-        {coverEditorTarget && <CoverEditorDialog files={coverEditorTarget} t={t} onExecute={executeCoverEdit} onClose={() => setCoverEditorTarget(null)} />}
         {collectionDialog && (
             <ReadingCollectionsDialog paths={collectionDialog.paths || null} collections={readingLists.collections} t={t}
                 initialCollectionId={collectionDialog.initialCollectionId} initialAction={collectionDialog.initialAction}
@@ -4510,7 +4493,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 <ContextMenuItem onClick={() => handleContextAction('reset-progress')} disabled={readingActionBusy} label={t('folder.reading.reset_progress')} />
                 <div className="folder-context-menu-separator" role="separator" />
                 {supportsRatingEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-rating')} icon="star" label={t('rating_editor_title')} />}
-                {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_title')} />}
+                {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_open_tool')} />}
                 {(supportsRatingEditor(contextMenu.file) || supportsCoverEditor(contextMenu.file)) && (
                     <div className="folder-context-menu-separator" role="separator" />
                 )}
@@ -4645,8 +4628,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           libraries={libraryMoveRequest.libraries || libraries}
           initialValue={resolveLastSelectedLibrary(
             libraryMoveRequest.libraries || libraries,
-            config?.last_selected_library,
+            lastLibraryMoveTargetRef.current || config?.last_library_move_target || config?.last_selected_library,
           )}
+          onSelectionChange={rememberLibraryMoveTarget}
           onConfirm={moveSelectedToLibrary}
           onClose={() => setLibraryMoveRequest(null)}
           t={t}
@@ -5069,7 +5053,7 @@ function MovePreviewDialog({ plans, onConfirm, onClose, t }) {
   );
 }
 
-function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onConfirm, onClose, t }) {
+function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onSelectionChange, onConfirm, onClose, t }) {
   const [selected, setSelected] = useState(initialValue || libraries[0] || '');
   const [createCurrentFolder, setCreateCurrentFolder] = useState(true);
   const plans = useMemo(
@@ -5110,7 +5094,11 @@ function LibraryMoveDialog({ sources, folderMode, libraries, initialValue, onCon
             <select
               id="library-move-select"
               value={selected}
-              onChange={event => setSelected(event.target.value)}
+                onChange={event => {
+                    const targetLibrary = event.target.value;
+                    setSelected(targetLibrary);
+                    onSelectionChange?.(targetLibrary);
+                }}
             >
               {libraries.map(library => <option key={library} value={library}>{library}</option>)}
             </select>

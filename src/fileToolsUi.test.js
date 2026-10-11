@@ -21,7 +21,7 @@ const ipcSource = fs.readFileSync(new URL('../electron/ipcHandlers.js', import.m
 test('파일 도구 탭은 지연 로딩되고 기존 탭 이동 콜백을 사용한다', () => {
     assert.match(appSource, /lazyTab\(\(\) => import\('\.\/tabs\/ToolsTab'\)\)/);
     assert.match(appSource, /loadedTabs\.has\('tools'\)/);
-    assert.match(appSource, /<MemoToolsTab t=\{t\} onOpenTab=\{handleTabChange\} showToast=\{showToast\} \/>/);
+    assert.match(appSource, /<MemoToolsTab config=\{config\} saveConfig=\{setConfig\} t=\{t\} onOpenTab=\{handleTabChange\} showToast=\{showToast\} \/>/);
 });
 
 test('파일 도구 화면은 레지스트리 기반 카테고리와 상태를 표시한다', () => {
@@ -42,6 +42,24 @@ test('텍본 정리기는 별도 청크와 워커로 지연 로딩된다', () =>
     assert.match(textCleanerSource, /new Worker\(new URL\('\.\.\/workers\/textCleanerWorker\.js'/);
     assert.match(textCleanerSource, /loadTextCleanerFile/);
     assert.match(textCleanerSource, /saveTextCleanerFile/);
+});
+
+test('폴더의 표지 편집은 설정과 여러 파일을 파일 도구의 지연 로딩 화면으로 전달한다', () => {
+    assert.match(toolsTabSource, /lazy\(\(\) => import\('\.\.\/features\/fileTools\/coverEditor\/CoverEditorTool'\)\)/);
+    assert.match(folderSource, /resolveCoverEditorTargets\(menu\.file, selectedEntryObjects\)\.map\(file => file\.full_path \|\| file\.path\)/);
+    assert.match(folderSource, /detail: \{ tabId: 'tools', toolId: 'cover-editor', paths, source: 'folder', mode: 'append' \}/);
+    assert.match(folderSource, /cover_editor_open_tool/);
+    assert.doesNotMatch(folderSource, /CoverEditorDialog|setCoverEditorTarget|executeCoverEdit|saveCoverEditorPreferences/);
+    assert.match(appSource, /mode: event\.detail\?\.mode/);
+    assert.match(appSource, /source: event\.detail\?\.source/);
+});
+
+test('표지 저장 후 폴더와 검색·읽기 목록은 탭 복귀 시 갱신한다', () => {
+    const handler = folderSource.slice(folderSource.indexOf('const handleMetadataSaved = event'), folderSource.indexOf('const handleSmartRefresh'));
+    assert.match(handler, /!hasCurrentFolderFile && !isLibrarySearchActive && !isFolderTagSearchActive && !isReadingList/);
+    assert.match(handler, /setTreeRefreshToken\(value => value \+ 1\)/);
+    assert.match(handler, /pendingMetadataRefreshRef\.current = true;[\s\S]*?if \(!isFolderTabVisible\(\)\) return/);
+    assert.match(handler, /event\.detail\?\.activeTab !== 'folder'[\s\S]*?handleRefresh\(\)/);
 });
 
 test('텍본 정리기는 원본과 편집 가능한 결과 및 변경 전후를 제공한다', () => {

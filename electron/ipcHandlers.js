@@ -19,6 +19,8 @@ import { registerReadiveIpc } from './readive/ipc.js';
 import { registerEpubEditorIpc } from './epubEditor/ipc.js';
 import { inspectCoverEditor, loadCoverEditorImage, applyCoverEditor } from './coverEditor.js';
 import { resolveCoverEditorSevenZPath } from './coverEditorBinary.js';
+import { registerCoverEditorSourceIpc } from './coverEditorSourceIpc.js';
+import { decodeCoverEditorImage } from './coverEditorImageDecoder.js';
 import { createPermanentDeleteDialogOptions, deleteFileEntries } from './fileDeletion.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
@@ -3624,12 +3626,20 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             sevenZExe,
             dbPath: libraryDbPath(),
             thumbnailDir: thumbnailDir(),
-            normalizeImage: (buffer, mimeType) => {
-                const image = nativeImage.createFromBuffer(buffer);
+            createThumbnail: async buffer => {
+                const image = await decodeCoverEditorImage(buffer, { nativeImage });
                 const { width, height } = image.getSize();
-                if (image.isEmpty() || !width || !height || width * height > 64000000) {
-                    throw new Error('Choose a valid image with no more than 64 million pixels.');
-                }
+                const scale = Math.min(1, 128 / Math.max(width, height));
+                const thumbnail = image.resize({
+                    width: Math.max(1, Math.round(width * scale)),
+                    height: Math.max(1, Math.round(height * scale)),
+                    quality: 'good',
+                });
+                return { thumbnailDataUrl: thumbnail.toDataURL(), width, height };
+            },
+            normalizeImage: async (buffer, mimeType) => {
+                const image = await decodeCoverEditorImage(buffer, { nativeImage });
+                const { width, height } = image.getSize();
                 return {
                     buffer: ['image/jpeg', 'image/png'].includes(mimeType) ? buffer : image.toPNG(),
                     mimeType: ['image/jpeg', 'image/png'].includes(mimeType) ? mimeType : 'image/png',
@@ -3643,6 +3653,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             }),
         };
     };
+
+    const coverEditorSources = registerCoverEditorSourceIpc(ipcMain, {
+        getOptions: coverEditorOptions,
+        getMetadataCoverPath: imageUrl => fetchImageCacheFileFromUrl(imageUrl, apiCoverCacheDir()),
+        getParentWindow: sender => BrowserWindow.fromWebContents(sender),
+        getLanguage: () => configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko',
+    });
 
     ipcMain.handle('coverEditor:inspect', async (_event, filePath) => {
         try {
@@ -3678,17 +3695,19 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         }
     });
 
-    ipcMain.handle('coverEditor:apply', async (_event, request) => {
+    ipcMain.handle('coverEditor:apply', async (event, request) => {
         try {
-            const options = await coverEditorOptions();
-            const save = () => applyCoverEditor(request, options);
-            const result = await (hooks.withCoverEdit ? hooks.withCoverEdit(request.filePath, save) : save());
-            try {
-                await hooks.onMetadataSaveSuccess?.([result.filePath]);
-            } catch (error) {
-                console.warn('[CoverEditor] Viewer refresh failed:', error.message);
-            }
-            return result;
+            return await coverEditorSources.withImage(event.sender, request?.imagePath, async () => {
+                const options = await coverEditorOptions();
+                const save = () => applyCoverEditor(request, options);
+                const result = await (hooks.withCoverEdit ? hooks.withCoverEdit(request.filePath, save) : save());
+                try {
+                    await hooks.onMetadataSaveSuccess?.([result.filePath]);
+                } catch (error) {
+                    console.warn('[CoverEditor] Viewer refresh failed:', error.message);
+                }
+                return result;
+            });
         } catch (error) {
             return { success: false, error: error.message, code: error.code || '' };
         }

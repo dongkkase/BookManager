@@ -1,3 +1,5 @@
+import { normalizeDroppedPaths } from './appShell.js';
+
 export const FILE_TOOL_CATEGORIES = Object.freeze([
     { id: 'text', labelKey: 'tools.category.text' },
     { id: 'conversion', labelKey: 'tools.category.conversion' },
@@ -83,6 +85,15 @@ export const FILE_TOOLS = Object.freeze([
         target: { type: 'tab', tabId: 'renamer' },
     },
     {
+        id: 'cover-editor',
+        category: 'archive-image',
+        labelKey: 'cover_editor_title',
+        icon: 'image',
+        tone: 'orange',
+        status: 'available',
+        target: { type: 'tool', toolId: 'cover-editor' },
+    },
+    {
         id: 'image-resizer',
         category: 'archive-image',
         labelKey: 'tools.item.image_resizer',
@@ -135,4 +146,20 @@ export function isTextCleanerPath(filePath = '') {
 
 export function firstTextCleanerPath(paths = []) {
     return paths.find(isTextCleanerPath) || '';
+}
+
+export function resolveFileToolPathAction(detail, activeToolId) {
+    if (detail?.activeTab !== 'tools' || !['load-paths', 'drop-paths'].includes(detail.action)) return null;
+    const toolId = detail.toolId || activeToolId;
+    const paths = normalizeDroppedPaths(Array.isArray(detail.paths) ? detail.paths : []);
+    const source = detail.action === 'drop-paths' || detail.source === 'drop' ? 'drop' : 'navigation';
+    if (toolId === 'cover-editor' && paths.length > 0) {
+        return { toolId, source, request: { paths, mode: detail.mode === 'replace' ? 'replace' : 'append',
+            ...(detail.source === 'folder' && detail.action === 'load-paths' ? { source: 'folder' } : {}) } };
+    }
+    if (toolId === 'text-cleaner') {
+        const path = firstTextCleanerPath(paths);
+        if (path) return { toolId, source, request: { path } };
+    }
+    return null;
 }

@@ -154,11 +154,24 @@ async function readEntry(filePath, entry, type, options, maxBytes) {
     return result.buffer;
 }
 
-export async function readComicCoverImage(filePath, entryName, options = {}) {
+export async function createComicCoverImageReader(filePath, options = {}) {
     const archive = await inspectArchive(filePath, options);
-    const entry = archive.pages.find(page => page.name === entryName);
-    if (!entry) throw new Error('The selected comic page is no longer available.');
-    return readEntry(filePath, entry, archive.type, options, MAX_IMAGE_BYTES);
+    return {
+        pages: archive.pages.map(entry => ({ name: entry.name, size: entry.size, crc: entry.crc })),
+        async readImage(entryName) {
+            const entry = archive.pages.find(page => page.name === entryName);
+            if (!entry) throw new Error('The selected comic page is no longer available.');
+            const requestedMaxBytes = Number(options.maxImageBytes);
+            const maxBytes = Number.isSafeInteger(requestedMaxBytes) && requestedMaxBytes > 0
+                ? Math.min(requestedMaxBytes, MAX_IMAGE_BYTES) : MAX_IMAGE_BYTES;
+            return readEntry(filePath, entry, archive.type, options, maxBytes);
+        },
+    };
+}
+
+export async function readComicCoverImage(filePath, entryName, options = {}) {
+    const reader = await createComicCoverImageReader(filePath, options);
+    return reader.readImage(entryName);
 }
 
 function xmlNodes(xml) {

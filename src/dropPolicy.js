@@ -54,11 +54,15 @@ const SUPPORTED_VIEWER_DROP_EXTENSION_SET = new Set(SUPPORTED_VIEWER_DROP_EXTENS
 
 export const REPLACE_DROP_RATIO = 0.3;
 
-export function resolveTaskDropMode(tabId, clientY, bounds) {
-    if (!['organizer', 'renamer', 'metadata'].includes(tabId)) return 'append';
+export function resolveFileDropMode(clientY, bounds) {
     if (!bounds || bounds.height <= 0 || !Number.isFinite(clientY)) return 'append';
     const offset = clientY - bounds.top;
     return offset >= 0 && offset < bounds.height * REPLACE_DROP_RATIO ? 'replace' : 'append';
+}
+
+export function resolveTaskDropMode(tabId, clientY, bounds) {
+    if (!['organizer', 'renamer', 'metadata'].includes(tabId)) return 'append';
+    return resolveFileDropMode(clientY, bounds);
 }
 
 function normalizedFileExtension(filePath) {

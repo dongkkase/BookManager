@@ -54,6 +54,27 @@ test('공통 파일 툴바는 파일 작업 탭에서만 활성화된다', () =>
     assert.equal(isFileToolbarEnabled('organizer', true), false);
 });
 
+test('공통 파일 툴바는 도구의 명시적 활성화 상태를 반영한다', () => {
+    assert.equal(isFileToolbarEnabled('tools', false, { fileActionsEnabled: true }), true);
+    assert.equal(isFileToolbarEnabled('tools', false, { fileActionsEnabled: false }), false);
+    assert.equal(isFileToolbarEnabled('tools', false, { fileActionsEnabled: 'true' }), false);
+    assert.equal(isFileToolbarEnabled('tools', false, {}), false);
+    assert.equal(isFileToolbarEnabled('organizer', false, { fileActionsEnabled: false }), true);
+});
+
+test('공통 파일 툴바는 전역 또는 도구 파일 작업 중 비활성화된다', () => {
+    assert.equal(isFileToolbarEnabled('tools', true, { fileActionsEnabled: true }), false);
+    assert.equal(isFileToolbarEnabled('tools', false, {
+        fileActionsEnabled: true,
+        fileActionsBusy: true,
+    }), false);
+    assert.equal(isFileToolbarEnabled('tools', false, {
+        fileActionsEnabled: true,
+        fileActionsBusy: false,
+    }), true);
+    assert.equal(isFileToolbarEnabled('renamer', false, { fileActionsBusy: true }), false);
+});
+
 test('앱 제목은 버전을 제외한 BookManager 이름만 사용한다', () => {
     assert.equal(APP_NAME, 'BookManager');
     assert.equal(formatAppTitle('3.0.0'), 'BookManager');

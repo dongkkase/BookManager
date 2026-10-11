@@ -27,8 +27,10 @@ const LEGACY_TAB_IDS = Object.freeze([
 
 const FILE_TOOLBAR_TABS = new Set(['organizer', 'renamer', 'metadata']);
 
-export function isFileToolbarEnabled(tabId, isWorking = false) {
-    return !isWorking && FILE_TOOLBAR_TABS.has(tabId);
+export function isFileToolbarEnabled(tabId, isWorking = false, toolbarState = {}) {
+    return !isWorking
+        && !toolbarState.fileActionsBusy
+        && (FILE_TOOLBAR_TABS.has(tabId) || toolbarState.fileActionsEnabled === true);
 }
 
 export function canAcceptGlobalDrop(tabId, isWorking = false) {

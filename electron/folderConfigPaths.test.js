@@ -18,6 +18,7 @@ test('기존 NFC 라이브러리와 탐색 경로를 실제 존재하는 NFD 경
         last_folder_path: nfc,
         last_selected_folder_path: nfc,
         last_selected_library: nfc,
+        last_library_move_target: nfc,
         folder_goto_history: [nfc, '/books'],
         index_last_mtimes: { [nfc]: 'fingerprint', '/books': 'other' },
         custom_setting: { keep: true },
@@ -37,7 +38,7 @@ test('기존 NFC 라이브러리와 탐색 경로를 실제 존재하는 NFD 경
     assert.deepEqual(restored.library_entries, [{ path: nfd, alias: '소설', group: '도서' }]);
     assert.deepEqual(restored.favorites, [nfd, { path: nfd, name: '즐겨찾기' }]);
     assert.deepEqual(restored.folder_favorites, [nfd]);
-    for (const key of ['folder_last_path', 'last_folder_path', 'last_selected_folder_path', 'last_selected_library']) {
+    for (const key of ['folder_last_path', 'last_folder_path', 'last_selected_folder_path', 'last_selected_library', 'last_library_move_target']) {
         assert.equal(restored[key], nfd);
         assert.equal(config[key], nfc);
     }

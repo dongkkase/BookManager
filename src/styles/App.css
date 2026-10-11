@@ -82,7 +82,7 @@ body.is-resizing-panel * {
   padding: 8px 12px;
   font-size: var(--font-sm);
   font-weight: 500;
-  border: none;
+    border: 1px solid transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -169,7 +169,7 @@ body.is-resizing-panel * {
 
 .top-btn-danger {
   background-color: #d32f2f;
-  border: none;
+    border: 1px solid transparent;
 }
 
 .top-btn-danger:hover:not(:disabled) {

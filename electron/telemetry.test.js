@@ -109,6 +109,16 @@ test('TTS analytics only accepts known engine/model pairs with a reader format',
     assert.doesNotMatch(JSON.stringify(events), /private/);
 });
 
+test('cover editor tool navigation uses only its fixed identifier', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_usage_stats: true });
+    assert.equal(telemetry.trackTelemetryEvent({ event: 'tool_opened', tool: 'cover-editor', source: 'navigation', paths: ['/private/book.cbz'] }), true);
+    await telemetry.flushTelemetry();
+    const event = requests.map(request => JSON.parse(request.body)).find(request => request.event === 'tool_opened');
+    assert.equal(event.properties.tool, 'cover-editor');
+    assert.equal(event.properties.source, 'navigation');
+    assert.doesNotMatch(JSON.stringify(event), /private|book\.cbz|paths/);
+});
+
 test('usage identity survives restart, contains only random state and rotates after revocation', async t => {
     const { telemetry, requests, storageDir } = setup(t, {}, { telemetry_usage_stats: true });
     telemetry.trackTelemetryEvent({ event: 'app_active' });

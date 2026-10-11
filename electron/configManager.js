@@ -304,6 +304,7 @@ export class ConfigManager {
       folder_goto_history: [],
       folder_search_history: [],
       last_selected_library: '',
+        last_library_move_target: '',
       index_last_mtimes: {},
       min_window_width: 1200,
       min_window_height: 750,

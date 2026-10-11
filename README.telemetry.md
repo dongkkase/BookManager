@@ -99,7 +99,7 @@ JavaScript 예외와 처리하지 않은 Promise 거부, 연결된 프로세스 
 | 식별자 | 계측 대상과 해석 |
 | --- | --- |
 | 메뉴 `folder`, `organizer`, `renamer`, `metadata`, `tools`, `sharing`, `releases`, `settings` | 각 메뉴로 이동하거나 설정을 열기 |
-| 도구 `text-cleaner`, `epub-editor` | 텍본 정리기·EPUB 제작 에디터 열기 |
+| 도구 `text-cleaner`, `epub-editor`, `cover-editor` | 텍본 정리기·EPUB 제작 에디터·표지 추가 및 교체 열기 |
 | 기능 `archive-organizer`, `archive-renamer` | 압축 구조 정리·내부 파일명 변경 실행 |
 | 기능 `metadata-save` | 메타데이터 저장 작업 |
 | 기능 `text-cleaner` | 텍본 정리기의 저장 작업. 분석·편집 횟수 전체를 나타내지 않음 |
@@ -139,10 +139,10 @@ TTS 엔진과 모델은 다음 허용 값만 전송합니다.
 | 인사이트 | 현재 집계 내용 |
 | --- | --- |
 | 활성 설치 | `app_active`의 기간 전체 `uniqExact(distinct_id)` |
-| 메뉴·도구 사용 | 메뉴 8개와 도구 2개별 열기 횟수, 고유 사용 설치 수, 활성 설치 대비 사용 비율 |
+| 메뉴·도구 사용 | 메뉴 8개와 도구 3개별 열기 횟수, 고유 사용 설치 수, 활성 설치 대비 사용 비율 |
 | 기능 사용과 작업 결과 | 계측된 기능 9개별 고유 사용 설치 수와 시작·완료·실패·취소 건수 |
 
-메뉴·도구 표는 위 계측 목록의 메뉴 8개와 도구 2개를 고정 목록으로 합친 뒤 이벤트 집계를 `LEFT JOIN`하여 사용량이 0인 항목도 표시합니다. 기능 표도 실제 계측된 기능 9개의 고정 목록을 사용합니다. 기능 사용 설치 수는 `feature_started`, `feature_completed`, `feature_failed`, `feature_cancelled` 중 하나라도 관측된 고유 `distinct_id` 수입니다. 시작 이벤트만을 기준으로 한 수와는 다를 수 있습니다.
+메뉴·도구 표는 위 계측 목록의 메뉴 8개와 도구 3개를 고정 목록으로 합친 뒤 이벤트 집계를 `LEFT JOIN`하여 사용량이 0인 항목도 표시합니다. 표지 추가 및 교체는 `tool_opened`의 `tool = cover-editor`로 페이지 열기를 집계하며 표지 저장 실행 횟수를 의미하지 않습니다. 기능 표도 실제 계측된 기능 9개의 고정 목록을 사용합니다. 기능 사용 설치 수는 `feature_started`, `feature_completed`, `feature_failed`, `feature_cancelled` 중 하나라도 관측된 고유 `distinct_id` 수입니다. 시작 이벤트만을 기준으로 한 수와는 다를 수 있습니다.
 
 기간과 테스트 버전 제외 조건이 SQL에 직접 들어 있으므로 대시보드 상단의 날짜·속성 필터를 바꾸어도 현재 세 인사이트에 적용되지 않습니다. 다른 기간이나 특정 `app_version`·`os`를 분석하려면 해당 SQL 조건을 수정하거나 별도 인사이트를 만듭니다.
 

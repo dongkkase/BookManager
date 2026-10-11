@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const EVENTS = new Set(['app_active', 'menu_opened', 'tool_opened', 'feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled', 'viewer_tts_used']);
 const MENUS = new Set(['folder', 'organizer', 'renamer', 'metadata', 'tools', 'sharing', 'releases', 'settings']);
-const TOOLS = new Set(['text-cleaner', 'epub-editor']);
+const TOOLS = new Set(['text-cleaner', 'epub-editor', 'cover-editor']);
 const FEATURES = new Set(['archive-organizer', 'archive-renamer', 'metadata-save', 'text-cleaner', 'epub-export', 'epub-save', 'epub-import', 'viewer-open', 'viewer-tts', 'sharing-start']);
 const FORMATS = new Set(['comic', 'epub', 'pdf', 'text', 'audio']);
 const TTS_MODELS = new Map([

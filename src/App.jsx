@@ -4,6 +4,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AppLockOverlay } from './components/AppLockOverlay';
 import { AudiobookMiniPlayer } from './components/AudiobookMiniPlayer';
 import { FaIcon } from './components/FaIcon';
+import { FileDropHoverOverlay } from './components/FileDropHoverOverlay';
 import { Toast } from './components/Toast';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
@@ -40,7 +41,7 @@ import {
   shouldUseLibraryScanSlide,
 } from './appLockState';
 import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
-import { classifyDroppedEntries, REPLACE_DROP_RATIO, resolveMetadataDropPaths, resolveTaskDropMode } from './dropPolicy';
+import { classifyDroppedEntries, resolveMetadataDropPaths, resolveTaskDropMode } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
 import { fontVarsForConfig } from './fontPolicy';
 import { installBundledFontFaces } from './bundledFonts';
@@ -67,36 +68,6 @@ const MemoReleaseTab = lazyTab(() => import('./tabs/ReleaseTab'));
 
 function TabLoading({ t }) {
   return <div className="app-tab-loading">{t('msg_loading_list')}</div>;
-}
-
-function FileDropHoverOverlay({ opensViewer, dropMode, t }) {
-    if (!opensViewer) {
-        return (
-            <div className="app-file-drop-hover is-split" style={{ '--replace-drop-ratio': `${REPLACE_DROP_RATIO * 100}%` }}>
-                {['replace', 'append'].map(mode => (
-                    <div key={mode} className={`app-file-drop-zone is-${mode} ${dropMode === mode ? 'is-active' : ''}`}>
-                        <div className="app-file-drop-hover-card">
-                            <FaIcon name={mode === 'replace' ? 'folderMinus' : 'fileCirclePlus'} size={28} />
-                            <span>{t(`drag_drop_${mode}`)}</span>
-                        </div>
-                    </div>
-                ))}
-                <span className="app-file-drop-announcement" role="status" aria-live="polite">{t(`drag_drop_${dropMode}`)}</span>
-            </div>
-        );
-    }
-  return (
-    <div
-      className={`app-file-drop-hover ${opensViewer ? 'is-viewer-open' : ''}`.trim()}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="app-file-drop-hover-card">
-        <FaIcon name={opensViewer ? 'bookOpen' : 'fileCirclePlus'} size={32} />
-        <span>{t(opensViewer ? 'folder.drop.open_in_viewer' : 'drag_drop')}</span>
-      </div>
-    </div>
-  );
 }
 
 function isSameStatusState(left = {}, right = {}) {
@@ -415,10 +386,12 @@ function App() {
       scheduleLastTabSave(tabId, tabIndex, '자동 전달 탭 저장');
       if (paths.length > 0) {
         dispatchTabAction(tabId, {
-          action: 'load-paths',
-          activeTab: tabId,
-          paths,
-          toolId: event.detail?.toolId,
+            action: 'load-paths',
+            activeTab: tabId,
+            paths,
+            toolId: event.detail?.toolId,
+            mode: event.detail?.mode,
+            source: event.detail?.source,
         });
       }
     };
@@ -642,13 +615,13 @@ function App() {
     label: t(tab.labelKey),
   }));
   const appStyle = useMemo(() => fontVarsForConfig(config || {}), [config?.font_family, config?.font_scale]);
-  const fileToolbarEnabled = isFileToolbarEnabled(activeTab, isAppLocked);
   const activeToolbarState = toolbarStates[activeTab] || {
     totalCount: 0,
     checkedCount: 0,
     hasItems: false,
     allChecked: true,
   };
+  const fileToolbarEnabled = isFileToolbarEnabled(activeTab, isAppLocked, activeToolbarState);
   const activeStatus = statusStates[activeTab] || {
     message: t('status_wait'),
     progress: 0,
@@ -677,7 +650,8 @@ function App() {
     .join('\n');
   const showRunButton = activeTab === 'organizer'
     || activeTab === 'renamer'
-    || (activeTab === 'folder' && ['executing', 'cancelling'].includes(activeStatus.phase));
+    || ((activeTab === 'folder' || activeStatus.canCancel === true)
+        && ['executing', 'cancelling'].includes(activeStatus.phase));
   const isExecuting = activeStatus.phase === 'executing';
   const isCancelling = activeStatus.phase === 'cancelling';
   const showProgress = lockStatus.phase !== 'idle';
@@ -853,10 +827,10 @@ function App() {
             </React.Suspense>
           )}
         </div>
-        <div className="app-tab-panel" hidden={activeTab !== 'tools'}>
+        <div className={`app-tab-panel ${activeTab === 'tools' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'tools'}>
           {loadedTabs.has('tools') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
-              <MemoToolsTab t={t} onOpenTab={handleTabChange} showToast={showToast} />
+              <MemoToolsTab config={config} saveConfig={setConfig} t={t} onOpenTab={handleTabChange} showToast={showToast} />
             </React.Suspense>
           )}
         </div>

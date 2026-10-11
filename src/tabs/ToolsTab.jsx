@@ -1,12 +1,13 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import { isFilePathDrag } from '../appShell';
-import { FILE_TOOL_CATEGORIES, fileToolsByCategory, firstTextCleanerPath } from '../fileTools';
+import { FILE_TOOL_CATEGORIES, fileToolsByCategory, resolveFileToolPathAction } from '../fileTools';
 import { trackTelemetry } from '../telemetry.js';
 import '../styles/ToolsTab.css';
 
 const TextCleanerTool = lazy(() => import('./TextCleanerTool'));
 const EpubEditorTool = lazy(() => import('../features/fileTools/epubEditor/EpubEditorTool'));
+const CoverEditorTool = lazy(() => import('../features/fileTools/coverEditor/CoverEditorTool'));
 
 function ToolItem({ tool, onOpenTab, onOpenTool, t }) {
     const isAvailable = tool.status === 'available';
@@ -57,7 +58,7 @@ function ToolItem({ tool, onOpenTab, onOpenTool, t }) {
     );
 }
 
-export default function ToolsTab({ t, onOpenTab, showToast }) {
+export default function ToolsTab({ config, saveConfig, t, onOpenTab, showToast }) {
     const [activeToolId, setActiveToolId] = useState(null);
     const [openRequest, setOpenRequest] = useState(null);
     const beforeToolChange = useRef(null);
@@ -66,15 +67,15 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
         return () => { if (beforeToolChange.current === handler) beforeToolChange.current = null; };
     }, []);
 
-    const openTextCleanerPath = useCallback(async (filePath, source = 'navigation') => {
-        if (!filePath) return;
-        if (beforeToolChange.current && !await beforeToolChange.current()) return;
-        setActiveToolId('text-cleaner');
-        if (activeToolId !== 'text-cleaner') trackTelemetry('tool_opened', { tool: 'text-cleaner', source });
-        setOpenRequest(current => ({ path: filePath, token: (current?.token || 0) + 1 }));
+    const openToolPaths = useCallback(async ({ toolId, request, source }) => {
+        if (toolId !== activeToolId && beforeToolChange.current && !await beforeToolChange.current()) return;
+        setActiveToolId(toolId);
+        if (activeToolId !== toolId) trackTelemetry('tool_opened', { tool: toolId, source });
+        setOpenRequest(current => ({ ...request, token: (current?.token || 0) + 1 }));
     }, [activeToolId]);
 
-    const handleOpenTool = useCallback(toolId => {
+    const handleOpenTool = useCallback(async toolId => {
+        if (toolId !== activeToolId && beforeToolChange.current && !await beforeToolChange.current()) return;
         setOpenRequest(null);
         setActiveToolId(toolId);
         if (toolId !== activeToolId) trackTelemetry('tool_opened', { tool: toolId, source: 'catalog' });
@@ -91,15 +92,13 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
 
     useEffect(() => {
         const handleAction = event => {
-            const detail = event.detail;
-            if (detail?.activeTab !== 'tools' || !['load-paths', 'drop-paths'].includes(detail.action)) return;
-            if ((detail.toolId || activeToolId) !== 'text-cleaner') return;
-            openTextCleanerPath(firstTextCleanerPath(detail.paths), detail.action === 'drop-paths' ? 'drop' : 'navigation');
+            const action = resolveFileToolPathAction(event.detail, activeToolId);
+            if (action) openToolPaths(action);
         };
         window.addEventListener('bookmanager:action', handleAction);
         window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'tools' } }));
         return () => window.removeEventListener('bookmanager:action', handleAction);
-    }, [activeToolId, openTextCleanerPath]);
+    }, [activeToolId, openToolPaths]);
 
     const handleDragOver = useCallback(event => {
         if (!isFilePathDrag(event.dataTransfer)) return;
@@ -112,6 +111,22 @@ export default function ToolsTab({ t, onOpenTab, showToast }) {
         return (
             <Suspense fallback={<div className="file-tools-loading">{t('tools.loading')}</div>}>
                 <EpubEditorTool t={t} onBack={handleBack} showToast={showToast} registerBeforeLeave={registerBeforeLeave} />
+            </Suspense>
+        );
+    }
+
+    if (activeToolId === 'cover-editor') {
+        return (
+            <Suspense fallback={<div className="file-tools-loading">{t('tools.loading')}</div>}>
+                <CoverEditorTool
+                    config={config}
+                    saveConfig={saveConfig}
+                    t={t}
+                    onBack={handleBack}
+                    openRequest={openRequest}
+                    showToast={showToast}
+                    registerBeforeLeave={registerBeforeLeave}
+                />
             </Suspense>
         );
     }

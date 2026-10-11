@@ -166,6 +166,25 @@ test('최근 검색어는 다른 설정 저장 후에도 유지되고 다시 실
     }
 });
 
+test('커버 편집의 마지막 적용 방식과 해제한 옵션 및 검색 API는 다른 설정 저장 및 재시작 후에도 유지된다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-cover-editor-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ConfigManager(root, root);
+    assert.equal(manager.loadConfig().folder_cover_editor_options, undefined);
+    assert.equal(manager.saveConfig({
+        folder_cover_editor_options: { mode: 'replace', backup: true, renumber: true },
+    }), true);
+    const lastOptions = { mode: 'add', backup: false, renumber: false, apiSource: '문피아' };
+    assert.equal(manager.saveConfig({ folder_cover_editor_options: lastOptions }), true);
+    assert.equal(manager.saveConfig({ language: 'en' }), true);
+
+    const saved = JSON.parse(fs.readFileSync(manager.configPath, 'utf8'));
+    assert.deepEqual(saved.folder_cover_editor_options, lastOptions);
+    const reloaded = new ConfigManager(root, root).loadConfig();
+    assert.deepEqual(reloaded.folder_cover_editor_options, lastOptions);
+    assert.equal(reloaded.language, 'en');
+});
+
 test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-yes24-'));
     try {

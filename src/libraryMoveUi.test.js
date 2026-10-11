@@ -60,6 +60,7 @@ function fixture(t, choices, withProgress = false) {
         applyConflictChoice, expandLibraryMovePlans, libraryMoveFolderSources, normalizeLibraryKey, createLibraryMoveProgress,
         basename: path.basename, parentPath: path.dirname,
         libraries: [library], config: {}, t: key => key,
+        lastLibraryMoveTargetRef: { current: null },
         emitLibraryMoveProgress: (...args) => calls.progress.push(args), clearLibraryMoveProgress: () => {},
         saveConfig: async () => {}, setLibraryMoveRequest: request => calls.requests.push(request),
         clearSelection: () => {}, handleRefresh: async () => {},
