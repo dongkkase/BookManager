@@ -115,6 +115,93 @@ test('organizer distinguishes an archive with no images after extraction succeed
     assert.equal(error.telemetryTool, undefined);
 });
 
+test('nested extraction reports the failed entry locally and only its reason to Sentry', requiresExecutableScript, async t => {
+    const { root, item, options } = setup(t, [
+        "const fs = require('node:fs');",
+        "const path = require('node:path');",
+        'const args = process.argv.slice(2);',
+        "const directory = args.find(arg => arg.startsWith('-o')).slice(2);",
+        "if (path.basename(args[1]) === 'Secret Book.zip') {",
+        "    fs.mkdirSync(path.join(directory, 'private chapters'), { recursive: true });",
+        "    fs.writeFileSync(path.join(directory, 'private chapters', 'Secret Volume.zip'), 'invalid archive');",
+        '} else {',
+        "    process.stderr.write('ERROR: Wrong password : private page.jpg\\n', () => { process.exitCode = 2; });",
+        '}',
+    ].join('\n'));
+    const requests = [];
+    const telemetry = createTelemetry({
+        env: {},
+        fetch: async (_url, init) => { requests.push(init); return { ok: true }; },
+    });
+    telemetry.configureTelemetry({
+        config: { telemetry_error_reports: true },
+        storageDir: root,
+        appVersion: '3.13.0',
+        isPackaged: true,
+        serviceConfig: { sentryDsn: 'https://publickey@errors.example.test/42' },
+    });
+    t.after(() => telemetry.updateTelemetryConsent({}));
+
+    const result = await observeOperation('archive-organizer', () => executeOrganizer([item], {
+        ...options,
+        deleteOriginal: true,
+        lang: 'ko',
+    }), {
+        report: telemetry.reportTelemetryError,
+        isSessionCurrent: () => true,
+        track: () => false,
+    });
+    const [error] = getOperationErrors(result);
+    assert.equal(error.code, 'PROCESS_FAILED');
+    assert.equal(error.telemetryStage, 'extract-nested');
+    assert.equal(error.telemetryReason, 'password-required');
+    assert.equal(error.exitCode, 2);
+    assert.match(result.stats.error[0], /Secret Volume\.zip/);
+    assert.match(result.stats.error[0], /원본 파일은 유지됩니다/);
+    assert.match(result.stats.error[0], /Wrong password/);
+    assert.equal(fs.readFileSync(item.filepath, 'utf8'), 'private source');
+    assert.deepEqual(result.createdFiles, []);
+    assert.deepEqual(result.stats.success, []);
+
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 1);
+    const event = JSON.parse(requests[0].body.split('\n')[2]);
+    assert.equal(event.tags.error_reason, 'password-required');
+    assert.equal(event.tags.error_stage, 'extract-nested');
+    assert.equal(event.tags.exit_code, 2);
+    assert.doesNotMatch(requests[0].body, /Secret Book|Secret Volume|private page|private chapters|Wrong password/);
+    assert.equal(requests[0].body.includes(root), false);
+});
+
+test('organizer bounds quiet tool output while retaining the final failure diagnostic', requiresExecutableScript, async t => {
+    const { item, options } = setup(t, [
+        "process.stdout.write('private progress '.repeat(20000));",
+        "process.stderr.write('private output '.repeat(20000));",
+        "process.stderr.write('\\nERROR: Unsupported Method : private page.jpg\\n', () => { process.exitCode = 2; });",
+    ].join('\n'));
+    const result = await executeOrganizer([item], options);
+    const [error] = getOperationErrors(result);
+    assert.equal(error.telemetryReason, 'unsupported-method');
+    assert.ok(error.message.length <= 16 * 1024);
+    assert.match(error.message, /Unsupported Method/);
+    assert.equal(fs.readFileSync(item.filepath, 'utf8'), 'private source');
+});
+
+test('organizer decodes split UTF-8 output and preserves unknown failure diagnostics', requiresExecutableScript, async t => {
+    const { item, options } = setup(t, [
+        "const bytes = Buffer.from('알 수 없는 오류: 내부 파일.zip');",
+        'process.stderr.write(bytes.subarray(0, 1));',
+        'setTimeout(() => {',
+        '    process.stderr.write(bytes.subarray(1), () => { process.exitCode = 2; });',
+        '}, 10);',
+    ].join('\n'));
+    const result = await executeOrganizer([item], options);
+    const [error] = getOperationErrors(result);
+    assert.equal(error.message, '알 수 없는 오류: 내부 파일.zip');
+    assert.equal(error.telemetryReason, undefined);
+    assert.equal(error.code, 'PROCESS_FAILED');
+});
+
 test('organizer preserves original error identity, code and stack when output writing and cleanup both fail', requiresExecutableScript, async t => {
     const { item, options } = setup(t, SUCCESS_TOOL);
     const original = Object.assign(new Error('private output failure'), { code: 'EIO' });

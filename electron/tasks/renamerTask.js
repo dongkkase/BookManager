@@ -38,9 +38,9 @@ async function retryBusyFsOperation(operation, options = {}) {
         try {
             return await operation();
         } catch (error) {
-            const canRetry = BUSY_FS_ERROR_CODES.has(error?.code)
-                && attempt < BUSY_FS_RETRY_DELAYS_MS.length
-                && !options.shouldCancel?.();
+            const isBusy = BUSY_FS_ERROR_CODES.has(error?.code);
+            if (isBusy && options.shouldCancel?.()) throw taskCancelledError();
+            const canRetry = isBusy && attempt < BUSY_FS_RETRY_DELAYS_MS.length;
             if (!canRetry) throw error;
             await delay(BUSY_FS_RETRY_DELAYS_MS[attempt]);
         }
@@ -49,7 +49,10 @@ async function retryBusyFsOperation(operation, options = {}) {
 }
 
 async function renameWithBusyRetry(src, dest, options = {}) {
-    return retryBusyFsOperation(() => fsp.rename(src, dest), options);
+    return retryBusyFsOperation(() => {
+        if (options.shouldCancel?.()) throw taskCancelledError();
+        return fsp.rename(src, dest);
+    }, options);
 }
 
 async function rmWithBusyRetry(targetPath, options = {}) {
@@ -880,6 +883,34 @@ async function uniquePath(basePath) {
   }
 }
 
+async function renamerOutputPath(sourcePath, targetExt, options) {
+    const sourceExt = path.extname(sourcePath);
+    if (options.deleteOriginal !== false && sourceExt.toLowerCase() === targetExt) return sourcePath;
+    const outputName = `${path.basename(sourcePath, sourceExt)}${targetExt}`;
+    return uniquePath(path.join(path.dirname(sourcePath), outputName));
+}
+
+async function writeRenamerOutput(tempArchive, finalPath, sourcePath, options) {
+    // Replace only after preparation finishes; a failed rename leaves the original in place.
+    await renameWithBusyRetry(tempArchive, finalPath, options);
+    if (options.deleteOriginal !== false && sourcePath !== finalPath) {
+        try {
+            // Once published, finish source cleanup even if cancellation was requested.
+            await rmWithBusyRetry(sourcePath);
+        } catch (error) {
+            return withErrorStage(error, 'remove-source');
+        }
+    }
+    return null;
+}
+
+function renamerErrorMessage(error, options) {
+    if (error?.telemetryStage === 'write-output' && BUSY_FS_ERROR_CODES.has(error?.code)) {
+        return taskText(options.lang, 'task_renamer_output_busy');
+    }
+    return error.message;
+}
+
 function tempArchivePathNearSource(sourcePath, prefix, finalPath) {
   const ext = path.extname(finalPath) || path.extname(sourcePath) || '.zip';
   return path.join(
@@ -1122,11 +1153,7 @@ async function optimizeExtractedImages(rootDir, item, options) {
 async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, options = {}) {
   const sevenZExe = options.sevenZExe;
   const filename = path.basename(sourcePath);
-  const sourceExt = path.extname(sourcePath).toLowerCase();
-  const outputName = `${path.basename(sourcePath, sourceExt)}${targetExt}`;
-  const finalPath = options.deleteOriginal === false
-    ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
-    : path.join(path.dirname(sourcePath), outputName);
+    const finalPath = await renamerOutputPath(sourcePath, targetExt, options);
   let tempArchive = tempArchivePathNearSource(sourcePath, 'RenameOnly', finalPath);
   let stage = 'direct-copy';
 
@@ -1153,26 +1180,10 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
     }
 
     stage = 'write-output';
-    if (options.deleteOriginal === false) {
-      await renameWithBusyRetry(tempArchive, finalPath, options);
-      tempArchive = '';
-    } else {
-      const sourceHoldingPath = `${sourcePath}.bookmanager.tmp`;
-      await rmWithBusyRetry(sourceHoldingPath, options).catch(() => {});
-      await renameWithBusyRetry(sourcePath, sourceHoldingPath, options);
-      try {
-        if (fs.existsSync(finalPath)) await rmWithBusyRetry(finalPath, options);
-        await renameWithBusyRetry(tempArchive, finalPath, options);
-        tempArchive = '';
-        await rmWithBusyRetry(sourceHoldingPath, options);
-      } catch (error) {
-        await rmWithBusyRetry(finalPath, options).catch(() => {});
-        if (fs.existsSync(sourceHoldingPath)) await renameWithBusyRetry(sourceHoldingPath, sourcePath, options);
-        throw error;
-      }
-    }
+    const cleanupError = await writeRenamerOutput(tempArchive, finalPath, sourcePath, options);
+    tempArchive = '';
 
-    return { success: true, message: filename, outputPath: finalPath };
+    return { success: true, message: filename, outputPath: finalPath, cleanupError };
   } catch (error) {
     throw withErrorStage(error, stage);
   } finally {
@@ -1322,10 +1333,7 @@ async function processRenamerItem(item, options) {
       || moves.some(move => normalizeInnerPath(path.relative(tempBase, move.targetAbs)) !== move.originalPath);
 
     stage = 'prepare';
-    const outputName = `${path.basename(sourcePath, sourceExt)}${targetExt}`;
-    const finalPath = options.deleteOriginal === false
-      ? await uniquePath(path.join(path.dirname(sourcePath), outputName))
-      : path.join(path.dirname(sourcePath), outputName);
+    const finalPath = await renamerOutputPath(sourcePath, targetExt, options);
     tempArchive = tempArchivePathNearSource(sourcePath, 'Renamed', finalPath);
 
     stage = 'optimize-images';
@@ -1363,25 +1371,11 @@ async function processRenamerItem(item, options) {
     }
 
     stage = 'write-output';
-    if (options.deleteOriginal === false) {
-      await renameWithBusyRetry(tempArchive, finalPath, options);
-    } else {
-      const sourceHoldingPath = `${sourcePath}.bookmanager.tmp`;
-      await rmWithBusyRetry(sourceHoldingPath, options).catch(() => {});
-      await renameWithBusyRetry(sourcePath, sourceHoldingPath, options);
-      try {
-        if (fs.existsSync(finalPath)) await rmWithBusyRetry(finalPath, options);
-        await renameWithBusyRetry(tempArchive, finalPath, options);
-        tempArchive = '';
-        await rmWithBusyRetry(sourceHoldingPath, options);
-      } catch (error) {
-        await rmWithBusyRetry(finalPath, options).catch(() => {});
-        if (fs.existsSync(sourceHoldingPath)) await renameWithBusyRetry(sourceHoldingPath, sourcePath, options);
-        throw error;
-      }
-    }
+    const cleanupError = await writeRenamerOutput(tempArchive, finalPath, sourcePath, options);
+    tempArchive = '';
+    operationError = cleanupError;
 
-    return { success: true, message: filename, outputPath: finalPath };
+    return { success: true, message: filename, outputPath: finalPath, cleanupError };
   } catch (error) {
     operationError = withErrorStage(error, stage);
     throw operationError;
@@ -1426,7 +1420,15 @@ export async function executeRenamer(items, options = {}, onProgress) {
         pathMap[item.filepath] = result.outputPath || item.filepath;
         continue;
       }
-      stats.success.push(result.message);
+        if (result.cleanupError) {
+            errors.push(result.cleanupError);
+            stats.error.push(`${result.message} - ${taskText(options.lang, 'task_renamer_source_retained', {
+                path: result.outputPath,
+                reason: result.cleanupError.message,
+            })}`);
+        } else {
+            stats.success.push(result.message);
+        }
       outputFiles.push(result.outputPath);
       pathMap[item.filepath] = result.outputPath;
     } catch (error) {
@@ -1436,7 +1438,7 @@ export async function executeRenamer(items, options = {}, onProgress) {
         break;
       }
       errors.push(withErrorStage(error, 'prepare'));
-      stats.error.push(`${item.name || item.filepath} - ${error.message}`);
+        stats.error.push(`${item.name || item.filepath} - ${renamerErrorMessage(error, options)}`);
     }
     if (options.shouldCancel?.()) {
       cancelled = true;

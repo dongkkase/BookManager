@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, isGarbageFolderName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
 import { attachOperationErrors } from '../operationDiagnostics.js';
+import { classifyArchiveFailure } from '../archiveFailureReason.js';
 import { createOrganizerRenameBatches } from '../organizerRenamePolicy.js';
 import { listZipEntries, listZipEntriesFromFile, readZipEntry, readZipEntryFromFile } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
@@ -130,33 +131,43 @@ function withProcessDetails(error, tool, exitCode, signal) {
 }
 
 function runProcess(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const captureOutput = options.captureOutput !== false;
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      windowsHide: true,
-      stdio: ['ignore', captureOutput ? 'pipe' : 'ignore', captureOutput ? 'pipe' : 'ignore'],
+    return new Promise((resolve, reject) => {
+        const captureOutput = options.captureOutput !== false;
+        const maxOutputLength = options.maxOutputLength ?? Infinity;
+        const child = spawn(command, args, {
+            cwd: options.cwd,
+            windowsHide: true,
+            stdio: ['ignore', captureOutput ? 'pipe' : 'ignore', captureOutput ? 'pipe' : 'ignore'],
+        });
+        let stdout = '';
+        let stderr = '';
+        if (captureOutput) {
+            child.stdout.setEncoding('utf8');
+            child.stderr.setEncoding('utf8');
+            child.stdout.on('data', data => { stdout = (stdout + data).slice(-maxOutputLength); });
+            child.stderr.on('data', data => { stderr = (stderr + data).slice(-maxOutputLength); });
+        }
+        child.on('error', error => reject(withProcessDetails(error, options.telemetryTool)));
+        child.on('close', (code, signal) => {
+            if (code === 0 || code === 1) resolve({ code, stdout, stderr });
+            else {
+                const error = new Error(stderr || stdout || `${command} exited with ${code}`);
+                error.code = 'PROCESS_FAILED';
+                if (options.telemetryTool === '7z') {
+                    error.telemetryReason = classifyArchiveFailure(`${stderr}\n${stdout}`);
+                }
+                reject(withProcessDetails(error, options.telemetryTool, code, signal));
+            }
+        });
     });
-    let stdout = '';
-    let stderr = '';
-    if (captureOutput) {
-      child.stdout.on('data', data => { stdout += data.toString(); });
-      child.stderr.on('data', data => { stderr += data.toString(); });
-    }
-    child.on('error', error => reject(withProcessDetails(error, options.telemetryTool)));
-    child.on('close', (code, signal) => {
-      if (code === 0 || code === 1) resolve({ code, stdout, stderr });
-      else {
-        const error = new Error(stderr || stdout || `${command} exited with ${code}`);
-        error.code = 'PROCESS_FAILED';
-        reject(withProcessDetails(error, options.telemetryTool, code, signal));
-      }
-    });
-  });
 }
 
 function runQuietProcess(command, args, options = {}) {
-  return runProcess(command, args, { ...options, captureOutput: false });
+    return runProcess(command, args, {
+        ...options,
+        captureOutput: options.telemetryTool === '7z',
+        maxOutputLength: 16 * 1024,
+    });
 }
 
 function needsSevenZipArchiveAlias(filePath) {
@@ -850,7 +861,7 @@ async function collectNestedArchives(rootDir) {
   return nested;
 }
 
-async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
+async function extractNestedArchives(rootDir, sevenZExe, shouldCancel, lang) {
   const queue = await collectNestedArchives(rootDir);
   const queued = new Set(queue.map(reservationKey));
 
@@ -860,10 +871,18 @@ async function extractNestedArchives(rootDir, sevenZExe, shouldCancel) {
     if (!fs.existsSync(archivePath)) continue;
     const destination = archivePath.slice(0, -path.extname(archivePath).length);
     await fsp.mkdir(destination, { recursive: true });
-    await withSevenZipArchivePath(
-      archivePath,
-      safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y'], { telemetryTool: '7z' }),
-    );
+    try {
+        await withSevenZipArchivePath(
+            archivePath,
+            safeArchivePath => runQuietProcess(sevenZExe, ['x', safeArchivePath, `-o${destination}`, '-y'], { telemetryTool: '7z' }),
+        );
+    } catch (error) {
+        error.message = taskText(lang, 'task_nested_archive_extract_failed', {
+            name: path.relative(rootDir, archivePath),
+            error: error.message,
+        });
+        throw error;
+    }
     await fsp.rm(archivePath, { force: true });
 
     const discovered = await collectNestedArchives(destination);
@@ -1130,7 +1149,7 @@ async function processOrganizerItem(item, options) {
       archivePath => runQuietProcess(sevenZExe, ['x', archivePath, `-o${tempBase}`, '-y'], { telemetryTool: '7z' }),
     );
     stage = 'extract-nested';
-    await extractNestedArchives(tempBase, sevenZExe, options.shouldCancel);
+    await extractNestedArchives(tempBase, sevenZExe, options.shouldCancel, options.lang);
     stage = 'inspect';
     const actualRoot = await getActualRoot(tempBase);
     const leaves = await getImageLeaves(actualRoot);

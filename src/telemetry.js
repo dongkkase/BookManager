@@ -34,14 +34,28 @@ export function trackTelemetry(event, properties = {}, target = globalThis.windo
     }
 }
 
-export function reportTelemetryError(error, source = 'renderer', target = globalThis.window) {
+export function reportTelemetryError(error, source = 'renderer', target = globalThis.window, diagnostics = {}) {
     try {
-        return sendToMain('reportTelemetryError', {
+        const payload = {
             name: boundedString(error?.name, 80) || 'Error',
             message: boundedString(typeof error === 'string' ? error : error?.message, 1024) || 'Unknown renderer error',
             stack: boundedString(error?.stack, 8192),
             source: boundedString(source, 64),
-        }, target);
+        };
+        const code = boundedString(error?.code, 80);
+        if (code) payload.code = code;
+        if (diagnostics?.error_kind === 'uncaught-error' || diagnostics?.error_kind === 'unhandled-rejection') {
+            payload.error_kind = diagnostics.error_kind;
+        }
+        const filename = boundedString(diagnostics?.filename, 4096);
+        if (filename) payload.filename = filename;
+        for (const field of ['lineno', 'colno']) {
+            const value = diagnostics?.[field];
+            if (Number.isSafeInteger(value) && value > 0 && value <= 10000000) {
+                payload[field] = value;
+            }
+        }
+        return sendToMain('reportTelemetryError', payload, target);
     } catch {
         return false;
     }
@@ -51,7 +65,12 @@ export function installTelemetryErrorHandlers({ target = globalThis.window, sour
     const onError = event => {
         try {
             if (event?.error || typeof event?.message === 'string') {
-                reportTelemetryError(event.error || event.message, source, target);
+                reportTelemetryError(event.error || event.message, source, target, {
+                    error_kind: 'uncaught-error',
+                    filename: event.filename,
+                    lineno: event.lineno,
+                    colno: event.colno,
+                });
             }
         } catch {
             // Error reporting must not change the original error handling.
@@ -59,7 +78,7 @@ export function installTelemetryErrorHandlers({ target = globalThis.window, sour
     };
     const onRejection = event => {
         try {
-            reportTelemetryError(event?.reason, source, target);
+            reportTelemetryError(event?.reason, source, target, { error_kind: 'unhandled-rejection' });
         } catch {
             // Rejected telemetry requests must not create another rejection.
         }

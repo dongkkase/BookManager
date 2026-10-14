@@ -132,6 +132,16 @@ test('batch reporting skips expected failures, deduplicates causes and caps repo
     assert.deepEqual(expected.errors, []);
 });
 
+test('batch reporting distinguishes tool reasons while deduplicating repeated files with the same reason', async () => {
+    const { errors, options } = operationHarness();
+    const failures = ['invalid-archive', 'invalid-archive', 'password-required', 'password-required', 'corrupt-data'].map((telemetryReason, index) => Object.assign(new Error(`private file ${index}`), {
+        code: 'PROCESS_FAILED', telemetryStage: 'extract-nested', telemetryTool: '7z', telemetryReason, exitCode: 2,
+        stack: `Error: private file ${index}\n    at closeCallback (app:///electron/tasks/organizerTask.js:150:23)`,
+    }));
+    await observeOperation('archive-organizer', async () => attachOperationErrors({ stats: { error: ['failed'] } }, failures), options);
+    assert.deepEqual(errors.map(({ error }) => error), [failures[0], failures[2], failures[4]]);
+});
+
 test('missing executable errors are reported while ordinary missing files remain expected', () => {
     const reports = [];
     reportOperationError({ code: 'ENOENT' }, 'archive-organizer', error => reports.push(error));

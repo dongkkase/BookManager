@@ -190,6 +190,58 @@ test('Windows 배포본은 portable exe를 단일 파일 ZIP으로 감싼다', (
     assert.equal(packageConfig.build.afterAllArtifactBuild, 'electron/zipWindowsPortable.cjs');
 });
 
+test('Windows portable 빌드는 실행마다 독립된 임시 폴더를 사용한다', async () => {
+    const { NsisTarget } = require('app-builder-lib/out/targets/nsis/NsisTarget.js');
+    let computedDefines;
+    const packager = {
+        config: { portable: packageConfig.build.portable },
+        info: {
+            metadata: {},
+            buildResourcesDir: path.join(projectRoot, 'build'),
+            callArtifactBuildStarted: async () => {},
+        },
+        appInfo: {
+            id: packageConfig.build.appId,
+            name: packageConfig.name,
+            sanitizedName: packageConfig.build.productName,
+            productName: packageConfig.build.productName,
+            productFilename: packageConfig.build.productName,
+            version: packageConfig.version,
+            buildVersion: packageConfig.version,
+            description: packageConfig.description,
+            copyright: '',
+            getVersionInWeirdWindowsForm: () => `${packageConfig.version}.0`,
+        },
+        platformSpecificBuildOptions: {},
+        projectDir: projectRoot,
+        compression: 'store',
+        getIconPath: async () => null,
+        expandArtifactNamePattern: () => 'BookManager.exe',
+        packagerOptions: {
+            effectiveOptionComputed: async ([defines]) => {
+                computedDefines = defines;
+                // 실제 NSIS 설정을 만든 뒤 실행 아티팩트 생성 전에 중단합니다.
+                return true;
+            },
+        },
+    };
+    const target = new NsisTarget(packager, os.tmpdir(), 'portable', {
+        refCount: 0,
+        packArch: async () => { throw new Error('Packaging must not run'); },
+    });
+
+    await target.buildInstaller(new Map());
+
+    assert.ok(computedDefines);
+    assert.equal(Object.hasOwn(computedDefines, 'UNPACK_DIR_NAME'), false);
+    const portableScript = fs.readFileSync(
+        require.resolve('app-builder-lib/templates/nsis/portable.nsi'),
+        'utf8',
+    );
+    assert.match(portableScript, /\bInitPluginsDir\b/);
+    assert.match(portableScript, /StrCpy \$INSTDIR "\$PLUGINSDIR\\app"\s*!ifdef UNPACK_DIR_NAME\s*StrCpy \$INSTDIR "\$TEMP\\\$\{UNPACK_DIR_NAME\}"\s*!endif/);
+});
+
 test('Windows 배포 ZIP에는 BookManager.exe만 포함한다', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-zip-'));
     try {

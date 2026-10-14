@@ -16,6 +16,10 @@ const TTS_MODELS = new Map([
 ]);
 const SOURCES = new Set(['main', 'ipc', 'renderer', 'viewer', 'react', 'renderer-react', 'viewer-react', 'viewer-load', 'menu', 'navigation', 'catalog', 'drop', 'uncaughtException', 'unhandledRejection', 'child-process-gone', 'gpu-process-crashed', 'render-process-gone', 'associated-file-open-failed', 'renderer-unresponsive', 'renderer-load-failed']);
 const ERROR_NAMES = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'URIError', 'EvalError', 'AggregateError', 'AbortError']);
+const ERROR_KINDS = new Map([
+    ['uncaught-error', 'Uncaught JavaScript error'],
+    ['unhandled-rejection', 'Unhandled promise rejection'],
+]);
 const ERROR_DESCRIPTIONS = new Map([
     ['EACCES', 'Permission denied'],
     ['ENOENT', 'File or directory not found'],
@@ -68,6 +72,15 @@ const ERROR_STAGE_DESCRIPTIONS = new Map([
     ['direct-copy', 'Archive copy failed'],
     ['direct-rename', 'Archive rename failed'],
 ]);
+const ERROR_REASON_DESCRIPTIONS = new Map([
+    ['password-required', 'Archive requires a password'],
+    ['unsupported-method', 'Archive compression method is unsupported'],
+    ['invalid-archive', 'File is not a supported archive'],
+    ['corrupt-data', 'Archive data is damaged'],
+    ['access-denied', 'External tool could not access a file'],
+    ['disk-full', 'External tool ran out of storage space'],
+    ['path-too-long', 'External tool encountered a path that is too long'],
+]);
 const ERROR_TOOLS = new Set(['7z', 'cwebp']);
 const ERROR_SIGNALS = new Set(['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGILL', 'SIGTRAP', 'SIGABRT', 'SIGIOT', 'SIGBUS', 'SIGFPE', 'SIGKILL', 'SIGUSR1', 'SIGSEGV', 'SIGUSR2', 'SIGPIPE', 'SIGALRM', 'SIGTERM', 'SIGCHLD', 'SIGCONT', 'SIGSTOP', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU', 'SIGURG', 'SIGXCPU', 'SIGXFSZ', 'SIGVTALRM', 'SIGPROF', 'SIGWINCH', 'SIGIO', 'SIGPWR', 'SIGSYS', 'SIGINFO', 'SIGBREAK']);
 const ERROR_SYSCALLS = new Set(['access', 'chmod', 'chown', 'close', 'copyfile', 'fstat', 'fsync', 'ftruncate', 'link', 'lstat', 'mkdir', 'open', 'opendir', 'read', 'readdir', 'readlink', 'realpath', 'rename', 'rmdir', 'scandir', 'spawn', 'stat', 'symlink', 'unlink', 'utime', 'write']);
@@ -97,7 +110,7 @@ function allowedProperties(input = {}) {
 
 function allowedErrorDiagnostics(input = {}) {
     const tags = {};
-    for (const [key, values] of [['error_code', ERROR_DESCRIPTIONS], ['error_stage', ERROR_STAGE_DESCRIPTIONS], ['error_tool', ERROR_TOOLS], ['signal', ERROR_SIGNALS], ['syscall', ERROR_SYSCALLS]]) {
+    for (const [key, values] of [['error_code', ERROR_DESCRIPTIONS], ['error_kind', ERROR_KINDS], ['error_stage', ERROR_STAGE_DESCRIPTIONS], ['error_reason', ERROR_REASON_DESCRIPTIONS], ['error_tool', ERROR_TOOLS], ['signal', ERROR_SIGNALS], ['syscall', ERROR_SYSCALLS]]) {
         if (values.has(input[key])) tags[key] = input[key];
     }
     if (Number.isInteger(input.exit_code) && input.exit_code >= -2147483648 && input.exit_code <= 4294967295) {
@@ -377,7 +390,8 @@ export function createTelemetry(options = {}) {
             return null;
         }
         filename = filename.replace(/\\/g, '/');
-        if (!filename.startsWith(`${appRoot}/`)) return null;
+        const rootPrefix = `${appRoot}/`;
+        if (platform === 'win32' ? !filename.toLowerCase().startsWith(rootPrefix.toLowerCase()) : !filename.startsWith(rootPrefix)) return null;
         const relative = filename.slice(appRoot.length + 1);
         if (!/^(?:electron|src|dist\/assets)\/[a-z0-9_./-]+\.(?:js|jsx|mjs|cjs)$/i.test(relative) || relative.split('/').includes('..')) return null;
         try {
@@ -392,7 +406,7 @@ export function createTelemetry(options = {}) {
         if (typeof stack !== 'string') return [];
         const frames = [];
         for (const line of stack.slice(0, 32768).split('\n').slice(1, 65)) {
-            const location = line.match(/(?:\(|\bat\s+)((?:file:\/\/\/|https?:\/\/|\/|[a-z]:[\\/]).+):(\d+):(\d+)\)?$/i);
+            const location = line.match(/(?:\(|\bat\s+)((?:file:\/\/\/|app:\/\/\/|https?:\/\/|\/|[a-z]:[\\/]).+):(\d+):(\d+)\)?$/i);
             if (!location) continue;
             const filename = trustedFilename(location[1]);
             const lineno = Number(location[2]);
@@ -400,6 +414,17 @@ export function createTelemetry(options = {}) {
             if (filename && lineno > 0 && lineno <= 10000000 && colno > 0 && colno <= 10000000) frames.push({ filename, lineno, colno, in_app: true });
         }
         return frames.slice(0, 32).reverse();
+    }
+
+    function errorFrames(error) {
+        const frames = stackFrames(error?.stack);
+        if (frames.length) return frames;
+        const filename = trustedFilename(error?.filename);
+        const lineno = error?.lineno;
+        const colno = error?.colno;
+        if (!filename || !Number.isSafeInteger(lineno) || lineno <= 0 || lineno > 10000000
+            || !Number.isSafeInteger(colno) || colno <= 0 || colno > 10000000) return [];
+        return [{ filename, lineno, colno, in_app: true }];
     }
 
     function sanitizeSentryEvent(event = {}) {
@@ -416,8 +441,9 @@ export function createTelemetry(options = {}) {
         }
         const tags = { ...allowedProperties(event.tags), os: platform, ...diagnostics };
         delete tags.duration_ms;
-        const description = ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || (tags.error_tool ? 'External tool failed' : 'details omitted');
-        const diagnosticFingerprint = ['error_stage', 'error_tool', 'exit_code', 'signal', 'syscall'].filter(key => tags[key] !== undefined).map(key => `${key}:${tags[key]}`);
+        const reasonDescription = code === 'PROCESS_FAILED' ? ERROR_REASON_DESCRIPTIONS.get(tags.error_reason) : '';
+        const description = reasonDescription || ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || (tags.error_tool ? 'External tool failed' : ERROR_KINDS.get(tags.error_kind) || 'details omitted');
+        const diagnosticFingerprint = ['error_kind', 'error_stage', 'error_reason', 'error_tool', 'exit_code', 'signal', 'syscall'].filter(key => tags[key] !== undefined).map(key => `${key}:${tags[key]}`);
         const fingerprint = !frames.length
             ? ['bookmanager', tags.feature || 'app', tags.source || 'unknown', type, code || 'unknown', ...diagnosticFingerprint]
             : diagnosticFingerprint.length ? ['{{ default }}', code || 'unknown', ...diagnosticFingerprint] : null;
@@ -478,12 +504,14 @@ export function createTelemetry(options = {}) {
         try {
             if (!enabled('errors') || outstandingErrors >= 20 || pending.size >= MAX_PENDING || !consumeRate('errors')) return false;
             const type = ERROR_NAMES.has(error?.name) ? error.name : 'Error';
-            const frames = stackFrames(error?.stack);
+            const frames = errorFrames(error);
             const tags = {
                 ...allowedProperties(context),
                 ...allowedErrorDiagnostics({
                     error_code: error?.code,
+                    error_kind: context.error_kind,
                     error_stage: error?.telemetryStage,
+                    error_reason: error?.telemetryReason,
                     error_tool: error?.telemetryTool,
                     exit_code: error?.exitCode,
                     signal: error?.signal,

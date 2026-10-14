@@ -66,6 +66,7 @@ import {
   resolveLibrarySyncChoice,
 } from './libraryDialog.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
+import { relaunchApp } from './appRelaunch.js';
 import { installAppUpdate } from './updateInstaller.js';
 import {
   pathHasHiddenDirectorySegment,
@@ -5773,9 +5774,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('app:relaunch', () => {
-    app.relaunch();
-    app.quit();
-    return true;
+    return relaunchApp(app);
   });
 
   ipcMain.handle('app:installUpdate', async (_event, options = {}) => {

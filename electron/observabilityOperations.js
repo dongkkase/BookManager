@@ -48,7 +48,7 @@ function reportResultErrors(result, feature, report) {
     for (const error of errors) {
         if (isExpectedOperationError(error)) continue;
         const key = JSON.stringify([
-            error.name, error.code, error.telemetryStage, error.telemetryTool,
+            error.name, error.code, error.telemetryStage, error.telemetryReason, error.telemetryTool,
             error.exitCode, error.signal, error.syscall,
             typeof error.stack === 'string' ? error.stack.split('\n').filter(line => /^\s+at /.test(line)).join('\n') : '',
         ]);

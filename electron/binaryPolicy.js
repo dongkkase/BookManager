@@ -36,9 +36,10 @@ function sevenZipBinPlatformFolder(platform) {
 
 function appendSevenZipPackageCandidates(candidates, root, platform, arch, aliases) {
     if (!root) return;
+    const platformPath = platform === 'win32' ? path.win32 : path;
     const packagePlatform = sevenZipBinPlatformFolder(platform);
     for (const alias of aliases) {
-        candidates.push(path.join(
+        candidates.push(platformPath.join(
             root,
             'node_modules',
             '7zip-bin',
@@ -53,13 +54,18 @@ function appendWindowsFfmpegCandidates(candidates, platform, aliases) {
     if (platform !== 'win32') return;
     for (const directory of ['C:\\ffmpeg\\bin']) {
         for (const alias of aliases) {
-            candidates.push(path.join(directory, executableName(alias, platform)));
+            candidates.push(path.win32.join(directory, executableName(alias, platform)));
         }
     }
 }
 
 export function binaryCandidates(toolName, options = {}) {
     const platform = options.platform || process.platform;
+    const platformPath = platform === 'win32' ? path.win32 : path;
+    const environment = options.env || process.env;
+    const env = platform === 'win32'
+        ? Object.fromEntries(Object.entries(environment).map(([key, value]) => [key.toUpperCase(), value]))
+        : environment;
     const arch = options.arch || process.arch;
     const aliases = TOOL_ALIASES[toolName] || [toolName];
     const roots = [
@@ -73,7 +79,7 @@ export function binaryCandidates(toolName, options = {}) {
     for (const root of roots) {
         for (const folder of platformFolders) {
             for (const alias of aliases) {
-                candidates.push(path.join(root, 'bin', folder, executableName(alias, platform)));
+                candidates.push(platformPath.join(root, 'bin', folder, executableName(alias, platform)));
             }
         }
         if (toolName === '7za' || toolName === '7z') {
@@ -81,9 +87,26 @@ export function binaryCandidates(toolName, options = {}) {
         }
     }
 
-    for (const directory of String(options.pathValue ?? process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    const pathEntries = String(options.pathValue ?? env.PATH ?? '').split(platform === 'win32' ? ';' : path.delimiter);
+    for (const entry of pathEntries) {
+        const directory = platform === 'win32' ? entry.trim().replace(/^"(.*)"$/, '$1') : entry;
+        if (!directory) continue;
         for (const alias of aliases) {
-            candidates.push(path.join(directory, executableName(alias, platform)));
+            candidates.push(platformPath.join(directory, executableName(alias, platform)));
+        }
+    }
+
+    if (platform === 'win32' && (toolName === '7za' || toolName === '7z')) {
+        const systemDrive = env.SYSTEMDRIVE || 'C:';
+        const directories = [
+            env.PROGRAMW6432,
+            env.PROGRAMFILES || path.win32.join(systemDrive, 'Program Files'),
+            env['PROGRAMFILES(X86)'] || path.win32.join(systemDrive, 'Program Files (x86)'),
+        ].filter(Boolean);
+        for (const directory of directories) {
+            for (const alias of aliases) {
+                candidates.push(path.win32.join(directory, '7-Zip', executableName(alias, platform)));
+            }
         }
     }
 

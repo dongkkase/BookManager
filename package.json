@@ -167,6 +167,9 @@
       "artifactName": "BookManager.exe",
       "icon": "src/images/app.ico"
     },
+    "portable": {
+      "unpackDirName": true
+    },
     "mac": {
       "target": [
         {

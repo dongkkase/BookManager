@@ -57,6 +57,58 @@ test('오류는 크기를 제한하고 오류 객체에 첨부된 사용자 데�
     assert.equal(errors[2].message, 'Unknown renderer error');
 });
 
+test('오류 코드를 보존하고 오류 객체의 임의 위치 속성을 전달하지 않는다', () => {
+    const { target, errors } = createTarget();
+    reportTelemetryError({
+        name: 'Error', message: 'Failed', code: 'ERR_CONNECTION_RESET',
+        filename: '/private/book.txt', lineno: 20, colno: 5, error_kind: 'private data',
+    }, 'renderer', target);
+    assert.deepEqual(errors[0], {
+        name: 'Error', message: 'Failed', stack: '', source: 'renderer', code: 'ERR_CONNECTION_RESET',
+    });
+    reportTelemetryError({ code: 'C'.repeat(200) }, 'renderer', target);
+    assert.equal(errors[1].code, 'C'.repeat(80));
+    reportTelemetryError({ code: { private: 'data' } }, 'renderer', target);
+    assert.equal(Object.hasOwn(errors[2], 'code'), false);
+});
+
+test('전역 오류의 위치를 보존하고 위치 크기와 좌표를 제한한다', () => {
+    const { target, errors, listeners } = createTarget();
+    const dispose = installTelemetryErrorHandlers({ target });
+    listeners.get('error')({
+        message: 'Script failed', filename: 'file:///app/dist/assets/index.js', lineno: 18, colno: 42,
+    });
+    assert.deepEqual(errors[0], {
+        name: 'Error', message: 'Script failed', stack: '', source: 'renderer', error_kind: 'uncaught-error',
+        filename: 'file:///app/dist/assets/index.js', lineno: 18, colno: 42,
+    });
+
+    listeners.get('error')({ message: 'Script failed', filename: 'F'.repeat(5000), lineno: 1, colno: 10000000 });
+    assert.equal(errors[1].filename, 'F'.repeat(4096));
+    assert.equal(errors[1].lineno, 1);
+    assert.equal(errors[1].colno, 10000000);
+    for (const coordinate of [undefined, null, '42', 0, -1, 1.5, NaN, Infinity, 10000001, Number.MAX_SAFE_INTEGER + 1]) {
+        listeners.get('error')({ message: 'Script failed', filename: {}, lineno: coordinate, colno: coordinate });
+        const payload = errors.at(-1);
+        assert.equal(Object.hasOwn(payload, 'filename'), false);
+        assert.equal(Object.hasOwn(payload, 'lineno'), false);
+        assert.equal(Object.hasOwn(payload, 'colno'), false);
+    }
+    dispose();
+});
+
+test('처리하지 않은 거부의 코드를 유지하고 임의 진단 종류를 제외한다', () => {
+    const { target, errors, listeners } = createTarget();
+    const dispose = installTelemetryErrorHandlers({ target });
+    listeners.get('unhandledrejection')({ reason: { message: 'Failed', code: 'EACCES', filename: '/private/book.txt' } });
+    assert.equal(errors[0].code, 'EACCES');
+    assert.equal(errors[0].error_kind, 'unhandled-rejection');
+    assert.equal(Object.hasOwn(errors[0], 'filename'), false);
+    reportTelemetryError('Failed', 'renderer', target, { error_kind: 'private data', project: 'private data' });
+    assert.deepEqual(errors[1], { name: 'Error', message: 'Failed', stack: '', source: 'renderer' });
+    dispose();
+});
+
 test('브리지가 없거나 동기 예외와 Promise 거부가 발생해도 호출자에게 전파하지 않는다', async () => {
     for (const target of [undefined, null, {}, { electronAPI: {} }]) {
         assert.equal(trackTelemetry('menu_opened', { menu: 'tools' }, target), false);
@@ -121,8 +173,11 @@ test('전역 JS 오류와 처리하지 않은 거부를 보고하고 기존 브�
     assert.equal(errors.length, 3);
     assert.equal(errors[0].name, 'TypeError');
     assert.equal(errors[0].stack, error.stack);
+    assert.equal(errors[0].error_kind, 'uncaught-error');
     assert.equal(errors[1].message, 'Script failed');
+    assert.equal(errors[1].error_kind, 'uncaught-error');
     assert.equal(errors[2].message, 'Request failed');
+    assert.equal(errors[2].error_kind, 'unhandled-rejection');
     assert.ok(errors.every(value => value.source === 'viewer'));
     assert.equal(prevented, false);
     dispose();

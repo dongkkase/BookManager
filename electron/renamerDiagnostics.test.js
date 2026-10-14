@@ -221,6 +221,25 @@ test('renamer reports a final cleanup failure at the cleanup stage when the prec
     assert.equal(events[0].tags.error_stage, 'cleanup');
 });
 
+test('renamer keeps a published output and reports source cleanup separately without leaking paths', requiresExecutableScript, async t => {
+    const fixture = setup(t, SUCCESS_TOOL);
+    const original = Object.assign(new Error('private source removal failed'), { code: 'EIO', syscall: 'unlink' });
+    const remove = fsp.rm;
+    t.mock.method(fsp, 'rm', async (target, settings) => {
+        if (target === fixture.item.filepath) throw original;
+        return remove(target, settings);
+    });
+    const { result, errors, events } = await observeResult(t, fixture, { target_format: 'cbz', deleteOriginal: true });
+    assert.equal(errors[0], original);
+    assert.equal(result.stats.error.length, 1);
+    assert.equal(result.stats.success.length, 0);
+    assert.equal(fs.existsSync(fixture.item.filepath), true);
+    assert.equal(fs.existsSync(result.outputFiles[0]), true);
+    assert.equal(result.pathMap[fixture.item.filepath], result.outputFiles[0]);
+    assert.equal(events[0].tags.error_stage, 'remove-source');
+    assert.equal(events[0].tags.syscall, 'unlink');
+});
+
 test('renamer cancellation during an external process remains a cancellation without error reports', requiresExecutableScript, async t => {
     const fixture = setup(t, 'setInterval(() => {}, 1000);');
     let cancelled = false;

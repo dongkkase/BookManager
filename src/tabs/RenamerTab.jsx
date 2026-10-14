@@ -21,6 +21,7 @@ import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
 import { isTextEntryTarget } from '../interactionPolicy';
 import { partitionSkippedFiles } from '../notificationPolicy';
+import { trackRenamerPreview, waitForRenamerPreviews } from '../utils/renamerPreview';
 import {
   applyImmediateSingleSelection,
   scheduleAfterNextPaint,
@@ -75,6 +76,9 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const initialRenamerBatchOptions = normalizeRenamerBatchOptionsFromConfig(config);
   const [fileList, setFileList] = useState([]);
   const executeLockRef = useRef(false);
+  const pendingPreviewsRef = useRef(new Set());
+  const previewWaitControllerRef = useRef(null);
+  const [previewRefreshVersion, setPreviewRefreshVersion] = useState(0);
   const applyingConfigRef = useRef(false);
   const lastAppliedConfigOptionsRef = useRef(null);
   const lastAppliedBatchOptionsRef = useRef(null);
@@ -142,6 +146,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, []);
 
   useEffect(() => () => {
+    previewWaitControllerRef.current?.abort();
     previewRequestRef.current.cover += 1;
     previewRequestRef.current.inner += 1;
     pendingArchiveSelectRef.current?.();
@@ -252,6 +257,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   };
 
   const loadPreview = useCallback(async (target, archive, entry) => {
+    if (executeLockRef.current) return;
     const requestId = (previewRequestRef.current[target] || 0) + 1;
     previewRequestRef.current[target] = requestId;
     const isCurrentRequest = () => previewRequestRef.current[target] === requestId;
@@ -264,9 +270,9 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     setPreviewError(current => ({ ...current, [target]: false }));
     let result = null;
     try {
-      result = await window.electronAPI?.extractArchiveImage?.(
-        archive.filepath,
-        entry.originalPath,
+      result = await trackRenamerPreview(
+        pendingPreviewsRef.current,
+        window.electronAPI?.extractArchiveImage?.(archive.filepath, entry.originalPath),
       );
     } catch {
       result = null;
@@ -284,11 +290,11 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
 
   useEffect(() => {
     loadPreview('cover', activeArchive, coverEntry);
-  }, [activeArchive?.filepath, coverEntry?.originalPath, loadPreview]);
+  }, [activeArchive?.filepath, coverEntry?.originalPath, loadPreview, previewRefreshVersion]);
 
   useEffect(() => {
     loadPreview('inner', activeArchive, activeEntry);
-  }, [activeArchive?.filepath, activeEntry?.originalPath, loadPreview]);
+  }, [activeArchive?.filepath, activeEntry?.originalPath, loadPreview, previewRefreshVersion]);
 
   const analyzePaths = useCallback(async (paths) => {
     const cleanPaths = [...new Set((paths || []).filter(Boolean))];
@@ -655,6 +661,9 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     }
 
     executeLockRef.current = true;
+    const previewWaitController = new AbortController();
+    previewWaitControllerRef.current = previewWaitController;
+    let executionStarted = false;
     setIsWorking(true);
     setTaskPhase('executing');
     setProgress(0);
@@ -662,6 +671,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     setStatusMessage(t('msg_processing_overlay'));
 
     try {
+      const previewsReady = await waitForRenamerPreviews(pendingPreviewsRef.current, previewWaitController.signal);
+      if (!previewsReady || previewWaitController.signal.aborted) return;
+      previewWaitControllerRef.current = null;
+      executionStarted = true;
       window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
         detail: { tabs: ['organizer', 'metadata'] },
       }));
@@ -719,7 +732,9 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         language: config?.language || config?.lang || 'ko',
       });
     } finally {
+      previewWaitControllerRef.current = null;
       executeLockRef.current = false;
+      if (executionStarted) setPreviewRefreshVersion(version => version + 1);
       setProgress(0);
       setStatusMessage(t('status_wait'));
       setIsWorking(false);
@@ -731,6 +746,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     if (!['analyzing', 'executing'].includes(taskPhase)) return;
     setTaskPhase('cancelling');
     setStatusMessage(t('cancel_wait'));
+    if (previewWaitControllerRef.current) {
+      previewWaitControllerRef.current.abort();
+      return;
+    }
     await window.electronAPI?.stopTask?.('renamer');
   }, [taskPhase, t]);
 

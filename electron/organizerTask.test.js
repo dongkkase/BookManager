@@ -8,6 +8,7 @@ import { spawnSync } from 'child_process';
 
 import { listZipEntriesFromFile, readZipEntry, replaceZipEntry } from './core/zipArchive.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
+import { getOperationErrors } from './operationDiagnostics.js';
 import { assignOrganizerSeriesOutputPaths, changeOrganizerUnit, organizerExtractedTitleName, organizerFolderName } from '../src/organizerPolicy.js';
 
 function find7z() {
@@ -430,6 +431,42 @@ test('Organizer는 압축 파일명과 같은 내부 ZIP 래퍼의 권/화 ZIP�
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+test('Organizer는 잘못된 내부 ZIP의 원본을 보존하고 다음 정상 파일 작업을 계속한다', async t => {
+    const sevenZExe = findBundled7z() || find7z();
+    if (!sevenZExe) return t.skip('7z executable is not available');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-organizer-invalid-nested-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const source = path.join(root, 'broken.zip');
+    const original = await makeZipBuffer(root, 'broken.zip', [['chapters/invalid.zip', Buffer.from('not an archive')]]);
+    const validSource = path.join(root, 'valid.zip');
+    await makeZipBuffer(root, 'valid.zip', [['001.jpg', Buffer.from('valid page')]]);
+    const output = path.join(root, 'output');
+    const result = await executeOrganizer([
+        {
+            filepath: source, name: 'broken.zip', out_path: output,
+            volumes: [{ type: 'archive', inner_path: 'chapters/invalid.zip', new_name: 'Broken' }],
+        },
+        {
+            filepath: validSource, name: 'valid.zip', out_path: output,
+            volumes: [{ new_name: 'Valid' }],
+        },
+    ], { sevenZExe, deleteOriginal: true, flatten_folders: true, lang: 'en' });
+
+    assert.equal(result.stats.error.length, 1);
+    assert.match(result.stats.error[0], /invalid\.zip/);
+    assert.match(result.stats.error[0], /original file is preserved/);
+    assert.equal(result.stats.success.length, 1);
+    assert.equal(result.createdFiles.length, 1);
+    assert.deepEqual(fs.readFileSync(source), original);
+    assert.equal(fs.existsSync(validSource), false);
+    assert.deepEqual(fs.readdirSync(output), ['Valid.zip']);
+    const [error] = getOperationErrors(result);
+    assert.equal(error.telemetryStage, 'extract-nested');
+    assert.equal(error.telemetryReason, 'invalid-archive');
+    assert.equal(error.exitCode, 2);
+    assert.equal(result.cancelled, false);
 });
 
 test('Organizer는 단일 Root_Files 압축 파일의 권 이름과 쉼표를 원본 파일명에서 보존한다', async () => {

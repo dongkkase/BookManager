@@ -296,6 +296,62 @@ test('safe tool diagnostics and trusted frames survive the final Sentry envelope
     assert.doesNotMatch(requests.map(request => request.body).join(''), /Secret Book|private|token|stderr|stdout|command/);
 });
 
+test('Windows app stacks retain frames across drive and installation path casing differences', async t => {
+    const appRoot = 'C:/Apps/BookManager/resources/app.asar';
+    const relative = 'dist/assets/index.js';
+    const checkedFiles = [];
+    const { telemetry, requests } = setup(t, {
+        platform: 'win32',
+        appRoot,
+        fs: {
+            ...fs,
+            statSync(filename) {
+                checkedFiles.push(filename);
+                return { isFile: () => true };
+            },
+        },
+    }, { telemetry_error_reports: true });
+    for (const filename of [
+        `${appRoot}/${relative}`,
+        `c:/apps/bookmanager/resources/app.asar/${relative}`,
+        `c:\\apps\\bookmanager\\resources\\app.asar\\${relative.replaceAll('/', '\\')}`,
+        `app:///${relative}`,
+    ]) {
+        telemetry.reportTelemetryError({ stack: `Error: private message\n    at privateFunction (${filename}:12:3)` }, { source: 'renderer' });
+    }
+    for (const filename of [
+        `${appRoot}-other/${relative}`,
+        `${appRoot}/src/../../private.js`,
+        'C:/Users/private/book.js',
+    ]) {
+        telemetry.reportTelemetryError({ stack: `Error: private message\n    at ${filename}:12:3` }, { source: 'renderer' });
+    }
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, 7);
+    for (const event of events.slice(0, 4)) {
+        assert.deepEqual(event.exception.values[0].stacktrace.frames, [{ filename: `app:///${relative}`, lineno: 12, colno: 3, in_app: true }]);
+    }
+    for (const event of events.slice(4)) assert.equal(event.exception.values[0].stacktrace, undefined);
+    assert.ok(checkedFiles.length > 0);
+    assert.ok(checkedFiles.every(filename => filename === `${appRoot}/${relative}`));
+    assert.doesNotMatch(JSON.stringify(events), /private|C:|c:|resources|app\.asar/);
+});
+
+test('app root casing remains significant outside Windows', async t => {
+    const appRoot = '/Applications/BookManager/resources/app.asar';
+    let fileChecks = 0;
+    const { telemetry, requests } = setup(t, {
+        platform: 'linux',
+        appRoot,
+        fs: { ...fs, statSync() { fileChecks += 1; return { isFile: () => true }; } },
+    }, { telemetry_error_reports: true });
+    telemetry.reportTelemetryError({ stack: 'Error\n    at /applications/bookmanager/resources/app.asar/dist/assets/index.js:12:3' }, { source: 'renderer' });
+    await telemetry.flushTelemetry();
+    assert.equal(fileChecks, 0);
+    assert.equal(JSON.parse(requests[0].body.split('\n')[2]).exception.values[0].stacktrace, undefined);
+});
+
 test('shared subprocess stack locations retain default grouping while distinguishing stages and exit codes', async t => {
     const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
     const stack = `Error: private details\n    at closeCallback (${path.join(APP_ROOT, 'electron/tasks/organizerTask.js')}:42:3)`;
@@ -315,6 +371,60 @@ test('shared subprocess stack locations retain default grouping while distinguis
     }
 });
 
+test('external tool reasons retain fixed descriptions and separate otherwise identical failures with or without stacks', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    const reasons = [
+        ['password-required', 'Archive requires a password'],
+        ['unsupported-method', 'Archive compression method is unsupported'],
+        ['invalid-archive', 'File is not a supported archive'],
+        ['corrupt-data', 'Archive data is damaged'],
+        ['access-denied', 'External tool could not access a file'],
+        ['disk-full', 'External tool ran out of storage space'],
+        ['path-too-long', 'External tool encountered a path that is too long'],
+    ];
+    const stack = `Error: Secret Book\n    at closeCallback (${path.join(APP_ROOT, 'electron/tasks/organizerTask.js')}:42:3)`;
+    for (const [telemetryReason] of reasons) {
+        for (const errorStack of [stack, '']) {
+            telemetry.reportTelemetryError({
+                name: 'Error', code: 'PROCESS_FAILED', telemetryStage: 'extract-nested', telemetryTool: '7z',
+                telemetryReason, exitCode: 2, stack: errorStack,
+                message: 'Secret Book token=secret', stderr: '/private/book',
+            }, { source: 'ipc', feature: 'archive-organizer' });
+        }
+    }
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, reasons.length * 2);
+    assert.equal(new Set(events.map(event => JSON.stringify(event.fingerprint))).size, events.length);
+    for (const [index, event] of events.entries()) {
+        const [reason, description] = reasons[Math.floor(index / 2)];
+        assert.equal(event.tags.error_code, 'PROCESS_FAILED');
+        assert.equal(event.tags.error_reason, reason);
+        assert.equal(event.exception.values[0].value, `Error (PROCESS_FAILED): ${description}`);
+        assert.ok(event.fingerprint.includes(`error_reason:${reason}`));
+        assert.equal(event.fingerprint[0], index % 2 === 0 ? '{{ default }}' : 'bookmanager');
+    }
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /Secret Book|private|secret|stderr|telemetryReason/);
+});
+
+test('unknown tool reasons are omitted and reason descriptions do not replace specific error codes', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    for (const telemetryReason of ['Secret Book', 'invalid-archive /private/book', { path: '/private/book' }, undefined]) {
+        telemetry.reportTelemetryError({ code: 'PROCESS_FAILED', telemetryReason }, { source: 'ipc' });
+    }
+    telemetry.reportTelemetryError({ code: 'EACCES', telemetryReason: 'invalid-archive' }, { source: 'ipc' });
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, 5);
+    for (const event of events.slice(0, 4)) {
+        assert.equal(event.tags.error_reason, undefined);
+        assert.equal(event.exception.values[0].value, 'Error (PROCESS_FAILED): External tool failed');
+        assert.deepEqual(event.fingerprint, ['bookmanager', 'app', 'ipc', 'Error', 'PROCESS_FAILED']);
+    }
+    assert.equal(events[4].exception.values[0].value, 'Error (EACCES): Permission denied');
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /Secret Book|private|telemetryReason/);
+});
+
 test('Sentry revalidates hostile diagnostics injected after beforeSend at the final transport boundary', async t => {
     const sdk = await import('@sentry/node');
     const { telemetry, requests } = setup(t, {
@@ -330,7 +440,7 @@ test('Sentry revalidates hostile diagnostics injected after beforeSend at the fi
                                 ...item,
                                 tags: {
                                     ...item.tags,
-                                    error_code: 'private-code', error_stage: '/private/stage', error_tool: 'C:\\private\\7z.exe',
+                                    error_code: 'private-code', error_kind: 'private-kind', error_stage: '/private/stage', error_reason: 'Secret Book', error_tool: 'C:\\private\\7z.exe',
                                     exit_code: '2 secret', signal: 'SIGTERM secret', syscall: 'spawn C:\\private\\7z.exe',
                                     stderr: 'Secret Book token=secret',
                                 },
@@ -350,7 +460,7 @@ test('Sentry revalidates hostile diagnostics injected after beforeSend at the fi
     assert.deepEqual(event.tags, { feature: 'archive-organizer', source: 'ipc', os: process.platform });
     assert.equal(event.exception.values[0].value, 'Error: details omitted');
     assert.deepEqual(event.fingerprint, ['bookmanager', 'archive-organizer', 'ipc', 'Error', 'unknown']);
-    assert.doesNotMatch(requests[0].body, /private|secret|Secret Book|stderr|extra|error_stage|exit_code|signal|syscall/);
+    assert.doesNotMatch(requests[0].body, /private|secret|Secret Book|stderr|extra|error_kind|error_stage|error_reason|exit_code|signal|syscall/);
 });
 
 test('error summaries use fixed descriptions and reject unknown diagnostic values and invalid exit codes', async t => {
