@@ -3,25 +3,21 @@ import {
     createPageCurlFoldContext,
     createPageCurlFrontCurveMesh,
     createPageCurlFrontMesh,
+    createPageCurlFrontSurfaceColors,
     createPageCurlLineIntersections,
+    createPageCurlReceiverContactCasterMesh,
     createPageCurlReceiverLightingMesh,
+    createPageCurlSurfaceLightingTextures,
     getPageCurlLightingRadiusFactor,
     getPageCurlOrderedLineEndpoints,
-    getPageCurlReceiverShadowOnset,
+    getPageCurlReceiverShadowBlur,
     getPageCurlReceiverShadowOpacity,
     getPageCurlSurfaceLandingProgress,
-    getPageCurlTargetShadowOffset,
     mapPageCurlReceiverLowerEdgeCasterPoint,
     pageCurlCurveShadeGradientColors,
     pageCurlCurveShadeGradientPositions,
-    pageCurlMovingCreaseReflectionGradientColors,
-    pageCurlMovingCreaseReflectionGradientPositions,
-    pageCurlMovingCreaseReflectionIndices,
     pageCurlReceiverShadowIndices,
     pageCurlReceiverShadowSectionCount,
-    pageCurlStationaryCreaseShadowGradientColors,
-    pageCurlStationaryCreaseShadowGradientPositions,
-    pageCurlStationaryCreaseShadowIndices,
 } from './viewerPageCurlGeometry.js';
 
 const hasPage = entry => entry?.image && entry.frame?.width > 0 && entry.frame?.height > 0;
@@ -138,6 +134,76 @@ function drawGradientMesh(context, mesh, start, end, colors, stops, opacity) {
     context.restore();
 }
 
+function createScalarGradient(context, points, values) {
+    const [first, second, third] = points;
+    const dx1 = second.x - first.x;
+    const dy1 = second.y - first.y;
+    const dx2 = third.x - first.x;
+    const dy2 = third.y - first.y;
+    const determinant = dx1 * dy2 - dy1 * dx2;
+    if (Math.abs(determinant) < 0.000001) return null;
+    const dv1 = values[1] - values[0];
+    const dv2 = values[2] - values[0];
+    const x = (dv1 * dy2 - dv2 * dy1) / determinant;
+    const y = (dx1 * dv2 - dx2 * dv1) / determinant;
+    const squaredLength = x * x + y * y;
+    if (squaredLength < 1e-12) return null;
+    const start = { x: first.x - x * values[0] / squaredLength, y: first.y - y * values[0] / squaredLength };
+    const end = { x: start.x + x / squaredLength, y: start.y + y / squaredLength };
+    return { start, end, gradient: context.createLinearGradient(start.x, start.y, end.x, end.y) };
+}
+
+function drawFrontSurface(context, mesh, entry, colors) {
+    const canvas = context.canvas.ownerDocument.createElement('canvas');
+    try {
+        canvas.width = entry.image.width || entry.image.naturalWidth;
+        canvas.height = entry.image.height || entry.image.naturalHeight;
+        const surface = canvas.getContext('2d');
+        surface.fillStyle = '#fff';
+        surface.fillRect(0, 0, canvas.width, canvas.height);
+        const scaleX = canvas.width / entry.frame.width;
+        const scaleY = canvas.height / entry.frame.height;
+        surface.setTransform(scaleX, 0, 0, scaleY, -entry.frame.x * scaleX, -entry.frame.y * scaleY);
+        const channels = colors.map(color => Number(color.match(/\d+/)[0]) / 255);
+        // Assemble opaque lighting before multiplying the image so overlapping
+        // texture strips cannot apply the same shade twice.
+        eachTriangle(mesh, (_first, _second, _third, a, b, c) => {
+            const points = [a, b, c].map(index => mesh.textures[index]);
+            const field = createScalarGradient(surface, points, [channels[a], channels[b], channels[c]]);
+            if (field) {
+                field.gradient.addColorStop(0, '#000');
+                field.gradient.addColorStop(1, '#fff');
+            }
+            surface.fillStyle = field?.gradient || colors[a];
+            surface.beginPath();
+            traceTriangle(surface, ...expandTriangle(points, 0.65 / Math.max(scaleX, scaleY)));
+            surface.fill();
+        });
+        surface.setTransform(1, 0, 0, 1, 0, 0);
+        surface.globalCompositeOperation = 'multiply';
+        surface.drawImage(entry.image, 0, 0, canvas.width, canvas.height);
+        drawTexturedMesh(context, mesh, { ...entry, image: canvas });
+    } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+    }
+}
+
+function drawBackSurfaceLighting(context, mesh, active, back, fold, spread, opacity) {
+    const textures = createPageCurlSurfaceLightingTextures(
+        mesh.textures, active.frame, back.frame, fold, spread, mesh.vertices,
+    );
+    let field = null;
+    eachTriangle(mesh, (first, second, third, a, b, c) => {
+        if (!field) field = createScalarGradient(context, [first, second, third], [textures[a].x, textures[b].x, textures[c].x]);
+    });
+    if (!field) return;
+    drawGradientMesh(
+        context, mesh, field.start, field.end,
+        pageCurlCurveShadeGradientColors, pageCurlCurveShadeGradientPositions, opacity * 0.92,
+    );
+}
+
 function clipFrames(context, entries) {
     context.beginPath();
     entries.forEach(entry => {
@@ -157,46 +223,61 @@ function drawReceiverShadow(context, active, back, receivers, fold, lighting, sp
     );
     const intersections = createPageCurlLineIntersections(active.frame, fold);
     const endpoints = getPageCurlOrderedLineEndpoints(intersections, fold);
-    const onset = getPageCurlReceiverShadowOnset(fold.progress);
+    const canvas = context.canvas.ownerDocument.createElement('canvas');
     context.save();
-    clipFrames(context, receivers);
-    context.globalAlpha *= opacity;
-    const transform = context.getTransform();
-    const pixelRatio = Math.max(1, Math.hypot(transform.a, transform.b));
-    const blur = active.frame.width * 0.037 * (0.45 + 0.55 * onset);
-    context.filter = `blur(${blur * pixelRatio}px)`;
-    context.translate(
-        active.frame.width * 0.008 * visibility * lighting.receiverShadowProjectionDirection.x,
-        active.frame.width * 0.008 * visibility * lighting.receiverShadowProjectionDirection.y,
-    );
-    context.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    traceMesh(context, { vertices: lighting.receiverShadowVertices, indices: pageCurlReceiverShadowIndices });
-    context.fill();
-    if (endpoints) {
-        let edgeEnd = endpoints.cornerPoint;
-        for (const point of intersections) {
-            if (Math.abs(point.y - fold.cornerY) < Math.abs(edgeEnd.y - fold.cornerY)) edgeEnd = point;
+    try {
+        canvas.width = context.canvas.width;
+        canvas.height = context.canvas.height;
+        const caster = canvas.getContext('2d');
+        const transform = context.getTransform();
+        caster.setTransform(transform);
+        caster.fillStyle = '#000';
+        traceMesh(caster, createPageCurlReceiverContactCasterMesh(lighting, active.frame.width, fold, spread));
+        caster.fill();
+        traceMesh(caster, { vertices: lighting.receiverShadowVertices, indices: pageCurlReceiverShadowIndices });
+        caster.fill();
+        if (endpoints) {
+            let edgeEnd = endpoints.cornerPoint;
+            for (const point of intersections) {
+                if (Math.abs(point.y - fold.cornerY) < Math.abs(edgeEnd.y - fold.cornerY)) edgeEnd = point;
+            }
+            if (Math.abs(edgeEnd.y - fold.cornerY) > 0.5) edgeEnd = endpoints.cornerPoint;
+            caster.beginPath();
+            for (let index = 0; index <= pageCurlReceiverShadowSectionCount; index += 1) {
+                const ratio = index / pageCurlReceiverShadowSectionCount;
+                const point = mapCaster({
+                    x: fold.cornerX + (edgeEnd.x - fold.cornerX) * ratio,
+                    y: fold.cornerY + (edgeEnd.y - fold.cornerY) * ratio,
+                });
+                if (index === 0) caster.moveTo(point.x, point.y);
+                else caster.lineTo(point.x, point.y);
+            }
+            caster.lineWidth = Math.min(22, Math.max(8, active.frame.width * 0.032)) * opacity;
+            caster.lineCap = 'round';
+            caster.lineJoin = 'round';
+            caster.strokeStyle = '#000';
+            caster.stroke();
         }
-        context.beginPath();
-        for (let index = 0; index <= pageCurlReceiverShadowSectionCount; index += 1) {
-            const ratio = index / pageCurlReceiverShadowSectionCount;
-            const point = mapCaster({
-                x: fold.cornerX + (edgeEnd.x - fold.cornerX) * ratio,
-                y: fold.cornerY + (edgeEnd.y - fold.cornerY) * ratio,
-            });
-            if (index === 0) context.moveTo(point.x, point.y);
-            else context.lineTo(point.x, point.y);
-        }
-        context.lineWidth = Math.min(22, Math.max(8, active.frame.width * 0.032)) * opacity;
-        context.lineCap = 'round';
-        context.strokeStyle = context.fillStyle;
-        context.stroke();
+        const tip = mapCaster({ x: fold.cornerX, y: fold.cornerY });
+        caster.beginPath();
+        caster.arc(tip.x, tip.y, active.frame.width * 0.026 * visibility, 0, Math.PI * 2);
+        caster.fill();
+        // Blur the union once, keeping contact, edge and tip shadows from stacking.
+        clipFrames(context, receivers);
+        const pixelRatio = Math.max(1, Math.hypot(transform.a, transform.b));
+        const blur = getPageCurlReceiverShadowBlur(active.frame.width, fold, spread);
+        const offset = active.frame.width * 0.008 * visibility;
+        const dx = offset * lighting.receiverShadowProjectionDirection.x;
+        const dy = offset * lighting.receiverShadowProjectionDirection.y;
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.globalAlpha *= opacity * 0.5;
+        context.filter = `blur(${blur * pixelRatio}px)`;
+        context.drawImage(canvas, transform.a * dx + transform.c * dy, transform.b * dx + transform.d * dy);
+    } finally {
+        context.restore();
+        canvas.width = 0;
+        canvas.height = 0;
     }
-    const tip = mapCaster({ x: fold.cornerX, y: fold.cornerY });
-    context.beginPath();
-    context.arc(tip.x, tip.y, active.frame.width * 0.026 * visibility, 0, Math.PI * 2);
-    context.fill();
-    context.restore();
 }
 
 /** Draws a complete curl scene in book-space CSS pixels. Entries are in visual order. */
@@ -249,37 +330,18 @@ export function drawPageCurlFrame(context, {
         const shadowOpacity = getPageCurlReceiverShadowOpacity(fold, spread);
         const front = createPageCurlFrontMesh(active.frame, fold, spread);
         drawTexturedMesh(context, front, active, true);
-        const shadowVertices = lighting.stationaryCreaseShadowVertices;
-        const shadowOffset = Math.floor(pageCurlReceiverShadowSectionCount / 2) * 5;
-        context.save();
-        clipFrames(context, [active]);
-        drawGradientMesh(
-            context, { vertices: shadowVertices, indices: pageCurlStationaryCreaseShadowIndices },
-            shadowVertices[shadowOffset], shadowVertices[shadowOffset + 4],
-            pageCurlStationaryCreaseShadowGradientColors, pageCurlStationaryCreaseShadowGradientPositions,
-            shadowOpacity,
-        );
-        context.restore();
-        drawReceiverShadow(context, active, back, [receiver, ...current], fold, lighting, spread, shadowOpacity);
-        drawTexturedMesh(context, createPageCurlFrontCurveMesh(active.frame, back.frame, fold, spread), active);
-        drawTexturedMesh(context, createPageCurlBackMesh(active.frame, back.frame, fold, spread), back);
         const lightingOpacity = getPageCurlLightingRadiusFactor(
             fold.arcLength, Math.min(14, Math.max(7, active.frame.width * 0.02)),
         ) * (1 - getPageCurlSurfaceLandingProgress(fold, spread));
-        const radius = getPageCurlTargetShadowOffset(fold.arcLength);
-        drawGradientMesh(
+        const frontCurve = createPageCurlFrontCurveMesh(active.frame, back.frame, fold, spread);
+        drawFrontSurface(context, frontCurve, active, createPageCurlFrontSurfaceColors(
+            frontCurve, active.frame, back.frame, fold, spread, lightingOpacity,
+        ));
+        drawReceiverShadow(context, active, back, [receiver, ...current], fold, lighting, spread, shadowOpacity);
+        drawTexturedMesh(context, createPageCurlBackMesh(active.frame, back.frame, fold, spread), back);
+        drawBackSurfaceLighting(
             context, createPageCurlBackMesh(active.frame, back.frame, fold, spread, false),
-            { x: fold.midpointX, y: fold.midpointY },
-            { x: fold.midpointX - fold.normalX * radius, y: fold.midpointY - fold.normalY * radius },
-            pageCurlCurveShadeGradientColors, pageCurlCurveShadeGradientPositions, lightingOpacity * 0.92,
-        );
-        const reflectionVertices = lighting.movingCreaseReflectionVertices;
-        const reflectionOffset = Math.floor(pageCurlReceiverShadowSectionCount / 2) * 3;
-        drawGradientMesh(
-            context, { vertices: reflectionVertices, indices: pageCurlMovingCreaseReflectionIndices },
-            reflectionVertices[reflectionOffset], reflectionVertices[reflectionOffset + 2],
-            pageCurlMovingCreaseReflectionGradientColors, pageCurlMovingCreaseReflectionGradientPositions,
-            lightingOpacity,
+            active, back, fold, spread, lightingOpacity,
         );
     } finally {
         context.restore();

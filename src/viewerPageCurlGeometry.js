@@ -3,6 +3,9 @@
 const pageCurlPolygonMeshVertexCount = 9;
 const pageCurlMaximumArcWidthRatio = 0.28;
 const pageCurlArcDistanceRatio = 0.82;
+const pageCurlSurfaceArcRatio = 0.8;
+const pageCurlSurfaceHeightProjectionRatio = 0.3;
+const pageCurlFrontSurfaceShadeStrength = 0.22;
 const pageCurlHighQualityBackCurveStripCount = 10;
 const pageCurlHighQualityBackFlatStripCount = 2;
 const pageCurlBackCurveStripCount = pageCurlHighQualityBackCurveStripCount;
@@ -13,8 +16,6 @@ const pageCurlLongitudinalSectionCount = pageCurlHighQualityLongitudinalSectionC
 const pageCurlExpandedBackStripVertexCount = (pageCurlLongitudinalSectionCount * 6) + 6;
 const pageCurlBackStripVertexCount = pageCurlExpandedBackStripVertexCount;
 const pageCurlBackMeshVertexCount = pageCurlBackStripCount * pageCurlBackStripVertexCount;
-const pageCurlMinimumCornerLift = 0.12;
-const pageCurlHingeTailRatio = 0.82;
 const pageCurlHighQualityReceiverSilhouetteSectionCount = 9;
 const pageCurlReceiverShadowSectionCount = pageCurlHighQualityReceiverSilhouetteSectionCount;
 const pageCurlReceiverShadowBandCount = 4;
@@ -73,6 +74,7 @@ const pageCurlReceiverShadowPositions = [
 ];
 const pageCurlReceiverCastDirectionX = 0.6401843996644799;
 const pageCurlReceiverCastDirectionY = 0.7682212795973759;
+const pageCurlReceiverShadowBlurRatio = 0.037;
 const pageCurlReceiverShadowOffsetRatio = 0.008;
 const pageCurlReceiverShadowCasterInsetRatio = 0.055;
 const pageCurlReceiverShadowHingeTaperRatio = 0.18;
@@ -106,15 +108,19 @@ const pageCurlMovingCreaseReflectionGradientColors = [
 ];
 const pageCurlMovingCreaseReflectionGradientPositions = [0, 1 / 3, 1];
 const pageCurlCurveShadeGradientColors = [
-    'rgba(0, 0, 0, 0)',
-    'rgba(0, 0, 0, 0.045)',
-    'rgba(0, 0, 0, 0.1)',
-    'rgba(0, 0, 0, 0.18)',
-    'rgba(0, 0, 0, 0.14)',
-    'rgba(0, 0, 0, 0.06)',
-    'rgba(0, 0, 0, 0)',
+    'rgba(0, 0, 0, 0.28)',
+    'rgba(0, 0, 0, 0.25)',
+    'rgba(0, 0, 0, 0.17)',
+    'rgba(0, 0, 0, 0.065)',
+    'rgba(255, 255, 255, 0)',
+    'rgba(255, 255, 255, 0.045)',
+    'rgba(255, 255, 255, 0.10)',
+    'rgba(255, 255, 255, 0.04)',
+    'rgba(255, 255, 255, 0.01)',
+    'rgba(255, 255, 255, 0)',
 ];
-const pageCurlCurveShadeGradientPositions = [0, 0.14, 0.32, 0.52, 0.72, 0.88, 1];
+const pageCurlCurveShadeGradientPositions = [0, 0.08, 0.18, 0.30, 0.42, 0.56, 0.68, 0.82, 0.93, 1];
+const pageCurlFrontSurfaceGrayColors = Array.from({ length: 256 }, (_, channel) => `rgb(${channel}, ${channel}, ${channel})`);
 const clampWorklet = (value, minimum, maximum) => {
     return Math.max(minimum, Math.min(maximum, value));
 };
@@ -168,11 +174,20 @@ const createPageCurlFoldContext = ({ cornerSide, frame, landsOnTargetFrame = fal
     const deltaX = dragX - cornerX;
     const deltaY = dragY - cornerY;
     const distance = Math.max(0.001, Math.sqrt((deltaX * deltaX) + (deltaY * deltaY)));
-    const normalX = deltaX / distance;
-    const normalY = deltaY / distance;
+    const dragNormalX = deltaX / distance;
+    const dragNormalY = deltaY / distance;
     const curlEnvelope = Math.pow(Math.sin(Math.PI * geometryProgress), 0.65);
     const arcLength = Math.min(frame.width * pageCurlMaximumArcWidthRatio, distance * pageCurlArcDistanceRatio) * curlEnvelope;
-    const sourceDepth = (distance + arcLength) / 2;
+    // Include the projected cylinder height when solving the fold direction,
+    // so the raised back plane still meets the finger at the held corner.
+    const projectedBackHeight = 2 * arcLength * pageCurlSurfaceArcRatio
+        * pageCurlSurfaceHeightProjectionRatio / Math.PI;
+    const planeDistance = Math.sqrt(Math.max(0, distance * distance - projectedBackHeight * projectedBackHeight));
+    const hingeDirectionY = cornerY < frame.y + frame.height / 2 ? 1 : -1;
+    const tangentSign = dragNormalX * hingeDirectionY >= 0 ? 1 : -1;
+    const normalX = (dragNormalX * planeDistance + dragNormalY * tangentSign * projectedBackHeight) / distance;
+    const normalY = (dragNormalY * planeDistance - dragNormalX * tangentSign * projectedBackHeight) / distance;
+    const sourceDepth = (planeDistance + arcLength) / 2;
     return {
         arcLength,
         cornerX,
@@ -236,6 +251,10 @@ const clipPageCurlFrameByFold = (frame, fold, distanceSign, distanceThreshold = 
 };
 const clipPageCurlFrameToStationarySide = (frame, fold, seamOverlap = 0) => {
     return clipPageCurlFrameByFold(frame, fold, -1, -Math.max(0, seamOverlap));
+};
+const getPageCurlLongitudinalRatio = (section) => {
+    // Spend the existing vertex budget near the narrow curl endpoints.
+    return (1 - Math.cos(Math.PI * section / pageCurlLongitudinalSectionCount)) / 2;
 };
 const createPageCurlStripTopology = (inputPolygon, fold) => {
     const polygon = [];
@@ -301,7 +320,7 @@ const createPageCurlStripTopology = (inputPolygon, fold) => {
         const points = [];
         const triangleIndices = [];
         for (let section = 0; section <= pageCurlLongitudinalSectionCount; section += 1) {
-            const ratio = section / pageCurlLongitudinalSectionCount;
+            const ratio = getPageCurlLongitudinalRatio(section);
             points.push({
                 x: firstStart.x + ((firstEnd.x - firstStart.x) * ratio),
                 y: firstStart.y + ((firstEnd.y - firstStart.y) * ratio),
@@ -309,7 +328,7 @@ const createPageCurlStripTopology = (inputPolygon, fold) => {
         }
         const secondEdgeStartIndex = points.length;
         for (let section = 0; section <= pageCurlLongitudinalSectionCount; section += 1) {
-            const ratio = section / pageCurlLongitudinalSectionCount;
+            const ratio = getPageCurlLongitudinalRatio(section);
             points.push({
                 x: secondStart.x + ((secondEnd.x - secondStart.x) * ratio),
                 y: secondStart.y + ((secondEnd.y - secondStart.y) * ratio),
@@ -333,7 +352,7 @@ const createPageCurlStripTopology = (inputPolygon, fold) => {
             const points = [];
             const triangleIndices = [];
             for (let section = 0; section <= pageCurlLongitudinalSectionCount; section += 1) {
-                const ratio = section / pageCurlLongitudinalSectionCount;
+                const ratio = getPageCurlLongitudinalRatio(section);
                 points.push({
                     x: edgeStart.x + ((edgeEnd.x - edgeStart.x) * ratio),
                     y: edgeStart.y + ((edgeEnd.y - edgeStart.y) * ratio),
@@ -395,7 +414,7 @@ const createPageCurlStripTopology = (inputPolygon, fold) => {
             const points = [];
             const triangleIndices = [];
             for (let section = 0; section <= pageCurlLongitudinalSectionCount; section += 1) {
-                const ratio = section / pageCurlLongitudinalSectionCount;
+                const ratio = getPageCurlLongitudinalRatio(section);
                 points.push({
                     x: firstStart.x + ((firstEnd.x - firstStart.x) * ratio),
                     y: firstStart.y + ((firstEnd.y - firstStart.y) * ratio),
@@ -403,7 +422,7 @@ const createPageCurlStripTopology = (inputPolygon, fold) => {
             }
             const secondRailStartIndex = points.length;
             for (let section = 0; section <= pageCurlLongitudinalSectionCount; section += 1) {
-                const ratio = section / pageCurlLongitudinalSectionCount;
+                const ratio = getPageCurlLongitudinalRatio(section);
                 points.push({
                     x: secondStart.x + ((secondEnd.x - secondStart.x) * ratio),
                     y: secondStart.y + ((secondEnd.y - secondStart.y) * ratio),
@@ -532,7 +551,7 @@ const createPageCurlStripTopology = (inputPolygon, fold) => {
                     continue;
                 }
                 for (let section = 1; section < pageCurlLongitudinalSectionCount; section += 1) {
-                    const ratio = section / pageCurlLongitudinalSectionCount;
+                    const ratio = getPageCurlLongitudinalRatio(section);
                     points.push({
                         x: current.x + ((next.x - current.x) * ratio),
                         y: current.y + ((next.y - current.y) * ratio),
@@ -632,36 +651,34 @@ const createPageCurlFrontMesh = (frame, fold, landsOnTargetFrame = false) => {
     }
     return padPageCurlMesh(vertices, textures, anchor, anchor);
 };
-const getPageCurlCornerLiftFactor = (sourcePoint, activeFrame, fold) => {
-    const distanceFromGrabbedCorner = Math.abs(sourcePoint.y - fold.cornerY);
-    const cornerProximity = 1 - clampWorklet(distanceFromGrabbedCorner / Math.max(1, activeFrame.height), 0, 1);
-    return pageCurlMinimumCornerLift
-        + (smoothStepWorklet(cornerProximity) * (1 - pageCurlMinimumCornerLift));
-};
-const getPageCurlLongitudinalTailRatio = (sourcePoint, activeFrame, fold) => {
-    const cornerLift = getPageCurlCornerLiftFactor(sourcePoint, activeFrame, fold);
-    const normalizedCornerLift = clampWorklet((cornerLift - pageCurlMinimumCornerLift) / (1 - pageCurlMinimumCornerLift), 0, 1);
-    return pageCurlHingeTailRatio
-        + (normalizedCornerLift * (1 - pageCurlHingeTailRatio));
+const getPageCurlLocalArcLength = (_point, _frame, fold) => {
+    // One cylinder keeps the edge and the printed surface on the same smooth roll.
+    return Math.max(0, fold.arcLength) * pageCurlSurfaceArcRatio;
 };
 const mapPageCurlCurvedPoint = (point, activeFrame, fold) => {
-    const sourceDepth = Math.max(0, -getPageCurlFoldDistance(point, fold));
-    const arcLength = Math.max(0, fold.arcLength);
+    const depth = Math.max(0, -getPageCurlFoldDistance(point, fold));
+    const arcLength = getPageCurlLocalArcLength(point, activeFrame, fold);
+    // Center the circular interval on the shared front/back crease.
+    const sourceDepth = Math.max(0, depth - (fold.arcLength - arcLength) / 2);
     const radius = arcLength / Math.PI;
-    const projectedDepth = arcLength <= 0.001
+    const projectedDepth = arcLength <= 0
         ? sourceDepth
         : sourceDepth < arcLength
             ? -radius * Math.sin(Math.PI * sourceDepth / arcLength)
             : sourceDepth - arcLength;
-    const tailRatio = getPageCurlLongitudinalTailRatio(point, activeFrame, fold);
-    const tailBowProgress = arcLength <= 0.001
-        ? 0
-        : smoothStepWorklet(clampWorklet((sourceDepth - (arcLength / 2)) / (arcLength / 2), 0, 1));
-    const tailBowOffset = arcLength * (1 - tailRatio) * tailBowProgress;
-    const displacement = sourceDepth + projectedDepth + tailBowOffset;
+    const displacement = sourceDepth + projectedDepth;
+    // The half-cylinder rises monotonically into one flat back plane. Fading
+    // this height back to zero inside the roll would introduce an inward dent.
+    const heightProgress = arcLength > 0
+        ? clampWorklet(sourceDepth / arcLength, 0, 1)
+        : 0;
+    const elevation = radius * (1 - Math.cos(Math.PI * heightProgress));
+    const hingeDirectionY = fold.cornerY < activeFrame.y + activeFrame.height / 2 ? 1 : -1;
+    const tangentSign = fold.normalX * hingeDirectionY >= 0 ? 1 : -1;
+    const projectedLift = elevation * pageCurlSurfaceHeightProjectionRatio;
     return {
-        x: point.x + (fold.normalX * displacement),
-        y: point.y + (fold.normalY * displacement),
+        x: point.x + (fold.normalX * displacement) - fold.normalY * tangentSign * projectedLift,
+        y: point.y + (fold.normalY * displacement) + fold.normalX * tangentSign * projectedLift,
     };
 };
 const getPageCurlLandingProgress = (fold, landsOnTargetFrame) => {
@@ -721,6 +738,25 @@ const mapPageCurlBackPoint = (sourcePoint, activeFrame, backFrame, fold, landing
         x: curvedPoint.x + ((texturePoint.x - curvedPoint.x) * landingProgress),
         y: curvedPoint.y + ((texturePoint.y - curvedPoint.y) * landingProgress),
     };
+    if (landingProgress > 0 && landingProgress < 1) {
+        // A mirrored or differently sized target rotates the crease as it lands.
+        // Keep the lifted paper on that same line throughout the interpolation.
+        const tangentX = -fold.normalY;
+        const tangentY = fold.normalX;
+        const landedTangentX = tangentX * backFrame.width / Math.max(1, activeFrame.width)
+            * (reverseTextureX ? -1 : 1);
+        const landedTangentY = tangentY * backFrame.height / Math.max(1, activeFrame.height);
+        const renderedTangentX = tangentX + (landedTangentX - tangentX) * landingProgress;
+        const renderedTangentY = tangentY + (landedTangentY - tangentY) * landingProgress;
+        const renderedTangentLength = Math.hypot(renderedTangentX, renderedTangentY);
+        if (renderedTangentLength > 0.0001) {
+            const projectedLift = ((curvedPoint.x - sourcePoint.x) * tangentX)
+                + ((curvedPoint.y - sourcePoint.y) * tangentY);
+            const remainingLift = projectedLift * (1 - landingProgress);
+            vertex.x += (renderedTangentX / renderedTangentLength - tangentX) * remainingLift;
+            vertex.y += (renderedTangentY / renderedTangentLength - tangentY) * remainingLift;
+        }
+    }
     return {
         texture: texturePoint,
         vertex,
@@ -785,11 +821,24 @@ const stabilizePageCurlDirection = (direction, referenceDirection) => {
         + ((normalizedDirection.x - normalizedReference.x) * localNormalWeight), normalizedReference.y
         + ((normalizedDirection.y - normalizedReference.y) * localNormalWeight), normalizedReference);
 };
-const getPageCurlBackStripDepthRange = (stripIndex, minimumBackDepth, maximumBackCurveDepth, maximumDepth) => {
+const getPageCurlBackStripDepthRange = (stripIndex, minimumBackDepth, maximumBackCurveDepth, maximumDepth, creaseDepth = minimumBackDepth) => {
     if (stripIndex < pageCurlBackCurveStripCount) {
         const curveDepth = maximumBackCurveDepth - minimumBackDepth;
         if (curveDepth <= 0.001) {
             return null;
+        }
+        // Both paper faces and their lighting need the same explicit crease rail.
+        if (creaseDepth > minimumBackDepth && creaseDepth < maximumBackCurveDepth) {
+            if (stripIndex === 0) {
+                return { nearDepth: minimumBackDepth, farDepth: creaseDepth };
+            }
+            const remainingDepth = maximumBackCurveDepth - creaseDepth;
+            const remainingStrips = pageCurlBackCurveStripCount - 1;
+            return {
+                nearDepth: creaseDepth
+                    + (remainingDepth * (stripIndex - 1) / remainingStrips),
+                farDepth: creaseDepth + (remainingDepth * stripIndex / remainingStrips),
+            };
         }
         return {
             nearDepth: minimumBackDepth
@@ -848,7 +897,11 @@ const createPageCurlBackMesh = (activeFrame, backFrame, fold, landsOnTargetFrame
     const indices = null;
     const vertices = [];
     const textures = [];
-    const seamOverlap = getPageCurlSurfaceSeamOverlap(fold.arcLength);
+    // Opaque images need seam coverage, but transparent lighting must start at
+    // the crest so the folded overlap does not composite the shade twice.
+    const seamOverlap = overlapStripSeams
+        ? getPageCurlSurfaceSeamOverlap(fold.arcLength)
+        : 0;
     const stripOverlap = overlapStripSeams
         ? getPageCurlStripOverlap(fold.arcLength)
         : 0;
@@ -860,11 +913,18 @@ const createPageCurlBackMesh = (activeFrame, backFrame, fold, landsOnTargetFrame
     const maximumBackCurveDepth = Math.min(maximumDepth, fold.arcLength);
     if (maximumDepth - minimumBackDepth > 0.001 && fold.progress > 0.0001) {
         for (let stripIndex = 0; stripIndex < pageCurlBackStripCount; stripIndex += 1) {
-            const depthRange = getPageCurlBackStripDepthRange(stripIndex, minimumBackDepth, maximumBackCurveDepth, maximumDepth);
+            const depthRange = getPageCurlBackStripDepthRange(stripIndex, minimumBackDepth, maximumBackCurveDepth, maximumDepth, fold.arcLength / 2);
             if (!depthRange) {
                 continue;
             }
-            const { farDepth, nearDepth } = expandPageCurlStripDepthRange(depthRange, stripOverlap, minimumBackDepth, maximumDepth);
+            const expandedDepthRange = expandPageCurlStripDepthRange(depthRange, stripOverlap, minimumBackDepth, maximumDepth);
+            const creaseDepth = fold.arcLength / 2;
+            const nearDepth = Math.abs(depthRange.nearDepth - creaseDepth) < 0.0001
+                ? creaseDepth
+                : expandedDepthRange.nearDepth;
+            const farDepth = Math.abs(depthRange.farDepth - creaseDepth) < 0.0001
+                ? creaseDepth
+                : expandedDepthRange.farDepth;
             let polygon = clipPageCurlPolygonByDistance(rectangle, fold, -nearDepth, 1);
             polygon = clipPageCurlPolygonByDistance(polygon, fold, -farDepth, -1);
             const topology = createPageCurlStripTopology(polygon, fold);
@@ -944,11 +1004,21 @@ const createPageCurlFrontCurveMesh = (activeFrame, backFrame, fold, landsOnTarge
     const textures = [];
     if (maximumFrontDepth > 0.001 && fold.progress > 0.0001) {
         for (let stripIndex = 0; stripIndex < pageCurlBackStripCount; stripIndex += 1) {
-            const nearDepth = maximumFrontDepth * stripIndex / pageCurlBackStripCount;
-            const farDepth = maximumFrontDepth * (stripIndex + 1) / pageCurlBackStripCount;
+            const creaseDepth = Math.min(maximumFrontDepth, fold.arcLength / 2);
+            const curveStrips = pageCurlBackStripCount - 1;
+            const nearDepth = stripIndex < curveStrips
+                ? creaseDepth * stripIndex / curveStrips
+                : creaseDepth;
+            const farDepth = stripIndex < curveStrips
+                ? creaseDepth * (stripIndex + 1) / curveStrips
+                : maximumFrontDepth;
             const expandedDepthRange = expandPageCurlStripDepthRange({ farDepth, nearDepth }, stripOverlap, 0, maximumFrontDepth);
-            let polygon = clipPageCurlPolygonByDistance(rectangle, fold, -expandedDepthRange.nearDepth, 1);
-            polygon = clipPageCurlPolygonByDistance(polygon, fold, -expandedDepthRange.farDepth, -1);
+            let polygon = clipPageCurlPolygonByDistance(rectangle, fold, -(Math.abs(nearDepth - creaseDepth) < 0.0001
+                ? creaseDepth
+                : expandedDepthRange.nearDepth), 1);
+            polygon = clipPageCurlPolygonByDistance(polygon, fold, -(Math.abs(farDepth - creaseDepth) < 0.0001
+                ? creaseDepth
+                : expandedDepthRange.farDepth), -1);
             const topology = createPageCurlStripTopology(polygon, fold);
             if (indices) {
                 if (topology.triangleIndices.length === 0) {
@@ -1110,17 +1180,19 @@ const createPageCurlReceiverLightingMesh = (activeFrame, backFrame, fold, landsO
         ? 1
         : -1;
     const interiorSampleDistance = Math.max(2, Math.min(activeFrame.width, activeFrame.height) * 0.012);
-    const outerEdgeFoldIntersectionY = Math.abs(fold.normalY) <= 0.0001
-        ? hingeY
-        : clampWorklet(fold.midpointY
-            - (fold.normalX
-                * (fold.cornerX - fold.midpointX)
-                / fold.normalY), activeFrame.y, activeFrame.y + activeFrame.height);
+    const cornerSourceDepth = Math.max(0, -getPageCurlFoldDistance({ x: fold.cornerX, y: fold.cornerY }, fold));
+    const outerEdgeHingeDistance = getPageCurlFoldDistance({ x: fold.cornerX, y: hingeY }, fold);
+    // Clip the edge by its endpoint distances so a fully folded edge stays
+    // intact when the fold turns vertical and normalY changes sign.
+    const outerEdgeStartRatio = outerEdgeHingeDistance > 0
+        ? outerEdgeHingeDistance / (outerEdgeHingeDistance + cornerSourceDepth)
+        : 0;
+    const outerEdgeFoldIntersectionY = hingeY
+        + ((fold.cornerY - hingeY) * outerEdgeStartRatio);
     const receiverReference = {
         x: -fold.normalX,
         y: -fold.normalY,
     };
-    const cornerSourceDepth = Math.max(0, -getPageCurlFoldDistance({ x: fold.cornerX, y: fold.cornerY }, fold));
     const cornerElevation = getPageCurlSurfaceElevation(cornerSourceDepth, fold.arcLength);
     const maximumCornerElevation = activeFrame.width
         * pageCurlMaximumArcWidthRatio
@@ -1157,7 +1229,8 @@ const createPageCurlReceiverLightingMesh = (activeFrame, backFrame, fold, landsO
         }, activeFrame, backFrame, fold, landingProgress, landsOnTargetFrame).vertex;
         const outerEdgeReceiverNormal = stabilizePageCurlDirection(getPageCurlReceiverOutwardNormal(mappedRimPoint, mappedRimInteriorPoint, receiverReference), receiverReference);
         const localSourceDepth = Math.max(0, -getPageCurlFoldDistance(surfaceRimSource, fold));
-        const localElevation = getPageCurlSurfaceElevation(localSourceDepth, fold.arcLength);
+        const localArcLength = getPageCurlLocalArcLength(surfaceRimSource, activeFrame, fold);
+        const localElevation = getPageCurlSurfaceElevation(localSourceDepth - ((fold.arcLength - localArcLength) / 2), localArcLength);
         const localHeightVisibility = cornerElevation <= 0.001
             ? 0
             : smoothStepWorklet(clampWorklet(localElevation / cornerElevation, 0, 1));
@@ -1180,20 +1253,40 @@ const createPageCurlReceiverLightingMesh = (activeFrame, backFrame, fold, landsO
     const creaseLineEndpoints = getPageCurlOrderedLineEndpoints(createPageCurlLineIntersections(activeFrame, fold, -creaseSourceDepth), fold);
     const creaseLandingJoinDepth = Math.max(0, creaseSourceDepth - getPageCurlSurfaceSeamOverlap(fold.arcLength));
     if (creaseLineEndpoints) {
+        const creaseRail = [];
+        // Shadow and reflection must follow the rendered polygonal rim, not a
+        // separately sampled analytic curve that can expose a bright pixel gap.
+        for (let section = 0; section <= pageCurlLongitudinalSectionCount; section += 1) {
+            const ratio = getPageCurlLongitudinalRatio(section);
+            creaseRail.push(mapPageCurlFrontCurvePoint({
+                x: creaseLineEndpoints.hingePoint.x + ((creaseLineEndpoints.cornerPoint.x - creaseLineEndpoints.hingePoint.x) * ratio),
+                y: creaseLineEndpoints.hingePoint.y + ((creaseLineEndpoints.cornerPoint.y - creaseLineEndpoints.hingePoint.y) * ratio),
+            }, activeFrame, backFrame, fold, landingProgress, creaseLandingJoinDepth, landsOnTargetFrame));
+        }
         for (let sectionIndex = 0; sectionIndex <= pageCurlReceiverShadowSectionCount; sectionIndex += 1) {
-            const sectionRatio = sectionIndex / pageCurlReceiverShadowSectionCount;
-            const creaseSourcePoint = {
-                x: creaseLineEndpoints.hingePoint.x + ((creaseLineEndpoints.cornerPoint.x
-                    - creaseLineEndpoints.hingePoint.x) * sectionRatio),
-                y: creaseLineEndpoints.hingePoint.y + ((creaseLineEndpoints.cornerPoint.y
-                    - creaseLineEndpoints.hingePoint.y) * sectionRatio),
+            // Include every rim corner; unused fixed-budget rows collapse at the tip.
+            const sectionPosition = Math.min(pageCurlLongitudinalSectionCount, sectionIndex / 2);
+            const railSection = Math.min(pageCurlLongitudinalSectionCount - 1, Math.floor(sectionPosition));
+            const railRatio = sectionPosition - railSection;
+            const startRatio = getPageCurlLongitudinalRatio(railSection);
+            const endRatio = getPageCurlLongitudinalRatio(railSection + 1);
+            const sectionRatio = startRatio + ((endRatio - startRatio) * railRatio);
+            const mappedCreasePoint = {
+                x: creaseRail[railSection].x + ((creaseRail[railSection + 1].x - creaseRail[railSection].x) * railRatio),
+                y: creaseRail[railSection].y + ((creaseRail[railSection + 1].y - creaseRail[railSection].y) * railRatio),
             };
-            const mappedCreasePoint = mapPageCurlFrontCurvePoint(creaseSourcePoint, activeFrame, backFrame, fold, landingProgress, creaseLandingJoinDepth, landsOnTargetFrame);
             const reflectionSectionVisibility = smoothStepWorklet(clampWorklet((sectionRatio
                 - pageCurlMovingCreaseReflectionFadeStartRatio) / (pageCurlMovingCreaseReflectionFadeEndRatio
                 - pageCurlMovingCreaseReflectionFadeStartRatio), 0, 1));
+            const creaseSourcePoint = {
+                x: creaseLineEndpoints.hingePoint.x + ((creaseLineEndpoints.cornerPoint.x - creaseLineEndpoints.hingePoint.x) * sectionRatio),
+                y: creaseLineEndpoints.hingePoint.y + ((creaseLineEndpoints.cornerPoint.y - creaseLineEndpoints.hingePoint.y) * sectionRatio),
+            };
+            const localRadiusRatio = getPageCurlLocalArcLength(creaseSourcePoint, activeFrame, fold)
+                / Math.max(0.001, fold.arcLength);
             for (let depthIndex = 0; depthIndex < pageCurlStationaryCreaseShadowDepthPositions.length; depthIndex += 1) {
                 const shadowDepth = activeFrame.width
+                    * localRadiusRatio
                     * pageCurlStationaryCreaseShadowDepthPositions[depthIndex]
                     * shadowVisibility;
                 stationaryCreaseShadowVertices.push({
@@ -1206,8 +1299,9 @@ const createPageCurlReceiverLightingMesh = (activeFrame, backFrame, fold, landsO
                     * landingVisibility
                     * reflectionSectionVisibility;
                 const reflectionDepth = depthIndex === 0
-                    ? -pageCurlMovingCreaseReflectionOverlap * reflectionVisibility
+                    ? -pageCurlMovingCreaseReflectionOverlap * reflectionVisibility * localRadiusRatio
                     : activeFrame.width
+                        * localRadiusRatio
                         * pageCurlMovingCreaseReflectionDepthPositions[depthIndex]
                         * reflectionVisibility;
                 movingCreaseReflectionVertices.push({
@@ -1242,4 +1336,89 @@ const getPageCurlLightingRadiusFactor = (arcLength, referenceRadius) => {
 const getPageCurlTargetShadowOffset = (arcLength) => {
     return Math.max(0, arcLength) / Math.PI;
 };
-export { createPageCurlFoldContext, createPageCurlFrontMesh, createPageCurlFrontCurveMesh, createPageCurlBackMesh, createPageCurlReceiverLightingMesh, createPageCurlLineIntersections, getPageCurlOrderedLineEndpoints, mapPageCurlReceiverLowerEdgeCasterPoint, getPageCurlSurfaceLandingProgress, getPageCurlReceiverShadowOpacity, getPageCurlReceiverShadowOnset, getPageCurlLightingRadiusFactor, getPageCurlTargetShadowOffset, mapPageCurlCurvedPoint, getPageCurlSurfaceElevation, pageCurlReceiverShadowSectionCount, pageCurlReceiverShadowIndices, pageCurlStationaryCreaseShadowIndices, pageCurlMovingCreaseReflectionIndices, pageCurlStationaryCreaseShadowGradientColors, pageCurlStationaryCreaseShadowGradientPositions, pageCurlMovingCreaseReflectionGradientColors, pageCurlMovingCreaseReflectionGradientPositions, pageCurlCurveShadeGradientColors, pageCurlCurveShadeGradientPositions };
+const createPageCurlSurfaceLightingTextures = (textures, activeFrame, backFrame, fold, reverseTextureX, vertices) => {
+    const lightingTextures = [];
+    const landingProgress = getPageCurlSurfaceLandingProgress(fold, reverseTextureX);
+    const intersections = createPageCurlLineIntersections(activeFrame, fold, -fold.arcLength / 2);
+    const ends = getPageCurlOrderedLineEndpoints(intersections, fold);
+    const sourceStart = ends?.hingePoint ?? { x: fold.midpointX, y: fold.midpointY };
+    const sourceEnd = ends?.cornerPoint ?? { x: sourceStart.x - fold.normalY, y: sourceStart.y + fold.normalX };
+    const start = mapPageCurlBackPoint(sourceStart, activeFrame, backFrame, fold, landingProgress, reverseTextureX).vertex;
+    const end = mapPageCurlBackPoint(sourceEnd, activeFrame, backFrame, fold, landingProgress, reverseTextureX).vertex;
+    const tangentX = end.x - start.x;
+    const tangentY = end.y - start.y;
+    const length = Math.max(0.0001, Math.hypot(tangentX, tangentY));
+    // Preserve the paper side when different page aspect ratios rotate the
+    // rendered crease during landing.
+    const alignment = (sourceStart.y - sourceEnd.y) * fold.normalX
+        + (sourceEnd.x - sourceStart.x) * fold.normalY;
+    const sign = alignment < 0 ? -1 : 1;
+    const normalX = -tangentY / length * sign;
+    const normalY = tangentX / length * sign;
+    const lightingWidth = Math.max(1, fold.arcLength * 0.45 * (1 - landingProgress));
+    for (let index = 0; index < textures.length; index += 1) {
+        const point = vertices[index];
+        const normalizedY = (textures[index].y - backFrame.y) / Math.max(1, backFrame.height);
+        // An affine field from the rendered crease keeps triangle interpolation
+        // from introducing corners into the highlight as the paper bends.
+        lightingTextures.push({
+            x: ((point.x - start.x) * normalX + (point.y - start.y) * normalY) / lightingWidth,
+            y: normalizedY,
+        });
+    }
+    return lightingTextures;
+};
+const createPageCurlFrontSurfaceColors = (mesh, activeFrame, backFrame, fold, landsOnTargetFrame, opacity) => {
+    const lighting = createPageCurlSurfaceLightingTextures(mesh.textures, activeFrame, backFrame, fold, landsOnTargetFrame, mesh.vertices);
+    const colors = [];
+    for (let index = 0; index < mesh.textures.length; index += 1) {
+        const source = mesh.textures[index];
+        const depth = Math.max(0, -getPageCurlFoldDistance(source, fold));
+        const localArc = getPageCurlLocalArcLength(source, activeFrame, fold);
+        const centeredDepth = depth - (fold.arcLength - localArc) / 2;
+        const curvedAmount = smoothStepWorklet(clampWorklet(2 * centeredDepth / Math.max(0.001, localArc), 0, 1));
+        // Use the back surface's rendered crease while leaving the flat front
+        // extension unlit. Opaque colors keep overlapping strips from darkening twice.
+        const nearCrest = 1 - smoothStepWorklet(clampWorklet(lighting[index].x / 0.36, 0, 1));
+        const shade = pageCurlFrontSurfaceShadeStrength * opacity * nearCrest * curvedAmount;
+        const channel = Math.round(255 * (1 - shade));
+        colors.push(pageCurlFrontSurfaceGrayColors[channel]);
+    }
+    return colors;
+};
+const getPageCurlReceiverShadowBlur = (pageWidth, fold, landsOnTargetFrame) => {
+    const landingVisibility = 1 - getPageCurlSurfaceLandingProgress(fold, landsOnTargetFrame);
+    const maximumHeight = pageWidth * pageCurlMaximumArcWidthRatio * 2 / Math.PI;
+    const arcLength = Math.max(0, fold.arcLength);
+    const height = getPageCurlSurfaceElevation(fold.foldDepth, arcLength) * landingVisibility;
+    const heightRatio = clampWorklet(height / Math.max(1, maximumHeight), 0, 1);
+    const contactBlur = Math.max(0.6, pageWidth * 0.002);
+    return contactBlur + (pageWidth * pageCurlReceiverShadowBlurRatio * heightRatio);
+};
+const createPageCurlReceiverContactCasterMesh = (lighting, pageWidth, fold, landsOnTargetFrame) => {
+    const points = lighting.stationaryCreaseShadowVertices;
+    const columns = pageCurlStationaryCreaseShadowDepthPositions.length;
+    const maximumDepth = pageCurlStationaryCreaseShadowDepthPositions[columns - 1];
+    const blur = getPageCurlReceiverShadowBlur(pageWidth, fold, landsOnTargetFrame);
+    const width = blur * 2.5;
+    const hinge = points[0];
+    const end = points[points.length - columns];
+    const creaseLength = Math.hypot(end.x - hinge.x, end.y - hinge.y);
+    const taperLength = Math.max(1, Math.min(creaseLength * 0.35, Math.max(pageWidth * 0.1, blur * 6)));
+    const vertices = [];
+    for (let index = 0; index < points.length; index += 1) {
+        const column = index % columns;
+        const base = points[index - column];
+        // Narrow the caster at contact before blurring so the hinge does
+        // not leave a round cap on the stationary page.
+        const distanceFromHinge = Math.hypot(base.x - hinge.x, base.y - hinge.y);
+        const hingeTaper = smoothStepWorklet(clampWorklet(distanceFromHinge / taperLength, 0, 1));
+        const depth = width * hingeTaper * pageCurlStationaryCreaseShadowDepthPositions[column] / maximumDepth;
+        vertices.push({
+            x: base.x + fold.normalX * depth,
+            y: base.y + fold.normalY * depth,
+        });
+    }
+    return { vertices, indices: pageCurlStationaryCreaseShadowIndices };
+};
+export { createPageCurlReceiverContactCasterMesh, createPageCurlSurfaceLightingTextures, createPageCurlFrontSurfaceColors, getPageCurlReceiverShadowBlur, getPageCurlLocalArcLength, pageCurlStationaryCreaseShadowDepthPositions, createPageCurlFoldContext, createPageCurlFrontMesh, createPageCurlFrontCurveMesh, createPageCurlBackMesh, createPageCurlReceiverLightingMesh, createPageCurlLineIntersections, getPageCurlOrderedLineEndpoints, mapPageCurlReceiverLowerEdgeCasterPoint, getPageCurlSurfaceLandingProgress, getPageCurlReceiverShadowOpacity, getPageCurlReceiverShadowOnset, getPageCurlLightingRadiusFactor, getPageCurlTargetShadowOffset, mapPageCurlCurvedPoint, getPageCurlSurfaceElevation, pageCurlReceiverShadowSectionCount, pageCurlReceiverShadowIndices, pageCurlStationaryCreaseShadowIndices, pageCurlMovingCreaseReflectionIndices, pageCurlStationaryCreaseShadowGradientColors, pageCurlStationaryCreaseShadowGradientPositions, pageCurlMovingCreaseReflectionGradientColors, pageCurlMovingCreaseReflectionGradientPositions, pageCurlCurveShadeGradientColors, pageCurlCurveShadeGradientPositions };

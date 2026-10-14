@@ -314,6 +314,15 @@ export default function EpubOriginalDocument({
             return { clientX: rect.left + event.clientX * scaleX, clientY: rect.top + event.clientY * scaleY };
         };
         const forwardPointer = event => {
+            const selectionStart = event.type === 'pointerdown' || event.type === 'mousedown';
+            const interactiveTarget = event.target.closest?.('a, button, input, select, textarea, [contenteditable], [role="textbox"]');
+            if (interactiveTarget && (event.button === 1 || selectionStart)) return;
+            if ((event.type === 'click' || event.type === 'dblclick')
+                && Number(frame.closest('[data-curl-suppress-click]')?.dataset.curlSuppressClick) > Date.now()) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             const audioButton = event.target.closest?.('button[data-epub-audio-id]');
             if (audioButton) {
                 event.stopPropagation();
@@ -348,7 +357,8 @@ export default function EpubOriginalDocument({
                 ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey,
             });
             frame.dispatchEvent(forwarded);
-            if (forwarded.defaultPrevented && event.type !== 'pointerdown' && event.type !== 'mousedown') event.preventDefault();
+            if ((forwarded.defaultPrevented && (event.button === 1 || !selectionStart))
+                || (selectionStart && frame.closest('[data-curl-dragging]'))) event.preventDefault();
         };
         const forwardWheel = event => {
             event.preventDefault();
@@ -399,7 +409,7 @@ export default function EpubOriginalDocument({
         };
         if (mode !== 'measure') {
             listen(document, 'wheel', forwardWheel, { passive: false });
-            ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'mousedown', 'mousemove', 'mouseup', 'click', 'dblclick', 'contextmenu'].forEach(type => listen(document, type, forwardPointer));
+            ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'mousedown', 'mousemove', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu'].forEach(type => listen(document, type, forwardPointer));
             ['keydown', 'keyup'].forEach(type => listen(document, type, forwardKey));
             listen(document, 'selectionchange', () => {
                 const selection = viewport.getSelection();

@@ -91,6 +91,21 @@ function expectVisible(expected, message) {
     check(JSON.stringify(visibleIndexes()) === JSON.stringify(expected), message + ': ' + visibleIndexes());
 }
 const overlay = () => document.querySelector('.viewer-page-curl-canvas');
+const book = () => document.querySelector('.fixture-book');
+function dragEvent(type, x, y, options = {}) {
+    const event = new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 31, pointerType: 'mouse', isPrimary: true,
+        button: 0, buttons: type === 'pointerup' || type === 'pointercancel' ? 0 : 1,
+        clientX: x, clientY: y, ...options,
+    });
+    book().dispatchEvent(event);
+    return event;
+}
+function dragPoints(side = 'right') {
+    const rect = book().getBoundingClientRect();
+    const x = side === 'right' ? rect.right - 12 : rect.left + 12;
+    return { x, y: rect.bottom - 32, move: amount => x + (side === 'right' ? -1 : 1) * rect.width * amount };
+}
 const transientCanvases = () => createdCanvases.filter(canvas => !canvas.classList.contains('fixture-source-canvas'));
 function expectReleased(message) {
     check(transientCanvases().every(canvas => canvas.width === 0 || canvas.height === 0), message);
@@ -199,6 +214,67 @@ window.testDone = (async () => {
     expectVisible([6, 7], 'Explicit cancellation must keep the current spread');
     expectReleased('Explicit cancellation must release animation snapshots');
     results.push('explicit finish cancels without a stale commit');
+
+    const dragStarts = [];
+    let dragCancels = 0;
+    renderBook({ onTurnStart: index => dragStarts.push(index), onTurnCancel: () => { dragCancels += 1; } });
+    api().turnToPage(2);
+    await frames();
+    let drag = dragPoints();
+    const beforeDrag = changes.length;
+    dragEvent('pointerdown', drag.x, drag.y);
+    dragEvent('pointermove', drag.move(0.16), drag.y);
+    await until(() => painted(overlay()), 'Dragging must display a curl before pointerup');
+    const firstDragFrame = overlay().toDataURL();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    check(changes.length === beforeDrag && api().getCurrentPageIndex() === 2, 'Holding a drag must not auto-complete');
+    dragEvent('pointermove', drag.move(0.42), drag.y - 20);
+    await frames();
+    check(overlay().toDataURL() !== firstDragFrame, 'The curl surface must follow pointer movement');
+    dragEvent('pointerup', drag.move(0.42), drag.y - 20);
+    await until(() => api().getCurrentPageIndex() === 4 && !book().hasAttribute('data-curl-dragging'), 'Released drag must finish on the target spread');
+    check(changes.slice(beforeDrag).join(',') === '4' && dragStarts.at(-1) === 4, 'A completed drag must commit exactly once');
+    expectReleased('Completed drag must release its snapshots');
+    check(!book().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })), 'A drag must suppress its following click');
+
+    drag = dragPoints('left');
+    const beforeRollback = changes.length;
+    dragEvent('pointerdown', drag.x, drag.y);
+    dragEvent('pointermove', drag.move(0.08), drag.y);
+    await until(() => painted(overlay()), 'A short drag must preview the fold');
+    dragEvent('pointerup', drag.move(0.08), drag.y);
+    await until(() => !book().hasAttribute('data-curl-dragging'), 'A short drag must roll back');
+    check(changes.length === beforeRollback && api().getCurrentPageIndex() === 4 && dragCancels === 1, 'Rollback must preserve the original page');
+    expectReleased('Rollback must release its snapshots');
+
+    for (const cancellation of ['pointercancel', 'lostpointercapture', 'blur', 'resize', 'absolute']) {
+        drag = dragPoints('left');
+        dragEvent('pointerdown', drag.x, drag.y);
+        dragEvent('pointermove', drag.move(0.4), drag.y);
+        await until(() => painted(overlay()), cancellation + ' requires a held curl');
+        const beforeCancel = changes.length;
+        if (cancellation === 'blur') window.dispatchEvent(new Event('blur'));
+        else if (cancellation === 'resize') renderBook({ width: 300, height: 380 });
+        else if (cancellation === 'absolute') api().turnToPage(0);
+        else dragEvent(cancellation, drag.move(0.4), drag.y);
+        await until(() => !book().hasAttribute('data-curl-dragging'), cancellation + ' must clear the drag');
+        await frames();
+        check(changes.slice(beforeCancel).join(',') === (cancellation === 'absolute' ? '0' : ''), cancellation + ' must not commit a stale target');
+        expectReleased(cancellation + ' must release its snapshots');
+    }
+    drag = dragPoints();
+    dragEvent('pointerdown', drag.x, drag.y);
+    dragEvent('pointermove', drag.move(0.4), drag.y);
+    dragEvent('pointerup', drag.move(0.4), drag.y);
+    await until(() => api().getCurrentPageIndex() === 2 && !book().hasAttribute('data-curl-dragging'), 'Release during snapshot preparation must finish the requested drag');
+    expectReleased('Fast release must release its snapshots');
+    drag = dragPoints();
+    dragEvent('pointerdown', drag.x, drag.y);
+    api().flip(4);
+    await until(() => api().getCurrentPageIndex() === 4 && !book().hasAttribute('data-curl-dragging'), 'Automatic navigation must replace a pointerdown that has not started dragging');
+    dragEvent('pointerup', drag.x, drag.y);
+    expectReleased('Automatic navigation from a pending pointer must release its snapshots');
+    results.push('pointer-driven curl, rollback, cancellation, resize and fast release');
 
     const readerLeaves = colors.map((_color, index) => <div key={index} className="viewer-flipbook-page fixture-leaf" data-flipbook-index={index}>
         <article className="viewer-text-page" style={{ width: '100%', height: '100%', boxSizing: 'border-box', padding: '24px', margin: 0, color: '#111', background: '#fff', font: '18px sans-serif' }}>
@@ -472,7 +548,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PAGE_CURL_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const report = JSON.parse(payload);
-        assert.equal(report.results.length, 12);
+        assert.equal(report.results.length, 13);
         assert.ok(report.transientCanvasCount > 1, 'The renderer must exercise actual snapshot allocation');
         t.diagnostic(payload);
     } finally {

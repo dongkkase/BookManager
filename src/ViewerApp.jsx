@@ -1076,6 +1076,9 @@ function ViewerFlipBook({
   pdfAmbient = false,
   renderPage,
   onPageIndexChange,
+    canStartDrag,
+    onPageTurnStart,
+    onPageTurnCancel,
 }) {
   const flipBookRef = useRef(null);
   const stageRef = useRef(null);
@@ -1083,6 +1086,8 @@ function ViewerFlipBook({
   const absoluteTargetBookIndexRef = useRef(null);
   const renderPageRef = useRef(renderPage);
   const pageChangeStateRef = useRef(null);
+    const dragTargetBookIndexRef = useRef(null);
+    const [dragTargetBookIndex, setDragTargetBookIndex] = useState(null);
   renderPageRef.current = renderPage;
     const pdfAmbientBookKeyRef = useRef(bookKey);
     pdfAmbientBookKeyRef.current = bookKey;
@@ -1171,11 +1176,31 @@ function ViewerFlipBook({
     minHeight: `${Math.ceil(scaledBookPixelHeight) + 24}px`,
   }), [scaledBookPixelHeight, scaledBookPixelWidth]);
   pageChangeStateRef.current = { currentBookIndex, model, onPageIndexChange, spread };
+    const handleDragTurnStart = useCallback(target => {
+        const nextPageIndex = model.bookToPageIndex.get(target);
+        if (!Number.isInteger(nextPageIndex) || onPageTurnStart?.(nextPageIndex) === false) return false;
+        dragTargetBookIndexRef.current = target;
+        setDragTargetBookIndex(target);
+        setAmbientBookIndex(target);
+        return true;
+    }, [model, onPageTurnStart]);
+    const handleDragTurnCancel = useCallback(() => {
+        if (dragTargetBookIndexRef.current === null) return;
+        dragTargetBookIndexRef.current = null;
+        setDragTargetBookIndex(null);
+        setAmbientBookIndex(flipBookRef.current?.pageFlip?.().getCurrentPageIndex?.() ?? currentBookIndex);
+        onPageTurnCancel?.();
+    }, [currentBookIndex, onPageTurnCancel]);
+    useLayoutEffect(() => {
+        if (stageRef.current?.querySelector('[data-curl-dragging]')) {
+            flipBookRef.current?.pageFlip?.().getRender?.().finishAnimation?.();
+        }
+    }, [normalizedVisualScale]);
   const handlePageChange = useCallback(bookIndex => {
     const pageChangeState = pageChangeStateRef.current;
     if (typeof pageChangeState?.onPageIndexChange !== 'function') return;
     const normalizedBookIndex = Math.max(0, Number(bookIndex) || 0);
-    if (normalizedBookIndex !== pageChangeState.currentBookIndex) return;
+    if (normalizedBookIndex !== pageChangeState.currentBookIndex && normalizedBookIndex !== dragTargetBookIndexRef.current) return;
     if (absoluteTargetBookIndexRef.current != null) {
       if (normalizedBookIndex !== absoluteTargetBookIndexRef.current) return;
       absoluteTargetBookIndexRef.current = null;
@@ -1185,6 +1210,8 @@ function ViewerFlipBook({
       ?? pageChangeState.model.bookToPageIndex.get(fallbackBookIndex);
     setAmbientBookIndex(normalizedBookIndex);
     setDisplayedBookIndex(normalizedBookIndex);
+        dragTargetBookIndexRef.current = null;
+        setDragTargetBookIndex(null);
     if (Number.isInteger(nextPageIndex)) {
       displayedSourceIndexRef.current = nextPageIndex;
       pageChangeState.onPageIndexChange(nextPageIndex);
@@ -1193,7 +1220,9 @@ function ViewerFlipBook({
   useLayoutEffect(() => {
     if (lastAbsoluteNavigationKeyRef.current !== absoluteNavigationKey) {
       lastAbsoluteNavigationKeyRef.current = absoluteNavigationKey;
-      absoluteTargetBookIndexRef.current = currentBookIndex;
+            const pageFlip = flipBookRef.current?.pageFlip?.();
+            pageFlip?.getRender?.().finishAnimation?.();
+            absoluteTargetBookIndexRef.current = pageFlip?.getCurrentPageIndex?.() === currentBookIndex ? null : currentBookIndex;
       return;
     }
     if (
@@ -1275,6 +1304,10 @@ function ViewerFlipBook({
     () => new Set(currentGroupEntries.map(entry => entry.bookIndex)),
     [currentGroupEntries],
   );
+    const dragGroupEntries = useMemo(
+        () => dragTargetBookIndex === null ? [] : getFlipBookCurrentGroupEntries(model.entries, dragTargetBookIndex),
+        [dragTargetBookIndex, model.entries],
+    );
   const nearbyBookIndexes = useMemo(() => {
     if (!provideNearbyPageState) return null;
     return new Set(
@@ -1331,6 +1364,7 @@ function ViewerFlipBook({
     const indexes = new Set([
       ...currentGroupEntries.map(entry => entry.bookIndex),
       ...displayedGroupEntries.map(entry => entry.bookIndex),
+            ...dragGroupEntries.map(entry => entry.bookIndex),
     ]);
     if (nearbyPreloadPhase >= 1) {
       nearbyBookIndexes?.forEach(bookIndex => indexes.add(bookIndex));
@@ -1339,6 +1373,7 @@ function ViewerFlipBook({
   }, [
     currentGroupEntries,
     displayedGroupEntries,
+        dragGroupEntries,
     nearbyBookIndexes,
     nearbyPreloadPhase,
     provideNearbyPageState,
@@ -1348,6 +1383,7 @@ function ViewerFlipBook({
     const indexes = new Set([
       ...currentGroupEntries.map(entry => entry.bookIndex),
       ...displayedGroupEntries.map(entry => entry.bookIndex),
+            ...dragGroupEntries.map(entry => entry.bookIndex),
     ]);
     if (nearbyPreloadPhase >= 2) {
       nearbyBookIndexes?.forEach(bookIndex => indexes.add(bookIndex));
@@ -1356,6 +1392,7 @@ function ViewerFlipBook({
   }, [
     currentGroupEntries,
     displayedGroupEntries,
+        dragGroupEntries,
     nearbyBookIndexes,
     nearbyPreloadPhase,
     provideNearbyPageState,
@@ -1432,6 +1469,9 @@ function ViewerFlipBook({
             duration={BOOK_PAGE_TURN_DURATION}
             spread={spread}
             onPageChange={handlePageChange}
+            canStartDrag={canStartDrag}
+            onTurnStart={handleDragTurnStart}
+            onTurnCancel={handleDragTurnCancel}
           >
             {pageElements}
           </ViewerPageCurlBook>
@@ -3044,16 +3084,16 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
 
   useEffect(() => {
     if (!open) return undefined;
-    const handlePointerDown = event => {
+    const handleClick = event => {
       if (!rootRef.current?.contains(event.target)) setOpen(false);
     };
     const handleKeyDown = event => {
       if (event.key === 'Escape') setOpen(false);
     };
-    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('click', handleClick);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('click', handleClick);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [open]);
@@ -4205,6 +4245,7 @@ function ViewerHelpModal({ open, onClose }) {
     { keys: ['← / →', '↑ / ↓', 'PageUp / PageDown'], description: viewerText('viewer.help.shortcut_page_group', '이전장과 다음장으로 이동합니다.') },
     { key: viewerText('viewer.help.shortcut_wheel_key', '마우스 휠'), description: viewerText('viewer.help.shortcut_wheel', '한장보기와 두장보기에서는 페이지를 넘기고, 스크롤에서는 본문을 스크롤합니다.') },
     { key: viewerText('viewer.help.shortcut_swipe_key', '스와이프'), description: viewerText('viewer.help.shortcut_swipe', '터치 화면에서 좌우로 스와이프해 이전장과 다음장으로 이동합니다.') },
+        { key: viewerText('viewer.help.shortcut_page_drag_key', '페이지 드래그'), description: viewerText('viewer.help.shortcut_page_drag', '책넘김 효과에서는 페이지를 끌어서 넘깁니다. 텍스트 페이지는 바깥쪽 가장자리에서 끌고, 짧게 끌었다 놓으면 원래 페이지로 돌아옵니다.') },
     { key: 'Home / End', description: viewerText('viewer.help.shortcut_home_end', '첫 페이지와 마지막 페이지로 이동합니다.') },
     {
       keys: [
@@ -4218,7 +4259,7 @@ function ViewerHelpModal({ open, onClose }) {
     { keys: ['0', '7', '8', '9'], description: viewerText('viewer.help.shortcut_fit_group', '원본 크기, 가로 맞춤, 높이 맞춤, 전체 맞춤으로 전환합니다.') },
     { key: 'B', description: viewerText('viewer.help.shortcut_bookmark', '현재 페이지를 책갈피로 추가합니다.') },
     { keys: [viewerShortcutLabel(['Mod', 'F']), 'L'], description: viewerText('viewer.help.shortcut_navigation_group', '목차 및 검색 패널을 열고 검색 입력 또는 목차 탭으로 이동합니다.') },
-    { keys: ['Enter', 'F11', viewerText('viewer.help.shortcut_double_click_key', '더블클릭')], description: viewerText('viewer.help.shortcut_fullscreen_group', '뷰어 본문 또는 창 전체화면을 전환합니다.') },
+    { keys: ['Enter', 'F11', viewerText('viewer.help.shortcut_double_click_key', '더블클릭'), viewerText('viewer.help.shortcut_middle_click_key', '마우스 휠 클릭')], description: viewerText('viewer.help.shortcut_fullscreen_group', '뷰어 본문 또는 창 전체화면을 전환합니다.') },
     { key: 'Esc', description: viewerText('viewer.help.shortcut_escape', '뷰어 창을 닫습니다.') },
   ];
   const toolbarRows = [
@@ -5862,6 +5903,7 @@ function ViewerApp() {
   const pageTurnPendingRef = useRef(false);
   const pageTurnSequenceRef = useRef(0);
   const bookPageTurnTargetRef = useRef(null);
+    const bookPageDragActiveRef = useRef(false);
   const viewerToastTimerRef = useRef(null);
   const toolbarPeekTimerRef = useRef(null);
   const lastPageHintRef = useRef('');
@@ -6911,6 +6953,7 @@ function ViewerApp() {
     pageTurnCompletionRef.current = null;
     pageTurnPendingRef.current = false;
     bookPageTurnTargetRef.current = null;
+        bookPageDragActiveRef.current = false;
   }, []);
 
   const completeTimedPageEffect = useCallback(sequence => {
@@ -7770,6 +7813,7 @@ function ViewerApp() {
   }, [flowMode, pageCount, pageCountReadyForNavigation, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session?.type, setPageIndexSynced]);
 
   const movePage = useCallback(delta => {
+        if (bookPageDragActiveRef.current) return;
     const currentIndex = clamp(pageIndexRef.current, 0, Math.max(0, pageCount - 1));
     if (delta > 0 && pageCount > 0 && flowMode !== 'scroll' && isForwardBoundaryIndex(currentIndex)) {
       moveAdjacentBook(1);
@@ -7831,6 +7875,7 @@ function ViewerApp() {
       }
       bookPageTurnTargetRef.current = null;
       pageTurnPendingRef.current = false;
+            bookPageDragActiveRef.current = false;
     }
     if (pageIndexRef.current === normalizedIndex) return;
     setPageIndexSynced(normalizedIndex);
@@ -7839,6 +7884,17 @@ function ViewerApp() {
     }
     resetPageModeScroll();
   }, [flowMode, pageCount, resetPageModeScroll, session?.type, setPageIndexSynced]);
+
+    const handleFlipBookDragStart = useCallback(target => {
+        if (pageTurnPendingRef.current) return false;
+        pageTurnPendingRef.current = true;
+        bookPageTurnTargetRef.current = target;
+        bookPageDragActiveRef.current = true;
+        return true;
+    }, []);
+    const handleFlipBookDragCancel = useCallback(() => {
+        if (bookPageDragActiveRef.current) clearPageTurnRuntime();
+    }, [clearPageTurnRuntime]);
 
   const getFlipBookPageSize = useCallback((slots = 1, minimumWidth = 180) => {
     const normalizedSlots = Math.max(1, Number(slots) || 1);
@@ -8563,6 +8619,14 @@ function ViewerApp() {
     toggleFullscreen();
   }, [isViewerInteractiveTarget, toggleFullscreen]);
 
+    const handleContentMiddleClick = useCallback(event => {
+        if (event.button !== 1 || isViewerInteractiveTarget(event.target)) return;
+        if (event.target?.closest?.('a, button, input, select, textarea, [contenteditable], [role="textbox"]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.type === 'auxclick') toggleFullscreen();
+    }, [isViewerInteractiveTarget, toggleFullscreen]);
+
   const getDragPanTarget = useCallback(target => {
     if (!(session?.type === 'comic' || session?.type === 'pdf')) return null;
     if (target?.closest?.('.viewer-pdf-text-layer')) return null;
@@ -8640,6 +8704,14 @@ function ViewerApp() {
     swipeGestureRef.current = null;
     releaseSwipePointerCapture(event);
   }, [releaseSwipePointerCapture]);
+
+    const canStartFlipBookDrag = useCallback(event => {
+        if (loading || initialRenderLoading || pageTurnPendingRef.current || isViewerInteractiveTarget(event.target)) return false;
+        if (helpOpen || bookmarkEditorOpen || bookmarkMenuOpen || settingsOpen || navigationPanelOpen || selectionMenu || imageLightbox || lookupPanel) return false;
+        const panTarget = getDragPanTarget(event.target);
+        const { canPanX, canPanY } = dragPanOverflowStateForTarget(scrollRef.current, panTarget);
+        return !canPanX && !canPanY;
+    }, [bookmarkEditorOpen, bookmarkMenuOpen, getDragPanTarget, helpOpen, imageLightbox, initialRenderLoading, isViewerInteractiveTarget, loading, lookupPanel, navigationPanelOpen, selectionMenu, settingsOpen]);
 
   const handleSwipePointerDown = useCallback(event => {
     if (!event.isPrimary) return;
@@ -9104,6 +9176,9 @@ function ViewerApp() {
           provideNearbyPageState
           initialRenderLoading={initialRenderLoading}
           onPageIndexChange={handleFlipBookPageIndexChange}
+          canStartDrag={canStartFlipBookDrag}
+          onPageTurnStart={handleFlipBookDragStart}
+          onPageTurnCancel={handleFlipBookDragCancel}
           renderAmbientPage={backgroundMode === 'immersive' && !initialRenderLoading ? (sourceIndex, entry) => {
             const page = pages[sourceIndex];
             const src = page ? (pageData[page.name] || page?.pageUrl) : '';
@@ -9450,6 +9525,9 @@ function ViewerApp() {
           pageSize={pageSize}
           absoluteNavigationKey={absolutePageJumpSequence}
           onPageIndexChange={handleFlipBookPageIndexChange}
+          canStartDrag={canStartFlipBookDrag}
+          onPageTurnStart={handleFlipBookDragStart}
+          onPageTurnCancel={handleFlipBookDragCancel}
           provideNearbyPageState={isOriginalEpub}
           initialRenderLoading={initialRenderLoading}
           renderPage={(sourceIndex, entry) => renderReaderArticle(items[sourceIndex], entry.leafOffset, sourceIndex)}
@@ -9571,6 +9649,9 @@ function ViewerApp() {
           visualScale={flipBookVisualScale}
           renderKey={pdfFlipBookRenderKey}
           onPageIndexChange={handleFlipBookPageIndexChange}
+          canStartDrag={canStartFlipBookDrag}
+          onPageTurnStart={handleFlipBookDragStart}
+          onPageTurnCancel={handleFlipBookDragCancel}
           renderPage={(sourceIndex, _entry, renderState) => renderPdfPage(
             sourceIndex,
             slots,
@@ -10108,6 +10189,8 @@ function ViewerApp() {
         onScroll={handleScroll}
         onContextMenu={handleContentContextMenu}
         onDoubleClick={handleContentDoubleClick}
+        onMouseDown={handleContentMiddleClick}
+        onAuxClick={handleContentMiddleClick}
         onPointerDown={handleContentPointerDown}
         onPointerMove={handleContentPointerMove}
         onPointerUp={handleContentPointerUp}

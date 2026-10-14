@@ -2671,7 +2671,7 @@ body.is-resizing-panel .detail-panel-wrap {
   grid-template-columns: var(--tile-image-width, 100px) minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
-  min-height: calc(var(--tile-image-height, 124px) + 12px);
+    height: calc(var(--tile-image-height, 124px) + 12px);
   padding: 6px;
   background: transparent;
   border: 1px solid transparent;

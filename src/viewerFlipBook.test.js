@@ -431,7 +431,7 @@ test('가로형 페이지 발견으로 플립북 구조가 바뀌어도 표시 �
     );
     assert.match(
         viewerFlipBookSource,
-        /pageChangeStateRef\.current = \{ currentBookIndex, model, onPageIndexChange, spread \}[\s\S]*?if \(normalizedBookIndex !== pageChangeState\.currentBookIndex\) return/,
+        /pageChangeStateRef\.current = \{ currentBookIndex, model, onPageIndexChange, spread \}[\s\S]*?if \(normalizedBookIndex !== pageChangeState\.currentBookIndex && normalizedBookIndex !== dragTargetBookIndexRef\.current\) return/,
     );
 });
 
@@ -540,7 +540,7 @@ test('만화와 PDF 책넘김 전용 몰입형 배경에서는 하단 그라데�
 
 test('두장보기 Home과 End 이동은 진행 중인 애니메이션을 끝내고 목표 펼침면으로 즉시 이동한다', () => {
     assert.match(viewerSource, /const \[absolutePageJumpSequence, setAbsolutePageJumpSequence\] = useState\(0\)/);
-    assert.match(viewerSource, /absoluteTargetBookIndexRef\.current = currentBookIndex/);
+    assert.match(viewerSource, /absoluteTargetBookIndexRef\.current = pageFlip\?\.getCurrentPageIndex\?\.\(\) === currentBookIndex \? null : currentBookIndex/);
     assert.match(viewerSource, /finishAndTurnFlipBookToPage\(pageFlip, currentBookIndex\)/);
     assert.match(viewerSource, /if \(normalizedBookIndex !== absoluteTargetBookIndexRef\.current\) return/);
     assert.doesNotMatch(viewerSource, /flipBookRef\.current\?\.flip\?\.\(currentBookIndex\)/);
