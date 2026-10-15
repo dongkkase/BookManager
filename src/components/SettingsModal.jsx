@@ -17,11 +17,24 @@ import {
 } from '../bundledFonts';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 import { TelemetrySettings } from './TelemetrySettings';
+import { fontVarsForConfig } from '../fontPolicy';
+import { libraryDisplayName } from '../libraryPresentation';
+import { SettingsLibraryPreview } from './SettingsLibraryPreview';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
   { value: 'en', label: 'English' },
   { value: 'ja', label: '日本語' },
+];
+
+const SETTINGS_TABS = [
+    { id: 'basic', key: 'general', icon: 'sliders' },
+    { id: 'processing', key: 'processing', icon: 'archive' },
+    { id: 'folder', key: 'folder', icon: 'folderOpen' },
+    { id: 'viewer', key: 'viewer', icon: 'bookOpen' },
+    { id: 'api', key: 'api', icon: 'search' },
+    { id: 'ttsApi', key: 'tts', icon: 'headphones', fallbackKey: 'tab_tts_api_key' },
+    { id: 'privacy', key: 'privacy', icon: 'user' },
 ];
 
 const FORMAT_KEYS = ['none', 'zip', 'cbz', 'cbr', '7z'];
@@ -94,11 +107,6 @@ function uniqueSystemFonts(fonts = [], currentFont = '', bundledOptions = []) {
   return result.sort((a, b) => a.localeCompare(b));
 }
 
-function libraryFallbackName(folderPath = '') {
-  const parts = String(folderPath || '').split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] || folderPath;
-}
-
 function supertonicInstallPercent(progress = {}) {
   const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
   if (progress.phase === 'complete') return 100;
@@ -164,6 +172,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
   const [fileAssociationLoading, setFileAssociationLoading] = React.useState(false);
   const [fileAssociationBusy, setFileAssociationBusy] = React.useState('');
   const [fileAssociationFeedback, setFileAssociationFeedback] = React.useState(null);
+    const settingsBodyRef = React.useRef(null);
+    const [compactNavigation, setCompactNavigation] = React.useState(false);
   const settingsOpenInitializedRef = React.useRef(false);
   const threadMax = React.useMemo(() => safeThreadMax(), []);
   const handleCancel = React.useCallback(() => {
@@ -174,6 +184,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     if (showApiManual) setShowApiManual(false);
     else handleCancel();
   });
+
+    const manualDialogRef = useModalAccessibility(isOpen && showApiManual, () => setShowApiManual(false));
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -189,6 +201,21 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     if (!isOpen) return;
     setActiveTab(initialTab);
   }, [initialTab, isOpen, navigationRequest]);
+
+    React.useEffect(() => {
+        const media = window.matchMedia('(max-width: 760px)');
+        const updateNavigation = () => setCompactNavigation(media.matches);
+        updateNavigation();
+        media.addEventListener('change', updateNavigation);
+        return () => media.removeEventListener('change', updateNavigation);
+    }, []);
+
+    React.useEffect(() => {
+        if (!isOpen) return;
+        settingsBodyRef.current?.scrollTo({ top: 0 });
+        dialogRef.current?.querySelector('[role="tab"][aria-selected="true"]')
+            ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }, [activeTab, isOpen]);
 
   React.useEffect(() => {
     if (!isOpen) return undefined;
@@ -328,6 +355,22 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     const value = t(key);
     return value && value !== key ? value : fallback;
   };
+
+    const selectedTab = SETTINGS_TABS.find(tab => tab.id === activeTab) || SETTINGS_TABS[0];
+    const tabTitle = tab => label(`settings.${tab.key}.title`, t(tab.fallbackKey || 'tab_basic'));
+    const handleTabKeyDown = event => {
+        const currentIndex = SETTINGS_TABS.findIndex(tab => tab.id === activeTab);
+        let nextIndex;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % SETTINGS_TABS.length;
+        else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + SETTINGS_TABS.length) % SETTINGS_TABS.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = SETTINGS_TABS.length - 1;
+        else return;
+        event.preventDefault();
+        const nextTab = SETTINGS_TABS[nextIndex];
+        setActiveTab(nextTab.id);
+        dialogRef.current?.querySelector(`#settings-tab-${nextTab.id}`)?.focus();
+    };
 
   const apiSourceLabel = (source) => label(source.labelKey, source.value);
   const formatLabels = Array.isArray(t('format_opts')) ? t('format_opts') : ['변경 안 함', 'ZIP', 'CBZ', 'CBR', '7z'];
@@ -757,6 +800,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
   const renderSecretInput = (key, placeholder, disabled = false) => (
     <div className="settings-secret-row">
       <input
+        id={`settings-secret-${key}`}
         className="settings-input"
         type={showSecrets[key] ? 'text' : 'password'}
         placeholder={placeholder}
@@ -769,6 +813,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         type="button"
         onClick={() => setShowSecrets(prev => ({ ...prev, [key]: !prev[key] }))}
         disabled={disabled}
+        aria-controls={`settings-secret-${key}`}
+        aria-pressed={Boolean(showSecrets[key])}
         aria-label={showSecrets[key] ? label('secret_hide', '비밀번호 숨기기') : label('secret_show', '비밀번호 보기')}
       >
         <FaIcon name={showSecrets[key] ? 'eyeSlash' : 'eye'} />
@@ -778,10 +824,10 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
 
   const renderCheck = (key, text, help) => (
     <label className="settings-check-row">
-      <input type="checkbox" checked={Boolean(localConfig[key])} onChange={event => handleChange(key, event.target.checked)} />
+      <input type="checkbox" aria-describedby={help ? `settings-help-${key}` : undefined} checked={Boolean(localConfig[key])} onChange={event => handleChange(key, event.target.checked)} />
       <span>
         <strong>{text}</strong>
-        {help && <small>{help}</small>}
+        {help && <small id={`settings-help-${key}`}>{help}</small>}
       </span>
     </label>
   );
@@ -797,424 +843,516 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         tabIndex={-1}
         onClick={event => event.stopPropagation()}
       >
-        <div className="modal-header">
-          <span id="settings-modal-title" className="modal-title">{t('settings_title')}</span>
-          <button className="modal-close" aria-label={t('btn_close')} onClick={handleCancel}>×</button>
+        <div className="modal-header" inert={showApiManual ? '' : undefined}>
+            <div className="settings-header-copy">
+                <span id="settings-modal-title" className="modal-title">{t('settings_title')}</span>
+                <p className="settings-subtitle">{t('settings.subtitle')}</p>
+            </div>
+            <button className="modal-close" aria-label={t('btn_close')} onClick={handleCancel}>×</button>
         </div>
 
-        <div className="settings-tabs">
-          <button className={activeTab === 'basic' ? 'active' : ''} onClick={() => setActiveTab('basic')}>{label('tab_basic', '기본 설정')}</button>
-          <button className={activeTab === 'folder' ? 'active' : ''} onClick={() => setActiveTab('folder')}>{label('tab_folder_settings', '폴더 탭 설정')}</button>
-          <button className={activeTab === 'api' ? 'active' : ''} onClick={() => setActiveTab('api')}>{label('tab_api', 'API 검색 설정')}</button>
-          <button className={activeTab === 'ttsApi' ? 'active' : ''} onClick={() => setActiveTab('ttsApi')}>{label('tab_tts_api_key', 'TTS 설정')}</button>
-        </div>
-
-        <div className="modal-body settings-modal-body">
-          {activeTab === 'basic' && (
-            <div className="settings-panel">
-              <fieldset className="settings-fieldset settings-basic-fieldset">
-              <div className="settings-row">
-                <span className="settings-label">{t('lang_lbl')}</span>
-                <select className="settings-select" value={localConfig.language || localConfig.lang || 'ko'} onChange={event => handleLanguageChange(event.target.value)}>
-                  {LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </div>
-
-              <div className="settings-row">
-                <span className="settings-label">{t('sound_lbl')}</span>
-                <div className="settings-inline-control">
-                  <select
-                    className="settings-select"
-                    value={localConfig.completion_sound || 'Default.wav'}
-                    onChange={event => {
-                      handleChange('completion_sound', event.target.value);
-                      window.electronAPI?.playSound?.(event.target.value);
-                    }}
-                  >
-                    {soundOptions.map(file => <option key={file} value={file}>{file.replace(/\.(mp3|wav)$/i, '')}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="settings-row">
-                <span className="settings-label">{t('font_family_lbl')}</span>
-                <select className="settings-select" value={localConfig.font_family || 'Noto Sans KR'} onChange={event => handleChange('font_family', event.target.value)}>
-                  <optgroup label={label('font_group_bundled', '프로그램 포함 폰트')}>
-                    {bundledFontOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
+        <div className="settings-workspace" inert={showApiManual ? '' : undefined}>
+            <aside className="settings-sidebar">
+                <div className="settings-tabs" role="tablist" aria-label={t('settings.navigation')} aria-orientation={compactNavigation ? 'horizontal' : 'vertical'}>
+                    {SETTINGS_TABS.map(tab => (
+                        <button
+                            key={tab.id}
+                            id={`settings-tab-${tab.id}`}
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === tab.id}
+                            aria-controls="settings-panel"
+                            tabIndex={activeTab === tab.id ? 0 : -1}
+                            className={activeTab === tab.id ? 'active' : ''}
+                            onClick={() => setActiveTab(tab.id)}
+                            onKeyDown={handleTabKeyDown}
+                        >
+                            <FaIcon name={tab.icon} className="settings-nav-icon" />
+                            <span>
+                                <strong>{tabTitle(tab)}</strong>
+                                <small>{t(`settings.${tab.key}.summary`)}</small>
+                            </span>
+                        </button>
                     ))}
-                  </optgroup>
-                  <optgroup label={label('font_group_system', '시스템 폰트')}>
-                    {systemFontsForSelect.map(font => <option key={font} value={font}>{font}</option>)}
-                  </optgroup>
-                </select>
-              </div>
-
-              <div className="settings-row">
-                <span className="settings-label">{t('font_size_lbl')}</span>
-                <select className="settings-select" value={localConfig.font_scale || 100} onChange={event => handleChange('font_scale', Number(event.target.value))}>
-                  {FONT_SCALES.map(value => <option key={value} value={value}>{value}%</option>)}
-                </select>
-              </div>
-
-              <div className="settings-row">
-                <span className="settings-label">{t('format_lbl')}</span>
-                <select className="settings-select" value={localConfig.target_format || 'none'} onChange={event => handleChange('target_format', event.target.value)}>
-                  {FORMAT_KEYS.map((key, index) => <option key={key} value={key}>{formatLabels[index] || key.toUpperCase()}</option>)}
-                </select>
-              </div>
-
-              <div className="settings-row">
-                <span className="settings-label">{t('max_threads')}</span>
-                <div className="settings-slider-control">
-                  <input
-                    type="range"
-                    min="1"
-                    max={threadMax}
-                    value={Math.min(threadMax, Number(localConfig.max_threads) || 1)}
-                    onChange={event => handleChange('max_threads', Number(event.target.value))}
-                  />
-                  <span>{Math.min(threadMax, Number(localConfig.max_threads) || 1)} Cores</span>
                 </div>
-              </div>
-              <p className="settings-help">{t('threads_desc')}</p>
-
-              <div className="settings-separator" />
-
-                {renderCheck('hardware_acceleration', t('hardware_acceleration'), t('hardware_acceleration_desc'))}
-              {renderCheck('play_sound', t('play_sound'))}
-              {renderCheck('backup_on', t('backup'))}
-              {renderCheck('flatten_folders', t('flatten'), t('flatten_desc'))}
-              {renderCheck('pass_skip_meta', t('opt_pass_skip_meta'), t('opt_pass_skip_meta_tip'))}
-
-              <div className="settings-row">
-                <span className="settings-label">{t('common_quality')}</span>
-                <div className="settings-slider-control">
-                  <input type="range" min="1" max="100" value={localConfig.img_quality || 100} onChange={event => handleChange('img_quality', Number(event.target.value))} />
-                  <span>{localConfig.img_quality || 100}%{Number(localConfig.img_quality) === 100 ? ` (${label('quality_lossless', '무손실')})` : ''}</span>
+            </aside>
+            <div
+                ref={settingsBodyRef}
+                className="modal-body settings-modal-body"
+                role="tabpanel"
+                id="settings-panel"
+                aria-labelledby={`settings-tab-${activeTab}`}
+                tabIndex={0}
+            >
+                <div className="settings-page-header">
+                    <h2>{tabTitle(selectedTab)}</h2>
+                    <p>{t(`settings.${selectedTab.key}.description`)}</p>
                 </div>
-              </div>
-              <p className="settings-help">{t('tt_img_quality_desc')}</p>
+                {activeTab === 'basic' && (
+                    <div className="settings-panel">
+                        <fieldset className="settings-fieldset">
+                            <legend>{t('settings.sections.appearance')}</legend>
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-language">{t('lang_lbl')}</label>
+                                <select id="settings-language" className="settings-select" value={localConfig.language || localConfig.lang || 'ko'} onChange={event => handleLanguageChange(event.target.value)}>
+                                    {LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                </select>
+                            </div>
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-font">{t('font_family_lbl')}</label>
+                                <select id="settings-font" className="settings-select" value={localConfig.font_family || 'Noto Sans KR'} onChange={event => handleChange('font_family', event.target.value)}>
+                                    <optgroup label={label('font_group_bundled', '프로그램 포함 폰트')}>
+                                        {bundledFontOptions.map(option => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                    </optgroup>
+                                    <optgroup label={label('font_group_system', '시스템 폰트')}>
+                                        {systemFontsForSelect.map(font => <option key={font} value={font}>{font}</option>)}
+                                    </optgroup>
+                                </select>
+                            </div>
 
-              <div className="settings-row">
-                <span className="settings-label">{label('renamer_archive_compression_lbl', '재압축 강도 :')}</span>
-                <select
-                  className="settings-select"
-                  value={localConfig.renamer_archive_compression || 'auto'}
-                  onChange={event => handleChange('renamer_archive_compression', event.target.value)}
-                >
-                  {RENAMER_ARCHIVE_COMPRESSION_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {label(option.labelKey, option.fallback)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <p className="settings-help">{label('renamer_archive_compression_desc', '내부 파일명 변경에서 다시 압축할 때만 적용됩니다. 빠름은 속도 우선, 최대 압축은 용량 우선입니다.')}</p>
-
-              {renderCheck('webp_conversion', t('webp'), label('webp_desc', '모든 이미지를 고효율 WebP 포맷으로 변환하여 압축자 호환성을 보장합니다.'))}
-
-              <div className="settings-separator" />
-
-              {VIEWER_PROGRAM_TYPES.map(option => (
-                <div className="settings-row" key={option.key}>
-                  <span className="settings-label settings-viewer-label">
-                    <span>{label(option.labelKey, option.fallback)}</span>
-                    {option.descriptionKey ? (
-                      <small>{label(option.descriptionKey, option.descriptionFallback)}</small>
-                    ) : null}
-                  </span>
-                  <div className="settings-path-row">
-                    <input
-                      className="settings-input"
-                      value={localConfig.viewer_paths?.[option.key] || ''}
-                      placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')}
-                      readOnly
-                    />
-                    <button className="settings-action-btn" onClick={() => handleSelectViewer(option.key)}>{label('btn_find', '찾기')}</button>
-                    <button
-                      className="settings-action-btn"
-                      onClick={() => handleClearViewer(option.key)}
-                      disabled={!localConfig.viewer_paths?.[option.key]}
-                    >
-                      {label('btn_remove', '삭제')}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              </fieldset>
-
-                <TelemetrySettings config={localConfig} onChange={handleChange} />
-
-                <fieldset className="settings-fieldset settings-file-association-fieldset">
-                    <legend>{label('file_association_title', '파일 연결')}</legend>
-                    <p className="settings-help">
-                        {label(
-                            'file_association_desc',
-                            'BookManager를 통해 열 확장자를 체크한 뒤 적용하세요. 상태 배지는 현재 기본 앱 연결을 표시합니다.',
-                        )}
-                    </p>
-                    <p className="settings-help">
-                        {label(
-                            'file_association_behavior_notice',
-                            '체크는 BookManager로 연결할 대상을 선택합니다. 적용 시 위 뷰어 경로도 함께 저장됩니다. 기존 기본 앱을 다른 앱으로 바꾸려면 운영체제 설정을 사용하세요.',
-                        )}
-                    </p>
-
-                    {fileAssociationLoading ? (
-                        <p className="settings-file-association-message" role="status">
-                            {label('file_association_loading', '파일 연결 상태를 확인하는 중...')}
-                        </p>
-                    ) : null}
-
-                    {!fileAssociationLoading && !fileAssociationStatus?.supported ? (
-                        <p className="settings-file-association-message is-notice" role="status">
-                            {fileAssociationStatus?.reason === 'macos-12-required'
-                                ? label(
-                                    'file_association_macos_12_required',
-                                    '파일 연결 설정은 macOS 12 이상에서 사용할 수 있습니다.',
-                                )
-                                : label(
-                                    'file_association_unsupported',
-                                    '이 운영체제 또는 현재 실행 환경에서는 파일 연결을 지원하지 않습니다.',
-                                )}
-                        </p>
-                    ) : null}
-
-                    {availableFileAssociations.length > 0 ? (
-                        <div className="settings-file-association-groups">
-                            {FILE_ASSOCIATION_GROUPS.map(group => {
-                                const groupAssociations = availableFileAssociations.filter(
-                                    association => association.group === group.key,
-                                );
-                                if (groupAssociations.length === 0) return null;
-                                return (
-                                    <section className="settings-file-association-group" key={group.key}>
-                                        <h4>{label(group.labelKey, group.fallback)}</h4>
-                                        <div className="settings-file-association-options">
-                                            {groupAssociations.map(association => {
-                                                const extension = association.extension;
-                                                const extensionLabel = String(extension).replace(/^\./, '').toUpperCase();
-                                                const statusType = association.isDefault
-                                                    ? 'default'
-                                                    : association.handlerName ? 'other' : 'none';
-                                                const statusLabel = statusType === 'default'
-                                                    ? label('file_association_status_bookmanager', 'BookManager')
-                                                    : statusType === 'other'
-                                                        ? label('file_association_status_other', '다른 앱')
-                                                        : label('file_association_status_none', '연결 없음');
-                                                return (
-                                                    <label className="settings-file-association-option" key={extension}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={selectedFileAssociations.includes(extension)}
-                                                            onChange={event => toggleFileAssociation(extension, event.target.checked)}
-                                                            disabled={fileAssociationControlsDisabled}
-                                                            aria-label={`${extensionLabel} ${label('file_association_checkbox_aria', '연결 대상 선택')}`}
-                                                        />
-                                                        <strong>{extensionLabel}</strong>
-                                                        <span
-                                                            className={`settings-file-association-badge is-${statusType}`}
-                                                            title={statusType === 'other' ? association.handlerName : statusLabel}
-                                                        >
-                                                            {statusLabel}
-                                                        </span>
-                                                    </label>
-                                                );
-                                            })}
-                                        </div>
-                                    </section>
-                                );
-                            })}
-                        </div>
-                    ) : null}
-
-                    <div className="settings-file-association-actions">
-                        <button
-                            type="button"
-                            className="settings-action-btn"
-                            onClick={handleRefreshFileAssociationStatus}
-                            disabled={fileAssociationControlsDisabled || availableFileAssociations.length === 0}
-                        >
-                            {fileAssociationBusy === 'refresh'
-                                ? label('file_association_refreshing', '새로고침 중...')
-                                : label('file_association_refresh', '상태 새로고침')}
-                        </button>
-                        <button
-                            type="button"
-                            className="settings-action-btn"
-                            onClick={handleSelectAllFileAssociations}
-                            disabled={fileAssociationControlsDisabled || availableFileAssociations.length === 0}
-                        >
-                            {label('file_association_select_all', '전체 선택')}
-                        </button>
-                        <button
-                            type="button"
-                            className="settings-action-btn"
-                            onClick={handleClearFileAssociationSelection}
-                            disabled={fileAssociationControlsDisabled || selectedFileAssociations.length === 0}
-                        >
-                            {label('file_association_clear_all', '전체 해제')}
-                        </button>
-                        <button
-                            type="button"
-                            className="settings-action-btn settings-blue-btn"
-                            onClick={handleApplyFileAssociations}
-                            disabled={fileAssociationControlsDisabled || selectedFileAssociations.length === 0}
-                        >
-                            {fileAssociationBusy === 'apply'
-                                ? label('file_association_applying', '연결 중...')
-                                : label('file_association_apply', 'BookManager로 연결')}
-                        </button>
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-font-scale">{t('font_size_lbl')}</label>
+                                <select id="settings-font-scale" className="settings-select" value={localConfig.font_scale || 100} onChange={event => handleChange('font_scale', Number(event.target.value))}>
+                                    {FONT_SCALES.map(value => <option key={value} value={value}>{value}%</option>)}
+                                </select>
+                            </div>
+                            <div className="settings-font-preview">
+                                <span style={fontVarsForConfig(localConfig)}>{t('settings.font_preview')}</span>
+                                <small>{t('settings.font_preview_hint')}</small>
+                            </div>
+                        </fieldset>
+                        <fieldset className="settings-fieldset">
+                            <legend>{t('settings.sections.notifications')}</legend>
+                            {renderCheck('play_sound', t('play_sound'))}
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-sound">{t('sound_lbl')}</label>
+                                <div className="settings-inline-control">
+                                    <select id="settings-sound"
+                                        className="settings-select"
+                                        disabled={!localConfig.play_sound}
+                                        value={localConfig.completion_sound || 'Default.wav'}
+                                        onChange={event => {
+                                            handleChange('completion_sound', event.target.value);
+                                            window.electronAPI?.playSound?.(event.target.value);
+                                        }}
+                                    >
+                                        {soundOptions.map(file => <option key={file} value={file}>{file.replace(/\.(mp3|wav)$/i, '')}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        </fieldset>
                     </div>
+                )}
 
-                    {fileAssociationStatus?.supported
-                        && fileAssociationStatus.platform === 'win32'
-                        && !fileAssociationStatus.directApply ? (
-                            <div className="settings-file-association-system-note">
-                                <p>
-                                    {label(
-                                        'file_association_windows_confirmation',
-                                        'Windows 시스템 설정에서 BookManager를 기본 앱으로 한 번 더 선택해야 합니다.',
-                                    )}
+                {activeTab === 'processing' && (
+                    <div className="settings-panel">
+                        <fieldset className="settings-fieldset">
+                            <legend>{t('settings.sections.output')}</legend>
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-target-format">{t('format_lbl')}</label>
+                                <select id="settings-target-format" className="settings-select" value={localConfig.target_format || 'none'} onChange={event => handleChange('target_format', event.target.value)}>
+                                    {FORMAT_KEYS.map((key, index) => <option key={key} value={key}>{formatLabels[index] || key.toUpperCase()}</option>)}
+                                </select>
+                            </div>
+                            {renderCheck('backup_on', t('backup'))}
+                            {renderCheck('flatten_folders', t('flatten'), t('flatten_desc'))}
+                            {renderCheck('pass_skip_meta', t('opt_pass_skip_meta'), t('opt_pass_skip_meta_tip'))}
+                        </fieldset>
+                        <fieldset className="settings-fieldset">
+                            <legend>{t('settings.sections.images')}</legend>
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-img-quality">{t('common_quality')}</label>
+                                <div className="settings-slider-control">
+                                    <input id="settings-img-quality" aria-describedby="settings-quality-help" type="range" min="1" max="100" value={localConfig.img_quality || 100} onChange={event => handleChange('img_quality', Number(event.target.value))} />
+                                    <output htmlFor="settings-img-quality">{localConfig.img_quality || 100}%{Number(localConfig.img_quality) === 100 ? ` (${label('quality_lossless', '무손실')})` : ''}</output>
+                                </div>
+                            </div>
+                            <p className="settings-help" id="settings-quality-help">{t('tt_img_quality_desc')}</p>
+
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-renamer-compression">{label('renamer_archive_compression_lbl', '재압축 강도 :')}</label>
+                                <select id="settings-renamer-compression"
+                                    aria-describedby="settings-compression-help"
+                                    className="settings-select"
+                                    value={localConfig.renamer_archive_compression || 'auto'}
+                                    onChange={event => handleChange('renamer_archive_compression', event.target.value)}
+                                >
+                                    {RENAMER_ARCHIVE_COMPRESSION_OPTIONS.map(option => (
+                                        <option key={option.value} value={option.value}>
+                                            {label(option.labelKey, option.fallback)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <p className="settings-help" id="settings-compression-help">{label('renamer_archive_compression_desc', '내부 파일명 변경에서 다시 압축할 때만 적용됩니다. 빠름은 속도 우선, 최대 압축은 용량 우선입니다.')}</p>
+
+                            {renderCheck('webp_conversion', t('webp'), label('webp_desc', '모든 이미지를 고효율 WebP 포맷으로 변환하여 압축자 호환성을 보장합니다.'))}
+                        </fieldset>
+                        <fieldset className="settings-fieldset">
+                            <legend>{t('settings.sections.performance')}</legend>
+                            <div className="settings-row">
+                                <label className="settings-label" htmlFor="settings-max-threads">{t('max_threads')}</label>
+                                <div className="settings-slider-control">
+                                    <input id="settings-max-threads"
+                                        aria-describedby="settings-threads-help"
+                                        type="range"
+                                        min="1"
+                                        max={threadMax}
+                                        value={Math.min(threadMax, Number(localConfig.max_threads) || 1)}
+                                        onChange={event => handleChange('max_threads', Number(event.target.value))}
+                                    />
+                                    <output htmlFor="settings-max-threads">{t('settings.cores').replace('{count}', Math.min(threadMax, Number(localConfig.max_threads) || 1))}</output>
+                                </div>
+                            </div>
+                            <p className="settings-notice" id="settings-threads-help">
+                                <FaIcon name="info" />
+                                <span>{t('settings.threads_description').replace('{count}', threadMax)}</span>
+                            </p>
+                            {renderCheck('hardware_acceleration', t('hardware_acceleration'), t('hardware_acceleration_desc'))}
+                        </fieldset>
+                    </div>
+                )}
+
+                {activeTab === 'viewer' && (
+                    <div className="settings-panel">
+                        <fieldset className="settings-fieldset">
+                            <legend>{t('settings.sections.viewers')}</legend>
+                            <p className="settings-help">{t('settings.viewer_hint')}</p>
+                            {VIEWER_PROGRAM_TYPES.map(option => (
+                                <div className="settings-row" key={option.key}>
+                                    <label className="settings-label settings-viewer-label" htmlFor={`settings-viewer-${option.key}`}>
+                                        <span>{label(option.labelKey, option.fallback)}</span>
+                                        {option.descriptionKey ? (
+                                            <small>{label(option.descriptionKey, option.descriptionFallback)}</small>
+                                        ) : null}
+                                    </label>
+                                    <div className="settings-path-row">
+                                        <input
+                                            id={`settings-viewer-${option.key}`}
+                                            className="settings-input"
+                                            title={localConfig.viewer_paths?.[option.key] || ''}
+                                            value={localConfig.viewer_paths?.[option.key] || ''}
+                                            placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')}
+                                            readOnly
+                                        />
+                                        <button className="settings-action-btn" aria-label={`${label(option.labelKey, option.fallback)} ${label('btn_find', '찾기')}`} onClick={() => handleSelectViewer(option.key)}>{label('btn_find', '찾기')}</button>
+                                        <button
+                                            className="settings-action-btn"
+                                            aria-label={`${label(option.labelKey, option.fallback)} ${label('btn_remove', '삭제')}`}
+                                            onClick={() => handleClearViewer(option.key)}
+                                            disabled={!localConfig.viewer_paths?.[option.key]}
+                                        >
+                                            {label('btn_remove', '삭제')}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </fieldset>
+                        <fieldset className="settings-fieldset settings-file-association-fieldset">
+                            <legend>{label('file_association_title', '파일 연결')}</legend>
+                            <p className="settings-notice">
+                                <FaIcon name="info" />
+                                <span>{t('settings.immediate_note')}</span>
+                            </p>
+                            <p className="settings-help">
+                                {label(
+                                    'file_association_desc',
+                                    'BookManager를 통해 열 확장자를 체크한 뒤 적용하세요. 상태 배지는 현재 기본 앱 연결을 표시합니다.',
+                                )}
+                            </p>
+                            <p className="settings-help">
+                                {label(
+                                    'file_association_behavior_notice',
+                                    '체크는 BookManager로 연결할 대상을 선택합니다. 적용 시 위 뷰어 경로도 함께 저장됩니다. 기존 기본 앱을 다른 앱으로 바꾸려면 운영체제 설정을 사용하세요.',
+                                )}
+                            </p>
+
+                            {fileAssociationLoading ? (
+                                <p className="settings-file-association-message" role="status">
+                                    {label('file_association_loading', '파일 연결 상태를 확인하는 중...')}
                                 </p>
+                            ) : null}
+
+                            {!fileAssociationLoading && !fileAssociationStatus?.supported ? (
+                                <p className="settings-file-association-message is-notice" role="status">
+                                    {fileAssociationStatus?.reason === 'macos-12-required'
+                                        ? label(
+                                            'file_association_macos_12_required',
+                                            '파일 연결 설정은 macOS 12 이상에서 사용할 수 있습니다.',
+                                        )
+                                        : label(
+                                            'file_association_unsupported',
+                                            '이 운영체제 또는 현재 실행 환경에서는 파일 연결을 지원하지 않습니다.',
+                                        )}
+                                </p>
+                            ) : null}
+
+                            {availableFileAssociations.length > 0 ? (
+                                <div className="settings-file-association-groups">
+                                    {FILE_ASSOCIATION_GROUPS.map(group => {
+                                        const groupAssociations = availableFileAssociations.filter(
+                                            association => association.group === group.key,
+                                        );
+                                        if (groupAssociations.length === 0) return null;
+                                        return (
+                                            <section className="settings-file-association-group" key={group.key}>
+                                                <h4>{label(group.labelKey, group.fallback)}</h4>
+                                                <div className="settings-file-association-options">
+                                                    {groupAssociations.map(association => {
+                                                        const extension = association.extension;
+                                                        const extensionLabel = String(extension).replace(/^\./, '').toUpperCase();
+                                                        const statusType = association.isDefault
+                                                            ? 'default'
+                                                            : association.handlerName ? 'other' : 'none';
+                                                        const statusLabel = statusType === 'default'
+                                                            ? label('file_association_status_bookmanager', 'BookManager')
+                                                            : statusType === 'other'
+                                                                ? label('file_association_status_other', '다른 앱')
+                                                                : label('file_association_status_none', '연결 없음');
+                                                        return (
+                                                            <label className="settings-file-association-option" key={extension}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedFileAssociations.includes(extension)}
+                                                                    onChange={event => toggleFileAssociation(extension, event.target.checked)}
+                                                                    disabled={fileAssociationControlsDisabled}
+                                                                    aria-label={`${extensionLabel} ${label('file_association_checkbox_aria', '연결 대상 선택')}`}
+                                                                />
+                                                                <strong>{extensionLabel}</strong>
+                                                                <span
+                                                                    className={`settings-file-association-badge is-${statusType}`}
+                                                                    title={statusType === 'other' ? association.handlerName : statusLabel}
+                                                                >
+                                                                    {statusLabel}
+                                                                </span>
+                                                            </label>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </section>
+                                        );
+                                    })}
+                                </div>
+                            ) : null}
+
+                            <div className="settings-file-association-actions">
                                 <button
                                     type="button"
                                     className="settings-action-btn"
-                                    onClick={handleOpenFileAssociationSettings}
-                                    disabled={Boolean(fileAssociationBusy) || !window.electronAPI?.openFileAssociationSettings}
+                                    onClick={handleRefreshFileAssociationStatus}
+                                    disabled={fileAssociationControlsDisabled || availableFileAssociations.length === 0}
                                 >
-                                    {fileAssociationBusy === 'settings'
-                                        ? label('file_association_opening_settings', '설정 여는 중...')
-                                        : label('file_association_open_settings', 'Windows 기본 앱 설정 열기')}
+                                    {fileAssociationBusy === 'refresh'
+                                        ? label('file_association_refreshing', '새로고침 중...')
+                                        : label('file_association_refresh', '상태 새로고침')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="settings-action-btn"
+                                    onClick={handleSelectAllFileAssociations}
+                                    disabled={fileAssociationControlsDisabled || availableFileAssociations.length === 0}
+                                >
+                                    {label('file_association_select_all', '전체 선택')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="settings-action-btn"
+                                    onClick={handleClearFileAssociationSelection}
+                                    disabled={fileAssociationControlsDisabled || selectedFileAssociations.length === 0}
+                                >
+                                    {label('file_association_clear_all', '전체 해제')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="settings-action-btn settings-blue-btn"
+                                    onClick={handleApplyFileAssociations}
+                                    disabled={fileAssociationControlsDisabled || selectedFileAssociations.length === 0}
+                                >
+                                    {fileAssociationBusy === 'apply'
+                                        ? label('file_association_applying', '연결 중...')
+                                        : label('file_association_apply', 'BookManager로 연결')}
                                 </button>
                             </div>
-                        ) : null}
 
-                    {fileAssociationFeedback ? (
-                        <p
-                            className={`settings-file-association-message is-${fileAssociationFeedback.type}`}
-                            role={fileAssociationFeedback.type === 'error' ? 'alert' : 'status'}
-                        >
-                            {fileAssociationFeedbackText}
-                        </p>
-                    ) : null}
-                </fieldset>
-            </div>
-          )}
+                            {fileAssociationStatus?.supported
+                                && fileAssociationStatus.platform === 'win32'
+                                && !fileAssociationStatus.directApply ? (
+                                    <div className="settings-file-association-system-note">
+                                        <p>
+                                            {label(
+                                                'file_association_windows_confirmation',
+                                                'Windows 시스템 설정에서 BookManager를 기본 앱으로 한 번 더 선택해야 합니다.',
+                                            )}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            className="settings-action-btn"
+                                            onClick={handleOpenFileAssociationSettings}
+                                            disabled={Boolean(fileAssociationBusy) || !window.electronAPI?.openFileAssociationSettings}
+                                        >
+                                            {fileAssociationBusy === 'settings'
+                                                ? label('file_association_opening_settings', '설정 여는 중...')
+                                                : label('file_association_open_settings', 'Windows 기본 앱 설정 열기')}
+                                        </button>
+                                    </div>
+                                ) : null}
+
+                            {fileAssociationFeedback ? (
+                                <p
+                                    className={`settings-file-association-message is-${fileAssociationFeedback.type}`}
+                                    role={fileAssociationFeedback.type === 'error' ? 'alert' : 'status'}
+                                >
+                                    {fileAssociationFeedbackText}
+                                </p>
+                            ) : null}
+                        </fieldset>
+                    </div>
+                )}
 
           {activeTab === 'folder' && (
             <div className="settings-panel">
               <fieldset className="settings-fieldset settings-library-fieldset">
               <legend>{t('grp_dup_folders_title')}</legend>
               <p className="settings-help">{t('dup_folder_desc')}</p>
-              <div className="settings-library-toolbar">
-                <button className="settings-action-btn settings-blue-btn" onClick={handleAddDupFolder}>
-                  <FaIcon name="folderPlus" />{label('btn_add', '추가')}
-                </button>
-              </div>
-              <div className="settings-list settings-library-list">
-                {libraryEntries.length === 0 ? (
-                  <div className="settings-empty-list">{t('tf_empty_no_data')}</div>
-                ) : libraryEntries.map((entry, index) => (
-                  <div
-                    className={`settings-list-item settings-library-list-item ${selectedDupFolder === entry.path ? 'active' : ''}`}
-                    key={entry.path}
-                    onClick={() => setSelectedDupFolder(entry.path)}
-                  >
-                    <div className="settings-library-list-main">
-                      <div className="settings-library-list-head">
-                        <span className="settings-library-list-title" title={entry.path}>
-                          {entry.alias || libraryFallbackName(entry.path)}
-                        </span>
-                        {entry.group ? (
-                          <span className="settings-library-list-group" title={entry.group}>{entry.group}</span>
-                        ) : null}
-                      </div>
-                      <span className="settings-library-list-path" title={entry.path}>{entry.path}</span>
+                <div className="settings-library-layout">
+                    <div className="settings-library-workspace">
+                        <div className="settings-library-editing">
+                            <div className="settings-library-toolbar">
+                                <h3>{t('settings.library_preview.registered')}</h3>
+                                <button className="settings-action-btn settings-blue-btn" onClick={handleAddDupFolder}>
+                                    <FaIcon name="folderPlus" />{label('btn_add', '추가')}
+                                </button>
+                            </div>
+                            <div className="settings-list settings-library-list">
+                                {libraryEntries.length === 0 ? (
+                                    <div className="settings-empty-list">{t('tf_empty_no_data')}</div>
+                                ) : libraryEntries.map((entry, index) => (
+                                    <div
+                                        className={`settings-list-item settings-library-list-item ${selectedDupFolder === entry.path ? 'active' : ''}`}
+                                        key={entry.path}
+                                        data-library-path={entry.path}
+                                        onClick={() => setSelectedDupFolder(entry.path)}
+                                    >
+                                        <button
+                                            type="button"
+                                            className="settings-library-list-main settings-library-select"
+                                            aria-pressed={selectedDupFolder === entry.path}
+                                            onClick={() => setSelectedDupFolder(entry.path)}
+                                        >
+                                            <div className="settings-library-list-head">
+                                                <span className="settings-library-list-title" title={entry.path}>
+                                                    {libraryDisplayName(entry.path, entry.alias)}
+                                                </span>
+                                                {entry.group ? (
+                                                    <span className="settings-library-list-group" title={entry.group}>{entry.group}</span>
+                                                ) : null}
+                                            </div>
+                                            <span className="settings-library-list-path" title={entry.path}>{entry.path}</span>
+                                        </button>
+                                        <div
+                                            className="settings-library-row-actions"
+                                            role="group"
+                                            aria-label={libraryDisplayName(entry.path, entry.alias)}
+                                        >
+                                            <button
+                                                type="button"
+                                                aria-label={label('settings_library_move_up', '위로 이동')}
+                                                title={label('settings_library_move_up', '위로 이동')}
+                                                disabled={index === 0}
+                                                onClick={event => {
+                                                    event.stopPropagation();
+                                                    handleMoveLibrary(entry.path, -1);
+                                                }}
+                                            >
+                                                <FaIcon name="angleUp" size={11} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                aria-label={label('settings_library_move_down', '아래로 이동')}
+                                                title={label('settings_library_move_down', '아래로 이동')}
+                                                disabled={index === libraryEntries.length - 1}
+                                                onClick={event => {
+                                                    event.stopPropagation();
+                                                    handleMoveLibrary(entry.path, 1);
+                                                }}
+                                            >
+                                                <FaIcon name="angleDown" size={11} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                aria-label={label('settings_library_edit', '수정')}
+                                                title={label('settings_library_edit', '수정')}
+                                                onClick={event => {
+                                                    event.stopPropagation();
+                                                    setSelectedDupFolder(entry.path);
+                                                }}
+                                            >
+                                                <FaIcon name="edit" size={11} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                aria-label={label('btn_remove', '삭제')}
+                                                title={label('btn_remove', '삭제')}
+                                                onClick={event => {
+                                                    event.stopPropagation();
+                                                    handleRemoveDupFolder(entry.path);
+                                                }}
+                                            >
+                                                <FaIcon name="trash" size={11} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {selectedLibraryEntry && (
+                                <div className="settings-library-editor">
+                                    <div className="settings-library-editor-fields">
+                                        <label>
+                                            <span>{label('settings_library_alias', '별칭')}</span>
+                                            <input
+                                                id="settings-library-alias"
+                                                className="settings-input"
+                                                value={selectedLibraryEntry.alias}
+                                                placeholder={label('settings_library_alias_ph', '라이브러리에 표시할 이름')}
+                                                onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'alias', event.target.value)}
+                                            />
+                                        </label>
+                                        <label>
+                                            <span>{label('settings_library_group', '그룹')}</span>
+                                            <input
+                                                id="settings-library-group"
+                                                className="settings-input"
+                                                value={selectedLibraryEntry.group}
+                                                placeholder={label('settings_library_group_ph', '예: NAS, 로컬, 작업용')}
+                                                onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'group', event.target.value)}
+                                            />
+                                        </label>
+                                    </div>
+                                    <div className="settings-library-editor-path" title={selectedLibraryEntry.path}>
+                                        <span>{label('settings_library_path', '경로')}</span>
+                                        <strong>{selectedLibraryEntry.path}</strong>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <SettingsLibraryPreview
+                            entries={libraryEntries}
+                            selectedPath={selectedDupFolder}
+                            onSelect={setSelectedDupFolder}
+                            config={localConfig}
+                            t={t}
+                        />
                     </div>
-                    <div className="settings-library-row-actions">
-                      <button
-                        type="button"
-                        aria-label={label('settings_library_move_up', '위로 이동')}
-                        title={label('settings_library_move_up', '위로 이동')}
-                        disabled={index === 0}
-                        onClick={event => {
-                          event.stopPropagation();
-                          handleMoveLibrary(entry.path, -1);
-                        }}
-                      >
-                        <FaIcon name="angleUp" size={11} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={label('settings_library_move_down', '아래로 이동')}
-                        title={label('settings_library_move_down', '아래로 이동')}
-                        disabled={index === libraryEntries.length - 1}
-                        onClick={event => {
-                          event.stopPropagation();
-                          handleMoveLibrary(entry.path, 1);
-                        }}
-                      >
-                        <FaIcon name="angleDown" size={11} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={label('settings_library_edit', '수정')}
-                        title={label('settings_library_edit', '수정')}
-                        onClick={event => {
-                          event.stopPropagation();
-                          setSelectedDupFolder(entry.path);
-                        }}
-                      >
-                        <FaIcon name="edit" size={11} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={label('btn_remove', '삭제')}
-                        title={label('btn_remove', '삭제')}
-                        onClick={event => {
-                          event.stopPropagation();
-                          handleRemoveDupFolder(entry.path);
-                        }}
-                      >
-                        <FaIcon name="trash" size={11} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {selectedLibraryEntry && (
-                <div className="settings-library-editor">
-                  <div className="settings-library-editor-fields">
-                    <label>
-                      <span>{label('settings_library_alias', '별칭')}</span>
-                      <input
-                        className="settings-input"
-                        value={selectedLibraryEntry.alias}
-                        placeholder={label('settings_library_alias_ph', '공유 서버에 표시할 이름')}
-                        onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'alias', event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      <span>{label('settings_library_group', '그룹')}</span>
-                      <input
-                        className="settings-input"
-                        value={selectedLibraryEntry.group}
-                        placeholder={label('settings_library_group_ph', '예: NAS, 로컬, 작업용')}
-                        onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'group', event.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <div className="settings-library-editor-path" title={selectedLibraryEntry.path}>
-                    <span>{label('settings_library_path', '경로')}</span>
-                    <strong>{selectedLibraryEntry.path}</strong>
-                  </div>
                 </div>
-              )}
               </fieldset>
               <fieldset className="settings-fieldset">
               <legend>{label('settings_maintenance_title', '인덱스 및 캐시 관리')}</legend>
+                    <p className="settings-notice">
+                        <FaIcon name="info" />
+                        <span>{t('settings.immediate_note')}</span>
+                    </p>
               <div className="settings-maintenance-actions">
                 <span>{label('setting_update_index_msg', '등록된 대상 폴더의 변경사항을 확인하여 인덱스를 최신화합니다.')}</span>
                 <button className="settings-action-btn" onClick={handleUpdateIndex} disabled={Boolean(maintenanceBusy)}>
@@ -1236,8 +1374,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               <fieldset className="settings-fieldset">
               <legend>{label('preferred_search_api_group', '자주 사용하는 검색 API')}</legend>
               <div className="settings-row">
-                <span className="settings-label">{label('preferred_search_api_comic', '만화책')}</span>
-                <select
+                <label className="settings-label" htmlFor="settings-preferred-comic">{label('preferred_search_api_comic', '만화책')}</label>
+                <select id="settings-preferred-comic"
                   className="settings-select"
                   value={preferredComicApi}
                   onChange={event => handleChange('preferred_meta_api_comic', event.target.value)}
@@ -1248,8 +1386,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 </select>
               </div>
               <div className="settings-row">
-                <span className="settings-label">{label('preferred_search_api_book', '전자책')}</span>
-                <select
+                <label className="settings-label" htmlFor="settings-preferred-book">{label('preferred_search_api_book', '전자책')}</label>
+                <select id="settings-preferred-book"
                   className="settings-select"
                   value={preferredBookApi}
                   onChange={event => handleChange('preferred_meta_api_book', event.target.value)}
@@ -1260,8 +1398,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 </select>
               </div>
               <div className="settings-row">
-                <span className="settings-label">{label('preferred_search_api_pdf', 'PDF')}</span>
-                <select
+                <label className="settings-label" htmlFor="settings-preferred-pdf">{label('preferred_search_api_pdf', 'PDF')}</label>
+                <select id="settings-preferred-pdf"
                   className="settings-select"
                   value={preferredPdfApi}
                   onChange={event => handleChange('preferred_meta_api_pdf', event.target.value)}
@@ -1275,34 +1413,17 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               </fieldset>
 
               <fieldset className="settings-fieldset">
-              <legend>{t('ai_cover_search_group')}</legend>
-              <div className="settings-row">
-                <span className="settings-label">{t('ai_provider')}</span>
-                <select className="settings-select" value={aiProvider} onChange={event => handleApiChange('ai_provider', event.target.value)}>
-                  <option value="Gemini">Gemini</option>
-                  <option value="OpenAI">OpenAI</option>
-                </select>
-              </div>
-              <div className="settings-row">
-                <span className="settings-label">{t('ai_api_key')}</span>
-                {renderSecretInput(
-                  aiKeyField,
-                  aiProvider === 'OpenAI' ? 'OpenAI API Key (sk-...)' : 'Gemini API Key (AIza...)'
-                )}
-              </div>
-              <p className="settings-help">{t('ai_cover_search_notice')}</p>
-              </fieldset>
-
+              <legend>{t('settings.sections.credentials')}</legend>
               <div className="settings-api-manual-row">
                 <button className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}><FaIcon name="bookOpen" />{label('btn_api_manual', 'API 발급 매뉴얼')}</button>
               </div>
 
                 <div className="settings-row">
-                    <span className="settings-label">YES24 API Key</span>
+                    <label className="settings-label" htmlFor="settings-secret-yes24">YES24 API Key</label>
                     {renderSecretInput('yes24', 'YES24 API Key (yk_live_...)')}
                 </div>
                 <div className="settings-row settings-aladin-api-row">
-                    <span className="settings-label">Aladin TTBKey</span>
+                    <label className="settings-label" htmlFor="settings-secret-aladin">Aladin TTBKey</label>
                     {renderSecretInput('aladin', 'Aladin TTBKey')}
                     <p className="settings-help settings-aladin-api-notice">
                         {label('aladin_openapi_shutdown_notice', '알라딘 OpenAPI 서비스 종료 예정 26년 10월 30일')}{' '}
@@ -1323,23 +1444,53 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                     </p>
                 </div>
               <div className="settings-row">
-                <span className="settings-label">Google Books API</span>
+                <label className="settings-label" htmlFor="settings-secret-google">Google Books API</label>
                 {renderSecretInput('google', 'Google Books API Key')}
               </div>
               <div className="settings-row">
-                <span className="settings-label">Comic Vine API</span>
+                <label className="settings-label" htmlFor="settings-secret-vine">Comic Vine API</label>
                 {renderSecretInput('vine', 'Comic Vine API Key')}
               </div>
 
+              </fieldset>
+
+              <fieldset className="settings-fieldset">
+              <legend>{t('ai_cover_search_group')}</legend>
+              <div className="settings-row">
+                <label className="settings-label" htmlFor="settings-ai-provider">{t('ai_provider')}</label>
+                <select id="settings-ai-provider" className="settings-select" value={aiProvider} onChange={event => handleApiChange('ai_provider', event.target.value)}>
+                  <option value="Gemini">Gemini</option>
+                  <option value="OpenAI">OpenAI</option>
+                </select>
+              </div>
+              <div className="settings-row">
+                <label className="settings-label" htmlFor={`settings-secret-${aiKeyField}`}>{t('ai_api_key')}</label>
+                {renderSecretInput(
+                  aiKeyField,
+                  aiProvider === 'OpenAI' ? 'OpenAI API Key (sk-...)' : 'Gemini API Key (AIza...)'
+                )}
+              </div>
+              <p className="settings-help">{t('ai_cover_search_notice')}</p>
+              </fieldset>
+
               <fieldset className="settings-fieldset settings-tag-fieldset">
               <legend>{t('tag_rules_group')}</legend>
-              <p className="settings-help">{t('tag_rules_desc')}</p>
+              <p className="settings-help" id="settings-tag-rules-help">{t('tag_rules_desc')}</p>
               <textarea
+                aria-label={t('tag_rules_group')}
+                aria-describedby="settings-tag-rules-help"
                 className="settings-textarea"
                 value={localConfig.api_keys?.tag_rules || ''}
                 placeholder={label('tag_rules_placeholder', 'Shounen, 소년만화 -> 소년\nAction -> 액션')}
                 onChange={event => handleApiChange('tag_rules', event.target.value)}
               />
+              </fieldset>
+              <fieldset className="settings-fieldset">
+              <legend>{t('settings.sections.search_cache')}</legend>
+              <p className="settings-notice">
+                  <FaIcon name="info" />
+                  <span>{t('settings.immediate_note')}</span>
+              </p>
               <div className="settings-maintenance-actions">
                 <button className="settings-action-btn settings-danger-btn" onClick={handleClearApiCache} disabled={Boolean(maintenanceBusy)}>
                   <FaIcon name="trash" />
@@ -1354,7 +1505,13 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             <div className="settings-panel">
               <fieldset className="settings-fieldset">
               <legend>{label('tts_supertonic_group', 'Supertonic 3 (로컬)')}</legend>
-              <p className="settings-help">{label('tts_supertonic_desc', '인터넷 전송 없이 기기에서 음성을 생성합니다. 최초 사용 전 모델 설치가 필요합니다.')}</p>
+                    {!supertonicStatus.installed && (
+                        <p className="settings-notice">
+                            <FaIcon name="info" />
+                            <span>{t('settings.tts.install_note')}</span>
+                        </p>
+                    )}
+              <p className="settings-help">{label('tts_supertonic_desc', '낭독할 텍스트를 외부로 보내지 않고 기기에서 음성을 생성합니다. 최초 모델 설치에는 인터넷 연결이 필요합니다.')}</p>
               <div className="settings-maintenance-actions">
                 {!supertonicStatus.installed && (
                   <button className="settings-action-btn settings-blue-btn" onClick={handleInstallSupertonic} disabled={Boolean(maintenanceBusy)}>
@@ -1377,32 +1534,41 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               <fieldset className="settings-fieldset">
               <legend>{label('tts_api_group', 'TTS API')}</legend>
               <div className="settings-row">
-                <span className="settings-label">{label('tts_openai_api_key', 'OpenAI TTS API Key')}</span>
+                <label className="settings-label" htmlFor="settings-secret-tts_openai_key">{label('tts_openai_api_key', 'OpenAI TTS API Key')}</label>
                 {renderSecretInput('tts_openai_key', 'OpenAI API Key (sk-...)')}
               </div>
               <div className="settings-row">
-                <span className="settings-label">{label('tts_google_api_key', 'Google TTS 인증 정보')}</span>
+                <label className="settings-label" htmlFor="settings-secret-tts_google_key">{label('tts_google_api_key', 'Google TTS 인증 정보')}</label>
                 {renderSecretInput('tts_google_key', 'Google service account JSON or JSON file path')}
               </div>
-              <p className="settings-help">{label('tts_google_credential_notice', 'Google Cloud TTS는 API key가 아니라 서비스 계정 JSON 또는 JSON 파일 경로가 필요합니다.')}</p>
-              <p className="settings-help">{label('tts_api_notice', 'TTS에서만 사용하는 인증 정보입니다. AI 표지 제목 검색 API Key와 별도로 저장됩니다.')}</p>
+              <p className="settings-help">{label('tts_google_credential_notice', 'BookManager의 Google TTS를 사용하려면 서비스 계정 JSON 내용 또는 해당 파일 경로를 입력하세요.')}</p>
+              <p className="settings-help">{label('tts_api_notice', '음성 읽기에 사용하는 인증 정보이며, AI 표지 제목 검색과는 별도 항목으로 저장됩니다.')}</p>
               </fieldset>
             </div>
           )}
+                {activeTab === 'privacy' && (
+                    <div className="settings-panel">
+                        <TelemetrySettings config={localConfig} onChange={handleChange} />
+                    </div>
+                )}
+            </div>
         </div>
 
         {maintenanceMessage && (
-          <div className="settings-maintenance-message">{maintenanceMessage}</div>
+          <div className="settings-maintenance-message" role="status">{maintenanceMessage}</div>
         )}
 
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={handleCancel}>{t('btn_cancel')}</button>
-          <button className="btn btn-primary" onClick={handleSave}>{t('btn_save')}</button>
+        <div className="modal-footer settings-footer" inert={showApiManual ? '' : undefined}>
+            <p className="settings-save-note">{t('settings.save_note')}</p>
+            <div className="settings-footer-actions">
+                <button className="btn btn-secondary" onClick={handleCancel}>{t('btn_cancel')}</button>
+                <button className="btn btn-primary" onClick={handleSave}>{t('btn_save')}</button>
+            </div>
         </div>
         {showApiManual && (
           <div className="settings-manual-backdrop" onClick={() => setShowApiManual(false)}>
-            <div className="settings-manual-dialog" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}>
-              <h3>{label('api_manual_title', 'API 발급 매뉴얼')}</h3>
+            <div ref={manualDialogRef} className="settings-manual-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-manual-title" tabIndex={-1} onClick={event => event.stopPropagation()}>
+              <h3 id="settings-manual-title">{label('api_manual_title', 'API 발급 매뉴얼')}</h3>
                 <button onClick={() => window.electronAPI?.openExternal?.('https://developers.yes24.com/docs/apikey')}>YES24 OpenAPI</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://blog.aladin.co.kr/openapi')}>Aladin OpenAPI</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://comicvine.gamespot.com/api/')}>Comic Vine API</button>

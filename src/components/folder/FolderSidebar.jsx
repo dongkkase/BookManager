@@ -17,9 +17,8 @@ import {
   applyImmediateSingleSelection,
   scheduleAfterNextPaint,
 } from '../../selectionVisualFeedback';
+import { buildLibraryItems, groupLibraryItems } from '../../libraryPresentation.js';
 
-const libraryPathKey = value => String(value || '').trim().replace(/[\\/]+$/, '').toLowerCase();
-const fallbackLibraryName = value => String(value || '').split(/[\\/]/).filter(Boolean).pop() || value;
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'bookmanager.folderSidebar.collapsedSections';
 
 function readStoredSidebarCollapseState() {
@@ -60,34 +59,8 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
   };
 
   const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
-  const libraryItems = useMemo(() => {
-    const metaByPath = new Map((libraryEntries || [])
-      .filter(entry => entry?.path)
-      .map(entry => [libraryPathKey(entry.path), entry]));
-    return (libraries || []).map((libraryPath, index) => {
-      const meta = metaByPath.get(libraryPathKey(libraryPath)) || {};
-      return {
-        path: libraryPath,
-        index,
-        name: meta.alias || fallbackLibraryName(libraryPath),
-        group: meta.group || '',
-      };
-    });
-  }, [libraries, libraryEntries]);
-  const groupedLibraryItems = useMemo(() => {
-    const groups = [];
-    const groupMap = new Map();
-    for (const item of libraryItems) {
-      const groupKey = item.group || '';
-      if (!groupMap.has(groupKey)) {
-        const group = { key: groupKey, label: item.group, items: [] };
-        groupMap.set(groupKey, group);
-        groups.push(group);
-      }
-      groupMap.get(groupKey).items.push(item);
-    }
-    return groups;
-  }, [libraryItems]);
+    const libraryItems = useMemo(() => buildLibraryItems(libraries, libraryEntries), [libraries, libraryEntries]);
+    const groupedLibraryItems = useMemo(() => groupLibraryItems(libraryItems), [libraryItems]);
   const isSectionCollapsed = useCallback(sectionKey => Boolean(collapsedSections[sectionKey]), [collapsedSections]);
   const toggleSidebarSection = useCallback(sectionKey => {
     setCollapsedSections(current => ({
