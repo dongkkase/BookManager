@@ -26,6 +26,7 @@ const EXTRA_TRANSLATIONS = {
       item: {
         text_cleaner: '텍본 정리기',
         epub_editor: 'EPUB 에디터',
+        epub_optimizer: 'EPUB 용량 최적화',
         text_encoding: '텍스트 인코딩 변환',
         text_split_merge: '텍스트 분할·병합',
         txt_to_epub: 'TXT → EPUB',
@@ -841,6 +842,7 @@ const EXTRA_TRANSLATIONS = {
       item: {
         text_cleaner: 'Text Cleaner',
         epub_editor: 'EPUB Studio',
+        epub_optimizer: 'EPUB Size Optimizer',
         text_encoding: 'Text Encoding Converter',
         text_split_merge: 'Split & Merge Text',
         txt_to_epub: 'TXT → EPUB',
@@ -1656,6 +1658,7 @@ const EXTRA_TRANSLATIONS = {
       item: {
         text_cleaner: 'テキスト整理',
         epub_editor: 'EPUBエディター',
+        epub_optimizer: 'EPUB容量最適化',
         text_encoding: '文字コード変換',
         text_split_merge: 'テキスト分割・結合',
         txt_to_epub: 'TXT → EPUB',

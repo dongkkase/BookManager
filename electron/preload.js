@@ -46,6 +46,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadTextCleanerFile: (filePath) => ipcRenderer.invoke('tools:textCleaner:load', filePath),
   saveTextCleanerFile: (request) => ipcRenderer.invoke('tools:textCleaner:save', request),
     epubEditor: request => ipcRenderer.invoke('tools:epubEditor', request),
+    epubOptimizer: request => ipcRenderer.invoke('tools:epubOptimizer', request),
+    onEpubOptimizerProgress: callback => {
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('tools:epubOptimizer:progress', handler);
+        return () => ipcRenderer.removeListener('tools:epubOptimizer:progress', handler);
+    },
     onEpubEditorProgress: callback => {
         const handler = (_, progress) => callback(progress);
         ipcRenderer.on('tools:epubEditor:progress', handler);

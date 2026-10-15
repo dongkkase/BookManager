@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createTelemetry } from './telemetry.js';
+import { saveConfigWithTelemetryConsent } from './observabilityConsent.js';
 
 const SERVICE_CONFIG = { sentryDsn: 'https://publickey@errors.example.test/42', posthogToken: 'phc_exampletoken', posthogHost: 'https://analytics.example.test' };
 const CONSENT = { telemetry_error_reports: true, telemetry_usage_stats: true };
@@ -80,7 +81,7 @@ test('usage payloads use fixed identifiers and never include book data, paths or
     assert.deepEqual(Object.keys(first).sort(), ['api_key', 'event', 'properties', 'timestamp', 'uuid']);
     assert.deepEqual(first.properties, {
         feature: 'text-cleaner', format: 'text', source: 'ipc', duration_ms: 13,
-        distinct_id: first.properties.distinct_id, app_version: '3.2.1', os: process.platform,
+        distinct_id: first.properties.distinct_id, app_version: '3.2.1', app_language: 'ko', os: process.platform,
         $process_person_profile: false, $geoip_disable: true, $ip: null,
     });
     assert.match(first.properties.distinct_id, /^[0-9a-f-]{36}$/);
@@ -88,6 +89,69 @@ test('usage payloads use fixed identifiers and never include book data, paths or
     assert.equal(requests[0].redirect, 'error');
     assert.equal(requests[0].credentials, 'omit');
     assert.doesNotMatch(requests.map(item => item.body).join(''), /private|Secret Book|Private Search|user@example/);
+});
+
+test('usage events include only the supported app language from settings', async t => {
+    for (const [config, expected] of [
+        [{ language: 'ko' }, 'ko'],
+        [{ language: 'en', lang: 'ja' }, 'en'],
+        [{ language: 'ja' }, 'ja'],
+        [{ lang: 'en' }, 'en'],
+        [{}, 'ko'],
+        [{ language: '/private/setting', lang: 'en' }, 'ko'],
+        [{ language: { value: 'en' } }, 'ko'],
+    ]) {
+        const { telemetry, requests } = setup(t, {}, { ...CONSENT, ...config });
+        telemetry.trackTelemetryEvent({ event: 'menu_opened', menu: 'folder', app_language: 'ja', language: '/private/event' });
+        await telemetry.flushTelemetry();
+        const events = requests.map(request => JSON.parse(request.body));
+        assert.deepEqual(events.map(event => event.event), ['app_active', 'menu_opened']);
+        for (const event of events) {
+            assert.equal(event.properties.app_language, expected);
+            assert.equal(event.properties.$process_person_profile, false);
+        }
+        assert.doesNotMatch(JSON.stringify(events), /private/);
+    }
+});
+
+test('language changes reach subsequent usage events only after settings are saved', async t => {
+    let config = { ...CONSENT, language: 'ko' };
+    let saveSucceeds = false;
+    const configManager = {
+        getConfig: () => config,
+        saveConfig: next => {
+            if (!saveSucceeds) return false;
+            config = { ...next };
+            return true;
+        },
+    };
+    const { telemetry, requests } = setup(t, {}, config);
+    await telemetry.flushTelemetry();
+    const nextConfig = { ...config, language: 'en' };
+    assert.throws(() => saveConfigWithTelemetryConsent(configManager, nextConfig, telemetry.updateTelemetryConsent), { code: 'CONFIG_SAVE_FAILED' });
+    telemetry.trackTelemetryEvent({ event: 'menu_opened', menu: 'settings' });
+    saveSucceeds = true;
+    saveConfigWithTelemetryConsent(configManager, nextConfig, telemetry.updateTelemetryConsent);
+    telemetry.trackTelemetryEvent({ event: 'menu_opened', menu: 'folder' });
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body));
+    assert.deepEqual(events.map(event => event.properties.app_language), ['ko', 'ko', 'en']);
+    assert.equal(new Set(events.map(event => event.properties.distinct_id)).size, 1);
+});
+
+test('language changes respect disabled usage statistics and apply when re-enabled', async t => {
+    const { telemetry, requests, storageDir } = setup(t, {}, { ...CONSENT, telemetry_usage_stats: false, language: 'ko' });
+    telemetry.updateTelemetryConsent({ ...CONSENT, telemetry_usage_stats: false, language: 'ja' });
+    assert.equal(telemetry.trackTelemetryEvent({ event: 'menu_opened', menu: 'folder' }), false);
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 0);
+    assert.deepEqual(fs.readdirSync(storageDir), []);
+    telemetry.updateTelemetryConsent({ ...CONSENT, language: 'ja' });
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 1);
+    const event = JSON.parse(requests[0].body);
+    assert.equal(event.event, 'app_active');
+    assert.equal(event.properties.app_language, 'ja');
 });
 
 test('TTS analytics only accepts known engine/model pairs with a reader format', async t => {

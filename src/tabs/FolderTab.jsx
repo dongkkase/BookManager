@@ -24,7 +24,7 @@ import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { ReadiveTransferDialog } from '../components/ReadiveTransferDialog';
 import { resolveReadivePaths } from '../readiveTransferPolicy';
 import { BOOKMANAGER_PATHS_MIME } from '../appShell';
-import { isTextCleanerPath } from '../fileTools';
+import { isEpubOptimizerPath, isTextCleanerPath } from '../fileTools';
 import { extractCoreTitle } from '../utils/folderUtils';
 import {
   basename,
@@ -3588,6 +3588,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           detail: { tabId: 'tools', toolId: 'text-cleaner', paths: [target] },
         }));
       }
+    } else if (action === 'send-file-epub-optimizer' && isEpubOptimizerPath(menu.file?.full_path || menu.file?.path)) {
+        const paths = resolveCoverEditorTargets(menu.file, selectedEntryObjects)
+            .map(file => file.full_path || file.path).filter(isEpubOptimizerPath);
+        if (paths.length > 0) {
+            window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
+                detail: { tabId: 'tools', toolId: 'epub-optimizer', paths, source: 'folder', mode: 'append' },
+            }));
+        }
     } else if (action === 'select-all') {
       selectAll();
     } else if (action === 'invert-selection') {
@@ -4493,8 +4501,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 <ContextMenuItem onClick={() => handleContextAction('reset-progress')} disabled={readingActionBusy} label={t('folder.reading.reset_progress')} />
                 <div className="folder-context-menu-separator" role="separator" />
                 {supportsRatingEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-rating')} icon="star" label={t('rating_editor_title')} />}
-                {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_open_tool')} />}
-                {(supportsRatingEditor(contextMenu.file) || supportsCoverEditor(contextMenu.file)) && (
+                {supportsRatingEditor(contextMenu.file) && (
                     <div className="folder-context-menu-separator" role="separator" />
                 )}
               {!isReadingList && (
@@ -4502,14 +4509,25 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   <ContextMenuItem onClick={() => handleContextAction('send-file-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-renamer')} label={t('action_inner_ren')} shortcut="F2" />
                   <ContextMenuItem onClick={() => handleContextAction('send-file-metadata')} label={t('action_meta_edit')} shortcut="F3" />
-                  <ContextMenuSubmenu label={t('tools.context_menu')} icon="fileLines">
+                </>
+              )}
+                <ContextMenuSubmenu label={t('tools.context_menu')} icon="fileLines">
+                    {supportsCoverEditor(contextMenu.file) && <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_open_tool')} />}
                     <ContextMenuItem
-                      onClick={() => handleContextAction('send-file-text-cleaner')}
-                      disabled={!isTextCleanerPath(contextMenu.file?.full_path || contextMenu.file?.path)}
-                      icon="fileLines"
-                      label={t('tools.item.text_cleaner')}
+                        onClick={() => handleContextAction('send-file-epub-optimizer')}
+                        disabled={!isEpubOptimizerPath(contextMenu.file?.full_path || contextMenu.file?.path)}
+                        icon="sliders"
+                        label={t('tools.item.epub_optimizer')}
                     />
-                  </ContextMenuSubmenu>
+                    {!isReadingList && <ContextMenuItem
+                        onClick={() => handleContextAction('send-file-text-cleaner')}
+                        disabled={!isTextCleanerPath(contextMenu.file?.full_path || contextMenu.file?.path)}
+                        icon="fileLines"
+                        label={t('tools.item.text_cleaner')}
+                    />}
+                </ContextMenuSubmenu>
+              {!isReadingList && (
+                <>
                   {!hasSelectedDirectories && (
                       <>
                           <ContextMenuItem onClick={() => handleContextAction('update-files')} label={t('action_update_files')} />
@@ -4770,7 +4788,7 @@ function ContextMenuItem({ label, shortcut = '', icon = '', onClick, disabled = 
         </span>
       )}
       <span className="folder-context-menu-label">{label}</span>
-      <span className="folder-context-menu-shortcut">{shortcut}</span>
+        {shortcut && <span className="folder-context-menu-shortcut">{shortcut}</span>}
     </button>
   );
 }

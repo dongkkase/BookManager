@@ -94,6 +94,15 @@ export const FILE_TOOLS = Object.freeze([
         target: { type: 'tool', toolId: 'cover-editor' },
     },
     {
+        id: 'epub-optimizer',
+        category: 'archive-image',
+        labelKey: 'tools.item.epub_optimizer',
+        icon: 'sliders',
+        tone: 'green',
+        status: 'available',
+        target: { type: 'tool', toolId: 'epub-optimizer' },
+    },
+    {
         id: 'image-resizer',
         category: 'archive-image',
         labelKey: 'tools.item.image_resizer',
@@ -144,6 +153,10 @@ export function isTextCleanerPath(filePath = '') {
     return /\.txt$/i.test(String(filePath));
 }
 
+export function isEpubOptimizerPath(filePath = '') {
+    return /\.epub$/i.test(String(filePath));
+}
+
 export function firstTextCleanerPath(paths = []) {
     return paths.find(isTextCleanerPath) || '';
 }
@@ -153,7 +166,7 @@ export function resolveFileToolPathAction(detail, activeToolId) {
     const toolId = detail.toolId || activeToolId;
     const paths = normalizeDroppedPaths(Array.isArray(detail.paths) ? detail.paths : []);
     const source = detail.action === 'drop-paths' || detail.source === 'drop' ? 'drop' : 'navigation';
-    if (toolId === 'cover-editor' && paths.length > 0) {
+    if (['cover-editor', 'epub-optimizer'].includes(toolId) && paths.length > 0) {
         return { toolId, source, request: { paths, mode: detail.mode === 'replace' ? 'replace' : 'append',
             ...(detail.source === 'folder' && detail.action === 'load-paths' ? { source: 'folder' } : {}) } };
     }

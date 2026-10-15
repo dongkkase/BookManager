@@ -8,6 +8,7 @@ import '../styles/ToolsTab.css';
 const TextCleanerTool = lazy(() => import('./TextCleanerTool'));
 const EpubEditorTool = lazy(() => import('../features/fileTools/epubEditor/EpubEditorTool'));
 const CoverEditorTool = lazy(() => import('../features/fileTools/coverEditor/CoverEditorTool'));
+const EpubOptimizerTool = lazy(() => import('../features/fileTools/epubOptimizer/EpubOptimizerTool'));
 
 function ToolItem({ tool, onOpenTab, onOpenTool, t }) {
     const isAvailable = tool.status === 'available';
@@ -115,10 +116,11 @@ export default function ToolsTab({ config, saveConfig, t, onOpenTab, showToast }
         );
     }
 
-    if (activeToolId === 'cover-editor') {
+    if (activeToolId === 'cover-editor' || activeToolId === 'epub-optimizer') {
+        const ActiveTool = activeToolId === 'cover-editor' ? CoverEditorTool : EpubOptimizerTool;
         return (
             <Suspense fallback={<div className="file-tools-loading">{t('tools.loading')}</div>}>
-                <CoverEditorTool
+                <ActiveTool
                     config={config}
                     saveConfig={saveConfig}
                     t={t}

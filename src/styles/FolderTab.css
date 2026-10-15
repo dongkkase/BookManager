@@ -3074,12 +3074,17 @@ body.is-resizing-panel .detail-panel-wrap {
 }
 
 .folder-context-submenu-flyout {
+    width: max-content;
   min-width: 210px;
   overflow: visible;
 }
 
 .folder-context-submenu-flyout .folder-context-menu-item {
   padding-left: 20px;
+}
+
+.folder-context-submenu-flyout .folder-context-menu-label {
+    flex: 1 0 auto;
 }
 
 .folder-context-menu-icon {

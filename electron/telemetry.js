@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const EVENTS = new Set(['app_active', 'menu_opened', 'tool_opened', 'feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled', 'viewer_tts_used']);
 const MENUS = new Set(['folder', 'organizer', 'renamer', 'metadata', 'tools', 'sharing', 'releases', 'settings']);
-const TOOLS = new Set(['text-cleaner', 'epub-editor', 'cover-editor']);
+const TOOLS = new Set(['text-cleaner', 'epub-editor', 'cover-editor', 'epub-optimizer']);
 const FEATURES = new Set(['archive-organizer', 'archive-renamer', 'metadata-save', 'text-cleaner', 'epub-export', 'epub-save', 'epub-import', 'viewer-open', 'viewer-tts', 'sharing-start']);
 const FORMATS = new Set(['comic', 'epub', 'pdf', 'text', 'audio']);
+const APP_LANGUAGES = new Set(['ko', 'en', 'ja']);
 const TTS_MODELS = new Map([
     ['system', new Set(['system'])],
     ['supertonic', new Set(['supertonic-3'])],
@@ -227,9 +228,11 @@ export function createTelemetry(options = {}) {
 
     function updateTelemetryConsent(config = {}) {
         const previous = getTelemetryStatus();
+        const language = config.language || config.lang;
         configuration = {
             telemetry_error_reports: config.telemetry_error_reports === true,
             telemetry_usage_stats: config.telemetry_usage_stats === true,
+            language: APP_LANGUAGES.has(language) ? language : 'ko',
         };
         const next = getTelemetryStatus();
         if (!next.errorReportsEnabled) cancel('errors');
@@ -360,6 +363,7 @@ export function createTelemetry(options = {}) {
                     ...properties,
                     distinct_id: getInstallationId(),
                     app_version: version,
+                    app_language: configuration.language,
                     os: platform,
                     $process_person_profile: false,
                     $geoip_disable: true,

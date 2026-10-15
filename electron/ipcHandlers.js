@@ -17,6 +17,7 @@ import { BoundedMemoryCache } from './boundedMemoryCache.js';
 import { createTtsRequestRegistry } from './ttsRequestRegistry.js';
 import { registerReadiveIpc } from './readive/ipc.js';
 import { registerEpubEditorIpc } from './epubEditor/ipc.js';
+import { registerEpubOptimizerIpc } from './epubOptimizer/ipc.js';
 import { inspectCoverEditor, loadCoverEditorImage, applyCoverEditor } from './coverEditor.js';
 import { resolveCoverEditorSevenZPath } from './coverEditorBinary.js';
 import { registerCoverEditorSourceIpc } from './coverEditorSourceIpc.js';
@@ -3169,6 +3170,7 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
     const epubEditorService = registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, openViewerPreview: hooks.openViewerPreview });
+    const epubOptimizerService = registerEpubOptimizerIpc({ ipcMain, BrowserWindow });
   const cancellationRegistry = new TaskCancellationRegistry();
   const ttsRequestRegistry = createTtsRequestRegistry();
   const runtimeStates = new Map();
@@ -5810,6 +5812,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       removeContentIndexProgressListener();
       return Promise.all([
         epubEditorService.dispose(),
+        epubOptimizerService.dispose(),
         readiveService.dispose(),
         librarySearchService.close(),
         contentIndexService.close(),
