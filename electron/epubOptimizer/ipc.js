@@ -1,7 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { observeOperation } from '../observabilityOperations.js';
 
-export function registerEpubOptimizerIpc({ ipcMain, BrowserWindow, createService }) {
+export function registerEpubOptimizerIpc({ ipcMain, BrowserWindow, createService, observe = observeOperation }) {
     let servicePromise;
     const owners = new Set();
     const inspections = new Map();
@@ -48,7 +49,7 @@ export function registerEpubOptimizerIpc({ ipcMain, BrowserWindow, createService
                 writeKey = key;
                 if (event.sender.isDestroyed()) return { error: 'TASK_CANCELLED', code: 'TASK_CANCELLED' };
             }
-            const result = await optimizer.run(owner, {
+            const run = () => optimizer.run(owner, {
                 action: request.action,
                 filePath: request.filePath,
                 operationId: request.operationId,
@@ -61,6 +62,9 @@ export function registerEpubOptimizerIpc({ ipcMain, BrowserWindow, createService
                     currentItem: progress.name || request.filePath,
                 });
             });
+            const result = request.action === 'optimize'
+                ? await observe('epub-optimize', run, { format: 'epub' })
+                : await run();
             if (request.action === 'inspect' && !event.sender.isDestroyed() && inspections.get(owner) === ownerInspections) {
                 ownerInspections.set(request.filePath, result.fingerprint);
                 if (ownerInspections.size > 10000) ownerInspections.delete(ownerInspections.keys().next().value);

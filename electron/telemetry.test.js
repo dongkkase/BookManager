@@ -183,6 +183,23 @@ test('cover editor tool navigation uses only its fixed identifier', async t => {
     assert.doesNotMatch(JSON.stringify(event), /private|book\.cbz|paths/);
 });
 
+test('EPUB optimization accepts its fixed tool and feature identifiers without file data or settings', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_usage_stats: true });
+    assert.equal(telemetry.trackTelemetryEvent({ event: 'tool_opened', tool: 'epub-optimizer', source: 'catalog' }), true);
+    for (const event of ['feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled']) {
+        assert.equal(telemetry.trackTelemetryEvent({ event, feature: 'epub-optimize', format: 'epub', duration_ms: 12,
+            filePath: '/private/book.epub', backupPath: '/private/bak/book.epub', operationId: 'private-operation',
+            settings: { jpegQuality: 82 }, removedResources: [{ name: 'private-image.jpg' }], savedBytes: 12345 }), true);
+    }
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body));
+    assert.equal(events.find(event => event.event === 'tool_opened').properties.tool, 'epub-optimizer');
+    const operations = events.filter(event => event.event.startsWith('feature_'));
+    assert.equal(operations.length, 4);
+    assert.ok(operations.every(event => event.properties.feature === 'epub-optimize' && event.properties.format === 'epub'));
+    assert.doesNotMatch(JSON.stringify(events), /private|filePath|backupPath|operationId|settings|jpegQuality|removedResources|savedBytes/);
+});
+
 test('usage identity survives restart, contains only random state and rotates after revocation', async t => {
     const { telemetry, requests, storageDir } = setup(t, {}, { telemetry_usage_stats: true });
     telemetry.trackTelemetryEvent({ event: 'app_active' });

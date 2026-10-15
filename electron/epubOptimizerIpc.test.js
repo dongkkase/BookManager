@@ -6,8 +6,94 @@ import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { registerEpubOptimizerIpc } from './epubOptimizer/ipc.js';
 import { EpubOptimizerService } from './epubOptimizer/service.js';
+import { observeOperation } from './observabilityOperations.js';
 
 const sender = id => Object.assign(new EventEmitter(), { id, isDestroyed: () => false, send() {} });
+
+test('optimizer telemetry counts each execution result while excluding inspection, cancellation requests and rejected input', async t => {
+    let handler;
+    let time = 0;
+    const events = [];
+    const reports = [];
+    const saved = { status: 'saved', outputPath: '/private/book.epub', backupPath: '/private/bak/book.epub', savedBytes: 100 };
+    const unchanged = { status: 'unchanged', outputPath: null, savedBytes: 0 };
+    const failure = Object.assign(new Error('Private write failure'), { code: 'EIO', backupPath: '/private/bak/book.epub' });
+    const service = {
+        run: async (_owner, request) => {
+            if (request.action === 'inspect') return { fingerprint: 'private-hash' };
+            if (request.operationId === 'failed') throw failure;
+            if (request.operationId === 'cancelled') throw Object.assign(new Error('Private cancellation'), { code: 'TASK_CANCELLED' });
+            return request.operationId === 'unchanged' ? unchanged : saved;
+        },
+        cancel: () => ({ canceled: true }),
+        dispose: async () => {},
+    };
+    const controller = registerEpubOptimizerIpc({
+        ipcMain: { handle: (_channel, fn) => { handler = fn; } }, createService: () => service,
+        observe: (feature, action, options) => observeOperation(feature, action, {
+            ...options,
+            track: event => { events.push(event); return true; },
+            report: (error, context) => reports.push({ error, context }),
+            isSessionCurrent: () => true,
+            now: () => time += 10,
+        }),
+    });
+    t.after(() => controller.dispose());
+    const owner = { sender: sender(1) };
+    const request = { action: 'optimize', filePath: '/private/book.epub', operationId: 'saved', expectedFingerprint: 'private-hash', settings: { jpegQuality: 82 } };
+    assert.equal((await handler(owner, request)).code, 'EPUB_REINSPECT_REQUIRED');
+    assert.equal((await handler(owner, { ...request, filePath: '/private/book.txt' })).code, 'EPUB_FILE_REQUIRED');
+    await handler(owner, { ...request, action: 'inspect' });
+    await handler(owner, { ...request, action: 'cancel' });
+    assert.deepEqual(events, []);
+    assert.equal(await handler(owner, request), saved);
+    assert.equal(await handler(owner, { ...request, operationId: 'unchanged' }), unchanged);
+    assert.deepEqual(await handler(owner, { ...request, operationId: 'failed' }), {
+        error: failure.message, code: 'EIO', backupPath: failure.backupPath,
+    });
+    assert.deepEqual(await handler(owner, { ...request, operationId: 'cancelled' }), {
+        error: 'Private cancellation', code: 'TASK_CANCELLED',
+    });
+    const expected = ['feature_completed', 'feature_completed', 'feature_failed', 'feature_cancelled'].flatMap(event => [
+        { event: 'feature_started', feature: 'epub-optimize', format: 'epub' },
+        { event, feature: 'epub-optimize', format: 'epub', duration_ms: 10 },
+    ]);
+    assert.deepEqual(events, expected);
+    assert.deepEqual(reports, [{ error: failure, context: { feature: 'epub-optimize', source: 'ipc' } }]);
+    assert.doesNotMatch(JSON.stringify(events), /private|Private|settings|jpegQuality|filePath|backupPath|operationId|savedBytes/);
+});
+
+test('optimizer completion respects a telemetry consent change without changing the saved result', async t => {
+    let handler;
+    let finish;
+    let current = true;
+    const events = [];
+    const saved = { status: 'saved', outputPath: '/private/book.epub' };
+    const controller = registerEpubOptimizerIpc({
+        ipcMain: { handle: (_channel, fn) => { handler = fn; } },
+        createService: () => ({
+            run: (_owner, request) => request.action === 'inspect' ? { fingerprint: 'hash' } : new Promise(resolve => { finish = resolve; }),
+            dispose: async () => {},
+        }),
+        observe: (feature, action, options) => observeOperation(feature, action, {
+            ...options,
+            track: event => { events.push(event); return true; },
+            report: () => assert.fail('Successful optimization must not report errors'),
+            isSessionCurrent: () => current,
+        }),
+    });
+    t.after(() => controller.dispose());
+    const owner = { sender: sender(1) };
+    const request = { action: 'optimize', filePath: '/private/book.epub', operationId: 'save', expectedFingerprint: 'hash' };
+    await handler(owner, { ...request, action: 'inspect' });
+    const pending = handler(owner, request);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(typeof finish, 'function');
+    current = false;
+    finish(saved);
+    assert.equal(await pending, saved);
+    assert.deepEqual(events, [{ event: 'feature_started', feature: 'epub-optimize', format: 'epub' }]);
+});
 
 test('optimizer IPC loads lazily, requires same-owner inspection, and never executes from an inspection', async () => {
     let handler;
