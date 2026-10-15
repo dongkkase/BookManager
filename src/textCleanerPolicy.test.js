@@ -119,11 +119,145 @@ test('들여쓴 표와 탭 구분 행 및 코드 블록의 공백은 보존한�
     assert.equal(cleanText(source).text, source);
 });
 
-test('텍본 정리기는 문장 중간에 잘못 들어간 개행을 연결한다', () => {
-    const result = cleanText('예고하고 있었\n 다.\n\n숨긴 무\n림고수였다.');
+test('단어 연결 모드는 단어 중간에 잘못 들어간 개행을 연결한다', () => {
+    const result = cleanText('예고하고 있었\n다.\n\n숨긴 무\n림고수였다.', { lineJoinMode: 'word' });
 
     assert.equal(result.text, '예고하고 있었다.\n\n숨긴 무림고수였다.');
     assert.equal(result.changes.filter(change => change.type === 'lineBreak').length, 2);
+});
+
+test('기본 개행 연결은 한글과 영문 단어 사이를 공백으로 구분한다', () => {
+    for (const newline of ['\n', '\r\n', '\r']) {
+        const source = `그는 고개를${newline}끄덕였다.${newline}This is a${newline}sentence.`;
+        const expected = `그는 고개를 끄덕였다.${newline}This is a sentence.`;
+        assert.equal(cleanText(source).text, expected);
+        for (const lineJoinMode of ['space', 'unknown', null]) {
+            assert.equal(cleanText(source, { lineJoinMode }).text, expected);
+        }
+        assert.equal(cleanText(source, { joinBrokenLines: false, lineJoinMode: 'word' }).text, source);
+    }
+});
+
+test('단어 연결 모드는 한글과 영문 및 숫자 안에서 끊긴 줄을 붙인다', () => {
+    for (const [source, expected] of [
+        ['숨긴 무\n림고수였다.', '숨긴 무림고수였다.'],
+        ['This is a sen\ntence.', 'This is a sentence.'],
+        ['"This is a sen\ntence.\nNext sentence."', '"This is a sentence. Next sentence."'],
+        ['번호는 123\n456이다.', '번호는 123456이다.'],
+    ]) {
+        assert.equal(cleanText(source, { lineJoinMode: 'word' }).text, expected);
+        assert.equal(cleanText(expected, { lineJoinMode: 'word' }).text, expected);
+    }
+});
+
+test('단어 연결 모드도 정리하기 전의 경계 공백을 단어 사이 구분으로 보존한다', () => {
+    for (const whitespace of [' ', '  ', '\t', '\u3000', '\u00a0']) {
+        const source = `그는 고개를\n${whitespace}끄덕였다.`;
+        assert.equal(cleanText(source, { lineJoinMode: 'word' }).text, '그는 고개를 끄덕였다.');
+        assert.equal(cleanText(source, {
+            lineJoinMode: 'word', trimLeadingWhitespace: false, collapseRepeatedSpaces: false,
+        }).text, `그는 고개를${whitespace}끄덕였다.`);
+        const trailing = `그는 고개를${whitespace}\n끄덕였다.`;
+        assert.equal(cleanText(trailing, {
+            lineJoinMode: 'word', collapseRepeatedSpaces: false,
+        }).text, `그는 고개를${whitespace}끄덕였다.`);
+    }
+    assert.equal(cleanText('예고하고 있었\n 다.', { lineJoinMode: 'word' }).text, '예고하고 있었 다.');
+    assert.equal(cleanText('This is a\n sentence.', { lineJoinMode: 'word' }).text, 'This is a sentence.');
+    assert.equal(cleanText('"그는 고개를\n  끄덕였다.\n다음 말이다."', { lineJoinMode: 'word' }).text,
+        '"그는 고개를 끄덕였다. 다음 말이다."');
+});
+
+test('두 연결 모드는 한자와 주석 및 인용문 문장부호의 경계를 유지한다', () => {
+    for (const lineJoinMode of ['space', 'word']) {
+        for (const [source, expected] of [
+            ['無憂亦無\n怖', '無憂亦無怖'],
+            ['소동사\n (小東邪)라 불렀다.', '소동사(小東邪)라 불렀다.'],
+            ['진왕(秦王)\n 을 만났다.', '진왕(秦王)을 만났다.'],
+            ['"고반재간(考槃在澗)\n영시물훤(永示勿萱)."', '"고반재간(考槃在澗) 영시물훤(永示勿萱)."'],
+            ['"\n첫 문장.\n\n다음 문장.\n"', '"첫 문장. 다음 문장."'],
+            ['말하자면,\n이런 일이다.', '말하자면, 이런 일이다.'],
+        ]) assert.equal(cleanText(source, { lineJoinMode }).text, expected);
+        const protectedText = ['```', '  sen', 'tence', '```', '| 항목 | 값 |', '------', '┌────┬────┐'].join('\n');
+        assert.equal(cleanText(protectedText, { lineJoinMode }).text, protectedText);
+    }
+});
+
+test('장과 회차 및 독립된 제목은 앞뒤의 문장과 연결하지 않는다', () => {
+    const headings = [
+        '제1장', '1화', '제 1 편', '12회 새로운 만남', '제2권: 두 번째 이야기',
+        '제1장 시작', '프롤로그', '에필로그 - 귀환', '서장', '종장', '외전 1',
+        'Chapter 3 - title', 'Episode 2: Return', 'EP.1', 'Ep. 2 - Departure',
+        'Prologue', 'Epilogue: Home', '【1화】', '[제1장] 새로운 시작', '（제 1 편）',
+    ];
+    for (const lineJoinMode of ['space', 'word']) {
+        for (const newline of ['\n', '\r\n', '\r']) {
+            for (const heading of headings) {
+                const source = ['이전 문단', heading, '그날은 아침부터 흐렸다.'].join(newline);
+                const result = cleanText(source, { lineJoinMode });
+                assert.equal(result.text, source, heading);
+                assert.equal(result.changeCount, 0, heading);
+            }
+        }
+    }
+});
+
+test('회차를 언급한 문장과 짧은 일반 본문은 제목으로 처리하지 않는다', () => {
+    for (const prose of [
+        '1화를 읽었다', '제1장을 펼쳤다', '3회 초에 공을 던졌다.',
+        '3회 초에 공을 던졌다', '프롤로그를 읽었다', '그는 고개를', '다음 날 아침',
+    ]) {
+        assert.equal(cleanText(`앞의 이야기\n${prose}`).text, `앞의 이야기 ${prose}`, prose);
+    }
+});
+
+test('여러 줄 인용문과 빈 줄을 건너뛰는 고정 폭 연결도 제목 양쪽을 보존한다', () => {
+    for (const lineJoinMode of ['space', 'word']) {
+        for (const heading of ['1화 새로운 시작', '프롤로그', 'Chapter 3 - title', '[제1장] 시작']) {
+            const quote = `"첫 문장.\n\n${heading}\n마지막 문장."`;
+            assert.equal(cleanText(quote, { lineJoinMode }).text, quote);
+        }
+        const prose = '가'.repeat(40);
+        const heading = `제1장 ${'새'.repeat(36)}`;
+        const hardWrapped = Array.from({ length: 6 }, () => [prose, heading, '마지막 문장.'])
+            .flat().join('\n\n');
+        assert.equal(cleanText(hardWrapped, { lineJoinMode }).text, hardWrapped);
+    }
+});
+
+test('고정 폭 연결에서 두 모드는 원래 경계 공백과 연결 방식을 함께 반영한다', () => {
+    for (const leading of ['', '  ']) {
+        const first = '가'.repeat(39) + '무';
+        const last = leading + '림고수였다.';
+        const source = Array.from({ length: 6 }, () => [first, last]).flat().join('\n\n');
+        for (const lineJoinMode of ['space', 'word']) {
+            const separator = lineJoinMode === 'word' && !leading ? '' : ' ';
+            const expected = Array(6).fill(first + separator + last.trimStart()).join('\n\n');
+            assert.equal(cleanText(source, { lineJoinMode }).text, expected);
+        }
+    }
+});
+
+test('제목 보호와 두 연결 모드의 변경 좌표는 결과와 일치하고 재처리해도 유지된다', () => {
+    const source = '  제1장 시작\r\n  숨긴 무\n림고수였다.\n그는 고개를\n  끄덕였다.\n"첫 문장.\n\n다음 문장."\n제2장 귀환\n마지막 문장.';
+    for (const lineJoinMode of ['space', 'word']) {
+        const options = { lineJoinMode, indentParagraphs: true, removeBlankLines: true };
+        const result = cleanText(source, options);
+        const expectedWord = lineJoinMode === 'word' ? '무림고수였다.' : '무 림고수였다.';
+        assert.equal(result.text, `  제1장 시작\r\n  숨긴 ${expectedWord}\n  그는 고개를 끄덕였다.\n  "첫 문장. 다음 문장."\n  제2장 귀환\n  마지막 문장.`);
+        let reconstructed = '';
+        let sourceOffset = 0;
+        for (const change of result.changes) {
+            reconstructed += source.slice(sourceOffset, change.sourceStart);
+            assert.equal(reconstructed.length, change.resultStart);
+            reconstructed += change.after;
+            assert.equal(reconstructed.length, change.resultEnd);
+            sourceOffset = change.sourceEnd;
+        }
+        reconstructed += source.slice(sourceOffset);
+        assert.equal(reconstructed, result.text);
+        assert.equal(cleanText(result.text, options).text, result.text);
+    }
 });
 
 test('괄호 안에서 끊긴 한자 인용문은 공백과 개행을 함께 정리한다', () => {
@@ -206,14 +340,16 @@ test('하이픈으로 둘러싼 문장의 끊긴 단어를 연결하고 장식�
     ];
     for (const newline of ['\n', '\r\n', '\r']) {
         const source = lines.join(newline);
-        const result = cleanText(source);
+        const result = cleanText(source, { lineJoinMode: 'word' });
         assert.equal(result.text, lines.join(''));
         assert.equal(result.changes.length, 2);
         assert.equal(result.protectedLineCount, 0);
         assert.equal(cleanText(result.text).text, result.text);
         assert.equal(cleanText(source, { joinBrokenLines: false }).text, source);
-        assert.equal(cleanText(source + newline + '다음 문장.').text, lines.join('') + newline + '다음 문장.');
-        assert.equal(cleanText('앞 문단' + newline + source).text, '앞 문단' + newline + lines.join(''));
+        assert.equal(cleanText(source + newline + '다음 문장.', { lineJoinMode: 'word' }).text,
+            lines.join('') + newline + '다음 문장.');
+        assert.equal(cleanText('앞 문단' + newline + source, { lineJoinMode: 'word' }).text,
+            '앞 문단' + newline + lines.join(''));
         for (const change of result.changes) {
             assert.equal(source.slice(change.sourceStart, change.sourceEnd), newline);
             assert.equal(result.text.slice(change.resultStart, change.resultEnd), change.after);
@@ -235,7 +371,7 @@ test('제목과 단독 구분선, 빈 줄 및 코드·표가 있는 장식 구�
 
 test('한자 인용문과 하이픈 문단 사이의 빈 줄은 유지한다', () => {
     const source = ' "고반재간(考槃在澗)  석인지관(碩人之寬)  독매오언(獨寐寤言)\n영시물훤(永示勿萱)........"\n\n-----자연\n을 벗삼아 살았\n다.-----';
-    const result = cleanText(source);
+    const result = cleanText(source, { lineJoinMode: 'word' });
     assert.equal(result.text, '"고반재간(考槃在澗) 석인지관(碩人之寬) 독매오언(獨寐寤言) 영시물훤(永示勿萱)........"\n\n-----자연을 벗삼아 살았다.-----');
 });
 
@@ -409,13 +545,14 @@ test('닫히지 않거나 짝이 다른 인용문과 표·코드·제목을 가�
     ]) assert.equal(cleanText(source).text, source);
 });
 
-test('인용문 속에서 끊긴 단어는 기존 규칙대로 붙이고 문장 사이는 띄운다', () => {
-    assert.equal(cleanText("'숨긴 무\n림고수였다.\n\n다음 이야기다.'").text, "'숨긴 무림고수였다. 다음 이야기다.'");
+test('단어 연결 모드는 인용문 속에서 끊긴 단어를 붙이고 문장 사이는 띄운다', () => {
+    assert.equal(cleanText("'숨긴 무\n림고수였다.\n\n다음 이야기다.'", { lineJoinMode: 'word' }).text,
+        "'숨긴 무림고수였다. 다음 이야기다.'");
     assert.equal(cleanText("'\n첫 문장.\n\n다음 문장.\n'").text, "'첫 문장. 다음 문장.'");
     const first = `"${'가'.repeat(38)}무`;
     const last = '림고수였다."';
     const source = Array.from({ length: 6 }, () => [first, last]).flat().join('\n\n');
-    assert.equal(cleanText(source).text, Array(6).fill(first + last).join('\n\n'));
+    assert.equal(cleanText(source, { lineJoinMode: 'word' }).text, Array(6).fill(first + last).join('\n\n'));
 });
 
 test('고정 폭으로 보이는 인용문도 문장 끝의 닫는 따옴표 뒤 개행은 유지한다', () => {
@@ -441,7 +578,7 @@ test('고정 폭 문서에서도 문장 끝은 보존하고 문장 중간의 끊
         const tail = '다.';
         const source = Array.from({ length: 6 }, () => [complete, broken, tail]).flat().join('\n\n');
         const expected = Array.from({ length: 6 }, () => [complete, broken + tail]).flat().join('\n\n');
-        const result = cleanText(source);
+        const result = cleanText(source, { lineJoinMode: 'word' });
         assert.equal(result.text, expected);
         assert.equal(result.changes.filter(change => change.type === 'lineBreak').length, 6);
         assert.equal(cleanText(result.text).text, expected);
@@ -479,7 +616,8 @@ test('연표 항목은 앞뒤의 일반 문장과 연결하지 않는다', () =>
 
     assert.equal(cleanText(source).text, source.replace('\n ', '\n'));
     assert.equal(cleanText(source, { trimLeadingWhitespace: false }).text, source);
-    assert.equal(cleanText('2150년 1월 1일에 시작된 전\n쟁이었다.').text, '2150년 1월 1일에 시작된 전쟁이었다.');
+    assert.equal(cleanText('2150년 1월 1일에 시작된 전\n쟁이었다.', { lineJoinMode: 'word' }).text,
+        '2150년 1월 1일에 시작된 전쟁이었다.');
 });
 
 test('빈 줄이 삽입된 고정 폭 텍스트에서도 연표 앞뒤의 개행은 유지한다', () => {
@@ -600,7 +738,7 @@ test('빈 줄 삭제에서도 코드 블록 내부와 보호된 본문 줄은 �
 
 test('빈 줄 삭제는 기존 문장·인용문 연결 뒤에 적용하고 변경 좌표를 유지한다', () => {
     const source = '  첫  문장.\r\n \t\r\n숨긴 무\n림고수였다.\n\n"첫 문장.\n\n다음 문장."\r마지막 문장.\r\n';
-    const result = cleanText(source, { removeBlankLines: true });
+    const result = cleanText(source, { removeBlankLines: true, lineJoinMode: 'word' });
     assert.equal(result.text, '첫 문장.\r\n숨긴 무림고수였다.\n"첫 문장. 다음 문장."\r마지막 문장.\r\n');
     assert.deepEqual(result.changes.map(change => change.type), [
         'whitespace', 'blankLine', 'lineBreak', 'blankLine', 'lineBreak',
@@ -670,7 +808,7 @@ test('문단 들여쓰기는 기존 공백·탭을 선택한 폭으로 맞추고
 
 test('문단 들여쓰기는 연결된 문장과 여러 줄 인용문의 시작에만 적용한다', () => {
     const source = '숨긴 무\n림고수였다.\n\n"첫 문장.\n\n다음 문장."';
-    const result = cleanText(source, { indentParagraphs: true, paragraphIndentSize: 4 });
+    const result = cleanText(source, { indentParagraphs: true, paragraphIndentSize: 4, lineJoinMode: 'word' });
 
     assert.equal(result.text, '    숨긴 무림고수였다.\n\n    "첫 문장. 다음 문장."');
     assert.deepEqual(result.changes.filter(change => change.type === 'indentation')
@@ -707,7 +845,7 @@ test('문단 들여쓰기와 빈 줄 삭제를 함께 사용해도 표와 코드
 
 test('문단 들여쓰기와 다른 정리 규칙을 함께 적용한 변경 좌표로 결과를 재구성할 수 있다', () => {
     const source = '  첫  문장.\r\n \t\r\n숨긴 무\n림고수였다.\n\n"첫 문장.\n\n다음 문장."\r마지막 문장.\r\n';
-    const result = cleanText(source, { indentParagraphs: true, removeBlankLines: true });
+    const result = cleanText(source, { indentParagraphs: true, removeBlankLines: true, lineJoinMode: 'word' });
     assert.equal(result.text, '  첫 문장.\r\n  숨긴 무림고수였다.\n  "첫 문장. 다음 문장."\r  마지막 문장.\r\n');
     assert.equal(result.changes[0].type, 'whitespace');
 

@@ -393,7 +393,11 @@ button.file-tool-item {
     gap: 6px;
 }
 
-.text-cleaner-indent-option select {
+.text-cleaner-indent-option select,
+.text-cleaner-join-option select,
+.text-cleaner-preset-controls select,
+.text-cleaner-preset-controls input,
+.text-cleaner-preset-controls button {
     padding: 3px 6px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -402,8 +406,59 @@ button.file-tool-item {
     font: inherit;
 }
 
-.text-cleaner-indent-option select:disabled {
+.text-cleaner-indent-option select:disabled,
+.text-cleaner-join-option select:disabled,
+.text-cleaner-preset-controls :disabled {
     opacity: 0.5;
+}
+
+.text-cleaner-presets {
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border-color);
+    background: #242424;
+    font-size: var(--font-sm);
+}
+
+.text-cleaner-presets summary {
+    width: fit-content;
+    cursor: pointer;
+}
+
+.text-cleaner-preset-controls,
+.text-cleaner-preset-controls form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+
+.text-cleaner-preset-controls {
+    margin-top: 8px;
+}
+
+.text-cleaner-preset-controls select,
+.text-cleaner-preset-controls input {
+    width: 180px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.text-cleaner-preset-controls button:not(:disabled) {
+    cursor: pointer;
+}
+
+.text-cleaner-preset-controls button:hover:not(:disabled) {
+    border-color: var(--text-cleaner-accent);
+}
+
+.text-cleaner-presets p {
+    margin: 7px 0 0;
+    color: var(--text-secondary);
+}
+
+.text-cleaner-presets p.is-error {
+    color: #ffb8b2;
 }
 
 .text-cleaner-coming {

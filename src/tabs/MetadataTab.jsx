@@ -909,6 +909,11 @@ function MetadataTab({ config, t, showToast }) {
     updateActiveMetadata(fieldId, value || '');
   };
 
+    const handleCopyFieldToBatch = (fieldId) => {
+        if (!activeItem) return;
+        updateBatchMetadata(fieldId, activeItem.metadata?.[fieldId] ?? '');
+    };
+
   const handleApplyBatchToActive = () => {
     if (!activeItem) return;
     updateItem(activeItem.id, item => {
@@ -1956,6 +1961,35 @@ function MetadataTab({ config, t, showToast }) {
     );
   };
 
+    const renderCopyButtons = (onCopyToOriginal, onCopyToBatch, label) => {
+        const toOriginalLabel = `${label}: ${t('t3_tt_copy_field_to_orig')}`;
+        const toBatchLabel = `${label}: ${t('t3_tt_copy_field_to_batch')}`;
+        return (
+            <div className="meta-col-btn">
+                <button
+                    type="button"
+                    className="meta-copy-btn"
+                    title={toOriginalLabel}
+                    aria-label={toOriginalLabel}
+                    onClick={onCopyToOriginal}
+                    disabled={!activeItem}
+                >
+                    <FaIcon name="angle-left" size={12} />
+                </button>
+                <button
+                    type="button"
+                    className="meta-copy-btn"
+                    title={toBatchLabel}
+                    aria-label={toBatchLabel}
+                    onClick={onCopyToBatch}
+                    disabled={!activeItem}
+                >
+                    <FaIcon name="angle-right" size={12} />
+                </button>
+            </div>
+        );
+    };
+
   const renderFieldRows = (fields) => (
     fields.map((field) => (
       <div className={`meta-form-row ${field.type === 'textarea' ? 'tall' : ''}`} key={field.id}>
@@ -1969,9 +2003,7 @@ function MetadataTab({ config, t, showToast }) {
             </div>
           )}
         </div>
-        <div className="meta-col-btn">
-          <button className="meta-copy-btn" onClick={() => handleCopyField(field.id)} disabled={!activeItem}><FaIcon name="angle-left" size={12} /></button>
-        </div>
+        {renderCopyButtons(() => handleCopyField(field.id), () => handleCopyFieldToBatch(field.id), fieldLabel(field))}
         <div className="meta-col-res meta-field-with-stepper">
           {renderFieldInput(field, batchMetadata[field.id] || '', value => updateBatchMetadata(field.id, value), 'meta-input res')}
           {field.type === 'number' && (
@@ -1998,7 +2030,7 @@ function MetadataTab({ config, t, showToast }) {
             onChange={value => updateActiveMetadata(fieldId, value)}
             disabled={!activeItem}
           />
-          <button className="meta-copy-btn" onClick={() => handleCopyField(fieldId)} disabled={!activeItem}><FaIcon name="angle-left" size={12} /></button>
+          {renderCopyButtons(() => handleCopyField(fieldId), () => handleCopyFieldToBatch(fieldId), label)}
           <TagInput
             className="meta-input res meta-tag-box"
             placeholder={placeholder}
@@ -2043,6 +2075,11 @@ function MetadataTab({ config, t, showToast }) {
     updateActiveGenreTags(value);
   };
 
+    const handleCopyGenreTagsToBatch = () => {
+        if (!activeItem) return;
+        updateBatchGenreTags(combinedGenreTagsValue(activeItem.metadata));
+    };
+
   const toggleCombinedTagValue = (option) => {
     const values = new Set(splitTagValues(combinedGenreTagsValue(activeItem?.metadata)));
     if (values.has(option)) values.delete(option);
@@ -2084,7 +2121,7 @@ function MetadataTab({ config, t, showToast }) {
             onChange={updateActiveGenreTags}
             disabled={!activeItem}
           />
-          <button className="meta-copy-btn" onClick={handleCopyGenreTags} disabled={!activeItem}><FaIcon name="angle-left" size={12} /></button>
+          {renderCopyButtons(handleCopyGenreTags, handleCopyGenreTagsToBatch, label)}
           <TagInput
             className="meta-input res meta-tag-box"
             placeholder={placeholder}

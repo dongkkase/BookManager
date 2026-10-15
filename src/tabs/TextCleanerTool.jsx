@@ -3,6 +3,7 @@ import { FaIcon } from '../components/FaIcon';
 import TextCleanerEditor from '../components/TextCleanerEditor';
 import TextCleanerSearch from '../components/TextCleanerSearch';
 import TextCleanerRecentFiles from '../components/TextCleanerRecentFiles';
+import TextCleanerPresets from '../components/TextCleanerPresets';
 import { DEFAULT_TEXT_SEARCH_OPTIONS } from '../textCleanerFindReplace';
 import { runTextCleanerSearchJob } from '../textCleanerSearchJob';
 import { droppedPathsFromDataTransfer } from '../appShell';
@@ -15,6 +16,13 @@ import {
     textOffsetForEditorScroll,
 } from '../textCleanerNavigation';
 import { DEFAULT_TEXT_CLEANER_OPTIONS } from '../textCleanerPolicy';
+import {
+    normalizeTextCleanerOptions,
+    readTextCleanerSettings,
+    removeTextCleanerPreset,
+    upsertTextCleanerPreset,
+    writeTextCleanerSettings,
+} from '../textCleanerSettings';
 import { createTextCleanerInput } from '../textCleanerInput';
 import { rememberTextCleanerFile } from '../textCleanerRecentFiles';
 import { TEXT_CLEANER_QUOTE_PAIRS } from '../textCleanerInsertion';
@@ -384,7 +392,8 @@ function errorMessage(t, error, fallbackKey) {
 export default function TextCleanerTool({ t, onBack, openRequest = null, showToast }) {
     const [fileInfo, setFileInfo] = useState(null);
     const [insertDialog, setInsertDialog] = useState(null);
-    const [options, setOptions] = useState(DEFAULT_TEXT_CLEANER_OPTIONS);
+    const [settings, setSettings] = useState(readTextCleanerSettings);
+    const { options, presets } = settings;
     const [backup, setBackup] = useState(true);
     const [analysisVersion, setAnalysisVersion] = useState(0);
     const [changes, setChanges] = useState([]);
@@ -414,6 +423,7 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
     const [resultSearchResult, setResultSearchResult] = useState(EMPTY_SEARCH_RESULT);
     const [lineCounts, setLineCounts] = useState({ source: 1, result: 1 });
     const [resultTextVersion, setResultTextVersion] = useState(0);
+    const [settingsSaveFailed, setSettingsSaveFailed] = useState(false);
     const sourceTextRef = useRef('');
     const resultTextRef = useRef('');
     const sourceAreaRef = useRef(null);
@@ -935,10 +945,33 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     }, []);
 
+    const persistSettings = useCallback(nextSettings => {
+        setSettings(nextSettings);
+        const saved = writeTextCleanerSettings(nextSettings);
+        setSettingsSaveFailed(!saved);
+        return saved;
+    }, []);
+
+    const handleApplyOptions = useCallback(requestedOptions => {
+        if (busy) return false;
+        const nextOptions = normalizeTextCleanerOptions(requestedOptions);
+        if (Object.keys(DEFAULT_TEXT_CLEANER_OPTIONS).every(key => options[key] === nextOptions[key])) return true;
+        if (manualEdited && !window.confirm(t('tools.text_cleaner.confirm_reanalyze'))) return false;
+        persistSettings({ ...settings, options: nextOptions });
+        return true;
+    }, [busy, manualEdited, options, persistSettings, settings, t]);
+
     const handleRuleChange = useCallback((key, value) => {
-        if (manualEdited && !window.confirm(t('tools.text_cleaner.confirm_reanalyze'))) return;
-        setOptions(current => ({ ...current, [key]: value ?? !current[key] }));
-    }, [manualEdited, t]);
+        handleApplyOptions({ ...options, [key]: value ?? !options[key] });
+    }, [handleApplyOptions, options]);
+
+    const handleSavePreset = useCallback(name => {
+        return persistSettings({ ...settings, presets: upsertTextCleanerPreset(presets, name, options) });
+    }, [options, persistSettings, presets, settings]);
+
+    const handleDeletePreset = useCallback(name => {
+        return persistSettings({ ...settings, presets: removeTextCleanerPreset(presets, name) });
+    }, [persistSettings, presets, settings]);
 
     const handleReanalyze = useCallback(() => {
         if (manualEdited && !window.confirm(t('tools.text_cleaner.confirm_reanalyze'))) return;
@@ -1339,18 +1372,39 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                 </div>
             </header>
 
+            <TextCleanerPresets
+                t={t}
+                presets={presets}
+                disabled={busy}
+                onApply={handleApplyOptions}
+                onSave={handleSavePreset}
+                onDelete={handleDeletePreset}
+            />
             <div className="text-cleaner-options" aria-label={t('tools.text_cleaner.rules')}>
                 <strong>{t('tools.text_cleaner.rules')}</strong>
                 {ruleItems.map(rule => (
-                    <label key={rule.key} title={rule.hint}>
-                        <input
-                            type="checkbox"
-                            checked={options[rule.key]}
-                            disabled={busy}
-                            onChange={() => handleRuleChange(rule.key)}
-                        />
-                        {rule.label}
-                    </label>
+                    <React.Fragment key={rule.key}>
+                        <label title={rule.hint}>
+                            <input
+                                type="checkbox"
+                                checked={options[rule.key]}
+                                disabled={busy}
+                                onChange={() => handleRuleChange(rule.key)}
+                            />
+                            {rule.label}
+                        </label>
+                        {rule.key === 'joinBrokenLines' && <label className="text-cleaner-join-option" title={t('tools.text_cleaner.line_join_hint')}>
+                            <select
+                                aria-label={t('tools.text_cleaner.line_join_mode')}
+                                value={options.lineJoinMode}
+                                disabled={busy || !options.joinBrokenLines}
+                                onChange={event => handleRuleChange('lineJoinMode', event.target.value)}
+                            >
+                                <option value="space">{t('tools.text_cleaner.line_join_space')}</option>
+                                <option value="word">{t('tools.text_cleaner.line_join_word')}</option>
+                            </select>
+                        </label>}
+                    </React.Fragment>
                 ))}
                 <span className="text-cleaner-indent-option">
                     <label title={t('tools.text_cleaner.rule_indent_hint')}>
@@ -1388,6 +1442,11 @@ export default function TextCleanerTool({ t, onBack, openRequest = null, showToa
                 <span className="text-cleaner-coming">{t('tools.text_cleaner.rule_spelling')} · {t('tools.status.planned')}</span>
             </div>
 
+            {settingsSaveFailed && (
+                <div className="text-cleaner-message is-error" role="alert">
+                    {t('tools.text_cleaner.settings_save_failed')}
+                </div>
+            )}
             {error && (
                 <div className="text-cleaner-message is-error" role="alert">
                     {error}

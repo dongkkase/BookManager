@@ -2,6 +2,7 @@ export const DEFAULT_TEXT_CLEANER_OPTIONS = Object.freeze({
     trimLeadingWhitespace: true,
     collapseRepeatedSpaces: true,
     joinBrokenLines: true,
+    lineJoinMode: 'space',
     removeBlankLines: false,
     indentParagraphs: false,
     paragraphIndentSize: 2,
@@ -12,7 +13,7 @@ export const MAX_RECORDED_TEXT_CHANGES = 10000;
 
 const BOX_DRAWING_PATTERN = /[\u2500-\u257f]/g;
 const SENTENCE_END_PATTERN = /[.!?。？！…][\s"'’”」』】)）》〉〕］}]*$/u;
-const OPENING_LINE_PATTERN = /^[\s"'‘“「『【《〈〔［{(]*[-–—•·※◇◆○●□■▶▷►▸☆★▶]|^\s*(?:제?\s*\d+\s*(?:화|장|편)|chapter\s+\d+)\b/iu;
+const OPENING_LINE_PATTERN = /^[\s"'‘“「『【《〈〔［{(]*[-–—•·※◇◆○●□■▶▷►▸☆★▶]/u;
 const TIMELINE_ENTRY_PATTERN = /^\s*\d{1,4}년\s*\d{1,2}월\s*\d{1,2}일\s*[:：]/u;
 const TEXT_HEADING_PATTERN = /^\s*[-=+_*#~]{3,}\s*[\p{L}\p{N}]|(?:^|\s)제?\s*\d+\s*권\s*$/u;
 const QUOTED_DIALOGUE_PATTERN = /^(?:"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』)$/u;
@@ -22,6 +23,28 @@ const HARD_WRAP_LOCAL_WINDOW = 12;
 const HAN_PHRASE_LINE_PATTERN = /^["'“‘「『]?[가-힣]+(?:\(\p{Script=Han}+\)|（\p{Script=Han}+）)(?:\s+[가-힣]+(?:\(\p{Script=Han}+\)|（\p{Script=Han}+）))*[.!?。？！…]*["'”’」』]?$/u;
 const QUOTE_CLOSERS = { '"': '"', "'": "'", '“': '”', '‘': '’', '「': '」', '『': '』' };
 const CLOSING_QUOTES = new Set(Object.values(QUOTE_CLOSERS));
+const HEADING_WRAPPERS = [['[', ']'], ['【', '】'], ['(', ')'], ['（', '）'], ['〈', '〉'], ['《', '》']];
+
+function isTextHeading(line) {
+    if (TEXT_HEADING_PATTERN.test(line)) return true;
+    let title = line.trim();
+    if (!title || title.length > 120) return false;
+    for (const [opening, closing] of HEADING_WRAPPERS) {
+        if (!title.startsWith(opening)) continue;
+        const end = title.indexOf(closing, opening.length);
+        if (end < 0) return false;
+        title = title.slice(opening.length, end).trim() + ' ' + title.slice(end + closing.length).trim();
+        title = title.trim();
+        break;
+    }
+    const marker = title.match(/^(?:(?:제\s*)?\d+\s*(?:권|장|화|회|편)|(?:chapter|episode)\s+\d+|ep\.?\s*\d+|프롤로그|에필로그|서장|종장|외전|머리말|맺음말|후기|prologue|epilogue)(?=$|[\s:：.．\-–—])/iu);
+    if (!marker) return false;
+    const subtitle = title.slice(marker[0].length).replace(/^[\s:：.．\-–—]+/u, '');
+    if (!subtitle) return true;
+    if (SENTENCE_END_PATTERN.test(subtitle)) return false;
+    if (/회$/u.test(marker[0]) && /^(?:초|말)(?:에|부터|까지|\s|$)/u.test(subtitle)) return false;
+    return !/(?:했다|한다|된다|있다|없다|였다|이다|는다|니다|어요|아요|지요|네요)$/u.test(subtitle);
+}
 
 function quotedProseBoundaries(text) {
     const boundaries = new Map();
@@ -38,7 +61,7 @@ function quotedProseBoundaries(text) {
         if (!trimmed) continue;
         if (!candidate && !QUOTE_CLOSERS[trimmed[0]]) continue;
         if (isProtectedTextLine(line, { inFence, ignoreSymbolRatio: true })
-            || TEXT_HEADING_PATTERN.test(trimmed) || TIMELINE_ENTRY_PATTERN.test(trimmed)
+            || isTextHeading(trimmed) || TIMELINE_ENTRY_PATTERN.test(trimmed)
             || OPENING_LINE_PATTERN.test(trimmed)) {
             candidate = null;
             continue;
@@ -119,7 +142,7 @@ function decoratedProseOffsets(text) {
         if (opening) candidate = { marker: opening[1], starts: [] };
         if (!candidate) continue;
         const body = stripProseDecoration(line);
-        if (!body.trim() || isProtectedTextLine(body)
+        if (!body.trim() || isProtectedTextLine(body) || isTextHeading(body)
             || (!opening && OPENING_LINE_PATTERN.test(body))) {
             candidate = null;
             continue;
@@ -146,7 +169,7 @@ export function isProtectedTextLine(line = '', state = {}) {
     if (/^\s*[-=+_*#~]{4,}\s*$/.test(line)) return true;
     if (/\t/.test(line) && line.split('\t').filter(part => part.trim()).length >= 2) return true;
     if ((line.match(/[|｜]/g) || []).length >= 2) return true;
-    if (TEXT_HEADING_PATTERN.test(trimmed)) return false;
+    if (isTextHeading(trimmed)) return false;
     if (state.inParenthesis && /^[\p{L}\p{N}][^()（）]*[)）]/u.test(trimmed)) return false;
     if (state.inHanQuote && HAN_PHRASE_LINE_PATTERN.test(trimmed)) return false;
 
@@ -171,7 +194,7 @@ function cleanLine(line, options, protectedLine) {
     return result;
 }
 
-function joinSeparator(previousLine, nextLine) {
+function joinSeparator(previousLine, nextLine, mode, originalWhitespace) {
     const previousCharacter = previousLine.at(-1) || '';
     const nextCharacter = nextLine[0] || '';
     if (!previousCharacter || !nextCharacter) return '';
@@ -179,9 +202,8 @@ function joinSeparator(previousLine, nextLine) {
     if (isHanPhraseBoundary(previousLine, nextLine)) return ' ';
     if (/[,;:，、]/u.test(previousCharacter) && WORD_CHARACTER_PATTERN.test(nextCharacter)) return ' ';
     if (/[\p{L}\p{N}]/u.test(previousCharacter) && /[\p{L}\p{N}]/u.test(nextCharacter)) {
-        const bothHangul = /[가-힣]/u.test(previousCharacter) && /[가-힣]/u.test(nextCharacter);
         const bothHan = /\p{Script=Han}/u.test(previousCharacter) && /\p{Script=Han}/u.test(nextCharacter);
-        return bothHangul || bothHan ? '' : ' ';
+        return !originalWhitespace && (bothHan || mode === 'word') ? '' : ' ';
     }
     return '';
 }
@@ -196,7 +218,7 @@ function shouldJoinBoundary(previousLine, nextLine, previousProtected, nextProte
     const next = nextLine.trimStart();
     if (!previous || !next || previousProtected || nextProtected) return false;
     if (TIMELINE_ENTRY_PATTERN.test(previous) || TIMELINE_ENTRY_PATTERN.test(next)) return false;
-    if (TEXT_HEADING_PATTERN.test(previous) || TEXT_HEADING_PATTERN.test(next)) return false;
+    if (isTextHeading(previous) || isTextHeading(next)) return false;
     if (SENTENCE_END_PATTERN.test(previous)) return false;
     if (OPENING_LINE_PATTERN.test(next)) return false;
     if (inHanQuote && isHanPhraseBoundary(previous, next)) return true;
@@ -281,7 +303,7 @@ function shouldJoinHardWrappedBoundary(
     const next = nextLine.trim();
     if (!previous || !next || !hardWrap.wrappedLineNumbers.has(lineNumber)) return false;
     if (TIMELINE_ENTRY_PATTERN.test(previous) || TIMELINE_ENTRY_PATTERN.test(next)) return false;
-    if (TEXT_HEADING_PATTERN.test(previous) || TEXT_HEADING_PATTERN.test(next)) return false;
+    if (isTextHeading(previous) || isTextHeading(next)) return false;
     if (SENTENCE_END_PATTERN.test(previous) || CLOSING_QUOTES.has(previous.at(-1))) return false;
     if (OPENING_LINE_PATTERN.test(next)) return false;
     return WORD_CHARACTER_PATTERN.test(next[0] || '') || isHanAnnotationBoundary(previous, next);
@@ -294,6 +316,7 @@ function changePreview(value) {
 export function cleanText(sourceText = '', requestedOptions = {}) {
     const text = String(sourceText ?? '');
     const options = { ...DEFAULT_TEXT_CLEANER_OPTIONS, ...requestedOptions };
+    const lineJoinMode = options.lineJoinMode === 'word' ? 'word' : 'space';
     const requestedIndentSize = Number(options.paragraphIndentSize);
     const indentSize = Number.isFinite(requestedIndentSize)
         ? Math.max(1, Math.min(8, Math.floor(requestedIndentSize)))
@@ -402,7 +425,12 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
             const separator = quoteJoin && !directJoin && !hardWrapJoin
                 && !quotePunctuationBoundary
                 && !/\s$/u.test(line.cleaned) && !/^\s/u.test(nextLine.cleaned)
-                ? ' ' : joinSeparator(line.cleaned, nextLine.cleaned);
+                ? ' ' : joinSeparator(
+                    line.cleaned,
+                    nextLine.cleaned,
+                    lineJoinMode,
+                    /\s$/u.test(line.original) || /^\s/u.test(nextLine.original),
+                );
             const boundaryText = line.newline
                 + skippedLines.map(skippedLine => skippedLine.original + skippedLine.newline).join('');
             const lastBoundaryLine = skippedLines.at(-1) || line;
@@ -486,7 +514,7 @@ export function cleanText(sourceText = '', requestedOptions = {}) {
             inHanQuote: hanQuote,
         });
         hanQuoteCloser = hanQuote && !protectedLine && !/["'”’」』]$/u.test(trimmed) ? quoteCloser : null;
-        if (protectedLine || !original.trim() || TEXT_HEADING_PATTERN.test(classificationText) || TIMELINE_ENTRY_PATTERN.test(original)) {
+        if (protectedLine || !original.trim() || isTextHeading(classificationText) || TIMELINE_ENTRY_PATTERN.test(original)) {
             parenthesisDepth = 0;
         } else {
             for (const character of original) {

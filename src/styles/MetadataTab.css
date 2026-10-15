@@ -1,4 +1,5 @@
 .metadata-tab {
+    --meta-copy-action-width: calc(var(--control-height-lg) * 2 + 4px);
   display: flex;
   height: 100%;
   box-sizing: border-box;
@@ -594,7 +595,7 @@
 
 .meta-form-row {
   display: grid;
-  grid-template-columns: 92px minmax(220px, 1fr) 38px minmax(220px, 1fr);
+    grid-template-columns: 92px minmax(220px, 1fr) var(--meta-copy-action-width) minmax(220px, 1fr);
   gap: 8px;
   align-items: center;
   margin-bottom: 9px;
@@ -602,7 +603,7 @@
 
 .meta-column-heads {
   display: grid;
-  grid-template-columns: 92px minmax(220px, 1fr) 38px minmax(220px, 1fr);
+    grid-template-columns: 92px minmax(220px, 1fr) var(--meta-copy-action-width) minmax(220px, 1fr);
   gap: 8px;
   margin: 0 0 8px;
   color: #fff;
@@ -851,6 +852,12 @@ textarea.meta-auto-height-textarea {
   font-weight: 800;
 }
 
+.meta-col-btn {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+}
+
 .meta-copy-btn,
 .meta-stepper button {
   background-color: #444;
@@ -925,7 +932,7 @@ textarea.meta-auto-height-textarea {
 }
 
 .meta-tag-editor {
-  --meta-tag-action-width: 38px;
+    --meta-tag-action-width: var(--meta-copy-action-width);
   display: grid;
   grid-template-columns: 54px 1fr;
   gap: 12px;
@@ -1042,7 +1049,7 @@ textarea.meta-auto-height-textarea {
 .meta-series-apply-btn {
   grid-column: 2;
   justify-self: start;
-  width: calc(50% - 29px);
+    width: calc((100% - var(--meta-tag-action-width) - 20px) / 2);
   min-width: 180px;
   background-color: #383838;
   color: #fff;

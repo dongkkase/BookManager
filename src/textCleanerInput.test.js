@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createTextCleanerInput } from './textCleanerInput.js';
 import { countTextLines, findTextMatches } from './textCleanerNavigation.js';
 import { inspectTextQuotes } from './textCleanerQuotes.js';
+import { readTextCleanerSettings } from './textCleanerSettings.js';
 
 const toolSource = fs.readFileSync(new URL('./tabs/TextCleanerTool.jsx', import.meta.url), 'utf8');
 
@@ -45,13 +46,15 @@ function createToolFixture(t) {
     }
     TextCleanerTool({ t: key => key });`, {
         createTextCleanerInput,
+        readTextCleanerSettings: () => readTextCleanerSettings({ getItem: () => null }),
         rememberTextCleanerFile: () => {},
         URL,
         DEFAULT_TEXT_CLEANER_OPTIONS: {},
         DEFAULT_TEXT_SEARCH_OPTIONS: {},
         EMPTY_SEARCH_RESULT: { query: '', matches: [], index: -1, pending: false },
         useState(initial) {
-            let value = stateIndex++ === 0 ? { filePath: '/test.txt', snapshot: {} } : initial;
+            let value = stateIndex++ === 0 ? { filePath: '/test.txt', snapshot: {} }
+                : typeof initial === 'function' ? initial() : initial;
             return [value, update => {
                 value = typeof update === 'function' ? update(value) : update;
                 stateUpdates.push(value);
