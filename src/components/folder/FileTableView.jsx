@@ -4,6 +4,7 @@ import { normalizeColumnLayout } from '../../folderColumnLayout';
 import {
     buildVirtualTableRows,
     groupFolderFiles,
+    normalizeViewScales,
     shouldVirtualizeFolderItems,
 } from '../../folderViewState';
 import { useRafRubberSelection } from '../../hooks/useRafRubberSelection';
@@ -18,6 +19,10 @@ import {
     ViewerBookmarkStatusIcon,
     ViewerReadingStatusIcon,
 } from './ViewerStatusBadges';
+import {
+    viewerReadingProgressText,
+    viewerReadingStatusText,
+} from '../../viewerStatusState';
 
 const STATUS_COLUMN_KEYS = new Set(['viewer_reading_status', 'viewer_bookmark_status']);
 const HEADER_ICON_BY_COLUMN = {
@@ -67,8 +72,9 @@ const FileTableView = forwardRef(({
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportHeight, setViewportHeight] = useState(0);
     const [viewportWidth, setViewportWidth] = useState(0);
-    const rowHeight = Math.round(36 + Number(scale || 50) * 0.42);
-    const coverSize = Math.round(32 + Number(scale || 50) * 0.28);
+    const normalizedScale = normalizeViewScales({ table: scale }).table;
+    const rowHeight = Math.round(36 + normalizedScale * 0.42);
+    const coverSize = Math.round(32 + normalizedScale * 0.28);
     const normalizedLayout = useMemo(() => normalizeColumnLayout(columnLayout), [columnLayout]);
   const columns = useMemo(() => normalizeColumnLayout(columnLayout)
     .filter(column => column.visible)
@@ -85,18 +91,15 @@ const FileTableView = forwardRef(({
     );
     const centeredColumnKeys = useMemo(() => new Set([
         'resolution',
-        'size',
-        'created',
-        'volume',
-        'chapter',
-        'modified',
         'ext',
-        'total_volume',
-        'page_count',
         'format',
         'viewer_reading_status',
         'viewer_bookmark_status',
     ]), []);
+    const numericColumnKeys = useMemo(() => new Set([
+        'size', 'volume', 'chapter', 'total_volume', 'page_count',
+    ]), []);
+    const dateColumnKeys = useMemo(() => new Set(['created', 'modified']), []);
 
     const groupedData = useMemo(
         () => Array.isArray(groupedDataProp)
@@ -168,9 +171,10 @@ const FileTableView = forwardRef(({
     );
 
   const formatSize = (bytes) => {
-    if (!bytes || bytes === 0) return '-';
+    if (bytes === null || bytes === undefined || bytes === '') return '-';
     const units = ['B', 'KB', 'MB', 'GB'];
     let size = Number(bytes);
+    if (!Number.isFinite(size) || size < 0) return '-';
     let unitIndex = 0;
     while (size >= 1024 && unitIndex < units.length - 1) {
       size /= 1024;
@@ -183,6 +187,7 @@ const FileTableView = forwardRef(({
     if (!dateStr) return '';
     try {
       const date = new Date(dateStr);
+      if (!Number.isFinite(date.getTime())) return '';
       return date.toLocaleDateString('ko-KR', {
         year: 'numeric',
         month: '2-digit',
@@ -398,88 +403,125 @@ const FileTableView = forwardRef(({
     return <FaIcon name={icon} size={12} title={column.label} />;
   };
 
-  const renderCell = (file, column) => {
-    const className = centeredColumnKeys.has(column.key) ? 'center-cell' : undefined;
-    if (column.key === 'cover') {
-        return (
-            <td key={column.key} className="cover-cell">
-                <CoverImage
-                    key={coverImageKey(file)}
-                    src={file.cover}
-                    alt={file.name || ''}
-                    className="table-cover-image"
-                    t={t}
-                    iconSize={file.isDirectory ? 24 : 14}
-                    isDirectory={file.isDirectory}
-                    showLoadingIndicator={visibleCoverPathSet.has(file.path)}
-                />
-            </td>
-        );
-    }
-    if (file.isDirectory) {
-        if (column.key === 'name' || column.key === 'title') {
+    const renderCell = (file, column) => {
+        const className = [
+            centeredColumnKeys.has(column.key) ? 'center-cell' : '',
+            numericColumnKeys.has(column.key) ? 'numeric-cell' : '',
+            dateColumnKeys.has(column.key) ? 'date-cell' : '',
+            column.key === 'name' || column.key === 'title' ? 'primary-cell' : '',
+            column.key === 'name' ? 'file-name-cell' : '',
+        ].filter(Boolean).join(' ');
+        if (column.key === 'cover') {
             return (
-                <td key={column.key} className={className}>
-                    <span className="folder-item-name">
-                        <FaIcon name="folder" size={14} title={t('folder_item_type')} />
-                        <span>{file.name || ''}</span>
-                    </span>
+                <td key={column.key} className="cover-cell">
+                    <CoverImage
+                        key={coverImageKey(file)}
+                        src={file.cover}
+                        alt={file.name || ''}
+                        className="table-cover-image"
+                        t={t}
+                        iconSize={file.isDirectory ? 24 : 14}
+                        isDirectory={file.isDirectory}
+                        showLoadingIndicator={visibleCoverPathSet.has(file.path)}
+                    />
                 </td>
             );
         }
+        if (file.isDirectory) {
+            if (column.key === 'name' || column.key === 'title') {
+                return (
+                    <td key={column.key} className={className} title={String(file.name ?? '')}>
+                        <span className="folder-item-name">
+                            <FaIcon name="folder" size={14} title={t('folder_item_type')} />
+                            <span className="file-table-name-text">{file.name ?? ''}</span>
+                        </span>
+                    </td>
+                );
+            }
+            if (column.key === 'ext' || column.key === 'format') {
+                const value = t('folder_item_type');
+                return <td key={column.key} className={className} title={value}><span className="file-table-format is-folder">{value}</span></td>;
+            }
+            if (dateColumnKeys.has(column.key)) {
+                const value = formatDate(file[column.key] || file[column.key === 'created' ? 'ctime' : 'mtime']);
+                return <td key={column.key} className={className} title={value}>{value}</td>;
+            }
+            if (column.key === 'folder_path' || column.key === 'path' || column.key === 'full_path') {
+                const value = file[column.key] ?? file.path ?? '';
+                return <td key={column.key} className={className} title={String(value)}>{value}</td>;
+            }
+            return <td key={column.key} className={className} />;
+        }
+        if (column.key === 'viewer_reading_status') {
+            const status = file.viewerStatus || {};
+            const hasStatus = status.isCompleted || status.hasReadingProgress;
+            const rawPercent = Number(status.percent);
+            const percent = status.isCompleted ? 100
+                : status.percent !== null && status.percent !== undefined && status.percent !== '' && Number.isFinite(rawPercent)
+                    ? Math.max(0, Math.min(100, Math.round(rawPercent))) : null;
+            const label = hasStatus
+                ? [viewerReadingStatusText(status, t), viewerReadingProgressText(status)].filter(Boolean).join(' ')
+                : '';
+            return (
+                <td key={column.key} className="center-cell folder-status-cell" title={label}>
+                    {hasStatus && (
+                        <span className={`file-table-reading-status${status.isCompleted ? ' is-complete' : ''}`} aria-label={label}>
+                            <span className="file-table-reading-summary">
+                                <ViewerReadingStatusIcon file={file} t={t} />
+                                {percent !== null && <span className="file-table-reading-percent">{percent}%</span>}
+                            </span>
+                            {percent !== null && <span className="file-table-reading-track" aria-hidden="true"><span style={{ width: `${percent}%` }} /></span>}
+                        </span>
+                    )}
+                </td>
+            );
+        }
+        if (column.key === 'viewer_bookmark_status') {
+            return (
+                <td key={column.key} className="center-cell folder-status-cell">
+                    <ViewerBookmarkStatusIcon file={file} t={t} />
+                </td>
+            );
+        }
+        if (column.key === 'dup_count') {
+            return (
+                <td
+                    key={column.key}
+                    className="dup-cell"
+                    title={file.duplicate_matches?.map(match => `${match.name} (${match.ratio}%)`).join('\n') || (file.dup_count > 0 ? t('dup_count_format', [file.dup_count, file.max_ratio]) : '')}
+                >
+                    {file.dup_count > 0 && <span className="file-table-duplicate-badge">{t('dup_count_format', [file.dup_count, file.max_ratio])}</span>}
+                </td>
+            );
+        }
+        if (dateColumnKeys.has(column.key)) {
+            const value = formatDate(file[column.key]);
+            return <td key={column.key} className={className} title={value}>{value}</td>;
+        }
+        if (column.key === 'size') {
+            const value = formatSize(file.size);
+            return <td key={column.key} className={className} title={value}>{value}</td>;
+        }
+        if (column.key === 'name' || column.key === 'title') {
+            const value = file[column.key] ?? '';
+            return (
+                <td key={column.key} className={className} title={String(value)}>
+                    <span className="file-table-name-text">{value}</span>
+                    {column.key === 'name' && file.recentReadingText && (
+                        <small className="file-table-name-secondary" title={file.recentReadingText}>
+                            <FaIcon name="clock" size={9} />
+                            <span>{file.recentReadingText}</span>
+                        </small>
+                    )}
+                </td>
+            );
+        }
+        const value = file[column.key] ?? '';
         if (column.key === 'ext' || column.key === 'format') {
-            return <td key={column.key} className={className}>{t('folder_item_type')}</td>;
+            return <td key={column.key} className={className} title={String(value)}>{value !== '' && <span className="file-table-format">{value}</span>}</td>;
         }
-        if (column.key === 'created' || column.key === 'modified') {
-            const value = file[column.key] || file[column.key === 'created' ? 'ctime' : 'mtime'];
-            return <td key={column.key} className={className}>{formatDate(value)}</td>;
-        }
-        if (column.key === 'folder_path' || column.key === 'path' || column.key === 'full_path') {
-            return <td key={column.key} className={className}>{file[column.key] || file.path || ''}</td>;
-        }
-        return <td key={column.key} className={className} />;
-    }
-    if (column.key === 'viewer_reading_status') {
-      return (
-        <td key={column.key} className="center-cell folder-status-cell">
-          <ViewerReadingStatusIcon file={file} t={t} />
-        </td>
-      );
-    }
-    if (column.key === 'viewer_bookmark_status') {
-      return (
-        <td key={column.key} className="center-cell folder-status-cell">
-          <ViewerBookmarkStatusIcon file={file} t={t} />
-        </td>
-      );
-    }
-    if (column.key === 'dup_count') {
-      return (
-        <td
-          key={column.key}
-          className="dup-cell"
-          title={file.duplicate_matches?.map(match => `${match.name} (${match.ratio}%)`).join('\n') || ''}
-        >
-          {file.dup_count > 0 ? t('dup_count_format', [file.dup_count, file.max_ratio]) : ''}
-        </td>
-      );
-    }
-    if (column.key === 'created' || column.key === 'modified') {
-      return <td key={column.key} className={className}>{formatDate(file[column.key])}</td>;
-    }
-    if (column.key === 'size') return <td key={column.key} className={className}>{formatSize(file.size)}</td>;
-    if (column.key === 'name' && file.recentReadingText) {
-      return (
-        <td key={column.key} className={className}>
-          <div className="file-name-with-recent-reading">
-            <span>{file.name || ''}</span>
-            <small><FaIcon name="clock" size={9} /> {file.recentReadingText}</small>
-          </div>
-        </td>
-      );
-    }
-    return <td key={column.key} className={className}>{file[column.key] || ''}</td>;
-  };
+        return <td key={column.key} className={className} title={String(value)}>{value}</td>;
+    };
 
   return (
     <div
@@ -502,7 +544,7 @@ const FileTableView = forwardRef(({
 	        stopRubberSelection();
 	      }}
 	    >
-      <table className="file-table" style={{ width: `${Math.max(tableWidth, 1)}px` }}>
+      <table className="file-table" style={{ width: `${Math.max(tableWidth, 1)}px`, '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}>
         <colgroup>
           {columns.map(column => (
             <col key={column.key} style={{ width: `${column.width}px` }} />
@@ -514,28 +556,59 @@ const FileTableView = forwardRef(({
               <th
                 key={col.key}
                 data-column-key={col.key}
-                className={`${col.sortable ? 'sortable' : ''} ${centeredColumnKeys.has(col.key) ? 'center-column' : ''} ${STATUS_COLUMN_KEYS.has(col.key) ? 'status-column' : ''} ${sortKey === col.key ? 'active-sort' : ''} ${dragSourceColumnKey === col.key ? 'drag-source' : ''} ${dragOverColumnKey === col.key ? 'drag-over' : ''}`}
+                scope="col"
+                aria-sort={col.sortable ? sortKey === col.key ? sortOrder === 'asc' ? 'ascending' : 'descending' : 'none' : undefined}
+                className={`${col.sortable ? 'sortable' : ''} ${centeredColumnKeys.has(col.key) ? 'center-column' : ''} ${numericColumnKeys.has(col.key) ? 'numeric-column' : ''} ${dateColumnKeys.has(col.key) ? 'date-column' : ''} ${STATUS_COLUMN_KEYS.has(col.key) ? 'status-column' : ''} ${sortKey === col.key ? 'active-sort' : ''} ${dragSourceColumnKey === col.key ? 'drag-source' : ''} ${dragOverColumnKey === col.key ? 'drag-over' : ''}`}
                 title={col.label}
-                onClick={() => {
-                  if (headerReorderRef.current.moved) {
-                    headerReorderRef.current.moved = false;
-                    return;
-                  }
-                  if (col.sortable && onSort) onSort(col.key);
+                onClick={event => {
+                    if (event.target !== event.currentTarget || !col.sortable) return;
+                    if (headerReorderRef.current.moved) {
+                        headerReorderRef.current.moved = false;
+                        return;
+                    }
+                    onSort?.(col.key);
                 }}
               >
                 <span
                   className="file-table-header-grip"
                   onMouseDown={event => startColumnReorder(event, col)}
+                  onClick={event => event.stopPropagation()}
                   title={t('column_reorder')}
                 >
                   <FaIcon name="grip-vertical" size={10} />
                 </span>
-                <span className="file-table-header-label">{renderHeaderLabel(col)}</span>
-                {sortKey === col.key && (
-                  <span className="file-table-sort-icon" aria-hidden="true">
-                    {sortOrder === 'asc' ? '▲' : '▼'}
-                  </span>
+                {col.sortable ? (
+                    <button
+                        type="button"
+                        className="file-table-header-button"
+                        onMouseDown={() => {
+                            if (!headerReorderRef.current.active) headerReorderRef.current.moved = false;
+                        }}
+                        onClick={() => {
+                            if (headerReorderRef.current.moved) {
+                                headerReorderRef.current.moved = false;
+                                return;
+                            }
+                            onSort?.(col.key);
+                        }}
+                        onKeyDown={event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                                event.stopPropagation();
+                                headerReorderRef.current.moved = false;
+                            }
+                        }}
+                    >
+                        <span className="file-table-header-label">{renderHeaderLabel(col)}</span>
+                        {sortKey === col.key && (
+                            <span className="file-table-sort-icon" aria-hidden="true">
+                                {sortOrder === 'asc' ? '▲' : '▼'}
+                            </span>
+                        )}
+                    </button>
+                ) : (
+                    <span className="file-table-header-content">
+                        <span className="file-table-header-label">{renderHeaderLabel(col)}</span>
+                    </span>
                 )}
                 <span
                   className="file-table-column-resizer"
@@ -572,8 +645,8 @@ const FileTableView = forwardRef(({
                   key={file.path || fileIndex}
                   data-file-path={file.path}
                   draggable={Boolean(file.full_path || file.path)}
-                  className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
-                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
+                  className={`file-row ${fileIndex % 2 ? 'is-alternate' : ''} ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                  aria-selected={selectedFileLookup.has(file.path)}
                   onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
                   onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}
                   onClick={(event) => handleRowClick(file, event, fileIndex)}
@@ -608,8 +681,8 @@ const FileTableView = forwardRef(({
 	                  key={file.path || index}
 	                  data-file-path={file.path}
                       draggable={Boolean(file.full_path || file.path)}
-                      className={`${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
-	                  style={{ '--folder-row-height': `${rowHeight}px`, '--folder-cover-size': `${coverSize}px` }}
+                      className={`file-row ${fileIndex % 2 ? 'is-alternate' : ''} ${selectedFileLookup.has(file.path) ? 'selected' : ''} ${activeSelectedPath === file.path ? 'active-selection' : ''} ${file.dup_count > 0 ? 'has-duplicate' : ''}`}
+                      aria-selected={selectedFileLookup.has(file.path)}
 	                  onMouseDown={(event) => handleRowMouseDown(file, event, fileIndex)}
                       onMouseUp={(event) => handleRowMouseUp(file, event, fileIndex)}
 	                  onClick={(event) => handleRowClick(file, event, fileIndex)}

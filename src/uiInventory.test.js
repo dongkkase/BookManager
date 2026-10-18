@@ -71,7 +71,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['리스트 패널 포커스 추적', "markFolderPanelFocus('list')"],
         ['여러 파일 이름 변경 공용 컴포넌트', '<MultiRenameDialog'],
         ['레이아웃 이름 저장', "t('dlg_save_lay_msg')"],
-        ['삭제할 레이아웃 선택', 'id="layout-delete-select"'],
+        ['현재·저장된 레이아웃 편집 대상', 'id="layout-edit-target"'],
         ['경로 이동 입력 영역', '<FolderPathBar'],
         ['경로 이동 단축키', "isShortcutKey(event, 'l')"],
         ['보이는 항목 표지 지연 로드 큐', 'handleVisibleFilesChange'],
@@ -250,7 +250,7 @@ test('14.4 dropdown 전수 목록이 실제 제어와 연결되어 있다', () =
         ['저장 레이아웃 적용', 'onApplyLayout'],
     ]);
     assertInventory('folder', [
-        ['저장 레이아웃 삭제', 'id="layout-delete-select"'],
+        ['저장 레이아웃 삭제 확인', "t('layout_delete_confirm', [name])"],
         ['라이브러리 이동 대상', 'id="library-move-select"'],
         ['라이브러리 이동 요약', 'className="library-move-summary"'],
         ['라이브러리 이동 옵션', 'library_move_option'],
@@ -398,10 +398,10 @@ test('폴더 탭 컨텍스트 메뉴는 기존 Python 메뉴 항목과 단축키
     ]);
 });
 
-test('리스트 패널 새로고침 버튼은 캐시를 건너뛰고 강제 스캔한다', () => {
+test('경로 표시줄 새로고침은 현재 읽기 목록을 갱신하고 일반 폴더는 강제 스캔한다', () => {
     assert.match(
         sources.folder,
-        /className="refresh-btn"[\s\S]*onClick=\{\(\) => handleSmartRefresh\(true\)\}/,
+        /<FolderPathBar[\s\S]*onRefresh=\{\(\) => isReadingList \? refreshActiveReadingList\(\) : handleSmartRefresh\(true\)\}/,
     );
     assert.match(
         sources.folder,
@@ -422,16 +422,16 @@ test('리스트 패널 사이드바 토글은 SVG 아이콘과 접근성 상태�
     ]);
 });
 
-test('폴더 탭 F5는 활성 패널에 맞는 새로고침을 실행한다', () => {
+test('폴더 헤더 새로고침과 F5는 탐색기와 현재 목록을 함께 갱신한다', () => {
     assertInventory('folder', [
-        ['F5 활성 패널 판정', 'isExplorerPanelActive'],
-        ['탐색기 패널 F5 폴더 새로고침', 'refreshContextFolder(selectedFolderPath)'],
-        ['리스트 패널 F5 강제 새로고침', 'handleSmartRefresh(true)'],
+        ['폴더 헤더 새로고침 연결', 'onRefresh={handleRefreshTree}'],
+        ['폴더 헤더 새로고침 진행 상태', 'refreshing={folderRefreshBusy}'],
+        ['폴더 헤더 중복 새로고침 방지', 'refreshDisabled={folderRefreshBusy}'],
         ['F5 단축키 핸들러', 'handleRefreshShortcut()'],
     ]);
     assert.match(
         sources.folder,
-        /handleRefreshShortcut[\s\S]*isExplorerPanelActive\(\)[\s\S]*refreshContextFolder\(selectedFolderPath\)[\s\S]*handleSmartRefresh\(true\)/,
+        /const handleRefreshShortcut = useCallback\(async \(\) => \{\s*await handleRefreshTree\(\);\s*\}, \[handleRefreshTree\]\)/,
     );
 });
 

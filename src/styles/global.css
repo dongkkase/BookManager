@@ -133,7 +133,8 @@ body {
   height: 10px;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: var(--bg-secondary);
 }
 

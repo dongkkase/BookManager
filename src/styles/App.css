@@ -2807,12 +2807,6 @@ body.is-resizing-panel * {
     pointer-events: auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .settings-library-editor {
-        transition: none;
-    }
-}
-
 .settings-library-editor-heading {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

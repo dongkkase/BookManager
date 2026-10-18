@@ -5,18 +5,13 @@ import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(fileURLToPath(new URL('./tabs/FolderTab.jsx', import.meta.url)), 'utf8');
 
-test('라이브러리 최초 등록 자동 작업은 메타데이터와 썸네일 추출까지 실행한다', () => {
-    assert.match(source, /pendingInitialLibraryIndexRef\.current\s*=\s*folderPath/);
-    assert.match(source, /runLibraryIndexAction\(folderPath,\s*true,\s*{[\s\S]*mode:\s*'smart'[\s\S]*skipPrompt:\s*true/);
-    assert.match(source, /showIndexingVisual:\s*true/);
-    assert.match(source, /forceMetadata:\s*false/);
+test('라이브러리 작업의 메타데이터 단계와 진행 상태를 유지한다', () => {
     assert.match(source, /metadata-initial/);
     assert.match(source, /libraryPhaseRef\.current\s*=\s*libraryPhase/);
     assert.match(source, /libraryPhase:\s*libraryPhaseRef\.current\s*\|\|/);
 });
 
-test('라이브러리 최초 등록 자동 작업이 끝나면 하위 폴더 포함을 끈 상태로 목록을 갱신한다', () => {
-    assert.match(source, /resetIncludeSubfoldersOnComplete:\s*true/);
+test('라이브러리 작업은 하위 폴더 포함 초기화 옵션을 목록 갱신에 반영한다', () => {
     assert.match(source, /const shouldResetIncludeSubfolders\s*=\s*options\.resetIncludeSubfoldersOnComplete\s*===\s*true/);
     assert.match(source, /const nextIncludeSubfolders\s*=\s*optimizeMetadata[\s\S]*\?\s*\(shouldResetIncludeSubfolders\s*\?\s*false\s*:\s*true\)/);
     assert.match(source, /includeSubfolders:\s*nextIncludeSubfolders/);

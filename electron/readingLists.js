@@ -167,6 +167,14 @@ export async function readingListsRequest(library, request = {}) {
                 recentUpdatedCount: recentActivityCount(db, 'updated_at', cutoff),
             };
         }
+        if (operation === 'membership') {
+            requireList(db, request.id);
+            validatePaths(request.paths);
+            const paths = [...new Set(request.paths.map(value => library.normalizeFilePath(path.resolve(value))))];
+            const member = db.prepare('SELECT 1 FROM reading_list_members WHERE list_id = ? AND path = ?');
+            const memberCount = paths.reduce((count, filePath) => count + Number(Boolean(member.get(request.id, filePath))), 0);
+            return { totalCount: paths.length, memberCount };
+        }
         if (operation === 'preview') {
             requireList(db, request.id, true);
             return { previewRows: db.prepare(`SELECT path, is_directory FROM reading_list_members
@@ -275,7 +283,7 @@ export function registerReadingListsIpc({ ipcMain, getMainWindow, createLibrary,
             const result = await readingListsRequest(library, request);
             if (result.rows) return { success: true, files: await hydrateReadingListRows(result.rows, normalizeFile) };
             if (result.previewRows) return { success: true, file: await loadCollectionPreview(result.previewRows, loadPreview) };
-            if (!['overview', 'list'].includes(request.operation)) broadcast();
+            if (!['overview', 'list', 'membership'].includes(request.operation)) broadcast();
             return { success: true, ...result };
         } catch (error) {
             return { success: false, error: error.message };

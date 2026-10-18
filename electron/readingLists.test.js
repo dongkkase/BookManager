@@ -105,6 +105,37 @@ test('기존 읽고 싶은 책의 파일 항목과 등록 시각을 유지하며
     } finally { await reopened.close(); }
 });
 
+test('등록 여부는 정규화한 선택 경로만 조회하고 사라진 항목도 유지한다', async t => {
+    const { folder, files, request } = await fixture(t);
+    const membership = paths => request({ operation: 'membership', id: 'want-to-read', paths });
+    assert.deepEqual(await membership([files[0]]), { totalCount: 1, memberCount: 0 });
+    await request({ operation: 'add', id: 'want-to-read', paths: [files[0]] });
+    assert.deepEqual(await membership([files[0]]), { totalCount: 1, memberCount: 1 });
+    assert.deepEqual(await membership([folder]), { totalCount: 1, memberCount: 0 });
+    await request({ operation: 'add', id: 'want-to-read', paths: [folder] });
+    assert.deepEqual(await membership([files[1]]), { totalCount: 1, memberCount: 0 });
+    assert.deepEqual(await membership([
+        folder, `${folder}${path.sep}`, `${folder}${path.sep}nested${path.sep}..`, ...files, files[0],
+    ]), { totalCount: 3, memberCount: 2 });
+    const before = (await request({ operation: 'list', id: 'want-to-read' })).rows;
+    await fs.unlink(files[0]);
+    assert.deepEqual(await membership([files[0]]), { totalCount: 1, memberCount: 1 });
+    assert.deepEqual((await request({ operation: 'list', id: 'want-to-read' })).rows, before);
+    const { id } = await request({ operation: 'create', name: 'Separate membership' });
+    await request({ operation: 'add', id, paths: [files[1]] });
+    assert.deepEqual(await request({ operation: 'membership', id, paths: [folder, ...files] }), { totalCount: 3, memberCount: 1 });
+    assert.deepEqual(await membership([folder, ...files]), { totalCount: 3, memberCount: 2 });
+});
+
+test('등록 여부 조회는 잘못된 목록과 경로를 거부한다', async t => {
+    const { files, request } = await fixture(t);
+    await assert.rejects(request({ operation: 'membership', id: 'missing', paths: files }), /list_not_found/);
+    for (const paths of [[], ['../relative.epub'], [null], [`${files[0]}\0`], Array(10001).fill(files[0])]) {
+        await assert.rejects(request({ operation: 'membership', id: 'want-to-read', paths }), /invalid_paths/);
+    }
+    assert.equal((await request({ operation: 'overview' })).wishlistCount, 0);
+});
+
 test('컬렉션 생성, 중복 이름 검사, 이름 수정, 항목 제거와 삭제는 다른 목록에 영향을 주지 않는다', async t => {
     const { db, files, request } = await fixture(t);
     const { id } = await request({ operation: 'create', name: ' Weekend ' });
@@ -255,13 +286,17 @@ test('IPC는 다른 창과 서브프레임을 거부하고 저장 성공을 알�
     const { dbPath, folder, files } = await fixture(t);
     let handler;
     let broadcasts = 0;
+    let normalizedRows = 0;
     const mainFrame = {};
     const sender = { mainFrame };
     registerReadingListsIpc({
         ipcMain: { handle: (_name, fn) => { handler = fn; } },
         getMainWindow: () => ({ webContents: sender, isDestroyed: () => false }),
         createLibrary: () => new LibraryDB({ dbPath }),
-        normalizeFile: row => ({ ...row, full_path: row.path }),
+        normalizeFile: row => {
+            normalizedRows += 1;
+            return { ...row, full_path: row.path };
+        },
         loadPreview: async filePath => ({ cover: `cover:${filePath}` }),
         broadcast: () => { broadcasts += 1; },
     });
@@ -273,6 +308,15 @@ test('IPC는 다른 창과 서브프레임을 거부하고 저장 성공을 알�
     assert.equal(result.files.length, 3);
     assert.equal(result.files.find(file => file.path === folder).isDirectory, true);
     assert.equal(result.files.find(file => file.path === folder).exists, true);
+    assert.equal(broadcasts, 1);
+    assert.deepEqual(await handler(event, { operation: 'membership', id: 'want-to-read', paths: [folder, ...files, files[0]] }), {
+        success: true, totalCount: 3, memberCount: 3,
+    });
+    assert.equal(normalizedRows, 3);
+    assert.equal(broadcasts, 1);
+    assert.deepEqual(await handler(event, { operation: 'membership', id: 'missing', paths: files }), {
+        success: false, error: 'list_not_found',
+    });
     assert.equal(broadcasts, 1);
     const { id } = await handler(event, { operation: 'create', name: 'Preview' });
     await handler(event, { operation: 'add', id, paths: [folder, files[0]] });

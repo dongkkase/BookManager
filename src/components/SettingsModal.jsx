@@ -287,6 +287,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     }, [libraryEditorOpen, selectedLibraryEntry]);
 
     React.useLayoutEffect(() => {
+        let prepareFrame;
+        let enterFrame;
         if (!isOpen) {
             setLibraryEditorMounted(false);
             setLibraryEditorExpanded(false);
@@ -295,19 +297,24 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         }
         if (libraryEditorOpen) {
             setLibraryEditorMounted(true);
-            libraryEditorRef.current?.getBoundingClientRect();
-            setLibraryEditorExpanded(true);
+            // Paint the closed position before starting the slide transition.
+            prepareFrame = window.requestAnimationFrame(() => {
+                enterFrame = window.requestAnimationFrame(() => setLibraryEditorExpanded(true));
+            });
         } else {
             setLibraryEditorExpanded(false);
         }
+        return () => {
+            window.cancelAnimationFrame(prepareFrame);
+            window.cancelAnimationFrame(enterFrame);
+        };
     }, [isOpen, libraryEditorOpen]);
 
     React.useEffect(() => {
-        if (!libraryEditorMounted || libraryEditorExpanded) return undefined;
-        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        const timeout = window.setTimeout(() => setLibraryEditorMounted(false), reducedMotion ? 0 : 260);
+        if (!libraryEditorMounted || libraryEditorExpanded || libraryEditorOpen) return undefined;
+        const timeout = window.setTimeout(() => setLibraryEditorMounted(false), 260);
         return () => window.clearTimeout(timeout);
-    }, [libraryEditorMounted, libraryEditorExpanded]);
+    }, [libraryEditorMounted, libraryEditorExpanded, libraryEditorOpen]);
 
     React.useLayoutEffect(() => {
         const editor = libraryEditorRef.current;
@@ -326,8 +333,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     }, [isOpen, Boolean(displayedLibraryEntry)]);
 
     React.useLayoutEffect(() => {
-        if (libraryEditorOpen) libraryEditorRef.current?.querySelector('input')?.focus({ preventScroll: true });
-    }, [libraryEditorOpen, selectedDupFolder]);
+        if (libraryEditorOpen && libraryEditorExpanded) libraryEditorRef.current?.querySelector('input')?.focus({ preventScroll: true });
+    }, [libraryEditorOpen, libraryEditorExpanded, selectedDupFolder]);
 
     React.useEffect(() => {
         const media = window.matchMedia('(max-width: 760px)');
@@ -1138,6 +1145,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         tabIndex={-1}
         onClick={event => event.stopPropagation()}
         onClickCapture={event => {
+            const selectingLibrary = event.target.closest('.settings-library-list-item, .settings-library-preview-item')
+                && !event.target.closest('.settings-library-drag-handle, .settings-library-remove');
+            if (selectingLibrary) return;
             if (selectedDupFolder && !libraryEditorRef.current?.contains(event.target)) {
                 setSelectedDupFolder('');
             }

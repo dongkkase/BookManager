@@ -59,6 +59,8 @@ const recentFiles = [
 ];
 let holdRecentUpdates = false;
 let releaseRecent;
+let heldMembershipPath = '';
+const pendingMembership = [];
 let changed;
 window.electronAPI = {
     getRoots: async () => [], getSpecialPaths: async () => ({}),
@@ -80,6 +82,13 @@ window.electronAPI = {
         requests.push(request);
         const { operation, id } = request;
         if (operation === 'overview') return { success: true, collections: collections.map(c => ({ ...c, count: books.get(c.id).length })), wishlistCount: books.get('want-to-read').length, recentAddedCount: recentFiles.length, recentUpdatedCount: recentFiles.length };
+        if (operation === 'membership') {
+            const paths = [...new Set(request.paths)];
+            const members = new Set((books.get(id) || []).map(entry => entry.path));
+            const result = { success: true, totalCount: paths.length, memberCount: paths.filter(filePath => members.has(filePath)).length };
+            if (paths.includes(heldMembershipPath)) return await new Promise(resolve => pendingMembership.push(() => resolve(result)));
+            return result;
+        }
         if (operation === 'preview') {
             const members = books.get(id) || [];
             const cover = members.find(entry => !entry.isDirectory && entry.cover)?.cover || (members.some(entry => entry.isDirectory) ? folderCover : '');
@@ -111,6 +120,26 @@ const setInput = (element, value) => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
 };
+const navigateByPathEnter = async value => {
+    const input = document.querySelector('.goto-path-input');
+    input.focus();
+    setInput(input, value);
+    await frame();
+    let submits = 0;
+    const countSubmit = () => { submits += 1; };
+    input.form.addEventListener('submit', countSubmit);
+    try {
+        await new Promise(resolve => {
+            window.continuePathEnter = resolve;
+            console.log('READING_PATH_ENTER');
+        });
+        await frame();
+        check(submits === 1, 'Path Enter must submit exactly once, received: ' + submits);
+    } finally {
+        input.form?.removeEventListener('submit', countSubmit);
+        window.continuePathEnter = null;
+    }
+};
 const selectOption = async (label, value) => {
     const select = document.querySelector('.recent-list-toolbar select[aria-label="' + label + '"]');
     check(select, 'Missing select: ' + label);
@@ -127,11 +156,29 @@ const loadedCollectionCover = expected => collectionCoverImage()?.complete && co
 const navigateBack = () => document.querySelector('button[aria-label="' + t('folder.goto.back') + '"]').click();
 const folderCoverImage = () => [...document.querySelectorAll('.view-container [data-file-path]')].find(item => item.dataset.filePath === folder.path)?.querySelector('img');
 const loadedFolderCover = () => folderCoverImage()?.complete && folderCoverImage().naturalWidth > 0;
-async function contextAction(label, filePath = book.path) {
+async function openContext(filePath = book.path) {
     const row = rowFor(filePath);
-    check(row, 'Missing book row');
+    check(row, 'Missing context row: ' + filePath);
     row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 450, clientY: 200 }));
-    await click('추가');
+    await frame();
+    if (!button('읽고 싶은 책 추가')) await click('추가');
+}
+async function closeContext() {
+    window.dispatchEvent(new MouseEvent('click'));
+    await frame();
+}
+async function wishlistButtons(addEnabled, removeEnabled, message) {
+    await until(() => button('읽고 싶은 책 추가')?.disabled === !addEnabled
+        && button('읽고 싶은 책 삭제')?.disabled === !removeEnabled, message);
+}
+async function expectWishlistState(filePath, addEnabled, removeEnabled) {
+    await openContext(filePath);
+    await wishlistButtons(addEnabled, removeEnabled, 'Incorrect wishlist actions for ' + filePath);
+    await closeContext();
+}
+async function contextAction(label, filePath = book.path) {
+    await openContext(filePath);
+    await until(() => button(label) && !button(label).disabled, 'Context action did not become enabled: ' + label);
     await click(label);
 }
 window.readingListTests = (async () => {
@@ -208,8 +255,10 @@ window.readingListTests = (async () => {
     const toolbar = document.querySelector('.recent-list-toolbar');
     check(toolbar.scrollWidth <= toolbar.clientWidth, 'Recent toolbar overflowed');
     if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_RECENT'); });
+    await expectWishlistState(book.path, true, false);
     await contextAction('읽고 싶은 책 추가');
     await until(() => books.get('want-to-read').length === 1, 'Wishlist mutation was not called');
+    await expectWishlistState(book.path, false, true);
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
     await until(() => document.querySelector('tr[data-file-path]'), 'Wishlist book missing');
     await contextAction('컬렉션에 추가');
@@ -222,9 +271,7 @@ window.readingListTests = (async () => {
     await click('추가', dialog);
     await until(() => !document.querySelector('dialog[open]'), 'Picker did not close');
     check(books.get('collection-1').length === 1, 'Book was not added to collection');
-    setInput(document.querySelector('.goto-path-input'), '/fixture');
-    await frame();
-    document.querySelector('.folder-goto-path-submit').click();
+    await navigateByPathEnter('/fixture');
     await until(() => rowFor(folder.path), 'Folder browser did not load for collection registration');
     const normalHeaders = [...document.querySelectorAll('.view-container th')].map(cell => cell.textContent).join('|');
     await contextAction('컬렉션에 추가', folder.path);
@@ -306,12 +353,20 @@ window.readingListTests = (async () => {
     for (let index = 0; index < 5; index += 1) await frame();
     check(!document.querySelector('tr[data-file-path]'), 'Stale recent response replaced wishlist');
     check(!requests.some(request => request.operation === 'list' && request.id === 'collections'), 'Collections view incorrectly fetched a book list');
-    setInput(document.querySelector('.goto-path-input'), '/fixture');
-    await frame();
-    document.querySelector('.folder-goto-path-submit').click();
+    await navigateByPathEnter('/fixture');
     await until(() => rowFor(folder.path) && rowFor(book.path), 'Folder browser did not load');
+    await expectWishlistState(book.path, true, false);
     await contextAction('읽고 싶은 책 추가', folder.path);
     await until(() => books.get('want-to-read').some(entry => entry.path === folder.path), 'Folder path was not added');
+    await expectWishlistState(folder.path, false, true);
+    rowFor(folder.path).click(); await frame();
+    rowFor(book.path).dispatchEvent(new MouseEvent('click', { bubbles: true, ...(/Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true }) })); await frame();
+    await openContext(book.path);
+    await wishlistButtons(true, true, 'Mixed wishlist selection should allow both add and remove');
+    const mixedMembership = requests.filter(request => request.operation === 'membership').at(-1);
+    check(mixedMembership.paths.length === 2 && mixedMembership.paths.includes(folder.path) && mixedMembership.paths.includes(book.path), 'Mixed membership did not query the selected file and folder');
+    await closeContext();
+    rowFor(book.path).click(); await frame();
     await contextAction('읽고 싶은 책 추가');
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
     await until(() => rowFor(folder.path) && rowFor(book.path), 'Wishlist did not show files and folders together');
@@ -329,7 +384,23 @@ window.readingListTests = (async () => {
     rowFor(book.path).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await until(() => viewerPaths.includes(book.path), 'Wishlist file did not open in viewer');
     check(!previewRequests.some(filePath => filePath.startsWith('collection://')), 'Virtual collection was sent to filesystem preview');
-    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview'].includes(request.operation)).map(request => request.operation), staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true };
+    await navigateByPathEnter('/fixture');
+    await until(() => rowFor(folder.path) && rowFor(book.path), 'Folder browser did not return for membership checks');
+    await expectWishlistState(folder.path, true, false);
+    const folderMembership = requests.filter(request => request.operation === 'membership').at(-1);
+    check(folderMembership.paths.length === 1 && folderMembership.paths[0] === folder.path && books.get('want-to-read').some(entry => entry.path === childBook.path), 'Folder membership should query the folder itself despite its registered child');
+    heldMembershipPath = book.path;
+    await openContext(book.path);
+    await until(() => pendingMembership.length > 0, 'Delayed membership request was not made');
+    await wishlistButtons(false, false, 'Wishlist actions should stay disabled while membership loads');
+    heldMembershipPath = '';
+    await openContext(folder.path);
+    await wishlistButtons(true, false, 'New folder menu should load its own membership');
+    pendingMembership.splice(0).forEach(release => release());
+    for (let index = 0; index < 5; index += 1) await frame();
+    check(!button('읽고 싶은 책 추가').disabled && button('읽고 싶은 책 삭제').disabled, 'Stale registered-file membership replaced the new unregistered-folder menu');
+    await closeContext();
+    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership'].includes(request.operation)).map(request => request.operation), staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true };
     root.unmount();
     return report;
 })();
@@ -349,6 +420,13 @@ app.whenReady().then(async () => {
     const window = new BrowserWindow({ show: false, width: 1100, height: 800, webPreferences: { backgroundThrottling: false } });
     window.webContents.on('console-message', async (_event, level, message) => {
         if (level >= 2) console.error(message);
+        if (message === 'READING_PATH_ENTER') {
+            window.webContents.focus();
+            window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+            window.webContents.sendInputEvent({ type: 'char', keyCode: 'Enter' });
+            window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+            await window.webContents.executeJavaScript('window.continuePathEnter()');
+        }
         if (['CAPTURE_READING_MODAL', 'CAPTURE_READING_COLLECTION', 'CAPTURE_READING_RECENT'].includes(message)) {
             const screenshot = await window.webContents.capturePage();
             const filename = ${JSON.stringify(process.env.BOOKMANAGER_READING_SCREENSHOT || '/tmp/bookmanager-reading-lists.png')};
@@ -382,6 +460,8 @@ app.whenReady().then(async () => {
         assert.equal(report.fileOpened, true);
         assert.equal(report.folderCoversLoaded, true);
         assert.equal(report.virtualCollections, true);
+        assert.equal(report.wishlistMembershipStates, true);
+        assert.equal(report.staleMembershipIgnored, true);
         t.diagnostic(JSON.stringify(report));
     } finally {
         await server?.close();

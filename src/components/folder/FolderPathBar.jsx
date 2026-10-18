@@ -172,6 +172,7 @@ export function FolderPathBar({
                     }}
                     onKeyDown={handleInputKeyDown}
                 />
+                {!virtualLocation && <kbd className="folder-goto-path-enter" aria-hidden="true">Enter</kbd>}
                 {showFavorite && (
                     <button
                         className="folder-goto-path-favorite"
@@ -244,17 +245,6 @@ export function FolderPathBar({
                     </div>
                 )}
             </div>
-            <button
-                className="folder-goto-path-submit"
-                type="submit"
-                disabled={Boolean(virtualLocation)}
-                onFocus={() => {
-                    setActiveIndex(-1);
-                    onOpenChange(false);
-                }}
-            >
-                {t('folder.goto.go')}
-            </button>
             <button
                 className="folder-goto-path-icon"
                 type="button"

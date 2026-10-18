@@ -96,10 +96,10 @@ test('오디오 완료는 로컬에만 있던 재생 시간을 유지하고 초�
     assert.equal(saved.playbackRate, 1.5);
 });
 
-test('모든 컨텍스트 메뉴에 두 동작을 제공하고 세 언어 문구가 있다', () => {
+test('폴더와 파일 컨텍스트 메뉴에 두 동작을 제공하고 세 언어 문구가 있다', () => {
     const source = readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8');
     for (const action of ['mark-read', 'reset-progress']) {
-        assert.equal(source.split(`handleContextAction('${action}')`).length - 1, 3);
+        assert.equal(source.split(`handleContextAction('${action}')`).length - 1, 2);
     }
     for (const lang of ['ko', 'en', 'ja']) {
         for (const name of ['mark_read', 'reset_progress', 'updating', 'marked', 'reset_done', 'partial', 'no_files', 'failed', 'viewer_open']) {

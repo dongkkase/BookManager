@@ -9,7 +9,7 @@ const EXTRA_TRANSLATIONS = {
     settings: {
         library_preview: {
             title: '라이브러리 미리보기',
-            description: '폴더 탭에 표시될 이름과 그룹, 순서입니다. 변경사항은 저장 후 적용됩니다.',
+            description: '폴더 탭에 표시될 이름과 그룹, 순서입니다. 변경사항은 ‘적용’을 누르면 반영됩니다.',
             hint: '항목을 누르면 해당 라이브러리를 수정할 수 있습니다.',
             registered: '등록 폴더',
         },
@@ -46,7 +46,7 @@ const EXTRA_TRANSLATIONS = {
             title: '음성 읽기',
             summary: '로컬 모델 · 클라우드',
             description: '음성 읽기에 사용할 모델과 서비스 인증 정보를 설정합니다.',
-            install_note: '모델 설치는 확인 후 시작되며, 설정 저장과 별개로 진행됩니다.',
+            install_note: '모델 설치는 확인 후 시작되며, 하단의 ‘적용’ 버튼과 별개로 진행됩니다.',
         },
         privacy: {
             title: '개인정보',
@@ -68,7 +68,7 @@ const EXTRA_TRANSLATIONS = {
         viewer_hint: '경로를 비워 두면 BookManager 내장 뷰어로 엽니다.',
         apply: '적용',
         save_note: '적용을 누르면 변경사항이 저장됩니다. 관리 작업은 별도로 실행됩니다.',
-        immediate_note: '이 영역의 관리 작업은 설정 저장과 별개로 실행됩니다.',
+        immediate_note: '이 영역의 관리 작업은 하단의 ‘적용’ 버튼과 별개로 실행됩니다.',
         cores: '{count}개',
         threads_description: '동시에 처리할 작업 수입니다. 값을 높이면 CPU 사용량이 늘어납니다. 이 기기에서는 시스템 여유를 남기도록 최대 {count}개까지 사용할 수 있습니다.',
     },
@@ -417,8 +417,9 @@ const EXTRA_TRANSLATIONS = {
         remove_library: '라이브러리 제거',
         collapse_section: '{0} 접기',
         expand_section: '{0} 펼치기',
-        reading: '읽기',
+        reading: '모아보기',
         recent_reading: '최근 읽음',
+        refresh: '폴더 및 목록 새로고침 (F5)',
       },
       goto: {
         placeholder: '이동할 폴더 경로 입력',
@@ -918,7 +919,7 @@ const EXTRA_TRANSLATIONS = {
     settings: {
         library_preview: {
             title: 'Library preview',
-            description: 'Names, groups, and order as shown in the Folders tab. Changes apply after saving.',
+            description: 'Names, groups, and order as shown in the Folders tab. Click Apply for changes to take effect.',
             hint: 'Select an item to edit that library.',
             registered: 'Registered folders',
         },
@@ -955,7 +956,7 @@ const EXTRA_TRANSLATIONS = {
             title: 'Read aloud',
             summary: 'Local models · Cloud',
             description: 'Set up models and service credentials for reading aloud.',
-            install_note: 'Model installation starts after confirmation and runs independently of saving settings.',
+            install_note: 'Model installation starts after confirmation and runs independently of the Apply button at the bottom.',
         },
         privacy: {
             title: 'Privacy',
@@ -977,7 +978,7 @@ const EXTRA_TRANSLATIONS = {
         viewer_hint: 'Leave the path empty to open files with the BookManager built-in viewer.',
         apply: 'Apply',
         save_note: 'Apply saves your changes. Management actions run separately.',
-        immediate_note: 'Management actions in this section run independently of saving settings.',
+        immediate_note: 'Management actions in this section run independently of the Apply button at the bottom.',
         cores: '{count} cores',
         threads_description: 'The number of tasks to process at the same time. Higher values increase CPU usage. This device allows up to {count} to leave capacity for the system.',
     },
@@ -1326,8 +1327,9 @@ const EXTRA_TRANSLATIONS = {
         remove_library: 'Remove Library',
         collapse_section: 'Collapse {0}',
         expand_section: 'Expand {0}',
-        reading: 'Reading',
+        reading: 'Quick Access',
         recent_reading: 'Recently Read',
+        refresh: 'Refresh folders and list (F5)',
       },
       goto: {
         placeholder: 'Enter a folder path',
@@ -1827,7 +1829,7 @@ const EXTRA_TRANSLATIONS = {
     settings: {
         library_preview: {
             title: 'ライブラリのプレビュー',
-            description: 'フォルダータブに表示される名前・グループ・順序です。変更は保存後に適用されます。',
+            description: 'フォルダータブに表示される名前・グループ・順序です。「適用」を押すと変更が反映されます。',
             hint: '項目を選択すると、そのライブラリを編集できます。',
             registered: '登録フォルダー',
         },
@@ -1864,7 +1866,7 @@ const EXTRA_TRANSLATIONS = {
             title: '読み上げ',
             summary: 'ローカルモデル · クラウド',
             description: '読み上げに使用するモデルとサービスの認証情報を設定します。',
-            install_note: 'モデルのインストールは確認後に開始され、設定の保存とは別に進行します。',
+            install_note: 'モデルのインストールは確認後に開始され、下部の「適用」ボタンとは別に進行します。',
         },
         privacy: {
             title: 'プライバシー',
@@ -1886,7 +1888,7 @@ const EXTRA_TRANSLATIONS = {
         viewer_hint: 'パスを空欄にすると、BookManager内蔵ビューアで開きます。',
         apply: '適用',
         save_note: '適用を押すと変更が保存されます。管理操作は別に実行されます。',
-        immediate_note: 'この領域の管理操作は、設定の保存とは別に実行されます。',
+        immediate_note: 'この領域の管理操作は、下部の「適用」ボタンとは別に実行されます。',
         cores: '{count}コア',
         threads_description: '同時に処理する作業数です。値を上げるとCPU使用率が増えます。この端末では、システムの余裕を残すために最大{count}件まで使用できます。',
     },
@@ -2235,8 +2237,9 @@ const EXTRA_TRANSLATIONS = {
         remove_library: 'ライブラリを削除',
         collapse_section: '{0} を折りたたむ',
         expand_section: '{0} を展開',
-        reading: '読書',
+        reading: 'クイックアクセス',
         recent_reading: '最近読んだ項目',
+        refresh: 'フォルダーと一覧を更新 (F5)',
       },
       goto: {
         placeholder: '移動先のフォルダーパスを入力',

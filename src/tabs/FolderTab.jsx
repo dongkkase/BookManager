@@ -64,11 +64,13 @@ import {
   resolveSelectionAfterDelete,
 } from '../folderTreeState';
 import {
+    FOLDER_GROUP_KEYS,
   filterFolderFiles,
   normalizeSavedLayouts,
 } from '../folderToolbarState';
 import {
   createDefaultColumnLayout,
+    moveColumn,
   normalizeColumnLayout,
   serializeColumnLayout,
 } from '../folderColumnLayout';
@@ -592,7 +594,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const activeLibraryScanKeyRef = useRef('');
   const libraryScanUiHeartbeatRef = useRef(0);
   const preparingDuplicatesRef = useRef(false);
-  const pendingInitialLibraryIndexRef = useRef('');
   const libraryPhaseRef = useRef('');
   const conflictResolverRef = useRef(null);
   const restoredLayoutRef = useRef(false);
@@ -665,9 +666,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
     const [missingRefreshVersion, setMissingRefreshVersion] = useState(0);
   const [treeRefreshToken, setTreeRefreshToken] = useState(0);
+    const [isRefreshingTree, setIsRefreshingTree] = useState(false);
+    const refreshingTreeRef = useRef(false);
   const [itemScales, setItemScales] = useState({ table: 50, tile: 50, thumbnail: 50 });
   const [showLayoutDialog, setShowLayoutDialog] = useState(false);
-  const [showDeleteLayoutDialog, setShowDeleteLayoutDialog] = useState(false);
+    const [layoutEditorTarget, setLayoutEditorTarget] = useState('');
+    const layoutDeleteBusyRef = useRef(false);
   const [showMissingDialog, setShowMissingDialog] = useState(false);
   const [columnLayout, setColumnLayout] = useState(createDefaultColumnLayout);
   const [contextMenu, setContextMenu] = useState(null);
@@ -706,6 +710,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const [collectionDialog, setCollectionDialog] = useState(null);
     const [listMembershipBusy, setListMembershipBusy] = useState(false);
     const listMembershipBusyRef = useRef(false);
+    const [wishlistMembership, setWishlistMembership] = useState(null);
     const favoriteEntries = useMemo(() => normalizeFavorites(config || {}), [config?.folder_favorites, config?.favorites]);
     const favoriteFiles = useMemo(() => favoriteEntries.map(entry => ({
         ...entry,
@@ -744,6 +749,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       message: options?.message || '',
       initialValue: options?.initialValue || '',
       inputId: options?.inputId || 'folder-text-input',
+        validate: options?.validate,
     });
   }), []);
   const closeTopOverlay = useCallback(() => {
@@ -759,7 +765,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     else if (showContentIndexDialog) setShowContentIndexDialog(false);
     else if (libraryMoveRequest) setLibraryMoveRequest(null);
     else if (seriesMovePreview) setSeriesMovePreview(null);
-    else if (showDeleteLayoutDialog) setShowDeleteLayoutDialog(false);
     else if (showLayoutDialog) setShowLayoutDialog(false);
     else if (showMissingDialog) setShowMissingDialog(false);
     else if (contextMenu) setContextMenu(null);
@@ -775,7 +780,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     seriesMovePreview,
     textInputDialog,
     closeTextInputDialog,
-    showDeleteLayoutDialog,
     showFolderTagSearchDialog,
     showContentIndexDialog,
     showLayoutDialog,
@@ -1824,21 +1828,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return () => window.clearInterval(timer);
   }, [refreshLibraryScanStates]);
 
-  const addLibrary = useCallback(async () => {
-    try {
-      const folderPath = await window.electronAPI.selectFolder(t('dlg_sel_dup_folder'));
-      if (folderPath && saveConfig && !libraries.includes(folderPath)) {
-        await saveConfig(syncLibraryConfig({}, [
-          ...libraryEntries,
-          { path: folderPath, alias: '', group: '' },
-        ]));
-        pendingInitialLibraryIndexRef.current = folderPath;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [libraries, libraryEntries, saveConfig]);
-
   const removeLibrary = useCallback(async (path) => {
     if (saveConfig) {
       await saveConfig(syncLibraryConfig({}, libraryEntries.filter(entry => entry.path !== path)));
@@ -2429,11 +2418,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectedFolderPath,
   ]);
 
-  const handleRefreshTree = useCallback(async () => {
-    if (scanning || preparingDuplicates) return;
-    setTreeRefreshToken(current => current + 1);
-    await handleRefresh();
-  }, [handleRefresh, preparingDuplicates, scanning]);
+    const folderRefreshBusy = isRefreshingTree || scanning || preparingDuplicates
+        || librarySearchLoading || folderTagLoading
+        || (isReadingList && (isRecentReading ? recentReadingLoading : readingLists.loading));
+
+    const handleRefreshTree = useCallback(async () => {
+        if (refreshingTreeRef.current || folderRefreshBusy) return;
+        refreshingTreeRef.current = true;
+        setIsRefreshingTree(true);
+        try {
+            setTreeRefreshToken(current => current + 1);
+            await handleRefresh();
+        } finally {
+            refreshingTreeRef.current = false;
+            setIsRefreshingTree(false);
+        }
+    }, [folderRefreshBusy, handleRefresh]);
 
   const handleLibrarySelect = useCallback(async folderPath => {
     if (!folderPath) return;
@@ -2599,20 +2599,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     t,
   ]);
 
-  useEffect(() => {
-    const folderPath = pendingInitialLibraryIndexRef.current;
-    if (!folderPath || preparingDuplicates || scanning) return;
-    if (!libraries.includes(folderPath)) return;
-    pendingInitialLibraryIndexRef.current = '';
-    runLibraryIndexAction(folderPath, true, {
-      mode: 'smart',
-      skipPrompt: true,
-      showIndexingVisual: true,
-      resetIncludeSubfoldersOnComplete: true,
-      forceMetadata: false,
-    });
-  }, [libraries, preparingDuplicates, runLibraryIndexAction, scanning]);
-
   const handleCancelCurrentTask = useCallback(async () => {
     if (!preparingDuplicates && !scanning && !isCheckingMissing) return;
     setFolderTaskCancelling(true);
@@ -2704,6 +2690,37 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         [selectedEntryObjects],
     );
     const hasSelectedDirectories = selectedEntryObjects.some(file => file.isDirectory);
+
+    const contextWishlistPathsKey = JSON.stringify(contextMenu && contextMenu.type !== 'collection'
+        ? resolveReadingActionPaths(contextMenu, selectedEntryObjects, { preserveNestedEntries: true })
+        : []);
+    useEffect(() => {
+        setWishlistMembership(null);
+        const paths = JSON.parse(contextWishlistPathsKey);
+        if (!contextMenu || paths.length === 0) return;
+        let active = true;
+        const loadMembership = async () => {
+            try {
+                const result = await window.electronAPI?.readingLists?.({ operation: 'membership', id: 'want-to-read', paths });
+                if (active && result?.success) {
+                    setWishlistMembership({
+                        menu: contextMenu,
+                        pathsKey: contextWishlistPathsKey,
+                        totalCount: result.totalCount,
+                        memberCount: result.memberCount,
+                    });
+                }
+            } catch {
+                // Keep both actions disabled when membership cannot be determined.
+            }
+        };
+        void loadMembership();
+        return () => { active = false; };
+    }, [contextMenu, contextWishlistPathsKey]);
+    const wishlistMembershipReady = wishlistMembership?.menu === contextMenu
+        && wishlistMembership?.pathsKey === contextWishlistPathsKey;
+    const canAddToWishlist = wishlistMembershipReady && wishlistMembership.memberCount < wishlistMembership.totalCount;
+    const canRemoveFromWishlist = wishlistMembershipReady && wishlistMembership.memberCount > 0;
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -3415,21 +3432,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       || Boolean(activeElement?.closest?.('.folder-left-panel, .folder-sidebar'));
   }, []);
 
-  const handleRefreshShortcut = useCallback(async () => {
-    if (isReadingList) {
-      await refreshActiveReadingList();
-      return;
-    }
-    if (isLibrarySearchActive || isFolderTagSearchActive) {
-        await handleRefresh();
-        return;
-    }
-    if (isExplorerPanelActive()) {
-      await refreshContextFolder(selectedFolderPath);
-      return;
-    }
-    await handleSmartRefresh(true);
-  }, [handleRefresh, handleSmartRefresh, isExplorerPanelActive, isFolderTagSearchActive, isLibrarySearchActive, isReadingList, refreshActiveReadingList, refreshContextFolder, selectedFolderPath]);
+    const handleRefreshShortcut = useCallback(async () => {
+        await handleRefreshTree();
+    }, [handleRefreshTree]);
 
   const handleRenameShortcut = useCallback(async () => {
     if (activeSelectedFile?.collectionId) {
@@ -3687,7 +3692,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (!isFolderTabVisible()) return;
+      if (!isFolderTabVisible() || showLayoutDialog) return;
       if (
         !event.defaultPrevented
         && !event.repeat
@@ -3779,7 +3784,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFavoritesView, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, removeSelectedFavorites, runtimePlatform, selectAll, sendSelectedFilesToTab, undoLastRename]);
+  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFavoritesView, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, removeSelectedFavorites, runtimePlatform, selectAll, sendSelectedFilesToTab, showLayoutDialog, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -3985,13 +3990,53 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     await saveConfig?.({ folder_saved_layouts: currentLayouts });
   }, [columnLayout, config?.folder_saved_layouts, config?.language, config?.lang, groupKey, requestTextInput, saveConfig, sortKey, sortOrder, t]);
 
-  const handleDeleteLayout = useCallback(async name => {
-    if (!name || !savedLayouts.includes(name)) return;
-    const currentLayouts = { ...(config?.folder_saved_layouts || {}) };
-    delete currentLayouts[name];
-    await saveConfig?.({ folder_saved_layouts: currentLayouts });
-    setShowDeleteLayoutDialog(false);
-  }, [config?.folder_saved_layouts, saveConfig, savedLayouts]);
+    const handleAddLayout = useCallback(async layout => {
+        const currentLayouts = config?.folder_saved_layouts || {};
+        const name = (await requestTextInput({
+            title: t('layout_add_title'),
+            message: t('dlg_save_lay_msg'),
+            initialValue: '',
+            inputId: 'folder-layout-add-input',
+            validate: value => {
+                const trimmed = value.trim();
+                if (!trimmed) return t('dlg_save_lay_msg');
+                return Object.hasOwn(currentLayouts, trimmed) ? t('layout_name_exists') : '';
+            },
+        }))?.trim();
+        if (!name) return null;
+        await saveConfig?.({
+            folder_saved_layouts: {
+                ...currentLayouts,
+                [name]: { ...layout, columns: serializeColumnLayout(layout.columns) },
+            },
+        });
+        return name;
+    }, [config?.folder_saved_layouts, requestTextInput, saveConfig, t]);
+
+    const handleDeleteLayout = useCallback(async name => {
+        if (!name || !savedLayouts.includes(name) || layoutDeleteBusyRef.current) return false;
+        layoutDeleteBusyRef.current = true;
+        try {
+            const response = await window.electronAPI?.showMessage?.({
+                type: 'question',
+                title: t('menu_del_layout'),
+                message: t('layout_delete_confirm', [name]),
+                buttons: 'yes-no',
+                defaultChoice: 'no',
+                language: config?.language || config?.lang || 'ko',
+            });
+            if (response !== 'yes') return false;
+            const currentLayouts = { ...(config?.folder_saved_layouts || {}) };
+            delete currentLayouts[name];
+            await saveConfig?.({ folder_saved_layouts: currentLayouts });
+            return true;
+        } catch (error) {
+            showToast?.(t('config_save_failed').replace('{msg}', error?.message || String(error)));
+            return false;
+        } finally {
+            layoutDeleteBusyRef.current = false;
+        }
+    }, [config?.folder_saved_layouts, config?.language, config?.lang, saveConfig, savedLayouts, showToast, t]);
 
   const handleApplyLayout = useCallback(name => {
     const layout = config?.folder_saved_layouts?.[name];
@@ -4006,12 +4051,35 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
   }, [config?.folder_saved_layouts, saveConfig]);
 
-  const handleApplyColumnLayout = useCallback(async nextLayout => {
-    const normalized = normalizeColumnLayout(nextLayout);
-    setColumnLayout(normalized);
-    setShowLayoutDialog(false);
-    await saveConfig?.({ folder_column_layout: serializeColumnLayout(normalized) });
-  }, [saveConfig]);
+    const handleApplyColumnLayout = useCallback(async changes => {
+        const updates = {};
+        const current = changes.find(entry => entry.name === '')?.layout;
+        const savedChanges = changes.filter(entry => entry.name !== '');
+        if (current) {
+            updates.folder_column_layout = serializeColumnLayout(current.columns);
+            updates.folder_sort_key = current.sortKey;
+            updates.folder_sort_order = current.sortOrder;
+            updates.folder_group_key = current.groupKey;
+        }
+        if (savedChanges.length > 0) {
+            updates.folder_saved_layouts = {
+                ...(config?.folder_saved_layouts || {}),
+                ...Object.fromEntries(savedChanges.map(({ name, layout }) => [name, {
+                    ...config?.folder_saved_layouts?.[name],
+                    ...layout,
+                    columns: serializeColumnLayout(layout.columns),
+                }])),
+            };
+        }
+        if (Object.keys(updates).length === 0) return;
+        await saveConfig?.(updates);
+        if (current) {
+            setColumnLayout(normalizeColumnLayout(current.columns));
+            setSortKey(current.sortKey);
+            setSortOrder(current.sortOrder);
+            setGroupKey(current.groupKey);
+        }
+    }, [config?.folder_saved_layouts, saveConfig]);
 
   const handleDetailContentHeightChange = useCallback(contentHeight => {
     if (!contentHeight) return;
@@ -4115,36 +4183,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onMouseDownCapture={() => markFolderPanelFocus('explorer')}
             onFocusCapture={() => markFolderPanelFocus('explorer')}
           >
-            <div className="left-toolbar">
-              <div className="left-toolbar-row">
-                <button
-                  className={`folder-checkable-btn ${includeSubfolders ? 'checked' : ''}`}
-                  type="button"
-                  aria-pressed={includeSubfolders}
-                  disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
-                  onClick={handleIncludeSubfoldersChange}
-                >
-                  {t(folderToggleLabelKey('subfolders', includeSubfolders))}
-                </button>
-                <button
-                  className={`folder-checkable-btn ${enableDupCheck ? 'checked' : ''}`}
-                  type="button"
-                  aria-pressed={enableDupCheck}
-                  disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
-                  onClick={handleDupCheckChange}
-                >
-                  {t(folderToggleLabelKey('duplicates', enableDupCheck))}
-                </button>
-              </div>
-              <button
-                className="full-btn"
-                disabled={scanning || preparingDuplicates}
-                onClick={handleRefreshTree}
-              >
-                {t('folder_refresh_tree')}
-              </button>
-            </div>
-            
             <div className="sidebar-container">
               <FolderSidebar
                 libraries={libraries}
@@ -4153,7 +4191,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 selectedFolderPath={selectedFolderPath}
                 onSelectFolder={handleSafeFolderNavigation}
                 onSelectLibraryFolder={handleLibrarySelect}
-                onAddLibrary={addLibrary}
                 onRemoveLibrary={removeLibrary}
                 onFolderContextMenu={showFolderContextMenu}
                 onLibraryContextMenu={showLibraryContextMenu}
@@ -4168,30 +4205,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 wishlistCount={readingLists.wishlistCount}
                 collectionCount={readingLists.collections.length}
                 onSelectReadingList={handleSelectReadingList}
+                missingCount={missingData.length}
+                onCheckMissingVolumes={checkMissingVolumes}
+                isCheckingMissing={isCheckingMissing}
+                missingCheckDisabled={preparingDuplicates}
                 libraryScanStateMap={libraryScanStateMap}
                 refreshToken={treeRefreshToken}
+                onRefresh={handleRefreshTree}
+                refreshing={folderRefreshBusy}
+                refreshDisabled={folderRefreshBusy}
                 t={t}
               />
-            </div>
-            
-            <div className="left-bottom-bar">
-              <button 
-                className="warning-btn" 
-                onClick={checkMissingVolumes} 
-                disabled={isCheckingMissing || preparingDuplicates}
-              >
-                {isCheckingMissing ? t('msg_analyzing') : (
-                  <>
-                    <span>{t('tf_btn_check_missing')}</span>
-                    {missingData.length > 0 && (
-                      <span className="missing-count-indicator">
-                        <FaIcon name="circle" size={7} />
-                        <span>{missingData.length}</span>
-                      </span>
-                    )}
-                  </>
-                )}
-              </button>
             </div>
           </div>
         )}
@@ -4250,12 +4274,34 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   metadataMissingOnly={metadataMissingOnly}
                   setMetadataMissingOnly={setMetadataMissingOnly}
                   savedLayouts={savedLayouts}
-                  onEditLayout={() => setShowLayoutDialog(true)}
+                  onEditLayout={name => {
+                      setLayoutEditorTarget(typeof name === 'string' ? name : '');
+                      setShowLayoutDialog(true);
+                  }}
                   onSaveLayout={handleSaveLayout}
-                  onDeleteLayout={() => savedLayouts.length > 0 && setShowDeleteLayoutDialog(true)}
+                  onDeleteLayout={handleDeleteLayout}
                   onApplyLayout={handleApplyLayout}
                   onExportCsv={handleExportCsv}
-                />
+                >
+                    <button
+                        className={`toolbar-btn folder-checkable-btn ${includeSubfolders ? 'checked' : ''}`}
+                        type="button"
+                        aria-pressed={includeSubfolders}
+                        disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
+                        onClick={handleIncludeSubfoldersChange}
+                    >
+                        {t(folderToggleLabelKey('subfolders', includeSubfolders))}
+                    </button>
+                    <button
+                        className={`toolbar-btn folder-checkable-btn ${enableDupCheck ? 'checked' : ''}`}
+                        type="button"
+                        aria-pressed={enableDupCheck}
+                        disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
+                        onClick={handleDupCheckChange}
+                    >
+                        {t(folderToggleLabelKey('duplicates', enableDupCheck))}
+                    </button>
+                </FolderToolbar>
               )}
             </div>
             
@@ -4375,7 +4421,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onForward={() => void handleFolderHistoryNavigation(1)}
             onUp={handleParentFolderNavigation}
             onRefresh={() => isReadingList ? refreshActiveReadingList() : handleSmartRefresh(true)}
-            refreshDisabled={isReadingList ? (isRecentReading ? recentReadingLoading : readingLists.loading) : !selectedFolderPath || scanning || preparingDuplicates}
+            refreshDisabled={folderRefreshBusy || (!isReadingList && !selectedFolderPath)}
             t={t}
           />
 
@@ -4532,8 +4578,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 }} />)}
             </> : <>
             <ContextMenuSubmenu label={t('reading_lists.add')} icon="plus">
-                <ContextMenuItem onClick={() => handleContextAction('wishlist-add')} disabled={listMembershipBusy} label={t('reading_lists.wishlist_add')} />
-                <ContextMenuItem onClick={() => handleContextAction('wishlist-remove')} danger={contextMenu.type === 'file' || contextMenu.source === 'list'} disabled={listMembershipBusy} label={t('reading_lists.wishlist_remove')} />
+                <ContextMenuItem onClick={() => handleContextAction('wishlist-add')} disabled={listMembershipBusy || !canAddToWishlist} label={t('reading_lists.wishlist_add')} />
+                <ContextMenuItem onClick={() => handleContextAction('wishlist-remove')} danger={contextMenu.type === 'file' || contextMenu.source === 'list'} disabled={listMembershipBusy || !canRemoveFromWishlist} label={t('reading_lists.wishlist_remove')} />
                 {readingListKind === 'collection' && (contextMenu.type === 'file' || contextMenu.source === 'list') ? (
                     <ContextMenuItem onClick={() => handleContextAction('collection-remove')} danger disabled={listMembershipBusy} label={t('reading_lists.collection_remove')} />
                 ) : (
@@ -4543,15 +4589,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <div className="folder-context-menu-separator" />
           {contextMenu.type === 'library' ? (
             <>
-              <ContextMenuItem onClick={() => handleContextAction('send-readive')} label={t('readive.send')} />
               <ContextMenuItem onClick={() => handleContextAction('sync-library')} label={t('setting_update_index')} />
               <ContextMenuItem onClick={() => handleContextAction('optimize-library')} label={t('menu_optimize_meta')} />
-                <div className="folder-context-menu-separator" />
-                <ContextMenuItem onClick={() => handleContextAction('mark-read')} disabled={readingActionBusy} label={t('folder.reading.mark_read')} />
-                <ContextMenuItem onClick={() => handleContextAction('reset-progress')} disabled={readingActionBusy} label={t('folder.reading.reset_progress')} />
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('open-explorer')} icon="folderOpen" label={t('action_open_exp')} />
-              <ContextMenuItem onClick={() => handleContextAction('remove-library')} label={t('folder.sidebar.remove_library')} />
+                <ContextMenuItem onClick={() => handleContextAction('remove-library')} danger label={t('folder.sidebar.remove_library')} />
             </>
           ) : contextMenu.type === 'folder' ? (
             <>
@@ -4671,17 +4713,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       )}
       {showLayoutDialog && (
         <LayoutEditDialog
-          layout={columnLayout}
+          layout={{ columns: columnLayout, sortKey, sortOrder, groupKey }}
+          savedLayouts={config?.folder_saved_layouts || {}}
+          initialTarget={layoutEditorTarget}
           onApply={handleApplyColumnLayout}
+            onAdd={handleAddLayout}
+            onDelete={handleDeleteLayout}
+            textInputDialogOpen={Boolean(textInputDialog)}
           onClose={() => setShowLayoutDialog(false)}
-          t={t}
-        />
-      )}
-      {showDeleteLayoutDialog && (
-        <LayoutDeleteDialog
-          layouts={savedLayouts}
-          onDelete={handleDeleteLayout}
-          onClose={() => setShowDeleteLayoutDialog(false)}
           t={t}
         />
       )}
@@ -5015,83 +5054,308 @@ function ContentIndexDialog({
   );
 }
 
-function LayoutEditDialog({ layout, onApply, onClose, t }) {
-  const [draft, setDraft] = useState(() => normalizeColumnLayout(layout));
+function createEditableLayout(layout) {
+    const columns = normalizeColumnLayout(layout?.columns);
+    return {
+        columns,
+        sortKey: columns.some(column => column.key === layout?.sortKey && column.sortable !== false)
+            ? layout.sortKey : 'name',
+        sortOrder: layout?.sortOrder === 'desc' ? 'desc' : 'asc',
+        groupKey: FOLDER_GROUP_KEYS.includes(layout?.groupKey) ? layout.groupKey : 'none',
+    };
+}
 
-  const updateColumn = (index, changes) => {
-    setDraft(current => current.map((column, columnIndex) => (
-      columnIndex === index ? { ...column, ...changes } : column
+function layoutEditSignature(layout) {
+    return JSON.stringify({ ...layout, columns: serializeColumnLayout(layout.columns) });
+}
+
+function LayoutEditDialog({ layout, savedLayouts, initialTarget = '', onApply, onAdd, onDelete, textInputDialogOpen = false, onClose, t }) {
+    const [entries, setEntries] = useState(() => [
+        { name: '', layout },
+        ...normalizeSavedLayouts(savedLayouts).map(name => ({ name, layout: savedLayouts[name] })),
+    ].map(entry => {
+        const normalized = createEditableLayout(entry.layout);
+        return { name: entry.name, layout: normalized, applied: layoutEditSignature(normalized) };
+    }));
+    const [targetName, setTargetName] = useState(initialTarget);
+    const [isApplying, setIsApplying] = useState(false);
+    const [saveError, setSaveError] = useState('');
+    const [dragKey, setDragKey] = useState('');
+    const [dropTarget, setDropTarget] = useState(null);
+    const applyingRef = useRef(false);
+    const dragKeyRef = useRef('');
+    const listRef = useRef(null);
+    const addButtonRef = useRef(null);
+    const activeEntry = entries.find(entry => entry.name === targetName) || entries[0];
+    const draft = activeEntry.layout.columns;
+    const changedEntries = entries.filter(entry => layoutEditSignature(entry.layout) !== entry.applied);
+    const hasChanges = changedEntries.length > 0;
+    const groupLabels = {
+        none: t('menu_none'), folder_path: t('menu_folder'), ext: t('col_ext'),
+        series: t('col_series'), author_series: `${t('col_writer')} + ${t('col_series')}`,
+        title: t('col_title'), author: t('col_writer'), publisher: t('col_publisher'), genre: t('col_genre'),
+    };
+    const updateLayout = update => setEntries(current => current.map(entry => (
+        entry.name === activeEntry.name ? { ...entry, layout: update(entry.layout) } : entry
     )));
-  };
+    const setDraft = update => updateLayout(current => ({ ...current, columns: update(current.columns) }));
 
-  return (
-    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="layout-dialog layout-edit-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
-        <div className="dialog-titlebar">
-          <span>{t('dlg_edit_lay_title')}</span>
-          <button onClick={onClose}>×</button>
+    useEffect(() => {
+        const handleEscape = event => {
+            if (event.key !== 'Escape' || textInputDialogOpen) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (!applyingRef.current) onClose();
+        };
+        window.addEventListener('keydown', handleEscape, true);
+        return () => window.removeEventListener('keydown', handleEscape, true);
+    }, [onClose, textInputDialogOpen]);
+
+    const endDrag = () => {
+        dragKeyRef.current = '';
+        setDragKey('');
+        setDropTarget(null);
+    };
+
+    const targetForEvent = (event, key) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        return { key, position: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+    };
+
+    const dropColumn = (event, key) => {
+        const sourceKey = dragKeyRef.current;
+        if (!sourceKey || applyingRef.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const target = targetForEvent(event, key);
+        if (sourceKey !== key) {
+            setDraft(current => {
+                const source = current.find(column => column.key === sourceKey);
+                if (!source) return current;
+                const next = current.filter(column => column.key !== sourceKey);
+                const index = next.findIndex(column => column.key === target.key);
+                if (index < 0) return current;
+                next.splice(index + (target.position === 'after' ? 1 : 0), 0, source);
+                return next;
+            });
+        }
+        endDrag();
+    };
+
+    const moveWithKeyboard = (event, key) => {
+        if (!['ArrowUp', 'ArrowDown'].includes(event.key) || applyingRef.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const direction = event.key === 'ArrowUp' ? -1 : 1;
+        setDraft(current => moveColumn(current, current.findIndex(column => column.key === key), direction));
+        requestAnimationFrame(() => {
+            const handle = listRef.current?.querySelector(`[data-column-key="${key}"] .layout-column-drag-handle`);
+            handle?.focus({ preventScroll: true });
+            handle?.scrollIntoView({ block: 'nearest' });
+        });
+    };
+
+    const apply = async () => {
+        if (!hasChanges || applyingRef.current) return;
+        applyingRef.current = true;
+        setIsApplying(true);
+        setSaveError('');
+        try {
+            await onApply(changedEntries.map(entry => ({ name: entry.name, layout: entry.layout })));
+            setEntries(current => current.map(entry => ({ ...entry, applied: layoutEditSignature(entry.layout) })));
+        } catch (error) {
+            setSaveError(t('config_save_failed').replace('{msg}', error?.message || String(error)));
+        } finally {
+            applyingRef.current = false;
+            setIsApplying(false);
+        }
+    };
+
+    const add = async () => {
+        if (applyingRef.current) return;
+        applyingRef.current = true;
+        setIsApplying(true);
+        setSaveError('');
+        endDrag();
+        const addedLayout = createEditableLayout(activeEntry.layout);
+        try {
+            const name = await onAdd(addedLayout);
+            if (!name) return;
+            setEntries(current => [...current, {
+                name,
+                layout: addedLayout,
+                applied: layoutEditSignature(addedLayout),
+            }]);
+            setTargetName(name);
+        } catch (error) {
+            setSaveError(t('config_save_failed').replace('{msg}', error?.message || String(error)));
+        } finally {
+            applyingRef.current = false;
+            setIsApplying(false);
+            requestAnimationFrame(() => addButtonRef.current?.focus({ preventScroll: true }));
+        }
+    };
+
+    const remove = async () => {
+        if (!activeEntry.name || applyingRef.current) return;
+        applyingRef.current = true;
+        setIsApplying(true);
+        setSaveError('');
+        endDrag();
+        const name = activeEntry.name;
+        try {
+            if (!await onDelete(name)) return;
+            setEntries(current => current.filter(entry => entry.name !== name));
+            setTargetName('');
+            requestAnimationFrame(() => addButtonRef.current?.focus({ preventScroll: true }));
+        } catch (error) {
+            setSaveError(t('config_save_failed').replace('{msg}', error?.message || String(error)));
+        } finally {
+            applyingRef.current = false;
+            setIsApplying(false);
+        }
+    };
+
+    return (
+        <div className="folder-dialog-backdrop" onMouseDown={() => { if (!applyingRef.current) onClose(); }}>
+            <div
+                className="layout-dialog layout-edit-dialog"
+                data-folder-modal
+                onMouseDown={event => event.stopPropagation()}
+                onKeyDown={event => event.stopPropagation()}
+            >
+                <div className="dialog-titlebar">
+                    <span>{t('dlg_edit_lay_title')}</span>
+                    <button type="button" onClick={onClose} disabled={isApplying} aria-label={t('btn_close')}>×</button>
+                </div>
+                <div className="layout-dialog-body">
+                    <label className="layout-editor-target" htmlFor="layout-edit-target">
+                        <span>{t('layout_edit_target')}</span>
+                        <select
+                            id="layout-edit-target"
+                            value={activeEntry.name}
+                            disabled={isApplying}
+                            onChange={event => {
+                                endDrag();
+                                setTargetName(event.target.value);
+                                setSaveError('');
+                            }}
+                        >
+                            {entries.map(entry => (
+                                <option key={entry.name} value={entry.name}>
+                                    {entry.name || t('layout_current')}{layoutEditSignature(entry.layout) !== entry.applied ? ' *' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <div className="layout-editor-options">
+                        <label htmlFor="layout-edit-group">
+                            <span>{t('layout_group')}</span>
+                            <select id="layout-edit-group" value={activeEntry.layout.groupKey} disabled={isApplying}
+                                onChange={event => updateLayout(current => ({ ...current, groupKey: event.target.value }))}>
+                                {FOLDER_GROUP_KEYS.map(key => <option key={key} value={key}>{groupLabels[key]}</option>)}
+                            </select>
+                        </label>
+                        <label htmlFor="layout-edit-sort">
+                            <span>{t('layout_sort')}</span>
+                            <select id="layout-edit-sort" value={activeEntry.layout.sortKey} disabled={isApplying}
+                                onChange={event => updateLayout(current => ({ ...current, sortKey: event.target.value }))}>
+                                {draft.filter(column => column.sortable !== false).map(column => (
+                                    <option key={column.key} value={column.key}>{t(column.labelKey).replace(/[☐☑]\s*/, '')}</option>
+                                ))}
+                            </select>
+                        </label>
+                        <label htmlFor="layout-edit-order">
+                            <span>{t('layout_sort_order')}</span>
+                            <select id="layout-edit-order" value={activeEntry.layout.sortOrder} disabled={isApplying}
+                                onChange={event => updateLayout(current => ({ ...current, sortOrder: event.target.value }))}>
+                                <option value="asc">{t('layout_order_asc')}</option>
+                                <option value="desc">{t('layout_order_desc')}</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div className="layout-dialog-label">{t('dlg_edit_lay_msg')}</div>
+                    <div
+                        ref={listRef}
+                        className="layout-column-list"
+                        onDragEnd={endDrag}
+                        onDragLeave={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null);
+                        }}
+                    >
+                        {draft.map(column => {
+                            const label = column.key === 'dup_count'
+                                ? t(column.labelKey).replace(/[☐☑]\s*/, '') : t(column.labelKey);
+                            return (
+                                <div
+                                    key={column.key}
+                                    data-column-key={column.key}
+                                    className={`layout-column-row${column.visible ? '' : ' is-hidden'}${dragKey === column.key ? ' is-dragging' : ''}${dropTarget?.key === column.key ? ` drop-${dropTarget.position}` : ''}`}
+                                    onDragOver={event => {
+                                        if (!dragKeyRef.current || applyingRef.current) return;
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        event.dataTransfer.dropEffect = 'move';
+                                        setDropTarget(dragKeyRef.current === column.key ? null : targetForEvent(event, column.key));
+                                    }}
+                                    onDrop={event => dropColumn(event, column.key)}
+                                >
+                                    <button
+                                        type="button"
+                                        className="layout-column-drag-handle"
+                                        draggable={!isApplying}
+                                        disabled={isApplying}
+                                        aria-label={`${t('column_reorder')}: ${label}`}
+                                        aria-keyshortcuts="ArrowUp ArrowDown"
+                                        title={t('layout_column_reorder_hint')}
+                                        onDragStart={event => {
+                                            event.stopPropagation();
+                                            dragKeyRef.current = column.key;
+                                            event.dataTransfer.effectAllowed = 'move';
+                                            event.dataTransfer.setData('text/plain', column.key);
+                                            const row = event.currentTarget.closest('.layout-column-row');
+                                            event.dataTransfer.setDragImage(row, 12, row.offsetHeight / 2);
+                                            setDragKey(column.key);
+                                            setDropTarget(null);
+                                        }}
+                                        onKeyDown={event => moveWithKeyboard(event, column.key)}
+                                    >
+                                        <FaIcon name="grip-vertical" size={12} />
+                                    </button>
+                                    <span className="layout-column-name" id={`layout-column-${column.key}`} title={label}>{label}</span>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        className="layout-column-toggle"
+                                        aria-checked={column.visible}
+                                        aria-labelledby={`layout-column-${column.key}`}
+                                        disabled={isApplying}
+                                        onClick={() => setDraft(current => current.map(item => (
+                                            item.key === column.key ? { ...item, visible: !item.visible } : item
+                                        )))}
+                                    >
+                                        <span aria-hidden="true" />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {saveError && <div className="layout-dialog-error" role="alert">{saveError}</div>}
+                </div>
+                <div className="layout-dialog-footer">
+                    <button type="button" className="secondary" onClick={onClose} disabled={isApplying}>{t('btn_cancel')}</button>
+                    <button type="button" ref={addButtonRef} className="secondary layout-add-button" onClick={add} disabled={isApplying}>{t('btn_add')}</button>
+                    {activeEntry.name && <button type="button" className="secondary danger layout-delete-button" onClick={remove} disabled={isApplying}>{t('btn_remove')}</button>}
+                    <button type="button" className="primary" onClick={apply} disabled={!hasChanges || isApplying} aria-busy={isApplying}>{t('settings.apply')}</button>
+                </div>
+            </div>
         </div>
-        <div className="layout-dialog-body">
-          <div className="layout-dialog-label">{t('dlg_edit_lay_msg')}</div>
-          <div className="layout-column-list">
-            {draft.map((column, index) => (
-              <div key={column.key} className="layout-column-row">
-                <label className="layout-column-toggle">
-                  <input
-                    type="checkbox"
-                    checked={column.visible}
-                    onChange={event => updateColumn(index, { visible: event.target.checked })}
-                  />
-                  <span className="layout-column-name">
-                    {column.key === 'dup_count'
-                      ? t(column.labelKey).replace(/[☐☑]\s*/, '')
-                      : t(column.labelKey)}
-                  </span>
-                </label>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="layout-dialog-footer">
-          <button className="secondary" onClick={onClose}>{t('btn_cancel')}</button>
-            <button className="primary" onClick={() => onApply(draft)}>{t('btn_ok')}</button>
-        </div>
-      </div>
-    </div>
-  );
+    );
 }
 
-function LayoutDeleteDialog({ layouts, onDelete, onClose, t }) {
-  const [selected, setSelected] = useState(layouts[0] || '');
-
-  return (
-    <div className="folder-dialog-backdrop" onMouseDown={onClose}>
-      <div className="layout-delete-dialog" data-folder-modal onMouseDown={event => event.stopPropagation()}>
-        <div className="dialog-titlebar">
-          <span>{t('menu_del_layout')}</span>
-          <button onClick={onClose}>×</button>
-        </div>
-        <div className="layout-delete-body">
-          <label htmlFor="layout-delete-select">{t('dlg_del_lay_msg')}</label>
-          <select
-            id="layout-delete-select"
-            value={selected}
-            onChange={event => setSelected(event.target.value)}
-          >
-            {layouts.map(name => <option key={name} value={name}>{name}</option>)}
-          </select>
-        </div>
-        <div className="layout-dialog-footer">
-          <button className="dialog-cancel-button" onClick={onClose}>{t('btn_cancel')}</button>
-            <button className="danger" onClick={() => onDelete(selected)}>{t('btn_ok')}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-text-input', onConfirm, onClose, t }) {
+function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-text-input', validate, onConfirm, onClose, t }) {
   const [draft, setDraft] = useState(initialValue);
+    const [validationError, setValidationError] = useState('');
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -5103,6 +5367,12 @@ function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-
 
   const submit = event => {
     event.preventDefault();
+        const error = validate?.(draft) || '';
+        setValidationError(error);
+        if (error) {
+            inputRef.current?.focus();
+            return;
+        }
     onConfirm(draft);
   };
 
@@ -5129,8 +5399,14 @@ function TextInputDialog({ title, message, initialValue = '', inputId = 'folder-
             className="text-input-dialog-input"
             type="text"
             value={draft}
-            onChange={event => setDraft(event.target.value)}
+            aria-invalid={Boolean(validationError)}
+            aria-describedby={validationError ? `${inputId}-error` : undefined}
+            onChange={event => {
+                setDraft(event.target.value);
+                setValidationError('');
+            }}
           />
+            {validationError && <div id={`${inputId}-error`} className="layout-dialog-error" role="alert">{validationError}</div>}
         </div>
         <div className="layout-dialog-footer">
           <button type="button" className="text-input-cancel" onClick={onClose}>{t('btn_cancel')}</button>

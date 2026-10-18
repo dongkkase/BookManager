@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { FaIcon } from '../FaIcon';
 import {
   ancestorPathsBetween,
@@ -7,6 +8,7 @@ import {
   joinTreePath,
 } from '../../folderTreeState';
 import {
+    libraryScanStatusText,
   isLibraryScanning,
   libraryStatusClass,
   libraryStatusText,
@@ -20,6 +22,155 @@ import {
 import { buildLibraryItems, groupLibraryItems } from '../../libraryPresentation.js';
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'bookmanager.folderSidebar.collapsedSections';
+const LIBRARY_VISIBLE_COUNT_STORAGE_KEY = 'bookmanager.folderSidebar.libraryVisibleCount';
+const LIBRARY_VISIBLE_COUNTS = [5, 8, 12, 20, 0];
+const LIBRARY_DISPLAY_FIELDS_STORAGE_KEY = 'bookmanager.folderSidebar.libraryDisplayFields';
+const LIBRARY_DISPLAY_FIELDS = [
+    ['folders', 'folder_library_show_folders'],
+    ['files', 'folder_library_show_files'],
+    ['updatedAt', 'folder_library_show_updated'],
+];
+
+function readStoredLibraryVisibleCount() {
+    try {
+        const count = Number(window.localStorage.getItem(LIBRARY_VISIBLE_COUNT_STORAGE_KEY) ?? 5);
+        return LIBRARY_VISIBLE_COUNTS.includes(count) ? count : 5;
+    } catch {
+        return 5;
+    }
+}
+
+function readStoredLibraryDisplayFields() {
+    let stored;
+    try {
+        stored = JSON.parse(window.localStorage.getItem(LIBRARY_DISPLAY_FIELDS_STORAGE_KEY));
+    } catch {
+        stored = null;
+    }
+    return Object.fromEntries(LIBRARY_DISPLAY_FIELDS.map(([key]) => [key, stored?.[key] !== false]));
+}
+
+function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
+    const [open, setOpen] = useState(false);
+    const [position, setPosition] = useState(null);
+    const buttonRef = useRef(null);
+    const menuRef = useRef(null);
+    const closeMenu = useCallback(() => {
+        setOpen(false);
+        buttonRef.current?.focus({ preventScroll: true });
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!open || !menuRef.current || !buttonRef.current) return;
+        const anchor = buttonRef.current.getBoundingClientRect();
+        const menu = menuRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(anchor.right - menu.width, window.innerWidth - menu.width - 8));
+        const top = anchor.bottom + menu.height + 4 <= window.innerHeight - 8
+            ? anchor.bottom + 4 : Math.max(8, anchor.top - menu.height - 4);
+        setPosition({ left, top });
+    }, [open]);
+
+    useLayoutEffect(() => {
+        if (open && position) menuRef.current?.querySelector('[role="menuitemradio"][aria-checked="true"]')?.focus({ preventScroll: true });
+    }, [open, position]);
+
+    useEffect(() => {
+        if (!open) return;
+        const onOutsidePointer = event => {
+            if (!buttonRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
+        };
+        const onViewportChange = event => {
+            if (!menuRef.current?.contains(event.target)) setOpen(false);
+        };
+        const onKeyDown = event => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeMenu();
+        };
+        document.addEventListener('pointerdown', onOutsidePointer);
+        document.addEventListener('keydown', onKeyDown, true);
+        window.addEventListener('resize', onViewportChange);
+        document.addEventListener('scroll', onViewportChange, true);
+        return () => {
+            document.removeEventListener('pointerdown', onOutsidePointer);
+            document.removeEventListener('keydown', onKeyDown, true);
+            window.removeEventListener('resize', onViewportChange);
+            document.removeEventListener('scroll', onViewportChange, true);
+        };
+    }, [open, closeMenu]);
+
+    return <>
+        <button
+            ref={buttonRef}
+            type="button"
+            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn library-display-options-button"
+            aria-label={t('folder_library_display_options')}
+            data-tooltip={t('folder_library_display_options')}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={() => {
+                setPosition(null);
+                setOpen(current => !current);
+            }}
+        >
+            <FaIcon name="ellipsisVertical" size={12} />
+        </button>
+        {open && createPortal(
+            <div
+                ref={menuRef}
+                className="folder-context-menu library-display-options-menu"
+                role="menu"
+                aria-label={t('folder_library_display_options')}
+                style={position || { left: 0, top: 0, visibility: 'hidden' }}
+                onKeyDown={event => {
+                    event.stopPropagation();
+                    if (event.key === 'Tab') {
+                        setOpen(false);
+                    } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                        event.preventDefault();
+                        const options = Array.from(event.currentTarget.querySelectorAll('button'));
+                        const current = options.indexOf(document.activeElement);
+                        const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
+                            : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+                        options[next]?.focus();
+                    }
+                }}
+            >
+                {LIBRARY_VISIBLE_COUNTS.map(count => (
+                    <button
+                        key={count}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={value === count}
+                        onClick={() => {
+                            onChange(count);
+                            closeMenu();
+                        }}
+                    >
+                        <span className="folder-context-menu-icon">{value === count && <FaIcon name="check" size={12} />}</span>
+                        <span>{t(count === 0 ? 'folder_library_show_all' : 'folder_library_show_items', [count])}</span>
+                    </button>
+                ))}
+                <div className="folder-context-menu-separator" role="separator" />
+                {LIBRARY_DISPLAY_FIELDS.map(([key, labelKey]) => (
+                    <button
+                        key={key}
+                        type="button"
+                        role="menuitemcheckbox"
+                        className="library-display-field-option"
+                        aria-checked={fields[key]}
+                        onClick={() => onToggleField(key)}
+                    >
+                        <span>{t(labelKey)}</span>
+                        <span className="library-display-field-switch" aria-hidden="true" />
+                    </button>
+                ))}
+            </div>,
+            document.body,
+        )}
+    </>;
+}
 
 function readStoredSidebarCollapseState() {
   if (typeof window === 'undefined' || !window.localStorage) return {};
@@ -35,9 +186,13 @@ function readStoredSidebarCollapseState() {
  * 좌측 사이드바 컴포넌트
  * 읽기 목록, 라이브러리 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, missingCount = 0, onCheckMissingVolumes, isCheckingMissing = false, missingCheckDisabled = false, libraryScanStateMap = {}, refreshToken = 0, onRefresh, refreshing = false, refreshDisabled = false }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
+    const [libraryVisibleCount, setLibraryVisibleCount] = useState(readStoredLibraryVisibleCount);
+    const [libraryDisplayFields, setLibraryDisplayFields] = useState(readStoredLibraryDisplayFields);
+    const [libraryListHeight, setLibraryListHeight] = useState(null);
+    const libraryListRef = useRef(null);
   const [roots, setRoots] = useState([]);
   const [folderCache, setFolderCache] = useState({});
   const [libraryFolderCounts, setLibraryFolderCounts] = useState({});
@@ -61,6 +216,39 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
   const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
     const libraryItems = useMemo(() => buildLibraryItems(libraries, libraryEntries), [libraries, libraryEntries]);
     const groupedLibraryItems = useMemo(() => groupLibraryItems(libraryItems), [libraryItems]);
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(LIBRARY_VISIBLE_COUNT_STORAGE_KEY, String(libraryVisibleCount));
+        } catch {
+            // Keep the current choice when local storage is unavailable.
+        }
+    }, [libraryVisibleCount]);
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(LIBRARY_DISPLAY_FIELDS_STORAGE_KEY, JSON.stringify(libraryDisplayFields));
+        } catch {
+            // Keep the current choice when local storage is unavailable.
+        }
+    }, [libraryDisplayFields]);
+    useLayoutEffect(() => {
+        const list = libraryListRef.current;
+        if (!list) return;
+        const measure = () => {
+            const rows = list.querySelectorAll('.library-list-item');
+            const count = libraryVisibleCount || rows.length;
+            const lastVisible = rows[Math.min(count, rows.length) - 1] || list.lastElementChild;
+            if (!lastVisible) return;
+            const bottomPadding = parseFloat(window.getComputedStyle(list).paddingBottom) || 0;
+            const height = Math.ceil(lastVisible.getBoundingClientRect().bottom - list.getBoundingClientRect().top
+                + list.scrollTop + bottomPadding);
+            setLibraryListHeight(current => current === height ? current : height);
+        };
+        measure();
+        const observer = new ResizeObserver(measure);
+        observer.observe(list);
+        Array.from(list.children).forEach(child => observer.observe(child));
+        return () => observer.disconnect();
+    }, [libraryVisibleCount, groupedLibraryItems, collapsedSections.libraries]);
   const isSectionCollapsed = useCallback(sectionKey => Boolean(collapsedSections[sectionKey]), [collapsedSections]);
   const toggleSidebarSection = useCallback(sectionKey => {
     setCollapsedSections(current => ({
@@ -78,7 +266,6 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
       <button
         type="button"
         className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn sidebar-section-toggle-btn"
-        title={label}
         aria-label={label}
         aria-expanded={!collapsed}
         data-tooltip={label}
@@ -295,6 +482,7 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
   const renderLibraryList = () => {
     const sectionLabel = t('folder.sidebar.libraries');
     const collapsed = isSectionCollapsed('libraries');
+    const showStatus = libraryDisplayFields.folders || libraryDisplayFields.files || libraryDisplayFields.updatedAt;
     return (
       <div className={`sidebar-section sidebar-section-library ${collapsed ? 'is-collapsed' : ''}`}>
         <div className="nav-header">
@@ -304,27 +492,23 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
             <button
               type="button"
               className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
-              title={t('tab_folder_settings')}
-              aria-label={t('tab_folder_settings')}
-              data-tooltip={t('tab_folder_settings')}
+                aria-label={t('folder_library_manage')}
+                data-tooltip={t('folder_library_manage')}
               onClick={onOpenLibrarySettings}
-            >
-              <FaIcon name="gear" size={12} />
-            </button>
-            <button
-              type="button"
-              className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
-              title={t('folder.sidebar.add_library')}
-              aria-label={t('folder.sidebar.add_library')}
-              data-tooltip={t('folder.sidebar.add_library')}
-              onClick={onAddLibrary}
             >
               <FaIcon name="plus" size={12} />
             </button>
+            <LibraryDisplayOptions
+                value={libraryVisibleCount}
+                onChange={setLibraryVisibleCount}
+                fields={libraryDisplayFields}
+                onToggleField={key => setLibraryDisplayFields(current => ({ ...current, [key]: !current[key] }))}
+                t={t}
+            />
           </div>
         </div>
         {!collapsed && (
-          <ul className="nav-list">
+          <ul ref={libraryListRef} className="nav-list" style={{ height: libraryListHeight === null ? undefined : `${libraryListHeight}px` }}>
             {libraryItems.length > 0 ? groupedLibraryItems.map(group => (
               <React.Fragment key={group.key || '__ungrouped'}>
                 {group.label ? (
@@ -335,6 +519,7 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                   const idx = item.index;
                   const libraryKey = normalizeLibraryKey(lib);
                   const scanState = libraryScanStateMap[libraryKey];
+                    const status = libraryStatusClass(scanState);
                   const libraryMetaText = libraryStatusText(t, scanState, {
                     folderCount: libraryFolderCounts[libraryKey] || 0,
                   });
@@ -360,10 +545,18 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                       onContextMenu={(event) => onLibraryContextMenu?.(event, lib)}
                     >
                       <div className="library-list-main" title={`${lib}\n${libraryMetaText}`}>
-                        <span className="library-list-name">{item.name}</span>
-                        <span className={`library-scan-status ${libraryStatusClass(scanState)}`}>
-                          {libraryMetaText}
-                        </span>
+                        <span className="library-list-name" title={item.name}>{item.name}</span>
+                        {showStatus && <span className={`library-scan-status ${status}`} title={libraryMetaText}>
+                            {libraryDisplayFields.folders && <span className="library-scan-count">
+                                <FaIcon name="folder" size={10} title={t('folder.detail.folder_count')} />
+                                <span>{libraryFolderCounts[libraryKey] || 0}</span>
+                            </span>}
+                            {libraryDisplayFields.files && <span className="library-scan-count">
+                                <FaIcon name="file" size={10} title={t('folder.detail.file_count')} />
+                                <span>{scanState?.indexedCount || scanState?.fileCount || 0}</span>
+                            </span>}
+                            {libraryDisplayFields.updatedAt && <span className="library-scan-time">{libraryScanStatusText(t, scanState)}</span>}
+                        </span>}
                       </div>
                       <div className="library-list-actions">
                         {showSyncButton && (
@@ -387,7 +580,6 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                             event.stopPropagation();
                             onLibraryContextMenu?.(event, lib);
                           }}
-                          title={t('folder.sidebar.more_actions')}
                           aria-label={t('folder.sidebar.more_actions')}
                           data-tooltip={t('folder.sidebar.more_actions')}
                         >
@@ -443,6 +635,27 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                     </span>
                 </button>
             </li>
+                <li className={`recent-reading-list-item ${readingListSelected === 'collections' || readingListSelected === 'collection' ? 'selected' : ''}`}>
+                    <button
+                        type="button"
+                        className="reading-list-nav-button"
+                        onClick={event => {
+                            applySidebarSelection(event);
+                            setSelectedSource('collections');
+                            setOptimisticSelectedPath('');
+                            onSelectReadingList?.('collections');
+                        }}
+                        aria-current={readingListSelected === 'collections' || readingListSelected === 'collection' ? 'page' : undefined}
+                    >
+                        <span className="recent-reading-list-main">
+                            <FaIcon name="layers" size={12} />
+                            <span>{t('reading_lists.collections')}</span>
+                        </span>
+                        <span className="recent-reading-count" aria-label={t('reading_lists.count', [collectionCount])}>
+                            {collectionCount}
+                        </span>
+                    </button>
+                </li>
             <li
               className={`recent-reading-list-item ${recentReadingSelected ? 'selected' : ''}`}
               onClick={(event) => {
@@ -464,20 +677,39 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                     ['recent-added', 'calendar', recentAddedCount],
                     ['recent-updated', 'rotateRight', recentUpdatedCount],
                     ['wishlist', 'bookmark', wishlistCount],
-                    ['collections', 'layers', collectionCount],
                 ].map(([kind, icon, count]) => (
-                    <li key={kind} className={`recent-reading-list-item ${readingListSelected === kind || (kind === 'collections' && readingListSelected === 'collection') ? 'selected' : ''}`}>
+                    <li key={kind} className={`recent-reading-list-item ${readingListSelected === kind ? 'selected' : ''}`}>
                         <button type="button" className="reading-list-nav-button" onClick={event => {
                             applySidebarSelection(event);
                             setSelectedSource(kind);
                             setOptimisticSelectedPath('');
                             onSelectReadingList?.(kind);
-                        }} aria-current={readingListSelected === kind || (kind === 'collections' && readingListSelected === 'collection') ? 'page' : undefined}>
+                        }} aria-current={readingListSelected === kind ? 'page' : undefined}>
                             <span className="recent-reading-list-main"><FaIcon name={icon} size={12} /><span>{t(`reading_lists.${kind.replaceAll('-', '_')}`)}</span></span>
                             <span className="recent-reading-count" aria-label={t('reading_lists.count', [count])}>{count}</span>
                         </button>
                     </li>
                 ))}
+                <li className="recent-reading-list-item">
+                    <button
+                        type="button"
+                        className="reading-list-nav-button"
+                        onClick={onCheckMissingVolumes}
+                        disabled={isCheckingMissing || missingCheckDisabled}
+                        aria-busy={isCheckingMissing}
+                    >
+                        <span className="recent-reading-list-main">
+                            <FaIcon name="search" size={12} />
+                            <span>{isCheckingMissing ? t('msg_analyzing') : t('tf_btn_check_missing')}</span>
+                        </span>
+                        {!isCheckingMissing && missingCount > 0 && (
+                            <span className="recent-reading-count missing-count-indicator">
+                                <FaIcon name="circle" size={7} />
+                                <span>{missingCount}</span>
+                            </span>
+                        )}
+                    </button>
+                </li>
           </ul>
         )}
       </div>
@@ -574,7 +806,6 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                 key={pathKey}
                 type="button"
                 className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
-                title={label}
                 aria-label={label}
                 data-tooltip={label}
                 onClick={async () => {
@@ -591,6 +822,17 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
               </button>
             );
           })}
+            <button
+                type="button"
+                className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn folder-sidebar-refresh-btn"
+                aria-label={t('folder.sidebar.refresh')}
+                data-tooltip={t('folder.sidebar.refresh')}
+                aria-busy={refreshing}
+                disabled={refreshing || refreshDisabled}
+                onClick={onRefresh}
+            >
+                <FaIcon name="rotateRight" className={refreshing ? 'folder-sidebar-refresh-icon is-spinning' : 'folder-sidebar-refresh-icon'} size={12} />
+            </button>
         </div>
       </div>
       <ul ref={treeListRef} className="nav-list folder-tree-list">

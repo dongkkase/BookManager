@@ -80,8 +80,9 @@ function viewContext(options = {}) {
         librarySearchResults: [...rows], folderTagSearchResults: [...rows], recentReadingFiles: [...rows],
         librarySearchLoading: true, folderTagLoading: true, recentReadingLoading: true,
         folderTagFacetScopeKey: 'cached-scopes', searchSubmitToken: 0, missingRefreshVersion: 0,
+        treeRefreshToken: 0, isRefreshingTree: false,
     };
-    const calls = { cacheClears: 0, resets: 0, scans: [], tags: [], recent: 0, stat: 0, missing: 0, explorerRefresh: 0 };
+    const calls = { cacheClears: 0, resets: 0, scans: [], tags: [], recent: 0, readingLists: 0, stat: 0, missing: 0, explorerRefresh: 0 };
     const context = {
         useCallback: callback => callback,
         runtimePlatform: options.platform || 'darwin',
@@ -91,6 +92,17 @@ function viewContext(options = {}) {
         clearFolderCache: () => { calls.cacheClears += 1; },
         resetCoverPreviewQueue: () => { calls.resets += 1; },
         isRecentReading: options.isRecentReading || false,
+        isReadingList: options.isReadingList || options.isRecentReading || false,
+        refreshReadingList: async () => {
+            calls.readingLists += 1;
+            return options.readingList?.();
+        },
+        readingLists: { loading: options.readingListLoading || false },
+        isRefreshingTree: options.isRefreshingTree || false,
+        refreshingTreeRef: { current: options.refreshingTree || false },
+        librarySearchLoading: options.librarySearchLoading || false,
+        folderTagLoading: options.folderTagLoading || false,
+        recentReadingLoading: options.recentReadingLoading || false,
         isLibrarySearchActive: options.isLibrarySearchActive || false,
         isFolderTagSearchActive: options.isFolderTagSearchActive || false,
         folderTagSelections: [{ category: 'writer', value: 'Writer' }],
@@ -99,14 +111,17 @@ function viewContext(options = {}) {
         folderTagDatabaseScopeKey: 'scopes',
         selectedFolderPath: options.selectedFolderPath ?? '/Volumes/NAS/Books',
         scanOptions: { includeSubfolders: true, fastInitial: true },
-        scanFolder: async (path, scanOptions) => { calls.scans.push({ path, options: scanOptions }); return options.scanRows || []; },
+        scanFolder: async (path, scanOptions) => {
+            calls.scans.push({ path, options: scanOptions });
+            return options.scan ? options.scan(path, scanOptions) : options.scanRows || [];
+        },
         scheduleLocalMissingToast() {},
         findMissingVolumes: () => [],
         invalidateMissingVolumesCheck: () => { calls.missing += 1; },
         showToast() {},
         t: key => key,
-        scanning: false,
-        preparingDuplicates: false,
+        scanning: options.scanning || false,
+        preparingDuplicates: options.preparingDuplicates || false,
         watchedMtimeRef: { current: 10 },
         isExplorerPanelActive: () => options.explorerActive || false,
         refreshContextFolder: async () => { calls.explorerRefresh += 1; },
@@ -132,6 +147,7 @@ function viewContext(options = {}) {
         'folderTagFacetScopeKey', 'searchSubmitToken', 'missingRefreshVersion',
         'recentReadingLoaded', 'folderTagSelections', 'folderTagMatchMode',
         'folderTagResultScopeKey', 'showFolderTagSearchDialog', 'showContentIndexSearchHint',
+        'treeRefreshToken', 'isRefreshingTree',
     ]) context[`set${key[0].toUpperCase()}${key.slice(1)}`] = value => {
         state[key] = typeof value === 'function' ? value(state[key]) : value;
     };
@@ -143,15 +159,23 @@ function refreshFixture(options = {}) {
     const recentStart = source.indexOf('const loadRecentReading = useCallback');
     const recentEnd = source.indexOf('\n    useEffect(', recentStart);
     assert.ok(recentStart >= 0 && recentEnd > recentStart);
+    const readingRefreshStart = source.indexOf('const refreshActiveReadingList = useCallback');
+    const readingRefreshEnd = source.indexOf('\n\n', readingRefreshStart);
+    assert.ok(readingRefreshStart >= 0 && readingRefreshEnd > readingRefreshStart);
+    const treeRefreshStart = source.indexOf('const folderRefreshBusy =');
+    const treeRefreshEnd = source.indexOf('const handleLibrarySelect = useCallback', treeRefreshStart);
+    assert.ok(treeRefreshStart >= 0 && treeRefreshEnd > treeRefreshStart);
     const declarations = [
         callbackSource('applyFolderTagSearch', 'resetSearchQuery'),
         source.slice(recentStart, recentEnd),
+        source.slice(readingRefreshStart, readingRefreshEnd),
         callbackSource('removeDeletedEntries', 'handleRefresh'),
         callbackSource('handleRefresh', 'executeRatingEdit'),
         callbackSource('handleSmartRefresh', 'handleIncludeSubfoldersChange'),
+        source.slice(treeRefreshStart, treeRefreshEnd),
         callbackSource('handleRefreshShortcut', 'handleRenameShortcut'),
     ].join('\n');
-    const methods = new Function(...Object.keys(view.context), `return (() => { ${declarations}\nreturn { removeDeletedEntries, handleRefresh, handleSmartRefresh, handleRefreshShortcut, applyFolderTagSearch, loadRecentReading }; })();`)(...Object.values(view.context));
+    const methods = new Function(...Object.keys(view.context), `return (() => { ${declarations}\nreturn { removeDeletedEntries, handleRefresh, handleSmartRefresh, handleRefreshTree, handleRefreshShortcut, applyFolderTagSearch, loadRecentReading }; })();`)(...Object.values(view.context));
     const startSearch = () => {
         const start = source.indexOf('  useEffect(() => {\n    const requestId = librarySearchRequestRef.current');
         const end = source.indexOf('\n  useEffect(', start + 1);
@@ -380,5 +404,122 @@ test('F5와 스마트 새로고침은 검색 중 폴더 선택·mtime·탐색기
         await value.handleRefreshShortcut();
         assert.equal(value.state.searchSubmitToken, 2);
         assert.equal(value.calls.explorerRefresh, 0);
+        assert.equal(value.state.treeRefreshToken, 1);
+    }
+});
+
+test('폴더 헤더 새로고침과 F5는 탐색기와 일반 폴더를 같은 방식으로 강제 갱신한다', async () => {
+    for (const handler of ['handleRefreshTree', 'handleRefreshShortcut']) {
+        for (const explorerActive of [false, true]) {
+            const value = refreshFixture({ explorerActive });
+            await value[handler]();
+            assert.equal(value.state.treeRefreshToken, 1, handler);
+            assert.deepEqual(value.calls.scans, [{ path: '/Volumes/NAS/Books', options: { includeSubfolders: true, fastInitial: true, force: true } }]);
+            assert.equal(value.calls.stat, 0);
+            assert.equal(value.calls.explorerRefresh, 0);
+            assert.equal(value.calls.resets, 1);
+            assert.equal(value.calls.missing, 1);
+            assert.equal(value.state.isRefreshingTree, false);
+            assert.equal(value.context.refreshingTreeRef.current, false);
+        }
+    }
+});
+
+test('F5는 최근 읽음과 다른 읽기 목록을 다시 조회하면서 탐색기도 갱신한다', async () => {
+    for (const isRecentReading of [true, false]) {
+        const freshRows = [{ path: remainingPath }];
+        const value = refreshFixture({ isReadingList: true, isRecentReading, explorerActive: true, selectedFolderPath: '', freshRows });
+        await value.handleRefreshShortcut();
+        assert.equal(value.state.treeRefreshToken, 1);
+        assert.equal(value.calls.recent, isRecentReading ? 1 : 0);
+        assert.equal(value.calls.readingLists, isRecentReading ? 0 : 1);
+        if (isRecentReading) assert.deepEqual(value.state.recentReadingFiles, freshRows);
+        assert.deepEqual(value.calls.scans, []);
+        assert.deepEqual(value.calls.tags, []);
+        assert.equal(value.calls.explorerRefresh, 0);
+        assert.equal(value.state.isRefreshingTree, false);
+    }
+});
+
+test('F5는 선택 폴더가 없는 라이브러리 검색과 태그 검색도 탐색기와 함께 갱신한다', async () => {
+    const freshRows = [{ path: remainingPath }];
+    const value = refreshFixture({ isLibrarySearchActive: true, isFolderTagSearchActive: true, selectedFolderPath: '', freshRows });
+    await value.handleRefreshShortcut();
+    assert.equal(value.state.treeRefreshToken, 1);
+    assert.equal(value.state.searchSubmitToken, 1);
+    assert.equal(value.context.librarySearchRequestRef.current, 11);
+    assert.deepEqual(value.calls.tags, [[value.context.folderTagDatabaseScopes, value.context.folderTagSelections, 'any']]);
+    assert.deepEqual(value.state.folderTagSearchResults, freshRows);
+    assert.deepEqual(value.calls.scans, []);
+    assert.equal(value.calls.recent, 0);
+    assert.equal(value.calls.readingLists, 0);
+});
+
+test('진행 중인 폴더·검색·읽기 작업에서는 헤더 새로고침과 F5가 중복 요청을 시작하지 않는다', async () => {
+    const busyStates = [
+        { isRefreshingTree: true },
+        { refreshingTree: true },
+        { scanning: true },
+        { preparingDuplicates: true },
+        { librarySearchLoading: true, isLibrarySearchActive: true },
+        { folderTagLoading: true, isFolderTagSearchActive: true },
+        { isRecentReading: true, recentReadingLoading: true },
+        { isReadingList: true, readingListLoading: true },
+    ];
+    for (const options of busyStates) {
+        const value = refreshFixture(options);
+        await value.handleRefreshTree();
+        await value.handleRefreshShortcut();
+        assert.equal(value.state.treeRefreshToken, 0, JSON.stringify(options));
+        assert.equal(value.calls.resets, 0);
+        assert.deepEqual(value.calls.scans, []);
+        assert.deepEqual(value.calls.tags, []);
+        assert.equal(value.calls.recent, 0);
+        assert.equal(value.calls.readingLists, 0);
+        assert.equal(value.state.searchSubmitToken, 0);
+    }
+});
+
+test('새로고침 대기 중 연속 클릭과 F5는 합쳐지고 완료 뒤에는 다시 실행할 수 있다', async () => {
+    for (const readingList of [false, true]) {
+        const pending = deferred();
+        const value = refreshFixture(readingList
+            ? { isReadingList: true, readingList: () => pending.promise }
+            : { scan: () => pending.promise });
+        const first = value.handleRefreshTree();
+        assert.equal(value.state.isRefreshingTree, true);
+        assert.equal(value.context.refreshingTreeRef.current, true);
+        await value.handleRefreshShortcut();
+        await value.handleRefreshTree();
+        assert.equal(value.state.treeRefreshToken, 1);
+        assert.equal(value.calls.scans.length + value.calls.readingLists, 1);
+        pending.resolve([]);
+        await first;
+        assert.equal(value.state.isRefreshingTree, false);
+        assert.equal(value.context.refreshingTreeRef.current, false);
+        await value.handleRefreshShortcut();
+        assert.equal(value.state.treeRefreshToken, 2);
+        assert.equal(value.calls.scans.length + value.calls.readingLists, 2);
+    }
+});
+
+test('새로고침 실패 뒤에도 진행 상태를 해제하여 F5 재시도를 허용한다', async () => {
+    for (const readingList of [false, true]) {
+        let attempts = 0;
+        const failOnce = async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error('Refresh failed');
+            return [];
+        };
+        const value = refreshFixture(readingList
+            ? { isReadingList: true, readingList: failOnce }
+            : { scan: failOnce });
+        await assert.rejects(value.handleRefreshShortcut(), /Refresh failed/);
+        assert.equal(value.state.isRefreshingTree, false);
+        assert.equal(value.context.refreshingTreeRef.current, false);
+        await value.handleRefreshShortcut();
+        assert.equal(attempts, 2);
+        assert.equal(value.state.treeRefreshToken, 2);
+        assert.equal(value.state.isRefreshingTree, false);
     }
 });

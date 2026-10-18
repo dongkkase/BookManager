@@ -61,16 +61,19 @@ export function libraryStatusClass(state, options = {}) {
     return resolveLibraryStatus(state, options);
 }
 
-export function libraryStatusText(t, state, options = {}) {
+export function libraryScanStatusText(t, state, options = {}) {
     const status = resolveLibraryStatus(state, options);
+    if (status === 'pending') return t('folder_library_never_scanned');
+    if (status === 'scanning') return t('folder_library_scanning');
+    if (status === 'cancelled') return t('folder_library_scan_cancelled');
+    if (status === 'error') return t('folder_library_scan_failed');
+    return formatLibraryRelativeTime(t, state.lastScannedAt, options.nowMs);
+}
+
+export function libraryStatusText(t, state, options = {}) {
     const folderCount = Number(options.folderCount ?? state?.folderCount ?? 0) || 0;
     const count = state?.indexedCount || state?.fileCount || 0;
-    let statusText = '';
-    if (status === 'pending') statusText = t('folder_library_never_scanned');
-    else if (status === 'scanning') statusText = t('folder_library_scanning');
-    else if (status === 'cancelled') statusText = t('folder_library_scan_cancelled');
-    else if (status === 'error') statusText = t('folder_library_scan_failed');
-    else statusText = formatLibraryRelativeTime(t, state.lastScannedAt, options.nowMs);
+    const statusText = libraryScanStatusText(t, state, options);
     return t('folder_library_scan_meta', [folderCount, count, statusText]);
 }
 

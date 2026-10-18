@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   FOLDER_GROUP_KEYS,
   FOLDER_SORT_KEYS,
@@ -14,6 +14,7 @@ function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, 
   const ref = useRef(null);
   const menuRef = useRef(null);
   const [placement, setPlacement] = useState('down');
+    const [horizontalOffset, setHorizontalOffset] = useState(0);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -34,15 +35,22 @@ function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, 
     };
   }, [open, setOpen]);
 
-  useEffect(() => {
-    if (!open || !ref.current || !menuRef.current) return;
-    setPlacement(dropdownVerticalPlacement(
-      ref.current.getBoundingClientRect(),
-      menuRef.current.offsetHeight,
-      window.innerHeight,
-    ));
-    menuRef.current.querySelector('button')?.focus();
-  }, [open]);
+    useLayoutEffect(() => {
+        if (!open || !ref.current || !menuRef.current) return;
+        const triggerRect = ref.current.getBoundingClientRect();
+        const panelRect = ref.current.closest('.folder-right-panel')?.getBoundingClientRect();
+        const minLeft = Math.max(8, (panelRect?.left ?? 0) + 8);
+        const maxRight = Math.min(window.innerWidth - 8, (panelRect?.right ?? window.innerWidth) - 8);
+        menuRef.current.style.maxWidth = `${Math.max(0, maxRight - minLeft)}px`;
+        setPlacement(dropdownVerticalPlacement(
+            triggerRect,
+            menuRef.current.offsetHeight,
+            window.innerHeight,
+        ));
+        const left = Math.max(minLeft, Math.min(triggerRect.left, maxRight - menuRef.current.offsetWidth));
+        setHorizontalOffset(left - triggerRect.left);
+        menuRef.current.querySelector('button')?.focus();
+    }, [open]);
 
   return (
     <div className="toolbar-dropdown" ref={ref}>
@@ -60,6 +68,7 @@ function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, 
           ref={menuRef}
           role="menu"
           className={`dropdown-menu dropdown-menu-${placement} ${menuClassName}`}
+            style={{ left: horizontalOffset }}
         >
           {children}
         </div>
@@ -84,9 +93,17 @@ function FolderToolbar({
   onDeleteLayout,
   onApplyLayout,
   onExportCsv,
+    children,
 }) {
   const [openMenu, setOpenMenu] = useState('');
   const setMenu = menu => open => setOpenMenu(open ? menu : '');
+    const runLayoutAction = (action, ...args) => {
+        setOpenMenu('');
+        action?.(...args);
+    };
+    const handleLayoutKeyDown = event => {
+        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+    };
 
   const groupLabels = {
     none: t('menu_none'),
@@ -177,20 +194,58 @@ function FolderToolbar({
         buttonLabel={t('folder_layouts')}
         open={openMenu === 'layout'}
         setOpen={setMenu('layout')}
+        menuClassName="layout-menu"
       >
-        <button className="dropdown-item" onClick={onEditLayout}><span />{t('menu_edit_layout')}</button>
-        <button className="dropdown-item" onClick={onSaveLayout}><span />{t('menu_save_layout')}</button>
-        <button className="dropdown-item" onClick={onDeleteLayout}><span />{t('menu_del_layout')}</button>
+        <button type="button" role="menuitem" className="dropdown-item" onClick={() => runLayoutAction(onEditLayout)} onKeyDown={handleLayoutKeyDown}><span />{t('menu_edit_layout')}</button>
+        <button type="button" role="menuitem" className="dropdown-item" onClick={() => runLayoutAction(onSaveLayout)} onKeyDown={handleLayoutKeyDown}><span />{t('menu_save_layout')}</button>
         {savedLayouts.length > 0 && <div className="dropdown-separator" />}
         {savedLayouts.map(name => (
-          <button key={name} className="dropdown-item" onClick={() => onApplyLayout(name)}>
-            <span />
-            {name}
-          </button>
+            <div key={name} className="saved-layout-row" role="none" onKeyDown={handleLayoutKeyDown}>
+                <button
+                    type="button"
+                    role="menuitem"
+                    className="dropdown-item saved-layout-name"
+                    title={name}
+                    onClick={() => runLayoutAction(onApplyLayout, name)}
+                >
+                    <span />
+                    <span>{name}</span>
+                </button>
+                <button
+                    type="button"
+                    role="menuitem"
+                    className="saved-layout-action"
+                    title={t('layout_edit_named', [name])}
+                    aria-label={t('layout_edit_named', [name])}
+                    onClick={() => runLayoutAction(onEditLayout, name)}
+                >
+                    <FaIcon name="pen" size={11} />
+                </button>
+                <button
+                    type="button"
+                    role="menuitem"
+                    className="saved-layout-action saved-layout-delete"
+                    title={t('layout_delete_named', [name])}
+                    aria-label={t('layout_delete_named', [name])}
+                    onClick={() => runLayoutAction(onDeleteLayout, name)}
+                >
+                    <FaIcon name="trash" size={11} />
+                </button>
+            </div>
         ))}
       </Dropdown>
 
-      <button className="toolbar-btn csv-btn" onClick={onExportCsv}>{t('folder_export_csv')}</button>
+        <button
+            type="button"
+            className="toolbar-btn csv-btn"
+            title={t('folder_export_csv')}
+            aria-label={t('folder_export_csv')}
+            onClick={onExportCsv}
+        >
+            <span>CSV</span>
+            <FaIcon name="download" size={11} />
+        </button>
+        {children}
     </div>
   );
 }

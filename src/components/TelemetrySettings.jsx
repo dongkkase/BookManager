@@ -8,7 +8,7 @@ const LABELS = {
         usageStats: '기능 사용 빈도 보내기',
         usageStatsHelp: '앱의 사용성 개선을 위해 메뉴와 기능의 사용 빈도수, 앱 설정 언어를 보냅니다.',
         privacy: '앱 버전·운영체제·기능 식별자가 포함될 수 있습니다. 책 제목·본문·파일 경로·검색어는 보내지 않습니다.',
-        optional: '두 항목은 기본으로 켜져 있습니다. 원하지 않으면 체크를 해제하고 저장하세요. 언제든지 변경할 수 있습니다.',
+        optional: '두 항목은 기본으로 켜져 있습니다. 원하지 않으면 체크를 해제한 뒤 ‘적용’을 누르세요. 언제든지 변경할 수 있습니다.',
         unavailable: '현재 연결되어 있지 않아 전송되지 않습니다.',
     },
     en: {
@@ -18,7 +18,7 @@ const LABELS = {
         usageStats: 'Send feature usage counts',
         usageStatsHelp: 'Send menu and feature usage counts and the app’s selected language to help improve usability.',
         privacy: 'Reports may include the app version, operating system and feature identifiers. Book titles, contents, file paths and search terms are not sent.',
-        optional: 'Both options are enabled by default. Uncheck either option and save to turn it off. You can change these settings at any time.',
+        optional: 'Both options are enabled by default. Uncheck either option and click Apply to turn it off. You can change these settings at any time.',
         unavailable: 'Currently unavailable. No data is sent.',
     },
     ja: {
@@ -28,7 +28,7 @@ const LABELS = {
         usageStats: '機能の利用頻度を送信',
         usageStatsHelp: 'アプリの使いやすさを改善するため、メニューや機能の利用頻度とアプリの設定言語を送信します。',
         privacy: 'アプリのバージョン・OS・機能識別子が含まれる場合があります。本のタイトル・本文・ファイルパス・検索語は送信しません。',
-        optional: 'どちらも初期設定では有効です。希望しない場合はチェックを外して保存してください。いつでも変更できます。',
+        optional: 'どちらも初期設定では有効です。希望しない場合はチェックを外して「適用」を押してください。いつでも変更できます。',
         unavailable: '現在接続されていないため、送信されません。',
     },
 };

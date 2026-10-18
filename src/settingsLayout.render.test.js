@@ -819,15 +819,39 @@ async function runLibraryPreviewInteractions() {
     check(document.querySelector('.settings-library-preview')?.textContent.includes(translate('folder.sidebar.empty_libraries', language)), 'Empty library preview has no guidance');
     return { mutations: 13, dragAndDrop: 7, draftIsolation: true, saved: true, cancelled: true, empty: true };
 }
-async function runLibraryEditorTransitions() {
+async function runLibraryEditorTransitions(reducedMotion = false) {
     await open({ initialTab: 'folder' });
-    check(!matchMedia('(prefers-reduced-motion: reduce)').matches, 'Animated editor fixture unexpectedly prefers reduced motion');
+    check(matchMedia('(prefers-reduced-motion: reduce)').matches === reducedMotion, 'Editor fixture has an unexpected motion preference');
+    const firstEditorFrame = new Promise(resolve => {
+        const observer = new MutationObserver(() => {
+            const editor = libraryEditor();
+            if (!editor) return;
+            observer.disconnect();
+            requestAnimationFrame(() => resolve({
+                expanded: editor.classList.contains('is-open'),
+                offset: editorOffset(editor),
+                height: editor.offsetHeight,
+                focused: editor.contains(document.activeElement),
+            }));
+        });
+        observer.observe(document.querySelector('.settings-content'), { childList: true, subtree: true });
+    });
     previewItem('/fixture/Books').click();
+    const firstFrame = await firstEditorFrame;
+    check(!firstFrame.expanded && firstFrame.offset >= firstFrame.height && !firstFrame.focused,
+        'Library editor did not prepare a closed, unfocused frame before entering: ' + JSON.stringify(firstFrame));
     await until(() => libraryEditor(), 'Selecting a library did not mount its editor');
     const editor = libraryEditor();
+    check(getComputedStyle(editor).transitionDuration === '0.22s', 'Library editor did not retain its slide duration');
     const initialOffset = editorOffset(editor);
     check(initialOffset > 1, 'Library editor did not begin below its open position');
-    await waitForLibraryEditor();
+    let previousOffset = initialOffset;
+    await until(() => {
+        const offset = editorOffset(editor);
+        check(offset <= previousOffset + 0.5, 'Library editor reversed or jumped during its opening frames');
+        previousOffset = offset;
+        return editor.classList.contains('is-open') && !editor.inert && Math.abs(offset) <= 0.5;
+    }, 'Library editor did not finish sliding open');
     check(editor === libraryEditor() && Math.abs(editorOffset(editor)) <= 0.5, 'Library editor did not slide up into place');
     const openBounds = editor.getBoundingClientRect();
     libraryRow('/fixture/Novels').querySelector('.settings-library-select').click();
@@ -855,7 +879,61 @@ async function runLibraryEditorTransitions() {
     await new Promise(resolve => setTimeout(resolve, 300));
     check(libraryEditor() === reopened && reopened.classList.contains('is-open') && document.getElementById('settings-library-alias').value === '소설 모음',
         'A stale close completion removed the reopened editor');
-    return { slidesOpen: true, slidesClosed: true, retainsNodeOnSelection: true, rapidReopen: true };
+    panel().querySelector('h2').click();
+    await until(() => !libraryEditor(), 'Library editor did not close before the pending-entry check');
+    previewItem('/fixture/Books').click();
+    await until(() => libraryEditor(), 'Pending library editor did not mount');
+    document.getElementById('settings-tab-basic').click();
+    await until(() => !libraryEditor(), 'Switching tabs did not cancel the pending library editor');
+    check(!document.querySelector('.settings-modal-body').classList.contains('has-library-editor'),
+        'Switching tabs retained the library editor spacing');
+    return { preparesClosedFrame: true, slidesOpen: true, slidesClosed: true, retainsNodeOnSelection: true, rapidReopen: true, cancelsPendingEntry: true };
+}
+let libraryPointerSelection;
+async function prepareLibraryPointerSelection(source, path) {
+    if (!libraryEditor()) {
+        await open({ initialTab: 'folder' });
+        await selectPreview('/fixture/Books');
+    }
+    const row = libraryRow(path);
+    const target = source === 'preview' ? previewItem(path) : source === 'row' ? row : row.querySelector('.settings-library-select');
+    target.scrollIntoView({ block: 'center', behavior: 'instant' });
+    await frame();
+    const bounds = target.getBoundingClientRect();
+    const point = { x: Math.round(source === 'row' ? bounds.left + 3 : bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) };
+    check(target.contains(document.elementFromPoint(point.x, point.y)), 'Library pointer target is covered: ' + source);
+    if (source === 'row') check(document.elementFromPoint(point.x, point.y) === row, 'Expected registered row padding as pointer target');
+    const editor = libraryEditor();
+    const trace = { source, path, editor, events: [], errors: [], frame: 0 };
+    const sample = () => {
+        if (libraryEditor() !== editor || !editor.classList.contains('is-open') || editor.inert || Math.abs(editorOffset(editor)) > 0.5) {
+            trace.errors.push('Pointer selection closed, moved or replaced the editor');
+        }
+    };
+    const sampleFrame = () => { sample(); trace.frame = requestAnimationFrame(sampleFrame); };
+    trace.observer = new MutationObserver(records => {
+        if (records.some(record => !record.oldValue?.split(' ').includes('is-open'))) trace.errors.push('Pointer selection removed the open class between click phases');
+        sample();
+    });
+    trace.observer.observe(editor, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+    trace.record = event => { trace.events.push([event.type, event.isTrusted]); sample(); };
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.addEventListener(type, trace.record, true);
+    trace.frame = requestAnimationFrame(sampleFrame);
+    libraryPointerSelection = trace;
+    return point;
+}
+async function checkLibraryPointerSelection() {
+    for (let index = 0; index < 5; index++) await frame();
+    const trace = libraryPointerSelection;
+    cancelAnimationFrame(trace.frame);
+    trace.observer.disconnect();
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.removeEventListener(type, trace.record, true);
+    check(JSON.stringify(trace.events) === JSON.stringify(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].map(type => [type, true])),
+        'Library selection did not receive a trusted pointer sequence: ' + JSON.stringify(trace.events));
+    check(trace.errors.length === 0, trace.source + ': ' + trace.errors.join('; '));
+    check(document.querySelector('.settings-library-editor-path').textContent.includes(trace.path), 'Pointer selection did not update the editor contents');
+    check(libraryRow(trace.path).classList.contains('active') && previewItem(trace.path).getAttribute('aria-pressed') === 'true', 'Pointer selection did not synchronize list and preview');
+    return { source: trace.source, trustedPointer: true, retainsOpenEditor: true };
 }
 function checkLibraryPreviewLayout(context) {
     const workspace = document.querySelector('.settings-library-workspace');
@@ -1088,7 +1166,7 @@ async function runLayout(scale, selectedLanguage = 'ko') {
     return { viewport: [innerWidth, innerHeight], scale, language: selectedLanguage, measurements };
 }
 render();
-window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview };
+window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview };
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<html><head></head><body style="margin:0"><div id="root" style="width:100%;height:100vh"></div><script type="module" src="/fixture.jsx"></script></body></html>');
         server = await createServer({
@@ -1124,6 +1202,22 @@ app.whenReady().then(async () => {
     const providers = await window.webContents.executeJavaScript('window.settingsLayoutTests.runProviderInteractions()');
     const libraryPreview = await window.webContents.executeJavaScript('window.settingsLayoutTests.runLibraryPreviewInteractions()');
     const editorTransitions = await window.webContents.executeJavaScript('window.settingsLayoutTests.runLibraryEditorTransitions()');
+    const checkPointerSelections = async () => {
+        const results = [];
+        for (const [source, path] of [['list', '/fixture/Novels'], ['preview', '/fixture/Comics'], ['row', '/fixture/Books']]) {
+            const point = await window.webContents.executeJavaScript('window.settingsLayoutTests.prepareLibraryPointerSelection(' + JSON.stringify(source) + ',' + JSON.stringify(path) + ')');
+            window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+            window.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+            window.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+            results.push(await window.webContents.executeJavaScript('window.settingsLayoutTests.checkLibraryPointerSelection()'));
+        }
+        return results;
+    };
+    editorTransitions.pointerSelections = await checkPointerSelections();
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    const editorReducedMotion = await window.webContents.executeJavaScript('window.settingsLayoutTests.runLibraryEditorTransitions(true)');
+    editorReducedMotion.pointerSelections = await checkPointerSelections();
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     await window.webContents.executeJavaScript('window.settingsLayoutTests.prepareLibraryEditorResize()');
     window.setContentSize(520, 650);
     await window.webContents.executeJavaScript('window.settingsLayoutTests.checkLibraryEditorLayout("editor resized to mobile")');
@@ -1188,7 +1282,7 @@ app.whenReady().then(async () => {
             }
         }
     }
-    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ interactions, apply, providers, libraryPreview, editorTransitions, layouts }));
+    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ interactions, apply, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts }));
     app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
 `);
@@ -1212,7 +1306,11 @@ app.whenReady().then(async () => {
         assert.deepEqual(report.apply, { initialClean: true, uiOnlyClean: true, revertedClean: true, duplicateBlocked: true, pendingEditsRetained: true, languageRetained: true, retry: true, fileAssociationGuards: true, partialBaseline: true });
         assert.deepEqual(report.providers, { sources: 19, persisted: true, cancelled: true, retainedValues: true, fallback: true, allDisabled: true, keyboardActivations: 2 });
         assert.deepEqual(report.libraryPreview, { mutations: 13, dragAndDrop: 7, draftIsolation: true, saved: true, cancelled: true, empty: true });
-        assert.deepEqual(report.editorTransitions, { slidesOpen: true, slidesClosed: true, retainsNodeOnSelection: true, rapidReopen: true });
+        assert.deepEqual(report.editorTransitions, {
+            preparesClosedFrame: true, slidesOpen: true, slidesClosed: true, retainsNodeOnSelection: true, rapidReopen: true, cancelsPendingEntry: true,
+            pointerSelections: ['list', 'preview', 'row'].map(source => ({ source, trustedPointer: true, retainsOpenEditor: true })),
+        });
+        assert.deepEqual(report.editorReducedMotion, report.editorTransitions);
         assert.equal(report.layouts.length, 10);
         assert.ok(report.layouts.every(layout => layout.measurements.length === 11));
         t.diagnostic(JSON.stringify(report));

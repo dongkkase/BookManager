@@ -24,7 +24,7 @@ test('폴더탭 탐색기 패널의 아이콘은 이모지 대신 FontAwesome을
     assert.match(source, /name=\{isExpanded \? 'angleDown' : 'chevronRight'\}/);
     assert.match(folderTabSource, /icon="folderOpen"/);
     assert.match(folderTabSource, /icon=\{isFavoriteFolder[\s\S]*\? 'star' : 'pin'\}/);
-    assert.match(folderTabSource, /<FaIcon name="circle"/);
+    assert.match(source, /<FaIcon name="circle"/);
     assert.match(folderTabSource, /<FaIcon name="bars"/);
     assert.match(folderTabSource, /<FaIcon name="microsoft"/);
     assert.match(folderTabSource, /<FaIcon name="list"/);
@@ -37,11 +37,10 @@ test('폴더탭 탐색기 아이콘 버튼은 hover 툴팁 정보를 가진다',
     assert.match(source, /data-tooltip=\{label\}/);
 });
 
-test('마지막 라이브러리 메뉴 툴팁은 목록 스크롤을 만들지 않도록 위로 열린다', () => {
-    const lastLibraryMenuSelector = /\.sidebar-section-library\s*>\s*\.nav-list\s*>\s*\.library-list-item:last-child\s+\.library-menu-btn\[data-tooltip\]/;
-    assert.match(folderTabStyles, lastLibraryMenuSelector);
-    assert.match(folderTabStyles, new RegExp(`${lastLibraryMenuSelector.source}::before\\s*\\{[\\s\\S]*?top:\\s*auto;[\\s\\S]*?bottom:\\s*calc\\(100% \\+ 7px\\);`));
-    assert.match(folderTabStyles, new RegExp(`${lastLibraryMenuSelector.source}::after\\s*\\{[\\s\\S]*?top:\\s*auto;[\\s\\S]*?bottom:\\s*calc\\(100% \\+ 2px\\);[\\s\\S]*?border-bottom:\\s*1px solid #58606a;`));
+test('라이브러리 메뉴 툴팁은 스크롤 경계에서 잘리지 않도록 행 안쪽 왼편에 열린다', () => {
+    const libraryMenuSelector = /\.library-menu-btn\[data-tooltip\]/;
+    assert.match(folderTabStyles, new RegExp(`${libraryMenuSelector.source}::before\\s*\\{[\\s\\S]*?top:\\s*50%;[\\s\\S]*?right:\\s*calc\\(100% \\+ 8px\\);[\\s\\S]*?transform:\\s*translateY\\(-50%\\);`));
+    assert.match(folderTabStyles, new RegExp(`${libraryMenuSelector.source}::after\\s*\\{[\\s\\S]*?top:\\s*calc\\(50% - 4px\\);[\\s\\S]*?right:\\s*calc\\(100% \\+ 4px\\);`));
 });
 
 test('라이브러리 리스트의 행 버튼은 삭제 대신 컨텍스트 메뉴를 연다', () => {
