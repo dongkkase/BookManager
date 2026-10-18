@@ -382,11 +382,27 @@
             pointer-events: auto;
         }
 
-        .demo-slide img {
+        .demo-slide img,
+        .demo-slide video {
             display: block;
             width: 100%;
             height: 100%;
             object-fit: contain;
+        }
+
+        .demo-slide-video {
+            display: grid;
+            grid-template-rows: minmax(0, 1fr) auto;
+        }
+
+        .demo-slide-video video {
+            min-height: 0;
+        }
+
+        .demo-slide-video .demo-caption {
+            position: static;
+            padding: 16px 22px;
+            background: var(--panel);
         }
 
         .demo-caption {
@@ -660,7 +676,8 @@
                 grid-template-rows: auto 1fr;
             }
 
-            .demo-slide img {
+            .demo-slide img,
+            .demo-slide video {
                 height: auto;
                 aspect-ratio: 1469 / 1054;
             }
@@ -788,14 +805,14 @@
             <div class="demo-header">
                 <div>
                     <h2 id="demo-title" class="text-animate">See your library take shape</h2>
-                    <p class="section-lead">Explore the app, from browsing and organizing files to editing book details, reading and sending books to mobile. Screenshots show the Korean interface.</p>
+                    <p class="section-lead">Explore the app, from browsing and organizing files to editing book details, reading and sending books to mobile. Demos show the Korean interface.</p>
                 </div>
                 <span class="demo-count" data-demo-count>1 / 11</span>
             </div>
-            <div class="demo-slider" data-demo-slider aria-label="BookManager screenshots">
+            <div class="demo-slider" data-demo-slider aria-label="BookManager app demos">
                 <div class="demo-viewport">
-                    <figure class="demo-slide active" aria-hidden="false">
-                        <img src="../demo/demo0.png" alt="BookManager library browser" loading="eager">
+                    <figure class="demo-slide demo-slide-video active" aria-hidden="false">
+                        <video src="../demo/demo0.mp4" aria-label="BookManager library browsing demo video" autoplay muted playsinline controls preload="auto"></video>
                         <figcaption class="demo-caption">
                             <span><strong>Browse your library by cover</strong>See covers and details for books in your folders, and find your next read.</span>
                             <em class="demo-badge">Library manager</em>
@@ -871,21 +888,21 @@
                             <em class="demo-badge">File transfer</em>
                         </figcaption>
                     </figure>
-                    <button class="demo-control prev" type="button" data-demo-prev aria-label="Previous screenshot">&lsaquo;</button>
-                    <button class="demo-control next" type="button" data-demo-next aria-label="Next screenshot">&rsaquo;</button>
+                    <button class="demo-control prev" type="button" data-demo-prev aria-label="Previous demo">&lsaquo;</button>
+                    <button class="demo-control next" type="button" data-demo-next aria-label="Next demo">&rsaquo;</button>
                 </div>
-                <div class="demo-dots" aria-label="Choose a screenshot">
-                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="Screenshot 1"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="Screenshot 2"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="Screenshot 3"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="Screenshot 4"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="Screenshot 5"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="Screenshot 6"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="Screenshot 7"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="Screenshot 8"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="Screenshot 9"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="Screenshot 10"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="Screenshot 11"></button>
+                <div class="demo-dots" aria-label="Choose a demo">
+                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="Demo 1"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="Demo 2"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="Demo 3"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="Demo 4"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="Demo 5"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="Demo 6"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="Demo 7"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="Demo 8"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="Demo 9"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="Demo 10"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="Demo 11"></button>
                 </div>
             </div>
         </section>
@@ -1167,6 +1184,7 @@
             const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             let currentIndex = 0;
             let timer = null;
+            let hasFocus = slider.contains(document.activeElement);
 
             function showSlide(index) {
                 currentIndex = (index + slides.length) % slides.length;
@@ -1174,6 +1192,17 @@
                     const active = slideIndex === currentIndex;
                     slide.classList.toggle('active', active);
                     slide.setAttribute('aria-hidden', active ? 'false' : 'true');
+                    slide.inert = !active;
+                    const video = slide.querySelector('video');
+                    if (video) {
+                        if (active) {
+                            video.currentTime = 0;
+                            video.muted = true;
+                            video.play()?.catch(() => {});
+                        } else {
+                            video.pause();
+                        }
+                    }
                 });
                 dots.forEach((dot, dotIndex) => {
                     const active = dotIndex === currentIndex;
@@ -1187,15 +1216,33 @@
 
             function stopTimer() {
                 if (!timer) return;
-                clearInterval(timer);
+                clearTimeout(timer);
                 timer = null;
+            }
+
+            function canAutoAdvance() {
+                return !reduceMotion && slides.length > 1
+                    && !slider.matches(':hover') && !hasFocus;
             }
 
             function startTimer() {
                 stopTimer();
-                if (reduceMotion || slides.length < 2) return;
-                timer = setInterval(() => showSlide(currentIndex + 1), 4500);
+                if (!canAutoAdvance()) return;
+                const video = slides[currentIndex].querySelector('video');
+                if (video && !video.ended && !video.error) return;
+                timer = setTimeout(() => {
+                    showSlide(currentIndex + 1);
+                    startTimer();
+                }, video?.ended ? 0 : 4500);
             }
+
+            slides.forEach((slide, slideIndex) => {
+                const video = slide.querySelector('video');
+                video?.addEventListener('ended', () => {
+                    if (slideIndex === currentIndex) startTimer();
+                });
+                video?.addEventListener('error', startTimer);
+            });
 
             slider.querySelector('[data-demo-prev]')?.addEventListener('click', () => {
                 showSlide(currentIndex - 1);
@@ -1214,8 +1261,14 @@
 
             slider.addEventListener('mouseenter', stopTimer);
             slider.addEventListener('mouseleave', startTimer);
-            slider.addEventListener('focusin', stopTimer);
-            slider.addEventListener('focusout', startTimer);
+            slider.addEventListener('focusin', () => {
+                hasFocus = true;
+                stopTimer();
+            });
+            slider.addEventListener('focusout', (event) => {
+                hasFocus = slider.contains(event.relatedTarget);
+                startTimer();
+            });
 
             showSlide(0);
             startTimer();

@@ -376,11 +376,27 @@
             pointer-events: auto;
         }
 
-        .demo-slide img {
+        .demo-slide img,
+        .demo-slide video {
             display: block;
             width: 100%;
             height: 100%;
             object-fit: contain;
+        }
+
+        .demo-slide-video {
+            display: grid;
+            grid-template-rows: minmax(0, 1fr) auto;
+        }
+
+        .demo-slide-video video {
+            min-height: 0;
+        }
+
+        .demo-slide-video .demo-caption {
+            position: static;
+            padding: 16px 22px;
+            background: var(--panel);
         }
 
         .demo-caption {
@@ -654,7 +670,8 @@
                 grid-template-rows: auto 1fr;
             }
 
-            .demo-slide img {
+            .demo-slide img,
+            .demo-slide video {
                 height: auto;
                 aspect-ratio: 1469 / 1054;
             }
@@ -786,10 +803,10 @@
                 </div>
                 <span class="demo-count" data-demo-count>1 / 11</span>
             </div>
-            <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 이미지">
+            <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 화면">
                 <div class="demo-viewport">
-                    <figure class="demo-slide active" aria-hidden="false">
-                        <img src="demo/demo0.png" alt="BookManager 라이브러리 브라우저 화면" loading="eager">
+                    <figure class="demo-slide demo-slide-video active" aria-hidden="false">
+                        <video src="demo/demo0.mp4" aria-label="BookManager 라이브러리 탐색 데모 영상" autoplay muted playsinline controls preload="auto"></video>
                         <figcaption class="demo-caption">
                             <span><strong>표지로 둘러보는 나의 라이브러리</strong>폴더에 쌓인 책을 표지와 책 정보로 확인하고, 읽고 싶은 책을 찾습니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
@@ -865,21 +882,21 @@
                             <em class="demo-badge">파일 전송</em>
                         </figcaption>
                     </figure>
-                    <button class="demo-control prev" type="button" data-demo-prev aria-label="이전 데모 이미지">&lsaquo;</button>
-                    <button class="demo-control next" type="button" data-demo-next aria-label="다음 데모 이미지">&rsaquo;</button>
+                    <button class="demo-control prev" type="button" data-demo-prev aria-label="이전 데모 화면">&lsaquo;</button>
+                    <button class="demo-control next" type="button" data-demo-next aria-label="다음 데모 화면">&rsaquo;</button>
                 </div>
-                <div class="demo-dots" aria-label="데모 이미지 선택">
-                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="데모 이미지 1"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="데모 이미지 2"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="데모 이미지 3"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="데모 이미지 4"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="데모 이미지 5"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="데모 이미지 6"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="데모 이미지 7"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="데모 이미지 8"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="데모 이미지 9"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="데모 이미지 10"></button>
-                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="데모 이미지 11"></button>
+                <div class="demo-dots" aria-label="데모 화면 선택">
+                    <button class="demo-dot active" type="button" data-demo-dot="0" aria-label="데모 화면 1"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="1" aria-label="데모 화면 2"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="2" aria-label="데모 화면 3"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="3" aria-label="데모 화면 4"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="4" aria-label="데모 화면 5"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="5" aria-label="데모 화면 6"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="6" aria-label="데모 화면 7"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="7" aria-label="데모 화면 8"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="8" aria-label="데모 화면 9"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="9" aria-label="데모 화면 10"></button>
+                    <button class="demo-dot" type="button" data-demo-dot="10" aria-label="데모 화면 11"></button>
                 </div>
             </div>
         </section>
@@ -1161,6 +1178,7 @@
             const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             let currentIndex = 0;
             let timer = null;
+            let hasFocus = slider.contains(document.activeElement);
 
             function showSlide(index) {
                 currentIndex = (index + slides.length) % slides.length;
@@ -1168,6 +1186,17 @@
                     const active = slideIndex === currentIndex;
                     slide.classList.toggle('active', active);
                     slide.setAttribute('aria-hidden', active ? 'false' : 'true');
+                    slide.inert = !active;
+                    const video = slide.querySelector('video');
+                    if (video) {
+                        if (active) {
+                            video.currentTime = 0;
+                            video.muted = true;
+                            video.play()?.catch(() => {});
+                        } else {
+                            video.pause();
+                        }
+                    }
                 });
                 dots.forEach((dot, dotIndex) => {
                     const active = dotIndex === currentIndex;
@@ -1181,15 +1210,33 @@
 
             function stopTimer() {
                 if (!timer) return;
-                clearInterval(timer);
+                clearTimeout(timer);
                 timer = null;
+            }
+
+            function canAutoAdvance() {
+                return !reduceMotion && slides.length > 1
+                    && !slider.matches(':hover') && !hasFocus;
             }
 
             function startTimer() {
                 stopTimer();
-                if (reduceMotion || slides.length < 2) return;
-                timer = setInterval(() => showSlide(currentIndex + 1), 4500);
+                if (!canAutoAdvance()) return;
+                const video = slides[currentIndex].querySelector('video');
+                if (video && !video.ended && !video.error) return;
+                timer = setTimeout(() => {
+                    showSlide(currentIndex + 1);
+                    startTimer();
+                }, video?.ended ? 0 : 4500);
             }
+
+            slides.forEach((slide, slideIndex) => {
+                const video = slide.querySelector('video');
+                video?.addEventListener('ended', () => {
+                    if (slideIndex === currentIndex) startTimer();
+                });
+                video?.addEventListener('error', startTimer);
+            });
 
             slider.querySelector('[data-demo-prev]')?.addEventListener('click', () => {
                 showSlide(currentIndex - 1);
@@ -1208,8 +1255,14 @@
 
             slider.addEventListener('mouseenter', stopTimer);
             slider.addEventListener('mouseleave', startTimer);
-            slider.addEventListener('focusin', stopTimer);
-            slider.addEventListener('focusout', startTimer);
+            slider.addEventListener('focusin', () => {
+                hasFocus = true;
+                stopTimer();
+            });
+            slider.addEventListener('focusout', (event) => {
+                hasFocus = slider.contains(event.relatedTarget);
+                startTimer();
+            });
 
             showSlide(0);
             startTimer();

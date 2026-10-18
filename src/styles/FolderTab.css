@@ -3610,6 +3610,9 @@ body.is-resizing-panel .detail-panel-wrap {
 }
 
 .view-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   width: var(--control-height);
   min-width: var(--control-height);
   height: var(--control-height);
