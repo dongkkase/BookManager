@@ -46,6 +46,68 @@ function find7z() {
     return '';
 }
 
+test('없는 파일은 ENOENT로 실패하고 기존 리더와 오디오 세션 및 캐시를 보존한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-missing-file-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const readerPath = path.join(root, 'reader.pdf');
+    const audioPath = path.join(root, 'audio.mp3');
+    fs.writeFileSync(readerPath, '');
+    fs.writeFileSync(audioPath, '');
+    const manager = new ViewerSessionManager();
+    const reader = manager.create(readerPath, { skipAdjacent: true });
+    const audio = manager.create(audioPath, { skipAdjacent: true });
+    const comicCache = { entries: [] };
+    const audioCache = { sessionId: reader.id, buffer: Buffer.from('cached audio') };
+    manager.comicArchiveEntryCaches.set(reader.id, comicCache);
+    manager.epubAudioAssetCache.set('cached-audio', audioCache);
+    const sessions = [...manager.sessions];
+    const sequence = manager.nextSessionSeq;
+
+    assert.throws(() => manager.create(path.join(root, 'missing.epub')), { code: 'ENOENT' });
+
+    assert.deepEqual([...manager.sessions], sessions);
+    assert.equal(manager.current('reader'), reader);
+    assert.equal(manager.current('audio'), audio);
+    assert.equal(manager.current(), audio);
+    assert.equal(manager.nextSessionSeq, sequence);
+    assert.deepEqual([...manager.comicArchiveEntryCaches], [[reader.id, comicCache]]);
+    assert.deepEqual([...manager.epubAudioAssetCache], [['cached-audio', audioCache]]);
+});
+
+for (const code of ['EACCES', 'EIO']) {
+    test(`파일 접근 검사에서 발생한 ${code} 오류를 그대로 전달한다`, t => {
+        const filePath = path.join(os.tmpdir(), 'bookmanager-viewer-unavailable.pdf');
+        const failure = Object.assign(new Error('File access failed.'), { code, syscall: 'stat', path: filePath });
+        const stat = t.mock.method(fs, 'statSync', target => {
+            assert.equal(target, path.resolve(filePath));
+            throw failure;
+        });
+        const manager = new ViewerSessionManager();
+
+        assert.throws(() => manager.create(filePath), error => error === failure && error.code === code);
+
+        assert.equal(stat.mock.callCount(), 1);
+        assert.equal(manager.sessions.size, 0);
+        assert.equal(manager.nextSessionSeq, 1);
+    });
+}
+
+test('명시적인 skipExistenceCheck 옵션은 파일 접근 검사를 건너뛴다', t => {
+    const failure = Object.assign(new Error('File access failed.'), { code: 'ENOENT' });
+    const stat = t.mock.method(fs, 'statSync', () => { throw failure; });
+    const manager = new ViewerSessionManager();
+    const filePath = path.join(os.tmpdir(), 'bookmanager-viewer-deferred.epub');
+
+    const session = manager.create(filePath, { skipExistenceCheck: true, skipAdjacent: true });
+
+    assert.equal(session.filePath, path.resolve(filePath));
+    assert.equal(session.type, 'epub');
+    assert.equal(manager.current('reader'), session);
+    assert.equal(stat.mock.callCount(), 0);
+    assert.throws(() => manager.create(filePath, { skipExistenceCheck: 'true' }), error => error === failure);
+    assert.equal(stat.mock.callCount(), 1);
+});
+
 test('TXT 뷰어 세션은 24MB를 초과하는 파일을 읽는다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-large-text-'));
     try {

@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import { getTelemetryStatus, reportTelemetryError, trackTelemetryEvent } from './telemetry.js';
+import { getRendererErrorDiagnostics, getTelemetryStatus, reportTelemetryError, trackTelemetryEvent } from './telemetry.js';
 
 export function isTelemetrySenderAllowed(event, { distIndexPath, devServerUrl }) {
     try {
@@ -25,9 +25,10 @@ export function setupTelemetryIPC({ ipcMain, distIndexPath, devServerUrl, report
     });
     ipcMain.on('telemetry:error', (event, payload) => {
         if (!isAllowed(event) || !payload || typeof payload !== 'object') return;
+        const diagnostics = getRendererErrorDiagnostics(payload);
         const error = {
-            name: typeof payload.name === 'string' ? payload.name.slice(0, 80) : 'Error',
-            code: typeof payload.code === 'string' ? payload.code.slice(0, 80) : '',
+            name: diagnostics.name,
+            code: diagnostics.code,
             stack: typeof payload.stack === 'string' ? payload.stack.slice(0, 12000) : '',
             filename: typeof payload.filename === 'string' ? payload.filename.slice(0, 4096) : '',
             lineno: payload.lineno,
@@ -35,7 +36,10 @@ export function setupTelemetryIPC({ ipcMain, distIndexPath, devServerUrl, report
         };
         report(error, {
             source: ['renderer', 'viewer', 'react', 'renderer-react', 'viewer-react', 'viewer-load'].includes(payload.source) ? payload.source : 'renderer',
-            error_kind: ['uncaught-error', 'unhandled-rejection'].includes(payload.error_kind) ? payload.error_kind : undefined,
+            error_kind: diagnostics.error_kind,
+            browser_error: diagnostics.browser_error,
+            ipc_channel: diagnostics.ipc_channel,
+            rejection_type: diagnostics.rejection_type,
         });
     });
 }

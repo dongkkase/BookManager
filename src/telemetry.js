@@ -47,6 +47,9 @@ export function reportTelemetryError(error, source = 'renderer', target = global
         if (diagnostics?.error_kind === 'uncaught-error' || diagnostics?.error_kind === 'unhandled-rejection') {
             payload.error_kind = diagnostics.error_kind;
         }
+        if (payload.error_kind === 'unhandled-rejection') {
+            payload.rejection_type = error === null ? 'null' : typeof error;
+        }
         const filename = boundedString(diagnostics?.filename, 4096);
         if (filename) payload.filename = filename;
         for (const field of ['lineno', 'colno']) {

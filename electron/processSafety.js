@@ -139,6 +139,19 @@ export function shouldReloadRendererAfterGone(details = {}, reloadCount = 0, max
     return String(details?.reason || '') !== CLEAN_RENDERER_EXIT_REASON;
 }
 
+export function isWindowsControlExit(exitCode, platform = process.platform) {
+    // STATUS_CONTROL_C_EXIT may be represented as a signed or unsigned 32-bit value.
+    return platform === 'win32' && (exitCode === -1073741510 || exitCode === 3221225786);
+}
+
+export function isExpectedProcessExit(details = {}, { platform = process.platform, isShuttingDown = false } = {}) {
+    if (details?.reason === CLEAN_RENDERER_EXIT_REASON) return true;
+    if (!isShuttingDown) return false;
+    if (details?.reason === 'killed') return true;
+    return (details?.reason === 'abnormal-exit' || !details?.reason)
+        && isWindowsControlExit(details?.exitCode, platform);
+}
+
 export function attachWindowSafetyHandlers(windowTarget, options = {}) {
     const webContents = windowTarget?.webContents;
     if (!webContents || typeof webContents.on !== 'function') {
@@ -147,19 +160,27 @@ export function attachWindowSafetyHandlers(windowTarget, options = {}) {
 
     const reportFault = options.reportFault || createProcessFaultReporter(options);
     const setTimeoutFn = options.setTimeout || setTimeout;
+    const clearTimeoutFn = options.clearTimeout || clearTimeout;
+    const isShuttingDown = typeof options.isShuttingDown === 'function' ? options.isShuttingDown : () => false;
     const reloadDelayMs = Number.isFinite(options.reloadDelayMs) ? options.reloadDelayMs : 500;
     const maxReloads = Number.isFinite(options.maxReloads) ? options.maxReloads : 1;
     const disposers = [];
+    const pendingReloads = new Set();
     let reloadCount = 0;
+    let uninstalled = false;
 
     const onRenderProcessGone = (_event, details = {}) => {
+        if (uninstalled) return;
         reportFault('render-process-gone', details);
-        if (!shouldReloadRendererAfterGone(details, reloadCount, maxReloads)) return;
+        if (isShuttingDown() || !shouldReloadRendererAfterGone(details, reloadCount, maxReloads)) return;
 
         reloadCount += 1;
-        setTimeoutFn(() => {
+        const pending = { timer: null };
+        pendingReloads.add(pending);
+        pending.timer = setTimeoutFn(() => {
+            pendingReloads.delete(pending);
             try {
-                if (windowTarget?.isDestroyed?.()) return;
+                if (uninstalled || isShuttingDown() || windowTarget?.isDestroyed?.() || webContents.isDestroyed?.()) return;
                 windowTarget?.webContents?.reload?.();
             } catch (error) {
                 reportFault('renderer-reload-failed', error);
@@ -185,7 +206,10 @@ export function attachWindowSafetyHandlers(windowTarget, options = {}) {
 
     return {
         uninstall() {
+            uninstalled = true;
             for (const dispose of disposers.splice(0)) dispose();
+            for (const pending of pendingReloads) clearTimeoutFn(pending.timer);
+            pendingReloads.clear();
         },
     };
 }

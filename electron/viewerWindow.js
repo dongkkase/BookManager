@@ -18,6 +18,8 @@ import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
 import { observeOperation } from './observabilityOperations.js';
 import { reportTelemetryError } from './telemetry.js';
 import { setupViewerTtsTelemetry } from './viewerTelemetry.js';
+import { isExpectedProcessExit } from './processSafety.js';
+import { translate } from '../src/utils/i18n.js';
 
 let documentProtocolRegistered = false;
 let comicProtocolRegistered = false;
@@ -233,6 +235,7 @@ export function setupViewerWindowManager(options = {}) {
         getAudioLibraryRecord = async () => null,
         getLibraryDbPath = () => '',
         getMainWindow = () => null,
+        isShuttingDown = () => false,
         configManager = null,
     } = options;
 
@@ -635,9 +638,23 @@ export function setupViewerWindowManager(options = {}) {
         viewerWindow.on('maximize', scheduleViewerWindowStateSave);
         viewerWindow.on('unmaximize', scheduleViewerWindowStateSave);
         viewerWindow.on('close', handleViewerWindowClose);
+        if (process.platform === 'win32') {
+            viewerWindow.on('session-end', () => {
+                context.closingWindows.add(viewerWindow);
+            });
+        }
         viewerWindow.webContents.on('render-process-gone', (_event, details) => {
-            if (details?.reason !== 'clean-exit') reportTelemetryError({}, { source: 'render-process-gone', format: context.currentSession?.type });
-            if (context.window !== viewerWindow || context.kind !== 'audio') return;
+            const currentWindow = context.window === viewerWindow;
+            const shuttingDown = !currentWindow || isShuttingDown() || context.closingWindows.has(viewerWindow);
+            if (!isExpectedProcessExit(details, { isShuttingDown: shuttingDown })) {
+                reportTelemetryError(details, {
+                    source: 'render-process-gone',
+                    window_type: 'viewer',
+                    ...(currentWindow ? { format: context.currentSession?.type } : {}),
+                    app_lifecycle: shuttingDown ? 'quitting' : 'running',
+                });
+            }
+            if (!currentWindow || context.kind !== 'audio') return;
             context.closeRequestVersion += 1;
             clearAudioMiniPlayer(context);
         });
@@ -838,7 +855,20 @@ export function setupViewerWindowManager(options = {}) {
         return { success: true, type };
     };
 
-    ipcMain.handle('viewer:open', async (_event, filePath) => openViewer(filePath));
+    ipcMain.handle('viewer:open', async (_event, filePath) => {
+        try {
+            return await openViewer(filePath);
+        } catch (error) {
+            if (error?.code !== 'ENOENT' || error.syscall !== 'stat'
+                || error.path !== path.resolve(filePath || '')) throw error;
+            const config = configManager?.getConfig?.() || {};
+            return {
+                success: false,
+                code: 'ENOENT',
+                message: translate('viewer_file_not_found', config.language || config.lang || 'ko'),
+            };
+        }
+    });
     ipcMain.handle('viewer:openAdjacent', async (event, sessionId, direction) => (
         openAdjacentViewer(event, sessionId, direction)
     ));

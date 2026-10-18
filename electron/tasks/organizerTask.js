@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 import { cleanDisplayTitle, extractCoreTitle, formatLeafName, isGarbageFolderName, resolveTitles } from '../parsers/parser.js';
 import { missingBinaryMessage } from '../binaryPolicy.js';
 import { attachOperationErrors } from '../operationDiagnostics.js';
-import { classifyArchiveFailure } from '../archiveFailureReason.js';
+import { createArchiveFailureClassifier } from '../archiveFailureReason.js';
 import { createOrganizerRenameBatches } from '../organizerRenamePolicy.js';
 import { listZipEntries, listZipEntriesFromFile, readZipEntry, readZipEntryFromFile } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
@@ -134,6 +134,7 @@ function runProcess(command, args, options = {}) {
     return new Promise((resolve, reject) => {
         const captureOutput = options.captureOutput !== false;
         const maxOutputLength = options.maxOutputLength ?? Infinity;
+        const failureClassifier = options.telemetryTool === '7z' ? createArchiveFailureClassifier() : null;
         const child = spawn(command, args, {
             cwd: options.cwd,
             windowsHide: true,
@@ -144,8 +145,14 @@ function runProcess(command, args, options = {}) {
         if (captureOutput) {
             child.stdout.setEncoding('utf8');
             child.stderr.setEncoding('utf8');
-            child.stdout.on('data', data => { stdout = (stdout + data).slice(-maxOutputLength); });
-            child.stderr.on('data', data => { stderr = (stderr + data).slice(-maxOutputLength); });
+            child.stdout.on('data', data => {
+                failureClassifier?.write('stdout', data);
+                stdout = (stdout + data).slice(-maxOutputLength);
+            });
+            child.stderr.on('data', data => {
+                failureClassifier?.write('stderr', data);
+                stderr = (stderr + data).slice(-maxOutputLength);
+            });
         }
         child.on('error', error => reject(withProcessDetails(error, options.telemetryTool)));
         child.on('close', (code, signal) => {
@@ -154,7 +161,7 @@ function runProcess(command, args, options = {}) {
                 const error = new Error(stderr || stdout || `${command} exited with ${code}`);
                 error.code = 'PROCESS_FAILED';
                 if (options.telemetryTool === '7z') {
-                    error.telemetryReason = classifyArchiveFailure(`${stderr}\n${stdout}`);
+                    error.telemetryReason = failureClassifier.finish();
                 }
                 reject(withProcessDetails(error, options.telemetryTool, code, signal));
             }
@@ -163,7 +170,8 @@ function runProcess(command, args, options = {}) {
 }
 
 function runQuietProcess(command, args, options = {}) {
-    return runProcess(command, args, {
+    const processArgs = options.telemetryTool === '7z' ? [...args, '-sccUTF-8'] : args;
+    return runProcess(command, processArgs, {
         ...options,
         captureOutput: options.telemetryTool === '7z',
         maxOutputLength: 16 * 1024,
@@ -1302,7 +1310,12 @@ export async function executeOrganizer(items, options = {}, onProgress) {
     }
     if (outcome.error) {
       errors.push(outcome.error);
-      stats.error.push(`${item.name || item.filepath} - ${outcome.error.message}`);
+        const error = outcome.error;
+        const message = error.code === 'PROCESS_FAILED' && error.telemetryTool === '7z'
+            && error.telemetryStage === 'extract' && error.telemetryReason === 'corrupt-data'
+            ? taskText(options.lang, 'task_organizer_corrupt_archive', { error: error.message })
+            : error.message;
+        stats.error.push(`${item.name || item.filepath} - ${message}`);
       continue;
     }
     stats.success.push(outcome.result.message);

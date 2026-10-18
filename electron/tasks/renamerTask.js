@@ -1150,6 +1150,28 @@ async function optimizeExtractedImages(rootDir, item, options) {
   await Promise.all(Array.from({ length: maxWorkers(options, imageFiles.length) }, worker));
 }
 
+async function renameArchiveEntryBatch(sevenZExe, tempArchive, pairs, options = {}) {
+    const args = pairs.flatMap(pair => [pair.oldPath, pair.newPath]);
+    const listPath = args.some(name => name.startsWith('@')) ? `${tempArchive}.rename-list.txt` : '';
+    try {
+        if (listPath) {
+            await fsp.writeFile(listPath, args.map(name => `"${name}"`).join('\n') + '\n', {
+                encoding: 'utf8',
+                mode: 0o600,
+            });
+        }
+        await runQuietProcess(sevenZExe, [
+            'rn', tempArchive, '-spd',
+            ...(listPath ? ['-scsUTF-8', '--', `@${listPath}`] : ['--', ...args]),
+        ], {
+            telemetryTool: '7z',
+            shouldCancel: options.shouldCancel,
+        });
+    } finally {
+        if (listPath) await rmWithBusyRetry(listPath).catch(() => {});
+    }
+}
+
 async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, options = {}) {
   const sevenZExe = options.sevenZExe;
   const filename = path.basename(sourcePath);
@@ -1160,17 +1182,10 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
   try {
     await fsp.copyFile(sourcePath, tempArchive);
     stage = 'direct-rename';
-    for (let index = 0; index < pairs.length; index += 20) {
-      if (options.shouldCancel?.()) return { cancelled: true, message: filename };
-      const args = [];
-      for (const pair of pairs.slice(index, index + 20)) {
-        args.push(pair.oldPath, pair.newPath);
-      }
-      await runQuietProcess(sevenZExe, ['rn', tempArchive, ...args], {
-        telemetryTool: '7z',
-        shouldCancel: options.shouldCancel,
-      });
-    }
+        for (let index = 0; index < pairs.length; index += 20) {
+            if (options.shouldCancel?.()) return { cancelled: true, message: filename };
+            await renameArchiveEntryBatch(sevenZExe, tempArchive, pairs.slice(index, index + 20), options);
+        }
 
     if (options.backup_on) {
       stage = 'backup';
@@ -1215,12 +1230,17 @@ async function processRenamerItem(item, options) {
   }
   const renamePairs = plannedMoves
     .filter(pair => pair.oldPath !== pair.newPath);
+    const renamePaths = renamePairs.flatMap(pair => [pair.oldPath, pair.newPath]);
+    // List files cannot represent line breaks within archive entry names.
+    const hasUnsupportedRenameListName = renamePaths.some(name => name.startsWith('@'))
+        && renamePaths.some(name => /[\r\n]/.test(name));
   const canRenameDirectly = ['.zip', '.cbz'].includes(sourceExt)
     && targetExt === sourceExt
     && !item.capOpt
     && !item.exifOpt
     && !hasEntryDeletes
     && !options.flattenFolders
+    && !hasUnsupportedRenameListName
     && !(options.webp_conversion || options.webpConversion);
 
   if (renamePairs.length === 0 && canRenameDirectly) {

@@ -109,6 +109,19 @@ test('처리하지 않은 거부의 코드를 유지하고 임의 진단 종류�
     dispose();
 });
 
+test('처리하지 않은 거부는 원본 값의 자료형만 진단 속성에 기록한다', () => {
+    const { target, errors, listeners } = createTarget();
+    const dispose = installTelemetryErrorHandlers({ target });
+    const reasons = [undefined, null, 'private message', 42, true, 42n, Symbol('private'), {}, () => {}];
+    for (const reason of reasons) listeners.get('unhandledrejection')({ reason });
+    assert.deepEqual(errors.map(error => error.rejection_type), [
+        'undefined', 'null', 'string', 'number', 'boolean', 'bigint', 'symbol', 'object', 'function',
+    ]);
+    listeners.get('error')({ message: 'Script failed' });
+    assert.equal(Object.hasOwn(errors.at(-1), 'rejection_type'), false);
+    dispose();
+});
+
 test('브리지가 없거나 동기 예외와 Promise 거부가 발생해도 호출자에게 전파하지 않는다', async () => {
     for (const target of [undefined, null, {}, { electronAPI: {} }]) {
         assert.equal(trackTelemetry('menu_opened', { menu: 'tools' }, target), false);

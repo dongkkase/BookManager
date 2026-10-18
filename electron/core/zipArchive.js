@@ -17,8 +17,23 @@ const MAX_ZIP_ENTRY_COUNT = 100000;
 const ZIP32_MAX = 0xffffffff;
 const ZIP32_MAX_ENTRIES = 0xffff;
 const LEGACY_NAME_ENCODINGS = ['euc-kr', 'shift_jis'];
+const ZIP_OPEN_RETRY_DELAYS_MS = [100, 250, 500, 1000];
 
 let crcTable = null;
+
+async function openZipFile(filePath, flags, options = {}, mode) {
+    for (let attempt = 0; ; attempt += 1) {
+        checkZipRewriteCancellation(options);
+        try {
+            return await fs.open(filePath, flags, mode);
+        } catch (error) {
+            if (error?.code !== 'EBUSY') throw error;
+            checkZipRewriteCancellation(options);
+            if (attempt >= ZIP_OPEN_RETRY_DELAYS_MS.length) throw error;
+            await new Promise(resolve => setTimeout(resolve, ZIP_OPEN_RETRY_DELAYS_MS[attempt]));
+        }
+    }
+}
 
 function getCrcTable() {
     if (crcTable) return crcTable;
@@ -239,7 +254,7 @@ async function readFileRange(handle, start, length) {
 }
 
 export async function listZipEntriesFromFile(filePath, options = {}) {
-    const handle = await fs.open(filePath, 'r');
+    const handle = await openZipFile(filePath, 'r', options);
     try {
         const stat = await handle.stat();
         const tailLength = Math.min(stat.size, EOCD_TAIL_BYTES);
@@ -348,7 +363,7 @@ export async function readZipEntryFromFile(filePath, entry, options = {}) {
     if (hasMaxBytes && entry.uncompressedSize > maxBytes) return null;
     if (options.maxCompressedBytes && entry.compressedSize > options.maxCompressedBytes) return null;
 
-    const handle = await fs.open(filePath, 'r');
+    const handle = await openZipFile(filePath, 'r', options);
     try {
         const localHeader = await readFileRange(handle, entry.localHeaderOffset, 30);
         if (localHeader.length < 30 || localHeader.readUInt32LE(0) !== LOCAL_SIGNATURE) return null;
@@ -497,10 +512,13 @@ async function writeAll(handle, buffer, position) {
 
 export async function replaceZipEntryAppendOnly(filePath, entryName, content, options = {}) {
     const replacement = createEntry(entryName, content, { store: true });
-    const handle = await fs.open(filePath, 'r+');
+    const handle = await openZipFile(filePath, 'r+', options);
     try {
         const stat = await handle.stat();
-        const sourceEntries = await listZipEntriesFromFile(filePath, { includeRawRecords: true });
+        const sourceEntries = await listZipEntriesFromFile(filePath, {
+            includeRawRecords: true,
+            shouldCancel: options.shouldCancel,
+        });
         let comment = Buffer.alloc(0);
         if (stat.size > 0) {
             const tail = await readFileRange(handle, Math.max(0, stat.size - EOCD_TAIL_BYTES), Math.min(stat.size, EOCD_TAIL_BYTES));
@@ -551,7 +569,9 @@ export async function replaceZipEntryAppendOnly(filePath, entryName, content, op
         const eocd = endOfCentralDirectory(centralParts.length, central.length, centralOffset);
         eocd.writeUInt16LE(comment.length, 20);
         const appendBuffer = Buffer.concat([local.buffer, replacement.compressed, central, eocd, comment]);
+        checkZipRewriteCancellation(options);
         await options.beforeWrite?.();
+        checkZipRewriteCancellation(options);
         await writeAll(handle, appendBuffer, stat.size);
         return true;
     } finally {
@@ -651,7 +671,7 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
     const renames = options.renameEntries || [];
     const removals = options.removeEntries || [];
     if (!replacements.length && !renames.length && !removals.length) return;
-    const source = await fs.open(filePath, 'r');
+    const source = await openZipFile(filePath, 'r', options);
     const temporaryPath = path.join(path.dirname(filePath), `.bookmanager-zip-${randomUUID()}.zip-update`);
     let output = null;
     try {
@@ -674,7 +694,10 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
         const endRecordOffset = sourceStat.size - tail.length + eocd;
         if (centralOffset + centralSize > endRecordOffset) throw unsupportedZipRewrite('ZIP central directory exceeds the archive size');
         const comment = tail.subarray(eocd + 22);
-        const sourceEntries = await listZipEntriesFromFile(filePath, { includeRawRecords: true });
+        const sourceEntries = await listZipEntriesFromFile(filePath, {
+            includeRawRecords: true,
+            shouldCancel: options.shouldCancel,
+        });
         if (sourceEntries.length !== count || sourceEntries.reduce((size, entry) => size + entry.centralRecord.length, 0) !== centralSize) {
             throw unsupportedZipRewrite('ZIP central directory is incomplete or unsupported');
         }
@@ -734,7 +757,8 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
         if (offset >= ZIP32_MAX || outputCentralSize >= ZIP32_MAX) throw unsupportedZipRewrite('ZIP64 output is not supported by ZIP update');
 
         checkZipRewriteCancellation(options);
-        output = await fs.open(temporaryPath, 'wx', sourceStat.mode & 0o777);
+        output = await openZipFile(temporaryPath, 'wx', options, sourceStat.mode & 0o777);
+        checkZipRewriteCancellation(options);
         const copyBuffer = Buffer.alloc(256 * 1024);
         for (const entry of entries) {
             checkZipRewriteCancellation(options);

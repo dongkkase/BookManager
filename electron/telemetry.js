@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { classifyRendererErrorMessage, isTelemetryIpcChannelAllowed, isTelemetryRejectionTypeAllowed } from './rendererErrorDiagnostics.js';
+import { isWindowsControlExit } from './processSafety.js';
 
 const EVENTS = new Set(['app_active', 'menu_opened', 'tool_opened', 'feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled', 'viewer_tts_used']);
 const MENUS = new Set(['folder', 'organizer', 'renamer', 'metadata', 'tools', 'sharing', 'releases', 'settings']);
@@ -21,6 +23,24 @@ const ERROR_KINDS = new Map([
     ['uncaught-error', 'Uncaught JavaScript error'],
     ['unhandled-rejection', 'Unhandled promise rejection'],
 ]);
+const BROWSER_ERRORS = new Map([
+    ['resize-observer-loop', 'ResizeObserver loop notifications were deferred'],
+    ['script-error', 'Script error details were hidden by the browser'],
+]);
+const PROCESS_GONE_SOURCES = new Set(['render-process-gone', 'child-process-gone']);
+const PROCESS_REASONS = new Map([
+    ['clean-exit', 'Process exited normally'],
+    ['abnormal-exit', 'Process exited with a non-zero exit code'],
+    ['killed', 'Process was terminated externally'],
+    ['crashed', 'Process crashed'],
+    ['oom', 'Process ran out of memory'],
+    ['launch-failed', 'Process failed to launch'],
+    ['integrity-failure', 'Process failed a Windows code integrity check'],
+    ['memory-eviction', 'Process was terminated to prevent memory exhaustion'],
+]);
+const PROCESS_TYPES = new Set(['Utility', 'Zygote', 'Sandbox helper', 'GPU', 'Pepper Plugin', 'Pepper Plugin Broker', 'Unknown']);
+const WINDOW_TYPES = new Set(['main', 'viewer']);
+const APP_LIFECYCLES = new Set(['running', 'quitting']);
 const ERROR_DESCRIPTIONS = new Map([
     ['EACCES', 'Permission denied'],
     ['ENOENT', 'File or directory not found'],
@@ -81,6 +101,12 @@ const ERROR_REASON_DESCRIPTIONS = new Map([
     ['access-denied', 'External tool could not access a file'],
     ['disk-full', 'External tool ran out of storage space'],
     ['path-too-long', 'External tool encountered a path that is too long'],
+    ['file-in-use', 'External tool could not access a file in use'],
+    ['path-not-found', 'External tool could not find a file or path'],
+    ['invalid-path', 'External tool encountered an invalid path'],
+    ['io-error', 'External tool encountered a device I/O error'],
+    ['out-of-memory', 'External tool ran out of memory'],
+    ['file-open-failed', 'External tool could not open a file'],
 ]);
 const ERROR_TOOLS = new Set(['7z', 'cwebp']);
 const ERROR_SIGNALS = new Set(['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGILL', 'SIGTRAP', 'SIGABRT', 'SIGIOT', 'SIGBUS', 'SIGFPE', 'SIGKILL', 'SIGUSR1', 'SIGSEGV', 'SIGUSR2', 'SIGPIPE', 'SIGALRM', 'SIGTERM', 'SIGCHLD', 'SIGCONT', 'SIGSTOP', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU', 'SIGURG', 'SIGXCPU', 'SIGXFSZ', 'SIGVTALRM', 'SIGPROF', 'SIGWINCH', 'SIGIO', 'SIGPWR', 'SIGSYS', 'SIGINFO', 'SIGBREAK']);
@@ -117,7 +143,33 @@ function allowedErrorDiagnostics(input = {}) {
     if (Number.isInteger(input.exit_code) && input.exit_code >= -2147483648 && input.exit_code <= 4294967295) {
         tags.exit_code = input.exit_code;
     }
+    if (isTelemetryIpcChannelAllowed(input.ipc_channel)) tags.ipc_channel = input.ipc_channel;
+    if (tags.error_kind === 'uncaught-error' && BROWSER_ERRORS.has(input.browser_error)) {
+        tags.browser_error = input.browser_error;
+    }
+    if (tags.error_kind === 'unhandled-rejection' && isTelemetryRejectionTypeAllowed(input.rejection_type)) {
+        tags.rejection_type = input.rejection_type;
+    }
+    if (PROCESS_GONE_SOURCES.has(input.source)) {
+        for (const [key, values] of [['process_reason', PROCESS_REASONS], ['process_type', PROCESS_TYPES], ['window_type', WINDOW_TYPES], ['app_lifecycle', APP_LIFECYCLES]]) {
+            if (values.has(input[key])) tags[key] = input[key];
+        }
+    }
     return tags;
+}
+
+export function getRendererErrorDiagnostics(payload = {}) {
+    const parsed = classifyRendererErrorMessage(payload.message, { errorNames: ERROR_NAMES, errorCodes: ERROR_DESCRIPTIONS, errorKind: payload.error_kind });
+    return {
+        name: ERROR_NAMES.has(payload.name) && payload.name !== 'Error' ? payload.name : parsed.name || 'Error',
+        code: ERROR_DESCRIPTIONS.has(payload.code) ? payload.code : parsed.code || '',
+        ...allowedErrorDiagnostics({
+            error_kind: payload.error_kind,
+            ipc_channel: parsed.ipc_channel,
+            browser_error: parsed.browser_error,
+            rejection_type: payload.rejection_type,
+        }),
+    };
 }
 
 function cleanServiceConfig(value = {}) {
@@ -420,15 +472,20 @@ export function createTelemetry(options = {}) {
         return frames.slice(0, 32).reverse();
     }
 
+    function trustedFrame(frame) {
+        const filename = trustedFilename(frame?.filename);
+        const lineno = frame?.lineno;
+        const colno = frame?.colno;
+        if (!filename || !Number.isSafeInteger(lineno) || lineno <= 0 || lineno > 10000000
+            || (colno !== undefined && (!Number.isSafeInteger(colno) || colno < 0 || colno > 10000000))) return null;
+        return { filename, lineno, ...(colno > 0 ? { colno } : {}), in_app: true };
+    }
+
     function errorFrames(error) {
         const frames = stackFrames(error?.stack);
         if (frames.length) return frames;
-        const filename = trustedFilename(error?.filename);
-        const lineno = error?.lineno;
-        const colno = error?.colno;
-        if (!filename || !Number.isSafeInteger(lineno) || lineno <= 0 || lineno > 10000000
-            || !Number.isSafeInteger(colno) || colno <= 0 || colno > 10000000) return [];
-        return [{ filename, lineno, colno, in_app: true }];
+        const frame = trustedFrame(error);
+        return frame ? [frame] : [];
     }
 
     function sanitizeSentryEvent(event = {}) {
@@ -438,16 +495,26 @@ export function createTelemetry(options = {}) {
         const code = diagnostics.error_code;
         const frames = [];
         for (const frame of (exception.stacktrace?.frames || []).slice(-32)) {
-            const filename = trustedFilename(frame.filename);
-            if (filename && Number.isSafeInteger(frame.lineno) && frame.lineno > 0 && Number.isSafeInteger(frame.colno) && frame.colno > 0) {
-                frames.push({ filename, lineno: frame.lineno, colno: frame.colno, in_app: true });
-            }
+            const trusted = trustedFrame(frame);
+            if (trusted) frames.push(trusted);
         }
         const tags = { ...allowedProperties(event.tags), os: platform, ...diagnostics };
         delete tags.duration_ms;
         const reasonDescription = code === 'PROCESS_FAILED' ? ERROR_REASON_DESCRIPTIONS.get(tags.error_reason) : '';
-        const description = reasonDescription || ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || (tags.error_tool ? 'External tool failed' : ERROR_KINDS.get(tags.error_kind) || 'details omitted');
-        const diagnosticFingerprint = ['error_kind', 'error_stage', 'error_reason', 'error_tool', 'exit_code', 'signal', 'syscall'].filter(key => tags[key] !== undefined).map(key => `${key}:${tags[key]}`);
+        let processDescription = '';
+        if (PROCESS_GONE_SOURCES.has(tags.source)) {
+            const controlExit = isWindowsControlExit(tags.exit_code, platform)
+                && (!tags.process_reason || ['abnormal-exit', 'killed'].includes(tags.process_reason));
+            const gpuContextLost = platform === 'win32' && tags.source === 'child-process-gone'
+                && tags.process_type === 'GPU' && tags.exit_code === 34
+                && (!tags.process_reason || ['crashed', 'abnormal-exit'].includes(tags.process_reason));
+            processDescription = gpuContextLost ? 'GPU process exited after losing its graphics context (RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST)'
+                : controlExit ? 'Windows console control termination (STATUS_CONTROL_C_EXIT)'
+                    : PROCESS_REASONS.get(tags.process_reason) || 'Process exited unexpectedly';
+        }
+        const description = reasonDescription || ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || processDescription || (tags.error_tool ? 'External tool failed' : tags.ipc_channel ? 'IPC invocation failed' : BROWSER_ERRORS.get(tags.browser_error) || ERROR_KINDS.get(tags.error_kind) || 'details omitted');
+        const diagnosticFingerprint = ['error_kind', 'browser_error', 'error_stage', 'error_reason', 'error_tool', 'exit_code', 'signal', 'syscall', 'ipc_channel', 'process_reason', 'process_type', 'window_type', 'app_lifecycle'].filter(key => tags[key] !== undefined).map(key => `${key}:${tags[key]}`);
+        if (!frames.length && tags.rejection_type) diagnosticFingerprint.push(`rejection_type:${tags.rejection_type}`);
         const fingerprint = !frames.length
             ? ['bookmanager', tags.feature || 'app', tags.source || 'unknown', type, code || 'unknown', ...diagnosticFingerprint]
             : diagnosticFingerprint.length ? ['{{ default }}', code || 'unknown', ...diagnosticFingerprint] : null;
@@ -512,14 +579,22 @@ export function createTelemetry(options = {}) {
             const tags = {
                 ...allowedProperties(context),
                 ...allowedErrorDiagnostics({
+                    source: context.source,
                     error_code: error?.code,
                     error_kind: context.error_kind,
+                    browser_error: context.browser_error,
+                    ipc_channel: context.ipc_channel,
+                    rejection_type: context.rejection_type,
                     error_stage: error?.telemetryStage,
                     error_reason: error?.telemetryReason,
                     error_tool: error?.telemetryTool,
                     exit_code: error?.exitCode,
                     signal: error?.signal,
                     syscall: error?.syscall,
+                    process_reason: error?.reason,
+                    process_type: context.source === 'child-process-gone' ? error?.type : undefined,
+                    window_type: context.window_type,
+                    app_lifecycle: context.app_lifecycle,
                 }),
             };
             const event = sanitizeSentryEvent({

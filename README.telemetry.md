@@ -25,7 +25,7 @@ Sentry 프로젝트의 **Security & Privacy**에서는 아래 두 설정을 함�
 
 | 구분 | 전송하는 정보 | 전송하지 않는 정보 |
 | --- | --- | --- |
-| Sentry | 허용된 오류 유형·오류 코드와 고정 설명, 전역 예외·Promise 거부 구분, 실패 단계·외부 도구 종류·종료 코드·종료 시그널·시스템 호출 분류, 앱 내부 코드의 상대 위치와 행·열, 앱 버전, OS, 고정 기능·발생 위치 식별자 | 원본 오류 메시지·외부 도구 출력·명령 인수, 책 이름·본문·메타데이터, 실제 파일 경로, 검색어, 사용자 설정, API 키, 첨부 파일 |
+| Sentry | 허용된 오류 유형·오류 코드와 고정 설명, 전역 예외·Promise 거부 구분과 거부 값의 자료형, 허용된 브라우저 오류 분류·IPC 호출명, 실패 단계·외부 도구 종류·종료 코드·종료 시그널·시스템 호출 분류, 프로세스 종료 사유·종류와 창 종류·앱 종료 상태, 앱 내부 코드의 상대 위치와 행·열, 앱 버전, OS, 고정 기능·발생 위치 식별자 | 원본 오류 메시지·외부 도구 출력·명령 인수, 책 이름·본문·메타데이터, 실제 파일 경로, 검색어, 사용자 설정, API 키, 첨부 파일 |
 | PostHog | 무작위 설치 ID, 이벤트 시각, 앱 버전, 앱 설정 언어, OS, 고정 메뉴·도구·기능 식별자, 작업 결과, 처리 시간, 허용된 파일 형식 분류, 실제 사용한 TTS 엔진·모델 분류 | 책 이름·본문·메타데이터, 파일 경로, 검색어, 계정·기기 이름, 음성 이름·스타일, 앱 언어 외 사용자 설정, API 키 |
 
 화면 녹화, 자동 클릭 수집, 성능 추적, Sentry breadcrumbs와 일반 로그 전송은 사용하지 않습니다. PostHog 이벤트는 `$process_person_profile: false`, `$geoip_disable: true`, `$ip: null`을 지정하며 앱에서 사용자 프로필을 만들거나 로그인 계정과 연결하지 않습니다. 다만 HTTPS 요청을 받는 서비스에는 네트워크 통신의 출발지 IP가 보일 수 있으므로 이를 개인정보가 전혀 없는 전송이라고 설명하지 않습니다. PostHog의 익명 이벤트 동작은 [공식 문서](https://posthog.com/docs/data/anonymous-vs-identified-events)를 참고합니다.
@@ -65,15 +65,29 @@ Electron 28 앱의 메인 프로세스에서 `@sentry/node` 10.75.3의 독립적
 
 JavaScript 예외와 처리하지 않은 Promise 거부, 연결된 프로세스 이상 상태, 계측된 작업 오류를 대상으로 합니다. 네이티브 크래시 덤프·미니덤프는 수집하지 않습니다. 소스맵 업로드도 포함하지 않으므로 배포 렌더러 스택은 원본 JSX 위치가 아닌 번들 파일의 행·열로 나타납니다.
 
-렌더러·뷰어의 전역 오류는 `error_kind`를 `uncaught-error` 또는 `unhandled-rejection`으로 구분하며 오류 그룹에도 반영합니다. 오류 객체의 코드는 IPC를 거쳐 기존 허용 목록으로 제한합니다. 사용할 수 있는 스택이 없으면 브라우저 `ErrorEvent`의 파일 위치와 행·열을 같은 앱 내부 파일 검사에 통과한 경우에만 대체 프레임으로 사용합니다. Windows에서는 설치 경로의 대소문자 차이로 앱 스택이 빠지지 않도록 루트를 비교합니다. 원본 메시지나 사용자 파일 위치를 보관하지 않으므로, 이미 `details omitted`와 스택 없이 수집된 이벤트의 구체적인 원인은 이 개선으로 복원할 수 없습니다.
+렌더러·뷰어의 전역 오류는 `error_kind`를 `uncaught-error` 또는 `unhandled-rejection`으로 구분하며 오류 그룹에도 반영합니다. 오류 객체의 코드는 IPC를 거쳐 기존 허용 목록으로 제한합니다. 사용할 수 있는 스택이 없으면 브라우저 `ErrorEvent`의 파일 위치와 행·열을 같은 앱 내부 파일 검사에 통과한 경우에만 대체 프레임으로 사용합니다. 열 번호가 없거나 `0`이면 열은 생략하고 확인된 파일과 행은 보존합니다. Windows에서는 설치 경로의 대소문자 차이로 앱 스택이 빠지지 않도록 루트를 비교합니다. 원본 메시지나 사용자 파일 위치를 보관하지 않으므로, 이미 `details omitted`와 스택 없이 수집된 이벤트의 구체적인 원인은 이 개선으로 복원할 수 없습니다.
+
+전역 예외의 메시지가 알려진 고정 문구와 정확히 일치하면 `browser_error`로 `resize-observer-loop` 또는 `script-error`를 기록하고 설명·오류 그룹을 구분합니다. 각각 ResizeObserver 알림의 다음 프레임 지연과 브라우저가 상세 내용을 숨긴 스크립트 오류를 나타내며, 원문이나 URL을 추가로 보내거나 오류 보고를 제외하지 않습니다. `Uncaught TypeError:`처럼 허용된 오류 유형으로 시작하는 메시지는 유형만 복원합니다. 알려지지 않은 메시지와 임의의 분류값은 보관하지 않습니다. 이미 `Uncaught JavaScript error`로 묶인 이벤트의 원인은 복원할 수 없으며, 새 분류는 변경된 앱에서 발생한 오류부터 적용됩니다. 분류의 기준은 [Resize Observer 명세](https://drafts.csswg.org/resize-observer/#deliver-resize-loop-error)와 [HTML 런타임 오류 명세](https://html.spec.whatwg.org/multipage/webappapis.html#runtime-script-errors)를 참고합니다.
+
+Electron IPC 실패는 원래 오류 코드나 앱 스택을 잃을 수 있습니다. 메인 프로세스는 렌더러가 보낸 메시지를 폐기하기 전에 Electron의 고정된 IPC 오류 접두부를 확인하고, `rendererErrorDiagnostics.js`의 정적 허용 목록에 있는 호출명만 `ipc_channel`로 남깁니다. 접두부 바로 뒤의 허용된 오류 유형·코드도 복원하되, 명시적인 허용 코드가 있으면 우선합니다. 메시지 본문에서 임의로 코드를 검색하지 않으며 원본 메시지와 호출 인수는 전송하지 않습니다. 새 IPC 호출을 진단하려면 정적 허용 목록도 갱신합니다. Promise 거부의 `rejection_type`은 `null` 또는 JavaScript `typeof` 결과만 기록하고 값 자체는 보관하지 않습니다. 호출명이 다르면 오류 그룹을 구분하고, 거부 값의 자료형은 스택이 없는 경우에만 그룹을 구분하는 데 사용합니다. 기존에 `Unhandled promise rejection`만 남은 이벤트의 원인은 소급해 복원할 수 없으며, 추가 진단 정보는 변경된 앱에서 새로 발생한 오류부터 적용됩니다.
+
+`render-process-gone`과 `child-process-gone`은 JavaScript 예외가 아닌 프로세스 종료 알림이므로 스택 없이 보고될 수 있습니다. `process_reason`은 Electron이 제공한 정상 종료·비정상 종료·외부 종료·충돌·메모리 부족·시작 실패·코드 무결성 실패·메모리 회수 사유의 고정 값으로 제한합니다. `process_type`은 GPU 등 허용된 자식 프로세스 종류, `window_type`은 `main` 또는 `viewer`, `app_lifecycle`은 `running` 또는 `quitting`만 보관하고 오류 그룹에도 반영합니다. 뷰어도 원래 종료 코드를 보존합니다. 서비스 이름·프로세스 이름·책 제목·사용자 경로는 전송하지 않습니다.
+
+Windows의 GPU 자식 프로세스가 종료 코드 `34`와 `crashed`·`abnormal-exit` 또는 사유 누락으로 보고되면, [Chromium의 종료 코드 정의](https://github.com/chromium/chromium/blob/main/content/public/common/result_codes.cc)에 따라 `RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST`의 고정 설명을 표시합니다. GPU 그래픽 컨텍스트를 잃은 뒤 종료됐다는 의미이며 특정 드라이버 결함·메모리 부족·앱 전체 종료·복구 성공을 확정하지 않습니다. 원래 종료 사유·코드·오류 그룹은 유지하고 보고를 생략하지 않습니다. 다른 프로세스·플랫폼이나 명시적인 외부 종료·메모리 부족·시작 실패에는 이 설명을 적용하지 않습니다. 증상이 반복되면 기존 설정의 **하드웨어 가속 사용**을 끄고 저장한 뒤 앱을 다시 시작해 우회할 수 있습니다. 가속 설정은 앱 시작 전에 적용되므로 실행 중 설정 저장만으로는 바뀌지 않습니다.
+
+Windows의 `-1073741510`(부호 없는 값 `3221225786`, `0xC000013A`)은 `STATUS_CONTROL_C_EXIT`로 분류해 고정 설명을 표시합니다. 이는 [Microsoft가 정의한 콘솔 제어 종료 상태](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55)이며, 이 값만으로 종료 주체나 사용자가 수행한 작업을 알 수는 없습니다. 명시적인 충돌·메모리 부족 등 다른 종료 사유가 있으면 해당 사유를 우선합니다. 정상 종료는 보고하지 않으며, 앱 또는 창의 종료가 확정되었을 때만 `killed` 또는 사유가 없거나 `abnormal-exit`인 Windows 콘솔 제어 종료를 Sentry에서 제외합니다. 실행 중 발생한 종료와 명시적인 충돌·메모리 부족·시작 실패 등은 계속 보고합니다. 메인 창의 로컬 프로세스 로그는 유지하고, 앱 종료 확정 및 Windows 세션 종료 후에는 렌더러 복구를 예약하거나 이미 예약한 재로드를 실행하지 않습니다. 취소할 수 있는 종료 확인 요청만으로는 복구나 보고를 중단하지 않습니다.
 
 작업의 반환값에 있는 `ok: false`, `success: false`, 오류 목록과 명시적인 취소 상태를 구분합니다. 사용자 취소, 파일 없음·권한 부족·용량 부족과 지정된 입력 검증 오류는 일반적으로 Sentry 이슈로 올리지 않습니다. 단, 외부 도구 실행의 `ENOENT`는 실행 파일 또는 작업 폴더 누락 등 시작 실패를 진단하기 위해 보고합니다. 상세 정보를 문자열로만 돌려주는 작업은 원본 문자열 대신 `TASK_FAILED`로 보고될 수 있어, 원인 분석에는 기존 로컬 로그가 필요할 수 있습니다.
+
+뷰어 세션 생성은 `stat`의 원래 파일 시스템 오류 코드를 보존합니다. 대상 파일의 `ENOENT`는 열기 실패로 처리하되 Sentry의 프로그램 오류로 보고하지 않고, `viewer:open` 응답에 고정 코드와 앱 언어에 맞는 목록 새로 고침·파일 위치·저장 장치 연결 확인 안내를 반환합니다. 실패 시 새 세션을 만들거나 기존 뷰어 세션과 읽기 목록을 제거하지 않습니다. 권한 오류와 예상하지 못한 입출력 오류를 파일 없음으로 바꾸지 않으며, `EIO` 등 기존 보고 대상 오류는 계속 보고합니다.
 
 압축 구조 정리, 내부 파일명 변경과 메타데이터 저장 작업은 결과 창의 오류 문자열과 별도로 원래 예외를 메인 프로세스의 `WeakMap`에 보관합니다. `operationDiagnostics.js`의 `attachOperationErrors(result, errors)`로 연결하고, `observeOperation`이 같은 결과 객체에서 읽어 전송하므로 IPC 반환값에 예외·스택·추가 사용자 데이터를 넣지 않습니다. 예상된 오류를 제외한 뒤 오류 유형·코드·단계·도구·종료 상태·스택 위치가 같은 실패는 중복을 제거하고 작업당 최대 3건을 보고합니다. 취소된 작업이나 실행 중 오류 수집 설정이 해제된 작업은 보고하지 않습니다.
 
 압축 구조 정리의 `error_stage`는 준비, 추출, 중첩 압축 추출, 이미지 검사·변환·평탄화, 재압축, 출력 저장, 백업, 원본 삭제와 임시 파일 정리 등을 고정 값으로 구분합니다. `error_tool`은 `7z`, `cwebp`만 허용하고, `exit_code`는 정수 종료 코드, `signal`과 `syscall`은 허용 목록의 값만 전송합니다. `PROCESS_FAILED`, `TOOL_MISSING`, `ARCHIVE_NO_IMAGES`는 각각 외부 도구 실패, 도구 누락, 추출 후 이미지 없음으로 구분합니다. 외부 도구의 원문 출력은 Sentry에 보내지 않고, 파일별 상세 메시지는 기존 작업 결과 창에만 표시합니다. 새 진단 정보는 변경된 앱을 배포한 이후 발생한 오류부터 수집되며 기존 Sentry 이벤트에는 소급 적용되지 않습니다.
 
-압축 구조 정리는 크기를 제한한 외부 도구 출력을 로컬 오류 안내에 사용하며, Sentry에는 암호 필요·미지원 압축 방식·잘못된 압축 파일·데이터 손상·접근 거부·저장 공간 부족·경로 길이 초과를 구분하는 허용 목록의 `error_reason`만 추가합니다. 같은 실패 단계와 종료 코드라도 분류한 원인이 다르면 오류 그룹과 작업 내 중복 보고를 구분합니다.
+압축 구조 정리는 크기를 제한한 외부 도구 출력을 로컬 오류 안내에 사용하며, Sentry에는 암호 필요·미지원 압축 방식·잘못된 압축 파일·데이터 손상·접근 거부·저장 공간 부족·경로 길이 초과·파일 사용 중·파일 또는 경로 없음·잘못된 경로·장치 입출력 오류·메모리 부족·파일 열기 실패를 구분하는 허용 목록의 `error_reason`만 추가합니다. 같은 실패 단계와 종료 코드라도 분류한 원인이 다르면 오류 그룹과 작업 내 중복 보고를 구분합니다.
+
+압축 구조 정리의 추출·이름 변경·재압축 명령은 `-sccUTF-8`로 출력 인코딩을 명시하고, 확인된 영어·한국어 고정 오류 문구만 분류합니다. Windows 기본 OEM 출력과 앱의 UTF-8 디코딩이 다르면 현지화된 오류가 손상될 수 있으므로 [7-Zip 출력 코드페이지](https://github.com/ip7z/7zip/blob/main/CPP/Common/StdOutStream.cpp)와 [Windows 오류 문구](https://learn.microsoft.com/ko-kr/windows/win32/debug/system-error-codes--0-499-)를 기준으로 처리합니다. stdout·stderr를 각각 줄 단위로 분류해 로컬 출력의 마지막 16,384문자에서 앞부분이 잘려도 이미 확인한 사유는 유지합니다. 미완성 줄도 스트림마다 16,384문자로 제한하고 초과한 줄은 건너뜁니다. `cannot open file`은 구체적인 시스템 오류가 없을 때만 `file-open-failed`로 남기며 권한·용량 등 원인을 추정하지 않습니다. 알려지지 않은 문구와 원문 출력·파일명·경로는 전송하지 않습니다.
 
 내부 파일명 변경도 같은 진단 규격을 사용합니다. 압축 내부 이름을 직접 변경하는 `direct-rename`, 추출 후 항목을 이동하는 `rename-entries`, 항목 삭제 `delete-entries`, 이미지 최적화 `optimize-images`와 추출·변환·재압축·백업·저장·정리 단계를 구분합니다. 출력 교체 실패는 `write-output`, 다른 확장자로 저장한 뒤 원본 삭제 실패는 `remove-source`로 구분합니다. 원본 삭제에 실패해도 저장된 출력 경로를 결과에 유지하고 삭제 실패를 안내합니다. 모든 항목이 삭제 대상으로 지정돼 실행할 수 없는 경우는 `ARCHIVE_NO_ENTRIES`로 구분합니다. WebP 변환 실패 후 원본 이미지를 유지하는 경우처럼 기존 대체 처리로 완료한 작업은 실패로 보고하지 않습니다. 임시 폴더 정리에서도 오류가 나면 먼저 발생한 작업 오류를 유지합니다.
 
@@ -179,7 +193,9 @@ TTS 엔진과 모델은 다음 허용 값만 전송합니다.
 
 ```bash
 node --test electron/telemetry.test.js electron/observability.test.js electron/configManager.test.js src/telemetry.test.js src/settingsPolicy.test.js
-node --test electron/rendererDiagnostics.test.js
+node --test electron/rendererDiagnostics.test.js electron/rendererErrorDiagnostics.test.js
+node --test electron/processSafety.test.js electron/viewerProcessDiagnostics.test.js
+node --test electron/metadataDiagnostics.test.js electron/zipOpenRetry.test.js
 node --test electron/viewerTelemetry.test.js src/viewerTtsTelemetry.test.js src/viewerTtsHistory.test.js src/viewerSelectionToolbar.test.js
 npx vite build
 ```

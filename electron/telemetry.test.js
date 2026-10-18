@@ -453,7 +453,8 @@ test('shared subprocess stack locations retain default grouping while distinguis
 });
 
 test('external tool reasons retain fixed descriptions and separate otherwise identical failures with or without stacks', async t => {
-    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    let now = Date.now();
+    const { telemetry, requests } = setup(t, { now: () => now }, { telemetry_error_reports: true });
     const reasons = [
         ['password-required', 'Archive requires a password'],
         ['unsupported-method', 'Archive compression method is unsupported'],
@@ -462,6 +463,12 @@ test('external tool reasons retain fixed descriptions and separate otherwise ide
         ['access-denied', 'External tool could not access a file'],
         ['disk-full', 'External tool ran out of storage space'],
         ['path-too-long', 'External tool encountered a path that is too long'],
+        ['file-in-use', 'External tool could not access a file in use'],
+        ['path-not-found', 'External tool could not find a file or path'],
+        ['invalid-path', 'External tool encountered an invalid path'],
+        ['io-error', 'External tool encountered a device I/O error'],
+        ['out-of-memory', 'External tool ran out of memory'],
+        ['file-open-failed', 'External tool could not open a file'],
     ];
     const stack = `Error: Secret Book\n    at closeCallback (${path.join(APP_ROOT, 'electron/tasks/organizerTask.js')}:42:3)`;
     for (const [telemetryReason] of reasons) {
@@ -472,6 +479,8 @@ test('external tool reasons retain fixed descriptions and separate otherwise ide
                 message: 'Secret Book token=secret', stderr: '/private/book',
             }, { source: 'ipc', feature: 'archive-organizer' });
         }
+        await telemetry.flushTelemetry();
+        now += 60000;
     }
     await telemetry.flushTelemetry();
     const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
@@ -522,6 +531,8 @@ test('Sentry revalidates hostile diagnostics injected after beforeSend at the fi
                                 tags: {
                                     ...item.tags,
                                     error_code: 'private-code', error_kind: 'private-kind', error_stage: '/private/stage', error_reason: 'Secret Book', error_tool: 'C:\\private\\7z.exe',
+                                    ipc_channel: 'private-user:SecretBook', rejection_type: 'private-user',
+                                    process_reason: 'private-reason', process_type: 'Secret Book', window_type: 'private-window', app_lifecycle: 'private-state',
                                     exit_code: '2 secret', signal: 'SIGTERM secret', syscall: 'spawn C:\\private\\7z.exe',
                                     stderr: 'Secret Book token=secret',
                                 },
@@ -541,7 +552,141 @@ test('Sentry revalidates hostile diagnostics injected after beforeSend at the fi
     assert.deepEqual(event.tags, { feature: 'archive-organizer', source: 'ipc', os: process.platform });
     assert.equal(event.exception.values[0].value, 'Error: details omitted');
     assert.deepEqual(event.fingerprint, ['bookmanager', 'archive-organizer', 'ipc', 'Error', 'unknown']);
-    assert.doesNotMatch(requests[0].body, /private|secret|Secret Book|stderr|extra|error_kind|error_stage|error_reason|exit_code|signal|syscall/);
+    assert.doesNotMatch(requests[0].body, /private|secret|Secret Book|stderr|extra|error_kind|error_stage|error_reason|ipc_channel|rejection_type|process_reason|process_type|window_type|app_lifecycle|exit_code|signal|syscall/);
+});
+
+test('Windows renderer control exits retain their known status without being mistaken for JavaScript errors', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    for (const exitCode of [-1073741510, 3221225786]) {
+        assert.equal(telemetry.reportTelemetryError({ exitCode }, {
+            source: 'render-process-gone', window_type: 'main', app_lifecycle: 'running',
+        }), true);
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+        const event = JSON.parse(request.body.split('\n')[2]);
+        assert.equal(event.exception.values[0].value, 'Error: Windows console control termination (STATUS_CONTROL_C_EXIT)');
+        assert.equal(event.exception.values[0].stacktrace, undefined);
+        assert.equal(event.tags.window_type, 'main');
+        assert.equal(event.tags.app_lifecycle, 'running');
+        assert.equal(event.tags.os, 'win32');
+    }
+});
+
+test('process exit reasons, child types and window roles survive final Sentry sanitization without private details', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    const descriptions = [
+        ['crashed', 'Process crashed'],
+        ['oom', 'Process ran out of memory'],
+        ['killed', 'Process was terminated externally'],
+        ['launch-failed', 'Process failed to launch'],
+        ['integrity-failure', 'Process failed a Windows code integrity check'],
+    ];
+    for (const [reason] of descriptions) {
+        telemetry.reportTelemetryError({ reason, exitCode: 1, message: 'Secret Book token=secret', path: '/private/book.epub' }, {
+            source: 'render-process-gone', window_type: 'viewer', format: 'epub', app_lifecycle: 'running',
+        });
+    }
+    telemetry.reportTelemetryError({ reason: 'crashed', exitCode: 1, type: 'GPU', serviceName: 'Secret Book' }, {
+        source: 'child-process-gone', app_lifecycle: 'quitting',
+    });
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, 6);
+    for (const [index, [reason, description]] of descriptions.entries()) {
+        assert.equal(events[index].exception.values[0].value, `Error: ${description}`);
+        assert.deepEqual(events[index].tags, {
+            format: 'epub', source: 'render-process-gone', os: 'win32', exit_code: 1,
+            process_reason: reason, window_type: 'viewer', app_lifecycle: 'running',
+        });
+    }
+    assert.equal(new Set(events.map(event => JSON.stringify(event.fingerprint))).size, 6);
+    assert.equal(events[5].tags.process_type, 'GPU');
+    assert.equal(events[5].tags.app_lifecycle, 'quitting');
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /private|secret|Secret Book|serviceName/);
+});
+
+test('control exit summaries are Windows-specific and never replace explicit crash or memory failure reasons', async t => {
+    const windows = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    for (const reason of ['crashed', 'oom']) {
+        windows.telemetry.reportTelemetryError({ reason, exitCode: -1073741510 }, { source: 'render-process-gone' });
+    }
+    const linux = setup(t, { platform: 'linux' }, { telemetry_error_reports: true });
+    linux.telemetry.reportTelemetryError({ reason: 'abnormal-exit', exitCode: -1073741510 }, { source: 'render-process-gone' });
+    await Promise.all([windows.telemetry.flushTelemetry(), linux.telemetry.flushTelemetry()]);
+    assert.deepEqual(windows.requests.map(request => JSON.parse(request.body.split('\n')[2]).exception.values[0].value), [
+        'Error: Process crashed', 'Error: Process ran out of memory',
+    ]);
+    assert.equal(JSON.parse(linux.requests[0].body.split('\n')[2]).exception.values[0].value, 'Error: Process exited with a non-zero exit code');
+});
+
+test('Windows GPU context-loss exits retain their precise description, existing grouping and private-data filtering', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    const reasons = ['crashed', 'abnormal-exit', undefined];
+    for (const reason of reasons) {
+        assert.equal(telemetry.reportTelemetryError({
+            reason, type: 'GPU', exitCode: 34, message: 'Secret Book', serviceName: 'private-service', path: '/private/book',
+        }, { source: 'child-process-gone', app_lifecycle: 'running' }), true);
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, reasons.length);
+    for (const [index, request] of requests.entries()) {
+        const event = JSON.parse(request.body.split('\n')[2]);
+        const reason = reasons[index];
+        assert.equal(event.exception.values[0].value, 'Error: GPU process exited after losing its graphics context (RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST)');
+        assert.equal(event.exception.values[0].stacktrace, undefined);
+        assert.equal(event.tags.exit_code, 34);
+        assert.equal(event.tags.process_type, 'GPU');
+        assert.equal(event.tags.process_reason, reason);
+        assert.deepEqual(event.fingerprint, [
+            'bookmanager', 'app', 'child-process-gone', 'Error', 'unknown', 'exit_code:34',
+            ...(reason ? [`process_reason:${reason}`] : []), 'process_type:GPU', 'app_lifecycle:running',
+        ]);
+        assert.doesNotMatch(request.body, /Secret Book|private|serviceName/);
+    }
+});
+
+test('GPU context-loss descriptions do not reinterpret other processes, exit codes or explicit failure reasons', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    const cases = [
+        [{ type: 'Utility', reason: 'crashed', exitCode: 34 }, 'child-process-gone', 'Process crashed'],
+        [{ type: 'GPU', reason: 'crashed', exitCode: 34 }, 'render-process-gone', 'Process crashed'],
+        [{ type: 'GPU', reason: 'crashed', exitCode: 34 }, 'ipc', 'details omitted'],
+        [{ type: 'GPU', reason: 'crashed', exitCode: 1 }, 'child-process-gone', 'Process crashed'],
+        [{ type: 'GPU', reason: 'crashed', exitCode: '34' }, 'child-process-gone', 'Process crashed'],
+        [{ type: 'GPU', reason: 'killed', exitCode: 34 }, 'child-process-gone', 'Process was terminated externally'],
+        [{ type: 'GPU', reason: 'oom', exitCode: 34 }, 'child-process-gone', 'Process ran out of memory'],
+        [{ type: 'GPU', reason: 'launch-failed', exitCode: 34 }, 'child-process-gone', 'Process failed to launch'],
+        [{ type: 'GPU', reason: 'integrity-failure', exitCode: 34 }, 'child-process-gone', 'Process failed a Windows code integrity check'],
+        [{ type: 'GPU', reason: 'clean-exit', exitCode: 34 }, 'child-process-gone', 'Process exited normally'],
+    ];
+    for (const [details, source] of cases) telemetry.reportTelemetryError(details, { source });
+    await telemetry.flushTelemetry();
+    assert.deepEqual(requests.map(request => JSON.parse(request.body.split('\n')[2]).exception.values[0].value), cases.map(([, , description]) => `Error: ${description}`));
+
+    const linux = setup(t, { platform: 'linux' }, { telemetry_error_reports: true });
+    linux.telemetry.reportTelemetryError({ type: 'GPU', reason: 'crashed', exitCode: 34 }, { source: 'child-process-gone' });
+    await linux.telemetry.flushTelemetry();
+    assert.equal(JSON.parse(linux.requests[0].body.split('\n')[2]).exception.values[0].value, 'Error: Process crashed');
+});
+
+test('unknown process diagnostics and process-like fields on unrelated exceptions are omitted', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    telemetry.reportTelemetryError({ reason: 'private-reason', type: 'Secret Book', exitCode: 1 }, {
+        source: 'child-process-gone', window_type: 'private-window', app_lifecycle: 'private-state',
+    });
+    telemetry.reportTelemetryError({ reason: 'oom', type: 'GPU' }, {
+        source: 'ipc', window_type: 'main', app_lifecycle: 'quitting',
+    });
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, 2);
+    assert.deepEqual(events[0].tags, { source: 'child-process-gone', os: process.platform, exit_code: 1 });
+    assert.equal(events[0].exception.values[0].value, 'Error: Process exited unexpectedly');
+    assert.deepEqual(events[1].tags, { source: 'ipc', os: process.platform });
+    assert.equal(events[1].exception.values[0].value, 'Error: details omitted');
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /private|Secret Book|process_reason|process_type|window_type|app_lifecycle/);
 });
 
 test('error summaries use fixed descriptions and reject unknown diagnostic values and invalid exit codes', async t => {

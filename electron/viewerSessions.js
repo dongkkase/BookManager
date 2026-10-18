@@ -2124,12 +2124,7 @@ export class ViewerSessionManager {
 
     create(filePath, options = {}) {
         const normalizedPath = path.resolve(filePath || '');
-        if (
-            !normalizedPath
-            || (options.skipExistenceCheck !== true && !fs.existsSync(normalizedPath))
-        ) {
-            throw new Error('File not found.');
-        }
+        if (options.skipExistenceCheck !== true) fs.statSync(normalizedPath);
         const type = viewerTypeForPath(normalizedPath);
         if (type === 'unsupported') {
             throw new Error('Unsupported viewer format.');

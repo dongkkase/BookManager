@@ -22,6 +22,7 @@ import {
   attachWindowSafetyHandlers,
   createProcessFaultReporter,
   installProcessSafetyHandlers,
+    isExpectedProcessExit,
 } from './processSafety.js';
 import { openAssociatedFile } from './associatedFileOpener.js';
 import {
@@ -56,6 +57,7 @@ let sharingServersStopped = false;
 let appQuitRequested = false;
 let allowAppQuit = false;
 let isFinalizingAppQuit = false;
+let isWindowsSessionEnding = false;
 let mainWindowReady = false;
 let showMainWindowInactiveForInitialFile = false;
 let isDrainingOpenFiles = false;
@@ -264,10 +266,20 @@ const reportLocalProcessFault = createProcessFaultReporter({
   getLogPath: getProcessLogPath,
 });
 
+function isAppShuttingDown() {
+    return allowWindowClose || allowAppQuit || isFinalizingAppQuit || isWindowsSessionEnding;
+}
+
 function reportProcessFault(eventName, details, context) {
     reportLocalProcessFault(eventName, details, context);
-    if (eventName === 'render-process-gone' && details?.reason === 'clean-exit') return;
-    reportTelemetryError(details, { source: eventName });
+    const processGone = eventName === 'render-process-gone' || eventName === 'child-process-gone';
+    const shuttingDown = isAppShuttingDown();
+    if (processGone && isExpectedProcessExit(details, { isShuttingDown: shuttingDown })) return;
+    reportTelemetryError(details, {
+        source: eventName,
+        ...(processGone ? { app_lifecycle: shuttingDown ? 'quitting' : 'running' } : {}),
+        ...(eventName === 'render-process-gone' ? { window_type: 'main' } : {}),
+    });
 }
 
 installProcessSafetyHandlers({
@@ -415,6 +427,7 @@ async function initializeApp() {
     getAudioLibraryRecord: getViewerAudioLibraryRecord,
     getLibraryDbPath: () => resolveLibraryDbPath(getExecutableDir()),
     getMainWindow: () => mainWindow,
+    isShuttingDown: isAppShuttingDown,
     configManager,
   });
   fileAssociationController = setupFileAssociationIPC({
@@ -441,6 +454,7 @@ async function initializeApp() {
 }
 
 function createMainWindow(config) {
+    allowWindowClose = false;
   mainWindowReady = false;
   if (useUnsafeDevNodeIntegration) {
     console.warn('[BookManager] Unsafe dev Node integration is enabled for this session.');
@@ -477,7 +491,17 @@ function createMainWindow(config) {
     installEditorMediaHeaders(mainWindow.webContents, APP_ID);
   attachWindowSafetyHandlers(mainWindow, {
     reportFault: reportProcessFault,
+    isShuttingDown: isAppShuttingDown,
   });
+    mainWindow.webContents.on('will-prevent-unload', () => {
+        allowWindowClose = false;
+        appQuitRequested = false;
+    });
+    if (process.platform === 'win32') {
+        mainWindow.on('session-end', () => {
+            isWindowsSessionEnding = true;
+        });
+    }
     mainWindow.on('app-command', (_event, command) => {
         const direction = command === 'browser-backward' ? -1 : command === 'browser-forward' ? 1 : 0;
         if (!direction || !mainWindow || mainWindow.webContents.isDestroyed()) return;
@@ -571,7 +595,6 @@ function createMainWindow(config) {
     mainWindow = null;
     mainWindowReady = false;
     showMainWindowInactiveForInitialFile = false;
-    allowWindowClose = false;
   });
 }
 

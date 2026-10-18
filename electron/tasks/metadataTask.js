@@ -2665,6 +2665,7 @@ async function injectComicInfoFastZip(filePath, metadata, options = {}) {
   await replaceZipEntryAppendOnly(filePath, 'ComicInfo.xml', createComicInfoXml(metadata), {
     removeMatchingBasename: true,
     beforeWrite: options.beforeWrite,
+    shouldCancel: options.shouldCancel,
   });
   return true;
 }
@@ -2888,6 +2889,7 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
           stage = 'write-metadata';
           await injectComicInfoFastZip(filePath, item.metadata || {}, {
             lang: options.lang,
+            shouldCancel: options.shouldCancel,
             beforeWrite: async () => {
               if (options.backup_on && !backupCreated) {
                 stage = 'backup';
@@ -2947,7 +2949,10 @@ export async function saveMetadataItems(items, options = {}, onProgress) {
         if (error.code === 'TASK_CANCELLED') cancelled = true;
         else {
             errors.push(withErrorStage(error, stage));
-            stats.error.push(`${item.name || filePath} - ${error.message}`);
+            const message = error.code === 'EBUSY' && error.syscall === 'open'
+                ? taskText(options.lang, 'task_metadata_file_busy')
+                : error.message;
+            stats.error.push(`${item.name || filePath} - ${message}`);
         }
     } finally {
       await fsp.rm(tempArchive, { force: true }).catch(() => {});

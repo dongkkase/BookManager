@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { replaceZipEntry, listZipEntriesFromFile } from './core/zipArchive.js';
+import { replaceZipEntry, listZipEntriesFromFile, readZipEntryFromFile } from './core/zipArchive.js';
 import { getOperationErrors } from './operationDiagnostics.js';
 import { observeOperation } from './observabilityOperations.js';
 import { createTelemetry } from './telemetry.js';
@@ -145,6 +145,87 @@ test('metadata inspection preserves original file errors while expected missing 
     assert.equal(errors[0].telemetryStage, 'inspect');
     assert.equal(result.stats.error.length, 1);
     assert.deepEqual(events, []);
+});
+
+test('metadata save recovers from a temporary ZIP open lock without duplicate backups or error reports', async t => {
+    const fixture = await zipFixture(t);
+    const original = fs.readFileSync(fixture.item.filepath);
+    const open = fsp.open;
+    let attempts = 0;
+    t.mock.method(fsp, 'open', async (filePath, flags, ...args) => {
+        if (filePath === fixture.item.filepath && flags === 'r+' && ++attempts <= 2) {
+            throw Object.assign(new Error('private file is locked'), { code: 'EBUSY', syscall: 'open' });
+        }
+        return open(filePath, flags, ...args);
+    });
+    const { result, errors, events } = await observeResult(t, fixture, { backup_on: true });
+    assert.equal(attempts, 3);
+    assert.equal(result.stats.success.length, 1);
+    assert.deepEqual(result.stats.error, []);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(events, []);
+    const entries = await listZipEntriesFromFile(fixture.item.filepath);
+    assert.equal(entries.filter(entry => entry.name === 'ComicInfo.xml').length, 1);
+    assert.equal((await readZipEntryFromFile(fixture.item.filepath, entries.find(entry => entry.name === '001.jpg'))).toString(), 'private page contents');
+    assert.match((await readZipEntryFromFile(fixture.item.filepath, entries.find(entry => entry.name === 'ComicInfo.xml'))).toString(), /Private Title/);
+    const backupDir = path.join(fixture.root, 'bak');
+    assert.deepEqual(fs.readdirSync(backupDir), [fixture.item.name]);
+    assert.deepEqual(fs.readFileSync(path.join(backupDir, fixture.item.name)), original);
+});
+
+test('persistent metadata ZIP open locks retain the original error and source while displaying recovery guidance', async t => {
+    const fixture = await zipFixture(t);
+    const original = fs.readFileSync(fixture.item.filepath);
+    const failure = Object.assign(new Error('private file is locked'), { code: 'EBUSY', syscall: 'open' });
+    const stack = failure.stack;
+    const open = fsp.open;
+    let attempts = 0;
+    t.mock.method(fsp, 'open', async (filePath, flags, ...args) => {
+        if (filePath === fixture.item.filepath && flags === 'r+') {
+            attempts += 1;
+            throw failure;
+        }
+        return open(filePath, flags, ...args);
+    });
+    const { result, errors, events } = await observeResult(t, fixture, { backup_on: true, lang: 'ko' });
+    assert.equal(attempts, 5);
+    assert.equal(result.stats.success.length, 0);
+    assert.equal(result.stats.error.length, 1);
+    assert.match(result.stats.error[0], /파일이 사용 중이어서.*프로그램을 닫거나/);
+    assert.equal(errors[0], failure);
+    assert.equal(errors[0].stack, stack);
+    assert.equal(errors[0].message, 'private file is locked');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].tags.error_code, 'EBUSY');
+    assert.equal(events[0].tags.error_stage, 'write-metadata');
+    assert.equal(events[0].tags.syscall, 'open');
+    assert.deepEqual(fs.readFileSync(fixture.item.filepath), original);
+    assert.equal(fs.existsSync(path.join(fixture.root, 'bak')), false);
+});
+
+test('cancelling a busy metadata ZIP save prevents another open, backup, write and error report', async t => {
+    const fixture = await zipFixture(t);
+    const original = fs.readFileSync(fixture.item.filepath);
+    const open = fsp.open;
+    let attempts = 0;
+    let cancelled = false;
+    t.mock.method(fsp, 'open', async (filePath, flags, ...args) => {
+        if (filePath === fixture.item.filepath && flags === 'r+') {
+            attempts += 1;
+            setImmediate(() => { cancelled = true; });
+            throw Object.assign(new Error('private file is locked'), { code: 'EBUSY', syscall: 'open' });
+        }
+        return open(filePath, flags, ...args);
+    });
+    const { result, errors, events } = await observeResult(t, fixture, { backup_on: true, shouldCancel: () => cancelled });
+    assert.equal(attempts, 1);
+    assert.equal(result.cancelled, true);
+    assert.deepEqual(result.stats.error, []);
+    assert.deepEqual(result.stats.success, []);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(events, []);
+    assert.deepEqual(fs.readFileSync(fixture.item.filepath), original);
+    assert.equal(fs.existsSync(path.join(fixture.root, 'bak')), false);
 });
 
 test('metadata 7z save failures retain process exit details and exclude captured process output from Sentry', requiresExecutableScript, async t => {
