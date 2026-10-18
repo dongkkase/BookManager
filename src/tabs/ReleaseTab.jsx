@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import { parseReleaseMarkdown } from '../releasePolicy';
 import { releaseNotificationKey } from '../releaseNotificationPolicy';
@@ -146,9 +146,110 @@ function MarkdownBody({ markdown, onOpenExternal }) {
     });
 }
 
+function getReleaseScrollInset(navigation) {
+    const horizontal = navigation && getComputedStyle(navigation).getPropertyValue('--release-nav-horizontal').trim() === '1';
+    return horizontal ? navigation.offsetHeight + 30 : 15;
+}
+
+function revealVersionInList(list, active) {
+    if (!list || !active) return;
+    const listRect = list.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    if (activeRect.top < listRect.top) list.scrollTop += activeRect.top - listRect.top;
+    else if (activeRect.bottom > listRect.bottom) list.scrollTop += activeRect.bottom - listRect.bottom;
+    if (activeRect.left < listRect.left) list.scrollLeft += activeRect.left - listRect.left;
+    else if (activeRect.right > listRect.right) list.scrollLeft += activeRect.right - listRect.right;
+}
+
 function ReleaseTab({ t, isActive, releases, loading, loadError, unread, onViewed }) {
     const [error, setError] = useState('');
     const [highlighted, setHighlighted] = useState(() => new Set());
+    const [activeReleaseId, setActiveReleaseId] = useState(null);
+    const scrollAreaRef = useRef(null);
+    const contentRef = useRef(null);
+    const navigationRef = useRef(null);
+    const versionListRef = useRef(null);
+    const articleRefs = useRef(new Map());
+    const versionRefs = useRef(new Map());
+    const navigationTargetRef = useRef(null);
+
+    useEffect(() => {
+        const scrollArea = scrollAreaRef.current;
+        if (!isActive || loading || !scrollArea || releases.length === 0) return undefined;
+        let frame = 0;
+        let settleTimer = 0;
+        const updateActiveRelease = () => {
+            frame = 0;
+            if (!scrollArea.clientHeight) return;
+            scrollArea.style.setProperty('--release-viewport-height', `${scrollArea.clientHeight}px`);
+            const threshold = scrollArea.getBoundingClientRect().top + getReleaseScrollInset(navigationRef.current) + 2;
+            let currentId = releases[0].id;
+            for (const item of releases) {
+                const article = articleRefs.current.get(item.id);
+                if (!article || article.getBoundingClientRect().top > threshold) break;
+                currentId = item.id;
+            }
+            if (scrollArea.scrollTop > 0 && scrollArea.scrollTop + scrollArea.clientHeight >= scrollArea.scrollHeight - 2) {
+                currentId = releases[releases.length - 1].id;
+            }
+            setActiveReleaseId(navigationTargetRef.current ?? currentId);
+            if (navigationTargetRef.current === null) {
+                revealVersionInList(versionListRef.current, versionRefs.current.get(currentId));
+            }
+        };
+        const scheduleUpdate = () => {
+            if (!frame) frame = requestAnimationFrame(updateActiveRelease);
+        };
+        const finishNavigation = event => {
+            if (event && event.target !== scrollArea) return;
+            window.clearTimeout(settleTimer);
+            navigationTargetRef.current = null;
+            scheduleUpdate();
+        };
+        const interruptNavigation = () => {
+            if (navigationTargetRef.current === null) return;
+            scrollArea.scrollTo({ top: scrollArea.scrollTop, behavior: 'instant' });
+            finishNavigation();
+        };
+        const onScroll = () => {
+            if (navigationTargetRef.current !== null) {
+                window.clearTimeout(settleTimer);
+                settleTimer = window.setTimeout(finishNavigation, 180);
+            }
+            scheduleUpdate();
+        };
+        const observer = new ResizeObserver(scheduleUpdate);
+        observer.observe(scrollArea);
+        if (contentRef.current) observer.observe(contentRef.current);
+        if (navigationRef.current) observer.observe(navigationRef.current);
+        scrollArea.addEventListener('scroll', onScroll, { passive: true });
+        scrollArea.addEventListener('scrollend', finishNavigation);
+        scrollArea.addEventListener('wheel', interruptNavigation, { passive: true });
+        scrollArea.addEventListener('touchstart', interruptNavigation, { passive: true });
+        scheduleUpdate();
+        return () => {
+            cancelAnimationFrame(frame);
+            window.clearTimeout(settleTimer);
+            navigationTargetRef.current = null;
+            observer.disconnect();
+            scrollArea.removeEventListener('scroll', onScroll);
+            scrollArea.removeEventListener('scrollend', finishNavigation);
+            scrollArea.removeEventListener('wheel', interruptNavigation);
+            scrollArea.removeEventListener('touchstart', interruptNavigation);
+        };
+    }, [isActive, loading, releases]);
+
+    const scrollToRelease = id => {
+        const scrollArea = scrollAreaRef.current;
+        const article = articleRefs.current.get(id);
+        if (!scrollArea || !article) return;
+        const top = scrollArea.scrollTop + article.getBoundingClientRect().top - scrollArea.getBoundingClientRect().top - getReleaseScrollInset(navigationRef.current);
+        const targetTop = Math.max(0, Math.min(top, scrollArea.scrollHeight - scrollArea.clientHeight));
+        if (Math.abs(targetTop - scrollArea.scrollTop) <= 1) return;
+        navigationTargetRef.current = id;
+        setActiveReleaseId(id);
+        scrollArea.scrollTo({ top: targetTop, behavior: 'smooth' });
+    };
 
     useEffect(() => {
         if (!isActive) {
@@ -176,42 +277,77 @@ function ReleaseTab({ t, isActive, releases, loading, loadError, unread, onViewe
 
     return (
         <div className="release-tab">
-            <div className="release-scroll-area">
-                <div className="release-content-container">
-                    {loading ? (
-                        <div className="release-loading">{t('msg_loading_list')}</div>
-                    ) : releases.length === 0 ? (
-                        <div className="release-error">{t('msg_release_load_fail')}</div>
-                    ) : (
-                        <>
-                            {(error || loadError) && (
-                                <div className="release-error compact">
-                                    {t('msg_release_load_fail')}
-                                </div>
-                            )}
-                            {releases.map(item => (
-                                <article key={item.id} className={`release-card${highlighted.has(releaseNotificationKey(item)) ? ' is-new' : ''}`}>
-                                    <div className="release-card-title">
-                                        <FaIcon name="archive" size={18} />
-                                        <span>{item.name}</span>
-                                        {highlighted.has(releaseNotificationKey(item)) && <span className="release-new-badge">NEW</span>}
-                                        {item.date && <span className="release-card-date">({item.date})</span>}
+            <div className="release-scroll-area" ref={scrollAreaRef}>
+                <div className={`release-page-layout${!loading && releases.length > 0 ? ' has-version-nav' : ''}`}>
+                    <div className="release-content-container" ref={contentRef}>
+                        {loading ? (
+                            <div className="release-loading">{t('msg_loading_list')}</div>
+                        ) : releases.length === 0 ? (
+                            <div className="release-error">{t('msg_release_load_fail')}</div>
+                        ) : (
+                            <>
+                                {(error || loadError) && (
+                                    <div className="release-error compact">
+                                        {t('msg_release_load_fail')}
                                     </div>
-                                    <div className="release-card-body">
-                                        <MarkdownBody markdown={item.body} onOpenExternal={openExternal} />
-                                    </div>
-                                    {item.url && (
-                                        <button
-                                            type="button"
-                                            className="release-card-link"
-                                            onClick={() => openExternal(item.url)}
-                                        >
-                                            GitHub
-                                        </button>
-                                    )}
-                                </article>
-                            ))}
-                        </>
+                                )}
+                                {releases.map(item => (
+                                    <article
+                                        key={item.id}
+                                        id={`release-note-${encodeURIComponent(item.id)}`}
+                                        ref={element => {
+                                            if (element) articleRefs.current.set(item.id, element);
+                                            else articleRefs.current.delete(item.id);
+                                        }}
+                                        className={`release-card${highlighted.has(releaseNotificationKey(item)) ? ' is-new' : ''}`}
+                                    >
+                                        <div className="release-card-title">
+                                            <FaIcon name="archive" size={18} />
+                                            <span>{item.name}</span>
+                                            {highlighted.has(releaseNotificationKey(item)) && <span className="release-new-badge">NEW</span>}
+                                            {item.date && <span className="release-card-date">({item.date})</span>}
+                                        </div>
+                                        <div className="release-card-body">
+                                            <MarkdownBody markdown={item.body} onOpenExternal={openExternal} />
+                                        </div>
+                                        {item.url && (
+                                            <button
+                                                type="button"
+                                                className="release-card-link"
+                                                onClick={() => openExternal(item.url)}
+                                            >
+                                                GitHub
+                                            </button>
+                                        )}
+                                    </article>
+                                ))}
+                            </>
+                        )}
+                    </div>
+                    {!loading && releases.length > 0 && (
+                        <nav className="release-version-nav" aria-label={t('release_versions')} ref={navigationRef}>
+                            <h2 className="release-version-heading">{t('release_versions')}</h2>
+                            <div className="release-version-list" ref={versionListRef}>
+                                {releases.map(item => (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        className="release-version-link"
+                                        aria-controls={`release-note-${encodeURIComponent(item.id)}`}
+                                        aria-current={(activeReleaseId ?? releases[0].id) === item.id ? 'location' : undefined}
+                                        title={[item.name, item.date].filter(Boolean).join('\n')}
+                                        ref={element => {
+                                            if (element) versionRefs.current.set(item.id, element);
+                                            else versionRefs.current.delete(item.id);
+                                        }}
+                                        onClick={() => scrollToRelease(item.id)}
+                                    >
+                                        <span className="release-version-name">{item.tag || item.name}</span>
+                                        {highlighted.has(releaseNotificationKey(item)) && <span className="release-version-new-dot" aria-label="NEW" />}
+                                    </button>
+                                ))}
+                            </div>
+                        </nav>
                     )}
                 </div>
             </div>

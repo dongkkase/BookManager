@@ -67,6 +67,7 @@ import {
   resolveLibrarySyncChoice,
 } from './libraryDialog.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
+import { openExternalUrl } from './externalUrlOpener.js';
 import { relaunchApp } from './appRelaunch.js';
 import { installAppUpdate } from './updateInstaller.js';
 import {
@@ -5820,10 +5821,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return resolveAppVersion();
   });
 
-  ipcMain.handle('app:openExternal', async (_event, url) => {
+  ipcMain.handle('app:openExternal', async (_event, url, options) => {
     const safeUrl = normalizeExternalUrl(url);
     if (!safeUrl) throw new Error(i18nT('external_url_blocked'));
-    await shell.openExternal(safeUrl);
+    await openExternalUrl(safeUrl, options, { app, shell });
     return true;
   });
 

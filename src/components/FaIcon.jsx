@@ -3,6 +3,8 @@ import { config as fontAwesomeConfig } from '@fortawesome/fontawesome-svg-core';
 import '@fortawesome/fontawesome-svg-core/styles.css';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
+    faApple,
+    faAndroid,
   faDiscord,
   faMicrosoft,
 } from '@fortawesome/free-brands-svg-icons';
@@ -16,6 +18,7 @@ import {
   faAnglesRight,
   faAnglesUp,
   faArrowRotateLeft,
+    faArrowUpRightFromSquare,
   faBackwardStep,
   faBars,
   faBook,
@@ -99,6 +102,9 @@ import {
 fontAwesomeConfig.autoAddCss = false;
 
 const ICONS = {
+    apple: faApple,
+    android: faAndroid,
+    externalLink: faArrowUpRightFromSquare,
   angleDown: faAngleDown,
   angleLeft: faAngleLeft,
   angleRight: faAngleRight,

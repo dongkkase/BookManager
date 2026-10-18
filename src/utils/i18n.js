@@ -5,6 +5,16 @@ export const SUPPORTED_LANGUAGES = ['ko', 'en', 'ja'];
 
 const EXTRA_TRANSLATIONS = {
   ko: {
+    support: {
+        actions: '프로젝트 지원 및 모바일 앱',
+        github: 'GitHub 스타',
+        sponsor: 'BookManager 후원',
+        ios: 'App Store에서 Readive 다운로드',
+        android: 'Android 앱 준비 중',
+        star_title: 'BookManager를 응원해 주세요',
+        star_description: '책 정리가 조금 더 편해졌다면 GitHub에 스타를 남겨 주세요. 여러분의 관심은 다음 기능을 만들고 BookManager를 꾸준히 개선하는 힘이 됩니다.',
+        star_action: 'GitHub에서 스타 남기기',
+    },
     reading_lists: readingListTranslations.ko,
     settings: {
         library_preview: {
@@ -421,6 +431,14 @@ const EXTRA_TRANSLATIONS = {
         recent_reading: '최근 읽음',
         refresh: '폴더 및 목록 새로고침 (F5)',
       },
+        tree: {
+            loading: '폴더 불러오는 중…',
+            empty: '하위 폴더 없음',
+            error: '폴더를 불러오지 못했습니다',
+            retry: '다시 시도',
+            expand: '폴더 펼치기',
+            collapse: '폴더 접기',
+        },
       goto: {
         placeholder: '이동할 폴더 경로 입력',
         input_label: '이동할 폴더 경로',
@@ -915,6 +933,16 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   en: {
+    support: {
+        actions: 'Project support and mobile apps',
+        github: 'Star on GitHub',
+        sponsor: 'Support BookManager',
+        ios: 'Download Readive on the App Store',
+        android: 'Android app coming soon',
+        star_title: 'Give BookManager your support',
+        star_description: 'If organizing your books has become a little easier, leave us a star on GitHub. Your support encourages us to build new features and keep improving BookManager.',
+        star_action: 'Leave a star on GitHub',
+    },
     reading_lists: readingListTranslations.en,
     settings: {
         library_preview: {
@@ -1331,6 +1359,14 @@ const EXTRA_TRANSLATIONS = {
         recent_reading: 'Recently Read',
         refresh: 'Refresh folders and list (F5)',
       },
+        tree: {
+            loading: 'Loading folders…',
+            empty: 'No subfolders',
+            error: 'Could not load folders',
+            retry: 'Retry',
+            expand: 'Expand folder',
+            collapse: 'Collapse folder',
+        },
       goto: {
         placeholder: 'Enter a folder path',
         input_label: 'Folder path to open',
@@ -1825,6 +1861,16 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   ja: {
+    support: {
+        actions: 'プロジェクトの支援とモバイルアプリ',
+        github: 'GitHubでスターを付ける',
+        sponsor: 'BookManagerを支援',
+        ios: 'App StoreでReadiveをダウンロード',
+        android: 'Androidアプリは準備中',
+        star_title: 'BookManagerを応援してください',
+        star_description: '本の整理が少し楽になったら、GitHubでスターを付けていただけるとうれしいです。皆さんの応援が、新しい機能の開発やBookManagerの継続的な改善の励みになります。',
+        star_action: 'GitHubでスターを付ける',
+    },
     reading_lists: readingListTranslations.ja,
     settings: {
         library_preview: {
@@ -2241,6 +2287,14 @@ const EXTRA_TRANSLATIONS = {
         recent_reading: '最近読んだ項目',
         refresh: 'フォルダーと一覧を更新 (F5)',
       },
+        tree: {
+            loading: 'フォルダーを読み込み中…',
+            empty: 'サブフォルダーなし',
+            error: 'フォルダーを読み込めませんでした',
+            retry: '再試行',
+            expand: 'フォルダーを展開',
+            collapse: 'フォルダーを折りたたむ',
+        },
       goto: {
         placeholder: '移動先のフォルダーパスを入力',
         input_label: '移動先のフォルダーパス',

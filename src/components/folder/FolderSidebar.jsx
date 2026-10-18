@@ -20,6 +20,10 @@ import {
   scheduleAfterNextPaint,
 } from '../../selectionVisualFeedback';
 import { buildLibraryItems, groupLibraryItems } from '../../libraryPresentation.js';
+import { createFolderTreeLoader } from '../../folderTreeLoader.js';
+import FolderTree from './FolderTree.jsx';
+
+const EMPTY_ITEMS = [];
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'bookmanager.folderSidebar.collapsedSections';
 const LIBRARY_VISIBLE_COUNT_STORAGE_KEY = 'bookmanager.folderSidebar.libraryVisibleCount';
@@ -186,7 +190,7 @@ function readStoredSidebarCollapseState() {
  * 좌측 사이드바 컴포넌트
  * 읽기 목록, 라이브러리 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, missingCount = 0, onCheckMissingVolumes, isCheckingMissing = false, missingCheckDisabled = false, libraryScanStateMap = {}, refreshToken = 0, onRefresh, refreshing = false, refreshDisabled = false }) {
+function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEMS, favorites = EMPTY_ITEMS, selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, missingCount = 0, onCheckMissingVolumes, isCheckingMissing = false, missingCheckDisabled = false, libraryScanStateMap = {}, refreshToken = 0, onRefresh, refreshing = false, refreshDisabled = false }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
     const [libraryVisibleCount, setLibraryVisibleCount] = useState(readStoredLibraryVisibleCount);
@@ -194,28 +198,23 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
     const [libraryListHeight, setLibraryListHeight] = useState(null);
     const libraryListRef = useRef(null);
   const [roots, setRoots] = useState([]);
-  const [folderCache, setFolderCache] = useState({});
-  const [libraryFolderCounts, setLibraryFolderCounts] = useState({});
+    const [folderEntries, setFolderEntries] = useState({});
   const [specialPaths, setSpecialPaths] = useState({});
   const [selectedSource, setSelectedSource] = useState('');
   const [optimisticSelectedPath, setOptimisticSelectedPath] = useState('');
   const sidebarRef = useRef(null);
-  const treeListRef = useRef(null);
-  const selectedNodeRef = useRef(null);
-  const folderCacheRef = useRef({});
-  const folderLoadPromisesRef = useRef(new Map());
+    const folderLoaderRef = useRef(null);
+    const folderReaderRef = useRef(null);
   const pendingNavigationRef = useRef(null);
 
-  const focusSelectedNode = (block = 'nearest', behavior = 'auto') => {
-    const node = selectedNodeRef.current;
-    if (!node) return;
-    node.focus?.({ preventScroll: true });
-    node.scrollIntoView?.({ block, inline: 'nearest', behavior });
-  };
-
   const tooltipText = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trimStart();
+    const libraryRootPathsKey = JSON.stringify([...new Set(libraries)].sort());
+    const libraryRootPaths = useMemo(() => JSON.parse(libraryRootPathsKey), [libraryRootPathsKey]);
     const libraryItems = useMemo(() => buildLibraryItems(libraries, libraryEntries), [libraries, libraryEntries]);
     const groupedLibraryItems = useMemo(() => groupLibraryItems(libraryItems), [libraryItems]);
+    const libraryFolderCounts = useMemo(() => Object.fromEntries(libraryItems.map(item => [
+        normalizeLibraryKey(item.path), folderEntries[item.path]?.children.length || 0,
+    ])), [libraryItems, folderEntries]);
     useEffect(() => {
         try {
             window.localStorage.setItem(LIBRARY_VISIBLE_COUNT_STORAGE_KEY, String(libraryVisibleCount));
@@ -303,10 +302,10 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
   }, [libraryItems, roots]);
 
   const findContainingLibraryRoot = useCallback(folderPath => (
-    (libraries || [])
+    libraryRootPaths
       .filter(lib => isSameOrDescendantPath(folderPath, lib))
       .sort((left, right) => String(right).length - String(left).length)[0] || ''
-  ), [libraries]);
+  ), [libraryRootPaths]);
 
   const readLiveFolderChildren = useCallback(async folderPath => {
     if (!window.electronAPI?.readDir) return [];
@@ -336,6 +335,49 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
     }));
   }, [findContainingLibraryRoot]);
 
+    const readFolderChildren = useCallback(async folderPath => {
+        const indexedFolders = await readIndexedLibraryFolderChildren(folderPath);
+        return indexedFolders || await readLiveFolderChildren(folderPath);
+    }, [readIndexedLibraryFolderChildren, readLiveFolderChildren]);
+    folderReaderRef.current = readFolderChildren;
+
+    useEffect(() => {
+        const loader = createFolderTreeLoader({
+            readChildren: folderPath => folderReaderRef.current(folderPath),
+            onChange: (folderPath, entry) => setFolderEntries(current => ({ ...current, [folderPath]: entry })),
+        });
+        folderLoaderRef.current = loader;
+        return () => {
+            loader.dispose();
+            if (folderLoaderRef.current === loader) folderLoaderRef.current = null;
+        };
+    }, []);
+
+    const loadFolder = useCallback(folderPath => (
+        folderLoaderRef.current?.load(folderPath, { priority: true }) || Promise.resolve([])
+    ), []);
+
+    useEffect(() => {
+        folderLoaderRef.current?.reset();
+        setFolderEntries({});
+        libraryRootPaths.forEach(path => folderLoaderRef.current?.load(path));
+    }, [refreshToken, readFolderChildren, libraryRootPaths]);
+
+    useEffect(() => {
+        const visited = new Set();
+        const loadExpanded = nodes => {
+            for (const node of nodes) {
+                if (visited.has(node.path)) continue;
+                visited.add(node.path);
+                if (!expandedFolders.has(node.path)) continue;
+                const entry = folderLoaderRef.current?.get(node.path);
+                if (!entry) loadFolder(node.path);
+                if (entry?.status === 'ready') loadExpanded(entry.children);
+            }
+        };
+        loadExpanded(treeRoots);
+    }, [expandedFolders, treeRoots, folderEntries, loadFolder]);
+
   useEffect(() => {
     setOptimisticSelectedPath('');
   }, [selectedFolderPath]);
@@ -354,84 +396,29 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
   }, [collapsedSections]);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchRoots = async () => {
       try {
         if (window.electronAPI && window.electronAPI.getRoots) {
           const fetchedRoots = await window.electronAPI.getRoots();
           const rootNodes = fetchedRoots.map(r => ({ name: r, path: r, isFolder: true }));
-          setRoots(rootNodes);
+          if (!cancelled) setRoots(rootNodes);
         }
       } catch (error) {
         console.error('Failed to fetch roots:', error);
       }
     };
     fetchRoots();
+    return () => { cancelled = true; };
   }, [refreshToken]);
-
-  useEffect(() => {
-    window.electronAPI?.getSpecialPaths?.()
-      .then(paths => setSpecialPaths(paths || {}))
-      .catch(error => console.error('Failed to fetch special paths:', error));
-  }, [refreshToken]);
-
-  useEffect(() => {
-    folderLoadPromisesRef.current.clear();
-    setFolderCache({});
-  }, [refreshToken]);
-
-  useEffect(() => {
-    folderCacheRef.current = folderCache;
-  }, [folderCache]);
 
   useEffect(() => {
     let cancelled = false;
-    const loadLibraryFolderCounts = async () => {
-      const counts = {};
-      await Promise.all((libraries || []).map(async lib => {
-        const key = normalizeLibraryKey(lib);
-        counts[key] = 0;
-        try {
-          const indexedChildren = await readIndexedLibraryFolderChildren(lib);
-          if (indexedChildren) {
-            counts[key] = indexedChildren.length;
-            return;
-          }
-          const liveChildren = await readLiveFolderChildren(lib);
-          counts[key] = liveChildren.length;
-        } catch (error) {
-          console.error('Failed to count library folders:', error);
-        }
-      }));
-      if (!cancelled) setLibraryFolderCounts(counts);
-    };
-    loadLibraryFolderCounts();
-    return () => {
-      cancelled = true;
-    };
-  }, [libraries, readIndexedLibraryFolderChildren, readLiveFolderChildren, refreshToken]);
-
-  const loadFolder = useCallback(async (folderPath, force = false) => {
-    if (!force && folderCacheRef.current[folderPath]) return folderCacheRef.current[folderPath];
-    if (!force && folderLoadPromisesRef.current.has(folderPath)) {
-      return folderLoadPromisesRef.current.get(folderPath);
-    }
-    const promise = (async () => {
-      try {
-        const indexedFolders = await readIndexedLibraryFolderChildren(folderPath);
-        const folders = indexedFolders || await readLiveFolderChildren(folderPath);
-        setFolderCache(prev => ({ ...prev, [folderPath]: folders }));
-        return folders;
-      } catch (error) {
-        console.error('Failed to read dir:', error);
-        setFolderCache(prev => ({ ...prev, [folderPath]: [] }));
-      }
-      return [];
-    })().finally(() => {
-      folderLoadPromisesRef.current.delete(folderPath);
-    });
-    folderLoadPromisesRef.current.set(folderPath, promise);
-    return promise;
-  }, [readIndexedLibraryFolderChildren, readLiveFolderChildren]);
+    window.electronAPI?.getSpecialPaths?.()
+      .then(paths => { if (!cancelled) setSpecialPaths(paths || {}); })
+      .catch(error => console.error('Failed to fetch special paths:', error));
+    return () => { cancelled = true; };
+  }, [refreshToken]);
 
   const toggleFolder = useCallback((path) => {
     setExpandedFolders(current => {
@@ -440,11 +427,11 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
         next.delete(path);
       } else {
         next.add(path);
-        loadFolder(path);
       }
       return next;
     });
-  }, [loadFolder]);
+    if (!expandedFolders.has(path)) loadFolder(path);
+  }, [expandedFolders, loadFolder]);
 
   useEffect(() => {
     if (!selectedFolderPath || treeRoots.length === 0) return;
@@ -454,29 +441,22 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
       const root = chooseTreeRoot(treeRoots, selectedFolderPath);
       if (!root) return;
       const ancestors = ancestorPathsBetween(root.path, selectedFolderPath);
+        setExpandedFolders(current => {
+            const next = new Set(current);
+            ancestors.slice(0, -1).forEach(path => next.add(path));
+            return next.size === current.size ? current : next;
+        });
       for (const ancestor of ancestors.slice(0, -1)) {
         if (cancelled) return;
-        setExpandedFolders(current => new Set(current).add(ancestor));
         await loadFolder(ancestor);
       }
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => focusSelectedNode('center'));
-      });
     };
 
     revealSelectedPath();
     return () => {
       cancelled = true;
     };
-  }, [loadFolder, selectedFolderPath, treeRoots]);
-
-  useEffect(() => {
-    if (!selectedFolderPath) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => focusSelectedNode('nearest'));
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [selectedFolderPath, expandedFolders]);
+  }, [loadFolder, selectedFolderPath, treeRoots, refreshToken, readFolderChildren]);
 
   // 라이브러리 목록
   const renderLibraryList = () => {
@@ -716,78 +696,19 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
     );
   };
 
-  // 폴더 트리 뷰 (재귀 렌더링)
-  const renderTreeNode = (node, depth = 0, siblings = []) => {
-    const isExpanded = expandedFolders.has(node.path);
-    const isActive = !recentReadingSelected && !readingListSelected && (optimisticSelectedPath || selectedFolderPath) === node.path;
-    const children = folderCache[node.path] || [];
-    
-    // 이 노드가 자식을 가질 가능성이 있는지 (일단 폴더면 있다고 가정, 로드 후 비어있으면 없는 것으로 표시)
-    const hasChildren = folderCache[node.path]
-      ? children.length > 0
-      : node.childFolderCount !== undefined ? node.childFolderCount > 0 : true;
+    const selectTreeFolder = useCallback(folderPath => {
+        setSelectedSource('tree');
+        setOptimisticSelectedPath(folderPath);
+        scheduleSidebarNavigation(() => onSelectFolder?.(folderPath, { source: 'tree' }));
+    }, [onSelectFolder, scheduleSidebarNavigation]);
 
-    return (
-      <li key={node.path} className="tree-node">
-        <div
-          ref={isActive ? selectedNodeRef : null}
-          data-folder-sidebar-path={node.path}
-          tabIndex={isActive ? -1 : undefined}
-          className={isActive ? 'selected' : ''}
-          style={{ 
-            '--folder-tree-indent': `${7 + depth * 10}px`,
-            paddingTop: '4px', 
-            paddingBottom: '4px',
-            display: 'flex',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: '#d1d5db',
-            fontSize: 'var(--font-sm)'
-          }}
-          onClick={(event) => {
-            applySidebarSelection(event);
-            setSelectedSource('tree');
-            setOptimisticSelectedPath(node.path);
-            scheduleSidebarNavigation(() => {
-              onSelectFolder?.(node.path, { source: 'tree' });
-            });
-          }}
-          onDoubleClick={() => {
-            if (node.isFolder) toggleFolder(node.path);
-          }}
-          onContextMenu={(event) => {
-            if (node.isLibraryRoot) {
-              onLibraryContextMenu?.(event, node.path);
-              return;
-            }
-            onFolderContextMenu?.(event, node.path, siblings.map(item => item.path));
-          }}
-        >
-          <span
-            className="folder-tree-expander"
-            style={{ visibility: node.isFolder && hasChildren ? 'visible' : 'hidden' }}
-            role="button"
-            aria-label={isExpanded ? '접기' : '펼치기'}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (node.isFolder) toggleFolder(node.path);
-            }}
-          >
-            <FaIcon name={isExpanded ? 'angleDown' : 'chevronRight'} size={10} />
-          </span>
-          <span style={{ marginRight: '4px', display: 'inline-flex', color: node.isFolder ? '#f0b536' : '#b8c7d4' }}>
-            <FaIcon name={node.isFolder ? 'folder' : 'file'} size={12} />
-          </span>
-          <span style={{ minWidth: 0, whiteSpace: 'nowrap' }}>{node.name}</span>
-        </div>
-        {node.isFolder && isExpanded && children.length > 0 && (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {children.map(child => renderTreeNode(child, depth + 1, children))}
-          </ul>
-        )}
-      </li>
-    );
-  };
+    const openTreeContextMenu = useCallback((event, node, siblingPaths) => {
+        if (node.isLibraryRoot) {
+            onLibraryContextMenu?.(event, node.path);
+            return;
+        }
+        onFolderContextMenu?.(event, node.path, siblingPaths);
+    }, [onLibraryContextMenu, onFolderContextMenu]);
 
   const renderFolderTree = () => (
     <div className="sidebar-section sidebar-section-folders">
@@ -835,9 +756,17 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
             </button>
         </div>
       </div>
-      <ul ref={treeListRef} className="nav-list folder-tree-list">
-        {treeRoots.map(node => renderTreeNode(node, 0, treeRoots))}
-      </ul>
+        <FolderTree
+            roots={treeRoots}
+            entries={folderEntries}
+            expandedPaths={expandedFolders}
+            selectedPath={!recentReadingSelected && !readingListSelected ? optimisticSelectedPath || selectedFolderPath : ''}
+            onToggle={toggleFolder}
+            onSelect={selectTreeFolder}
+            onContextMenu={openTreeContextMenu}
+            onRetry={loadFolder}
+            t={t}
+        />
     </div>
   );
 

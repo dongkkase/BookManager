@@ -1771,6 +1771,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleDelete = async (event) => {
+        if (document.querySelector('.app-support-dialog-layer')) return;
       if (event.key !== 'Delete' || apiSearch.open || isWorking || isMetadataTextInput(event.target)) return;
       if (!selectedFileId && !selectedGroup) return;
       event.preventDefault();
@@ -1801,6 +1802,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleMetadataTreeKeyDown = (event) => {
+        if (document.querySelector('.app-support-dialog-layer')) return;
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       const treeIsActive = isMetadataTreeTarget(event.target) || metadataTreeKeyboardActiveRef.current;
       if (
@@ -1880,6 +1882,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleShortcut = (event) => {
+        if (document.querySelector('.app-support-dialog-layer')) return;
       if (apiSearch.open || event.defaultPrevented || event.repeat) return;
       const code = shortcutCode(event);
       if (hasPrimaryModifier(event) && !event.altKey && code === 'KeyF') {

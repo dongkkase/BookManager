@@ -20,6 +20,11 @@ function fixture() {
             return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
         },
         useMemo: factory => factory(),
+        useRef(initial) {
+            const index = cursor++;
+            if (!(index in slots)) slots[index] = { current: initial };
+            return slots[index];
+        },
         useEffect: effect => effects.push(effect),
     };
     const listeners = new Map();

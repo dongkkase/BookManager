@@ -2245,6 +2245,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const canFocusGotoPath = useCallback(() => (
     !document.querySelector('.modal-overlay')
+    && !document.querySelector('.app-support-dialog-layer')
     && !document.querySelector('.app-lock-screen')
     && !document.querySelector('.app-library-scan-slide')
     && !mainAreaRef.current?.closest('.folder-tab')?.querySelector('.folder-dialog-backdrop')
@@ -3693,6 +3694,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (!isFolderTabVisible() || showLayoutDialog) return;
+        if (document.querySelector('.app-support-dialog-layer')) return;
       if (
         !event.defaultPrevented
         && !event.repeat

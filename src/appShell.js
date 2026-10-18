@@ -1,6 +1,9 @@
 export const APP_NAME = 'BookManager';
 export const DISCORD_URL = 'https://discord.gg/DRVUbPewaV';
 export const READIVE_URL = 'https://dongkkase.github.io/BookManager/readive/';
+export const GITHUB_URL = 'https://github.com/dongkkase/BookManager';
+export const SPONSOR_URL = 'https://buymeacoffee.com/dongkkase';
+export const READIVE_APP_STORE_URL = 'https://apps.apple.com/kr/app/readive/id6796676237?pt=822806&ct=BookManager';
 export const ISSUE_URL = 'https://github.com/dongkkase/BookManager/issues';
 export const MANUAL_URL = 'https://github.com/dongkkase/BookManager/wiki';
 export const RELEASES_URL = 'https://github.com/dongkkase/BookManager/releases';

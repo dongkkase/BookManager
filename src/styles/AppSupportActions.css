@@ -1,0 +1,194 @@
+.app-support-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 0;
+    height: var(--control-height-lg);
+    margin: 0 3px 4px 10px;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: #2b2b2b;
+}
+
+.app-support-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-height-lg);
+    height: calc(var(--control-height-lg) - 2px);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.app-support-actions > .app-support-button + .app-support-button {
+    border-left: 1px solid #444;
+}
+
+.app-support-actions > .app-support-button:first-of-type {
+    border-radius: 5px 0 0 5px;
+}
+
+.app-support-actions > .app-support-button:last-of-type {
+    border-radius: 0 5px 5px 0;
+}
+
+.app-support-button:focus-visible {
+    outline-offset: -3px;
+}
+
+.app-support-button:hover,
+.app-support-button[aria-expanded="true"] {
+    background: #3a3a3a;
+}
+
+.app-support-star {
+    color: oklch(0.84 0.17 95);
+}
+
+.app-support-sponsor {
+    color: oklch(0.704 0.191 22.216);
+}
+
+.app-support-apple {
+    color: oklch(0.985 0.001 263);
+}
+
+.app-support-android {
+    color: oklch(0.82 0.17 154);
+    cursor: default;
+}
+
+.app-support-mug {
+    width: calc(22px * var(--font-scale, 1));
+    height: calc(22px * var(--font-scale, 1));
+    background: currentColor;
+    -webkit-mask: var(--support-mug-icon) center / contain no-repeat;
+    mask: var(--support-mug-icon) center / contain no-repeat;
+}
+
+.app-support-button[data-tooltip]::before,
+.app-support-button[data-tooltip]::after {
+    position: absolute;
+    z-index: 80;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: #e5ecef;
+    transition: none;
+}
+
+.app-support-button[data-tooltip]::before {
+    content: attr(data-tooltip);
+    top: calc(100% + 8px);
+    right: 0;
+    width: max-content;
+    max-width: min(280px, calc(100vw - 24px));
+    padding: 7px 10px;
+    border-radius: 10px;
+    color: #263442;
+    font-size: var(--font-xs);
+    font-weight: 400;
+    line-height: 1.4;
+    text-align: center;
+    white-space: normal;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+}
+
+.app-support-button[data-tooltip]::after {
+    content: '';
+    top: calc(100% + 4px);
+    right: calc(50% - 4px);
+    width: 8px;
+    height: 8px;
+    transform: rotate(45deg);
+}
+
+.app-support-button[data-tooltip]:is(:hover, :focus-visible)::before,
+.app-support-button[data-tooltip]:is(:hover, :focus-visible)::after {
+    visibility: visible;
+    opacity: 1;
+}
+
+.app-support-dialog-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+}
+
+.app-support-dialog {
+    position: absolute;
+    width: min(calc(340px * var(--font-scale, 1)), 420px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    padding: 18px 16px 16px;
+    border: 1px solid #45494e;
+    border-radius: 6px;
+    background: #25272a;
+    color: #f1f1f1;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.app-support-dialog h2 {
+    margin: 0 24px 12px 0;
+    font-size: var(--font-md);
+    font-weight: 500;
+    line-height: 1.5;
+    word-break: keep-all;
+}
+
+.app-support-dialog p {
+    margin: 0 0 14px;
+    color: #b1b4b8;
+    font-size: var(--font-base);
+    line-height: 1.65;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}
+
+.app-support-dialog-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #a7abb0;
+    cursor: pointer;
+}
+
+.app-support-dialog-close:hover {
+    background: #383c40;
+    color: #fff;
+}
+
+.app-support-dialog-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: var(--control-height-lg);
+    padding: 9px 12px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: #5b9bfa;
+    color: #101c2c;
+    font-size: var(--font-base);
+    line-height: 1.4;
+    cursor: pointer;
+}
+
+.app-support-dialog-link:hover {
+    background: #78adfc;
+}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { TabBar } from './components/TabBar';
 import { SettingsModal } from './components/SettingsModal';
 import { AppLockOverlay } from './components/AppLockOverlay';
+import { AppSupportActions } from './components/AppSupportActions';
 import { AudiobookMiniPlayer } from './components/AudiobookMiniPlayer';
 import { FaIcon } from './components/FaIcon';
 import { FileDropHoverOverlay } from './components/FileDropHoverOverlay';
@@ -13,7 +14,6 @@ import { useLockScanQueue } from './hooks/useLockScanQueue';
 import { translateKnownText } from './utils/i18n';
 import {
   DISCORD_URL,
-  READIVE_URL,
   MANUAL_URL,
   RELEASES_URL,
   TABS,
@@ -26,8 +26,6 @@ import {
   normalizeDroppedPaths,
   resolveTabId,
 } from './appShell';
-import readiveAppleIcon from '../docs/icon_apple.svg';
-import readiveGooglePlayIcon from '../docs/icon_googleplay.svg';
 import {
   createToastDescriptor,
   shouldShowToast,
@@ -798,18 +796,7 @@ function App() {
           releaseNotice={releaseUpdates.unread[0]}
           t={t}
         />
-        <button
-          className="top-btn top-btn-store top-bar-store-action"
-          title="Readive"
-          aria-label="Readive"
-          onClick={() => window.electronAPI?.openExternal?.(READIVE_URL)}
-        >
-          <span className="top-store-icons" aria-hidden="true">
-            <img className="top-store-icon" src={readiveAppleIcon} alt="" />
-            <img className="top-store-icon" src={readiveGooglePlayIcon} alt="" />
-          </span>
-          통합 모바일 뷰어 Readive
-        </button>
+        <AppSupportActions t={t} showToast={showToast} />
       </div>
       
       <div className="app-content" ref={fileDropAreaRef}>

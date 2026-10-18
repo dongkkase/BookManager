@@ -262,7 +262,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 앱 정보
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   installUpdate: (options) => ipcRenderer.invoke('app:installUpdate', options),
-  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+    openExternal: (url, options) => ipcRenderer.invoke('app:openExternal', url, options),
   relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
   setRuntimeState: (state) => ipcRenderer.send('app:setRuntimeState', state),
 });
