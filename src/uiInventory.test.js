@@ -197,9 +197,9 @@ test('상단 메뉴는 외부 링크와 아이콘 전용 환경 설정 버튼을
         ['Discord URL import', 'DISCORD_URL'],
         ['Discord 버튼', "openExternal?.(DISCORD_URL)"],
         ['Discord 아이콘', 'name="discord"'],
-        ['Discord 아이콘 전용 버튼', 'className="top-btn top-btn-icon"'],
+        ['Discord 버그 신고 및 건의 문구', "t('btn_issue')"],
+        ['Discord 버그 신고 및 건의 접근성 이름', "aria-label={t('btn_issue')}"],
         ['매뉴얼 URL import', 'MANUAL_URL'],
-        ['버그 신고 버튼', "openExternal?.(ISSUE_URL)"],
         ['매뉴얼 버튼', "openExternal?.(MANUAL_URL)"],
         ['매뉴얼 아이콘', 'name="bookOpen"'],
         ['매뉴얼 문구', "t('btn_manual')"],
@@ -208,10 +208,7 @@ test('상단 메뉴는 외부 링크와 아이콘 전용 환경 설정 버튼을
         ['환경 설정 접근성 이름', "aria-label={t('settings_btn')}"],
     ]);
     assert.doesNotMatch(sources.app, /<FaIcon name="gear" \/>\{t\('settings_btn'\)\}/);
-    assert.ok(
-        sources.app.indexOf('openExternal?.(DISCORD_URL)') < sources.app.indexOf('openExternal?.(ISSUE_URL)'),
-        'Discord 버튼은 버그 신고 버튼 왼쪽에 있어야 합니다.',
-    );
+    assert.doesNotMatch(sources.app, /openExternal\?\.\(ISSUE_URL\)/);
     assert.match(
         sources.appCss,
         /\.top-btn\s*\{[\s\S]*?box-sizing: border-box;[\s\S]*?height: var\(--control-height-lg\);/,

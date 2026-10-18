@@ -79,7 +79,7 @@ export const VISUAL_STYLE_CONTRACTS = Object.freeze([
       '.dropdown-menu-up',
       '.dropdown-item:hover',
       '.goto-path-input:focus',
-      'border-left: 1px dashed #666',
+        'body.is-resizing-folder-horizontal .folder-resizer-vertical::before',
     ],
   },
   {

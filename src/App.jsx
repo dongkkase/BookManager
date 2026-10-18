@@ -14,7 +14,6 @@ import { translateKnownText } from './utils/i18n';
 import {
   DISCORD_URL,
   READIVE_URL,
-  ISSUE_URL,
   MANUAL_URL,
   RELEASES_URL,
   TABS,
@@ -753,14 +752,14 @@ function App() {
               : t('msg_latest_version', [appVersion || '-'])}
           </button>
           <button
-            className="top-btn top-btn-icon"
+            className="top-btn"
             title="Discord"
-            aria-label="Discord"
+            aria-label={t('btn_issue')}
             onClick={() => window.electronAPI?.openExternal?.(DISCORD_URL)}
           >
             <FaIcon name="discord" />
+            {t('btn_issue')}
           </button>
-          <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(ISSUE_URL)}><FaIcon name="bug" />{t('btn_issue')}</button>
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(MANUAL_URL)}><FaIcon name="bookOpen" />{t('btn_manual')}</button>
           <button
             className="top-btn top-btn-icon top-btn-settings"
