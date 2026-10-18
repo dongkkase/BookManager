@@ -1,6 +1,7 @@
 import { IMAGE_EDIT_LIMITS, IMAGE_FILTER_PRESETS, getTransformedImageDimensions, normalizeImageEditSettings } from './imageEditing.shared.js';
 
 let source = null;
+let sourceMimeType = '';
 let queue = Promise.resolve();
 
 function canvas(width, height) {
@@ -166,6 +167,33 @@ function addBorder(image, border, scale) {
     return result;
 }
 
+function hasTransparency(surface) {
+    const context = surface.getContext('2d');
+    for (let top = 0; top < surface.height; top += 128) {
+        const { data } = context.getImageData(0, top, surface.width, Math.min(128, surface.height - top));
+        for (let index = 3; index < data.length; index += 4) if (data[index] !== 255) return true;
+    }
+    return false;
+}
+
+async function encodeOutput(surface, options) {
+    if (options.outputFormat !== 'auto') return surface.convertToBlob({ type: 'image/png' });
+    const maximum = Number(options.maxOutputBytes) > 0 ? Number(options.maxOutputBytes) : Infinity;
+    let png;
+    if (sourceMimeType !== 'image/jpeg') {
+        png = await surface.convertToBlob({ type: 'image/png' });
+        if (png.size <= maximum) return png;
+    }
+    // Preserve transparent source pixels and transparency added by border effects.
+    if (hasTransparency(surface)) return png || surface.convertToBlob({ type: 'image/png' });
+    let jpeg;
+    for (const quality of [0.95, 0.9, 0.85, 0.8]) {
+        jpeg = await surface.convertToBlob({ type: 'image/jpeg', quality });
+        if (jpeg.size <= maximum || jpeg.type !== 'image/jpeg') break;
+    }
+    return jpeg;
+}
+
 async function render(settings, options = {}) {
     if (!source) throw Object.assign(new Error('Image is not loaded'), { code: 'IMAGE_EDIT_CLOSED' });
     const value = normalizeImageEditSettings(settings, source.width, source.height);
@@ -201,7 +229,7 @@ async function render(settings, options = {}) {
             croppedContext.drawImage(transformed, value.crop.x * transformed.width, value.crop.y * transformed.height, value.crop.width * transformed.width, value.crop.height * transformed.height, 0, 0, width, height);
             output = addBorder(cropped, value.border, outputScale);
         }
-        const blob = await output.convertToBlob({ type: 'image/png' });
+        const blob = await encodeOutput(output, options);
         return { blob, width: output.width, height: output.height };
     } finally {
         if (output !== transformed && output !== cropped) release(output);
@@ -218,6 +246,7 @@ self.onmessage = ({ data }) => {
                 if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') throw Object.assign(new Error('Image editing requires OffscreenCanvas'), { code: 'IMAGE_EDIT_UNSUPPORTED' });
                 source?.close();
                 source = await createImageBitmap(data.blob);
+                sourceMimeType = data.blob.type.toLowerCase();
                 if (source.width > IMAGE_EDIT_LIMITS.maxDimension || source.height > IMAGE_EDIT_LIMITS.maxDimension || source.width * source.height > IMAGE_EDIT_LIMITS.maxPixels) {
                     source.close();
                     source = null;

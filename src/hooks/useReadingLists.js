@@ -3,14 +3,24 @@ import { mergeFolderFileCacheUpdate } from './useFolderScan.js';
 
 const EMPTY_FILES = [];
 
-export function useReadingLists(listId, t, localFiles = null) {
+export function useReadingLists(listId, t, localFiles = null, libraryPaths = []) {
+    const libraryScopeKey = JSON.stringify([...new Set(libraryPaths)].sort());
+    const isRecentList = listId === 'recent-added' || listId === 'recent-updated';
     const [overview, setOverview] = useState({ collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0, previewRevision: 0 });
     const [overviewError, setOverviewError] = useState('');
     const [snapshot, setSnapshot] = useState({ id: '', files: EMPTY_FILES, previewRevision: 0 });
+    const [recentSnapshots, setRecentSnapshots] = useState({});
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const requestRef = useRef(0);
     const overviewRef = useRef(0);
+    const listIdRef = useRef(listId);
+    listIdRef.current = listId;
+    const invalidateInactiveRecentLists = useCallback(() => {
+        setRecentSnapshots(current => current[listIdRef.current]
+            ? { [listIdRef.current]: current[listIdRef.current] }
+            : {});
+    }, []);
     const refreshOverview = useCallback(async () => {
         const sequence = ++overviewRef.current;
         try {
@@ -19,6 +29,7 @@ export function useReadingLists(listId, t, localFiles = null) {
             if (sequence === overviewRef.current) {
                 setOverview({
                     ...result,
+                    libraryScopeKey,
                     previewRevision: sequence,
                     collections: result.collections.map(collection => ({
                         ...collection,
@@ -39,7 +50,7 @@ export function useReadingLists(listId, t, localFiles = null) {
         } catch {
             if (sequence === overviewRef.current) setOverviewError(t('reading_lists.load_failed'));
         }
-    }, [t]);
+    }, [libraryScopeKey, t]);
     const refresh = useCallback(async () => {
         const sequence = ++requestRef.current;
         if (localFiles !== null) {
@@ -60,10 +71,21 @@ export function useReadingLists(listId, t, localFiles = null) {
             const result = await window.electronAPI?.readingLists?.({ operation: 'list', id: listId });
             if (!result?.success) throw new Error(result?.error || 'unavailable');
             if (sequence === requestRef.current) {
-                setSnapshot({ id: listId, files: result.files, previewRevision: sequence });
-                if (listId === 'recent-added' || listId === 'recent-updated') {
+                const nextSnapshot = { id: listId, files: result.files, previewRevision: sequence, libraryScopeKey };
+                if (isRecentList) {
+                    setRecentSnapshots(current => ({
+                        ...Object.fromEntries(Object.entries(current).filter(([, value]) => value.libraryScopeKey === libraryScopeKey)),
+                        [listId]: nextSnapshot,
+                    }));
                     const countKey = listId === 'recent-added' ? 'recentAddedCount' : 'recentUpdatedCount';
-                    setOverview(current => ({ ...current, [countKey]: result.files.length }));
+                    setOverview(current => ({
+                        ...current,
+                        ...(current.libraryScopeKey === libraryScopeKey ? {} : { recentAddedCount: 0, recentUpdatedCount: 0 }),
+                        libraryScopeKey,
+                        [countKey]: result.files.length,
+                    }));
+                } else {
+                    setSnapshot(nextSnapshot);
                 }
             }
         } catch {
@@ -71,7 +93,7 @@ export function useReadingLists(listId, t, localFiles = null) {
         } finally {
             if (sequence === requestRef.current) setLoading(false);
         }
-    }, [listId, localFiles, refreshOverview, t]);
+    }, [isRecentList, libraryScopeKey, listId, localFiles, refreshOverview, t]);
     const refreshRef = useRef(refresh);
     refreshRef.current = refresh;
     useEffect(() => {
@@ -80,15 +102,17 @@ export function useReadingLists(listId, t, localFiles = null) {
     }, [refresh]);
     useEffect(() => {
         const reload = () => {
+            invalidateInactiveRecentLists();
             void refreshOverview();
-            void refresh();
+            void refreshRef.current();
         };
         void refreshOverview();
         const unsubscribe = window.electronAPI?.onReadingListsChanged?.(reload);
         const unsubscribeScan = window.electronAPI?.onScanComplete?.(reload);
         const timer = window.setInterval(() => {
+            invalidateInactiveRecentLists();
             void refreshOverview();
-            if (listId.startsWith('recent-')) void refresh();
+            if (listIdRef.current.startsWith('recent-')) void refreshRef.current();
         }, 60000);
         window.addEventListener('focus', reload);
         window.addEventListener('bookmanager:metadata-saved', reload);
@@ -100,19 +124,22 @@ export function useReadingLists(listId, t, localFiles = null) {
             window.removeEventListener('focus', reload);
             window.removeEventListener('bookmanager:metadata-saved', reload);
         };
-    }, [listId, refresh, refreshOverview]);
+    }, [invalidateInactiveRecentLists, refreshOverview]);
     const mutate = useCallback(async request => {
         const result = await window.electronAPI?.readingLists?.(request);
         if (!result?.success) {
             const key = ['duplicate_name', 'invalid_name', 'list_not_found'].includes(result?.error) ? result.error : 'save_failed';
             throw new Error(t(`reading_lists.${key}`));
         }
+        invalidateInactiveRecentLists();
         await Promise.all([refreshOverview(), refreshRef.current()]);
         return result;
-    }, [refreshOverview, t]);
+    }, [invalidateInactiveRecentLists, refreshOverview, t]);
+    const visibleSnapshot = isRecentList ? recentSnapshots[listId] : snapshot;
+    const previewRevision = listId === 'collections' ? overview.previewRevision : visibleSnapshot?.previewRevision || 0;
     const updateFilePreview = useCallback(file => {
         if (listId === 'collections') {
-            setOverview(current => ({
+            setOverview(current => current.previewRevision !== previewRevision ? current : ({
                 ...current,
                 collections: current.collections.map(collection => collection.collectionId === file.collectionId
                     ? { ...collection, cover: file.cover, thumb_path: file.thumb_path, cover_file_path: file.cover_file_path }
@@ -121,7 +148,7 @@ export function useReadingLists(listId, t, localFiles = null) {
             return;
         }
         setSnapshot(current => {
-            if (current.id !== listId) return current;
+            if (current.id !== listId || current.previewRevision !== previewRevision) return current;
             let changed = false;
             const files = current.files.map(entry => {
                 if (entry.path !== file.path) return entry;
@@ -133,15 +160,18 @@ export function useReadingLists(listId, t, localFiles = null) {
             });
             return changed ? { ...current, files } : current;
         });
-    }, [listId, localFiles]);
+    }, [listId, localFiles, previewRevision]);
     return {
         ...overview,
-        files: listId === 'collections' ? overview.collections : snapshot.id === listId ? snapshot.files : EMPTY_FILES,
+        recentAddedCount: overview.libraryScopeKey === libraryScopeKey ? overview.recentAddedCount : 0,
+        recentUpdatedCount: overview.libraryScopeKey === libraryScopeKey ? overview.recentUpdatedCount : 0,
+        files: listId === 'collections' ? overview.collections
+            : visibleSnapshot?.id === listId && (!isRecentList || visibleSnapshot.libraryScopeKey === libraryScopeKey) ? visibleSnapshot.files : EMPTY_FILES,
         loading,
         error: listId === 'collections' ? overviewError : error,
         refresh,
         mutate,
-        previewRevision: listId === 'collections' ? overview.previewRevision : snapshot.previewRevision,
+        previewRevision,
         updateFilePreview,
     };
 }

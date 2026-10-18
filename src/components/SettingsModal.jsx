@@ -940,6 +940,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     setMaintenanceMessage('');
     try {
       const result = await window.electronAPI?.updateFolderIndex?.(localConfig.dup_check_folders || [], {
+        mode: 'smart',
         priorityFolder: localConfig.last_selected_library,
         language: localConfig.language || localConfig.lang || 'ko',
       });
@@ -1124,15 +1125,26 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         </>;
     };
 
-  const renderCheck = (key, text, help) => (
-    <label className="settings-check-row">
-      <input type="checkbox" aria-describedby={help ? `settings-help-${key}` : undefined} checked={Boolean(localConfig[key])} onChange={event => handleChange(key, event.target.checked)} />
-      <span>
-        <strong>{text}</strong>
-        {help && <small id={`settings-help-${key}`}>{help}</small>}
-      </span>
-    </label>
-  );
+    const renderSwitch = (key, text, help) => (
+        <label className="settings-check-row settings-switch-row" htmlFor={`settings-${key}`}>
+            <button
+                id={`settings-${key}`}
+                type="button"
+                role="switch"
+                className="settings-provider-switch"
+                aria-label={text}
+                aria-describedby={help ? `settings-help-${key}` : undefined}
+                aria-checked={Boolean(localConfig[key])}
+                onClick={() => handleChange(key, !localConfig[key])}
+            >
+                <span aria-hidden="true" />
+            </button>
+            <span>
+                <strong>{text}</strong>
+                {help && <small id={`settings-help-${key}`}>{help}</small>}
+            </span>
+        </label>
+    );
 
   return (
     <div className="modal-overlay" onClick={handleCancel}>
@@ -1241,7 +1253,20 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                         </fieldset>
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.notifications')}</legend>
-                            {renderCheck('play_sound', t('play_sound'))}
+                            <label className="settings-check-row settings-switch-row" htmlFor="settings-play-sound">
+                                <button
+                                    id="settings-play-sound"
+                                    type="button"
+                                    role="switch"
+                                    className="settings-provider-switch"
+                                    aria-label={t('play_sound')}
+                                    aria-checked={Boolean(localConfig.play_sound)}
+                                    onClick={() => handleChange('play_sound', !localConfig.play_sound)}
+                                >
+                                    <span aria-hidden="true" />
+                                </button>
+                                <span><strong>{t('play_sound')}</strong></span>
+                            </label>
                             <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-sound">{t('sound_lbl')}</label>
                                 <div className="settings-inline-control">
@@ -1272,9 +1297,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                     {FORMAT_KEYS.map((key, index) => <option key={key} value={key}>{formatLabels[index] || key.toUpperCase()}</option>)}
                                 </select>
                             </div>
-                            {renderCheck('backup_on', t('backup'))}
-                            {renderCheck('flatten_folders', t('flatten'), t('flatten_desc'))}
-                            {renderCheck('pass_skip_meta', t('opt_pass_skip_meta'), t('opt_pass_skip_meta_tip'))}
+                            {renderSwitch('backup_on', t('backup'))}
+                            {renderSwitch('flatten_folders', t('flatten'), t('flatten_desc'))}
+                            {renderSwitch('pass_skip_meta', t('opt_pass_skip_meta'), t('opt_pass_skip_meta_tip'))}
                         </fieldset>
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.images')}</legend>
@@ -1304,7 +1329,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                             </div>
                             <p className="settings-help" id="settings-compression-help">{label('renamer_archive_compression_desc', '내부 파일명 변경에서 다시 압축할 때만 적용됩니다. 빠름은 속도 우선, 최대 압축은 용량 우선입니다.')}</p>
 
-                            {renderCheck('webp_conversion', t('webp'), label('webp_desc', '모든 이미지를 고효율 WebP 포맷으로 변환하여 압축자 호환성을 보장합니다.'))}
+                            {renderSwitch('webp_conversion', t('webp'), label('webp_desc', '모든 이미지를 고효율 WebP 포맷으로 변환하여 압축자 호환성을 보장합니다.'))}
                         </fieldset>
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.performance')}</legend>
@@ -1326,7 +1351,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                 <FaIcon name="info" />
                                 <span>{t('settings.threads_description').replace('{count}', threadMax)}</span>
                             </p>
-                            {renderCheck('hardware_acceleration', t('hardware_acceleration'), t('hardware_acceleration_desc'))}
+                            {renderSwitch('hardware_acceleration', t('hardware_acceleration'), t('hardware_acceleration_desc'))}
                         </fieldset>
                     </div>
                 )}

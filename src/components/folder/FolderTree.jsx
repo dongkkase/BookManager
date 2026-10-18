@@ -61,6 +61,10 @@ function FolderTreeComponent({
     const previousViewport = useRef({ scrollTop: 0, height: 280, rowHeight: 28 });
     const [focusedKey, setFocusedKey] = useState(selectedKey || null);
     const [viewport, setViewport] = useState({ scrollTop: 0, height: 280, rowHeight: 28 });
+    const contentKey = useMemo(() => JSON.stringify(rows.map(row => [row.key, row.node.name])), [rows]);
+    const [contentWidth, setContentWidth] = useState({ key: '', rowHeight: 0, width: 0 });
+    const minimumContentWidth = contentWidth.key === contentKey && contentWidth.rowHeight === viewport.rowHeight
+        ? contentWidth.width : 0;
     const activeKey = nodeIndices.has(focusedKey) ? focusedKey : selectedKey || nodeRows[0]?.key;
     const virtual = rows.length >= VIRTUAL_THRESHOLD;
     const window = virtual
@@ -85,6 +89,28 @@ function FolderTreeComponent({
         };
         setViewport(previous => previous.scrollTop === next.scrollTop && previous.height === next.height && previous.rowHeight === next.rowHeight ? previous : next);
     }, []);
+
+    useLayoutEffect(() => {
+        const list = listRef.current;
+        const row = list?.querySelector('.folder-tree-row, .folder-tree-status');
+        if (!row) return undefined;
+        const measureWidth = () => {
+            const style = getComputedStyle(list);
+            const availableWidth = list.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+            const measuredWidth = Math.ceil(row.getBoundingClientRect().width);
+            const width = measuredWidth > availableWidth + 1 ? measuredWidth : 0;
+            setContentWidth(previous => {
+                const sameContent = previous.key === contentKey && previous.rowHeight === viewport.rowHeight;
+                if (sameContent && previous.width >= width) return previous;
+                return { key: contentKey, rowHeight: viewport.rowHeight, width };
+            });
+        };
+        // Keep the widest rendered row while virtualization replaces offscreen rows.
+        measureWidth();
+        const observer = new ResizeObserver(measureWidth);
+        observer.observe(row);
+        return () => observer.disconnect();
+    }, [contentKey, viewport.rowHeight, window.start, window.end]);
 
     useLayoutEffect(() => {
         const list = listRef.current;
@@ -233,6 +259,7 @@ function FolderTreeComponent({
         <ul
             ref={listRef}
             className="nav-list folder-tree-list"
+            style={{ '--folder-tree-content-width': `${minimumContentWidth}px` }}
             role="tree"
             aria-label={t('folder.sidebar.folders')}
             onKeyDown={event => {

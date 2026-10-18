@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
+import MenuSurface from '../MenuSurface';
 import { translate } from '../../utils/i18n';
 import '../../styles/epubAudioControls.css';
 
@@ -46,8 +47,8 @@ export function EpubAudioControls({ player, tracks, settings, onSettingsChange, 
                 <span className="viewer-epub-audio-note note-two" aria-hidden="true">♫</span>
                 <span className="viewer-epub-audio-levels" aria-hidden="true"><i /><i /><i /></span>
             </button>
-            {open && (
-                <section id="viewer-epub-audio-menu" className="viewer-epub-audio-menu" aria-label={t('title')}>
+                <MenuSurface open={open} origin="bottom right" id="viewer-epub-audio-menu" className="viewer-epub-audio-menu" role="region" aria-label={t('title')}>
+                    {open && <>
                     <div className="viewer-epub-audio-heading">
                         <span>{t('title')}</span>
                         <small role="status">{status}</small>
@@ -78,8 +79,8 @@ export function EpubAudioControls({ player, tracks, settings, onSettingsChange, 
                         <input type="range" min="0" max="100" step="1" value={Math.round(settings.volume * 100)} aria-label={t('volume')} onChange={event => onSettingsChange({ volume: Number(event.target.value) / 100, muted: false })} />
                         <small>{Math.round(settings.volume * 100)}%</small>
                     </div>
-                </section>
-            )}
+                    </>}
+                </MenuSurface>
         </div>
     );
 }

@@ -10,11 +10,12 @@ const local = { name: 'en0', address: '192.168.5.10', netmask: '255.255.255.0' }
 const remote = { remoteAddress: '192.168.5.20', localAddress: local.address };
 const deviceId = 'device-recovery';
 
-async function fixture(t, { withLibraryDb = false } = {}) {
+async function fixture(t, { withLibraryDb = false, shouldPersistReadingState } = {}) {
     const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'readive-sync-recovery-')));
     const libraryDb = withLibraryDb ? new LibraryDB({ dbPath: path.join(root, 'reading.db') }) : null;
     t.after(async () => { await libraryDb?.close(); await fs.rm(root, { recursive: true, force: true }); });
-    const service = new ReadiveService({ directory: path.join(root, 'state'), interfaces: () => [local], getLibraryDb: async () => libraryDb });
+    const service = new ReadiveService({ directory: path.join(root, 'state'), interfaces: () => [local],
+        getLibraryDb: async () => libraryDb, shouldPersistReadingState });
     service.localInterface = local;
     service.port = 19421;
     service.server = {};
@@ -33,7 +34,7 @@ async function fixture(t, { withLibraryDb = false } = {}) {
         const job = await service.enqueue({ snapshotId: snapshot.id, deviceId: id, confirmed: true });
         return service.store.state.jobs.find(item => item.id === job.id).manifest.files[0];
     };
-    return { service, request, pair, share };
+    return { service, request, pair, share, libraryDb };
 }
 
 function reading(file, id = deviceId, revision = 1) {
@@ -143,6 +144,32 @@ test('Readive unchanged reading polls skip durable writes and notifications whil
     assert.deepEqual(changed.json.acknowledged, [signature(next)]);
     assert.equal(saves, 2);
     assert.equal(changes, 2);
+});
+
+test('Readive live sync applies the current persistence policy after library registration changes', async t => {
+    let registered = false;
+    const { service, request, pair, share, libraryDb } = await fixture(t, {
+        withLibraryDb: true, shouldPersistReadingState: () => registered,
+    });
+    const token = await pair();
+    const file = await share('registration-policy.txt');
+    const body = revision => ({ itemIds: [file.itemId], records: [reading(file, deviceId, revision)] });
+    let notifications = 0;
+    service.onReadingChanged = () => { notifications += 1; };
+    const first = await request(token, '/reading', body(1));
+    assert.deepEqual(first.json.acknowledged, [signature(reading(file))]);
+    assert.deepEqual(await libraryDb.listRecentReadingStates(), []);
+    assert.equal(notifications, 0);
+    registered = true;
+    await request(token, '/reading', body(2));
+    assert.equal((await libraryDb.listRecentReadingStates())[0].pageIndex, 2);
+    assert.equal(notifications, 1);
+    registered = false;
+    libraryDb.getConnection().prepare('DELETE FROM reading_states').run();
+    await request(token, '/reading', body(3));
+    assert.deepEqual(await libraryDb.listRecentReadingStates(), []);
+    assert.equal(notifications, 1);
+    assert.equal(service.store.state.reading[`${file.itemId}:${deviceId}`].revision, 3);
 });
 
 test('Readive acknowledges a stored losing upload but never a stale or unshared upload', async t => {

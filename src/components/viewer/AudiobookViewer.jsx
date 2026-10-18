@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FaIcon } from '../FaIcon';
 import { CoverArtwork } from '../CoverArtwork';
 import { mergeReadiveResumeState } from '../../readiveViewerResume';
+import { isLibraryReadingStorageAllowed } from '../../libraryReadingStorage';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const SKIP_INTERVALS = [5, 10, 15, 30, 60];
@@ -211,7 +212,8 @@ function pairValue(number, total) {
     return `${number || '-'}/${total}`;
 }
 
-function readStoredJson(key, fallback) {
+function readStoredJson(key, fallback, libraryPaths) {
+    if (!isLibraryReadingStorageAllowed(key, libraryPaths)) return fallback;
     try {
         const parsed = JSON.parse(localStorage.getItem(key) || 'null');
         return parsed && typeof parsed === 'object' ? parsed : fallback;
@@ -220,7 +222,8 @@ function readStoredJson(key, fallback) {
     }
 }
 
-function saveStoredJson(key, value) {
+function saveStoredJson(key, value, libraryPaths) {
+    if (!isLibraryReadingStorageAllowed(key, libraryPaths)) return;
     try {
         localStorage.setItem(key, JSON.stringify(value));
     } catch {
@@ -236,7 +239,7 @@ function audioBookmarksKey(session) {
     return `bookmanager-viewer-bookmarks:${session?.filePath || session?.fileName || session?.id || ''}`;
 }
 
-function persistAudioPlaybackState(session, audio, fallbackDuration = 0, fallbackRate = 1, fallbackPosition = 0) {
+function persistAudioPlaybackState(session, audio, fallbackDuration = 0, fallbackRate = 1, fallbackPosition = 0, libraryPaths) {
     if (!session) return;
     const positionSeconds = Number(audio?.currentTime);
     const playbackRate = Number(audio?.playbackRate);
@@ -247,7 +250,7 @@ function persistAudioPlaybackState(session, audio, fallbackDuration = 0, fallbac
         durationSeconds: Number(audio?.duration) || fallbackDuration,
         playbackRate: Number.isFinite(playbackRate) ? playbackRate : fallbackRate,
     };
-    saveStoredJson(audioStateKey(session), state);
+    saveStoredJson(audioStateKey(session), state, libraryPaths);
     window.viewerAPI?.saveReadingState?.(session.id, {
         format: 'audio',
         positionSeconds: state.positionSeconds,
@@ -281,6 +284,7 @@ function ToolbarButton({ title, active = false, disabled = false, icon, onClick 
 
 function AudiobookViewer({
     session,
+    readingLibraryPathsRef,
     language = 'ko',
     isFullscreen = false,
     adjacentLoading = false,
@@ -335,8 +339,9 @@ function AudiobookViewer({
             effectiveDuration || restoreDurationRef.current,
             playbackRate,
             restoreTimeRef.current,
+            readingLibraryPathsRef?.current,
         );
-    }, [effectiveDuration, playbackRate, session]);
+    }, [effectiveDuration, playbackRate, readingLibraryPathsRef, session]);
 
     const publishAudioMiniPlayback = useCallback(() => {
         if (!session?.id) return;
@@ -381,7 +386,7 @@ function AudiobookViewer({
         setCurrentTime(0);
         setDuration(0);
         setPanel('');
-        const stored = readStoredJson(audioStateKey(session), {});
+        const stored = readStoredJson(audioStateKey(session), {}, readingLibraryPathsRef?.current);
         restoreTimeRef.current = Math.max(0, Number(stored.positionSeconds) || 0);
         restoreDurationRef.current = Math.max(0, Number(stored.durationSeconds) || 0);
         const storedPlaybackRate = Number(stored.playbackRate);
@@ -419,7 +424,7 @@ function AudiobookViewer({
         return () => {
             active = false;
         };
-    }, [initialPreferences.playbackRate, session, t]);
+    }, [initialPreferences.playbackRate, readingLibraryPathsRef, session, t]);
 
     useEffect(() => window.viewerAPI?.onAudioMetadataRefresh?.(payload => {
         if (!session?.id || payload?.sessionId !== session.id || !payload.audioData) return;
@@ -446,6 +451,7 @@ function AudiobookViewer({
             capturedDuration || restoreDurationRef.current,
             Number(capturedAudio?.playbackRate) || playbackRate,
             restoreTimeRef.current,
+            readingLibraryPathsRef?.current,
         );
         const handleBeforeUnload = () => saveCapturedPlaybackState();
         const timer = window.setInterval(saveCapturedPlaybackState, 5000);
@@ -455,7 +461,7 @@ function AudiobookViewer({
             window.removeEventListener('beforeunload', handleBeforeUnload);
             saveCapturedPlaybackState();
         };
-    }, [activeAudioData?.documentUrl, metadata.durationSeconds, playbackRate, session]);
+    }, [activeAudioData?.documentUrl, metadata.durationSeconds, playbackRate, readingLibraryPathsRef, session]);
 
     useEffect(() => {
         if (!activeAudioData?.documentUrl || !session?.id) return;

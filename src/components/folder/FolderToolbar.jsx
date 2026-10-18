@@ -5,6 +5,7 @@ import {
 } from '../../folderToolbarState';
 import { dropdownVerticalPlacement } from '../../interactionPolicy';
 import { FaIcon } from '../FaIcon';
+import MenuSurface from '../MenuSurface';
 
 function toolbarDropdownLabel(label = '') {
   return String(label || '').replace(/\s*▼\s*$/u, '');
@@ -63,16 +64,16 @@ function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, 
         <span>{toolbarDropdownLabel(buttonLabel)}</span>
         <FaIcon name="caret-down" size={9} />
       </button>
-      {open && (
-        <div
+        <MenuSurface
+            open={open}
+            origin={placement === 'up' ? 'bottom left' : 'top left'}
           ref={menuRef}
           role="menu"
           className={`dropdown-menu dropdown-menu-${placement} ${menuClassName}`}
             style={{ left: horizontalOffset }}
         >
           {children}
-        </div>
-      )}
+        </MenuSurface>
     </div>
   );
 }
@@ -237,8 +238,9 @@ function FolderToolbar({
 
         <button
             type="button"
-            className="toolbar-btn csv-btn"
-            title={t('folder_export_csv')}
+            className="toolbar-btn csv-btn folder-toolbar-tooltip-btn"
+            data-tooltip={t('folder.toolbar.export_csv_hint')}
+            aria-description={t('folder.toolbar.export_csv_hint')}
             aria-label={t('folder_export_csv')}
             onClick={onExportCsv}
         >

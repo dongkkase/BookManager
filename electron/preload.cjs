@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 폴더 스캔
   scanFolder: (folderPath, options) => ipcRenderer.invoke('folder:scan', folderPath, options),
+    checkFileDuplicates: (files, options) => ipcRenderer.invoke('folder:checkDuplicates', files, options),
     checkMissingVolumes: (libraryFolders, options) => ipcRenderer.invoke('folder:missingVolumes', libraryFolders, options),
   searchLibraryFiles: (query, libraries, options) => ipcRenderer.invoke('folder:searchLibraryFiles', { query, libraries, options }),
   getLibraryTagFacets: (libraries) => ipcRenderer.invoke('folder:getLibraryTagFacets', { libraries }),

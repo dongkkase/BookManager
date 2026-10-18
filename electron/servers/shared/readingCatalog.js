@@ -13,16 +13,16 @@ export function sharedReadingLists(config = {}) {
     return SHARED_READING_LISTS.map(list => ({ id: list.id, name: sharingText(config, list.key, list.fallback) }));
 }
 
-export async function readSharedReadingList(library, id, collectionId = '') {
+export async function readSharedReadingList(library, id, collectionId = '', libraryPaths = []) {
     if (!SHARED_READING_LISTS.some(list => list.id === id) || (collectionId && id !== 'collections')) {
         throw new Error('list_not_found');
     }
     if (id === 'collections') {
-        const { collections } = await readingListsRequest(library, { operation: 'overview' });
+        const { collections } = await readingListsRequest(library, { operation: 'overview' }, libraryPaths);
         if (!collectionId) return { collections, rows: [] };
         const collection = collections.find(item => item.id === collectionId);
         if (!collection) throw new Error('list_not_found');
-        const { rows } = await readingListsRequest(library, { operation: 'list', id: collectionId });
+        const { rows } = await readingListsRequest(library, { operation: 'list', id: collectionId }, libraryPaths);
         return { collection, rows };
     }
     if (id === 'recent-reading') {
@@ -31,5 +31,5 @@ export async function readSharedReadingList(library, id, collectionId = '') {
         const byPath = new Map(files.map(file => [file.path, file]));
         return { rows: states.map(state => ({ ...byPath.get(state.filePath), path: state.filePath, last_read_at: state.lastReadAt })) };
     }
-    return readingListsRequest(library, { operation: 'list', id });
+    return readingListsRequest(library, { operation: 'list', id }, libraryPaths);
 }

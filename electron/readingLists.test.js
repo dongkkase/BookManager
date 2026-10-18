@@ -10,12 +10,18 @@ async function fixture(t) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bookmanager-reading-lists-'));
     const dbPath = path.join(root, 'library.db');
     const db = new LibraryDB({ dbPath });
+    const controllers = [];
     const folder = path.join(root, 'books_%');
     await fs.mkdir(path.join(folder, 'nested'), { recursive: true });
     const files = ['first.epub', 'nested/second.cbz'].map(name => path.join(folder, name));
     for (const file of files) await fs.writeFile(file, 'fixture');
-    t.after(async () => { await db.close(); await fs.rm(root, { recursive: true, force: true }); });
-    return { root, db, dbPath, folder, files, request: request => readingListsRequest(db, request) };
+    t.after(async () => {
+        for (const controller of controllers) await controller.dispose();
+        await db.close();
+        await fs.rm(root, { recursive: true, force: true });
+    });
+    const libraries = [folder];
+    return { root, db, dbPath, folder, files, libraries, controllers, request: request => readingListsRequest(db, request, libraries) };
 }
 
 test('컬렉션은 파일과 폴더를 개별 항목으로 저장하고 재실행 후 복원하며 원본을 보존한다', async t => {
@@ -208,9 +214,10 @@ test('최근 목록과 배지는 14일 경계를 포함하고 오래되거나 �
 test('최근 목록과 배지는 각각 최신 1000개로 제한한다', async t => {
     const { db, folder, request } = await fixture(t);
     const files = Array.from({ length: 1005 }, (_, index) => ({ path: path.join(folder, `${index}.epub`) }));
-    await db.upsertFileInfoBulk(files);
+    const outside = Array.from({ length: 1005 }, (_, index) => ({ path: path.join(`${folder}-outside`, `${index}.epub`) }));
+    await db.upsertFileInfoBulk([...files, ...outside]);
     const sql = db.getConnection();
-    const now = Date.now();
+    const now = Date.now() - 3600000;
     const update = sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?');
     sql.transaction(() => files.forEach((file, index) => update.run(
         new Date(now - index * 1000).toISOString(),
@@ -224,6 +231,65 @@ test('최근 목록과 배지는 각각 최신 1000개로 제한한다', async t
     const overview = await request({ operation: 'overview' });
     assert.equal(overview.recentAddedCount, added.length);
     assert.equal(overview.recentUpdatedCount, updated.length);
+});
+
+test('최근 목록과 배지는 현재 등록된 라이브러리 경로만 반영하며 다른 읽기 목록을 유지한다', async t => {
+    const { root, db, folder, files, libraries, request } = await fixture(t);
+    const outside = path.join(root, 'outside.epub');
+    const sibling = path.join(`${folder}-other`, 'sibling.epub');
+    await fs.writeFile(outside, 'fixture');
+    await db.upsertFileInfoBulk([...files, outside, sibling].map(filePath => ({ path: filePath })));
+    await request({ operation: 'add', id: 'want-to-read', paths: [files[0], outside] });
+    const checkRecent = async expected => {
+        for (const id of ['recent-added', 'recent-updated']) {
+            assert.deepEqual((await request({ operation: 'list', id })).rows.map(row => row.path).sort(), [...expected].sort());
+        }
+        const overview = await request({ operation: 'overview' });
+        assert.equal(overview.recentAddedCount, expected.length);
+        assert.equal(overview.recentUpdatedCount, expected.length);
+        assert.equal(overview.wishlistCount, 2);
+    };
+    await checkRecent(files);
+    libraries.push(path.dirname(files[1]), folder);
+    await checkRecent(files);
+    libraries.splice(0, libraries.length, path.dirname(files[1]));
+    await checkRecent([files[1]]);
+    libraries.splice(0);
+    await checkRecent([]);
+    assert.equal((await request({ operation: 'list', id: 'want-to-read' })).rows.length, 2);
+    assert.equal(db.getConnection().prepare('SELECT COUNT(*) AS count FROM files').get().count, 4);
+    libraries.push(folder);
+    await checkRecent(files);
+});
+
+test('최근 목록은 운영체제 경로와 특수문자를 리터럴로 비교하고 루트 라이브러리를 지원한다', async t => {
+    for (const platform of ['linux', 'darwin', 'win32']) {
+        const { db } = await fixture(t);
+        db.platform = platform;
+        const paths = platform === 'win32' ? path.win32 : path.posix;
+        const volume = platform === 'win32' ? 'C:\\' : '/';
+        const folder = paths.join(volume, 'Books_100%[a]', '한글');
+        const inside = paths.join(folder, 'book.epub');
+        const sibling = paths.join(`${folder}-other`, 'book.epub');
+        const similar = paths.join(volume, 'BooksX100x[a]', '한글', 'book.epub');
+        const otherCase = paths.join(volume, 'books_100%[a]', '한글', 'case.epub');
+        const filePaths = [inside, sibling, similar, otherCase];
+        await db.upsertFileInfoBulk(filePaths.map(filePath => ({ path: filePath })));
+        const expected = (platform === 'win32' ? [inside, otherCase] : [inside]).map(filePath => db.normalizeFilePath(filePath));
+        const libraries = platform === 'darwin' ? [folder.normalize('NFC'), folder.normalize('NFD')] : [`${folder}${paths.sep}`];
+        for (const id of ['recent-added', 'recent-updated']) {
+            const { rows } = await readingListsRequest(db, { operation: 'list', id }, libraries);
+            assert.deepEqual(rows.map(row => row.path).sort(), expected.sort(), platform);
+            const all = await readingListsRequest(db, { operation: 'list', id }, [volume]);
+            assert.equal(all.rows.length, 4, `${platform} root`);
+        }
+        const overview = await readingListsRequest(db, { operation: 'overview' }, libraries);
+        assert.equal(overview.recentAddedCount, expected.length);
+        assert.equal(overview.recentUpdatedCount, expected.length);
+        const empty = await readingListsRequest(db, { operation: 'overview' }, ['', 'relative', null]);
+        assert.equal(empty.recentAddedCount, 0);
+        assert.equal(empty.recentUpdatedCount, 0);
+    }
 });
 
 test('폴더 이동 후 컬렉션과 읽고 싶은 책의 경로 및 추가 시점을 보존한다', async t => {
@@ -283,13 +349,13 @@ test('컬렉션 표지는 등록 파일을 우선 사용하고 읽을 수 없는
 });
 
 test('IPC는 다른 창과 서브프레임을 거부하고 저장 성공을 알린다', async t => {
-    const { dbPath, folder, files } = await fixture(t);
+    const { dbPath, folder, files, controllers } = await fixture(t);
     let handler;
     let broadcasts = 0;
     let normalizedRows = 0;
     const mainFrame = {};
     const sender = { mainFrame };
-    registerReadingListsIpc({
+    controllers.push(registerReadingListsIpc({
         ipcMain: { handle: (_name, fn) => { handler = fn; } },
         getMainWindow: () => ({ webContents: sender, isDestroyed: () => false }),
         createLibrary: () => new LibraryDB({ dbPath }),
@@ -299,7 +365,7 @@ test('IPC는 다른 창과 서브프레임을 거부하고 저장 성공을 알�
         },
         loadPreview: async filePath => ({ cover: `cover:${filePath}` }),
         broadcast: () => { broadcasts += 1; },
-    });
+    }));
     const event = { sender, senderFrame: mainFrame };
     await assert.rejects(handler({ sender: {} }), /untrusted_sender/);
     await assert.rejects(handler({ sender, senderFrame: {} }), /untrusted_sender/);
@@ -322,4 +388,36 @@ test('IPC는 다른 창과 서브프레임을 거부하고 저장 성공을 알�
     await handler(event, { operation: 'add', id, paths: [folder, files[0]] });
     assert.equal((await handler(event, { operation: 'preview', id })).file.cover, `cover:${files[0]}`);
     assert.equal(broadcasts, 3);
+});
+
+test('최근 목록 IPC는 매 요청마다 서버의 등록 라이브러리를 읽고 클라이언트 경로를 사용하지 않는다', async t => {
+    const { root, db, dbPath, folder, files, controllers } = await fixture(t);
+    const outside = path.join(root, 'outside.epub');
+    await fs.writeFile(outside, 'fixture');
+    await db.upsertFileInfoBulk([...files, outside].map(filePath => ({ path: filePath })));
+    let libraries = [folder];
+    let handler;
+    const mainFrame = {};
+    const sender = { mainFrame };
+    controllers.push(registerReadingListsIpc({
+        ipcMain: { handle: (_name, callback) => { handler = callback; } },
+        getMainWindow: () => ({ webContents: sender, isDestroyed: () => false }),
+        createLibrary: () => new LibraryDB({ dbPath }),
+        getLibraryPaths: () => libraries,
+        normalizeFile: row => row,
+        broadcast: () => assert.fail('Reading queries must not broadcast changes'),
+    }));
+    const event = { sender, senderFrame: mainFrame };
+    for (const id of ['recent-added', 'recent-updated']) {
+        const result = await handler(event, { operation: 'list', id, libraries: [root], libraryPaths: [root] });
+        assert.equal(result.success, true);
+        assert.deepEqual(result.files.map(file => file.path).sort(), [...files].sort());
+    }
+    libraries = [];
+    const overview = await handler(event, { operation: 'overview' });
+    assert.equal(overview.recentAddedCount, 0);
+    assert.equal(overview.recentUpdatedCount, 0);
+    assert.deepEqual((await handler(event, { operation: 'list', id: 'recent-added' })).files, []);
+    libraries = [root];
+    assert.equal((await handler(event, { operation: 'list', id: 'recent-updated' })).files.length, 3);
 });

@@ -7,12 +7,14 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
 import { viewerPdfResourceOptions } from './viewerPdfResources';
 import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
+import { isLibraryReadingStorageAllowed, pruneLibraryReadingStorage } from './libraryReadingStorage';
 import { createViewerTtsRequests } from './viewerTtsRequests';
 import { reportViewerTtsUsage } from './viewerTtsTelemetry';
 import { normalizeSupertonicReading, prepareSupertonicPages, splitSupertonicRequests, supertonicReadingCacheKey } from '../electron/supertonicReading.js';
 import { SupertonicTtsSettings } from './components/viewer/SupertonicTtsSettings';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
+import MenuSurface from './components/MenuSurface';
 import { CoverArtwork } from './components/CoverArtwork';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
 import { ViewerScrollOptions, ViewerScrollPopover } from './components/viewer/ViewerScrollControls';
@@ -1490,8 +1492,9 @@ function viewerPrefsKey(sessionOrType) {
   return type ? `bookmanager-viewer-prefs:${type}` : '';
 }
 
-function readJson(key, fallback) {
+function readJson(key, fallback, libraryPaths) {
   if (!key) return fallback;
+    if (!isLibraryReadingStorageAllowed(key, libraryPaths)) return fallback;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(key) || '');
     return parsed && typeof parsed === 'object' ? parsed : fallback;
@@ -1500,8 +1503,9 @@ function readJson(key, fallback) {
   }
 }
 
-function saveJson(key, value) {
+function saveJson(key, value, libraryPaths) {
   if (!key) return;
+    if (!isLibraryReadingStorageAllowed(key, libraryPaths)) return;
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
@@ -3007,9 +3011,8 @@ function ViewerDropdown({ value, options, onChange, onNotice, onPreview, preview
         {!hasButtonIcon || hasIconLabel ? <span>{displayedLabel}</span> : null}
         <FaIcon name="caretDown" size={hasButtonIcon ? 8 : 11} />
       </button>
-      {open && (
-        <div className="viewer-dropdown-menu" role="listbox">
-          {options.map(option => (
+        <MenuSurface open={open} className="viewer-dropdown-menu" role="listbox">
+          {open && options.map(option => (
             option.kind === 'group' ? (
               <div key={option.id} className="viewer-dropdown-group">
                 {viewerText(option.labelKey, option.label)}
@@ -3072,8 +3075,7 @@ function ViewerDropdown({ value, options, onChange, onNotice, onPreview, preview
               </div>
             )
           ))}
-        </div>
-      )}
+        </MenuSurface>
     </div>
   );
 }
@@ -3109,8 +3111,8 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
       >
         {`${zoom}%`}
       </ToolbarButton>
-      {open && (
-        <div className="viewer-zoom-menu" role="dialog" aria-label={viewerText('viewer.zoom.dialog', '확대/축소 조절')}>
+        <MenuSurface open={open} origin="top right" className="viewer-zoom-menu" role="dialog" aria-label={viewerText('viewer.zoom.dialog', '확대/축소 조절')}>
+            {open && <>
           <span className="viewer-zoom-value">{zoom}%</span>
           <input
             className="viewer-zoom-range"
@@ -3126,8 +3128,8 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
           <button type="button" className="viewer-zoom-reset" title={viewerText('viewer.zoom.reset', '확대/축소 리셋')} onClick={onReset}>
             {viewerText('viewer.common.reset_short', '리셋')}
           </button>
-        </div>
-      )}
+            </>}
+        </MenuSurface>
     </div>
   );
 }
@@ -3995,13 +3997,15 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
       >
         <span>{viewerText('viewer.tts.title', 'TTS')}</span>
       </button>
-      {open && (
-        <div
+        <MenuSurface
+          open={open}
+          origin="top center"
           className="viewer-tts-menu"
           role="dialog"
           aria-label={viewerText('viewer.tts.settings', 'TTS 설정')}
           onKeyDown={handleTtsKeyDown}
         >
+            {open && <>
           <div className="viewer-tts-actions" aria-label={viewerText('viewer.tts.group', 'TTS')}>
             <button
               type="button"
@@ -4055,8 +4059,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
               >
                 <span className="viewer-tts-rate-value">{settings.rate.toFixed(1)}x</span>
               </button>
-              {rateOpen && (
-                <div className="viewer-tts-rate-popover" role="dialog" aria-label={viewerText('viewer.tts.rate', '속도')}>
+                <MenuSurface open={rateOpen} origin="top center" className="viewer-tts-rate-popover" role="dialog" aria-label={viewerText('viewer.tts.rate', '속도')}>
+                    {rateOpen && <>
                   <input
                     type="range"
                     min="0.5"
@@ -4068,8 +4072,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
                     onChange={event => handleTtsRateChange(Number(event.target.value))}
                   />
                   <output>{settings.rate.toFixed(1)}x</output>
-                </div>
-              )}
+                    </>}
+                </MenuSurface>
             </div>
             <ViewerDropdown
               value={activeVoiceValue}
@@ -4130,8 +4134,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
               <span>{remoteTtsProgressLabel}</span>
             </div>
           )}
-        </div>
-      )}
+            </>}
+        </MenuSurface>
     </div>
   );
 }
@@ -5811,6 +5815,8 @@ function ReaderSettingsPanel({
 
 function ViewerApp() {
   const [session, setSession] = useState(null);
+    const readingLibraryPathsRef = useRef(null);
+    const readingLibraryConfigReadyRef = useRef(null);
     const [readiveResumePending, setReadiveResumePending] = useState(null);
     const [readiveResumeReady, setReadiveResumeReady] = useState(false);
   const [pages, setPages] = useState([]);
@@ -6742,16 +6748,24 @@ function ViewerApp() {
 
   useEffect(() => {
     let mounted = true;
+    let configChanged = false;
     const applyViewerLanguage = config => {
       const nextLanguage = setLanguage(config?.language || config?.lang || 'ko');
       if (mounted) {
+        if (config && Object.prototype.hasOwnProperty.call(config, 'readingLibraryPaths')) {
+          readingLibraryPathsRef.current = config.readingLibraryPaths;
+          pruneLibraryReadingStorage(window.localStorage, config.readingLibraryPaths);
+        }
         setViewerLanguage(current => current === nextLanguage ? current : nextLanguage);
       }
     };
-    window.viewerAPI?.getConfig?.()
-      .then(applyViewerLanguage)
+    readingLibraryConfigReadyRef.current = Promise.resolve(window.viewerAPI?.getConfig?.())
+      .then(config => { if (!configChanged) applyViewerLanguage(config); })
       .catch(() => {});
-    const unsubscribeConfig = window.viewerAPI?.onConfigChange?.(applyViewerLanguage);
+    const unsubscribeConfig = window.viewerAPI?.onConfigChange?.(config => {
+      configChanged = true;
+      applyViewerLanguage(config);
+    });
     window.viewerAPI?.getFullscreenState?.()
       .then(state => {
         if (mounted && typeof state?.fullscreen === 'boolean') {
@@ -6798,7 +6812,7 @@ function ViewerApp() {
     };
     saveJson(viewerPrefsKey(session), viewerPrefs);
     if (epubOriginalScrollRestoreRef.current.position || session.preview) return;
-    saveJson(storageKey(session, 'state'), fileState);
+    saveJson(storageKey(session, 'state'), fileState, readingLibraryPathsRef.current);
     window.viewerAPI?.saveReadingState?.(session.id, {
       format: session.type,
       ...fileState,
@@ -6816,7 +6830,7 @@ function ViewerApp() {
             if (now - autoScrollLocalSaveTimeRef.current < 500) return;
             autoScrollLocalSaveTimeRef.current = now;
         }
-    const currentState = readJson(storageKey(session, 'state'), {});
+    const currentState = readJson(storageKey(session, 'state'), {}, readingLibraryPathsRef.current);
     saveJson(storageKey(session, 'state'), {
       ...currentState,
         updatedAt: Date.now(),
@@ -6824,7 +6838,7 @@ function ViewerApp() {
       pageIndex: clamp(Number(nextPageIndex) || 0, 0, Math.max(0, pageCount - 1)),
       scrollPercent: clamp(Number(nextScrollPercent) || 0, 0, 100),
       pageCount,
-    });
+    }, readingLibraryPathsRef.current);
   }, [autoScrolling, captureCurrentEpubPosition, flowMode, pageCount, readiveResumeReady, session]);
 
   const persistCurrentPosition = useCallback(() => {
@@ -7165,6 +7179,8 @@ function ViewerApp() {
     const loadSequence = loadSequenceRef.current + 1;
     loadSequenceRef.current = loadSequence;
     const isCurrentLoad = () => loadSequenceRef.current === loadSequence;
+    await readingLibraryConfigReadyRef.current;
+    if (!isCurrentLoad()) return;
     setViewerSessionResolved(true);
     setInitialRenderLoading(true);
     setInitialRenderSequence(current => current + 1);
@@ -7212,7 +7228,7 @@ function ViewerApp() {
     scrollRestoreTokenRef.current += 1;
     scrollRef.current?.scrollTo?.({ top: 0 });
 
-    const localFileState = readJson(storageKey(nextSession, 'state'), {});
+    const localFileState = readJson(storageKey(nextSession, 'state'), {}, readingLibraryPathsRef.current);
         let remoteFileState = null;
         try {
             remoteFileState = await window.viewerAPI?.getReadiveReadingState?.(nextSession.id);
@@ -9905,6 +9921,7 @@ function ViewerApp() {
     return (
       <AudiobookViewer
         session={session}
+        readingLibraryPathsRef={readingLibraryPathsRef}
         language={viewerLanguage}
         isFullscreen={isFullscreen}
         adjacentLoading={adjacentLoading}
@@ -10114,8 +10131,8 @@ function ViewerApp() {
           <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.bookmark_group', '책갈피')}>
             <div className="viewer-bookmark-menu-wrap">
               <ToolbarButton title={viewerText('viewer.toolbar.bookmark', '책갈피')} icon="bookmark" active={bookmarkMenuOpen} onClick={() => setBookmarkMenuOpen(current => !current)} />
-              {bookmarkMenuOpen && (
-                <div className="viewer-bookmark-menu">
+                <MenuSurface open={bookmarkMenuOpen} origin="top right" className="viewer-bookmark-menu">
+                    {bookmarkMenuOpen && <>
                   <button type="button" onClick={addBookmark}>{viewerText('viewer.bookmark.add', '책갈피 추가 (B)')}</button>
                   <button type="button" onClick={clearBookmarks}>{viewerText('viewer.bookmark.clear_all', '책갈피 모두 삭제')}</button>
                   <button type="button" onClick={() => setBookmarkEditorOpen(true)}>{viewerText('viewer.bookmark.edit', '책갈피 편집')}</button>
@@ -10126,8 +10143,8 @@ function ViewerApp() {
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
+                    </>}
+                </MenuSurface>
             </div>
           </div>
           <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.fullscreen', '전체화면 전환')}>
@@ -10262,23 +10279,25 @@ function ViewerApp() {
           onSearchClick={goSearchResult}
         />
       )}
-      {selectionMenu && (
-        selectionMenu.kind === 'comic-flow' ? (
-          <div
+          <MenuSurface
+            open={selectionMenu?.kind === 'comic-flow'}
             className="viewer-context-menu"
-            style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
+            style={{ left: selectionMenu?.x, top: selectionMenu?.y }}
             onMouseDown={event => event.stopPropagation()}
           >
+            {selectionMenu && selectionMenu.kind === 'comic-flow' && (
             <button type="button" onClick={toggleComicSinglePageFromSelection}>
               {selectionMenu.isSinglePage
                 ? viewerText('viewer.context.comic_single_page_clear', '단독장 분리 해제')
                 : viewerText('viewer.context.comic_single_page', '이 페이지를 단독장으로 분리')}
             </button>
-          </div>
-        ) : selectionMenu.kind === 'text-selection' ? (
-            <div
-                className={`viewer-selection-toolbar is-${selectionMenu.placement || 'above'} has-menus-${selectionMenu.submenuPlacement || 'below'}`}
-                style={{ left: `${selectionMenu.x}px`, top: `${selectionMenu.y}px` }}
+            )}
+          </MenuSurface>
+            <MenuSurface
+                open={selectionMenu?.kind === 'text-selection'}
+                origin={selectionMenu?.placement === 'below' ? 'top center' : 'bottom center'}
+                className={`viewer-selection-toolbar is-${selectionMenu?.placement || 'above'} has-menus-${selectionMenu?.submenuPlacement || 'below'}`}
+                style={{ left: selectionMenu?.x, top: selectionMenu?.y }}
                 role="toolbar"
                 aria-label={viewerText('viewer.context.selection_toolbar', '선택 텍스트 도구')}
                 onPointerDown={event => event.stopPropagation()}
@@ -10287,6 +10306,7 @@ function ViewerApp() {
                     event.stopPropagation();
                 }}
             >
+                {selectionMenu && selectionMenu.kind === 'text-selection' && <>
                 <div className="viewer-selection-colors" role="group" aria-label={viewerText('viewer.context.add_highlight_short', '하이라이트')}>
                     {HIGHLIGHT_COLORS.map(color => (
                         <button
@@ -10340,14 +10360,14 @@ function ViewerApp() {
                             <span className="viewer-selection-tool-icon"><FaIcon name="search" /><FaIcon name="angleDown" size={8} /></span>
                             <span>{viewerText('viewer.lookup.title', '검색')}</span>
                         </button>
-                        <div className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                        <MenuSurface open={selectionSubmenu === 'search'} origin={selectionMenu?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
                             <button type="button" role="menuitem" onClick={searchBookFromSelection}>
                                 {viewerText('viewer.context.search_in_book', '이 책에서 검색')}
                             </button>
                             <button type="button" role="menuitem" onClick={searchGoogleFromSelection}>
                                 {viewerText('viewer.context.search_google', '구글 검색')}
                             </button>
-                        </div>
+                        </MenuSurface>
                     </div>
                     <div className={`viewer-selection-menu${selectionSubmenu === 'dictionary' ? ' is-open' : ''}`}>
                         <button
@@ -10361,14 +10381,14 @@ function ViewerApp() {
                             <span className="viewer-selection-tool-icon"><FaIcon name="bookOpen" /><FaIcon name="angleDown" size={8} /></span>
                             <span>{viewerText('viewer.context.dictionary_search_short', '사전')}</span>
                         </button>
-                        <div className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                        <MenuSurface open={selectionSubmenu === 'dictionary'} origin={selectionMenu?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
                             <button type="button" role="menuitem" onClick={() => openSelectionDictionary('naver')}>
                                 {viewerText('viewer.context.dictionary_naver', 'Naver 사전')}
                             </button>
                             <button type="button" role="menuitem" onClick={() => openSelectionDictionary('google')}>
                                 {viewerText('viewer.context.dictionary_google', 'Google 사전')}
                             </button>
-                        </div>
+                        </MenuSurface>
                     </div>
                     <div className={`viewer-selection-menu${selectionSubmenu === 'translation' ? ' is-open' : ''}`}>
                         <button
@@ -10382,19 +10402,18 @@ function ViewerApp() {
                             <span className="viewer-selection-tool-icon"><FaIcon name="language" /><FaIcon name="angleDown" size={8} /></span>
                             <span>{viewerText('viewer.context.translate_short', '번역')}</span>
                         </button>
-                        <div className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                        <MenuSurface open={selectionSubmenu === 'translation'} origin={selectionMenu?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
                             <button type="button" role="menuitem" onClick={() => openSelectionTranslation('google')}>
                                 {viewerText('viewer.context.translate_google', 'Google 번역')}
                             </button>
                             <button type="button" role="menuitem" onClick={() => openSelectionTranslation('deepl')}>
                                 {viewerText('viewer.context.translate_deepl', 'DeepL 번역')}
                             </button>
-                        </div>
+                        </MenuSurface>
                     </div>
                 </div>
-            </div>
-        ) : null
-      )}
+                </>}
+            </MenuSurface>
       <ViewerLookupPanel lookup={lookupPanel} onClose={() => setLookupPanel(null)} />
       <ImageLightbox image={imageLightbox} onClose={() => setImageLightbox(null)} />
       <ViewerHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />

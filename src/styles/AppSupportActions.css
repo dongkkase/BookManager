@@ -89,7 +89,7 @@
     width: max-content;
     max-width: min(280px, calc(100vw - 24px));
     padding: 7px 10px;
-    border-radius: 10px;
+    border-radius: 6px;
     color: #263442;
     font-size: var(--font-xs);
     font-weight: 400;

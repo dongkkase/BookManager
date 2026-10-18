@@ -49,6 +49,8 @@ async function fixture(options = {}) {
     const same = (left, right) => left && right && left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
     const react = {
         Fragment: Symbol('Fragment'),
+        Suspense: Symbol('Suspense'),
+        lazy: () => 'CoverImageEditorDialog',
         createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
         useState(initial) {
             const index = cursor++;
@@ -256,6 +258,7 @@ async function fixture(options = {}) {
         text: () => textContent(tree),
         currentImage: () => nodes(tree).find(node => node.type === 'img' && node.props.alt === 'cover_editor_current'),
         newImage: () => nodes(tree).find(node => node.type === 'img' && node.props.alt === 'cover_editor_new'),
+        imageEditor: () => nodes(tree).find(node => node.type === 'CoverImageEditorDialog'),
         alert: () => textContent(nodes(tree).find(node => node.props.role === 'alert')),
         browse: async () => { await button('cover_editor_local_browse').props.onClick(); await settle(); },
         close: () => { unmount(); globalThis.window = originalWindow; globalThis.document = originalDocument; },
@@ -3445,5 +3448,176 @@ test('a dropped cover invalidated by changed targets is released without replayi
         assert.equal(value.newImage().props.src, preview('/images/new-drop.png').dataUrl);
         assert.deepEqual(value.calls.preview, ['/images/old-drop.png', '/images/new-drop.png']);
         assert.deepEqual(value.calls.released, [{ imagePath: '/images/old-drop.png' }]);
+    } finally { value.close(); }
+});
+
+test('new-cover actions share a separate row below image details with edit after clear', async () => {
+    const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')] });
+    try {
+        assert.equal(value.button('cover_editor_clear'), undefined);
+        assert.equal(value.button('cover_editor_edit'), undefined);
+        await value.browse();
+        const clear = value.button('cover_editor_clear');
+        const edit = value.button('cover_editor_edit');
+        assert.ok(clear);
+        assert.ok(edit);
+        assert.equal(clear.parent, edit.parent);
+        assert.deepEqual(childrenOf(clear.parent).map(textContent), ['cover_editor_clear', 'cover_editor_edit']);
+        const rows = childrenOf(clear.parent.parent);
+        const actionIndex = rows.indexOf(clear.parent);
+        assert.ok(actionIndex > 0);
+        assert.equal(textContent(rows[actionIndex - 1]), '400 × 600 · 12 KB');
+        assert.equal(edit.props.disabled, false);
+        clear.props.onClick();
+        await value.settle();
+        assert.equal(value.button('cover_editor_clear'), undefined);
+        assert.equal(value.button('cover_editor_edit'), undefined);
+    } finally { value.close(); }
+});
+
+test('editing a chosen cover locks its parent and saves the validated edited image', async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    const edited = { ...preview('/temporary/edited-cover.png'), imageVersion: 'edited-version', width: 250, height: 500, size: 4096 };
+    const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')], importedPreview: () => edited });
+    try {
+        await value.browse();
+        value.button('cover_editor_edit').props.onClick();
+        await value.settle();
+        const editor = value.imageEditor();
+        assert.ok(editor);
+        assert.equal(editor.props.image.imagePath, '/images/new.png');
+        assert.equal(editor.props.image.imageVersion, 'image-version');
+        assert.equal(value.calls.busy.at(-1), true);
+        assert.equal(value.calls.imageDropAvailable.at(-1), false);
+        assert.equal(value.button('cover_editor_save').props.disabled, true);
+        assert.equal(value.button('cover_editor_clear').props.disabled, true);
+        await value.button('cover_editor_save').props.onClick();
+        assert.deepEqual(value.calls.execute, []);
+        await editor.props.onApply(new Blob([bytes], { type: 'image/png' }));
+        editor.props.onClose();
+        await value.settle();
+        assert.deepEqual(value.calls.importedPreview, [{ bytes }]);
+        assert.equal(value.newImage().props.src, edited.dataUrl);
+        assert.ok(value.text().includes('250 × 500 · 4 KB'));
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/new.png' }]);
+        assert.equal(value.imageEditor(), undefined);
+        assert.equal(value.calls.busy.at(-1), false);
+        assert.equal(value.calls.imageDropAvailable.at(-1), true);
+        await value.button('cover_editor_save').props.onClick();
+        await value.settle();
+        assert.equal(value.calls.execute.length, 1);
+        assert.equal(value.calls.execute[0].imagePath, edited.imagePath);
+        assert.equal(value.calls.execute[0].imageVersion, edited.imageVersion);
+    } finally { value.close(); }
+});
+
+test('cancelling cover image editing retains the original candidate and avoids importing an image', async () => {
+    const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')] });
+    try {
+        await value.browse();
+        value.button('cover_editor_edit').props.onClick();
+        await value.settle();
+        value.imageEditor().props.onClose();
+        await value.settle();
+        assert.equal(value.imageEditor(), undefined);
+        assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+        assert.deepEqual(value.calls.importedPreview, []);
+        assert.deepEqual(value.calls.released, []);
+        assert.equal(value.calls.busy.at(-1), false);
+        assert.equal(value.calls.imageDropAvailable.at(-1), true);
+        assert.equal(value.button('cover_editor_save').props.disabled, false);
+    } finally { value.close(); }
+});
+
+test('failed edited-image imports retain the candidate and keep editing open for retry', async () => {
+    for (const failure of ['result', 'throw']) {
+        const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')], importedPreview: () => {
+            if (failure === 'throw') throw new Error('Image import unavailable');
+            return { error: 'Invalid edited image', code: 'COVER_IMAGE_INVALID' };
+        } });
+        try {
+            await value.browse();
+            value.button('cover_editor_edit').props.onClick();
+            await value.settle();
+            await assert.rejects(value.imageEditor().props.onApply(new Blob(['edited'], { type: 'image/png' })));
+            await value.settle();
+            assert.ok(value.imageEditor());
+            assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+            assert.deepEqual(value.calls.released, []);
+            assert.deepEqual(value.calls.execute, []);
+            assert.equal(value.button('cover_editor_save').props.disabled, true);
+            value.imageEditor().props.onClose();
+            await value.settle();
+            assert.equal(value.button('cover_editor_save').props.disabled, false);
+        } finally { value.close(); }
+    }
+});
+
+test('oversized edited images fail before reading or importing bytes and preserve the selected cover', async () => {
+    let reads = 0;
+    const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')] });
+    try {
+        await value.browse();
+        value.button('cover_editor_edit').props.onClick();
+        await value.settle();
+        await assert.rejects(value.imageEditor().props.onApply({
+            size: 16 * 1024 * 1024 + 1,
+            arrayBuffer: async () => { reads += 1; return new ArrayBuffer(0); },
+        }), { code: 'COVER_IMAGE_TOO_LARGE' });
+        await value.settle();
+        assert.equal(reads, 0);
+        assert.deepEqual(value.calls.importedPreview, []);
+        assert.deepEqual(value.calls.released, []);
+        assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+        assert.ok(value.imageEditor());
+    } finally { value.close(); }
+});
+
+test('closing during edited-image import releases a late result without replacing the selected cover', async () => {
+    for (const close of ['editor', 'unmount']) {
+        const pending = deferred();
+        const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')], importedPreview: () => pending.promise });
+        try {
+            await value.browse();
+            value.button('cover_editor_edit').props.onClick();
+            await value.settle();
+            const editor = value.imageEditor();
+            const applying = editor.props.onApply(new Blob(['edited'], { type: 'image/png' }));
+            await value.settle();
+            assert.equal(value.calls.importedPreview.length, 1);
+            if (close === 'unmount') value.unmount();
+            else editor.props.onClose();
+            await value.settle();
+            pending.resolve(preview('/temporary/late-edited-cover.png'));
+            await assert.rejects(applying, { code: 'IMAGE_EDIT_CLOSED' });
+            await value.settle();
+            assert.equal(value.calls.updatesAfterUnmount, 0);
+            assert.deepEqual(value.calls.released, [
+                ...(close === 'unmount' ? [undefined] : []),
+                { imagePath: '/temporary/late-edited-cover.png' },
+            ]);
+            assert.deepEqual(value.calls.execute, []);
+            if (close === 'editor') {
+                assert.equal(value.imageEditor(), undefined);
+                assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+            }
+        } finally { value.close(); }
+    }
+});
+
+test('cover editing remains disabled while another candidate loads or an external task runs', async () => {
+    const pending = deferred();
+    const value = await fixture({ embedded: true, files: [selectedFile('book.cbz')], importedPreview: () => pending.promise });
+    try {
+        await value.browse();
+        value.updateProps({ externalBusy: true });
+        await value.settle();
+        assert.equal(value.button('cover_editor_edit').props.disabled, true);
+        value.updateProps({ externalBusy: false, localImageRequest: { id: 1, url: 'https://images.example/next.png' } });
+        await value.settle();
+        assert.equal(value.button('cover_editor_edit').props.disabled, true);
+        pending.resolve(preview('/temporary/next-cover.png'));
+        await value.settle();
+        assert.equal(value.button('cover_editor_edit').props.disabled, false);
     } finally { value.close(); }
 });

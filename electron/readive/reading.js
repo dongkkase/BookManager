@@ -109,6 +109,7 @@ function knownReadingSignatures(values, allowed, selectedIds) {
 
 export async function exchangeReading(state, device, records, libraryDb, itemIds, options = {}) {
     if (!Array.isArray(records) || records.length > 2000) throw fail('invalid_reading_batch');
+    const shouldPersistFile = options.shouldPersistFile || (() => true);
     const sharedItems = Object.values(state.items).filter(item => item.deviceIds.includes(device.id));
     let items = sharedItems;
     let selectedIds;
@@ -148,7 +149,7 @@ export async function exchangeReading(state, device, records, libraryDb, itemIds
     report.acknowledged = [];
     const db = libraryDb?.getConnection();
     for (const item of items) {
-        if (!available.has(item.itemId)) continue;
+        if (!available.has(item.itemId) || !shouldPersistFile(item.sourcePath)) continue;
         const row = db?.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(libraryDb.normalizeFilePath(item.sourcePath));
         const applied = state.appliedReadings[item.itemId];
         const baseline = item.localReadingBaseline;
@@ -196,7 +197,8 @@ export async function exchangeReading(state, device, records, libraryDb, itemIds
         const previous = known.get(item.itemId);
         if (!previous || previous.contentHash !== winner.contentHash || previous.deviceId !== winner.deviceId || previous.revision !== winner.revision) winners.push(winner);
         const applied = state.appliedReadings[item.itemId];
-        if (libraryDb && available.has(item.itemId) && winner.deviceId !== state.serverId && (!applied || newerReading(winner, applied.record))) {
+        if (libraryDb && available.has(item.itemId) && shouldPersistFile(item.sourcePath)
+            && winner.deviceId !== state.serverId && (!applied || newerReading(winner, applied.record))) {
             const row = db.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(libraryDb.normalizeFilePath(item.sourcePath));
             const saved = await libraryDb.upsertReadingState(item.sourcePath, { ...readingStateProjection(winner, row), format: item.format });
             state.appliedReadings[item.itemId] = { record: winner, localRevision: saved.revision };

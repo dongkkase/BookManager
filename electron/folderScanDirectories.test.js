@@ -54,6 +54,10 @@ for (const quickListOnly of [false, true]) {
 
 test('폴더 행은 파일 메타데이터 조회와 중복 비교에서 제외하고 이벤트 캐시 키를 분리한다', async t => {
     const root = createFixture(t);
+    const library = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-folder-dup-'));
+    t.after(() => fs.rmSync(library, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(library, 'Books.cbz'), '');
+    fs.writeFileSync(path.join(library, 'Root book.cbz'), '');
     const lookupPaths = [];
     const events = [];
     const rows = await scanFolder(root, {
@@ -61,20 +65,13 @@ test('폴더 행은 파일 메타데이터 조회와 중복 비교에서 제외�
         includeSubfolders: false,
         skipArchiveExtraction: true,
         enableDupCheck: true,
-        dupFolders: ['/indexed-books'],
+        dupFolders: [library],
         reportFileReady: true,
         requestId: 7,
         libraryDb: {
             async getFileInfo(filePath) {
                 lookupPaths.push(filePath);
                 return null;
-            },
-            async getTargetIndex() {
-                return [{
-                    name: 'Books.cbz',
-                    full_path: '/indexed-books/Books.cbz',
-                    path: '/indexed-books',
-                }];
             },
         },
     }, {
@@ -84,8 +81,9 @@ test('폴더 행은 파일 메타데이터 조회와 중복 비교에서 제외�
         },
     });
 
-    assert.deepEqual(lookupPaths, [path.join(root, 'Root book.cbz')]);
+    assert.deepEqual([...new Set(lookupPaths)], [path.join(root, 'Root book.cbz')]);
     assert.equal(rows.find(row => row.name === 'Books.cbz').dup_count, 0);
+    assert.equal(rows.find(row => row.name === 'Root book.cbz').duplicate_matches[0].path, path.join(library, 'Root book.cbz'));
     const completeEvent = events.find(event => event.channel === 'scan-complete').data;
     assert.deepEqual(completeEvent.files, rows);
     assert.equal(JSON.parse(completeEvent.cacheKey).includeDirectories, true);

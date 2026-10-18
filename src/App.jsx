@@ -40,6 +40,7 @@ import {
 import { resolveUpdateInfo, shouldOpenUpdatePage } from './updatePolicy';
 import { classifyDroppedEntries, resolveMetadataDropPaths, resolveTaskDropMode } from './dropPolicy';
 import { settingsEffects } from './settingsPolicy';
+import { libraryReadingStorageScopeKey, pruneLibraryReadingStorage } from './libraryReadingStorage';
 import { fontVarsForConfig } from './fontPolicy';
 import { installBundledFontFaces } from './bundledFonts';
 import { trackTelemetry } from './telemetry.js';
@@ -96,6 +97,12 @@ function App() {
     const updateInfo = useMemo(() => resolveUpdateInfo(appVersion, releaseUpdates.result), [appVersion, releaseUpdates.result]);
   const { config, saveConfig: setConfig, reloadConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n(config);
+
+    const readingStorageScopeKey = config?.library_data_prune_pending ? null : libraryReadingStorageScopeKey(config?.libraries);
+    useEffect(() => {
+        if (readingStorageScopeKey === null) return;
+        pruneLibraryReadingStorage(window.localStorage, JSON.parse(readingStorageScopeKey));
+    }, [readingStorageScopeKey]);
 
   useEffect(() => {
     const listBundledFonts = window.electronAPI?.listBundledFonts;

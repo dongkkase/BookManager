@@ -35,7 +35,7 @@ function readingActionPatch(action, format, previous = {}, metadata = {}) {
     };
 }
 
-export async function updateReadingProgress(db, paths, action, { getOpenViewerPaths = () => [] } = {}) {
+export async function updateReadingProgress(db, paths, action, { getOpenViewerPaths = () => [], shouldPersistFile = () => true } = {}) {
     if (!['mark-read', 'reset-progress'].includes(action)) throw new Error('invalid_reading_action');
     if (!Array.isArray(paths) || paths.length > 10000 || paths.some(value => (
         typeof value !== 'string' || !value || value.length > 32768
@@ -77,6 +77,7 @@ export async function updateReadingProgress(db, paths, action, { getOpenViewerPa
             const metadata = new Map((await db.listFilesByPaths(batch)).map(file => [file.path, file]));
             for (const filePath of batch) {
                 try {
+                    if (!shouldPersistFile(filePath)) continue;
                     const key = db.normalizeFilePath(filePath);
                     if (getOpenViewerPaths().some(openPath => db.normalizeFilePath(path.resolve(openPath)) === key)) {
                         errors.push({ filePath, code: 'READING_VIEWER_OPEN' });

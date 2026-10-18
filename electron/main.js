@@ -17,6 +17,7 @@ import {
   resolveThumbnailDir,
 } from './dataPaths.js';
 import { LibraryDB } from './database/library_db.js';
+import { isRegisteredLibraryFile } from './libraryPathScope.js';
 import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
 import {
   attachWindowSafetyHandlers,
@@ -164,6 +165,8 @@ function getProcessLogPath() {
 }
 
 async function recordExternalViewerOpen(filePath, format) {
+    if (configManager?.canPruneLibraryData?.()
+        && !isRegisteredLibraryFile(filePath, configManager.getConfig()?.libraries)) return;
   let db = null;
   try {
     db = new LibraryDB({ dbPath: resolveLibraryDbPath(getExecutableDir()) });

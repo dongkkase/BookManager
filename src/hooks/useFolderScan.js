@@ -165,11 +165,14 @@ export function appendUniqueFolderFiles(currentFiles = [], incomingFiles = []) {
     return additions.length > 0 ? [...current, ...additions] : current;
 }
 
+const queuedFolderScanRequests = new WeakMap();
+
 export function coordinateFolderScanRequest({
     activeScans,
     queuedForceScans,
     cacheKey,
     force = false,
+    refresh = false,
     isCurrent = () => true,
     execute,
 }) {
@@ -180,14 +183,23 @@ export function coordinateFolderScanRequest({
         activeScan = undefined;
     }
     if (activeScan) {
-        if (!force || activeScan.force) return activeScan.promise;
+        if ((!force && !refresh) || activeScan.force || (!force && activeScan.refresh)) return activeScan.promise;
 
         const existingQueuedForce = queuedForceScans.get(cacheKey);
-        if (existingQueuedForce) return existingQueuedForce;
+        if (existingQueuedForce) {
+            const request = queuedFolderScanRequests.get(existingQueuedForce);
+            if (force && request && !request.force) {
+                request.force = true;
+                request.execute = execute;
+                request.isCurrent = isCurrent;
+            }
+            return existingQueuedForce;
+        }
 
         let queuedForcePromise;
+        const request = { force, refresh, execute, isCurrent };
         const startForcedScan = () => {
-            if (!isCurrent()) {
+            if (!request.isCurrent()) {
                 if (queuedForceScans.get(cacheKey) === queuedForcePromise) {
                     queuedForceScans.delete(cacheKey);
                 }
@@ -203,12 +215,11 @@ export function coordinateFolderScanRequest({
                 activeScans,
                 queuedForceScans,
                 cacheKey,
-                force: true,
-                isCurrent,
-                execute,
+                ...request,
             });
         };
         queuedForcePromise = activeScan.promise.then(startForcedScan, startForcedScan);
+        queuedFolderScanRequests.set(queuedForcePromise, request);
         queuedForceScans.set(cacheKey, queuedForcePromise);
         const releaseQueuedForce = () => {
             if (queuedForceScans.get(cacheKey) === queuedForcePromise) {
@@ -220,7 +231,7 @@ export function coordinateFolderScanRequest({
     }
 
     const promise = Promise.resolve().then(() => isCurrent() ? execute() : []);
-    const activeEntry = { force, promise, isCurrent };
+    const activeEntry = { force, refresh, promise, isCurrent };
     activeScans.set(cacheKey, activeEntry);
     const releaseActiveScan = () => {
         if (activeScans.get(cacheKey) === activeEntry) {
@@ -271,11 +282,26 @@ export function mergeFolderFilePreservingCover(currentFile, incomingFile) {
     };
 }
 
+function preserveFolderDuplicateResults(currentFile, updatedFile) {
+    // Metadata and cover updates do not contain a fresh duplicate check result.
+    let result = updatedFile;
+    for (const key of ['duplicate_matches', 'dup_count', 'max_ratio']) {
+        const hasCurrent = Object.prototype.hasOwnProperty.call(currentFile || {}, key);
+        if (hasCurrent ? Object.is(updatedFile[key], currentFile[key])
+            : !Object.prototype.hasOwnProperty.call(updatedFile, key)) continue;
+        if (result === updatedFile) result = { ...updatedFile };
+        if (hasCurrent) result[key] = currentFile[key];
+        else delete result[key];
+    }
+    return result;
+}
+
 export function mergeFolderFileCacheUpdate(currentFile, incomingFile) {
     if (!incomingFile) return currentFile;
-    return incomingFile.isDirectory
+    const updatedFile = incomingFile.isDirectory
         ? mergeFolderFilePreservingCover(currentFile, incomingFile)
         : { ...currentFile, ...incomingFile };
+    return preserveFolderDuplicateResults(currentFile, updatedFile);
 }
 
 export function mergeFolderScanResults(incomingFiles = [], currentFiles = [], options = {}) {
@@ -320,6 +346,7 @@ export function useFolderScan(t) {
   const queuedForceScansRef = useRef(new Map());
   const pendingScanCacheKeysRef = useRef(new Set());
   const scanRequestIdRef = useRef(0);
+    const completedScanRequestIdRef = useRef(0);
     const scanScopeRef = useRef(null);
   const mountedRef = useRef(true);
 
@@ -379,6 +406,7 @@ export function useFolderScan(t) {
   const scanFolder = useCallback(async (folderPath, options = {}) => {
     const { includeSubfolders = true, enableDupCheck = false } = options;
     const force = options.force === true;
+    const refresh = force || options.refresh === true;
     const silent = options.silent === true;
     const fastInitial = options.fastInitial === true && options.skipArchiveExtraction !== true && !silent;
 
@@ -394,7 +422,7 @@ export function useFolderScan(t) {
         const isCurrentScope = () => mountedRef.current && scanScopeRef.current === requestScope;
 
     // 캐시에 데이터가 있다면 재사용
-    if (!force && hasReusableFolderFileCache(
+    if (!refresh && hasReusableFolderFileCache(
       fileDataCacheRef.current,
       pendingScanCacheKeysRef.current,
       cacheKey,
@@ -450,7 +478,7 @@ export function useFolderScan(t) {
             if (includeSubfolders) {
               setStatusMessage(t('folder.status.scanning') || '폴더 스캔 중...');
             } else {
-              pendingScanCacheKeysRef.current.delete(cacheKey);
+              if (!enableDupCheck) pendingScanCacheKeysRef.current.delete(cacheKey);
               setStatusMessage(
                 t('folder.status.files_found')?.replace('{count}', initialCount) || `${initialCount}개 파일 발견`
               );
@@ -482,7 +510,7 @@ export function useFolderScan(t) {
               ...limitCache(prev, cacheKey),
               [cacheKey]: mergeFilesPreservingCover(quickFiles || [], prev[cacheKey] || []),
             }));
-            pendingScanCacheKeysRef.current.delete(cacheKey);
+            if (!enableDupCheck) pendingScanCacheKeysRef.current.delete(cacheKey);
             const quickCount = countFolderFiles(quickFiles);
             setStatusMessage(
               t('folder.status.files_found')?.replace('{count}', quickCount) || `${quickCount}개 파일 발견`
@@ -492,7 +520,11 @@ export function useFolderScan(t) {
               setScanning(false);
             }
 
-            if (countFolderFiles(quickFiles) === 0) return quickFiles || [];
+            if (countFolderFiles(quickFiles) === 0) {
+                completedScanRequestIdRef.current = requestId;
+                pendingScanCacheKeysRef.current.delete(cacheKey);
+                return quickFiles || [];
+            }
 
             window.electronAPI.scanFolder(folderPath, {
               ...requestOptions,
@@ -505,6 +537,8 @@ export function useFolderScan(t) {
               reportFileReady: true,
             }).then(files => {
               if (!isCurrentRequest()) return;
+                completedScanRequestIdRef.current = requestId;
+                pendingScanCacheKeysRef.current.delete(cacheKey);
               touchCacheKey(cacheKey);
               setFileDataCache(prev => ({
                 ...limitCache(prev, cacheKey),
@@ -541,10 +575,11 @@ export function useFolderScan(t) {
         });
 
         if (!isCurrentRequest()) return files || [];
+        completedScanRequestIdRef.current = requestId;
         touchCacheKey(cacheKey);
         setFileDataCache(prev => ({
           ...limitCache(prev, cacheKey),
-          [cacheKey]: mergeFolderScanResults(files, prev[cacheKey], { force }),
+          [cacheKey]: mergeFolderScanResults(files, prev[cacheKey], { force: refresh }),
         }));
         pendingScanCacheKeysRef.current.delete(cacheKey);
         if (!silent) {
@@ -568,6 +603,7 @@ export function useFolderScan(t) {
       queuedForceScans: queuedForceScansRef.current,
       cacheKey,
       force,
+      refresh,
         isCurrent: isCurrentScope,
       execute: executeScan,
     });
@@ -678,6 +714,9 @@ export function useFolderScan(t) {
       return true;
     };
 
+    const isCurrentFileReadyEvent = data => isCurrentScanEvent(data)
+        && (data?.requestId === undefined || completedScanRequestIdRef.current !== data.requestId);
+
     const findReadyTargetKey = (cache, data, folderTargetKeys) => {
       if (cache[data.cacheKey]) return data.cacheKey;
       if (folderTargetKeys.has(data.folderPath)) return folderTargetKeys.get(data.folderPath);
@@ -701,7 +740,7 @@ export function useFolderScan(t) {
         const folderTargetKeys = new Map();
         const updatesByTargetKey = new Map();
         for (const data of batch) {
-          if (!isCurrentScanEvent(data)) continue;
+          if (!isCurrentFileReadyEvent(data)) continue;
           const targetKey = findReadyTargetKey(prev, data, folderTargetKeys);
           if (!targetKey) continue;
           if (!updatesByTargetKey.has(targetKey)) updatesByTargetKey.set(targetKey, new Map());
@@ -717,7 +756,7 @@ export function useFolderScan(t) {
             const updated = updatesByPath.get(file.path);
             if (!updated || !shouldApplyFolderFileUpdate(file, updated)) return file;
             changed = true;
-            return mergeFolderFilePreservingCover(file, updated);
+            return preserveFolderDuplicateResults(file, mergeFolderFilePreservingCover(file, updated));
           });
           if (!changed) continue;
           if (next === prev) next = { ...prev };
@@ -734,7 +773,7 @@ export function useFolderScan(t) {
 
     const handleFolderFileReady = (data) => {
       if (!data?.file?.path) return;
-      if (!isCurrentScanEvent(data)) return;
+      if (!isCurrentFileReadyEvent(data)) return;
       if (data.file.cover) {
         window.dispatchEvent(new CustomEvent('bookmanager:folder-thumbnail-ready', {
           detail: {
@@ -835,6 +874,8 @@ export function useFolderScan(t) {
       if (!isCurrentScanEvent(data)) return;
       const { files, folderPath, cacheKey } = data || {};
       if (folderPath && files && cacheKey) {
+        completedScanRequestIdRef.current = scanRequestIdRef.current;
+        pendingScanCacheKeysRef.current.delete(cacheKey);
         touchCacheKey(cacheKey);
         setFileDataCache(prev => ({
           ...limitCache(prev, cacheKey),

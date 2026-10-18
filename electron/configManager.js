@@ -57,7 +57,26 @@ export class ConfigManager {
       && paths.indexOf(legacyPath) === index
     ));
     this.config = null;
+    this.configInitialized = false;
+    this.configInitializationFailed = false;
+    this.configLoadTrusted = false;
+    this.libraryDataPruneReady = false;
   }
+
+    hasTrustedLibraryPaths(config = {}) {
+        const keys = ['libraries', 'dup_check_folders', 'library_entries'];
+        const pathApi = (this.platform || process.platform) === 'win32' ? path.win32 : path;
+        return keys.some(key => Object.prototype.hasOwnProperty.call(config, key))
+            && keys.every(key => !Object.prototype.hasOwnProperty.call(config, key)
+                || Array.isArray(config[key]) && config[key].every(entry => {
+                    const value = typeof entry === 'string' ? entry : entry?.path;
+                    return typeof value === 'string' && !value.includes('\0') && pathApi.isAbsolute(value.trim());
+                }));
+    }
+
+    canPruneLibraryData() {
+        return this.libraryDataPruneReady;
+    }
 
   normalizePathList(values = []) {
     const seen = new Set();
@@ -239,14 +258,24 @@ export class ConfigManager {
   }
 
   async initialize() {
+    this.configInitialized = false;
+    this.configInitializationFailed = false;
+    this.libraryDataPruneReady = false;
     try {
       fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
       this.config = this.loadConfig();
         const restored = await restoreFolderConfigPaths(this.config, { platform: this.platform });
-        if (restored !== this.config) this.saveConfig(restored);
+        const restoredSaved = restored === this.config || this.saveConfig(restored, { allowLibraryDataPrune: false });
+        this.configInitialized = restoredSaved;
+        this.configInitializationFailed = !restoredSaved;
+        if (!restoredSaved) this.config.library_data_prune_pending = true;
+        this.libraryDataPruneReady = restoredSaved && this.configLoadTrusted
+            && this.config.library_data_prune_pending !== true;
     } catch (error) {
       console.error('ConfigManager 초기화 실패:', error);
-      this.config = this.getDefaultConfig();
+      this.configInitializationFailed = true;
+      this.configLoadTrusted = false;
+      this.config = { ...this.getDefaultConfig(), library_data_prune_pending: true };
     }
   }
 
@@ -349,6 +378,8 @@ export class ConfigManager {
   }
 
   loadConfig() {
+    this.configLoadTrusted = false;
+    this.libraryDataPruneReady = false;
     try {
       if (this.usesDefaultConfigPath) {
         migrateLegacyAppDataDir(this.executableDir, this.platform, this.env);
@@ -356,7 +387,12 @@ export class ConfigManager {
       this.migrateLegacyConfig();
       if (fs.existsSync(this.configPath)) {
         const data = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid configuration object.');
         this.config = this.normalizeConfig(data);
+        this.configLoadTrusted = !this.configInitializationFailed
+            && data.library_data_prune_pending !== true && this.hasTrustedLibraryPaths(data);
+        if (!this.configLoadTrusted) this.config.library_data_prune_pending = true;
+        this.libraryDataPruneReady = this.configInitialized && this.configLoadTrusted;
         return this.config;
       }
     } catch (error) {
@@ -368,8 +404,8 @@ export class ConfigManager {
         // 손상 파일이 없거나 이동할 수 없으면 기본 설정 생성만 진행합니다.
       }
     }
-    this.config = this.normalizeConfig({});
-    this.saveConfig(this.config);
+    this.config = { ...this.normalizeConfig({}), library_data_prune_pending: true };
+    this.saveConfig(this.config, { allowLibraryDataPrune: false });
     return this.config;
   }
 
@@ -392,7 +428,7 @@ export class ConfigManager {
     return false;
   }
 
-  saveConfig(configData) {
+  saveConfig(configData, { allowLibraryDataPrune = true } = {}) {
     try {
       const requestedLang = configData?.language || configData?.lang;
       const hasLibraryPathUpdate = Object.prototype.hasOwnProperty.call(configData || {}, 'libraries')
@@ -431,12 +467,31 @@ export class ConfigManager {
           ...(configData?.api_keys || {}),
         },
       });
+        const pathSignature = values => JSON.stringify([...new Set((values || []).map(value => this.libraryPathKey(value)))].sort());
+        const hasLibraryUpdate = hasLibraryPathUpdate || hasLibraryEntryUpdate;
+        const validLibraryUpdate = !hasLibraryUpdate || this.hasTrustedLibraryPaths(configData);
+        const explicitLibraryChange = allowLibraryDataPrune && hasLibraryUpdate && validLibraryUpdate
+            && pathSignature(this.config?.libraries) !== pathSignature(nextConfig.libraries);
+        if (validLibraryUpdate && (explicitLibraryChange || this.configLoadTrusted && this.config?.library_data_prune_pending !== true)) {
+            delete nextConfig.library_data_prune_pending;
+        } else {
+            nextConfig.library_data_prune_pending = true;
+        }
       const configDir = path.dirname(this.configPath);
       fs.mkdirSync(configDir, { recursive: true });
       const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify(nextConfig, null, 2), 'utf-8');
       fs.renameSync(tempPath, this.configPath);
       this.config = nextConfig;
+        if (explicitLibraryChange) {
+            this.configInitialized = true;
+            this.configInitializationFailed = false;
+            this.configLoadTrusted = true;
+            this.libraryDataPruneReady = true;
+        } else if (nextConfig.library_data_prune_pending) {
+            this.configLoadTrusted = false;
+            this.libraryDataPruneReady = false;
+        }
       return true;
     } catch (error) {
       console.error('설정 저장 실패:', error);

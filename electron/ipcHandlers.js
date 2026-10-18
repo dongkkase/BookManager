@@ -3,6 +3,8 @@ import { saveConfigWithTelemetryConsent } from './observabilityConsent.js';
 import { registerObservedHandler } from './observabilityOperations.js';
 import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
+import { createLibraryDataMaintenance } from './libraryDataMaintenance.js';
+import { isRegisteredLibraryFile } from './libraryPathScope.js';
 import pkg from 'electron';
 const { ipcMain, app, BrowserWindow, dialog, shell, net, nativeImage } = pkg;
 import fs from 'fs';
@@ -16,6 +18,7 @@ import { promisify } from 'util';
 import { BoundedMemoryCache } from './boundedMemoryCache.js';
 import { createTtsRequestRegistry } from './ttsRequestRegistry.js';
 import { registerReadiveIpc } from './readive/ipc.js';
+import { pruneReadiveLibraryData } from './readive/libraryDataCleanup.js';
 import { registerEpubEditorIpc } from './epubEditor/ipc.js';
 import { registerEpubOptimizerIpc } from './epubOptimizer/ipc.js';
 import { inspectCoverEditor, loadCoverEditorImage, applyCoverEditor } from './coverEditor.js';
@@ -25,6 +28,7 @@ import { decodeCoverEditorImage } from './coverEditorImageDecoder.js';
 import { createPermanentDeleteDialogOptions, deleteFileEntries } from './fileDeletion.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
+import { registerFolderDuplicateCheckIpc } from './folderDuplicateCheck.js';
 import { readFolderDetails } from './folderDetails.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
@@ -2243,6 +2247,8 @@ const LIBRARY_SCAN_VISUAL_EXTENSIONS = new Set(['.zip', '.cbz', '.rar', '.cbr', 
 const LIBRARY_SCAN_PROGRESS_INTERVAL_MS = 500;
 const LIBRARY_SCAN_PROGRESS_MATCH_DELTA = 250;
 const LIBRARY_SCAN_STAT_CONCURRENCY = 16;
+const LIBRARY_SCAN_DIRECTORY_CONCURRENCY = 4;
+const LIBRARY_SCAN_NAME_COLLATOR = new Intl.Collator('ko', { numeric: true });
 const CPU_COUNT = os.cpus()?.length || 1;
 const DEFAULT_LIBRARY_METADATA_CONCURRENCY = Math.max(1, Math.min(Math.ceil(CPU_COUNT * 0.75), CPU_COUNT));
 const MAX_LIBRARY_METADATA_CONCURRENCY = Math.max(8, Math.min(32, Math.max(1, CPU_COUNT - 1)));
@@ -3019,9 +3025,12 @@ async function buildArchiveIndexEntries(filePaths = [], targetFolder, options = 
   return entries.filter(Boolean);
 }
 
-function createArchiveFingerprint(entries = []) {
+export function createArchiveFingerprint(entries = []) {
   const hash = crypto.createHash('sha1');
-  for (const entry of entries) {
+    const orderedEntries = [...entries].sort((left, right) => (
+        left.full_path < right.full_path ? -1 : left.full_path > right.full_path ? 1 : 0
+    ));
+  for (const entry of orderedEntries) {
     hash
       .update(entry.full_path)
       .update('\u001f')
@@ -3092,39 +3101,50 @@ export async function scanArchivePaths(rootPath, priorityFolder = '', onProgress
   }
 
   async function walk(currentPath) {
-    throwIfTaskCancelled(shouldCancel);
-    const normalizedCurrentPath = path.resolve(currentPath);
-    if (visitedDirs.has(normalizedCurrentPath)) return;
-    visitedDirs.add(normalizedCurrentPath);
-    if (typeof onFolder === 'function') onFolder(normalizedCurrentPath);
-    reportProgress(currentPath);
-    let entries;
-    try {
-      entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    const sortedEntries = [...entries].sort((left, right) => {
-      if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
-      return left.name.localeCompare(right.name, 'ko', { numeric: true });
-    });
-    for (const entry of sortedEntries) {
-      throwIfTaskCancelled(shouldCancel);
-      if (shouldSkipScanDirectoryEntry(entry)) continue;
-      const fullPath = path.join(currentPath, entry.name);
-      if (entry.isDirectory()) {
-        await walk(fullPath);
-      } else if (entry.isFile()) {
-        scannedCount += 1;
-        if (INDEX_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-          results.push(fullPath);
-          if (typeof onMatch === 'function') await onMatch(fullPath);
-          reportProgress(fullPath);
-        } else {
-          reportProgress(fullPath);
+        const pendingFolders = [currentPath];
+        let cursor = 0;
+        while (cursor < pendingFolders.length) {
+            throwIfTaskCancelled(shouldCancel);
+            const batch = [];
+            while (cursor < pendingFolders.length && batch.length < LIBRARY_SCAN_DIRECTORY_CONCURRENCY) {
+                throwIfTaskCancelled(shouldCancel);
+                const folder = path.resolve(pendingFolders[cursor++]);
+                if (visitedDirs.has(folder)) continue;
+                visitedDirs.add(folder);
+                if (typeof onFolder === 'function') onFolder(folder);
+                reportProgress(folder);
+                batch.push(folder);
+            }
+            const snapshots = await Promise.all(batch.map(async folder => {
+                try {
+                    return await fs.promises.readdir(folder, { withFileTypes: true });
+                } catch {
+                    return [];
+                }
+            }));
+            throwIfTaskCancelled(shouldCancel);
+            for (let index = 0; index < batch.length; index += 1) {
+                const entries = snapshots[index].filter(entry => !shouldSkipScanDirectoryEntry(entry));
+                entries.sort((left, right) => {
+                    if (left.isFile() !== right.isFile()) return left.isFile() ? -1 : 1;
+                    return LIBRARY_SCAN_NAME_COLLATOR.compare(left.name, right.name);
+                });
+                for (const entry of entries) {
+                    throwIfTaskCancelled(shouldCancel);
+                    const fullPath = path.join(batch[index], entry.name);
+                    if (entry.isDirectory()) {
+                        pendingFolders.push(fullPath);
+                    } else if (entry.isFile()) {
+                        scannedCount += 1;
+                        if (INDEX_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+                            results.push(fullPath);
+                            if (typeof onMatch === 'function') await onMatch(fullPath);
+                        }
+                        reportProgress(fullPath);
+                    }
+                }
+            }
         }
-      }
-    }
   }
   try {
     if (typeof onProgress === 'function') {
@@ -3209,6 +3229,23 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   const renameHistoryPath = () => resolveRenameHistoryPath(appDataDir());
   const apiCoverCacheDir = () => resolveApiCoverCacheDir(appDataDir());
   const thumbnailDir = () => resolveThumbnailDir(appDataDir());
+    const libraryDataMaintenance = createLibraryDataMaintenance({
+        getLibraryPaths: () => configManager.canPruneLibraryData?.() ? configManager.getConfig().libraries : null,
+        dbPath: libraryDbPath(),
+        thumbnailDir: thumbnailDir(),
+        contentIndexDbPath: contentIndexDbPath(),
+        pruneLinkedData: libraries => fs.existsSync(readiveService.store.filePath)
+            ? pruneReadiveLibraryData(readiveService.store, libraries) : null,
+        onChanged: () => {
+            for (const window of BrowserWindow.getAllWindows()) {
+                if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+                window.webContents.send('reading:listsChanged');
+                window.webContents.send('reading:changed', { libraryScopeChanged: true });
+            }
+        },
+        onError: error => console.warn('[LibraryData] Cleanup failed:', error.message || error.code || error),
+    });
+    void libraryDataMaintenance.run();
   const librarySearchService = new LibrarySearchService(libraryDbPath());
   const contentIndexService = new ContentIndexService(contentIndexDbPath());
   const removeContentIndexProgressListener = contentIndexService.onProgress(progress => {
@@ -3466,6 +3503,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 폴더 스캔 ==========
+    registerFolderDuplicateCheckIpc({ ipcMain, cancellationRegistry, getConfig: () => configManager.getConfig() });
     ipcMain.handle('folder:missingVolumes', async (event, libraryFolders = [], options = {}) => {
         const taskId = 'folder:missingVolumes';
         cancellationRegistry.cancel(event.sender.id, taskId);
@@ -3525,6 +3563,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       throw error;
     } finally {
       cancellationRegistry.finish(event.sender.id, taskId, controller);
+        void libraryDataMaintenance.run();
     }
   });
 
@@ -4396,6 +4435,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   };
 
   const recordReadingOpened = async filePath => {
+    if (configManager.canPruneLibraryData?.() && !isRegisteredLibraryFile(filePath, configManager.getConfig().libraries)) return;
     const db = new LibraryDB({ dbPath: libraryDbPath() });
     try {
       const state = await db.upsertReadingState(filePath, {
@@ -4426,10 +4466,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         }
     });
 
-    registerReadingListsIpc({
+    const readingListsController = registerReadingListsIpc({
         ipcMain,
         getMainWindow: hooks.getMainWindow,
         createLibrary: () => new LibraryDB({ dbPath: libraryDbPath() }),
+        getLibraryPaths: () => configManager.getConfig()?.libraries || [],
         normalizeFile: normalizeLibrarySearchFileForRenderer,
         loadPreview: async filePath => inspectFolderFile(filePath, {
             dbPath: libraryDbPath(),
@@ -4486,7 +4527,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             || (event.senderFrame && event.senderFrame !== event.sender.mainFrame)) throw new Error('reading_untrusted_sender');
         const db = new LibraryDB({ dbPath: libraryDbPath() });
         try {
-            const result = await updateReadingProgress(db, paths, action, { getOpenViewerPaths: hooks.getOpenViewerPaths });
+            const result = await updateReadingProgress(db, paths, action, {
+                getOpenViewerPaths: hooks.getOpenViewerPaths,
+                shouldPersistFile: filePath => !configManager.canPruneLibraryData?.()
+                    || isRegisteredLibraryFile(filePath, configManager.getConfig()?.libraries),
+            });
             if (result.states.length > 0) broadcastReadingChanged({ progressChanged: true });
             return result;
         } finally {
@@ -4642,11 +4687,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     try {
       const states = await db.getLibraryScanStates(targetFolders);
       const stateByPath = new Map(states.map(state => [path.resolve(state.library_path), state]));
-      return targetFolders.map(folder => normalizeLibraryScanStateForRenderer(
+      return await Promise.all(targetFolders.map(async folder => normalizeLibraryScanStateForRenderer(
         folder,
         stateByPath.get(folder),
-        fs.existsSync(folder),
-      ));
+        await fs.promises.access(folder).then(() => true, () => false),
+      )));
     } finally {
       await db.close();
     }
@@ -4947,6 +4992,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             });
           }
           const metadataTargets = metadataTargetsByFolder.get(folder);
+            const metadataRootMtime = safeStatMtime(folder);
           const files = await optimizeMetadataForPaths(folder, metadataTargets || [], {
             libraryDb: db,
             sevenZExe,
@@ -4957,7 +5003,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             lang,
             touchHeartbeat: () => queueLibraryScanHeartbeat(
               folder,
-              safeStatMtime(folder),
+              metadataRootMtime,
               shouldOptimizeMetadata ? 'metadata' : mode,
             ),
           }, event);
@@ -5097,21 +5143,27 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return configManager.getConfig();
   });
 
-  ipcMain.handle('config:save', (_, config) => {
+  ipcMain.handle('config:save', async (_, config) => {
     const currentConfig = configManager.getConfig() || {};
     const updates = config || {};
-    const nextLang = updates.language || updates.lang || currentConfig.language || currentConfig.lang || 'ko';
-    const nextConfig = {
-      ...currentConfig,
-      ...updates,
-      lang: nextLang,
-      language: nextLang,
-      api_keys: {
-        ...(currentConfig.api_keys || {}),
-        ...(updates.api_keys || {}),
-      },
+    const save = async () => {
+        const latestConfig = configManager.getConfig() || {};
+        const language = updates.language || updates.lang || latestConfig.language || latestConfig.lang || 'ko';
+        const nextConfig = {
+            ...latestConfig,
+            ...updates,
+            lang: language,
+            language,
+            api_keys: { ...(latestConfig.api_keys || {}), ...(updates.api_keys || {}) },
+        };
+        const saved = saveConfigWithTelemetryConsent(configManager, nextConfig);
+        if (JSON.stringify(latestConfig.libraries) !== JSON.stringify(saved.libraries)) await libraryDataMaintenance.run();
+        return saved;
     };
-    const savedConfig = saveConfigWithTelemetryConsent(configManager, nextConfig);
+    const changesLibraries = Object.hasOwn(updates, 'libraries')
+        && JSON.stringify(currentConfig.libraries) !== JSON.stringify(updates.libraries);
+    const savedConfig = await (changesLibraries ? libraryDataMaintenance.withIdle(save) : save());
+    const nextLang = savedConfig.language || savedConfig.lang || 'ko';
     setLanguage(nextLang);
     const savedApiKeys = savedConfig.api_keys || {};
     BrowserWindow.getAllWindows().forEach(window => {
@@ -5122,6 +5174,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
           hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
           hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
           hasSupertonicModel: supertonicModelManager.status().installed,
+          readingLibraryPaths: configManager.canPruneLibraryData?.() ? savedConfig.libraries : null,
         });
       }
     });
@@ -5867,9 +5920,10 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         epubEditorService.dispose(),
         epubOptimizerService.dispose(),
         readiveService.dispose(),
+        readingListsController.dispose(),
         librarySearchService.close(),
         contentIndexService.close(),
-      ]).then(() => undefined);
+      ]).then(() => libraryDataMaintenance.dispose());
     },
   };
 }

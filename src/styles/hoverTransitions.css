@@ -1,3 +1,18 @@
+/* Keep disabled appearance transitions available in both states. */
+:where(
+    button:not(.ee-element-drag-handle, .ee-block-trigger),
+    input,
+    select,
+    textarea,
+    fieldset,
+    .settings-file-association-option,
+    .cover-editor-option-toggle,
+    .meta-tag-input,
+    .sharing-option-row input + span
+) {
+    transition: all 0.3s ease-out;
+}
+
 /* Low-specificity defaults preserve component transitions, including transition: none. */
 @media (prefers-reduced-motion: no-preference) {
     :where(

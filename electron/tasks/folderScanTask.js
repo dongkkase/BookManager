@@ -27,6 +27,7 @@ const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const PDF_THUMBNAIL_CACHE_PREFIX = 'pdf-first-page-v2-';
 const QUICK_FILE_BATCH_SIZE = 500;
 const QUICK_FILE_BATCH_INTERVAL_MS = 250;
+const DUPLICATE_COMPARE_BATCH_SIZE = 2048;
 const FOLDER_PREVIEW_MAX_DEPTH = 3;
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
 const execFileAsync = promisify(execFile);
@@ -1069,7 +1070,7 @@ function normalizeForCompare(text = '') {
     }
   }
   for (const [from, to] of Object.entries(synonyms)) value = value.replace(new RegExp(`\\b${from}\\b`, 'gi'), to);
-  return value.replace(/[^가-힣a-z0-9]/g, '');
+  return value.replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }
 
 function normalizeFilenameForCompare(name = '') {
@@ -1094,6 +1095,12 @@ function sameFilenameNumbers(aName = '', bName = '') {
   const bNums = filenameNumberTokens(bName);
   if (aNums.length !== bNums.length) return false;
   return aNums.every((value, index) => value === bNums[index]);
+}
+
+function duplicatePathKey(filePath) {
+    const resolved = path.resolve(filePath);
+    if (process.platform === 'win32') return resolved.toLowerCase();
+    return process.platform === 'darwin' ? resolved.normalize('NFC') : resolved;
 }
 
 function bigrams(text) {
@@ -1169,143 +1176,132 @@ function similarity(a, b) {
 }
 
 async function buildDupCache(dupFolders, targetExts, event, lang = 'ko', options = {}) {
-  const cache = [];
-  const seen = new Set();
-  const targetExtSet = targetExts instanceof Set ? targetExts : new Set(targetExts);
+    const cache = [];
+    const scannedDirectories = new Set();
+    const candidatePaths = new Set();
+    const targetExtSet = new Set([...targetExts].map(extension => extension.toLowerCase()));
 
-  function addCandidate(record = {}) {
-    const fullPath = record.full_path || record.file_path || record.path || '';
-    if (!fullPath || seen.has(fullPath)) return;
-    const name = String(record.name || path.basename(fullPath)).normalize('NFC');
-    if (!targetExtSet.has(path.extname(name).toLowerCase())) return;
-    seen.add(fullPath);
-    cache.push({
-      name,
-      path: record.path || path.dirname(fullPath),
-      full_path: fullPath,
-      size: Number(record.size) || 0,
-      compareTitle: normalizeFilenameForCompare(name),
-    });
-  }
-
-  async function addFilePath(fullPath) {
-    if (!fullPath || seen.has(fullPath)) return;
-    if (!targetExtSet.has(path.extname(fullPath).toLowerCase())) return;
-    try {
-      const stats = await fs.promises.stat(fullPath);
-      addCandidate({
-        name: path.basename(fullPath),
-        path: path.dirname(fullPath),
-        full_path: fullPath,
-        size: stats.size,
-      });
-    } catch {
-      // Ignore unreadable duplicate target files.
-    }
-  }
-
-  async function scanDir(currentPath) {
-    throwIfTaskCancelled(options);
-    let entries;
-    try {
-      entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      if (shouldSkipScanDirectoryEntry(entry)) continue;
-      const fullPath = path.join(currentPath, entry.name);
-      if (entry.isDirectory()) {
-        await scanDir(fullPath);
-      } else if (entry.isFile()) {
-        await addFilePath(fullPath);
-      }
-    }
-  }
-
-  for (const folder of dupFolders || []) {
-    throwIfTaskCancelled(options);
-    if (!folder || !fs.existsSync(folder)) continue;
-    let indexedRows = [];
-    if (options.libraryDb && !options.libraryDb.__bookManagerUnavailable) {
-      try {
-        indexedRows = await options.libraryDb.getTargetIndex(folder);
-      } catch (error) {
-        options.libraryDb.__bookManagerUnavailable = true;
-        console.warn(`[FolderScan] duplicate index unavailable; falling back to directory scan: ${error.message}`);
-      }
-    }
-    if (indexedRows.length > 0) {
-      for (const row of indexedRows) {
+    async function scanDir(currentPath) {
         throwIfTaskCancelled(options);
-        addCandidate(row);
-      }
-    } else {
-      await scanDir(folder);
+        const directoryKey = duplicatePathKey(currentPath);
+        if (scannedDirectories.has(directoryKey)) return;
+        scannedDirectories.add(directoryKey);
+        let entries;
+        try {
+            entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+        } catch {
+            return;
+        }
+
+        for (const entry of entries) {
+            throwIfTaskCancelled(options);
+            if (shouldSkipScanDirectoryEntry(entry)) continue;
+            const fullPath = path.join(currentPath, entry.name);
+            if (entry.isDirectory()) {
+                await scanDir(fullPath);
+            } else if (entry.isFile() && targetExtSet.has(path.extname(entry.name).toLowerCase())) {
+                const pathKey = duplicatePathKey(fullPath);
+                if (candidatePaths.has(pathKey)) continue;
+                candidatePaths.add(pathKey);
+                const name = entry.name.normalize('NFC');
+                cache.push({
+                    name,
+                    path: currentPath,
+                    full_path: fullPath,
+                    pathKey,
+                    compareTitle: normalizeFilenameForCompare(name),
+                });
+            }
+        }
     }
-  }
 
-  if (event && cache.length) {
-    event.sender.send('scan-progress', {
-      requestId: options.requestId,
-      progress: 85,
-      message: taskText(lang, 'task_dup_index_done', { count: cache.length }),
-    });
-  }
+    // 파일명만 탐색해 인덱스 갱신 이후 추가·삭제된 파일도 반영합니다.
+    for (const folder of dupFolders || []) {
+        throwIfTaskCancelled(options);
+        if (folder) await scanDir(path.resolve(folder));
+    }
 
-  return cache;
+    if (event && cache.length) {
+        event.sender.send('scan-progress', {
+            requestId: options.requestId,
+            progress: 85,
+            message: taskText(lang, 'task_dup_index_done', { count: cache.length }),
+        });
+    }
+
+    return cache;
 }
 
-function attachDuplicateMatches(files, dupCache) {
-  if (!dupCache.length) return files;
-  const candidatesByNumberKey = new Map();
-  for (const candidate of dupCache) {
-    const key = duplicateCandidateNumberKey(candidate.name);
-    if (!candidatesByNumberKey.has(key)) candidatesByNumberKey.set(key, []);
-    candidatesByNumberKey.get(key).push(candidate);
-  }
-
-  return files.map(file => {
-    if (file.isDirectory) return file;
-    const compareTitle = normalizeFilenameForCompare(file.name || file.full_path);
-    const matches = [];
-    if (compareTitle.length < 2) {
-      return {
-        ...file,
-        duplicate_matches: [],
-        dup_count: 0,
-        max_ratio: 0,
-      };
+async function attachDuplicateMatches(files, dupCache, options = {}) {
+    const candidatesByNumberKey = new Map();
+    const candidateStats = new Map();
+    for (const candidate of dupCache) {
+        const key = duplicateCandidateNumberKey(candidate.name);
+        if (!candidatesByNumberKey.has(key)) candidatesByNumberKey.set(key, []);
+        candidatesByNumberKey.get(key).push(candidate);
     }
 
-    const normalizedFilePath = path.normalize(file.full_path);
-    const candidates = candidatesByNumberKey.get(duplicateCandidateNumberKey(file.name || file.full_path)) || [];
-    for (const candidate of candidates) {
-      if (path.normalize(candidate.full_path) === normalizedFilePath) continue;
-      if (candidate.compareTitle.length < 2) continue;
-      if (!sameFilenameNumbers(file.name || file.full_path, candidate.name)) continue;
+    const results = [];
+    let comparisonCount = 0;
+    for (const file of files) {
+        throwIfTaskCancelled(options);
+        const filePath = file.full_path || file.path || '';
+        const name = file.name || path.basename(filePath);
+        const compareTitle = normalizeFilenameForCompare(name);
+        const matches = [];
+        const normalizedFilePath = filePath ? duplicatePathKey(filePath) : '';
+        const candidates = !file.isDirectory && compareTitle.length >= 2
+            ? candidatesByNumberKey.get(duplicateCandidateNumberKey(name)) || []
+            : [];
+        for (const candidate of candidates) {
+            comparisonCount += 1;
+            if (comparisonCount % DUPLICATE_COMPARE_BATCH_SIZE === 0) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
+            throwIfTaskCancelled(options);
+            if (candidate.pathKey === normalizedFilePath) continue;
+            if (candidate.compareTitle.length < 2) continue;
+            if (!sameFilenameNumbers(name, candidate.name)) continue;
 
-      const ratio = similarity(compareTitle, candidate.compareTitle);
-      if (ratio >= 0.7) {
-        matches.push({
-          path: candidate.full_path,
-          folder: candidate.path,
-          name: candidate.name,
-          size: candidate.size,
-          ratio: Math.round(ratio * 1000) / 10,
+            const ratio = similarity(compareTitle, candidate.compareTitle);
+            if (ratio < 0.7) continue;
+            if (!candidateStats.has(candidate.full_path)) {
+                // 매칭된 후보만 확인해 전체 라이브러리의 stat 호출을 피합니다.
+                candidateStats.set(candidate.full_path, await fs.promises.stat(candidate.full_path).catch(() => null));
+            }
+            throwIfTaskCancelled(options);
+            const stats = candidateStats.get(candidate.full_path);
+            if (!stats?.isFile()) continue;
+            matches.push({
+                path: candidate.full_path,
+                folder: candidate.path,
+                name: candidate.name,
+                size: stats.size,
+                ratio: Math.round(ratio * 1000) / 10,
+            });
+        }
+
+        matches.sort((a, b) => b.ratio - a.ratio);
+        results.push({
+            ...file,
+            duplicate_matches: matches,
+            dup_count: matches.length,
+            max_ratio: matches[0]?.ratio || 0,
         });
-      }
     }
+    return results;
+}
 
-    matches.sort((a, b) => b.ratio - a.ratio);
-    return {
-      ...file,
-      duplicate_matches: matches,
-      dup_count: matches.length,
-      max_ratio: matches[0]?.ratio || 0,
-    };
-  });
+export async function checkDuplicateFiles(files = [], options = {}, event) {
+    const {
+        dupFolders = [],
+        targetExts = DEFAULT_TARGET_EXTS,
+        lang = 'ko',
+    } = options;
+    throwIfTaskCancelled(options);
+    if (files.length === 0) return [];
+    const dupCache = await buildDupCache(dupFolders, targetExts, event, lang, options);
+    return attachDuplicateMatches(files, dupCache, options);
 }
 
 async function safeGetCachedFileInfo(libraryDb, fullPath) {
@@ -1978,12 +1974,11 @@ export async function scanFolder(folderPath, options = {}, event) {
         currentFile: '',
         currentFileName: '',
       });
-      const dupCache = await buildDupCache(dupFolders, normalizedExts, event, lang, {
-        ...options,
-        libraryDb,
-      });
-      throwIfTaskCancelled(options);
-      files = attachDuplicateMatches(results, dupCache);
+        files = await checkDuplicateFiles(results, {
+            ...options,
+            targetExts: normalizedExts,
+            libraryDb,
+        }, event);
     }
 
     emitTaskProgress({

@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useState } from 'react';
 import { FaIcon } from '../FaIcon';
+import MenuSurface from '../MenuSurface';
 import { getCurrentLanguage, translate } from '../../utils/i18n';
 import '../../styles/viewerScrollControls.css';
 
@@ -197,17 +198,17 @@ export function ViewerScrollOptions({
 }
 
 export function ViewerScrollPopover({ open, ...options }) {
-    if (!open) return null;
-
     return (
-        <div
+        <MenuSurface
+            open={open}
+            origin="top center"
             id="viewer-scroll-menu"
             className="viewer-scroll-menu"
             role="region"
             aria-label={scrollText('title', '스크롤 설정')}
             onClick={event => event.stopPropagation()}
         >
-            <ViewerScrollOptions {...options} compact />
-        </div>
+            {open && <ViewerScrollOptions {...options} compact />}
+        </MenuSurface>
     );
 }

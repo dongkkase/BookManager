@@ -480,6 +480,16 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     font-size: var(--font-xs);
 }
 
+.cover-editor-dialog .cover-editor-preview-actions.cover-editor-candidate-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    padding-top: 0;
+}
+
+.epub-editor-tool.cover-editor-image-edit-host {
+    display: contents;
+}
+
 .cover-editor-preview-actions button,
 .cover-editor-sources button,
 .cover-editor-header button,
@@ -525,7 +535,7 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     border: 0;
     border-bottom: 2px solid transparent;
     border-radius: 6px 6px 0 0;
-    transition: background-color 0.3s ease;
+    transition: background-color 0.3s ease, opacity 0.3s ease-out;
     line-height: 1.45;
     font: inherit;
     font-size: var(--font-xs);

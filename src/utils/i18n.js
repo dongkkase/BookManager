@@ -391,6 +391,11 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: '{0} 삭제 대상',
     },
     folder: {
+        toolbar: {
+            export_csv_hint: '현재 목록과 표시 중인 열을 CSV 파일로 저장합니다.',
+            include_subfolders_hint: '하위 폴더의 파일도 목록에 함께 표시합니다.',
+            duplicate_check_hint: '등록한 라이브러리와 파일명을 비교해 중복 후보를 표시합니다.',
+        },
         character_index: {
             label: '파일명 문자 인덱스',
             jump: '{label} · {count}개 항목 중 첫 항목으로 이동',
@@ -1319,6 +1324,11 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: 'Mark {0} for deletion',
     },
     folder: {
+        toolbar: {
+            export_csv_hint: 'Save the current list and visible columns as a CSV file.',
+            include_subfolders_hint: 'Include files from subfolders in the list.',
+            duplicate_check_hint: 'Compare file names with registered libraries to show possible duplicates.',
+        },
         character_index: {
             label: 'File name character index',
             jump: '{label} · Jump to the first of {count} items',
@@ -2247,6 +2257,11 @@ const EXTRA_TRANSLATIONS = {
       delete_entry_label: '{0} を削除対象にする',
     },
     folder: {
+        toolbar: {
+            export_csv_hint: '現在の一覧と表示中の列をCSVファイルに保存します。',
+            include_subfolders_hint: 'サブフォルダーのファイルも一覧に表示します。',
+            duplicate_check_hint: '登録したライブラリとファイル名を比較し、重複候補を表示します。',
+        },
         character_index: {
             label: 'ファイル名の文字インデックス',
             jump: '{label} · {count}件の最初の項目に移動',

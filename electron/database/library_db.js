@@ -1654,11 +1654,24 @@ export class LibraryDB {
         return this.withLock(async () => {
             const db = this.getConnection();
             const normalizedLibraryPath = path.resolve(libraryPath);
-            const remove = db.prepare('DELETE FROM library_folders WHERE library_path = ?');
+            const remove = db.prepare('DELETE FROM library_folders WHERE library_path = ? AND folder_path = ?');
             const insert = db.prepare(`
                 INSERT INTO library_folders (${LIBRARY_FOLDER_COLUMNS.join(', ')})
                 VALUES (${LIBRARY_FOLDER_COLUMNS.map(column => `@${column}`).join(', ')})
             `);
+            const detailColumns = LIBRARY_FOLDER_COLUMNS.filter(column => (
+                !['library_path', 'folder_path', 'last_seen_at'].includes(column)
+            ));
+            const update = db.prepare(`
+                UPDATE library_folders
+                SET ${[...detailColumns, 'last_seen_at'].map(column => `${column} = @${column}`).join(', ')}
+                WHERE library_path = @library_path AND folder_path = @folder_path
+            `);
+            const updateSeenAt = db.prepare(`
+                UPDATE library_folders SET last_seen_at = @last_seen_at
+                WHERE library_path = @library_path AND folder_path = @folder_path
+            `);
+            const lastSeenAt = new Date().toISOString();
             const normalizedFolders = folders
                 .map(folder => {
                     const folderPath = folder.folder_path || folder.folderPath || folder.path || '';
@@ -1673,15 +1686,39 @@ export class LibraryDB {
                         child_folder_count: Number(folder.child_folder_count ?? folder.childFolderCount) || 0,
                         direct_file_count: Number(folder.direct_file_count ?? folder.directFileCount) || 0,
                         recursive_file_count: Number(folder.recursive_file_count ?? folder.recursiveFileCount) || 0,
-                        last_seen_at: folder.last_seen_at || folder.lastSeenAt || new Date().toISOString(),
+                        last_seen_at: folder.last_seen_at || folder.lastSeenAt || lastSeenAt,
                     };
                 })
                 .filter(Boolean);
 
             db.transaction(() => {
-                remove.run(normalizedLibraryPath);
-                for (const folder of normalizedFolders) insert.run(folder);
-            })();
+                const existingByPath = new Map(db.prepare(`
+                    SELECT ${LIBRARY_FOLDER_COLUMNS.join(', ')} FROM library_folders WHERE library_path = ?
+                `).all(normalizedLibraryPath).map(folder => [folder.folder_path, folder]));
+                const sharedSeenAt = normalizedFolders[0]?.last_seen_at;
+                const hasSharedSeenAt = normalizedFolders.every(folder => folder.last_seen_at === sharedSeenAt);
+                for (const folder of normalizedFolders) {
+                    const existing = existingByPath.get(folder.folder_path);
+                    if (!existing) {
+                        insert.run(folder);
+                    } else {
+                        existingByPath.delete(folder.folder_path);
+                        if (detailColumns.some(column => existing[column] !== folder[column])) {
+                            update.run(folder);
+                        } else if (!hasSharedSeenAt && existing.last_seen_at !== folder.last_seen_at) {
+                            updateSeenAt.run(folder);
+                        }
+                    }
+                }
+                for (const folderPath of existingByPath.keys()) remove.run(normalizedLibraryPath, folderPath);
+                if (hasSharedSeenAt && normalizedFolders.length) {
+                    // Refresh scan timestamps together without rewriting the folder indexes.
+                    db.prepare(`
+                        UPDATE library_folders SET last_seen_at = ?
+                        WHERE library_path = ? AND last_seen_at IS NOT ?
+                    `).run(sharedSeenAt, normalizedLibraryPath, sharedSeenAt);
+                }
+            }).immediate();
             return { changes: normalizedFolders.length };
         });
     }

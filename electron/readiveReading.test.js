@@ -45,6 +45,26 @@ test('Readive remote reading persists once and hydrates after an open-only times
     assert.equal(winners[0].locator.pageIndex, 21);
 });
 
+test('Readive keeps shared hash history without recreating or exporting reading rows for unregistered source paths', async t => {
+    const { state, libraryDb, filePath, record, device } = await fixture(t);
+    const insideCopy = path.join(path.dirname(filePath), 'registered', 'copy.pdf');
+    state.pathContentHashes = { [insideCopy]: record.contentHash };
+    const options = { shouldPersistFile: candidate => candidate === insideCopy, report: {} };
+    const winners = await exchangeReading(state, device, [record], libraryDb, [record.itemId], options);
+    assert.deepEqual(winners, [record]);
+    assert.deepEqual(options.report.acknowledged, [{
+        itemId: record.itemId, contentHash: record.contentHash, deviceId: record.deviceId, revision: record.revision,
+    }]);
+    assert.deepEqual(await libraryDb.listRecentReadingStates(), []);
+    assert.deepEqual(state.appliedReadings, {});
+    assert.equal(options.report.readingChanged, false);
+    await libraryDb.upsertReadingState(filePath, { pageIndex: 77, pageCount: 100 });
+    await exchangeReading(state, device, [], libraryDb, [record.itemId], options);
+    assert.equal(state.reading[`${record.itemId}:${state.serverId}`], undefined);
+    assert.equal(state.reading[`${record.itemId}:${device.id}`].locator.pageIndex, 20);
+    assert.equal(options.report.readingChanged, false);
+});
+
 test('Readive rejects unshared books and ignores repeated older per-device revisions', async t => {
     const { state, libraryDb, record, device } = await fixture(t);
     await assert.rejects(exchangeReading(state, device, [{ ...record, itemId: 'other' }], libraryDb), /unshared_reading_item/);

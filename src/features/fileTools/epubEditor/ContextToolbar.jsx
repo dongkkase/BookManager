@@ -4,6 +4,7 @@ import { editorText as l } from './labels';
 import { selectionContext, placeContextToolbar, toolbarFocusIndex } from './contextTools';
 import { canApplyScript } from './richFormatting';
 import { imageAlignmentPatch, imageTextWrapPatch } from './imageNode';
+import MenuSurface from '../../../components/MenuSurface';
 
 export default function ContextToolbar({ editor, stageRef, enabled, actions, defaultColor, linkOpen, linkForm, onCloseLink, apiRef }) {
     const shell = useRef(null);
@@ -15,10 +16,14 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
     const [context, setContext] = useState(null);
     const [panel, setPanel] = useState(null);
     const [position, setPosition] = useState(null);
+    const kind = context?.kind;
+    const active = Boolean(context && enabled && (kind === 'linkForm' || selectionContext(editor.state)?.kind === kind));
+    const showToolbar = active && (kind !== 'block' || panel === 'block');
     const callbacks = useRef({ onCloseLink });
     callbacks.current = { onCloseLink };
     const focusFirst = () => requestAnimationFrame(() => {
-        const area = shell.current?.querySelector('.ee-context-menu, .ee-link-form') || shell.current;
+        if (shell.current?.dataset.menuState === 'closing') return;
+        const area = shell.current?.querySelector('.ee-context-menu:not([data-menu-state="closing"]), .ee-link-form') || shell.current;
         area?.querySelector('input:not([type="color"]):not(:disabled), textarea:not(:disabled), select:not(:disabled), button:not(:disabled)')?.focus();
     });
     useEffect(() => {
@@ -101,22 +106,22 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
         };
     }, [editor, stageRef, enabled, linkOpen]);
     useLayoutEffect(() => {
-        if (!context || !shell.current) { setPosition(null); return; }
+        if (!showToolbar || !shell.current) { setPosition(null); return; }
         const measure = () => {
             if (!shell.current) return;
-            const next = placeContextToolbar(context.anchorRect, context.bounds, shell.current.getBoundingClientRect());
+            const next = placeContextToolbar(context.anchorRect, context.bounds, { width: shell.current.offsetWidth, height: shell.current.offsetHeight });
             setPosition(current => current?.left === next?.left && current?.top === next?.top ? current : next);
         };
         measure();
         const observer = new ResizeObserver(measure);
         observer.observe(shell.current);
         return () => observer.disconnect();
-    }, [context, panel, linkOpen]);
-    useEffect(() => { if (linkOpen && context?.kind === 'linkForm') focusFirst(); }, [linkOpen, context?.kind]);
+    }, [context, panel, linkOpen, showToolbar]);
+    useEffect(() => { if (showToolbar && linkOpen && context?.kind === 'linkForm') focusFirst(); }, [linkOpen, context?.kind, showToolbar]);
     useEffect(() => {
         apiRef.current = {
             focus: () => {
-                const button = shell.current?.querySelector('button:not(:disabled)') || trigger.current;
+                const button = (shell.current?.dataset.menuState !== 'closing' && shell.current?.querySelector('button:not(:disabled)')) || trigger.current;
                 button?.focus();
                 return !!button;
             },
@@ -129,9 +134,6 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
         };
         return () => { apiRef.current = null; };
     }, [apiRef, context, editor]);
-    if (!context || !enabled) return null;
-    const kind = context.kind;
-    if (kind !== 'linkForm' && selectionContext(editor.state)?.kind !== kind) return null;
     const openPanel = name => {
         if (panel === name) {
             (name === 'block' ? trigger.current : shell.current?.querySelector('button[aria-expanded="true"]'))?.focus();
@@ -153,7 +155,7 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
         editor.chain().focus().insertContentAt(at, { type: 'paragraph' }).setTextSelection(at + 1).run();
         setPanel(null);
     };
-    const image = editor.getAttributes('image');
+    const image = active ? editor.getAttributes('image') : {};
     const remove = () => { editor.chain().focus().deleteSelection().run(); setPanel(null); };
     const onKeyDown = event => {
         if (event.key === 'Escape') {
@@ -165,14 +167,14 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
         if (event.target.tagName !== 'BUTTON' || event.altKey || event.metaKey || event.ctrlKey) return;
         const row = event.target.closest('[role="toolbar"], .ee-context-menu');
         if (!row) return;
-        const controls = [...row.querySelectorAll('button:not(:disabled), select:not(:disabled)')];
+        const controls = [...row.querySelectorAll('button:not(:disabled), select:not(:disabled)')].filter(control => !control.closest('[data-menu-state="closing"]'));
         const index = toolbarFocusIndex(controls.indexOf(event.target), event.key, controls.length);
         if (index >= 0) { event.preventDefault(); controls[index].focus(); }
     };
-    const showToolbar = kind !== 'block' || panel === 'block';
     return <>
-        {kind === 'block' && <button ref={trigger} type="button" className="ee-block-trigger" style={{ left: context.gutter, top: Math.max(context.bounds.top, Math.min(context.bounds.bottom - 30, context.anchorRect.top)) }} title={l('quickInsert')} aria-label={l('quickInsert')} aria-expanded={panel === 'block'} onMouseDown={event => event.preventDefault()} onClick={() => openPanel('block')} onKeyDown={onKeyDown}>+</button>}
-        {showToolbar && <div ref={shell} className="ee-context-toolbar" style={{ left: position?.left ?? context.bounds.left, top: position?.top ?? context.bounds.top, maxWidth: context.bounds.right - context.bounds.left, maxHeight: context.bounds.bottom - context.bounds.top, visibility: position ? 'visible' : 'hidden' }} onKeyDown={onKeyDown} onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}>
+        {active && kind === 'block' && <button ref={trigger} type="button" className="ee-block-trigger" style={{ left: context.gutter, top: Math.max(context.bounds.top, Math.min(context.bounds.bottom - 30, context.anchorRect.top)) }} title={l('quickInsert')} aria-label={l('quickInsert')} aria-expanded={panel === 'block'} onMouseDown={event => event.preventDefault()} onClick={() => openPanel('block')} onKeyDown={onKeyDown}>+</button>}
+        <MenuSurface open={showToolbar} ref={shell} className="ee-context-toolbar" style={active ? { left: position?.left ?? context.bounds.left, top: position?.top ?? context.bounds.top, maxWidth: context.bounds.right - context.bounds.left, maxHeight: context.bounds.bottom - context.bounds.top, visibility: position ? 'visible' : 'hidden' } : undefined} onKeyDown={onKeyDown} onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}>
+            {showToolbar && <>
             {kind === 'linkForm' ? linkForm : <div className="ee-context-actions" role="toolbar" aria-label={l(`${kind}Tools`)}>
                 {kind === 'text' && <>{['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript'].map(key => button(key, editor.isActive(key), undefined, ['superscript', 'subscript'].includes(key) ? !canApplyScript(editor, key) : !editor.can().toggleMark(key)))}<CommandButton command="color" action={() => run('color')} disabled={!editor.can().setColor('#000000')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').color || defaultColor }} /><CommandButton command="textBackground" action={() => run('textBackground')} disabled={!editor.can().setBackgroundColor('#fff176')} aria-haspopup="dialog" style={{ '--ee-text-color': editor.getAttributes('textStyle').backgroundColor || 'transparent' }} />{button('highlight', editor.isActive('highlight'))}{button('textStyles')}<i />{button('link')}{button('footnote')}{button('tts', editor.isActive('tts'))}{button('attachAudio', editor.isActive('audioRange'))}{button('reset')}<i /><IndentControls editor={editor} actions={actions} /></>}
                 {kind === 'link' && <><span className="ee-context-link" title={context.href.startsWith('epub:') ? l('internal') : context.href}>{context.href.startsWith('epub:') ? l('internal') : context.href}</span>{button('editLink', undefined, () => run('link'))}{button('unlink', undefined, () => editor.chain().focus().extendMarkRange('link').unsetLink().run())}</>}
@@ -190,9 +192,10 @@ export default function ContextToolbar({ editor, stageRef, enabled, actions, def
                 {['image', 'audio', 'media', 'table', 'horizontalRule'].includes(kind) && <><i />{button('paragraphBefore', undefined, () => adjacent('before'))}{button('paragraphAfter', undefined, () => adjacent('after'))}</>}
                 {kind === 'block' && <>{['paragraph', 'heading1', 'heading2', 'heading3', 'bulletList', 'orderedList', 'blockquote', 'templates', 'addImage', 'addTable', 'addAudio', 'media', 'specialCharacters', 'emoji', 'footnote', 'horizontalRule', 'columns', 'splitChapter'].map(command => button(command))}<i /><IndentControls editor={editor} actions={actions} /></>}
             </div>}
-            {['rows', 'columns'].includes(panel) && <div className="ee-context-menu" role="group" aria-label={l(panel === 'rows' ? 'tableRows' : 'tableColumns')}>
-                {(panel === 'rows' ? ['addRowBefore', 'addRowAfter', 'toggleHeaderRow', 'deleteRow'] : ['addColumnBefore', 'addColumnAfter', 'toggleHeaderColumn', 'deleteColumn']).map(command => <CommandButton key={command} command={command} showLabel disabled={!editor.can()[command]()} action={() => run(command)} />)}
-            </div>}
-        </div>}
+            <MenuSurface open={['rows', 'columns'].includes(panel)} className="ee-context-menu" role="group" aria-label={l(panel === 'rows' ? 'tableRows' : 'tableColumns')}>
+                {['rows', 'columns'].includes(panel) && (panel === 'rows' ? ['addRowBefore', 'addRowAfter', 'toggleHeaderRow', 'deleteRow'] : ['addColumnBefore', 'addColumnAfter', 'toggleHeaderColumn', 'deleteColumn']).map(command => <CommandButton key={command} command={command} showLabel disabled={!editor.can()[command]()} action={() => run(command)} />)}
+            </MenuSurface>
+            </>}
+        </MenuSurface>
     </>;
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { editorText as l } from './labels';
 import { QUOTE_PAIRS, canInsertQuotes } from './quotes';
+import '../../../styles/MenuSurface.css';
 
 export default function QuoteContextMenu({ editor, enabled, actions }) {
     const popup = useRef(null);
@@ -17,9 +18,8 @@ export default function QuoteContextMenu({ editor, enabled, actions }) {
             const caret = editor.view.coordsAtPos(editor.state.selection.head);
             const x = event.type === 'keydown' || (!event.clientX && !event.clientY) ? caret.left : event.clientX;
             const y = event.type === 'keydown' || (!event.clientX && !event.clientY) ? caret.bottom : event.clientY;
-            const rect = menu.getBoundingClientRect();
-            menu.style.left = `${Math.max(8, Math.min(window.innerWidth - rect.width - 8, x))}px`;
-            menu.style.top = `${Math.max(8, Math.min(window.innerHeight - rect.height - 8, y))}px`;
+            menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, x))}px`;
+            menu.style.top = `${Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, y))}px`;
             menu.querySelector('button')?.focus({ preventScroll: true });
         };
         const keyboard = event => {
@@ -62,7 +62,7 @@ export default function QuoteContextMenu({ editor, enabled, actions }) {
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : event.key === 'ArrowDown' ? (current + 1) % buttons.length : event.key === 'ArrowUp' ? (current - 1 + buttons.length) % buttons.length : -1;
         if (next >= 0) { event.preventDefault(); buttons[next].focus(); }
     };
-    return <div ref={popup} popover="manual" className="ee-format-menu ee-quote-context-menu" role="menu" aria-label={l('quoteCharacters')} onKeyDown={keydown} onMouseDown={event => event.preventDefault()}>
+    return <div ref={popup} popover="manual" className="ee-format-menu ee-quote-context-menu bm-native-menu-surface" role="menu" aria-label={l('quoteCharacters')} onKeyDown={keydown} onMouseDown={event => event.preventDefault()}>
         {QUOTE_PAIRS.map(pair => <button key={pair.command} type="button" className="ee-format-option" role="menuitem" onClick={() => { close(); editor.view.focus(); actions[pair.command](); }}><span className="ee-quote-symbol" aria-hidden="true">{pair.display}</span><span>{l(pair.command)}</span></button>)}
     </div>;
 }

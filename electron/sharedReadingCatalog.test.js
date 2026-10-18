@@ -138,6 +138,37 @@ test('Readive transfers a collection across libraries and revokes persisted jobs
     await assert.rejects(api(`${route}/preparations/${scan.scanId}`), /library_unavailable/);
 });
 
+test('Readive and OPDS recent lists apply registered-library scope before the 1000-file limit', async t => {
+    const { api, db, dbPath, root, configured, thumbnail } = await readiveFixture(t);
+    await db.upsertFileInfoBulk(Array.from({ length: 1000 }, (_, index) => ({
+        path: path.join(root, `outside-${index}.txt`),
+    })));
+    const app = buildOpdsApp({ library_entries: configured }, () => {}, { dbPath, thumbnailDir: path.dirname(thumbnail) });
+    const server = http.createServer(app);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const { libraries } = await api('/libraries');
+    for (const [id, name, expected] of [
+        ['recent-added', '최근 추가됨', ['two.txt', 'child.txt', 'one.txt']],
+        ['recent-updated', '최근 업데이트 됨', ['one.txt', 'child.txt', 'two.txt']],
+    ]) {
+        const libraryId = libraries.find(library => library.name === name).id;
+        assert.deepEqual((await api(`/libraries/${libraryId}/entries`)).entries.map(entry => entry.name), expected);
+        const response = await fetch(`${base}/opds?list=${id}`);
+        assert.equal(response.status, 200);
+        const xml = await response.text();
+        for (const file of expected) assert.ok(xml.includes(file), `${id}: ${file}`);
+        assert.ok(!xml.includes('outside-'));
+        assert.ok(!xml.includes('private.txt'));
+    }
+    configured.splice(0);
+    for (const name of ['최근 추가됨', '최근 업데이트 됨']) {
+        const libraryId = libraries.find(library => library.name === name).id;
+        assert.deepEqual((await api(`/libraries/${libraryId}/entries`)).entries, []);
+    }
+});
+
 test('Readive reading-list pages reject tampered or stale cursors and omit missing and symlinked members', async t => {
     const { api, service, request, firstLibrary, db, outside, first } = await readiveFixture(t);
     const paths = Array.from({ length: 205 }, (_, index) => path.join(firstLibrary, `book-${index}.txt`));

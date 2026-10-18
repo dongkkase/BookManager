@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { FaIcon } from '../components/FaIcon';
+import MenuSurface, { useMenuSurfaceOpen } from '../components/MenuSurface';
 import { CoverArtwork } from '../components/CoverArtwork';
 import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
@@ -35,6 +36,7 @@ import {
   replaceBasename,
 } from '../utils/folderPath';
 import { useFolderScan } from '../hooks/useFolderScan';
+import { useListDuplicateCheck } from '../hooks/useListDuplicateCheck';
 import { useFolderMouseNavigation } from '../hooks/useFolderMouseNavigation';
 import { useFolderSearchHistory } from '../hooks/useFolderSearchHistory';
 import { useFileSelection } from '../hooks/useFileSelection';
@@ -722,7 +724,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         size: 0,
         cover: '',
     })), [favoriteEntries]);
-    const readingLists = useReadingLists(readingListKind === 'collection' ? selectedCollectionId : readingListKind === 'wishlist' ? 'want-to-read' : readingListKind, t, isFavoritesView ? favoriteFiles : null);
+    const libraryEntriesKey = JSON.stringify(normalizeLibraryEntries(config || {}));
+    const libraryEntries = useMemo(() => JSON.parse(libraryEntriesKey), [libraryEntriesKey]);
+    const libraryPathsKey = JSON.stringify(libraryEntries.map(entry => entry.path));
+    const libraries = useMemo(() => JSON.parse(libraryPathsKey), [libraryPathsKey]);
+    const readingLibraryPathsRef = useRef(null);
+    readingLibraryPathsRef.current = config && !config.library_data_prune_pending && Array.isArray(config.libraries) ? libraries : null;
+    const readingLists = useReadingLists(readingListKind === 'collection' ? selectedCollectionId : readingListKind === 'wishlist' ? 'want-to-read' : readingListKind, t, isFavoritesView ? favoriteFiles : null, libraries);
     const { mutate: mutateList, refresh: refreshReadingList } = readingLists;
     const activeCollection = readingLists.collections.find(collection => collection.id === selectedCollectionId);
     const readingListTitle = isFavoritesView ? t('folder.sidebar.favorites') : isRecentReading ? t('folder.recent.title')
@@ -818,8 +826,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const searchInputRef = useRef(null);
   const librarySearchRequestRef = useRef(0);
   const folderTagRequestRef = useRef(0);
-  const libraryEntries = useMemo(() => normalizeLibraryEntries(config || {}), [config]);
-  const libraries = useMemo(() => libraryEntries.map(entry => entry.path), [libraryEntries]);
   const folderTagDatabaseScopes = useMemo(() => (
     libraries.length > 0
       ? libraries
@@ -1243,6 +1249,24 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     librarySearchResults,
     normalRawFileData,
   ]);
+    const isListDuplicateScope = isReadingList || isLibrarySearchActive || isFolderTagSearchActive;
+    const listDuplicateScopeKey = JSON.stringify([
+        folderSource, selectedCollectionId, isReadingList ? '' : selectedFolderPath,
+        isLibrarySearchActive ? normalizedSearchQuery : '',
+        isFolderTagSearchActive ? [folderTagSelections, folderTagMatchMode] : [],
+    ]);
+    const onListDuplicateError = useCallback(error => {
+        showToast?.(`${t('msg_failed')}: ${error.message}`);
+    }, [showToast, t]);
+    const listDuplicateCheck = useListDuplicateCheck({
+        files: isListDuplicateScope ? activeRawFileData : undefined,
+        enabled: isListDuplicateScope && enableDupCheck,
+        scopeKey: listDuplicateScopeKey,
+        dupFolders: config?.dup_check_folders || [],
+        onError: onListDuplicateError,
+    });
+    const refreshListDuplicates = listDuplicateCheck.refresh;
+    const activeDuplicateFileData = isListDuplicateScope ? listDuplicateCheck.files : activeRawFileData;
     const readingScopeRef = useRef(null);
     const readingFilesScope = useMemo(() => {
         const scopeKey = `${folderSource}:${selectedFolderPath}`;
@@ -1279,10 +1303,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         readingStatesLoaderRef.current?.setFiles(readingFilesScope);
     }, [readingFilesScope]);
   const fileDataWithViewerStatus = useMemo(() => {
-    if (activeRawFileData.length === 0) return activeRawFileData;
+    if (activeDuplicateFileData.length === 0) return activeDuplicateFileData;
     const reader = createViewerStatusReader();
     const statesByPath = readingStatesSnapshot?.files === readingFilesScope ? readingStatesSnapshot.statesByPath : null;
-    return activeRawFileData.map(file => {
+    return activeDuplicateFileData.map(file => {
         if (file.isDirectory) return file;
         const pathKey = readingStatePathKey(file.full_path || file.path, runtimePlatform);
         const readingFile = statesByPath?.has(pathKey) ? { ...file, readingState: statesByPath.get(pathKey) } : file;
@@ -1301,7 +1325,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             reader,
         );
     });
-  }, [activeRawFileData, config?.lang, config?.language, isRecentReading, readingFilesScope, readingStatesSnapshot, runtimePlatform, t, viewerStatusVersion]);
+  }, [activeDuplicateFileData, config?.lang, config?.language, isRecentReading, readingFilesScope, readingStatesSnapshot, runtimePlatform, t, viewerStatusVersion]);
   const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
     const recentListExtensions = useMemo(() => [...new Set([
         ...activeRawFileData.map(recentListExtension), recentListOptions.extension,
@@ -2285,6 +2309,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const handleRefresh = useCallback(async () => {
     resetCoverPreviewQueue();
+    if (isListDuplicateScope && enableDupCheck) refreshListDuplicates();
     if (isReadingList) {
         await refreshActiveReadingList();
         return;
@@ -2296,7 +2321,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const tagRefresh = isFolderTagSearchActive
         ? applyFolderTagSearch({ selections: folderTagSelections, matchMode: folderTagMatchMode })
         : Promise.resolve();
-    if (!selectedFolderPath) {
+    if (isListDuplicateScope || !selectedFolderPath) {
         await tagRefresh;
         return;
     }
@@ -2305,7 +2330,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     invalidateMissingVolumesCheck();
     setMissingRefreshVersion(value => value + 1);
     await tagRefresh;
-  }, [applyFolderTagSearch, folderTagMatchMode, folderTagSelections, invalidateMissingVolumesCheck, isFolderTagSearchActive, isLibrarySearchActive, isReadingList, refreshActiveReadingList, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
+  }, [applyFolderTagSearch, enableDupCheck, folderTagMatchMode, folderTagSelections, invalidateMissingVolumesCheck, isFolderTagSearchActive, isLibrarySearchActive, isListDuplicateScope, isReadingList, refreshActiveReadingList, refreshListDuplicates, resetCoverPreviewQueue, selectedFolderPath, scanFolder, scanOptions, scheduleLocalMissingToast]);
 
     const executeRatingEdit = useCallback(async request => {
         const result = await runInternalFileAction(() => window.electronAPI.saveRating(request));
@@ -2398,7 +2423,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setEnableDupCheck(nextValue);
     clearSelection();
 
-    if (!selectedFolderPath) return;
+    if (isListDuplicateScope || !selectedFolderPath) return;
     const nextOptions = {
       ...scanOptions,
       enableDupCheck: nextValue,
@@ -2411,6 +2436,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     clearSelection,
     config?.dup_check_folders,
     enableDupCheck,
+    isListDuplicateScope,
     preparingDuplicates,
     resetCoverPreviewQueue,
     scanFolder,
@@ -2553,7 +2579,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const refreshOptions = {
       ...scanOptions,
       includeSubfolders: nextIncludeSubfolders,
-      force: true,
+      force: false,
+      refresh: true,
     };
     if (includeSubfolders !== nextIncludeSubfolders) setIncludeSubfolders(nextIncludeSubfolders);
     folderNavigationRequestRef.current += 1;
@@ -3546,7 +3573,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         showToast?.(t('folder.reading.updating'));
         try {
             const result = await window.electronAPI.updateReadingProgress(paths, action);
-            applyReadingActionStates(window.localStorage, result.states, runtimePlatform);
+            applyReadingActionStates(window.localStorage, result.states, runtimePlatform, readingLibraryPathsRef.current);
             setViewerStatusVersion(version => version + 1);
             readingStatesLoaderRef.current?.refresh();
             if (result.errors.length > 0) {
@@ -3827,7 +3854,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   ]);
 
   const startHorizontalResize = useCallback((event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !isSidebarVisible) return;
+    const panel = mainAreaRef.current?.querySelector('.folder-left-panel');
+    if (panel && parseFloat(window.getComputedStyle(panel).marginLeft) < -0.5) return;
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = leftPanelWidth;
@@ -3882,7 +3911,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     document.body.classList.add('is-resizing-panel', 'is-resizing-folder-horizontal');
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
-  }, [leftPanelWidth, saveConfig, updateRightPanelWidth, updateViewContainerWidth]);
+  }, [isSidebarVisible, leftPanelWidth, saveConfig, updateRightPanelWidth, updateViewContainerWidth]);
 
   const startVerticalResize = useCallback((event) => {
     if (event.button !== 0) return;
@@ -4175,13 +4204,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       <div
         className="folder-main-area"
         ref={mainAreaRef}
-        style={{ '--folder-sidebar-width': isSidebarVisible ? `${leftPanelWidth}px` : '0px' }}
+        style={{ '--folder-sidebar-width': `${leftPanelWidth}px` }}
       >
         {/* Left Panel */}
-        {isSidebarVisible && (
           <div
-            className="folder-left-panel"
+            id="folder-explorer-panel"
+            className={`folder-left-panel${isSidebarVisible ? '' : ' is-collapsed'}`}
             style={{ flexBasis: `${leftPanelWidth}px`, width: `${leftPanelWidth}px` }}
+            inert={isSidebarVisible ? undefined : ''}
+            aria-hidden={!isSidebarVisible}
             onMouseDownCapture={() => markFolderPanelFocus('explorer')}
             onFocusCapture={() => markFolderPanelFocus('explorer')}
           >
@@ -4220,16 +4251,14 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               />
             </div>
           </div>
-        )}
-
-        {isSidebarVisible && (
           <div
-            className="folder-resizer folder-resizer-vertical"
+            className={`folder-resizer folder-resizer-vertical${isSidebarVisible ? '' : ' is-collapsed'}`}
             role="separator"
             aria-orientation="vertical"
+            inert={isSidebarVisible ? undefined : ''}
+            aria-hidden={!isSidebarVisible}
             onMouseDown={startHorizontalResize}
           />
-        )}
 
         {/* Right Panel */}
         <div
@@ -4244,10 +4273,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <button
                 type="button"
                 className={`toggle-btn folder-list-sidebar-toggle ${isSidebarVisible ? 'active' : ''}`}
-                onClick={() => setIsSidebarVisible(!isSidebarVisible)}
+                onClick={() => setIsSidebarVisible(visible => !visible)}
                 title={t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}
                 aria-label={t(isSidebarVisible ? 'folder_sidebar_on' : 'folder_sidebar_off')}
                 aria-pressed={isSidebarVisible}
+                aria-expanded={isSidebarVisible}
+                aria-controls="folder-explorer-panel"
               >
                 <img
                   className="folder-list-sidebar-toggle-icon"
@@ -4286,8 +4317,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   onExportCsv={handleExportCsv}
                 >
                     <button
-                        className={`toolbar-btn folder-checkable-btn ${includeSubfolders ? 'checked' : ''}`}
+                        className={`toolbar-btn folder-checkable-btn folder-toolbar-tooltip-btn ${includeSubfolders ? 'checked' : ''}`}
                         type="button"
+                        data-tooltip={t('folder.toolbar.include_subfolders_hint')}
+                        aria-label={t(folderToggleLabelKey('subfolders', includeSubfolders))}
+                        aria-description={t('folder.toolbar.include_subfolders_hint')}
                         aria-pressed={includeSubfolders}
                         disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
                         onClick={handleIncludeSubfoldersChange}
@@ -4295,12 +4329,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                         {t(folderToggleLabelKey('subfolders', includeSubfolders))}
                     </button>
                     <button
-                        className={`toolbar-btn folder-checkable-btn ${enableDupCheck ? 'checked' : ''}`}
+                        className={`toolbar-btn folder-checkable-btn folder-toolbar-tooltip-btn ${enableDupCheck ? 'checked' : ''}`}
                         type="button"
+                        data-tooltip={t('folder.toolbar.duplicate_check_hint')}
+                        aria-label={t(folderToggleLabelKey('duplicates', enableDupCheck))}
+                        aria-description={t('folder.toolbar.duplicate_check_hint')}
                         aria-pressed={enableDupCheck}
+                        aria-busy={listDuplicateCheck.busy}
                         disabled={shouldDisableFolderToggles(scanning, preparingDuplicates)}
                         onClick={handleDupCheckChange}
                     >
+                        {listDuplicateCheck.busy && <FaIcon name="spinner" className="content-index-spinner" size={11} />}
                         {t(folderToggleLabelKey('duplicates', enableDupCheck))}
                     </button>
                 </FolderToolbar>
@@ -4422,7 +4461,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             onBack={() => void handleFolderHistoryNavigation(-1)}
             onForward={() => void handleFolderHistoryNavigation(1)}
             onUp={handleParentFolderNavigation}
-            onRefresh={() => isReadingList ? refreshActiveReadingList() : handleSmartRefresh(true)}
+            onRefresh={() => isReadingList ? handleRefresh() : handleSmartRefresh(true)}
             refreshDisabled={folderRefreshBusy || (!isReadingList && !selectedFolderPath)}
             t={t}
           />
@@ -4445,7 +4484,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             ) : (isRecentReading && recentReadingLoading && !recentReadingLoaded) || (readingListKind && readingLists.loading && !readingLists.files.length) ? (
                <div className="recent-reading-state" role="status">
                  <FaIcon name="spinner" className="content-index-spinner" size={15} />
-                 <span>{t('folder.recent.loading')}</span>
+                 <span>{t(isRecentReading ? 'folder.recent.loading' : 'reading_lists.loading')}</span>
                </div>
              ) : isReadingList && filteredFileData.length === 0 ? (
                <div className="recent-reading-state">
@@ -4568,8 +4607,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                     return result;
                 }} onClose={() => setCollectionDialog(null)} />
         )}
-      {contextMenu && (
-        <ContextMenu x={contextMenu.x} y={contextMenu.y}>
+        <ContextMenu open={Boolean(contextMenu)} x={contextMenu?.x} y={contextMenu?.y}>
+            {contextMenu && <>
             {contextMenu.type === 'collection' ? <>
                 <ContextMenuItem label={t('reading_lists.open')} icon="folderOpen" onClick={() => {
                     handleSelectReadingList('collection', contextMenu.file.collectionId);
@@ -4698,8 +4737,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </>
           )}
             </>}
+            </>}
         </ContextMenu>
-      )}
       
       {showMissingDialog && (
         <MissingVolumesDialog
@@ -4804,13 +4843,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   );
 }
 
-function ContextMenu({ x, y, children }) {
+function ContextMenu({ open, x, y, children }) {
   const menuRef = useRef(null);
   const [position, setPosition] = useState({ x, y });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const menu = menuRef.current;
-    if (!menu) return;
+    if (!open || !menu) return;
     setPosition(clampContextMenuPosition(
       x,
       y,
@@ -4819,21 +4858,24 @@ function ContextMenu({ x, y, children }) {
       window.innerWidth,
       window.innerHeight,
     ));
-  }, [x, y]);
+  }, [open, x, y]);
 
   return (
-    <div
+    <MenuSurface
+        open={open}
       ref={menuRef}
       className="folder-context-menu"
+        role="menu"
       style={{ left: position.x, top: position.y }}
       onClick={event => event.stopPropagation()}
     >
       {children}
-    </div>
+    </MenuSurface>
   );
 }
 
 function ContextMenuSubmenu({ label, icon = '', children }) {
+    const parentOpen = useMenuSurfaceOpen();
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState('right');
   const [position, setPosition] = useState({ left: -10000, top: -10000 });
@@ -4857,6 +4899,12 @@ function ContextMenuSubmenu({ label, icon = '', children }) {
   };
 
   useEffect(() => () => cancelClose(), []);
+
+    useLayoutEffect(() => {
+        if (parentOpen) return;
+        cancelClose();
+        setOpen(false);
+    }, [parentOpen]);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !panelRef.current) return;
@@ -4900,8 +4948,10 @@ function ContextMenuSubmenu({ label, icon = '', children }) {
         <span className="folder-context-menu-label">{label}</span>
         <FaIcon name="chevronRight" size={10} />
       </button>
-      {open && createPortal(
-        <div
+      {typeof document !== 'undefined' && createPortal(
+        <MenuSurface
+            open={open}
+            origin={placement === 'left' ? 'top right' : 'top left'}
           ref={panelRef}
           className={`folder-context-menu folder-context-submenu-flyout is-${placement}`}
           style={{ left: position.left, top: position.top }}
@@ -4910,7 +4960,7 @@ function ContextMenuSubmenu({ label, icon = '', children }) {
           onMouseLeave={scheduleClose}
         >
           {children}
-        </div>,
+        </MenuSurface>,
         document.body,
       )}
     </div>
@@ -5616,7 +5666,7 @@ function ConflictFileCard({ title, file, filePath, t }) {
         <section className="move-conflict-card">
             <strong>{title}</strong>
             <div className="move-conflict-cover">
-                <CoverArtwork src={file?.cover} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} />
+                <CoverArtwork src={file?.cover} isDirectory={file?.isDirectory} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} />
             </div>
             <dl className="move-conflict-facts">
                 <div><dt>{t('move_conflict_size')}</dt><dd>{file?.size == null ? '-' : formatBytes(file.size)}</dd></div>

@@ -13,6 +13,7 @@ function storageFixture(values) {
         key: index => [...data.keys()][index],
         getItem: key => data.get(key) ?? null,
         setItem: (key, value) => data.set(key, value),
+        removeItem: key => data.delete(key),
     };
 }
 
@@ -96,6 +97,20 @@ test('오디오 완료는 로컬에만 있던 재생 시간을 유지하고 초�
     assert.equal(saved.playbackRate, 1.5);
 });
 
+test('읽기 액션 결과는 현재 등록된 라이브러리 안의 파일만 로컬에 반영한다', () => {
+    const storage = storageFixture({});
+    const paths = ['/books/book.epub', '/books-old/book.epub', '/outside/book.m4b'];
+    const states = paths.map(filePath => ({ filePath, status: 'completed', scrollPercent: 100 }));
+    applyReadingActionStates(storage, states, 'linux', ['/books']);
+    assert.notEqual(storage.getItem(`bookmanager-viewer-state:${paths[0]}`), null);
+    for (const path of paths.slice(1)) assert.equal(storage.getItem(`bookmanager-viewer-state:${path}`), null);
+    const emptyScopeStorage = storageFixture({});
+    applyReadingActionStates(emptyScopeStorage, states, 'linux', []);
+    assert.equal(emptyScopeStorage.length, 0);
+    applyReadingActionStates(emptyScopeStorage, states, 'linux', null);
+    assert.equal(emptyScopeStorage.length, paths.length);
+});
+
 test('폴더와 파일 컨텍스트 메뉴에 두 동작을 제공하고 세 언어 문구가 있다', () => {
     const source = readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8');
     for (const action of ['mark-read', 'reset-progress']) {
@@ -123,6 +138,7 @@ test('실제 폴더 액션은 중복 실행을 막고 저장·화면 갱신 및 
     const context = {
         useCallback: callback => callback,
         readingActionBusyRef: ref,
+        readingLibraryPathsRef: { current: ['/books'] },
         resolveReadingActionPaths,
         selectedEntryObjects: [{ path: filePath }],
         setReadingActionBusy: busy => calls.push(['busy', busy]),
@@ -150,6 +166,12 @@ test('실제 폴더 액션은 중복 실행을 막고 저장·화면 갱신 및 
     assert.equal(JSON.parse(storage.getItem(`bookmanager-viewer-state:${filePath}`)).status, 'unread');
     assert.ok(calls.some(call => call[0] === 'refresh'));
     assert.ok(calls.some(call => call[1] === 'folder.reading.reset_done:1'));
+    const removedLibraryRequest = change(menu, 'mark-read');
+    context.readingLibraryPathsRef.current = [];
+    storage.removeItem(`bookmanager-viewer-state:${filePath}`);
+    release();
+    await removedLibraryRequest;
+    assert.equal(storage.getItem(`bookmanager-viewer-state:${filePath}`), null);
     rejectRequest = true;
     await change(menu, 'mark-read');
     assert.equal(ref.current, false);

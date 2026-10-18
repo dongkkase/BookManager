@@ -12,6 +12,7 @@ import { epubAssetResponseData } from './epubAudio.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
 import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
 import { LibraryDB } from './database/library_db.js';
+import { isRegisteredLibraryFile } from './libraryPathScope.js';
 import { getReadiveReadingState } from './readive/ipc.js';
 import { createCoverEditViewerGuard } from './coverEditViewerGuard.js';
 import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
@@ -336,6 +337,8 @@ export function setupViewerWindowManager(options = {}) {
     const recordReadingState = async (session, state = {}) => {
         const dbPath = getLibraryDbPath?.();
         if (!session?.filePath || session.preview || !dbPath) return null;
+        if (configManager?.canPruneLibraryData?.()
+            && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries)) return null;
         try {
             if (!readingStateDb) readingStateDb = new LibraryDB({ dbPath });
             const saved = await readingStateDb.upsertReadingState(session.filePath, {
@@ -917,8 +920,10 @@ export function setupViewerWindowManager(options = {}) {
     });
     ipcMain.handle('viewer:getReadiveReadingState', async (event, sessionId) => {
         viewerContextForCurrentSessionRequest(event, sessionId);
-        if (sessions.get(sessionId).preview) return null;
-        return getReadiveReadingState(sessions.get(sessionId).filePath);
+        const session = sessions.get(sessionId);
+        if (session.preview || configManager?.canPruneLibraryData?.()
+            && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries)) return null;
+        return getReadiveReadingState(session.filePath);
     });
     ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
         const context = viewerContextForSender(event.sender);
@@ -957,6 +962,7 @@ export function setupViewerWindowManager(options = {}) {
         return {
             lang: language,
             language,
+            readingLibraryPaths: configManager?.canPruneLibraryData?.() ? config.libraries : null,
             hasTtsOpenAiKey: Boolean(String(apiKeys.tts_openai_key || '').trim()),
             hasTtsGoogleKey: Boolean(String(apiKeys.tts_google_key || '').trim()),
         };

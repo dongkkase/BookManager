@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { FaIcon } from '../FaIcon';
+import { CoverArtwork } from '../CoverArtwork';
 import { resolveBookType } from '../../metadata/metadataTypes';
 import { AudiobookDetailPanel } from './AudiobookDetailPanel';
 import { BookDetailPanel } from './BookDetailPanel';
@@ -44,7 +45,7 @@ const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = 
                 const response = await window.electronAPI?.getFilePreview?.(folderPath, { force: false });
                 if (!disposed && response?.success) setPreview(response.file);
             } catch {
-                // 표지를 읽지 못하면 폴더 아이콘을 유지한다.
+                // 표지를 읽지 못하면 폴더 기본 이미지를 유지한다.
             }
         }, 120);
         return () => {
@@ -95,9 +96,7 @@ const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = 
                                     <span className="folder-item-cover-badge"><FaIcon name="folder" size={18} title={t('folder_item_type')} /></span>
                                 </>
                             ) : (
-                                <div className="detail-cover-placeholder folder-item-artwork">
-                                    <FaIcon name="folder" size={76} title={t('folder_item_type')} />
-                                </div>
+                                <CoverArtwork isDirectory className="detail-cover-placeholder" fallbackAlt={t('folder_item_type')} />
                             )}
                         </DetailCoverFrame>
                     </div>

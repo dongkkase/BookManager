@@ -77,10 +77,11 @@ async function readBody(request) {
 }
 
 export class ReadiveService {
-    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], getConfig = () => ({}), serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onRatingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
+    constructor({ directory, getLibraryDb, getRegisteredLibraries = () => [], getConfig = () => ({}), shouldPersistReadingState = () => true, serverName = os.hostname(), interfaces = listReadiveInterfaces, now = Date.now, onReadingChanged = () => {}, onRatingChanged = () => {}, onLog = () => {}, requestManualApproval }) {
         this.store = new ReadiveStore(directory);
         this.getLibraryDb = getLibraryDb;
         this.getRegisteredLibraries = getRegisteredLibraries;
+        this.shouldPersistReadingState = shouldPersistReadingState;
         this.serverName = String(serverName).slice(0, 100);
         this.interfaces = interfaces;
         this.now = now;
@@ -806,7 +807,9 @@ export class ReadiveService {
             const report = {};
             const records = await this.store.transact(async next => {
                 if (!next.devices.some(item => item.id === device.id && equalDigest(item.tokenHash, digest(token)))) throw fail('unauthorized', 401);
-                return exchangeReading(next, device, body.records, await this.getLibraryDb?.(), body.itemIds, { knownReadings: body.knownReadings, report });
+                return exchangeReading(next, device, body.records, await this.getLibraryDb?.(), body.itemIds, {
+                    knownReadings: body.knownReadings, report, shouldPersistFile: this.shouldPersistReadingState,
+                });
             }, { shouldSave: () => report.changed });
             if (report.readingChanged) this.onReadingChanged();
             return { json: { records, acknowledged: report.acknowledged } };

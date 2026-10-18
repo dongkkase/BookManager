@@ -61,7 +61,7 @@
 .ee-epub-import { margin-top: 20px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .ee-epub-import p { flex: 1 1 300px; }
 .ee-template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; max-width: 960px; margin: 0 auto; }
-.ee-template { padding: 0; overflow: hidden; color: inherit; background: var(--bg-secondary, #252a2d); border: 1px solid var(--border-color, #3b4146); border-radius: 10px; text-align: left; transition: border-color .15s, transform .15s; }
+.ee-template { padding: 0; overflow: hidden; color: inherit; background: var(--bg-secondary, #252a2d); border: 1px solid var(--border-color, #3b4146); border-radius: 10px; text-align: left; transition: border-color .15s, transform .15s, opacity 0.3s ease-out; }
 .ee-template:hover:not(:disabled) { border-color: var(--ee-accent); transform: translateY(-3px); }
 .ee-template-art { height: 245px; display: flex; align-items: center; justify-content: center; background: #d9dfd7; }
 .ee-template.is-essay .ee-template-art { background: #e1d9ce; }

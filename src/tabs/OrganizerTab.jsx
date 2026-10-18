@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import MenuSurface from '../components/MenuSurface';
 import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { filterExistingResultPaths } from '../resultLog';
@@ -887,8 +888,8 @@ function OrganizerTab({ config, t, showToast }) {
                         >
                           {t('org_folder_menu')} <FaIcon name="angleDown" size={9} />
                         </button>
-                        {openFolderMenuId === item.id && (
-                          <div className="org-row-menu org-folder-menu" role="menu">
+                          <MenuSurface open={openFolderMenuId === item.id} className="org-row-menu org-folder-menu" role="menu">
+                            {openFolderMenuId === item.id && <>
                             <button type="button" role="menuitem" onClick={() => handleFolderMenuAction(item, 'default')}>
                               {t('org_default_path')}
                             </button>
@@ -898,8 +899,8 @@ function OrganizerTab({ config, t, showToast }) {
                             <button type="button" role="menuitem" onClick={() => handleFolderMenuAction(item, 'filename')}>
                               {t('org_filename_path')}
                             </button>
-                          </div>
-                        )}
+                            </>}
+                          </MenuSurface>
                       </div>
                       <div
                         className="org-row-menu-wrap org-batch-menu-wrap"
@@ -920,8 +921,8 @@ function OrganizerTab({ config, t, showToast }) {
                         >
                           {t('org_batch_menu')} <FaIcon name="angleDown" size={9} />
                         </button>
-                        {openBatchMenuId === item.id && (
-                          <div className="org-row-menu org-batch-menu" role="menu">
+                          <MenuSurface open={openBatchMenuId === item.id} className="org-row-menu org-batch-menu" role="menu">
+                            {openBatchMenuId === item.id && <>
                             <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'volume')}>
                               {t('org_batch_volume')}
                             </button>
@@ -937,8 +938,8 @@ function OrganizerTab({ config, t, showToast }) {
                             <button type="button" role="menuitem" onClick={() => handleBatchMenuAction(item.id, 'extracted')}>
                               {t('org_batch_extracted_title')}
                             </button>
-                          </div>
-                        )}
+                            </>}
+                          </MenuSurface>
                       </div>
                     </div>
                     <div className="org-col-count">{item.volumes?.length || 0}</div>

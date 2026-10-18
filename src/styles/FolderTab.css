@@ -45,6 +45,15 @@
   border: 1px solid var(--line);
   border-radius: 3px;
   overflow: hidden;
+    margin-left: 0;
+    transition: margin-left 240ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+}
+
+.folder-left-panel.is-collapsed {
+    margin-left: calc(-1 * (max(220px, min(var(--folder-sidebar-width, 240px), 520px, 48vw)) + 8px));
+    visibility: hidden;
+    pointer-events: none;
+    transition-delay: 0s, 240ms;
 }
 
 .folder-checkable-btn {
@@ -240,10 +249,13 @@
     --folder-tree-row-height: max(28px, calc(var(--control-height-sm) + 4px));
     --folder-tree-indent-step: max(14px, calc(12px * var(--font-scale, 1)));
     position: relative;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr);
+    align-content: start;
     flex: 1 1 auto;
     min-height: 0;
     padding: 4px 2px;
-    overflow-x: hidden;
+    overflow-x: auto;
     overflow-y: auto;
     overscroll-behavior: contain;
     scroll-behavior: auto;
@@ -475,8 +487,8 @@
   cursor: pointer;
 }
 
-.folder-sidebar-tooltip-btn[data-tooltip]::before,
-.folder-sidebar-tooltip-btn[data-tooltip]::after {
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]::before,
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]::after {
     position: absolute;
     right: 0;
     z-index: 80;
@@ -486,7 +498,7 @@
     transition: none;
 }
 
-.folder-sidebar-tooltip-btn[data-tooltip]::before {
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]::before {
     content: attr(data-tooltip);
     top: calc(100% + 8px);
     box-sizing: border-box;
@@ -495,7 +507,7 @@
     padding: 7px 10px;
     color: #263442;
     background: #e5ecef;
-    border-radius: 10px;
+    border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
     font-size: var(--font-xs);
     font-weight: 500;
@@ -505,7 +517,7 @@
     overflow-wrap: anywhere;
 }
 
-.folder-sidebar-tooltip-btn[data-tooltip]::after {
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]::after {
     content: '';
     top: calc(100% + 4px);
     right: calc(50% - 4px);
@@ -515,10 +527,10 @@
     transform: rotate(45deg);
 }
 
-.folder-sidebar-tooltip-btn[data-tooltip]:hover::before,
-.folder-sidebar-tooltip-btn[data-tooltip]:hover::after,
-.folder-sidebar-tooltip-btn[data-tooltip]:focus-visible::before,
-.folder-sidebar-tooltip-btn[data-tooltip]:focus-visible::after {
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]:hover::before,
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]:hover::after,
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]:focus-visible::before,
+:is(.folder-sidebar-tooltip-btn, .folder-toolbar-tooltip-btn)[data-tooltip]:focus-visible::after {
   opacity: 1;
   visibility: visible;
 }
@@ -606,6 +618,7 @@
 }
 
 .nav-list > :is(.recent-reading-list-item, .library-list-item) {
+    padding-block: 2px;
     transition: background-color 160ms ease;
 }
 
@@ -624,6 +637,7 @@
     box-sizing: border-box;
     display: flex;
     align-items: center;
+    min-width: var(--folder-tree-content-width, 0px);
     gap: 5px;
     height: var(--folder-tree-row-height);
     min-height: var(--folder-tree-row-height);
@@ -657,8 +671,6 @@
     align-self: stretch;
     flex: 0 0 auto;
     min-width: 0;
-    max-width: 45%;
-    overflow: hidden;
 }
 
 .folder-tree-guides:empty {
@@ -722,10 +734,7 @@
 }
 
 .folder-tree-name {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex: 1 0 auto;
     white-space: nowrap;
 }
 
@@ -739,10 +748,7 @@
 }
 
 .folder-tree-status > span:not(.folder-tree-guides) {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex: 1 0 auto;
 }
 
 .folder-tree-retry {
@@ -842,6 +848,11 @@ body.is-resizing-panel .detail-panel-wrap {
     border: 0;
     border-radius: 0;
     margin: 0;
+}
+
+.folder-resizer-vertical.is-collapsed {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .folder-resizer-vertical::before {
@@ -1337,6 +1348,15 @@ body.is-resizing-folder-horizontal .folder-resizer-vertical::after {
 .folder-toolbar > .toolbar-dropdown > .toolbar-btn:is(:hover, :focus-visible, .active),
 .right-toolbar-left:has(> .folder-toolbar) > .folder-list-sidebar-toggle:is(:hover, :focus-visible, .active) {
     z-index: 1;
+}
+
+.folder-toolbar > .folder-toolbar-tooltip-btn:is(:hover, :focus-visible) {
+    z-index: 80;
+}
+
+.folder-toolbar-tooltip-btn[data-tooltip]::before {
+    max-width: min(280px, calc(100vw - 24px));
+    word-break: keep-all;
 }
 
 .folder-toolbar .dropdown-menu-down {
@@ -3704,26 +3724,34 @@ body.is-resizing-panel .detail-panel-wrap {
     display: inline-flex;
     flex: 0 0 30px;
     align-items: center;
+    justify-content: flex-start;
     width: 30px;
     height: 18px;
     padding: 2px;
     border: 1px solid #626b78;
     border-radius: 999px;
     background: #424a57;
+    transition: background-color 180ms ease, border-color 180ms ease;
 }
 
 .library-display-field-switch::before {
     content: '';
+    flex-shrink: 0;
     width: 12px;
     height: 12px;
     border-radius: 50%;
     background: #f2f6fc;
+    transform: translateX(0);
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .library-display-field-option[aria-checked="true"] .library-display-field-switch {
-    justify-content: flex-end;
     border-color: #438ece;
     background: #357ebc;
+}
+
+.library-display-field-option[aria-checked="true"] .library-display-field-switch::before {
+    transform: translateX(12px);
 }
 
 .folder-context-submenu-flyout .folder-context-menu-item {
@@ -4717,20 +4745,27 @@ body.is-resizing-panel .detail-panel-wrap {
     border-radius: 999px;
     background: #424a57;
     cursor: pointer;
+    transition: background-color 180ms ease, border-color 180ms ease;
 }
 
 .layout-column-toggle > span {
     display: block;
+    flex-shrink: 0;
     width: 16px;
     height: 16px;
     border-radius: 50%;
     background: #f2f6fc;
+    transform: translateX(0);
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .layout-column-toggle[aria-checked="true"] {
-    justify-content: flex-end;
     border-color: #438ece;
     background: #357ebc;
+}
+
+.layout-column-toggle[aria-checked="true"] > span {
+    transform: translateX(14px);
 }
 
 .layout-column-name {

@@ -1,5 +1,6 @@
 import { folderEntryOperationTargets } from './fileActionPolicy.js';
 import { readingStatePathKey } from './folderReadingStates.js';
+import { isLibraryReadingStorageAllowed } from './libraryReadingStorage.js';
 
 export function resolveReadingActionPaths(menu, selectedEntries = [], { preserveNestedEntries = false } = {}) {
     if (!menu) return [];
@@ -14,7 +15,7 @@ export function resolveReadingActionPaths(menu, selectedEntries = [], { preserve
         : folderEntryOperationTargets(entries).map(entry => entry.full_path || entry.path);
 }
 
-export function applyReadingActionStates(storage, states, platform = '') {
+export function applyReadingActionStates(storage, states, platform = '', libraryPaths) {
     const prefix = 'bookmanager-viewer-state:';
     const keysByPath = new Map();
     for (let index = 0; index < storage.length; index += 1) {
@@ -25,6 +26,7 @@ export function applyReadingActionStates(storage, states, platform = '') {
         keysByPath.get(pathKey).push(key);
     }
     for (const state of states) {
+        if (!isLibraryReadingStorageAllowed(`${prefix}${state.filePath}`, libraryPaths)) continue;
         const pathKey = readingStatePathKey(state.filePath, platform);
         const keys = new Set([`${prefix}${state.filePath}`, ...(keysByPath.get(pathKey) || [])]);
         for (const key of keys) {

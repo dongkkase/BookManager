@@ -59,6 +59,8 @@ const recentFiles = [
 ];
 let holdRecentUpdates = false;
 let releaseRecent;
+let holdRecentAdded = false;
+let releaseRecentAdded;
 let heldMembershipPath = '';
 const pendingMembership = [];
 let changed;
@@ -95,6 +97,7 @@ window.electronAPI = {
             return { success: true, file: { isDirectory: true, is_folder: true, cover } };
         }
         if (operation === 'list') {
+            if (id === 'recent-added' && holdRecentAdded) return await new Promise(resolve => { releaseRecentAdded = () => resolve({ success: true, files: recentFiles }); });
             if (id === 'recent-updated' && holdRecentUpdates) return await new Promise(resolve => { releaseRecent = () => resolve({ success: true, files: [{ ...book, name: 'stale.epub' }] }); });
             return { success: true, files: id === 'recent-added' ? recentFiles : id === 'recent-updated' ? recentFiles.map((file, index) => ({ ...file, readingListAddedAt: daysAgo(index + 0.5) })) : [...(books.get(id) || [])] };
         }
@@ -111,7 +114,8 @@ window.electronAPI = {
 };
 const root = createRoot(document.getElementById('root'));
 root.render(<FolderTab config={{ libraries: [], folder_view_mode: 'table' }} t={t} saveConfig={async () => {}} showToast={notice => notices.push(notice)} />);
-const button = (text, scope = document) => [...scope.querySelectorAll('button')].find(item => item.textContent.trim() === text || item.querySelector('.recent-reading-list-main')?.textContent.trim() === text);
+const button = (text, scope = document) => [...scope.querySelectorAll('button')].find(item => !item.closest('[inert]')
+    && (item.textContent.trim() === text || item.querySelector('.recent-reading-list-main')?.textContent.trim() === text));
 const click = async (text, scope = document) => {
     await until(() => button(text, scope), 'Missing button: ' + text);
     button(text, scope).click(); await frame();
@@ -155,7 +159,8 @@ const collectionCoverImage = () => [...document.querySelectorAll('.view-containe
 const loadedCollectionCover = expected => collectionCoverImage()?.complete && collectionCoverImage().naturalWidth > 0 && collectionCoverImage().getAttribute('src') === expected;
 const navigateBack = () => document.querySelector('button[aria-label="' + t('folder.goto.back') + '"]').click();
 const folderCoverImage = () => [...document.querySelectorAll('.view-container [data-file-path]')].find(item => item.dataset.filePath === folder.path)?.querySelector('img');
-const loadedFolderCover = () => folderCoverImage()?.complete && folderCoverImage().naturalWidth > 0;
+const loadedFolderCover = () => folderCoverImage()?.complete && folderCoverImage().naturalWidth > 0
+    && folderCoverImage().getAttribute('src') === folderCover;
 async function openContext(filePath = book.path) {
     const row = rowFor(filePath);
     check(row, 'Missing context row: ' + filePath);
@@ -198,7 +203,10 @@ window.readingListTests = (async () => {
     folderCover = '';
     const beforeEmpty = coverRequests();
     changed();
-    await until(() => coverRequests() > beforeEmpty && rowFor(folder.path)?.querySelector('.folder-item-artwork'), 'Folder without a cover did not keep its folder icon');
+    await until(() => {
+        const placeholder = rowFor(folder.path)?.querySelector('.folder-cover-placeholder .cover-placeholder-image');
+        return coverRequests() > beforeEmpty && placeholder?.complete && placeholder.naturalWidth > 0;
+    }, 'Folder without a cover did not display its placeholder image');
     folderCover = coverSource + '#old';
     holdPreviews = true;
     changed();
@@ -215,6 +223,7 @@ window.readingListTests = (async () => {
     await until(() => !rowFor(folder.path), 'Preview restored a removed wishlist entry');
     await click('최근 추가됨');
     await until(() => rowPaths().length === 3, 'Recently added books did not load');
+    const recentNavigationOverviewCount = requests.filter(request => request.operation === 'overview').length;
     check(badge('최근 추가됨') === '3' && badge('최근 업데이트 됨') === '3' && badge('최근 읽음') === '3', 'Recent menu badges missing');
     check(document.querySelector('.reading-list-note').textContent.includes('1,000'), 'Recent activity limit hint missing');
     check(rowPaths()[0] === childBook.path, 'Default added date sorting failed');
@@ -235,7 +244,13 @@ window.readingListTests = (async () => {
     check(document.querySelector('select[aria-label="업데이트 날짜"]').value === '14', 'Added filters leaked into updated list');
     await selectOption('업데이트 날짜', '1');
     check(rowPaths().length === 1 && rowFor(book.path), 'Update date filter used the wrong date');
+    holdRecentAdded = true;
     await click('최근 추가됨');
+    await until(() => releaseRecentAdded, 'Recent added background refresh did not start');
+    check(rowPaths().length === 2 && !document.querySelector('.view-container .recent-reading-state[role="status"]'), 'Recent added revisit hid its cached books while refreshing');
+    check(requests.filter(request => request.operation === 'overview').length === recentNavigationOverviewCount, 'Recent navigation unnecessarily reloaded sidebar counts');
+    holdRecentAdded = false;
+    releaseRecentAdded();
     await until(() => rowPaths().length === 2 && document.querySelector('select[aria-label="추가 날짜"]')?.value === '7', 'Added filters were not retained');
     check(document.querySelector('select[aria-label="정렬 방향"]').value === 'desc', 'Added sorting was not retained');
     [...document.querySelectorAll('.sidebar-section-reading li')].find(item => item.querySelector('.recent-reading-list-main')?.textContent.trim() === '최근 읽음').click();
@@ -400,7 +415,7 @@ window.readingListTests = (async () => {
     for (let index = 0; index < 5; index += 1) await frame();
     check(!button('읽고 싶은 책 추가').disabled && button('읽고 싶은 책 삭제').disabled, 'Stale registered-file membership replaced the new unregistered-folder menu');
     await closeContext();
-    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership'].includes(request.operation)).map(request => request.operation), staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true };
+    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership'].includes(request.operation)).map(request => request.operation), recentCacheVisible: true, staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true };
     root.unmount();
     return report;
 })();
@@ -456,6 +471,7 @@ app.whenReady().then(async () => {
         const report = JSON.parse(output.result.match(/READING_LIST_RESULT=(.+)/)[1]);
         assert.deepEqual(report.mutations, ['add', 'create', 'add', 'add', 'rename', 'remove', 'delete', 'remove', 'add', 'add', 'add', 'remove']);
         assert.equal(report.staleResponseIgnored, true);
+        assert.equal(report.recentCacheVisible, true);
         assert.equal(report.folderOpened, true);
         assert.equal(report.fileOpened, true);
         assert.equal(report.folderCoversLoaded, true);

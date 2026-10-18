@@ -87,7 +87,7 @@ body.is-resizing-panel * {
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: background-color 0.2s;
+    transition: background-color 0.2s, opacity 0.3s ease-out;
   white-space: nowrap;
 }
 
@@ -1054,7 +1054,7 @@ body.is-resizing-panel * {
   border-radius: 50%;
   background: #263a48;
   color: #e8f2f8;
-  transition: background-color 120ms ease, border-color 120ms ease;
+    transition: background-color 120ms ease, border-color 120ms ease, opacity 0.3s ease-out;
 }
 
 .app-audio-mini-button:hover:not(:disabled) {
@@ -1662,6 +1662,7 @@ body.is-resizing-panel * {
     border: 1px solid #454a52;
     border-radius: 8px;
     background: #25272c;
+    transition: all 0.3s ease-out;
 }
 
 .settings-provider-card.is-disabled {
@@ -1712,6 +1713,7 @@ body.is-resizing-panel * {
 .settings-provider-switch {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-start;
     flex: 0 0 auto;
     box-sizing: border-box;
     width: 40px;
@@ -1721,20 +1723,27 @@ body.is-resizing-panel * {
     border-radius: 999px;
     background: #424a57;
     cursor: pointer;
+    transition: background-color 180ms ease, border-color 180ms ease;
 }
 
 .settings-provider-switch span {
     display: block;
+    flex-shrink: 0;
     width: 16px;
     height: 16px;
     border-radius: 50%;
     background: #f2f6fc;
+    transform: translateX(0);
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .settings-provider-switch[aria-checked="true"] {
-    justify-content: flex-end;
     border-color: #438ece;
     background: #357ebc;
+}
+
+.settings-provider-switch[aria-checked="true"] span {
+    transform: translateX(16px);
 }
 
 .settings-provider-switch:focus-visible {
@@ -2194,6 +2203,15 @@ body.is-resizing-panel * {
     font-weight: 500;
     line-height: 1.5;
     cursor: pointer;
+}
+
+.settings-check-row.settings-switch-row {
+    grid-template-columns: minmax(0, 1fr) 40px;
+    align-items: center;
+}
+
+.settings-switch-row > .settings-provider-switch {
+    order: 1;
 }
 
 .settings-check-row:first-child {

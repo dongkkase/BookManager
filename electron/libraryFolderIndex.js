@@ -1,5 +1,7 @@
 import path from 'path';
 
+const folderPathCollator = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' });
+
 export function folderDisplayName(folderPath) {
     const base = path.basename(folderPath);
     return base || folderPath;
@@ -11,21 +13,26 @@ function isPathInsideOrEqual(childPath, parentPath) {
 }
 
 function addLibraryFolderIndexRecord(folderMap, libraryPath, folderPath, lastSeenAt) {
-    const normalizedLibraryPath = path.resolve(libraryPath);
     const normalizedFolderPath = path.resolve(folderPath);
-    if (!isPathInsideOrEqual(normalizedFolderPath, normalizedLibraryPath)) return null;
+    const existingRecord = folderMap.get(normalizedFolderPath);
+    if (existingRecord) return existingRecord;
+    if (!isPathInsideOrEqual(normalizedFolderPath, libraryPath)) return null;
 
-    const isRoot = normalizedFolderPath === normalizedLibraryPath;
-    const parentPath = isRoot ? '' : path.dirname(normalizedFolderPath);
-    if (!isRoot && parentPath && parentPath !== normalizedFolderPath) {
-        addLibraryFolderIndexRecord(folderMap, normalizedLibraryPath, parentPath, lastSeenAt);
+    const missingFolders = [];
+    let currentPath = normalizedFolderPath;
+    while (!folderMap.has(currentPath)) {
+        missingFolders.push(currentPath);
+        if (currentPath === libraryPath) break;
+        currentPath = path.dirname(currentPath);
     }
-    if (!folderMap.has(normalizedFolderPath)) {
-        folderMap.set(normalizedFolderPath, {
-            library_path: normalizedLibraryPath,
-            folder_path: normalizedFolderPath,
-            parent_path: isRoot ? '' : parentPath,
-            name: folderDisplayName(normalizedFolderPath),
+    for (let index = missingFolders.length - 1; index >= 0; index -= 1) {
+        const missingPath = missingFolders[index];
+        const isRoot = missingPath === libraryPath;
+        folderMap.set(missingPath, {
+            library_path: libraryPath,
+            folder_path: missingPath,
+            parent_path: isRoot ? '' : path.dirname(missingPath),
+            name: folderDisplayName(missingPath),
             child_folder_count: 0,
             direct_file_count: 0,
             recursive_file_count: 0,
@@ -48,27 +55,26 @@ export function buildLibraryFolderIndexRecords(libraryPath, directoryPaths = [],
 
     for (const filePath of filePaths || []) {
         if (!filePath) continue;
-        let currentPath = path.dirname(path.resolve(filePath));
+        const currentPath = path.dirname(path.resolve(filePath));
         const directFolder = addLibraryFolderIndexRecord(folderMap, normalizedLibraryPath, currentPath, lastSeenAt);
         if (directFolder) directFolder.direct_file_count += 1;
-        while (currentPath && isPathInsideOrEqual(currentPath, normalizedLibraryPath)) {
-            const record = addLibraryFolderIndexRecord(folderMap, normalizedLibraryPath, currentPath, lastSeenAt);
-            if (record) record.recursive_file_count += 1;
-            if (currentPath === normalizedLibraryPath) break;
-            const parentPath = path.dirname(currentPath);
-            if (!parentPath || parentPath === currentPath) break;
-            currentPath = parentPath;
+    }
+
+    const records = [...folderMap.values()];
+    // Parents are inserted first, so reverse traversal aggregates each subtree once.
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        record.recursive_file_count += record.direct_file_count;
+        if (!record.parent_path) continue;
+        const parent = folderMap.get(record.parent_path);
+        if (parent) {
+            parent.child_folder_count += 1;
+            parent.recursive_file_count += record.recursive_file_count;
         }
     }
 
-    for (const record of folderMap.values()) {
-        if (!record.parent_path) continue;
-        const parent = folderMap.get(record.parent_path);
-        if (parent) parent.child_folder_count += 1;
-    }
-
-    return [...folderMap.values()].sort((left, right) => (
-        left.folder_path.localeCompare(right.folder_path, 'ko', { numeric: true, sensitivity: 'base' })
+    return records.sort((left, right) => (
+        folderPathCollator.compare(left.folder_path, right.folder_path)
     ));
 }
 

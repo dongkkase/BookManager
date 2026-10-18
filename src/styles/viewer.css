@@ -135,7 +135,7 @@ body,
     border-radius: 9px;
     background: transparent;
     cursor: pointer;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, opacity 0.3s ease-out;
 }
 
 .audiobook-toolbar-button:hover,
@@ -3586,7 +3586,7 @@ body,
     top: calc(100% - 1px);
     z-index: 112;
     min-width: 142px;
-    display: none;
+    display: grid;
     gap: 3px;
     padding: 5px;
     border: 1px solid rgba(120, 132, 146, 0.58);
@@ -3598,10 +3598,6 @@ body,
 .viewer-selection-toolbar.has-menus-above .viewer-selection-menu-list {
     top: auto;
     bottom: calc(100% - 1px);
-}
-
-.viewer-selection-menu.is-open .viewer-selection-menu-list {
-    display: grid;
 }
 
 .viewer-selection-menu-list button {

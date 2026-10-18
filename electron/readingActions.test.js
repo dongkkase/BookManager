@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
 import { updateReadingProgress } from './readingActions.js';
+import { isRegisteredLibraryFile } from './libraryPathScope.js';
 
 async function fixture(run) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bookmanager-reading-actions-'));
@@ -34,6 +35,20 @@ test('폴더 읽음 표시는 하위 지원 파일을 중복 없이 처리하고
         assert.ok(result.states.filter(state => state.format !== 'audio')
             .every(state => state.locator.normalizedPosition === 1 && state.scrollPercent === 100));
         assert.equal((await db.listRecentReadingStates()).length, files.length);
+    });
+});
+
+test('상위 폴더의 읽음 표시도 현재 라이브러리 안의 파일만 저장한다', async () => {
+    await fixture(async ({ db, folder, files }) => {
+        const libraries = [path.join(folder, 'nested')];
+        const options = { shouldPersistFile: filePath => isRegisteredLibraryFile(filePath, libraries) };
+        const result = await updateReadingProgress(db, [folder], 'mark-read', options);
+        assert.deepEqual(result.errors, []);
+        assert.deepEqual(result.states.map(state => state.filePath).sort(), files.slice(2).sort());
+        assert.deepEqual(await db.listReadingStatesByPaths([files[0]]), []);
+        libraries.length = 0;
+        assert.deepEqual(await updateReadingProgress(db, [folder], 'reset-progress', options), { states: [], errors: [] });
+        assert.ok((await db.listRecentReadingStates()).every(state => state.status === 'completed'));
     });
 });
 

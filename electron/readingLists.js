@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readingActionFormat } from './readingActions.js';
+import { createLibraryPathScope } from './libraryPathScope.js';
 
 const RECENT_ACTIVITY_LIMIT = 1000;
 const RECENT_ACTIVITY_DAYS = 14;
@@ -10,11 +11,11 @@ function recentActivityCutoff() {
     return new Date(Date.now() - RECENT_ACTIVITY_DAYS * 86400000).toISOString();
 }
 
-function recentActivityCount(db, column, cutoff) {
+function recentActivityCount(db, column, cutoff, scope) {
     return db.prepare(`SELECT COUNT(*) AS count FROM (
         SELECT activity.path FROM reading_file_activity activity JOIN files ON files.path = activity.path
-        WHERE activity.${column} >= ? LIMIT ?
-    )`).get(cutoff, RECENT_ACTIVITY_LIMIT).count;
+        WHERE activity.${column} >= ? AND (${scope.where}) LIMIT ?
+    )`).get(cutoff, ...scope.params, RECENT_ACTIVITY_LIMIT).count;
 }
 
 export function initializeReadingLists(db) {
@@ -39,8 +40,10 @@ export function initializeReadingLists(db) {
             added_at TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL DEFAULT ''
         );
-        CREATE INDEX IF NOT EXISTS idx_reading_activity_added ON reading_file_activity(added_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_reading_activity_updated ON reading_file_activity(updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_reading_activity_added_path ON reading_file_activity(added_at DESC, path);
+        CREATE INDEX IF NOT EXISTS idx_reading_activity_updated_path ON reading_file_activity(updated_at DESC, path);
+        DROP INDEX IF EXISTS idx_reading_activity_added;
+        DROP INDEX IF EXISTS idx_reading_activity_updated;
         INSERT OR IGNORE INTO reading_lists VALUES ('want-to-read', '', '', 'wishlist', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
         CREATE TRIGGER IF NOT EXISTS reading_activity_insert AFTER INSERT ON files BEGIN
             INSERT OR IGNORE INTO reading_file_activity(path, added_at, updated_at)
@@ -137,7 +140,7 @@ function requireList(db, id, collectionOnly = false) {
     return row;
 }
 
-export async function readingListsRequest(library, request = {}) {
+export async function readingListsRequest(library, request = {}, libraryPaths = []) {
     const operation = request?.operation;
     if (operation === 'add') {
         await library.withLock(() => requireList(library.getConnection(), request.id));
@@ -160,11 +163,12 @@ export async function readingListsRequest(library, request = {}) {
                 FROM reading_lists lists LEFT JOIN reading_list_members members ON members.list_id = lists.id
                 GROUP BY lists.id ORDER BY lists.created_at, lists.name`).all();
             const cutoff = recentActivityCutoff();
+            const scope = createLibraryPathScope(library, libraryPaths, 'activity.path');
             return {
                 collections: lists.filter(list => list.kind === 'collection'),
                 wishlistCount: lists.find(list => list.kind === 'wishlist')?.count || 0,
-                recentAddedCount: recentActivityCount(db, 'added_at', cutoff),
-                recentUpdatedCount: recentActivityCount(db, 'updated_at', cutoff),
+                recentAddedCount: recentActivityCount(db, 'added_at', cutoff, scope),
+                recentUpdatedCount: recentActivityCount(db, 'updated_at', cutoff, scope),
             };
         }
         if (operation === 'membership') {
@@ -183,10 +187,11 @@ export async function readingListsRequest(library, request = {}) {
         if (operation === 'list') {
             if (['recent-added', 'recent-updated'].includes(request.id)) {
                 const column = request.id === 'recent-added' ? 'added_at' : 'updated_at';
+                const scope = createLibraryPathScope(library, libraryPaths, 'activity.path');
                 const rows = db.prepare(`SELECT files.*, activity.${column} AS list_added_at
                     FROM reading_file_activity activity JOIN files ON files.path = activity.path
-                    WHERE activity.${column} >= ? ORDER BY activity.${column} DESC, files.path LIMIT ?`)
-                    .all(recentActivityCutoff(), RECENT_ACTIVITY_LIMIT);
+                    WHERE activity.${column} >= ? AND (${scope.where}) ORDER BY activity.${column} DESC, activity.path LIMIT ?`)
+                    .all(recentActivityCutoff(), ...scope.params, RECENT_ACTIVITY_LIMIT);
                 return { rows };
             }
             requireList(db, request.id);
@@ -221,7 +226,7 @@ export async function readingListsRequest(library, request = {}) {
     });
 }
 
-export async function hydrateReadingListRows(rows, normalize) {
+export async function hydrateReadingListRows(rows, normalize, { verifyPresence = true } = {}) {
     const files = new Array(rows.length);
     let index = 0;
     await Promise.all(Array.from({ length: Math.min(16, rows.length) }, async () => {
@@ -229,7 +234,9 @@ export async function hydrateReadingListRows(rows, normalize) {
             const current = index++;
             const row = rows[current];
             let stat;
-            try { stat = await fs.stat(row.path); } catch { stat = null; }
+            if (verifyPresence) {
+                try { stat = await fs.stat(row.path); } catch { stat = null; }
+            }
             const isDirectory = stat ? stat.isDirectory() : Boolean(row.is_directory);
             files[current] = {
                 ...normalize({ ...row, size: row.size ?? stat?.size, mtime: row.mtime ?? stat?.mtimeMs }),
@@ -244,7 +251,7 @@ export async function hydrateReadingListRows(rows, normalize) {
                 } : {}),
                 isDirectory,
                 is_folder: isDirectory,
-                exists: Boolean(stat?.isFile() || stat?.isDirectory()),
+                ...(verifyPresence ? { exists: Boolean(stat?.isFile() || stat?.isDirectory()) } : {}),
                 readingListAddedAt: row.list_added_at,
             };
         }
@@ -273,22 +280,44 @@ export async function loadCollectionPreview(rows, loadPreview) {
     return { isDirectory: true, is_folder: true, cover: '', thumb_path: '', cover_file_path: '' };
 }
 
-export function registerReadingListsIpc({ ipcMain, getMainWindow, createLibrary, normalizeFile, loadPreview, broadcast }) {
-    ipcMain.handle('reading:lists', async (event, request) => {
+export function registerReadingListsIpc({ ipcMain, getMainWindow, createLibrary, getLibraryPaths = () => [], normalizeFile, loadPreview, broadcast }) {
+    let library;
+    let disposing;
+    const pending = new Set();
+    const handleRequest = async (event, request) => {
+        if (disposing) return { success: false, error: 'reading_lists_closed' };
         const window = getMainWindow?.();
         if (!window || window.isDestroyed() || window.webContents !== event.sender
             || (event.senderFrame && event.senderFrame !== event.sender.mainFrame)) throw new Error('reading_untrusted_sender');
-        const library = createLibrary();
         try {
-            const result = await readingListsRequest(library, request);
-            if (result.rows) return { success: true, files: await hydrateReadingListRows(result.rows, normalizeFile) };
+            library ||= createLibrary();
+            const result = await readingListsRequest(library, request, getLibraryPaths());
+            if (result.rows) {
+                // Recent activity uses the DB snapshot; opening a book verifies its original path.
+                const recent = ['recent-added', 'recent-updated'].includes(request.id);
+                return { success: true, files: await hydrateReadingListRows(result.rows, normalizeFile, { verifyPresence: !recent }) };
+            }
             if (result.previewRows) return { success: true, file: await loadCollectionPreview(result.previewRows, loadPreview) };
             if (!['overview', 'list', 'membership'].includes(request.operation)) broadcast();
             return { success: true, ...result };
         } catch (error) {
             return { success: false, error: error.message };
-        } finally {
-            await library.close();
         }
+    };
+    ipcMain.handle('reading:lists', (event, request) => {
+        const response = handleRequest(event, request);
+        pending.add(response);
+        const settled = () => pending.delete(response);
+        response.then(settled, settled);
+        return response;
     });
+    return {
+        dispose() {
+            if (!disposing) {
+                ipcMain.removeHandler?.('reading:lists');
+                disposing = Promise.allSettled([...pending]).then(() => library?.close());
+            }
+            return disposing;
+        },
+    };
 }

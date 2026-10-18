@@ -456,7 +456,7 @@ async function opdsReadingCatalog(id, collectionId, roots, options) {
     const { LibraryDB } = await import('../database/library_db.js');
     const db = new LibraryDB({ dbPath: options.dbPath });
     try {
-        const result = await readSharedReadingList(db, id, collectionId);
+        const result = await readSharedReadingList(db, id, collectionId, roots);
         if (result.collections) return {
             folders: result.collections.map(collection => ({
                 title: collection.name,

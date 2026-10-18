@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { FaIcon } from '../FaIcon';
+import MenuSurface from '../MenuSurface';
 import {
   ancestorPathsBetween,
   chooseTreeRoot,
@@ -120,8 +121,10 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
         >
             <FaIcon name="ellipsisVertical" size={12} />
         </button>
-        {open && createPortal(
-            <div
+        {typeof document !== 'undefined' && createPortal(
+            <MenuSurface
+                open={open}
+                origin="top right"
                 ref={menuRef}
                 className="folder-context-menu library-display-options-menu"
                 role="menu"
@@ -141,6 +144,7 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
                     }
                 }}
             >
+                {open && <>
                 {LIBRARY_VISIBLE_COUNTS.map(count => (
                     <button
                         key={count}
@@ -170,7 +174,8 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
                         <span className="library-display-field-switch" aria-hidden="true" />
                     </button>
                 ))}
-            </div>,
+                </>}
+            </MenuSurface>,
             document.body,
         )}
     </>;

@@ -1,6 +1,7 @@
 import electron from 'electron';
 import path from 'node:path';
 import { LibraryDB } from '../database/library_db.js';
+import { isRegisteredLibraryFile } from '../libraryPathScope.js';
 import { ReadiveService } from './service.js';
 import { approveManualPairing } from './manualPairingApproval.js';
 import { sharingText } from '../servers/shared/sharingCommon.js';
@@ -19,6 +20,8 @@ export function registerReadiveIpc({ ipcMain, configManager, getLibraryDbPath, g
         requestManualApproval: options => approveManualPairing({ ...options, dialog: electron.dialog, window: getMainWindow?.(), config: configManager.getConfig() || {} }),
         getRegisteredLibraries: () => configManager.getConfig()?.library_entries || configManager.getConfig()?.libraries || [],
         getConfig: () => configManager.getConfig() || {},
+        shouldPersistReadingState: filePath => !configManager.canPruneLibraryData?.()
+            || isRegisteredLibraryFile(filePath, configManager.getConfig()?.libraries),
         getLibraryDb: async () => {
             const currentPath = getLibraryDbPath();
             if (!currentPath) return null;

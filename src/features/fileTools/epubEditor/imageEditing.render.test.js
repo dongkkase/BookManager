@@ -13,8 +13,8 @@ async function runImageRenderingChecks() {
     const check = (condition, message) => { checks += 1; if (!condition) throw new Error(message); };
     const makeCanvas = (width, height) => Object.assign(document.createElement('canvas'), { width, height });
     const png = canvas => new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    const decode = async result => {
-        check(result.blob.type === 'image/png', 'Rendered output must be an actual PNG blob');
+    const decode = async (result, mime = 'image/png') => {
+        check(result.blob.type === mime, 'Rendered output must use the requested image format');
         const bitmap = await createImageBitmap(result.blob);
         check(bitmap.width === result.width && bitmap.height === result.height, 'PNG dimensions must match renderer dimensions');
         const canvas = makeCanvas(bitmap.width, bitmap.height);
@@ -59,6 +59,7 @@ async function runImageRenderingChecks() {
     const sourceBytes = new Uint8Array(await source.arrayBuffer());
     const renderer = await createImageEditRenderer(source);
     let checkerRenderer;
+    const coverRenderers = [];
     try {
         const initial = createImageEditSettings(renderer.width, renderer.height);
         const original = await decode(await renderer.render(initial));
@@ -126,6 +127,51 @@ async function runImageRenderingChecks() {
         check(pixel(defaultCorners, 0, 0)[3] === 0 && pixel(defaultCorners, 64, 48)[3] === 255, 'The explicit default corner radius must produce rounded corners');
         const framed = await decode(await renderer.render({ ...initial, border: { preset: 'white', width: 8, color: '#112233' } }));
         colorIs(framed, 0, 0, [17, 34, 51, 255], 'Frame color must be baked into the PNG');
+        const coverOptions = { outputFormat: 'auto', maxOutputBytes: 16 * 1024 * 1024 };
+        const losslessCover = await decode(await renderer.render(initial, coverOptions));
+        check(samePixels(losslessCover, original), 'PNG covers within the byte limit must remain lossless');
+        const jpegSource = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+        const jpegRenderer = await createImageEditRenderer(jpegSource);
+        coverRenderers.push(jpegRenderer);
+        const epubJpeg = await decode(await jpegRenderer.render(initial));
+        check(epubJpeg.width === 128 && epubJpeg.height === 96, 'The default EPUB output must stay PNG even for a JPEG source');
+        const jpegCrop = await decode(await jpegRenderer.render({ ...initial, width: 64, height: 96,
+            crop: { x: 0.5, y: 0, width: 0.5, height: 1 } }, coverOptions), 'image/jpeg');
+        check(jpegCrop.width === 64 && jpegCrop.height === 96, 'JPEG cover output must retain the exact crop dimensions');
+        check(pixel(jpegCrop, 10, 10)[1] > 180 && pixel(jpegCrop, 10, 10)[0] < 50, 'JPEG output must contain the selected crop pixels');
+        for (const preset of ['rounded', 'shadow']) {
+            const transparentCover = await decode(await jpegRenderer.render({ ...initial, border: { preset, radius: 20, width: 8 } }, coverOptions));
+            check(pixel(transparentCover, 0, 0)[3] < 255, 'Cover effects with transparency must use PNG: ' + preset);
+        }
+        const transparentCanvas = makeCanvas(128, 96);
+        transparentCanvas.getContext('2d').drawImage(canvas, 8, 8);
+        const transparentRenderer = await createImageEditRenderer(await png(transparentCanvas));
+        coverRenderers.push(transparentRenderer);
+        const overLimitTransparent = await decode(await transparentRenderer.render(initial, { ...coverOptions, maxOutputBytes: 1 }));
+        check(pixel(overLimitTransparent, 0, 0)[3] === 0, 'Exceeding the byte cap must never flatten transparent source pixels into JPEG');
+
+        const noiseCanvas = makeCanvas(256, 256);
+        const noiseContext = noiseCanvas.getContext('2d');
+        const noise = noiseContext.createImageData(256, 256);
+        let seed = 17;
+        for (let offset = 0; offset < noise.data.length; offset += 4) {
+            for (let channel = 0; channel < 3; channel += 1) {
+                seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+                noise.data[offset + channel] = seed >>> 24;
+            }
+            noise.data[offset + 3] = 255;
+        }
+        noiseContext.putImageData(noise, 0, 0);
+        const noiseRenderer = await createImageEditRenderer(await png(noiseCanvas));
+        coverRenderers.push(noiseRenderer);
+        const noiseSettings = createImageEditSettings(256, 256);
+        const overLimitPng = await noiseRenderer.render(noiseSettings);
+        const initialJpeg = await noiseRenderer.render(noiseSettings, { ...coverOptions, maxOutputBytes: overLimitPng.blob.size - 1 });
+        check(initialJpeg.blob.type === 'image/jpeg' && initialJpeg.blob.size < overLimitPng.blob.size, 'Oversized opaque PNG output must use the smaller JPEG encoding');
+        const byteCap = Math.floor(initialJpeg.blob.size * 0.9);
+        const fittedJpeg = await noiseRenderer.render(noiseSettings, { ...coverOptions, maxOutputBytes: byteCap });
+        check(fittedJpeg.blob.type === 'image/jpeg' && fittedJpeg.blob.size <= byteCap, 'JPEG quality must adjust within its bounded range to fit the output limit');
+        check(fittedJpeg.width === 256 && fittedJpeg.height === 256, 'Encoding must not silently resize edited cover pixels');
         for (const border of IMAGE_BORDER_PRESETS) {
             const tiny = await decode(await renderer.render({ ...initial, width: 1, height: 1, border: { preset: border.id, width: 12, radius: 12 } }));
             check(tiny.width === 1 && tiny.height === 1, 'Every border must support the minimum output size: ' + border.id);
@@ -155,12 +201,13 @@ async function runImageRenderingChecks() {
         check(destroyedCode === 'IMAGE_EDIT_CLOSED', 'Closing the editor must stop active worker rendering');
         return { checks, supersededPreviews: 18, originalWidth: original.width, originalHeight: original.height, borders: IMAGE_BORDER_PRESETS.length };
     } finally {
+        for (const coverRenderer of coverRenderers) coverRenderer.destroy();
         checkerRenderer?.destroy();
         renderer.destroy();
     }
 }
 
-test('image editor worker renders transforms, effects, privacy regions, borders, and bounded preview queues into PNG pixels', async t => {
+test('image editor worker preserves EPUB PNG output and renders automatic cover formats, effects, and bounded previews', async t => {
     if (process.env.BOOKMANAGER_RENDERER_TESTS !== '1' || (process.platform === 'linux' && !process.env.DISPLAY)) {
         t.skip('Set BOOKMANAGER_RENDERER_TESTS=1 with a display to run the isolated Electron renderer.');
         return;

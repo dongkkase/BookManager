@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import MenuSurface from '../components/MenuSurface';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { filterExistingResultPaths } from '../resultLog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
@@ -1147,17 +1148,18 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
           t={t}
         />
       )}
-      {contextMenu && (
-        <div
+        <MenuSurface
+          open={Boolean(contextMenu)}
           className="renamer-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{ left: contextMenu?.x, top: contextMenu?.y }}
           onClick={event => event.stopPropagation()}
         >
+            {contextMenu && <>
           <button onClick={() => handleArchiveContextAction('show')}>{t('action_find_path')}</button>
           <button onClick={() => handleArchiveContextAction('rename')}>{t('action_rename_file')}</button>
           <button onClick={() => handleArchiveContextAction('reload')}>{t('action_reload_file')}</button>
-        </div>
-      )}
+            </>}
+        </MenuSurface>
     </div>
   );
 }

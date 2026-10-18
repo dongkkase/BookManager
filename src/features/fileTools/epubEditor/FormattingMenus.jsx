@@ -7,6 +7,7 @@ import { BLOCK_STYLES, INLINE_STYLES, HIGHLIGHTS } from '../../../../electron/ep
 import { applyBlockStyle, applyPresetMark, styledBlockPositions } from './richFormatting';
 import { canApplyParagraphFormat, selectedParagraphFormat } from './paragraphFormats';
 import { paragraphFormatStyle } from '../../../../electron/epubEditor/paragraphFormats';
+import '../../../styles/MenuSurface.css';
 
 function ToolbarMenu({ command, label, children, disabled = false, iconOnly = false }) {
     const id = useId();
@@ -25,9 +26,8 @@ function ToolbarMenu({ command, label, children, disabled = false, iconOnly = fa
         const rect = trigger.current.getBoundingClientRect();
         const menu = popup.current;
         menu.style.maxHeight = `${Math.max(120, window.innerHeight - 24)}px`;
-        const size = menu.getBoundingClientRect();
-        menu.style.left = `${Math.max(8, Math.min(window.innerWidth - size.width - 8, rect.left))}px`;
-        menu.style.top = `${Math.max(8, Math.min(window.innerHeight - size.height - 8, rect.bottom + 5))}px`;
+        menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, rect.left))}px`;
+        menu.style.top = `${Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 5))}px`;
     };
     useEffect(() => {
         if (!open) return;
@@ -53,7 +53,7 @@ function ToolbarMenu({ command, label, children, disabled = false, iconOnly = fa
     const choose = action => { close(); action(); };
     return <>
         <EditorTooltip label={`${l(command)}${shortcutLabel(command) ? ` (${shortcutLabel(command)})` : ''}`}><button ref={trigger} type="button" data-editor-menu={command} className={`ee-command ee-menu-trigger${iconOnly ? ' is-icon-only' : ''}`} aria-label={l(command)} aria-haspopup="menu" aria-expanded={open} aria-controls={id} disabled={disabled} onClick={show} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); show(); } }}><EditorIcon command={command} />{!iconOnly && <span>{label || l(command)}</span>}<span aria-hidden="true">▾</span></button></EditorTooltip>
-        <div id={id} ref={popup} popover="auto" className="ee-format-menu" role="menu" aria-label={l(command)} onKeyDown={keydown} onMouseDown={event => event.stopPropagation()}>{children(choose)}</div>
+        <div id={id} ref={popup} popover="auto" className="ee-format-menu bm-native-menu-surface" role="menu" aria-label={l(command)} onKeyDown={keydown} onMouseDown={event => event.stopPropagation()}>{children(choose)}</div>
     </>;
 }
 

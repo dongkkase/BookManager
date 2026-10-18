@@ -44,8 +44,9 @@ export class ReadiveReadingCatalog {
         const collectionId = descriptor.listId === 'collections' ? parts.shift() || '' : '';
         const db = await this.getLibraryDb();
         if (!db?.withLock || !db?.getConnection) throw fail('library_unavailable', 409);
+        const libraryPaths = registeredReadiveLibraries(this.getState(), this.getRegisteredLibraries()).map(library => library.path);
         let result;
-        try { result = await readSharedReadingList(db, descriptor.listId, collectionId); }
+        try { result = await readSharedReadingList(db, descriptor.listId, collectionId, libraryPaths); }
         catch (error) {
             if (error.message === 'list_not_found') throw fail('library_unavailable', 409);
             throw error;

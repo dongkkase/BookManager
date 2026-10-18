@@ -17,6 +17,8 @@ import { emitStatusState } from '../../statusState';
 import '../../styles/RenamerTab.css';
 import '../../styles/CoverEditorDialog.css';
 
+const CoverImageEditorDialog = React.lazy(() => import('../../features/fileTools/coverEditor/CoverImageEditorDialog'));
+
 const COVER_HELP_FORMATS = [
     { formats: 'ZIP · CBZ · 7Z · CB7', storage: 'file', description: 'storage_comic' },
     { formats: 'EPUB', storage: 'file', description: 'storage_epub' },
@@ -67,6 +69,10 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const [coverLoading, setCoverLoading] = useState(false);
     const [coverError, setCoverError] = useState('');
     const [image, setImage] = useState(null);
+    const [imageEditTarget, setImageEditTarget] = useState(null);
+    const imageEditTargetRef = useRef(null);
+    const imageEditButtonRef = useRef(null);
+    const wasImageEditingRef = useRef(false);
     const [imageArrival, setImageArrival] = useState(null);
     const [arrivalHighlight, setArrivalHighlight] = useState(0);
     const [imageSource, setImageSource] = useState('local');
@@ -123,7 +129,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const savingRef = useRef(false);
     const cancelRef = useRef(false);
     const completedResultsRef = useRef({});
-    const internalBusy = loading || saving || resultLogOpen || helpOpen || Boolean(filenamePreviewPath);
+    const internalBusy = loading || saving || resultLogOpen || helpOpen || Boolean(filenamePreviewPath) || Boolean(imageEditTarget);
     const busy = internalBusy || externalBusy;
     const inspectingFiles = loading && targets.length > 0;
     const loadingFiles = externalBusy || inspectingFiles;
@@ -207,6 +213,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         mountedRef.current = true;
         const previousFocus = document.activeElement;
         const keepFocusInside = event => {
+            if (imageEditTargetRef.current) return;
             const dialog = filenameDialogRef.current || helpDialogRef.current || (!embedded && dialogRef.current);
             if (dialog && !dialog.contains(event.target)) {
                 event.stopPropagation();
@@ -230,6 +237,11 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     useEffect(() => {
         onBusyChange?.(internalBusy);
     }, [internalBusy, onBusyChange]);
+
+    useEffect(() => {
+        if (!imageEditTarget && wasImageEditingRef.current) imageEditButtonRef.current?.focus();
+        wasImageEditingRef.current = Boolean(imageEditTarget);
+    }, [imageEditTarget]);
 
     useEffect(() => {
         onImageDropAvailabilityChange?.(!busy && !result && !helpOpen);
@@ -415,6 +427,41 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         setArrivalHighlight(0);
         setImageLoading(false);
         updateImage(null);
+    };
+
+    const openImageEditor = () => {
+        if (busy || result || imageLoading || !imageRef.current) return;
+        setImageArrival(null);
+        imageEditTargetRef.current = imageRef.current;
+        setImageEditTarget(imageRef.current);
+    };
+
+    const closeImageEditor = () => {
+        imageEditTargetRef.current = null;
+        setImageEditTarget(null);
+    };
+
+    const applyEditedImage = async blob => {
+        const target = imageEditTarget;
+        const isCurrent = () => mountedRef.current && target && imageEditTargetRef.current === target && imageRef.current === target;
+        const closedError = () => Object.assign(new Error(), { code: 'IMAGE_EDIT_CLOSED' });
+        if (!isCurrent()) throw closedError();
+        if (blob.size > 16 * 1024 * 1024) throw Object.assign(new Error(), { code: 'COVER_IMAGE_TOO_LARGE' });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (!isCurrent()) throw closedError();
+        const value = await window.electronAPI.previewCoverEditorImportedImage({ bytes });
+        if (!isCurrent()) {
+            releaseImage(value?.imagePath);
+            throw closedError();
+        }
+        if (value?.error || !value?.dataUrl || !value?.imagePath || !value?.imageVersion) {
+            releaseImage(value?.imagePath);
+            throw Object.assign(new Error(value?.error || ''), { code: value?.code || 'COVER_IMAGE_IMPORT_FAILED' });
+        }
+        imageRequestRef.current += 1;
+        setImageArrival(null);
+        setArrivalHighlight(0);
+        updateImage({ ...target, ...value });
     };
 
     const loadChosenImage = async (resolveImage, sourceDetails = {}) => {
@@ -696,6 +743,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
 
     const handleKeyDown = event => {
+        if (imageEditTargetRef.current) return;
         if (embedded && !helpOpen && !filenamePreviewPath) return;
         event.stopPropagation();
         if (event.key === 'Escape') {
@@ -1185,8 +1233,11 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                     </div>
                     <div className="cover-editor-preview-actions">
                         <span title={image?.sourceTitle || image?.entryName || image?.imagePath}>{image ? `${image.width} × ${image.height} · ${Math.ceil(image.size / 1024)} KB` : t('cover_editor_select_hint')}</span>
-                        {image && <button type="button" disabled={busy || Boolean(result)} onClick={clearImage}>{t('cover_editor_clear')}</button>}
                     </div>
+                    {image && <div className="cover-editor-preview-actions cover-editor-candidate-actions">
+                        <button type="button" disabled={busy || Boolean(result)} onClick={clearImage}>{t('cover_editor_clear')}</button>
+                        <button ref={imageEditButtonRef} type="button" disabled={busy || Boolean(result) || imageLoading} onClick={openImageEditor}>{t('cover_editor_edit')}</button>
+                    </div>}
                 </div>
             </div>
         </section>
@@ -1228,8 +1279,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
             onDrop={embedded ? undefined : event => { event.preventDefault(); event.stopPropagation(); }}
             onKeyDown={handleKeyDown}>
             <section ref={dialogRef} className={`cover-editor-dialog${embedded ? ' cover-editor-embedded' : ''}`} data-folder-modal={embedded ? undefined : true}
-                role={embedded ? 'region' : 'dialog'} aria-modal={embedded || helpOpen || filenamePreviewPath ? undefined : 'true'}
-                aria-hidden={helpOpen || resultLogOpen || filenamePreviewPath || embedded && processing ? 'true' : undefined} inert={helpOpen || resultLogOpen || filenamePreviewPath || embedded && processing ? '' : undefined}
+                role={embedded ? 'region' : 'dialog'} aria-modal={embedded || helpOpen || filenamePreviewPath || imageEditTarget ? undefined : 'true'}
+                aria-hidden={helpOpen || resultLogOpen || filenamePreviewPath || imageEditTarget || embedded && processing ? 'true' : undefined} inert={helpOpen || resultLogOpen || filenamePreviewPath || imageEditTarget || embedded && processing ? '' : undefined}
                 aria-labelledby={titleId} aria-busy={processing} tabIndex={-1}>
                 <header className="cover-editor-header">
                     <div className={embedded ? 'cover-editor-tool-heading' : undefined}>
@@ -1305,6 +1356,11 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                     {!result && <button type="button" className="cover-editor-save" onClick={save} disabled={busy || imageLoading || !readyEntries.length || !image}>{saving ? t('cover_editor_saving') : isBatchSave ? t('cover_editor_batch_save', [readyEntries.length]) : t('cover_editor_save')}</button>}
                 </footer>
             </section>
+            {imageEditTarget && <React.Suspense fallback={<div className="cover-editor-help-backdrop" role="status">{t('cover_editor_loading')}</div>}>
+                <CoverImageEditorDialog image={imageEditTarget} onApply={applyEditedImage} onClose={closeImageEditor} t={t}
+                    formatError={failure => failure?.code === 'ASSET_TOO_LARGE' ? t('cover_editor_image_too_large')
+                        : COVER_IMAGE_ERROR_KEYS[failure?.code] ? t(COVER_IMAGE_ERROR_KEYS[failure.code]) : ''} />
+            </React.Suspense>}
             {embedded && resultLogOpen && resultLog && <div className="cover-editor-result-modal"
                 onDragEnter={event => { event.preventDefault(); event.stopPropagation(); }}
                 onDragOver={event => { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'none'; }}

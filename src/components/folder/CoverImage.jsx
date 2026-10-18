@@ -80,16 +80,9 @@ function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadi
   }, [src]);
 
   if (!src || failed) {
-    if (isDirectory) {
-        return (
-            <div className={`${className} folder-item-artwork`} title={t('folder_item_type')}>
-                <FaIcon name="folder" size={iconSize} />
-            </div>
-        );
-    }
     return (
-      <div className={`${className} folder-cover-placeholder`} title={t('folder_no_cover')}>
-        <CoverArtwork fallbackAlt={t('folder_no_cover')} smooth />
+      <div className={`${className} folder-cover-placeholder`} title={t(isDirectory ? 'folder_item_type' : 'folder_no_cover')}>
+        <CoverArtwork isDirectory={isDirectory} fallbackAlt={t(isDirectory ? 'folder_item_type' : 'folder_no_cover')} smooth />
       </div>
     );
   }

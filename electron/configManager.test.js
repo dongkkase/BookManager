@@ -21,6 +21,148 @@ function writeDataConfig(root, config) {
     return configPath;
 }
 
+test('라이브러리 데이터 정리는 정상 등록 경로 설정의 초기화가 끝난 뒤에만 허용한다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-ready-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, { libraries: [] });
+    const manager = new ConfigManager(root, root);
+    assert.equal(manager.canPruneLibraryData(), false);
+    manager.loadConfig();
+    assert.equal(manager.canPruneLibraryData(), false);
+    await manager.initialize();
+    assert.equal(manager.canPruneLibraryData(), true);
+    manager.loadConfig();
+    assert.equal(manager.canPruneLibraryData(), true);
+    assert.equal(manager.getConfig().library_data_prune_pending, undefined);
+});
+
+test('설정 파일이 없어서 생성한 빈 라이브러리는 일반 설정 저장과 재시작 후에도 정리를 허용하지 않는다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-missing-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ConfigManager(root, root);
+    await manager.initialize();
+    assert.equal(manager.canPruneLibraryData(), false);
+    assert.equal(manager.getConfig().library_data_prune_pending, true);
+    assert.equal(manager.saveConfig({ ...manager.getConfig(), language: 'en', library_data_prune_pending: false }), true);
+    assert.equal(manager.canPruneLibraryData(), false);
+    const restarted = new ConfigManager(root, root);
+    await restarted.initialize();
+    assert.equal(restarted.canPruneLibraryData(), false);
+    assert.equal(restarted.getConfig().library_data_prune_pending, true);
+    assert.equal(restarted.saveConfig({ libraries: [], dup_check_folders: [], library_entries: [] }), true);
+    assert.equal(restarted.canPruneLibraryData(), false);
+});
+
+test('손상 설정의 빈 라이브러리 복구는 실제 등록 경로를 저장하기 전까지 정리를 보류한다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-corrupt-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    t.mock.method(console, 'error', () => {});
+    const configPath = writeDataConfig(root, {});
+    fs.writeFileSync(configPath, '{broken');
+    const manager = new ConfigManager(root, root);
+    await manager.initialize();
+    manager.loadConfig();
+    assert.equal(manager.canPruneLibraryData(), false);
+    const restarted = new ConfigManager(root, root);
+    await restarted.initialize();
+    assert.equal(restarted.canPruneLibraryData(), false);
+    const library = path.join(root, 'Books');
+    assert.equal(restarted.saveConfig({ libraries: [library] }), true);
+    assert.equal(restarted.canPruneLibraryData(), true);
+    assert.equal(restarted.getConfig().library_data_prune_pending, undefined);
+    assert.equal(restarted.saveConfig({ libraries: [], dup_check_folders: [], library_entries: [] }), true);
+    assert.equal(restarted.canPruneLibraryData(), true);
+    const empty = new ConfigManager(root, root);
+    await empty.initialize();
+    assert.deepEqual(empty.getConfig().libraries, []);
+    assert.equal(empty.canPruneLibraryData(), true);
+});
+
+test('등록 경로가 없거나 잘못된 기존 설정과 별칭만 변경한 보류 설정은 정리를 허용하지 않는다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-invalid-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const cases = [{ language: 'ko' }, { libraries: ['relative/books'] }, { libraries: ['/Books/invalid\0'] }, { library_entries: [{}] }, {
+        libraries: [path.join(root, 'Books')], library_data_prune_pending: true,
+    }];
+    for (const config of cases) {
+        writeDataConfig(root, config);
+        const manager = new ConfigManager(root, root);
+        await manager.initialize();
+        assert.equal(manager.canPruneLibraryData(), false);
+        const entries = manager.getConfig().library_entries.map(entry => ({ ...entry, alias: '다른 이름' }));
+        assert.equal(manager.saveConfig({ ...manager.getConfig(), library_entries: entries }), true);
+        assert.equal(manager.canPruneLibraryData(), false);
+        assert.equal(manager.getConfig().library_data_prune_pending, true);
+    }
+});
+
+test('라이브러리 변경 저장에 실패하면 정리 허용 상태로 승격하지 않는다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-save-failure-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    t.mock.method(console, 'error', () => {});
+    const manager = new ConfigManager(root, root);
+    await manager.initialize();
+    const blocker = path.join(root, 'blocker');
+    fs.writeFileSync(blocker, 'file');
+    manager.configPath = path.join(blocker, 'config.json');
+    assert.equal(manager.saveConfig({ libraries: [path.join(root, 'Books')] }), false);
+    assert.equal(manager.canPruneLibraryData(), false);
+    assert.deepEqual(manager.getConfig().libraries, []);
+    assert.equal(manager.getConfig().library_data_prune_pending, true);
+});
+
+test('정리 허용 상태에서도 잘못된 등록 경로를 저장하면 보류로 전환한다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-invalid-save-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    for (const invalidPath of ['/Books/invalid\0', 'relative/books']) {
+        writeDataConfig(root, { libraries: [path.join(root, 'Books')] });
+        const manager = new ConfigManager(root, root);
+        await manager.initialize();
+        assert.equal(manager.canPruneLibraryData(), true);
+        assert.equal(manager.saveConfig({ libraries: [invalidPath], dup_check_folders: [], library_entries: [] }), true);
+        assert.equal(manager.canPruneLibraryData(), false);
+        assert.equal(manager.getConfig().library_data_prune_pending, true);
+        manager.loadConfig();
+        assert.equal(manager.canPruneLibraryData(), false);
+        assert.equal(manager.saveConfig({ language: 'en' }), true);
+        assert.equal(manager.canPruneLibraryData(), false);
+    }
+});
+
+test('경로 복원 실패 후 기본값이나 재로드한 설정은 같은 초기화에서 정리를 허용하지 않는다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-restore-failure-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    t.mock.method(console, 'error', () => {});
+    const configPath = writeDataConfig(root, { libraries: [] });
+    const manager = new ConfigManager(root, root, { platform: 'darwin', configPath });
+    const loadConfig = manager.loadConfig.bind(manager);
+    manager.loadConfig = () => {
+        const config = loadConfig();
+        Object.defineProperty(config, 'folder_goto_history', {
+            get() { throw new Error('Path restoration failed'); },
+        });
+        return config;
+    };
+    await manager.initialize();
+    assert.equal(manager.canPruneLibraryData(), false);
+    assert.equal(manager.getConfig().library_data_prune_pending, true);
+    manager.loadConfig = loadConfig;
+    manager.loadConfig();
+    assert.equal(manager.canPruneLibraryData(), false);
+    assert.equal(manager.getConfig().library_data_prune_pending, true);
+    assert.equal(manager.saveConfig({ ...manager.getConfig(), language: 'en' }), true);
+    assert.equal(manager.canPruneLibraryData(), false);
+    assert.equal(manager.getConfig().library_data_prune_pending, true);
+    const restarted = new ConfigManager(root, root, { platform: 'darwin', configPath });
+    await restarted.initialize();
+    assert.equal(restarted.canPruneLibraryData(), false);
+    assert.equal(manager.saveConfig({ libraries: [path.join(root, 'Books')] }), true);
+    assert.equal(manager.canPruneLibraryData(), true);
+    manager.loadConfig();
+    assert.equal(manager.canPruneLibraryData(), true);
+    assert.equal(manager.getConfig().library_data_prune_pending, undefined);
+});
+
 test('오류 보고와 사용 통계는 미설정 시 기본으로 켜지며 명시적인 false와 잘못된 값은 끈다', () => {
     const manager = new ConfigManager('/user/data', '/portable/app');
     const defaults = manager.getDefaultConfig();

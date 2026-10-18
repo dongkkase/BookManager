@@ -13,6 +13,7 @@ async function fixture(t, language = 'en') {
     const handlers = new Map();
     const logs = [];
     const config = { language };
+    const configManager = { userDataPath: root, getConfig: () => config };
     const delivery = { windowDestroyed: false, contentsDestroyed: false, sendFails: false };
     const mainFrame = {};
     const webContents = {
@@ -30,7 +31,7 @@ async function fixture(t, language = 'en') {
             handle: (channel, handler) => handlers.set(channel, handler),
             removeHandler: channel => handlers.delete(channel),
         },
-        configManager: { userDataPath: root, getConfig: () => config },
+        configManager,
         getLibraryDbPath: () => null,
         getMainWindow: () => mainWindow,
     });
@@ -46,8 +47,23 @@ async function fixture(t, language = 'en') {
         await service.dispose();
         await fs.rm(root, { recursive: true, force: true });
     });
-    return { service, invoke, logs, config, delivery, webContents, mainFrame, handlers };
+    return { service, invoke, logs, config, configManager, root, delivery, webContents, mainFrame, handlers };
 }
+
+test('Readive IPC restricts local reading persistence only after library settings are trusted', async t => {
+    const { service, config, configManager, root } = await fixture(t);
+    const libraryPath = path.join(root, 'Books');
+    const inside = path.join(libraryPath, 'book.txt');
+    const outside = path.join(root, 'outside.txt');
+    config.libraries = [libraryPath];
+    configManager.canPruneLibraryData = () => false;
+    assert.equal(service.shouldPersistReadingState(outside), true);
+    configManager.canPruneLibraryData = () => true;
+    assert.equal(service.shouldPersistReadingState(inside), true);
+    assert.equal(service.shouldPersistReadingState(outside), false);
+    config.libraries = [];
+    assert.equal(service.shouldPersistReadingState(inside), false);
+});
 
 test('Readive IPC sends pairing and device events to server logs without exposing credentials or shared-server status', async t => {
     const { service, invoke, logs } = await fixture(t);
