@@ -1,4 +1,5 @@
 import { normalizeMetadataApiSourceForBookType } from './metadataApiPolicy.js';
+import { normalizeHardcoverToken, normalizeMetadataApiEnabled, normalizeMetadataProviderSettings } from '../electron/metadataProviderSettings.js';
 
 const FORMAT_KEYS = new Set(['none', 'zip', 'cbz', 'cbr', '7z']);
 const LANGUAGE_KEYS = new Set(['ko', 'en', 'ja']);
@@ -129,6 +130,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         aladin: String(apiKeys.aladin || '').trim(),
         vine: String(apiKeys.vine || '').trim(),
         google: String(apiKeys.google || '').trim(),
+        hardcover: normalizeHardcoverToken(apiKeys.hardcover),
         ai_provider: aiProvider,
         ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
         ai_gemini_key: aiGeminiKey,
@@ -137,20 +139,31 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         tts_google_key: String(apiKeys.tts_google_key || '').trim(),
         tag_rules: String(apiKeys.tag_rules || ''),
     };
+    const metadataApiEnabled = normalizeMetadataApiEnabled(config.metadata_api_enabled);
     const preferredComicApi = normalizeMetadataApiSourceForBookType(
         config.preferred_meta_api_comic || config.last_meta_api || '',
         'comic',
         normalizedApiKeys,
+        metadataApiEnabled,
     );
     const preferredBookApi = normalizeMetadataApiSourceForBookType(
         config.preferred_meta_api_book || config.last_meta_api || '',
         'book',
         normalizedApiKeys,
+        metadataApiEnabled,
     );
     const preferredPdfApi = normalizeMetadataApiSourceForBookType(
         config.preferred_meta_api_pdf || config.last_meta_api || '',
         'pdf',
         normalizedApiKeys,
+        metadataApiEnabled,
+    );
+
+    const preferredAudioApi = normalizeMetadataApiSourceForBookType(
+        config.preferred_meta_api_audio || config.preferred_meta_api_book || config.last_meta_api || '',
+        'audio',
+        normalizedApiKeys,
+        metadataApiEnabled,
     );
 
     const fontFamily = String(config.font_family || 'Noto Sans KR');
@@ -187,9 +200,68 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         preferred_meta_api_comic: preferredComicApi,
         preferred_meta_api_book: preferredBookApi,
         preferred_meta_api_pdf: preferredPdfApi,
+        preferred_meta_api_audio: preferredAudioApi,
+        metadata_providers: normalizeMetadataProviderSettings(config.metadata_providers),
+        metadata_api_enabled: metadataApiEnabled,
         last_meta_api: String(config.last_meta_api || preferredComicApi || preferredBookApi || '').trim(),
         api_keys: normalizedApiKeys,
     };
+}
+
+function isSettingsObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function settingsValuesEqual(left, right) {
+    if (Object.is(left, right)) return true;
+    if (Array.isArray(left) || Array.isArray(right)) {
+        return Array.isArray(left) && Array.isArray(right)
+            && left.length === right.length
+            && left.every((value, index) => settingsValuesEqual(value, right[index]));
+    }
+    if (!isSettingsObject(left) || !isSettingsObject(right)) return false;
+    const leftKeys = Object.keys(left).filter(key => left[key] !== undefined);
+    const rightKeys = Object.keys(right).filter(key => right[key] !== undefined);
+    return leftKeys.length === rightKeys.length
+        && leftKeys.every(key => Object.prototype.hasOwnProperty.call(right, key)
+            && settingsValuesEqual(left[key], right[key]));
+}
+
+export function settingsConfigsEqual(left = {}, right = {}, coreCount = 4) {
+    return settingsValuesEqual(
+        normalizeSettingsConfig(left, coreCount),
+        normalizeSettingsConfig(right, coreCount),
+    );
+}
+
+function mergeSettingsValue(saved, submitted, current) {
+    if (settingsValuesEqual(submitted, current)) return saved;
+    if (!isSettingsObject(current)
+        || (submitted !== undefined && !isSettingsObject(submitted))
+        || (saved !== undefined && !isSettingsObject(saved))) return current;
+
+    const keys = new Set([
+        ...Object.keys(saved || {}),
+        ...Object.keys(submitted || {}),
+        ...Object.keys(current),
+    ]);
+    const entries = [];
+    for (const key of keys) {
+        const value = mergeSettingsValue(saved?.[key], submitted?.[key], current[key]);
+        if (value !== undefined) entries.push([key, value]);
+    }
+    return Object.fromEntries(entries);
+}
+
+export function mergeSettingsDraft(saved = {}, submitted = {}, current = {}, coreCount = 4) {
+    const savedConfig = normalizeSettingsConfig(saved, coreCount);
+    const submittedConfig = normalizeSettingsConfig(submitted, coreCount);
+    const currentConfig = normalizeSettingsConfig(current, coreCount);
+    let merged = mergeSettingsValue(savedConfig, submittedConfig, currentConfig);
+    if (!settingsValuesEqual(currentConfig.library_entries, submittedConfig.library_entries)) {
+        merged = syncLibraryConfig(merged, currentConfig.library_entries);
+    }
+    return normalizeSettingsConfig(merged, coreCount);
 }
 
 export function settingsEffects(previous = {}, next = {}) {

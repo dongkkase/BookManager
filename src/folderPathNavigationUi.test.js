@@ -10,7 +10,7 @@ const configSource = readFileSync(new URL('../electron/configManager.js', import
 test('경로 이동 입력은 리스트 툴바와 파일 목록 사이에 항상 표시된다', () => {
     const toolbarIndex = folderTabSource.indexOf('className="right-toolbar"');
     const pathBarIndex = folderTabSource.indexOf('<FolderPathBar');
-    const viewIndex = folderTabSource.indexOf('className="view-container"');
+    const viewIndex = folderTabSource.indexOf('ref={viewContainerRef}');
 
     assert.ok(toolbarIndex >= 0);
     assert.ok(pathBarIndex > toolbarIndex);

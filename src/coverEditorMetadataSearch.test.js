@@ -10,7 +10,7 @@ import { enabledMetadataApiSourcesForBookType, UNIFIED_METADATA_API_SOURCE } fro
 import { metadataSearchResultKey } from './metadataSearch.js';
 
 const options = { query: '작품', page: 1, bookType: 'book', apiKeys: {} };
-const allKeys = { yes24: 'test', aladin: 'test', google: 'test', vine: 'test' };
+const allKeys = { yes24: 'test', aladin: 'test', google: 'test', vine: 'test', hardcover: 'test' };
 const cover = id => ({ id, title: '작품', coverUrl: `https://example.test/${id}.jpg` });
 const deferred = () => {
     let resolve;
@@ -64,6 +64,30 @@ test('알 수 없거나 책 종류에서 지원하지 않는 API는 통합검색
         assert.equal(response.api, UNIFIED_METADATA_API_SOURCE);
         assert.deepEqual(calls, enabledMetadataApiSourcesForBookType(bookType, options.apiKeys).map(source => source.value));
     }
+});
+
+test('비활성화된 표지 검색 소스는 통합검색과 저장된 단일 소스 선택에서 제외한다', async () => {
+    const metadataApiEnabled = { '리디북스': false, 'Google Books': false, Goodreads: false };
+    for (const apiSource of [UNIFIED_METADATA_API_SOURCE, '리디북스']) {
+        const calls = [];
+        const response = await searchCoverEditorMetadata({ ...options, apiSource, apiKeys: allKeys, metadataApiEnabled }, async request => {
+            calls.push(request.apiSource);
+            return { success: true, results: [cover(1)] };
+        });
+        assert.equal(response.api, UNIFIED_METADATA_API_SOURCE);
+        assert.ok(calls.length > 0);
+        assert.ok(calls.every(source => metadataApiEnabled[source] !== false));
+        assert.ok(response.results.every(result => metadataApiEnabled[result.apiSource] !== false));
+    }
+});
+
+test('모든 표지 검색 소스가 비활성화되면 요청 없이 설정 안내 상태를 반환한다', async () => {
+    const metadataApiEnabled = Object.fromEntries(enabledMetadataApiSourcesForBookType('book', allKeys).map(source => [source.value, false]));
+    let calls = 0;
+    const response = await searchCoverEditorMetadata({ ...options, apiKeys: allKeys, metadataApiEnabled }, async () => { calls += 1; });
+    assert.equal(response.success, false);
+    assert.equal(response.code, 'NO_ENABLED_APIS');
+    assert.equal(calls, 0);
 });
 
 test('표지 검색도 기존 통합검색의 최대 세 제공자 동시 실행 제한을 유지한다', async () => {
@@ -130,7 +154,7 @@ test('표지 없는 결과를 걸러도 원래 다음 페이지 정보는 유지
 test('같은 제공자의 같은 결과만 제거하고 다른 제공자의 같은 ID는 유지한다', async () => {
     const response = await searchCoverEditorMetadata(options, async request => ({
         success: true,
-        results: request.apiSource === 'Amazon' ? [] : [
+        results: !['리디북스', '문피아'].includes(request.apiSource) ? [] : [
             cover(0), { ...cover(0), coverUrl: 'https://example.test/duplicate.jpg' },
             { title: '작품', author: '저자', coverUrl: 'https://example.test/no-id.jpg' },
             { title: '작품', author: '저자', coverUrl: 'https://example.test/no-id-duplicate.jpg' },

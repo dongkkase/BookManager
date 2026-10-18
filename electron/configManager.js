@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { restoreFolderConfigPaths } from './folderConfigPaths.js';
+import { isMetadataApiSourceEnabled, normalizeHardcoverToken, normalizeMetadataApiEnabled, normalizeMetadataProviderSettings } from './metadataProviderSettings.js';
 import {
   migrateLegacyAppDataDir,
   resolveConfigPath,
@@ -9,9 +10,10 @@ import {
 } from './dataPaths.js';
 
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
-const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
-const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon']);
-const PDF_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon']);
+const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+const PDF_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+const AUDIO_METADATA_API_SOURCES = new Set([...BOOK_METADATA_API_SOURCES, 'Audible', 'AudNexus', 'Libro.fm']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
 const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
 
@@ -19,10 +21,21 @@ function normalizeLanguage(value, fallback = 'ko') {
   return SUPPORTED_LANGUAGES.has(value) ? value : fallback;
 }
 
-function normalizeMetadataApiSource(value, sources, fallback = '리디북스') {
-  const source = String(value || '').trim();
+function normalizeMetadataApiSource(value, sources, fallback = '리디북스', enabledMap = {}, apiKeys = {}) {
+    const source = String(value || '').trim();
     if (source === '통합검색') return source;
-  return sources.has(source) ? source : fallback;
+    if (sources.has(source) && isMetadataApiSourceEnabled(source, enabledMap)) return source;
+    const requiredKeys = { YES24: 'yes24', '알라딘': 'aladin', 'Google Books': 'google', Vine: 'vine', Hardcover: 'hardcover' };
+    const available = candidate => {
+        if (!isMetadataApiSourceEnabled(candidate, enabledMap)) return false;
+        const key = requiredKeys[candidate];
+        if (!key) return true;
+        return key === 'hardcover'
+            ? normalizeHardcoverToken(apiKeys?.[key]).length > 0
+            : String(apiKeys?.[key] || '').trim().length > 0;
+    };
+    if (sources.has(fallback) && available(fallback)) return fallback;
+    return [...sources].find(available) || '통합검색';
 }
 
 export class ConfigManager {
@@ -143,20 +156,34 @@ export class ConfigManager {
     ], rawLibraryPaths);
     const libraries = libraryEntries.map(entry => entry.path);
     const favorites = this.normalizeFavorites(raw.favorites || raw.folder_favorites || []);
+    const metadataApiEnabled = normalizeMetadataApiEnabled(raw.metadata_api_enabled);
     const preferredComicApi = normalizeMetadataApiSource(
       raw.preferred_meta_api_comic || raw.last_meta_api || defaults.preferred_meta_api_comic,
       COMIC_METADATA_API_SOURCES,
       defaults.preferred_meta_api_comic,
+        metadataApiEnabled,
+        raw.api_keys,
     );
     const preferredBookApi = normalizeMetadataApiSource(
       raw.preferred_meta_api_book || raw.last_meta_api || defaults.preferred_meta_api_book,
       BOOK_METADATA_API_SOURCES,
       defaults.preferred_meta_api_book,
+        metadataApiEnabled,
+        raw.api_keys,
     );
     const preferredPdfApi = normalizeMetadataApiSource(
       raw.preferred_meta_api_pdf || raw.last_meta_api || defaults.preferred_meta_api_pdf,
       PDF_METADATA_API_SOURCES,
       defaults.preferred_meta_api_pdf,
+        metadataApiEnabled,
+        raw.api_keys,
+    );
+    const preferredAudioApi = normalizeMetadataApiSource(
+        raw.preferred_meta_api_audio || raw.preferred_meta_api_book || raw.last_meta_api || defaults.preferred_meta_api_audio,
+        AUDIO_METADATA_API_SOURCES,
+        defaults.preferred_meta_api_audio,
+        metadataApiEnabled,
+        raw.api_keys,
     );
     const fontFamily = String(raw.font_family || defaults.font_family);
     const rawApiKeys = raw.api_keys && typeof raw.api_keys === 'object' && !Array.isArray(raw.api_keys)
@@ -195,10 +222,14 @@ export class ConfigManager {
       preferred_meta_api_comic: preferredComicApi,
       preferred_meta_api_book: preferredBookApi,
       preferred_meta_api_pdf: preferredPdfApi,
+        preferred_meta_api_audio: preferredAudioApi,
+        metadata_providers: normalizeMetadataProviderSettings(raw.metadata_providers),
+        metadata_api_enabled: metadataApiEnabled,
       last_meta_api: String(raw.last_meta_api || preferredComicApi || defaults.last_meta_api).trim(),
       api_keys: {
         ...mergedApiKeys,
         yes24: String(mergedApiKeys.yes24 || '').trim(),
+        hardcover: normalizeHardcoverToken(mergedApiKeys.hardcover),
         ai_provider: aiProvider,
         ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
         ai_gemini_key: aiGeminiKey,
@@ -265,11 +296,15 @@ export class ConfigManager {
       preferred_meta_api_comic: '리디북스',
       preferred_meta_api_book: '리디북스',
       preferred_meta_api_pdf: '리디북스',
+        preferred_meta_api_audio: '리디북스',
+        metadata_providers: normalizeMetadataProviderSettings(),
+        metadata_api_enabled: normalizeMetadataApiEnabled(),
       api_keys: {
         yes24: '',
         aladin: '',
         vine: '',
         google: '',
+        hardcover: '',
         ai_provider: 'Gemini',
         ai_key: '',
         ai_gemini_key: '',
@@ -382,6 +417,14 @@ export class ConfigManager {
         viewer_paths: {
           ...(this.config?.viewer_paths || {}),
           ...(configData?.viewer_paths || {}),
+        },
+        metadata_providers: {
+            ...(this.config?.metadata_providers || {}),
+            ...(configData?.metadata_providers || {}),
+        },
+        metadata_api_enabled: {
+            ...(this.config?.metadata_api_enabled || {}),
+            ...(configData?.metadata_api_enabled || {}),
         },
         api_keys: {
           ...(this.config?.api_keys || {}),

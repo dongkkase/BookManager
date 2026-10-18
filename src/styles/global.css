@@ -1,3 +1,5 @@
+@import './hoverTransitions.css';
+
 /* ============================================
    Global Styles - BookManager
    Dark Theme (기존 PyQt6 Dark Theme 포트)
@@ -176,6 +178,13 @@ a:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid #4db8ff;
   outline-offset: 2px;
+}
+
+/* 외곽에 포커스를 표시하는 입력 영역은 내부 테두리를 중복해서 강조하지 않습니다. */
+:is(.settings-control-field, .settings-provider-secret, .meta-search-field, .cover-editor-search-field, .folder-goto-path-control):focus-within
+    :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"]), select, textarea):focus-visible {
+    outline: none;
+    box-shadow: none;
 }
 
 label:has(input:not(:disabled)),

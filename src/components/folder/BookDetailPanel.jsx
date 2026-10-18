@@ -8,6 +8,7 @@ import {
     DetailCoverFrame,
     DetailFieldGroup,
     DetailLine,
+    DetailOpenButton,
     DetailPanelStatusBadges,
     detailMetadataValue,
     detailPublicationDate,
@@ -22,7 +23,7 @@ function metadataText(t, key, fallback) {
     return translated && translated !== key ? translated : fallback;
 }
 
-const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
+const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, onOpenFile, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -93,6 +94,7 @@ const BookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRat
                                     <CoverArtwork className="detail-cover-placeholder" fallbackAlt={t('folder_no_cover')} />
                                 )}
                             </DetailCoverFrame>
+                            <DetailOpenButton selectedFile={selectedFile} onOpenFile={onOpenFile} t={t} />
                             <div className="detail-cover-caption">
                                 <div>{fileName || '-'} ({formatSize(selectedFile.size)})</div>
                                 <div>{formatDate(selectedFile.created || selectedFile.ctime)}</div>

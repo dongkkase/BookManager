@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { restoreFolderNavigationViewport } from './hooks/useFolderNavigationRestore.js';
+import { buildVirtualGridLayout, buildVirtualTableRows } from './folderViewState.js';
 
 function createViewport({ headerHeight = 0, maxScrollTop = 5000 } = {}) {
     let scrollTop = 0;
@@ -152,6 +153,102 @@ test('a shorter folder synchronizes the clamped browser position', () => {
     restoreFolderNavigationViewport({
         container,
         request: { id: 6, scrollTop: 10000, scrollLeft: -20 },
+        onScrollPositionChange: position => positions.push(position),
+        ...frames,
+    });
+    frames.flush();
+    frames.flush();
+    assert.deepEqual(positions.at(-1), { scrollTop: 100, scrollLeft: 0 });
+});
+
+test('index navigation aligns an already visible item below the sticky table header', () => {
+    const { container, addItem } = createViewport({ headerHeight: 40 });
+    const frames = createFrames();
+    addItem('/library/나무.zip', 240, 50);
+    restoreFolderNavigationViewport({
+        container,
+        request: { id: 7, scrollTop: 100, scrollLeft: 620, revealPath: '/library/나무.zip', revealAlign: 'start' },
+        ...frames,
+    });
+    frames.flush();
+    frames.flush();
+    assert.equal(container.scrollTop, 200);
+    assert.equal(container.scrollLeft, 620);
+});
+
+test('normal folder navigation keeps an already visible item in place', () => {
+    const { container, addItem } = createViewport({ headerHeight: 40 });
+    const frames = createFrames();
+    addItem('/library/visible', 240, 50);
+    restoreFolderNavigationViewport({
+        container,
+        request: { id: 8, scrollTop: 100, scrollLeft: 25, revealPath: '/library/visible' },
+        ...frames,
+    });
+    frames.flush();
+    frames.flush();
+    assert.equal(container.scrollTop, 100);
+    assert.equal(container.scrollLeft, 25);
+});
+
+test('index navigation aligns a virtual grouped table target and corrects its mounted position', () => {
+    const { container, addItem } = createViewport({ headerHeight: 40 });
+    const frames = createFrames();
+    const targetPath = '/library/target';
+    const rows = buildVirtualTableRows([
+        { name: 'A', files: Array.from({ length: 60 }, (_, index) => ({ path: `/library/a-${index}` })) },
+        { name: 'B', files: [{ path: targetPath }] },
+    ]);
+    const rowHeight = 50;
+    const index = rows.findIndex(row => row.type === 'file' && row.file.path === targetPath);
+    const positions = [];
+    restoreFolderNavigationViewport({
+        container,
+        request: { id: 9, scrollTop: 0, scrollLeft: 250, revealPath: targetPath, revealAlign: 'start' },
+        revealBounds: { top: index * rowHeight, height: rowHeight },
+        onScrollPositionChange: position => {
+            positions.push(position);
+            if (positions.length === 1) addItem(targetPath, 3110, rowHeight);
+        },
+        ...frames,
+    });
+    assert.equal(container.scrollTop, 3100);
+    frames.flush();
+    frames.flush();
+    assert.equal(container.scrollTop, 3070);
+    assert.equal(container.scrollLeft, 250);
+});
+
+test('index navigation uses grouped grid offsets before the target is mounted', () => {
+    const { container, addItem } = createViewport();
+    const frames = createFrames();
+    const targetPath = '/library/target';
+    const layout = buildVirtualGridLayout([
+        { name: 'A', files: Array.from({ length: 60 }, (_, index) => ({ path: `/library/a-${index}` })) },
+        { name: 'B', files: [{ path: targetPath }] },
+    ], { columnCount: 3, rowHeight: 150, padding: 10, headerHeight: 36 });
+    const revealBounds = layout.rows.find(row => row.type === 'file' && row.file.path === targetPath);
+    restoreFolderNavigationViewport({
+        container,
+        request: { id: 10, scrollTop: 0, scrollLeft: 0, revealPath: targetPath, revealAlign: 'start' },
+        revealBounds,
+        ...frames,
+    });
+    assert.equal(container.scrollTop, 3082);
+    addItem(targetPath, 3082, 134);
+    frames.flush();
+    frames.flush();
+    assert.equal(container.scrollTop, 3082);
+});
+
+test('index navigation respects the bottom scroll limit for a final item', () => {
+    const { container, addItem } = createViewport({ maxScrollTop: 100 });
+    const frames = createFrames();
+    const positions = [];
+    addItem('/library/final', 450, 50);
+    restoreFolderNavigationViewport({
+        container,
+        request: { id: 11, scrollTop: 0, scrollLeft: 0, revealPath: '/library/final', revealAlign: 'start' },
         onScrollPositionChange: position => positions.push(position),
         ...frames,
     });

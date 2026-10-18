@@ -54,7 +54,7 @@ function restoreCoverEditorOptions(preferences, info) {
     };
 }
 
-export function CoverEditorDialog({ file, files, apiKeys = {}, preferences, onPreferencesChange, onExecute, onClose, showToast, t,
+export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnabled, preferences, onPreferencesChange, onExecute, onClose, showToast, t,
     embedded = false, externalBusy = false, localImageRequest, onImageDropAvailabilityChange, onToggleFile, onToggleAll, onRemoveFile, onBusyChange, onReset }) {
     const targets = (files?.length ? files : [file]).filter(Boolean);
     const fileKey = JSON.stringify(targets.map(target => target.full_path || target.path));
@@ -136,7 +136,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, preferences, onPr
     };
     const filePath = selectedEntry?.filePath || targets[0]?.full_path || targets[0]?.path || '';
     const bookType = ['comic', 'pdf', 'audio'].includes(info?.kind) ? info.kind : 'book';
-    const searchApiSources = metadataSearchSourcesForBookType(bookType);
+    const metadataApiEnabledKey = ALL_METADATA_API_SOURCES.map(source => metadataApiEnabled?.[source.value] !== false).join(',');
+    const searchApiSources = metadataSearchSourcesForBookType(bookType, metadataApiEnabled);
     const searchApiSource = searchApiSources.some(source => source.value === options.apiSource)
         ? options.apiSource : UNIFIED_METADATA_API_SOURCE;
     const checkedPaths = new Set(targets.filter(target => !embedded || target.checked !== false).map(target => target.full_path || target.path));
@@ -166,6 +167,20 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, preferences, onPr
     };
 
     useEffect(() => attachCoverEditorSearchScroll(metadataResultsRef.current), [imageSource, metadataLoading, metadataSearch.results]);
+
+    useEffect(() => {
+        metadataRequestRef.current += 1;
+        setMetadataLoading(false);
+        setMetadataSearch(EMPTY_METADATA_SEARCH);
+    }, [metadataApiEnabledKey]);
+
+    useEffect(() => {
+        if (metadataApiEnabled?.[options.apiSource] !== false) return;
+        const nextOptions = { ...optionsRef.current, apiSource: searchApiSource };
+        optionsRef.current = nextOptions;
+        setOptions(nextOptions);
+        onPreferencesChange?.(nextOptions);
+    }, [metadataApiEnabledKey, options.apiSource, searchApiSource]);
 
     useEffect(() => {
         if (!imageArrival) return;
@@ -526,7 +541,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, preferences, onPr
                 showToast?.({ key: 'api_key_missing' });
                 return;
             }
-            const value = await searchCoverEditorMetadata({ query, page, bookType, apiKeys, apiSource: searchApiSource },
+            const value = await searchCoverEditorMetadata({ query, page, bookType, apiKeys, metadataApiEnabled, apiSource: searchApiSource },
                 request => window.electronAPI.fetchMetadata(request), { isCancelled: () => !isCurrent() });
             if (!isCurrent()) return;
             if (value?.cancelled) {
@@ -535,7 +550,9 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, preferences, onPr
             }
             if (!value?.success || !Array.isArray(value.results)) {
                 setMetadataSearch(current => ({ ...current, failed: true }));
-                showToast?.({ key: value?.code === 'NO_ENABLED_APIS' ? 'cover_editor_metadata_no_apis' : 'cover_editor_metadata_failed' });
+                showToast?.(value?.code === 'API_DISABLED'
+                    ? { key: 'api_provider_disabled', values: { api: searchApiSource } }
+                    : { key: value?.code === 'NO_ENABLED_APIS' ? 'cover_editor_metadata_no_apis' : 'cover_editor_metadata_failed' });
                 return;
             }
             setMetadataSearch({ ...value, query, page, searched: true, failed: false });

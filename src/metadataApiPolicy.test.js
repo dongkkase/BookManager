@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { METADATA_API_SOURCE_NAMES, normalizeMetadataApiEnabled } from '../electron/metadataProviderSettings.js';
 import {
     ALL_METADATA_API_SOURCES,
     UNIFIED_METADATA_API_SOURCE,
@@ -16,6 +17,45 @@ import {
   preferredMetadataApiSource,
   requiredApiKeyForSource,
 } from './metadataApiPolicy.js';
+
+const additionalBookSources = ['Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB'];
+const additionalKeylessSources = additionalBookSources.filter(source => source !== 'Hardcover');
+const audioOnlySources = ['Audible', 'AudNexus', 'Libro.fm'];
+
+test('모든 검색 소스는 활성화 설정의 등록 목록과 일치한다', () => {
+    assert.deepEqual(ALL_METADATA_API_SOURCES.map(source => source.value).sort(), [...METADATA_API_SOURCE_NAMES].sort());
+});
+
+test('검색 목록은 토글을 반영하고 통합검색은 활성화와 필수 키를 모두 확인한다', () => {
+    const settings = { '리디북스': false, YES24: false, Audible: false };
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        const shown = metadataSearchSourcesForBookType(bookType, settings).map(source => source.value);
+        assert.equal(shown[0], UNIFIED_METADATA_API_SOURCE);
+        assert.ok(!shown.includes('리디북스'));
+        assert.ok(!shown.includes('YES24'));
+        assert.ok(!shown.includes('Audible'));
+        assert.ok(shown.includes('알라딘'));
+        const available = enabledMetadataApiSourcesForBookType(bookType, { yes24: 'key', aladin: 'key' }, settings).map(source => source.value);
+        assert.ok(!available.includes('YES24'));
+        assert.ok(!available.includes('Hardcover'));
+        assert.ok(available.includes('알라딘'));
+    }
+});
+
+test('비활성 기본 검색 소스는 사용 가능한 소스로 복구하고 모든 소스가 꺼지면 통합검색을 유지한다', () => {
+    const disabled = Object.fromEntries(METADATA_API_SOURCE_NAMES.map(source => [source, false]));
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        assert.deepEqual(metadataSearchSourcesForBookType(bookType, disabled).map(source => source.value), [UNIFIED_METADATA_API_SOURCE]);
+        assert.deepEqual(enabledMetadataApiSourcesForBookType(bookType, { yes24: 'key' }, disabled), []);
+        assert.equal(normalizeMetadataApiSourceForBookType('리디북스', bookType, {}, disabled), UNIFIED_METADATA_API_SOURCE);
+        assert.equal(preferredMetadataApiSource({ last_meta_api: '리디북스', metadata_api_enabled: disabled }, bookType), UNIFIED_METADATA_API_SOURCE);
+        assert.equal(normalizeMetadataApiSourceForBookType('리디북스', bookType, { hardcover: 'Bearer token' }, { ...disabled, Hardcover: true }), 'Hardcover');
+        assert.equal(normalizeMetadataApiSourceForBookType('리디북스', bookType, {}, { ...disabled, Hardcover: true }), UNIFIED_METADATA_API_SOURCE);
+        assert.equal(normalizeMetadataApiSourceForBookType('Hardcover', bookType, {}, { ...disabled, Hardcover: true }), 'Hardcover');
+        assert.equal(preferredMetadataApiSource({ last_meta_api: '리디북스', metadata_api_enabled: { '리디북스': false } }, bookType), '문피아');
+    }
+    assert.deepEqual(normalizeMetadataApiEnabled(disabled), disabled);
+});
 
 const metadataTabSource = readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
@@ -52,6 +92,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     'Google Books',
     'Anilist',
     'Vine',
+    ...additionalBookSources,
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('book').map(source => source.value), [
     '리디북스',
@@ -60,6 +101,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '알라딘',
     'Google Books',
     'Amazon',
+    ...additionalBookSources,
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('pdf').map(source => source.value), [
     '리디북스',
@@ -68,6 +110,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '알라딘',
     'Google Books',
     'Amazon',
+    ...additionalBookSources,
   ]);
   assert.deepEqual(metadataApiSourcesForBookType('audio').map(source => source.value), [
     '리디북스',
@@ -76,6 +119,8 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '알라딘',
     'Google Books',
     'Amazon',
+    ...additionalBookSources,
+    ...audioOnlySources,
   ]);
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'book', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'pdf', {}), '리디북스');
@@ -101,7 +146,7 @@ test('책 타입별 기본 검색 API 설정을 선택한다', () => {
   assert.equal(metadataApiPreferenceKey('comic'), 'preferred_meta_api_comic');
   assert.equal(metadataApiPreferenceKey('book'), 'preferred_meta_api_book');
   assert.equal(metadataApiPreferenceKey('pdf'), 'preferred_meta_api_pdf');
-  assert.equal(metadataApiPreferenceKey('audio'), 'preferred_meta_api_book');
+  assert.equal(metadataApiPreferenceKey('audio'), 'preferred_meta_api_audio');
   assert.equal(preferredMetadataApiSource({
     preferred_meta_api_comic: 'Vine',
     preferred_meta_api_book: 'Amazon',
@@ -154,19 +199,20 @@ test('통합검색은 모든 책 타입에서 선택할 수 있고 실제 API �
 
 test('통합검색 대상은 책 타입과 API 키 등록 여부를 함께 반영한다', () => {
     assert.deepEqual(enabledMetadataApiSourcesForBookType('comic').map(source => source.value), [
-        '리디북스', '문피아', '한국웹툰', 'Anilist',
+        '리디북스', '문피아', '한국웹툰', 'Anilist', ...additionalKeylessSources,
     ]);
     for (const bookType of ['book', 'pdf', 'audio']) {
         assert.deepEqual(enabledMetadataApiSourcesForBookType(bookType).map(source => source.value), [
-            '리디북스', '문피아', 'Amazon',
+            '리디북스', '문피아', 'Amazon', ...additionalKeylessSources,
+            ...(bookType === 'audio' ? audioOnlySources : []),
         ]);
     }
     assert.deepEqual(enabledMetadataApiSourcesForBookType('comic', {
         yes24: 'yk_live_test', aladin: ' ', google: 'key', vine: '',
     }).map(source => source.value), [
-        '리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist',
+        '리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', ...additionalKeylessSources,
     ]);
-    const apiKeys = { yes24: 'key', aladin: 'key', google: 'key', vine: 'key' };
+    const apiKeys = { yes24: 'key', aladin: 'key', google: 'key', vine: 'key', hardcover: 'token' };
     for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
         assert.deepEqual(enabledMetadataApiSourcesForBookType(bookType, apiKeys), metadataApiSourcesForBookType(bookType));
     }
@@ -421,4 +467,24 @@ test('오디오북 API 검색 결과에도 만화 읽기 방향 기본값을 넣
     Writer: 'Artist',
     Summary: '설명',
   });
+});
+
+test('새 검색 소스는 매체에 맞게 선택되며 Hardcover 토큰이 있어야 통합검색에 포함된다', () => {
+    for (const source of additionalBookSources) {
+        for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+            assert.equal(normalizeMetadataApiSourceForBookType(source, bookType), source);
+        }
+    }
+    for (const source of audioOnlySources) {
+        assert.equal(normalizeMetadataApiSourceForBookType(source, 'audio'), source);
+        for (const bookType of ['comic', 'book', 'pdf']) {
+            assert.equal(normalizeMetadataApiSourceForBookType(source, bookType), '리디북스');
+        }
+    }
+    assert.equal(requiredApiKeyForSource('Hardcover'), 'hardcover');
+    assert.equal(apiSourceHasRequiredKey('Hardcover', { hardcover: ' Bearer  ' }), false);
+    assert.equal(apiSourceHasRequiredKey('Hardcover', { hardcover: ' Bearer token ' }), true);
+    assert.equal(preferredMetadataApiSource({ preferred_meta_api_book: 'Kobo' }, 'audio'), 'Kobo');
+    assert.equal(preferredMetadataApiSource({ preferred_meta_api_book: 'Kobo', preferred_meta_api_audio: 'Audible' }, 'audio'), 'Audible');
+    assert.equal(new Set(ALL_METADATA_API_SOURCES.map(source => source.value)).size, ALL_METADATA_API_SOURCES.length);
 });

@@ -79,6 +79,8 @@ import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { searchYes24 } from './yes24Search.js';
 import { originalMunpiaCoverUrl, searchMunpia } from './munpiaSearch.js';
 import { searchKmas } from './kmasSearch.js';
+import { additionalMetadataErrorMessage, createAdditionalMetadataContext, searchAdditionalMetadataProvider } from './additionalMetadataProviders.js';
+import { isMetadataApiSourceEnabled } from './metadataProviderSettings.js';
 import { detectImageMimeType } from './imageMagic.js';
 import { encodeTextCover } from './textCoverEncoder.js';
 import { LibraryDB } from './database/library_db.js';
@@ -680,6 +682,7 @@ function stripHtml(value = '') {
 function normalizeSearchResult(raw = {}, id = '') {
   const metadata = {
     Title: raw.Title || '',
+    ...(raw.Album ? { Album: raw.Album } : {}),
     Series: raw.Series || raw.Title || '',
     SeriesGroup: raw.SeriesGroup || '',
     Count: raw.Count || '',
@@ -1316,6 +1319,13 @@ async function getRidiPublishDate(bookId = '') {
 
 function normalizeApiSource(apiName = '') {
   const name = String(apiName).toLowerCase();
+    const additionalAliases = {
+        goodreads: 'Goodreads', hardcover: 'Hardcover', openlibrary: 'Open Library',
+        itunes: 'iTunes', kobo: 'Kobo', lubimyczytac: 'LubimyCzytac', ranobedb: 'RanobeDB',
+        audible: 'Audible', audnexus: 'AudNexus', librofm: 'Libro.fm',
+    };
+    const additionalName = name.replace(/[\s._-]+/g, '');
+    if (Object.hasOwn(additionalAliases, additionalName)) return additionalAliases[additionalName];
   if (name.includes('google')) return 'Google Books';
   if (name.includes('anilist')) return 'Anilist';
   if (name.includes('amazon') || name.includes('아마존')) return 'Amazon';
@@ -1345,6 +1355,8 @@ function mangaValueForBookType(bookType = 'comic') {
 }
 
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
+    if (['Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB'].includes(apiName)) return true;
+    if (['Audible', 'AudNexus', 'Libro.fm'].includes(apiName)) return bookType === 'audio';
   const allowed = bookType === 'book' || bookType === 'pdf' || bookType === 'audio'
     ? new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon'])
     : new Set(['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
@@ -3887,6 +3899,17 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const page = Number(options.page || 1);
 
     if (!query) return { success: true, api: apiName, actualQuery: query, results: [] };
+    if (config.metadata_api_enabled && !isMetadataApiSourceEnabled(apiName, config.metadata_api_enabled)) {
+        return {
+            success: false,
+            api: apiName,
+            actualQuery: query,
+            results: [],
+            code: 'API_DISABLED',
+            error: i18nT('api_provider_disabled', { api: apiName }),
+            cached: false,
+        };
+    }
     if (!isMetadataApiAllowedForBookType(apiName, bookType)) {
       return {
         success: false,
@@ -3906,7 +3929,16 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       page,
     });
     const apiCacheDb = openApiCacheDbSafe();
-    const cacheQuery = `${bookType}::${query}::p${page}::v17`;
+    const additionalProvider = ['Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB', 'Audible', 'AudNexus', 'Libro.fm'].includes(apiName);
+    const providerContext = additionalProvider ? createAdditionalMetadataContext(apiName, config, apiKeys) : null;
+    if (providerContext?.errorCode) {
+        if (apiCacheDb) apiCacheDb.close();
+        return {
+            success: false, api: apiName, actualQuery, results: [], cached: false,
+            error: additionalMetadataErrorMessage({ code: providerContext.errorCode }, apiName, i18nT),
+        };
+    }
+    const cacheQuery = `${bookType}::${query}::p${page}::v17${providerContext?.cacheSuffix || ''}`;
     try {
       if (apiCacheDb) {
         const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);
@@ -3925,6 +3957,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             actualQuery,
             results: await enrichResultImages(cachedResults, apiCoverCacheDir()),
             ...(apiName === '한국웹툰' ? { hasNext: cachedResults.some(item => item.kmasHasNext) } : {}),
+            ...(typeof cachedResults[0]?.metadataProviderHasNext === 'boolean' ? { hasNext: cachedResults[0].metadataProviderHasNext } : {}),
             cached: true,
           };
         }
@@ -3934,6 +3967,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
 
     let results = [];
+    let providerHasNext;
     try {
       if (apiName === 'Google Books') {
         results = await searchGoogleBooks(query, apiKeys.google || '', page, bookType);
@@ -3965,17 +3999,34 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         results = await searchAmazon(query, page, bookType);
       } else if (apiName === 'Vine') {
         results = await searchVine(query, apiKeys.vine || '', page);
+      } else if (providerContext) {
+        const items = await searchAdditionalMetadataProvider(apiName, {
+            query, page, bookType, apiKeys, settings: providerContext.settings,
+        }, {
+            requestJson: requestJsonGeneric,
+            requestJsonPost,
+            requestText: (url, headers, timeout, requestOptions) => requestTextGeneric(url, headers, timeout, 3, requestOptions),
+        });
+        providerHasNext = items.hasNext;
+        results = items.map(item => normalizeSearchResult({
+            ...parseDateParts(item.PubDate),
+            ...item,
+            Format: metadataFormatForBookType(bookType),
+            Manga: mangaValueForBookType(bookType),
+            ...(typeof providerHasNext === 'boolean' ? { metadataProviderHasNext: providerHasNext } : {}),
+        }, item.ID));
       } else {
         throw new Error(i18nT('api_search_unsupported', { api: apiName }));
       }
     } catch (error) {
-      metadataSearchLog('Search failed', { api: apiName, query, actualQuery, page, error: error.message || String(error) });
+      const message = providerContext ? additionalMetadataErrorMessage(error, apiName, i18nT) : error.message || String(error);
+      metadataSearchLog('Search failed', { api: apiName, query, actualQuery, page, error: message });
       return {
         success: false,
         api: apiName,
         actualQuery,
         results: [],
-        error: error.message || String(error),
+        error: message,
         cached: false,
       };
     }
@@ -4004,6 +4055,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     return {
         success: true, api: apiName, actualQuery, results, cached: false,
         ...(apiName === '한국웹툰' ? { hasNext: results.some(item => item.kmasHasNext) } : {}),
+        ...(typeof providerHasNext === 'boolean' ? { hasNext: providerHasNext } : {}),
     };
   });
 

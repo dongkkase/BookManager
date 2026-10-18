@@ -55,7 +55,7 @@ const ThumbnailView = ({
 	  const [viewport, setViewport] = useState({ width: 0, height: 0, scrollTop: 0 });
 	  const items = files.length > 0 ? files : fileData;
   const imageWidth = Math.round(72 + Number(scale || 50) * 1.08);
-  const itemWidth = imageWidth + 24;
+    const itemWidth = imageWidth;
   const imageHeight = Math.round(imageWidth * 1.42);
   const groups = useMemo(
     () => Array.isArray(groupedDataProp)
@@ -69,10 +69,10 @@ const ThumbnailView = ({
     () => selectedFileSet instanceof Set ? selectedFileSet : new Set(selectedFiles),
     [selectedFileSet, selectedFiles],
   );
-	  const gapX = 18;
-	  const gapY = 16;
+    const gapX = Math.max(14, Math.min(24, Math.round(imageWidth * 0.12)));
+    const gapY = gapX;
 	  const padding = 10;
-	  const rowHeight = imageHeight + 10 + gapY;
+    const rowHeight = imageHeight + gapY;
 	  const shouldVirtualize = shouldVirtualizeFolderItems(groups);
 	  const columnCount = Math.max(1, Math.floor((Math.max(0, viewport.width - (padding * 2)) + gapX) / (itemWidth + gapX)));
     const virtualLayout = useMemo(() => shouldVirtualize
@@ -138,7 +138,7 @@ const ThumbnailView = ({
 	    const updateViewport = () => {
 	      setViewport(current => ({
 	        ...current,
-	        width: Math.max(0, Math.round(container.clientWidth || 0)),
+            width: Math.max(0, Math.round(container.clientWidth || 0) - (parseFloat(getComputedStyle(container).getPropertyValue('--folder-character-index-space')) || 0)),
 	        height: Math.max(0, Math.round(container.clientHeight || 0)),
 	        scrollTop: container.scrollTop || 0,
 	      }));
@@ -259,6 +259,8 @@ const ThumbnailView = ({
         '--thumb-item-width': `${itemWidth}px`,
         '--thumb-image-width': `${imageWidth}px`,
         '--thumb-image-height': `${imageHeight}px`,
+        '--thumb-gap-x': `${gapX}px`,
+        '--thumb-gap-y': `${gapY}px`,
       }}
     >
       {shouldVirtualize ? (

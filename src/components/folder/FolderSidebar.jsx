@@ -33,9 +33,9 @@ function readStoredSidebarCollapseState() {
 
 /**
  * 좌측 사이드바 컴포넌트
- * 라이브러리 목록, 즐겨찾기 목록, 폴더 트리 뷰를 포함
+ * 읽기 목록, 라이브러리 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFavorite, onSelectFavorite, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onAddFavorite, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, libraryScanStateMap = {}, refreshToken = 0 }) {
+function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [], selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onAddLibrary, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, libraryScanStateMap = {}, refreshToken = 0 }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
   const [roots, setRoots] = useState([]);
@@ -422,6 +422,27 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
         </div>
         {!collapsed && (
           <ul className="nav-list">
+            <li className={`recent-reading-list-item ${readingListSelected === 'favorites' ? 'selected' : ''}`}>
+                <button
+                    type="button"
+                    className="reading-list-nav-button"
+                    onClick={event => {
+                        applySidebarSelection(event);
+                        setSelectedSource('favorites');
+                        setOptimisticSelectedPath('');
+                        onSelectReadingList?.('favorites');
+                    }}
+                    aria-current={readingListSelected === 'favorites' ? 'page' : undefined}
+                >
+                    <span className="recent-reading-list-main">
+                        <FaIcon name="star" size={12} />
+                        <span>{t('folder.sidebar.favorites')}</span>
+                    </span>
+                    <span className="recent-reading-count" aria-label={t('reading_lists.count', [favorites.length])}>
+                        {favorites.length}
+                    </span>
+                </button>
+            </li>
             <li
               className={`recent-reading-list-item ${recentReadingSelected ? 'selected' : ''}`}
               onClick={(event) => {
@@ -457,75 +478,6 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
                         </button>
                     </li>
                 ))}
-          </ul>
-        )}
-      </div>
-    );
-  };
-
-  // 즐겨찾기 목록
-  const renderFavoritesList = () => {
-    const sectionLabel = t('folder.sidebar.favorites');
-    const collapsed = isSectionCollapsed('favorites');
-    return (
-      <div className={`sidebar-section sidebar-section-favorites ${collapsed ? 'is-collapsed' : ''}`}>
-        <div className="nav-header">
-          <span className="nav-header-title">{sectionLabel}</span>
-          <div className="folder-sidebar-header-actions">
-            {renderSectionToggle('favorites', sectionLabel)}
-            <button
-              type="button"
-              className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn favorite-add-btn"
-              title={t('folder.sidebar.add_favorite')}
-              aria-label={t('folder.sidebar.add_favorite')}
-              data-tooltip={t('folder.sidebar.add_favorite')}
-              onClick={() => selectedFolderPath && onAddFavorite && onAddFavorite(selectedFolderPath)}
-              disabled={!selectedFolderPath}
-            >
-              <FaIcon name="star" size={12} />
-            </button>
-          </div>
-        </div>
-        {!collapsed && (
-          <ul className="nav-list">
-            {favorites.map((favorite, idx) => {
-              const fav = typeof favorite === 'string' ? { name: favorite.split(/[\\/]/).pop() || favorite, path: favorite } : favorite;
-              return (
-                <li
-                  key={fav.path || idx}
-                  data-folder-sidebar-path={fav.path}
-                  className={selectedSource === 'favorite' && (selectedFavorite === idx || (optimisticSelectedPath || selectedFolderPath) === fav.path) ? 'selected' : ''}
-                  onClick={(event) => {
-                    applySidebarSelection(event);
-                    setSelectedSource('favorite');
-                    setOptimisticSelectedPath(fav.path);
-                    if (onSelectFavorite) onSelectFavorite(idx);
-                    scheduleSidebarNavigation(() => onSelectFolder?.(fav.path));
-                  }}
-                  onContextMenu={(event) => onFolderContextMenu?.(event, fav.path)}
-                >
-                  <span className="favorite-list-name" title={fav.path}>{fav.name}</span>
-                  <button
-                    type="button"
-                    className="favorite-menu-btn folder-sidebar-tooltip-btn"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onFolderContextMenu?.(event, fav.path);
-                    }}
-                    title={t('folder.sidebar.more_actions')}
-                    aria-label={t('folder.sidebar.more_actions')}
-                    data-tooltip={t('folder.sidebar.more_actions')}
-                  >
-                    <FaIcon name="ellipsisVertical" size={12} />
-                  </button>
-                </li>
-              );
-            })}
-            {favorites.length === 0 && (
-              <li className="sidebar-empty-list">
-                {t('folder.sidebar.empty_favorites')}
-              </li>
-            )}
           </ul>
         )}
       </div>
@@ -651,7 +603,6 @@ function FolderSidebar({ t, libraries = [], libraryEntries = [], favorites = [],
     <div ref={sidebarRef} className="folder-sidebar">
       {renderReadingList()}
       {renderLibraryList()}
-      {renderFavoritesList()}
       {renderFolderTree()}
     </div>
   );

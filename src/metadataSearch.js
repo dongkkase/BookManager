@@ -2,6 +2,7 @@ import {
     enabledMetadataApiSourcesForBookType,
     UNIFIED_METADATA_API_SOURCE,
 } from './metadataApiPolicy.js';
+import { isMetadataApiSourceEnabled } from '../electron/metadataProviderSettings.js';
 
 const SEARCH_PAGE_SIZE = 20;
 const MAX_CONCURRENT_SEARCHES = 3;
@@ -151,6 +152,12 @@ function responseResults(response, source) {
     return response.results.map(result => ({ ...result, apiSource: source }));
 }
 
+function responseHasNext(response) {
+    return typeof response.hasNext === 'boolean'
+        ? response.hasNext
+        : response.results.length >= SEARCH_PAGE_SIZE;
+}
+
 function searchFailure(error) {
     return String(error?.message || error || 'Search failed');
 }
@@ -159,6 +166,9 @@ export async function searchMetadata(options, fetchMetadata, { isCancelled = () 
     const cancelledResponse = () => responseEnvelope(options, { success: false, cancelled: true });
     if (isCancelled()) return cancelledResponse();
     if (options.apiSource !== UNIFIED_METADATA_API_SOURCE) {
+        if (!isMetadataApiSourceEnabled(options.apiSource, options.metadataApiEnabled)) {
+            return responseEnvelope(options, { success: false, code: 'API_DISABLED' });
+        }
         try {
             const response = await fetchMetadata(options);
             if (isCancelled()) return cancelledResponse();
@@ -170,7 +180,7 @@ export async function searchMetadata(options, fetchMetadata, { isCancelled = () 
                 success: true,
                 results: rankMetadataSearchResults(responseResults(response, options.apiSource), options.query),
                 cached: Boolean(response.cached),
-                hasNext: response.hasNext === true || response.results.length >= SEARCH_PAGE_SIZE,
+                hasNext: responseHasNext(response),
             });
         } catch (error) {
             if (isCancelled()) return cancelledResponse();
@@ -178,7 +188,7 @@ export async function searchMetadata(options, fetchMetadata, { isCancelled = () 
         }
     }
 
-    const sources = enabledMetadataApiSourcesForBookType(options.bookType, options.apiKeys);
+    const sources = enabledMetadataApiSourcesForBookType(options.bookType, options.apiKeys, options.metadataApiEnabled);
     if (sources.length === 0) {
         return responseEnvelope(options, { success: false, code: 'NO_ENABLED_APIS' });
     }
@@ -215,7 +225,7 @@ export async function searchMetadata(options, fetchMetadata, { isCancelled = () 
     return responseEnvelope(options, {
         results: rankMetadataSearchResults(successes.flatMap(entry => responseResults(entry.response, entry.source)), options.query),
         cached: failures.length === 0 && successes.every(entry => entry.response.cached),
-        hasNext: successes.some(entry => entry.response.hasNext === true || entry.response.results.length >= SEARCH_PAGE_SIZE),
+        hasNext: successes.some(entry => responseHasNext(entry.response)),
         failures,
     });
 }

@@ -19,12 +19,17 @@ export function FolderPathBar({
     onUp,
     onRefresh,
     refreshDisabled = false,
+    canFavorite = false,
+    isFavorite = false,
+    favoriteDisabled = false,
+    onToggleFavorite,
     shortcutLabel,
     t,
 }) {
     const containerRef = useRef(null);
     const listboxId = useId();
     const [activeIndex, setActiveIndex] = useState(-1);
+    const showFavorite = canFavorite && !virtualLocation;
 
     useEffect(() => {
         if (!isOpen) setActiveIndex(-1);
@@ -134,12 +139,12 @@ export function FolderPathBar({
                     <FaIcon name="angleUp" size={14} />
                 </button>
             </div>
-            <label className="folder-goto-path-label" htmlFor="folder-goto-path-input">
-                <FaIcon name="folderOpen" size={12} />
-                <span>{t('fm_title')}</span>
-                <kbd>{shortcutLabel}</kbd>
-            </label>
-            <div className="folder-goto-path-control">
+            <div className={`folder-goto-path-control${showFavorite ? ' has-favorite' : ''}`}>
+                <label className="folder-goto-path-label" htmlFor="folder-goto-path-input">
+                    <FaIcon name="folderOpen" size={12} />
+                    <span>{t('fm_title')}</span>
+                    <kbd>{shortcutLabel}</kbd>
+                </label>
                 <input
                     id="folder-goto-path-input"
                     ref={inputRef}
@@ -167,6 +172,38 @@ export function FolderPathBar({
                     }}
                     onKeyDown={handleInputKeyDown}
                 />
+                {showFavorite && (
+                    <button
+                        className="folder-goto-path-favorite"
+                        type="button"
+                        title={t(isFavorite ? 'action_fav_rem' : 'action_fav_add')}
+                        aria-label={t(isFavorite ? 'action_fav_rem' : 'action_fav_add')}
+                        aria-pressed={isFavorite}
+                        disabled={favoriteDisabled}
+                        onClick={onToggleFavorite}
+                        onFocus={() => {
+                            setActiveIndex(-1);
+                            onOpenChange(false);
+                        }}
+                        onKeyDown={event => {
+                            if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+                        }}
+                    >
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill={isFavorite ? 'currentColor' : 'none'}
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                            focusable="false"
+                        >
+                            <path d="m12 3 2.78 5.63L21 9.54l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.91Z" />
+                        </svg>
+                    </button>
+                )}
                 {!virtualLocation && <span className="folder-goto-path-arrow" aria-hidden="true">
                     <FaIcon name="angleDown" size={10} />
                 </span>}

@@ -3,7 +3,7 @@ import { mergeFolderFileCacheUpdate } from './useFolderScan.js';
 
 const EMPTY_FILES = [];
 
-export function useReadingLists(listId, t) {
+export function useReadingLists(listId, t, localFiles = null) {
     const [overview, setOverview] = useState({ collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0, previewRevision: 0 });
     const [overviewError, setOverviewError] = useState('');
     const [snapshot, setSnapshot] = useState({ id: '', files: EMPTY_FILES, previewRevision: 0 });
@@ -42,6 +42,12 @@ export function useReadingLists(listId, t) {
     }, [t]);
     const refresh = useCallback(async () => {
         const sequence = ++requestRef.current;
+        if (localFiles !== null) {
+            setSnapshot({ id: listId, files: localFiles, previewRevision: sequence });
+            setLoading(false);
+            setError('');
+            return;
+        }
         if (!listId || listId === 'collections') {
             setLoading(false);
             setError('');
@@ -65,7 +71,7 @@ export function useReadingLists(listId, t) {
         } finally {
             if (sequence === requestRef.current) setLoading(false);
         }
-    }, [listId, refreshOverview, t]);
+    }, [listId, localFiles, refreshOverview, t]);
     const refreshRef = useRef(refresh);
     refreshRef.current = refresh;
     useEffect(() => {
@@ -119,13 +125,15 @@ export function useReadingLists(listId, t) {
             let changed = false;
             const files = current.files.map(entry => {
                 if (entry.path !== file.path) return entry;
-                const updated = mergeFolderFileCacheUpdate(entry, file);
+                const updated = mergeFolderFileCacheUpdate(entry, localFiles !== null
+                    ? { ...file, name: entry.name, title: entry.title }
+                    : file);
                 if (updated !== entry) changed = true;
                 return updated;
             });
             return changed ? { ...current, files } : current;
         });
-    }, [listId]);
+    }, [listId, localFiles]);
     return {
         ...overview,
         files: listId === 'collections' ? overview.collections : snapshot.id === listId ? snapshot.files : EMPTY_FILES,

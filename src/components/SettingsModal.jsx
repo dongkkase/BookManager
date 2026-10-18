@@ -1,14 +1,20 @@
 import React from 'react';
+import { AUDIBLE_REGIONS, ITUNES_COUNTRIES, KOBO_COUNTRIES, KOBO_LANGUAGES, isMetadataApiSourceEnabled } from '../../electron/metadataProviderSettings.js';
 import { FaIcon } from './FaIcon';
 import {
   libraryPathKey,
   normalizeLibraryEntries,
   normalizeSettingsConfig,
+    mergeSettingsDraft,
   safeThreadLimit,
+    settingsConfigsEqual,
   syncLibraryConfig,
 } from '../settingsPolicy';
 import {
+    ALL_METADATA_API_SOURCES,
+    apiSourceHasRequiredKey,
     metadataSearchSourcesForBookType,
+    requiredApiKeyForSource,
   normalizeMetadataApiSourceForBookType,
 } from '../metadataApiPolicy';
 import {
@@ -18,8 +24,8 @@ import {
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 import { TelemetrySettings } from './TelemetrySettings';
 import { fontVarsForConfig } from '../fontPolicy';
-import { libraryDisplayName } from '../libraryPresentation';
 import { SettingsLibraryPreview } from './SettingsLibraryPreview';
+import { SettingsLibraryList } from './SettingsLibraryList';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -35,6 +41,28 @@ const SETTINGS_TABS = [
     { id: 'api', key: 'api', icon: 'search' },
     { id: 'ttsApi', key: 'tts', icon: 'headphones', fallbackKey: 'tab_tts_api_key' },
     { id: 'privacy', key: 'privacy', icon: 'user' },
+];
+
+const API_SETTINGS_SECTIONS = [
+    { id: 'preferred', labelKey: 'preferred_search_api_group' },
+    { id: 'providers', labelKey: 'settings.api.search_settings' },
+    { id: 'ai', labelKey: 'ai_cover_search_group' },
+    { id: 'tags', labelKey: 'tag_rules_group' },
+    { id: 'cache', labelKey: 'settings.api.search_cache' },
+];
+
+const AUDIOBOOK_METADATA_PROVIDERS = new Set(['Audible', 'AudNexus', 'Libro.fm']);
+const METADATA_PROVIDER_GROUPS = [
+    {
+        id: 'books',
+        labelKey: 'metadata_provider_group_books',
+        sources: ALL_METADATA_API_SOURCES.filter(source => !AUDIOBOOK_METADATA_PROVIDERS.has(source.value)),
+    },
+    {
+        id: 'audiobooks',
+        labelKey: 'metadata_provider_group_audiobooks',
+        sources: ALL_METADATA_API_SOURCES.filter(source => AUDIOBOOK_METADATA_PROVIDERS.has(source.value)),
+    },
 ];
 
 const FORMAT_KEYS = ['none', 'zip', 'cbz', 'cbr', '7z'];
@@ -76,11 +104,33 @@ const FALLBACK_SYSTEM_FONT_OPTIONS = [
   'Verdana',
   'Consolas',
 ];
+const METADATA_PROVIDER_GUIDES = [
+    { name: 'Hardcover', key: 'hardcover', url: 'https://hardcover.app/account/api' },
+    { name: 'Goodreads', key: 'goodreads', url: 'https://www.goodreads.com/' },
+    { name: 'Open Library', key: 'openlibrary', url: 'https://openlibrary.org/dev/docs/api/search' },
+    { name: 'iTunes', key: 'itunes', url: 'https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/Searching.html' },
+    { name: 'Kobo', key: 'kobo', url: 'https://www.kobo.com/' },
+    { name: 'LubimyCzytac', key: 'lubimyczytac', url: 'https://lubimyczytac.pl/' },
+    { name: 'RanobeDB', key: 'ranobedb', url: 'https://ranobedb.org/' },
+    { name: 'Audible', key: 'audible', url: 'https://www.audible.com/' },
+    { name: 'AudNexus', key: 'audnexus', url: 'https://audnex.us/' },
+    { name: 'Libro.fm', key: 'librofm', url: 'https://libro.fm/' },
+];
+
+const METADATA_PROVIDER_KEY_LABELS = {
+    yes24: 'YES24 API Key',
+    aladin: 'Aladin TTBKey',
+    google: 'Google Books API Key',
+    vine: 'Comic Vine API Key',
+    hardcover: 'Hardcover API Token',
+};
+
 const DEFAULT_API_KEYS = {
     yes24: '',
   aladin: '',
   vine: '',
   google: '',
+    hardcover: '',
   ai_provider: 'Gemini',
   ai_key: '',
   tts_openai_key: '',
@@ -156,7 +206,13 @@ function normalizeConfig(config) {
 
 function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', navigationRequest = 0, onLanguagePreviewChange }) {
   const [localConfig, setLocalConfig] = React.useState(null);
+    const [appliedConfig, setAppliedConfig] = React.useState(null);
+    const [isApplying, setIsApplying] = React.useState(false);
+    const applyingRef = React.useRef(false);
+    const fileAssociationApplyingRef = React.useRef(false);
+    const draftLanguageRef = React.useRef('');
   const [activeTab, setActiveTab] = React.useState('basic');
+    const [activeApiSection, setActiveApiSection] = React.useState('preferred');
   const [showSecrets, setShowSecrets] = React.useState({});
   const [maintenanceMessage, setMaintenanceMessage] = React.useState('');
   const [maintenanceBusy, setMaintenanceBusy] = React.useState('');
@@ -173,15 +229,34 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
   const [fileAssociationBusy, setFileAssociationBusy] = React.useState('');
   const [fileAssociationFeedback, setFileAssociationFeedback] = React.useState(null);
     const settingsBodyRef = React.useRef(null);
+    const libraryEditorRef = React.useRef(null);
+    const lastLibraryEntryRef = React.useRef(null);
+    const [libraryEditorMounted, setLibraryEditorMounted] = React.useState(false);
+    const [libraryEditorExpanded, setLibraryEditorExpanded] = React.useState(false);
+    const libraryEntries = React.useMemo(() => normalizeLibraryEntries(localConfig), [localConfig]);
+    const selectedLibraryEntry = libraryEntries.find(entry => entry.path === selectedDupFolder) || null;
+    const libraryEditorOpen = isOpen && activeTab === 'folder' && Boolean(selectedLibraryEntry);
+    const displayedLibraryEntry = libraryEditorOpen
+        ? selectedLibraryEntry
+        : libraryEditorMounted ? lastLibraryEntryRef.current : null;
     const [compactNavigation, setCompactNavigation] = React.useState(false);
   const settingsOpenInitializedRef = React.useRef(false);
   const threadMax = React.useMemo(() => safeThreadMax(), []);
+    const hasChanges = React.useMemo(() => Boolean(
+        localConfig && appliedConfig
+        && !settingsConfigsEqual(localConfig, appliedConfig, navigator.hardwareConcurrency || 4)
+    ), [localConfig, appliedConfig]);
   const handleCancel = React.useCallback(() => {
-    setLocalConfig(normalizeConfig(config));
+    if (applyingRef.current) return;
+    setLocalConfig(appliedConfig);
     onClose?.();
-  }, [config, onClose]);
+  }, [appliedConfig, onClose]);
   const dialogRef = useModalAccessibility(isOpen, () => {
     if (showApiManual) setShowApiManual(false);
+    else if (activeTab === 'folder' && selectedDupFolder) {
+        setSelectedDupFolder('');
+        settingsBodyRef.current?.focus({ preventScroll: true });
+    }
     else handleCancel();
   });
 
@@ -194,13 +269,65 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     }
     if (settingsOpenInitializedRef.current) return;
     settingsOpenInitializedRef.current = true;
-    setLocalConfig(normalizeConfig(config));
+    const initialConfig = normalizeConfig(config);
+    draftLanguageRef.current = initialConfig.language;
+    setLocalConfig(initialConfig);
+    setAppliedConfig(initialConfig);
   }, [config, isOpen]);
 
   React.useEffect(() => {
     if (!isOpen) return;
     setActiveTab(initialTab);
+    setActiveApiSection('preferred');
+    setSelectedDupFolder('');
   }, [initialTab, isOpen, navigationRequest]);
+
+    React.useLayoutEffect(() => {
+        if (libraryEditorOpen) lastLibraryEntryRef.current = selectedLibraryEntry;
+    }, [libraryEditorOpen, selectedLibraryEntry]);
+
+    React.useLayoutEffect(() => {
+        if (!isOpen) {
+            setLibraryEditorMounted(false);
+            setLibraryEditorExpanded(false);
+            lastLibraryEntryRef.current = null;
+            return;
+        }
+        if (libraryEditorOpen) {
+            setLibraryEditorMounted(true);
+            libraryEditorRef.current?.getBoundingClientRect();
+            setLibraryEditorExpanded(true);
+        } else {
+            setLibraryEditorExpanded(false);
+        }
+    }, [isOpen, libraryEditorOpen]);
+
+    React.useEffect(() => {
+        if (!libraryEditorMounted || libraryEditorExpanded) return undefined;
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const timeout = window.setTimeout(() => setLibraryEditorMounted(false), reducedMotion ? 0 : 260);
+        return () => window.clearTimeout(timeout);
+    }, [libraryEditorMounted, libraryEditorExpanded]);
+
+    React.useLayoutEffect(() => {
+        const editor = libraryEditorRef.current;
+        const body = settingsBodyRef.current;
+        if (!isOpen || !displayedLibraryEntry || !editor || !body) return;
+        const updateEditorSpace = () => {
+            body.style.setProperty('--settings-library-editor-space', `${editor.offsetHeight + 32}px`);
+        };
+        updateEditorSpace();
+        const observer = new ResizeObserver(updateEditorSpace);
+        observer.observe(editor);
+        return () => {
+            observer.disconnect();
+            body.style.removeProperty('--settings-library-editor-space');
+        };
+    }, [isOpen, Boolean(displayedLibraryEntry)]);
+
+    React.useLayoutEffect(() => {
+        if (libraryEditorOpen) libraryEditorRef.current?.querySelector('input')?.focus({ preventScroll: true });
+    }, [libraryEditorOpen, selectedDupFolder]);
 
     React.useEffect(() => {
         const media = window.matchMedia('(max-width: 760px)');
@@ -215,7 +342,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         settingsBodyRef.current?.scrollTo({ top: 0 });
         dialogRef.current?.querySelector('[role="tab"][aria-selected="true"]')
             ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }, [activeTab, isOpen]);
+        if (activeTab === 'api') {
+            dialogRef.current?.querySelector('.settings-api-submenu [aria-current="page"]')
+                ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+    }, [activeTab, activeApiSection, compactNavigation, isOpen]);
 
   React.useEffect(() => {
     if (!isOpen) return undefined;
@@ -357,7 +488,16 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
   };
 
     const selectedTab = SETTINGS_TABS.find(tab => tab.id === activeTab) || SETTINGS_TABS[0];
+    const selectedApiSection = API_SETTINGS_SECTIONS.find(section => section.id === activeApiSection) || API_SETTINGS_SECTIONS[0];
     const tabTitle = tab => label(`settings.${tab.key}.title`, t(tab.fallbackKey || 'tab_basic'));
+    const selectTab = id => {
+        setSelectedDupFolder('');
+        setActiveTab(id);
+        if (id === 'api') {
+            setActiveApiSection('preferred');
+            settingsBodyRef.current?.scrollTo({ top: 0 });
+        }
+    };
     const handleTabKeyDown = event => {
         const currentIndex = SETTINGS_TABS.findIndex(tab => tab.id === activeTab);
         let nextIndex;
@@ -368,9 +508,37 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         else return;
         event.preventDefault();
         const nextTab = SETTINGS_TABS[nextIndex];
-        setActiveTab(nextTab.id);
+        selectTab(nextTab.id);
         dialogRef.current?.querySelector(`#settings-tab-${nextTab.id}`)?.focus();
     };
+    const handleApiSectionKeyDown = event => {
+        const currentIndex = API_SETTINGS_SECTIONS.findIndex(section => section.id === activeApiSection);
+        let nextIndex;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % API_SETTINGS_SECTIONS.length;
+        else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + API_SETTINGS_SECTIONS.length) % API_SETTINGS_SECTIONS.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = API_SETTINGS_SECTIONS.length - 1;
+        else return;
+        event.preventDefault();
+        event.stopPropagation();
+        const nextSection = API_SETTINGS_SECTIONS[nextIndex];
+        setActiveApiSection(nextSection.id);
+        dialogRef.current?.querySelector(`#settings-api-section-${nextSection.id}`)?.focus();
+    };
+    const renderApiSubmenu = () => (
+        <nav className="settings-api-submenu" aria-label={tabTitle(SETTINGS_TABS.find(tab => tab.id === 'api'))}>
+            {API_SETTINGS_SECTIONS.map(section => (
+                <button key={section.id} id={`settings-api-section-${section.id}`} type="button"
+                    aria-current={activeApiSection === section.id ? 'page' : undefined}
+                    aria-controls="settings-api-content"
+                    tabIndex={activeApiSection === section.id ? 0 : -1}
+                    className={activeApiSection === section.id ? 'active' : ''}
+                    onClick={() => setActiveApiSection(section.id)} onKeyDown={handleApiSectionKeyDown}>
+                    {t(section.labelKey)}
+                </button>
+            ))}
+        </nav>
+    );
 
   const apiSourceLabel = (source) => label(source.labelKey, source.value);
   const formatLabels = Array.isArray(t('format_opts')) ? t('format_opts') : ['변경 안 함', 'ZIP', 'CBZ', 'CBR', '7z'];
@@ -378,17 +546,31 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     localConfig.preferred_meta_api_comic || localConfig.last_meta_api,
     'comic',
     localConfig.api_keys || {},
+    localConfig.metadata_api_enabled,
   );
   const preferredBookApi = normalizeMetadataApiSourceForBookType(
     localConfig.preferred_meta_api_book || localConfig.last_meta_api,
     'book',
     localConfig.api_keys || {},
+    localConfig.metadata_api_enabled,
   );
   const preferredPdfApi = normalizeMetadataApiSourceForBookType(
     localConfig.preferred_meta_api_pdf || localConfig.last_meta_api,
     'pdf',
     localConfig.api_keys || {},
+    localConfig.metadata_api_enabled,
   );
+    const preferredAudioApi = normalizeMetadataApiSourceForBookType(
+        localConfig.preferred_meta_api_audio || localConfig.preferred_meta_api_book || localConfig.last_meta_api,
+        'audio',
+        localConfig.api_keys || {},
+        localConfig.metadata_api_enabled,
+    );
+    const providerSettings = localConfig.metadata_providers;
+    const regionNames = new Intl.DisplayNames([localConfig.lang || 'ko'], { type: 'region' });
+    const languageNames = new Intl.DisplayNames([localConfig.lang || 'ko'], { type: 'language' });
+    const countryLabel = country => regionNames.of(country.toUpperCase() === 'UK' ? 'GB' : country.toUpperCase());
+    const itunesCountries = [...new Set([...ITUNES_COUNTRIES, providerSettings.itunes_country])];
   const bundledFontOptions = bundledFontOptionsFromFaces(bundledFontFaces);
   const systemFontsForSelect = uniqueSystemFonts(systemFontOptions, localConfig.font_family, bundledFontOptions);
   const aiProvider = localConfig.api_keys?.ai_provider === 'OpenAI' ? 'OpenAI' : 'Gemini';
@@ -397,6 +579,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     const fileAssociationControlsDisabled = Boolean(
         fileAssociationLoading
         || fileAssociationBusy
+        || isApplying
         || !fileAssociationStatus?.supported,
     );
     const fileAssociationFeedbackText = fileAssociationFeedback
@@ -418,16 +601,52 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     }));
   };
 
+    const handleProviderChange = (key, value) => {
+        setLocalConfig(prev => ({
+            ...prev,
+            metadata_providers: { ...prev.metadata_providers, [key]: value },
+        }));
+    };
+
+    const handleProviderEnabledChange = (source, enabled) => {
+        setLocalConfig(prev => ({
+            ...prev,
+            metadata_api_enabled: { ...prev.metadata_api_enabled, [source]: enabled },
+        }));
+    };
+
   const handleLanguageChange = (value) => {
+    draftLanguageRef.current = value;
     setLocalConfig(prev => ({ ...prev, lang: value, language: value }));
     onLanguagePreviewChange?.(value);
   };
 
-  const handleSave = () => {
-    const nextConfig = normalizeSettingsConfig(localConfig, navigator.hardwareConcurrency || 4);
-    onSave?.(nextConfig);
-    onClose?.(nextConfig);
-  };
+    const handleApply = async () => {
+        if (!hasChanges || applyingRef.current || fileAssociationApplyingRef.current) return;
+        applyingRef.current = true;
+        setIsApplying(true);
+        const submittedConfig = localConfig;
+        const coreCount = navigator.hardwareConcurrency || 4;
+        const nextConfig = normalizeSettingsConfig(submittedConfig, coreCount);
+        try {
+            const result = await onSave(nextConfig);
+            const savedConfig = normalizeConfig(result && typeof result === 'object' ? result : nextConfig);
+            if (draftLanguageRef.current === submittedConfig.language) {
+                draftLanguageRef.current = savedConfig.language;
+            }
+            setAppliedConfig(savedConfig);
+            setLocalConfig(current => mergeSettingsDraft(savedConfig, submittedConfig, current, coreCount));
+        } catch (error) {
+            if (!error?.settingsSaveNotified) {
+                showToast?.(label('config_save_failed', '설정 저장 실패: {msg}')
+                    .replace('{msg}', error?.message || String(error)), 6000);
+            }
+        } finally {
+            applyingRef.current = false;
+            setIsApplying(false);
+            onLanguagePreviewChange?.(draftLanguageRef.current);
+        }
+    };
 
   const updateViewerPath = (viewerType, filePath) => {
     if (!viewerType) return;
@@ -474,6 +693,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     };
 
     const handleApplyFileAssociations = async () => {
+        if (applyingRef.current || fileAssociationApplyingRef.current) return;
         if (selectedFileAssociations.length === 0) {
             setFileAssociationFeedback({
                 type: 'error',
@@ -493,6 +713,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             return;
         }
 
+        fileAssociationApplyingRef.current = true;
         setFileAssociationBusy('apply');
         setFileAssociationFeedback(null);
         try {
@@ -506,6 +727,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 await onPersistViewerPaths({ viewer_paths: viewerPaths });
             } else if (window.electronAPI?.saveConfig) {
                 await window.electronAPI.saveConfig({ viewer_paths: viewerPaths });
+            }
+            if (typeof onPersistViewerPaths === 'function' || window.electronAPI?.saveConfig) {
+                setAppliedConfig(previous => normalizeConfig({ ...previous, viewer_paths: viewerPaths }));
             }
 
             const result = await applyFileAssociations(selectedFileAssociations);
@@ -577,6 +801,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 detail: error?.message || String(error),
             });
         } finally {
+            fileAssociationApplyingRef.current = false;
             setFileAssociationBusy('');
         }
     };
@@ -644,9 +869,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         }
     };
 
-  const libraryEntries = normalizeLibraryEntries(localConfig);
-  const selectedLibraryEntry = libraryEntries.find(entry => entry.path === selectedDupFolder) || null;
-
   const updateLibraryEntries = (updater) => {
     setLocalConfig(prev => {
       const entries = normalizeLibraryEntries(prev);
@@ -669,17 +891,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     if (!folderPath) return;
     updateLibraryEntries(entries => entries.filter(entry => entry.path !== folderPath));
     setSelectedDupFolder(current => current === folderPath ? '' : current);
-  };
-
-  const handleMoveLibrary = (folderPath, direction) => {
-    updateLibraryEntries(entries => {
-      const index = entries.findIndex(entry => entry.path === folderPath);
-      const nextIndex = index + direction;
-      if (index < 0 || nextIndex < 0 || nextIndex >= entries.length) return entries;
-      const nextEntries = [...entries];
-      [nextEntries[index], nextEntries[nextIndex]] = [nextEntries[nextIndex], nextEntries[index]];
-      return nextEntries;
-    });
   };
 
   const handleLibraryEntryChange = (folderPath, key, value) => {
@@ -797,11 +1008,13 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     }
   };
 
-  const renderSecretInput = (key, placeholder, disabled = false) => (
-    <div className="settings-secret-row">
+  const renderSecretInput = (key, placeholder, disabled = false, inlineLabel = '') => (
+    <div className={`settings-secret-row${inlineLabel ? ' settings-provider-secret settings-control-field' : ''}`}>
+        {inlineLabel && <label htmlFor={`settings-secret-${key}`}>{inlineLabel}</label>}
       <input
         id={`settings-secret-${key}`}
         className="settings-input"
+        aria-label={inlineLabel ? METADATA_PROVIDER_KEY_LABELS[key] : undefined}
         type={showSecrets[key] ? 'text' : 'password'}
         placeholder={placeholder}
         value={localConfig.api_keys?.[key] || ''}
@@ -821,6 +1034,88 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
       </button>
     </div>
   );
+
+    const renderProviderSettings = source => {
+        return <>
+            {source.value === '알라딘' && (
+                    <p className="settings-help settings-aladin-api-notice">
+                        {label('aladin_openapi_shutdown_notice', '알라딘 OpenAPI 서비스 종료 예정 26년 10월 30일')}{' '}
+                        <a
+                            className="settings-help-link"
+                            href="https://blog.aladin.co.kr/openapi/group/18264538"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={event => {
+                                if (window.electronAPI?.openExternal) {
+                                    event.preventDefault();
+                                    window.electronAPI.openExternal(event.currentTarget.href);
+                                }
+                            }}
+                        >
+                            [{label('aladin_openapi_shutdown_details', '자세히보기')}]
+                        </a>
+                    </p>
+            )}
+            {source.value === 'Hardcover' && (
+                <p className="settings-help">{t('metadata_provider_guide_hardcover')}{' '}
+                    <a className="settings-help-link" href="https://hardcover.app/account/api" target="_blank" rel="noopener noreferrer"
+                        onClick={event => {
+                            if (window.electronAPI?.openExternal) {
+                                event.preventDefault();
+                                window.electronAPI.openExternal(event.currentTarget.href);
+                            }
+                        }}>{t('metadata_provider_get_token')}</a>
+                </p>
+            )}
+            {source.value === 'iTunes' && <>
+                    <div className="settings-row settings-control-field">
+                        <label className="settings-label" htmlFor="settings-itunes-country">{t('metadata_provider_itunes_country')}</label>
+                        <select id="settings-itunes-country" className="settings-select" value={providerSettings.itunes_country}
+                            onChange={event => handleProviderChange('itunes_country', event.target.value)}>
+                            {itunesCountries.map(country => <option key={country} value={country}>{countryLabel(country)}</option>)}
+                        </select>
+                    </div>
+                    <div className="settings-row settings-control-field">
+                        <label className="settings-label" htmlFor="settings-itunes-cover">{t('metadata_provider_itunes_cover')}</label>
+                        <select id="settings-itunes-cover" className="settings-select" value={providerSettings.itunes_cover_resolution}
+                            onChange={event => handleProviderChange('itunes_cover_resolution', event.target.value)}>
+                            <option value="high">{t('metadata_provider_cover_high')}</option>
+                            <option value="standard">{t('metadata_provider_cover_standard')}</option>
+                        </select>
+                    </div>
+
+            </>}
+            {source.value === 'Kobo' && <>
+                    <div className="settings-row settings-control-field">
+                        <label className="settings-label" htmlFor="settings-kobo-country">{t('metadata_provider_kobo_country')}</label>
+                        <select id="settings-kobo-country" className="settings-select" value={providerSettings.kobo_country}
+                            onChange={event => handleProviderChange('kobo_country', event.target.value)}>
+                            {KOBO_COUNTRIES.map(country => <option key={country} value={country}>{countryLabel(country)}</option>)}
+                        </select>
+                    </div>
+                    <div className="settings-row settings-control-field">
+                        <label className="settings-label" htmlFor="settings-kobo-language">{t('metadata_provider_kobo_language')}</label>
+                        <select id="settings-kobo-language" className="settings-select" value={providerSettings.kobo_language}
+                            onChange={event => handleProviderChange('kobo_language', event.target.value)}>
+                            {KOBO_LANGUAGES.map(language => <option key={language} value={language}>
+                                {language === 'all' ? t('metadata_provider_all_languages') : languageNames.of(language)}
+                            </option>)}
+                        </select>
+                    </div>
+
+            </>}
+            {source.value === 'Audible' && <>
+                    <div className="settings-row settings-control-field">
+                        <label className="settings-label" htmlFor="settings-audible-region">{t('metadata_provider_audible_region')}</label>
+                        <select id="settings-audible-region" className="settings-select" value={providerSettings.audible_region}
+                            onChange={event => handleProviderChange('audible_region', event.target.value)}>
+                            {AUDIBLE_REGIONS.map(country => <option key={country} value={country}>{countryLabel(country)}</option>)}
+                        </select>
+                    </div>
+
+            </>}
+        </>;
+    };
 
   const renderCheck = (key, text, help) => (
     <label className="settings-check-row">
@@ -842,63 +1137,74 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         aria-labelledby="settings-modal-title"
         tabIndex={-1}
         onClick={event => event.stopPropagation()}
+        onClickCapture={event => {
+            if (selectedDupFolder && !libraryEditorRef.current?.contains(event.target)) {
+                setSelectedDupFolder('');
+            }
+        }}
       >
         <div className="modal-header" inert={showApiManual ? '' : undefined}>
             <div className="settings-header-copy">
                 <span id="settings-modal-title" className="modal-title">{t('settings_title')}</span>
                 <p className="settings-subtitle">{t('settings.subtitle')}</p>
             </div>
-            <button className="modal-close" aria-label={t('btn_close')} onClick={handleCancel}>×</button>
+            <button className="modal-close" aria-label={t('btn_close')} onClick={handleCancel} disabled={isApplying}>×</button>
         </div>
 
         <div className="settings-workspace" inert={showApiManual ? '' : undefined}>
-            <aside className="settings-sidebar">
+            <aside id="settings-sidebar" className="settings-sidebar">
                 <div className="settings-tabs" role="tablist" aria-label={t('settings.navigation')} aria-orientation={compactNavigation ? 'horizontal' : 'vertical'}>
                     {SETTINGS_TABS.map(tab => (
+                        <React.Fragment key={tab.id}>
                         <button
-                            key={tab.id}
                             id={`settings-tab-${tab.id}`}
                             type="button"
                             role="tab"
                             aria-selected={activeTab === tab.id}
                             aria-controls="settings-panel"
+                            aria-expanded={tab.id === 'api' ? activeTab === 'api' : undefined}
                             tabIndex={activeTab === tab.id ? 0 : -1}
                             className={activeTab === tab.id ? 'active' : ''}
-                            onClick={() => setActiveTab(tab.id)}
+                            onClick={() => selectTab(tab.id)}
                             onKeyDown={handleTabKeyDown}
                         >
                             <FaIcon name={tab.icon} className="settings-nav-icon" />
-                            <span>
+                            <span className="settings-nav-copy">
                                 <strong>{tabTitle(tab)}</strong>
                                 <small>{t(`settings.${tab.key}.summary`)}</small>
                             </span>
+                            {tab.id === 'api' && <FaIcon name={activeTab === 'api' ? 'angleDown' : 'angleRight'} className="settings-nav-chevron" />}
                         </button>
+                        {tab.id === 'api' && activeTab === 'api' && !compactNavigation && renderApiSubmenu()}
+                        </React.Fragment>
                     ))}
                 </div>
+                {activeTab === 'api' && compactNavigation && renderApiSubmenu()}
             </aside>
+            <div className="settings-content">
             <div
                 ref={settingsBodyRef}
-                className="modal-body settings-modal-body"
+                className={`modal-body settings-modal-body${displayedLibraryEntry ? ' has-library-editor' : ''}`}
                 role="tabpanel"
                 id="settings-panel"
                 aria-labelledby={`settings-tab-${activeTab}`}
                 tabIndex={0}
             >
                 <div className="settings-page-header">
-                    <h2>{tabTitle(selectedTab)}</h2>
-                    <p>{t(`settings.${selectedTab.key}.description`)}</p>
+                    <h2>{activeTab === 'api' ? t(selectedApiSection.labelKey) : tabTitle(selectedTab)}</h2>
+                    {activeTab !== 'api' && <p>{t(`settings.${selectedTab.key}.description`)}</p>}
                 </div>
                 {activeTab === 'basic' && (
                     <div className="settings-panel">
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.appearance')}</legend>
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-language">{t('lang_lbl')}</label>
                                 <select id="settings-language" className="settings-select" value={localConfig.language || localConfig.lang || 'ko'} onChange={event => handleLanguageChange(event.target.value)}>
                                     {LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                                 </select>
                             </div>
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-font">{t('font_family_lbl')}</label>
                                 <select id="settings-font" className="settings-select" value={localConfig.font_family || 'Noto Sans KR'} onChange={event => handleChange('font_family', event.target.value)}>
                                     <optgroup label={label('font_group_bundled', '프로그램 포함 폰트')}>
@@ -912,7 +1218,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                 </select>
                             </div>
 
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-font-scale">{t('font_size_lbl')}</label>
                                 <select id="settings-font-scale" className="settings-select" value={localConfig.font_scale || 100} onChange={event => handleChange('font_scale', Number(event.target.value))}>
                                     {FONT_SCALES.map(value => <option key={value} value={value}>{value}%</option>)}
@@ -926,7 +1232,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.notifications')}</legend>
                             {renderCheck('play_sound', t('play_sound'))}
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-sound">{t('sound_lbl')}</label>
                                 <div className="settings-inline-control">
                                     <select id="settings-sound"
@@ -950,7 +1256,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                     <div className="settings-panel">
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.output')}</legend>
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-target-format">{t('format_lbl')}</label>
                                 <select id="settings-target-format" className="settings-select" value={localConfig.target_format || 'none'} onChange={event => handleChange('target_format', event.target.value)}>
                                     {FORMAT_KEYS.map((key, index) => <option key={key} value={key}>{formatLabels[index] || key.toUpperCase()}</option>)}
@@ -962,7 +1268,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                         </fieldset>
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.images')}</legend>
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-img-quality">{t('common_quality')}</label>
                                 <div className="settings-slider-control">
                                     <input id="settings-img-quality" aria-describedby="settings-quality-help" type="range" min="1" max="100" value={localConfig.img_quality || 100} onChange={event => handleChange('img_quality', Number(event.target.value))} />
@@ -971,7 +1277,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                             </div>
                             <p className="settings-help" id="settings-quality-help">{t('tt_img_quality_desc')}</p>
 
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-renamer-compression">{label('renamer_archive_compression_lbl', '재압축 강도 :')}</label>
                                 <select id="settings-renamer-compression"
                                     aria-describedby="settings-compression-help"
@@ -992,7 +1298,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                         </fieldset>
                         <fieldset className="settings-fieldset">
                             <legend>{t('settings.sections.performance')}</legend>
-                            <div className="settings-row">
+                            <div className="settings-row settings-control-field">
                                 <label className="settings-label" htmlFor="settings-max-threads">{t('max_threads')}</label>
                                 <div className="settings-slider-control">
                                     <input id="settings-max-threads"
@@ -1021,32 +1327,33 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                             <legend>{t('settings.sections.viewers')}</legend>
                             <p className="settings-help">{t('settings.viewer_hint')}</p>
                             {VIEWER_PROGRAM_TYPES.map(option => (
-                                <div className="settings-row" key={option.key}>
-                                    <label className="settings-label settings-viewer-label" htmlFor={`settings-viewer-${option.key}`}>
-                                        <span>{label(option.labelKey, option.fallback)}</span>
-                                        {option.descriptionKey ? (
-                                            <small>{label(option.descriptionKey, option.descriptionFallback)}</small>
-                                        ) : null}
-                                    </label>
-                                    <div className="settings-path-row">
-                                        <input
-                                            id={`settings-viewer-${option.key}`}
-                                            className="settings-input"
-                                            title={localConfig.viewer_paths?.[option.key] || ''}
-                                            value={localConfig.viewer_paths?.[option.key] || ''}
-                                            placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')}
-                                            readOnly
-                                        />
-                                        <button className="settings-action-btn" aria-label={`${label(option.labelKey, option.fallback)} ${label('btn_find', '찾기')}`} onClick={() => handleSelectViewer(option.key)}>{label('btn_find', '찾기')}</button>
-                                        <button
-                                            className="settings-action-btn"
-                                            aria-label={`${label(option.labelKey, option.fallback)} ${label('btn_remove', '삭제')}`}
-                                            onClick={() => handleClearViewer(option.key)}
-                                            disabled={!localConfig.viewer_paths?.[option.key]}
-                                        >
-                                            {label('btn_remove', '삭제')}
-                                        </button>
+                                <div className="settings-viewer-field" key={option.key}>
+                                    <div className="settings-row settings-control-field">
+                                        <label className="settings-label" htmlFor={`settings-viewer-${option.key}`}>{label(option.labelKey, option.fallback)}</label>
+                                        <div className="settings-path-row">
+                                            <input
+                                                id={`settings-viewer-${option.key}`}
+                                                aria-describedby={option.descriptionKey ? `settings-viewer-${option.key}-help` : undefined}
+                                                className="settings-input"
+                                                title={localConfig.viewer_paths?.[option.key] || ''}
+                                                value={localConfig.viewer_paths?.[option.key] || ''}
+                                                placeholder={label('viewer_placeholder', '뷰어 프로그램 경로를 선택하세요')}
+                                                readOnly
+                                            />
+                                            <button className="settings-action-btn" aria-label={`${label(option.labelKey, option.fallback)} ${label('btn_find', '찾기')}`} onClick={() => handleSelectViewer(option.key)}>{label('btn_find', '찾기')}</button>
+                                            <button
+                                                className="settings-action-btn"
+                                                aria-label={`${label(option.labelKey, option.fallback)} ${label('btn_remove', '삭제')}`}
+                                                onClick={() => handleClearViewer(option.key)}
+                                                disabled={!localConfig.viewer_paths?.[option.key]}
+                                            >
+                                                {label('btn_remove', '삭제')}
+                                            </button>
+                                        </div>
                                     </div>
+                                    {option.descriptionKey && <p className="settings-help" id={`settings-viewer-${option.key}-help`}>
+                                        {label(option.descriptionKey, option.descriptionFallback)}
+                                    </p>}
                                 </div>
                             ))}
                         </fieldset>
@@ -1225,117 +1532,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                     <FaIcon name="folderPlus" />{label('btn_add', '추가')}
                                 </button>
                             </div>
-                            <div className="settings-list settings-library-list">
-                                {libraryEntries.length === 0 ? (
-                                    <div className="settings-empty-list">{t('tf_empty_no_data')}</div>
-                                ) : libraryEntries.map((entry, index) => (
-                                    <div
-                                        className={`settings-list-item settings-library-list-item ${selectedDupFolder === entry.path ? 'active' : ''}`}
-                                        key={entry.path}
-                                        data-library-path={entry.path}
-                                        onClick={() => setSelectedDupFolder(entry.path)}
-                                    >
-                                        <button
-                                            type="button"
-                                            className="settings-library-list-main settings-library-select"
-                                            aria-pressed={selectedDupFolder === entry.path}
-                                            onClick={() => setSelectedDupFolder(entry.path)}
-                                        >
-                                            <div className="settings-library-list-head">
-                                                <span className="settings-library-list-title" title={entry.path}>
-                                                    {libraryDisplayName(entry.path, entry.alias)}
-                                                </span>
-                                                {entry.group ? (
-                                                    <span className="settings-library-list-group" title={entry.group}>{entry.group}</span>
-                                                ) : null}
-                                            </div>
-                                            <span className="settings-library-list-path" title={entry.path}>{entry.path}</span>
-                                        </button>
-                                        <div
-                                            className="settings-library-row-actions"
-                                            role="group"
-                                            aria-label={libraryDisplayName(entry.path, entry.alias)}
-                                        >
-                                            <button
-                                                type="button"
-                                                aria-label={label('settings_library_move_up', '위로 이동')}
-                                                title={label('settings_library_move_up', '위로 이동')}
-                                                disabled={index === 0}
-                                                onClick={event => {
-                                                    event.stopPropagation();
-                                                    handleMoveLibrary(entry.path, -1);
-                                                }}
-                                            >
-                                                <FaIcon name="angleUp" size={11} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                aria-label={label('settings_library_move_down', '아래로 이동')}
-                                                title={label('settings_library_move_down', '아래로 이동')}
-                                                disabled={index === libraryEntries.length - 1}
-                                                onClick={event => {
-                                                    event.stopPropagation();
-                                                    handleMoveLibrary(entry.path, 1);
-                                                }}
-                                            >
-                                                <FaIcon name="angleDown" size={11} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                aria-label={label('settings_library_edit', '수정')}
-                                                title={label('settings_library_edit', '수정')}
-                                                onClick={event => {
-                                                    event.stopPropagation();
-                                                    setSelectedDupFolder(entry.path);
-                                                }}
-                                            >
-                                                <FaIcon name="edit" size={11} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                aria-label={label('btn_remove', '삭제')}
-                                                title={label('btn_remove', '삭제')}
-                                                onClick={event => {
-                                                    event.stopPropagation();
-                                                    handleRemoveDupFolder(entry.path);
-                                                }}
-                                            >
-                                                <FaIcon name="trash" size={11} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            {selectedLibraryEntry && (
-                                <div className="settings-library-editor">
-                                    <div className="settings-library-editor-fields">
-                                        <label>
-                                            <span>{label('settings_library_alias', '별칭')}</span>
-                                            <input
-                                                id="settings-library-alias"
-                                                className="settings-input"
-                                                value={selectedLibraryEntry.alias}
-                                                placeholder={label('settings_library_alias_ph', '라이브러리에 표시할 이름')}
-                                                onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'alias', event.target.value)}
-                                            />
-                                        </label>
-                                        <label>
-                                            <span>{label('settings_library_group', '그룹')}</span>
-                                            <input
-                                                id="settings-library-group"
-                                                className="settings-input"
-                                                value={selectedLibraryEntry.group}
-                                                placeholder={label('settings_library_group_ph', '예: NAS, 로컬, 작업용')}
-                                                onChange={event => handleLibraryEntryChange(selectedLibraryEntry.path, 'group', event.target.value)}
-                                            />
-                                        </label>
-                                    </div>
-                                    <div className="settings-library-editor-path" title={selectedLibraryEntry.path}>
-                                        <span>{label('settings_library_path', '경로')}</span>
-                                        <strong>{selectedLibraryEntry.path}</strong>
-                                    </div>
-                                </div>
-                            )}
+                            <SettingsLibraryList
+                                entries={libraryEntries}
+                                selectedPath={selectedDupFolder}
+                                onSelect={setSelectedDupFolder}
+                                onRemove={handleRemoveDupFolder}
+                                onChange={updateLibraryEntries}
+                                t={t}
+                            />
                         </div>
                         <SettingsLibraryPreview
                             entries={libraryEntries}
@@ -1370,100 +1574,117 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
           )}
 
           {activeTab === 'api' && (
-            <div className="settings-panel">
+            <div className="settings-panel" id="settings-api-content" role="region" aria-labelledby={`settings-api-section-${activeApiSection}`}>
+              {activeApiSection === 'preferred' && (
               <fieldset className="settings-fieldset">
               <legend>{label('preferred_search_api_group', '자주 사용하는 검색 API')}</legend>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor="settings-preferred-comic">{label('preferred_search_api_comic', '만화책')}</label>
                 <select id="settings-preferred-comic"
                   className="settings-select"
                   value={preferredComicApi}
                   onChange={event => handleChange('preferred_meta_api_comic', event.target.value)}
                 >
-                  {metadataSearchSourcesForBookType('comic').map(source => (
+                  {metadataSearchSourcesForBookType('comic', localConfig.metadata_api_enabled).map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>
               </div>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor="settings-preferred-book">{label('preferred_search_api_book', '전자책')}</label>
                 <select id="settings-preferred-book"
                   className="settings-select"
                   value={preferredBookApi}
                   onChange={event => handleChange('preferred_meta_api_book', event.target.value)}
                 >
-                  {metadataSearchSourcesForBookType('book').map(source => (
+                  {metadataSearchSourcesForBookType('book', localConfig.metadata_api_enabled).map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>
               </div>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor="settings-preferred-pdf">{label('preferred_search_api_pdf', 'PDF')}</label>
                 <select id="settings-preferred-pdf"
                   className="settings-select"
                   value={preferredPdfApi}
                   onChange={event => handleChange('preferred_meta_api_pdf', event.target.value)}
                 >
-                  {metadataSearchSourcesForBookType('pdf').map(source => (
+                  {metadataSearchSourcesForBookType('pdf', localConfig.metadata_api_enabled).map(source => (
                     <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
                   ))}
                 </select>
               </div>
+                <div className="settings-row settings-control-field">
+                    <label className="settings-label" htmlFor="settings-preferred-audio">{t('preferred_search_api_audio')}</label>
+                    <select id="settings-preferred-audio" className="settings-select" value={preferredAudioApi}
+                        onChange={event => handleChange('preferred_meta_api_audio', event.target.value)}>
+                        {metadataSearchSourcesForBookType('audio', localConfig.metadata_api_enabled).map(source => (
+                            <option key={source.value} value={source.value}>{apiSourceLabel(source)}</option>
+                        ))}
+                    </select>
+                </div>
               <p className="settings-help">{label('preferred_search_api_desc', '선택한 값은 메타데이터 관리의 검색 API 드롭다운 기본값으로 사용됩니다.')}</p>
               </fieldset>
+              )}
 
-              <fieldset className="settings-fieldset">
-              <legend>{t('settings.sections.credentials')}</legend>
-              <div className="settings-api-manual-row">
-                <button className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}><FaIcon name="bookOpen" />{label('btn_api_manual', 'API 발급 매뉴얼')}</button>
-              </div>
-
-                <div className="settings-row">
-                    <label className="settings-label" htmlFor="settings-secret-yes24">YES24 API Key</label>
-                    {renderSecretInput('yes24', 'YES24 API Key (yk_live_...)')}
+              {activeApiSection === 'providers' && <>
+                <div className="settings-provider-toolbar settings-api-manual-row">
+                    <p className="settings-help">{t('metadata_provider_enabled_help')}</p>
+                    <button type="button" className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}>
+                        <FaIcon name="bookOpen" />{label('btn_api_manual', '검색 소스 설정 안내')}
+                    </button>
                 </div>
-                <div className="settings-row settings-aladin-api-row">
-                    <label className="settings-label" htmlFor="settings-secret-aladin">Aladin TTBKey</label>
-                    {renderSecretInput('aladin', 'Aladin TTBKey')}
-                    <p className="settings-help settings-aladin-api-notice">
-                        {label('aladin_openapi_shutdown_notice', '알라딘 OpenAPI 서비스 종료 예정 26년 10월 30일')}{' '}
-                        <a
-                            className="settings-help-link"
-                            href="https://blog.aladin.co.kr/openapi/group/18264538"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={event => {
-                                if (window.electronAPI?.openExternal) {
-                                    event.preventDefault();
-                                    window.electronAPI.openExternal(event.currentTarget.href);
-                                }
-                            }}
-                        >
-                            [{label('aladin_openapi_shutdown_details', '자세히보기')}]
-                        </a>
-                    </p>
-                </div>
-              <div className="settings-row">
-                <label className="settings-label" htmlFor="settings-secret-google">Google Books API</label>
-                {renderSecretInput('google', 'Google Books API Key')}
-              </div>
-              <div className="settings-row">
-                <label className="settings-label" htmlFor="settings-secret-vine">Comic Vine API</label>
-                {renderSecretInput('vine', 'Comic Vine API Key')}
-              </div>
+                {METADATA_PROVIDER_GROUPS.map(group => (
+                    <section key={group.id} className="settings-provider-group" aria-labelledby={`settings-provider-group-${group.id}`}>
+                        <h3 id={`settings-provider-group-${group.id}`} className="settings-provider-group-title">{t(group.labelKey)}</h3>
+                        <div className="settings-provider-list">
+                            {group.sources.map(source => {
+                                const enabled = isMetadataApiSourceEnabled(source.value, localConfig.metadata_api_enabled);
+                                const key = requiredApiKeyForSource(source.value);
+                                const ready = apiSourceHasRequiredKey(source.value, localConfig.api_keys);
+                                const hasSettings = ['알라딘', 'Hardcover', 'iTunes', 'Kobo', 'Audible'].includes(source.value);
+                                const descriptionKey = source.labelKey.replace('api_source_', 'metadata_provider_description_');
+                                const descriptionId = `settings-${descriptionKey}`;
+                                return (
+                                    <article key={source.value} className={`settings-provider-card${enabled ? '' : ' is-disabled'}`} data-provider={source.value}>
+                                        <div className={`settings-provider-header${key ? ' has-key' : ''}`}>
+                                            <div className="settings-provider-copy">
+                                                <h4>{apiSourceLabel(source)}</h4>
+                                                {enabled && !ready && <span className="settings-provider-status is-setup_required">{t('metadata_provider_setup_required')}</span>}
+                                            </div>
+                                            {key && renderSecretInput(key, key === 'yes24' ? 'yk_live_...' : '', false,
+                                                key === 'aladin' ? 'TTBKey' : key === 'hardcover' ? 'API Token' : 'API Key')}
+                                            <button type="button" role="switch" className="settings-provider-switch"
+                                                aria-label={apiSourceLabel(source)} aria-checked={enabled} aria-describedby={descriptionId}
+                                                onClick={() => handleProviderEnabledChange(source.value, !enabled)}>
+                                                <span aria-hidden="true" />
+                                            </button>
+                                        </div>
+                                        <p id={descriptionId} className="settings-provider-description">{t(descriptionKey)}</p>
+                                        {hasSettings && (
+                                            <div className="settings-provider-fields">{renderProviderSettings(source)}</div>
+                                        )}
+                                    </article>
+                                );
+                            })}
+                        </div>
+                    </section>
+                ))}
+                <p className="settings-help">{t('metadata_provider_region_help')}</p>
+                <p className="settings-help">{t('metadata_provider_unofficial_help')}</p>
+              </>}
 
-              </fieldset>
-
+              {activeApiSection === 'ai' && (
               <fieldset className="settings-fieldset">
               <legend>{t('ai_cover_search_group')}</legend>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor="settings-ai-provider">{t('ai_provider')}</label>
                 <select id="settings-ai-provider" className="settings-select" value={aiProvider} onChange={event => handleApiChange('ai_provider', event.target.value)}>
                   <option value="Gemini">Gemini</option>
                   <option value="OpenAI">OpenAI</option>
                 </select>
               </div>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor={`settings-secret-${aiKeyField}`}>{t('ai_api_key')}</label>
                 {renderSecretInput(
                   aiKeyField,
@@ -1472,7 +1693,9 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               </div>
               <p className="settings-help">{t('ai_cover_search_notice')}</p>
               </fieldset>
+              )}
 
+              {activeApiSection === 'tags' && (
               <fieldset className="settings-fieldset settings-tag-fieldset">
               <legend>{t('tag_rules_group')}</legend>
               <p className="settings-help" id="settings-tag-rules-help">{t('tag_rules_desc')}</p>
@@ -1485,6 +1708,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 onChange={event => handleApiChange('tag_rules', event.target.value)}
               />
               </fieldset>
+              )}
+              {activeApiSection === 'cache' && (
               <fieldset className="settings-fieldset">
               <legend>{t('settings.sections.search_cache')}</legend>
               <p className="settings-notice">
@@ -1498,6 +1723,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                 </button>
               </div>
               </fieldset>
+              )}
             </div>
           )}
 
@@ -1533,11 +1759,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               </fieldset>
               <fieldset className="settings-fieldset">
               <legend>{label('tts_api_group', 'TTS API')}</legend>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor="settings-secret-tts_openai_key">{label('tts_openai_api_key', 'OpenAI TTS API Key')}</label>
                 {renderSecretInput('tts_openai_key', 'OpenAI API Key (sk-...)')}
               </div>
-              <div className="settings-row">
+              <div className="settings-row settings-control-field">
                 <label className="settings-label" htmlFor="settings-secret-tts_google_key">{label('tts_google_api_key', 'Google TTS 인증 정보')}</label>
                 {renderSecretInput('tts_google_key', 'Google service account JSON or JSON file path')}
               </div>
@@ -1552,6 +1778,58 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                     </div>
                 )}
             </div>
+                {displayedLibraryEntry && (
+                    <div
+                        ref={libraryEditorRef}
+                        className={`settings-library-editor${libraryEditorExpanded ? ' is-open' : ''}`}
+                        role="group"
+                        aria-label={label('settings_library_edit', '수정')}
+                        aria-hidden={!libraryEditorOpen}
+                        inert={libraryEditorOpen ? undefined : ''}
+                        onTransitionEnd={event => {
+                            if (event.target === event.currentTarget && event.propertyName === 'transform' && !libraryEditorOpen) {
+                                setLibraryEditorMounted(false);
+                            }
+                        }}
+                    >
+                        <div className="settings-library-editor-heading">
+                            <div className="settings-library-editor-path" title={displayedLibraryEntry.path}>
+                                <span>{label('settings_library_path', '경로')}</span>
+                                <strong>{displayedLibraryEntry.path}</strong>
+                            </div>
+                            <button type="button" className="settings-library-editor-close" aria-label={t('btn_close')} title={t('btn_close')}
+                                onClick={() => {
+                                    setSelectedDupFolder('');
+                                    settingsBodyRef.current?.focus({ preventScroll: true });
+                                }}>
+                                <FaIcon name="xmark" />
+                            </button>
+                        </div>
+                        <div className="settings-library-editor-fields">
+                            <label className="settings-control-field">
+                                <span className="settings-field-label">{label('settings_library_alias', '별칭')}</span>
+                                <input
+                                    id="settings-library-alias"
+                                    className="settings-input"
+                                    value={displayedLibraryEntry.alias}
+                                    placeholder={label('settings_library_alias_ph', '라이브러리에 표시할 이름')}
+                                    onChange={event => handleLibraryEntryChange(displayedLibraryEntry.path, 'alias', event.target.value)}
+                                />
+                            </label>
+                            <label className="settings-control-field">
+                                <span className="settings-field-label">{label('settings_library_group', '그룹')}</span>
+                                <input
+                                    id="settings-library-group"
+                                    className="settings-input"
+                                    value={displayedLibraryEntry.group}
+                                    placeholder={label('settings_library_group_ph', '예: NAS, 로컬, 작업용')}
+                                    onChange={event => handleLibraryEntryChange(displayedLibraryEntry.path, 'group', event.target.value)}
+                                />
+                            </label>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
 
         {maintenanceMessage && (
@@ -1561,8 +1839,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         <div className="modal-footer settings-footer" inert={showApiManual ? '' : undefined}>
             <p className="settings-save-note">{t('settings.save_note')}</p>
             <div className="settings-footer-actions">
-                <button className="btn btn-secondary" onClick={handleCancel}>{t('btn_cancel')}</button>
-                <button className="btn btn-primary" onClick={handleSave}>{t('btn_save')}</button>
+                <button className="btn btn-secondary" onClick={handleCancel} disabled={isApplying}>{t('btn_cancel')}</button>
+                <button className="btn btn-primary" onClick={handleApply} disabled={!hasChanges || isApplying || Boolean(fileAssociationBusy)} aria-busy={isApplying}>{t('settings.apply')}</button>
             </div>
         </div>
         {showApiManual && (
@@ -1573,6 +1851,15 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               <button onClick={() => window.electronAPI?.openExternal?.('https://blog.aladin.co.kr/openapi')}>Aladin OpenAPI</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://comicvine.gamespot.com/api/')}>Comic Vine API</button>
               <button onClick={() => window.electronAPI?.openExternal?.('https://console.cloud.google.com/')}>Google Cloud Console</button>
+                {METADATA_PROVIDER_GUIDES.map(provider => (
+                    <section key={provider.key} className="settings-provider-guide">
+                        <h4>{provider.name}</h4>
+                        <p className="settings-help">{t(`metadata_provider_guide_${provider.key}`)}</p>
+                        <button type="button" onClick={() => window.electronAPI?.openExternal?.(provider.url)}>
+                            {provider.name} · {t('metadata_provider_open_guide')}
+                        </button>
+                    </section>
+                ))}
               <button className="settings-manual-close" onClick={() => setShowApiManual(false)}>{label('btn_close', '닫기')}</button>
             </div>
           </div>

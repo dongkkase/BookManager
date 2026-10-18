@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { METADATA_API_SOURCE_NAMES } from '../electron/metadataProviderSettings.js';
 import {
     metadataSearchResultKey,
     rankMetadataSearchResults,
@@ -17,12 +18,43 @@ const unifiedOptions = {
     bookType: 'book',
     apiKeys: {},
 };
-const allKeys = { yes24: 'yes24-key', aladin: 'aladin-key', google: 'google-key', vine: 'vine-key' };
+const allKeys = { yes24: 'yes24-key', aladin: 'aladin-key', google: 'google-key', vine: 'vine-key', hardcover: 'hardcover-token' };
+const keylessBookSources = ['리디북스', '문피아', 'Amazon', 'Goodreads', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB'];
 const deferred = () => {
     let resolve;
     const promise = new Promise(settle => { resolve = settle; });
     return { promise, resolve };
 };
+
+test('통합검색은 키가 등록되어도 비활성 소스를 요청하지 않고 부분 토글을 반영한다', async () => {
+    const calls = [];
+    const metadataApiEnabled = { '리디북스': false, '문피아': false, YES24: false, Hardcover: false, Amazon: false };
+    const result = await searchMetadata({ ...unifiedOptions, apiKeys: allKeys, metadataApiEnabled }, async request => {
+        calls.push(request.apiSource);
+        assert.equal(request.metadataApiEnabled, metadataApiEnabled);
+        return { success: true, results: [{ id: 1, title: request.apiSource }] };
+    });
+    assert.equal(result.success, true);
+    assert.ok(calls.includes('알라딘'));
+    assert.ok(calls.includes('Open Library'));
+    assert.ok(calls.every(source => metadataApiEnabled[source] !== false));
+    assert.deepEqual(result.results.map(item => item.apiSource).sort(), [...calls].sort());
+});
+
+test('단일 비활성 검색과 모든 소스를 끈 통합검색은 네트워크 요청 전에 실패한다', async () => {
+    const disabled = Object.fromEntries(METADATA_API_SOURCE_NAMES.map(source => [source, false]));
+    const fetch = async () => assert.fail('disabled providers must not be requested');
+    for (const apiSource of ['리디북스', 'Hardcover', 'Audible']) {
+        const result = await searchMetadata({ ...unifiedOptions, apiSource, apiKeys: allKeys, metadataApiEnabled: disabled }, fetch);
+        assert.equal(result.success, false);
+        assert.equal(result.code, 'API_DISABLED');
+        assert.deepEqual(result.results, []);
+    }
+    const result = await searchMetadata({ ...unifiedOptions, apiKeys: allKeys, metadataApiEnabled: disabled }, fetch);
+    assert.equal(result.success, false);
+    assert.equal(result.code, 'NO_ENABLED_APIS');
+    assert.deepEqual(result.results, []);
+});
 
 test('integrated search uses only enabled providers compatible with the book type', async () => {
     const calls = [];
@@ -31,12 +63,12 @@ test('integrated search uses only enabled providers compatible with the book typ
         calls.push(request);
         return { success: true, results: [{ id: 7, title: '수선전', metadata: { Title: '수선전' } }] };
     });
-    assert.deepEqual(calls.map(call => call.apiSource), ['리디북스', '문피아', 'Amazon']);
+    assert.deepEqual(calls.map(call => call.apiSource), keylessBookSources);
     assert.ok(calls.every(call => call.page === 3 && call.query === '수선전' && call.bookType === 'book'));
     assert.equal(result.api, UNIFIED_METADATA_API_SOURCE);
     assert.equal(result.actualQuery, '수선전');
-    assert.equal(result.results.length, 3);
-    assert.equal(new Set(result.results.map(item => metadataSearchResultKey(item))).size, 3);
+    assert.equal(result.results.length, keylessBookSources.length);
+    assert.equal(new Set(result.results.map(item => metadataSearchResultKey(item))).size, keylessBookSources.length);
     assert.ok(result.results.every(item => item.id === 7));
 });
 
@@ -46,7 +78,7 @@ test('registered keys enable their providers and comic search includes Anilist i
         calls.push(request.apiSource);
         return { success: true, results: [] };
     });
-    assert.deepEqual(calls, ['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+    assert.deepEqual(calls, ['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
 });
 
 test('search requests run at most three at a time and collect responses in provider order', async () => {
@@ -80,7 +112,7 @@ test('provider response failures and thrown errors are isolated without discardi
     const result = await searchMetadata(unifiedOptions, async request => {
         if (request.apiSource === '리디북스') return { success: false, error: 'Ridi unavailable' };
         if (request.apiSource === '문피아') throw new Error('Munpia timeout');
-        return { success: true, results: [{ id: 5, title: '수선전', coverUrl: 'https://example.test/cover.png' }] };
+        return { success: true, results: request.apiSource === 'Amazon' ? [{ id: 5, title: '수선전', coverUrl: 'https://example.test/cover.png' }] : [] };
     });
     assert.equal(result.success, true);
     assert.deepEqual(result.failures, [
@@ -96,7 +128,7 @@ test('all failed providers produce an explicit failure code while empty successf
     const failed = await searchMetadata(unifiedOptions, async () => ({ success: false, error: 'offline' }));
     assert.equal(failed.success, false);
     assert.equal(failed.code, 'ALL_APIS_FAILED');
-    assert.equal(failed.failures.length, 3);
+    assert.equal(failed.failures.length, keylessBookSources.length);
     const empty = await searchMetadata(unifiedOptions, async () => ({ success: true, results: [] }));
     assert.equal(empty.success, true);
     assert.deepEqual(empty.results, []);
@@ -108,7 +140,7 @@ test('malformed provider responses are treated as isolated failures', async () =
         request.apiSource === 'Amazon' ? { success: true, results: [] } : null
     ));
     assert.equal(result.success, true);
-    assert.equal(result.failures.length, 2);
+    assert.equal(result.failures.length, keylessBookSources.length - 1);
 });
 
 test('cancelled search starts no requests and stops queued providers after active responses settle', async () => {
@@ -140,8 +172,28 @@ test('the next page is available when any provider returns a full page', async (
     }));
     assert.equal(result.hasNext, true);
     const partialPages = await searchMetadata(unifiedOptions, async () => ({ success: true, results: fullPage.slice(0, 19) }));
-    assert.equal(partialPages.results.length, 57);
+    assert.equal(partialPages.results.length, 19 * keylessBookSources.length);
     assert.equal(partialPages.hasNext, false);
+});
+
+test('single and unified searches respect explicit pagination even when the result count suggests otherwise', async () => {
+    for (const apiSource of ['iTunes', UNIFIED_METADATA_API_SOURCE]) {
+        for (const [response, expected] of [
+            [{ results: Array.from({ length: 20 }, (_, id) => ({ id, title: '수선전' })), hasNext: false }, false],
+            [{ results: [{ id: 1, title: '수선전' }], hasNext: true }, true],
+            [{ results: Array.from({ length: 20 }, (_, id) => ({ id, title: '수선전' })) }, true],
+            [{ results: [{ id: 1, title: '수선전' }] }, false],
+        ]) {
+            const result = await searchMetadata({ ...unifiedOptions, apiSource }, async () => ({ success: true, ...response }));
+            assert.equal(result.hasNext, expected, `${apiSource}: ${response.results.length} results, hasNext=${response.hasNext}`);
+        }
+    }
+    const mixed = await searchMetadata(unifiedOptions, async request => ({
+        success: true,
+        results: [{ id: 1, title: '수선전' }],
+        hasNext: request.apiSource === 'Open Library',
+    }));
+    assert.equal(mixed.hasNext, true);
 });
 
 test('integrated search reports cache use only if all providers served cached successful responses', async () => {

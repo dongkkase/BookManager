@@ -173,6 +173,7 @@ async function fixture(options = {}) {
         onImageDropAvailabilityChange: available => { calls.imageDropAvailable.push(available); },
         onReset: () => { calls.reset += 1; },
         apiKeys: options.apiKeys || {},
+        metadataApiEnabled: options.metadataApiEnabled,
         preferences: options.preferences,
         onPreferencesChange: preferences => {
             calls.preferences.push(preferences);
@@ -1200,6 +1201,66 @@ function searchForm(value) {
 }
 
 const searchApiSelect = value => value.all(node => node.type === 'select' && node.props.className === 'cover-editor-search-api')[0];
+
+test('disabled cover sources disappear from the menu and a restored disabled selection falls back to unified', async () => {
+    const metadataApiEnabled = { '리디북스': false, '문피아': false, Goodreads: false };
+    const value = await fixture({ metadataApiEnabled, preferences: { apiSource: '문피아' } });
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        await value.settle();
+        assert.equal(searchApiSelect(value).props.value, '통합검색');
+        const choices = childrenOf(searchApiSelect(value)).map(node => node.props.value);
+        assert.ok(choices.includes('통합검색'));
+        assert.ok(choices.includes('Open Library'));
+        assert.ok(!choices.some(source => metadataApiEnabled[source] === false));
+        assert.equal(value.calls.preferences.at(-1).apiSource, '통합검색');
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        assert.ok(value.calls.metadata.length > 0);
+        assert.ok(value.calls.metadata.every(request => metadataApiEnabled[request.apiSource] !== false));
+    } finally { value.close(); }
+});
+
+test('changing enabled cover sources cancels pending results and all-off search sends no requests', async () => {
+    const pending = deferred();
+    const value = await fixture({ preferences: { apiSource: '리디북스' }, metadata: () => pending.promise });
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        value.render();
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        assert.equal(value.calls.metadata.length, 1);
+        const metadataApiEnabled = Object.fromEntries(metadataApiPolicy.ALL_METADATA_API_SOURCES.map(source => [source.value, false]));
+        value.updateProps({ metadataApiEnabled });
+        await value.settle();
+        assert.equal(searchApiSelect(value).props.value, '통합검색');
+        assert.deepEqual(childrenOf(searchApiSelect(value)).map(node => node.props.value), ['통합검색']);
+        pending.resolve({ success: true, results: [metadataResult], hasNext: true });
+        await value.settle();
+        assert.ok(!value.text().includes(metadataResult.title));
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        assert.equal(value.calls.metadata.length, 1);
+        assert.deepEqual(value.calls.toasts.at(-1), { key: 'cover_editor_metadata_no_apis' });
+    } finally { value.close(); }
+});
+
+test('saving unrelated settings with the same enabled sources preserves an ongoing cover search', async () => {
+    const pending = deferred();
+    const value = await fixture({ metadataApiEnabled: { Goodreads: false }, preferences: { apiSource: '리디북스' }, metadata: () => pending.promise });
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        value.render();
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        value.updateProps({ metadataApiEnabled: { Goodreads: false, '리디북스': true } });
+        await value.settle();
+        pending.resolve({ success: true, results: [metadataResult], hasNext: true });
+        await value.settle();
+        assert.ok(value.text().includes(metadataResult.title));
+        assert.equal(value.calls.metadata.length, 1);
+    } finally { value.close(); }
+});
 
 test('cover API selection defaults to unified, persists with other options, and is restored on reopen', async () => {
     let preferences;

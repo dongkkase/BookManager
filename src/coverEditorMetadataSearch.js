@@ -101,7 +101,7 @@ export async function upgradeCoverEditorMetadataThumbnails(results, cacheCover, 
 }
 
 export async function searchCoverEditorMetadata(options = {}, fetchMetadata, runtime = {}) {
-    const apiSource = metadataSearchSourcesForBookType(options.bookType).some(source => source.value === options.apiSource)
+    const apiSource = metadataSearchSourcesForBookType(options.bookType, options.metadataApiEnabled).some(source => source.value === options.apiSource)
         ? options.apiSource : UNIFIED_METADATA_API_SOURCE;
     const response = await searchMetadata({ ...options, apiSource }, fetchMetadata, runtime);
     const seen = new Set();

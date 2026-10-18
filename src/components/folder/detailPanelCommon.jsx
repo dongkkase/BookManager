@@ -192,6 +192,25 @@ export function DetailCoverFrame({ children }) {
     );
 }
 
+export function DetailOpenButton({ selectedFile, onOpenFile, t }) {
+    if (!selectedFile || selectedFile.isDirectory || selectedFile.collectionId || !onOpenFile) return null;
+    const isAudio = resolveBookType(selectedFile) === 'audio';
+
+    return (
+        <button
+            type="button"
+            className="btn btn-primary detail-open-button"
+            onClick={() => onOpenFile(selectedFile)}
+            onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+            }}
+        >
+            <FaIcon name={isAudio ? 'headphones' : 'bookOpen'} size={18} />
+            <span>{t(isAudio ? 'folder.detail.listen' : 'folder.detail.read')}</span>
+        </button>
+    );
+}
+
 export function DetailPanelStatusBadges({ selectedFile, t }) {
     return (
         <ViewerDetailStatusBadges

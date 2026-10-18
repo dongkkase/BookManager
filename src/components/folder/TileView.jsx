@@ -138,7 +138,7 @@ const TileView = ({
 	    const updateViewport = () => {
 	      setViewport(current => ({
 	        ...current,
-	        width: Math.max(0, Math.round(container.clientWidth || 0)),
+            width: Math.max(0, Math.round(container.clientWidth || 0) - (parseFloat(getComputedStyle(container).getPropertyValue('--folder-character-index-space')) || 0)),
 	        height: Math.max(0, Math.round(container.clientHeight || 0)),
 	        scrollTop: container.scrollTop || 0,
 	      }));

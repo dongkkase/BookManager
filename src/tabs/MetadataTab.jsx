@@ -530,14 +530,18 @@ function MetadataTab({ config, t, showToast }) {
   const activeMetadataWriteMessage = activeItem?.metadataWriteMessage || '';
   const activeIsEpub = isEpubFilePath(activeItem?.filepath || activeItem?.path || activeItem?.name);
     const activeIsTxt = isTxtMetadataItem(activeItem);
+    const canUseApiCover = Boolean(activeItem) && activeMetadataWriteSupported && (
+        activeBookType === 'audio' || (activeBookType === 'book' && (activeIsEpub || activeIsTxt))
+    );
   const activeEpubImageState = activeItem?.filepath ? epubImagesByFilePath[activeItem.filepath] || {} : {};
   const activeEpubImages = activeEpubImageState.images || [];
   const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
-    const currentApiSources = useMemo(() => metadataSearchSourcesForBookType(activeBookType), [activeBookType]);
+    const metadataApiEnabledKey = ALL_METADATA_API_SOURCES.map(source => config?.metadata_api_enabled?.[source.value] !== false).join(',');
+    const currentApiSources = useMemo(() => metadataSearchSourcesForBookType(activeBookType, config?.metadata_api_enabled), [activeBookType, metadataApiEnabledKey]);
     useEffect(() => {
         closeApiSearch();
         return () => { apiSearchRequestRef.current += 1; };
-    }, [activeBookType, closeApiSearch]);
+    }, [activeBookType, metadataApiEnabledKey, closeApiSearch]);
   const currentMetadataConfig = useMemo(() => (
     activeBookType === 'pdf'
       ? {
@@ -690,10 +694,12 @@ function MetadataTab({ config, t, showToast }) {
   }, [
     activeBookType,
     config?.api_keys,
+    metadataApiEnabledKey,
     config?.last_meta_api,
     config?.preferred_meta_api_book,
     config?.preferred_meta_api_comic,
     config?.preferred_meta_api_pdf,
+    config?.preferred_meta_api_audio,
   ]);
 
   const updateItem = (id, updater) => {
@@ -1094,6 +1100,7 @@ function MetadataTab({ config, t, showToast }) {
                 page,
                 bookType: activeBookType,
                 apiKeys: config?.api_keys || {},
+                metadataApiEnabled: config?.metadata_api_enabled,
             }, options => window.electronAPI.fetchMetadata(options), { isCancelled });
             if (isCancelled()) return;
             let error = '';
@@ -1102,6 +1109,8 @@ function MetadataTab({ config, t, showToast }) {
                     ? text('meta_search_all_failed', '모든 API 검색에 실패했습니다.')
                     : result.code === 'NO_ENABLED_APIS'
                         ? text('meta_search_no_enabled_api', '사용 가능한 검색 API가 없습니다.')
+                        : result.code === 'API_DISABLED'
+                            ? text('api_provider_disabled', '{api} 검색 소스가 비활성화되어 있습니다.', { api: source })
                         : result.error || text('meta_search_failed', '검색에 실패했습니다.');
             }
             setApiSearch({
@@ -1122,7 +1131,7 @@ function MetadataTab({ config, t, showToast }) {
                 error: error.message || text('meta_search_failed', '검색에 실패했습니다.'),
             });
         }
-    }, [activeBookType, apiSource, config?.api_keys, searchQuery, selectApiSource, text]);
+    }, [activeBookType, apiSource, config?.api_keys, config?.metadata_api_enabled, searchQuery, selectApiSource, text]);
 
   const handleSearchApi = async (page = 1) => {
     const query = searchQuery.trim();
@@ -1366,7 +1375,7 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   const handleUseApiCoverResult = async (result, { autoForEmptyTxt = false } = {}) => {
-    if (!activeItem || activeBookType !== 'book' || (!activeIsEpub && !activeIsTxt)) return;
+    if (!canUseApiCover) return;
     const coverUrl = apiResultCoverUrl(result);
     if (!coverUrl) {
       setStatusMessage(text('meta_epub_cover_api_empty', '선택한 검색 결과에 사용할 표지가 없습니다.'));
@@ -1378,16 +1387,20 @@ function MetadataTab({ config, t, showToast }) {
       setStatusMessage(text('meta_epub_cover_api_loading', '검색 API 표지를 저장하는 중...'));
       const cached = await window.electronAPI?.cacheMetadataRemoteCover?.(originalUrl);
       if (!cached?.filePath) throw new Error(text('meta_epub_cover_api_failed', '검색 API 표지를 로컬 캐시에 저장하지 못했습니다.'));
-      const updateCoverChange = activeIsTxt ? updateActiveTxtCoverChange : updateActiveEpubCoverChange;
+        const updateCoverChange = activeBookType === 'audio'
+            ? updateActiveAudioCoverChange
+            : activeIsTxt ? updateActiveTxtCoverChange : updateActiveEpubCoverChange;
       updateCoverChange({
         type: 'file',
         filePath: cached.filePath,
         label: result?.title || result?.metadata?.Title || fileNameFromPath(cached.filePath),
       }, cached.coverCacheUrl || coverUrl, { onlyIfEmpty: autoForEmptyTxt });
             if (apiSearchRequestRef.current === requestId) closeApiSearch();
-      setStatusMessage(activeIsTxt
-        ? text('txt_cover_replace_pending', '저장하면 TXT 표지가 교체됩니다.')
-        : text('meta_epub_cover_api_done', '검색 API 표지를 새 EPUB 표지로 선택했습니다.'));
+        setStatusMessage(activeBookType === 'audio'
+            ? text('audio_cover_replace_pending', '저장하면 오디오북 썸네일이 교체됩니다.')
+            : activeIsTxt
+                ? text('txt_cover_replace_pending', '저장하면 TXT 표지가 교체됩니다.')
+                : text('meta_epub_cover_api_done', '검색 API 표지를 새 EPUB 표지로 선택했습니다.'));
     } catch (error) {
       const message = error.message || text('meta_epub_cover_api_failed', '검색 API 표지를 로컬 캐시에 저장하지 못했습니다.');
       setStatusMessage(message);
@@ -1438,9 +1451,14 @@ function MetadataTab({ config, t, showToast }) {
         page: 1,
         bookType: activeBookType,
         apiKeys: config?.api_keys || {},
+        metadataApiEnabled: config?.metadata_api_enabled,
       }, options => window.electronAPI.fetchMetadata(options));
       if (result?.success === false) {
-        setStatusMessage(result.error || text('t3_msg_auto_match_failed', '자동 매칭에 실패했습니다.'));
+        setStatusMessage(result.code === 'API_DISABLED'
+            ? text('api_provider_disabled', '{api} 검색 소스가 비활성화되어 있습니다.', { api: apiSource })
+            : result.code === 'NO_ENABLED_APIS'
+                ? text('meta_search_no_enabled_api', '사용 가능한 검색 API가 없습니다.')
+                : result.error || text('t3_msg_auto_match_failed', '자동 매칭에 실패했습니다.'));
         return;
       }
       const first = result.results?.[0];
@@ -1998,8 +2016,8 @@ function MetadataTab({ config, t, showToast }) {
           {renderFieldInput(field, activeItem?.metadata?.[field.id] || '', value => updateActiveMetadata(field.id, value))}
           {field.type === 'number' && (
             <div className="meta-stepper">
-              <button onClick={() => bumpField(field.id, -1)} disabled={!activeItem}>−</button>
-              <button onClick={() => bumpField(field.id, 1)} disabled={!activeItem}>+</button>
+                <button type="button" aria-label={`${fieldLabel(field)} −`} onClick={() => bumpField(field.id, -1)} disabled={!activeItem}><FaIcon name="minus" size={12} /></button>
+                <button type="button" aria-label={`${fieldLabel(field)} +`} onClick={() => bumpField(field.id, 1)} disabled={!activeItem}><FaIcon name="plus" size={12} /></button>
             </div>
           )}
         </div>
@@ -2008,8 +2026,8 @@ function MetadataTab({ config, t, showToast }) {
           {renderFieldInput(field, batchMetadata[field.id] || '', value => updateBatchMetadata(field.id, value), 'meta-input res')}
           {field.type === 'number' && (
             <div className="meta-stepper">
-              <button onClick={() => bumpField(field.id, -1, 'batch')}>−</button>
-              <button onClick={() => bumpField(field.id, 1, 'batch')}>+</button>
+                <button type="button" aria-label={`${fieldLabel(field)} −`} onClick={() => bumpField(field.id, -1, 'batch')}><FaIcon name="minus" size={12} /></button>
+                <button type="button" aria-label={`${fieldLabel(field)} +`} onClick={() => bumpField(field.id, 1, 'batch')}><FaIcon name="plus" size={12} /></button>
             </div>
           )}
         </div>
@@ -2526,29 +2544,33 @@ function MetadataTab({ config, t, showToast }) {
         onMouseDownCapture={deactivateMetadataTreeKeyboard}
       >
         <div className="meta-search-bar">
-          <span className="meta-search-label">{t('t3_search_api')}</span>
-          <select
-            className="meta-api-select"
-            value={apiSource}
-            onChange={(event) => selectApiSource(event.target.value)}
-          >
-            {currentApiSources.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
-          </select>
-          <span className="meta-search-label">{t('t3_search_query')}</span>
-          <input
-            ref={apiSearchInputRef}
-            type="text"
-            className="meta-search-input"
-            placeholder={t('t3_search_ph')}
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing || event.shiftKey) return;
-              if (!searchQuery.trim() || isWorking) return;
-              event.preventDefault();
-              handleSearchApi(1);
-            }}
-          />
+            <label className="meta-search-field">
+                <span className="meta-search-label">{t('t3_search_api').replace(/\s*[:：]\s*$/, '')}</span>
+                <select
+                    className="meta-api-select"
+                    value={apiSource}
+                    onChange={(event) => selectApiSource(event.target.value)}
+                >
+                    {currentApiSources.map(source => <option key={source.value} value={source.value}>{apiSourceLabel(source.value)}</option>)}
+                </select>
+            </label>
+            <label className="meta-search-field">
+                <span className="meta-search-label">{t('t3_search_query').replace(/\s*[:：]\s*$/, '')}</span>
+                <input
+                    ref={apiSearchInputRef}
+                    type="text"
+                    className="meta-search-input"
+                    placeholder={t('t3_search_ph')}
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing || event.shiftKey) return;
+                        if (!searchQuery.trim() || isWorking) return;
+                        event.preventDefault();
+                        handleSearchApi(1);
+                    }}
+                />
+            </label>
           <button className="meta-search-btn" onClick={() => handleSearchApi(1)} disabled={isWorking || !searchQuery.trim()}><FaIcon name="search" /> {t('t3_btn_search')} (S)</button>
         </div>
 
@@ -2677,7 +2699,7 @@ function MetadataTab({ config, t, showToast }) {
           t={t}
           onClose={closeApiSearch}
           onSelect={handleSelectApiResult}
-          onUseCover={activeBookType === 'book' && (activeIsEpub || activeIsTxt) ? handleUseApiCoverResult : null}
+          onUseCover={canUseApiCover ? handleUseApiCoverResult : null}
           onSearch={fetchMetadataResults}
           onResolveRidiDate={resolveRidiPublishDate}
           minWidth={config?.metadata_search_min_width}

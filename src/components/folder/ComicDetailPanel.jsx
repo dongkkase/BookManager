@@ -9,6 +9,7 @@ import {
     DetailCoverFrame,
     DetailFieldGroup,
     DetailLine,
+    DetailOpenButton,
     DetailPanelStatusBadges,
     detailPublicationDate,
     detailReadingTime,
@@ -17,7 +18,7 @@ import {
     useDetailContentHeight,
 } from './detailPanelCommon';
 
-const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
+const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, onOpenFile, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -77,6 +78,7 @@ const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRa
                                     <CoverArtwork className="detail-cover-placeholder" fallbackAlt={t('folder_no_cover')} />
                                 )}
                             </DetailCoverFrame>
+                            <DetailOpenButton selectedFile={selectedFile} onOpenFile={onOpenFile} t={t} />
                             <div className="detail-cover-caption">
                                 <div>{t('col_res')}: {selectedFile.resolution || '-'}, ({formatSize(selectedFile.size)})</div>
                                 <div>{formatDate(selectedFile.created || selectedFile.ctime)}</div>

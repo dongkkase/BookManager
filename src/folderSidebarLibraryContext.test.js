@@ -32,10 +32,7 @@ test('폴더탭 탐색기 패널의 아이콘은 이모지 대신 FontAwesome을
 
 test('폴더탭 탐색기 아이콘 버튼은 hover 툴팁 정보를 가진다', () => {
     assert.match(source, /className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"/);
-    assert.match(source, /className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn favorite-add-btn"/);
-    assert.match(source, /className="favorite-menu-btn folder-sidebar-tooltip-btn"/);
     assert.match(source, /className="library-menu-btn folder-sidebar-tooltip-btn"/);
-    assert.match(source, /data-tooltip=\{t\('folder\.sidebar\.add_favorite'\)\}/);
     assert.match(source, /data-tooltip=\{t\('folder\.sidebar\.more_actions'\)\}/);
     assert.match(source, /data-tooltip=\{label\}/);
 });
@@ -47,11 +44,9 @@ test('마지막 라이브러리 메뉴 툴팁은 목록 스크롤을 만들지 �
     assert.match(folderTabStyles, new RegExp(`${lastLibraryMenuSelector.source}::after\\s*\\{[\\s\\S]*?top:\\s*auto;[\\s\\S]*?bottom:\\s*calc\\(100% \\+ 2px\\);[\\s\\S]*?border-bottom:\\s*1px solid #58606a;`));
 });
 
-test('라이브러리와 즐겨찾기 리스트의 행 버튼은 삭제 대신 컨텍스트 메뉴를 연다', () => {
+test('라이브러리 리스트의 행 버튼은 삭제 대신 컨텍스트 메뉴를 연다', () => {
     assert.match(source, /className="library-menu-btn folder-sidebar-tooltip-btn"[\s\S]*onLibraryContextMenu\?\.\(event,\s*lib\)/);
-    assert.match(source, /className="favorite-menu-btn folder-sidebar-tooltip-btn"[\s\S]*onFolderContextMenu\?\.\(event,\s*fav\.path\)/);
     assert.doesNotMatch(source, /className="library-remove-btn"/);
-    assert.doesNotMatch(source, /className="favorite-remove-btn"/);
     assert.match(folderTabSource, /handleContextAction\('remove-library'\)/);
 });
 

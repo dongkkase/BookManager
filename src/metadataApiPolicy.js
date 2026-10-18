@@ -1,6 +1,17 @@
 import { cleanMetadataSummary } from './metadataPolicy.js';
+import { isMetadataApiSourceEnabled } from '../electron/metadataProviderSettings.js';
 
 export const UNIFIED_METADATA_API_SOURCE = '통합검색';
+
+const ADDITIONAL_BOOK_METADATA_API_SOURCES = [
+    { value: 'Goodreads', labelKey: 'api_source_goodreads' },
+    { value: 'Hardcover', labelKey: 'api_source_hardcover' },
+    { value: 'Open Library', labelKey: 'api_source_openlibrary' },
+    { value: 'iTunes', labelKey: 'api_source_itunes' },
+    { value: 'Kobo', labelKey: 'api_source_kobo' },
+    { value: 'LubimyCzytac', labelKey: 'api_source_lubimyczytac' },
+    { value: 'RanobeDB', labelKey: 'api_source_ranobedb' },
+];
 
 export const COMIC_METADATA_API_SOURCES = [
   { value: '리디북스', labelKey: 'api_source_ridi' },
@@ -11,6 +22,7 @@ export const COMIC_METADATA_API_SOURCES = [
   { value: 'Google Books', labelKey: 'api_source_google' },
   { value: 'Anilist', labelKey: 'api_source_anilist' },
   { value: 'Vine', labelKey: 'api_source_vine' },
+    ...ADDITIONAL_BOOK_METADATA_API_SOURCES,
 ];
 
 export const BOOK_METADATA_API_SOURCES = [
@@ -20,15 +32,23 @@ export const BOOK_METADATA_API_SOURCES = [
   { value: '알라딘', labelKey: 'api_source_aladin' },
   { value: 'Google Books', labelKey: 'api_source_google' },
   { value: 'Amazon', labelKey: 'api_source_amazon' },
+    ...ADDITIONAL_BOOK_METADATA_API_SOURCES,
 ];
 
 export const PDF_METADATA_API_SOURCES = [
   ...BOOK_METADATA_API_SOURCES,
 ];
 
+export const AUDIO_METADATA_API_SOURCES = [
+    ...BOOK_METADATA_API_SOURCES,
+    { value: 'Audible', labelKey: 'api_source_audible' },
+    { value: 'AudNexus', labelKey: 'api_source_audnexus' },
+    { value: 'Libro.fm', labelKey: 'api_source_librofm' },
+];
+
 export const ALL_METADATA_API_SOURCES = [
   ...COMIC_METADATA_API_SOURCES,
-  ...BOOK_METADATA_API_SOURCES.filter(source => (
+  ...AUDIO_METADATA_API_SOURCES.filter(source => (
     !COMIC_METADATA_API_SOURCES.some(comicSource => comicSource.value === source.value)
   )),
 ];
@@ -39,54 +59,59 @@ export function requiredApiKeyForSource(source = '') {
     '알라딘': 'aladin',
     'Google Books': 'google',
     Vine: 'vine',
+    Hardcover: 'hardcover',
   }[source] || '';
 }
 
 export function apiSourceHasRequiredKey(source, apiKeys = {}) {
   const requiredKey = requiredApiKeyForSource(source);
-  return !requiredKey || String(apiKeys?.[requiredKey] || '').trim().length > 0;
+  const value = String(apiKeys?.[requiredKey] || '').trim();
+    return !requiredKey || (requiredKey === 'hardcover' ? value.replace(/^Bearer(?:\s+|$)/i, '').trim() : value).length > 0;
 }
 
 export function metadataApiSourcesForBookType(bookType = 'comic') {
   if (bookType === 'pdf') return PDF_METADATA_API_SOURCES;
-  return bookType === 'book' || bookType === 'audio'
+    if (bookType === 'audio') return AUDIO_METADATA_API_SOURCES;
+  return bookType === 'book'
     ? BOOK_METADATA_API_SOURCES
     : COMIC_METADATA_API_SOURCES;
 }
 
-export function metadataSearchSourcesForBookType(bookType = 'comic') {
+export function metadataSearchSourcesForBookType(bookType = 'comic', enabledMap = {}) {
     return [
         { value: UNIFIED_METADATA_API_SOURCE, labelKey: 'api_source_unified' },
-        ...metadataApiSourcesForBookType(bookType),
+        ...metadataApiSourcesForBookType(bookType).filter(source => isMetadataApiSourceEnabled(source.value, enabledMap)),
     ];
 }
 
-export function enabledMetadataApiSourcesForBookType(bookType = 'comic', apiKeys = {}) {
+export function enabledMetadataApiSourcesForBookType(bookType = 'comic', apiKeys = {}, enabledMap = {}) {
     return metadataApiSourcesForBookType(bookType).filter(source => (
-        apiSourceHasRequiredKey(source.value, apiKeys)
+        isMetadataApiSourceEnabled(source.value, enabledMap) && apiSourceHasRequiredKey(source.value, apiKeys)
     ));
 }
 
 export function metadataApiPreferenceKey(bookType = 'comic') {
   if (bookType === 'pdf') return 'preferred_meta_api_pdf';
-  return bookType === 'book' || bookType === 'audio'
+    if (bookType === 'audio') return 'preferred_meta_api_audio';
+  return bookType === 'book'
     ? 'preferred_meta_api_book'
     : 'preferred_meta_api_comic';
 }
 
-export function normalizeMetadataApiSourceForBookType(source = '', bookType = 'comic', apiKeys = {}) {
+export function normalizeMetadataApiSourceForBookType(source = '', bookType = 'comic', apiKeys = {}, enabledMap = {}) {
     if (source === UNIFIED_METADATA_API_SOURCE) return source;
-  const sources = metadataApiSourcesForBookType(bookType);
-  if (sources.some(item => item.value === source)) return source;
-  return sources.find(item => apiSourceHasRequiredKey(item.value, apiKeys))?.value || sources[0]?.value || '';
+    const sources = metadataApiSourcesForBookType(bookType);
+    if (sources.some(item => item.value === source) && isMetadataApiSourceEnabled(source, enabledMap)) return source;
+    return enabledMetadataApiSourcesForBookType(bookType, apiKeys, enabledMap)[0]?.value || UNIFIED_METADATA_API_SOURCE;
 }
 
 export function preferredMetadataApiSource(config = {}, bookType = 'comic') {
   const preferenceKey = metadataApiPreferenceKey(bookType);
   return normalizeMetadataApiSourceForBookType(
-    config?.[preferenceKey] || config?.last_meta_api || '',
+    config?.[preferenceKey] || (bookType === 'audio' ? config?.preferred_meta_api_book : '') || config?.last_meta_api || '',
     bookType,
     config?.api_keys || {},
+    config?.metadata_api_enabled || {},
   );
 }
 

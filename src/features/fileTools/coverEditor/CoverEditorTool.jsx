@@ -389,6 +389,7 @@ export default function CoverEditorTool({ config, saveConfig, t, showToast, onBa
         onDragEnd={() => setDragging(false)}
         onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}>
         <CoverEditorDialog key={session} embedded files={files} externalBusy={collecting} apiKeys={config?.api_keys || {}}
+            metadataApiEnabled={config?.metadata_api_enabled}
             preferences={preferences || config?.folder_cover_editor_options} onPreferencesChange={savePreferences}
             onExecute={execute} onClose={back} showToast={showToast} t={t}
             onToggleFile={toggleFile} onToggleAll={toggleAll} onRemoveFile={removeFile}

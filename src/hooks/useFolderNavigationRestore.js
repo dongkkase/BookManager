@@ -34,7 +34,7 @@ export function restoreFolderNavigationViewport({
                 };
             }
             if (bounds) {
-                if (bounds.top < container.scrollTop + headerHeight) {
+                if (request.revealAlign === 'start' || bounds.top < container.scrollTop + headerHeight) {
                     container.scrollTop = Math.max(0, bounds.top - headerHeight);
                 } else if (bounds.top + bounds.height > container.scrollTop + container.clientHeight) {
                     container.scrollTop = Math.max(0, bounds.top + bounds.height - container.clientHeight);
@@ -78,6 +78,7 @@ export function useFolderNavigationRestore({
     const scrollTop = navigationRestore?.scrollTop;
     const scrollLeft = navigationRestore?.scrollLeft;
     const revealPath = navigationRestore?.revealPath;
+    const revealAlign = navigationRestore?.revealAlign;
     const revealTop = revealBounds?.top;
     const revealHeight = revealBounds?.height;
 
@@ -87,7 +88,7 @@ export function useFolderNavigationRestore({
         if (!container || container.clientWidth <= 0 || container.clientHeight <= 0) return undefined;
         return restoreFolderNavigationViewport({
             container,
-            request: { id: requestId, scrollTop, scrollLeft, revealPath },
+            request: { id: requestId, scrollTop, scrollLeft, revealPath, revealAlign },
             revealBounds: revealTop === undefined ? null : { top: revealTop, height: revealHeight },
             onScrollPositionChange: position => callbacksRef.current.onScrollPositionChange?.(position),
             onComplete: id => {
@@ -95,5 +96,5 @@ export function useFolderNavigationRestore({
                 callbacksRef.current.onNavigationRestore?.(id);
             },
         });
-    }, [containerRef, requestId, scrollTop, scrollLeft, revealPath, viewportReady, revealTop, revealHeight]);
+    }, [containerRef, requestId, scrollTop, scrollLeft, revealPath, revealAlign, viewportReady, revealTop, revealHeight]);
 }

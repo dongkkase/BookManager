@@ -127,6 +127,12 @@ button:disabled {
     opacity: 0.55;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+    :where(.search-form button, .action-button, .text-button, .library-card[data-clickable="true"]) {
+        transition: all 0.3s ease-out;
+    }
+}
+
 .app-shell {
     width: min(1280px, calc(100% - 32px));
     margin: 0 auto;

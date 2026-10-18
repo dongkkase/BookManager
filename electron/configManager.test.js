@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ConfigManager } from './configManager.js';
+import { normalizeMetadataApiEnabled } from './metadataProviderSettings.js';
 
 function dataConfigPath(root) {
     return path.join(root, 'BookManagerData', 'config.json');
@@ -590,5 +591,83 @@ test('macOS 앱 번들 내부 data의 기존 config도 앱 옆 BookManagerData/c
         assert.equal(fs.existsSync(dataConfigPath(root)), true);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('신규 제공자 기본값과 인증 및 지역 설정은 저장 후 유지되고 부분 저장 시 보존된다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-providers-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, { preferred_meta_api_book: 'Kobo' });
+    const manager = new ConfigManager(root, root);
+    assert.equal(manager.loadConfig().preferred_meta_api_audio, 'Kobo');
+    assert.equal(manager.saveConfig({
+        preferred_meta_api_comic: 'Hardcover', preferred_meta_api_book: 'Open Library',
+        preferred_meta_api_pdf: 'iTunes', preferred_meta_api_audio: 'AudNexus',
+        api_keys: { hardcover: ' Bearer hc_test ' },
+        metadata_providers: { itunes_country: 'JP', kobo_country: 'ca', kobo_language: 'fr', audible_region: 'uk' },
+    }), true);
+    manager.saveConfig({ metadata_providers: { itunes_cover_resolution: 'standard' }, api_keys: { google: 'google-key' } });
+    const loaded = new ConfigManager(root, root).loadConfig();
+    assert.equal(loaded.preferred_meta_api_comic, 'Hardcover');
+    assert.equal(loaded.preferred_meta_api_book, 'Open Library');
+    assert.equal(loaded.preferred_meta_api_pdf, 'iTunes');
+    assert.equal(loaded.preferred_meta_api_audio, 'AudNexus');
+    assert.equal(loaded.api_keys.hardcover, 'hc_test');
+    assert.deepEqual(loaded.metadata_providers, {
+        itunes_country: 'JP', itunes_cover_resolution: 'standard',
+        kobo_country: 'ca', kobo_language: 'fr', audible_region: 'uk',
+    });
+    const normalized = manager.normalizeConfig({ preferred_meta_api_audio: 'Libro.fm', preferred_meta_api_book: 'Audible' });
+    assert.equal(normalized.preferred_meta_api_audio, 'Libro.fm');
+    assert.equal(normalized.preferred_meta_api_book, '리디북스');
+});
+
+test('검색 소스 토글은 부분 저장과 재실행에도 유지되고 비활성 기본값은 복구한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-provider-toggles-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, {
+        preferred_meta_api_comic: '리디북스', preferred_meta_api_book: 'Kobo',
+        preferred_meta_api_pdf: 'Hardcover', preferred_meta_api_audio: 'Audible',
+        api_keys: { hardcover: 'saved-token' },
+        metadata_providers: { kobo_country: 'jp' },
+    });
+    const manager = new ConfigManager(root, root);
+    assert.deepEqual(manager.loadConfig().metadata_api_enabled, normalizeMetadataApiEnabled());
+    assert.equal(manager.saveConfig({ metadata_api_enabled: { '리디북스': false, Kobo: false, Audible: false } }), true);
+    assert.equal(manager.saveConfig({ metadata_api_enabled: { Hardcover: false, unknown: false } }), true);
+    assert.equal(manager.saveConfig({ language: 'en' }), true);
+    const loaded = new ConfigManager(root, root).loadConfig();
+    assert.deepEqual(loaded.metadata_api_enabled, normalizeMetadataApiEnabled({ '리디북스': false, Kobo: false, Audible: false, Hardcover: false }));
+    for (const type of ['comic', 'book', 'pdf', 'audio']) {
+        assert.equal(loaded[`preferred_meta_api_${type}`], '문피아');
+    }
+    assert.equal(loaded.api_keys.hardcover, 'saved-token');
+    assert.equal(loaded.metadata_providers.kobo_country, 'jp');
+    assert.equal(manager.saveConfig({ metadata_api_enabled: { Hardcover: true } }), true);
+    const reenabled = new ConfigManager(root, root).loadConfig();
+    assert.equal(reenabled.metadata_api_enabled.Hardcover, true);
+    assert.equal(reenabled.metadata_api_enabled.Kobo, false);
+    assert.equal(reenabled.api_keys.hardcover, 'saved-token');
+});
+
+test('사용 가능한 활성 소스로 기본값을 복구하고 모든 검색 소스가 꺼진 상태도 저장한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-provider-all-off-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ConfigManager(root, root);
+    manager.loadConfig();
+    const disabled = Object.fromEntries(Object.keys(normalizeMetadataApiEnabled()).map(source => [source, false]));
+    assert.equal(manager.saveConfig({ metadata_api_enabled: disabled, api_keys: { yes24: 'saved-key' } }), true);
+    const loaded = new ConfigManager(root, root).loadConfig();
+    assert.deepEqual(loaded.metadata_api_enabled, disabled);
+    for (const type of ['comic', 'book', 'pdf', 'audio']) {
+        assert.equal(loaded[`preferred_meta_api_${type}`], '통합검색');
+    }
+    for (const apiKeys of [{}, { hardcover: 'Bearer' }, { hardcover: 'Bearer token' }]) {
+        const normalized = manager.normalizeConfig({
+            preferred_meta_api_book: '리디북스',
+            metadata_api_enabled: { ...disabled, Hardcover: true },
+            api_keys: apiKeys,
+        });
+        assert.equal(normalized.preferred_meta_api_book, apiKeys.hardcover === 'Bearer token' ? 'Hardcover' : '통합검색');
     }
 });

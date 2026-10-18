@@ -531,77 +531,92 @@ function App() {
     dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths, ...(activeTab !== 'folder' ? { dropMode } : {}) });
   }, [activeTab, dispatchTabAction, dropInteractionBlocked, language, resetFileDropHover, showToast, t]);
 
-  const handleSettingsClose = useCallback(async (updatedConfig) => {
-    setShowSettings(false);
-    if (!updatedConfig) {
-      const savedLang = config?.language || config?.lang || 'ko';
-      await changeLanguage(savedLang);
-      return;
-    }
-    if (updatedConfig) {
-      const requestedLang = updatedConfig.language || updatedConfig.lang;
-      if (requestedLang) await changeLanguage(requestedLang);
-            let savedConfig;
-            try {
-                savedConfig = await setConfig(updatedConfig);
-            } catch (error) {
-                const savedLang = config?.language || config?.lang || 'ko';
-                await changeLanguage(savedLang);
-                await reloadConfig();
-                setShowSettings(true);
-                const messages = {
-                    ko: '설정을 저장하지 못했습니다. 다시 저장해 주세요.',
-                    en: 'Could not save settings. Please save again.',
-                    ja: '設定を保存できませんでした。もう一度保存してください。',
-                };
-                const pausedMessages = {
-                    ko: ' 끄기로 한 오류 보고·사용 통계는 앱을 닫을 때까지 꺼진 상태입니다.',
-                    en: ' Reporting you turned off stays off until the app closes.',
-                    ja: ' オフにしたエラー報告・利用統計は、アプリを閉じるまで停止したままです。',
-                };
-                const reportingPaused = typeof error?.message === 'string' && error.message.includes('CONFIG_SAVE_FAILED:')
-                    && (updatedConfig.telemetry_error_reports === false || updatedConfig.telemetry_usage_stats === false);
-                showToast(`${messages[savedLang] || messages.ko}${reportingPaused ? pausedMessages[savedLang] || pausedMessages.ko : ''}`, 6000);
-                return;
-            }
-      const effects = settingsEffects(config || {}, savedConfig || updatedConfig);
-      const nextLang = savedConfig?.language || savedConfig?.lang || requestedLang;
-      if (nextLang) await changeLanguage(nextLang);
-      if (effects.resetTaskTabs) {
-        window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
-          detail: { tabs: ['organizer', 'renamer', 'metadata'] },
-        }));
-        showToast({ key: 'msg_settings_changed_clear' });
-      }
-      if (effects.librariesChanged) {
-        setActiveTab('folder');
-        await setConfig({ last_tab_id: 'folder', last_tab_index: 0 });
-        const folders = savedConfig?.dup_check_folders || updatedConfig.dup_check_folders || [];
-        if (folders.length > 0) {
-          window.electronAPI?.updateFolderIndex?.(folders, {
-            priorityFolder: savedConfig?.last_selected_library || updatedConfig.last_selected_library,
-            optimizeMetadata: true,
-            forceMetadata: false,
-            mode: 'smart',
-            language: nextLang,
-          }).catch(error => {
-            console.error('라이브러리 인덱스 갱신 실패:', error);
-          });
+    const handleSettingsClose = useCallback(async () => {
+        setShowSettings(false);
+        const savedLang = config?.language || config?.lang || 'ko';
+        await changeLanguage(savedLang);
+    }, [changeLanguage, config]);
+
+    const handleSettingsSave = useCallback(async (updatedConfig) => {
+        let savedConfig;
+        try {
+            savedConfig = await setConfig(updatedConfig) || updatedConfig;
+        } catch (error) {
+            const savedLang = config?.language || config?.lang || 'ko';
+            await Promise.allSettled([changeLanguage(savedLang), reloadConfig()]);
+            const messages = {
+                ko: '설정을 저장하지 못했습니다. 다시 적용해 주세요.',
+                en: 'Could not save settings. Please apply again.',
+                ja: '設定を保存できませんでした。もう一度適用してください。',
+            };
+            const pausedMessages = {
+                ko: ' 끄기로 한 오류 보고·사용 통계는 앱을 닫을 때까지 꺼진 상태입니다.',
+                en: ' Reporting you turned off stays off until the app closes.',
+                ja: ' オフにしたエラー報告・利用統計は、アプリを閉じるまで停止したままです。',
+            };
+            const reportingPaused = typeof error?.message === 'string' && error.message.includes('CONFIG_SAVE_FAILED:')
+                && (updatedConfig.telemetry_error_reports === false || updatedConfig.telemetry_usage_stats === false);
+            showToast(`${messages[savedLang] || messages.ko}${reportingPaused ? pausedMessages[savedLang] || pausedMessages.ko : ''}`, 6000);
+            const saveError = error instanceof Error ? error : new Error(String(error));
+            saveError.settingsSaveNotified = true;
+            throw saveError;
         }
-      }
-      if (effects.restartRecommended) {
-        const response = await window.electronAPI?.showMessage?.({
-          type: 'question',
-          title: t('msg_restart_title'),
-          message: t('msg_restart_desc'),
-          buttons: 'yes-no',
-          defaultChoice: 'no',
-          language: nextLang,
-        });
-        if (response === 'yes') await window.electronAPI?.relaunchApp?.();
-      }
-    }
-  }, [changeLanguage, config, reloadConfig, setConfig, showToast, t]);
+        const effects = settingsEffects(config || {}, savedConfig);
+        const nextLang = savedConfig.language || savedConfig.lang || updatedConfig.language || updatedConfig.lang;
+        if (nextLang) {
+            try {
+                await changeLanguage(nextLang);
+            } catch (error) {
+                console.error('저장된 설정 언어 적용 실패:', error);
+            }
+        }
+        if (effects.resetTaskTabs) {
+            window.dispatchEvent(new CustomEvent('bookmanager:reset-task-tabs', {
+                detail: { tabs: ['organizer', 'renamer', 'metadata'] },
+            }));
+            showToast({ key: 'msg_settings_changed_clear' });
+        }
+        if (effects.librariesChanged) {
+            setActiveTab('folder');
+            try {
+                savedConfig = await setConfig({ last_tab_id: 'folder', last_tab_index: 0 }) || savedConfig;
+            } catch (error) {
+                console.error('라이브러리 변경 후 기본 탭 저장 실패:', error);
+            }
+            const folders = savedConfig.dup_check_folders || updatedConfig.dup_check_folders || [];
+            if (folders.length > 0) {
+                try {
+                    Promise.resolve(window.electronAPI?.updateFolderIndex?.(folders, {
+                        priorityFolder: savedConfig.last_selected_library || updatedConfig.last_selected_library,
+                        optimizeMetadata: true,
+                        forceMetadata: false,
+                        mode: 'smart',
+                        language: nextLang,
+                    })).catch(error => {
+                        console.error('라이브러리 인덱스 갱신 실패:', error);
+                    });
+                } catch (error) {
+                    console.error('라이브러리 인덱스 갱신 실패:', error);
+                }
+            }
+        }
+        if (effects.restartRecommended) {
+            try {
+                const response = await window.electronAPI?.showMessage?.({
+                    type: 'question',
+                    title: t('msg_restart_title'),
+                    message: t('msg_restart_desc'),
+                    buttons: 'yes-no',
+                    defaultChoice: 'no',
+                    language: nextLang,
+                });
+                if (response === 'yes') await window.electronAPI?.relaunchApp?.();
+            } catch (error) {
+                console.error('설정 변경 후 재시작 안내 실패:', error);
+            }
+        }
+        return savedConfig;
+    }, [changeLanguage, config, reloadConfig, setConfig, showToast, t]);
 
   const handleSettingsLanguagePreview = useCallback((nextLanguage) => {
     changeLanguage(nextLanguage).catch(error => {
@@ -901,6 +916,7 @@ function App() {
           initialTab={settingsInitialTab}
           navigationRequest={settingsNavigationRequest}
           onClose={handleSettingsClose}
+          onSave={handleSettingsSave}
           onPersistViewerPaths={setConfig}
           onLanguagePreviewChange={handleSettingsLanguagePreview}
           t={t}

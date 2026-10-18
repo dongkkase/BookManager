@@ -8,6 +8,7 @@ import {
     DetailCoverFrame,
     DetailFieldGroup,
     DetailLine,
+    DetailOpenButton,
     DetailPanelStatusBadges,
     detailMetadataValue,
     detailReadingTime,
@@ -57,7 +58,7 @@ function fractionValue(current, total) {
     return totalText ? `${currentText} / ${totalText}` : currentText;
 }
 
-const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, t }) => {
+const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRating, onOpenFile, t }) => {
     const [imageError, setImageError] = useState(false);
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
 
@@ -150,6 +151,7 @@ const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEd
                                     <CoverArtwork className="detail-cover-placeholder" fallbackAlt={t('audio_no_cover')} />
                                 )}
                             </DetailCoverFrame>
+                            <DetailOpenButton selectedFile={selectedFile} onOpenFile={onOpenFile} t={t} />
                             <div className="detail-cover-caption">
                                 <div>{fileName || '-'} ({formatSize(selectedFile.size)})</div>
                                 <div>{formatDate(selectedFile.created || selectedFile.ctime)}</div>
