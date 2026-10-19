@@ -7,6 +7,8 @@ import { executeLibraryMoveAsync, findLibraryMoveConflicts, removeTreeIfNoFilesA
 import { applyConflictChoice, createLibraryMovePlans, expandLibraryMovePlans, libraryMoveFolderSources } from './libraryMovePolicy.js';
 import { normalizeLibraryKey } from './folderLibraryStatus.js';
 import { createLibraryMoveProgress } from './libraryMoveProgress.js';
+import { buildLibraryItems } from './libraryPresentation.js';
+import { translate } from './utils/i18n.js';
 
 const source = fs.readFileSync(new URL('./tabs/FolderTab.jsx', import.meta.url), 'utf8');
 const callback = (name, next) => {
@@ -57,9 +59,9 @@ function fixture(t, choices, withProgress = false) {
         window: { electronAPI: api }, useCallback: fn => fn,
         requestConflictChoice: async conflict => { calls.prompts.push(conflict); return choices[calls.prompts.length - 1] || choices[0]; },
         runInternalFileAction: action => action(),
-        applyConflictChoice, expandLibraryMovePlans, libraryMoveFolderSources, normalizeLibraryKey, createLibraryMoveProgress,
+        applyConflictChoice, expandLibraryMovePlans, libraryMoveFolderSources, normalizeLibraryKey, createLibraryMoveProgress, buildLibraryItems,
         basename: path.basename, parentPath: path.dirname,
-        libraries: [library], config: {}, t: key => key,
+        libraries: [library], libraryEntries: [{ path: library, alias: '만화' }], config: {}, t: (key, args) => translate(key, 'ko', args),
         lastLibraryMoveTargetRef: { current: null },
         emitLibraryMoveProgress: (...args) => calls.progress.push(args), clearLibraryMoveProgress: () => {},
         saveConfig: async () => {}, setLibraryMoveRequest: request => calls.requests.push(request),
@@ -163,9 +165,11 @@ test('폴더 탭은 실행 중인 이동의 실제 진행률과 선택 항목의
     f.selectedEntryObjects[0].cover = 'cached-folder-cover';
     await f.moveSelectedToLibrary(createLibraryMovePlans(f.selectedEntryObjects.slice(0, 2), f.library, { folderMode: true }));
     assert.deepEqual(f.calls.errors, []);
-    const moving = f.calls.progress.filter(call => call[0] === 'library_move_status_moving_progress');
+    const moving = f.calls.progress.filter(call => call[0].startsWith('만화 라이브러리로 이동 중...'));
+    assert.ok(moving.some(call => call[0] === '만화 라이브러리로 이동 중... (2개)'));
+    assert.ok(moving.some(call => call[0] === '만화 라이브러리로 이동 중... (1/2개, 50%)'));
     assert.ok(moving.some(call => call[1] === 47.5));
     assert.ok(moving.some(call => call[1] === 70));
-    assert.ok(moving.some(call => call[3].currentItemCover === 'cached-folder-cover'));
+    assert.ok(moving.some(call => call[3]?.currentItemCover === 'cached-folder-cover'));
     assert.equal(f.progressListeners.size, 0);
 });

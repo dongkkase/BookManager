@@ -2,12 +2,14 @@
     display: flex;
     align-items: center;
     flex: 0 0 auto;
-    gap: 0;
+    box-sizing: border-box;
+    gap: 2px;
     height: var(--control-height-lg);
     margin: 0 3px 4px 10px;
-    border: 1px solid #444;
-    border-radius: 6px;
-    background: #2b2b2b;
+    padding: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    background: #25272a;
 }
 
 .app-support-button {
@@ -15,109 +17,177 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: var(--control-height-lg);
-    height: calc(var(--control-height-lg) - 2px);
+    flex: 0 0 auto;
+    width: calc(var(--control-height-lg) - 2px);
+    height: 100%;
+    min-height: 0;
     padding: 0;
     border: 0;
-    border-radius: 0;
+    border-radius: 5px;
     background: transparent;
+    color: #adb4bf;
     cursor: pointer;
-    transition: background-color 0.15s ease;
+    transition: color 0.15s ease, background-color 0.15s ease;
 }
 
-.app-support-actions > .app-support-button + .app-support-button {
-    border-left: 1px solid #444;
-}
-
-.app-support-actions > .app-support-button:first-of-type {
-    border-radius: 5px 0 0 5px;
-}
-
-.app-support-actions > .app-support-button:last-of-type {
-    border-radius: 0 5px 5px 0;
+.app-support-divider {
+    flex: 0 0 1px;
+    height: 14px;
+    margin: 0 3px;
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .app-support-button:focus-visible {
     outline-offset: -3px;
 }
 
-.app-support-button:hover,
-.app-support-button[aria-expanded="true"] {
-    background: #3a3a3a;
+.app-support-button:not([aria-disabled="true"]):is(:hover, :focus-visible, [aria-expanded="true"]) {
+    background: var(--support-hover-background);
+    color: var(--support-accent);
 }
 
 .app-support-star {
-    color: oklch(0.84 0.17 95);
+    --support-accent: #f2cf64;
+    --support-hover-background: rgba(242, 207, 100, 0.12);
 }
 
 .app-support-sponsor {
-    color: oklch(0.704 0.191 22.216);
+    --support-accent: #ef9a94;
+    --support-hover-background: rgba(239, 154, 148, 0.11);
 }
 
 .app-support-apple {
-    color: oklch(0.985 0.001 263);
+    --support-accent: #eef1f4;
+    --support-hover-background: rgba(255, 255, 255, 0.08);
 }
 
 .app-support-android {
-    color: oklch(0.82 0.17 154);
+    color: #69717b;
     cursor: default;
 }
 
 .app-support-mug {
+    display: block;
     width: calc(22px * var(--font-scale, 1));
     height: calc(22px * var(--font-scale, 1));
-    background: currentColor;
-    -webkit-mask: var(--support-mug-icon) center / contain no-repeat;
-    mask: var(--support-mug-icon) center / contain no-repeat;
+    fill: currentColor;
 }
 
-.app-support-button[data-tooltip]::before,
-.app-support-button[data-tooltip]::after {
-    position: absolute;
-    z-index: 80;
-    visibility: hidden;
-    opacity: 0;
+.app-support-button-visual,
+.app-support-button-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
     pointer-events: none;
-    background: #e5ecef;
-    transition: none;
 }
 
-.app-support-button[data-tooltip]::before {
-    content: attr(data-tooltip);
-    top: calc(100% + 8px);
-    right: 0;
-    width: max-content;
-    max-width: min(280px, calc(100vw - 24px));
-    padding: 7px 10px;
-    border-radius: 6px;
-    color: #263442;
-    font-size: var(--font-xs);
-    font-weight: 400;
-    line-height: 1.4;
-    text-align: center;
-    white-space: normal;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+.app-support-button-visual {
+    width: 100%;
+    height: 100%;
+    font-size: calc(1px * var(--font-scale, 1));
 }
 
-.app-support-button[data-tooltip]::after {
+.app-support-button-icon {
+    z-index: 1;
+}
+
+.app-support-button-burst {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.app-support-button-visual::before,
+.app-support-button-burst::before,
+.app-support-button-burst::after {
     content: '';
-    top: calc(100% + 4px);
-    right: calc(50% - 4px);
-    width: 8px;
-    height: 8px;
-    transform: rotate(45deg);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    border-radius: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
 }
 
-.app-support-button[data-tooltip]:is(:hover, :focus-visible)::before,
-.app-support-button[data-tooltip]:is(:hover, :focus-visible)::after {
-    visibility: visible;
-    opacity: 1;
+.app-support-button-visual::before {
+    box-sizing: border-box;
+    width: 30em;
+    height: 30em;
+    border: 0 solid var(--support-accent);
+}
+
+.app-support-button-burst::before {
+    width: 2.5em;
+    height: 2.5em;
+    box-shadow: 0 -18em 0 var(--support-accent),
+        14em -11em 0 #a7d8f5, 18em 4em 0 #f7a8c3,
+        8em 17em 0 #a4dfc4, -9em 17em 0 #d5b2f5,
+        -18em 3em 0 var(--support-accent), -14em -12em 0 #c7b4f5;
+}
+
+.app-support-button-burst::after {
+    width: 1.5em;
+    height: 1.5em;
+    box-shadow: 4em -17em 0 #f7a8c3,
+        16em -7em 0 var(--support-accent), 16em 8em 0 #a4dfc4,
+        5em 18em 0 #a7d8f5, -12em 14em 0 var(--support-accent),
+        -18em -1em 0 #a7d8f5, -10em -15em 0 #f7a8c3;
+}
+
+:root:not([data-motion="reduced"]) :is(.app-support-star, .app-support-sponsor):is(:hover, :focus-visible) {
+    z-index: 1;
+}
+
+:root:not([data-motion="reduced"]) :is(.app-support-star, .app-support-sponsor):is(:hover, :focus-visible) .app-support-button-icon {
+    animation: app-support-icon-pop 900ms ease-out both;
+}
+
+:root:not([data-motion="reduced"]) :is(.app-support-star, .app-support-sponsor):is(:hover, :focus-visible) .app-support-button-visual::before {
+    animation: app-support-ring-burst 900ms ease-out both;
+}
+
+:root:not([data-motion="reduced"]) :is(.app-support-star, .app-support-sponsor):is(:hover, :focus-visible) .app-support-button-burst::before,
+:root:not([data-motion="reduced"]) :is(.app-support-star, .app-support-sponsor):is(:hover, :focus-visible) .app-support-button-burst::after {
+    animation: app-support-particle-burst 900ms ease-out both;
+}
+
+@keyframes app-support-icon-pop {
+    0%, 58%, 100% { transform: scale(1); }
+    12%, 22% { transform: scale(0); }
+    40% { transform: scale(1.25); }
+}
+
+@keyframes app-support-ring-burst {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.15); border-width: 15em; }
+    12% { opacity: 0.9; border-color: var(--support-accent); }
+    28% { opacity: 0.85; transform: translate(-50%, -50%) scale(1); border-width: 4em; border-color: #c7a2ef; }
+    45%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); border-width: 0; border-color: #c7a2ef; }
+}
+
+@keyframes app-support-particle-burst {
+    0%, 20% { opacity: 0; transform: translate(-50%, -50%) scale(0.35); }
+    32% { opacity: 1; transform: translate(-50%, -50%) scale(0.9); }
+    65% { opacity: 0.65; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
 }
 
 .app-support-dialog-layer {
     position: fixed;
     inset: 0;
     z-index: 12000;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 180ms ease, visibility 0s 180ms;
+}
+
+.app-support-dialog-layer.is-open {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 180ms ease;
 }
 
 .app-support-dialog {
@@ -131,6 +201,12 @@
     background: #25272a;
     color: #f1f1f1;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    transform: translateY(-6px);
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-support-dialog-layer.is-open .app-support-dialog {
+    transform: translateY(0);
 }
 
 .app-support-dialog h2 {
@@ -148,6 +224,10 @@
     line-height: 1.65;
     word-break: keep-all;
     overflow-wrap: anywhere;
+}
+
+.app-support-dialog button {
+    transition: background-color 150ms ease, color 150ms ease;
 }
 
 .app-support-dialog-close {

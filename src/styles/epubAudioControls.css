@@ -141,9 +141,3 @@
     from { transform: scaleY(0.35); }
     to { transform: scaleY(1); }
 }
-
-@media (prefers-reduced-motion: reduce) {
-    .viewer-epub-audio-indicator { t}
-    .viewer-epub-audio-controls.is-playing .viewer-epub-audio-note { animation: none; }
-    .viewer-epub-audio-levels i { animation: none; }
-}

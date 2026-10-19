@@ -276,12 +276,13 @@ function isAppShuttingDown() {
 function reportProcessFault(eventName, details, context) {
     reportLocalProcessFault(eventName, details, context);
     const processGone = eventName === 'render-process-gone' || eventName === 'child-process-gone';
+    const rendererUnresponsive = eventName === 'renderer-unresponsive';
     const shuttingDown = isAppShuttingDown();
     if (processGone && isExpectedProcessExit(details, { isShuttingDown: shuttingDown })) return;
     reportTelemetryError(details, {
         source: eventName,
-        ...(processGone ? { app_lifecycle: shuttingDown ? 'quitting' : 'running' } : {}),
-        ...(eventName === 'render-process-gone' ? { window_type: 'main' } : {}),
+        ...(processGone || rendererUnresponsive ? { app_lifecycle: shuttingDown ? 'quitting' : 'running' } : {}),
+        ...(eventName === 'render-process-gone' || rendererUnresponsive ? { window_type: 'main' } : {}),
     });
 }
 

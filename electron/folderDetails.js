@@ -18,7 +18,7 @@ export async function readFolderDetails(folderPath, options = {}) {
     checkCancelled();
     const stats = await fs.lstat(root);
     if (!stats.isDirectory()) throw new Error('Not a directory');
-    const library = options.libraryDb || new LibraryDB({ dbPath: options.dbPath });
+    const library = options.libraryDb || new LibraryDB({ dbPath: options.dbPath, readOnly: true });
     const summary = {
         fileCount: 0,
         folderCount: 0,
@@ -30,7 +30,12 @@ export async function readFolderDetails(folderPath, options = {}) {
         secondsPerPage: SECONDS_PER_PAGE,
     };
     try {
-        const rows = await library.getFolderDetailMetadata(root);
+        const rows = await library.getFolderDetailMetadata(root).catch(error => {
+            if (!options.libraryDb && (error.code === 'SQLITE_CANTOPEN'
+                || error.message?.includes('database does not exist')
+                || /^no such (table|column):/.test(error.message || ''))) return [];
+            throw error;
+        });
         const metadata = new Map(rows.map(row => [library.normalizeFilePath(row.path), row]));
         const pending = [root];
         while (pending.length > 0) {

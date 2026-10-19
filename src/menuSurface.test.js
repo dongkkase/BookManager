@@ -9,7 +9,7 @@ const compiled = transformSync(fs.readFileSync(new URL('./components/MenuSurface
 }).code;
 const copy = value => JSON.parse(JSON.stringify(value));
 
-function fixture(initialProps = {}, initialParentOpen = true) {
+function fixture(initialProps = {}, initialParentOpen = true, initialReducedMotion = false) {
     const slots = [];
     const frames = new Map();
     const timers = new Map();
@@ -23,6 +23,7 @@ function fixture(initialProps = {}, initialParentOpen = true) {
     let now = 0;
     let nextId = 1;
     let parentOpen = initialParentOpen;
+    let reducedMotion = initialReducedMotion;
     let props = { open: true, children: 'Menu', ...initialProps };
     let result;
     let div;
@@ -94,6 +95,7 @@ function fixture(initialProps = {}, initialParentOpen = true) {
         module, exports: module.exports, window,
         require(name) {
             if (name === 'react') return react;
+            if (name === '../hooks/useReducedMotion') return { useReducedMotion: () => reducedMotion };
             assert.equal(name, '../styles/MenuSurface.css');
             return {};
         },
@@ -126,6 +128,7 @@ function fixture(initialProps = {}, initialParentOpen = true) {
         staleUpdates: () => staleUpdates,
         update(update) { props = { ...props, ...update }; return render(); },
         setParentOpen(value) { parentOpen = value; return render(); },
+        setReducedMotion(value) { reducedMotion = value; return render(); },
         finishAnimation(animation = animations.at(-1)) {
             animation?.finish();
             if (dirty) render();
@@ -308,4 +311,34 @@ test('browsers without WAAPI remove the closed menu after the 140ms fallback and
     assert.equal(value.div(), undefined);
     assert.equal(value.forwardedRef.current, null);
     value.unmount();
+});
+
+test('reduced motion opens and removes menus immediately without animation frames or timers', () => {
+    const value = fixture({}, true, true);
+    assert.ok(value.div());
+    assert.equal(value.animations.length, 0);
+    assert.deepEqual(value.pending(), { frames: 0, timers: 0 });
+    value.update({ open: false });
+    assert.equal(value.div(), undefined);
+    value.update({ open: true });
+    assert.ok(value.div());
+    assert.equal(value.animations.length, 0);
+    value.unmount();
+});
+
+test('switching to reduced motion cancels an entrance or completes a closing menu immediately', () => {
+    for (const closing of [false, true]) {
+        const value = fixture();
+        value.runFrames();
+        if (closing) value.update({ open: false });
+        const animation = value.animations.at(-1);
+        const staleFinish = animation.onfinish;
+        value.setReducedMotion(true);
+        assert.equal(animation.cancelled, true);
+        assert.deepEqual(value.pending(), { frames: 0, timers: 0 });
+        assert.equal(Boolean(value.div()), !closing);
+        staleFinish?.();
+        value.unmount();
+        assert.equal(value.staleUpdates(), 0);
+    }
 });

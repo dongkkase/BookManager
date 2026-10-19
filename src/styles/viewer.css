@@ -4539,10 +4539,6 @@ body,
     .viewer-slide-toggle { opacity: 1; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .viewer-slide-toggle {  }
-}
-
 .viewer-slide-toggle:hover {
   background: linear-gradient(180deg, #363636, #242424);
   border-color: #6a6a6a;

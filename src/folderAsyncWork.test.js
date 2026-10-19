@@ -86,14 +86,140 @@ test('visible cover priority, queue bounds, duplicate suppression and failed loa
     h.queue.enqueue([{ path: 'B1' }, { path: 'B1' }, { path: 'covered', cover: 'yes' }, { path: 'B2' }, { path: 'B3' }, { path: 'B4' }]);
     h.jobs[0].fail();
     await tick();
-    for (let index = 1; index <= 3; index += 1) {
+    for (let index = 1; index <= 4; index += 1) {
         h.jobs[index].finish();
         await tick();
     }
-    assert.deepEqual(h.jobs.map(job => job.file.path), ['A1', 'B1', 'B2', 'B3']);
+    assert.deepEqual(h.jobs.map(job => job.file.path), ['A1', 'B1', 'B2', 'B3', 'B4']);
     h.queue.enqueue([{ path: 'A1' }]);
     await tick();
+    assert.equal(h.jobs.length, 5);
+});
+
+test('visible covers beyond the first request batch continue after all earlier previews fail', async () => {
+    const requested = [];
+    const results = [];
+    let active = 0;
+    let maximumActive = 0;
+    const queue = createCoverPreviewQueue({
+        keyForFile: file => file.path,
+        load: async file => {
+            requested.push(file.path);
+            active += 1;
+            maximumActive = Math.max(maximumActive, active);
+            await Promise.resolve();
+            active -= 1;
+            if (file.index < 32) throw new Error('unavailable');
+            return file.path;
+        },
+        onResult: result => results.push(result),
+    });
+    const files = Array.from({ length: 40 }, (_, index) => ({ path: `/books/${index}`, index }));
+    queue.enqueue(files);
+    await tick();
+    assert.deepEqual(requested, files.map(file => file.path));
+    assert.deepEqual(results, files.slice(32).map(file => file.path));
+    assert.equal(maximumActive, 2);
+});
+
+test('evicting a cached preview allows that file to load again when visible', async () => {
+    const h = coverHarness({ concurrency: 1 });
+    h.queue.enqueue([{ path: 'book' }]);
+    await tick();
+    h.jobs[0].finish();
+    await tick();
+    h.queue.enqueue([{ path: 'book' }]);
+    await tick();
+    assert.equal(h.jobs.length, 1);
+    h.queue.forgetKey('book');
+    h.queue.enqueue([{ path: 'book' }]);
+    await tick();
+    assert.equal(h.jobs.length, 2);
+    h.jobs[1].finish();
+    await tick();
+});
+
+test('an empty visible snapshot removes pending previews without releasing active requests early', async () => {
+    const h = coverHarness({ concurrency: 1, requestLimit: 1 });
+    h.queue.enqueue([{ path: 'A1' }, { path: 'A2' }]);
+    await tick();
+    h.queue.enqueue([]);
+    h.jobs[0].finish();
+    await tick();
+    assert.deepEqual(h.jobs.map(job => job.file.path), ['A1']);
+    h.queue.enqueue([{ path: 'B1' }, { path: 'B2' }]);
+    await tick();
+    h.jobs[1].finish();
+    await tick();
+    h.jobs[2].finish();
+    await tick();
+    assert.deepEqual(h.jobs.map(job => job.file.path), ['A1', 'B1', 'B2']);
+    assert.equal(h.maximumActive(), 1);
+});
+
+test('preview results are batched without delaying the next preview requests', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const batches = [];
+    const h = coverHarness({ resultFlushDelay: 120, onResults: entries => batches.push(entries) });
+    const context = { folderPath: '/books' };
+    h.queue.enqueue(['A1', 'A2', 'A3', 'A4'].map(path => ({ path })), context);
+    await tick();
+    h.jobs[0].finish();
+    h.jobs[1].finish();
+    await tick();
     assert.equal(h.jobs.length, 4);
+    h.jobs[2].finish();
+    h.jobs[3].finish();
+    await tick();
+    t.mock.timers.tick(119);
+    assert.equal(batches.length, 0);
+    t.mock.timers.tick(1);
+    assert.equal(batches.length, 1);
+    assert.deepEqual(batches[0].map(entry => entry.result), ['A1', 'A2', 'A3', 'A4']);
+    assert.ok(batches[0].every(entry => entry.context === context && entry.file.path === entry.result));
+    assert.equal(h.results.length, 0);
+    assert.equal(h.maximumActive(), 2);
+});
+
+for (const changeScope of [false, true]) {
+    test(`${changeScope ? 'scope changes' : 'reset'} discard buffered results and ignore old in-flight completions`, async t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const batches = [];
+        const h = coverHarness({ resultFlushDelay: 120, onResults: entries => batches.push(entries) });
+        h.queue.setScope('A');
+        h.queue.enqueue([{ path: 'A1' }, { path: 'A2' }]);
+        await tick();
+        h.jobs[0].finish();
+        await tick();
+        if (changeScope) h.queue.setScope('B');
+        else h.queue.reset();
+        t.mock.timers.tick(120);
+        assert.equal(batches.length, 0);
+        h.queue.enqueue([{ path: 'B1' }]);
+        await tick();
+        h.jobs[1].finish();
+        h.jobs[2].finish();
+        await tick();
+        t.mock.timers.tick(120);
+        assert.deepEqual(batches.map(entries => entries.map(entry => entry.result)), [['B1']]);
+        assert.equal(h.maximumActive(), 2);
+    });
+}
+
+test('batched result delivery defaults to immediate and remains usable after an update fails', async () => {
+    const batches = [];
+    const h = coverHarness({ concurrency: 1, onResults: entries => {
+        batches.push(entries);
+        if (batches.length === 1) throw new Error('update failed');
+    } });
+    h.queue.enqueue([{ path: 'A1' }, { path: 'A2' }]);
+    await tick();
+    h.jobs[0].finish();
+    await tick();
+    assert.equal(batches.length, 1);
+    h.jobs[1].finish();
+    await tick();
+    assert.deepEqual(batches.map(entries => entries.map(entry => entry.result)), [['A1'], ['A2']]);
 });
 
 test('reset on unmount discards pending covers and never starts the abandoned queue', async () => {

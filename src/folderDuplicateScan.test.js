@@ -178,6 +178,73 @@ test('빠른 목록 뒤 최종 중복 결과는 대기 중이거나 늦게 도�
     assert.equal(f.files()[0].max_ratio, 100);
 });
 
+test('묶음 메타데이터 이벤트는 함께 반영하고 최종 결과 이후의 늦은 묶음은 무시한다', async t => {
+    const f = fixture();
+    t.after(f.dispose);
+    const metadata = await beginDuplicateScan(f);
+    f.emit('ready', metadata, { files: [null, {}, { ...file(), title: 'Updated title' }] });
+    f.flushTimers();
+    await f.flush();
+    assert.equal(f.files()[0].title, 'Updated title');
+
+    f.emit('ready', metadata, { files: [{ ...file(), title: 'Queued title' }] });
+    metadata.resolve([{ ...file('/A', 1), title: 'Final title' }]);
+    await f.flush();
+    f.flushTimers();
+    f.emit('ready', metadata, { files: [{ ...file(), title: 'Late title' }] });
+    f.flushTimers();
+    await f.flush();
+    assert.equal(f.files()[0].title, 'Final title');
+    assert.equal(f.files()[0].dup_count, 1);
+});
+
+test('대형 목록의 메타데이터 묶음은 화면 갱신을 모아서 처리하고 기존 표지를 보존한다', async t => {
+    const f = fixture();
+    t.after(f.dispose);
+    const scan = f.scan('/A');
+    await f.flush();
+    const initial = Array.from({ length: 10000 }, (_, index) => ({
+        ...file(), path: `/A/Book-${index}.cbz`, name: `Book-${index}.cbz`, cover: `cover-${index}`,
+    }));
+    f.calls[0].resolve(initial);
+    await f.flush();
+    await scan;
+    const metadata = f.calls[1];
+    const updates = initial.slice(0, 128).map(entry => ({ ...entry, cover: '', title: `Metadata: ${entry.name}` }));
+    f.emit('ready', metadata, { files: updates });
+    assert.deepEqual([...f.timers.values()].map(timer => timer.delay), [600]);
+    f.flushTimers();
+    await f.flush();
+    for (let index = 0; index < 128; index += 1) {
+        assert.equal(f.files()[index].title, updates[index].title);
+        assert.equal(f.files()[index].cover, initial[index].cover);
+    }
+    assert.equal(f.files()[128], initial[128]);
+    metadata.resolve(initial);
+    await f.flush();
+});
+
+test('폴더를 바꾸면 대기 중인 이전 메타데이터 묶음을 반영하지 않는다', async t => {
+    const f = fixture();
+    t.after(f.dispose);
+    const metadata = await beginDuplicateScan(f);
+    const initialTitle = f.files()[0].title;
+    f.emit('ready', metadata, { files: [{ ...file(), title: 'Stale title' }] });
+    const next = f.scan('/B');
+    await f.flush();
+    f.flushTimers();
+    await f.flush();
+    assert.equal(f.files()[0].title, initialTitle);
+    metadata.resolve([{ ...file(), title: 'Stale final title' }]);
+    f.calls[2].resolve([file('/B')]);
+    await f.flush();
+    await next;
+    assert.equal(f.files('/B')[0].path, '/B/Book.cbz');
+    assert.equal(f.files()[0].title, initialTitle);
+    f.calls[3].resolve([file('/B')]);
+    await f.flush();
+});
+
 test('일반 스캔의 완료 이벤트와 최종 응답도 늦은 중간 결과보다 우선한다', async t => {
     const f = fixture();
     t.after(f.dispose);

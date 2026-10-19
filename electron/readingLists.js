@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readingActionFormat } from './readingActions.js';
 import { createLibraryPathScope } from './libraryPathScope.js';
+import { initializeReadingFileActivity } from './readingFileActivity.js';
 
 const RECENT_ACTIVITY_LIMIT = 1000;
 const RECENT_ACTIVITY_DAYS = 14;
@@ -45,23 +46,8 @@ export function initializeReadingLists(db) {
         DROP INDEX IF EXISTS idx_reading_activity_added;
         DROP INDEX IF EXISTS idx_reading_activity_updated;
         INSERT OR IGNORE INTO reading_lists VALUES ('want-to-read', '', '', 'wishlist', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-        CREATE TRIGGER IF NOT EXISTS reading_activity_insert AFTER INSERT ON files BEGIN
-            INSERT OR IGNORE INTO reading_file_activity(path, added_at, updated_at)
-            VALUES (new.path, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-        END;
-        CREATE TRIGGER IF NOT EXISTS reading_activity_update AFTER UPDATE ON files
-        WHEN old.mtime IS NOT new.mtime OR old.size IS NOT new.size
-            OR old.title IS NOT new.title OR old.series IS NOT new.series
-            OR old.writer IS NOT new.writer OR old.summary IS NOT new.summary
-            OR old.rating IS NOT new.rating OR old.genre IS NOT new.genre
-            OR old.volume IS NOT new.volume OR old.number IS NOT new.number
-            OR old.tags IS NOT new.tags OR old.cover_override_path IS NOT new.cover_override_path
-        BEGIN
-            INSERT INTO reading_file_activity(path, added_at, updated_at)
-            VALUES (new.path, '', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-            ON CONFLICT(path) DO UPDATE SET updated_at = excluded.updated_at;
-        END;
     `);
+    initializeReadingFileActivity(db);
     if (!db.pragma('table_info(reading_list_members)').some(column => column.name === 'is_directory')) {
         db.exec('ALTER TABLE reading_list_members ADD COLUMN is_directory INTEGER NOT NULL DEFAULT 0');
     }
@@ -82,9 +68,10 @@ export function moveReadingListPaths(db, move) {
                     .run(row.list_id, destination, row.added_at, row.is_directory);
                 db.prepare('DELETE FROM reading_list_members WHERE list_id = ? AND path = ?').run(row.list_id, row.path);
             } else {
-                db.prepare(`INSERT INTO reading_file_activity VALUES (?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET added_at = excluded.added_at, updated_at = excluded.updated_at`)
-                    .run(destination, row.added_at, row.updated_at);
+                db.prepare(`INSERT INTO reading_file_activity(path, added_at, updated_at, metadata_updated_at) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(path) DO UPDATE SET added_at = excluded.added_at, updated_at = excluded.updated_at,
+                        metadata_updated_at = excluded.metadata_updated_at`)
+                    .run(destination, row.added_at, row.updated_at, row.metadata_updated_at);
                 db.prepare('DELETE FROM reading_file_activity WHERE path = ?').run(row.path);
             }
         }

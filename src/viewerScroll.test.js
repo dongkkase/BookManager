@@ -8,6 +8,7 @@ function createHarness({ initialSettings = {}, height = 600, contentHeight = 100
     let settings = { ...DEFAULT_SCROLL_SETTINGS, ...initialSettings };
     let enabled = true;
     let blocked = false;
+    let reducedMotion = false;
     const pending = new Map();
     const autoChanges = [];
     const positions = [];
@@ -28,6 +29,7 @@ function createHarness({ initialSettings = {}, height = 600, contentHeight = 100
         getSettings: () => settings,
         isEnabled: () => enabled,
         isBlocked: () => blocked,
+        isMotionReduced: () => reducedMotion,
         onAutoScrollChange: value => autoChanges.push(value),
         requestFrame(callback) {
             const id = ++frameId;
@@ -53,6 +55,7 @@ function createHarness({ initialSettings = {}, height = 600, contentHeight = 100
         setSettings: next => { settings = { ...settings, ...next }; },
         setEnabled: value => { enabled = value; },
         setBlocked: value => { blocked = value; },
+        setReducedMotion: value => { reducedMotion = value; },
         settle() {
             for (let index = 0; index < 200 && pending.size; index += 1) step();
             assert.equal(pending.size, 0, 'animation should finish');
@@ -283,5 +286,50 @@ test('toggle and cancel are idempotent and do not leave animation callbacks queu
     fixture.controller.stopAutoScroll();
     fixture.controller.cancelMotion();
     assert.deepEqual(fixture.autoChanges, [true, false]);
+    assert.equal(fixture.pending.size, 0);
+});
+
+test('reduced motion applies smooth wheel and keyboard destinations without animation frames', () => {
+    const fixture = createHarness({ initialSettings: { behavior: 'smooth' } });
+    fixture.setReducedMotion(true);
+    fixture.controller.handleScrollWheel(wheel(120));
+    assert.equal(fixture.element.scrollTop, 120);
+    fixture.controller.scrollByKeyboard(1);
+    assert.equal(fixture.element.scrollTop, 630);
+    assert.equal(fixture.pending.size, 0);
+    fixture.setReducedMotion(false);
+    fixture.controller.handleScrollWheel(wheel(120));
+    assert.equal(fixture.element.scrollTop, 630);
+    assert.equal(fixture.pending.size, 1);
+    fixture.settle();
+    assert.equal(fixture.element.scrollTop, 750);
+});
+
+test('switching to reduced motion completes the pending scroll target and clears its frame', () => {
+    const fixture = createHarness({ initialSettings: { behavior: 'smooth' } });
+    fixture.controller.handleScrollWheel(wheel(300));
+    fixture.step();
+    fixture.setReducedMotion(true);
+    fixture.controller.finishMotion();
+    assert.equal(fixture.element.scrollTop, 300);
+    assert.equal(fixture.pending.size, 0);
+    fixture.controller.scrollByKeyboard(1);
+    assert.equal(fixture.element.scrollTop, 810);
+    assert.equal(fixture.pending.size, 0);
+});
+
+test('a reduced-motion change between input events retains all pending scroll distance', () => {
+    const fixture = createHarness({ initialSettings: { behavior: 'smooth' } });
+    fixture.controller.handleScrollWheel(wheel(300));
+    fixture.step();
+    fixture.setReducedMotion(true);
+    fixture.controller.handleScrollWheel(wheel(100));
+    assert.equal(fixture.element.scrollTop, 400);
+    assert.equal(fixture.pending.size, 0);
+    assert.equal(fixture.controller.startAutoScroll(), true);
+    fixture.step();
+    assert.ok(fixture.element.scrollTop > 400, 'Explicit automatic reading remains available');
+    fixture.controller.finishMotion();
+    assert.equal(fixture.controller.getAutoScrolling(), false);
     assert.equal(fixture.pending.size, 0);
 });

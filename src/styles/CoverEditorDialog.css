@@ -394,17 +394,6 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     100% { opacity: 0; transform: scale(1.025); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .cover-editor-candidate .cover-editor-arrival-highlight {
-        animation: cover-editor-arrival-confirm-reduced 220ms ease-out both;
-    }
-}
-
-@keyframes cover-editor-arrival-confirm-reduced {
-    from { opacity: 0.65; }
-    to { opacity: 0; }
-}
-
 .cover-editor-image-loading {
     position: absolute;
     bottom: 12px;
@@ -480,8 +469,9 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     font-size: var(--font-xs);
 }
 
+.cover-editor-dialog .cover-editor-preview-actions.cover-editor-current-actions,
 .cover-editor-dialog .cover-editor-preview-actions.cover-editor-candidate-actions {
-    justify-content: flex-end;
+    justify-content: center;
     flex-wrap: wrap;
     padding-top: 0;
 }

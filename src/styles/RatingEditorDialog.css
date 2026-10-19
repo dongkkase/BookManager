@@ -136,11 +136,3 @@
     from { opacity: 0.3; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
-
-@media (prefers-reduced-motion: reduce) {
-    .rating-editor-star .rating-editor-star-visual { transition: none; transform: none !important; }
-    .rating-editor-star svg,
-    .rating-editor-star-glow,
-    .rating-editor-star-outline { transition: none; }
-    .rating-editor-label.has-rating { animation: none; }
-}

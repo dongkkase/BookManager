@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildFolderCharacterIndex } from './folderCharacterIndex.js';
+import { buildFolderCharacterIndex, createFolderCharacterIndexBuilder } from './folderCharacterIndex.js';
 
 function filesNamed(...names) {
     return names.map((name, index) => ({ name, path: `/library/${index}/${name}` }));
@@ -9,6 +9,54 @@ function filesNamed(...names) {
 function labelsFor(names, locale) {
     return buildFolderCharacterIndex(filesNamed(...names), locale).map(entry => entry.label);
 }
+
+test('문자 인덱스 빌더는 변하지 않은 파일의 문자 분석을 반복하지 않는다', () => {
+    const OriginalSegmenter = Intl.Segmenter;
+    let segments = 0;
+    let build;
+    try {
+        Intl.Segmenter = class extends OriginalSegmenter {
+            segment(value) { segments += 1; return super.segment(value); }
+        };
+        build = createFolderCharacterIndexBuilder('ko');
+    } finally {
+        Intl.Segmenter = OriginalSegmenter;
+    }
+    const files = filesNamed('나무.cbz', '별.epub', 'Apple.pdf');
+    const first = build(files);
+    const initialSegments = segments;
+    assert.ok(initialSegments > 0);
+    assert.deepEqual(build([...files]), first);
+    assert.equal(segments, initialSegments);
+    const extended = [...files, { name: '나비.cbz', path: '/library/new.cbz' }];
+    assert.deepEqual(build(extended), buildFolderCharacterIndex(extended, 'ko'));
+    assert.equal(segments, initialSegments + 1);
+});
+
+test('재사용한 문자 인덱스 빌더도 이름·경로·정렬·항목 제거를 현재 목록에 맞게 반영한다', () => {
+    const build = createFolderCharacterIndexBuilder('en');
+    const files = filesNamed('Apple 2.cbz', 'Apple 1.cbz', 'Zebra.cbz');
+    build(files);
+    files[0].name = 'Banana.cbz';
+    files[0].path = '/renamed/Banana.cbz';
+    files[1].path = '/moved/Apple 1.cbz';
+    assert.deepEqual(build(files), buildFolderCharacterIndex(files, 'en'));
+    const reversed = [...files].reverse();
+    assert.deepEqual(build(reversed), buildFolderCharacterIndex(reversed, 'en'));
+    assert.deepEqual(build([files[2]]), buildFolderCharacterIndex([files[2]], 'en'));
+    assert.deepEqual(build([]), []);
+    assert.deepEqual(build(null), []);
+});
+
+test('문자 인덱스 캐시는 빌더의 언어별 문자 분류를 섞지 않는다', () => {
+    const files = filesNamed('Åke.cbz', 'Älg.cbz', 'Öga.cbz', 'Apple.cbz', '나무.cbz', '東京.cbz');
+    const english = createFolderCharacterIndexBuilder('en');
+    const swedish = createFolderCharacterIndexBuilder('sv');
+    assert.deepEqual(english(files), buildFolderCharacterIndex(files, 'en'));
+    assert.deepEqual(swedish(files), buildFolderCharacterIndex(files, 'sv'));
+    assert.notDeepEqual(english(files).map(entry => entry.label), swedish(files).map(entry => entry.label));
+    assert.deepEqual(english(files), buildFolderCharacterIndex(files, 'en'));
+});
 
 test('현재 목록에 존재하고 이동 가능한 항목의 인덱스만 생성한다', () => {
     const files = filesNamed('나무.cbz', '별.epub', '나비.pdf');

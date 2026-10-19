@@ -144,14 +144,15 @@ const FileTableView = forwardRef(({
         revealBounds: navigationRevealBounds,
         onScrollPositionChange: position => setScrollTop(current => current === position.scrollTop ? current : position.scrollTop),
     });
+    const flatRows = useMemo(() => shouldVirtualize ? null : groupedData.flatMap(group => group.files), [groupedData, shouldVirtualize]);
     const fileIndexByPath = useMemo(() => {
+        if (!flatRows) return null;
         const map = new Map();
-        groupedData.flatMap(group => group.files).forEach((file, index) => {
+        flatRows.forEach((file, index) => {
             if (file.path) map.set(file.path, index);
         });
         return map;
-    }, [groupedData]);
-    const flatRows = useMemo(() => groupedData.flatMap(group => group.files), [groupedData]);
+    }, [flatRows]);
     const visibleCoverRows = useMemo(() => {
         if (shouldVirtualize) return virtualVisibleRows
             .filter(row => row.type === 'file')
@@ -415,6 +416,7 @@ const FileTableView = forwardRef(({
             return (
                 <td key={column.key} className="cover-cell">
                     <CoverImage
+                        file={file}
                         key={coverImageKey(file)}
                         src={file.cover}
                         alt={file.name || ''}

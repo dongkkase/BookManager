@@ -6,6 +6,7 @@ import { isAudioPath } from './audioMetadata.js';
 import { writeAudioMetadataFile } from './audioMetadataWriter.js';
 import { detectImageMimeType, supportedImageExtensionForMimeType, supportedImageMimeTypeForPath } from './imageMagic.js';
 import { getTextContentHash, resolveTextMetadata, saveTextMetadata } from './textMetadataStore.js';
+import { markReadingFileMetadataUpdated } from './readingFileActivity.js';
 
 const MAX_COVER_BYTES = 16 * 1024 * 1024;
 export const LOCAL_COVER_OVERRIDE_PREFIX = 'local-cover-override-';
@@ -114,7 +115,7 @@ export async function saveLocalCoverOverride(filePath, imagePath, options = {}) 
                 const normalizedPath = libraryDb.normalizeFilePath(filePath);
                 db.transaction(() => {
                     const previous = db.prepare('SELECT cover_override_path FROM files WHERE path = ?').get(normalizedPath);
-                    db.prepare(`
+                    const saved = db.prepare(`
                         INSERT INTO files (path, mtime, size, ext, title, book_type, cover_override_path, thumb_path)
                         VALUES (@path, @mtime, @size, @ext, @title, @bookType, @coverPath, @coverPath)
                         ON CONFLICT(path) DO UPDATE SET
@@ -130,6 +131,9 @@ export async function saveLocalCoverOverride(filePath, imagePath, options = {}) 
                         coverPath,
                     });
                     const previousPath = previous?.cover_override_path;
+                    if (saved.changes > 0 && previousPath !== coverPath) {
+                        markReadingFileMetadataUpdated(db, normalizedPath);
+                    }
                     if (managedLocalCover(previousPath, directory)) {
                         const references = db.prepare('SELECT 1 FROM files WHERE cover_override_path = ? OR thumb_path = ? LIMIT 1').get(previousPath, previousPath);
                         if (!references) unusedPreviousPath = previousPath;

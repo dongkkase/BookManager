@@ -7,6 +7,8 @@ import { BookDetailPanel } from './BookDetailPanel';
 import { ComicDetailPanel } from './ComicDetailPanel';
 import { PdfDetailPanel } from './PdfDetailPanel';
 import { DetailCoverFrame, DetailFieldGroup, formatDate, useDetailContentHeight } from './detailPanelCommon';
+import { useFolderCoverPreview } from './FolderCoverPreviewContext';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = true, t }) => {
     const { contentRef, scrollRef } = useDetailContentHeight(selectedFile, onContentHeightChange);
@@ -119,20 +121,21 @@ const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = 
 };
 
 const DetailPanelContent = (props) => {
-    const selectedFile = props.selectedFile || {};
+    const selectedFile = useFolderCoverPreview(props.selectedFile) || {};
+    const previewProps = { ...props, selectedFile };
     if (selectedFile?.isDirectory) {
-        return <DirectoryDetailPanel {...props} />;
+        return <DirectoryDetailPanel {...previewProps} />;
     }
     if (resolveBookType(selectedFile) === 'pdf') {
-        return <PdfDetailPanel {...props} />;
+        return <PdfDetailPanel {...previewProps} />;
     }
     if (resolveBookType(selectedFile) === 'book') {
-        return <BookDetailPanel {...props} />;
+        return <BookDetailPanel {...previewProps} />;
     }
     if (resolveBookType(selectedFile) === 'audio') {
-        return <AudiobookDetailPanel {...props} />;
+        return <AudiobookDetailPanel {...previewProps} />;
     }
-    return <ComicDetailPanel {...props} />;
+    return <ComicDetailPanel {...previewProps} />;
 };
 
 const DetailPanelLayer = ({ id, outgoing, onExited, children }) => {
@@ -159,6 +162,7 @@ const DetailPanelLayer = ({ id, outgoing, onExited, children }) => {
 };
 
 const DetailPanel = React.memo((props) => {
+    const reducedMotion = useReducedMotion();
     const selectedFile = props.selectedFile || null;
     const selectionKey = selectedFile
         ? `${selectedFile.isDirectory ? 'directory' : resolveBookType(selectedFile)}:${selectedFile.full_path || selectedFile.path || selectedFile.name}`
@@ -167,9 +171,9 @@ const DetailPanel = React.memo((props) => {
     const currentPanel = panels[0];
 
     if (currentPanel.selectionKey !== selectionKey) {
-        setPanels([{ id: currentPanel.id + 1, selectionKey, selectedFile, onEditRating: props.onEditRating }, ...panels]);
-    } else if (currentPanel.selectedFile !== selectedFile) {
-        setPanels([{ ...currentPanel, selectedFile }, ...panels.slice(1)]);
+        setPanels([{ id: currentPanel.id + 1, selectionKey, selectedFile, onEditRating: props.onEditRating }, ...(reducedMotion ? [] : panels)]);
+    } else if (currentPanel.selectedFile !== selectedFile || (reducedMotion && panels.length > 1)) {
+        setPanels([{ ...currentPanel, selectedFile }, ...(reducedMotion ? [] : panels.slice(1))]);
     }
 
     const removePanel = useCallback(id => {

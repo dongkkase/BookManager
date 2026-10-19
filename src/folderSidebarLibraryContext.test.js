@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(fileURLToPath(new URL('./components/folder/FolderSidebar.jsx', import.meta.url)), 'utf8');
 const folderTabSource = readFileSync(fileURLToPath(new URL('./tabs/FolderTab.jsx', import.meta.url)), 'utf8');
-const folderTabStyles = readFileSync(fileURLToPath(new URL('./styles/FolderTab.css', import.meta.url)), 'utf8');
 const treeSource = readFileSync(fileURLToPath(new URL('./components/folder/FolderTree.jsx', import.meta.url)), 'utf8');
 
 test('탐색기 트리의 라이브러리 루트는 라이브러리 컨텍스트 메뉴를 연다', () => {
@@ -37,12 +36,6 @@ test('폴더탭 탐색기 아이콘 버튼은 hover 툴팁 정보를 가진다',
     assert.match(source, /className="library-menu-btn folder-sidebar-tooltip-btn"/);
     assert.match(source, /data-tooltip=\{t\('folder\.sidebar\.more_actions'\)\}/);
     assert.match(source, /data-tooltip=\{label\}/);
-});
-
-test('라이브러리 메뉴 툴팁은 스크롤 경계에서 잘리지 않도록 행 안쪽 왼편에 열린다', () => {
-    const libraryMenuSelector = /\.library-menu-btn\[data-tooltip\]/;
-    assert.match(folderTabStyles, new RegExp(`${libraryMenuSelector.source}::before\\s*\\{[\\s\\S]*?top:\\s*50%;[\\s\\S]*?right:\\s*calc\\(100% \\+ 8px\\);[\\s\\S]*?transform:\\s*translateY\\(-50%\\);`));
-    assert.match(folderTabStyles, new RegExp(`${libraryMenuSelector.source}::after\\s*\\{[\\s\\S]*?top:\\s*calc\\(50% - 4px\\);[\\s\\S]*?right:\\s*calc\\(100% \\+ 4px\\);`));
 });
 
 test('라이브러리 리스트의 행 버튼은 삭제 대신 컨텍스트 메뉴를 연다', () => {

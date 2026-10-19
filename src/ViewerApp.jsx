@@ -29,6 +29,8 @@ import { restoreEpubOriginalScrollPosition } from './epubOriginalScrollRestore';
 import { buildOriginalEpubPages, captureEpubReadingPosition, resolveEpubReadingPosition } from './epubOriginalPagination';
 import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
+import { applyMotionPreference } from './motionPolicy';
+import { useReducedMotion } from './hooks/useReducedMotion';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
@@ -945,6 +947,7 @@ function zoomAnchorSelectorForTarget(target) {
 }
 
 function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
+    const reducedMotion = useReducedMotion();
   const enabled = typeof renderPage === 'function' && entries.length > 0;
   const groupKey = buildFlipBookStructureKey(entries);
   const renderPageRef = useRef(renderPage);
@@ -963,6 +966,12 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
       activeGroupKeyRef.current = '';
       setLayers([]);
       return undefined;
+    }
+    if (reducedMotion) {
+        activeGroupKeyRef.current = groupKey;
+        layerIdRef.current += 1;
+        setLayers([{ id: layerIdRef.current, groupKey, entries, visible: true }]);
+        return undefined;
     }
     if (activeGroupKeyRef.current === groupKey) return undefined;
 
@@ -996,7 +1005,7 @@ function FadingFlipBookAmbientLayer({ bookStyle, entries, renderPage }) {
       if (revealFrame) window.cancelAnimationFrame(revealFrame);
       window.clearTimeout(cleanupTimer);
     };
-  }, [enabled, groupKey]);
+  }, [enabled, groupKey, reducedMotion]);
 
   if (!enabled || layers.length < 1) return null;
   return (
@@ -1082,6 +1091,7 @@ function ViewerFlipBook({
     onPageTurnStart,
     onPageTurnCancel,
 }) {
+    const reducedMotion = useReducedMotion();
   const flipBookRef = useRef(null);
   const stageRef = useRef(null);
   const lastAbsoluteNavigationKeyRef = useRef(absoluteNavigationKey);
@@ -1256,6 +1266,11 @@ function ViewerFlipBook({
         }
         return;
       }
+      if (reducedMotion) {
+          setAmbientBookIndex(currentBookIndex);
+          finishAndTurnFlipBookToPage(pageFlip, currentBookIndex);
+          return;
+      }
       const targetReady = targetEntries.every(entry => {
         if (entry.blank) return true;
         const target = stageRef.current?.querySelector?.(`[data-flipbook-index="${entry.bookIndex}"]`);
@@ -1283,12 +1298,13 @@ function ViewerFlipBook({
       frameId = window.requestAnimationFrame(requestFlip);
     };
 
-    frameId = window.requestAnimationFrame(requestFlip);
+    if (reducedMotion) requestFlip();
+    else frameId = window.requestAnimationFrame(requestFlip);
     return () => {
       disposed = true;
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [currentBookIndex, currentSourceIndex, pageFormat, spread, structureKey]);
+  }, [currentBookIndex, currentSourceIndex, pageFormat, reducedMotion, spread, structureKey]);
   const pageRenderDependency = renderKey ?? renderPage;
   const ambientEntries = useMemo(
     () => getFlipBookCurrentGroupEntries(model.entries, effectiveAmbientBookIndex),
@@ -5814,6 +5830,7 @@ function ReaderSettingsPanel({
 }
 
 function ViewerApp() {
+    const reducedMotion = useReducedMotion();
   const [session, setSession] = useState(null);
     const readingLibraryPathsRef = useRef(null);
     const readingLibraryConfigReadyRef = useRef(null);
@@ -6752,6 +6769,7 @@ function ViewerApp() {
     const applyViewerLanguage = config => {
       const nextLanguage = setLanguage(config?.language || config?.lang || 'ko');
       if (mounted) {
+        applyMotionPreference(config?.motion_preference);
         if (config && Object.prototype.hasOwnProperty.call(config, 'readingLibraryPaths')) {
           readingLibraryPathsRef.current = config.readingLibraryPaths;
           pruneLibraryReadingStorage(window.localStorage, config.readingLibraryPaths);
@@ -6986,8 +7004,16 @@ function ViewerApp() {
     completion.callback?.();
   }, []);
 
+    useLayoutEffect(() => {
+        if (!reducedMotion) return;
+        const completion = pageTurnCompletionRef.current;
+        if (completion) completeTimedPageEffect(completion.sequence);
+        else clearPageTurnRuntime();
+    }, [clearPageTurnRuntime, completeTimedPageEffect, reducedMotion]);
+
   const triggerTimedPageEffect = useCallback((format, targetIndex, currentIndex, onComplete, direction) => {
     if (flowMode === 'scroll' || targetIndex === currentIndex) return false;
+    if (reducedMotion) return false;
     if (readerSettings.pageEffect === 'page') {
       if (pageTurnPendingRef.current) return true;
       clearPageTurnRuntime();
@@ -7022,7 +7048,7 @@ function ViewerApp() {
       duration,
     }));
     return true;
-  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect]);
+  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, reducedMotion]);
 
   const triggerReaderPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
     if (!isReaderDocument) return false;
@@ -9950,7 +9976,9 @@ function ViewerApp() {
           aria-label={viewerText('viewer.common.loading', 'Loading...')}
         >
           <span className="viewer-initial-render-loading-indicator">
-            <img src={blocksShuffle4Icon} alt="" />
+            {reducedMotion
+                ? <span>{viewerText('viewer.common.loading', 'Loading...')}</span>
+                : <img src={blocksShuffle4Icon} alt="" />}
             {showInitialRenderRefresh && (
                 <button
                     type="button"

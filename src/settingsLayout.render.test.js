@@ -23,6 +23,7 @@ import { createRoot } from 'react-dom/client';
 import { SettingsModal } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/SettingsModal.jsx')}`)};
 import { translate } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/utils/i18n.js')}`)};
 import { fontVarsForConfig } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/fontPolicy.js')}`)};
+import { applyMotionPreference, initializeMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/global.css')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/App.css')}`)};
 const check = (condition, message) => { if (!condition) throw new Error(message); };
@@ -92,10 +93,12 @@ window.electronAPI = {
     openExternal: async () => { throw new Error('Unexpected external navigation'); },
 };
 const root = createRoot(document.getElementById('root'));
+initializeMotionPreference();
 let language = 'ko';
 let properties = { isOpen: true, config: baseline, initialTab: 'basic', navigationRequest: 0 };
 function render(patch = {}) {
     properties = { ...properties, ...patch };
+    applyMotionPreference(properties.config.motion_preference);
     root.render(<SettingsModal {...properties}
         t={(key, values) => translate(key, language, values)}
         onSave={async value => {
@@ -295,12 +298,14 @@ async function runInteractions() {
         check(applyButton().disabled, 'Category navigation made unchanged settings dirty');
     }
     await navigate('basic');
-    for (const id of ['language', 'font', 'font-scale', 'sound']) {
+    for (const id of ['language', 'font', 'font-scale', 'motion-preference', 'sound']) {
         check(document.getElementById('settings-' + id), 'Missing general control: ' + id);
     }
     await change(document.getElementById('settings-language'), 'en');
     await change(document.getElementById('settings-font'), 'Jua');
     await change(document.getElementById('settings-font-scale'), '125');
+    check(document.getElementById('settings-motion-preference').value === 'system', 'Motion must default to system preference');
+    await change(document.getElementById('settings-motion-preference'), 'full');
     check(document.querySelector('.settings-font-preview')?.textContent.trim(), 'Font sample is missing');
     check(calls.languages.at(-1) === 'en', 'Language preview callback was not invoked');
     await navigate('processing');
@@ -354,6 +359,7 @@ async function runInteractions() {
     const saved = await applySettings('settings across categories');
     check(calls.saves.length === 1 && calls.closes.length === 0, 'Apply invoked an unexpected save or close callback');
     check(saved.language === 'en' && saved.font_family === 'Jua' && saved.font_scale === 125, 'General settings were not saved');
+    check(saved.motion_preference === 'full', 'Animation preference was not saved');
     check(saved.target_format === 'cbz' && saved.img_quality === 85, 'Processing settings were not saved');
     check(saved.api_keys.ai_gemini_key === 'fixture-api-key', 'API setting was not saved across category navigation');
     check(saved.api_keys.hardcover === 'hc_fixture', 'Hardcover token was not normalized');
@@ -822,6 +828,25 @@ async function runLibraryPreviewInteractions() {
 async function runLibraryEditorTransitions(reducedMotion = false) {
     await open({ initialTab: 'folder' });
     check(matchMedia('(prefers-reduced-motion: reduce)').matches === reducedMotion, 'Editor fixture has an unexpected motion preference');
+    if (reducedMotion) {
+        await selectPreview('/fixture/Books');
+        const editor = libraryEditor();
+        check(getComputedStyle(editor).transitionDuration === '0s' && Math.abs(editorOffset(editor)) <= 0.5,
+            'Reduced motion did not open the editor immediately');
+        check(editor.contains(document.activeElement), 'Reduced motion lost editor focus');
+        libraryRow('/fixture/Novels').querySelector('.settings-library-select').click();
+        await frame();
+        check(libraryEditor() === editor && document.getElementById('settings-library-alias').value === '소설 모음',
+            'Reduced motion changed editor selection behavior');
+        panel().querySelector('h2').click();
+        await frame();
+        check(!libraryEditor(), 'Reduced motion waited for the exit timer');
+        await selectPreview('/fixture/Books');
+        document.getElementById('settings-tab-basic').click();
+        await frame();
+        check(!libraryEditor(), 'Reduced motion retained an editor after switching tabs');
+        return { opensImmediately: true, closesImmediately: true, retainsNodeOnSelection: true, restoresFocus: true };
+    }
     const firstEditorFrame = new Promise(resolve => {
         const observer = new MutationObserver(() => {
             const editor = libraryEditor();
@@ -1310,7 +1335,10 @@ app.whenReady().then(async () => {
             preparesClosedFrame: true, slidesOpen: true, slidesClosed: true, retainsNodeOnSelection: true, rapidReopen: true, cancelsPendingEntry: true,
             pointerSelections: ['list', 'preview', 'row'].map(source => ({ source, trustedPointer: true, retainsOpenEditor: true })),
         });
-        assert.deepEqual(report.editorReducedMotion, report.editorTransitions);
+        assert.deepEqual(report.editorReducedMotion, {
+            opensImmediately: true, closesImmediately: true, retainsNodeOnSelection: true, restoresFocus: true,
+            pointerSelections: ['list', 'preview', 'row'].map(source => ({ source, trustedPointer: true, retainsOpenEditor: true })),
+        });
         assert.equal(report.layouts.length, 10);
         assert.ok(report.layouts.every(layout => layout.measurements.length === 11));
         t.diagnostic(JSON.stringify(report));

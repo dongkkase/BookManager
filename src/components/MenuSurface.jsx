@@ -1,4 +1,5 @@
 import React, { createContext, forwardRef, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import '../styles/MenuSurface.css';
 
 const MenuOpenContext = createContext(true);
@@ -20,6 +21,7 @@ function readVisual(node) {
 }
 
 export const MenuSurface = forwardRef(function MenuSurface({ open, origin, children, className, style, ...props }, forwardedRef) {
+    const reducedMotion = useReducedMotion();
     const parentOpen = useContext(MenuOpenContext);
     const effectiveOpen = Boolean(open) && parentOpen;
     const [present, setPresent] = useState(effectiveOpen);
@@ -46,6 +48,12 @@ export const MenuSurface = forwardRef(function MenuSurface({ open, origin, child
             lastVisual.current = null;
             lastOpenProps.current = null;
             entrancePending.current = false;
+            return undefined;
+        }
+        if (reducedMotion) {
+            entrancePending.current = false;
+            lastVisual.current = effectiveOpen ? OPEN_VISUAL : null;
+            setPresent(effectiveOpen);
             return undefined;
         }
 
@@ -91,7 +99,7 @@ export const MenuSurface = forwardRef(function MenuSurface({ open, origin, child
             if (animation) animation.onfinish = null;
             animation?.cancel();
         };
-    }, [effectiveOpen, shouldRender]);
+    }, [effectiveOpen, shouldRender, reducedMotion]);
 
     if (!shouldRender || !renderedProps) return null;
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     createViewerStatusReader,
+    createCachedViewerStatusMapper,
     isViewerStatusStorageKey,
     readViewerFileStatus,
     viewerReadingProgressText,
@@ -63,6 +64,80 @@ test('상태 리더는 저장소를 한 번 스캔해 책갈피 수를 읽는다
     assert.equal(status.hasBookmarks, true);
     assert.equal(status.bookmarkCount, 2);
     assert.equal(viewerBookmarkStatusText(status, (key, values) => `${values[0]}개`), '2개');
+});
+
+test('목록 상태 매퍼는 같은 파일과 읽기 상태를 재사용하고 DB 상태 변경·삭제를 즉시 반영한다', () => {
+    const embeddedState = { status: 'reading', pageIndex: 19, pageCount: 100 };
+    const file = Object.freeze({ path: '/books/a.cbz', readingState: embeddedState });
+    const reader = createViewerStatusReader(new MemoryStorage());
+    let reads = 0;
+    const mapFile = createCachedViewerStatusMapper(value => { reads += 1; return reader(value); });
+    const first = mapFile(file);
+    assert.equal(first.viewerStatus.percent, 20);
+    assert.equal(mapFile(file), first);
+    assert.equal(reads, 1);
+    const completedState = { ...embeddedState, status: 'completed' };
+    const completed = mapFile(file, completedState);
+    assert.equal(completed.viewerStatus.percent, 100);
+    assert.equal(mapFile(file, completedState), completed);
+    const cleared = mapFile(file, null);
+    assert.equal(cleared.viewerStatus.hasReadingProgress, false);
+    assert.equal(cleared.readingState, null);
+    assert.equal(mapFile(file, null), cleared);
+    assert.equal(reads, 3);
+    assert.equal(mapFile(file).viewerStatus.percent, 20);
+    assert.equal(file.readingState, embeddedState);
+});
+
+test('메타데이터·표지·평점이 갱신된 파일 객체는 이전 결과를 재사용하지 않는다', () => {
+    const mapFile = createCachedViewerStatusMapper(createViewerStatusReader(new MemoryStorage()));
+    const state = { status: 'reading', pageIndex: 9 };
+    const file = Object.freeze({ path: '/books/a.cbz', page_count: 100, rating: '3', cover: 'old.jpg' });
+    const before = mapFile(file, state);
+    const updated = Object.freeze({ ...file, page_count: 200, rating: '7', cover: 'new.jpg' });
+    const after = mapFile(updated, state);
+    assert.notEqual(after, before);
+    assert.equal(after.viewerStatus.pageCount, 200);
+    assert.equal(after.viewerStatus.percent, 5);
+    assert.equal(after.rating, '7');
+    assert.equal(after.cover, 'new.jpg');
+    assert.equal(before.viewerStatus.percent, 10);
+    assert.equal(mapFile(updated, state), after);
+});
+
+test('DB에 읽기 기록이 없는 파일은 조회 완료 후에도 기존 표시 객체와 로컬 진행률을 유지한다', () => {
+    const file = Object.freeze({ path: '/books/a.cbz', page_count: 100 });
+    const storage = new MemoryStorage({
+        'bookmanager-viewer-state:/books/a.cbz': JSON.stringify({ pageIndex: 49 }),
+    });
+    const reader = createViewerStatusReader(storage);
+    let reads = 0;
+    const mapFile = createCachedViewerStatusMapper(value => { reads += 1; return reader(value); });
+    const pending = mapFile(file);
+    const absent = mapFile(file, null);
+    assert.equal(absent, pending);
+    assert.equal(absent.viewerStatus.percent, 50);
+    assert.equal(reads, 1);
+
+    const databaseState = { status: 'completed', pageCount: 100, updatedAt: '2026-10-19T00:00:00Z' };
+    const completed = mapFile(file, databaseState);
+    assert.equal(completed.viewerStatus.percent, 100);
+    const cleared = mapFile(file, null);
+    assert.equal(cleared.viewerStatus.percent, 50);
+    assert.equal(mapFile(file, null), cleared);
+    assert.equal(reads, 3);
+});
+
+test('로컬 저장소가 갱신되면 새 매퍼가 진행도와 책갈피를 다시 읽는다', () => {
+    const file = { path: '/books/a.cbz', page_count: 100 };
+    const storage = new MemoryStorage();
+    const before = createCachedViewerStatusMapper(createViewerStatusReader(storage))(file);
+    storage.entries.set('bookmanager-viewer-state:/books/a.cbz', JSON.stringify({ pageIndex: 49 }));
+    storage.entries.set('bookmanager-viewer-bookmarks:/books/a.cbz', JSON.stringify([{ id: 1 }]));
+    const after = createCachedViewerStatusMapper(createViewerStatusReader(storage))(file);
+    assert.equal(before.viewerStatus.hasReadingProgress, false);
+    assert.equal(after.viewerStatus.percent, 50);
+    assert.equal(after.viewerStatus.bookmarkCount, 1);
 });
 
 test('오디오북 진행률과 초 단위 북마크 상태를 계산한다', () => {

@@ -27,6 +27,7 @@ test('책넘김은 실제 페이지를 유지하고 이동 취소와 캔버스 �
 import React, { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import ViewerPageCurlBook from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/ViewerPageCurlBook.jsx')}`)};
+import { applyMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import EpubInlineMedia from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubInlineMedia.jsx')}`)};
 import EpubOriginalDocument from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
 import { releasePageCurlSnapshots, snapshotPageCurlLeaf } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/viewerPageCurlSnapshot.js')}`)};
@@ -142,6 +143,7 @@ async function startFlip(index) {
     await until(() => painted(overlay()), 'A page turn must paint the actual page snapshot');
 }
 window.testDone = (async () => {
+    applyMotionPreference('full');
     renderBook();
     await until(() => bookRef.current && visibleIndexes().length === 2, 'The initial spread did not become visible');
     expectVisible([0, 1], 'The initial spread must preserve both DOM leaves');
@@ -275,6 +277,46 @@ window.testDone = (async () => {
     dragEvent('pointerup', drag.x, drag.y);
     expectReleased('Automatic navigation from a pending pointer must release its snapshots');
     results.push('pointer-driven curl, rollback, cancellation, resize and fast release');
+
+    applyMotionPreference('reduced');
+    await frames();
+    const beforeReducedFlip = changes.length;
+    const canvasCountBeforeReduced = transientCanvases().length;
+    api().flip(6);
+    check(api().getCurrentPageIndex() === 6 && changes.slice(beforeReducedFlip).join(',') === '6', 'Reduced motion must commit synchronously once');
+    check(!painted(overlay()) && transientCanvases().length === canvasCountBeforeReduced, 'Reduced motion must not prepare snapshots');
+    api().flip(4);
+    check(api().getCurrentPageIndex() === 4, 'Reduced motion must accept the next navigation without a timer');
+    await frames();
+    drag = dragPoints('left');
+    dragEvent('pointerdown', drag.x, drag.y);
+    dragEvent('pointermove', drag.move(0.4), drag.y);
+    check(!painted(overlay()) && api().getCurrentPageIndex() === 4, 'Reduced drag must keep the page static until release');
+    dragEvent('pointerup', drag.move(0.4), drag.y);
+    check(api().getCurrentPageIndex() === 2 && !book().hasAttribute('data-curl-dragging'), 'Reduced drag must commit immediately on release');
+    await frames();
+    drag = dragPoints();
+    dragEvent('pointerdown', drag.x, drag.y);
+    dragEvent('pointermove', drag.move(0.4), drag.y);
+    applyMotionPreference('full');
+    await frames();
+    check(!book().hasAttribute('data-curl-dragging') && api().getCurrentPageIndex() === 2, 'Restoring full motion during a reduced drag must cancel the gesture and release input');
+    await startFlip(4);
+    applyMotionPreference('reduced');
+    await frames();
+    check(api().getCurrentPageIndex() === 4 && !painted(overlay()), 'Enabling reduced motion must complete an active curl');
+    expectReleased('Reduced motion must release active snapshot canvases');
+    applyMotionPreference('full');
+    await frames();
+    api().flip(6);
+    applyMotionPreference('reduced');
+    await frames(3);
+    check(api().getCurrentPageIndex() === 6 && !painted(overlay()), 'Enabling reduced motion during snapshot preparation must commit immediately');
+    await frames(3);
+    expectReleased('Late snapshot completion after reduced motion must release its canvases');
+    applyMotionPreference('full');
+    await frames();
+    results.push('reduced motion immediate turns, drag, and active preparation cleanup');
 
     const readerLeaves = colors.map((_color, index) => <div key={index} className="viewer-flipbook-page fixture-leaf" data-flipbook-index={index}>
         <article className="viewer-text-page" style={{ width: '100%', height: '100%', boxSizing: 'border-box', padding: '24px', margin: 0, color: '#111', background: '#fff', font: '18px sans-serif' }}>
@@ -548,7 +590,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PAGE_CURL_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const report = JSON.parse(payload);
-        assert.equal(report.results.length, 13);
+        assert.equal(report.results.length, 14);
         assert.ok(report.transientCanvasCount > 1, 'The renderer must exercise actual snapshot allocation');
         t.diagnostic(payload);
     } finally {

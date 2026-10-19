@@ -14,10 +14,12 @@ import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
 import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
+import { FolderCoverPreviewContext } from '../components/folder/FolderCoverPreviewContext';
+import { createFolderCoverPreviewStore, folderPreviewMetadataUpdate } from '../folderCoverPreviewStore';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
 import { FolderPathBar } from '../components/folder/FolderPathBar';
 import { FolderCharacterIndex } from '../components/folder/FolderCharacterIndex';
-import { buildFolderCharacterIndex } from '../folderCharacterIndex';
+import { createFolderCharacterIndexBuilder } from '../folderCharacterIndex';
 import { RatingEditorDialog } from '../components/folder/RatingEditorDialog';
 import { supportsRatingEditor } from '../ratingPolicy';
 import { supportsCoverEditor, resolveCoverEditorTargets } from '../coverEditorBatch';
@@ -79,16 +81,18 @@ import {
 import {
   attachViewerStatus,
   createViewerStatusReader,
+    createCachedViewerStatusMapper,
   isViewerStatusStorageKey,
   viewerBookmarkStatusText,
   viewerReadingStatusText,
 } from '../viewerStatusState';
-import { createFolderReadingStatesLoader, readingStatePathKey, sameReadingStateFiles } from '../folderReadingStates';
+import { createFolderReadingStatesLoader, createReadingStatePathKeyResolver, sameReadingStateFiles } from '../folderReadingStates';
 import { applyReadingActionStates, resolveReadingActionPaths } from '../folderReadingActions';
 import { createLibraryMoveProgress } from '../libraryMoveProgress';
+import { buildLibraryItems } from '../libraryPresentation';
 import {
   MAX_VIEW_SCALE_BY_MODE,
-  groupFolderFiles,
+    createFolderGroupingCache,
   normalizeViewMode,
   normalizeViewScales,
 } from '../folderViewState';
@@ -608,6 +612,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const lastFolderPanelRef = useRef('list');
   const pendingMetadataRefreshRef = useRef(false);
     const coverPreviewQueueRef = useRef(null);
+    const coverPreviewStore = useMemo(() => createFolderCoverPreviewStore({
+        onEvict: key => coverPreviewQueueRef.current?.forgetKey(key),
+    }), []);
     if (!coverPreviewQueueRef.current) {
         coverPreviewQueueRef.current = createCoverPreviewQueue({
             concurrency: COVER_PREVIEW_CONCURRENCY,
@@ -617,17 +624,31 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             load: file => file.collectionId
                 ? window.electronAPI.readingLists({ operation: 'preview', id: file.collectionId })
                 : window.electronAPI.getFilePreview(coverPreviewFilePath(file), { force: false }),
-            onResult: (result, file, context) => {
-                if (!result?.success || !result.file || (!file.isDirectory && !result.file.cover)) return;
-                if (Boolean(file.isDirectory) !== Boolean(result.file.isDirectory)) return;
-                const updatedFile = {
-                    ...file,
-                    ...result.file,
-                    path: file.path,
-                    full_path: file.full_path || result.file.full_path || result.file.path,
-                };
-                if (context.updateFilePreview) context.updateFilePreview(updatedFile);
-                else context.updateCachedFiles(context.folderPath, context.scanOptions, [updatedFile]);
+            resultFlushDelay: 120,
+            onResults: entries => {
+                const folders = new Map();
+                for (const { result, file, context } of entries) {
+                    if (!result?.success || !result.file || (!file.isDirectory && !result.file.cover)) continue;
+                    if (Boolean(file.isDirectory) !== Boolean(result.file.isDirectory)) continue;
+                    const updatedFile = {
+                        ...file,
+                        ...result.file,
+                        path: file.path,
+                        full_path: file.full_path || result.file.full_path || result.file.path,
+                    };
+                    if (context.updateFilePreview) context.updateFilePreview(updatedFile);
+                    else {
+                        coverPreviewStore.publish(file, result.file);
+                        const metadataUpdate = folderPreviewMetadataUpdate(file, result.file);
+                        if (!metadataUpdate) continue;
+                        const key = JSON.stringify([context.folderPath, context.scanOptions]);
+                        if (!folders.has(key)) folders.set(key, { context, files: [] });
+                        folders.get(key).files.push(metadataUpdate);
+                    }
+                }
+                for (const { context, files } of folders.values()) {
+                    context.updateCachedFiles(context.folderPath, context.scanOptions, files);
+                }
             },
         });
     }
@@ -1026,7 +1047,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const resetCoverPreviewQueue = useCallback(() => {
         coverPreviewQueueRef.current.reset();
-  }, []);
+        coverPreviewStore.clear();
+  }, [coverPreviewStore]);
 
     useEffect(() => resetCoverPreviewQueue, [resetCoverPreviewQueue]);
 
@@ -1277,6 +1299,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, [activeRawFileData, folderSource, selectedFolderPath]);
     const currentReadingScopeRef = useRef(readingFilesScope);
     currentReadingScopeRef.current = readingFilesScope;
+    const readingFilesScopeKey = `${folderSource}:${selectedFolderPath}`;
+    const currentReadingScopeKeyRef = useRef(readingFilesScopeKey);
+    currentReadingScopeKeyRef.current = readingFilesScopeKey;
     const readingStatesLoaderRef = useRef(null);
     const [readingStatesSnapshot, setReadingStatesSnapshot] = useState(null);
     useEffect(() => {
@@ -1288,7 +1313,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             isCurrent: files => currentReadingScopeRef.current === files,
         });
         readingStatesLoaderRef.current = loader;
-        loader.setFiles(currentReadingScopeRef.current);
+        loader.setFiles(currentReadingScopeRef.current, currentReadingScopeKeyRef.current);
         const removeListener = window.electronAPI.onRecentReadingChanged?.(event => loader.refresh(event));
         const refresh = () => loader.refresh();
         window.addEventListener('focus', refresh);
@@ -1300,15 +1325,19 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         };
     }, [runtimePlatform]);
     useEffect(() => {
-        readingStatesLoaderRef.current?.setFiles(readingFilesScope);
-    }, [readingFilesScope]);
+        readingStatesLoaderRef.current?.setFiles(readingFilesScope, readingFilesScopeKey);
+    }, [readingFilesScope, readingFilesScopeKey]);
+    const viewerStatusReader = useMemo(() => createViewerStatusReader(), [viewerStatusVersion]);
+    const mapViewerStatus = useMemo(() => createCachedViewerStatusMapper(viewerStatusReader), [viewerStatusReader]);
+    const getReadingStatePathKey = useMemo(() => createReadingStatePathKeyResolver(runtimePlatform), [runtimePlatform]);
   const fileDataWithViewerStatus = useMemo(() => {
     if (activeDuplicateFileData.length === 0) return activeDuplicateFileData;
-    const reader = createViewerStatusReader();
+    const reader = viewerStatusReader;
     const statesByPath = readingStatesSnapshot?.files === readingFilesScope ? readingStatesSnapshot.statesByPath : null;
     return activeDuplicateFileData.map(file => {
         if (file.isDirectory) return file;
-        const pathKey = readingStatePathKey(file.full_path || file.path, runtimePlatform);
+        const pathKey = getReadingStatePathKey(file);
+        if (!isRecentReading) return mapViewerStatus(file, statesByPath?.has(pathKey) ? statesByPath.get(pathKey) : file.readingState);
         const readingFile = statesByPath?.has(pathKey) ? { ...file, readingState: statesByPath.get(pathKey) } : file;
         return attachViewerStatus(
             isRecentReading
@@ -1325,11 +1354,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             reader,
         );
     });
-  }, [activeDuplicateFileData, config?.lang, config?.language, isRecentReading, readingFilesScope, readingStatesSnapshot, runtimePlatform, t, viewerStatusVersion]);
+  }, [activeDuplicateFileData, config?.lang, config?.language, getReadingStatePathKey, isRecentReading, mapViewerStatus, readingFilesScope, readingStatesSnapshot, t, viewerStatusReader]);
   const localSearchQuery = isLibrarySearchActive ? '' : appliedSearchQuery;
-    const recentListExtensions = useMemo(() => [...new Set([
+    const recentListExtensions = useMemo(() => isRecentList ? [...new Set([
         ...activeRawFileData.map(recentListExtension), recentListOptions.extension,
-    ].filter(Boolean))].sort(), [activeRawFileData, recentListOptions.extension]);
+    ].filter(Boolean))].sort() : [], [activeRawFileData, isRecentList, recentListOptions.extension]);
     const filteredFileData = useMemo(() => {
         const files = filterFolderFiles(fileDataWithViewerStatus, {
             query: localSearchQuery,
@@ -1353,40 +1382,43 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             });
             return;
         }
-        queue.enqueue(files, {
+        queue.enqueue(files.map(file => coverPreviewStore.resolve(file)), {
             folderPath: selectedFolderPath,
             scanOptions,
             updateCachedFiles,
         });
-    }, [coverPreviewScope, isCollectionView, isFavoritesView, readingListKind, readingLists.updateFilePreview, scanOptions, selectedFolderPath, updateCachedFiles]);
+    }, [coverPreviewScope, coverPreviewStore, isCollectionView, isFavoritesView, readingListKind, readingLists.updateFilePreview, scanOptions, selectedFolderPath, updateCachedFiles]);
   const savedLayouts = useMemo(
     () => normalizeSavedLayouts(config?.folder_saved_layouts),
     [config?.folder_saved_layouts],
   );
+    const groupFiles = useMemo(() => createFolderGroupingCache(), []);
   const groupedFileData = useMemo(
     () => isRecentList
       ? [{ name: '', files: sortRecentListFiles(filteredFileData, recentListOptions) }]
       : readingListKind && !isCollectionView && !isFavoritesView
-        ? groupFolderFiles(filteredFileData, 'none', 'readingListAddedAt', 'desc')
-      : groupFolderFiles(filteredFileData, groupKey, sortKey, sortOrder, {
+        ? groupFiles(filteredFileData, 'none', 'readingListAddedAt', 'desc')
+      : groupFiles(filteredFileData, groupKey, sortKey, sortOrder, {
           fallbackGroupName: t('folder_group_uncategorized'),
         }),
-    [filteredFileData, groupKey, isCollectionView, isFavoritesView, isRecentList, readingListKind, recentListOptions, sortKey, sortOrder, t],
+    [filteredFileData, groupFiles, groupKey, isCollectionView, isFavoritesView, isRecentList, readingListKind, recentListOptions, sortKey, sortOrder, t],
   );
   const displayedFileData = useMemo(
-    () => groupedFileData.flatMap(group => group.files),
+    () => groupedFileData.length === 1 ? groupedFileData[0].files : groupedFileData.flatMap(group => group.files),
     [groupedFileData],
   );
     const characterIndexLocale = typeof navigator !== 'undefined'
         ? navigator.language
         : config?.language || config?.lang || 'ko';
+    const buildCharacterIndex = useMemo(() => createFolderCharacterIndexBuilder(characterIndexLocale), [characterIndexLocale]);
     const characterIndexEntries = useMemo(
-        () => buildFolderCharacterIndex(displayedFileData, characterIndexLocale),
-        [characterIndexLocale, displayedFileData],
+        () => buildCharacterIndex(displayedFileData),
+        [buildCharacterIndex, displayedFileData],
     );
 
   // --- 선택 상태 ---
   const {
+    fileLookup,
     selectedFiles,
     activeSelectedPath,
     selectedFileData,
@@ -1407,26 +1439,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             [folderSource]: { ...(current[folderSource] || defaultRecentListOptions(folderSource)), ...patch },
         }));
     }, [clearSelection, folderSource]);
+    const resetRecentListOptions = useCallback(() => {
+        changeRecentListOptions(defaultRecentListOptions(folderSource));
+        resetSearchQuery();
+        showToast?.(t('reading_lists.filters_reset'));
+    }, [changeRecentListOptions, folderSource, resetSearchQuery, showToast, t]);
   const activeSelectedFile = selectedFileData();
   const detailSelectedFile = activeSelectedFile?.collectionId ? null : activeSelectedFile || null;
   const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
-  const fileSizeByPath = useMemo(() => {
-    const sizes = new Map();
-    filteredFileData.forEach(file => {
-      if (file?.path) sizes.set(file.path, Number(file.size) || 0);
-    });
-    return sizes;
-  }, [filteredFileData]);
   const selectedFilesTotalBytes = useMemo(() => (
-    selectedFiles.reduce((total, filePath) => total + (fileSizeByPath.get(filePath) || 0), 0)
-  ), [fileSizeByPath, selectedFiles]);
-  const displayedFileByPath = useMemo(() => {
-    const map = new Map();
-    displayedFileData.forEach(file => {
-      if (file?.path) map.set(file.path, file);
-    });
-    return map;
-  }, [displayedFileData]);
+    selectedFiles.reduce((total, filePath) => total + (Number(fileLookup.getFile(filePath)?.size) || 0), 0)
+  ), [fileLookup, selectedFiles]);
   const itemScale = itemScales[viewMode] || 50;
   const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
@@ -1456,7 +1479,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, []);
 
     const handleCharacterIndexNavigate = useCallback(entry => {
-        if (!displayedFileByPath.has(entry.path)) return;
+        if (fileLookup.getIndex(entry.path) === undefined) return;
         const scroller = viewContainerRef.current?.querySelector('.file-table-container, .thumbnail-grid, .tile-grid');
         if (!scroller) return;
         cancelFolderLocationRestore();
@@ -1469,7 +1492,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             files: displayedFileData,
             viewMode,
         });
-    }, [cancelFolderLocationRestore, displayedFileByPath, displayedFileData, viewMode]);
+    }, [cancelFolderLocationRestore, fileLookup, displayedFileData, viewMode]);
 
     const prepareFolderLocationRestore = useCallback((folderPath, options = {}) => {
         rememberCurrentFolderLocation();
@@ -2269,7 +2292,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const canFocusGotoPath = useCallback(() => (
     !document.querySelector('.modal-overlay')
-    && !document.querySelector('.app-support-dialog-layer')
+    && !document.querySelector('.app-support-dialog-layer.is-open')
     && !document.querySelector('.app-lock-screen')
     && !document.querySelector('.app-library-scan-slide')
     && !mainAreaRef.current?.closest('.folder-tab')?.querySelector('.folder-dialog-backdrop')
@@ -2711,8 +2734,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [activeSelectedPath, detailPanelHeight, ensureActiveSelectionVisible, viewMode]);
 
     const selectedEntryObjects = useMemo(() => (
-        selectedFiles.map(filePath => displayedFileByPath.get(filePath)).filter(file => file && !file.collectionId)
-    ), [displayedFileByPath, selectedFiles]);
+        selectedFiles.map(filePath => fileLookup.getFile(filePath)).filter(file => file && !file.collectionId)
+    ), [fileLookup, selectedFiles]);
     const selectedFileObjects = useMemo(
         () => selectedEntryObjects.filter(file => !file.isDirectory),
         [selectedEntryObjects],
@@ -3151,6 +3174,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }
     const targetLibrary = plans[0]?.targetLibrary;
     if (!targetLibrary) return;
+    const targetLibraryName = buildLibraryItems([targetLibrary], libraryEntries)[0].name;
         lastLibraryMoveTargetRef.current = targetLibrary;
     const firstMoveItem = plans[0]?.src || plans[0]?.full_path || plans[0]?.path || '';
     const requestId = `library-move-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -3160,7 +3184,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         getPreview: filePath => window.electronAPI?.getFilePreview?.(filePath, { force: false }),
         onProgress: data => emitLibraryMoveProgress(
             t(data.libraryPhase === 'indexing' ? 'library_move_status_indexing_progress' : 'library_move_status_moving_progress', [
-                data.processedCount, data.totalCount, data.percent,
+                data.processedCount, data.totalCount, data.percent, targetLibraryName,
             ]),
             data.progress,
             data.currentFile,
@@ -3181,7 +3205,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           if (stage === 'conflicts') {
             emitLibraryMoveProgress(t('library_move_status_conflicts', [executablePlans.length]), progress, currentItem);
           } else if (stage === 'moving') {
-            emitLibraryMoveProgress(t('library_move_status_moving', [executablePlans.length]), progress, currentItem);
+            emitLibraryMoveProgress(t('library_move_status_moving', [executablePlans.length, targetLibraryName]), progress, currentItem);
           }
         },
         onConflictWait: () => {
@@ -3256,7 +3280,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         moveProgress.dispose();
       clearLibraryMoveProgress();
     }
-  }, [clearLibraryMoveProgress, clearSelection, config?.language, config?.lang, emitLibraryMoveProgress, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, refreshLibraryScanStates, saveConfig, selectedEntryObjects, selectedFolderPath, showToast, t]);
+  }, [clearLibraryMoveProgress, clearSelection, config?.language, config?.lang, emitLibraryMoveProgress, executeLibraryMovePlans, handleFolderChange, handleRefresh, libraries, libraryEntries, refreshLibraryScanStates, saveConfig, selectedEntryObjects, selectedFolderPath, showToast, t]);
 
     const rememberLibraryMoveTarget = useCallback(targetLibrary => {
         lastLibraryMoveTargetRef.current = targetLibrary;
@@ -3721,7 +3745,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (!isFolderTabVisible() || showLayoutDialog) return;
-        if (document.querySelector('.app-support-dialog-layer')) return;
+        if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (
         !event.defaultPrevented
         && !event.repeat
@@ -4148,7 +4172,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const rows = filteredFileData.map(file => exportColumns.map(column => {
       if (column.key === 'folder_path') return file.folder_path || parentPath(file.full_path || file.path);
       if (column.key === 'author') return file.author || file.writer || '';
-      if (column.key === 'cover') return file.cover ? t('folder_cover_img') : '';
+      if (column.key === 'cover') return coverPreviewStore.resolve(file).cover ? t('folder_cover_img') : '';
       if (column.key === 'viewer_reading_status') return viewerReadingStatusText(file.viewerStatus, t);
       if (column.key === 'viewer_bookmark_status') return viewerBookmarkStatusText(file.viewerStatus, t);
       return file[column.key] ?? '';
@@ -4160,7 +4184,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       message: result?.success ? t('dlg_exp_done') : t('dlg_err_occurred', [result?.message || t('msg_failed')]),
       language: config?.language || config?.lang || 'ko',
     });
-  }, [columnLayout, config?.language, config?.lang, filteredFileData, t]);
+  }, [columnLayout, config?.language, config?.lang, coverPreviewStore, filteredFileData, t]);
 
   // View Stack
   const renderViewStack = () => {
@@ -4200,6 +4224,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   };
 
   return (
+    <FolderCoverPreviewContext.Provider value={coverPreviewStore}>
     <div className="folder-tab">
       <div
         className="folder-main-area"
@@ -4436,6 +4461,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 options={recentListOptions}
                 extensions={recentListExtensions}
                 onChange={changeRecentListOptions}
+                onReset={resetRecentListOptions}
                 count={filteredFileData.length}
                 total={activeRawFileData.length}
                 t={t}
@@ -4840,6 +4866,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         />
       )}
     </div>
+    </FolderCoverPreviewContext.Provider>
   );
 }
 

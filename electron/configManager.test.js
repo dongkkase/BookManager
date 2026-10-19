@@ -21,6 +21,20 @@ function writeDataConfig(root, config) {
     return configPath;
 }
 
+test('모션 설정은 이전 설정에 기본값을 부여하고 저장 후 다시 읽는다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-motion-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, { language: 'ko' });
+    const manager = new ConfigManager(root, root);
+    assert.equal(manager.loadConfig().motion_preference, 'system');
+    for (const motion_preference of ['full', 'reduced', 'system']) {
+        assert.equal(manager.saveConfig({ ...manager.getConfig(), motion_preference }), true);
+        const restarted = new ConfigManager(root, root);
+        assert.equal(restarted.loadConfig().motion_preference, motion_preference);
+    }
+    assert.equal(manager.normalizeConfig({ motion_preference: 'invalid' }).motion_preference, 'system');
+});
+
 test('라이브러리 데이터 정리는 정상 등록 경로 설정의 초기화가 끝난 뒤에만 허용한다', async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-ready-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));

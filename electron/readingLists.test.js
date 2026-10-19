@@ -198,7 +198,7 @@ test('최근 목록과 배지는 14일 경계를 포함하고 오래되거나 �
     const update = sql.prepare('UPDATE reading_file_activity SET added_at = ?, updated_at = ? WHERE path = ?');
     update.run(cutoff, older, files[0]);
     update.run(older, cutoff, files[1]);
-    sql.prepare('INSERT INTO reading_file_activity VALUES (?, ?, ?)').run('/missing-db-entry.epub', cutoff, cutoff);
+    sql.prepare('INSERT INTO reading_file_activity(path, added_at, updated_at) VALUES (?, ?, ?)').run('/missing-db-entry.epub', cutoff, cutoff);
     assert.deepEqual((await request({ operation: 'list', id: 'recent-added' })).rows.map(file => file.path), [files[0]]);
     assert.deepEqual((await request({ operation: 'list', id: 'recent-updated' })).rows.map(file => file.path), [files[1]]);
     const overview = await request({ operation: 'overview' });
@@ -238,7 +238,7 @@ test('최근 목록과 배지는 현재 등록된 라이브러리 경로만 반�
     const outside = path.join(root, 'outside.epub');
     const sibling = path.join(`${folder}-other`, 'sibling.epub');
     await fs.writeFile(outside, 'fixture');
-    await db.upsertFileInfoBulk([...files, outside, sibling].map(filePath => ({ path: filePath })));
+    await db.upsertFileInfoBulk([...files, outside, sibling].map(filePath => ({ path: filePath, mtime: Date.now() / 1000 })));
     await request({ operation: 'add', id: 'want-to-read', paths: [files[0], outside] });
     const checkRecent = async expected => {
         for (const id of ['recent-added', 'recent-updated']) {
@@ -274,7 +274,7 @@ test('최근 목록은 운영체제 경로와 특수문자를 리터럴로 비�
         const similar = paths.join(volume, 'BooksX100x[a]', '한글', 'book.epub');
         const otherCase = paths.join(volume, 'books_100%[a]', '한글', 'case.epub');
         const filePaths = [inside, sibling, similar, otherCase];
-        await db.upsertFileInfoBulk(filePaths.map(filePath => ({ path: filePath })));
+        await db.upsertFileInfoBulk(filePaths.map(filePath => ({ path: filePath, mtime: Date.now() / 1000 })));
         const expected = (platform === 'win32' ? [inside, otherCase] : [inside]).map(filePath => db.normalizeFilePath(filePath));
         const libraries = platform === 'darwin' ? [folder.normalize('NFC'), folder.normalize('NFD')] : [`${folder}${paths.sep}`];
         for (const id of ['recent-added', 'recent-updated']) {
@@ -394,7 +394,7 @@ test('최근 목록 IPC는 매 요청마다 서버의 등록 라이브러리를 
     const { root, db, dbPath, folder, files, controllers } = await fixture(t);
     const outside = path.join(root, 'outside.epub');
     await fs.writeFile(outside, 'fixture');
-    await db.upsertFileInfoBulk([...files, outside].map(filePath => ({ path: filePath })));
+    await db.upsertFileInfoBulk([...files, outside].map(filePath => ({ path: filePath, mtime: Date.now() / 1000 })));
     let libraries = [folder];
     let handler;
     const mainFrame = {};

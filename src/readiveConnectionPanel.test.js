@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { transformSync } from 'esbuild';
 import * as transferPolicy from './readiveTransferPolicy.js';
+import * as motionPolicy from './motionPolicy.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : Array.isArray(tree) ? tree.flatMap(nodes) : [tree, ...Object.values(tree.props ?? {}).flatMap(nodes)];
@@ -133,6 +134,7 @@ async function fixture(options = {}) {
         const mocks = {
             react: renderer.react,
             '../readiveTransferPolicy': transferPolicy,
+            '../motionPolicy': motionPolicy,
             './FaIcon': { FaIcon: 'Icon' },
             '../styles/ReadiveTransfer.css': {},
         };
@@ -444,7 +446,7 @@ test('attention waits for a known stopped state and respects reduced motion with
         value.setStatusError(false);
         await value.advance(2032);
         assert.equal(value.hasAttention(), true);
-        assert.deepEqual(value.calls.scrolls, [{ block: 'nearest', behavior: 'auto' }]);
+        assert.deepEqual(value.calls.scrolls, [{ block: 'nearest', behavior: 'instant' }]);
         assert.equal(value.calls.focus, 0);
         value.setStatusError(true);
         await value.advance(2000);

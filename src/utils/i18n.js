@@ -17,6 +17,12 @@ const EXTRA_TRANSLATIONS = {
     },
     reading_lists: readingListTranslations.ko,
     settings: {
+        motion: {
+            label: '애니메이션',
+            system: '시스템 설정 따르기',
+            full: '애니메이션 켜기',
+            reduced: '동작 줄이기',
+        },
         library_preview: {
             title: '라이브러리 미리보기',
             description: '폴더 탭에 표시될 이름과 그룹, 순서입니다. 변경사항은 ‘적용’을 누르면 반영됩니다.',
@@ -950,6 +956,12 @@ const EXTRA_TRANSLATIONS = {
     },
     reading_lists: readingListTranslations.en,
     settings: {
+        motion: {
+            label: 'Animations',
+            system: 'Follow system setting',
+            full: 'Enable animations',
+            reduced: 'Reduce motion',
+        },
         library_preview: {
             title: 'Library preview',
             description: 'Names, groups, and order as shown in the Folders tab. Click Apply for changes to take effect.',
@@ -1883,6 +1895,12 @@ const EXTRA_TRANSLATIONS = {
     },
     reading_lists: readingListTranslations.ja,
     settings: {
+        motion: {
+            label: 'アニメーション',
+            system: 'システム設定に従う',
+            full: 'アニメーションを有効にする',
+            reduced: '動きを減らす',
+        },
         library_preview: {
             title: 'ライブラリのプレビュー',
             description: 'フォルダータブに表示される名前・グループ・順序です。「適用」を押すと変更が反映されます。',

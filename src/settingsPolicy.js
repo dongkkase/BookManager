@@ -1,4 +1,5 @@
 import { normalizeMetadataApiSourceForBookType } from './metadataApiPolicy.js';
+import { normalizeMotionPreference } from './motionPolicy.js';
 import { normalizeHardcoverToken, normalizeMetadataApiEnabled, normalizeMetadataProviderSettings } from '../electron/metadataProviderSettings.js';
 
 const FORMAT_KEYS = new Set(['none', 'zip', 'cbz', 'cbr', '7z']);
@@ -194,6 +195,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         viewer_paths: normalizeViewerPaths(config.viewer_paths),
         font_family: fontFamily === 'Default' ? 'Noto Sans KR' : fontFamily,
         font_scale: Math.min(155, Math.max(80, Number(config.font_scale) || 100)),
+        motion_preference: normalizeMotionPreference(config.motion_preference),
         library_entries: libraryEntries,
         libraries,
         dup_check_folders: libraries,

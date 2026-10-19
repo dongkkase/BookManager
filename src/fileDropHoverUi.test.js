@@ -134,7 +134,8 @@ test('중첩 드롭존 이동과 드롭 완료 시 호버 상태를 안정적으
 test('드롭존 효과는 입력을 막지 않고 모션 감소 설정을 따른다', () => {
     assert.match(appStyles, /\.app-file-drop-hover\s*\{[^}]*border:\s*2px dashed[^}]*pointer-events:\s*none/s);
     assert.match(appStyles, /@keyframes app-file-drop-hover-in/);
-    assert.match(appStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.app-file-drop-hover\s*\{\s*animation:\s*none;/);
+    const motionStyles = readFileSync(new URL('./styles/motion.css', import.meta.url), 'utf8');
+    assert.match(motionStyles, /:root\[data-motion="reduced"\][\s\S]*?animation:\s*none !important;/);
 });
 
 test('커버 모달이 열리면 전역 파일 호버와 드롭을 차단하고 닫으면 다시 허용한다', async () => {

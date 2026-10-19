@@ -72,6 +72,7 @@ const ERROR_DESCRIPTIONS = new Map([
     ['TOOL_MISSING', 'Required tool was not found'],
     ['ARCHIVE_NO_IMAGES', 'Archive contains no images'],
     ['ARCHIVE_NO_ENTRIES', 'No archive entries would remain'],
+    ['ZIP_REWRITE_UNSUPPORTED', 'ZIP structure is not supported for update'],
 ]);
 const ERROR_STAGE_DESCRIPTIONS = new Map([
     ['prepare', 'Operation preparation failed'],
@@ -151,7 +152,12 @@ function allowedErrorDiagnostics(input = {}) {
         tags.rejection_type = input.rejection_type;
     }
     if (PROCESS_GONE_SOURCES.has(input.source)) {
-        for (const [key, values] of [['process_reason', PROCESS_REASONS], ['process_type', PROCESS_TYPES], ['window_type', WINDOW_TYPES], ['app_lifecycle', APP_LIFECYCLES]]) {
+        for (const [key, values] of [['process_reason', PROCESS_REASONS], ['process_type', PROCESS_TYPES]]) {
+            if (values.has(input[key])) tags[key] = input[key];
+        }
+    }
+    if (PROCESS_GONE_SOURCES.has(input.source) || input.source === 'renderer-unresponsive') {
+        for (const [key, values] of [['window_type', WINDOW_TYPES], ['app_lifecycle', APP_LIFECYCLES]]) {
             if (values.has(input[key])) tags[key] = input[key];
         }
     }
@@ -512,8 +518,10 @@ export function createTelemetry(options = {}) {
                 : controlExit ? 'Windows console control termination (STATUS_CONTROL_C_EXIT)'
                     : PROCESS_REASONS.get(tags.process_reason) || 'Process exited unexpectedly';
         }
-        const description = reasonDescription || ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || processDescription || (tags.error_tool ? 'External tool failed' : tags.ipc_channel ? 'IPC invocation failed' : BROWSER_ERRORS.get(tags.browser_error) || ERROR_KINDS.get(tags.error_kind) || 'details omitted');
+        const rendererDescription = tags.source === 'renderer-unresponsive' ? 'Renderer is not responding' : '';
+        const description = reasonDescription || ERROR_DESCRIPTIONS.get(code) || ERROR_STAGE_DESCRIPTIONS.get(tags.error_stage) || processDescription || rendererDescription || (tags.error_tool ? 'External tool failed' : tags.ipc_channel ? 'IPC invocation failed' : BROWSER_ERRORS.get(tags.browser_error) || ERROR_KINDS.get(tags.error_kind) || 'details omitted');
         const diagnosticFingerprint = ['error_kind', 'browser_error', 'error_stage', 'error_reason', 'error_tool', 'exit_code', 'signal', 'syscall', 'ipc_channel', 'process_reason', 'process_type', 'window_type', 'app_lifecycle'].filter(key => tags[key] !== undefined).map(key => `${key}:${tags[key]}`);
+        if (tags.source === 'renderer-unresponsive' && tags.format) diagnosticFingerprint.push(`format:${tags.format}`);
         if (!frames.length && tags.rejection_type) diagnosticFingerprint.push(`rejection_type:${tags.rejection_type}`);
         const fingerprint = !frames.length
             ? ['bookmanager', tags.feature || 'app', tags.source || 'unknown', type, code || 'unknown', ...diagnosticFingerprint]

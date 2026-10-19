@@ -82,8 +82,10 @@ test('표지 요청은 하나씩 실행하며 오래된 응답과 종료 후 응
 test('완료 수와 백분율 문구를 세 언어로 제공한다', () => {
     for (const language of ['ko', 'en', 'ja']) {
         for (const key of ['library_move_status_moving_progress', 'library_move_status_indexing_progress']) {
-            assert.match(translate(key, language, [1, 6, 25]), /1\/6/);
-            assert.match(translate(key, language, [1, 6, 25]), /25%/);
+            assert.match(translate(key, language, [1, 6, 25, 'Comics']), /1\/6/);
+            assert.match(translate(key, language, [1, 6, 25, 'Comics']), /25%/);
         }
+        assert.match(translate('library_move_status_moving', language, [6, 'Comics']), /Comics/);
+        assert.match(translate('library_move_status_moving_progress', language, [1, 6, 25, 'Comics']), /Comics/);
     }
 });

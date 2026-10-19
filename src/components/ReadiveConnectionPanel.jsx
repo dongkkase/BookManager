@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FaIcon } from './FaIcon';
 import { formatReadiveBytes } from '../readiveTransferPolicy';
+import { isMotionReduced, subscribeMotionPreference } from '../motionPolicy';
 import '../styles/ReadiveTransfer.css';
 
 export function useReadiveStatus() {
@@ -108,17 +109,28 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
 
         let frame;
         let timer;
+        let attentionShown = false;
+        const unsubscribeMotion = subscribeMotionPreference(() => {
+            if (attentionShown && isMotionReduced()) {
+                panelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+            }
+        });
         frame = window.requestAnimationFrame(() => {
             frame = window.requestAnimationFrame(() => {
+                attentionShown = true;
                 setAttentionVisible(true);
                 panelRef.current?.scrollIntoView({
                     block: 'nearest',
-                    behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+                    behavior: isMotionReduced() ? 'instant' : 'smooth',
                 });
-                timer = window.setTimeout(() => setAttentionVisible(false), 3600);
+                timer = window.setTimeout(() => {
+                    attentionShown = false;
+                    setAttentionVisible(false);
+                }, 3600);
             });
         });
         const cancel = () => {
+            unsubscribeMotion();
             window.cancelAnimationFrame(frame);
             window.clearTimeout(timer);
         };

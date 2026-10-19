@@ -28,8 +28,9 @@ import { decodeCoverEditorImage } from './coverEditorImageDecoder.js';
 import { createPermanentDeleteDialogOptions, deleteFileEntries } from './fileDeletion.js';
 
 import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
+import { runFolderScanInWorker, shouldRunFolderScanInWorker } from './folderScanService.js';
 import { registerFolderDuplicateCheckIpc } from './folderDuplicateCheck.js';
-import { readFolderDetails } from './folderDetails.js';
+import { createFolderPreviewService } from './folderPreviewService.js';
 import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
@@ -2975,6 +2976,7 @@ async function createArchiveIndexEntry(filePath, targetFolder) {
     name: path.basename(filePath),
     size: stat.size,
     mtime: stat.mtimeMs,
+    birthtimeMs: stat.birthtimeMs,
   };
 }
 
@@ -3531,7 +3533,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     try {
       const config = configManager.getConfig() || {};
       const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
-      return await scanFolder(folderPath, {
+      const scan = shouldRunFolderScanInWorker(options) ? runFolderScanInWorker : scanFolder;
+      return await scan(folderPath, {
         ...(options || {}),
         lang: options?.lang || config.language || config.lang || 'ko',
         dbPath: libraryDbPath(),
@@ -4884,6 +4887,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
               });
             }
           });
+          throwIfTaskCancelled(shouldCancel);
+          await db.syncReadingFileActivity(entries);
           const fingerprint = createArchiveFingerprint(entries);
           const previousFingerprint = activeState?.fingerprint || lastMtimes[folder] || '';
           if (mode === 'smart' && previousFingerprint === fingerprint) {
@@ -5171,6 +5176,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         window.webContents.send('viewer:config-change', {
           lang: savedConfig.lang,
           language: savedConfig.language,
+          motion_preference: savedConfig.motion_preference || 'system',
           hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
           hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
           hasSupertonicModel: supertonicModelManager.status().installed,
@@ -5653,12 +5659,13 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     }
   });
 
+    const folderPreviewService = createFolderPreviewService({ thumbnailEncoder: encodeThumbnail });
     const folderDetailRequests = new Map();
     ipcMain.handle('fs:folderDetails', async (event, folderPath, requestId) => {
         const senderId = event.sender.id;
         folderDetailRequests.set(senderId, requestId);
         try {
-            const details = await readFolderDetails(folderPath, {
+            const details = await folderPreviewService.details(folderPath, {
                 dbPath: libraryDbPath(),
                 shouldCancel: () => event.sender.isDestroyed() || folderDetailRequests.get(senderId) !== requestId,
             });
@@ -5673,20 +5680,20 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         if (folderDetailRequests.get(event.sender.id) === requestId) folderDetailRequests.delete(event.sender.id);
     });
 
-  ipcMain.handle('fs:filePreview', async (_, filePath, options = {}) => {
+  ipcMain.handle('fs:filePreview', async (event, filePath, options = {}) => {
     try {
-      if (!filePath || !fs.existsSync(filePath)) {
+      if (!filePath) {
         return { success: false, message: 'File not found.' };
       }
       const sevenZExe = await getBinPath('7za') || await getBinPath('7z');
       return {
         success: true,
-        file: await inspectFolderFile(filePath, {
+        file: await folderPreviewService.preview(filePath, {
           dbPath: libraryDbPath(),
           thumbnailDir: thumbnailDir(),
           sevenZExe,
           force: options?.force === true,
-          thumbnailEncoder: encodeThumbnail,
+          shouldCancel: () => event.sender.isDestroyed(),
         }),
       };
     } catch (error) {
@@ -5921,6 +5928,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         epubOptimizerService.dispose(),
         readiveService.dispose(),
         readingListsController.dispose(),
+        folderPreviewService.dispose(),
         librarySearchService.close(),
         contentIndexService.close(),
       ]).then(() => libraryDataMaintenance.dispose());

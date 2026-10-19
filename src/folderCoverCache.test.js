@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     mergeFolderFileCacheUpdate,
+    mergeFolderFileCacheUpdates,
     mergeFolderFilePreservingCover,
     mergeFolderScanResults,
     appendUniqueFolderFiles,
@@ -21,6 +22,35 @@ const directory = {
     cover_file_mtime: 1000,
     cover_file_size: 300,
 };
+
+test('동일한 메타데이터 배치는 전체 목록과 항목 참조를 유지한다', () => {
+    const file = { path: '/books/1.cbz', title: 'Book', compare_nums: [1], full_meta: { author: 'Author' }, cover: 'cached', thumb_path: 'cached' };
+    const files = [directory, file];
+    const updates = new Map([
+        [directory.path, { ...directory }],
+        [file.path, { ...file, compare_nums: [1], full_meta: { author: 'Author' } }],
+    ]);
+    assert.equal(mergeFolderFileCacheUpdates(files, updates), files);
+    assert.equal(mergeFolderFileCacheUpdates(files, updates, { preserveCover: true }), files);
+    assert.equal(mergeFolderFileCacheUpdates(files, new Map([['/other.cbz', { path: '/other.cbz' }]])), files);
+});
+
+test('메타데이터 배치는 바뀐 항목만 교체하고 오래된 결과와 중복검사 값은 유지한다', () => {
+    const first = { path: '/books/1.cbz', title: 'First', mtime: 2000, cover: 'cached', thumb_path: 'cached', dup_count: 2 };
+    const second = { path: '/books/2.cbz', title: 'Second', mtime: 2000, cover: 'second', thumb_path: 'second' };
+    const files = [directory, first, second];
+    const updates = new Map([
+        [first.path, { ...first, title: 'Updated', cover: '', thumb_path: '', dup_count: 0 }],
+        [second.path, { ...second, title: 'Stale', mtime: 1000 }],
+    ]);
+    const result = mergeFolderFileCacheUpdates(files, updates, { preserveCover: true });
+    assert.notEqual(result, files);
+    assert.equal(result[0], directory);
+    assert.deepEqual(result[1], { ...first, title: 'Updated' });
+    assert.equal(result[2], second);
+    assert.equal(files[1], first);
+    assert.equal(mergeFolderFileCacheUpdates(result, updates, { preserveCover: true }), result);
+});
 
 test('일반 폴더 스캔은 먼저 조회된 표지와 원본 파일 정보를 함께 유지한다', () => {
     const merged = mergeFolderFilePreservingCover(directory, {

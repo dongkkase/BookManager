@@ -3,6 +3,24 @@ export function nextSelectionIndex(length, currentIndex, direction) {
     return Math.max(0, Math.min(length - 1, currentIndex + direction));
 }
 
+export function createFileSelectionLookup(files = []) {
+    let indexByPath = null;
+    const getIndex = filePath => {
+        if (!indexByPath) {
+            indexByPath = new Map();
+            files.forEach((file, index) => {
+                const filePath = file?.path;
+                if (filePath) indexByPath.set(filePath, index);
+            });
+        }
+        return indexByPath.get(filePath);
+    };
+    return {
+        getIndex,
+        getFile: filePath => files[getIndex(filePath)],
+    };
+}
+
 export function selectedFilesSize(files = [], selectedPaths = []) {
     const selected = new Set(selectedPaths);
     return files.reduce((sum, file) => (

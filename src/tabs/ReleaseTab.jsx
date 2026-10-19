@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import { parseReleaseMarkdown } from '../releasePolicy';
 import { releaseNotificationKey } from '../releaseNotificationPolicy';
+import { isMotionReduced, subscribeMotionPreference } from '../motionPolicy';
 import '../styles/ReleaseTab.css';
 
 function InlineContent({ tokens, onOpenExternal }) {
@@ -226,8 +227,18 @@ function ReleaseTab({ t, isActive, releases, loading, loadError, unread, onViewe
         scrollArea.addEventListener('scrollend', finishNavigation);
         scrollArea.addEventListener('wheel', interruptNavigation, { passive: true });
         scrollArea.addEventListener('touchstart', interruptNavigation, { passive: true });
+        const unsubscribeMotion = subscribeMotionPreference(() => {
+            if (!isMotionReduced() || navigationTargetRef.current === null) return;
+            const article = articleRefs.current.get(navigationTargetRef.current);
+            if (article) {
+                const top = scrollArea.scrollTop + article.getBoundingClientRect().top - scrollArea.getBoundingClientRect().top - getReleaseScrollInset(navigationRef.current);
+                scrollArea.scrollTo({ top, behavior: 'instant' });
+            }
+            finishNavigation();
+        });
         scheduleUpdate();
         return () => {
+            unsubscribeMotion();
             cancelAnimationFrame(frame);
             window.clearTimeout(settleTimer);
             navigationTargetRef.current = null;
@@ -246,9 +257,10 @@ function ReleaseTab({ t, isActive, releases, loading, loadError, unread, onViewe
         const top = scrollArea.scrollTop + article.getBoundingClientRect().top - scrollArea.getBoundingClientRect().top - getReleaseScrollInset(navigationRef.current);
         const targetTop = Math.max(0, Math.min(top, scrollArea.scrollHeight - scrollArea.clientHeight));
         if (Math.abs(targetTop - scrollArea.scrollTop) <= 1) return;
-        navigationTargetRef.current = id;
+        const reducedMotion = isMotionReduced();
+        navigationTargetRef.current = reducedMotion ? null : id;
         setActiveReleaseId(id);
-        scrollArea.scrollTo({ top: targetTop, behavior: 'smooth' });
+        scrollArea.scrollTo({ top: targetTop, behavior: reducedMotion ? 'instant' : 'smooth' });
     };
 
     useEffect(() => {

@@ -53,6 +53,6 @@ test('폴더탭은 파일 정보, 내용, 전체 검색과 별도 인덱스 관�
     assert.match(folderTab, /aria-busy=\{contentIndexRunning\}/);
     assert.match(folderStyles, /\.content-index-spinner\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?animation:\s*folder-content-index-spin 800ms linear infinite;/);
     assert.match(folderStyles, /@keyframes folder-content-index-spin\s*\{[\s\S]*?rotate\(0deg\)[\s\S]*?rotate\(360deg\)/);
-    assert.match(folderStyles, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.content-index-spinner\s*\{[\s\S]*?animation-duration:\s*1600ms;/);
+    assert.match(read('src/styles/motion.css'), /:root\[data-motion="reduced"\][\s\S]*?animation:\s*none !important;/);
     assert.doesNotMatch(folderTab, /content-search-result-dialog/);
 });

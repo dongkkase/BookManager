@@ -190,6 +190,51 @@ test('ZIP64 local extra와 일반 중앙 디렉터리를 가진 기존 호환 EP
     checkWith7z(filePath);
 });
 
+test('ZIP 일괄 갱신은 반복 저장해도 주석과 후행 데이터를 구분해 보존한다', async t => {
+    const original = fixture({ content: Buffer.from('Original content') });
+    const trailingData = Buffer.from([0, 13, 10, 255, 1, 2, 3]);
+    const { filePath } = temporaryArchive(t, Buffer.concat([original.buffer, trailingData]));
+    const eocdSignature = Buffer.from('504b0506', 'hex');
+    for (const title of ['First title', 'Second title']) {
+        await replaceZipEntries(filePath, [{ name: 'OEBPS/content.opf', content: `<package>${title}</package>` }]);
+        const bytes = fs.readFileSync(filePath);
+        const end = bytes.lastIndexOf(eocdSignature);
+        assert.equal(bytes.readUInt16LE(end + 20), original.archiveComment.length);
+        assert.deepEqual(bytes.subarray(end + 22, end + 22 + original.archiveComment.length), original.archiveComment);
+        assert.deepEqual(bytes.subarray(end + 22 + original.archiveComment.length), trailingData);
+        const entries = await listZipEntriesFromFile(filePath, { includeRawRecords: true });
+        assert.equal(entries.length, 3);
+        const retained = entries.find(entry => entry.name === 'OEBPS/자료.bin');
+        assert.deepEqual(readZipEntry(bytes, retained), original.content);
+        assert.deepEqual(getZipEntryCompressedData(bytes, retained), original.compressed);
+        assert.deepEqual(bytes.subarray(retained.localHeaderOffset, retained.localHeaderOffset + original.localRecord.length), original.localRecord);
+        assert.equal(readZipEntry(bytes, entries.find(entry => entry.name === 'OEBPS/content.opf')).toString(), `<package>${title}</package>`);
+        checkWith7z(filePath);
+    }
+});
+
+test('ZIP 후행 데이터가 있어도 불완전한 주석과 손상된 중앙 및 로컬 구조는 원본을 보존한다', async t => {
+    const original = fixture({ content: Buffer.from('Original content') });
+    const trailingData = Buffer.from('trailing data');
+    const cases = [
+        original.buffer.subarray(0, original.buffer.length - 1),
+        Buffer.concat([original.buffer, trailingData]),
+        Buffer.concat([original.buffer, trailingData]),
+    ];
+    cases[1].writeUInt32LE(0, original.localRecord.length);
+    cases[2].writeUInt32LE(0, 0);
+    for (const bytes of cases) {
+        const { directory, filePath } = temporaryArchive(t, bytes);
+        let beforeWrites = 0;
+        await assert.rejects(replaceZipEntries(filePath, [{ name: 'OEBPS/content.opf', content: '<package/>' }], {
+            beforeWrite: () => { beforeWrites += 1; },
+        }));
+        assert.deepEqual(fs.readFileSync(filePath), bytes);
+        assert.equal(beforeWrites, 0);
+        assert.deepEqual(fs.readdirSync(directory), ['book.epub']);
+    }
+});
+
 test('ZIP64 EOCD는 기존 갱신이 본문을 잃는 구조이므로 새 갱신은 원본을 보존한다', async t => {
     const original = fixture({ zip64: true });
     const { directory, filePath } = temporaryArchive(t, original.buffer);

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
 import { SmoothCoverImage } from '../SmoothCoverImage';
 import { FaIcon } from '../FaIcon';
+import { useFolderCoverPreview } from './FolderCoverPreviewContext';
 
 const LOADED_COVER_SRC_CACHE_LIMIT = 512;
 const loadedCoverSrcSet = new Set();
@@ -27,7 +28,9 @@ function coverImageKey(file = {}) {
   ].join('|');
 }
 
-function CoverImage({ src, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true, isDirectory = false }) {
+function CoverImage({ src: originalSrc, file, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true, isDirectory = false }) {
+    const previewFile = useFolderCoverPreview(file);
+    const src = previewFile?.cover ?? originalSrc;
   const imageRef = useRef(null);
   const [loaded, setLoaded] = useState(() => isCoverSourceLoaded(src));
   const [failed, setFailed] = useState(false);

@@ -797,12 +797,6 @@
     }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .readive-dialog .readive-spinner {
-        animation-duration: 1600ms;
-    }
-}
-
 .readive-footer-hint {
     flex: 1;
     min-width: 0;

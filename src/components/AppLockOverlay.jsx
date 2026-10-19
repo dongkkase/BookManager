@@ -1,5 +1,7 @@
 import React from 'react';
 import { CoverArtwork } from './CoverArtwork';
+import { useReducedMotion } from '../hooks/useReducedMotion';
+import workingImage from '../images/app.png';
 import workingAnimation from '../images/rainbow cat remix.gif';
 
 export function AppLockOverlay({
@@ -12,6 +14,8 @@ export function AppLockOverlay({
     lockCurrentItemName,
     lockMessage,
 }) {
+    const reducedMotion = useReducedMotion();
+    const workingSource = reducedMotion ? workingImage : workingAnimation;
     if (!isAppLocked) return null;
 
     if (useLibraryScanSlide) {
@@ -20,7 +24,7 @@ export function AppLockOverlay({
                 <div className={`app-library-scan-stage ${lockIsLibraryIndexing ? 'is-indexing' : ''}`}>
                     {lockIsLibraryIndexing ? (
                         <div className="app-library-indexing-visual">
-                            <img className="app-library-indexing-image" src={workingAnimation} alt="" />
+                            <img className="app-library-indexing-image" src={workingSource} alt="" />
                         </div>
                     ) : lockThumbnailItems.length > 0 ? (
                         <div className="app-library-scan-rail">
@@ -77,7 +81,7 @@ export function AppLockOverlay({
                     </div>
                 </div>
             ) : (
-                <img className="app-lock-working-image" src={workingAnimation} alt="" />
+                <img className="app-lock-working-image" src={workingSource} alt="" />
             )}
             <span>{lockMessage}</span>
             {lockCurrentItem && (

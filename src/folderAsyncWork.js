@@ -1,15 +1,24 @@
-export function createCoverPreviewQueue({ concurrency = 2, queueLimit = 96, requestLimit = 32, keyForFile, load, onResult }) {
+export function createCoverPreviewQueue({ concurrency = 2, queueLimit = 96, requestLimit = 32, keyForFile, load, onResult, onResults, resultFlushDelay = 0 }) {
     let scope = '';
     let generation = 0;
     let queue = [];
-    let queuedKeys = new Set();
+    let visibleFiles = [];
+    let visibleContext;
+    let nextVisibleIndex = 0;
+    let pendingResults = [];
+    let resultTimer = null;
     const active = new Set();
     const attempted = new Set();
 
     const reset = () => {
         generation += 1;
         queue = [];
-        queuedKeys.clear();
+        visibleFiles = [];
+        visibleContext = undefined;
+        nextVisibleIndex = 0;
+        pendingResults = [];
+        if (resultTimer !== null) clearTimeout(resultTimer);
+        resultTimer = null;
         attempted.clear();
     };
 
@@ -19,16 +28,52 @@ export function createCoverPreviewQueue({ concurrency = 2, queueLimit = 96, requ
         reset();
     };
 
+    const flushResults = () => {
+        resultTimer = null;
+        const entries = pendingResults;
+        pendingResults = [];
+        if (entries.length > 0) {
+            try {
+                onResults(entries);
+            } catch {
+                // A rejected UI update must not stop the remaining preview requests.
+            }
+        }
+    };
+
+    const publishResult = (result, request) => {
+        if (typeof onResults !== 'function') {
+            onResult?.(result, request.file, request.context);
+            return;
+        }
+        pendingResults.push({ result, file: request.file, context: request.context });
+        if (resultFlushDelay <= 0) flushResults();
+        else if (resultTimer === null) resultTimer = setTimeout(flushResults, resultFlushDelay);
+    };
+
+    const fillQueue = () => {
+        const seen = new Set();
+        const limit = Math.max(1, Math.min(queueLimit, requestLimit));
+        while (nextVisibleIndex < visibleFiles.length && queue.length < limit) {
+            const file = visibleFiles[nextVisibleIndex++];
+            const key = keyForFile(file);
+            if (!key || file.cover || attempted.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            queue.push({ file, key, context: visibleContext, generation });
+        }
+    };
+
     const pump = () => {
-        while (active.size < concurrency && queue.length > 0) {
+        while (active.size < concurrency) {
+            if (queue.length === 0) fillQueue();
+            if (queue.length === 0) break;
             const request = queue.shift();
-            queuedKeys.delete(request.key);
             attempted.add(request.key);
             active.add(request);
             Promise.resolve()
                 .then(() => request.generation === generation ? load(request.file, request.context) : undefined)
                 .then(result => {
-                    if (request.generation === generation) onResult(result, request.file, request.context);
+                    if (request.generation === generation) publishResult(result, request);
                 })
                 .catch(() => {})
                 .finally(() => {
@@ -39,22 +84,14 @@ export function createCoverPreviewQueue({ concurrency = 2, queueLimit = 96, requ
     };
 
     const enqueue = (files = [], context) => {
-        const next = [];
-        const seen = new Set(queuedKeys);
-        for (const file of files) {
-            const key = keyForFile(file);
-            if (!key || file.cover || attempted.has(key) || seen.has(key)) continue;
-            seen.add(key);
-            next.push({ file, key, context, generation });
-            if (next.length >= requestLimit) break;
-        }
-        if (next.length === 0) return;
-        queue = [...next, ...queue].slice(0, queueLimit);
-        queuedKeys = new Set(queue.map(request => request.key));
+        visibleFiles = Array.isArray(files) ? files : [];
+        visibleContext = context;
+        nextVisibleIndex = 0;
+        queue = [];
         pump();
     };
 
-    return { enqueue, reset, setScope };
+    return { enqueue, reset, setScope, forgetKey: key => attempted.delete(key) };
 }
 
 export function createFolderPoller({ readStat, canPoll, mtimeRef, onChange }) {

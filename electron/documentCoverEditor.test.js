@@ -6,6 +6,7 @@ import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
 import { getTextContentHash, resolveTextMetadata, saveTextMetadata } from './textMetadataStore.js';
 import { LOCAL_COVER_OVERRIDE_PREFIX, saveLocalCoverOverride, saveTextCoverOnly, writeAudioCoverOnly } from './documentCoverEditor.js';
+import { readingListsRequest } from './readingLists.js';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1kAAAAASUVORK5CYII=', 'base64');
 
@@ -107,10 +108,36 @@ test('failed override updates keep the previous cover and clean up the newly cop
         BEGIN SELECT RAISE(ABORT, 'test save failure'); END;
     `);
     const before = await fs.readdir(value.thumbnailDir);
+    const activityBefore = value.libraryDb.getConnection().prepare('SELECT * FROM reading_file_activity WHERE path = ?').get(value.filePath);
     await assert.rejects(saveLocalCoverOverride(value.filePath, value.imagePath, value), /test save failure/);
     assert.deepEqual(await fs.readdir(value.thumbnailDir), before);
     assert.equal((await value.libraryDb.getFileInfo(value.filePath)).cover_override_path, first.coverPath);
     assert.deepEqual(await fs.readFile(first.coverPath), PNG);
+    assert.deepEqual(value.libraryDb.getConnection().prepare('SELECT * FROM reading_file_activity WHERE path = ?').get(value.filePath), activityBefore);
+});
+
+test('local PDF and audio cover edits appear in recently updated and retain their date after scanning', async t => {
+    for (const extension of ['.pdf', '.webm']) {
+        await t.test(extension, async t => {
+            const value = await fixture(t, extension);
+            const old = new Date('2020-07-20T01:00:00.000Z');
+            await fs.utimes(value.filePath, old, old);
+            await value.libraryDb.upsertFileInfo({ path: value.filePath, mtime: old.getTime() / 1000, title: 'Old book' }, { activitySource: 'scan' });
+            const activity = () => value.libraryDb.getConnection().prepare('SELECT * FROM reading_file_activity WHERE path = ?').get(value.filePath);
+            const recent = () => readingListsRequest(value.libraryDb, { operation: 'list', id: 'recent-updated' }, [value.root]);
+            assert.equal((await recent()).rows.length, 0);
+            const beforeSave = Date.now();
+            await saveLocalCoverOverride(value.filePath, value.imagePath, value);
+            const saved = activity();
+            assert.ok(Date.parse(saved.metadata_updated_at) >= beforeSave);
+            assert.equal(saved.updated_at, saved.metadata_updated_at);
+            assert.equal((await recent()).rows[0].path, value.filePath);
+            await value.libraryDb.syncReadingFileActivity([{ path: value.filePath, birthtimeMs: old.getTime(), mtimeMs: old.getTime() }]);
+            await value.libraryDb.upsertFileInfo(await value.libraryDb.getFileInfo(value.filePath), { activitySource: 'scan' });
+            assert.deepEqual(activity(), saved);
+            assert.equal((await fs.stat(value.filePath)).mtimeMs, old.getTime());
+        });
+    }
 });
 
 test('invalid images are rejected before TXT metadata, local overrides or audio files can change', async t => {

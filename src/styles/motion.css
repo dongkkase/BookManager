@@ -1,0 +1,40 @@
+/* App preference is resolved in motionPolicy.js for the main window and viewers. */
+:root[data-motion="reduced"],
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+}
+
+/* Loading stays visible after removing the delayed reveal keyframe. */
+:root[data-motion="reduced"] .folder-cover-spinner {
+    opacity: 1;
+}
+
+/* These transient layers normally become invisible at the end of a keyframe. */
+:root[data-motion="reduced"] .detail-panel-layer.is-outgoing,
+:root[data-motion="reduced"] .cover-editor-arrival-highlight,
+:root[data-motion="reduced"] .rating-editor-sparks {
+    opacity: 0;
+}
+
+/* Keep layout transforms (centering, zoom and toggle state) intact. */
+:root[data-motion="reduced"] .top-btn-store:hover,
+:root[data-motion="reduced"] .thumbnail-item:hover .thumbnail-cover-card,
+:root[data-motion="reduced"] .ee-template:hover:not(:disabled),
+:root[data-motion="reduced"] .viewer-help-close:hover,
+:root[data-motion="reduced"] .rating-editor-star .rating-editor-star-visual {
+    transform: none !important;
+}
+
+:root[data-motion="reduced"] .top-btn-store::after {
+    display: none;
+}
+
+/* Attention remains apparent without repeatedly flashing the border. */
+:root[data-motion="reduced"] .readive-sharing-panel.is-connection-attention {
+    border-color: #60a5fa;
+    box-shadow: inset 0 0 0 1px #60a5fa66;
+}

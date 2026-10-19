@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { createViewerScrollController } from './viewerScroll.js';
+import { useReducedMotion } from './hooks/useReducedMotion';
 
 export function useViewerScroll({ scrollRef, enabled, settings, sessionKey, blocked = false }) {
+    const reducedMotion = useReducedMotion();
     const [autoScrolling, setAutoScrolling] = useState(false);
     const stateRef = useRef(null);
-    stateRef.current = { scrollRef, enabled, settings, blocked };
+    stateRef.current = { scrollRef, enabled, settings, blocked, reducedMotion };
     const controllerRef = useRef(null);
     if (controllerRef.current === null) {
         controllerRef.current = createViewerScrollController({
@@ -12,10 +14,15 @@ export function useViewerScroll({ scrollRef, enabled, settings, sessionKey, bloc
             getSettings: () => stateRef.current.settings,
             isEnabled: () => stateRef.current.enabled,
             isBlocked: () => stateRef.current.blocked || document.hidden,
+            isMotionReduced: () => stateRef.current.reducedMotion,
             onAutoScrollChange: setAutoScrolling,
         });
     }
     const controller = controllerRef.current;
+
+    useEffect(() => {
+        if (reducedMotion) controller.finishMotion();
+    }, [controller, reducedMotion]);
 
     useEffect(() => {
         controller.cancelMotion();

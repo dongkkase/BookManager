@@ -106,14 +106,15 @@ const ThumbnailView = ({
             scrollTop: position.scrollTop,
         }),
     });
-	  const fileIndexByPath = useMemo(() => {
-	    const map = new Map();
-	    groups.flatMap(group => group.files).forEach((file, index) => {
-	      if (file.path) map.set(file.path, index);
-	    });
-	    return map;
-	  }, [groups]);
-    const flatItems = useMemo(() => groups.flatMap(group => group.files), [groups]);
+    const flatItems = useMemo(() => shouldVirtualize ? null : groups.flatMap(group => group.files), [groups, shouldVirtualize]);
+    const fileIndexByPath = useMemo(() => {
+        if (!flatItems) return null;
+        const map = new Map();
+        flatItems.forEach((file, index) => {
+            if (file.path) map.set(file.path, index);
+        });
+        return map;
+    }, [flatItems]);
     const visibleCoverItems = useMemo(() => {
         if (shouldVirtualize) return virtualRows
             .filter(row => row.type === 'file')
@@ -309,6 +310,7 @@ const ThumbnailView = ({
 	            >
               <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
                 <CoverImage
+                    file={file}
                     key={coverImageKey(file)}
                     src={file.cover}
                     alt={file.name || ''}
@@ -360,6 +362,7 @@ const ThumbnailView = ({
 	            >
               <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
                 <CoverImage
+                    file={file}
                     key={coverImageKey(file)}
                     src={file.cover}
                     alt={file.name || ''}

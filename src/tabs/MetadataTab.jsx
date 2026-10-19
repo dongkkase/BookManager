@@ -30,6 +30,7 @@ import { splitMetadataFileDisplayName } from '../metadataFilename';
 import '../styles/MetadataTab.css';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../resourcePolicy';
 import { shouldPlayCompletionSound } from '../completionSoundPolicy';
+import { isMotionReduced, subscribeMotionPreference } from '../motionPolicy';
 import {
   hasPrimaryModifier as hasPlatformPrimaryModifier,
   primaryModifierLabel,
@@ -367,6 +368,11 @@ function MetadataTab({ config, t, showToast }) {
   const [taskPhase, setTaskPhase] = useState('idle');
   const primaryShortcut = primaryModifierLabel(isMacPlatform() ? 'MacIntel' : 'Win32');
   const formScrollRef = useRef(null);
+    useEffect(() => subscribeMotionPreference(() => {
+        if (!isMotionReduced()) return;
+        const scroller = formScrollRef.current;
+        scroller?.scrollTo({ top: scroller.scrollTop, behavior: 'instant' });
+    }), []);
   const sectionRefs = useRef({});
   const coverLoadRequestsRef = useRef(new Set());
   const [epubImagesByFilePath, setEpubImagesByFilePath] = useState({});
@@ -1771,7 +1777,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleDelete = async (event) => {
-        if (document.querySelector('.app-support-dialog-layer')) return;
+        if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (event.key !== 'Delete' || apiSearch.open || isWorking || isMetadataTextInput(event.target)) return;
       if (!selectedFileId && !selectedGroup) return;
       event.preventDefault();
@@ -1802,7 +1808,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleMetadataTreeKeyDown = (event) => {
-        if (document.querySelector('.app-support-dialog-layer')) return;
+        if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       const treeIsActive = isMetadataTreeTarget(event.target) || metadataTreeKeyboardActiveRef.current;
       if (
@@ -1882,7 +1888,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleShortcut = (event) => {
-        if (document.querySelector('.app-support-dialog-layer')) return;
+        if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (apiSearch.open || event.defaultPrevented || event.repeat) return;
       const code = shortcutCode(event);
       if (hasPrimaryModifier(event) && !event.altKey && code === 'KeyF') {
@@ -2203,7 +2209,7 @@ function MetadataTab({ config, t, showToast }) {
     const section = sectionRefs.current[sectionId];
     const scroller = formScrollRef.current;
     if (!section || !scroller) return;
-    scroller.scrollTo({ top: section.offsetTop - 8, behavior: 'smooth' });
+    scroller.scrollTo({ top: section.offsetTop - 8, behavior: isMotionReduced() ? 'instant' : 'smooth' });
   };
 
   const syncActiveSection = () => {
@@ -2942,7 +2948,7 @@ function MetadataSearchDialog({
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
-    if (!dialog?.animate) return undefined;
+    if (!dialog?.animate || isMotionReduced()) return undefined;
 
     const animation = dialog.animate([
       {
@@ -2964,7 +2970,13 @@ function MetadataSearchDialog({
       fill: 'both',
     });
 
-    return () => animation.cancel();
+    const unsubscribeMotion = subscribeMotionPreference(() => {
+        if (isMotionReduced()) animation.cancel();
+    });
+    return () => {
+        unsubscribeMotion();
+        animation.cancel();
+    };
   }, []);
 
   useEffect(() => {

@@ -4,6 +4,7 @@ import { joinPath } from '../utils/folderPath.js';
 
 export const FOLDER_FILE_CACHE_LIMIT = 8;
 const READY_FILES_FLUSH_DELAY_MS = 180;
+const LARGE_FOLDER_READY_FILES_FLUSH_DELAY_MS = 600;
 const QUICK_FILES_FLUSH_DELAY_MS = 180;
 const QUICK_LIST_TARGET_EXTENSIONS = new Set([
   '.zip',
@@ -296,12 +297,42 @@ function preserveFolderDuplicateResults(currentFile, updatedFile) {
     return result;
 }
 
+function reuseUnchangedFolderFile(currentFile, updatedFile) {
+    if (currentFile === updatedFile || !currentFile) return updatedFile;
+    const keys = Object.keys(updatedFile);
+    if (keys.length !== Object.keys(currentFile).length) return updatedFile;
+    for (const key of keys) {
+        const before = currentFile[key];
+        const after = updatedFile[key];
+        if (Object.is(before, after)) continue;
+        if (before && after && typeof before === 'object' && typeof after === 'object'
+            && JSON.stringify(before) === JSON.stringify(after)) continue;
+        return updatedFile;
+    }
+    return currentFile;
+}
+
 export function mergeFolderFileCacheUpdate(currentFile, incomingFile) {
     if (!incomingFile) return currentFile;
     const updatedFile = incomingFile.isDirectory
         ? mergeFolderFilePreservingCover(currentFile, incomingFile)
         : { ...currentFile, ...incomingFile };
-    return preserveFolderDuplicateResults(currentFile, updatedFile);
+    return reuseUnchangedFolderFile(currentFile, preserveFolderDuplicateResults(currentFile, updatedFile));
+}
+
+export function mergeFolderFileCacheUpdates(currentFiles, updatesByPath, { preserveCover = false } = {}) {
+    let nextFiles = currentFiles;
+    currentFiles.forEach((file, index) => {
+        const incoming = updatesByPath.get(file.path);
+        if (!incoming || (preserveCover && !shouldApplyFolderFileUpdate(file, incoming))) return;
+        const updated = preserveCover
+            ? reuseUnchangedFolderFile(file, preserveFolderDuplicateResults(file, mergeFolderFilePreservingCover(file, incoming)))
+            : mergeFolderFileCacheUpdate(file, incoming);
+        if (updated === file) return;
+        if (nextFiles === currentFiles) nextFiles = currentFiles.slice();
+        nextFiles[index] = updated;
+    });
+    return nextFiles;
 }
 
 export function mergeFolderScanResults(incomingFiles = [], currentFiles = [], options = {}) {
@@ -655,15 +686,15 @@ export function useFolderScan(t) {
       });
       if (targetKeys.length === 0) return prev;
       const updatedByPath = new Map(files.map(file => [file.path, file]));
-      const next = { ...prev };
+      let next = prev;
       for (const key of targetKeys) {
-        const currentFiles = next[key] || [];
-        next[key] = currentFiles.map(file => {
-          const updated = updatedByPath.get(file.path);
-          return mergeFolderFileCacheUpdate(file, updated);
-        });
+        const currentFiles = prev[key] || [];
+        const nextFiles = mergeFolderFileCacheUpdates(currentFiles, updatedByPath);
+        if (nextFiles === currentFiles) continue;
+        if (next === prev) next = { ...prev };
+        next[key] = nextFiles;
       }
-      return limitCache(next, preferredKey);
+      return next === prev ? prev : limitCache(next, preferredKey);
     });
   }, [getCacheKey, limitCache]);
 
@@ -751,14 +782,8 @@ export function useFolderScan(t) {
         let next = prev;
         for (const [targetKey, updatesByPath] of updatesByTargetKey.entries()) {
           const currentFiles = prev[targetKey] || [];
-          let changed = false;
-          const nextFiles = currentFiles.map(file => {
-            const updated = updatesByPath.get(file.path);
-            if (!updated || !shouldApplyFolderFileUpdate(file, updated)) return file;
-            changed = true;
-            return preserveFolderDuplicateResults(file, mergeFolderFilePreservingCover(file, updated));
-          });
-          if (!changed) continue;
+          const nextFiles = mergeFolderFileCacheUpdates(currentFiles, updatesByPath, { preserveCover: true });
+          if (nextFiles === currentFiles) continue;
           if (next === prev) next = { ...prev };
           next[targetKey] = nextFiles;
         }
@@ -767,24 +792,25 @@ export function useFolderScan(t) {
     };
 
     const scheduleReadyFilesFlush = () => {
-      if (readyFilesFlushTimer) return;
-      readyFilesFlushTimer = window.setTimeout(flushReadyFiles, READY_FILES_FLUSH_DELAY_MS);
+        if (readyFilesFlushTimer) return;
+        const files = fileDataCacheRef.current[scanScopeRef.current?.cacheKey] || [];
+        readyFilesFlushTimer = window.setTimeout(flushReadyFiles, files.length >= 10000
+            ? LARGE_FOLDER_READY_FILES_FLUSH_DELAY_MS : READY_FILES_FLUSH_DELAY_MS);
     };
 
     const handleFolderFileReady = (data) => {
-      if (!data?.file?.path) return;
-      if (!isCurrentFileReadyEvent(data)) return;
-      if (data.file.cover) {
-        window.dispatchEvent(new CustomEvent('bookmanager:folder-thumbnail-ready', {
-          detail: {
-            src: data.file.cover,
-            name: data.file.name || data.file.filename || data.file.path,
-            path: data.file.path,
-          },
-        }));
-      }
-      pendingReadyFiles.push(data);
-      scheduleReadyFilesFlush();
+        if (!data || !isCurrentFileReadyEvent(data)) return;
+        const files = Array.isArray(data.files) ? data.files : [data.file];
+        for (const file of files) {
+            if (!file?.path) continue;
+            if (file.cover) {
+                window.dispatchEvent(new CustomEvent('bookmanager:folder-thumbnail-ready', {
+                    detail: { src: file.cover, name: file.name || file.filename || file.path, path: file.path },
+                }));
+            }
+            pendingReadyFiles.push({ folderPath: data.folderPath, cacheKey: data.cacheKey, requestId: data.requestId, file });
+        }
+        if (pendingReadyFiles.length > 0) scheduleReadyFilesFlush();
     };
 
     const applyQuickFileEvents = (events, deferred = false) => {

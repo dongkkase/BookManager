@@ -7,6 +7,7 @@ import { AudiobookMiniPlayer } from './components/AudiobookMiniPlayer';
 import { FaIcon } from './components/FaIcon';
 import { FileDropHoverOverlay } from './components/FileDropHoverOverlay';
 import { Toast } from './components/Toast';
+import { TooltipLayer } from './components/TooltipLayer';
 import { useConfig } from './hooks/useConfig';
 import { useI18n } from './hooks/useI18n';
 import { useReleaseUpdates } from './hooks/useReleaseUpdates';
@@ -42,6 +43,7 @@ import { classifyDroppedEntries, resolveMetadataDropPaths, resolveTaskDropMode }
 import { settingsEffects } from './settingsPolicy';
 import { libraryReadingStorageScopeKey, pruneLibraryReadingStorage } from './libraryReadingStorage';
 import { fontVarsForConfig } from './fontPolicy';
+import { applyMotionPreference } from './motionPolicy.js';
 import { installBundledFontFaces } from './bundledFonts';
 import { trackTelemetry } from './telemetry.js';
 import {
@@ -97,6 +99,10 @@ function App() {
     const updateInfo = useMemo(() => resolveUpdateInfo(appVersion, releaseUpdates.result), [appVersion, releaseUpdates.result]);
   const { config, saveConfig: setConfig, reloadConfig } = useConfig();
   const { t, language, changeLanguage } = useI18n(config);
+
+    React.useLayoutEffect(() => {
+        applyMotionPreference(config?.motion_preference);
+    }, [config?.motion_preference]);
 
     const readingStorageScopeKey = config?.library_data_prune_pending ? null : libraryReadingStorageScopeKey(config?.libraries);
     useEffect(() => {
@@ -918,6 +924,7 @@ function App() {
         />
       )}
       <Toast toast={toast} onClose={() => setToast(null)} t={t} />
+      <TooltipLayer />
     </div>
   );
 }

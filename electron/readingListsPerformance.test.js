@@ -110,6 +110,7 @@ test('최근 목록 반복 조회는 DB 연결을 재사용하고 다른 연결�
     }));
     const outside = path.join(value.root, 'outside.epub');
     await value.writer.upsertFileInfoBulk([...inside, { path: outside, title: 'Outside' }]);
+    await value.writer.syncReadingFileActivity(inside.map(record => ({ path: record.path, birthtimeMs: Date.now(), mtimeMs: record.mtime * 1000 })));
     const stat = t.mock.method(fs, 'stat', () => {
         assert.fail('Recent IPC requests must not wait for original file access');
     });
@@ -161,7 +162,7 @@ test('종료는 진행 중인 읽기 요청 완료를 기다려 연결을 닫고
         },
     });
     const filePath = path.join(value.folder, 'pending.epub');
-    await value.writer.upsertFileInfo({ path: filePath, title: 'Pending book' });
+    await value.writer.upsertFileInfo({ path: filePath, title: 'Pending book', mtime: Date.now() / 1000 });
     const response = value.request({ operation: 'list', id: 'recent-added' });
     await entered.promise;
     let disposed = false;

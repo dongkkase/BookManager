@@ -679,7 +679,7 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
         const sourceStat = await source.stat();
         const tail = await readFileRange(source, Math.max(0, sourceStat.size - EOCD_TAIL_BYTES), Math.min(sourceStat.size, EOCD_TAIL_BYTES));
         const eocd = findEndOfCentralDirectory(tail);
-        if (eocd < 0 || eocd + 22 + tail.readUInt16LE(eocd + 20) !== tail.length) {
+        if (eocd < 0 || eocd + 22 + tail.readUInt16LE(eocd + 20) > tail.length) {
             throw unsupportedZipRewrite('ZIP end record is missing or incomplete');
         }
         const count = tail.readUInt16LE(eocd + 10);
@@ -693,7 +693,9 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
         }
         const endRecordOffset = sourceStat.size - tail.length + eocd;
         if (centralOffset + centralSize > endRecordOffset) throw unsupportedZipRewrite('ZIP central directory exceeds the archive size');
-        const comment = tail.subarray(eocd + 22);
+        const commentEnd = eocd + 22 + tail.readUInt16LE(eocd + 20);
+        const comment = tail.subarray(eocd + 22, commentEnd);
+        const trailingData = tail.subarray(commentEnd);
         const sourceEntries = await listZipEntriesFromFile(filePath, {
             includeRawRecords: true,
             shouldCancel: options.shouldCancel,
@@ -788,6 +790,7 @@ export async function replaceZipEntries(filePath, replacements, options = {}) {
         endRecord.writeUInt16LE(comment.length, 20);
         await writeAll(output, endRecord, offset);
         await writeAll(output, comment, offset + endRecord.length);
+        await writeAll(output, trailingData, offset + endRecord.length + comment.length);
         await output.close();
         output = null;
         await source.close();

@@ -22,6 +22,7 @@ import {
   installBundledFontFaces,
 } from '../bundledFonts';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
+import { useReducedMotion } from '../hooks/useReducedMotion.js';
 import { TelemetrySettings } from './TelemetrySettings';
 import { fontVarsForConfig } from '../fontPolicy';
 import { SettingsLibraryPreview } from './SettingsLibraryPreview';
@@ -205,6 +206,7 @@ function normalizeConfig(config) {
 }
 
 function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', navigationRequest = 0, onLanguagePreviewChange }) {
+    const reducedMotion = useReducedMotion();
   const [localConfig, setLocalConfig] = React.useState(null);
     const [appliedConfig, setAppliedConfig] = React.useState(null);
     const [isApplying, setIsApplying] = React.useState(false);
@@ -295,6 +297,11 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             lastLibraryEntryRef.current = null;
             return;
         }
+        if (reducedMotion) {
+            setLibraryEditorMounted(libraryEditorOpen);
+            setLibraryEditorExpanded(libraryEditorOpen);
+            return;
+        }
         if (libraryEditorOpen) {
             setLibraryEditorMounted(true);
             // Paint the closed position before starting the slide transition.
@@ -308,7 +315,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             window.cancelAnimationFrame(prepareFrame);
             window.cancelAnimationFrame(enterFrame);
         };
-    }, [isOpen, libraryEditorOpen]);
+    }, [isOpen, libraryEditorOpen, reducedMotion]);
 
     React.useEffect(() => {
         if (!libraryEditorMounted || libraryEditorExpanded || libraryEditorOpen) return undefined;
@@ -1249,6 +1256,12 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                             <div className="settings-font-preview">
                                 <span style={fontVarsForConfig(localConfig)}>{t('settings.font_preview')}</span>
                                 <small>{t('settings.font_preview_hint')}</small>
+                            </div>
+                            <div className="settings-row settings-control-field">
+                                <label className="settings-label" htmlFor="settings-motion-preference">{t('settings.motion.label')}</label>
+                                <select id="settings-motion-preference" className="settings-select" value={localConfig.motion_preference} onChange={event => handleChange('motion_preference', event.target.value)}>
+                                    {['system', 'full', 'reduced'].map(value => <option key={value} value={value}>{t(`settings.motion.${value}`)}</option>)}
+                                </select>
                             </div>
                         </fieldset>
                         <fieldset className="settings-fieldset">

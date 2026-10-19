@@ -27,6 +27,7 @@ const MAX_INLINE_COVER_BYTES = 12 * 1024 * 1024;
 const PDF_THUMBNAIL_CACHE_PREFIX = 'pdf-first-page-v2-';
 const QUICK_FILE_BATCH_SIZE = 500;
 const QUICK_FILE_BATCH_INTERVAL_MS = 250;
+const QUICK_SCAN_IO_CONCURRENCY = 4;
 const DUPLICATE_COMPARE_BATCH_SIZE = 2048;
 const FOLDER_PREVIEW_MAX_DEPTH = 3;
 const KO_NUMERIC_COLLATOR = new Intl.Collator('ko', { numeric: true });
@@ -1318,11 +1319,25 @@ async function safeGetCachedFileInfo(libraryDb, fullPath) {
 async function safeUpsertFileInfo(libraryDb, info, options) {
   if (!libraryDb || libraryDb.__bookManagerUnavailable) return;
   try {
-    return await libraryDb.upsertFileInfo(info, options);
+    return await libraryDb.upsertFileInfo(info, { ...options, activitySource: 'scan' });
   } catch (error) {
     libraryDb.__bookManagerUnavailable = true;
     console.warn(`[FolderScan] Library DB update failed; continuing without cache: ${error.message}`);
   }
+}
+
+async function syncFileActivity(libraryDb, fullPath, stats) {
+    if (!libraryDb?.syncReadingFileActivity || libraryDb.__bookManagerUnavailable) return;
+    try {
+        await libraryDb.syncReadingFileActivity([{
+            path: fullPath,
+            birthtimeMs: stats.birthtimeMs,
+            mtimeMs: stats.mtimeMs,
+        }]);
+    } catch (error) {
+        libraryDb.__bookManagerUnavailable = true;
+        console.warn(`[FolderScan] File activity update failed; continuing without cache: ${error.message}`);
+    }
 }
 
 async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCount = 0) {
@@ -1331,6 +1346,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
   const ext = path.extname(name).toLowerCase();
   const bookType = resolveBookType({ path: fullPath, ext });
   const filenameMeta = await extractFilenameMetadata(name);
+    if (options.skipLibraryCache !== true) await syncFileActivity(options.libraryDb, fullPath, stats);
     const isTextFile = isTextMetadataPath(fullPath);
     const textMetadata = isTextFile && options.libraryDb && !options.libraryDb.__bookManagerUnavailable
         ? await resolveTextMetadata(fullPath, { libraryDb: options.libraryDb })
@@ -1354,6 +1370,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         : options.skipLibraryCache === true
             ? null
             : await safeGetCachedFileInfo(options.libraryDb, fullPath);
+    throwIfTaskCancelled(options);
   const cacheValid = options.force !== true && isValidCache(cached, stats);
   let audioCoverOverridePath = bookType === 'audio' || ext === '.pdf'
     ? validAudioCoverOverridePath(cached)
@@ -1765,65 +1782,107 @@ export async function scanFolder(folderPath, options = {}, event) {
   let lastTaskLogAt = 0;
   let lastQuickFileBatchAt = 0;
 
-  async function scanQuickList(rootPath) {
-    const pendingDirectories = [rootPath];
-    for (let directoryIndex = 0; directoryIndex < pendingDirectories.length; directoryIndex += 1) {
-      throwIfTaskCancelled(options);
-      const currentPath = pendingDirectories[directoryIndex];
-      let entries;
-      try {
-        entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
-      } catch (error) {
-        console.error(`Failed to read directory: ${currentPath}`, error);
-        emitQuickFileBatch();
-        continue;
-      }
+    async function scanQuickList(rootPath) {
+        const pendingDirectories = [rootPath];
+        const directoryReads = new Map();
+        let nextReadIndex = 0;
 
-      const now = Date.now();
-      if (now - lastTaskProgressAt > 150) {
-        lastTaskProgressAt = now;
-        emitTaskProgress({
-          progress: 0,
-          message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
-          currentFile: currentPath,
-          currentFileName: path.basename(currentPath),
-        });
-      }
-
-      for (const entry of sortEntriesForPriority(entries)) {
-        throwIfTaskCancelled(options);
-        if (shouldSkipScanDirectoryEntry(entry)) continue;
-        const fullPath = path.join(currentPath, entry.name);
-
-        if (entry.isDirectory()) {
-            if (includeDirectories && currentPath === rootPath) {
-                const stats = await fs.promises.stat(fullPath).catch(() => null);
+        function prefetchDirectories() {
+            while (directoryReads.size < QUICK_SCAN_IO_CONCURRENCY && nextReadIndex < pendingDirectories.length) {
                 throwIfTaskCancelled(options);
-                const directory = createDirectoryData(fullPath, stats);
-                results.push(directory);
-                if (options.reportQuickFiles && quickFileCacheKey) {
-                    quickFileBatch.push(directory);
+                const directoryPath = pendingDirectories[nextReadIndex];
+                directoryReads.set(nextReadIndex, fs.promises.readdir(directoryPath, { withFileTypes: true }).then(
+                    entries => ({ entries }),
+                    error => ({ error }),
+                ));
+                nextReadIndex += 1;
+            }
+        }
+
+        try {
+            for (let directoryIndex = 0; directoryIndex < pendingDirectories.length; directoryIndex += 1) {
+                throwIfTaskCancelled(options);
+                prefetchDirectories();
+                const currentPath = pendingDirectories[directoryIndex];
+                const snapshot = await directoryReads.get(directoryIndex);
+                directoryReads.delete(directoryIndex);
+                throwIfTaskCancelled(options);
+                prefetchDirectories();
+                if (snapshot.error) {
+                    console.error(`Failed to read directory: ${currentPath}`, snapshot.error);
                     emitQuickFileBatch();
+                    continue;
+                }
+
+                const entries = sortEntriesForPriority(snapshot.entries).filter(entry => !shouldSkipScanDirectoryEntry(entry));
+                const directories = entries.filter(entry => entry.isDirectory()).map(entry => path.join(currentPath, entry.name));
+                if (includeSubfolders) {
+                    for (const directory of directories) pendingDirectories.push(directory);
+                    prefetchDirectories();
+                }
+                const directoryStats = new Map();
+                let nextStatIndex = 0;
+                function prefetchDirectoryStats() {
+                    if (!includeDirectories || currentPath !== rootPath) return;
+                    while (directoryStats.size < QUICK_SCAN_IO_CONCURRENCY && nextStatIndex < directories.length) {
+                        throwIfTaskCancelled(options);
+                        const directoryPath = directories[nextStatIndex++];
+                        directoryStats.set(directoryPath, fs.promises.stat(directoryPath).catch(() => null));
+                    }
+                }
+
+                try {
+                    prefetchDirectoryStats();
+                    const now = Date.now();
+                    if (now - lastTaskProgressAt > 150) {
+                        lastTaskProgressAt = now;
+                        emitTaskProgress({
+                            progress: 0,
+                            message: taskText(lang, 'task_scan_searching', { count: matchedCount }),
+                            currentFile: currentPath,
+                            currentFileName: path.basename(currentPath),
+                        });
+                    }
+
+                    for (const entry of entries) {
+                        throwIfTaskCancelled(options);
+                        const fullPath = path.join(currentPath, entry.name);
+                        if (entry.isDirectory()) {
+                            if (includeDirectories && currentPath === rootPath) {
+                                const stats = await directoryStats.get(fullPath);
+                                directoryStats.delete(fullPath);
+                                throwIfTaskCancelled(options);
+                                prefetchDirectoryStats();
+                                const directory = createDirectoryData(fullPath, stats);
+                                results.push(directory);
+                                if (options.reportQuickFiles && quickFileCacheKey) {
+                                    quickFileBatch.push(directory);
+                                    emitQuickFileBatch();
+                                }
+                            }
+                        } else if (entry.isFile()) {
+                            scannedCount += 1;
+                            const ext = path.extname(entry.name).toLowerCase();
+                            if (normalizedExtSet.has(ext)) {
+                                const file = createQuickFileData(fullPath);
+                                results.push(file);
+                                matchedCount += 1;
+                                if (options.reportQuickFiles && quickFileCacheKey) {
+                                    quickFileBatch.push(file);
+                                    emitQuickFileBatch();
+                                }
+                            }
+                        }
+                    }
+                    emitQuickFileBatch();
+                } finally {
+                    await Promise.all(directoryStats.values());
                 }
             }
-          if (includeSubfolders) pendingDirectories.push(fullPath);
-        } else if (entry.isFile()) {
-          scannedCount += 1;
-          const ext = path.extname(entry.name).toLowerCase();
-          if (normalizedExtSet.has(ext)) {
-            const file = createQuickFileData(fullPath);
-            results.push(file);
-            matchedCount += 1;
-            if (options.reportQuickFiles && quickFileCacheKey) {
-              quickFileBatch.push(file);
-              emitQuickFileBatch();
-            }
-          }
+        } finally {
+            await Promise.all(directoryReads.values());
         }
-      }
-      emitQuickFileBatch();
     }
-  }
 
   function emitQuickFileBatch(force = false) {
     if (!event || !options.reportQuickFiles || event.sender.isDestroyed()) return;

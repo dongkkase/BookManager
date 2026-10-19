@@ -130,10 +130,16 @@ test('Readive 정리 저장 실패 시 기존 도서·읽기기록을 메모리�
     });
     const before = structuredClone(store.state);
     const bytes = await fs.readFile(store.filePath, 'utf8');
-    t.mock.method(store, 'save', async () => { throw new Error('disk unavailable'); });
+    const save = t.mock.method(store, 'save', async () => { throw new Error('disk unavailable'); });
     await assert.rejects(pruneReadiveLibraryData(store, [libraryPath]), /disk unavailable/);
     assert.deepEqual(store.state, before);
     assert.equal(await fs.readFile(store.filePath, 'utf8'), bytes);
+    save.mock.restore();
+    const retried = await pruneReadiveLibraryData(store, [libraryPath]);
+    assert.equal(retried.skipped, undefined);
+    assert.equal(retried.changes, 2);
+    assert.deepEqual(store.state.items, {});
+    assert.deepEqual(store.state.reading, {});
 });
 
 test('Readive 정리는 호출 당시 등록 경로를 사용하고 변경이 없으면 상태 파일을 다시 쓰지 않는다', async t => {
@@ -150,4 +156,92 @@ test('Readive 정리는 호출 당시 등록 경로를 사용하고 변경이 �
     assert.equal(result.changes, 0);
     assert.equal(save.mock.callCount(), 0);
     assert.deepEqual(Object.keys(store.state.items), [hashFor('a')]);
+});
+
+test('변경 없는 Readive 정리는 트랜잭션과 전체 상태 복제에 진입하지 않는다', async t => {
+    const { store, libraryPath, inside } = await fixture(t);
+    await store.transact(state => { state.items = { [hashFor('a')]: itemFor('a', inside) }; });
+    await pruneReadiveLibraryData(store, [libraryPath]);
+    t.mock.method(store, 'transact', () => assert.fail('An unchanged cleanup must skip the state clone and traversal.'));
+    const result = await pruneReadiveLibraryData(store, [libraryPath]);
+    assert.equal(result.skipped, true);
+    assert.equal(result.changes, 0);
+    assert.equal(result.deletedItemCount, 0);
+    assert.deepEqual(Object.keys(store.state.items), [hashFor('a')]);
+});
+
+test('SQLite 변경 없이 추가된 전송 도서와 읽기 기록도 다음 Readive 정리에서 제거한다', async t => {
+    const { store, libraryPath, inside, outside } = await fixture(t);
+    await store.transact(state => { state.items = { [hashFor('a')]: itemFor('a', inside) }; });
+    await pruneReadiveLibraryData(store, [libraryPath]);
+    await store.transact(state => {
+        state.items[hashFor('b')] = itemFor('b', outside);
+        state.pathContentHashes = { [outside]: hashFor('b') };
+        state.reading['item-b:phone'] = readingFor('b');
+        state.appliedReadings['item-b'] = { record: readingFor('b') };
+    });
+    const result = await pruneReadiveLibraryData(store, [libraryPath]);
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.changes, 4);
+    assert.deepEqual(Object.keys(store.state.items), [hashFor('a')]);
+    assert.deepEqual(store.state.pathContentHashes, {});
+    assert.deepEqual(store.state.reading, {});
+    assert.equal((await pruneReadiveLibraryData(store, [libraryPath])).skipped, true);
+});
+
+test('등록 경로가 바뀌거나 빈 목록으로 저장되면 Readive 정리를 다시 실행한다', async t => {
+    const { store, root, libraryPath, inside, outside } = await fixture(t);
+    await store.transact(state => {
+        state.items = { [hashFor('a')]: itemFor('a', inside), [hashFor('b')]: itemFor('b', outside) };
+    });
+    await pruneReadiveLibraryData(store, [root]);
+    const narrowed = await pruneReadiveLibraryData(store, [libraryPath]);
+    assert.equal(narrowed.deletedItemCount, 1);
+    assert.deepEqual(Object.keys(store.state.items), [hashFor('a')]);
+    const removed = await pruneReadiveLibraryData(store, []);
+    assert.equal(removed.deletedItemCount, 1);
+    assert.deepEqual(store.state.items, {});
+});
+
+test('정리보다 먼저 대기 중인 전송 기록의 저장이 끝난 뒤 최신 상태를 정리한다', async t => {
+    const { store, libraryPath, outside } = await fixture(t);
+    await pruneReadiveLibraryData(store, [libraryPath]);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const mutation = store.transact(async state => {
+        await gate;
+        state.items[hashFor('a')] = itemFor('a', outside);
+    });
+    let completed = false;
+    const pruning = pruneReadiveLibraryData(store, [libraryPath]).then(result => {
+        completed = true;
+        return result;
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(completed, false);
+    release();
+    await mutation;
+    assert.equal((await pruning).deletedItemCount, 1);
+    assert.deepEqual(store.state.items, {});
+});
+
+test('정리 진행 중 새로 대기한 전송 기록을 정리 완료 캐시에 포함하지 않는다', async t => {
+    const { store, libraryPath, outside } = await fixture(t);
+    const pruning = pruneReadiveLibraryData(store, [libraryPath]);
+    const mutation = store.transact(state => { state.items[hashFor('a')] = itemFor('a', outside); });
+    await Promise.all([pruning, mutation]);
+    assert.deepEqual(Object.keys(store.state.items), [hashFor('a')]);
+    const next = await pruneReadiveLibraryData(store, [libraryPath]);
+    assert.equal(next.skipped, undefined);
+    assert.equal(next.deletedItemCount, 1);
+    assert.deepEqual(store.state.items, {});
+});
+
+test('상태 객체가 교체되면 같은 대기열과 등록 경로라도 Readive 정리를 다시 실행한다', async t => {
+    const { store, libraryPath, outside } = await fixture(t);
+    await pruneReadiveLibraryData(store, [libraryPath]);
+    store.state = { ...store.state, items: { [hashFor('a')]: itemFor('a', outside) } };
+    const result = await pruneReadiveLibraryData(store, [libraryPath]);
+    assert.equal(result.deletedItemCount, 1);
+    assert.deepEqual(store.state.items, {});
 });

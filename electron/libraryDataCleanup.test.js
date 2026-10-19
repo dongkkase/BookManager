@@ -44,7 +44,7 @@ test('라이브러리 밖 도서정보·읽기기록을 정리하고 내부 공�
     ]);
     for (const file of [inside, outside, readingOnly]) await db.upsertReadingState(file, { pageIndex: 3, pageCount: 10 });
     const sql = db.getConnection();
-    sql.prepare('INSERT INTO reading_file_activity VALUES (?, ?, ?)').run(activityOnly, '2026-10-18', '2026-10-18');
+    sql.prepare('INSERT INTO reading_file_activity(path, added_at, updated_at) VALUES (?, ?, ?)').run(activityOnly, '2026-10-18', '2026-10-18');
     const { id } = await readingListsRequest(db, { operation: 'create', name: 'Keep references' });
     for (const listId of ['want-to-read', id]) await readingListsRequest(db, { operation: 'add', id: listId, paths: [outside] });
 

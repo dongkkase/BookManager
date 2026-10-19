@@ -3,6 +3,16 @@ import test from 'node:test';
 import { FILE_TOOL_CATEGORIES, FILE_TOOLS } from './fileTools.js';
 import { formatTranslation, legacyTranslations, translate, translateKnownText } from './utils/i18n.js';
 
+test('애니메이션 설정 이름과 세 선택을 모든 지원 언어로 제공한다', () => {
+    for (const language of ['ko', 'en', 'ja']) {
+        for (const key of ['label', 'system', 'full', 'reduced']) {
+            const translationKey = `settings.motion.${key}`;
+            assert.notEqual(translate(translationKey, language), translationKey);
+        }
+    }
+    assert.equal(translate('settings.motion.full', 'ko'), '애니메이션 켜기');
+});
+
 test('인덱스 및 순차 자리표시자에 동적 값을 삽입한다', () => {
     assert.equal(formatTranslation('{0}개 성공, {1}개 실패', [3, 1]), '3개 성공, 1개 실패');
     assert.equal(formatTranslation('{} series have {} missing volumes', [2, 4]), '2 series have 4 missing volumes');

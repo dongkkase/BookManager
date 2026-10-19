@@ -1,9 +1,12 @@
 import React from 'react';
-import { defaultRecentListOptions, recentListDateKey } from '../../recentReadingListState.js';
+import { recentListDateKey } from '../../recentReadingListState.js';
 import { FOLDER_COLUMNS } from '../../folderColumnLayout.js';
 
-export function RecentReadingToolbar({ kind, options, extensions, onChange, count, total, t }) {
+export function RecentReadingToolbar({ kind, options, extensions, onChange, onReset, count, total, t }) {
     const dateLabel = t(`reading_lists.${kind === 'recent-reading' ? 'read_at' : kind === 'recent-added' ? 'added_at' : 'updated_at'}`);
+    const countLabel = ['recent-added', 'recent-updated'].includes(kind) && total >= 1000
+        ? 'reading_lists.limited_filtered_count'
+        : 'reading_lists.filtered_count';
     const sortLabels = {
         [recentListDateKey(kind)]: dateLabel,
         name: t('col_name'),
@@ -54,8 +57,8 @@ export function RecentReadingToolbar({ kind, options, extensions, onChange, coun
                 <option value="desc">{t('reading_lists.descending')}</option>
                 <option value="asc">{t('reading_lists.ascending')}</option>
             </select>
-            <button type="button" onClick={() => onChange(defaultRecentListOptions(kind))}>{t('reading_lists.reset_filters')}</button>
-            <span className="recent-list-result-count" role="status">{t('reading_lists.filtered_count', [count, total])}</span>
+            <button type="button" onClick={onReset}>{t('reading_lists.reset_filters')}</button>
+            <span className="recent-list-result-count" role="status">{t(countLabel, [count, total])}</span>
         </div>
     );
 }

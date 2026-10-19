@@ -76,6 +76,35 @@ export function groupFolderFiles(files = [], groupKey = 'none', sortKey = 'name'
     return directories.length > 0 ? [{ name: '', files: directories }, ...fileGroups] : fileGroups;
 }
 
+export function createFolderGroupingCache() {
+    let previous = null;
+    return (files = [], groupKey = 'none', sortKey = 'name', sortOrder = 'asc', options = {}) => {
+        const fallbackGroupName = String(options.fallbackGroupName || UNCATEGORIZED_GROUP_NAME);
+        const replacements = new Map();
+        const canReuse = previous && previous.groupKey === groupKey && previous.sortKey === sortKey
+            && previous.sortOrder === sortOrder && previous.fallbackGroupName === fallbackGroupName
+            && previous.files.length === files.length && files.every((file, index) => {
+                const before = previous.files[index];
+                if (before === file) return true;
+                if (!before || !file || before.path !== file.path || before.isDirectory !== file.isDirectory) return false;
+                const key = file.isDirectory === true ? 'name' : sortKey;
+                if (!Object.is(before[key], file[key])) return false;
+                if (groupKey && groupKey !== 'none' && !file.isDirectory
+                    && folderFileGroupValue(before, groupKey, fallbackGroupName) !== folderFileGroupValue(file, groupKey, fallbackGroupName)) return false;
+                replacements.set(before, file);
+                return true;
+            });
+        const groups = canReuse
+            ? replacements.size === 0 ? previous.groups : previous.groups.map(group => ({
+                ...group,
+                files: group.files.map(file => replacements.get(file) || file),
+            }))
+            : groupFolderFiles(files, groupKey, sortKey, sortOrder, options);
+        previous = { files, groupKey, sortKey, sortOrder, fallbackGroupName, groups };
+        return groups;
+    };
+}
+
 export function countGroupedFiles(groups = []) {
     return groups.reduce((total, group) => total + (Array.isArray(group?.files) ? group.files.length : 0), 0);
 }

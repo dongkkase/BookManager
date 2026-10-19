@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from './FaIcon';
+import { useReducedMotion } from '../hooks/useReducedMotion.js';
 import {
   folderNameRenamePattern,
   inferRenamePattern,
@@ -17,6 +18,7 @@ function basename(filePath = '') {
 }
 
 function MultiRenameDialog({ files, onExecute, onClose, t, exists, confirmLast = false }) {
+    const reducedMotion = useReducedMotion();
   const renameFiles = useMemo(() => (
     files.map(file => {
       const fullPath = file.full_path || file.path || '';
@@ -360,7 +362,7 @@ function MultiRenameDialog({ files, onExecute, onClose, t, exists, confirmLast =
           </div>
           {(previewProgressVisible || executing) && (
             <div className="multi-rename-progress">
-              <progress max="100" value={executing ? progress : undefined} />
+                {(executing || !reducedMotion) && <progress max="100" value={executing ? progress : undefined} />}
               <span>{executing ? `${progress}%` : t('tf_preview_updating')}</span>
             </div>
           )}

@@ -102,21 +102,35 @@ function compareIndexLabels(left, right, collator) {
     return collator.compare(left, right) || (left < right ? -1 : left > right ? 1 : 0);
 }
 
+export function createFolderCharacterIndexBuilder(locale) {
+    const context = createIndexContext(locale);
+    const labelsByFile = new WeakMap();
+
+    return (files = []) => {
+        if (!Array.isArray(files) || files.length === 0) return [];
+        const entries = new Map();
+
+        for (const file of files) {
+            if (typeof file?.name !== 'string' || !file.name || typeof file.path !== 'string' || !file.path) continue;
+            let cached = labelsByFile.get(file);
+            if (!cached || cached.name !== file.name) {
+                cached = { name: file.name, label: characterIndexLabel(file.name, context) };
+                labelsByFile.set(file, cached);
+            }
+            const label = cached.label;
+            const existing = entries.get(label);
+            if (existing) {
+                existing.count += 1;
+            } else {
+                entries.set(label, { key: label, label, path: file.path, count: 1 });
+            }
+        }
+
+        return Array.from(entries.values()).sort((left, right) => compareIndexLabels(left.label, right.label, context.sortCollator));
+    };
+}
+
 export function buildFolderCharacterIndex(files = [], locale) {
     if (!Array.isArray(files) || files.length === 0) return [];
-    const context = createIndexContext(locale);
-    const entries = new Map();
-
-    for (const file of files) {
-        if (typeof file?.name !== 'string' || !file.name || typeof file.path !== 'string' || !file.path) continue;
-        const label = characterIndexLabel(file.name, context);
-        const existing = entries.get(label);
-        if (existing) {
-            existing.count += 1;
-        } else {
-            entries.set(label, { key: label, label, path: file.path, count: 1 });
-        }
-    }
-
-    return Array.from(entries.values()).sort((left, right) => compareIndexLabels(left.label, right.label, context.sortCollator));
+    return createFolderCharacterIndexBuilder(locale)(files);
 }

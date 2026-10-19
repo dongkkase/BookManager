@@ -243,7 +243,6 @@
 .ee-busy { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; gap: 12px; background: #151c23b8; z-index: 10; backdrop-filter: blur(2px); }.ee-busy progress { width: 150px; accent-color: var(--ee-accent); }
 .ee-busy-spinner { flex-shrink: 0; animation: ee-busy-spin 1s linear infinite; }
 @keyframes ee-busy-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .ee-busy-spinner { animation-duration: 3s; } }
 @media (max-width: 1100px) {
     .ee-workspace { --ee-left-width: 175px; --ee-right-width: 220px; }.ee-stage { padding: 20px; }.ee-paper { padding: 32px 30px 60px; }.ee-header-actions { gap: 4px; }.ee-header-actions .ee-button { font-size: 11px; padding: 6px 8px; }.ee-book-mark { display: none; }
 }
@@ -267,7 +266,6 @@
 .ee-command-icon > svg.ee-icon-modifier { position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; }
 .ee-command:focus-visible { outline: 2px solid var(--ee-accent); outline-offset: 1px; }
 .ee-tooltip-anchor { display: inline-flex; flex: 0 0 auto; }
-.ee-tooltip { position: fixed; z-index: 70; max-width: min(300px, calc(100vw - 16px)); padding: 7px 10px; border: 1px solid #789d8770; border-radius: 5px; background: #18231e; color: #edf6f0; box-shadow: 0 3px 12px #0005; font: 12px/1.5 var(--font-primary, sans-serif); overflow-wrap: anywhere; pointer-events: none; }
 .ee-context-toolbar { position: fixed; z-index: 30; display: flex; flex-direction: column; width: max-content; padding: 5px; overflow: auto; border: 1px solid #789d8790; border-radius: 8px; background: var(--bg-secondary, #242a2d); color: var(--text-primary, #e8e9e6); box-shadow: 0 6px 24px #0004; font-size: 12px; }
 .ee-context-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .ee-context-actions > i { width: 1px; height: 20px; margin: 0 4px; background: var(--border-color, #3b4146); }

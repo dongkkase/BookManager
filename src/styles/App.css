@@ -489,12 +489,6 @@ body.is-resizing-panel * {
     }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .app-file-drop-hover {
-        animation: none;
-    }
-}
-
 .app-lock-screen {
   position: absolute;
   inset: 0;
@@ -2329,6 +2323,10 @@ body.is-resizing-panel * {
     border-radius: 6px;
     background-color: #202328;
     overflow-wrap: anywhere;
+}
+
+.settings-font-preview + .settings-row {
+    margin-top: 18px;
 }
 
 .settings-font-preview :is(span, strong, p) {

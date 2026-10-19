@@ -727,7 +727,7 @@ function OrganizerTab({ config, t, showToast }) {
 
   const handleOrganizerKeyDown = useCallback((event) => {
     if (isWorking || showVolumeRenameDialog) return false;
-    if (document.querySelector('.app-support-dialog-layer')) return false;
+    if (document.querySelector('.app-support-dialog-layer.is-open')) return false;
     if (!shouldHandleGlobalShortcut(event)) return false;
     if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'a')) {
       event.preventDefault();

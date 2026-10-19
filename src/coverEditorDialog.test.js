@@ -153,6 +153,7 @@ async function fixture(options = {}) {
     );
     mocks['../../statusState'] = { emitStatusState: (tabId, state) => statusStates.push(normalizeStatusState(tabId, state)) };
     mocks['../../metadataApiPolicy'] = metadataApiPolicy;
+    mocks['../../hooks/useReducedMotion'] = { useReducedMotion: () => Boolean(options.reducedMotion) };
     mocks['../../coverEditorImageArrival'] = { animateCoverEditorImageArrival: request => {
         calls.arrivals.push(request);
         if (!options.deferArrival) request.onFinish();
@@ -1664,6 +1665,24 @@ test('superseded cover searches cannot overwrite the latest results', async () =
         assert.equal(value.calls.metadata.filter(request => request.query === 'book').length, previousRequestCount);
         assert.equal(value.text().includes('Obsolete result'), false);
         assert.ok(value.text().includes('Current result'));
+    } finally { value.close(); }
+});
+
+test('reduced motion replaces the animated search graphic with visible progress text', async () => {
+    const pending = deferred();
+    const value = await fixture({ reducedMotion: true, metadata: () => pending.promise });
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        value.render();
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        const status = value.all(node => node.props.className === 'cover-editor-search-loading')[0];
+        assert.equal(status.props.role, 'status');
+        assert.equal(textContent(status), 'cover_editor_metadata_loading');
+        assert.equal(nodes(status).some(node => node.type === 'img'), false);
+        pending.resolve({ success: true, results: [], hasNext: false });
+        await value.settle();
+        assert.equal(value.all(node => node.props.className === 'cover-editor-search-loading').length, 0);
     } finally { value.close(); }
 });
 

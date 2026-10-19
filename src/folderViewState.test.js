@@ -4,12 +4,50 @@ import {
     buildVirtualGridLayout,
     buildVirtualTableRows,
     groupFolderFiles,
+    createFolderGroupingCache,
     normalizeViewMode,
     normalizeViewScales,
     shouldVirtualizeFolderItems,
     sortFolderFiles,
     visibleVirtualRows,
 } from './folderViewState.js';
+
+test('표지와 읽기 상태만 바뀌면 기존 정렬을 유지하면서 새 항목 객체를 표시한다', () => {
+    const group = createFolderGroupingCache();
+    const files = [
+        { path: '/10.cbz', name: '10.cbz', series: 'B' },
+        { path: '/2.cbz', name: '2.cbz', series: 'A' },
+        { path: '/1.cbz', name: '1.cbz', series: 'A' },
+    ];
+    const initial = group(files, 'series');
+    assert.equal(group([...files], 'series'), initial);
+    const updated = files.map((file, index) => index === 1 ? { ...file, cover: 'new.jpg', viewerStatus: { percent: 20 } } : file);
+    const result = group(updated, 'series');
+    assert.deepEqual(result, groupFolderFiles(updated, 'series'));
+    assert.equal(result[0].files[1], updated[1]);
+    assert.equal(result[1].files[0], files[0]);
+    assert.equal(initial[0].files[1].cover, undefined);
+});
+
+test('정렬·그룹 필드와 범위가 바뀌면 캐시된 순서를 다시 계산한다', () => {
+    const group = createFolderGroupingCache();
+    const files = [
+        { path: '/dir', name: '폴더', isDirectory: true },
+        { path: '/10.cbz', name: '10.cbz', size: 10, author: 'A', series: 'B' },
+        { path: '/2.cbz', name: '2.cbz', size: 20, writer: 'A', series: 'A' },
+    ];
+    for (const [rows, key, sort, order, options] of [
+        [files, 'author_series', 'size', 'asc', {}],
+        [files.map(file => file.size === 10 ? { ...file, size: 30 } : file), 'author_series', 'size', 'asc', {}],
+        [files.map(file => file.writer ? { ...file, writer: 'B' } : file), 'author_series', 'size', 'asc', {}],
+        [files, 'author_series', 'size', 'desc', {}],
+        [files, 'series', 'name', 'asc', { fallbackGroupName: '없음' }],
+        [[...files].reverse(), 'none', 'name', 'asc', {}],
+        [files.slice(1), 'none', 'name', 'asc', {}],
+    ]) {
+        assert.deepEqual(group(rows, key, sort, order, options), groupFolderFiles(rows, key, sort, order, options));
+    }
+});
 
 test('혼합 목록은 정렬 방향과 관계없이 폴더를 먼저 표시하고 폴더 이름을 자연정렬한다', () => {
     const files = [

@@ -1,6 +1,7 @@
 import React, { Children, cloneElement, forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { drawPageCurlFrame } from './viewerPageCurlRenderer';
 import { releasePageCurlSnapshots, snapshotPageCurlLeaf } from './viewerPageCurlSnapshot';
+import { useReducedMotion } from './hooks/useReducedMotion';
 
 export const PAGE_CURL_SNAPSHOT_TIMEOUT = { reader: 3000, image: 800 };
 
@@ -8,6 +9,7 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     children, startPage = 0, preparedPage = startPage, width, height, spread = true,
     duration = 600, onPageChange, canStartDrag, onTurnStart, onTurnCancel, className = '', style,
 }, forwardedRef) {
+    const reducedMotion = useReducedMotion();
     const rootRef = useRef(null);
     const canvasRef = useRef(null);
     const runtimeRef = useRef({ index: startPage, sequence: 0, frame: 0, snapshots: [], target: null });
@@ -16,7 +18,7 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     const [displayedPage, setDisplayedPage] = useState(startPage);
     const [preparingPage, setPreparingPage] = useState(null);
     const pages = Children.toArray(children);
-    propsRef.current = { width, height, spread, duration, onPageChange, canStartDrag, onTurnStart, onTurnCancel, pageCount: pages.length };
+    propsRef.current = { width, height, spread, duration, onPageChange, canStartDrag, onTurnStart, onTurnCancel, pageCount: pages.length, reducedMotion };
 
     useImperativeHandle(forwardedRef, () => {
         const normalize = value => {
@@ -107,6 +109,11 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
         };
         const animate = complete => {
             const runtime = runtimeRef.current;
+            if (propsRef.current.reducedMotion) {
+                if (complete) commit(runtime.target);
+                else cancel();
+                return;
+            }
             const sequence = runtime.sequence;
             const target = runtime.target;
             const fromProgress = runtime.progress || 0;
@@ -193,6 +200,7 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
             const runtime = runtimeRef.current;
             if (runtime.drag && !runtime.drag.started) cancel();
             if (runtime.target !== null || runtime.drag || target === runtime.index) return;
+            if (propsRef.current.reducedMotion) return commit(target);
             return prepare(target);
         };
         const pointerDown = event => {
@@ -248,7 +256,7 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
                     }
                     drag.started = true;
                     root.dataset.curlDragging = 'true';
-                    prepare(target);
+                    if (!propsRef.current.reducedMotion) prepare(target);
                 }
                 nativeEvent.preventDefault();
                 nativeEvent.stopPropagation();
@@ -267,7 +275,10 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
                 nativeEvent.stopPropagation();
                 drag.complete = drag.progress >= 0.28;
                 root.dataset.curlSuppressClick = String(Date.now() + 500);
-                if (runtime.scene) {
+                if (propsRef.current.reducedMotion) {
+                    if (drag.complete) commit(target);
+                    else cancel();
+                } else if (runtime.scene) {
                     if (paint(drag.progress)) animate(drag.complete);
                 } else if (runtime.snapshotFailed && drag.complete) commit(target);
                 else if (!drag.complete) cancel();
@@ -305,6 +316,11 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
         };
         interactionRef.current = {
             cancel, pointerDown,
+            reduceMotion: () => {
+                const runtime = runtimeRef.current;
+                if (runtime.drag && (!runtime.drag.released || !runtime.drag.complete)) cancel();
+                else if (runtime.target !== null) commit(runtime.target);
+            },
             suppressClick: event => {
                 if (Number(rootRef.current?.dataset.curlSuppressClick) > Date.now()) {
                     event.preventDefault();
@@ -327,6 +343,11 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     useLayoutEffect(() => {
         interactionRef.current?.cancel();
     }, [width, height, spread]);
+
+    useLayoutEffect(() => {
+        if (reducedMotion) interactionRef.current?.reduceMotion();
+        else if (runtimeRef.current.drag) interactionRef.current?.cancel();
+    }, [reducedMotion]);
 
     useLayoutEffect(() => () => {
         interactionRef.current?.cancel({ updateState: false });

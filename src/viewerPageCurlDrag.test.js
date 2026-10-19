@@ -24,10 +24,11 @@ import ViewerApp from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/Viewe
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/global.css')}`)};
 const options = Object.fromEntries(new URL(location.href).searchParams);
 const type = options.type;
+const effect = options.effect || 'page';
 const original = options.style === 'original';
 const rtl = options.direction === 'rtl';
 const zoomed = options.zoom === '200';
-const label = [type, options.style, options.direction, options.zoom].filter(Boolean).join('/');
+const label = [type, options.style, options.direction, options.zoom, options.effect].filter(Boolean).join('/');
 const check = (condition, message) => { if (!condition) throw new Error(label + ': ' + message); };
 const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -62,12 +63,15 @@ const images = Array.from({ length: 8 }, (_, index) => {
     context.fillStyle = '#ffffff'; context.font = '90px sans-serif'; context.fillText(String(index + 1), 180, 360);
     return { name: String(index) + '.png', width: 480, height: 700, mime: 'image/png', pageUrl: image.toDataURL() };
 });
+const configListeners = new Set();
+const updateMotion = motion_preference => configListeners.forEach(callback => callback({ language: 'ko', motion_preference }));
 window.viewerAPI = {
     getCurrentSession: async () => ({ id: label, type, filePath: '/fixture/' + label + '.' + type, fileName: 'Drag fixture', preview: true }),
     getText: async () => ({ text: Array.from({ length: 180 }, (_, index) => (index + 1) + '. ' + chapterText).join('\\n\\n') }),
     getEpubText: async () => ({ chapters, metadata: {}, toc: [], fonts: [] }),
     listComicPages: async () => ({ pages: images }),
-    getConfig: async () => ({ language: 'ko' }),
+    getConfig: async () => ({ language: 'ko', motion_preference: 'full' }),
+    onConfigChange: callback => { configListeners.add(callback); return () => configListeners.delete(callback); },
     getFullscreenState: async () => ({ fullscreen: false }),
     listBundledFonts: async () => [], listSystemFonts: async () => [],
     onLoadSession: () => () => {},
@@ -75,7 +79,7 @@ window.viewerAPI = {
 localStorage.clear();
 localStorage.setItem('bookmanager-viewer-prefs:' + type, JSON.stringify({
     flowMode: 'spread', spreadCoverFirst: false, slideNavOpen: false, readingDirection: rtl ? 'rtl' : 'ltr', zoom: zoomed ? 200 : 100,
-    readerSettings: { pageEffect: 'page', epubStyle: original ? 'original' : 'optimized' },
+    readerSettings: { pageEffect: effect, epubStyle: original ? 'original' : 'optimized' },
 }));
 let pointerId = 10;
 function pointer(target, type, x, y, id, buttons = type === 'pointerup' || type === 'pointercancel' ? 0 : 1) {
@@ -108,6 +112,26 @@ function gesture(side, { target, insideFrame = false } = {}) {
 createRoot(document.getElementById('root')).render(<ViewerApp />);
 window.pageCurlDragTests = (async () => {
     const results = [];
+    if (effect !== 'page') {
+        const currentPages = () => [...document.querySelectorAll('.viewer-page-transition-layer.is-current [data-page-index], .viewer-page-transition-layer.is-current [data-reader-page-index]')]
+            .map(node => Number(node.dataset.pageIndex ?? node.dataset.readerPageIndex)).sort((a, b) => a - b).join(',');
+        await until(() => !document.querySelector('.is-initial-render-loading') && currentPages() === '0,1', 'Timed-effect fixture did not load');
+        const nextPage = () => [...document.querySelectorAll('button')].find(node => node.title === '다음장').click();
+        nextPage();
+        await until(() => document.querySelector('.has-page-effect'), 'Full motion must start its page transition');
+        updateMotion('reduced');
+        await frame(); await frame();
+        check(!document.querySelector('.has-page-effect') && currentPages() === '2,3', 'Reduced motion must complete a pending timed transition immediately');
+        nextPage();
+        await frame(); await frame();
+        check(!document.querySelector('.has-page-effect') && currentPages() === '4,5', 'Reduced motion must release navigation without waiting for animation events or fallback timers');
+        updateMotion('full');
+        await frame(); await frame();
+        nextPage();
+        await until(() => document.querySelector('.has-page-effect'), 'Restoring full motion must restore the saved page effect');
+        await until(() => currentPages() === '6,7' && !document.querySelector('.has-page-effect'), 'Restored effect must complete normally');
+        return { label, results: ['timed transition completes on reduced motion', 'immediate repeated navigation', 'saved effect resumes in full motion'] };
+    }
     await until(() => book() && !document.querySelector('.is-initial-render-loading')
         && (!original || [...book().querySelectorAll('[data-curl-visible="true"] iframe')].every(node => node.dataset.originalReady === 'true')), 'Viewer did not finish loading');
     await delay(300);
@@ -210,6 +234,15 @@ window.pageCurlDragTests = (async () => {
     resumed.end();
     await until(() => !dragging() && !animating() && sources().join(',') === '2,3', 'A new drag after Home must commit even when released before its snapshot is ready');
     results.push('drag resumes after Home and early release');
+    next.click();
+    await until(animating, 'Live reduced-motion test requires an active page curl');
+    updateMotion('reduced');
+    await frame(); await frame();
+    check(!animating() && sources().join(',') === '4,5', 'Configuration changes must finish the active curl and preserve its target');
+    next.click();
+    await frame(); await frame();
+    check(!animating() && sources().join(',') === '6,7', 'Reduced page turns must accept the next navigation immediately');
+    results.push('live config updates complete curls and release navigation');
     return { label, results };
 })();
 `);
@@ -231,7 +264,7 @@ app.whenReady().then(async () => {
     const window = new BrowserWindow({ show: false, width: 1400, height: 1000, webPreferences: { backgroundThrottling: false } });
     window.webContents.on('console-message', (_event, level, message) => { if (level >= 2) console.log('RENDERER: ' + message); });
     const reports = [];
-    for (const query of ['type=text', 'type=epub&style=optimized', 'type=epub&style=original', 'type=comic&direction=ltr', 'type=comic&direction=rtl', 'type=comic&direction=ltr&zoom=200']) {
+    for (const query of ['type=text', 'type=epub&style=optimized', 'type=epub&style=original', 'type=comic&direction=ltr', 'type=comic&direction=rtl', 'type=comic&direction=ltr&zoom=200', 'type=comic&effect=fade', 'type=text&effect=slide']) {
         await window.loadURL(${JSON.stringify(fixtureUrl)} + '?' + query);
         try { reports.push(await window.webContents.executeJavaScript('window.pageCurlDragTests')); }
         catch (error) { reports.push({ query, error: error.message }); }
@@ -254,12 +287,12 @@ app.whenReady().then(async () => {
         });
         assert.equal(output.code, 0, output.result);
         const report = JSON.parse(output.result.match(/PAGE_CURL_DRAG_RESULT=(.+)/)[1]);
-        assert.equal(report.length, 6);
+        assert.equal(report.length, 8);
         assert.deepEqual(report.filter(item => item.error), [], output.result);
-        assert.ok(report.every(item => item.results.length === (item.label.includes('200') ? 1 : 8)));
+        assert.ok(report.every(item => item.results.length === (item.label.includes('200') ? 1 : /fade|slide/.test(item.label) ? 3 : 9)));
         t.diagnostic(JSON.stringify(report));
     } finally {
         await server?.close();
-        await fs.rm(directory, { recursive: true, force: true });
+        await fs.rm(directory, { recursive: true, force: true, maxRetries: 3 });
     }
 });

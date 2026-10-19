@@ -3,7 +3,11 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import { TelemetryErrorBoundary } from './components/TelemetryErrorBoundary.jsx';
 import { installTelemetryErrorHandlers, reportTelemetryError } from './telemetry.js';
+import { initializeMotionPreference } from './motionPolicy.js';
 import './styles/global.css';
+
+const disposeMotionPreference = initializeMotionPreference();
+if (import.meta.hot) import.meta.hot.dispose(disposeMotionPreference);
 
 const isViewerWindow = new URLSearchParams(window.location.search).get('viewer') === '1';
 installTelemetryErrorHandlers({ source: isViewerWindow ? 'viewer' : 'renderer' });

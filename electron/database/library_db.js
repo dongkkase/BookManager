@@ -10,6 +10,7 @@ import {
 import { buildLibraryFolderIndexRecords } from '../libraryFolderIndex.js';
 import { remapCoverReadingState } from '../coverReadingState.js';
 import { initializeReadingLists, moveReadingListPaths, deleteReadingListPaths } from '../readingLists.js';
+import { fileActivityDates, markReadingFileMetadataUpdated } from '../readingFileActivity.js';
 
 const require = createRequire(import.meta.url);
 let DatabaseConstructor = null;
@@ -51,6 +52,16 @@ const TAG_METADATA_COLUMNS = [
     'penciller', 'inker', 'colorist', 'letterer', 'cover_artist', 'editor',
     'age_rating', 'format', 'characters', 'publish_date',
 ];
+
+const FILE_ACTIVITY_COLUMNS = FILE_COLUMNS.filter(column => ![
+    'path', 'ext', 'resolution', 'thumb_path', 'has_metadata', 'metadata_override',
+].includes(column));
+
+function recordReadingFileChange(db, before, after) {
+    if (after && FILE_ACTIVITY_COLUMNS.some(column => String(before?.[column] ?? '') !== String(after[column] ?? ''))) {
+        markReadingFileMetadataUpdated(db, after.path);
+    }
+}
 
 const LIBRARY_SCAN_STATE_COLUMNS = [
     'library_path',
@@ -961,10 +972,11 @@ export class LibraryDB {
         };
     }
 
-    async upsertFileInfo(record, { expectedCoverOverridePath } = {}) {
+    async upsertFileInfo(record, { expectedCoverOverridePath, activitySource = 'user' } = {}) {
         return this.withLock(async () => {
             const db = this.getConnection();
             const normalized = this.normalizeFileRecord(record);
+            const previous = activitySource === 'scan' ? null : db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path);
             const placeholders = FILE_COLUMNS.map(column => `@${column}`).join(', ');
             // Keep cover changes made after the caller read its cache snapshot.
             const preserveChangedCover = typeof expectedCoverOverridePath === 'string';
@@ -983,14 +995,16 @@ export class LibraryDB {
             `);
             if (preserveChangedCover) {
                 const saved = statement.get({ ...values, expectedCoverOverridePath });
+                if (activitySource !== 'scan') recordReadingFileChange(db, previous, db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path));
                 return { changes: 1, ...saved };
             }
             const result = statement.run(values);
+            if (activitySource !== 'scan') recordReadingFileChange(db, previous, db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path));
             return { changes: result.changes };
         });
     }
 
-    async upsertFileInfoBulk(records = []) {
+    async upsertFileInfoBulk(records = [], { activitySource = 'user' } = {}) {
         return this.withLock(async () => {
             const db = this.getConnection();
             const placeholders = FILE_COLUMNS.map(column => `@${column}`).join(', ');
@@ -1006,7 +1020,9 @@ export class LibraryDB {
             const insertMany = db.transaction(items => {
                 for (const record of items) {
                     const normalized = this.normalizeFileRecord(record);
+                    const previous = activitySource === 'scan' ? null : db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path);
                     statement.run(Object.fromEntries(FILE_COLUMNS.map(column => [column, normalized[column] ?? ''])));
+                    if (activitySource !== 'scan') recordReadingFileChange(db, previous, db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path));
                 }
             });
             insertMany(records);
@@ -1014,10 +1030,36 @@ export class LibraryDB {
         });
     }
 
+    async syncReadingFileActivity(entries = []) {
+        return this.withLock(async () => {
+            const db = this.getConnection();
+            const sync = db.prepare(`
+                INSERT INTO reading_file_activity(path, added_at, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    added_at = excluded.added_at,
+                    updated_at = MAX(excluded.updated_at, metadata_updated_at)
+                WHERE added_at IS NOT excluded.added_at
+                    OR updated_at IS NOT MAX(excluded.updated_at, metadata_updated_at)
+            `);
+            const changes = db.transaction(() => {
+                let changed = 0;
+                for (const entry of entries) {
+                    const filePath = entry.path || entry.full_path || '';
+                    const dates = fileActivityDates(entry);
+                    if (!filePath || (!dates.addedAt && !dates.modifiedAt)) continue;
+                    changed += sync.run(this.normalizeFilePath(filePath), dates.addedAt, dates.modifiedAt).changes;
+                }
+                return changed;
+            })();
+            return { changes };
+        });
+    }
+
     async setFileRating(filePath, rating, { storage = 'database', expectedRating } = {}) {
         if (!Number.isInteger(rating) || rating < 1 || rating > 10) throw new Error('Rating must be an integer from 1 to 10.');
         return this.withLock(async () => {
             const normalizedPath = this.normalizeFilePath(filePath);
+            const previous = this.getConnection().prepare('SELECT * FROM files WHERE path = ?').get(normalizedPath);
             if (expectedRating !== undefined) {
                 const row = this.getConnection().prepare('SELECT rating FROM files WHERE path = ?').get(normalizedPath);
                 const value = Number(row?.rating);
@@ -1035,6 +1077,7 @@ export class LibraryDB {
                 rating: String(rating),
                 override: storage === 'file' ? '' : String(rating),
             });
+            recordReadingFileChange(this.getConnection(), previous, this.getConnection().prepare('SELECT * FROM files WHERE path = ?').get(normalizedPath));
             return true;
         });
     }
@@ -1079,8 +1122,9 @@ export class LibraryDB {
         ).all(contentHash).map(row => row.path));
     }
 
-    writeTextMetadataIndex(db, contentHash, record) {
+    writeTextMetadataIndex(db, contentHash, record, { activitySource = 'scan' } = {}) {
         const normalized = this.normalizeFileRecord(record);
+        const previous = activitySource === 'scan' ? null : db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path);
         const placeholders = FILE_COLUMNS.map(column => `@${column}`).join(', ');
         const updates = FILE_COLUMNS.slice(1).map(column => `${column} = excluded.${column}`).join(', ');
         db.prepare(`
@@ -1091,6 +1135,7 @@ export class LibraryDB {
             INSERT INTO text_metadata_paths (path, content_hash) VALUES (?, ?)
             ON CONFLICT(path) DO UPDATE SET content_hash = excluded.content_hash
         `).run(normalized.path, contentHash);
+        if (activitySource !== 'scan') recordReadingFileChange(db, previous, db.prepare('SELECT * FROM files WHERE path = ?').get(normalized.path));
     }
 
     async linkTextMetadataRecord({ contentHash, record, missingPaths = [] }) {
@@ -1108,7 +1153,7 @@ export class LibraryDB {
         });
     }
 
-    async saveTextMetadataRecord({ contentHash, metadata, record, coverPath = '', relatedRecords = [] }) {
+    async saveTextMetadataRecord({ contentHash, metadata, record, coverPath = '', relatedRecords = [], activitySource = 'user' }) {
         return this.withLock(async () => {
             const db = this.getConnection();
             db.transaction(() => {
@@ -1121,11 +1166,11 @@ export class LibraryDB {
                         cover_path = excluded.cover_path,
                         updated_at = excluded.updated_at
                 `).run(contentHash, JSON.stringify(metadata), JSON.stringify(record), coverPath, new Date().toISOString());
-                this.writeTextMetadataIndex(db, contentHash, record);
+                this.writeTextMetadataIndex(db, contentHash, record, { activitySource });
                 const linkedHash = db.prepare('SELECT content_hash FROM text_metadata_paths WHERE path = ?');
                 for (const related of relatedRecords) {
                     if (linkedHash.get(this.normalizeFilePath(related.path))?.content_hash === contentHash) {
-                        this.writeTextMetadataIndex(db, contentHash, related);
+                        this.writeTextMetadataIndex(db, contentHash, related, { activitySource });
                     }
                 }
             })();
@@ -1303,8 +1348,10 @@ export class LibraryDB {
             const db = this.getConnection();
             const targetPath = this.normalizeFilePath(path.resolve(filePath));
             return db.transaction(() => {
+                const previousFile = db.prepare('SELECT * FROM files WHERE path = ?').get(targetPath);
                 db.prepare("UPDATE files SET thumb_path = '', cover_override_path = '', mtime = ?, size = ? WHERE path = ?")
                     .run(mtime, size, targetPath);
+                recordReadingFileChange(db, previousFile, db.prepare('SELECT * FROM files WHERE path = ?').get(targetPath));
                 if (!readingAdjustment) return {};
                 const sourcePath = this.normalizeFilePath(path.resolve(readingAdjustment.sourcePath));
                 const previous = db.prepare("SELECT * FROM reading_states WHERE file_path = ? AND deleted_at = ''").get(sourcePath);

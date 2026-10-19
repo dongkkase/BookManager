@@ -14,7 +14,7 @@
 }
 
 /* Low-specificity defaults preserve component transitions, including transition: none. */
-@media (prefers-reduced-motion: no-preference) {
+:where(:root:not([data-motion="reduced"])) {
     :where(
         .ee-divider-dialog .ee-divider-card,
         .ee-element-drag-handle,

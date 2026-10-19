@@ -195,7 +195,7 @@ async function saveWithIdentity(filePath, identity, options) {
         if (!sameFileState(identity.stat, await fs.stat(filePath))) {
             throw new Error('The TXT file changed before its metadata could be saved.');
         }
-        await libraryDb.saveTextMetadataRecord({ ...result, relatedRecords });
+        await libraryDb.saveTextMetadataRecord({ ...result, relatedRecords, activitySource: options.activitySource });
     } catch (error) {
         if (newCover) await fs.rm(newCover, { force: true }).catch(() => {});
         throw error;
@@ -237,6 +237,7 @@ export async function resolveTextMetadata(filePath, { libraryDb } = {}) {
     const legacyCover = await existingCoverPath({ coverPath: legacy.cover_override_path });
     return saveWithIdentity(filePath, identity, {
         libraryDb,
+        activitySource: 'scan',
         metadata: legacyMetadata(legacy),
         record: legacy,
         coverChange: legacyCover ? { type: 'file', filePath: legacyCover } : undefined,

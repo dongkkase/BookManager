@@ -92,6 +92,59 @@ function harness(platform = 'win32', reportError = () => {}) {
     };
 }
 
+test('viewer unresponsive reports follow the active format and confirmed shutdown state', async () => {
+    for (const beginClose of [
+        (h, window) => window.close(),
+        (h, window) => window.emit('session-end'),
+        h => h.setShuttingDown(true),
+    ]) {
+        const h = harness();
+        const window = await h.open('/private/old.epub');
+        window.webContents.emit('unresponsive');
+        assert.deepEqual(h.reports[0].context, {
+            source: 'renderer-unresponsive', window_type: 'viewer', format: 'epub', app_lifecycle: 'running',
+        });
+        assert.equal(await h.open('/private/Secret Book.pdf'), window);
+        window.webContents.emit('unresponsive');
+        assert.equal(h.reports[1].context.format, 'pdf');
+        beginClose(h, window);
+        window.webContents.emit('unresponsive');
+        assert.deepEqual(h.reports[2].context, {
+            source: 'renderer-unresponsive', window_type: 'viewer', format: 'pdf', app_lifecycle: 'quitting',
+        });
+        assert.equal(h.reports.length, 3);
+        assert.doesNotMatch(JSON.stringify(h.reports), /private|Secret Book|old\.epub/);
+    }
+});
+
+test('cancelled audio close keeps unresponsive reports in the running state', async () => {
+    const h = harness();
+    const window = await h.open('/private/book.m4b');
+    window.close();
+    await new Promise(resolve => setImmediate(resolve));
+    window.emit('query-session-end');
+    window.webContents.emit('unresponsive');
+    assert.deepEqual(h.reports[0].context, {
+        source: 'renderer-unresponsive', window_type: 'viewer', format: 'audio', app_lifecycle: 'running',
+    });
+});
+
+test('late unresponsive reports do not inherit a replacement viewer session', async () => {
+    const h = harness();
+    const oldWindow = await h.open('/private/old.epub');
+    oldWindow.close();
+    const newWindow = await h.open('/private/new.pdf');
+    assert.notEqual(oldWindow, newWindow);
+    oldWindow.webContents.emit('unresponsive');
+    assert.deepEqual(h.reports[0].context, {
+        source: 'renderer-unresponsive', window_type: 'viewer', app_lifecycle: 'quitting',
+    });
+    newWindow.webContents.emit('unresponsive');
+    assert.deepEqual(h.reports[1].context, {
+        source: 'renderer-unresponsive', window_type: 'viewer', format: 'pdf', app_lifecycle: 'running',
+    });
+});
+
 test('viewer process failures retain details and distinguish running from confirmed app shutdown', async () => {
     const h = harness();
     const window = await h.open();

@@ -140,6 +140,45 @@ function harness({ working = false, dialogResponse = 1, deferDialog = false } = 
 
 const controlExit = { reason: 'abnormal-exit', exitCode: -1073741510 };
 
+test('main unresponsive reports identify the running window during pending and cancelled exit confirmation', async () => {
+    const h = harness({ working: true, deferDialog: true });
+    h.window.webContents.emit('unresponsive');
+    h.app.quit();
+    h.window.webContents.emit('unresponsive');
+    h.answerDialog(1);
+    await h.settle();
+    h.window.webContents.emit('unresponsive');
+    assert.equal(h.reports.length, 3);
+    for (const report of h.reports) {
+        assert.deepEqual(report.context, {
+            source: 'renderer-unresponsive', app_lifecycle: 'running', window_type: 'main',
+        });
+        assert.deepEqual(report.details, {});
+    }
+    assert.equal(h.localReports.length, 3);
+    assert.equal(h.timers.size, 0);
+    assert.equal(h.window.reloads, 0);
+});
+
+test('main unresponsive reports retain confirmed shutdown state and reset for a new window', async () => {
+    const h = harness();
+    h.window.close();
+    await h.settle();
+    h.window.webContents.emit('unresponsive');
+    assert.deepEqual(h.reports[0].context, {
+        source: 'renderer-unresponsive', app_lifecycle: 'quitting', window_type: 'main',
+    });
+    h.window.finishClose();
+    h.recreate();
+    h.window.webContents.emit('unresponsive');
+    assert.equal(h.reports[1].context.app_lifecycle, 'running');
+    h.window.emit('session-end');
+    h.window.webContents.emit('unresponsive');
+    assert.equal(h.reports[2].context.app_lifecycle, 'quitting');
+    assert.equal(h.reports.length, 3);
+    assert.equal(h.timers.size, 0);
+});
+
 test('main renderer control exits while running retain diagnostics and trigger one recovery', () => {
     const h = harness();
     h.window.webContents.emit('render-process-gone', {}, controlExit);

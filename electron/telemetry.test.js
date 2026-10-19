@@ -607,6 +607,64 @@ test('process exit reasons, child types and window roles survive final Sentry sa
     assert.doesNotMatch(requests.map(request => request.body).join(''), /private|secret|Secret Book|serviceName/);
 });
 
+test('unresponsive renderer reports retain fixed descriptions and distinct window, lifecycle and format groups', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    const contexts = [
+        {},
+        { window_type: 'main', app_lifecycle: 'running' },
+        { window_type: 'main', app_lifecycle: 'quitting' },
+        { window_type: 'viewer', app_lifecycle: 'running' },
+        { window_type: 'viewer', app_lifecycle: 'running', format: 'epub' },
+        { window_type: 'viewer', app_lifecycle: 'running', format: 'pdf' },
+        { window_type: 'viewer', app_lifecycle: 'quitting', format: 'pdf' },
+    ];
+    for (const context of contexts) {
+        telemetry.reportTelemetryError({
+            reason: 'oom', type: 'GPU', message: 'Secret Book token=secret', path: '/private/book.epub',
+        }, { source: 'renderer-unresponsive', ...context });
+    }
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, contexts.length);
+    for (const [index, context] of contexts.entries()) {
+        const event = events[index];
+        assert.equal(event.exception.values[0].value, 'Error: Renderer is not responding');
+        assert.equal(event.exception.values[0].stacktrace, undefined);
+        assert.deepEqual(event.tags, { source: 'renderer-unresponsive', os: 'win32', ...context });
+        assert.deepEqual(event.fingerprint, [
+            'bookmanager', 'app', 'renderer-unresponsive', 'Error', 'unknown',
+            ...(context.window_type ? [`window_type:${context.window_type}`] : []),
+            ...(context.app_lifecycle ? [`app_lifecycle:${context.app_lifecycle}`] : []),
+            ...(context.format ? [`format:${context.format}`] : []),
+        ]);
+    }
+    assert.equal(new Set(events.map(event => JSON.stringify(event.fingerprint))).size, contexts.length);
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /private|secret|Secret Book|process_reason|process_type/);
+});
+
+test('unresponsive diagnostics reject unknown values without changing unrelated error groups', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    telemetry.reportTelemetryError({ message: 'Secret Book', reason: 'crashed', type: 'GPU' }, {
+        source: 'renderer-unresponsive', window_type: 'private-window', app_lifecycle: 'private-state', format: '/private/book',
+    });
+    for (const source of ['ipc', 'render-process-gone']) {
+        telemetry.reportTelemetryError({}, { source, window_type: 'main', app_lifecycle: 'running', format: 'pdf' });
+    }
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, 3);
+    assert.deepEqual(events[0].tags, { source: 'renderer-unresponsive', os: 'win32' });
+    assert.equal(events[0].exception.values[0].value, 'Error: Renderer is not responding');
+    assert.deepEqual(events[0].fingerprint, ['bookmanager', 'app', 'renderer-unresponsive', 'Error', 'unknown']);
+    assert.deepEqual(events[1].tags, { source: 'ipc', os: 'win32', format: 'pdf' });
+    assert.equal(events[1].exception.values[0].value, 'Error: details omitted');
+    assert.deepEqual(events[1].fingerprint, ['bookmanager', 'app', 'ipc', 'Error', 'unknown']);
+    assert.deepEqual(events[2].fingerprint, [
+        'bookmanager', 'app', 'render-process-gone', 'Error', 'unknown', 'window_type:main', 'app_lifecycle:running',
+    ]);
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /private|Secret Book|process_reason|process_type/);
+});
+
 test('control exit summaries are Windows-specific and never replace explicit crash or memory failure reasons', async t => {
     const windows = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
     for (const reason of ['crashed', 'oom']) {
@@ -728,6 +786,7 @@ test('metadata diagnostics retain safe stages and output-limit codes without boo
     const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
     const cases = [
         [{ telemetryStage: 'write-metadata' }, 'Error: Metadata write failed'],
+        [{ telemetryStage: 'write-metadata', code: 'ZIP_REWRITE_UNSUPPORTED' }, 'Error (ZIP_REWRITE_UNSUPPORTED): ZIP structure is not supported for update'],
         [{ telemetryStage: 'write-database', code: 'SQLITE_BUSY' }, 'Error (SQLITE_BUSY): Database is busy'],
         [{ telemetryStage: 'write-database', code: 'ERR_DLOPEN_FAILED' }, 'Error (ERR_DLOPEN_FAILED): Native module could not be loaded'],
         [{ telemetryStage: 'inspect', telemetryTool: '7z', code: 'PROCESS_OUTPUT_TOO_LARGE' }, 'Error (PROCESS_OUTPUT_TOO_LARGE): External tool output exceeded the size limit'],

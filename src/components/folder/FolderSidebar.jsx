@@ -275,7 +275,7 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
         data-tooltip={label}
         onClick={() => toggleSidebarSection(sectionKey)}
       >
-        <FaIcon name={collapsed ? 'chevronRight' : 'angleDown'} size={10} />
+        <FaIcon name="chevronRight" className="sidebar-section-toggle-icon" size={10} />
       </button>
     );
   }, [isSectionCollapsed, sectionToggleLabel, toggleSidebarSection]);
@@ -492,7 +492,8 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
             />
           </div>
         </div>
-        {!collapsed && (
+        <div className="sidebar-section-content" aria-hidden={collapsed} inert={collapsed ? '' : undefined}>
+            <div className="sidebar-section-content-inner">
           <ul ref={libraryListRef} className="nav-list" style={{ height: libraryListHeight === null ? undefined : `${libraryListHeight}px` }}>
             {libraryItems.length > 0 ? groupedLibraryItems.map(group => (
               <React.Fragment key={group.key || '__ungrouped'}>
@@ -581,7 +582,8 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
               </li>
             )}
           </ul>
-        )}
+            </div>
+        </div>
       </div>
     );
   };
@@ -597,7 +599,8 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
             {renderSectionToggle('reading', sectionLabel)}
           </div>
         </div>
-        {!collapsed && (
+        <div className="sidebar-section-content" aria-hidden={collapsed} inert={collapsed ? '' : undefined}>
+            <div className="sidebar-section-content-inner">
           <ul className="nav-list">
             <li className={`recent-reading-list-item ${readingListSelected === 'favorites' ? 'selected' : ''}`}>
                 <button
@@ -696,7 +699,8 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
                     </button>
                 </li>
           </ul>
-        )}
+            </div>
+        </div>
       </div>
     );
   };

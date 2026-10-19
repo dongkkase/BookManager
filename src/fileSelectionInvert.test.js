@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { nextSelectionIndex } from './folderSelectionState.js';
+import { createFileSelectionLookup, nextSelectionIndex } from './folderSelectionState.js';
 
 const source = readFileSync(new URL('./hooks/useFileSelection.js', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '')
@@ -26,6 +26,7 @@ function createSelectionHarness(files) {
         useMemo: fn => fn(),
         useCallback: fn => fn,
         nextSelectionIndex,
+        createFileSelectionLookup,
     });
     vm.runInContext(source, context);
     return (nextFiles = files) => {
@@ -121,4 +122,33 @@ test('선택 밖의 활성 경로나 생략된 옵션은 기존 마지막 선택
     assert.deepEqual(Array.from(selection.selectedFiles), []);
     assert.equal(selection.activeSelectedPath, '');
     assert.equal(selection.lastSelectedIndex, -1);
+});
+
+test('목록 조회를 선택 정보와 공유하고 메타데이터 갱신 후 현재 파일을 반환한다', () => {
+    let pathReads = 0;
+    const files = Array.from({ length: 1000 }, (_, index) => ({
+        get path() { pathReads += 1; return `/book/${index}`; },
+        size: index,
+    }));
+    const render = createSelectionHarness(files);
+    let selection = render();
+    assert.equal(pathReads, 0);
+    assert.equal(selection.selectedFileData(), null);
+    assert.equal(pathReads, 0);
+
+    selection.selectPaths(['/book/999']);
+    selection = render();
+    const selected = selection.selectedFileData();
+    const indexedReads = pathReads;
+    assert.equal(selection.fileLookup.getFile('/book/999'), selected);
+    assert.equal(selection.fileLookup.getFile('/book/999').size, 999);
+    assert.equal(selection.fileLookup.getIndex('/book/999'), 999);
+    assert.equal(selection.fileLookup.getIndex('/missing'), undefined);
+    assert.equal(pathReads, indexedReads);
+
+    const updated = { path: '/book/999', size: 2048, title: 'Updated title' };
+    selection = render([updated, ...files.slice(0, -1)]);
+    assert.equal(selection.fileLookup.getIndex('/book/999'), 0);
+    assert.equal(selection.fileLookup.getFile('/book/999'), updated);
+    assert.equal(selection.selectedFileData(), updated);
 });

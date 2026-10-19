@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
-import { nextSelectionIndex } from '../folderSelectionState';
+import { createFileSelectionLookup, nextSelectionIndex } from '../folderSelectionState';
 
 function samePathList(left = [], right = []) {
   return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -28,16 +28,7 @@ export function useFileSelection(fileData = []) {
   const [lastSelectedIndex, setLastSelectedIndex] = useState(-1);
   const [activeSelectedPath, setActiveSelectedPath] = useState('');
   const selectionStartRef = useRef(null);
-  const fileLookup = useMemo(() => {
-    const byPath = new Map();
-    const indexByPath = new Map();
-    fileData.forEach((file, index) => {
-      if (!file?.path) return;
-      byPath.set(file.path, file);
-      indexByPath.set(file.path, index);
-    });
-    return { byPath, indexByPath };
-  }, [fileData]);
+    const fileLookup = useMemo(() => createFileSelectionLookup(fileData), [fileData]);
   const selectedPathLookup = useMemo(() => new Set(selectedFiles), [selectedFiles]);
 
   // --- 선택된 파일 데이터 가져오기 ---
@@ -46,12 +37,12 @@ export function useFileSelection(fileData = []) {
     const selectedPath = activeSelectedPath && selectedPathLookup.has(activeSelectedPath)
       ? activeSelectedPath
       : selectedFiles[selectedFiles.length - 1];
-    return fileLookup.byPath.get(selectedPath) || null;
+    return fileLookup.getFile(selectedPath) || null;
   }, [activeSelectedPath, selectedFiles, selectedPathLookup, fileLookup]);
 
   // --- 단일 파일 선택 ---
   const selectFile = useCallback((filePath, fileDataItem, index) => {
-    const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
+    const resolvedIndex = fileLookup.getIndex(filePath) ?? -1;
     const nextIndex = resolvedIndex >= 0 ? resolvedIndex : (index ?? -1);
     setSelectedFiles(prev => (prev.length === 1 && prev[0] === filePath ? prev : [filePath]));
     setActiveSelectedPath(current => current === filePath ? current : filePath);
@@ -61,7 +52,7 @@ export function useFileSelection(fileData = []) {
 
   // --- 파일 선택 토글 (primary modifier+클릭) ---
   const toggleFile = useCallback((filePath, fileDataItem, index) => {
-    const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
+    const resolvedIndex = fileLookup.getIndex(filePath) ?? -1;
     setSelectedFiles(prev => {
       const exists = prev.includes(filePath);
       if (exists) {
@@ -85,7 +76,7 @@ export function useFileSelection(fileData = []) {
     }
 
     const startIndex = selectionStartRef.current.index;
-    const resolvedIndex = fileLookup.indexByPath.get(filePath) ?? -1;
+    const resolvedIndex = fileLookup.getIndex(filePath) ?? -1;
     const endIndex = resolvedIndex >= 0 ? resolvedIndex : index;
 
     let start, end;
@@ -138,7 +129,7 @@ export function useFileSelection(fileData = []) {
         const selectedPaths = new Set(prev);
         const next = allPaths.filter(path => !selectedPaths.has(path));
       setActiveSelectedPath(next[next.length - 1] || '');
-      setLastSelectedIndex(next.length > 0 ? fileLookup.indexByPath.get(next[next.length - 1]) ?? -1 : -1);
+      setLastSelectedIndex(next.length > 0 ? fileLookup.getIndex(next[next.length - 1]) ?? -1 : -1);
       return next;
     });
   }, [fileData, fileLookup]);
@@ -148,7 +139,7 @@ export function useFileSelection(fileData = []) {
         const activePath = validPaths.includes(options.activePath)
             ? options.activePath
             : validPaths[validPaths.length - 1];
-        const activeIndex = activePath ? fileLookup.indexByPath.get(activePath) ?? -1 : -1;
+        const activeIndex = activePath ? fileLookup.getIndex(activePath) ?? -1 : -1;
         setSelectedFiles(prev => samePathList(prev, validPaths) ? prev : validPaths);
         setActiveSelectedPath(current => {
             const nextPath = activePath || '';
@@ -161,7 +152,7 @@ export function useFileSelection(fileData = []) {
   const moveActiveSelection = useCallback((direction, extend = false) => {
     if (fileData.length === 0) return '';
     const currentIndex = activeSelectedPath
-      ? fileLookup.indexByPath.get(activeSelectedPath) ?? -1
+      ? fileLookup.getIndex(activeSelectedPath) ?? -1
       : -1;
     const nextIndex = nextSelectionIndex(fileData.length, currentIndex, direction);
     const nextPath = fileData[nextIndex]?.path;
@@ -198,6 +189,7 @@ export function useFileSelection(fileData = []) {
   const isPartiallySelected = selectedFiles.length > 0 && selectedFiles.length < fileData.length;
 
   return {
+    fileLookup,
     selectedFiles,
     activeSelectedPath,
     selectedFileData,

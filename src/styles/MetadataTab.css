@@ -1265,12 +1265,6 @@ textarea.meta-auto-height-textarea {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .meta-api-dialog-backdrop::before {
-    animation: none;
-  }
-}
-
 .meta-api-dialog-header {
   display: flex;
   align-items: center;

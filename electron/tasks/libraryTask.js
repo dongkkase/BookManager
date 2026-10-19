@@ -47,6 +47,7 @@ class LibraryExtractWorker extends EventEmitter {
         const modTime = new Date(stat.mtimeMs);
         const modDate = modTime.toISOString().split('T')[0];
         const fileSize = stat.size;
+        await this.db.syncReadingFileActivity([{ path: fp, birthtimeMs: stat.birthtimeMs, mtimeMs: stat.mtimeMs }]);
 
         // 2. DB 캐시 확인
         const cached = await this.db.getFileInfo(fp);
@@ -133,7 +134,7 @@ class LibraryExtractWorker extends EventEmitter {
           mod_date: Math.floor(stat.mtimeMs / 1000),
           file_size: fileSize,
           thumbnail: thumbnailPath
-        });
+        }, { activitySource: 'scan' });
 
         // 7. 이벤트 방출
         this.emit('data_extracted', fp, meta);

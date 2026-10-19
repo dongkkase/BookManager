@@ -28,7 +28,7 @@ test('폴더 클릭의 빠른 1차 목록은 readDir로 먼저 표시하고 무�
     assert.match(hookSource, /background:\s*true/);
     assert.match(hookSource, /skipArchiveExtraction:\s*true/);
     assert.match(hookSource, /skipLibraryCache:\s*true/);
-    assert.match(taskSource, /const cached = options\.skipLibraryCache === true[\s\S]*await safeGetCachedFileInfo/);
+    assert.match(taskSource, /options\.skipLibraryCache === true\s*\? null\s*:\s*await safeGetCachedFileInfo/);
     assert.match(taskSource, /options\.libraryDb && options\.skipLibraryCache !== true/);
     assert.match(taskSource, /function createQuickFileData/);
     assert.match(taskSource, /if \(quickListOnly\) \{[\s\S]*await scanQuickList\(folderPath\)/);
@@ -40,7 +40,7 @@ test('폴더 클릭의 빠른 1차 목록은 readDir로 먼저 표시하고 무�
 
 test('폴더 변경은 새 스캔 시작 시 메인 프로세스에서 이전 폴더 스캔을 취소한다', () => {
     assert.match(ipcSource, /cancellationRegistry\.cancel\(event\.sender\.id,\s*taskId\)[\s\S]*cancellationRegistry\.start\(event\.sender\.id,\s*taskId\)/);
-    assert.match(folderTabSource, /await scanFolder\(nextFolderPath,\s*scanOptions\)/);
+    assert.match(folderTabSource, /await scanFolder\(nextFolderPath,\s*locationRequest\.location\.viewMode\s*\?\s*\{ \.\.\.scanOptions, fastInitial: false \}\s*:\s*scanOptions\)/);
 });
 
 test('하위 폴더 빠른 목록은 경량 재귀 탐색이 끝날 때까지 로딩 상태를 표시한다', () => {
@@ -62,7 +62,7 @@ test('하위 폴더 빠른 목록은 경량 재귀 탐색이 끝날 때까지 �
     assert.match(preloadCjsSource, /onFolderQuickFiles:\s*\(callback\) => \{\s*const handler = \(_, data\) => callback\(data\);/);
     assert.match(preloadSource, /onFolderQuickFiles:[\s\S]*ipcRenderer\.on\('folder:quickFiles', handler\)[\s\S]*removeListener\('folder:quickFiles', handler\)/);
     assert.match(preloadCjsSource, /onFolderQuickFiles:[\s\S]*ipcRenderer\.on\('folder:quickFiles', handler\)[\s\S]*removeListener\('folder:quickFiles', handler\)/);
-    assert.match(folderTabSource, /aria-busy=\{!isRecentReading && scanning\}/);
+    assert.match(folderTabSource, /aria-busy=\{isReadingList \? \(isRecentReading \? recentReadingLoading : readingLists\.loading\) : scanning\}/);
     assert.match(folderTabSource, /<FolderScanFeedback[\s\S]*message=\{statusMessage\}/);
     assert.match(folderTabSource, /role="status"[\s\S]*aria-live="polite"/);
     assert.match(folderTabSource, /onCancel=\{cancelScan\}/);

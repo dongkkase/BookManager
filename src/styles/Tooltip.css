@@ -1,0 +1,30 @@
+.app-tooltip {
+    position: fixed;
+    z-index: 13000;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: min(280px, calc(100vw - 16px));
+    padding: 7px 10px;
+    border-radius: 6px;
+    color: #263442;
+    background: #e5ecef;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: center;
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+}
+
+.app-tooltip[data-arrow="true"]::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: calc(var(--tooltip-arrow-left) - 4px);
+    width: 8px;
+    height: 8px;
+    background: inherit;
+    transform: rotate(45deg);
+}

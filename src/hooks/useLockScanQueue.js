@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useReducedMotion } from './useReducedMotion.js';
 import {
     hasMatchingLockScanItem,
     mergeLockScanItem,
@@ -11,6 +12,7 @@ export function useLockScanQueue({
     isAppLocked,
     isLibraryScanSlideActive,
 }) {
+    const reducedMotion = useReducedMotion();
     const [lockThumbnails, setLockThumbnails] = useState([]);
     const [lockThumbnailIndex, setLockThumbnailIndex] = useState(0);
     const lockThumbnailsRef = useRef([]);
@@ -60,7 +62,7 @@ export function useLockScanQueue({
     }, []);
 
     const pushLockScanItem = useCallback((item = {}) => {
-        if (!libraryScanSlideActiveRef.current) {
+        if (!libraryScanSlideActiveRef.current || reducedMotion) {
             return;
         }
         const visibleItems = lockThumbnailsRef.current;
@@ -76,15 +78,15 @@ export function useLockScanQueue({
         if (nextQueue === lockScanQueueRef.current) return;
         lockScanQueueRef.current = nextQueue;
         startLockScanQueueTimer();
-    }, [displayLockScanItem, startLockScanQueueTimer]);
+    }, [displayLockScanItem, startLockScanQueueTimer, reducedMotion]);
 
     useEffect(() => {
         libraryScanSlideActiveRef.current = isLibraryScanSlideActive;
-        if (isLibraryScanSlideActive) return undefined;
+        if (isLibraryScanSlideActive && !reducedMotion) return undefined;
         lockScanQueueRef.current = [];
         stopLockScanQueueTimer();
         return undefined;
-    }, [isLibraryScanSlideActive, stopLockScanQueueTimer]);
+    }, [isLibraryScanSlideActive, stopLockScanQueueTimer, reducedMotion]);
 
     useEffect(() => {
         return () => stopLockScanQueueTimer();
@@ -103,7 +105,7 @@ export function useLockScanQueue({
             setLockThumbnailIndex(0);
             return undefined;
         }
-        if (isLibraryScanSlideActive) {
+        if (isLibraryScanSlideActive || reducedMotion) {
             setLockThumbnailIndex(0);
             return undefined;
         }
@@ -115,7 +117,7 @@ export function useLockScanQueue({
             setLockThumbnailIndex(current => (current + 1) % lockThumbnails.length);
         }, 1600);
         return () => window.clearInterval(timer);
-    }, [isAppLocked, isLibraryScanSlideActive, lockThumbnails.length, stopLockScanQueueTimer]);
+    }, [isAppLocked, isLibraryScanSlideActive, lockThumbnails.length, stopLockScanQueueTimer, reducedMotion]);
 
     return {
         activateLockScanQueue,

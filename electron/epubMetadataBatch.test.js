@@ -7,6 +7,7 @@ import path from 'path';
 import { randomBytes } from 'crypto';
 import { analyzeMetadataInputs, saveMetadataItems } from './tasks/metadataTask.js';
 import { getZipEntryCompressedData, listZipEntries, readZipEntry, replaceZipEntry } from './core/zipArchive.js';
+import { getOperationErrors } from './operationDiagnostics.js';
 
 async function fixture(t) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-epub-batch-save-'));
@@ -54,6 +55,60 @@ test('EPUB 표지와 OPF는 한번 갱신하며 본문, 부가파일, 백업을 
     assert.ok(entries.some(entry => entry.name.endsWith('.png') && readZipEntry(updated, entry).equals(cover)));
     const analyzed = await analyzeMetadataInputs([filePath], { includeCovers: false });
     assert.equal(analyzed.items[0].metadata.Title, 'New title');
+});
+
+test('EPUB 끝의 후행 데이터는 메타데이터 저장 후에도 주석과 구분하여 보존한다', async t => {
+    const { directory, filePath, original } = await fixture(t);
+    const comment = Buffer.from('archive comment');
+    const trailing = Buffer.from([0, 255, 254, 13, 10, 116, 114, 97, 105, 108, 101, 114]);
+    const eocd = original.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    assert.ok(eocd >= 0);
+    const source = Buffer.concat([original, comment, trailing]);
+    source.writeUInt16LE(comment.length, eocd + 20);
+    fs.writeFileSync(filePath, source);
+
+    const result = await saveMetadataItems([{ filepath: filePath, metadata: { Title: 'Updated title' } }], { backup_on: true });
+
+    assert.deepEqual(result.stats.error, []);
+    assert.equal(result.stats.success.length, 1);
+    assert.deepEqual(fs.readFileSync(path.join(directory, 'bak', 'book.epub')), source);
+    const updated = fs.readFileSync(filePath);
+    const entries = listZipEntries(updated);
+    for (const name of ['OEBPS/chapter.xhtml', 'META-INF/sidecar.bin']) {
+        const before = listZipEntries(source).find(entry => entry.name === name);
+        const after = entries.find(entry => entry.name === name);
+        assert.deepEqual(getZipEntryCompressedData(updated, after), getZipEntryCompressedData(source, before));
+    }
+    const analyzed = await analyzeMetadataInputs([filePath], { includeCovers: false });
+    assert.equal(analyzed.items[0].metadata.Title, 'Updated title');
+    const updatedEocd = updated.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    assert.equal(updated.readUInt16LE(updatedEocd + 20), comment.length);
+    assert.deepEqual(updated.subarray(updatedEocd + 22, updatedEocd + 22 + comment.length), comment);
+    assert.deepEqual(updated.subarray(updatedEocd + 22 + comment.length), trailing);
+    assert.deepEqual(fs.readdirSync(directory).sort(), ['bak', 'book.epub', 'new-cover.png']);
+});
+
+test('ZIP 주석이 잘린 EPUB은 저장을 거절하고 원본과 임시파일 정리를 보장한다', async t => {
+    const { directory, filePath, original } = await fixture(t);
+    const eocd = original.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    assert.ok(eocd >= 0);
+    const source = Buffer.concat([original, Buffer.from('short')]);
+    source.writeUInt16LE(20, eocd + 20);
+    fs.writeFileSync(filePath, source);
+    const analyzed = await analyzeMetadataInputs([filePath], { includeCovers: false });
+    assert.equal(analyzed.items[0].metadata.Title, 'Old title');
+
+    const result = await saveMetadataItems([{ filepath: filePath, metadata: { Title: 'Rejected title' } }], { backup_on: true });
+
+    assert.deepEqual(result.stats.success, []);
+    assert.equal(result.stats.error.length, 1);
+    assert.match(result.stats.error[0], /ZIP end record is missing or incomplete/);
+    const errors = getOperationErrors(result);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, 'ZIP_REWRITE_UNSUPPORTED');
+    assert.equal(errors[0].telemetryStage, 'write-metadata');
+    assert.deepEqual(fs.readFileSync(filePath), source);
+    assert.deepEqual(fs.readdirSync(directory).sort(), ['book.epub', 'new-cover.png']);
 });
 
 test('EPUB 스트리밍 복사 도중 취소하면 원본을 유지하고 오류 및 임시출력을 남기지 않는다', async t => {

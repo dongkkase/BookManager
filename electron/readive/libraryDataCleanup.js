@@ -1,6 +1,19 @@
 import path from 'node:path';
 import { isRegisteredLibraryFile } from '../libraryPathScope.js';
 
+const completedScopes = new WeakMap();
+
+function emptyCleanupResult() {
+    return {
+        changes: 0,
+        deletedItemCount: 0,
+        deletedPathHashCount: 0,
+        deletedReadingCount: 0,
+        deletedAppliedReadingCount: 0,
+        preservedSharedItemCount: 0,
+    };
+}
+
 function entries(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : [];
 }
@@ -23,16 +36,14 @@ export async function pruneReadiveLibraryData(store, libraryPaths) {
         typeof value !== 'string' || !value || value.includes('\0') || !path.isAbsolute(value)
     ))) throw new Error('invalid_library_paths');
     const registeredPaths = [...libraryPaths];
+    const scope = JSON.stringify(registeredPaths);
+    const completed = completedScopes.get(store);
+    if (completed?.scope === scope && completed.pending === store.pending && completed.state === store.state) {
+        return { ...emptyCleanupResult(), skipped: true };
+    }
     const contains = filePath => isRegisteredLibraryFile(filePath, registeredPaths);
-    return store.transact(state => {
-        const result = {
-            changes: 0,
-            deletedItemCount: 0,
-            deletedPathHashCount: 0,
-            deletedReadingCount: 0,
-            deletedAppliedReadingCount: 0,
-            preservedSharedItemCount: 0,
-        };
+    const operation = store.transact(state => {
+        const result = emptyCleanupResult();
         const protectedHashes = internalJobHashes(state.jobs, contains);
         for (const [filePath, hash] of entries(state.pathContentHashes)) {
             if (contains(filePath)) {
@@ -72,4 +83,11 @@ export async function pruneReadiveLibraryData(store, libraryPaths) {
             + result.deletedReadingCount + result.deletedAppliedReadingCount;
         return result;
     }, { shouldSave: result => result.changes > 0 });
+    const pending = store.pending;
+    const result = await operation;
+    // A queued transfer or reading update must invalidate this completed pass.
+    if (pending && typeof pending.then === 'function' && store.pending === pending) {
+        completedScopes.set(store, { scope, pending, state: store.state });
+    }
+    return result;
 }

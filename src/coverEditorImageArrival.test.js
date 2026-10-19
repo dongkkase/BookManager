@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { animateCoverEditorImageArrival } from './coverEditorImageArrival.js';
+import { applyMotionPreference } from './motionPolicy.js';
 
 function eventTarget() {
     const listeners = new Map();
@@ -16,7 +17,7 @@ function eventTarget() {
     };
 }
 
-function harness({ reduced = false, hidden = false, animationSupported = true, decodeSupported = true, image = {} } = {}) {
+function harness({ reduced = false, preference = 'system', hidden = false, animationSupported = true, decodeSupported = true, image = {} } = {}) {
     let resolveDecode;
     let rejectDecode;
     const decoded = new Promise((resolve, reject) => { resolveDecode = resolve; rejectDecode = reject; });
@@ -27,6 +28,8 @@ function harness({ reduced = false, hidden = false, animationSupported = true, d
     const observers = [];
     const view = {
         ...eventTarget(), innerWidth: 1100, innerHeight: 900,
+        Event,
+        dispatchEvent(event) { this.emit(event.type); },
         getComputedStyle(element) { return element.style; },
         matchMedia: () => media,
         setTimeout(callback) { const token = {}; timers.set(token, callback); return token; },
@@ -38,6 +41,13 @@ function harness({ reduced = false, hidden = false, animationSupported = true, d
         },
     };
     const document = { ...eventTarget(), defaultView: view, hidden };
+    const attributes = new Map();
+    document.documentElement = {
+        getAttribute: name => attributes.get(name),
+        setAttribute: (name, value) => attributes.set(name, value),
+    };
+    view.document = document;
+    applyMotionPreference(preference, view);
     const element = (rect = { left: 0, top: 0, width: 1100, height: 900 }) => ({
         style: {}, attributes: {}, children: [], ownerDocument: document, isConnected: true,
         getClientRects() { return this.style.display === 'none' ? [] : [rect]; },
@@ -137,15 +147,37 @@ test('cancelling a flying thumbnail clears everything without completing an obso
     value.assertClean();
 });
 
-test('explicit cover selection feedback remains visible with reduced motion enabled', async () => {
+test('reduced motion applies the selected cover immediately without waiting for decode or animation', async () => {
     const value = harness({ reduced: true });
+    assert.equal(value.finishes, 1);
+    assert.equal(value.created.length, 0);
     await value.decoded();
-    assert.equal(value.animations.length, 1);
-    assert.equal(value.finishes, 0);
-    assert.equal(value.container.children.length, 1);
+    assert.equal(value.animations.length, 0);
+    assert.equal(value.finishes, 1);
+    value.assertClean();
+});
+
+test('app motion overrides the system and switching to reduced completes pending or running arrivals', async () => {
+    for (const started of [false, true]) {
+        const value = harness({ reduced: true, preference: 'full' });
+        if (started) await value.decoded();
+        assert.equal(value.finishes, 0);
+        applyMotionPreference('reduced', value.view);
+        assert.equal(value.finishes, 1);
+        await value.decoded();
+        assert.equal(value.animations.length, started ? 1 : 0);
+        assert.ok(value.animations.every(animation => animation.cancelled));
+        value.assertClean();
+    }
+});
+
+test('system preference changes complete an in-flight cover arrival once', async () => {
+    const value = harness();
+    await value.decoded();
+    const staleFinish = value.animations[0].onfinish;
+    value.media.matches = true;
     value.media.emit('change');
-    assert.equal(value.finishes, 0);
-    value.animations[0].onfinish();
+    staleFinish();
     assert.equal(value.finishes, 1);
     value.assertClean();
 });

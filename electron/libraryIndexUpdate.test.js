@@ -14,7 +14,7 @@ function fixture(options = {}) {
     const folder = path.resolve('/test-library');
     const files = ['unchanged.cbz', 'added.cbz', 'updated.cbz'].map(name => path.join(folder, name));
     const calls = {
-        scans: [], syncs: [], folderIndexes: [], metadata: [], configs: [], states: [],
+        scans: [], syncs: [], activity: [], folderIndexes: [], metadata: [], configs: [], states: [],
         rootStats: 0, heartbeatRootStats: 0, progress: [], closed: 0, finished: 0,
     };
     let now = Date.parse('2026-01-01T00:00:00Z');
@@ -55,6 +55,7 @@ function fixture(options = {}) {
                 calls.states.push({ ...value });
             }
             async getTargetIndex() { return files.map(full_path => ({ full_path })); }
+            async syncReadingFileActivity(entries) { calls.activity.push(entries); }
             async syncTargetIndex(root, entries) {
                 calls.syncs.push({ root, entries });
                 return {
@@ -84,7 +85,7 @@ function fixture(options = {}) {
         buildLibraryFolderIndexRecords: root => [{ library_path: root, folder_path: root }],
         buildArchiveIndexEntries: async (_files, root, settings) => {
             settings.onProgress({ completedCount: files.length, totalCount: files.length, currentPath: root });
-            return files.map(full_path => ({ full_path, file_size: 123, file_mtime: 1 }));
+            return files.map(full_path => ({ full_path, size: 123, mtime: 1, birthtimeMs: 2 }));
         },
         createArchiveFingerprint: () => 'current',
         optimizeMetadataForPaths: async (root, targets, settings) => {
@@ -114,6 +115,9 @@ test('동일한 지문의 스마트 갱신은 메타데이터 추출과 대상 �
     assert.equal(result.changedTotal, 0);
     assert.equal(value.calls.scans.length, 1);
     assert.equal(value.calls.syncs.length, 0);
+    assert.equal(value.calls.activity.length, 1);
+    assert.deepEqual(value.calls.activity[0].map(entry => entry.full_path), value.files);
+    assert.ok(value.calls.activity[0].every(entry => entry.mtime === 1 && entry.birthtimeMs === 2));
     assert.equal(value.calls.metadata.length, 0);
     assert.equal(value.calls.folderIndexes.length, 1);
     assert.equal(value.calls.states.at(-1).status, 'ready');
@@ -127,6 +131,7 @@ test('변경된 스마트 갱신은 추가·변경된 파일만 메타데이터 
     assert.equal(result.changedTotal, 3);
     assert.equal(result.visualTotal, 2);
     assert.equal(value.calls.syncs.length, 1);
+    assert.equal(value.calls.activity.length, 1);
     assert.deepEqual(value.calls.metadata[0].targets, value.files.slice(1));
     assert.equal(value.calls.metadata[0].settings.force, false);
     assert.equal(value.calls.metadata[0].settings.metadataConcurrency, 3);
@@ -155,6 +160,7 @@ test('취소된 인덱스 갱신은 메타데이터 추출 없이 취소 상태�
     const result = await value.run({ mode: 'smart' });
     assert.equal(result.cancelled, true);
     assert.equal(value.calls.syncs.length, 0);
+    assert.equal(value.calls.activity.length, 0);
     assert.equal(value.calls.metadata.length, 0);
     assert.equal(value.calls.states.at(-1).status, 'cancelled');
     assert.equal(value.calls.closed, 1);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { attachCoverEditorSearchScroll } from './coverEditorSearchScroll.js';
+import { applyMotionPreference } from './motionPolicy.js';
 
 function harness({ top = 0, height = 500, contentHeight = 2500, reduced = false, roundPixels = false } = {}) {
     let time = 0;
@@ -8,6 +9,8 @@ function harness({ top = 0, height = 500, contentHeight = 2500, reduced = false,
     const frames = new Map();
     const listeners = new Map();
     const mediaListeners = new Set();
+    const motionListeners = new Map();
+    const attributes = new Map();
     const positions = [];
     const media = {
         matches: reduced,
@@ -15,6 +18,14 @@ function harness({ top = 0, height = 500, contentHeight = 2500, reduced = false,
         removeEventListener(name, listener) { assert.equal(name, 'change'); mediaListeners.delete(listener); },
     };
     const view = {
+        document: { documentElement: {
+            getAttribute: name => attributes.get(name),
+            setAttribute: (name, value) => attributes.set(name, value),
+        } },
+        Event,
+        addEventListener(name, listener) { motionListeners.set(name, listener); },
+        removeEventListener(name) { motionListeners.delete(name); },
+        dispatchEvent(event) { motionListeners.get(event.type)?.(); },
         matchMedia(query) { assert.equal(query, '(prefers-reduced-motion: reduce)'); return media; },
         performance: { now: () => time },
         requestAnimationFrame(callback) { const id = ++nextFrame; frames.set(id, callback); return id; },
@@ -56,6 +67,7 @@ function harness({ top = 0, height = 500, contentHeight = 2500, reduced = false,
     };
     return {
         element, frames, listeners, mediaListeners, positions, cleanup, wheel, emit, step,
+        setPreference(preference) { applyMotionPreference(preference, view); },
         setReduced(matches) { media.matches = matches; for (const listener of mediaListeners) listener({ matches }); },
         settle() {
             for (let index = 0; index < 200 && frames.size; index += 1) step();
@@ -118,6 +130,22 @@ test('reduced motion uses native wheel behavior and changing the preference stop
     assert.equal(value.frames.size, 0);
     value.step();
     assert.equal(value.element.scrollTop, top);
+    value.cleanup();
+});
+
+test('app motion preference overrides the system and stops existing scroll motion on change', () => {
+    const value = harness({ reduced: true });
+    value.setPreference('full');
+    assert.equal(value.wheel(200).defaultPrevented, true);
+    value.step();
+    const top = value.element.scrollTop;
+    value.setPreference('reduced');
+    assert.equal(value.frames.size, 0);
+    assert.equal(value.wheel(200).defaultPrevented, false);
+    value.step();
+    assert.equal(value.element.scrollTop, top);
+    value.setPreference('system');
+    assert.equal(value.wheel(200).defaultPrevented, false);
     value.cleanup();
 });
 

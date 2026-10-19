@@ -21,6 +21,8 @@ test('읽기 목록에서 파일·폴더 등록과 열기, 컬렉션 관리 및 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { FolderTab } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/tabs/FolderTab.jsx')}`)};
+import { AppSupportActions } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/AppSupportActions.jsx')}`)};
+import { applyMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import { translate } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/utils/i18n.js')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/App.css')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/global.css')}`)};
@@ -113,7 +115,10 @@ window.electronAPI = {
     },
 };
 const root = createRoot(document.getElementById('root'));
-root.render(<FolderTab config={{ libraries: [], folder_view_mode: 'table' }} t={t} saveConfig={async () => {}} showToast={notice => notices.push(notice)} />);
+root.render(<>
+    <div style={{ position: 'fixed', top: 0, right: 0, zIndex: 500 }}><AppSupportActions t={t} showToast={notice => notices.push(notice)} /></div>
+    <FolderTab config={{ libraries: [], folder_view_mode: 'table' }} t={t} saveConfig={async () => {}} showToast={notice => notices.push(notice)} />
+</>);
 const button = (text, scope = document) => [...scope.querySelectorAll('button')].find(item => !item.closest('[inert]')
     && (item.textContent.trim() === text || item.querySelector('.recent-reading-list-main')?.textContent.trim() === text));
 const click = async (text, scope = document) => {
@@ -154,6 +159,68 @@ const selectOption = async (label, value) => {
 const rowPaths = () => [...document.querySelectorAll('tr[data-file-path]')].map(row => row.dataset.filePath);
 const badge = label => [...document.querySelectorAll('.sidebar-section-reading li')].find(item => item.querySelector('.recent-reading-list-main')?.textContent.trim() === label)?.querySelector('.recent-reading-count')?.textContent;
 const rowFor = filePath => [...document.querySelectorAll('tr[data-file-path]')].find(row => row.dataset.filePath === filePath);
+const selectedRows = () => [...document.querySelectorAll('tr[data-file-path][aria-selected="true"]')].map(row => row.dataset.filePath);
+const shortcut = async (keyCode, modifiers = []) => {
+    await new Promise(resolve => {
+        window.shortcutInput = { keyCode, modifiers };
+        window.continueShortcut = resolve;
+        console.log('READING_SHORTCUT');
+    });
+    await frame();
+};
+async function verifySupportDialogShortcuts(preference) {
+    applyMotionPreference(preference);
+    await frame();
+    const primary = [/Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? 'meta' : 'control'];
+    const layer = document.querySelector('.app-support-dialog-layer');
+    check(layer?.getAttribute('aria-hidden') === 'true' && layer.hasAttribute('inert'), preference + ': closed support dialog must remain mounted and inert');
+    await click('최근 추가됨');
+    await until(() => rowPaths().length === 3, 'Shortcut fixture books did not load');
+    document.activeElement?.blur();
+    await shortcut('L', primary);
+    await until(() => document.activeElement === document.querySelector('.goto-path-input'), preference + ': initially closed support dialog blocked Mod+L');
+    document.activeElement.blur();
+    await shortcut('A', primary);
+    check(selectedRows().length === 3, preference + ': initially closed support dialog blocked select all');
+    const firstPath = rowPaths()[0];
+    const secondPath = rowPaths()[1];
+    rowFor(firstPath).click();
+    await frame();
+    await shortcut('Down');
+    check(JSON.stringify(selectedRows()) === JSON.stringify([secondPath]), preference + ': initially closed support dialog blocked arrow navigation');
+    const refreshes = () => requests.filter(request => request.operation === 'list' && request.id === 'recent-added').length;
+    const beforeRefresh = refreshes();
+    await shortcut('F5');
+    await until(() => refreshes() > beforeRefresh, preference + ': initially closed support dialog blocked refresh');
+    rowFor(firstPath).click();
+    await frame();
+    const star = document.querySelector('.app-support-star');
+    star.focus();
+    star.click();
+    await until(() => layer.classList.contains('is-open') && layer.contains(document.activeElement), 'Support dialog did not open and focus');
+    const selectionBefore = JSON.stringify(selectedRows());
+    const refreshesBefore = refreshes();
+    for (const [keyCode, modifiers] of [['L', primary], ['A', primary], ['Down', []], ['F5', []]]) {
+        await shortcut(keyCode, modifiers);
+    }
+    check(layer.contains(document.activeElement), preference + ': shortcut moved focus behind the open support dialog');
+    check(JSON.stringify(selectedRows()) === selectionBefore && refreshes() === refreshesBefore, preference + ': shortcut affected books behind the open support dialog');
+    await shortcut('Escape');
+    check(!layer.classList.contains('is-open') && layer.hasAttribute('inert'), preference + ': support dialog did not close');
+    await shortcut('L', primary);
+    await until(() => document.activeElement === document.querySelector('.goto-path-input'), preference + ': closing support dialog did not immediately restore Mod+L');
+    document.activeElement.blur();
+    await shortcut('A', primary);
+    check(selectedRows().length === 3, preference + ': closed support dialog blocked select all');
+    rowFor(firstPath).click();
+    await frame();
+    await shortcut('Down');
+    check(JSON.stringify(selectedRows()) === JSON.stringify([secondPath]), preference + ': closed support dialog blocked arrow navigation');
+    const afterCloseRefresh = refreshes();
+    await shortcut('F5');
+    await until(() => refreshes() > afterCloseRefresh, preference + ': closed support dialog blocked refresh');
+    return preference;
+}
 const collectionPath = 'collection://collection-1';
 const collectionCoverImage = () => [...document.querySelectorAll('.view-container [data-file-path]')].find(item => item.dataset.filePath === collectionPath)?.querySelector('img');
 const loadedCollectionCover = expected => collectionCoverImage()?.complete && collectionCoverImage().naturalWidth > 0 && collectionCoverImage().getAttribute('src') === expected;
@@ -186,9 +253,30 @@ async function contextAction(label, filePath = book.path) {
     await until(() => button(label) && !button(label).disabled, 'Context action did not become enabled: ' + label);
     await click(label);
 }
+async function resetRecentList(dateLabel, defaultDays, firstPath) {
+    const search = document.querySelector('.folder-search-control input');
+    setInput(search, 'no-match-before-reset');
+    search.form.requestSubmit();
+    await frame();
+    check(rowPaths().length === 0, 'Search did not filter the recent list');
+    await click('초기화', document.querySelector('.recent-list-toolbar'));
+    check(document.querySelector('.folder-search-control input').value === '', 'Reset retained the submitted search query');
+    check(rowPaths().length === 3 && rowPaths()[0] === firstPath, 'Reset did not restore the default results and sorting');
+    const values = [...document.querySelectorAll('.recent-list-toolbar select')].map(select => select.value);
+    check(JSON.stringify(values) === JSON.stringify([defaultDays, '', '', dateLabel === '읽은 날짜' ? 'lastReadAt' : 'readingListAddedAt', 'desc']), 'Reset did not restore all filter controls');
+    const noticeCount = notices.length;
+    await click('초기화', document.querySelector('.recent-list-toolbar'));
+    check(notices.length === noticeCount + 1 && notices.at(-1) === t('reading_lists.filters_reset'), 'Reset did not acknowledge an already default list');
+    setInput(document.querySelector('.folder-search-control input'), 'unsubmitted draft');
+    await frame();
+    await click('초기화', document.querySelector('.recent-list-toolbar'));
+    check(document.querySelector('.folder-search-control input').value === '' && rowPaths().length === 3, 'Reset retained an unsubmitted search draft');
+}
 window.readingListTests = (async () => {
     books.set('want-to-read', [folder]);
     await until(() => document.querySelector('.sidebar-container'), 'Folder sidebar did not mount');
+    const supportDialogShortcuts = [];
+    for (const preference of ['full', 'reduced']) supportDialogShortcuts.push(await verifySupportDialogShortcuts(preference));
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
     await until(loadedFolderCover, 'Wishlist folder cover did not load without a selected folder');
     for (const label of ['menu_thumbnail', 'menu_tile', 'menu_detail']) {
@@ -233,7 +321,7 @@ window.readingListTests = (async () => {
     check(rowPaths().length === 1 && rowFor(childBook.path), 'Reading status filter failed');
     await selectOption('파일 형식', '.pdf');
     check(rowPaths().length === 0, 'Combined filters did not show empty result');
-    await click('초기화', document.querySelector('.recent-list-toolbar'));
+    await resetRecentList('추가 날짜', '14', childBook.path);
     await selectOption('정렬 기준', 'name');
     check(rowPaths()[0] === book.path, 'Name sorting failed');
     await selectOption('정렬 방향', 'desc');
@@ -244,6 +332,7 @@ window.readingListTests = (async () => {
     check(document.querySelector('select[aria-label="업데이트 날짜"]').value === '14', 'Added filters leaked into updated list');
     await selectOption('업데이트 날짜', '1');
     check(rowPaths().length === 1 && rowFor(book.path), 'Update date filter used the wrong date');
+    await resetRecentList('업데이트 날짜', '14', book.path);
     holdRecentAdded = true;
     await click('최근 추가됨');
     await until(() => releaseRecentAdded, 'Recent added background refresh did not start');
@@ -260,6 +349,7 @@ window.readingListTests = (async () => {
     check(rowPaths()[0] === childBook.path, 'Reading progress sorting failed');
     await selectOption('읽은 날짜', '7');
     check(rowPaths().length === 2 && !rowFor(book.path), 'Read date filter failed');
+    await resetRecentList('읽은 날짜', '0', '/fixture/other.pdf');
     await click('최근 추가됨');
     await until(() => document.querySelector('select[aria-label="추가 날짜"]'), 'Added toolbar missing');
     await click('초기화', document.querySelector('.recent-list-toolbar'));
@@ -415,7 +505,7 @@ window.readingListTests = (async () => {
     for (let index = 0; index < 5; index += 1) await frame();
     check(!button('읽고 싶은 책 추가').disabled && button('읽고 싶은 책 삭제').disabled, 'Stale registered-file membership replaced the new unregistered-folder menu');
     await closeContext();
-    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership'].includes(request.operation)).map(request => request.operation), recentCacheVisible: true, staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true };
+    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership'].includes(request.operation)).map(request => request.operation), recentCacheVisible: true, staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true, supportDialogShortcuts };
     root.unmount();
     return report;
 })();
@@ -441,6 +531,13 @@ app.whenReady().then(async () => {
             window.webContents.sendInputEvent({ type: 'char', keyCode: 'Enter' });
             window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
             await window.webContents.executeJavaScript('window.continuePathEnter()');
+        }
+        if (message === 'READING_SHORTCUT') {
+            const input = await window.webContents.executeJavaScript('window.shortcutInput');
+            window.webContents.focus();
+            window.webContents.sendInputEvent({ type: 'keyDown', ...input });
+            window.webContents.sendInputEvent({ type: 'keyUp', ...input });
+            await window.webContents.executeJavaScript('window.continueShortcut()');
         }
         if (['CAPTURE_READING_MODAL', 'CAPTURE_READING_COLLECTION', 'CAPTURE_READING_RECENT'].includes(message)) {
             const screenshot = await window.webContents.capturePage();
@@ -478,6 +575,7 @@ app.whenReady().then(async () => {
         assert.equal(report.virtualCollections, true);
         assert.equal(report.wishlistMembershipStates, true);
         assert.equal(report.staleMembershipIgnored, true);
+        assert.deepEqual(report.supportDialogShortcuts, ['full', 'reduced']);
         t.diagnostic(JSON.stringify(report));
     } finally {
         await server?.close();

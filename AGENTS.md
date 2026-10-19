@@ -28,6 +28,7 @@
 ## 개발 문서
 
 - 개발 문서의 시작점은 `dev-docs/README.md`입니다.
+- UI 효과·화면 전환을 추가하거나 수정하기 전에 `dev-docs/architecture/motion.md`를 확인합니다.
 - 파일 도구를 수정하기 전에 `dev-docs/architecture/file-tools.md`를 확인합니다.
 - 대형 라이브러리, AI 모델 또는 실행 파일을 추가하기 전에 `dev-docs/architecture/tool-packs.md`를 확인합니다.
 - 텍본 정리기 작업은 `dev-docs/features/text-cleaner.md`의 범위와 완료 조건을 따릅니다.

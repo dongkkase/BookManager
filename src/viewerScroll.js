@@ -39,6 +39,7 @@ export function createViewerScrollController({
     getSettings = () => DEFAULT_SCROLL_SETTINGS,
     isEnabled = () => true,
     isBlocked = () => false,
+    isMotionReduced = () => false,
     onAutoScrollChange = () => {},
     requestFrame = callback => requestAnimationFrame(callback),
     cancelFrame = id => cancelAnimationFrame(id),
@@ -85,6 +86,12 @@ export function createViewerScrollController({
         cancelFrameLoop();
         lastWrittenPosition = null;
     };
+    const finishMotion = () => {
+        const element = getElement();
+        const target = smoothTarget;
+        cancelMotion();
+        if (target !== null && element) writePosition(element, target);
+    };
     const tick = timestamp => {
         frame = null;
         const element = getElement();
@@ -107,6 +114,10 @@ export function createViewerScrollController({
                 return;
             }
         } else if (smoothTarget !== null) {
+            if (isMotionReduced()) {
+                finishMotion();
+                return;
+            }
             smoothTarget = clampPosition(smoothTarget, element);
             if (lastWrittenPosition !== null && Math.abs(element.scrollTop - lastWrittenPosition) > 1) {
                 smoothPosition = element.scrollTop;
@@ -136,14 +147,15 @@ export function createViewerScrollController({
         if (!isEnabled() || !element || !Number.isFinite(delta) || delta === 0) return false;
         stopAutoScroll();
         const settings = normalizeScrollSettings(getSettings());
-        if (settings.behavior === 'smooth') {
+        if (settings.behavior === 'smooth' && !isMotionReduced()) {
             // Accumulate against the destination so repeated input never discards pending distance.
             if (smoothTarget === null) smoothPosition = element.scrollTop;
             smoothTarget = clampPosition((smoothTarget ?? element.scrollTop) + delta, element);
             schedule();
         } else {
+            const origin = smoothTarget ?? element.scrollTop;
             cancelMotion();
-            writePosition(element, element.scrollTop + delta);
+            writePosition(element, origin + delta);
         }
         return true;
     };
@@ -205,6 +217,7 @@ export function createViewerScrollController({
         scrollByKeyboard,
         handleScrollWheel,
         cancelMotion,
+        finishMotion,
         getAutoScrolling: () => autoScrolling,
     };
 }

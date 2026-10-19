@@ -2,10 +2,35 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { createFolderReadingStatesLoader, readingStatePathKey, sameReadingStateFiles } from './folderReadingStates.js';
-import { attachViewerStatus, createViewerStatusReader } from './viewerStatusState.js';
+import { createFolderReadingStatesLoader, createReadingStatePathKeyResolver, readingStatePathKey, sameReadingStateFiles } from './folderReadingStates.js';
+import { attachViewerStatus, createCachedViewerStatusMapper, createViewerStatusReader } from './viewerStatusState.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('읽기 상태 경로 키는 플랫폼별 정규화와 경로 변경을 반영한다', () => {
+    const resolveMacKey = createReadingStatePathKeyResolver('darwin');
+    const resolveWindowsKey = createReadingStatePathKeyResolver('win32');
+    const path = '/books/한글.txt';
+    const file = { path: path.normalize('NFD') };
+    assert.equal(resolveMacKey(file), path);
+    assert.equal(resolveMacKey(file), path);
+    assert.equal(resolveWindowsKey(file), file.path);
+    assert.equal(resolveMacKey({ ...file, title: 'Updated' }), path);
+    file.full_path = '/books/다른 책.txt'.normalize('NFD');
+    assert.equal(resolveMacKey(file), '/books/다른 책.txt');
+    assert.equal(resolveMacKey(null), '');
+    assert.equal(resolveMacKey({}), '');
+});
+
+test('메타데이터 배치에서 참조가 같은 항목의 경로는 다시 비교하지 않는다', () => {
+    let reads = 0;
+    const unchanged = { get path() { reads += 1; return '/books/1.cbz'; } };
+    const updated = { path: '/books/2.cbz', title: 'Before' };
+    assert.equal(sameReadingStateFiles([unchanged, updated], [unchanged, { ...updated, title: 'After' }]), true);
+    assert.equal(reads, 0);
+    assert.equal(sameReadingStateFiles([unchanged, updated], [unchanged, { ...updated, isDirectory: true }]), false);
+});
+
 function fixture() {
     const requests = [];
     const updates = [];
@@ -16,7 +41,7 @@ function fixture() {
         onChange: state => updates.push(state),
         isCurrent: files => files === current,
     });
-    return { loader, requests, updates, setCurrent(files) { current = files; loader.setFiles(files); } };
+    return { loader, requests, updates, setCurrent(files, scopeKey) { current = files; loader.setFiles(files, scopeKey); }, renderOnly(files) { current = files; } };
 }
 
 test('500개씩 순차 조회하고 폴더·중복을 제외하며 없는 기록도 명시적으로 비운다', async () => {
@@ -80,6 +105,121 @@ test('NFD 응답을 NFC 파일에 연결하고 오류 후 같은 목록 재조�
     f.loader.dispose();
 });
 
+test('수집 중 목록이 늘어나도 진행 중 조회를 유지하며 이미 읽은 상태를 새 목록에 연결한다', async () => {
+    const f = fixture();
+    const files = Array.from({ length: 1201 }, (_, index) => ({ path: `/books/${index}.txt` }));
+    f.setCurrent(files.slice(0, 600), '/books');
+    f.setCurrent(files.slice(0, 900), '/books');
+    f.setCurrent(files, '/books');
+    assert.equal(f.requests.length, 1);
+    f.requests[0].resolve([{ filePath: files[0].path, status: 'reading' }]); await tick();
+    assert.equal(f.updates.at(-1).files, files);
+    assert.equal(f.updates.at(-1).statesByPath.get(files[0].path).status, 'reading');
+    f.requests[1].resolve([]); await tick();
+    f.requests[2].resolve([]); await tick();
+    const extended = [...files, { path: '/books/new.txt' }];
+    f.setCurrent(extended, '/books');
+    assert.equal(f.updates.at(-1).files, extended);
+    assert.equal(f.updates.at(-1).statesByPath.get(files[0].path).status, 'reading');
+    assert.deepEqual(f.requests[3].paths, ['/books/new.txt']);
+    f.requests[3].resolve([]); await tick();
+    const requestedPaths = f.requests.flatMap(request => request.paths);
+    assert.equal(requestedPaths.length, 1202);
+    assert.equal(new Set(requestedPaths).size, 1202);
+    assert.equal(f.updates.at(-1).statesByPath.size, 1202);
+    f.loader.dispose();
+});
+
+test('수집 중 읽기 기록 삭제는 이전 응답으로 복구되지 않고 추가된 파일과 함께 다시 조회한다', async () => {
+    const f = fixture();
+    const a = { path: '/books/a.txt' };
+    const b = { path: '/books/b.txt' };
+    f.setCurrent([a], '/books');
+    f.loader.refresh({ filePath: a.path, removed: true });
+    const extended = [a, b];
+    f.setCurrent(extended, '/books');
+    f.requests[0].resolve([{ filePath: a.path, status: 'reading' }]); await tick();
+    assert.equal(f.updates.at(-1).files, extended);
+    assert.equal(f.updates.at(-1).statesByPath.get(a.path), null);
+    assert.deepEqual(f.requests[1].paths, [a.path, b.path]);
+    f.requests[1].resolve([{ filePath: b.path, status: 'completed' }]); await tick();
+    assert.equal(f.updates.at(-1).statesByPath.get(a.path), null);
+    assert.equal(f.updates.at(-1).statesByPath.get(b.path).status, 'completed');
+    f.loader.dispose();
+});
+
+test('파일 제거와 재추가 후에는 이전 조회 응답을 재사용하지 않고 없어진 상태도 버린다', async () => {
+    const f = fixture();
+    const a = { path: '/books/a.txt' };
+    const b = { path: '/books/b.txt' };
+    f.setCurrent([a, b], '/books');
+    f.setCurrent([b], '/books');
+    f.setCurrent([a, b], '/books');
+    f.requests[0].resolve([{ filePath: a.path, status: 'completed' }, { filePath: b.path, status: 'reading' }]); await tick();
+    assert.equal(f.updates.at(-1).statesByPath.has(a.path), false);
+    assert.equal(f.updates.at(-1).statesByPath.get(b.path).status, 'reading');
+    assert.deepEqual(f.requests[1].paths, [a.path]);
+    f.requests[1].resolve([]); await tick();
+    const remaining = [a];
+    f.setCurrent(remaining, '/books');
+    assert.equal(f.updates.at(-1).files, remaining);
+    assert.equal(f.updates.at(-1).statesByPath.has(b.path), false);
+    assert.equal(f.requests.length, 2);
+    f.setCurrent([], '/books');
+    assert.equal(f.updates.at(-1).statesByPath.size, 0);
+    f.setCurrent([a], '/books');
+    assert.deepEqual(f.requests[2].paths, [a.path]);
+    f.requests[2].resolve([]); await tick();
+    f.loader.dispose();
+});
+
+test('목록 객체와 파일 경로가 같아도 폴더 범위가 바뀌면 이전 응답을 무시한다', async () => {
+    const f = fixture();
+    const files = [{ path: '/books/child/a.txt' }];
+    f.setCurrent(files, '/books');
+    f.setCurrent(files, '/books/child');
+    f.requests[0].resolve([{ filePath: files[0].path, status: 'completed' }]); await tick();
+    assert.equal(f.updates.length, 0);
+    assert.deepEqual(f.requests[1].paths, [files[0].path]);
+    f.requests[1].resolve([]); await tick();
+    assert.equal(f.updates.at(-1).statesByPath.get(files[0].path), null);
+    f.loader.dispose();
+});
+
+test('새 목록 렌더 직후 setFiles 전에 도착한 응답은 반영하지 않고 다음 갱신에서 재조회한다', async () => {
+    const f = fixture();
+    const a = { path: '/books/a.txt' };
+    const extended = [a, { path: '/books/b.txt' }];
+    f.setCurrent([a], '/books');
+    f.renderOnly(extended);
+    f.requests[0].resolve([{ filePath: a.path, status: 'completed' }]); await tick();
+    assert.equal(f.updates.length, 0);
+    assert.equal(f.requests.length, 1);
+    f.setCurrent(extended, '/books');
+    assert.deepEqual(f.requests[1].paths, extended.map(file => file.path));
+    f.requests[1].resolve([]); await tick();
+    assert.equal(f.updates.at(-1).files, extended);
+    f.loader.dispose();
+});
+
+test('조회 실패는 자동 재시도를 반복하지 않고 다음 수집 배치에서 실패·미조회 경로만 재시도한다', async () => {
+    const f = fixture();
+    const a = { path: '/books/a.txt' };
+    const b = { path: '/books/b.txt' };
+    const c = { path: '/books/c.txt' };
+    f.setCurrent([a], '/books');
+    f.requests[0].resolve([{ filePath: a.path, status: 'reading' }]); await tick();
+    f.setCurrent([a, b], '/books');
+    f.setCurrent([a, b, c], '/books');
+    f.requests[1].reject(new Error('offline')); await tick();
+    assert.equal(f.requests.length, 2);
+    f.setCurrent([a, b, c], '/books');
+    assert.deepEqual(new Set(f.requests[2].paths), new Set([b.path, c.path]));
+    f.requests[2].resolve([]); await tick();
+    assert.equal(f.updates.at(-1).statesByPath.get(a.path).status, 'reading');
+    f.loader.dispose();
+});
+
 test('Linux와 Windows에서는 서로 다른 Unicode 파일을 합치지 않는다', async () => {
     for (const platform of ['linux', 'Linux x86_64', 'win32', 'Win32', '']) {
         const requests = [];
@@ -133,7 +273,7 @@ function folderFixture(platform = 'MacIntel') {
     const changed = (left, right) => !left || left.length !== right.length || left.some((value, index) => value !== right[index]);
     const context = vm.createContext({
         navigator: { platform },
-        createFolderReadingStatesLoader, readingStatePathKey, sameReadingStateFiles, attachViewerStatus,
+        createFolderReadingStatesLoader, createReadingStatePathKeyResolver, readingStatePathKey, sameReadingStateFiles, attachViewerStatus, createCachedViewerStatusMapper,
         createViewerStatusReader: () => createViewerStatusReader(),
         recentReadingTimeText: () => '최근 읽음',
         useRef(initial) { const index = cursor++; return slots[index] ||= { current: initial }; },
@@ -149,7 +289,7 @@ function folderFixture(platform = 'MacIntel') {
             removeEventListener(_name, listener) { focusListeners.delete(listener); },
         },
     });
-    vm.runInContext(`function render({activeRawFileData,folderSource='folder',selectedFolderPath='/books',isRecentReading=false}) { const config = {}; const t = key => key; const viewerStatusVersion = 0; ${platformDeclaration} ${source.slice(start, finish)} return fileDataWithViewerStatus; }`, context);
+    vm.runInContext(`function render({activeRawFileData,folderSource='folder',selectedFolderPath='/books',isRecentReading=false}) { const config = {}; const t = key => key; const viewerStatusVersion = 0; const activeDuplicateFileData = activeRawFileData; ${platformDeclaration} ${source.slice(start, finish)} return fileDataWithViewerStatus; }`, context);
     return {
         requests,
         render(props, flush = true) { cursor = 0; const output = context.render(props); if (flush) this.flush(); return output; },
@@ -212,6 +352,23 @@ test('실제 FolderTab은 목록을 유지하면서 DB 변경을 반영하고 �
     f.notify({ filePath: '/books/b.txt', removed: true });
     assert.equal(f.render(props)[0].viewerStatus.hasReadingProgress, false);
     f.requests[2].resolve([]); await tick();
+    f.dispose();
+});
+
+test('실제 FolderTab은 하위 폴더 수집 배치가 추가되어도 이전 진행도를 유지하고 새 파일만 조회한다', async () => {
+    const f = folderFixture();
+    const first = { path: '/books/a.txt' };
+    let props = { activeRawFileData: [first] };
+    f.render(props);
+    f.requests[0].resolve([{ filePath: first.path, status: 'reading', locator: { kind: 'normalized', normalizedPosition: 0.2 } }]); await tick();
+    assert.equal(f.render(props)[0].viewerStatus.percent, 20);
+    props = { activeRawFileData: [first, { path: '/books/child/b.txt' }] };
+    f.render(props);
+    assert.equal(f.render(props)[0].viewerStatus.percent, 20);
+    assert.deepEqual(f.requests[1].paths, ['/books/child/b.txt']);
+    f.requests[1].resolve([]); await tick();
+    assert.equal(f.render(props)[0].viewerStatus.percent, 20);
+    assert.equal(f.requests.length, 2);
     f.dispose();
 });
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 import { transformSync } from 'esbuild';
 import { releaseNotificationKey } from './releaseNotificationPolicy.js';
 import { parseReleaseMarkdown } from './releasePolicy.js';
+import * as motionPolicy from './motionPolicy.js';
 
 const compiled = transformSync(fs.readFileSync(new URL('./tabs/ReleaseTab.jsx', import.meta.url), 'utf8'), { loader: 'jsx', format: 'cjs' }).code;
 const nodes = node => node && typeof node === 'object' ? [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)] : [];
@@ -34,6 +35,7 @@ function fixture() {
         '../components/FaIcon': { FaIcon: 'FaIcon' },
         '../releasePolicy': { parseReleaseMarkdown },
         '../releaseNotificationPolicy': { releaseNotificationKey },
+        '../motionPolicy': motionPolicy,
         '../styles/ReleaseTab.css': {},
     };
     const module = { exports: {} };

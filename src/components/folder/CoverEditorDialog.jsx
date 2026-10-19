@@ -13,6 +13,7 @@ import { metadataSearchResultKey } from '../../metadataSearch';
 import { ALL_METADATA_API_SOURCES, UNIFIED_METADATA_API_SOURCE, apiSourceHasRequiredKey, metadataSearchSourcesForBookType } from '../../metadataApiPolicy';
 import { attachCoverEditorSearchScroll } from '../../coverEditorSearchScroll';
 import { animateCoverEditorImageArrival } from '../../coverEditorImageArrival';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { emitStatusState } from '../../statusState';
 import '../../styles/RenamerTab.css';
 import '../../styles/CoverEditorDialog.css';
@@ -58,6 +59,7 @@ function restoreCoverEditorOptions(preferences, info) {
 
 export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnabled, preferences, onPreferencesChange, onExecute, onClose, showToast, t,
     embedded = false, externalBusy = false, localImageRequest, onImageDropAvailabilityChange, onToggleFile, onToggleAll, onRemoveFile, onBusyChange, onReset }) {
+    const reducedMotion = useReducedMotion();
     const targets = (files?.length ? files : [file]).filter(Boolean);
     const fileKey = JSON.stringify(targets.map(target => target.full_path || target.path));
     const isBatch = targets.length > 1;
@@ -1138,7 +1140,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                         </div>
                     </div>
                     {metadataLoading ? <div className="cover-editor-search-loading" role="status" aria-live="polite" aria-label={t('cover_editor_metadata_loading')}>
-                        <img src={workingAnimation} alt="" />
+                        {reducedMotion ? <span>{t('cover_editor_metadata_loading')}</span> : <img src={workingAnimation} alt="" />}
                     </div> : <>
                         <ul ref={metadataResultsRef} className="cover-editor-search-results" aria-label={t('cover_editor_source_metadata')}>
                                 {metadataSearch.results.map(item => {
@@ -1219,8 +1221,10 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                     </div>
                     <div className="cover-editor-preview-actions">
                         <span title={info?.coverEntry}>{info && (info.coverEntry || t(`cover_editor_kind_${info.kind}`))}</span>
-                        {info?.coverDataUrl && <button type="button" onClick={exportCurrentCover} disabled={busy}>{t('cover_editor_export')}</button>}
                     </div>
+                    {info?.coverDataUrl && <div className="cover-editor-preview-actions cover-editor-current-actions">
+                        <button type="button" onClick={exportCurrentCover} disabled={busy}>{t('cover_editor_export')}</button>
+                    </div>}
                 </div>
                 {embedded && <div className="cover-editor-preview-divider" aria-hidden="true" />}
                 <div className="cover-editor-preview">

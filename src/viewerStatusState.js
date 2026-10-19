@@ -216,6 +216,22 @@ export function attachViewerStatus(file, reader) {
     };
 }
 
+export function createCachedViewerStatusMapper(reader) {
+    const statusReader = typeof reader === 'function' ? reader : createViewerStatusReader();
+    // File and reading-state records are immutable; recreate the mapper when local storage changes.
+    const cache = new WeakMap();
+    return (file, readingState = file?.readingState) => {
+        // Missing database records use the same local-state fallback as an unqueried file.
+        if (readingState == null && file.readingState == null) readingState = file.readingState;
+        const cached = cache.get(file);
+        if (cached && cached.readingState === readingState) return cached.result;
+        const source = file.readingState === readingState ? file : { ...file, readingState };
+        const result = attachViewerStatus(source, statusReader);
+        cache.set(file, { readingState, result });
+        return result;
+    };
+}
+
 export function viewerReadingStatusText(status = {}, t) {
     if (status.isCompleted) return t?.('viewer_status_completed') || '모두 읽음';
     if (status.hasReadingProgress) return t?.('viewer_status_reading') || '읽는 중';

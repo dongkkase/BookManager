@@ -1,3 +1,5 @@
+import { isMotionReduced, subscribeMotionPreference } from './motionPolicy.js';
+
 const ARRIVAL_DURATION = 800;
 const RASTER_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif|bmp|x-ms-bmp);base64,/i;
 
@@ -30,11 +32,13 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
     let thumbnail;
     let timeout;
     let observer;
+    let unsubscribeMotion;
     const listeners = [];
     const finish = (notify = true) => {
         if (finished) return;
         finished = true;
         if (timeout !== undefined) view.clearTimeout(timeout);
+        unsubscribeMotion?.();
         observer?.disconnect();
         for (const [target, name, listener, options] of listeners) target.removeEventListener(name, listener, options);
         if (thumbnail) {
@@ -57,7 +61,7 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
     };
     const canShow = () => !document.hidden
         && visibleRect(container, view) && visibleRect(sourceElement, view) && visibleRect(targetElement, view);
-    if (!view || !document.createElement || !container.appendChild || !RASTER_DATA_URL.test(image?.dataUrl || '')
+    if (!view || isMotionReduced(view) || !document.createElement || !container.appendChild || !RASTER_DATA_URL.test(image?.dataUrl || '')
         || !Number.isFinite(image?.width) || !Number.isFinite(image?.height) || image.width <= 0 || image.height <= 0
         || !canShow()) {
         finish();
@@ -81,6 +85,9 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
     container.appendChild(flyer);
 
     const finishMotion = () => finish();
+    unsubscribeMotion = subscribeMotionPreference(() => {
+        if (isMotionReduced(view)) finishMotion();
+    }, view);
     const checkVisibility = () => { if (!canShow()) finish(); };
     listen(view, 'resize', finishMotion);
     listen(view, 'scroll', finishMotion, true);

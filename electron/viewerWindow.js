@@ -662,7 +662,14 @@ export function setupViewerWindowManager(options = {}) {
             clearAudioMiniPlayer(context);
         });
         viewerWindow.webContents.on('unresponsive', () => {
-            reportTelemetryError({}, { source: 'renderer-unresponsive', format: context.currentSession?.type });
+            const currentWindow = context.window === viewerWindow;
+            const shuttingDown = !currentWindow || isShuttingDown() || context.closingWindows.has(viewerWindow);
+            reportTelemetryError({}, {
+                source: 'renderer-unresponsive',
+                window_type: 'viewer',
+                ...(currentWindow ? { format: context.currentSession?.type } : {}),
+                app_lifecycle: shuttingDown ? 'quitting' : 'running',
+            });
         });
         viewerWindow.on('closed', () => {
             context.closingWindows.delete(viewerWindow);
@@ -962,6 +969,7 @@ export function setupViewerWindowManager(options = {}) {
         return {
             lang: language,
             language,
+            motion_preference: config.motion_preference || 'system',
             readingLibraryPaths: configManager?.canPruneLibraryData?.() ? config.libraries : null,
             hasTtsOpenAiKey: Boolean(String(apiKeys.tts_openai_key || '').trim()),
             hasTtsGoogleKey: Boolean(String(apiKeys.tts_google_key || '').trim()),
