@@ -454,7 +454,8 @@ export default function EpubOriginalDocument({
         if (!layout) return;
         setReady(true);
         callbacksRef.current.onReady?.(layout);
-        observer = new ResizeObserver(() => {
+        // Keep the iframe body in its own document's resize delivery cycle.
+        observer = new viewport.ResizeObserver(() => {
             cancelAnimationFrame(resizeFrame);
             resizeFrame = requestAnimationFrame(measure);
         });

@@ -1859,28 +1859,37 @@ function readerTextLength(value = '') {
   return Array.from(String(value || '')).length;
 }
 
-function estimateReaderLineCount(line = '', charsPerLine = 60) {
-  return Math.max(1, Math.ceil(readerTextLength(line) / Math.max(1, charsPerLine)));
+function estimateReaderLineCount(line = '', charsPerLine = 60, maxLines = Infinity) {
+    const lineWidth = Math.max(1, charsPerLine);
+    if (!Number.isFinite(maxLines)) return Math.max(1, Math.ceil(readerTextLength(line) / lineWidth));
+    const characterLimit = Math.max(0, Math.floor(maxLines)) * lineWidth;
+    let characterCount = 0;
+    for (const character of String(line || '')) {
+        characterCount += 1;
+        if (characterCount > characterLimit) break;
+    }
+    return Math.max(1, Math.ceil(characterCount / lineWidth));
 }
 
 function splitReaderLine(line = '', charsPerLine = 60, lines = 1, wrapMode = 'word') {
-  const characters = Array.from(String(line || ''));
-  const maxChars = Math.max(1, Math.floor(charsPerLine * Math.max(1, lines)));
-  if (characters.length <= maxChars) return [line, ''];
-  let splitAt = Math.min(characters.length, maxChars);
-  if (wrapMode !== 'char') {
-    const lowerBound = Math.max(1, splitAt - charsPerLine);
-    for (let index = splitAt; index > lowerBound; index -= 1) {
-      if (/\s/.test(characters[index - 1])) {
-        splitAt = index;
-        break;
-      }
+    const source = String(line || '');
+    const maxChars = Math.max(1, Math.floor(charsPerLine * Math.max(1, lines)));
+    const lowerBound = Math.max(1, maxChars - charsPerLine);
+    let characterCount = 0;
+    let offset = 0;
+    let wordOffset = 0;
+    for (const character of source) {
+        if (characterCount === maxChars) {
+            const splitAt = wordOffset || offset;
+            return [source.slice(0, splitAt).trimEnd(), source.slice(splitAt).trimStart()];
+        }
+        characterCount += 1;
+        offset += character.length;
+        if (wrapMode !== 'char' && characterCount > lowerBound && /\s/.test(character)) {
+            wordOffset = offset;
+        }
     }
-  }
-  return [
-    characters.slice(0, splitAt).join('').trimEnd(),
-    characters.slice(splitAt).join('').trimStart(),
-  ];
+    return [line, ''];
 }
 
 function splitReaderLineForPage(line = '', charsPerLine = 60, lines = 1, metrics = {}) {
@@ -1964,7 +1973,8 @@ function paginateText(text = '', options = 1800) {
     }
 
     while (line) {
-      const estimatedLines = estimateReaderLineCount(line, charsPerLine);
+      // Pagination only needs an exact count while the remainder can still fit.
+      const estimatedLines = estimateReaderLineCount(line, charsPerLine, lineBudget + widowLineTolerance);
       const remainingLines = lineBudget - usedLines;
       if (usedLines > 0 && estimatedLines > remainingLines) {
         if (
