@@ -301,6 +301,18 @@ function fileButton(value, name) {
     return value.all(node => (node.type === 'button' && 'aria-pressed' in node.props || node.type === 'tr' && node.props['data-cover-file']) && textContent(node).includes(name))[0];
 }
 
+const coverScopeSelect = value => value.all(node => node.type === 'select' && node.props['aria-label'] === 'cover_editor_scope')[0];
+
+async function selectEmbeddedFile(value, name) {
+    fileButton(value, name).props.onMouseDown(event({ button: 0, target: { closest: () => null } }));
+    await value.settle();
+}
+
+async function changeCoverScope(value, scope) {
+    coverScopeSelect(value).props.onChange({ target: { value: scope } });
+    await value.settle();
+}
+
 const resultLogDialog = value => value.all(node => node.type === 'ResultLogDialog')[0];
 
 function fileDetailsButton(value, name) {
@@ -353,9 +365,9 @@ test('option changes are remembered on cancellation and restored for another boo
         value.input('cover_editor_backup').props.onChange({ target: { checked: false } });
         value.render();
         assert.deepEqual(value.calls.preferences, [
-            { mode: 'add', renumber: true, backup: true, apiSource: '통합검색' },
-            { mode: 'add', renumber: false, backup: true, apiSource: '통합검색' },
-            { mode: 'add', renumber: false, backup: false, apiSource: '통합검색' },
+            { mode: 'add', renumber: true, backup: true, apiSource: '통합검색', coverScope: 'group' },
+            { mode: 'add', renumber: false, backup: true, apiSource: '통합검색', coverScope: 'group' },
+            { mode: 'add', renumber: false, backup: false, apiSource: '통합검색', coverScope: 'group' },
         ]);
         value.button('cover_editor_cancel').props.onClick();
         assert.equal(value.calls.close, 1);
@@ -367,7 +379,7 @@ test('option changes are remembered on cancellation and restored for another boo
         assert.equal(reopened.input('cover_editor_backup').props.checked, false);
         assert.equal(reopened.input('cover_editor_renumber').props.checked, false);
         reopened.input('cover_editor_replace').props.onChange();
-        assert.deepEqual(reopened.calls.preferences, [{ mode: 'replace', backup: false, renumber: false, apiSource: '통합검색' }]);
+        assert.deepEqual(reopened.calls.preferences, [{ mode: 'replace', backup: false, renumber: false, apiSource: '통합검색', coverScope: 'group' }]);
     } finally { reopened.close(); }
 });
 
@@ -801,6 +813,245 @@ test('batch requests share the selected image while preserving each file identit
         assert.equal(typeof value.calls.executeOptions[0].onProgress, 'function');
         assert.equal(typeof value.calls.executeOptions[0].shouldCancel, 'function');
         assert.equal(value.calls.executeOptions[0].shouldCancel(), false);
+    } finally { value.close(); }
+});
+
+test('cover scope defaults to grouping and remembers individual mode without saving a cover', async () => {
+    let preferences;
+    const files = ['first.cbz', 'second.cbz'].map(selectedFile);
+    const inspect = path => fileInfo(path.split('/').at(-1));
+    const value = await fixture({ embedded: true, files, inspect, preferences: { coverScope: 'invalid' },
+        onPreferencesChange: updated => { preferences = updated; } });
+    try {
+        assert.equal(coverScopeSelect(value).props.value, 'group');
+        assert.deepEqual(value.calls.preferences, []);
+        await changeCoverScope(value, 'individual');
+        assert.equal(preferences.coverScope, 'individual');
+        assert.deepEqual(value.calls.execute, []);
+    } finally { value.close(); }
+    const reopened = await fixture({ embedded: true, files, inspect, preferences });
+    try {
+        assert.equal(coverScopeSelect(reopened).props.value, 'individual');
+        assert.deepEqual(reopened.calls.preferences, []);
+        assert.equal(reopened.button('cover_editor_batch_save').props.disabled, true);
+    } finally { reopened.close(); }
+});
+
+test('group and individual covers survive scope changes and each file saves its own image identity', async () => {
+    let imagePath = '/images/group.png';
+    const files = ['first.cbz', 'second.cbz'].map(selectedFile);
+    const value = await fixture({ embedded: true, files, inspect: path => fileInfo(path.split('/').at(-1)),
+        select: () => imagePath, preview: path => ({ ...preview(path), imageVersion: `version:${path}` }), execute: saveBatchSuccessfully });
+    try {
+        await value.browse();
+        await changeCoverScope(value, 'individual');
+        assert.equal(value.newImage(), undefined);
+        imagePath = '/images/first.png';
+        await value.browse();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, true);
+        const wrapper = value.all(node => node.props.className === 'renamer-table-wrapper cover-editor-file-table')[0];
+        wrapper.props.onKeyDown(event({ key: 'ArrowDown', target: { tagName: 'DIV' } }));
+        await value.settle();
+        assert.equal(fileButton(value, 'second.cbz').props['aria-selected'], true);
+        assert.equal(value.newImage(), undefined);
+        imagePath = '/images/second.png';
+        await value.browse();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        await changeCoverScope(value, 'group');
+        assert.equal(value.newImage().props.src, preview('/images/group.png').dataUrl);
+        await changeCoverScope(value, 'individual');
+        assert.equal(value.newImage().props.src, preview('/images/second.png').dataUrl);
+        await selectEmbeddedFile(value, 'first.cbz');
+        assert.equal(value.newImage().props.src, preview('/images/first.png').dataUrl);
+        assert.deepEqual(value.calls.released, []);
+        await value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.execute[0].map(({ filePath, imagePath: path, imageVersion }) => ({ filePath, imagePath: path, imageVersion })), [
+            { filePath: '/library/first.cbz', imagePath: '/images/first.png', imageVersion: 'version:/images/first.png' },
+            { filePath: '/library/second.cbz', imagePath: '/images/second.png', imageVersion: 'version:/images/second.png' },
+        ]);
+    } finally { value.close(); }
+});
+
+test('individual saving requires covers for every checked valid file even when an unchecked row is previewed', async () => {
+    let imagePath = '/images/first.png';
+    const files = ['first.cbz', 'second.cbz', 'unchecked.cbz', 'broken.cbz'].map(name => ({ ...selectedFile(name), checked: name !== 'unchecked.cbz' }));
+    const value = await fixture({ embedded: true, files, preferences: { coverScope: 'individual' }, select: () => imagePath,
+        inspect: path => path.endsWith('broken.cbz') ? { error: 'Cannot inspect' } : fileInfo(path.split('/').at(-1)), execute: saveBatchSuccessfully });
+    try {
+        await value.browse();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, true);
+        assert.ok(value.text().includes('cover_editor_missing_covers'));
+        await value.button('cover_editor_batch_save').props.onClick();
+        assert.deepEqual(value.calls.execute, []);
+        await selectEmbeddedFile(value, 'second.cbz');
+        imagePath = '/images/second.png';
+        await value.browse();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        await selectEmbeddedFile(value, 'unchecked.cbz');
+        assert.equal(value.newImage(), undefined);
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        await value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.execute[0].map(request => [request.filePath, request.imagePath]), [
+            ['/library/first.cbz', '/images/first.png'], ['/library/second.cbz', '/images/second.png'],
+        ]);
+    } finally { value.close(); }
+});
+
+test('unchecking retains individual covers and removing a file releases only its own candidate', async () => {
+    let imagePath = '/images/first.png';
+    const files = ['first.cbz', 'second.cbz'].map(selectedFile);
+    const value = await fixture({ embedded: true, files, preferences: { coverScope: 'individual' }, select: () => imagePath,
+        inspect: path => fileInfo(path.split('/').at(-1)) });
+    try {
+        await value.browse();
+        await selectEmbeddedFile(value, 'second.cbz');
+        imagePath = '/images/second.png';
+        await value.browse();
+        value.updateProps({ files: files.map(file => ({ ...file, checked: file.name !== 'first.cbz' })) });
+        await value.settle();
+        await selectEmbeddedFile(value, 'first.cbz');
+        assert.equal(value.newImage().props.src, preview('/images/first.png').dataUrl);
+        assert.deepEqual(value.calls.released, []);
+        value.updateProps({ files });
+        await value.settle();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        value.updateProps({ files: [files[1]] });
+        await value.settle();
+        assert.equal(value.newImage().props.src, preview('/images/second.png').dataUrl);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/first.png' }]);
+        value.updateProps({ files });
+        await value.settle();
+        await selectEmbeddedFile(value, 'first.cbz');
+        assert.equal(value.newImage(), undefined);
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, true);
+        await selectEmbeddedFile(value, 'second.cbz');
+        value.button('cover_editor_clear').props.onClick();
+        await value.settle();
+        assert.equal(value.newImage(), undefined);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/first.png' }, { imagePath: '/images/second.png' }]);
+    } finally { value.close(); }
+});
+
+test('a shared image path is released only after every group and individual reference is cleared', async () => {
+    const value = await fixture({ embedded: true, files: ['first.cbz', 'second.cbz'].map(selectedFile),
+        inspect: path => fileInfo(path.split('/').at(-1)), select: () => '/images/shared.png' });
+    try {
+        await value.browse();
+        await changeCoverScope(value, 'individual');
+        await value.browse();
+        await selectEmbeddedFile(value, 'second.cbz');
+        await value.browse();
+        await changeCoverScope(value, 'group');
+        value.button('cover_editor_clear').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.released, []);
+        await changeCoverScope(value, 'individual');
+        value.button('cover_editor_clear').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.released, []);
+        await selectEmbeddedFile(value, 'first.cbz');
+        assert.equal(value.newImage().props.src, preview('/images/shared.png').dataUrl);
+        value.button('cover_editor_clear').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/shared.png' }]);
+    } finally { value.close(); }
+});
+
+test('changing the individual file or scope discards late local, metadata, and archive covers', async () => {
+    for (const source of ['local', 'metadata', 'archive']) {
+        for (const action of ['file', 'scope']) {
+            const pending = deferred();
+            const value = await fixture({ embedded: true, files: ['first.cbz', 'second.cbz'].map(selectedFile),
+                preferences: { coverScope: 'individual' }, inspect: path => fileInfo(path.split('/').at(-1), { canSelectArchiveImage: true }),
+                preview: () => pending.promise, metadataPreview: () => pending.promise, archivePreview: () => pending.promise });
+            try {
+                let selecting;
+                if (source === 'local') selecting = value.button('cover_editor_local_browse').props.onClick();
+                else {
+                    value.button(`cover_editor_source_${source}`).props.onClick();
+                    await value.settle();
+                    if (source === 'metadata') {
+                        searchForm(value).props.onSubmit(event());
+                        await value.settle();
+                    }
+                    selecting = value.all(node => node.type === 'button' && node.props.title === (source === 'metadata' ? metadataResult.title : 'pages/02.png'))[0].props.onClick();
+                }
+                await value.settle();
+                if (action === 'file') await selectEmbeddedFile(value, 'second.cbz');
+                else await changeCoverScope(value, 'group');
+                const obsoletePath = `/temporary/obsolete-${source}-${action}.png`;
+                pending.resolve(preview(obsoletePath));
+                await selecting;
+                await value.settle();
+                assert.equal(value.newImage(), undefined, `${source}:${action}`);
+                assert.deepEqual(value.calls.released, [{ imagePath: obsoletePath }]);
+                if (action === 'file') await selectEmbeddedFile(value, 'first.cbz');
+                else await changeCoverScope(value, 'individual');
+                assert.equal(value.newImage(), undefined, `${source}:${action}:return`);
+                assert.equal(value.button('cover_editor_batch_save').props.disabled, true);
+            } finally { value.close(); }
+        }
+    }
+});
+
+test('metadata, archive, and edited covers update only the previewed individual file', async () => {
+    for (const source of ['metadata', 'archive', 'edit']) {
+        let imagePath = '/images/first.png';
+        const chosenPath = `/temporary/${source}-second.png`;
+        const value = await fixture({ embedded: true, files: ['first.cbz', 'second.cbz'].map(selectedFile),
+            preferences: { coverScope: 'individual' }, inspect: path => fileInfo(path.split('/').at(-1), { canSelectArchiveImage: true }),
+            select: () => imagePath, metadataPreview: () => preview(chosenPath), archivePreview: () => preview(chosenPath),
+            importedPreview: () => preview(chosenPath), execute: saveBatchSuccessfully });
+        try {
+            await value.browse();
+            await selectEmbeddedFile(value, 'second.cbz');
+            if (source === 'edit') {
+                imagePath = '/images/second.png';
+                await value.browse();
+                value.button('cover_editor_edit').props.onClick();
+                await value.settle();
+                const editor = value.imageEditor();
+                await editor.props.onApply(new Blob(['edited'], { type: 'image/png' }));
+                editor.props.onClose();
+            } else {
+                value.button(`cover_editor_source_${source}`).props.onClick();
+                await value.settle();
+                if (source === 'metadata') {
+                    searchForm(value).props.onSubmit(event());
+                    await value.settle();
+                }
+                await value.all(node => node.type === 'button' && node.props.title === (source === 'metadata' ? metadataResult.title : 'pages/02.png'))[0].props.onClick();
+            }
+            await value.settle();
+            assert.equal(value.newImage().props.src, preview(chosenPath).dataUrl);
+            await selectEmbeddedFile(value, 'first.cbz');
+            assert.equal(value.newImage().props.src, preview('/images/first.png').dataUrl);
+            await value.button('cover_editor_batch_save').props.onClick();
+            await value.settle();
+            assert.deepEqual(value.calls.execute[0].map(request => request.imagePath), ['/images/first.png', chosenPath]);
+            assert.deepEqual(value.calls.released, source === 'edit' ? [{ imagePath: '/images/second.png' }] : []);
+        } finally { value.close(); }
+    }
+});
+
+test('individual filename previews use the requested file cover extension independently of the selected row', async () => {
+    let imagePath = '/images/first.png';
+    const value = await fixture({ embedded: true, files: ['first.cbz', 'second.cbz'].map(selectedFile),
+        preferences: { coverScope: 'individual', mode: 'replace', renumber: true }, select: () => imagePath,
+        preview: path => ({ ...preview(path), extension: path.endsWith('.webp') ? '.webp' : '.png' }),
+        inspect: path => fileInfo(path.split('/').at(-1), { coverEntry: 'cover.jpg', pages: [{ name: 'cover.jpg' }, { name: 'page.jpeg' }] }) });
+    try {
+        await value.browse();
+        await selectEmbeddedFile(value, 'second.cbz');
+        imagePath = '/images/second.webp';
+        await value.browse();
+        await selectEmbeddedFile(value, 'first.cbz');
+        openFilenamePreview(value, 'second.cbz');
+        assert.deepEqual(filenameRows(value), [['cover.jpg', '0000.webp'], ['page.jpeg', '0001.jpeg']]);
+        assert.equal(fileButton(value, 'first.cbz').props['aria-selected'], true);
+        assert.equal(value.newImage().props.src, preview('/images/first.png').dataUrl);
     } finally { value.close(); }
 });
 

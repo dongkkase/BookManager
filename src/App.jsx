@@ -770,12 +770,12 @@ function App() {
             disabled={isAppLocked || isUpdating}
             onClick={handleVersionClick}
           >
-            <FaIcon name={updateInfo.available ? 'gift' : 'circleCheck'} />
+            {updateInfo.available && <FaIcon name="gift" />}
             {isUpdating
               ? t('msg_update_downloading')
               : updateInfo.available
               ? t('msg_update_available', [appVersion || '-', updateInfo.latestVersion])
-              : t('msg_latest_version', [appVersion || '-'])}
+              : `Version ${appVersion || '-'}`}
           </button>
           <button
             className="top-btn"

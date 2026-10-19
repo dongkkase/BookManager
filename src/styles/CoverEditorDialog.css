@@ -960,6 +960,41 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     padding: 0 6px;
 }
 
+.cover-editor-scope {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    color: #ccc;
+    font-size: var(--font-xs);
+}
+
+.cover-editor-scope select {
+    max-width: 100%;
+    min-height: 28px;
+    padding: 3px 6px;
+    color: #e6e6e6;
+    background: #202020;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font: inherit;
+}
+
+.cover-editor-scope select:focus-visible {
+    outline: 2px solid #8bcdf4;
+    outline-offset: 2px;
+}
+
+.cover-editor-scope-hint {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 6px 10px;
+    color: #aaa;
+    font-size: var(--font-xs);
+    line-height: 1.5;
+}
+
 .cover-editor-modes {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1708,6 +1743,10 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     margin: 0;
     padding: 0 5px;
     font-size: var(--font-xs);
+}
+
+.cover-editor-embedded .cover-editor-scope {
+    margin: 0;
 }
 
 .cover-editor-embedded .cover-editor-modes {

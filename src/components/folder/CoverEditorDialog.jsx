@@ -52,6 +52,7 @@ function restoreCoverEditorOptions(preferences, info) {
         mode: ['replace', 'add'].includes(preferences?.mode) ? preferences.mode : info?.canAdd && !info.coverDataUrl ? 'add' : 'replace',
         renumber: typeof preferences?.renumber === 'boolean' ? preferences.renumber : Boolean(info?.canRenumber && !info.coverDataUrl),
         backup: typeof preferences?.backup === 'boolean' ? preferences.backup : true,
+        coverScope: preferences?.coverScope === 'individual' ? 'individual' : 'group',
         apiSource: ALL_METADATA_API_SOURCES.some(source => source.value === preferences?.apiSource)
             ? preferences.apiSource : UNIFIED_METADATA_API_SOURCE,
     };
@@ -70,7 +71,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const [currentCover, setCurrentCover] = useState({ filePath: '', dataUrl: '' });
     const [coverLoading, setCoverLoading] = useState(false);
     const [coverError, setCoverError] = useState('');
-    const [image, setImage] = useState(null);
+    const [images, setImages] = useState({ group: null, files: {} });
+    const imagesRef = useRef(images);
     const [imageEditTarget, setImageEditTarget] = useState(null);
     const imageEditTargetRef = useRef(null);
     const imageEditButtonRef = useRef(null);
@@ -143,6 +145,10 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         coverDataUrl: currentCover.filePath === selectedEntry.filePath ? currentCover.dataUrl : '',
     };
     const filePath = selectedEntry?.filePath || targets[0]?.full_path || targets[0]?.path || '';
+    const individualCovers = options.coverScope === 'individual';
+    const imageForFile = path => individualCovers ? images.files[path] || null : images.group;
+    const image = imageForFile(filePath);
+    imageRef.current = image;
     const bookType = ['comic', 'pdf', 'audio'].includes(info?.kind) ? info.kind : 'book';
     const metadataApiEnabledKey = ALL_METADATA_API_SOURCES.map(source => metadataApiEnabled?.[source.value] !== false).join(',');
     const searchApiSources = metadataSearchSourcesForBookType(bookType, metadataApiEnabled);
@@ -151,6 +157,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const checkedPaths = new Set(targets.filter(target => !embedded || target.checked !== false).map(target => target.full_path || target.path));
     const allFilesChecked = targets.length > 0 && checkedPaths.size === targets.length;
     const readyEntries = entries.filter(entry => entry.info && checkedPaths.has(entry.filePath));
+    const missingCoverCount = readyEntries.filter(entry => !imageForFile(entry.filePath)).length;
     const isBatchSave = embedded ? readyEntries.length > 1 : isBatch;
     const canAdd = readyEntries.length > 0 && readyEntries.every(entry => entry.info.canAdd);
     const emptySelection = embedded && !readyEntries.length;
@@ -172,6 +179,16 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         optionsRef.current = nextOptions;
         setOptions(nextOptions);
         onPreferencesChange?.(nextOptions);
+    };
+
+    const changeCoverScope = coverScope => {
+        if (busy || result || coverScope === options.coverScope) return;
+        imageRequestRef.current += 1;
+        setImageArrival(null);
+        setArrivalHighlight(0);
+        setImageLoading(false);
+        changeOptions({ coverScope });
+        imageRef.current = coverScope === 'individual' ? imagesRef.current.files[selectedPathRef.current] || null : imagesRef.current.group;
     };
 
     useEffect(() => attachCoverEditorSearchScroll(metadataResultsRef.current), [imageSource, metadataLoading, metadataSearch.results]);
@@ -246,8 +263,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     }, [imageEditTarget]);
 
     useEffect(() => {
-        onImageDropAvailabilityChange?.(!busy && !result && !helpOpen);
-    }, [busy, result, helpOpen, onImageDropAvailabilityChange]);
+        onImageDropAvailabilityChange?.(!busy && !result && !helpOpen && (!individualCovers || Boolean(filePath)));
+    }, [busy, result, helpOpen, individualCovers, filePath, onImageDropAvailabilityChange]);
 
     useEffect(() => {
         let cancelled = false;
@@ -269,8 +286,14 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
             setCurrentCover({ filePath: '', dataUrl: '' });
             if (!embedded) {
                 imageRef.current = null;
-                setImage(null);
+                imagesRef.current = { group: null, files: {} };
+                setImages(imagesRef.current);
                 setImageSource('local');
+            } else {
+                const targetPaths = new Set(nextEntries.map(entry => entry.filePath));
+                updateImages({ ...imagesRef.current, files: Object.fromEntries(
+                    Object.entries(imagesRef.current.files).filter(([path]) => targetPaths.has(path)),
+                ) });
             }
             if (!embedded || previousPath !== selectedPathRef.current) {
                 setSearchQuery(coverEditorSearchTitle(nextEntries[nextSelectedIndex]?.name));
@@ -367,6 +390,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     }, [imageSource, filePath, info?.version, info?.canSelectArchiveImage]);
 
     const selectEntry = async (entry, index) => {
+        if (busy) return;
         const requestId = ++coverRequestRef.current;
         if (selectedPathRef.current !== entry.filePath) {
             imageRequestRef.current += 1;
@@ -414,13 +438,24 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
 
     const releaseImage = imagePath => {
-        if (imagePath) void window.electronAPI.releaseCoverEditorImages?.({ imagePath })?.catch?.(() => {});
+        if (imagePath && ![imagesRef.current.group, ...Object.values(imagesRef.current.files)].some(value => value?.imagePath === imagePath)) {
+            void window.electronAPI.releaseCoverEditorImages?.({ imagePath })?.catch?.(() => {});
+        }
+    };
+
+    const updateImages = nextImages => {
+        const previousImages = imagesRef.current;
+        imagesRef.current = nextImages;
+        setImages(nextImages);
+        new Set([previousImages.group, ...Object.values(previousImages.files)].map(value => value?.imagePath)).forEach(releaseImage);
     };
 
     const updateImage = value => {
-        if (imageRef.current?.imagePath !== value?.imagePath) releaseImage(imageRef.current?.imagePath);
+        const current = imagesRef.current;
+        updateImages(optionsRef.current.coverScope === 'individual'
+            ? { ...current, files: { ...current.files, [selectedPathRef.current]: value } }
+            : { ...current, group: value });
         imageRef.current = value;
-        setImage(value);
     };
 
     const clearImage = () => {
@@ -467,7 +502,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
 
     const loadChosenImage = async (resolveImage, sourceDetails = {}) => {
-        if (savingRef.current || result) return;
+        if (savingRef.current || result || optionsRef.current.coverScope === 'individual' && !selectedPathRef.current) return;
         const requestId = ++imageRequestRef.current;
         setImageArrival(null);
         setArrivalHighlight(0);
@@ -772,7 +807,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
 
     const save = async () => {
-        if (!readyEntries.length || !image || busy || imageLoading || result || savingRef.current) return;
+        if (!readyEntries.length || missingCoverCount || busy || imageLoading || result || savingRef.current) return;
         savingRef.current = true;
         cancelRef.current = false;
         completedResultsRef.current = {};
@@ -796,8 +831,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
             version: entry.info.version,
             textContentHash: entry.info.textContentHash,
             targetEntry: entry.info.coverEntry,
-            imagePath: image.imagePath,
-            imageVersion: image.imageVersion,
+            imagePath: imageForFile(entry.filePath).imagePath,
+            imageVersion: imageForFile(entry.filePath).imageVersion,
             mode,
             renumber: Boolean(entry.info.canRenumber && renumber),
             backup,
@@ -916,6 +951,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
 
     const filenamePreviewEntry = entries.find(entry => entry.filePath === filenamePreviewPath);
     const filenamePreviewInfo = filenamePreviewEntry?.info;
+    const filenamePreviewImage = imageForFile(filenamePreviewPath);
     const filenamePreviewPages = filenamePreviewInfo?.pages || [];
     const filenamePreviewCoverEntry = filenamePreviewInfo?.coverEntry || filenamePreviewPages[0]?.name;
     const numberWidth = Math.max(4, String((filenamePreviewInfo?.pageCount || 0) + (mode === 'add' ? 1 : 0)).length);
@@ -939,7 +975,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const footerStatus = saving
         ? progress ? t('cover_editor_batch_progress', [progress.completed, progress.total]) : t('cover_editor_saving')
         : hasRunResult ? loggedStats || result?.batch ? resultCounts : [t('cover_editor_saved'), warningCount > 0 && t('cover_editor_count_warning', [warningCount])].filter(Boolean).join(' · ')
-            : canBackup && backup ? t('cover_editor_backup_hint') : '';
+            : individualCovers && missingCoverCount > 0 ? t('cover_editor_missing_covers', [missingCoverCount])
+                : canBackup && backup ? t('cover_editor_backup_hint') : '';
     const statusTone = saving ? 'is-working' : hasRunResult ? footerFailureCount > 0 ? 'has-error'
         : warningCount > 0 || footerCancelledCount > 0 ? 'has-warning' : 'is-success' : '';
     const showResultDetails = () => {
@@ -988,7 +1025,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                     const status = entry.error ? 'cover_editor_batch_inspect_failed'
                         : outcome?.cancelled ? 'cover_editor_batch_cancelled'
                             : outcome ? outcome.success ? 'cover_editor_status_saved' : 'cover_editor_status_failed'
-                                : entry.info ? 'cover_editor_batch_ready' : 'cover_editor_batch_pending';
+                                : entry.info ? individualCovers ? imageForFile(entry.filePath) ? 'cover_editor_cover_assigned' : 'cover_editor_cover_required'
+                                    : 'cover_editor_batch_ready' : 'cover_editor_batch_pending';
                     const name = entry.info?.name || entry.name;
                     const statusText = [t(status), hasResultWarning(outcome) && t('cover_editor_status_warning')].filter(Boolean).join(' · ');
                     return <tr key={entry.filePath} data-cover-file={entry.filePath}
@@ -1051,7 +1089,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 const status = entry.error ? 'cover_editor_batch_inspect_failed'
                     : outcome?.cancelled ? 'cover_editor_batch_cancelled'
                         : outcome ? outcome.success ? 'cover_editor_status_saved' : 'cover_editor_status_failed'
-                            : entry.info ? 'cover_editor_batch_ready' : 'cover_editor_batch_pending';
+                            : entry.info ? individualCovers ? imageForFile(entry.filePath) ? 'cover_editor_cover_assigned' : 'cover_editor_cover_required'
+                                : 'cover_editor_batch_ready' : 'cover_editor_batch_pending';
                 const warning = hasResultWarning(outcome);
                 const name = entry.info?.name || entry.name;
                 const expanded = Boolean(expandedFiles[entry.filePath]);
@@ -1255,6 +1294,14 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
             </button>}
             <fieldset className="cover-editor-options" disabled={busy || Boolean(result)} aria-label={embedded ? t('cover_editor_tool_options') : undefined}>
                 {!embedded && <legend className="cover-editor-section-title"><span aria-hidden="true">3</span>{t('cover_editor_operation')}</legend>}
+                <label className="cover-editor-scope">
+                    {t('cover_editor_scope')}
+                    <select value={options.coverScope} aria-label={t('cover_editor_scope')} aria-describedby={`${titleId}-scope-hint`}
+                        onChange={event => changeCoverScope(event.target.value)}>
+                        <option value="group">{t('cover_editor_scope_group')}</option>
+                        <option value="individual">{t('cover_editor_scope_individual')}</option>
+                    </select>
+                </label>
                 {canAdd || emptySelection ? <div className="cover-editor-modes">
                     <label><input type="radio" name={titleId} checked={mode === 'replace'} onChange={() => changeOptions({ mode: 'replace', renumber: false })} />{t('cover_editor_replace')}<small>{t('cover_editor_replace_hint')}</small></label>
                     <label><input type="radio" name={titleId} checked={mode === 'add'} onChange={() => changeOptions({ mode: 'add', renumber: true })} />{t('cover_editor_add')}<small>{t('cover_editor_add_hint')}</small></label>
@@ -1305,6 +1352,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                         <div className="cover-editor-tool-main">
                             <section ref={batchRef} id={`${titleId}-files`} className="cover-editor-tool-files" aria-label={t('cover_editor_tool_files')}>
                                 {optionsPanel}
+                                <p id={`${titleId}-scope-hint`} className="cover-editor-scope-hint">{t(individualCovers ? 'cover_editor_scope_individual_hint' : 'cover_editor_scope_group_hint')}</p>
                                 {embeddedFileList}
                                 {loading && <p className="cover-editor-note" role="status">{t('cover_editor_batch_inspecting', [inspectedCount, targets.length])}</p>}
                                 {inspectionFailureCount > 0 && <p className="cover-editor-note">{t('cover_editor_batch_inspect_hint')}</p>}
@@ -1332,6 +1380,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                             <div className="cover-editor-review">
                                 {comparisonPanel}
                                 {optionsPanel}
+                                <p id={`${titleId}-scope-hint`} className="cover-editor-scope-hint">{t(individualCovers ? 'cover_editor_scope_individual_hint' : 'cover_editor_scope_group_hint')}</p>
                             </div>
                         </div>
                     </>}
@@ -1357,7 +1406,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                     {saving && progress && <button type="button" onClick={cancelRemaining} disabled={cancelRequested}>{t('cover_editor_batch_cancel_remaining')}</button>}
                     {!embedded && <button type="button" onClick={close} disabled={saving}>{t(result ? 'cover_editor_close' : 'cover_editor_cancel')}</button>}
                     {embedded && result && <button type="button" onClick={onReset} disabled={busy || !onReset}>{t('cover_editor_tool_reset')}</button>}
-                    {!result && <button type="button" className="cover-editor-save" onClick={save} disabled={busy || imageLoading || !readyEntries.length || !image}>{saving ? t('cover_editor_saving') : isBatchSave ? t('cover_editor_batch_save', [readyEntries.length]) : t('cover_editor_save')}</button>}
+                    {!result && <button type="button" className="cover-editor-save" onClick={save} disabled={busy || imageLoading || !readyEntries.length || missingCoverCount > 0}>{saving ? t('cover_editor_saving') : isBatchSave ? t('cover_editor_batch_save', [readyEntries.length]) : t('cover_editor_save')}</button>}
                 </footer>
             </section>
             {imageEditTarget && <React.Suspense fallback={<div className="cover-editor-help-backdrop" role="status">{t('cover_editor_loading')}</div>}>
@@ -1395,12 +1444,12 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                                 <tbody>
                                     {mode === 'add' && <tr>
                                         <td>{t('cover_editor_new')}</td>
-                                        <td>{'0'.repeat(numberWidth)}{image?.extension || ''}</td>
+                                        <td>{'0'.repeat(numberWidth)}{filenamePreviewImage?.extension || ''}</td>
                                     </tr>}
                                     {filenamePreviewPages.map((page, index) => <tr key={page.name}>
                                         <td>{page.name}</td>
-                                        <td>{String(index + (mode === 'add' ? 1 : 0)).padStart(numberWidth, '0')}{mode === 'replace' && page.name === filenamePreviewCoverEntry && image
-                                            ? image.extension : page.name.match(/\.[^.\/]+$/)?.[0] || ''}</td>
+                                        <td>{String(index + (mode === 'add' ? 1 : 0)).padStart(numberWidth, '0')}{mode === 'replace' && page.name === filenamePreviewCoverEntry && filenamePreviewImage
+                                            ? filenamePreviewImage.extension : page.name.match(/\.[^.\/]+$/)?.[0] || ''}</td>
                                     </tr>)}
                                 </tbody>
                             </table>
@@ -1408,7 +1457,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                         {filenamePreviewPages.length < filenamePreviewInfo.pageCount && <p className="cover-editor-filename-note">
                             {t('cover_editor_filename_preview_count', [filenamePreviewPages.length, filenamePreviewInfo.pageCount])}
                         </p>}
-                        {!image && <p className="cover-editor-filename-note">{t('cover_editor_filename_preview_image_hint')}</p>}
+                        {!filenamePreviewImage && <p className="cover-editor-filename-note">{t('cover_editor_filename_preview_image_hint')}</p>}
                     </div>
                     <footer className="cover-editor-footer">
                         <button type="button" onClick={() => setFilenamePreviewPath('')}>{t('cover_editor_close')}</button>
