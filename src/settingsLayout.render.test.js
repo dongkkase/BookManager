@@ -36,7 +36,7 @@ async function until(predicate, message) {
     }
     throw new Error(message);
 }
-const categories = ['basic', 'processing', 'folder', 'viewer', 'api', 'ttsApi', 'privacy'];
+const categories = ['basic', 'processing', 'folder', 'viewer', 'api', 'ttsApi', 'privacy', 'licenses'];
 const apiSections = ['preferred', 'providers', 'ai', 'tags', 'cache'];
 const providerSources = [
     '리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine',
@@ -290,7 +290,7 @@ async function applySettings(context) {
 async function runInteractions() {
     await until(() => panel(), 'Settings did not mount');
     check(document.querySelector('[role="tablist"]'), 'Category navigation needs tablist semantics');
-    check(document.querySelectorAll('[role="tab"]').length === categories.length, 'Expected seven settings categories');
+    check(document.querySelectorAll('[role="tab"]').length === categories.length, 'Expected eight settings categories');
     for (const id of categories) {
         await navigate(id);
         checkTabSemantics(id);
@@ -385,8 +385,8 @@ async function runInteractions() {
     tab('basic').focus();
     for (const [key, id] of [
         ['ArrowDown', 'processing'], ['ArrowRight', 'folder'], ['ArrowUp', 'processing'],
-        ['ArrowLeft', 'basic'], ['End', 'privacy'], ['ArrowRight', 'basic'],
-        ['ArrowLeft', 'privacy'], ['Home', 'basic'],
+        ['ArrowLeft', 'basic'], ['End', 'licenses'], ['ArrowRight', 'basic'],
+        ['ArrowLeft', 'licenses'], ['Home', 'basic'],
     ]) {
         document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
         await until(() => isActive(id), key + ' did not select ' + id);
@@ -1129,6 +1129,16 @@ async function runLayout(scale, selectedLanguage = 'ko') {
         ? apiSections.map(section => ({ id, section })) : [{ id }]);
     for (const { id, section } of pages) {
         await navigate(id);
+        if (id === 'licenses') {
+            check(panel().querySelector('.settings-license-badge')?.textContent === 'MIT License', context + ': app license missing');
+            check(panel().querySelector('.settings-license-copyright')?.textContent.includes('dongkkase'), context + ': copyright missing');
+            check(!panel().textContent.includes('settings.licenses.'), context + ': license translation missing');
+            for (const notice of panel().querySelectorAll('.settings-license-notice')) {
+                notice.querySelector('summary').click();
+                check(notice.open && notice.querySelector('pre').textContent.trim(), context + ': license notice did not expand');
+            }
+            await frame();
+        }
         if (section) {
             await navigateApiSection(section);
             checkApiNavigationLayout(context + ':' + section, section);
@@ -1257,7 +1267,7 @@ app.whenReady().then(async () => {
             if (${Boolean(process.env.BOOKMANAGER_SETTINGS_SCREENSHOTS)}) {
                 await fs.writeFile('/tmp/bookmanager-settings-' + width + '-' + height + '-' + scale + '.png', (await window.webContents.capturePage()).toPNG());
                 if (width === 1280 && scale === 100) {
-                    for (const category of ['processing', 'viewer', 'api', 'ttsApi', 'folder']) {
+                    for (const category of ['processing', 'viewer', 'api', 'ttsApi', 'folder', 'licenses']) {
                         console.log('SETTINGS_RENDER_CAPTURE=' + width + ':' + category);
                         await window.webContents.executeJavaScript('window.settingsLayoutTests.navigate(' + JSON.stringify(category) + ')');
                         if (category === 'folder') {
@@ -1287,6 +1297,9 @@ app.whenReady().then(async () => {
                     await window.webContents.executeJavaScript('document.getElementById("settings-secret-google").closest(".settings-provider-card").scrollIntoView({ block: "center" }); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
                     await fs.writeFile('/tmp/bookmanager-settings-' + width + '-' + height + '-' + scale + '-api-provider-keys.png', (await window.webContents.capturePage()).toPNG());
                 }
+                await window.webContents.executeJavaScript('window.settingsLayoutTests.navigate("licenses")');
+                await window.webContents.executeJavaScript('document.querySelector(".settings-license-notice summary").click(); new Promise(resolve => requestAnimationFrame(resolve))');
+                await fs.writeFile('/tmp/bookmanager-settings-' + width + '-' + height + '-' + scale + '-licenses-expanded.png', (await window.webContents.capturePage()).toPNG());
             }
         }
     }
@@ -1325,7 +1338,7 @@ app.whenReady().then(async () => {
         });
         assert.equal(output.code, 0, output.result);
         const report = JSON.parse(output.result.match(/SETTINGS_LAYOUT_RESULT=(.+)/)[1]);
-        assert.equal(report.interactions.categories, 7);
+        assert.equal(report.interactions.categories, 8);
         assert.equal(report.interactions.apiSections, 5);
         assert.equal(report.interactions.manualFocusChecks, 4);
         assert.deepEqual(report.apply, { initialClean: true, uiOnlyClean: true, revertedClean: true, duplicateBlocked: true, pendingEditsRetained: true, languageRetained: true, retry: true, fileAssociationGuards: true, partialBaseline: true });
@@ -1340,7 +1353,7 @@ app.whenReady().then(async () => {
             pointerSelections: ['list', 'preview', 'row'].map(source => ({ source, trustedPointer: true, retainsOpenEditor: true })),
         });
         assert.equal(report.layouts.length, 10);
-        assert.ok(report.layouts.every(layout => layout.measurements.length === 11));
+        assert.ok(report.layouts.every(layout => layout.measurements.length === 12));
         t.diagnostic(JSON.stringify(report));
     } finally {
         await server?.close();

@@ -16,12 +16,16 @@ export function TooltipPopup({ target, label, id }) {
         const margin = 8;
         const center = anchor.left + anchor.width / 2;
         const left = Math.max(margin, Math.min(center - box.width / 2, window.innerWidth - box.width - margin));
-        const top = Math.max(margin, anchor.top - box.height - margin);
+        const placement = anchor.top - box.height - margin >= margin ? 'top' : 'bottom';
+        const top = placement === 'top'
+            ? anchor.top - box.height - margin
+            : Math.max(margin, Math.min(anchor.bottom + margin, window.innerHeight - box.height - margin));
         setPosition({
             left,
             top,
+            placement,
             arrow: Math.max(10, Math.min(center - left, box.width - 10)),
-            showArrow: top + box.height < anchor.top,
+            showArrow: placement === 'top' ? top + box.height < anchor.top : top > anchor.bottom,
         });
     }, [target, label]);
 
@@ -42,6 +46,7 @@ export function TooltipPopup({ target, label, id }) {
             role="tooltip"
             className="app-tooltip"
             data-arrow={position?.showArrow ? 'true' : undefined}
+            data-placement={position?.placement}
             style={{ left: position?.left, top: position?.top, '--tooltip-arrow-left': `${position?.arrow || 0}px`, visibility: position ? 'visible' : 'hidden' }}
         >
             {label}

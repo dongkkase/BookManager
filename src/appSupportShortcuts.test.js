@@ -123,6 +123,7 @@ test('메타데이터 트리 이동과 삭제도 Git스타의 실제 열림 상�
         selectTreeNode: node => calls.push(`select:${node.id}`),
         setGroupCollapsed: (_group, collapsed) => calls.push(`collapse:${collapsed}`),
         setSelectedFileId: () => {}, setSelectedGroup: () => {}, adjacentSelectionAfterRemoval,
+        setEpubImagesByFilePath: update => update({}),
         setFileList: update => calls.push(update([{ id: 'one' }, { id: 'two' }]).map(item => item.id)),
     };
     const tree = loadHandler(metadataSource, 'handleMetadataTreeKeyDown', "window.addEventListener('keydown', handleMetadataTreeKeyDown", scope, metadataHelpers());

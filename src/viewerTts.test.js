@@ -34,7 +34,7 @@ test('TTS 컨트롤은 리더 문서에서만 표시되고 현재 페이지 텍�
     assert.match(viewerSource, /\{isReaderDocument && \(\s*<div className="viewer-tool-cluster viewer-tts-cluster"/);
 });
 
-test('뷰어 툴바 매뉴얼은 TTS 플로팅 메뉴 사용법을 안내한다', () => {
+test('뷰어 툴바 매뉴얼은 TTS 도구 모음 사용법을 안내한다', () => {
     assert.match(viewerSource, /text: 'TTS', title: viewerText\('viewer\.tts\.title', 'TTS'\)/);
     assert.match(viewerSource, /viewer\.help\.toolbar_tts/);
     for (const language of ['ko', 'en', 'ja']) {
@@ -71,22 +71,15 @@ test('TTS 텍스트는 괄호 안의 내용과 특수문자를 제거한다', ()
     assert.equal(normalizeTtsTextForTest('`속마음` “대사”', true), '`속마음` “대사”');
 });
 
-test('TTS 메뉴는 툴바 버튼으로 여는 중앙 상단 플로팅 패널이다', () => {
+test('TTS 메뉴는 기존 툴바 공간 안에서 재생 조작부를 표시한다', () => {
     assert.match(viewerSource, /viewer-tts-toggle-button/);
     assert.doesNotMatch(viewerSource, /<FaIcon name="towerBroadcast" \/>/);
     assert.match(viewerSource, /aria-haspopup="dialog"/);
-    assert.match(viewerSource, /className="viewer-tts-actions"/);
+    assert.match(viewerSource, /className=\{`viewer-tts-actions /);
     assert.doesNotMatch(ttsControlSource, /viewer-tts-status|ttsStatusLabel|pageLabel/);
     assert.match(viewerSource, /document\.querySelector\('\.viewer-tts-menu'\)/);
     assert.match(viewerCss, /\.viewer-tts-control \{/);
-    assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*position:\s*fixed/);
-    assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*left:\s*50%/);
-    assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*width:\s*max-content/);
-    assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*transform:\s*translateX\(-50%\)/);
-    assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*display:\s*flex/);
-    assert.match(viewerCss, /\.viewer-tts-menu \{[\s\S]*flex-wrap:\s*nowrap/);
     assert.match(viewerCss, /\.viewer-tts-actions \{/);
-    assert.match(viewerCss, /grid-template-columns:\s*repeat\(5, 30px\) minmax\(140px, 168px\) 30px/);
     assert.match(ttsControlSource, /const \[rateOpen, setRateOpen\]/);
     assert.match(ttsControlSource, /className="viewer-tts-rate-popover"/);
     assert.match(viewerSource, /import voiceSelectionIcon from '\.\/images\/voice_selection\.svg'/);

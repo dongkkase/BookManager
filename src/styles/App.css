@@ -1526,6 +1526,78 @@ body.is-resizing-panel * {
     min-height: 0;
 }
 
+.settings-license-heading {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.settings-license-badge {
+    padding: 5px 9px;
+    border: 1px solid #496277;
+    border-radius: 6px;
+    background: #293c4c;
+    color: #c4e2fa;
+    font-size: var(--font-sm);
+    font-weight: 600;
+}
+
+.settings-license-copyright {
+    color: #c3cad4;
+    font-size: var(--font-xs);
+}
+
+.settings-license-notices {
+    display: grid;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.settings-license-panel .settings-help + .settings-license-notice {
+    margin-top: 14px;
+}
+
+.settings-license-notice {
+    min-width: 0;
+    border: 1px solid #414750;
+    border-radius: 6px;
+    background: #202328;
+}
+
+.settings-license-notice summary {
+    padding: 11px 12px;
+    border-radius: 5px;
+    color: #e1e7ef;
+    font-size: var(--font-sm);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.settings-license-notice summary:hover {
+    background: #2d333c;
+}
+
+.settings-license-notice summary:focus-visible {
+    outline: 2px solid #79b8e8;
+    outline-offset: 2px;
+}
+
+.settings-license-text {
+    margin: 0;
+    padding: 14px;
+    border-top: 1px solid #414750;
+    color: #c5cdd8;
+    font-family: var(--font-mono, Consolas, monospace);
+    font-size: var(--font-xs);
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
 .settings-footer {
     flex: 0 0 auto;
     align-items: center;

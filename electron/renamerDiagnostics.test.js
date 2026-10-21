@@ -7,7 +7,8 @@ import test from 'node:test';
 import { getOperationErrors } from './operationDiagnostics.js';
 import { observeOperation } from './observabilityOperations.js';
 import { createTelemetry } from './telemetry.js';
-import { executeRenamer } from './tasks/renamerTask.js';
+import { replaceZipEntry } from './core/zipArchive.js';
+import { analyzeRenamerInputs, executeRenamer } from './tasks/renamerTask.js';
 
 function setup(t, script = '') {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-renamer-diagnostics-'));
@@ -141,12 +142,82 @@ ${SUCCESS_TOOL}`);
         assert.equal(errors[0].telemetryStage, stage);
         assert.equal(errors[0].telemetryTool, '7z');
         assert.equal(errors[0].exitCode, 2);
+        assert.equal(errors[0].message, 'private process output');
+        assert.equal(errors[0].telemetryReason, undefined);
         assert.equal(events[0].tags.error_code, 'PROCESS_FAILED');
         assert.equal(events[0].tags.error_stage, stage);
         assert.equal(events[0].tags.error_tool, '7z');
         assert.equal(events[0].tags.exit_code, 2);
+        assert.equal(events[0].tags.error_reason, undefined);
         assert.ok(events[0].exception.values[0].stacktrace.frames.some(frame => frame.filename === 'app:///electron/tasks/renamerTask.js'));
     }
+});
+
+test('quiet 7z failures keep a bounded UTF-8 tail and report only the recognized reason', requiresExecutableScript, async t => {
+    for (const [command, overrides] of [
+        ['rn', {}],
+        ['x', { target_format: 'cbz' }],
+        ['a', { target_format: 'cbz' }],
+    ]) {
+        const fixture = setup(t, `
+if (process.argv[2] === ${JSON.stringify(command)}) {
+    const fs = require('node:fs');
+    const args = process.argv.slice(2);
+    const encodingIndex = args.indexOf('-sccUTF-8');
+    if (encodingIndex < 0 || (args.includes('--') && encodingIndex > args.indexOf('--'))) process.exit(7);
+    const reason = Buffer.from('ERROR: 디스크 공간이 부족합니다. : private process output\\n');
+    fs.writeSync(2, reason.subarray(0, 8));
+    setTimeout(() => {
+        fs.writeSync(2, reason.subarray(8));
+        fs.writeSync(2, 'private process output\\n'.repeat(2000));
+        fs.writeSync(1, 'private process output\\n'.repeat(2000));
+        process.exit(2);
+    }, 25);
+} else {
+    ${SUCCESS_TOOL}
+}`);
+        const { errors, events, body } = await observeResult(t, fixture, overrides);
+        assert.equal(errors[0].exitCode, 2);
+        assert.equal(errors[0].message.length, 16 * 1024);
+        assert.equal(errors[0].telemetryReason, 'disk-full');
+        assert.equal(events[0].tags.error_reason, 'disk-full');
+        assert.doesNotMatch(body, /디스크 공간|private process output/);
+    }
+});
+
+test('7z list output remains complete beyond the quiet-process output limit', requiresExecutableScript, async t => {
+    const fixture = setup(t, `
+const fs = require('node:fs');
+for (let index = 0; index < 1200; index += 1) {
+    fs.writeSync(1, 'Path = page-' + index + '.jpg\\nSize = 1\\nAttributes = A\\n\\n');
+}`);
+    const filepath = path.join(fixture.root, 'Large listing.7z');
+    fs.writeFileSync(filepath, 'archive inspected by fake tool');
+    const result = await analyzeRenamerInputs([filepath], { sevenZExe: fixture.options.sevenZExe });
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].entries.length, 1200);
+    const names = new Set(result.items[0].entries.map(entry => entry.originalPath));
+    assert.equal(names.has('page-0.jpg'), true);
+    assert.equal(names.has('page-1199.jpg'), true);
+});
+
+test('staged rename validation keeps the source when a tool reports success without swapping the payloads', requiresExecutableScript, async t => {
+    const fixture = setup(t, SUCCESS_TOOL);
+    fs.writeFileSync(fixture.item.filepath, Buffer.alloc(0));
+    await replaceZipEntry(fixture.item.filepath, '001.jpg', Buffer.from('private page one'));
+    await replaceZipEntry(fixture.item.filepath, '002.jpg', Buffer.from('private page two'));
+    fixture.item.entries.push({ originalPath: '002.jpg', newName: '001.jpg' });
+    const original = fs.readFileSync(fixture.item.filepath);
+    const { result, errors, events, body } = await observeResult(t, fixture, { deleteOriginal: true });
+    assert.equal(result.stats.success.length, 0);
+    assert.deepEqual(result.outputFiles, []);
+    assert.equal(errors[0].code, 'ARCHIVE_RENAME_MISMATCH');
+    assert.equal(errors[0].telemetryStage, 'direct-rename');
+    assert.equal(events[0].tags.error_code, 'ARCHIVE_RENAME_MISMATCH');
+    assert.equal(events[0].tags.error_stage, 'direct-rename');
+    assert.equal(body.includes(errors[0].message), false);
+    assert.deepEqual(fs.readFileSync(fixture.item.filepath), original);
+    assert.equal(fs.readdirSync(fixture.root).some(name => name.includes('RenameOnly') || name.endsWith('.rename-list.txt')), false);
 });
 
 test('renamer retains spawn failure identity information without mistaking it for a missing input file', async t => {

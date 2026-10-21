@@ -154,6 +154,32 @@ test('language changes respect disabled usage statistics and apply when re-enabl
     assert.equal(event.properties.app_language, 'ja');
 });
 
+test('settings diagnostics distinguish failure stages without transmitting settings or original errors', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+    const stages = ['config-normalize', 'config-write', 'config-replace', 'config-maintenance', 'config-notify'];
+    for (const stage of stages) {
+        const error = Object.assign(new Error('private settings /Users/private/config.json token=secret'), {
+            code: stage === 'config-replace' ? 'EPERM' : 'CONFIG_SAVE_FAILED',
+            syscall: stage === 'config-replace' ? 'rename' : undefined,
+            telemetryStage: stage,
+            cause: new Error('private original error'),
+            config: { api_keys: { google: 'secret-key' } },
+        });
+        telemetry.reportTelemetryError(error, { source: 'ipc', ipc_channel: 'config:save' });
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, stages.length);
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    for (const [index, event] of events.entries()) {
+        assert.equal(event.tags.error_stage, stages[index]);
+        assert.equal(event.tags.ipc_channel, 'config:save');
+        assert.ok(event.fingerprint.includes(`error_stage:${stages[index]}`));
+    }
+    assert.equal(events[2].tags.error_code, 'EPERM');
+    assert.equal(events[2].tags.syscall, 'rename');
+    assert.doesNotMatch(requests.map(request => request.body).join('\n'), /private|secret|api_keys|cause/);
+});
+
 test('TTS analytics only accepts known engine/model pairs with a reader format', async t => {
     const { telemetry, requests } = setup(t, {}, { telemetry_usage_stats: true });
     const event = { event: 'viewer_tts_used', feature: 'viewer-tts', format: 'epub', tts_engine: 'openai', tts_model: 'tts-1' };
@@ -663,6 +689,69 @@ test('unresponsive diagnostics reject unknown values without changing unrelated 
         'bookmanager', 'app', 'render-process-gone', 'Error', 'unknown', 'window_type:main', 'app_lifecycle:running',
     ]);
     assert.doesNotMatch(requests.map(request => request.body).join(''), /private|Secret Book|process_reason|process_type/);
+});
+
+test('main unresponsive reports retain only fixed menu and task state without changing existing groups', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    const contexts = [
+        { window_type: 'main', menu: 'folder', task_state: 'busy' },
+        { window_type: 'main', menu: 'renamer', task_state: 'idle' },
+        { window_type: 'main', menu: 'Secret Book', task_state: '/private/task' },
+        { window_type: 'viewer', task_state: 'busy' },
+    ];
+    for (const context of contexts) {
+        telemetry.reportTelemetryError({}, {
+            source: 'renderer-unresponsive', app_lifecycle: 'running', ...context,
+            path: '/private/book', settings: { api_keys: 'secret' },
+        });
+    }
+    telemetry.reportTelemetryError({}, { source: 'ipc', window_type: 'main', task_state: 'busy' });
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, 5);
+    assert.equal(events[0].tags.menu, 'folder');
+    assert.equal(events[0].tags.task_state, 'busy');
+    assert.equal(events[1].tags.menu, 'renamer');
+    assert.equal(events[1].tags.task_state, 'idle');
+    assert.deepEqual(events[0].fingerprint, events[1].fingerprint);
+    assert.deepEqual(events[0].fingerprint, events[2].fingerprint);
+    assert.equal(events[2].tags.menu, undefined);
+    for (const event of events.slice(2)) assert.equal(event.tags.task_state, undefined);
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /private|Secret Book|settings|api_keys|secret/);
+});
+
+test('main renderer memory failures retain fixed runtime context without changing failure details or groups', async t => {
+    const { telemetry, requests } = setup(t, { platform: 'win32' }, { telemetry_error_reports: true });
+    const contexts = [
+        { window_type: 'main', menu: 'metadata', task_state: 'busy' },
+        { window_type: 'main', menu: 'folder', task_state: 'idle' },
+        { window_type: 'main', menu: '/private/book', task_state: 'secret-task' },
+        { window_type: 'viewer', task_state: 'busy' },
+        { source: 'child-process-gone', window_type: 'main', task_state: 'busy' },
+    ];
+    for (const context of contexts) {
+        telemetry.reportTelemetryError({ reason: 'oom', exitCode: -536870904, message: 'Secret Book' }, {
+            source: 'render-process-gone', app_lifecycle: 'running', ...context,
+        });
+    }
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body.split('\n')[2]));
+    assert.equal(events.length, contexts.length);
+    assert.equal(events[0].tags.menu, 'metadata');
+    assert.equal(events[0].tags.task_state, 'busy');
+    assert.equal(events[1].tags.menu, 'folder');
+    assert.equal(events[1].tags.task_state, 'idle');
+    assert.deepEqual(events[0].fingerprint, events[1].fingerprint);
+    assert.deepEqual(events[0].fingerprint, events[2].fingerprint);
+    assert.equal(events[2].tags.menu, undefined);
+    for (const event of events.slice(2)) assert.equal(event.tags.task_state, undefined);
+    for (const event of events) {
+        assert.equal(event.exception.values[0].value, 'Error: Process ran out of memory');
+        assert.equal(event.tags.process_reason, 'oom');
+        assert.equal(event.tags.exit_code, -536870904);
+        assert.equal(event.tags.app_lifecycle, 'running');
+    }
+    assert.doesNotMatch(requests.map(request => request.body).join(''), /private|secret|Secret Book/);
 });
 
 test('control exit summaries are Windows-specific and never replace explicit crash or memory failure reasons', async t => {

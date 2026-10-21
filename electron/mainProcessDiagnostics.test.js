@@ -4,26 +4,32 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { createExitDialogOptions, shouldProceedWithExit } from './exitPolicy.js';
+import { createExitDialogOptions, normalizeRuntimeState, shouldProceedWithExit } from './exitPolicy.js';
 import { attachWindowSafetyHandlers, installProcessSafetyHandlers, isExpectedProcessExit } from './processSafety.js';
 
 const mainSource = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+const ipcSource = readFileSync(new URL('./ipcHandlers.js', import.meta.url), 'utf8');
 
-function sourceSection(start, end) {
-    const startIndex = mainSource.indexOf(start);
-    const endIndex = mainSource.indexOf(end, startIndex);
+function sourceSection(start, end, source = mainSource) {
+    const startIndex = source.indexOf(start);
+    const endIndex = source.indexOf(end, startIndex);
     assert.ok(startIndex >= 0 && endIndex > startIndex, `Missing main process section: ${start}`);
-    return mainSource.slice(startIndex, endIndex);
+    return source.slice(startIndex, endIndex);
 }
 
-function harness({ working = false, dialogResponse = 1, deferDialog = false } = {}) {
+function harness({ working = false, dialogResponse = 1, deferDialog = false, observedRuntime = true, runtimeLookupFails = false } = {}) {
     const app = new EventEmitter();
     const windows = [];
     const reports = [];
     const localReports = [];
     const pendingHandlers = [];
     const timers = new Map();
-    const runtimeState = { isWorking: working, language: 'ko' };
+    const runtimeState = { isWorking: working, language: 'ko', activeTab: 'folder' };
+    const runtimeStates = new Map(observedRuntime ? [[1, runtimeState]] : []);
+    const getRuntimeState = vm.runInNewContext(
+        `({ ${sourceSection('    getRuntimeState(', '    cancelAll(', ipcSource)} }).getRuntimeState`,
+        { runtimeStates, normalizeRuntimeState },
+    );
     let timerId = 0;
     let resolveDialog;
     let cancelledTasks = 0;
@@ -95,10 +101,13 @@ function harness({ working = false, dialogResponse = 1, deferDialog = false } = 
         flushTelemetry: async () => {},
         testConfigManager: { config: {}, updateConfig() {} },
         testIpcController: {
-            getRuntimeState: () => runtimeState,
+            getRuntimeState: (...args) => {
+                if (runtimeLookupFails) throw new Error('Runtime state lookup failed');
+                return getRuntimeState(...args);
+            },
             cancelAll: () => { cancelledTasks += 1; },
             waitForIdle: async () => {},
-            clear() {},
+            clear: ownerId => runtimeStates.delete(ownerId),
         },
         testViewerController: {
             prepareForAppQuit: () => { preparedViewers += 1; },
@@ -119,11 +128,12 @@ function harness({ working = false, dialogResponse = 1, deferDialog = false } = 
     main.createMainWindow({});
 
     return {
-        app, windows, reports, localReports, timers, runtimeState,
+        app, windows, reports, localReports, timers, runtimeState, runtimeStates, getRuntimeState,
         get window() { return windows.at(-1); },
         get cancelledTasks() { return cancelledTasks; },
         get preparedViewers() { return preparedViewers; },
         isShuttingDown: main.isAppShuttingDown,
+        reportProcessFault: main.reportProcessFault,
         answerDialog: response => resolveDialog(response),
         recreate: () => app.emit('activate'),
         async settle() {
@@ -152,6 +162,7 @@ test('main unresponsive reports identify the running window during pending and c
     for (const report of h.reports) {
         assert.deepEqual(report.context, {
             source: 'renderer-unresponsive', app_lifecycle: 'running', window_type: 'main',
+            menu: 'folder', task_state: 'busy',
         });
         assert.deepEqual(report.details, {});
     }
@@ -167,6 +178,7 @@ test('main unresponsive reports retain confirmed shutdown state and reset for a 
     h.window.webContents.emit('unresponsive');
     assert.deepEqual(h.reports[0].context, {
         source: 'renderer-unresponsive', app_lifecycle: 'quitting', window_type: 'main',
+        menu: 'folder', task_state: 'idle',
     });
     h.window.finishClose();
     h.recreate();
@@ -179,12 +191,126 @@ test('main unresponsive reports retain confirmed shutdown state and reset for a 
     assert.equal(h.timers.size, 0);
 });
 
+test('main unresponsive diagnostics use the latest observed menu and task state', () => {
+    const h = harness();
+    h.runtimeState.activeTab = 'renamer';
+    h.runtimeState.isWorking = true;
+    h.window.webContents.emit('unresponsive');
+    h.runtimeState.activeTab = 'tools';
+    h.runtimeState.isWorking = false;
+    h.window.webContents.emit('unresponsive');
+    assert.deepEqual(h.reports.map(report => ({
+        menu: report.context.menu,
+        task_state: report.context.task_state,
+    })), [
+        { menu: 'renamer', task_state: 'busy' },
+        { menu: 'tools', task_state: 'idle' },
+    ]);
+    assert.equal(h.timers.size, 0);
+    assert.equal(h.window.reloads, 0);
+});
+
+test('unobserved main runtime state is omitted while close flow retains its default state', () => {
+    const h = harness({ observedRuntime: false });
+    assert.equal(h.getRuntimeState(h.window.webContents.id, { allowDefault: false }), null);
+    assert.deepEqual(h.getRuntimeState(h.window.webContents.id), {
+        isWorking: false, language: 'ko', activeTab: 'folder',
+    });
+    h.window.webContents.emit('unresponsive');
+    h.window.webContents.emit('render-process-gone', {}, { reason: 'oom', exitCode: -536870904 });
+    assert.deepEqual(h.reports.map(report => report.context), [
+        { source: 'renderer-unresponsive', app_lifecycle: 'running', window_type: 'main' },
+        { source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main' },
+    ]);
+});
+
+test('late main renderer faults from a closed window cannot inherit replacement state', async () => {
+    const h = harness();
+    const oldWindow = h.window;
+    oldWindow.close();
+    await h.settle();
+    oldWindow.finishClose();
+    h.recreate();
+    h.runtimeStates.set(h.window.webContents.id, {
+        activeTab: 'metadata', isWorking: true, language: 'ko',
+    });
+    oldWindow.webContents.emit('unresponsive');
+    oldWindow.webContents.emit('render-process-gone', {}, { reason: 'oom', exitCode: -536870904 });
+    h.window.webContents.emit('unresponsive');
+    h.window.webContents.emit('render-process-gone', {}, { reason: 'oom', exitCode: -536870904 });
+    assert.deepEqual(h.reports.slice(0, 2).map(report => report.context), [
+        { source: 'renderer-unresponsive', app_lifecycle: 'running', window_type: 'main' },
+        { source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main' },
+    ]);
+    for (const report of h.reports.slice(2)) {
+        assert.equal(report.context.menu, 'metadata');
+        assert.equal(report.context.task_state, 'busy');
+    }
+});
+
+test('runtime lookup failure still reports original main renderer faults', () => {
+    const h = harness({ runtimeLookupFails: true });
+    assert.doesNotThrow(() => h.window.webContents.emit('unresponsive'));
+    assert.doesNotThrow(() => h.window.webContents.emit('render-process-gone', {}, { reason: 'oom', exitCode: -536870904 }));
+    assert.deepEqual(h.reports.map(report => report.context), [
+        { source: 'renderer-unresponsive', app_lifecycle: 'running', window_type: 'main' },
+        { source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main' },
+    ]);
+    assert.equal(h.localReports.length, 2);
+});
+
+test('process reports forward selected runtime diagnostics only for main renderer faults', () => {
+    const h = harness();
+    const context = { menu: 'tools', task_state: 'busy', privatePath: '/private/book.txt', source: 'viewer' };
+    h.reportProcessFault('renderer-unresponsive', {}, context);
+    h.reportProcessFault('render-process-gone', {}, context);
+    h.reportProcessFault('child-process-gone', {}, context);
+    h.reportProcessFault('uncaughtException', {}, context);
+    assert.deepEqual(h.reports.map(report => report.context), [
+        {
+            source: 'renderer-unresponsive', app_lifecycle: 'running', window_type: 'main',
+            menu: 'tools', task_state: 'busy',
+        },
+        {
+            source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main',
+            menu: 'tools', task_state: 'busy',
+        },
+        { source: 'child-process-gone', app_lifecycle: 'running' },
+        { source: 'uncaughtException' },
+    ]);
+});
+
+test('main renderer OOM retains original details and latest runtime diagnostics with one recovery', () => {
+    const h = harness();
+    h.runtimeState.activeTab = 'renamer';
+    h.runtimeState.isWorking = true;
+    const details = { reason: 'oom', exitCode: -536870904 };
+    h.window.webContents.emit('render-process-gone', {}, details);
+    assert.equal(h.reports[0].details, details);
+    assert.deepEqual(h.reports[0].context, {
+        source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main',
+        menu: 'renamer', task_state: 'busy',
+    });
+    assert.equal(h.timers.size, 1);
+    h.runTimers();
+    assert.equal(h.window.reloads, 1);
+    assert.equal(h.getRuntimeState(h.window.webContents.id, { allowDefault: false }), h.runtimeState);
+    h.window.webContents.emit('render-process-gone', {}, details);
+    assert.equal(h.reports[1].details, details);
+    assert.equal(h.timers.size, 0);
+    assert.equal(h.window.reloads, 1);
+    assert.equal(h.cancelledTasks, 0);
+});
+
 test('main renderer control exits while running retain diagnostics and trigger one recovery', () => {
     const h = harness();
     h.window.webContents.emit('render-process-gone', {}, controlExit);
     assert.deepEqual(h.reports, [{
         details: controlExit,
-        context: { source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main' },
+        context: {
+            source: 'render-process-gone', app_lifecycle: 'running', window_type: 'main',
+            menu: 'folder', task_state: 'idle',
+        },
     }]);
     assert.equal(h.localReports.length, 1);
     assert.equal(h.timers.size, 1);

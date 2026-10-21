@@ -73,6 +73,81 @@ test('direct rename lists preserve at signs, Unicode, spaces and quotes across b
     await assertRenamed(f, result, new Map(entries.map(entry => [entry.newName, entry.originalPath])));
 });
 
+for (const [label, extension, prefix, destination] of [
+    ['chain', '.zip', '', index => index + 1],
+    ['cycle with literal at signs', '.cbz', '@', index => (index + 1) % 22],
+    ['swap across batches', '.zip', '', index => index === 0 ? 21 : index === 21 ? 0 : `new-${index}`],
+]) {
+    test(`direct rename preserves every payload in a 22-entry ${label}`, requires7z, async t => {
+        const names = Array.from({ length: 22 }, (_, index) => `${prefix}${index}.jpg`);
+        const f = await fixture(t, [...names, 'ComicInfo.xml'], extension);
+        const entries = names.map((originalPath, index) => ({ originalPath, newName: `${prefix}${destination(index)}.jpg` }));
+        const result = await f.run(entries);
+        const expected = new Map(entries.map(entry => [entry.newName, entry.originalPath]));
+        expected.set('ComicInfo.xml', 'ComicInfo.xml');
+        await assertRenamed(f, result, expected);
+    });
+}
+
+test('staged renames preserve case-only changes and mixed-case swaps', requires7z, async t => {
+    for (const entries of [
+        [{ originalPath: 'Cover.JPG', newName: 'cover.JPG' }],
+        [
+            { originalPath: 'page-A.jpg', newName: 'PAGE-b.jpg' },
+            { originalPath: 'PAGE-b.jpg', newName: 'page-A.jpg' },
+        ],
+    ]) {
+        const f = await fixture(t, entries.map(entry => entry.originalPath));
+        const result = await f.run(entries);
+        await assertRenamed(f, result, new Map(entries.map(entry => [entry.newName, entry.originalPath])));
+    }
+});
+
+for (const action of ['cancel', 'fail']) {
+    test(`a ${action} during the final rename phase preserves the source and cleans staged files`, requires7z, async t => {
+        const names = Array.from({ length: 22 }, (_, index) => `@${index}.jpg`);
+        const f = await fixture(t, names);
+        const writeFile = fsp.writeFile;
+        let listCount = 0;
+        let cancelled = false;
+        t.mock.method(fsp, 'writeFile', async (filename, ...args) => {
+            await writeFile(filename, ...args);
+            if (!String(filename).endsWith('.rename-list.txt') || ++listCount !== 3) return;
+            if (action === 'cancel') cancelled = true;
+            else await writeFile(String(filename).slice(0, -'.rename-list.txt'.length), 'invalid staged archive');
+        });
+        const result = await f.run(names.map((originalPath, index) => ({ originalPath, newName: `@${index + 1}.jpg` })), {
+            shouldCancel: () => cancelled,
+        });
+        assert.equal(listCount, 3);
+        assert.equal(result.cancelled, action === 'cancel');
+        assert.deepEqual(result.outputFiles, []);
+        assert.equal(result.stats.success.length, 0);
+        if (action === 'cancel') {
+            assert.deepEqual(getOperationErrors(result), []);
+            assert.deepEqual(result.stats.error, []);
+        } else {
+            assert.equal(getOperationErrors(result)[0].code, 'PROCESS_FAILED');
+            assert.equal(getOperationErrors(result)[0].telemetryStage, 'direct-rename');
+        }
+        assert.deepEqual(fs.readFileSync(f.filepath), f.original);
+        f.assertClean();
+    });
+}
+
+test('staged renames reject duplicate final names instead of publishing a colliding archive', requires7z, async t => {
+    const f = await fixture(t, ['0.jpg', '1.jpg', '2.jpg']);
+    const result = await f.run([
+        { originalPath: '0.jpg', newName: '1.jpg' },
+        { originalPath: '1.jpg', newName: '2.jpg' },
+    ]);
+    assert.equal(result.stats.success.length, 0);
+    assert.deepEqual(result.outputFiles, []);
+    assert.equal(getOperationErrors(result)[0].code, 'ARCHIVE_RENAME_MISMATCH');
+    assert.deepEqual(fs.readFileSync(f.filepath), f.original);
+    f.assertClean();
+});
+
 test('at-sign paths with line breaks use extraction without splitting rename list entries', {
     skip: !toolAvailable || process.platform === 'win32' ? 'Requires 7-Zip and filesystem support for line breaks' : false,
 }, async t => {

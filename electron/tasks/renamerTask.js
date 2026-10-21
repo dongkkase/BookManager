@@ -3,8 +3,10 @@ import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { missingBinaryMessage } from '../binaryPolicy.js';
 import { attachOperationErrors } from '../operationDiagnostics.js';
+import { createArchiveFailureClassifier } from '../archiveFailureReason.js';
 import {
     listZipEntriesFromFile,
     readZipEntryFromFile,
@@ -507,6 +509,8 @@ function runProcess(command, args, options = {}) {
       return;
     }
     const captureOutput = options.captureOutput !== false;
+    const maxOutputLength = options.maxOutputLength ?? Infinity;
+    const failureClassifier = options.telemetryTool === '7z' ? createArchiveFailureClassifier() : null;
     const child = spawn(command, args, {
       cwd: options.cwd,
       windowsHide: true,
@@ -526,8 +530,16 @@ function runProcess(command, args, options = {}) {
       if (cancelTimer) clearInterval(cancelTimer);
     };
     if (captureOutput) {
-      child.stdout.on('data', data => { stdout += data.toString(); });
-      child.stderr.on('data', data => { stderr += data.toString(); });
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', data => {
+            failureClassifier?.write('stdout', data);
+            stdout = (stdout + data).slice(-maxOutputLength);
+        });
+        child.stderr.on('data', data => {
+            failureClassifier?.write('stderr', data);
+            stderr = (stderr + data).slice(-maxOutputLength);
+        });
     }
     child.on('error', error => {
       clearCancelTimer();
@@ -543,6 +555,7 @@ function runProcess(command, args, options = {}) {
       else {
         const error = new Error(stderr || stdout || `${command} exited with ${code}`);
         error.code = 'PROCESS_FAILED';
+        if (failureClassifier) error.telemetryReason = failureClassifier.finish();
         reject(withProcessDetails(error, options.telemetryTool, code, signal));
       }
     });
@@ -550,7 +563,13 @@ function runProcess(command, args, options = {}) {
 }
 
 function runQuietProcess(command, args, options = {}) {
-  return runProcess(command, args, { ...options, captureOutput: false });
+    const captureOutput = options.telemetryTool === '7z';
+    const processArgs = [...args];
+    if (captureOutput) {
+        const literalIndex = processArgs.indexOf('--');
+        processArgs.splice(literalIndex < 0 ? processArgs.length : literalIndex, 0, '-sccUTF-8');
+    }
+    return runProcess(command, processArgs, { ...options, captureOutput, maxOutputLength: 16 * 1024 });
 }
 
 async function isUsableConvertedFile(filePath, expectedExtension = '') {
@@ -1172,6 +1191,45 @@ async function renameArchiveEntryBatch(sevenZExe, tempArchive, pairs, options = 
     }
 }
 
+function archiveRenameMismatchError() {
+    const error = new Error('Renamed archive entries do not match the requested changes.');
+    error.code = 'ARCHIVE_RENAME_MISMATCH';
+    return error;
+}
+
+function archiveEntryIdentity(entry, name = entry.name) {
+    return JSON.stringify([name, entry.crc, entry.compressedSize, entry.uncompressedSize, entry.method, entry.isDirectory]);
+}
+
+async function stagedArchiveRenamePlan(tempArchive, pairs, options) {
+    const entries = await listZipEntriesFromFile(tempArchive, options);
+    const moves = new Map(pairs.map(pair => [pair.oldPath, pair.newPath]));
+    const sourceNames = new Set(entries.map(entry => entry.name));
+    const expectedNames = entries.map(entry => moves.get(entry.name) ?? entry.name);
+    if (moves.size !== pairs.length || pairs.some(pair => !sourceNames.has(pair.oldPath))
+        || new Set(expectedNames).size !== expectedNames.length) {
+        throw archiveRenameMismatchError();
+    }
+
+    const reservedRoots = new Set([...sourceNames, ...expectedNames]
+        .map(name => normalizeInnerPath(name).split('/')[0].toLowerCase()));
+    let namespace;
+    do {
+        namespace = `.bookmanager-rename-${randomUUID()}`;
+    } while (reservedRoots.has(namespace.toLowerCase()));
+    const temporaryPairs = pairs.map((pair, index) => ({
+        oldPath: pair.oldPath,
+        newPath: `${namespace}/${index}`,
+    }));
+    return {
+        stages: [
+            temporaryPairs,
+            pairs.map((pair, index) => ({ oldPath: temporaryPairs[index].newPath, newPath: pair.newPath })),
+        ],
+        expected: entries.map(entry => archiveEntryIdentity(entry, moves.get(entry.name) ?? entry.name)).sort(),
+    };
+}
+
 async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, options = {}) {
   const sevenZExe = options.sevenZExe;
   const filename = path.basename(sourcePath);
@@ -1182,10 +1240,23 @@ async function renameArchiveEntriesDirectly(sourcePath, pairs, targetExt, option
   try {
     await fsp.copyFile(sourcePath, tempArchive);
     stage = 'direct-rename';
-        for (let index = 0; index < pairs.length; index += 20) {
-            if (options.shouldCancel?.()) return { cancelled: true, message: filename };
-            await renameArchiveEntryBatch(sevenZExe, tempArchive, pairs.slice(index, index + 20), options);
+        const originalNames = new Set(pairs.map(pair => pair.oldPath.toLowerCase()));
+        // Later batches must not match entries already renamed by an earlier batch.
+        const needsStaging = pairs.some(pair => originalNames.has(pair.newPath.toLowerCase()));
+        const plan = needsStaging ? await stagedArchiveRenamePlan(tempArchive, pairs, options) : { stages: [pairs] };
+        for (const renamePairs of plan.stages) {
+            for (let index = 0; index < renamePairs.length; index += 20) {
+                if (options.shouldCancel?.()) return { cancelled: true, message: filename };
+                await renameArchiveEntryBatch(sevenZExe, tempArchive, renamePairs.slice(index, index + 20), options);
+            }
         }
+        if (plan.expected) {
+            const actual = (await listZipEntriesFromFile(tempArchive, options)).map(entry => archiveEntryIdentity(entry)).sort();
+            if (actual.length !== plan.expected.length || actual.some((entry, index) => entry !== plan.expected[index])) {
+                throw archiveRenameMismatchError();
+            }
+        }
+        if (options.shouldCancel?.()) return { cancelled: true, message: filename };
 
     if (options.backup_on) {
       stage = 'backup';

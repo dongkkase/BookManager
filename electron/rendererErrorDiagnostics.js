@@ -11,7 +11,7 @@ const IPC_CHANNELS = new Set([
     'dialog:selectArchives', 'dialog:selectFile', 'dialog:selectFiles', 'dialog:selectFolder',
     'fileAssociations:apply', 'fileAssociations:getStatus', 'fileAssociations:openSettings',
 
-    'folder:applyLibraryMoveIndex', 'folder:clearContentIndex', 'folder:clearDupCache', 'folder:getContentIndexStatus',
+    'folder:applyLibraryMoveIndex', 'folder:checkDuplicates', 'folder:clearContentIndex', 'folder:clearDupCache', 'folder:getContentIndexStatus',
     'folder:getLibraryFolderChildren', 'folder:getLibraryScanStates', 'folder:getLibraryTagFacets', 'folder:missingVolumes',
     'folder:scan', 'folder:searchLibraryContent', 'folder:searchLibraryFiles', 'folder:searchLibraryTags',
     'folder:startContentIndex', 'folder:stopContentIndex', 'folder:updateIndex',

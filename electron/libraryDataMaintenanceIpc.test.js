@@ -53,13 +53,14 @@ test('라이브러리 변경 저장은 이전 범위의 정리가 끝난 뒤 반
     let current = { libraries: ['/old'], language: 'ko' };
     const context = vm.createContext({
         configManager: { getConfig: () => current },
+        revokeConfigTelemetryConsent: () => {},
         saveConfigWithTelemetryConsent: (_manager, value) => { saved.push(value); current = value; return value; },
         libraryDataMaintenance: {
             async withIdle(operation) { waits += 1; await pending; return operation(); },
             async run() { runs += 1; },
         },
     });
-    const body = section("  ipcMain.handle('config:save', async (_, config) => {", '    setLanguage(nextLang);')
+    const body = section("  ipcMain.handle('config:save', async (_, config) => {", '    const nextLang =')
         .replace("  ipcMain.handle('config:save', async (_, config) => {", '(async (config) => {');
     const save = vm.runInContext(`${body}\nreturn savedConfig; })`, context);
     const changing = save({ libraries: ['/new'] });

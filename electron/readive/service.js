@@ -1,3 +1,4 @@
+import { readTagCatalog, directTagEntries } from '../servers/shared/tagCatalog.js';
 import { exchangeRatings } from './ratings.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -693,6 +694,27 @@ export class ReadiveService {
             await handle.close();
             await this.validateReader(readerId, device);
             return { asset: session.asset, deviceId: device.id, readerId, tokenHash: device.tokenHash };
+        }
+        const tagMatch = pathname.match(/^\/readive\/v1\/libraries\/([a-f0-9]{32})\/tag-search$/);
+        if (method === 'POST' && tagMatch) {
+            if (!body || typeof body !== 'object' || Array.isArray(body)
+                || Object.keys(body).some(key => !['path', 'filter'].includes(key))
+                || typeof body.path !== 'string') throw fail('invalid_tag_filter');
+            return this.previewRequests.run(async tagSignal => {
+                const libraryId = tagMatch[1];
+                if (this.readingCatalog.has(libraryId)) throw fail('tag_search_unavailable', 404);
+                const { scope } = await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId);
+                const resolved = await resolveReadiveLibraryPath(scope, body.path);
+                if (!resolved.stat.isDirectory()) throw fail('invalid_library_path');
+                this.validateLibraryPermission(scope);
+                const result = await readTagCatalog(await this.getLibraryDb?.(), [resolved.sourcePath], body.filter, tagSignal);
+                await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
+                this.validateLibraryPermission(scope);
+                this.validateDevice(device);
+                this.validateSource(remoteAddress, localAddress);
+                return { json: { genres: result.genres, tags: result.tags, publishers: result.publishers,
+                    authors: result.authors, characters: result.characters, years: result.years, entries: directTagEntries(result.matches, scope) } };
+            }, signal);
         }
         const previewMatch = pathname.match(/^\/readive\/v1\/libraries\/([a-f0-9]{32})\/preview$/);
         if (method === 'POST' && previewMatch) {

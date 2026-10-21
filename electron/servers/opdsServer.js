@@ -1,4 +1,5 @@
 import express from 'express';
+import { readTagCatalog, validateTagFilter } from './shared/tagCatalog.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -491,6 +492,40 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
 
     app.get('/', (_req, res) => res.redirect('/opds'));
 
+    let activeTagRequests = 0;
+    app.post('/opds/tags', express.json({ limit: '64kb' }), async (req, res) => {
+        const controller = new AbortController();
+        res.on('close', () => controller.abort());
+        if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)
+            || Object.keys(req.body).some(key => key !== 'filter')
+            || Object.keys(req.query).some(key => key !== 'dir')
+            || (req.query.dir !== undefined && typeof req.query.dir !== 'string')) return res.sendStatus(400);
+        const currentDir = resolveOpdsDirectory(req.query.dir, roots);
+        if (req.query.dir && !currentDir) return res.sendStatus(404);
+        if (activeTagRequests >= 4) return res.sendStatus(429);
+        activeTagRequests += 1;
+        let db;
+        try {
+            validateTagFilter(req.body.filter);
+            if (!options.dbPath) return res.sendStatus(404);
+            const { LibraryDB } = await import('../database/library_db.js');
+            db = new LibraryDB({ dbPath: options.dbPath, readOnly: true });
+            const result = await readTagCatalog(db, currentDir ? [currentDir] : roots, req.body.filter, controller.signal);
+            const rows = result.matches.length ? await db.listFilesByPaths(result.matches.map(row => row.path)) : [];
+            const feed = makeOpdsFeed({
+                title: 'BookManager', id: 'urn:bookmanager:opds:tag-search',
+                entries: catalogEntries({ folders: [], files: rows.map(normalizeStoredRecord).filter(row => isStoredCatalogFile(row, roots)) }, roots, options, new Date().toISOString()),
+            });
+            if (!controller.signal.aborted) res.json({ genres: result.genres, tags: result.tags, publishers: result.publishers,
+                    authors: result.authors, characters: result.characters, years: result.years, feed });
+        } catch (error) {
+            if (!controller.signal.aborted) res.status(error.status || 500).json({ error: error.code || 'tag_search_failed' });
+        } finally {
+            activeTagRequests -= 1;
+            if (db) await db.close();
+        }
+    });
+
     app.get('/opds', async (req, res) => {
         if (roots.length === 0 && readingLists.length === 0) {
             res.status(503).type('text/plain').send(sharingText(config, 'sharing_no_libraries', '공유할 라이브러리 폴더가 없습니다.'));
@@ -527,6 +562,10 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
                 '  <link rel="start" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="/opds" />',
                 `  <link rel="up" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="${escapeXml(collectionId ? readingListHref('collections') : '/opds')}" title="Up" />`,
             ] : opdsNavigationLinks(currentDir, roots);
+
+            if (options.dbPath && !readingList) links.push(
+                `  <link rel="urn:readive:tag-filter" type="application/json" href="${escapeXml(`/opds/tags${currentDir ? `?dir=${encodeURIComponent(currentDir)}` : ''}`)}" />`,
+            );
 
             log(sharingText(config, 'sharing_opds_browse', 'OPDS 탐색: {name}', {
                 name: readingList ? title : currentDir ? path.basename(currentDir) : sharingText(config, 'sharing_library_root', '라이브러리 루트'),

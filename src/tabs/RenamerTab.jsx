@@ -29,6 +29,7 @@ import {
 } from '../selectionVisualFeedback';
 import noImage from '../images/noimage.png';
 import { SmoothCoverImage } from '../components/SmoothCoverImage';
+import { useConfigSaveNotice } from '../hooks/useConfigSaveNotice';
 
 function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
@@ -65,6 +66,7 @@ function scrollTableRowIntoView(container, row) {
 }
 
 function RenamerTab({ config, saveConfig, t, showToast }) {
+    const saveConfigWithNotice = useConfigSaveNotice(saveConfig, showToast);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'renamer' } }));
@@ -190,8 +192,8 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     const configOptions = normalizeRenamerOptionsFromConfig(config);
     if (renamerOptionsEqual(currentRenamerOptions, configOptions)) return;
 
-    saveConfig?.(serializeRenamerOptions(currentRenamerOptions));
-  }, [config, currentRenamerOptions, saveConfig]);
+    saveConfigWithNotice(serializeRenamerOptions(currentRenamerOptions));
+  }, [config, currentRenamerOptions, saveConfigWithNotice]);
 
   useEffect(() => {
     if (!config) return;

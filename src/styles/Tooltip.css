@@ -28,3 +28,8 @@
     background: inherit;
     transform: rotate(45deg);
 }
+
+.app-tooltip[data-arrow="true"][data-placement="bottom"]::after {
+    top: -4px;
+    bottom: auto;
+}

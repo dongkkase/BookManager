@@ -128,6 +128,7 @@ const DEFAULT_TAG_OPTIONS = [
 ];
 
 const METADATA_COVER_CACHE_LIMIT = 50;
+const METADATA_COVER_CACHE_BYTE_LIMIT = 64 * 1024 * 1024;
 
 function isMetadataTextInput(target) {
   return isTextEntryTarget(target);
@@ -248,25 +249,31 @@ function pickMetadataFields(metadata = {}, fieldIds = [], extraFieldIds = []) {
 }
 
 function trimMetadataCoverCache(items = [], activeFilePath = '') {
-  const withCovers = items.filter(item => item.coverDataUrl);
-  if (withCovers.length <= METADATA_COVER_CACHE_LIMIT) return items;
+    const withCovers = items.filter(item => item.coverDataUrl);
+    const coverBytes = item => item.coverDataUrl.length * 2;
+    if (withCovers.length <= METADATA_COVER_CACHE_LIMIT
+        && withCovers.reduce((sum, item) => sum + coverBytes(item), 0) <= METADATA_COVER_CACHE_BYTE_LIMIT) return items;
 
-  const keep = new Set(
-    [...withCovers]
-      .sort((left, right) => {
+    const keep = new Set();
+    let retainedBytes = 0;
+    for (const item of withCovers.sort((left, right) => {
         if (left.filepath === activeFilePath) return -1;
         if (right.filepath === activeFilePath) return 1;
         return (right.coverLoadedAt || 0) - (left.coverLoadedAt || 0);
-      })
-      .slice(0, METADATA_COVER_CACHE_LIMIT)
-      .map(item => item.filepath),
-  );
+    })) {
+        if (keep.size >= METADATA_COVER_CACHE_LIMIT) break;
+        const bytes = coverBytes(item);
+        // Keep the active preview even when it alone exceeds the string-memory budget.
+        if (item.filepath !== activeFilePath && retainedBytes + bytes > METADATA_COVER_CACHE_BYTE_LIMIT) continue;
+        keep.add(item.filepath);
+        retainedBytes += bytes;
+    }
 
-  return items.map(item => {
-    if (!item.coverDataUrl || keep.has(item.filepath)) return item;
-    const { coverDataUrl, coverLoadedAt, epubCoverResolution, ...rest } = item;
-    return rest;
-  });
+    return items.map(item => {
+        if (!item.coverDataUrl || keep.has(item.filepath)) return item;
+        const { coverDataUrl, coverLoadedAt, epubCoverResolution, ...rest } = item;
+        return rest;
+    });
 }
 
 function fileNameFromPath(filePath = '') {
@@ -496,8 +503,11 @@ function MetadataTab({ config, t, showToast }) {
 
     let cancelled = false;
     coverLoadRequestsRef.current.add(filePath);
-    const coverRequest = activeItem.txtCoverChange?.type === 'file'
-        ? window.electronAPI.loadMetadataImageFile(activeItem.txtCoverChange.filePath)
+    const coverChange = activeItem.txtCoverChange || activeItem.epubCoverChange || activeItem.audioCoverChange;
+    const coverRequest = coverChange?.type === 'file'
+        ? window.electronAPI.loadMetadataImageFile(coverChange.filePath)
+        : coverChange?.type === 'entry'
+        ? window.electronAPI.loadMetadataEpubImage(filePath, coverChange.entryName)
         : loadMetadataCover(filePath, {
             ignoreAudioCoverOverride: activeItem.audioCoverChange?.type === 'reset',
         });
@@ -513,9 +523,9 @@ function MetadataTab({ config, t, showToast }) {
 
     return () => {
       cancelled = true;
-        if (isTxtMetadataItem(activeItem)) coverLoadRequestsRef.current.delete(filePath);
+        coverLoadRequestsRef.current.delete(filePath);
     };
-  }, [activeItem?.audioCoverChange?.type, activeItem?.coverDataUrl, activeItem?.filepath, activeItem?.textCoverRevision, activeItem?.txtCoverChange]);
+  }, [activeItem?.audioCoverChange, activeItem?.epubCoverChange, activeItem?.coverDataUrl, activeItem?.filepath, activeItem?.textCoverRevision, activeItem?.txtCoverChange]);
 
   const groupedItems = useMemo(() => groupItems(fileList), [fileList]);
   const visibleTreeNodes = useMemo(
@@ -634,47 +644,54 @@ function MetadataTab({ config, t, showToast }) {
     if (typeof listMetadataEpubImages !== 'function') return undefined;
 
     let cancelled = false;
+    const request = {};
     setEpubImagesByFilePath(prev => ({
       ...prev,
       [filePath]: {
         ...(prev[filePath] || {}),
         loading: true,
         error: '',
+        request,
       },
     }));
     listMetadataEpubImages(filePath)
       .then(result => {
         if (cancelled) return;
-        setEpubImagesByFilePath(prev => ({
-          ...prev,
-          [filePath]: {
-            loading: false,
-            loaded: true,
-            error: '',
-            images: result?.images || [],
-            coverEntryName: result?.coverEntryName || '',
-          },
-        }));
+        setEpubImagesByFilePath(prev => {
+            if (prev[filePath]?.request !== request) return prev;
+            return {
+                ...prev,
+                [filePath]: {
+                    loading: false,
+                    loaded: true,
+                    error: '',
+                    images: result?.images || [],
+                    coverEntryName: result?.coverEntryName || '',
+                },
+            };
+        });
       })
       .catch(error => {
         if (cancelled) return;
-        setEpubImagesByFilePath(prev => ({
-          ...prev,
-          [filePath]: {
-            ...(prev[filePath] || {}),
-            loading: false,
-            loaded: true,
-            error: error.message || text('meta_epub_images_failed', 'EPUB 이미지 목록을 불러오지 못했습니다.'),
-            images: [],
-            coverEntryName: '',
-          },
-        }));
+        setEpubImagesByFilePath(prev => {
+            if (prev[filePath]?.request !== request) return prev;
+            return {
+                ...prev,
+                [filePath]: {
+                    loading: false,
+                    loaded: true,
+                    error: error.message || text('meta_epub_images_failed', 'EPUB 이미지 목록을 불러오지 못했습니다.'),
+                    images: [],
+                    coverEntryName: '',
+                },
+            };
+        });
       });
 
     return () => {
       cancelled = true;
             setEpubImagesByFilePath(prev => {
-                if (!prev[filePath]?.loading) return prev;
+                if (prev[filePath]?.request !== request || !prev[filePath]?.loading) return prev;
                 return { ...prev, [filePath]: { ...prev[filePath], loading: false } };
             });
     };
@@ -838,6 +855,10 @@ function MetadataTab({ config, t, showToast }) {
     setFileList(prev => {
       const removedIds = prev.filter(item => item.checked !== false).map(item => item.id);
       const next = prev.filter(item => item.checked === false);
+        const retainedPaths = new Set(next.map(item => item.filepath));
+        setEpubImagesByFilePath(images => Object.fromEntries(
+            Object.entries(images).filter(([filePath]) => retainedPaths.has(filePath)),
+        ));
       setSelectedFileId(adjacentSelectionAfterRemoval(prev, removedIds, selectedFileId));
       setSelectedGroup('');
       setBatchMetadataByFileId(batchPrev => {
@@ -1799,7 +1820,12 @@ function MetadataTab({ config, t, showToast }) {
         const nextId = adjacentSelectionAfterRemoval(prev, removedIds, selectedFileId);
         setSelectedFileId(nextId);
         setSelectedGroup('');
-        return prev.filter(item => !removedIds.includes(item.id));
+        const next = prev.filter(item => !removedIds.includes(item.id));
+        const retainedPaths = new Set(next.map(item => item.filepath));
+        setEpubImagesByFilePath(images => Object.fromEntries(
+            Object.entries(images).filter(([filePath]) => retainedPaths.has(filePath)),
+        ));
+        return next;
       });
     };
     window.addEventListener('keydown', handleDelete, true);

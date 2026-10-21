@@ -126,7 +126,13 @@ test('작가와 시리즈를 조합해 그룹화한다', () => {
 });
 
 test('보기 모드와 보기별 크기를 안전한 값으로 복원한다', () => {
-    assert.equal(normalizeViewMode('invalid'), 'table');
+    assert.equal(normalizeViewMode(), 'thumbnail');
+    assert.equal(normalizeViewMode('invalid'), 'thumbnail');
+    for (const mode of ['table', 'tile', 'thumbnail']) {
+        assert.equal(normalizeViewMode(mode), mode);
+    }
+    assert.deepEqual(normalizeViewScales(), { table: 75, tile: 75, thumbnail: 75 });
+    assert.deepEqual(normalizeViewScales({ thumbnail: 50 }), { table: 75, tile: 75, thumbnail: 50 });
     assert.deepEqual(normalizeViewScales({ table: 5, tile: 120, thumbnail: 70 }), {
         table: 10,
         tile: 120,

@@ -544,6 +544,7 @@ test('두장보기 Home과 End 이동은 진행 중인 애니메이션을 끝내
     assert.match(viewerSource, /finishAndTurnFlipBookToPage\(pageFlip, currentBookIndex\)/);
     assert.match(viewerSource, /if \(normalizedBookIndex !== absoluteTargetBookIndexRef\.current\) return/);
     assert.doesNotMatch(viewerSource, /flipBookRef\.current\?\.flip\?\.\(currentBookIndex\)/);
-    assert.match(viewerSource, /event\.key === 'Home'[\s\S]*?goNavigationPage\(0\)/);
-    assert.match(viewerSource, /event\.key === 'End'[\s\S]*?goNavigationPage\(lastPageIndex\)/);
+    assert.match(viewerSource, /event\.key === 'Home'[\s\S]*?goBoundaryPage\(-1\)/);
+    assert.match(viewerSource, /event\.key === 'End'[\s\S]*?goBoundaryPage\(1\)/);
+    assert.match(viewerSource, /const goBoundaryPage = useCallback\(delta => \{\s*cancelMotion\(\);\s*setAbsolutePageJumpSequence\(current => current \+ 1\);\s*goNavigationPage\(delta < 0 \? 0 : Math\.max\(0, pageCount - 1\)\)/);
 });

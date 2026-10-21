@@ -41,6 +41,7 @@ const PROCESS_REASONS = new Map([
 const PROCESS_TYPES = new Set(['Utility', 'Zygote', 'Sandbox helper', 'GPU', 'Pepper Plugin', 'Pepper Plugin Broker', 'Unknown']);
 const WINDOW_TYPES = new Set(['main', 'viewer']);
 const APP_LIFECYCLES = new Set(['running', 'quitting']);
+const TASK_STATES = new Set(['busy', 'idle']);
 const ERROR_DESCRIPTIONS = new Map([
     ['EACCES', 'Permission denied'],
     ['ENOENT', 'File or directory not found'],
@@ -66,15 +67,22 @@ const ERROR_DESCRIPTIONS = new Map([
     ['SQLITE_BUSY', 'Database is busy'],
     ['SQLITE_CORRUPT', 'Database is corrupt'],
     ['SQLITE_FULL', 'Database storage is full'],
+    ['CONFIG_SAVE_FAILED', 'Settings could not be saved'],
     ['TASK_FAILED', 'Operation failed'],
     ['PROCESS_FAILED', 'External tool failed'],
     ['PROCESS_OUTPUT_TOO_LARGE', 'External tool output exceeded the size limit'],
     ['TOOL_MISSING', 'Required tool was not found'],
     ['ARCHIVE_NO_IMAGES', 'Archive contains no images'],
     ['ARCHIVE_NO_ENTRIES', 'No archive entries would remain'],
+    ['ARCHIVE_RENAME_MISMATCH', 'Archive entries did not match the rename plan'],
     ['ZIP_REWRITE_UNSUPPORTED', 'ZIP structure is not supported for update'],
 ]);
 const ERROR_STAGE_DESCRIPTIONS = new Map([
+    ['config-normalize', 'Settings preparation failed'],
+    ['config-write', 'Settings file write failed'],
+    ['config-replace', 'Settings file replacement failed'],
+    ['config-maintenance', 'Settings library maintenance failed'],
+    ['config-notify', 'Settings change notification failed'],
     ['prepare', 'Operation preparation failed'],
     ['extract', 'Archive extraction failed'],
     ['extract-nested', 'Nested archive extraction failed'],
@@ -160,6 +168,10 @@ function allowedErrorDiagnostics(input = {}) {
         for (const [key, values] of [['window_type', WINDOW_TYPES], ['app_lifecycle', APP_LIFECYCLES]]) {
             if (values.has(input[key])) tags[key] = input[key];
         }
+    }
+    if ((input.source === 'renderer-unresponsive' || input.source === 'render-process-gone')
+        && input.window_type === 'main' && TASK_STATES.has(input.task_state)) {
+        tags.task_state = input.task_state;
     }
     return tags;
 }
@@ -603,6 +615,7 @@ export function createTelemetry(options = {}) {
                     process_type: context.source === 'child-process-gone' ? error?.type : undefined,
                     window_type: context.window_type,
                     app_lifecycle: context.app_lifecycle,
+                    task_state: context.task_state,
                 }),
             };
             const event = sanitizeSentryEvent({

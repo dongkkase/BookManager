@@ -7,7 +7,7 @@ export const MAX_VIEW_SCALE_BY_MODE = {
     thumbnail: 150,
 };
 const MIN_VIEW_SCALE = 10;
-const DEFAULT_VIEW_SCALE = 50;
+export const DEFAULT_VIEW_SCALE = 75;
 
 function normalizeViewScale(scale, mode = 'table') {
     const maxScale = MAX_VIEW_SCALE_BY_MODE[mode] || MAX_VIEW_SCALE_BY_MODE.table;
@@ -224,5 +224,5 @@ export function normalizeViewScales(scales = {}) {
 }
 
 export function normalizeViewMode(mode) {
-    return ['table', 'tile', 'thumbnail'].includes(mode) ? mode : 'table';
+    return ['table', 'tile', 'thumbnail'].includes(mode) ? mode : 'thumbnail';
 }

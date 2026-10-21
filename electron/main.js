@@ -277,12 +277,15 @@ function reportProcessFault(eventName, details, context) {
     reportLocalProcessFault(eventName, details, context);
     const processGone = eventName === 'render-process-gone' || eventName === 'child-process-gone';
     const rendererUnresponsive = eventName === 'renderer-unresponsive';
+    const mainRendererFault = eventName === 'render-process-gone' || rendererUnresponsive;
     const shuttingDown = isAppShuttingDown();
     if (processGone && isExpectedProcessExit(details, { isShuttingDown: shuttingDown })) return;
     reportTelemetryError(details, {
         source: eventName,
         ...(processGone || rendererUnresponsive ? { app_lifecycle: shuttingDown ? 'quitting' : 'running' } : {}),
-        ...(eventName === 'render-process-gone' || rendererUnresponsive ? { window_type: 'main' } : {}),
+        ...(mainRendererFault ? { window_type: 'main' } : {}),
+        ...(mainRendererFault && context?.menu !== undefined ? { menu: context.menu } : {}),
+        ...(mainRendererFault && context?.task_state !== undefined ? { task_state: context.task_state } : {}),
     });
 }
 
@@ -494,7 +497,23 @@ function createMainWindow(config) {
   const windowOwnerId = mainWindow.webContents.id;
     installEditorMediaHeaders(mainWindow.webContents, APP_ID);
   attachWindowSafetyHandlers(mainWindow, {
-    reportFault: reportProcessFault,
+    reportFault: (eventName, details) => {
+        let context;
+        if (eventName === 'renderer-unresponsive' || eventName === 'render-process-gone') {
+            try {
+                const runtimeState = ipcController?.getRuntimeState(windowOwnerId, { allowDefault: false });
+                if (runtimeState) {
+                    context = {
+                        menu: runtimeState.activeTab,
+                        task_state: runtimeState.isWorking ? 'busy' : 'idle',
+                    };
+                }
+            } catch {
+                // Runtime diagnostics must not prevent reporting the original fault.
+            }
+        }
+        reportProcessFault(eventName, details, context);
+    },
     isShuttingDown: isAppShuttingDown,
   });
     mainWindow.webContents.on('will-prevent-unload', () => {

@@ -14,6 +14,7 @@ import { normalizeSupertonicReading, prepareSupertonicPages, splitSupertonicRequ
 import { SupertonicTtsSettings } from './components/viewer/SupertonicTtsSettings';
 import { useTts } from 'tts-react';
 import { FaIcon } from './components/FaIcon';
+import { TooltipLayer } from './components/TooltipLayer';
 import MenuSurface from './components/MenuSurface';
 import { CoverArtwork } from './components/CoverArtwork';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
@@ -31,6 +32,7 @@ import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
 import { applyMotionPreference } from './motionPolicy';
 import { useReducedMotion } from './hooks/useReducedMotion';
+import { useViewerTtsTransition } from './hooks/useViewerTtsTransition';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
@@ -2936,13 +2938,13 @@ function paginateReaderChapter(chapter = {}, options = {}) {
   }));
 }
 
-function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRotate = 0, children, active = false, className = '', ariaExpanded, ariaControls, ariaHasPopup }) {
+function ToolbarButton({ title, disabled = false, onClick, icon, iconSize = 14, iconSrc, iconRotate = 0, children, active = false, className = '', ariaExpanded, ariaControls, ariaHasPopup }) {
   const hasText = Boolean(children);
   return (
     <button
       type="button"
       className={`viewer-tool-button ${hasText ? 'has-text' : ''} ${active ? 'is-active' : ''} ${className}`.trim()}
-      title={title}
+        data-tooltip={title}
       aria-label={title}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
@@ -2953,7 +2955,7 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSrc, iconRo
       }}
       onClick={onClick}
     >
-      {icon ? <FaIcon name={icon} /> : null}
+        {icon ? <FaIcon name={icon} size={iconSize} /> : null}
       {iconSrc ? (
         <img
           className="viewer-tool-icon-image"
@@ -3026,7 +3028,7 @@ function ViewerDropdown({ value, options, onChange, onNotice, onPreview, preview
         ref={triggerRef}
         type="button"
         className={`viewer-dropdown-button ${hasButtonIcon && !hasIconLabel ? 'is-icon-only' : ''} ${hasIconLabel ? 'has-icon-label' : ''}`.trim()}
-        title={buttonTitle}
+        data-tooltip={buttonTitle}
         aria-label={buttonTitle}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -3086,7 +3088,7 @@ function ViewerDropdown({ value, options, onChange, onNotice, onPreview, preview
                   <button
                     type="button"
                     className={`viewer-dropdown-option-preview ${previewingValue === option.id ? 'is-previewing' : ''}`}
-                    title={`${viewerText(option.labelKey, option.label)} ${previewTitle}`.trim()}
+                    data-tooltip={`${viewerText(option.labelKey, option.label)} ${previewTitle}`.trim()}
                     aria-label={`${viewerText(option.labelKey, option.label)} ${previewTitle}`.trim()}
                     onMouseDown={event => event.preventDefault()}
                     onClick={() => onPreview(option.id)}
@@ -3129,7 +3131,7 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   return (
     <div className={`viewer-zoom-control ${open ? 'is-open' : ''}`} ref={rootRef} onWheel={onWheel}>
       <ToolbarButton
-        title={viewerText('viewer.zoom.title', '확대/축소')}
+        title={`${viewerText('viewer.zoom.title', '확대/축소')} (+ / -)`}
         iconSrc={plusMinusIcon}
         active={open}
         className="viewer-zoom-button"
@@ -3147,11 +3149,11 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
             max={ZOOM_MAX}
             step={step}
             value={zoom}
-            title={viewerText('viewer.zoom.ratio', '확대/축소 배율')}
+            data-tooltip={viewerText('viewer.zoom.ratio', '확대/축소 배율')}
             aria-label={viewerText('viewer.zoom.ratio', '확대/축소 배율')}
             onChange={event => onZoomChange(Number(event.target.value))}
           />
-          <button type="button" className="viewer-zoom-reset" title={viewerText('viewer.zoom.reset', '확대/축소 리셋')} onClick={onReset}>
+          <button type="button" className="viewer-zoom-reset" data-tooltip={viewerText('viewer.zoom.reset', '확대/축소 리셋')} onClick={onReset}>
             {viewerText('viewer.common.reset_short', '리셋')}
           </button>
             </>}
@@ -3168,6 +3170,8 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   const [openAiState, setOpenAiState] = useState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
   const [open, setOpen] = useState(false);
   const [rateOpen, setRateOpen] = useState(false);
+    const [readingSettingsOpen, setReadingSettingsOpen] = useState(false);
+    const ttsTransition = useViewerTtsTransition(open);
     useEffect(() => {
         if (closeMenu) setOpen(false);
     }, [closeMenu]);
@@ -3419,7 +3423,10 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
   }, [remoteTtsAllowedCacheKeys, remoteTtsRetainedCacheKeys]);
 
   useEffect(() => {
-    if (!open) setRateOpen(false);
+    if (!open) {
+        setRateOpen(false);
+        setReadingSettingsOpen(false);
+    }
   }, [open]);
 
   useEffect(() => {
@@ -4005,11 +4012,11 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     : viewerText('viewer.tts.play', 'TTS 재생');
 
   return (
-    <div className={`viewer-tts-control ${open ? 'is-open' : ''}`}>
+    <div ref={ttsTransition.controlRef} className={`viewer-tts-control ${open ? 'is-open' : ''} ${ttsTransition.present ? 'has-menu' : ''}`}>
       <button
         type="button"
         className={`viewer-tool-button has-text viewer-tts-toggle-button ${open ? 'is-active' : ''}`}
-        title={viewerText('viewer.tts.menu', 'TTS 메뉴')}
+        data-tooltip={viewerText('viewer.tts.menu', 'TTS 메뉴')}
         aria-label={viewerText('viewer.tts.menu', 'TTS 메뉴')}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -4023,20 +4030,22 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
       >
         <span>{viewerText('viewer.tts.title', 'TTS')}</span>
       </button>
-        <MenuSurface
-          open={open}
-          origin="top center"
+        {ttsTransition.present && (
+        <div
+          ref={ttsTransition.menuRef}
           className="viewer-tts-menu"
           role="dialog"
+          inert={open ? undefined : ''}
+          aria-hidden={!open}
           aria-label={viewerText('viewer.tts.settings', 'TTS 설정')}
           onKeyDown={handleTtsKeyDown}
         >
-            {open && <>
-          <div className="viewer-tts-actions" aria-label={viewerText('viewer.tts.group', 'TTS')}>
+            <span className="viewer-tts-label">{viewerText('viewer.tts.title', 'TTS')}</span>
+          <div className={`viewer-tts-actions ${isSupertonicEngine ? 'has-reading-settings' : ''}`} aria-label={viewerText('viewer.tts.group', 'TTS')}>
             <button
               type="button"
               className="viewer-tts-action"
-              title={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
+              data-tooltip={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
               aria-label={viewerText('viewer.tts.previous', '이전 페이지 읽기')}
               disabled={!canMovePrevious}
               onClick={() => handleMove(-1)}
@@ -4046,17 +4055,17 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
             <button
               type="button"
               className={`viewer-tts-action ${isActivelyPlaying ? 'is-active' : ''}`}
-              title={playTitle}
+              data-tooltip={isOpenAiLoading ? remoteTtsProgressLabel : `${playTitle} (Space)`}
               aria-label={playTitle}
               disabled={!hasPlayableText || isOpenAiLoading}
               onClick={handlePlayPause}
             >
-              <FaIcon name={isActivelyPlaying ? 'pause' : 'play'} />
+              <FaIcon name={isOpenAiLoading ? 'spinner' : isActivelyPlaying ? 'pause' : 'play'} className={isOpenAiLoading ? 'viewer-tts-progress-spinner' : ''} />
             </button>
             <button
               type="button"
               className="viewer-tts-action"
-              title={viewerText('viewer.tts.stop', 'TTS 정지')}
+              data-tooltip={viewerText('viewer.tts.stop', 'TTS 정지')}
               aria-label={viewerText('viewer.tts.stop', 'TTS 정지')}
               disabled={!isTtsActive}
               onClick={handleStop}
@@ -4066,7 +4075,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
             <button
               type="button"
               className="viewer-tts-action"
-              title={viewerText('viewer.tts.next', '다음 페이지 읽기')}
+              data-tooltip={viewerText('viewer.tts.next', '다음 페이지 읽기')}
               aria-label={viewerText('viewer.tts.next', '다음 페이지 읽기')}
               disabled={!canMoveNext}
               onClick={() => handleMove(1)}
@@ -4077,11 +4086,14 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
               <button
                 type="button"
                 className={`viewer-tts-action ${rateOpen ? 'is-active' : ''}`}
-                title={viewerText('viewer.tts.rate', '속도')}
+                data-tooltip={viewerText('viewer.tts.rate', '속도')}
                 aria-label={viewerText('viewer.tts.rate', '속도')}
                 aria-haspopup="dialog"
                 aria-expanded={rateOpen}
-                onClick={() => setRateOpen(current => !current)}
+                onClick={() => {
+                    setReadingSettingsOpen(false);
+                    setRateOpen(current => !current);
+                }}
               >
                 <span className="viewer-tts-rate-value">{settings.rate.toFixed(1)}x</span>
               </button>
@@ -4093,7 +4105,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
                     max="2"
                     step="0.1"
                     value={settings.rate}
-                    title={viewerText('viewer.tts.rate', '속도')}
+                    data-tooltip={viewerText('viewer.tts.rate', '속도')}
                     aria-label={viewerText('viewer.tts.rate', '속도')}
                     onChange={event => handleTtsRateChange(Number(event.target.value))}
                   />
@@ -4117,6 +4129,7 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
                 stopCurrentTtsWithoutAutoAdvance();
                 stopVoicePreview();
                 setRateOpen(false);
+                setReadingSettingsOpen(false);
                 if (voice.startsWith('supertonic:')) {
                   updateSettings({ engine: 'supertonic', supertonicVoice: voice.slice('supertonic:'.length) });
                 } else if (voice.startsWith('openai:')) {
@@ -4131,15 +4144,46 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
             <button
               type="button"
               className={`viewer-tts-action ${settings.autoAdvance ? 'is-active' : ''}`}
-              title={viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}
+              data-tooltip={viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}
               aria-label={viewerText('viewer.tts.auto_advance', '페이지 끝에서 다음 페이지 읽기')}
               aria-pressed={settings.autoAdvance}
               onClick={() => updateSettings({ autoAdvance: !settings.autoAdvance })}
             >
               <img className="viewer-tts-action-icon" src={personRunningIcon} alt="" aria-hidden="true" />
             </button>
-          </div>
             {isSupertonicEngine && (
+                <button
+                    type="button"
+                    className={`viewer-tts-action viewer-tts-settings-toggle ${readingSettingsOpen ? 'is-active' : ''}`}
+                    data-tooltip={viewerText('viewer.tts.supertonic_details.title', 'Supertonic 낭독 스타일')}
+                    aria-label={viewerText('viewer.tts.supertonic_details.title', 'Supertonic 낭독 스타일')}
+                    aria-haspopup="dialog"
+                    aria-expanded={readingSettingsOpen}
+                    onClick={() => {
+                        setRateOpen(false);
+                        setReadingSettingsOpen(current => !current);
+                    }}
+                >
+                    <FaIcon name="gear" />
+                </button>
+            )}
+            <button
+                type="button"
+                className="viewer-tts-action"
+                data-tooltip={`${viewerText('viewer.common.close', '닫기')} (Esc)`}
+                aria-label={viewerText('viewer.common.close', '닫기')}
+                onClick={() => setOpen(false)}
+            >
+                <FaIcon name="xmark" />
+            </button>
+          </div>
+            <MenuSurface
+                open={isSupertonicEngine && readingSettingsOpen}
+                className="viewer-tts-settings-popover"
+                origin="top right"
+                role="dialog"
+                aria-label={viewerText('viewer.tts.supertonic_details.title', 'Supertonic 낭독 스타일')}
+            >
                 <SupertonicTtsSettings
                     value={settings.supertonicReading}
                     voices={SUPERTONIC_TTS_VOICES}
@@ -4153,15 +4197,14 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
                     }}
                     onPreview={profile => handleVoicePreview(`supertonic:${settings.supertonicVoice}`, profile)}
                 />
-            )}
+            </MenuSurface>
           {isRemoteEngine && isOpenAiLoading && (
             <div className="viewer-tts-progress" role="status" aria-live="polite">
               <FaIcon name="spinner" className="viewer-tts-progress-spinner" />
               <span>{remoteTtsProgressLabel}</span>
             </div>
           )}
-            </>}
-        </MenuSurface>
+        </div>)}
     </div>
   );
 }
@@ -4271,12 +4314,14 @@ function ViewerHelpModal({ open, onClose }) {
   if (!open) return null;
 
   const shortcutRows = [
+        { key: 'Tab', description: viewerText('viewer.help.shortcut_toolbar', '상단 툴바를 표시하거나 숨깁니다. 숨긴 상태에서는 창 위쪽에 마우스를 올려 잠시 표시할 수 있습니다.') },
     { key: '[ / ]', description: viewerText('viewer.help.shortcut_file', '이전파일과 다음파일로 이동합니다.') },
-    { keys: ['← / →', '↑ / ↓', 'PageUp / PageDown'], description: viewerText('viewer.help.shortcut_page_group', '이전장과 다음장으로 이동합니다.') },
+        { keys: ['← / →', '↑ / ↓', 'PageUp / PageDown'], description: viewerText('viewer.help.shortcut_page_group', '이전장과 다음장으로 이동합니다. 만화책의 좌우 키는 좌/우 방향키 설정을 따릅니다. ↑·PageUp은 이전, ↓·PageDown은 다음으로 이동하며, 스크롤 모드에서는 설정된 양만큼 본문을 스크롤합니다.') },
     { key: viewerText('viewer.help.shortcut_wheel_key', '마우스 휠'), description: viewerText('viewer.help.shortcut_wheel', '한장보기와 두장보기에서는 페이지를 넘기고, 스크롤에서는 본문을 스크롤합니다.') },
     { key: viewerText('viewer.help.shortcut_swipe_key', '스와이프'), description: viewerText('viewer.help.shortcut_swipe', '터치 화면에서 좌우로 스와이프해 이전장과 다음장으로 이동합니다.') },
         { key: viewerText('viewer.help.shortcut_page_drag_key', '페이지 드래그'), description: viewerText('viewer.help.shortcut_page_drag', '책넘김 효과에서는 페이지를 끌어서 넘깁니다. 텍스트 페이지는 바깥쪽 가장자리에서 끌고, 짧게 끌었다 놓으면 원래 페이지로 돌아옵니다.') },
-    { key: 'Home / End', description: viewerText('viewer.help.shortcut_home_end', '첫 페이지와 마지막 페이지로 이동합니다.') },
+        { key: 'Home / End', description: viewerText('viewer.help.shortcut_home_end', '현재 문서의 처음과 끝으로 이동합니다. 두장보기에서는 첫 펼침면과 마지막 펼침면으로, 스크롤 모드에서는 본문 맨 위와 맨 아래로 이동합니다.') },
+        { key: 'Space', description: viewerText('viewer.help.shortcut_tts', 'TTS 도구 모음이 열린 동안 재생과 일시정지를 전환합니다.') },
     {
       keys: [
         '+ / -',
@@ -4293,10 +4338,13 @@ function ViewerHelpModal({ open, onClose }) {
     { key: 'Esc', description: viewerText('viewer.help.shortcut_escape', '뷰어 창을 닫습니다.') },
   ];
   const toolbarRows = [
+        { iconSrc: toolbarIcon, title: viewerText('viewer.toolbar.visibility_group', '툴바 표시'), description: viewerText('viewer.help.shortcut_toolbar', '상단 툴바를 표시하거나 숨깁니다. 숨긴 상태에서는 창 위쪽에 마우스를 올려 잠시 표시할 수 있습니다.') },
     { icon: 'anglesLeft', title: viewerText('viewer.toolbar.previous_file', '이전파일 ({shortcut})', { shortcut: '[' }), description: viewerText('viewer.help.toolbar_previous_file', '현재 파일과 같은 목록에서 이전 파일을 엽니다.') },
     { icon: 'anglesRight', title: viewerText('viewer.toolbar.next_file', '다음파일 ({shortcut})', { shortcut: ']' }), description: viewerText('viewer.help.toolbar_next_file', '현재 파일과 같은 목록에서 다음 파일을 엽니다.') },
-    { icon: 'angleLeft', title: viewerText('viewer.toolbar.previous_page', '이전장'), description: viewerText('viewer.help.toolbar_previous_page', '현재 문서의 이전 페이지로 이동합니다.') },
-    { icon: 'angleRight', title: viewerText('viewer.toolbar.next_page', '다음장'), description: viewerText('viewer.help.toolbar_next_page', '현재 문서의 다음 페이지로 이동합니다.') },
+        { icon: 'backwardStep', title: viewerText('viewer.toolbar.first_page', '처음으로'), description: viewerText('viewer.help.toolbar_first_page', 'Home 키와 같이 현재 문서의 처음으로 이동합니다. 상단 툴바와 하단 탐색바에서 사용할 수 있습니다.') },
+        { icon: 'angleLeft', title: viewerText('viewer.toolbar.previous_page', '이전장'), description: viewerText('viewer.help.toolbar_previous_page', '이전 페이지로 이동합니다. 스크롤 모드에서는 설정된 양만큼 위로 스크롤합니다.') },
+        { icon: 'angleRight', title: viewerText('viewer.toolbar.next_page', '다음장'), description: viewerText('viewer.help.toolbar_next_page', '다음 페이지로 이동합니다. 스크롤 모드에서는 설정된 양만큼 아래로 스크롤합니다. 문서 끝에서는 다음 파일이 있으면 엽니다.') },
+        { icon: 'forwardStep', title: viewerText('viewer.toolbar.last_page', '끝으로'), description: viewerText('viewer.help.toolbar_last_page', 'End 키와 같이 현재 문서의 끝으로 이동합니다. 두장보기에서는 마지막 펼침면을 표시하며, 다음 파일로 넘어가지 않습니다.') },
     { iconSrc: fitWidthOrHeightIcon, title: viewerText('viewer.fit.width', '가로 맞춤'), description: viewerText('viewer.help.toolbar_fit_width', '페이지를 뷰어의 가로 폭에 맞춥니다.') },
     { iconSrc: fitWidthOrHeightIcon, rotate: 90, title: viewerText('viewer.fit.height', '높이 맞춤'), description: viewerText('viewer.help.toolbar_fit_height', '페이지를 뷰어의 높이에 맞춥니다.') },
     { iconSrc: showFullSizeIcon, title: viewerText('viewer.fit.fit', '전체 맞춤'), description: viewerText('viewer.help.toolbar_fit_page', '페이지 전체가 보이도록 크기를 맞춥니다.') },
@@ -4305,9 +4353,9 @@ function ViewerHelpModal({ open, onClose }) {
     { iconSrc: readModeOnePageIcon, title: viewerText('viewer.read_mode.single', '한장보기'), description: viewerText('viewer.help.toolbar_single', '한 페이지씩 읽습니다.') },
     { iconSrc: readModeDoublePageIcon, title: viewerText('viewer.read_mode.spread', '두장보기'), description: viewerText('viewer.help.toolbar_spread', '두 페이지를 펼침 형태로 읽습니다.') },
     { iconSrc: readModeScrollIcon, title: viewerText('viewer.read_mode.scroll', '스크롤'), description: viewerText('viewer.help.toolbar_scroll', '문서를 세로로 이어서 스크롤합니다.') },
-    { text: 'TTS', title: viewerText('viewer.tts.title', 'TTS'), description: viewerText('viewer.help.toolbar_tts', 'EPUB/TXT에서 TTS 플로팅 메뉴를 열어 현재 페이지 본문을 읽습니다. 메뉴가 열린 동안 Space로 재생/일시정지를 전환하고, 다음/이전 페이지로 이동하면 새 페이지 본문부터 다시 읽습니다. 페이지 말머리는 읽지 않습니다.') },
-    { iconSrc: leftReadIcon, title: viewerText('viewer.toolbar.reading_direction_group', '읽기방향'), description: viewerText('viewer.help.toolbar_direction', '만화책의 좌우 읽기 방향을 전환합니다.') },
-    { iconSrc: slideNavigationIcon, title: viewerText('viewer.toolbar.slide_nav_group', '슬라이드 탐색 바'), description: viewerText('viewer.help.toolbar_slide_nav', '하단 페이지 슬라이드 탐색 바를 표시하거나 숨깁니다.') },
+        { text: 'TTS', title: viewerText('viewer.tts.title', 'TTS'), description: viewerText('viewer.help.toolbar_tts', 'EPUB/TXT에서 상단 TTS 도구 모음을 열어 현재 페이지 본문을 읽습니다. 도구 모음이 열린 동안 Space로 재생/일시정지를 전환하고, 다음/이전 페이지로 이동하면 새 페이지 본문부터 다시 읽습니다. 페이지 말머리는 읽지 않습니다.') },
+        { iconSrc: leftReadIcon, title: viewerText('viewer.toolbar.reading_direction_group', '읽기방향'), description: viewerText('viewer.help.toolbar_direction', '만화책의 좌우 읽기 방향을 전환합니다. 하단 썸네일과 이동 버튼은 읽기 방향을 따르며, 상단 좌우 이동 버튼은 좌/우 방향키 설정을 따릅니다.') },
+        { iconSrc: slideNavigationIcon, title: viewerText('viewer.toolbar.slide_nav_group', '슬라이드 탐색 바'), description: viewerText('viewer.help.toolbar_slide_nav', '하단 탐색바를 표시하거나 숨깁니다. 썸네일을 클릭해 해당 페이지나 펼침면으로 이동하고, 휠로 썸네일을 좌우로 탐색합니다. 양쪽 버튼으로 이전장·다음장 또는 문서의 처음·끝으로 이동할 수 있습니다.') },
     { text: 'Cover', title: viewerText('viewer.toolbar.cover_group', 'Cover'), description: viewerText('viewer.help.toolbar_cover', '만화책 두장보기에서 첫 장을 단독 표지로 처리합니다.') },
     { iconSrc: listSearchIcon, title: viewerText('viewer.navigation.title', '목차 및 검색'), description: viewerText('viewer.help.toolbar_navigation', '목차, 하이라이트, 검색 결과 패널을 엽니다.') },
     { icon: 'bookmark', title: viewerText('viewer.toolbar.bookmark', '책갈피'), description: viewerText('viewer.help.toolbar_bookmark', '책갈피 추가, 삭제, 편집 메뉴를 엽니다.') },
@@ -4316,6 +4364,7 @@ function ViewerHelpModal({ open, onClose }) {
     { icon: 'gear', title: viewerText('viewer.toolbar.settings_group', '설정'), description: viewerText('viewer.help.toolbar_settings', '뷰어 배경, 읽기, 표시 옵션을 조정합니다.') },
   ];
   const settingsRows = [
+        { title: viewerText('viewer.settings.arrow_key_mode', '좌/우 방향키'), description: viewerText('viewer.help.settings_arrow_key_mode', '만화책에서 좌우 방향키와 상단 이동 버튼의 방향을 선택합니다. 읽기 방향을 따르거나, 읽기 방향과 관계없이 왼쪽은 이전장·오른쪽은 다음장으로 고정할 수 있습니다.') },
     { title: viewerText('viewer.settings.background', '배경'), description: viewerText('viewer.help.settings_background', '단색 배경 또는 페이지 색을 반영하는 몰입형 배경을 선택합니다.') },
     { title: viewerText('viewer.settings.theme', '테마'), description: viewerText('viewer.help.settings_theme', '텍스트와 PDF 뷰어의 기본 배경과 글자 색을 선택합니다.') },
     { title: viewerText('viewer.settings.font_scale', '글자 배율'), description: viewerText('viewer.help.settings_font_scale', 'EPUB/TXT 글자 크기를 제작자 스타일 비율을 유지한 채 조절합니다.') },
@@ -4418,7 +4467,10 @@ function ViewerHelpModal({ open, onClose }) {
         </div>
         <div className="viewer-help-content" role="tabpanel">
           {activeTab === 'shortcuts' ? renderRows(shortcutRows) : null}
-          {activeTab === 'toolbar' ? renderRows(toolbarRows) : null}
+            {activeTab === 'toolbar' ? <>
+                <p className="viewer-help-intro">{viewerText('viewer.help.toolbar_tooltips', '버튼에 마우스를 올리면 기능과 사용할 수 있는 단축키가 표시됩니다.')}</p>
+                {renderRows(toolbarRows)}
+            </> : null}
           {activeTab === 'settings' ? renderRows(settingsRows) : null}
           {activeTab === 'navigation' ? renderRows(navigationRows) : null}
           {activeTab === 'context' ? renderRows(contextRows) : null}
@@ -8213,6 +8265,18 @@ function ViewerApp() {
     });
   }, [cancelMotion, goEpubInternalTarget, goPageIndex, pageCount, resolveSpreadNavigationIndex, session?.type]);
 
+    const goBoundaryPage = useCallback(delta => {
+        cancelMotion();
+        setAbsolutePageJumpSequence(current => current + 1);
+        goNavigationPage(delta < 0 ? 0 : Math.max(0, pageCount - 1));
+        if (flowMode === 'scroll') {
+            window.requestAnimationFrame(() => {
+                const node = scrollRef.current;
+                node?.scrollTo?.({ top: delta < 0 ? 0 : node.scrollHeight, left: 0 });
+            });
+        }
+    }, [cancelMotion, flowMode, goNavigationPage, pageCount]);
+
   const goSlideNavPage = useCallback(targetPageIndex => {
     cancelMotion();
     const resolvedPageIndex = clamp(Number(targetPageIndex) || 0, 0, Math.max(0, pageCount - 1));
@@ -9056,34 +9120,20 @@ function ViewerApp() {
         event.preventDefault();
         addBookmark();
       } else if (event.key === 'Home') {
-        cancelMotion();
         event.preventDefault();
         event.stopPropagation();
-        setAbsolutePageJumpSequence(current => current + 1);
-        goNavigationPage(0);
-        if (flowMode === 'scroll') {
-          window.requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ top: 0, left: 0 }));
-        }
+        goBoundaryPage(-1);
       } else if (event.key === 'End') {
-        cancelMotion();
         event.preventDefault();
         event.stopPropagation();
-        const lastPageIndex = Math.max(0, pageCount - 1);
-        setAbsolutePageJumpSequence(current => current + 1);
-        goNavigationPage(lastPageIndex);
-        if (flowMode === 'scroll') {
-          window.requestAnimationFrame(() => {
-            const node = scrollRef.current;
-            node?.scrollTo?.({ top: node.scrollHeight, left: 0 });
-          });
-        }
+        goBoundaryPage(1);
       } else if (event.key === 'Escape') {
         window.viewerAPI?.closeWindow?.();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, cancelMotion, flowMode, goNavigationPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, pageCount, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
+  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, goBoundaryPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -9794,11 +9844,11 @@ function ViewerApp() {
   const toolbarLeftPageDelta = viewerArrowKeyPageDelta('ArrowLeft', toolbarPageDirectionOptions) ?? -1;
   const toolbarRightPageDelta = viewerArrowKeyPageDelta('ArrowRight', toolbarPageDirectionOptions) ?? 1;
   const previousPageButtonState = {
-    title: viewerText('viewer.toolbar.previous_page', '이전장'),
+    title: `${viewerText('viewer.toolbar.previous_page', '이전장')} (${toolbarLeftPageDelta < 0 ? '←' : '→'} / ↑ / PageUp)`,
     disabled: previousPageDisabled,
   };
   const nextPageButtonState = {
-    title: viewerText('viewer.toolbar.next_page', '다음장'),
+    title: `${viewerText('viewer.toolbar.next_page', '다음장')} (${toolbarLeftPageDelta > 0 ? '←' : '→'} / ↓ / PageDown)`,
     disabled: nextPageDisabled,
   };
   const toolbarLeftPageButtonState = toolbarLeftPageDelta < 0
@@ -9809,6 +9859,22 @@ function ViewerApp() {
     : nextPageButtonState;
   const slideNavAvailable = Boolean(session && pageCount > 0 && (session.type !== 'pdf' || pdfDocument));
   const slideNavDirection = session?.type === 'comic' && readingDirection === 'rtl' ? 'rtl' : 'ltr';
+    const firstPageButtonState = {
+        title: `${viewerText('viewer.toolbar.first_page', '처음으로')} (Home)`,
+        disabled: pageCount <= 0 || previousPageDisabled,
+    };
+    const lastPageButtonState = {
+        title: `${viewerText('viewer.toolbar.last_page', '끝으로')} (End)`,
+        disabled: pageCount <= 0 || (flowMode === 'scroll' ? scrollPercent >= 100 : atForwardBoundary),
+    };
+    const toolbarLeftBoundaryState = toolbarLeftPageDelta < 0 ? firstPageButtonState : lastPageButtonState;
+    const toolbarRightBoundaryState = toolbarRightPageDelta < 0 ? firstPageButtonState : lastPageButtonState;
+    const slideLeftPageDelta = slideNavDirection === 'rtl' ? 1 : -1;
+    const slideRightPageDelta = -slideLeftPageDelta;
+    const slideLeftPageState = slideLeftPageDelta < 0 ? previousPageButtonState : nextPageButtonState;
+    const slideRightPageState = slideRightPageDelta < 0 ? previousPageButtonState : nextPageButtonState;
+    const slideLeftBoundaryState = slideLeftPageDelta < 0 ? firstPageButtonState : lastPageButtonState;
+    const slideRightBoundaryState = slideRightPageDelta < 0 ? firstPageButtonState : lastPageButtonState;
   const backgroundMode = supportsBackgroundSettings
     ? viewerBackground.mode
     : 'solid';
@@ -9971,6 +10037,7 @@ function ViewerApp() {
 
   return (
     <div className={appClassName} style={appStyle} lang={viewerLanguage}>
+        <TooltipLayer />
       {backgroundMode === 'immersive' && (
         <div
           className="viewer-ambient-backdrop has-gradient"
@@ -10024,7 +10091,7 @@ function ViewerApp() {
             onClick={toggleToolbarPinned}
           />
         </div>
-        <div className="viewer-title" title={session?.filePath || ''}>
+        <div className="viewer-title" data-tooltip={session?.filePath || ''}>
           <span>{session?.fileName || 'BookManagerViewer'}</span>
           <small>{progressText}</small>
         </div>
@@ -10045,6 +10112,12 @@ function ViewerApp() {
           </div>
           <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.page_navigation', '페이지 이동')}>
             <ToolbarButton
+                title={toolbarLeftBoundaryState.title}
+                icon="backwardStep"
+                disabled={toolbarLeftBoundaryState.disabled}
+                onClick={runToolbarAction(() => goBoundaryPage(toolbarLeftPageDelta))}
+            />
+            <ToolbarButton
               title={toolbarLeftPageButtonState.title}
               icon="angleLeft"
               disabled={toolbarLeftPageButtonState.disabled}
@@ -10056,13 +10129,19 @@ function ViewerApp() {
               disabled={toolbarRightPageButtonState.disabled}
               onClick={runToolbarAction(() => movePage(toolbarRightPageDelta))}
             />
+            <ToolbarButton
+                title={toolbarRightBoundaryState.title}
+                icon="forwardStep"
+                disabled={toolbarRightBoundaryState.disabled}
+                onClick={runToolbarAction(() => goBoundaryPage(toolbarRightPageDelta))}
+            />
           </div>
           {supportsViewControls && (
             <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.fit_group', '화면맞춤')}>
               {VIEW_MODES.map(option => (
                 <ToolbarButton
                   key={option.id}
-                  title={viewerText(option.labelKey, option.label)}
+                  title={`${viewerText(option.labelKey, option.label)} (${option.key})`}
                   iconSrc={option.iconSrc}
                   iconRotate={option.rotate || 0}
                   active={viewMode === option.id}
@@ -10168,7 +10247,7 @@ function ViewerApp() {
           )}
           <div className="viewer-tool-cluster" aria-label={viewerText('viewer.toolbar.bookmark_group', '책갈피')}>
             <div className="viewer-bookmark-menu-wrap">
-              <ToolbarButton title={viewerText('viewer.toolbar.bookmark', '책갈피')} icon="bookmark" active={bookmarkMenuOpen} onClick={() => setBookmarkMenuOpen(current => !current)} />
+              <ToolbarButton title={`${viewerText('viewer.toolbar.bookmark', '책갈피')} · ${viewerText('viewer.bookmark.add', '책갈피 추가 (B)')}`} icon="bookmark" active={bookmarkMenuOpen} onClick={() => setBookmarkMenuOpen(current => !current)} />
                 <MenuSurface open={bookmarkMenuOpen} origin="top right" className="viewer-bookmark-menu">
                     {bookmarkMenuOpen && <>
                   <button type="button" onClick={addBookmark}>{viewerText('viewer.bookmark.add', '책갈피 추가 (B)')}</button>
@@ -10274,7 +10353,7 @@ function ViewerApp() {
             aria-label={slideNavOpen
               ? viewerText('viewer.navigation.close_page_nav', '페이지 네비게이션 닫기')
               : viewerText('viewer.navigation.open_page_nav', '페이지 네비게이션 열기')}
-            title={slideNavOpen
+            data-tooltip={slideNavOpen
               ? viewerText('viewer.navigation.close_page_nav', '페이지 네비게이션 닫기')
               : viewerText('viewer.navigation.open_page_nav', '페이지 네비게이션 열기')}
             aria-expanded={slideNavOpen}
@@ -10282,15 +10361,52 @@ function ViewerApp() {
           >
             <FaIcon name={slideNavOpen ? 'angleDown' : 'angleUp'} />
           </button>
-          <div
-            className="viewer-slide-strip"
-            dir={slideNavDirection}
-            aria-label={viewerText('viewer.navigation.page_nav', '페이지 네비게이션')}
-            aria-hidden={!slideNavOpen}
-            onWheel={handleSlideNavWheel}
-          >
-            {!initialRenderLoading && renderSlideThumbs()}
-          </div>
+            <div className="viewer-slide-controls" aria-hidden={!slideNavOpen} inert={slideNavOpen ? undefined : ''}>
+                <div className="viewer-slide-buttons" role="group" aria-label={viewerText('viewer.toolbar.page_navigation', '페이지 이동')}>
+                    <ToolbarButton
+                        title={slideLeftBoundaryState.title}
+                        icon="backwardStep"
+                        className="viewer-slide-boundary-button"
+                        iconSize={12}
+                        disabled={slideLeftBoundaryState.disabled}
+                        onClick={runToolbarAction(() => goBoundaryPage(slideLeftPageDelta))}
+                    />
+                    <ToolbarButton
+                        title={slideLeftPageState.title}
+                        icon="angleLeft"
+                        className="viewer-slide-page-button"
+                        iconSize={18}
+                        disabled={slideLeftPageState.disabled}
+                        onClick={runToolbarAction(() => movePage(slideLeftPageDelta))}
+                    />
+                </div>
+                <div
+                    className="viewer-slide-strip"
+                    dir={slideNavDirection}
+                    aria-label={viewerText('viewer.navigation.page_nav', '페이지 네비게이션')}
+                    onWheel={handleSlideNavWheel}
+                >
+                    {!initialRenderLoading && renderSlideThumbs()}
+                </div>
+                <div className="viewer-slide-buttons" role="group" aria-label={viewerText('viewer.toolbar.page_navigation', '페이지 이동')}>
+                    <ToolbarButton
+                        title={slideRightPageState.title}
+                        icon="angleRight"
+                        className="viewer-slide-page-button"
+                        iconSize={18}
+                        disabled={slideRightPageState.disabled}
+                        onClick={runToolbarAction(() => movePage(slideRightPageDelta))}
+                    />
+                    <ToolbarButton
+                        title={slideRightBoundaryState.title}
+                        icon="forwardStep"
+                        className="viewer-slide-boundary-button"
+                        iconSize={12}
+                        disabled={slideRightBoundaryState.disabled}
+                        onClick={runToolbarAction(() => goBoundaryPage(slideRightPageDelta))}
+                    />
+                </div>
+            </div>
         </div>
       )}
       {supportsNavigationPanel && (

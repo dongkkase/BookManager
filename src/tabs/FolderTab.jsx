@@ -41,6 +41,7 @@ import { useFolderScan } from '../hooks/useFolderScan';
 import { useListDuplicateCheck } from '../hooks/useListDuplicateCheck';
 import { useFolderMouseNavigation } from '../hooks/useFolderMouseNavigation';
 import { useFolderSearchHistory } from '../hooks/useFolderSearchHistory';
+import { useConfigSaveNotice } from '../hooks/useConfigSaveNotice';
 import { useFileSelection } from '../hooks/useFileSelection';
 import {
   clampDetailHeight,
@@ -91,6 +92,7 @@ import { applyReadingActionStates, resolveReadingActionPaths } from '../folderRe
 import { createLibraryMoveProgress } from '../libraryMoveProgress';
 import { buildLibraryItems } from '../libraryPresentation';
 import {
+    DEFAULT_VIEW_SCALE,
   MAX_VIEW_SCALE_BY_MODE,
     createFolderGroupingCache,
   normalizeViewMode,
@@ -563,6 +565,7 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
 });
 
 function FolderTab({ config, saveConfig, t, showToast }) {
+    const saveConfigWithNotice = useConfigSaveNotice(saveConfig, showToast);
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
 
   useEffect(() => {
@@ -663,7 +666,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
 
   // --- 뷰 상태 ---
-  const [viewMode, setViewMode] = useState('table'); // 'table' | 'thumbnail' | 'tile'
+    const [viewMode, setViewMode] = useState('thumbnail'); // 'table' | 'thumbnail' | 'tile'
   const [sortKey, setSortKey] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
   const [groupKey, setGroupKey] = useState('none');
@@ -691,7 +694,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [treeRefreshToken, setTreeRefreshToken] = useState(0);
     const [isRefreshingTree, setIsRefreshingTree] = useState(false);
     const refreshingTreeRef = useRef(false);
-  const [itemScales, setItemScales] = useState({ table: 50, tile: 50, thumbnail: 50 });
+    const [itemScales, setItemScales] = useState(normalizeViewScales);
   const [showLayoutDialog, setShowLayoutDialog] = useState(false);
     const [layoutEditorTarget, setLayoutEditorTarget] = useState('');
     const layoutDeleteBusyRef = useRef(false);
@@ -1450,7 +1453,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const selectedFilesTotalBytes = useMemo(() => (
     selectedFiles.reduce((total, filePath) => total + (Number(fileLookup.getFile(filePath)?.size) || 0), 0)
   ), [fileLookup, selectedFiles]);
-  const itemScale = itemScales[viewMode] || 50;
+    const itemScale = itemScales[viewMode] || DEFAULT_VIEW_SCALE;
   const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
     const folderLocationLayoutKey = JSON.stringify([sortKey, sortOrder, groupKey, itemScale, includeSubfolders, localSearchQuery, metadataMissingOnly, viewContainerWidth]);
@@ -1652,7 +1655,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     if (!restoredViewSettingsRef.current) return undefined;
     const timer = window.setTimeout(() => {
-      saveConfig?.({
+      saveConfigWithNotice({
         folder_view_mode: viewMode,
         folder_item_scales: normalizeViewScales(itemScales),
         folder_sort_key: sortKey,
@@ -1661,7 +1664,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [groupKey, itemScales, saveConfig, sortKey, sortOrder, viewMode]);
+  }, [groupKey, itemScales, saveConfigWithNotice, sortKey, sortOrder, viewMode]);
 
   useEffect(() => {
     if (!activeSelectedFile || initializedDetailHeightRef.current) return;
@@ -4042,8 +4045,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       groupKey,
       columns: serializeColumnLayout(columnLayout),
     };
-    await saveConfig?.({ folder_saved_layouts: currentLayouts });
-  }, [columnLayout, config?.folder_saved_layouts, config?.language, config?.lang, groupKey, requestTextInput, saveConfig, sortKey, sortOrder, t]);
+    await saveConfigWithNotice({ folder_saved_layouts: currentLayouts });
+  }, [columnLayout, config?.folder_saved_layouts, config?.language, config?.lang, groupKey, requestTextInput, saveConfigWithNotice, sortKey, sortOrder, t]);
 
     const handleAddLayout = useCallback(async layout => {
         const currentLayouts = config?.folder_saved_layouts || {};
@@ -4102,9 +4105,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (layout.columns) {
       const nextColumns = normalizeColumnLayout(layout.columns);
       setColumnLayout(nextColumns);
-      saveConfig?.({ folder_column_layout: serializeColumnLayout(nextColumns) });
+      saveConfigWithNotice({ folder_column_layout: serializeColumnLayout(nextColumns) });
     }
-  }, [config?.folder_saved_layouts, saveConfig]);
+  }, [config?.folder_saved_layouts, saveConfigWithNotice]);
 
     const handleApplyColumnLayout = useCallback(async changes => {
         const updates = {};

@@ -29,6 +29,7 @@
 
 - 개발 문서의 시작점은 `dev-docs/README.md`입니다.
 - UI 효과·화면 전환을 추가하거나 수정하기 전에 `dev-docs/architecture/motion.md`를 확인합니다.
+- 새 애니메이션과 모션 효과는 Motion(`motion`)과 Anime.js(`animejs`)를 우선 사용합니다. React UI 전환은 Motion, 타임라인·SVG 효과는 Anime.js를 우선 검토하며 기존 앱의 동작 줄이기 설정을 따릅니다.
 - 파일 도구를 수정하기 전에 `dev-docs/architecture/file-tools.md`를 확인합니다.
 - 대형 라이브러리, AI 모델 또는 실행 파일을 추가하기 전에 `dev-docs/architecture/tool-packs.md`를 확인합니다.
 - 텍본 정리기 작업은 `dev-docs/features/text-cleaner.md`의 범위와 완료 조건을 따릅니다.

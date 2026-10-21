@@ -431,6 +431,9 @@ export class ConfigManager {
   }
 
   saveConfig(configData, { allowLibraryDataPrune = true } = {}) {
+    this.lastSaveFailure = null;
+    let stage = 'config-normalize';
+    let tempPath = '';
     try {
       const requestedLang = configData?.language || configData?.lang;
       const hasLibraryPathUpdate = Object.prototype.hasOwnProperty.call(configData || {}, 'libraries')
@@ -480,10 +483,14 @@ export class ConfigManager {
             nextConfig.library_data_prune_pending = true;
         }
       const configDir = path.dirname(this.configPath);
+      const serializedConfig = JSON.stringify(nextConfig, null, 2);
+      stage = 'config-write';
       fs.mkdirSync(configDir, { recursive: true });
-      const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(nextConfig, null, 2), 'utf-8');
+      tempPath = `${this.configPath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, serializedConfig, 'utf-8');
+      stage = 'config-replace';
       fs.renameSync(tempPath, this.configPath);
+      tempPath = '';
       this.config = nextConfig;
         if (explicitLibraryChange) {
             this.configInitialized = true;
@@ -496,9 +503,17 @@ export class ConfigManager {
         }
       return true;
     } catch (error) {
+      this.lastSaveFailure = { error, stage };
+      if (tempPath) {
+        try { fs.rmSync(tempPath, { force: true }); } catch {}
+      }
       console.error('설정 저장 실패:', error);
       return false;
     }
+  }
+
+  getLastSaveFailure() {
+    return this.lastSaveFailure || null;
   }
 
   getConfig() {

@@ -1,6 +1,7 @@
 import { saveItemRating } from './ratingEditor.js';
-import { saveConfigWithTelemetryConsent } from './observabilityConsent.js';
+import { revokeConfigTelemetryConsent, saveConfigWithTelemetryConsent } from './observabilityConsent.js';
 import { registerObservedHandler } from './observabilityOperations.js';
+import { reportTelemetryError } from './telemetry.js';
 import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
 import { createLibraryDataMaintenance } from './libraryDataMaintenance.js';
@@ -5149,8 +5150,23 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   ipcMain.handle('config:save', async (_, config) => {
-    const currentConfig = configManager.getConfig() || {};
+    let failureReported = false;
+    const reportFailure = (error, stage) => {
+        if (failureReported) return;
+        failureReported = true;
+        const original = error?.cause || error;
+        reportTelemetryError({
+            name: original?.name,
+            code: original?.code || error?.code,
+            stack: original?.stack,
+            syscall: original?.syscall,
+            telemetryStage: error?.telemetryStage || stage,
+        }, { source: 'ipc', ipc_channel: 'config:save' });
+    };
     const updates = config || {};
+    revokeConfigTelemetryConsent(configManager, updates);
+    const currentConfig = configManager.getConfig() || {};
+    let saveStage = 'config-normalize';
     const save = async () => {
         const latestConfig = configManager.getConfig() || {};
         const language = updates.language || updates.lang || latestConfig.language || latestConfig.lang || 'ko';
@@ -5162,27 +5178,49 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             api_keys: { ...(latestConfig.api_keys || {}), ...(updates.api_keys || {}) },
         };
         const saved = saveConfigWithTelemetryConsent(configManager, nextConfig);
-        if (JSON.stringify(latestConfig.libraries) !== JSON.stringify(saved.libraries)) await libraryDataMaintenance.run();
+        if (JSON.stringify(latestConfig.libraries) !== JSON.stringify(saved.libraries)) {
+            saveStage = 'config-maintenance';
+            await libraryDataMaintenance.run();
+        }
         return saved;
     };
-    const changesLibraries = Object.hasOwn(updates, 'libraries')
-        && JSON.stringify(currentConfig.libraries) !== JSON.stringify(updates.libraries);
-    const savedConfig = await (changesLibraries ? libraryDataMaintenance.withIdle(save) : save());
+    let savedConfig;
+    try {
+        const changesLibraries = Object.hasOwn(updates, 'libraries')
+            && JSON.stringify(currentConfig.libraries) !== JSON.stringify(updates.libraries);
+        savedConfig = await (changesLibraries ? libraryDataMaintenance.withIdle(save) : save());
+    } catch (error) {
+        reportFailure(error, saveStage);
+        throw error;
+    }
     const nextLang = savedConfig.language || savedConfig.lang || 'ko';
-    setLanguage(nextLang);
+    try {
+        setLanguage(nextLang);
+    } catch (error) {
+        reportFailure(error, 'config-notify');
+    }
     const savedApiKeys = savedConfig.api_keys || {};
-    BrowserWindow.getAllWindows().forEach(window => {
-      if (!window.isDestroyed()) {
-        window.webContents.send('viewer:config-change', {
-          lang: savedConfig.lang,
-          language: savedConfig.language,
-          motion_preference: savedConfig.motion_preference || 'system',
-          hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
-          hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
-          hasSupertonicModel: supertonicModelManager.status().installed,
-          readingLibraryPaths: configManager.canPruneLibraryData?.() ? savedConfig.libraries : null,
-        });
-      }
+    let windows = [];
+    try {
+        windows = BrowserWindow.getAllWindows();
+    } catch (error) {
+        reportFailure(error, 'config-notify');
+    }
+    windows.forEach(window => {
+        try {
+            if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+            window.webContents.send('viewer:config-change', {
+                lang: savedConfig.lang,
+                language: savedConfig.language,
+                motion_preference: savedConfig.motion_preference || 'system',
+                hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
+                hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
+                hasSupertonicModel: supertonicModelManager.status().installed,
+                readingLibraryPaths: configManager.canPruneLibraryData?.() ? savedConfig.libraries : null,
+            });
+        } catch (error) {
+            reportFailure(error, 'config-notify');
+        }
     });
     return savedConfig;
   });
@@ -5908,8 +5946,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   return {
-    getRuntimeState(ownerId) {
-      return runtimeStates.get(ownerId) || normalizeRuntimeState();
+    getRuntimeState(ownerId, { allowDefault = true } = {}) {
+        return runtimeStates.get(ownerId) || (allowDefault ? normalizeRuntimeState() : null);
     },
     cancelAll(ownerId) {
       return cancellationRegistry.cancelAll(ownerId);

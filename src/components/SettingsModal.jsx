@@ -24,6 +24,7 @@ import {
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 import { useReducedMotion } from '../hooks/useReducedMotion.js';
 import { TelemetrySettings } from './TelemetrySettings';
+import { LicenseSettings } from './LicenseSettings';
 import { fontVarsForConfig } from '../fontPolicy';
 import { SettingsLibraryPreview } from './SettingsLibraryPreview';
 import { SettingsLibraryList } from './SettingsLibraryList';
@@ -42,6 +43,7 @@ const SETTINGS_TABS = [
     { id: 'api', key: 'api', icon: 'search' },
     { id: 'ttsApi', key: 'tts', icon: 'headphones', fallbackKey: 'tab_tts_api_key' },
     { id: 'privacy', key: 'privacy', icon: 'user' },
+    { id: 'licenses', key: 'licenses', icon: 'fileLines' },
 ];
 
 const API_SETTINGS_SECTIONS = [
@@ -1825,6 +1827,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                         <TelemetrySettings config={localConfig} onChange={handleChange} />
                     </div>
                 )}
+                {activeTab === 'licenses' && <LicenseSettings t={t} />}
             </div>
                 {displayedLibraryEntry && (
                     <div

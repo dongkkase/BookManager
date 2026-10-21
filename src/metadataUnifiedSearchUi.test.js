@@ -286,6 +286,7 @@ function coverDraftHarness(activeItem, cacheCover) {
         apiSearchRequestRef: { current: 1 },
         coverLoadRequestsRef: { current: new Map() },
         METADATA_COVER_CACHE_LIMIT: 50,
+        METADATA_COVER_CACHE_BYTE_LIMIT: 64 * 1024 * 1024,
         AUDIOBOOK_SAVE_FIELD_IDS,
         BOOK_META_FIELD_IDS,
         TXT_META_FIELD_IDS,

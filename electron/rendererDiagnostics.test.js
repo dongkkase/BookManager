@@ -259,6 +259,17 @@ test('IPC rejection diagnostics recover known error names and preserve explicit 
     assert.equal(events[1].exception.values[0].value, 'Error: IPC invocation failed');
 });
 
+test('settings save rejections retain their fixed code without exposing settings or paths', async t => {
+    const harness = setup(t);
+    harness.dispatch('unhandledrejection', {
+        reason: new Error("Error invoking remote method 'config:save': Error: CONFIG_SAVE_FAILED: private-message Secret Book token=secret"),
+    });
+    const [event] = await harness.events();
+    assert.equal(event.tags.ipc_channel, 'config:save');
+    assert.equal(event.tags.error_code, 'CONFIG_SAVE_FAILED');
+    assert.equal(event.exception.values[0].value, 'Error (CONFIG_SAVE_FAILED): Settings could not be saved');
+});
+
 test('unknown IPC channels, message contents and forged diagnostic tags do not enter Sentry', async t => {
     const harness = setup(t);
     for (const message of [

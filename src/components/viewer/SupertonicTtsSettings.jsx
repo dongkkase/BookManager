@@ -37,7 +37,7 @@ export function SupertonicTtsSettings({ value, voices, baseVoice, text, onChange
         </label>
     );
     return (
-        <details className="viewer-supertonic-settings">
+        <details className="viewer-supertonic-settings" open>
             <summary>{t('title', 'Supertonic 낭독 스타일')}</summary>
             <div className="viewer-supertonic-settings-body">
                 <p>{t('description', '일반 문장·대사·속마음에 사용할 스타일을 선택하세요. 선택한 음성에 스타일별 속도와 쉼을 적용합니다.')}</p>
