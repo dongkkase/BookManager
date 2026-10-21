@@ -590,3 +590,78 @@
 .renamer-context-menu button:hover {
     background: #3d3d3d;
 }
+
+.renamer-rename-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2600;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.renamer-rename-dialog {
+    width: min(480px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 16px;
+    color: #eeeeee;
+    background: #252525;
+    border: 1px solid #555555;
+    border-radius: 7px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.renamer-rename-header,
+.renamer-rename-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.renamer-rename-header {
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.renamer-rename-header h2 {
+    margin: 0;
+    font-size: var(--font-md);
+}
+
+.renamer-rename-dialog label {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.renamer-rename-dialog input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    color: #ffffff;
+    background: #191919;
+    border: 1px solid #666666;
+    border-radius: 4px;
+}
+
+.renamer-rename-dialog button {
+    padding: 7px 14px;
+    color: #eeeeee;
+    background: #414141;
+    border: 1px solid #626262;
+    border-radius: 4px;
+}
+
+.renamer-rename-dialog button:disabled {
+    opacity: 0.5;
+}
+
+.renamer-rename-actions {
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+.renamer-rename-dialog .renamer-rename-confirm {
+    background: #3268a2;
+}

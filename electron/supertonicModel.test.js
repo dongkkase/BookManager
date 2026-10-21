@@ -19,8 +19,8 @@ test('Supertonic 모델은 앱 데이터 폴더 하위의 고정 경로를 사�
         path.join('/portable/BookManager', 'BookManagerData', 'models', 'supertonic-3'),
     );
     assert.equal(
-        resolveSupertonicModelDir('/portable/BookManager.app/Contents/MacOS', 'darwin', {}),
-        path.join('/portable', 'BookManagerData', 'models', 'supertonic-3'),
+        resolveSupertonicModelDir('/portable/BookManager.app/Contents/MacOS', 'darwin', { HOME: '/Users/reader' }),
+        path.join('/Users/reader', 'Library', 'Application Support', 'BookManagerData', 'models', 'supertonic-3'),
     );
 });
 

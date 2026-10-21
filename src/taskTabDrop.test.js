@@ -42,6 +42,7 @@ function fixture(tab, options = {}) {
         showToast: message => calls.errors.push(message),
         clearVolumeSelection: () => { calls.selectionsCleared += 1; },
         previewRequestRef: { current: { cover: 1, inner: 1 } },
+        renameRequestRef: { current: false },
         coverLoadRequestsRef: { current: new Map([['old', true]]) },
     };
     for (const setter of new Set(callbacks.match(/\bset[A-Z]\w+/g))) {

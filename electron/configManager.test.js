@@ -25,11 +25,11 @@ test('모션 설정은 이전 설정에 기본값을 부여하고 저장 후 다
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-motion-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     writeDataConfig(root, { language: 'ko' });
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     assert.equal(manager.loadConfig().motion_preference, 'system');
     for (const motion_preference of ['full', 'reduced', 'system']) {
         assert.equal(manager.saveConfig({ ...manager.getConfig(), motion_preference }), true);
-        const restarted = new ConfigManager(root, root);
+        const restarted = new ConfigManager(root, root, { platform: 'linux' });
         assert.equal(restarted.loadConfig().motion_preference, motion_preference);
     }
     assert.equal(manager.normalizeConfig({ motion_preference: 'invalid' }).motion_preference, 'system');
@@ -39,7 +39,7 @@ test('라이브러리 데이터 정리는 정상 등록 경로 설정의 초기�
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-ready-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     writeDataConfig(root, { libraries: [] });
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     assert.equal(manager.canPruneLibraryData(), false);
     manager.loadConfig();
     assert.equal(manager.canPruneLibraryData(), false);
@@ -53,13 +53,13 @@ test('라이브러리 데이터 정리는 정상 등록 경로 설정의 초기�
 test('설정 파일이 없어서 생성한 빈 라이브러리는 일반 설정 저장과 재시작 후에도 정리를 허용하지 않는다', async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-missing-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     await manager.initialize();
     assert.equal(manager.canPruneLibraryData(), false);
     assert.equal(manager.getConfig().library_data_prune_pending, true);
     assert.equal(manager.saveConfig({ ...manager.getConfig(), language: 'en', library_data_prune_pending: false }), true);
     assert.equal(manager.canPruneLibraryData(), false);
-    const restarted = new ConfigManager(root, root);
+    const restarted = new ConfigManager(root, root, { platform: 'linux' });
     await restarted.initialize();
     assert.equal(restarted.canPruneLibraryData(), false);
     assert.equal(restarted.getConfig().library_data_prune_pending, true);
@@ -73,11 +73,11 @@ test('손상 설정의 빈 라이브러리 복구는 실제 등록 경로를 저
     t.mock.method(console, 'error', () => {});
     const configPath = writeDataConfig(root, {});
     fs.writeFileSync(configPath, '{broken');
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     await manager.initialize();
     manager.loadConfig();
     assert.equal(manager.canPruneLibraryData(), false);
-    const restarted = new ConfigManager(root, root);
+    const restarted = new ConfigManager(root, root, { platform: 'linux' });
     await restarted.initialize();
     assert.equal(restarted.canPruneLibraryData(), false);
     const library = path.join(root, 'Books');
@@ -86,7 +86,7 @@ test('손상 설정의 빈 라이브러리 복구는 실제 등록 경로를 저
     assert.equal(restarted.getConfig().library_data_prune_pending, undefined);
     assert.equal(restarted.saveConfig({ libraries: [], dup_check_folders: [], library_entries: [] }), true);
     assert.equal(restarted.canPruneLibraryData(), true);
-    const empty = new ConfigManager(root, root);
+    const empty = new ConfigManager(root, root, { platform: 'linux' });
     await empty.initialize();
     assert.deepEqual(empty.getConfig().libraries, []);
     assert.equal(empty.canPruneLibraryData(), true);
@@ -100,7 +100,7 @@ test('등록 경로가 없거나 잘못된 기존 설정과 별칭만 변경한 
     }];
     for (const config of cases) {
         writeDataConfig(root, config);
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         await manager.initialize();
         assert.equal(manager.canPruneLibraryData(), false);
         const entries = manager.getConfig().library_entries.map(entry => ({ ...entry, alias: '다른 이름' }));
@@ -114,7 +114,7 @@ test('라이브러리 변경 저장에 실패하면 정리 허용 상태로 승�
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-save-failure-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     t.mock.method(console, 'error', () => {});
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     await manager.initialize();
     const blocker = path.join(root, 'blocker');
     fs.writeFileSync(blocker, 'file');
@@ -130,7 +130,7 @@ test('정리 허용 상태에서도 잘못된 등록 경로를 저장하면 보�
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     for (const invalidPath of ['/Books/invalid\0', 'relative/books']) {
         writeDataConfig(root, { libraries: [path.join(root, 'Books')] });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         await manager.initialize();
         assert.equal(manager.canPruneLibraryData(), true);
         assert.equal(manager.saveConfig({ libraries: [invalidPath], dup_check_folders: [], library_entries: [] }), true);
@@ -178,7 +178,7 @@ test('경로 복원 실패 후 기본값이나 재로드한 설정은 같은 초
 });
 
 test('오류 보고와 사용 통계는 미설정 시 기본으로 켜지며 명시적인 false와 잘못된 값은 끈다', () => {
-    const manager = new ConfigManager('/user/data', '/portable/app');
+    const manager = new ConfigManager('/user/data', '/portable/app', { platform: 'linux' });
     const defaults = manager.getDefaultConfig();
     assert.equal(defaults.telemetry_error_reports, true);
     assert.equal(defaults.telemetry_usage_stats, true);
@@ -207,25 +207,25 @@ test('오류 보고와 사용 통계는 미설정 시 기본으로 켜지며 명
 test('오류 보고와 사용 통계 해제는 독립적으로 저장되며 다른 설정 저장과 재시작에도 유지된다', t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-telemetry-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     const initial = manager.loadConfig();
     assert.equal(initial.telemetry_error_reports, true);
     assert.equal(initial.telemetry_usage_stats, true);
 
     manager.saveConfig({ telemetry_usage_stats: false });
     manager.saveConfig({ language: 'en' });
-    const errorOnly = new ConfigManager(root, root).loadConfig();
+    const errorOnly = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(errorOnly.telemetry_error_reports, true);
     assert.equal(errorOnly.telemetry_usage_stats, false);
 
     manager.saveConfig({ telemetry_error_reports: false, telemetry_usage_stats: true });
-    const usageOnly = new ConfigManager(root, root).loadConfig();
+    const usageOnly = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(usageOnly.telemetry_error_reports, false);
     assert.equal(usageOnly.telemetry_usage_stats, true);
 
     manager.saveConfig({ telemetry_usage_stats: false });
     manager.saveConfig({ language: 'ja' });
-    const optedOut = new ConfigManager(root, root).loadConfig();
+    const optedOut = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(optedOut.telemetry_error_reports, false);
     assert.equal(optedOut.telemetry_usage_stats, false);
 });
@@ -234,12 +234,12 @@ test('기존 설정에서 누락된 수집 항목만 기본값으로 보정하�
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-telemetry-migration-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     writeDataConfig(root, { language: 'en', telemetry_error_reports: false });
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     const loaded = manager.loadConfig();
     assert.equal(loaded.telemetry_error_reports, false);
     assert.equal(loaded.telemetry_usage_stats, true);
     manager.saveConfig({ play_sound: false });
-    const restarted = new ConfigManager(root, root).loadConfig();
+    const restarted = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(restarted.telemetry_error_reports, false);
     assert.equal(restarted.telemetry_usage_stats, true);
 });
@@ -272,16 +272,17 @@ test('초기화 시 NAS의 기존 Unicode 경로를 복구하고 다음 설정 �
 });
 
 test('config는 실행 경로의 BookManagerData 폴더에 둔다', () => {
-    const manager = new ConfigManager('/user/data', '/portable/app');
+    const manager = new ConfigManager('/user/data', '/portable/app', { platform: 'linux' });
     assert.equal(manager.configPath, path.join('/portable/app', 'BookManagerData', 'config.json'));
 });
 
-test('useUserData 옵션이 있어도 config는 실행 경로의 BookManagerData 폴더에 둔다', () => {
+test('macOS config는 사용자 Application Support의 BookManagerData 폴더에 둔다', () => {
     const manager = new ConfigManager('/user/data', '/Applications/BookManager.app/Contents/MacOS', {
         platform: 'darwin',
         useUserData: true,
+        env: { HOME: '/Users/reader' },
     });
-    assert.equal(manager.configPath, path.join('/Applications', 'BookManagerData', 'config.json'));
+    assert.equal(manager.configPath, path.join('/Users/reader', 'Library', 'Application Support', 'BookManagerData', 'config.json'));
 });
 
 test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한다', () => {
@@ -292,7 +293,7 @@ test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한�
             legacy_plugin_option: { enabled: true },
             api_keys: { custom_provider: 'secret', aladin: 'key' },
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.lang, 'ja');
         assert.equal(loaded.language, 'ja');
@@ -311,13 +312,13 @@ test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한�
 test('최근 검색어는 다른 설정 저장 후에도 유지되고 다시 실행할 때 복원된다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-search-history-'));
     try {
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         manager.loadConfig();
         manager.saveConfig({ folder_search_history: ['최근 검색', '이전 검색'] });
         manager.saveConfig({ language: 'en' });
-        assert.deepEqual(new ConfigManager(root, root).loadConfig().folder_search_history, ['최근 검색', '이전 검색']);
+        assert.deepEqual(new ConfigManager(root, root, { platform: 'linux' }).loadConfig().folder_search_history, ['최근 검색', '이전 검색']);
         manager.saveConfig({ folder_search_history: [] });
-        assert.deepEqual(new ConfigManager(root, root).loadConfig().folder_search_history, []);
+        assert.deepEqual(new ConfigManager(root, root, { platform: 'linux' }).loadConfig().folder_search_history, []);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -326,7 +327,7 @@ test('최근 검색어는 다른 설정 저장 후에도 유지되고 다시 실
 test('커버 편집의 마지막 적용 방식과 해제한 옵션 및 검색 API는 다른 설정 저장 및 재시작 후에도 유지된다', t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-cover-editor-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     assert.equal(manager.loadConfig().folder_cover_editor_options, undefined);
     assert.equal(manager.saveConfig({
         folder_cover_editor_options: { mode: 'replace', backup: true, renumber: true },
@@ -337,7 +338,7 @@ test('커버 편집의 마지막 적용 방식과 해제한 옵션 및 검색 AP
 
     const saved = JSON.parse(fs.readFileSync(manager.configPath, 'utf8'));
     assert.deepEqual(saved.folder_cover_editor_options, lastOptions);
-    const reloaded = new ConfigManager(root, root).loadConfig();
+    const reloaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.deepEqual(reloaded.folder_cover_editor_options, lastOptions);
     assert.equal(reloaded.language, 'en');
 });
@@ -345,7 +346,7 @@ test('커버 편집의 마지막 적용 방식과 해제한 옵션 및 검색 AP
 test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-yes24-'));
     try {
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         assert.equal(manager.loadConfig().api_keys.yes24, '');
         manager.saveConfig({
             api_keys: { yes24: '  yk_live_test  ', aladin: 'aladin-key' },
@@ -354,7 +355,7 @@ test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
             preferred_meta_api_pdf: 'YES24',
         });
         manager.saveConfig({ api_keys: { google: 'google-key' } });
-        const loaded = new ConfigManager(root, root).loadConfig();
+        const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
         assert.equal(loaded.api_keys.yes24, 'yk_live_test');
         assert.equal(loaded.api_keys.aladin, 'aladin-key');
         assert.equal(loaded.api_keys.google, 'google-key');
@@ -369,7 +370,7 @@ test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
 test('문피아 기본 검색 API를 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-munpia-'));
     try {
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         manager.loadConfig();
         manager.saveConfig({
             preferred_meta_api_comic: '문피아',
@@ -377,7 +378,7 @@ test('문피아 기본 검색 API를 저장 후 다시 불러온다', () => {
             preferred_meta_api_pdf: '문피아',
             last_meta_api: '문피아',
         });
-        const loaded = new ConfigManager(root, root).loadConfig();
+        const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
         assert.equal(loaded.preferred_meta_api_comic, '문피아');
         assert.equal(loaded.preferred_meta_api_book, '문피아');
         assert.equal(loaded.preferred_meta_api_pdf, '문피아');
@@ -390,7 +391,7 @@ test('문피아 기본 검색 API를 저장 후 다시 불러온다', () => {
 test('한국웹툰 기본 검색 API는 만화책 설정에서 저장 후 다시 불러온다', t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-kmas-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     manager.loadConfig();
     manager.saveConfig({
         preferred_meta_api_comic: '한국웹툰',
@@ -398,7 +399,7 @@ test('한국웹툰 기본 검색 API는 만화책 설정에서 저장 후 다시
         preferred_meta_api_pdf: '한국웹툰',
         last_meta_api: '한국웹툰',
     });
-    const loaded = new ConfigManager(root, root).loadConfig();
+    const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(loaded.preferred_meta_api_comic, '한국웹툰');
     assert.equal(loaded.preferred_meta_api_book, '리디북스');
     assert.equal(loaded.preferred_meta_api_pdf, '리디북스');
@@ -412,7 +413,7 @@ test('한국웹툰 기본 검색 API는 만화책 설정에서 저장 후 다시
 test('통합검색 기본 API 설정을 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-unified-search-'));
     try {
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         manager.loadConfig();
         manager.saveConfig({
             preferred_meta_api_comic: '통합검색',
@@ -421,7 +422,7 @@ test('통합검색 기본 API 설정을 저장 후 다시 불러온다', () => {
             last_meta_api: '통합검색',
         });
         manager.saveConfig({ language: 'en' });
-        const loaded = new ConfigManager(root, root).loadConfig();
+        const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
         assert.equal(loaded.preferred_meta_api_comic, '통합검색');
         assert.equal(loaded.preferred_meta_api_book, '통합검색');
         assert.equal(loaded.preferred_meta_api_pdf, '통합검색');
@@ -447,7 +448,7 @@ test('경로 목록과 즐겨찾기는 형식을 유지하며 중복을 제거�
                 { name: 'B', path: '/Books/B' },
             ],
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.deepEqual(loaded.libraries, ['/Books/', '/Comics', '/Manga']);
         assert.deepEqual(loaded.dup_check_folders, loaded.libraries);
@@ -472,7 +473,7 @@ test('라이브러리 별칭, 그룹, 표기 순서를 저장하고 기존 경�
                 { path: '/Books', alias: 'Bookshelf', group: 'Local' },
             ],
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.deepEqual(loaded.libraries, ['/Comics', '/Books']);
         assert.deepEqual(loaded.library_entries, [
@@ -498,7 +499,7 @@ test('라이브러리 별칭, 그룹, 표기 순서를 저장하고 기존 경�
 test('config가 없으면 기본 설정을 생성한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-default-'));
     try {
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(fs.existsSync(dataConfigPath(root)), true);
         assert.equal(loaded.target_format, 'none');
@@ -548,7 +549,7 @@ test('기존 AI 표지 검색 키를 선택된 제공자 전용 키로 이전한
                 ai_key: 'sk-legacy',
             },
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.api_keys.ai_provider, 'OpenAI');
         assert.equal(loaded.api_keys.ai_openai_key, 'sk-legacy');
@@ -565,7 +566,7 @@ test('기존 마지막 검색 API를 책 타입별 기본 검색 API로 승계�
         writeDataConfig(root, {
             last_meta_api: 'Google Books',
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.preferred_meta_api_comic, 'Google Books');
         assert.equal(loaded.preferred_meta_api_book, 'Google Books');
@@ -581,7 +582,7 @@ test('기존 Default 글꼴 설정은 Noto Sans KR 기본값으로 정규화한�
         writeDataConfig(root, {
             font_family: 'Default',
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.font_family, 'Noto Sans KR');
     } finally {
@@ -595,7 +596,7 @@ test('손상된 config를 백업하고 안전한 기본값으로 복구한다', 
         const configPath = dataConfigPath(root);
         fs.mkdirSync(path.dirname(configPath), { recursive: true });
         fs.writeFileSync(configPath, '{broken');
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.lang, 'ko');
         assert.equal(fs.existsSync(configPath), true);
@@ -611,7 +612,7 @@ test('손상된 config를 백업하고 안전한 기본값으로 복구한다', 
 test('연속 부분 저장은 이전 변경과 임시 파일 정리를 유지한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-writes-'));
     try {
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         manager.loadConfig();
         manager.updateConfig({ width: 1400 });
         manager.updateConfig({ height: 900 });
@@ -652,7 +653,7 @@ test('언어 부분 저장은 lang과 language를 같은 값으로 동기화한�
             lang: 'ko',
             language: 'ko',
         });
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         manager.loadConfig();
         manager.updateConfig({ lang: 'en' });
         let saved = JSON.parse(fs.readFileSync(dataConfigPath(root), 'utf8'));
@@ -675,7 +676,7 @@ test('루트의 기존 config.json은 BookManagerData/config.json으로 복사�
             language: 'en',
             target_format: 'cbz',
         }));
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.language, 'en');
         assert.equal(loaded.target_format, 'cbz');
@@ -696,7 +697,7 @@ test('userData의 기존 config.json도 BookManagerData/config.json으로 복사
             language: 'ja',
             play_sound: false,
         }));
-        const manager = new ConfigManager(userData, executableDir);
+        const manager = new ConfigManager(userData, executableDir, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.language, 'ja');
         assert.equal(loaded.play_sound, false);
@@ -718,7 +719,7 @@ test('기존 data 폴더는 BookManagerData로 이동해 읽는다', () => {
         fs.writeFileSync(path.join(root, 'data', 'library.db'), 'db');
         fs.writeFileSync(path.join(root, 'data', 'thumbnails', 'cover.jpg'), 'cover');
 
-        const manager = new ConfigManager(root, root);
+        const manager = new ConfigManager(root, root, { platform: 'linux' });
         const loaded = manager.loadConfig();
         assert.equal(loaded.language, 'en');
         assert.equal(loaded.target_format, 'zip');
@@ -731,7 +732,7 @@ test('기존 data 폴더는 BookManagerData로 이동해 읽는다', () => {
     }
 });
 
-test('macOS 앱 번들 내부 data의 기존 config도 앱 옆 BookManagerData/config.json으로 복사해 읽는다', () => {
+test('macOS 앱 번들 내부 data의 기존 config도 Application Support로 복사해 읽는다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-mac-bundle-'));
     const executableDir = path.join(root, 'BookManager.app', 'Contents', 'MacOS');
     try {
@@ -740,11 +741,11 @@ test('macOS 앱 번들 내부 data의 기존 config도 앱 옆 BookManagerData/c
             language: 'en',
             target_format: 'webp',
         }));
-        const manager = new ConfigManager(root, executableDir, { platform: 'darwin' });
+        const manager = new ConfigManager(root, executableDir, { platform: 'darwin', env: { HOME: root } });
         const loaded = manager.loadConfig();
         assert.equal(loaded.language, 'en');
         assert.equal(loaded.target_format, 'webp');
-        assert.equal(fs.existsSync(dataConfigPath(root)), true);
+        assert.equal(fs.existsSync(manager.configPath), true);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -754,7 +755,7 @@ test('신규 제공자 기본값과 인증 및 지역 설정은 저장 후 유�
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-providers-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     writeDataConfig(root, { preferred_meta_api_book: 'Kobo' });
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     assert.equal(manager.loadConfig().preferred_meta_api_audio, 'Kobo');
     assert.equal(manager.saveConfig({
         preferred_meta_api_comic: 'Hardcover', preferred_meta_api_book: 'Open Library',
@@ -763,7 +764,7 @@ test('신규 제공자 기본값과 인증 및 지역 설정은 저장 후 유�
         metadata_providers: { itunes_country: 'JP', kobo_country: 'ca', kobo_language: 'fr', audible_region: 'uk' },
     }), true);
     manager.saveConfig({ metadata_providers: { itunes_cover_resolution: 'standard' }, api_keys: { google: 'google-key' } });
-    const loaded = new ConfigManager(root, root).loadConfig();
+    const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(loaded.preferred_meta_api_comic, 'Hardcover');
     assert.equal(loaded.preferred_meta_api_book, 'Open Library');
     assert.equal(loaded.preferred_meta_api_pdf, 'iTunes');
@@ -787,12 +788,12 @@ test('검색 소스 토글은 부분 저장과 재실행에도 유지되고 비�
         api_keys: { hardcover: 'saved-token' },
         metadata_providers: { kobo_country: 'jp' },
     });
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     assert.deepEqual(manager.loadConfig().metadata_api_enabled, normalizeMetadataApiEnabled());
     assert.equal(manager.saveConfig({ metadata_api_enabled: { '리디북스': false, Kobo: false, Audible: false } }), true);
     assert.equal(manager.saveConfig({ metadata_api_enabled: { Hardcover: false, unknown: false } }), true);
     assert.equal(manager.saveConfig({ language: 'en' }), true);
-    const loaded = new ConfigManager(root, root).loadConfig();
+    const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.deepEqual(loaded.metadata_api_enabled, normalizeMetadataApiEnabled({ '리디북스': false, Kobo: false, Audible: false, Hardcover: false }));
     for (const type of ['comic', 'book', 'pdf', 'audio']) {
         assert.equal(loaded[`preferred_meta_api_${type}`], '문피아');
@@ -800,7 +801,7 @@ test('검색 소스 토글은 부분 저장과 재실행에도 유지되고 비�
     assert.equal(loaded.api_keys.hardcover, 'saved-token');
     assert.equal(loaded.metadata_providers.kobo_country, 'jp');
     assert.equal(manager.saveConfig({ metadata_api_enabled: { Hardcover: true } }), true);
-    const reenabled = new ConfigManager(root, root).loadConfig();
+    const reenabled = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.equal(reenabled.metadata_api_enabled.Hardcover, true);
     assert.equal(reenabled.metadata_api_enabled.Kobo, false);
     assert.equal(reenabled.api_keys.hardcover, 'saved-token');
@@ -809,11 +810,11 @@ test('검색 소스 토글은 부분 저장과 재실행에도 유지되고 비�
 test('사용 가능한 활성 소스로 기본값을 복구하고 모든 검색 소스가 꺼진 상태도 저장한다', t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-provider-all-off-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const manager = new ConfigManager(root, root);
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
     manager.loadConfig();
     const disabled = Object.fromEntries(Object.keys(normalizeMetadataApiEnabled()).map(source => [source, false]));
     assert.equal(manager.saveConfig({ metadata_api_enabled: disabled, api_keys: { yes24: 'saved-key' } }), true);
-    const loaded = new ConfigManager(root, root).loadConfig();
+    const loaded = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
     assert.deepEqual(loaded.metadata_api_enabled, disabled);
     for (const type of ['comic', 'book', 'pdf', 'audio']) {
         assert.equal(loaded[`preferred_meta_api_${type}`], '통합검색');

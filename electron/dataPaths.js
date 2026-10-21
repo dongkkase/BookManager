@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { migrateMacAppDataDir } from './macDataMigration.js';
 
 export const APP_DATA_DIR_NAME = 'BookManagerData';
 export const LEGACY_APP_DATA_DIR_NAME = 'data';
@@ -22,6 +24,9 @@ export function resolvePortableBaseDir(executableDir = process.cwd(), platform =
 }
 
 export function resolveAppDataDir(executableDir = process.cwd(), platform = process.platform, env = process.env) {
+    if (platform === 'darwin') {
+        return path.join(env?.HOME || os.homedir(), 'Library', 'Application Support', APP_DATA_DIR_NAME);
+    }
     return path.join(resolvePortableBaseDir(executableDir, platform, env), APP_DATA_DIR_NAME);
 }
 
@@ -31,6 +36,8 @@ export function resolveLegacyAppDataDirs(executableDir = process.cwd(), platform
     ];
 
     if (platform === 'darwin') {
+        legacyDirs.unshift(path.join(resolvePortableBaseDir(executableDir, platform, env), APP_DATA_DIR_NAME));
+        legacyDirs.push(path.join(executableDir || process.cwd(), APP_DATA_DIR_NAME));
         legacyDirs.push(path.join(executableDir || process.cwd(), LEGACY_APP_DATA_DIR_NAME));
     }
 
@@ -45,6 +52,9 @@ export function resolveLegacyAppDataDirs(executableDir = process.cwd(), platform
 
 export function migrateLegacyAppDataDir(executableDir = process.cwd(), platform = process.platform, env = process.env) {
     const appDataDir = resolveAppDataDir(executableDir, platform, env);
+    if (platform === 'darwin') {
+        return migrateMacAppDataDir(appDataDir, resolveLegacyAppDataDirs(executableDir, platform, env));
+    }
     if (fs.existsSync(appDataDir)) return appDataDir;
 
     for (const legacyDir of resolveLegacyAppDataDirs(executableDir, platform, env)) {

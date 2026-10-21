@@ -262,9 +262,8 @@ export class ConfigManager {
     this.configInitialized = false;
     this.configInitializationFailed = false;
     this.libraryDataPruneReady = false;
+    this.config = this.loadConfig();
     try {
-      fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
-      this.config = this.loadConfig();
         const restored = await restoreFolderConfigPaths(this.config, { platform: this.platform });
         const restoredSaved = restored === this.config || this.saveConfig(restored, { allowLibraryDataPrune: false });
         this.configInitialized = restoredSaved;
@@ -382,10 +381,10 @@ export class ConfigManager {
   loadConfig() {
     this.configLoadTrusted = false;
     this.libraryDataPruneReady = false;
-    try {
-      if (this.usesDefaultConfigPath) {
+    if (this.usesDefaultConfigPath) {
         migrateLegacyAppDataDir(this.executableDir, this.platform, this.env);
-      }
+    }
+    try {
       this.migrateLegacyConfig();
       if (fs.existsSync(this.configPath)) {
         const data = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));

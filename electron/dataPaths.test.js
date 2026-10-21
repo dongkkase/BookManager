@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
     resolveApiCacheDbPath,
+    resolveApiCoverCacheDir,
     resolveAppDataDir,
     resolveConfigPath,
     resolveContentIndexDbPath,
@@ -16,30 +18,41 @@ import {
     resolveThumbnailDir,
 } from './dataPaths.js';
 
-test('앱 데이터 경로는 실행 폴더의 BookManagerData 하위로 고정한다', () => {
+test('Linux 앱 데이터 경로는 실행 폴더의 BookManagerData 하위를 유지한다', () => {
     const executableDir = path.join('/portable', 'BookManager');
 
-    assert.equal(resolveAppDataDir(executableDir), path.join(executableDir, 'BookManagerData'));
-    assert.equal(resolveLibraryDbPath(executableDir), path.join(executableDir, 'BookManagerData', 'library.db'));
-    assert.equal(resolveContentIndexDir(executableDir), path.join(executableDir, 'BookManagerData', 'content_index'));
-    assert.equal(resolveContentIndexDbPath(executableDir), path.join(executableDir, 'BookManagerData', 'content_index', 'content.db'));
-    assert.equal(resolveApiCacheDbPath(executableDir), path.join(executableDir, 'BookManagerData', '.api_cache.db'));
-    assert.equal(resolveConfigPath(executableDir), path.join(executableDir, 'BookManagerData', 'config.json'));
-    assert.equal(resolveRenameHistoryPath(executableDir), path.join(executableDir, 'BookManagerData', 'rename_history.json'));
-    assert.equal(resolveThumbnailDir(executableDir), path.join(executableDir, 'BookManagerData', 'thumbnails'));
+    assert.equal(resolveAppDataDir(executableDir, 'linux'), path.join(executableDir, 'BookManagerData'));
+    assert.equal(resolveLibraryDbPath(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'library.db'));
+    assert.equal(resolveContentIndexDir(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'content_index'));
+    assert.equal(resolveContentIndexDbPath(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'content_index', 'content.db'));
+    assert.equal(resolveApiCacheDbPath(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', '.api_cache.db'));
+    assert.equal(resolveConfigPath(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'config.json'));
+    assert.equal(resolveRenameHistoryPath(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'rename_history.json'));
+    assert.equal(resolveThumbnailDir(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'thumbnails'));
 });
 
-test('macOS .app 내부 실행 경로는 앱 번들 옆 BookManagerData 폴더로 변환한다', () => {
+test('macOS의 모든 앱 데이터는 사용자 Application Support에 저장한다', () => {
     const executableDir = path.join('/portable', 'BookManager.app', 'Contents', 'MacOS');
+    const env = { HOME: '/Users/reader' };
+    const dataDir = path.join(env.HOME, 'Library', 'Application Support', 'BookManagerData');
 
     assert.equal(resolvePortableBaseDir(executableDir, 'darwin'), '/portable');
-    assert.equal(resolveAppDataDir(executableDir, 'darwin'), path.join('/portable', 'BookManagerData'));
-    assert.equal(resolveLibraryDbPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'library.db'));
-    assert.equal(resolveContentIndexDbPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'content_index', 'content.db'));
-    assert.equal(resolveApiCacheDbPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', '.api_cache.db'));
-    assert.equal(resolveConfigPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'config.json'));
-    assert.equal(resolveRenameHistoryPath(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'rename_history.json'));
-    assert.equal(resolveThumbnailDir(executableDir, 'darwin'), path.join('/portable', 'BookManagerData', 'thumbnails'));
+    assert.equal(resolveAppDataDir(executableDir, 'darwin', env), dataDir);
+    assert.equal(resolveAppDataDir('/development/BookManager', 'darwin', env), dataDir);
+    assert.equal(resolveAppDataDir(executableDir, 'darwin', {}), path.join(os.homedir(), 'Library', 'Application Support', 'BookManagerData'));
+    assert.equal(resolveLibraryDbPath(executableDir, 'darwin', env), path.join(dataDir, 'library.db'));
+    assert.equal(resolveContentIndexDbPath(executableDir, 'darwin', env), path.join(dataDir, 'content_index', 'content.db'));
+    assert.equal(resolveApiCacheDbPath(executableDir, 'darwin', env), path.join(dataDir, '.api_cache.db'));
+    assert.equal(resolveApiCoverCacheDir(executableDir, 'darwin', env), path.join(dataDir, 'api_cover_cache'));
+    assert.equal(resolveConfigPath(executableDir, 'darwin', env), path.join(dataDir, 'config.json'));
+    assert.equal(resolveRenameHistoryPath(executableDir, 'darwin', env), path.join(dataDir, 'rename_history.json'));
+    assert.equal(resolveThumbnailDir(executableDir, 'darwin', env), path.join(dataDir, 'thumbnails'));
+    assert.deepEqual(resolveLegacyAppDataDirs(executableDir, 'darwin', env), [
+        path.join('/portable', 'BookManagerData'),
+        path.join('/portable', 'data'),
+        path.join(executableDir, 'BookManagerData'),
+        path.join(executableDir, 'data'),
+    ]);
 });
 
 test('Windows portable은 임시 추출 경로 대신 원본 exe 폴더에 BookManagerData를 둔다', () => {
@@ -69,8 +82,8 @@ test('기존 data 폴더는 BookManagerData로 이동한다', () => {
         fs.writeFileSync(path.join(legacyDir, 'library.db'), 'db');
         fs.writeFileSync(path.join(legacyDir, 'thumbnails', 'cover.jpg'), 'cover');
 
-        assert.deepEqual(resolveLegacyAppDataDirs(root), [legacyDir]);
-        assert.equal(migrateLegacyAppDataDir(root), nextDir);
+        assert.deepEqual(resolveLegacyAppDataDirs(root, 'linux'), [legacyDir]);
+        assert.equal(migrateLegacyAppDataDir(root, 'linux'), nextDir);
         assert.equal(fs.existsSync(legacyDir), false);
         assert.equal(fs.readFileSync(path.join(nextDir, 'library.db'), 'utf8'), 'db');
         assert.equal(fs.readFileSync(path.join(nextDir, 'thumbnails', 'cover.jpg'), 'utf8'), 'cover');

@@ -30,6 +30,7 @@ import {
 import noImage from '../images/noimage.png';
 import { SmoothCoverImage } from '../components/SmoothCoverImage';
 import { useConfigSaveNotice } from '../hooks/useConfigSaveNotice';
+import { useModalAccessibility } from '../hooks/useModalAccessibility';
 
 function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop() || '';
@@ -96,6 +97,27 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+    const [renameDialog, setRenameDialog] = useState(null);
+    const renameRequestRef = useRef(false);
+    const renameResolverRef = useRef(null);
+    const mountedRef = useRef(false);
+    const closeRenameDialog = useCallback(() => {
+        const resolve = renameResolverRef.current;
+        renameResolverRef.current = null;
+        setRenameDialog(null);
+        resolve?.(null);
+    }, []);
+    const confirmRenameDialog = useCallback(value => {
+        const resolve = renameResolverRef.current;
+        if (!resolve) return;
+        renameResolverRef.current = null;
+        setRenameDialog(current => current ? { ...current, busy: true } : current);
+        resolve(value);
+    }, []);
+    const requestRenameName = useCallback(initialValue => new Promise(resolve => {
+        renameResolverRef.current = resolve;
+        setRenameDialog({ initialValue, busy: false });
+    }), []);
   const [taskPhase, setTaskPhase] = useState('idle');
   const [selectedEntryId, setSelectedEntryId] = useState(null);
   const [coverPreview, setCoverPreview] = useState('');
@@ -148,11 +170,17 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     return () => window.removeEventListener('click', closeMenu);
   }, []);
 
-  useEffect(() => () => {
-    previewWaitControllerRef.current?.abort();
-    previewRequestRef.current.cover += 1;
-    previewRequestRef.current.inner += 1;
-    pendingArchiveSelectRef.current?.();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+        mountedRef.current = false;
+        renameResolverRef.current?.(null);
+        renameResolverRef.current = null;
+        previewWaitControllerRef.current?.abort();
+        previewRequestRef.current.cover += 1;
+        previewRequestRef.current.inner += 1;
+        pendingArchiveSelectRef.current?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -442,6 +470,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   };
 
   const handleClear = () => {
+    if (renameRequestRef.current) return;
     previewRequestRef.current.cover += 1;
     previewRequestRef.current.inner += 1;
     setFileList([]);
@@ -464,6 +493,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [isWorking, t]);
 
   const handleRemoveChecked = useCallback(() => {
+    if (renameRequestRef.current) return;
     setFileList(prev => {
       const next = prev.filter(file => !file.checked);
       if (!next.some(file => file.id === selectedArchiveId)) {
@@ -486,7 +516,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [activeEntries]);
 
   const handleRemoveArchive = useCallback((targetArchiveId) => {
-    if (!targetArchiveId) return;
+    if (!targetArchiveId || renameRequestRef.current) return;
     setFileList(prev => {
       const index = prev.findIndex(file => file.id === targetArchiveId);
       if (index < 0) return prev;
@@ -506,7 +536,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [activeArchive?.id, handleRemoveArchive, selectedArchiveId]);
 
   const handleArchiveTableKeyDown = useCallback((event) => {
-    if (isWorking || !shouldHandleTableNavigation(event)) return;
+    if (isWorking || renameRequestRef.current || !shouldHandleTableNavigation(event)) return;
 
     const currentArchiveId = selectedArchiveId || activeArchive?.id;
     const currentIndex = fileList.findIndex(file => file.id === currentArchiveId);
@@ -538,7 +568,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [activeArchive?.id, fileList, handleRemoveSelectedArchive, isWorking, selectedArchiveId, selectArchiveAtIndex]);
 
   const handleInnerTableKeyDown = useCallback((event) => {
-    if (isWorking || !shouldHandleTableNavigation(event)) return;
+    if (isWorking || renameRequestRef.current || !shouldHandleTableNavigation(event)) return;
 
     const currentEntryId = selectedEntryId || activeEntry?.id;
     const currentIndex = activeEntries.findIndex(entry => entry.id === currentEntryId);
@@ -565,6 +595,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   }, [activeEntries, activeEntry?.id, isWorking, selectedEntryId, selectEntryAtIndex]);
 
   const handleArchiveContextAction = useCallback(async (action) => {
+    if (renameRequestRef.current) return;
     const archive = contextMenu?.archive;
     setContextMenu(null);
     if (!archive?.filepath) return;
@@ -576,46 +607,60 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
     }
 
     if (action === 'rename') {
-      if (!await window.electronAPI?.exists?.(archive.filepath)) {
-        await window.electronAPI?.showMessage?.({
-          type: 'warning',
-          title: t('dlg_warn'),
-          message: t('msg_file_not_exist'),
-          language: config?.language || config?.lang || 'ko',
-        });
-        return;
-      }
-      const oldName = basename(archive.filepath);
-      const nextName = window.prompt(t('msg_rename_desc'), oldName)?.trim();
-      if (!nextName || nextName === oldName) return;
-      const nextPath = replaceBasename(archive.filepath, nextName);
-      if (await window.electronAPI?.exists?.(nextPath)) {
-        await window.electronAPI?.showMessage?.({
-          type: 'warning',
-          title: t('msg_rename_title'),
-          message: t('msg_rename_dup'),
-          language: config?.language || config?.lang || 'ko',
-        });
-        return;
-      }
-      const result = await window.electronAPI?.renameFile?.(archive.filepath, nextPath);
-      if (!result?.success) {
-        const permission = ['EACCES', 'EPERM'].includes(result?.code);
-        await window.electronAPI?.showMessage?.({
-          type: 'error',
-          title: t('dlg_err'),
-          message: t('msg_err_rename_fail', [
-            permission ? `${t('dlg_err')}: ${result?.message}` : result?.message || t('msg_reload_fail'),
-          ]),
-          language: config?.language || config?.lang || 'ko',
-        });
-        return;
-      }
-      setFileList(prev => prev.map(item => item.id === archive.id
-        ? refreshRenamerItem({ ...item, id: nextPath, filepath: nextPath, name: nextName }, renameOptions)
-        : item));
-      setSelectedArchiveId(nextPath);
-      showToast?.({ key: 'msg_rename_success' });
+        if (isWorking || executeLockRef.current) return;
+        renameRequestRef.current = true;
+        try {
+            const sourceExists = await window.electronAPI?.exists?.(archive.filepath);
+            if (!mountedRef.current) return;
+            if (!sourceExists) {
+                await window.electronAPI?.showMessage?.({
+                    type: 'warning',
+                    title: t('dlg_warn'),
+                    message: t('msg_file_not_exist'),
+                    language: config?.language || config?.lang || 'ko',
+                });
+                return;
+            }
+            const oldName = basename(archive.filepath);
+            const nextName = (await requestRenameName(oldName))?.trim();
+            if (!mountedRef.current || !nextName || nextName === oldName) return;
+            const nextPath = replaceBasename(archive.filepath, nextName);
+            const destinationExists = await window.electronAPI?.exists?.(nextPath);
+            if (!mountedRef.current) return;
+            if (destinationExists) {
+                await window.electronAPI?.showMessage?.({
+                    type: 'warning',
+                    title: t('msg_rename_title'),
+                    message: t('msg_rename_dup'),
+                    language: config?.language || config?.lang || 'ko',
+                });
+                return;
+            }
+            const result = await window.electronAPI?.renameFile?.(archive.filepath, nextPath);
+            if (!mountedRef.current) return;
+            if (!result?.success) {
+                const permission = ['EACCES', 'EPERM'].includes(result?.code);
+                await window.electronAPI?.showMessage?.({
+                    type: 'error',
+                    title: t('dlg_err'),
+                    message: t('msg_err_rename_fail', [
+                        permission ? `${t('dlg_err')}: ${result?.message}` : result?.message || t('msg_reload_fail'),
+                    ]),
+                    language: config?.language || config?.lang || 'ko',
+                });
+                return;
+            }
+            setFileList(prev => prev.map(item => item.id === archive.id
+                ? refreshRenamerItem({ ...item, id: nextPath, filepath: nextPath, name: nextName }, renameOptions)
+                : item));
+            setSelectedArchiveId(nextPath);
+            showToast?.({ key: 'msg_rename_success' });
+        } catch (error) {
+            if (mountedRef.current) showToast?.(t('msg_err_rename_fail', [error?.message || String(error)]));
+        } finally {
+            renameRequestRef.current = false;
+            if (mountedRef.current) closeRenameDialog();
+        }
       return;
     }
 
@@ -648,10 +693,10 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         showToast?.(`${t('msg_reload_fail')} ${error.message}`);
       }
     }
-  }, [config?.language, config?.lang, contextMenu, renameOptions, showToast, t]);
+  }, [closeRenameDialog, config?.language, config?.lang, contextMenu, isWorking, renameOptions, requestRenameName, showToast, t]);
 
   const handleExecute = async () => {
-    if (executeLockRef.current) return;
+    if (executeLockRef.current || renameRequestRef.current) return;
     if (checkedCount === 0) {
       setStatusMessage(t('msg_no_targets'));
       await window.electronAPI?.showMessage?.({
@@ -768,6 +813,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
   useEffect(() => {
     const handleAppAction = (event) => {
       if (event.detail?.activeTab !== 'renamer') return;
+        if (renameRequestRef.current) return;
       const action = event.detail?.action;
       if (action === 'cancel-current') {
         handleCancel();
@@ -1150,6 +1196,14 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
           t={t}
         />
       )}
+        {renameDialog && (
+            <ArchiveRenameDialog
+                {...renameDialog}
+                onConfirm={confirmRenameDialog}
+                onClose={() => { if (!renameDialog.busy) closeRenameDialog(); }}
+                t={t}
+            />
+        )}
         <MenuSurface
           open={Boolean(contextMenu)}
           className="renamer-context-menu"
@@ -1164,6 +1218,40 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         </MenuSurface>
     </div>
   );
+}
+
+function ArchiveRenameDialog({ initialValue, busy, onConfirm, onClose, t }) {
+    const [draft, setDraft] = useState(initialValue);
+    const inputRef = useRef(null);
+    const dialogRef = useModalAccessibility(true, onClose);
+    useEffect(() => {
+        const frame = window.requestAnimationFrame(() => {
+            inputRef.current?.focus();
+            inputRef.current?.select();
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, []);
+
+    return (
+        <div className="renamer-rename-overlay" onMouseDown={onClose}>
+            <form ref={dialogRef} className="renamer-rename-dialog" role="dialog" aria-modal="true"
+                aria-labelledby="renamer-rename-title" aria-busy={busy} tabIndex={-1}
+                onMouseDown={event => event.stopPropagation()}
+                onSubmit={event => { event.preventDefault(); if (!busy) onConfirm(draft); }}>
+                <div className="renamer-rename-header">
+                    <h2 id="renamer-rename-title">{t('msg_rename_title')}</h2>
+                    <button type="button" className="renamer-rename-close" disabled={busy} aria-label={t('btn_close')} onClick={onClose}>×</button>
+                </div>
+                <label htmlFor="renamer-archive-name-input">{t('msg_rename_desc')}</label>
+                <input ref={inputRef} id="renamer-archive-name-input" value={draft} disabled={busy}
+                    onChange={event => setDraft(event.target.value)} />
+                <div className="renamer-rename-actions">
+                    <button type="button" className="renamer-rename-cancel" disabled={busy} onClick={onClose}>{t('btn_cancel')}</button>
+                    <button type="submit" className="renamer-rename-confirm" disabled={busy}>{t('btn_ok')}</button>
+                </div>
+            </form>
+        </div>
+    );
 }
 
 export { RenamerTab };
