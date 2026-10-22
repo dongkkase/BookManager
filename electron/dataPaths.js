@@ -25,7 +25,7 @@ export function resolvePortableBaseDir(executableDir = process.cwd(), platform =
 
 export function resolveAppDataDir(executableDir = process.cwd(), platform = process.platform, env = process.env) {
     if (platform === 'darwin') {
-        return path.join(env?.HOME || os.homedir(), 'Library', 'Application Support', APP_DATA_DIR_NAME);
+        return path.join(env?.HOME || os.homedir(), 'Library', 'Application Support', 'BookManager', APP_DATA_DIR_NAME);
     }
     return path.join(resolvePortableBaseDir(executableDir, platform, env), APP_DATA_DIR_NAME);
 }
@@ -36,9 +36,14 @@ export function resolveLegacyAppDataDirs(executableDir = process.cwd(), platform
     ];
 
     if (platform === 'darwin') {
-        legacyDirs.unshift(path.join(resolvePortableBaseDir(executableDir, platform, env), APP_DATA_DIR_NAME));
+        const userDataDir = path.dirname(resolveAppDataDir(executableDir, platform, env));
+        legacyDirs.unshift(
+            path.join(resolvePortableBaseDir(executableDir, platform, env), APP_DATA_DIR_NAME),
+            path.join(path.dirname(userDataDir), APP_DATA_DIR_NAME),
+        );
         legacyDirs.push(path.join(executableDir || process.cwd(), APP_DATA_DIR_NAME));
         legacyDirs.push(path.join(executableDir || process.cwd(), LEGACY_APP_DATA_DIR_NAME));
+        legacyDirs.push(path.join(userDataDir, LEGACY_APP_DATA_DIR_NAME));
     }
 
     const currentDir = path.resolve(resolveAppDataDir(executableDir, platform, env));
@@ -53,7 +58,9 @@ export function resolveLegacyAppDataDirs(executableDir = process.cwd(), platform
 export function migrateLegacyAppDataDir(executableDir = process.cwd(), platform = process.platform, env = process.env) {
     const appDataDir = resolveAppDataDir(executableDir, platform, env);
     if (platform === 'darwin') {
-        return migrateMacAppDataDir(appDataDir, resolveLegacyAppDataDirs(executableDir, platform, env));
+        return migrateMacAppDataDir(appDataDir, resolveLegacyAppDataDirs(executableDir, platform, env), {
+            portableDataDir: path.join(resolvePortableBaseDir(executableDir, platform, env), APP_DATA_DIR_NAME),
+        });
     }
     if (fs.existsSync(appDataDir)) return appDataDir;
 

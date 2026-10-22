@@ -58,10 +58,22 @@ const baseline = {
     api_keys: {},
 };
 const calls = { saves: [], saveAttempts: [], viewerPersists: [], associations: [], closes: [], languages: [], effects: [] };
+const dataFolderCalls = [];
+const dataFolderPath = '/Users/테스트 사용자/Library/Application Support/BookManager/BookManagerData';
+let dataFolderLoadFails = false;
+let nextDataFolderOpen = null;
 let nextSelectedFolder = null;
 let nextSave = null;
 let nextViewerSave = null;
 window.electronAPI = {
+    getAppDataPath: async () => {
+        if (dataFolderLoadFails) throw new Error('Unavailable');
+        return dataFolderPath;
+    },
+    openAppDataFolder: async () => {
+        dataFolderCalls.push(dataFolderPath);
+        return nextDataFolderOpen ? nextDataFolderOpen() : { success: true };
+    },
     listSounds: async () => ['Default.wav', 'Chime.wav'],
     listBundledFonts: async () => [
         { family: 'Noto Sans KR', filename: 'NotoSansKR-VariableFont_wght.ttf' },
@@ -286,6 +298,47 @@ async function applySettings(context) {
     await until(() => calls.saves.length === savesBefore + 1 && applyButton()?.disabled, context + ': apply did not finish with a clean draft');
     check(document.querySelector('.settings-modal-content') && calls.closes.length === closesBefore, context + ': applying settings closed the dialog');
     return calls.saves.at(-1);
+}
+async function runDataFolderInteractions() {
+    await open();
+    const field = () => document.getElementById('settings-data-folder-path');
+    const button = () => document.querySelector('.settings-data-folder button');
+    const feedback = () => document.querySelector('.settings-data-folder [role="alert"]');
+    await until(() => field()?.textContent === dataFolderPath, 'The actual data folder path was not displayed');
+    check(!document.querySelector('.settings-data-folder input, .settings-data-folder textarea'), 'Data folder path must be plain text');
+    check(getComputedStyle(field()).userSelect === 'text', 'Data folder path must allow text selection');
+    const range = document.createRange();
+    range.selectNodeContents(field());
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    check(window.getSelection().toString() === dataFolderPath, 'The full data folder path cannot be selected for copying');
+    window.getSelection().removeAllRanges();
+    check(button().getAttribute('aria-label') === translate('action_open_folder', language) && !button().textContent.trim(), 'Folder opening needs an accessible icon-only button');
+    check(button().getBoundingClientRect().left >= field().getBoundingClientRect().right, 'Folder opening button must be on the right of the path');
+    let finishOpen;
+    nextDataFolderOpen = () => new Promise(resolve => { finishOpen = resolve; });
+    button().click();
+    button().click();
+    await until(() => button().disabled && finishOpen, 'Folder opening did not enter its pending state');
+    check(dataFolderCalls.length === 1, 'Folder opening was dispatched more than once');
+    finishOpen({ success: false, message: 'Permission denied' });
+    await until(() => feedback()?.textContent.includes('Permission denied') && !button().disabled, 'Folder opening failure was not displayed');
+    nextDataFolderOpen = async () => { throw new Error('IPC unavailable'); };
+    button().click();
+    await until(() => feedback()?.textContent.includes('IPC unavailable') && !button().disabled, 'Folder IPC rejection was not displayed');
+    nextDataFolderOpen = null;
+    button().click();
+    await until(() => !feedback() && !button().disabled && dataFolderCalls.length === 3, 'Folder opening did not recover on retry');
+    check(dataFolderCalls.every(value => value === dataFolderPath), 'A different folder was opened');
+    check(applyButton().disabled && calls.saveAttempts.length === 0, 'Opening the data folder changed settings');
+    dataFolderLoadFails = true;
+    await open();
+    await until(() => feedback(), 'Path lookup failure was not displayed');
+    check(button().disabled && !field().textContent, 'An unavailable data folder can still be opened');
+    dataFolderLoadFails = false;
+    await open();
+    await until(() => field()?.textContent === dataFolderPath && !button().disabled, 'Path lookup did not recover after reopening settings');
+    return { pathVisible: true, selectable: true, opened: true, failures: true, retry: true, settingsUnchanged: true };
 }
 async function runInteractions() {
     await until(() => panel(), 'Settings did not mount');
@@ -1201,6 +1254,7 @@ async function runLayout(scale, selectedLanguage = 'ko') {
     return { viewport: [innerWidth, innerHeight], scale, language: selectedLanguage, measurements };
 }
 render();
+window.runDataFolderInteractions = runDataFolderInteractions;
 window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview };
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<html><head></head><body style="margin:0"><div id="root" style="width:100%;height:100vh"></div><script type="module" src="/fixture.jsx"></script></body></html>');
@@ -1224,6 +1278,11 @@ app.whenReady().then(async () => {
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     console.log('SETTINGS_RENDER_STAGE=interactions');
+    const dataFolder = await window.webContents.executeJavaScript('window.runDataFolderInteractions()');
+    if (${Boolean(process.env.BOOKMANAGER_SETTINGS_SCREENSHOTS)}) {
+        await window.webContents.executeJavaScript('document.querySelector(".settings-data-folder").scrollIntoView({ block: "center", behavior: "instant" }); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await fs.writeFile('/tmp/bookmanager-settings-data-folder.png', (await window.webContents.capturePage()).toPNG());
+    }
     const interactions = await window.webContents.executeJavaScript('window.settingsLayoutTests.runInteractions()');
     const apply = await window.webContents.executeJavaScript('window.settingsLayoutTests.runApplyInteractions()');
     await window.webContents.executeJavaScript('window.settingsLayoutTests.prepareProviderKeyboardToggle()');
@@ -1320,7 +1379,7 @@ app.whenReady().then(async () => {
             }
         }
     }
-    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ interactions, apply, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts }));
+    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ dataFolder, interactions, apply, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts }));
     app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
 `);
@@ -1338,6 +1397,7 @@ app.whenReady().then(async () => {
         });
         assert.equal(output.code, 0, output.result);
         const report = JSON.parse(output.result.match(/SETTINGS_LAYOUT_RESULT=(.+)/)[1]);
+        assert.deepEqual(report.dataFolder, { pathVisible: true, selectable: true, opened: true, failures: true, retry: true, settingsUnchanged: true });
         assert.equal(report.interactions.categories, 8);
         assert.equal(report.interactions.apiSections, 5);
         assert.equal(report.interactions.manualFocusChecks, 4);

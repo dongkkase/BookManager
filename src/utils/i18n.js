@@ -17,6 +17,15 @@ const EXTRA_TRANSLATIONS = {
     },
     reading_lists: readingListTranslations.ko,
     settings: {
+        data_folder: {
+            title: '데이터 폴더',
+            description: '설정, 라이브러리 정보, 썸네일과 캐시 등이 저장되는 BookManagerData 폴더입니다.',
+            path: '현재 저장 경로',
+            loading: '경로를 불러오는 중…',
+            opening: '폴더를 여는 중…',
+            load_failed: '데이터 폴더 경로를 불러오지 못했습니다. 설정을 다시 열어 주세요.',
+            open_failed: '데이터 폴더를 열지 못했습니다.',
+        },
         motion: {
             label: '애니메이션',
             system: '시스템 설정 따르기',
@@ -973,6 +982,15 @@ const EXTRA_TRANSLATIONS = {
     },
     reading_lists: readingListTranslations.en,
     settings: {
+        data_folder: {
+            title: 'Data folder',
+            description: 'The BookManagerData folder stores settings, library information, thumbnails, caches, and other app data.',
+            path: 'Current storage path',
+            loading: 'Loading path…',
+            opening: 'Opening folder…',
+            load_failed: 'Could not load the data folder path. Please reopen Settings.',
+            open_failed: 'Could not open the data folder.',
+        },
         motion: {
             label: 'Animations',
             system: 'Follow system setting',
@@ -1929,6 +1947,15 @@ const EXTRA_TRANSLATIONS = {
     },
     reading_lists: readingListTranslations.ja,
     settings: {
+        data_folder: {
+            title: 'データフォルダー',
+            description: '設定、ライブラリ情報、サムネイル、キャッシュなどを保存するBookManagerDataフォルダーです。',
+            path: '現在の保存先',
+            loading: 'パスを読み込み中…',
+            opening: 'フォルダーを開いています…',
+            load_failed: 'データフォルダーのパスを読み込めませんでした。設定を開き直してください。',
+            open_failed: 'データフォルダーを開けませんでした。',
+        },
         motion: {
             label: 'アニメーション',
             system: 'システム設定に従う',

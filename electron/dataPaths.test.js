@@ -31,15 +31,15 @@ test('Linux 앱 데이터 경로는 실행 폴더의 BookManagerData 하위를 �
     assert.equal(resolveThumbnailDir(executableDir, 'linux'), path.join(executableDir, 'BookManagerData', 'thumbnails'));
 });
 
-test('macOS의 모든 앱 데이터는 사용자 Application Support에 저장한다', () => {
+test('macOS의 모든 앱 데이터는 사용자 Application Support/BookManager/BookManagerData에 저장한다', () => {
     const executableDir = path.join('/portable', 'BookManager.app', 'Contents', 'MacOS');
     const env = { HOME: '/Users/reader' };
-    const dataDir = path.join(env.HOME, 'Library', 'Application Support', 'BookManagerData');
+    const dataDir = path.join(env.HOME, 'Library', 'Application Support', 'BookManager', 'BookManagerData');
 
     assert.equal(resolvePortableBaseDir(executableDir, 'darwin'), '/portable');
     assert.equal(resolveAppDataDir(executableDir, 'darwin', env), dataDir);
     assert.equal(resolveAppDataDir('/development/BookManager', 'darwin', env), dataDir);
-    assert.equal(resolveAppDataDir(executableDir, 'darwin', {}), path.join(os.homedir(), 'Library', 'Application Support', 'BookManagerData'));
+    assert.equal(resolveAppDataDir(executableDir, 'darwin', {}), path.join(os.homedir(), 'Library', 'Application Support', 'BookManager', 'BookManagerData'));
     assert.equal(resolveLibraryDbPath(executableDir, 'darwin', env), path.join(dataDir, 'library.db'));
     assert.equal(resolveContentIndexDbPath(executableDir, 'darwin', env), path.join(dataDir, 'content_index', 'content.db'));
     assert.equal(resolveApiCacheDbPath(executableDir, 'darwin', env), path.join(dataDir, '.api_cache.db'));
@@ -49,9 +49,11 @@ test('macOS의 모든 앱 데이터는 사용자 Application Support에 저장�
     assert.equal(resolveThumbnailDir(executableDir, 'darwin', env), path.join(dataDir, 'thumbnails'));
     assert.deepEqual(resolveLegacyAppDataDirs(executableDir, 'darwin', env), [
         path.join('/portable', 'BookManagerData'),
+        path.join(env.HOME, 'Library', 'Application Support', 'BookManagerData'),
         path.join('/portable', 'data'),
         path.join(executableDir, 'BookManagerData'),
         path.join(executableDir, 'data'),
+        path.join(env.HOME, 'Library', 'Application Support', 'BookManager', 'data'),
     ]);
 });
 

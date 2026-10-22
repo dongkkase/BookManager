@@ -28,6 +28,7 @@ import { LicenseSettings } from './LicenseSettings';
 import { fontVarsForConfig } from '../fontPolicy';
 import { SettingsLibraryPreview } from './SettingsLibraryPreview';
 import { SettingsLibraryList } from './SettingsLibraryList';
+import { SettingsDataFolder } from './SettingsDataFolder';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -1299,6 +1300,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                 </div>
                             </div>
                         </fieldset>
+                        <SettingsDataFolder t={t} />
                     </div>
                 )}
 

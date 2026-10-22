@@ -73,9 +73,83 @@ test('업데이트 후 설정 초기화 전에 전체 데이터를 복사하고 
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.legacy, 'config.json'), 'utf8')), config);
 });
 
-test('macOS의 이전 폴더 위치 네 가지를 지원하고 앱 옆 BookManagerData를 우선한다', t => {
+test('기존 Application Support 데이터를 새 하위 폴더로 이전하면서 Electron 프로필과 원본을 보존한다', async t => {
+    const f = fixture(t);
+    const profile = path.dirname(f.destination);
+    const previous = path.join(f.env.HOME, 'Library', 'Application Support', 'BookManagerData');
+    const profileFiles = ['config.json', 'Preferences', 'Cache/entry', 'readive-link/state.json', 'sharing-cert/cert.pem'];
+    for (const name of profileFiles) writeFile(profile, name, `profile: ${name}`);
+    if (process.platform !== 'win32') fs.chmodSync(profile, 0o750);
+    const profileMode = fs.statSync(profile).mode;
+    writeFile(previous, 'config.json', '{"language":"ja","libraries":["/Books"]}');
+    const previousCover = writeFile(previous, 'thumbnails/cover.jpg', 'cover');
+    writeFile(previous, 'models/supertonic-3/model.onnx', 'model');
+    const sourceDb = new LibraryDB({ dbPath: path.join(previous, 'library.db') });
+    try {
+        await sourceDb.upsertFileInfo({ path: '/Books/book.cbz', title: 'Saved title', thumb_path: previousCover });
+        await sourceDb.upsertReadingState('/Books/book.cbz', { format: 'comic', pageIndex: 7 });
+    } finally {
+        await sourceDb.close();
+    }
+
+    const manager = new ConfigManager(profile, f.executableDir, f.options);
+    await manager.initialize();
+    assert.equal(manager.getConfig().language, 'ja');
+    assert.deepEqual(manager.getConfig().libraries, ['/Books']);
+    const migrated = new Database(path.join(f.destination, 'library.db'));
+    try {
+        const record = migrated.prepare('SELECT title, thumb_path FROM files WHERE path = ?').get('/Books/book.cbz');
+        assert.equal(record.title, 'Saved title');
+        assert.equal(record.thumb_path, path.join(f.destination, 'thumbnails/cover.jpg'));
+        assert.equal(fs.readFileSync(record.thumb_path, 'utf8'), 'cover');
+        assert.equal(migrated.prepare('SELECT page_index FROM reading_states').get().page_index, 7);
+        assert.equal(migrated.pragma('quick_check', { simple: true }), 'ok');
+    } finally {
+        migrated.close();
+    }
+    assert.equal(fs.readFileSync(path.join(f.destination, 'models/supertonic-3/model.onnx'), 'utf8'), 'model');
+    assert.equal(fs.readFileSync(path.join(previous, 'config.json'), 'utf8'), '{"language":"ja","libraries":["/Books"]}');
+    assert.equal(fs.existsSync(f.legacy), false);
+    for (const name of profileFiles) assert.equal(fs.readFileSync(path.join(profile, name), 'utf8'), `profile: ${name}`);
+    assert.equal(fs.statSync(profile).mode, profileMode);
+    assert.doesNotThrow(() => assertAppDataDirWritable(f.destination));
+    assert.deepEqual(fs.readdirSync(profile).sort(), ['BookManagerData', 'Cache', 'Preferences', 'config.json', 'readive-link', 'sharing-cert'].sort());
+
+    manager.saveConfig({ language: 'en' });
+    writeFile(previous, 'config.json', '{"language":"ko"}');
+    await manager.initialize();
+    assert.equal(manager.getConfig().language, 'en');
+});
+
+test('BookManager/data만 남은 구버전은 DB와 프로필 설정을 함께 새 하위 폴더에서 사용한다', async t => {
+    const f = fixture(t);
+    const profile = path.dirname(f.destination);
+    writeFile(profile, 'config.json', '{"language":"en","libraries":["/Books"]}');
+    const previous = path.join(profile, 'data');
+    fs.mkdirSync(previous, { recursive: true });
+    const database = new Database(path.join(previous, 'library.db'));
+    database.exec('CREATE TABLE files (path TEXT PRIMARY KEY, title TEXT)');
+    database.prepare('INSERT INTO files VALUES (?, ?)').run('/Books/book.txt', 'Legacy title');
+    database.close();
+    const manager = new ConfigManager(profile, f.executableDir, f.options);
+    await manager.initialize();
+    assert.equal(manager.getConfig().language, 'en');
+    assert.deepEqual(manager.getConfig().libraries, ['/Books']);
+    const migrated = new Database(path.join(f.destination, 'library.db'));
+    try {
+        assert.equal(migrated.prepare('SELECT title FROM files').get().title, 'Legacy title');
+    } finally {
+        migrated.close();
+    }
+    assert.equal(fs.existsSync(path.join(previous, 'library.db')), true);
+    assert.equal(fs.readFileSync(path.join(profile, 'config.json'), 'utf8'), '{"language":"en","libraries":["/Books"]}');
+});
+
+test('macOS의 이전 폴더 위치 여섯 가지를 지원하고 앱 옆 BookManagerData를 우선한다', t => {
     const f = fixture(t);
     const sources = resolveLegacyAppDataDirs(f.executableDir, 'darwin', f.env);
+    assert.equal(sources.length, 6);
+    assert.equal(sources[0], f.legacy);
     for (const [index, source] of sources.entries()) writeFile(source, 'config.json', JSON.stringify({ index }));
     for (const [index, source] of sources.entries()) {
         migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env);
@@ -83,6 +157,125 @@ test('macOS의 이전 폴더 위치 네 가지를 지원하고 앱 옆 BookManag
         fs.rmSync(f.destination, { recursive: true });
         fs.rmSync(source, { recursive: true });
     }
+});
+
+test('새 폴더가 이미 있어도 앱 옆 전체 데이터를 한 번 이전하고 기존 대상은 통째로 백업한다', async t => {
+    const f = fixture(t);
+    const previous = path.join(f.env.HOME, 'Library', 'Application Support', 'BookManagerData');
+    writeFile(previous, 'config.json', '{"language":"ko"}');
+    writeFile(f.destination, 'config.json', '{"language":"ja"}');
+    writeFile(f.destination, 'destination-only/item.bin', 'keep in backup');
+    const oldDb = new Database(writeFile(f.destination, 'library.db', ''));
+    oldDb.exec('CREATE TABLE destination_data (value TEXT)');
+    oldDb.prepare('INSERT INTO destination_data VALUES (?)').run('existing destination');
+    oldDb.close();
+    const oldDbBytes = fs.readFileSync(path.join(f.destination, 'library.db'));
+    writeFile(f.destination, 'library.db-wal', 'stale WAL');
+    writeFile(f.destination, 'library.db-shm', 'stale SHM');
+    const expectedFiles = [
+        ['config.json', '{"language":"en","libraries":["/Books"]}'],
+        ['thumbnails/cover.jpg', 'cover'], ['text-thumbnails/text.webp', 'text-cover'],
+        ['api_cover_cache/api.jpg', 'api-cover'], ['.api_cache.db', 'api-cache'],
+        ['content_index/content.db', 'index'], ['rename_history.json', '["history"]'],
+        ['models/supertonic-3/model.onnx', 'model'], ['logs/runtime.log', 'runtime'],
+        ['custom/nested/file.bin', 'custom data'], ['.hidden-data', 'hidden data'],
+    ];
+    for (const [name, content] of expectedFiles) writeFile(f.legacy, name, content);
+    const sourceDb = new LibraryDB({ dbPath: path.join(f.legacy, 'library.db') });
+    try {
+        await sourceDb.upsertFileInfo({ path: '/Books/book.cbz', title: 'Original library', thumb_path: path.join(f.legacy, 'thumbnails/cover.jpg') });
+        await sourceDb.upsertReadingState('/Books/book.cbz', { format: 'comic', pageIndex: 42 });
+    } finally {
+        await sourceDb.close();
+    }
+    const sourceDbBytes = fs.readFileSync(path.join(f.legacy, 'library.db'));
+    const manager = new ConfigManager(path.dirname(f.destination), f.executableDir, f.options);
+    await manager.initialize();
+    assert.equal(manager.getConfig().language, 'en');
+    assert.deepEqual(manager.getConfig().libraries, ['/Books']);
+    const migrated = new Database(path.join(f.destination, 'library.db'));
+    try {
+        const record = migrated.prepare('SELECT title, thumb_path FROM files').get();
+        assert.equal(record.title, 'Original library');
+        assert.equal(record.thumb_path, path.join(f.destination, 'thumbnails/cover.jpg'));
+        assert.equal(migrated.prepare('SELECT page_index FROM reading_states').get().page_index, 42);
+        assert.equal(migrated.pragma('quick_check', { simple: true }), 'ok');
+    } finally {
+        migrated.close();
+    }
+    for (const [name, content] of expectedFiles) {
+        assert.equal(fs.readFileSync(path.join(f.destination, name), 'utf8'), content);
+        assert.equal(fs.readFileSync(path.join(f.legacy, name), 'utf8'), content);
+    }
+    assert.deepEqual(fs.readFileSync(path.join(f.legacy, 'library.db')), sourceDbBytes);
+    const backup = `${f.destination}.before-portable-migration`;
+    assert.equal(fs.readFileSync(path.join(backup, 'config.json'), 'utf8'), '{"language":"ja"}');
+    assert.equal(fs.readFileSync(path.join(backup, 'destination-only/item.bin'), 'utf8'), 'keep in backup');
+    assert.deepEqual(fs.readFileSync(path.join(backup, 'library.db')), oldDbBytes);
+    assert.equal(fs.readFileSync(path.join(backup, 'library.db-wal'), 'utf8'), 'stale WAL');
+    assert.equal(fs.existsSync(path.join(f.destination, 'destination-only')), false);
+    assert.equal(fs.existsSync(`${f.destination}.portable-migration-pending`), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.destination, '.portable-data-migration.json'))).completed, true);
+    manager.saveConfig({ language: 'ja' });
+    writeFile(f.legacy, 'config.json', '{"language":"ko"}');
+    await manager.initialize();
+    assert.equal(manager.getConfig().language, 'ja');
+    assert.deepEqual(fs.readFileSync(path.join(backup, 'library.db')), oldDbBytes);
+});
+
+test('기존 대상이 있을 때 복사 실패는 양쪽 데이터를 보존하고 다음 실행에서 다시 이전한다', t => {
+    const f = fixture(t);
+    writeFile(f.legacy, 'config.json', '{"language":"en"}');
+    writeFile(f.destination, 'config.json', '{"language":"ja"}');
+    const copy = t.mock.method(fs, 'cpSync', () => { throw Object.assign(new Error('No space'), { code: 'ENOSPC' }); });
+    assert.throws(() => migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env), { code: 'ENOSPC' });
+    assert.equal(fs.readFileSync(path.join(f.destination, 'config.json'), 'utf8'), '{"language":"ja"}');
+    assert.equal(fs.readFileSync(path.join(f.legacy, 'config.json'), 'utf8'), '{"language":"en"}');
+    assert.deepEqual(fs.readdirSync(path.dirname(f.destination)), ['BookManagerData']);
+    copy.mock.restore();
+    migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env);
+    assert.equal(fs.readFileSync(path.join(f.destination, 'config.json'), 'utf8'), '{"language":"en"}');
+});
+
+test('새 데이터 교체 실패 시 기존 대상 폴더를 복원하고 다음 실행에서 다시 시도한다', t => {
+    const f = fixture(t);
+    writeFile(f.legacy, 'config.json', '{"language":"en"}');
+    writeFile(f.destination, 'config.json', '{"language":"ja"}');
+    const originalRename = fs.renameSync;
+    const rename = t.mock.method(fs, 'renameSync', (source, destination) => {
+        if (destination === f.destination && path.basename(source).startsWith('.BookManagerData-migration-')) {
+            throw Object.assign(new Error('Replace denied'), { code: 'EACCES' });
+        }
+        return originalRename(source, destination);
+    });
+    assert.throws(() => migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env), { code: 'EACCES' });
+    assert.equal(fs.readFileSync(path.join(f.destination, 'config.json'), 'utf8'), '{"language":"ja"}');
+    assert.deepEqual(fs.readdirSync(path.dirname(f.destination)), ['BookManagerData']);
+    rename.mock.restore();
+    migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env);
+    assert.equal(fs.readFileSync(path.join(f.destination, 'config.json'), 'utf8'), '{"language":"en"}');
+});
+
+test('대상 백업 직후 중단됐으면 다음 실행에서 기존 대상을 먼저 복원한다', t => {
+    const f = fixture(t);
+    writeFile(`${f.destination}.before-portable-migration`, 'config.json', '{"language":"ja"}');
+    fs.writeFileSync(`${f.destination}.portable-migration-pending`, 'portable-data-migration');
+    migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env);
+    assert.equal(fs.readFileSync(path.join(f.destination, 'config.json'), 'utf8'), '{"language":"ja"}');
+    assert.deepEqual(fs.readdirSync(path.dirname(f.destination)), ['BookManagerData']);
+});
+
+test('교체 완료 직후 중단돼도 완료 기록을 확인해 다시 덮어쓰지 않는다', t => {
+    const f = fixture(t);
+    writeFile(f.legacy, 'config.json', '{"language":"ko"}');
+    writeFile(f.destination, 'config.json', '{"language":"en"}');
+    writeFile(f.destination, '.portable-data-migration.json', '{"version":1,"completed":true}');
+    writeFile(`${f.destination}.before-portable-migration`, 'config.json', '{"language":"ja"}');
+    fs.writeFileSync(`${f.destination}.portable-migration-pending`, 'portable-data-migration');
+    migrateLegacyAppDataDir(f.executableDir, 'darwin', f.env);
+    assert.equal(fs.readFileSync(path.join(f.destination, 'config.json'), 'utf8'), '{"language":"en"}');
+    assert.equal(fs.readFileSync(path.join(`${f.destination}.before-portable-migration`, 'config.json'), 'utf8'), '{"language":"ja"}');
+    assert.equal(fs.existsSync(`${f.destination}.portable-migration-pending`), false);
 });
 
 test('라이브러리·TXT 표지 경로를 새 위치로 갱신하고 외부 책 경로와 읽기 기록은 유지한다', async t => {

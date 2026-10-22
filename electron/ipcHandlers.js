@@ -4,6 +4,7 @@ import { registerObservedHandler } from './observabilityOperations.js';
 import { reportTelemetryError } from './telemetry.js';
 import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
+import { registerAppDataIpc } from './appDataIpc.js';
 import { createLibraryDataMaintenance } from './libraryDataMaintenance.js';
 import { isRegisteredLibraryFile } from './libraryPathScope.js';
 import pkg from 'electron';
@@ -5145,6 +5146,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   });
 
   // ========== 설정 관련 ==========
+    registerAppDataIpc({ ipcMain, shell, getAppDataDir: () => resolveAppDataDir(getExecutableDir()) });
+
   ipcMain.handle('config:get', () => {
     return configManager.getConfig();
   });

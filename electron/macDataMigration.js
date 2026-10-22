@@ -3,6 +3,14 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const PORTABLE_MIGRATION_MARKER = '.portable-data-migration.json';
+
+function portableMigrationPaths(appDataDir) {
+    return {
+        backupDir: `${appDataDir}.before-portable-migration`,
+        pendingPath: `${appDataDir}.portable-migration-pending`,
+    };
+}
 
 function statIfPresent(filePath) {
     try {
@@ -94,15 +102,59 @@ export function assertAppDataDirWritable(directory) {
     }
 }
 
-export function migrateMacAppDataDir(appDataDir, legacyDirs) {
-    if (statIfPresent(appDataDir)) return appDataDir;
-    for (const legacyDir of legacyDirs) {
+function hasCompletedPortableMigration(appDataDir) {
+    const markerPath = path.join(appDataDir, PORTABLE_MIGRATION_MARKER);
+    if (!statIfPresent(markerPath)) return false;
+    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+    if (marker.version !== 1 || marker.completed !== true) {
+        throw new Error(`Invalid app data migration record: ${markerPath}`);
+    }
+    return true;
+}
+
+function recoverInterruptedPortableMigration(appDataDir) {
+    const { backupDir, pendingPath } = portableMigrationPaths(appDataDir);
+    if (!statIfPresent(pendingPath)) return;
+    if (!statIfPresent(appDataDir)) {
+        if (!statIfPresent(backupDir)) throw new Error(`App data migration backup is missing: ${backupDir}`);
+        fs.renameSync(backupDir, appDataDir);
+    }
+    fs.unlinkSync(pendingPath);
+}
+
+function publishMigratedData(stagingDir, appDataDir) {
+    if (!statIfPresent(appDataDir)) {
+        fs.renameSync(stagingDir, appDataDir);
+        return;
+    }
+    const { backupDir, pendingPath } = portableMigrationPaths(appDataDir);
+    if (statIfPresent(backupDir)) throw new Error(`App data migration backup already exists: ${backupDir}`);
+    fs.writeFileSync(pendingPath, 'portable-data-migration', { flag: 'wx', mode: 0o600 });
+    fs.renameSync(appDataDir, backupDir);
+    try {
+        fs.renameSync(stagingDir, appDataDir);
+    } catch (error) {
+        fs.renameSync(backupDir, appDataDir);
+        fs.unlinkSync(pendingPath);
+        throw error;
+    }
+    fs.unlinkSync(pendingPath);
+}
+
+export function migrateMacAppDataDir(appDataDir, legacyDirs, { portableDataDir } = {}) {
+    recoverInterruptedPortableMigration(appDataDir);
+    if (hasCompletedPortableMigration(appDataDir)) return appDataDir;
+    const portableSource = portableDataDir && path.resolve(portableDataDir) !== path.resolve(appDataDir)
+        ? statIfPresent(portableDataDir) : null;
+    if (!portableSource && statIfPresent(appDataDir)) return appDataDir;
+    const sources = portableSource ? [portableDataDir] : legacyDirs;
+    for (const legacyDir of sources) {
         const stat = statIfPresent(legacyDir);
         if (!stat) continue;
         if (!stat.isDirectory()) throw new Error(`App data path is not a directory: ${legacyDir}`);
 
         const parentDir = path.dirname(appDataDir);
-        fs.mkdirSync(parentDir, { recursive: true });
+        fs.mkdirSync(parentDir, { recursive: true, mode: 0o700 });
         const stagingDir = fs.mkdtempSync(path.join(parentDir, '.BookManagerData-migration-'));
         try {
             // Keep the source intact, including when its parent is read-only.
@@ -110,7 +162,14 @@ export function migrateMacAppDataDir(appDataDir, legacyDirs) {
             makeCopiedDataWritable(stagingDir);
             migrateStoredCoverPaths(stagingDir, legacyDir, appDataDir);
             assertAppDataDirWritable(stagingDir);
-            fs.renameSync(stagingDir, appDataDir);
+            if (portableSource) {
+                fs.writeFileSync(path.join(stagingDir, PORTABLE_MIGRATION_MARKER), JSON.stringify({
+                    version: 1,
+                    completed: true,
+                    source: path.resolve(legacyDir),
+                }), { mode: 0o600 });
+            }
+            publishMigratedData(stagingDir, appDataDir);
             return appDataDir;
         } finally {
             try {

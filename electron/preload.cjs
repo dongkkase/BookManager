@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // 설정 관련
   getConfig: () => ipcRenderer.invoke('config:get'),
+    getAppDataPath: () => ipcRenderer.invoke('appData:getPath'),
+    openAppDataFolder: () => ipcRenderer.invoke('appData:openFolder'),
     getTelemetryStatus: () => ipcRenderer.invoke('telemetry:status'),
     trackTelemetry: event => ipcRenderer.send('telemetry:event', event),
     reportTelemetryError: error => ipcRenderer.send('telemetry:error', error),

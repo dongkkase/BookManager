@@ -276,13 +276,13 @@ test('config는 실행 경로의 BookManagerData 폴더에 둔다', () => {
     assert.equal(manager.configPath, path.join('/portable/app', 'BookManagerData', 'config.json'));
 });
 
-test('macOS config는 사용자 Application Support의 BookManagerData 폴더에 둔다', () => {
+test('macOS config는 사용자 Application Support/BookManager의 BookManagerData 폴더에 둔다', () => {
     const manager = new ConfigManager('/user/data', '/Applications/BookManager.app/Contents/MacOS', {
         platform: 'darwin',
         useUserData: true,
         env: { HOME: '/Users/reader' },
     });
-    assert.equal(manager.configPath, path.join('/Users/reader', 'Library', 'Application Support', 'BookManagerData', 'config.json'));
+    assert.equal(manager.configPath, path.join('/Users/reader', 'Library', 'Application Support', 'BookManager', 'BookManagerData', 'config.json'));
 });
 
 test('기존 설정의 알 수 없는 key와 API key를 손실 없이 유지한다', () => {

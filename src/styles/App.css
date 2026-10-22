@@ -1905,6 +1905,41 @@ body.is-resizing-panel * {
     margin-bottom: 0;
 }
 
+.settings-data-folder {
+    display: grid;
+    gap: 12px;
+}
+
+.settings-data-folder .settings-label {
+    margin: 0;
+}
+
+.settings-data-folder-location {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+}
+
+.settings-data-folder-path {
+    min-width: 0;
+    margin: 0;
+    color: #e6ecf3;
+    font-size: var(--font-sm);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.settings-data-folder .settings-icon-btn {
+    width: max(36px, var(--control-height));
+    padding: 0;
+}
+
+.settings-data-folder .settings-data-folder-error {
+    color: #ffbab2;
+}
+
 .settings-label {
     color: #dce1e8;
     font-weight: 500;
