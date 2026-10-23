@@ -489,6 +489,27 @@
   color: #aebfc8 !important;
 }
 
+.nav-header .sidebar-section-toggle-btn {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    justify-content: space-between;
+    gap: 4px;
+    text-align: left;
+}
+
+.sidebar-section-toggle-btn + .folder-sidebar-header-actions {
+    flex-shrink: 0;
+    margin-left: 4px;
+}
+
+.sidebar-section-toggle-indicator {
+    display: inline-flex;
+    flex: 0 0 var(--control-height-sm);
+    align-items: center;
+    justify-content: center;
+}
+
 .sidebar-section.is-collapsed .sidebar-section-toggle-btn {
   color: #dce8ee !important;
 }

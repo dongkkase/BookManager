@@ -263,22 +263,25 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
   const sectionToggleLabel = useCallback((sectionLabel, collapsed) => (
     t(collapsed ? 'folder.sidebar.expand_section' : 'folder.sidebar.collapse_section', [sectionLabel])
   ), [t]);
-  const renderSectionToggle = useCallback((sectionKey, sectionLabel) => {
-    const collapsed = isSectionCollapsed(sectionKey);
-    const label = sectionToggleLabel(sectionLabel, collapsed);
-    return (
-      <button
-        type="button"
-        className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn sidebar-section-toggle-btn"
-        aria-label={label}
-        aria-expanded={!collapsed}
-        data-tooltip={label}
-        onClick={() => toggleSidebarSection(sectionKey)}
-      >
-        <FaIcon name="chevronRight" className="sidebar-section-toggle-icon" size={10} />
-      </button>
-    );
-  }, [isSectionCollapsed, sectionToggleLabel, toggleSidebarSection]);
+    const renderSectionToggle = useCallback((sectionKey, sectionLabel) => {
+        const collapsed = isSectionCollapsed(sectionKey);
+        const label = sectionToggleLabel(sectionLabel, collapsed);
+        return (
+            <button
+                type="button"
+                className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn sidebar-section-toggle-btn"
+                aria-label={label}
+                aria-expanded={!collapsed}
+                data-tooltip={label}
+                onClick={() => toggleSidebarSection(sectionKey)}
+            >
+                <span className="nav-header-title">{sectionLabel}</span>
+                <span className="sidebar-section-toggle-indicator" aria-hidden="true">
+                    <FaIcon name="chevronRight" className="sidebar-section-toggle-icon" size={10} />
+                </span>
+            </button>
+        );
+    }, [isSectionCollapsed, sectionToggleLabel, toggleSidebarSection]);
   const applySidebarSelection = useCallback(event => {
     applyImmediateSingleSelection(
       sidebarRef.current,
@@ -471,9 +474,8 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
     return (
       <div className={`sidebar-section sidebar-section-library ${collapsed ? 'is-collapsed' : ''}`}>
         <div className="nav-header">
-          <span className="nav-header-title">{sectionLabel}</span>
-          <div className="folder-sidebar-header-actions">
             {renderSectionToggle('libraries', sectionLabel)}
+          <div className="folder-sidebar-header-actions">
             <button
               type="button"
               className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn"
@@ -594,10 +596,7 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
     return (
       <div className={`sidebar-section sidebar-section-reading ${collapsed ? 'is-collapsed' : ''}`}>
         <div className="nav-header">
-          <span className="nav-header-title">{sectionLabel}</span>
-          <div className="folder-sidebar-header-actions">
             {renderSectionToggle('reading', sectionLabel)}
-          </div>
         </div>
         <div className="sidebar-section-content" aria-hidden={collapsed} inert={collapsed ? '' : undefined}>
             <div className="sidebar-section-content-inner">

@@ -82,6 +82,7 @@
     "executableName": "BookManager",
     "afterSign": "electron/notarize.cjs",
     "afterPack": "electron/afterPack.cjs",
+    "artifactBuildStarted": "electron/portable/artifactBuildStarted.cjs",
     "afterAllArtifactBuild": "electron/zipWindowsPortable.cjs",
     "directories": {
       "output": "dist-electron"
@@ -112,7 +113,8 @@
         "to": "src",
         "filter": [
           "folderTagFilter.js",
-          "missingVolumesPolicy.js"
+          "missingVolumesPolicy.js",
+          "motionPolicy.js"
         ]
       },
       "version.json"
@@ -170,7 +172,8 @@
       "icon": "src/images/app.ico"
     },
     "portable": {
-      "unpackDirName": true
+      "unpackDirName": true,
+      "splashImage": "electron/portable/splash.bmp"
     },
     "mac": {
       "target": [

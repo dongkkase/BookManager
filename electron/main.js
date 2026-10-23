@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, screen, shell, systemPreferences } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -40,6 +40,7 @@ import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
 import { configureTelemetry, flushTelemetry, reportTelemetryError } from './telemetry.js';
 import { readTelemetryAppVersion, readTelemetryServiceConfig } from './observabilityConfig.js';
 import { setupTelemetryIPC } from './observabilityIpc.js';
+import { startupPresentation } from './startupPresentation.js';
 
 installConsolePipeGuard();
 
@@ -81,41 +82,6 @@ const thumbnailMemoryCache = new BoundedMemoryCache({
     maxBytes: 32 * 1024 * 1024,
     sizeOf: value => value.data.byteLength,
 });
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'bookmanager-thumbnail',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-    },
-  },
-  {
-    scheme: 'bookmanager-document',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-    },
-  },
-  {
-    scheme: 'bookmanager-comic',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      corsEnabled: true,
-    },
-  },
-]);
-
-app.setName(APP_NAME);
-if (process.platform === 'win32') {
-  app.setAppUserModelId(APP_ID);
-}
 
 // 앱 사용자 데이터 디렉토리
 function getUserDataPath() {
@@ -351,6 +317,7 @@ if (process.platform === 'win32') {
 app.whenReady()
   .then(initializeApp)
   .catch(error => {
+    startupPresentation.destroy();
     reportProcessFault('startup-failed', error);
     try {
       dialog.showErrorBox(APP_NAME, error?.message || String(error));
@@ -361,6 +328,7 @@ app.whenReady()
   });
 
 async function initializeApp() {
+    startupPresentation.update('loading');
   protocol.handle('bookmanager-thumbnail', async request => {
     const requestUrl = new URL(request.url);
     const requestedName = decodeURIComponent(requestUrl.pathname.slice(1));
@@ -559,16 +527,25 @@ function createMainWindow(config) {
   }
 
   mainWindow.once('ready-to-show', () => {
-    if (windowState.isMaximized) {
-      mainWindow.maximize();
-    }
-    if (!mainWindow.isVisible()) {
-      if (showMainWindowInactiveForInitialFile && typeof mainWindow.showInactive === 'function') {
-        mainWindow.showInactive();
-      } else {
-        mainWindow.show();
-      }
-    }
+    const readyWindow = mainWindow;
+    const showInactive = showMainWindowInactiveForInitialFile;
+    void startupPresentation.complete({
+        mainWindow: readyWindow,
+        motionPreference: config?.motion_preference,
+        systemPreferences,
+        animate: !isDev,
+        showMainWindow: () => {
+            if (readyWindow.isDestroyed()) return;
+            if (windowState.isMaximized) readyWindow.maximize();
+            if (!readyWindow.isVisible()) {
+                if (showInactive && typeof readyWindow.showInactive === 'function') {
+                    readyWindow.showInactive();
+                } else {
+                    readyWindow.show();
+                }
+            }
+        },
+    });
     mainWindowReady = true;
     showMainWindowInactiveForInitialFile = false;
   });

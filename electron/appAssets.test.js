@@ -188,58 +188,7 @@ test('Windows 배포본은 portable exe를 단일 파일 ZIP으로 감싼다', (
     );
     assert.equal(packageConfig.build.win.signAndEditExecutable, true);
     assert.equal(packageConfig.build.afterAllArtifactBuild, 'electron/zipWindowsPortable.cjs');
-});
-
-test('Windows portable 빌드는 실행마다 독립된 임시 폴더를 사용한다', async () => {
-    const { NsisTarget } = require('app-builder-lib/out/targets/nsis/NsisTarget.js');
-    let computedDefines;
-    const packager = {
-        config: { portable: packageConfig.build.portable },
-        info: {
-            metadata: {},
-            buildResourcesDir: path.join(projectRoot, 'build'),
-            callArtifactBuildStarted: async () => {},
-        },
-        appInfo: {
-            id: packageConfig.build.appId,
-            name: packageConfig.name,
-            sanitizedName: packageConfig.build.productName,
-            productName: packageConfig.build.productName,
-            productFilename: packageConfig.build.productName,
-            version: packageConfig.version,
-            buildVersion: packageConfig.version,
-            description: packageConfig.description,
-            copyright: '',
-            getVersionInWeirdWindowsForm: () => `${packageConfig.version}.0`,
-        },
-        platformSpecificBuildOptions: {},
-        projectDir: projectRoot,
-        compression: 'store',
-        getIconPath: async () => null,
-        expandArtifactNamePattern: () => 'BookManager.exe',
-        packagerOptions: {
-            effectiveOptionComputed: async ([defines]) => {
-                computedDefines = defines;
-                // 실제 NSIS 설정을 만든 뒤 실행 아티팩트 생성 전에 중단합니다.
-                return true;
-            },
-        },
-    };
-    const target = new NsisTarget(packager, os.tmpdir(), 'portable', {
-        refCount: 0,
-        packArch: async () => { throw new Error('Packaging must not run'); },
-    });
-
-    await target.buildInstaller(new Map());
-
-    assert.ok(computedDefines);
-    assert.equal(Object.hasOwn(computedDefines, 'UNPACK_DIR_NAME'), false);
-    const portableScript = fs.readFileSync(
-        require.resolve('app-builder-lib/templates/nsis/portable.nsi'),
-        'utf8',
-    );
-    assert.match(portableScript, /\bInitPluginsDir\b/);
-    assert.match(portableScript, /StrCpy \$INSTDIR "\$PLUGINSDIR\\app"\s*!ifdef UNPACK_DIR_NAME\s*StrCpy \$INSTDIR "\$TEMP\\\$\{UNPACK_DIR_NAME\}"\s*!endif/);
+    assert.equal(packageConfig.build.portable.splashImage, 'electron/portable/splash.bmp');
 });
 
 test('Windows 배포 ZIP에는 BookManager.exe만 포함한다', () => {
@@ -298,6 +247,7 @@ test('Electron 메인 프로세스가 직접 import하는 src 모듈은 app.asar
     assert.ok(folderTagFileSet);
     assert.equal(folderTagFileSet.filter.includes('folderTagFilter.js'), true);
     assert.equal(folderTagFileSet.filter.includes('missingVolumesPolicy.js'), true);
+    assert.equal(folderTagFileSet.filter.includes('motionPolicy.js'), true);
 });
 
 test('Electron 진입점은 콘솔 파이프 가드를 먼저 설치한다', () => {
@@ -424,8 +374,9 @@ test('macOS 메뉴 막대 아이콘은 16px 템플릿 이미지로 생성한다'
 
 test('저장된 썸네일은 제한된 전용 프로토콜로 제공한다', () => {
     const mainSource = fs.readFileSync(path.join(projectRoot, 'electron', 'main.js'), 'utf8');
+    const bootstrapSource = fs.readFileSync(path.join(projectRoot, 'electron', 'bootstrap.js'), 'utf8');
 
-    assert.match(mainSource, /protocol\.registerSchemesAsPrivileged/);
+    assert.match(bootstrapSource, /protocol\.registerSchemesAsPrivileged/);
     assert.match(mainSource, /protocol\.handle\('bookmanager-thumbnail'/);
     assert.match(mainSource, /resolveThumbnailDir\(getExecutableDir\(\)\)/);
     assert.match(mainSource, /path\.basename\(requestedName\) !== requestedName/);

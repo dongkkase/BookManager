@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron';
+import { app, BrowserWindow, dialog, protocol, systemPreferences } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installConsolePipeGuard } from './utils/consolePipeGuard.js';
@@ -6,6 +6,7 @@ import { installRuntimeLogging } from './utils/runtimeLog.js';
 import { configureHardwareAcceleration } from './hardwareAcceleration.js';
 import { migrateLegacyAppDataDir, resolveAppDataDir } from './dataPaths.js';
 import { assertAppDataDirWritable } from './macDataMigration.js';
+import { readStartupMotionPreference, startupPresentation } from './startupPresentation.js';
 
 let mainModule = null;
 const pendingLaunchRequests = [];
@@ -42,6 +43,41 @@ if (!gotTheLock) {
         });
     });
 
+    protocol.registerSchemesAsPrivileged([
+        {
+            scheme: 'bookmanager-thumbnail',
+            privileges: {
+                standard: true,
+                secure: true,
+                supportFetchAPI: true,
+            },
+        },
+        {
+            scheme: 'bookmanager-document',
+            privileges: {
+                standard: true,
+                secure: true,
+                supportFetchAPI: true,
+                stream: true,
+            },
+        },
+        {
+            scheme: 'bookmanager-comic',
+            privileges: {
+                standard: true,
+                secure: true,
+                supportFetchAPI: true,
+                stream: true,
+                corsEnabled: true,
+            },
+        },
+    ]);
+
+    app.setName('BookManager');
+    if (process.platform === 'win32') {
+        app.setAppUserModelId('com.bookmanager.app');
+    }
+
     const executableDir = app.isPackaged
         ? path.dirname(process.execPath)
         : fileURLToPath(new URL('..', import.meta.url));
@@ -68,8 +104,38 @@ if (!gotTheLock) {
     });
     installConsolePipeGuard();
 
-    mainModule = await import('./main.js');
-    for (const request of pendingLaunchRequests.splice(0)) {
-        dispatchLaunchRequest(request);
+    let quitting = false;
+    app.once('before-quit', () => {
+        quitting = true;
+        startupPresentation.destroy();
+    });
+    const loadMainModule = async () => {
+        if (quitting) return;
+        mainModule = await import('./main.js');
+        if (quitting) return;
+        for (const request of pendingLaunchRequests.splice(0)) {
+            dispatchLaunchRequest(request);
+        }
+    };
+
+    if (process.platform === 'darwin') {
+        // Finish the entry module before waiting for ready, then paint before heavy imports.
+        void app.whenReady().then(async () => {
+            if (quitting) return;
+            await startupPresentation.start({
+                BrowserWindow,
+                systemPreferences,
+                motionPreference: readStartupMotionPreference(executableDir),
+                enabled: !process.argv.includes('--dev'),
+            });
+            await loadMainModule();
+        }).catch(error => {
+            startupPresentation.destroy();
+            if (quitting) return;
+            dialog.showErrorBox('BookManager', error?.message || String(error));
+            app.exit(1);
+        });
+    } else {
+        await loadMainModule();
     }
 }
