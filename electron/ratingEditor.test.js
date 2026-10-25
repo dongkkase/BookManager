@@ -45,7 +45,11 @@ test('rating saves only ComicInfo rating and preserves pages, custom fields, unr
     });
     assert.equal(result.storage, 'file', result.fallbackReason);
     assert.deepEqual((await fs.readFile(f.filePath)).subarray(0, original.length), original);
-    assert.equal(await entry(f.filePath, 'ComicInfo.xml'), xml.replace('<CommunityRating>2</CommunityRating>', '').replace('</ComicInfo>', '<CommunityRating>7</CommunityRating></ComicInfo>'));
+    const updatedXml = await entry(f.filePath, 'ComicInfo.xml');
+    assert.match(updatedXml, /<Title>Original<\/Title>/);
+    assert.match(updatedXml, /<Custom value="keep"\/>/);
+    assert.match(updatedXml, /<Pages><Page Image="0" Bookmark="chapter"\/><\/Pages>/);
+    assert.match(updatedXml, /<CommunityRating>3\.5<\/CommunityRating>/);
     assert.equal(await entry(f.filePath, '001.jpg'), 'page bytes');
     assert.equal(await entry(f.filePath, 'notes.txt'), 'notes');
     assert.deepEqual(await fs.readFile(result.backupPath), original);
@@ -128,7 +132,7 @@ for (const storage of ['file', 'database']) {
             assert.equal(result.storage, storage);
             assert.equal((await scan(f)).rating, '9');
             if (storage === 'database') assert.deepEqual(await fs.readFile(f.filePath), original);
-            else assert.match(await entry(f.filePath, 'ComicInfo.xml'), /<CommunityRating>9<\/CommunityRating>/);
+            else assert.match(await entry(f.filePath, 'ComicInfo.xml'), /<CommunityRating>4\.5<\/CommunityRating>/);
             assert.equal(warning.mock.callCount(), 1);
             const next = await saveItemRating({ filePath: f.filePath, rating: 7 }, options);
             assert.equal(next.success, true);

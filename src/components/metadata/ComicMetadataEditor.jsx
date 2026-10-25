@@ -41,6 +41,7 @@ function ComicMetadataEditor({
                 {renderSeparatedTagField('Genre', t('t3_f_genre'), genreOptions)}
                 {renderSeparatedTagField('Tags', t('t3_f_tags_lbl'), tagOptions)}
                 {renderDualTextarea('Characters', t('t3_f_char'))}
+                {renderFieldRows(fields.tags.filter(field => field.id !== 'Characters'))}
             </section>
 
             <section className="meta-section-box" ref={sectionRef(sectionRefs, 'other')}>

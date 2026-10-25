@@ -356,7 +356,7 @@ test('문피아 IPC는 키 없이 모든 책 타입을 검색하고 별칭과 �
         assert.equal(result.results[0].coverUrl, `${sampleNovel.coverUrl}.origin.`);
         assert.equal(result.results[0].link, 'https://www.munpia.com/novel/detail/482756');
         assert.equal(result.results[0].metadata.Format, format);
-        assert.equal(result.results[0].metadata.Manga, bookType === 'comic' ? 'YesAndRightToLeft' : '');
+        assert.equal(result.results[0].metadata.Manga, '');
         assert.equal(result.results[0].metadata.Count, '202');
         for (const field of ['Publisher', 'ISBN', 'CommunityRating', 'Year', 'Month', 'Day']) {
             assert.equal(result.results[0].metadata[field], '', field);

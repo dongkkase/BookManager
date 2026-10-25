@@ -41,7 +41,7 @@ const FILE_COLUMNS = [
     'volume_count', 'page_count', 'format', 'manga', 'language', 'rating', 'rating_override',
     'age_rating', 'publish_date', 'summary', 'characters', 'teams', 'locations',
     'story_arc', 'tags', 'notes', 'web', 'isbn', 'book_type', 'thumb_path',
-    'cover_override_path', 'has_metadata', 'metadata_override',
+    'cover_override_path', 'has_metadata', 'metadata_override', 'comicinfo_version',
     'album', 'album_artist', 'composer', 'duration_seconds', 'bitrate',
     'sample_rate', 'codec', 'container', 'channels', 'track_number',
     'track_total', 'disc_number', 'disc_total', 'mime_type',
@@ -54,7 +54,7 @@ const TAG_METADATA_COLUMNS = [
 ];
 
 const FILE_ACTIVITY_COLUMNS = FILE_COLUMNS.filter(column => ![
-    'path', 'ext', 'resolution', 'thumb_path', 'has_metadata', 'metadata_override',
+    'path', 'ext', 'resolution', 'thumb_path', 'has_metadata', 'metadata_override', 'comicinfo_version',
 ].includes(column));
 
 function recordReadingFileChange(db, before, after) {
@@ -394,6 +394,7 @@ export class LibraryDB {
                 cover_override_path TEXT,
                 has_metadata INTEGER,
                 metadata_override INTEGER,
+                comicinfo_version INTEGER,
                 album TEXT,
                 album_artist TEXT,
                 composer TEXT,
@@ -517,6 +518,7 @@ export class LibraryDB {
             cover_override_path: 'TEXT',
             has_metadata: 'INTEGER',
             metadata_override: 'INTEGER',
+            comicinfo_version: 'INTEGER',
             album: 'TEXT',
             album_artist: 'TEXT',
             composer: 'TEXT',

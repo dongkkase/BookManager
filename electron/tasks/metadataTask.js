@@ -8,6 +8,13 @@ import { missingBinaryMessage } from '../binaryPolicy.js';
 import { attachOperationErrors } from '../operationDiagnostics.js';
 import { runMetadataProcess as runProcess } from '../metadataProcess.js';
 import {
+    COMICINFO_CACHE_VERSION,
+    parseComicInfoXml,
+    createComicInfoXml as serializeComicInfoXml,
+    updateComicInfoRating,
+} from '../comicInfoXml.js';
+import { readComicMetadata } from '../comicMetadataXml.js';
+import {
   listZipEntries,
   listZipEntriesFromFile,
   readZipEntry,
@@ -32,6 +39,7 @@ import {
   supportedImageMimeTypeForPath,
 } from '../imageMagic.js';
 import {
+    latestMetadataPathKey,
   latestMetadataTitleKey,
   normalizeLatestMetadataTitle,
 } from '../metadataLatestPolicy.js';
@@ -56,15 +64,6 @@ const AUDIO_COVER_OVERRIDE_PREFIX = 'audio-cover-override-';
 const EPUB_EXT = '.epub';
 const PDF_EXT = '.pdf';
 const EPUB_PACKAGE_MIME = 'application/oebps-package+xml';
-const XML_FIELDS = [
-  'Series', 'SeriesGroup', 'Title', 'Number', 'Count', 'Volume',
-  'Summary', 'Notes', 'Web',
-  'Writer', 'Penciller', 'Inker', 'Colorist', 'Letterer', 'CoverArtist', 'Editor',
-  'Publisher', 'Imprint', 'Genre', 'Tags', 'Characters',
-  'PageCount', 'LanguageISO', 'Format', 'BlackAndWhite', 'Manga',
-  'AgeRating', 'CommunityRating', 'Year', 'Month', 'Day',
-  'ComicZipAddedDate', 'ComicZipModifiedDate',
-];
 
 function taskText(lang, key, values) {
   return translate(key, lang || 'ko', values);
@@ -183,7 +182,7 @@ async function extractArchiveFile(filePath, innerPath, sevenZExe, options = {}) 
     if (!extracted) throw new Error(`${innerPath} extraction failed`);
     return extracted;
   }
-    const result = await runProcess(sevenZExe, ['e', '-so', filePath, innerPath], { ...options, binary: true });
+    const result = await runProcess(sevenZExe, ['e', '-so', '-spd', '-ssc', '--', filePath, innerPath], { ...options, binary: true });
   return result.buffer;
 }
 
@@ -1226,31 +1225,11 @@ export async function loadMetadataCover(filePath, options = {}) {
 }
 
 export function parseComicInfo(xmlText) {
-  const metadata = {};
-  for (const field of XML_FIELDS) {
-    const match = String(xmlText || '').match(new RegExp(`<${field}[^>]*>([\\s\\S]*?)<\\/${field}>`, 'i'));
-    if (match) metadata[field] = decodeXml(match[1]).trim();
-  }
-  return metadata;
+    return parseComicInfoXml(xmlText);
 }
 
-export function createComicInfoXml(metadata = {}) {
-  const now = new Date().toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
-  const data = { ...metadata };
-  const addedDate = data.ComicZipAddedDate || now;
-  data.ComicZipAddedDate = addedDate;
-  data.ComicZipModifiedDate = now;
-
-  let xml = '<?xml version="1.0" encoding="utf-8"?>\n';
-  xml += '<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">\n';
-  for (const field of XML_FIELDS) {
-    const value = data[field];
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      xml += `  <${field}>${encodeXml(value)}</${field}>\n`;
-    }
-  }
-  xml += '</ComicInfo>\n';
-  return xml;
+export function createComicInfoXml(metadata = {}, existingXml = '') {
+    return serializeComicInfoXml(metadata, existingXml);
 }
 
 function imageDataUrl(buffer, innerPath, explicitMimeType = '') {
@@ -1289,7 +1268,7 @@ function inferMetadataFromFilename(filePath, pageCount, options = {}) {
     Title: title,
     Volume: volumeMatch?.[1] || '',
     PageCount: pageCount ? String(pageCount) : '',
-    Manga: 'YesAndRightToLeft',
+    Manga: '',
     Format: 'Manga',
     LanguageISO: 'ko',
   };
@@ -1361,6 +1340,11 @@ function metadataFromLibraryRecord(record = {}, options = {}) {
     Rights: record.notes || '',
     Web: record.web || '',
     ISBN: record.isbn || '',
+    ...(record.book_type === 'comic' ? { GTIN: record.isbn || '' } : {}),
+    Characters: record.characters || '',
+    Teams: record.teams || '',
+    Locations: record.locations || '',
+    StoryArc: record.story_arc || '',
     PageCount: record.page_count || '',
     Count: record.volume_count || '',
     LanguageISO: record.language || '',
@@ -1427,13 +1411,13 @@ function metadataToLibraryRecord(item = {}) {
     publish_date: metadataPublishDate(metadata),
     summary: metadata.Summary || '',
     characters: metadata.Characters || '',
-    teams: '',
-    locations: '',
+    teams: metadata.Teams || '',
+    locations: metadata.Locations || '',
     story_arc: metadata.StoryArc || '',
     tags: metadata.Tags || '',
     notes: metadata.Rights || metadata.Notes || '',
     web: metadata.Web || '',
-    isbn: metadata.ISBN || '',
+    isbn: (bookType === 'comic' ? metadata.GTIN : metadata.ISBN) || '',
     book_type: bookType,
     album: metadata.Album || metadata.Series || '',
     album_artist: metadata.AlbumArtist || '',
@@ -1730,9 +1714,14 @@ async function persistDocumentMetadata(item, options = {}) {
     const stat = await fsp.stat(filePath);
     const existing = await libraryDb.getFileInfo(filePath).catch(() => null);
     const invalidateThumbnail = isEpub(filePath) && Boolean(item.epubCoverChange);
+    const isComic = resolveBookType({ path: filePath }) === 'comic';
+    const storedItem = isComic
+        ? { ...item, metadata: (await readExistingComicMetadata(filePath, options.sevenZExe))?.metadata || {} }
+        : item;
     await libraryDb.upsertFileInfo({
       ...(existing || {}),
-      ...metadataToLibraryRecord(item),
+      ...metadataToLibraryRecord(storedItem),
+      ...(isComic ? { comicinfo_version: COMICINFO_CACHE_VERSION, has_metadata: 1 } : {}),
       ...(invalidateThumbnail ? { thumb_path: '' } : {}),
       mtime: stat.mtimeMs / 1000,
       size: stat.size,
@@ -1809,27 +1798,16 @@ function compareOptionalMetadataNumber(left, right) {
   return (right || 0) - (left || 0);
 }
 
-function sameFilePath(left = '', right = '') {
-  if (!left || !right) return false;
-  const normalize = value => {
-    const resolved = path.resolve(String(value));
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  };
-  return normalize(left) === normalize(right);
-}
-
 function rankedLatestMetadataCandidates(records = [], criteria = {}) {
   const expectedBookType = String(criteria.bookType || '').trim().toLowerCase();
-  const excludePath = criteria.excludePath || criteria.filePath || '';
+    const excludePathKey = latestMetadataPathKey(criteria.excludePath || criteria.filePath || '');
   const candidates = [];
   const seenPaths = new Set();
 
   for (const record of records || []) {
     const candidatePath = record?.path || record?.filepath || record?.file_path || '';
-    if (!candidatePath || sameFilePath(candidatePath, excludePath)) continue;
-    const pathKey = process.platform === 'win32'
-      ? path.resolve(candidatePath).toLowerCase()
-      : path.resolve(candidatePath);
+    const pathKey = latestMetadataPathKey(candidatePath);
+    if (!pathKey || pathKey === excludePathKey) continue;
     if (seenPaths.has(pathKey)) continue;
     seenPaths.add(pathKey);
 
@@ -1893,7 +1871,9 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
         const imageEntries = entries
           .filter(entry => !entry.isDir && isImage(entry.name))
           .sort((a, b) => compareComicPageNames(a.name, b.name));
-        const comicInfoEntry = entries.find(entry => !entry.isDir && path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
+        const comicMetadata = await readComicMetadata(entries, entry => extractArchiveFile(
+            filePath, entry.name, sevenZExe, { maxBytes: 8 * 1024 * 1024 },
+        ));
         const pageCount = pdfAnalysis?.pageCount || imageEntries.length;
         let metadata = options.includeInferredMetadata === false
           ? {}
@@ -1907,7 +1887,8 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
 
         if (!isText && libraryDb && options.includeCachedMetadata !== false) {
           cachedMetadataRecord = await libraryDb.getFileInfo(filePath).catch(() => null);
-          if (bookType !== 'audio' || Number(cachedMetadataRecord?.metadata_override) === 1) {
+          if (!(bookType === 'comic' && comicMetadata)
+              && (bookType !== 'audio' || Number(cachedMetadataRecord?.metadata_override) === 1)) {
             metadata = {
               ...metadata,
               ...metadataFromLibraryRecord(cachedMetadataRecord, { preserveEmpty: bookType === 'audio' }),
@@ -1933,9 +1914,8 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           metadata = { ...metadata, ...pdfAnalysis.metadata };
         }
 
-        if (comicInfoEntry) {
-          const xmlBuffer = await extractArchiveFile(filePath, comicInfoEntry.name, sevenZExe, { maxBytes: 8 * 1024 * 1024 });
-          metadata = { ...metadata, ...parseComicInfo(xmlBuffer.toString('utf8')) };
+        if (comicMetadata) {
+          metadata = { ...metadata, ...comicMetadata.metadata };
         }
 
         let coverDataUrl = epubAnalysis?.coverDataUrl || '';
@@ -1978,7 +1958,10 @@ export async function analyzeMetadataInputs(paths, options = {}, onProgress) {
           group: path.basename(path.dirname(filePath)),
           checked: true,
           bookType,
-          hasComicInfo: Boolean(comicInfoEntry),
+          hasComicInfo: comicMetadata?.format === 'comicinfo',
+          hasComicMetadata: Boolean(comicMetadata),
+          comicMetadataFormat: comicMetadata?.format || '',
+          comicMetadataEntryName: comicMetadata?.entryName || '',
           hasEpubMetadata: Boolean(epubAnalysis?.hasMetadata),
           hasPdfMetadata: Boolean(pdfAnalysis?.hasMetadata),
           hasAudioMetadata: Boolean(audioAnalysis?.has_metadata),
@@ -2047,7 +2030,7 @@ export async function loadLatestSeriesMetadata(criteria = {}, options = {}) {
         || itemBookType === 'pdf'
         || path.extname(item?.filepath || '').toLowerCase() === EPUB_EXT;
       const hasEmbeddedMetadata = Boolean(
-        item?.hasComicInfo || item?.hasEpubMetadata || item?.hasPdfMetadata,
+        item?.hasComicMetadata || item?.hasComicInfo || item?.hasEpubMetadata || item?.hasPdfMetadata,
       );
       if (
         !item
@@ -2387,44 +2370,27 @@ async function resolveEpubCoverChange(epubPackage, coverChange = {}, options = {
   return null;
 }
 
-function comparableComicInfoValue(value) {
-  return String(value ?? '').trim();
+function comicInfoArchiveEntries(entries) {
+    return entries.filter(entry => !entry.isDir && !entry.isDirectory
+        && path.posix.basename(entry.name.replace(/\\/g, '/')).toLowerCase() === 'comicinfo.xml');
 }
 
-function comicInfoMetadataMatches(existing = {}, metadata = {}) {
-  if (!comparableComicInfoValue(existing.ComicZipModifiedDate)) return false;
-
-  for (const field of XML_FIELDS) {
-    if (field === 'ComicZipModifiedDate') continue;
-    if (field === 'ComicZipAddedDate' && !comparableComicInfoValue(metadata[field])) return false;
-    if (comparableComicInfoValue(existing[field]) !== comparableComicInfoValue(metadata[field])) {
-      return false;
+async function readExistingComicMetadata(filePath, sevenZExe, archiveEntries) {
+    if (!isZipArchive(filePath) && !sevenZExe) {
+        const error = new Error(missingBinaryMessage('7z'));
+        error.code = 'TOOL_MISSING';
+        error.telemetryTool = '7z';
+        throw error;
     }
-  }
-  return true;
-}
-
-async function readExistingComicInfoMetadata(filePath, sevenZExe) {
-  if (isZipArchive(filePath)) {
-    const entries = await listZipEntriesFromFile(filePath);
-    const comicInfoEntry = entries.find(entry => !entry.isDirectory && entry.name.replace(/\\/g, '/').toLowerCase() === 'comicinfo.xml');
-    if (!comicInfoEntry) return null;
-    const xmlBuffer = await readZipEntryFromFile(filePath, comicInfoEntry, { maxBytes: 8 * 1024 * 1024 });
-    return xmlBuffer ? parseComicInfo(xmlBuffer.toString('utf8')) : null;
-  }
-
-  if (!sevenZExe) return null;
-  try {
-    const result = await runProcess(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml'], { binary: true, telemetryTool: '7z' });
-    return result.buffer.length ? parseComicInfo(result.buffer.toString('utf8')) : null;
-  } catch {
-    return null;
-  }
+    const entries = archiveEntries || await listArchiveEntries(filePath, sevenZExe);
+    return readComicMetadata(entries, entry => extractArchiveFile(
+        filePath, entry.name, sevenZExe, { maxBytes: 8 * 1024 * 1024 },
+    ));
 }
 
 async function hasComicInfoMetadataChanges(filePath, metadata, sevenZExe) {
-  const existing = await readExistingComicInfoMetadata(filePath, sevenZExe);
-  return !existing || !comicInfoMetadataMatches(existing, metadata);
+    const existing = await readExistingComicMetadata(filePath, sevenZExe);
+    return existing?.format !== 'comicinfo' || createComicInfoXml(metadata, existing.comicInfoXml) !== existing.xml;
 }
 
 async function createMetadataBackup(filePath, extension, token) {
@@ -2662,7 +2628,8 @@ async function injectPdfMetadata(filePath, metadata) {
 async function injectComicInfoFastZip(filePath, metadata, options = {}) {
   const support = metadataWriteSupport(filePath, options.lang);
   if (!support.supported) throw new Error(support.message);
-  await replaceZipEntryAppendOnly(filePath, 'ComicInfo.xml', createComicInfoXml(metadata), {
+  const existing = await readExistingComicMetadata(filePath);
+  await replaceZipEntryAppendOnly(filePath, 'ComicInfo.xml', createComicInfoXml(metadata, existing?.comicInfoXml || ''), {
     removeMatchingBasename: true,
     beforeWrite: options.beforeWrite,
     shouldCancel: options.shouldCancel,
@@ -2704,17 +2671,10 @@ export async function writeArchiveRating(filePath, rating, { sevenZExe } = {}) {
     }
     const extension = path.extname(filePath).toLowerCase();
     if (!['.zip', '.cbz', '.7z', '.cb7'].includes(extension)) throw new Error('Archive rating writing is not supported.');
-    const entries = await listArchiveEntries(filePath, sevenZExe);
-    const entry = entries.find(item => !item.isDir && path.posix.basename(item.name.replace(/\\/g, '/')).toLowerCase() === 'comicinfo.xml');
-    const entryName = entry?.name || 'ComicInfo.xml';
-    let xml = entry ? (await extractArchiveFile(filePath, entryName, sevenZExe, { maxBytes: 8 * 1024 * 1024 })).toString('utf8')
-        : '<?xml version="1.0" encoding="utf-8"?>\n<ComicInfo></ComicInfo>';
-    if (/encoding\s*=\s*["'](?!utf-?8)[^"']+/i.test(xml) || !/<ComicInfo\b[^>]*>[\s\S]*<\/ComicInfo\s*>/i.test(xml)) {
-        throw new Error('Unsupported ComicInfo XML.');
-    }
-    const tag = `<CommunityRating>${rating}</CommunityRating>`;
-    const pattern = /<CommunityRating\b[^>]*(?:\/\s*>|>[\s\S]*?<\/CommunityRating\s*>)/gi;
-    xml = xml.replace(pattern, '').replace(/<\/ComicInfo\s*>/i, `${tag}</ComicInfo>`);
+    const existing = await readExistingComicMetadata(filePath, sevenZExe);
+    const entryName = existing?.format === 'comicinfo' ? existing.entryName : 'ComicInfo.xml';
+    const existingXml = existing?.comicInfoXml || '<?xml version="1.0" encoding="utf-8"?>\n<ComicInfo></ComicInfo>';
+    const xml = updateComicInfoRating(existingXml, rating);
     if (isZipArchive(filePath)) {
         await replaceRatingZipEntry(filePath, entryName, xml);
         return;
@@ -2740,7 +2700,8 @@ async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {
   if (!support.supported) throw new Error(support.message);
 
   if (isZipArchive(filePath)) {
-    await replaceZipEntry(filePath, 'ComicInfo.xml', createComicInfoXml(metadata), {
+    const existing = await readExistingComicMetadata(filePath);
+    await replaceZipEntry(filePath, 'ComicInfo.xml', createComicInfoXml(metadata, existing?.comicInfoXml || ''), {
       removeMatchingBasename: true,
     });
     return true;
@@ -2756,12 +2717,13 @@ async function injectComicInfo(filePath, metadata, sevenZExe, lang = 'ko') {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'BookManager_Metadata_'));
   let operationError;
   try {
+    const entries = await listArchiveEntries(filePath, sevenZExe);
+    const existing = await readExistingComicMetadata(filePath, sevenZExe, entries);
     const xmlPath = path.join(tempDir, 'ComicInfo.xml');
-    await fsp.writeFile(xmlPath, createComicInfoXml(metadata), 'utf8');
-    try {
-      await runProcess(sevenZExe, ['d', filePath, 'ComicInfo.xml', '-y'], { telemetryTool: '7z' });
-    } catch {
-      // ComicInfo.xml이 없으면 삭제 단계는 실패할 수 있으므로 무시합니다.
+    await fsp.writeFile(xmlPath, createComicInfoXml(metadata, existing?.comicInfoXml || ''), 'utf8');
+    const existingNames = comicInfoArchiveEntries(entries).map(entry => entry.name);
+    if (existingNames.length) {
+      await runProcess(sevenZExe, ['d', '-y', '-spd', '-ssc', '--', filePath, ...existingNames], { telemetryTool: '7z' });
     }
     await runProcess(sevenZExe, ['a', filePath, 'ComicInfo.xml', '-mx=0', '-mmt=on'], { cwd: tempDir, telemetryTool: '7z' });
     return true;

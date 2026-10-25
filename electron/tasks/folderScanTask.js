@@ -12,6 +12,8 @@ import {
 } from '../core/zipArchive.js';
 import { translate } from '../../src/utils/i18n.js';
 import { normalizeMetadataFormat } from '../metadataFormat.js';
+import { COMICINFO_CACHE_VERSION } from '../comicInfoXml.js';
+import { readComicMetadata } from '../comicMetadataXml.js';
 import { resolveBookType } from '../../src/metadata/metadataTypes.js';
 import { isBrokenPipeError } from '../utils/consolePipeGuard.js';
 import { isAudioPath, readAudioMetadata } from '../audioMetadata.js';
@@ -450,43 +452,43 @@ function parseEpubOpfMetadata(opfXml = '') {
   );
 }
 
-function parseComicInfo(xml) {
-  if (!xml) return {};
-  return {
-    title: readXmlTag(xml, 'Title'),
-    series: readXmlTag(xml, 'Series'),
-    volume: readXmlTag(xml, 'Volume'),
-    chapter: readXmlTag(xml, 'Number'),
-    writer: readXmlTag(xml, 'Writer'),
-    penciller: readXmlTag(xml, 'Penciller'),
-    inker: readXmlTag(xml, 'Inker'),
-    colorist: readXmlTag(xml, 'Colorist'),
-    letterer: readXmlTag(xml, 'Letterer'),
-    cover_artist: readXmlTag(xml, 'CoverArtist'),
-    editor: readXmlTag(xml, 'Editor'),
-    publisher: readXmlTag(xml, 'Publisher'),
-    imprint: readXmlTag(xml, 'Imprint'),
-    genre: readXmlTag(xml, 'Genre'),
-    page_count: readXmlTag(xml, 'PageCount'),
-    total_volume: readXmlTag(xml, 'Count'),
-    format: readXmlTag(xml, 'Format'),
-    description: readXmlTag(xml, 'Summary'),
-    series_group: readXmlTag(xml, 'SeriesGroup'),
-    tags: readXmlTag(xml, 'Tags'),
-    characters: readXmlTag(xml, 'Characters'),
-    story_arc: readXmlTag(xml, 'StoryArc'),
-    notes: readXmlTag(xml, 'Notes'),
-    link: readXmlTag(xml, 'Web'),
-    language: readXmlTag(xml, 'LanguageISO'),
-    manga: readXmlTag(xml, 'Manga'),
-    age_rating: readXmlTag(xml, 'AgeRating'),
-    rating: readXmlTag(xml, 'CommunityRating'),
-    date: [
-      readXmlTag(xml, 'Year'),
-      readXmlTag(xml, 'Month'),
-      readXmlTag(xml, 'Day'),
-    ].filter(Boolean).join('-'),
-  };
+function parseComicInfo(metadata) {
+    if (!metadata) return {};
+    const value = field => String(metadata[field] ?? '');
+    return {
+        title: value('Title'),
+        series: value('Series'),
+        volume: value('Volume'),
+        chapter: value('Number'),
+        writer: value('Writer'),
+        penciller: value('Penciller'),
+        inker: value('Inker'),
+        colorist: value('Colorist'),
+        letterer: value('Letterer'),
+        cover_artist: value('CoverArtist'),
+        editor: value('Editor'),
+        publisher: value('Publisher'),
+        imprint: value('Imprint'),
+        genre: value('Genre'),
+        page_count: value('PageCount'),
+        total_volume: value('Count'),
+        format: value('Format'),
+        description: value('Summary'),
+        series_group: value('SeriesGroup'),
+        tags: value('Tags'),
+        characters: value('Characters'),
+        teams: value('Teams'),
+        locations: value('Locations'),
+        story_arc: value('StoryArc'),
+        notes: value('Notes'),
+        link: value('Web'),
+        isbn: value('GTIN'),
+        language: value('LanguageISO'),
+        manga: value('Manga'),
+        age_rating: value('AgeRating'),
+        rating: value('CommunityRating'),
+        date: ['Year', 'Month', 'Day'].map(value).filter(Boolean).join('-'),
+    };
 }
 
 function getImageResolution(buffer, filename) {
@@ -542,48 +544,36 @@ async function saveThumbnail(imageBuffer, imageName, filePath, mtime, thumbnailD
 
 async function extractWith7Zip(filePath, sevenZExe, options = {}) {
   if (!sevenZExe) return {};
-  if (options.skipCoverExtraction) {
-    try {
-      const extracted = await execFileAsync(sevenZExe, ['e', '-so', '-ssc-', '-r', filePath, 'ComicInfo.xml'], {
-        encoding: 'buffer',
-        maxBuffer: MAX_INLINE_COVER_BYTES,
-        windowsHide: true,
-      });
-      if (!extracted.stdout?.length) return {};
-      return {
-        has_metadata: true,
-        ...parseComicInfo(extracted.stdout.toString('utf8')),
-      };
-    } catch {
-      return {};
-    }
-  }
-
   const { stdout } = await execFileAsync(sevenZExe, ['l', '-slt', filePath], {
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
     windowsHide: true,
   });
-  const entries = String(stdout || '')
-    .split(/\r?\n/)
-    .filter(line => line.startsWith('Path = '))
-    .map(line => line.slice(7).trim())
-    .filter(Boolean);
-  const comicInfoName = entries.find(name => path.basename(name).toLowerCase() === 'comicinfo.xml');
+    const entries = String(stdout || '')
+        .split(/\r?\n\s*\r?\n/)
+        .map(block => ({
+            name: block.match(/^Path = (.+)$/m)?.[1].trim() || '',
+            isDirectory: /^Folder = \+/m.test(block) || /^Attributes = .*D/m.test(block),
+        }))
+        .filter(entry => entry.name);
   const imageName = entries
-    .filter(name => IMAGE_EXTS.includes(path.extname(name).toLowerCase()))
+    .filter(entry => !entry.isDirectory && IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()))
+    .map(entry => entry.name)
     .sort(compareComicPageNames)[0];
-  const result = {};
+  const result = { comicinfo_version: COMICINFO_CACHE_VERSION };
 
-  if (comicInfoName) {
-    result.has_metadata = true;
-    const extracted = await execFileAsync(sevenZExe, ['e', '-so', filePath, comicInfoName], {
-      encoding: 'buffer',
-      maxBuffer: MAX_INLINE_COVER_BYTES,
-      windowsHide: true,
+    const comicMetadata = await readComicMetadata(entries, async entry => {
+        const extracted = await execFileAsync(sevenZExe, ['e', '-so', '-spd', '-ssc', '--', filePath, entry.name], {
+            encoding: 'buffer',
+            maxBuffer: MAX_INLINE_COVER_BYTES,
+            windowsHide: true,
+        });
+        return extracted.stdout;
     });
-    Object.assign(result, parseComicInfo(extracted.stdout.toString('utf8')));
-  }
+    if (comicMetadata) {
+        result.has_metadata = true;
+        Object.assign(result, parseComicInfo(comicMetadata.metadata));
+    }
   if (!options.skipCoverExtraction && imageName) {
     const extracted = await execFileAsync(sevenZExe, ['e', '-so', filePath, imageName], {
       encoding: 'buffer',
@@ -661,16 +651,15 @@ async function extractArchiveMetadata(filePath, ext, options = {}) {
     let result = {};
     if (ext === '.zip' || ext === '.cbz') {
       const entries = await listZipEntriesFromFile(filePath);
-      const comicInfoEntry = entries.find(entry => path.basename(entry.name).toLowerCase() === 'comicinfo.xml');
-
-      if (comicInfoEntry) {
-        result.has_metadata = true;
-        const xmlBuffer = await readZipEntryFromFile(filePath, comicInfoEntry, {
-          maxBytes: MAX_INLINE_COVER_BYTES,
-          maxCompressedBytes: MAX_INLINE_COVER_BYTES,
-        });
-        if (xmlBuffer) Object.assign(result, parseComicInfo(xmlBuffer.toString('utf8')));
-      }
+        const comicMetadata = await readComicMetadata(entries, entry => readZipEntryFromFile(filePath, entry, {
+            maxBytes: MAX_INLINE_COVER_BYTES,
+            maxCompressedBytes: MAX_INLINE_COVER_BYTES,
+        }));
+        if (comicMetadata) {
+            result.has_metadata = true;
+            Object.assign(result, parseComicInfo(comicMetadata.metadata));
+        }
+      result.comicinfo_version = COMICINFO_CACHE_VERSION;
       if (!options.skipCoverExtraction) {
         const imageEntry = entries
           .filter(entry => IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase()) && !entry.isDirectory)
@@ -794,6 +783,7 @@ function metadataFromCache(cached = {}) {
     manga: cached.manga || '',
     age_rating: cached.age_rating || '',
     rating: cached.rating || '',
+    comicinfo_version: cached.comicinfo_version,
     date: cached.publish_date || '',
     format: normalizeMetadataFormat(cached.format),
     isbn: cached.isbn || '',
@@ -1382,16 +1372,16 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
   const shouldRefreshEpubMetadata = cacheValid
     && ext === '.epub'
     && normalizeMetadataFormat(cached?.format) !== 'Novel';
-  const shouldRefreshComicCreatorMetadata = cacheValid
+  const shouldRefreshComicMetadata = cacheValid
     && ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.cb7'].includes(ext)
-    && [
+    && (Number(cached?.comicinfo_version) !== COMICINFO_CACHE_VERSION || [
       cached?.penciller,
       cached?.inker,
       cached?.colorist,
       cached?.letterer,
       cached?.cover_artist,
       cached?.editor,
-    ].some(value => value === null || value === undefined);
+    ].some(value => value === null || value === undefined));
   const shouldRefreshAudioMetadata = cacheValid
     && bookType === 'audio'
     && (
@@ -1413,7 +1403,7 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     !cacheValid
     || shouldRefreshMissingThumbnail
     || shouldRefreshEpubMetadata
-    || shouldRefreshComicCreatorMetadata
+    || shouldRefreshComicMetadata
     || shouldRefreshAudioMetadata
   )) {
     const extracted = await extractArchiveMetadata(fullPath, ext, {
@@ -1505,12 +1495,13 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
         manga: archiveMeta.manga || '',
         language: archiveMeta.language || '',
         rating: archiveMeta.rating || '',
+        comicinfo_version: archiveMeta.comicinfo_version || '',
         age_rating: archiveMeta.age_rating || '',
         publish_date: archiveMeta.date || '',
         summary: archiveMeta.description || '',
         characters: archiveMeta.characters || '',
-        teams: '',
-        locations: '',
+        teams: archiveMeta.teams || '',
+        locations: archiveMeta.locations || '',
         story_arc: archiveMeta.story_arc || '',
         tags: archiveMeta.tags || '',
         notes: archiveMeta.notes || '',
@@ -1606,8 +1597,8 @@ async function createFileData(fullPath, stats, options = {}, sourceChangeRetryCo
     series_group: archiveMeta.series_group || '',
     tags: archiveMeta.tags || '',
     characters: archiveMeta.characters || '',
-    teams: textMetadata ? archiveMeta.teams || '' : '',
-    locations: textMetadata ? archiveMeta.locations || '' : '',
+    teams: archiveMeta.teams || '',
+    locations: archiveMeta.locations || '',
     story_arc: archiveMeta.story_arc || '',
     notes: archiveMeta.notes || '',
     link: archiveMeta.link || '',

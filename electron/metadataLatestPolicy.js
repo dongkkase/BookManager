@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 const NUMBER_PATTERN = String.raw`[0-9０-９]+(?:[.．][0-9０-９]+)?`;
 const RANGE_SEPARATOR_PATTERN = String.raw`(?:~|〜|～|-|–|—)`;
 const NUMBER_RANGE_PATTERN = String.raw`${NUMBER_PATTERN}(?:\s*${RANGE_SEPARATOR_PATTERN}\s*${NUMBER_PATTERN})?`;
@@ -42,4 +44,12 @@ export function normalizeLatestMetadataTitle(value = '') {
 
 export function latestMetadataTitleKey(value = '') {
     return normalizeLatestMetadataTitle(value).toLowerCase();
+}
+
+export function latestMetadataPathKey(value = '', platform = process.platform) {
+    if (!value) return '';
+    const pathApi = platform === 'win32' ? path.win32 : path.posix;
+    const resolved = pathApi.resolve(String(value));
+    if (platform === 'darwin') return resolved.normalize('NFC');
+    return platform === 'win32' ? resolved.toLowerCase() : resolved;
 }

@@ -84,6 +84,19 @@ export function isDecimalMetadataField(field) {
     return field === 'Volume' || field === 'Number';
 }
 
+export function stepMetadataSequence(value, delta) {
+    const text = String(value ?? '').trim() || '0';
+    const match = text.match(/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))$/);
+    if (!match || (delta !== -1 && delta !== 1)) return null;
+    const fraction = match[3] || match[4] || '';
+    const scale = 10n ** BigInt(fraction.length);
+    const current = BigInt(`${match[2] || '0'}${fraction}`) * (match[1] === '-' ? -1n : 1n);
+    const next = current + BigInt(delta) * scale;
+    if (next <= 0n) return '0';
+    const digits = String(next).padStart(fraction.length + 1, '0');
+    return fraction ? `${digits.slice(0, -fraction.length)}.${digits.slice(-fraction.length)}` : digits;
+}
+
 export function applyInferredMetadataField(metadata = {}, inferred = {}, field = '') {
     const targetFields = field === 'Title' ? ['Title', 'Volume', 'Number'] : [field];
     const next = { ...(metadata || {}) };

@@ -699,6 +699,9 @@ function normalizeSearchResult(raw = {}, id = '') {
     Count: raw.Count || '',
     Volume: raw.Volume || '',
     Number: raw.Number || '',
+    AlternateSeries: raw.AlternateSeries || '',
+    AlternateNumber: raw.AlternateNumber || '',
+    AlternateCount: raw.AlternateCount || '',
     PageCount: raw.PageCount || '',
     Summary: raw.Summary || '',
     Writer: raw.Writer || '',
@@ -708,9 +711,11 @@ function normalizeSearchResult(raw = {}, id = '') {
     Letterer: raw.Letterer || '',
     CoverArtist: raw.CoverArtist || '',
     Editor: raw.Editor || '',
+    Translator: raw.Translator || '',
     Publisher: raw.Publisher || '',
     Imprint: raw.Imprint || '',
     ISBN: raw.ISBN || raw.isbn || '',
+    GTIN: raw.GTIN || raw.ISBN || raw.isbn || '',
     Web: raw.Web || '',
     Format: raw.Format || 'Manga',
     Year: raw.Year || '',
@@ -719,6 +724,13 @@ function normalizeSearchResult(raw = {}, id = '') {
     Genre: raw.Genre || '',
     Tags: raw.Tags || '',
     Characters: raw.Characters || '',
+    Teams: raw.Teams || '',
+    Locations: raw.Locations || '',
+    MainCharacterOrTeam: raw.MainCharacterOrTeam || '',
+    StoryArc: raw.StoryArc || '',
+    StoryArcNumber: raw.StoryArcNumber || '',
+    ScanInformation: raw.ScanInformation || '',
+    Review: raw.Review || '',
     AgeRating: raw.AgeRating || '',
     CommunityRating: raw.CommunityRating || '',
     LanguageISO: raw.LanguageISO || '',
@@ -1363,7 +1375,7 @@ function metadataFormatForBookType(bookType = 'comic') {
 }
 
 function mangaValueForBookType(bookType = 'comic') {
-  return bookType === 'comic' ? 'YesAndRightToLeft' : '';
+  return '';
 }
 
 function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
@@ -1471,11 +1483,11 @@ async function enrichGoogleBooksRatings(results = []) {
         ...item,
         Rating: `${rating} / 5.0`,
         RatingScore: rating,
-        CommunityRating: rating,
+        CommunityRating: String(Number(rating) * 2),
         rating,
         metadata: {
           ...(item.metadata || {}),
-          CommunityRating: rating,
+          CommunityRating: String(Number(rating) * 2),
         },
       };
     }
@@ -1523,7 +1535,7 @@ async function searchGoogleBooks(query, apiKey = '', page = 1, bookType = 'comic
       Count: '',
       Rating: ratingScore ? `${ratingScore} / 5.0` : '-',
       RatingScore: ratingScore,
-      CommunityRating: ratingScore,
+      CommunityRating: ratingScore ? String(Number(ratingScore) * 2) : '',
       AgeRating: '',
       PubDate: info.publishedDate || '',
       Format: metadataFormatForBookType(bookType),
@@ -1808,7 +1820,7 @@ function parseAmazonSearchHtml(html = '', bookType = 'book') {
       Count: '',
       Rating: rating ? `${rating} / 5.0` : '-',
       RatingScore: rating,
-      CommunityRating: rating,
+      CommunityRating: rating ? String(Number(rating) * 2) : '',
       AgeRating: '',
       PubDate: '',
       Format: metadataFormatForBookType(bookType),
@@ -3981,7 +3993,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             error: additionalMetadataErrorMessage({ code: providerContext.errorCode }, apiName, i18nT),
         };
     }
-    const cacheQuery = `${bookType}::${query}::p${page}::v17${apiName === 'Vine' ? '::comicvine-v5' : ''}${deferComicVineEnrichment ? '::summary' : ''}${providerContext?.cacheSuffix || ''}`;
+    const cacheQuery = `${bookType}::${query}::p${page}::v18${apiName === 'Vine' ? '::comicvine-v5' : ''}${deferComicVineEnrichment ? '::summary' : ''}${providerContext?.cacheSuffix || ''}`;
     try {
       if (apiCacheDb) {
         const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);

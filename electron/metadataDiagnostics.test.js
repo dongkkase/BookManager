@@ -112,7 +112,7 @@ async function observeResult(t, fixture, overrides = {}, items = [fixture.item])
 }
 
 const requiresExecutableScript = { skip: process.platform === 'win32' };
-const SUCCESS_TOOL = "if (process.argv[2] !== 'a') process.exit(2);";
+const SUCCESS_TOOL = "if (!['a', 'l'].includes(process.argv[2])) process.exit(2);";
 
 test('metadata missing-tool errors reach the final Sentry envelope with stages, safe frames and unchanged result fields', async t => {
     const fixture = setup(t);
@@ -122,7 +122,7 @@ test('metadata missing-tool errors reach the final Sentry envelope with stages, 
     assert.equal(errors[0].code, 'TOOL_MISSING');
     assert.deepEqual(events[0].tags, {
         feature: 'metadata-save', source: 'ipc', os: process.platform,
-        error_code: 'TOOL_MISSING', error_stage: 'write-metadata', error_tool: '7z',
+        error_code: 'TOOL_MISSING', error_stage: 'inspect', error_tool: '7z',
     });
     assert.ok(events[0].exception.values[0].stacktrace.frames.some(frame => frame.filename === 'app:///electron/tasks/metadataTask.js'));
     assert.equal(body.includes(errors[0].message), false);
@@ -229,7 +229,7 @@ test('cancelling a busy metadata ZIP save prevents another open, backup, write a
 });
 
 test('metadata 7z save failures retain process exit details and exclude captured process output from Sentry', requiresExecutableScript, async t => {
-    const fixture = setup(t, '.7z', "process.stdout.write('private process stdout'); process.stderr.write('private process stderr'); process.exit(2);");
+    const fixture = setup(t, '.7z', "if (process.argv[2] === 'l') process.exit(0); process.stdout.write('private process stdout'); process.stderr.write('private process stderr'); process.exit(2);");
     const { errors, events } = await observeResult(t, fixture);
     assert.equal(errors[0].code, 'PROCESS_FAILED');
     assert.match(errors[0].message, /private process stderr/);
@@ -240,6 +240,17 @@ test('metadata 7z save failures retain process exit details and exclude captured
     assert.equal(events[0].tags.error_stage, 'write-metadata');
     assert.equal(events[0].tags.error_tool, '7z');
     assert.equal(events[0].tags.exit_code, 2);
+});
+
+test('metadata 7z inspection failures preserve the archive instead of replacing unreadable ComicInfo', requiresExecutableScript, async t => {
+    const fixture = setup(t, '.7z', "process.stderr.write('private process inspection failure'); process.exit(2);");
+    const original = fs.readFileSync(fixture.item.filepath);
+    const { result, errors, events } = await observeResult(t, fixture);
+    assert.equal(result.stats.success.length, 0);
+    assert.equal(errors[0].code, 'PROCESS_FAILED');
+    assert.equal(errors[0].telemetryStage, 'inspect');
+    assert.equal(events[0].tags.error_stage, 'inspect');
+    assert.deepEqual(fs.readFileSync(fixture.item.filepath), original);
 });
 
 test('metadata preserves the first write failure when its temporary-directory cleanup also fails', requiresExecutableScript, async t => {
@@ -364,7 +375,7 @@ test('metadata recovered ZIP append and database cache failures do not become Se
     assert.ok((await listZipEntriesFromFile(fixture.item.filepath)).some(entry => entry.name === 'ComicInfo.xml'));
 });
 
-test('metadata missing ComicInfo inspection and removal remain recoverable when writing succeeds', requiresExecutableScript, async t => {
+test('metadata missing ComicInfo after a successful archive listing remains recoverable when writing succeeds', requiresExecutableScript, async t => {
     const fixture = setup(t, '.7z', SUCCESS_TOOL);
     const { result, errors, events } = await observeResult(t, fixture);
     assert.equal(result.stats.success.length, 1);
@@ -385,7 +396,14 @@ test('metadata cancellation and unsupported formats preserve existing non-error 
     assert.deepEqual(cancelled.errors, []);
     assert.deepEqual(cancelled.events, []);
 
-    const interruptedFixture = setup(t);
+    const interruptedFixture = await zipFixture(t);
+    const open = fsp.open;
+    t.mock.method(fsp, 'open', async (filePath, mode, ...args) => {
+        if (filePath === interruptedFixture.item.filepath && mode === 'r+') {
+            throw Object.assign(new Error('append fallback'), { code: 'ZIP_APPEND_UNSUPPORTED' });
+        }
+        return open(filePath, mode, ...args);
+    });
     t.mock.method(fsp, 'copyFile', async () => {
         throw Object.assign(new Error('cancelled during preparation'), { code: 'TASK_CANCELLED' });
     });

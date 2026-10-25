@@ -4,8 +4,10 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { AUDIOBOOK_SAVE_FIELD_IDS } from './metadata/audiobookMetadataFields.js';
 import { BOOK_META_FIELD_IDS, TXT_META_FIELD_IDS } from './metadata/bookMetadataFields.js';
+import { META_FIELD_IDS } from './metadata/comicMetadataFields.js';
 import { resolveBookType } from './metadata/metadataTypes.js';
-import { apiSourceHasRequiredKey, metadataSearchQueryForItem, UNIFIED_METADATA_API_SOURCE } from './metadataApiPolicy.js';
+import { apiSourceHasRequiredKey, metadataFromApiResult, metadataSearchQueryForItem, UNIFIED_METADATA_API_SOURCE } from './metadataApiPolicy.js';
+import { cleanMetadataSummary } from './metadataPolicy.js';
 import { metadataSearchResultKey, searchMetadata } from './metadataSearch.js';
 import { isTxtMetadataItem, shouldAutoUseTxtSearchCover, withTxtCoverChange } from './txtMetadataPolicy.js';
 
@@ -84,6 +86,71 @@ test('a manually entered search query retains its author, episode range and comp
     h.requests[0].resolve({ success: true, results: [] });
     await searching;
     assert.equal(h.state().query, query);
+});
+
+function selectionHarness() {
+    let batchMetadata = { LanguageISO: 'fr', Manga: 'No', Notes: 'Existing draft note' };
+    let closed = 0;
+    const context = vm.createContext({
+        activeItem: { filepath: '/books/comic.cbz' },
+        activeBookType: 'comic',
+        activeIsTxt: false,
+        isWorking: false,
+        saveLockRef: { current: false },
+        apiSearch: { query: '' },
+        searchQuery: '',
+        currentMetaFieldIds: META_FIELD_IDS,
+        currentMetadataExtraFieldIds: [],
+        tagRules: {},
+        useCallback: callback => callback,
+        metadataFromApiResult,
+        cleanMetadataSummary,
+        shouldAutoUseTxtSearchCover,
+        setBatchMetadata: update => { batchMetadata = update(batchMetadata); },
+        closeApiSearch: () => { closed += 1; },
+        setStatusMessage: () => {},
+        showToast: () => {},
+        text: (key, fallback) => fallback,
+    });
+    const pickFields = fragment('function pickMetadataFields(', 'function trimMetadataCoverCache(');
+    const normalize = fragment('const normalizeTagText = useCallback(', 'useEffect(() => {');
+    const applyToBatch = fragment('const applyMetadataToBatch = (', 'const applyMetadataToSeries = (');
+    const select = fragment('const handleSelectApiResult = async (', 'const updateActiveEpubCoverChange = useCallback(');
+    vm.runInContext(`${pickFields}\n${normalize}\n${applyToBatch}\n${select}
+        globalThis.select = handleSelectApiResult;
+    `, context);
+    return { select: context.select, batch: () => batchMetadata, closed: () => closed };
+}
+
+test('selecting search metadata fills a missing language from the title and retains the comic reading default', async () => {
+    for (const [Title, expected] of [
+        ['바람의 이야기', 'ko'], ['星のものがたり', 'ja'], ['山海故事', 'zh'], ['A Tale of Stars', 'en'],
+    ]) {
+        for (const LanguageISO of [undefined, '  ']) {
+            const metadata = Object.freeze({ Title, LanguageISO });
+            const h = selectionHarness();
+            await h.select({ metadata });
+            assert.equal(h.batch().LanguageISO, expected, Title);
+            assert.equal(h.batch().Manga, 'YesAndRightToLeft');
+            assert.equal(h.batch().Notes, 'Existing draft note');
+            assert.equal(metadata.LanguageISO, LanguageISO);
+            assert.equal(h.closed(), 1);
+        }
+    }
+});
+
+test('selecting search metadata preserves an explicit language and reading direction', async () => {
+    for (const [LanguageISO, Manga] of [
+        ['en', 'No'], ['ja', 'Yes'], ['zh-TW', 'Unknown'], ['fr', 'YesAndRightToLeft'],
+    ]) {
+        const metadata = Object.freeze({ Title: '한글로 표시된 검색 제목', LanguageISO, Manga });
+        const h = selectionHarness();
+        await h.select({ metadata });
+        assert.equal(h.batch().LanguageISO, LanguageISO);
+        assert.equal(h.batch().Manga, Manga);
+        assert.equal(h.batch().Notes, 'Existing draft note');
+        assert.equal(h.closed(), 1);
+    }
 });
 
 function searchHarness({ initialState = {}, fetchDetail, cacheCover, metadataApiEnabled } = {}) {

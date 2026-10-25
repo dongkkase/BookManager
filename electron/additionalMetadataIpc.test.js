@@ -206,7 +206,7 @@ test('audio-only sources reject non-audio book types before requests or cache ac
 
 test('provider dates, normalized ratings, audiobook album and book formats survive IPC normalization', async () => {
     for (const [api, bookType, expectedFormat, expectedManga] of [
-        ['iTunes', 'pdf', 'PDF', ''], ['RanobeDB', 'comic', 'Manga', 'YesAndRightToLeft'],
+        ['iTunes', 'pdf', 'PDF', ''], ['RanobeDB', 'comic', 'Manga', ''],
         ['Audible', 'audio', 'Audiobook', ''], ['AudNexus', 'audio', 'Audiobook', ''],
         ['iTunes', 'audio', 'Audiobook', ''],
     ]) {

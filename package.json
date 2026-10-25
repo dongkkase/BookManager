@@ -105,7 +105,8 @@
         "from": "src/metadata",
         "to": "src/metadata",
         "filter": [
-          "metadataTypes.js"
+          "metadataTypes.js",
+          "comicInfoPolicy.js"
         ]
       },
       {

@@ -25,6 +25,7 @@ import {
     normalizeMetadataAutoNumber,
     normalizeMetadataDecimal,
     splitCombinedGenreTags,
+    stepMetadataSequence,
 } from '../metadataPolicy';
 import { splitMetadataFileDisplayName } from '../metadataFilename';
 import '../styles/MetadataTab.css';
@@ -88,6 +89,7 @@ import {
   META_FIELDS,
   OTHER_FIELDS,
   PUBLISHER_FIELDS,
+    TAG_FIELDS,
   SEARCHABLE_SELECT_FIELDS,
   SECTION_TABS,
 } from '../metadata/comicMetadataFields';
@@ -487,6 +489,7 @@ function MetadataTab({ config, t, showToast }) {
   const sectionLabel = useCallback(section => text(section.labelKey, section.id), [text]);
   const optionLabel = useCallback((field, option) => {
     if (!option) return '';
+    if (option === 'Unknown') return text('comicinfo_unknown', 'Unknown');
     if (field.id === 'LanguageISO') return LANGUAGE_LABELS[option] || option;
     const key = field.id === 'Format'
       ? 'meta_formats'
@@ -638,6 +641,7 @@ function MetadataTab({ config, t, showToast }) {
           basic: BASIC_FIELDS,
           creators: CREATOR_FIELDS,
           publisher: PUBLISHER_FIELDS,
+          tags: TAG_FIELDS,
           other: OTHER_FIELDS,
         },
       }
@@ -1248,6 +1252,8 @@ function MetadataTab({ config, t, showToast }) {
     applyMetadataToBatch(metadataFromApiResult(result, {
       bookType: activeBookType,
             isTextMetadata: activeIsTxt,
+            defaultComicReadingDirection: 'YesAndRightToLeft',
+            inferMissingLanguageFromTitle: true,
       query: apiSearch.query || searchQuery,
     }));
     closeApiSearch();
@@ -1900,9 +1906,24 @@ function MetadataTab({ config, t, showToast }) {
     }
   };
 
+    const isSequenceStepperField = (fieldId) => (
+        ['Number', 'AlternateNumber', 'StoryArcNumber'].includes(fieldId)
+        || (fieldId === 'Volume' && activeBookType !== 'comic')
+    );
+    const canBumpField = (fieldId, value) => (
+        !isSequenceStepperField(fieldId) || stepMetadataSequence(value, 1) !== null
+    );
+
   const bumpField = (fieldId, delta, target = 'active') => {
     const source = target === 'batch' ? batchMetadata : activeItem?.metadata;
     const rawValue = source?.[fieldId];
+        if (isSequenceStepperField(fieldId)) {
+            const next = stepMetadataSequence(rawValue, delta);
+            if (next === null) return;
+            if (target === 'batch') updateBatchMetadata(fieldId, next);
+            else updateActiveMetadata(fieldId, next);
+            return;
+        }
     const dateDefaults = { Year: new Date().getFullYear(), Month: new Date().getMonth() + 1, Day: new Date().getDate() };
     const current = Number.parseInt(rawValue, 10);
     const base = Number.isFinite(current) ? current : (dateDefaults[fieldId] || 0);
@@ -2097,7 +2118,7 @@ function MetadataTab({ config, t, showToast }) {
             value={value || ''}
             options={uniqueSelectOptions(options, value)}
             optionLabel={option => optionLabel(field, option)}
-            allowCustom={field.id === 'SeriesGroup' || field.id === 'Publisher'}
+            allowCustom={field.id === 'SeriesGroup' || field.id === 'Publisher' || field.id === 'AgeRating'}
             onChange={onChange}
           />
         );
@@ -2117,13 +2138,19 @@ function MetadataTab({ config, t, showToast }) {
         value={value || ''}
         onChange={event => onChange(event.target.value)}
         onBlur={event => {
-          const nextValue = event.target.value.trim();
-          if (!nextValue) return;
-          if (field.type === 'number') {
-            onChange(clampMetadataNumber(field.id, nextValue));
-          } else if (field.type === 'decimal' || isDecimalMetadataField(field.id)) {
-            onChange(normalizeMetadataDecimal(nextValue));
-          }
+            const nextValue = event.target.value.trim();
+            if (activeBookType === 'comic' && field.id === 'Volume') {
+                const integer = /^[+-]?\d+$/.test(nextValue) ? Number(nextValue) : NaN;
+                const validInteger = Number.isInteger(integer) && integer >= -2147483648 && integer <= 2147483647;
+                onChange(validInteger ? String(integer) : nextValue);
+                return;
+            }
+            if (!nextValue) return;
+            if (field.type === 'number') {
+                onChange(clampMetadataNumber(field.id, nextValue));
+            } else if (field.type === 'decimal' || (activeBookType !== 'comic' && isDecimalMetadataField(field.id))) {
+                onChange(normalizeMetadataDecimal(nextValue));
+            }
         }}
       />
     );
@@ -2164,20 +2191,20 @@ function MetadataTab({ config, t, showToast }) {
         <div className="meta-col-label">{fieldLabel(field)}</div>
         <div className="meta-col-my meta-field-with-stepper">
           {renderFieldInput(field, activeItem?.metadata?.[field.id] || '', value => updateActiveMetadata(field.id, value))}
-          {field.type === 'number' && (
+          {(field.type === 'number' || isSequenceStepperField(field.id)) && (
             <div className="meta-stepper">
-                <button type="button" aria-label={`${fieldLabel(field)} −`} onClick={() => bumpField(field.id, -1)} disabled={!activeItem}><FaIcon name="minus" size={12} /></button>
-                <button type="button" aria-label={`${fieldLabel(field)} +`} onClick={() => bumpField(field.id, 1)} disabled={!activeItem}><FaIcon name="plus" size={12} /></button>
+                <button type="button" aria-label={`${fieldLabel(field)} −`} onClick={() => bumpField(field.id, -1)} disabled={!activeItem || !canBumpField(field.id, activeItem.metadata?.[field.id])}><FaIcon name="minus" size={12} /></button>
+                <button type="button" aria-label={`${fieldLabel(field)} +`} onClick={() => bumpField(field.id, 1)} disabled={!activeItem || !canBumpField(field.id, activeItem.metadata?.[field.id])}><FaIcon name="plus" size={12} /></button>
             </div>
           )}
         </div>
         {renderCopyButtons(() => handleCopyField(field.id), () => handleCopyFieldToBatch(field.id), fieldLabel(field))}
         <div className="meta-col-res meta-field-with-stepper">
           {renderFieldInput(field, batchMetadata[field.id] || '', value => updateBatchMetadata(field.id, value), 'meta-input res')}
-          {field.type === 'number' && (
+          {(field.type === 'number' || isSequenceStepperField(field.id)) && (
             <div className="meta-stepper">
-                <button type="button" aria-label={`${fieldLabel(field)} −`} onClick={() => bumpField(field.id, -1, 'batch')}><FaIcon name="minus" size={12} /></button>
-                <button type="button" aria-label={`${fieldLabel(field)} +`} onClick={() => bumpField(field.id, 1, 'batch')}><FaIcon name="plus" size={12} /></button>
+                <button type="button" aria-label={`${fieldLabel(field)} −`} onClick={() => bumpField(field.id, -1, 'batch')} disabled={!canBumpField(field.id, batchMetadata[field.id])}><FaIcon name="minus" size={12} /></button>
+                <button type="button" aria-label={`${fieldLabel(field)} +`} onClick={() => bumpField(field.id, 1, 'batch')} disabled={!canBumpField(field.id, batchMetadata[field.id])}><FaIcon name="plus" size={12} /></button>
             </div>
           )}
         </div>
@@ -2904,9 +2931,9 @@ function SearchableSelect({ className, value, options, optionLabel, allowCustom 
       setOpen(false);
       return;
     }
-    onChange(query);
+    onChange(query === currentLabel ? currentValue : query);
     setOpen(false);
-  }, [allowCustom, currentLabel, onChange, query]);
+  }, [allowCustom, currentLabel, currentValue, onChange, query]);
 
   return (
     <div className={`meta-searchable-select ${open ? 'open' : ''}`}>
@@ -2980,6 +3007,8 @@ function SearchableSelect({ className, value, options, optionLabel, allowCustom 
 
 function TagInput({ className = '', value, placeholder = '', disabled = false, onChange }) {
   const inputRef = useRef(null);
+    const isComposingRef = useRef(false);
+    const pendingBlurRef = useRef(false);
   const [draft, setDraft] = useState('');
   const tags = useMemo(() => splitTagValues(value), [value]);
 
@@ -2987,8 +3016,8 @@ function TagInput({ className = '', value, placeholder = '', disabled = false, o
     onChange(joinTagValues(nextTags));
   }, [onChange]);
 
-  const commitDraft = useCallback(() => {
-    const additions = splitTagValues(draft);
+  const commitDraft = useCallback((nextDraft = inputRef.current?.value ?? draft) => {
+    const additions = splitTagValues(nextDraft);
     if (additions.length === 0) return;
     updateTags([...tags, ...additions]);
     setDraft('');
@@ -3027,8 +3056,28 @@ function TagInput({ className = '', value, placeholder = '', disabled = false, o
         disabled={disabled}
         placeholder={tags.length === 0 ? placeholder : ''}
         onChange={event => setDraft(event.target.value)}
-        onBlur={commitDraft}
+        onCompositionStart={() => {
+            isComposingRef.current = true;
+            pendingBlurRef.current = false;
+        }}
+        onCompositionEnd={event => {
+            isComposingRef.current = false;
+            const nextDraft = event.currentTarget.value;
+            setDraft(nextDraft);
+            if (pendingBlurRef.current) {
+                pendingBlurRef.current = false;
+                commitDraft(nextDraft);
+            }
+        }}
+        onBlur={event => {
+            if (isComposingRef.current) {
+                pendingBlurRef.current = true;
+                return;
+            }
+            commitDraft(event.currentTarget.value);
+        }}
         onKeyDown={(event) => {
+            if (isComposingRef.current || event.nativeEvent?.isComposing || event.nativeEvent?.keyCode === 229) return;
           if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
             commitDraft();

@@ -11,6 +11,9 @@ const sources = {
     thumbnailView: fs.readFileSync(new URL('./components/folder/ThumbnailView.jsx', import.meta.url), 'utf8'),
     tileView: fs.readFileSync(new URL('./components/folder/TileView.jsx', import.meta.url), 'utf8'),
     coverImage: fs.readFileSync(new URL('./components/folder/CoverImage.jsx', import.meta.url), 'utf8'),
+    viewerStatusBadges: fs.readFileSync(new URL('./components/folder/ViewerStatusBadges.jsx', import.meta.url), 'utf8'),
+    detailPanelDisclosure: fs.readFileSync(new URL('./components/folder/DetailPanelDisclosure.jsx', import.meta.url), 'utf8'),
+    rubberSelection: fs.readFileSync(new URL('./hooks/useRafRubberSelection.js', import.meta.url), 'utf8'),
     folderToolbar: fs.readFileSync(new URL('./components/folder/FolderToolbar.jsx', import.meta.url), 'utf8'),
     folderPathBar: fs.readFileSync(new URL('./components/folder/FolderPathBar.jsx', import.meta.url), 'utf8'),
     detailPanel: [
@@ -97,7 +100,8 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['구조 정리 하위 항목 다중 이름 변경', 'executeVolumeMultiRename'],
         ['구조 정리 탭 숨김 상태 단축키 차단', 'isOrganizerTabVisible'],
         ['구조 정리 작업 리스트 키보드 포커스', 'tabIndex={0}'],
-        ['구조 정리 1뎁스 cube 아이콘', 'name="cube"'],
+        ['구조 정리 원본 디렉터리 그룹', 'groupOrganizerItems(fileList, runtimePlatform)'],
+        ['구조 정리 1뎁스 폴더 아이콘', 'name="folder"'],
         ['구조 정리 2뎁스 file-zipper 아이콘', 'name="file-zipper"'],
     ]);
     assertInventory('multiRenameDialog', [
@@ -119,13 +123,14 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['ComicInfo tag 칩 입력', 'function TagInput'],
         ['ComicInfo tag 추가 정규화', 'joinTagValues'],
         ['ComicInfo tag 칩 클래스', 'meta-tag-chip'],
-        ['메타데이터 권 소수 입력', "{ id: 'Volume', labelKey: 't3_f_vol', type: 'decimal' }"],
-        ['메타데이터 화 소수 입력', "{ id: 'Number', labelKey: 't3_f_num', type: 'decimal' }"],
+        ['ComicInfo 권 정수 입력', "{ id: 'Volume', labelKey: 't3_f_vol', type: 'number' }"],
+        ['ComicInfo 화 문자열 입력', "{ id: 'Number', labelKey: 't3_f_num', type: 'text' }"],
         ['메타데이터 소수 입력 모드', "field.type === 'decimal' ? 'decimal'"],
         ['메타데이터 소수 입력 정규화', 'normalizeMetadataDecimal(nextValue)'],
         ['메타데이터 자동 제목 권화 동시 적용', 'applyInferredMetadataField(item.metadata || {}, inferred, field)'],
         ['메타데이터 시리즈 전체 일괄 복사', 'applyBatchMetadataFields(item.metadata || {}, batchMetadata, currentMetaFieldIds, applyEmpty)'],
-        ['메타데이터 시리즈 전체 자동 후처리', 'applySeriesAutoMetadata(copiedMetadata, inferred)'],
+        ['메타데이터 시리즈 전체 자동 후처리', 'applySeriesAutoMetadata(copiedMetadata, inferred, {'],
+        ['텍스트 시리즈 일괄 적용 권화 보존', 'preserveNumber: isTxtMetadataItem(item)'],
         ['메타데이터 아이템 수정일 표시', 'metadataModifiedDate(file)'],
         ['메타데이터 아이템 수정일 fallback', "'No Data'"],
         ['메타데이터 파일명 중간 말줄임 분리', 'splitMetadataFileDisplayName(file.name)'],
@@ -143,7 +148,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['메타데이터 작업 리스트 아래 이동', "event.key === 'ArrowDown'"],
         ['메타데이터 작업 리스트 폴더 접기', "event.key === 'ArrowLeft'"],
         ['메타데이터 작업 리스트 폴더 펼치기', "event.key === 'ArrowRight'"],
-        ['메타데이터 검색형 select 필드 제한', "SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format'])"],
+        ['메타데이터 검색형 select 필드 제한', "SEARCHABLE_SELECT_FIELDS = new Set(['SeriesGroup', 'Format', 'AgeRating'])"],
         ['메타데이터 검색형 select 컴포넌트', 'function SearchableSelect'],
         ['메타데이터 시리즈 그룹 후보 수집', 'seriesGroupOptions'],
         ['메타데이터 저장 시리즈 그룹 후보 상태', 'savedSeriesGroupOptions'],
@@ -153,7 +158,7 @@ test('14.3 input 전수 목록이 실제 제어와 연결되어 있다', () => {
         ['메타데이터 포맷 WebComic 후보', "'WebComic'"],
         ['메타데이터 포맷 Digital 후보', "'Digital'"],
         ['메타데이터 연령등급 Python i18n 후보', 'const AGE_RATING_OPTIONS'],
-        ['메타데이터 연령등급 Adult 후보', "'Adult / Mature Audiences'"],
+        ['ComicInfo 표준 연령등급 후보', 'COMICINFO_AGE_RATINGS'],
         ['메타데이터 읽기 방향 Python i18n 후보', 'const MANGA_READING_OPTIONS'],
         ['메타데이터 읽기 방향 우좌 후보', "'YesAndRightToLeft'"],
         ['API 검색 다이얼로그 검색어', 'value={dialogQuery}'],
@@ -319,16 +324,18 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
     assertInventory('organizer', [
         ['하위 항목 선택 경로', 'selectedVolumePathSet.has(volumeRow.path)'],
         ['하위 항목 활성 선택 표시', "activeVolumePath === volumeRow.path"],
-        ['하위 항목 드래그 범위 선택', 'handleVolumeRowMouseEnter'],
-        ['하위 항목 드래그 영역 표시', 'volumeSelectionBox'],
-        ['하위 항목 드래그 영역 선택 계산', 'updateVolumeRubberSelection'],
-        ['하위 항목 드래그 영역 선택 반영', 'selectVolumePaths(selected)'],
+        ['하위 항목 드래그 범위 선택 시작', 'onMouseDown={event => handleVolumeRowMouseDown(volumeRow, event, volumeIndex)}'],
+        ['하위 항목 드래그 영역 표시', 'ref={volumeSelectionBoxRef}'],
+        ['하위 항목 드래그 영역 선택 계산', 'onMouseMove={volumeRubberSelection.update}'],
+        ['하위 항목 드래그 영역 선택 반영', 'onSelectPaths: selectVolumePaths'],
+        ['하위 항목 드래그 선택 확정', 'volumeRubberSelection.commit()'],
         ['폴더명 드롭다운 메뉴 버튼', "t('org_folder_menu')"],
         ['폴더명 드롭다운 메뉴 상태', 'openFolderMenuId === item.id'],
         ['폴더명 드롭다운 마우스 오버 열기', 'onMouseEnter={() => openFolderRowMenu(item.id)}'],
         ['폴더명 드롭다운 마우스 아웃 닫기', 'onMouseLeave={() => closeFolderRowMenu(item.id)}'],
         ['폴더명 파일명 항목', "t('org_filename_path')"],
-        ['폴더명 파일명 경로 적용', 'filenameOutputPath(item)'],
+        ['폴더명 파일명 메뉴 연결', "handleFolderMenuAction(item, 'filename')"],
+        ['폴더명 그룹 내 원본별 파일명 경로 적용', "mode === 'filename' ? filenameOutputPath(source)"],
         ['일괄 드롭다운 메뉴 버튼', "t('org_batch_menu')"],
         ['일괄 드롭다운 메뉴 상태', 'openBatchMenuId === item.id'],
         ['일괄 드롭다운 마우스 오버 열기', 'onMouseEnter={() => openBatchRowMenu(item.id)}'],
@@ -337,7 +344,7 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
         ['일괄 기존 파일명 버튼', "t('org_batch_original_name')"],
         ['일괄 제목추출 버튼', "t('org_batch_extracted_title')"],
         ['분석 결과 추출명 보존', 'hydrateOrganizerItem(item)'],
-        ['일괄 기존 파일명 적용', 'organizerOriginalFilenameName(preserved)'],
+        ['일괄 기존 파일명에 원본 압축 파일 정보 적용', 'organizerOriginalFilenameName(preserved, item)'],
         ['일괄 제목추출 적용', 'organizerExtractedTitleName(preserved)'],
         ['일괄 조작 전 추출명 고정', 'preserveOrganizerExtractedTitle(volume)'],
         ['작업 리스트 빈 영역 선택 해제', "event.target.closest('.org-tree-row')"],
@@ -350,6 +357,12 @@ test('압축 파일 구조 정리는 하위 항목 다중 선택과 공용 이�
         ['하위 항목 드래그 영역 스타일', '.org-drag-selection-box'],
         ['행 드롭다운 메뉴 스타일', '.org-row-menu'],
         ['행 드롭다운 hover 이탈 방지 위치', 'top: 100%;'],
+    ]);
+    assertInventory('rubberSelection', [
+        ['드래그 선택 프레임 단위 계산', 'window.requestAnimationFrame(applySelection)'],
+        ['드래그 선택 영역과 항목 교차 확인', 'itemRect.right >= left'],
+        ['드래그 선택 경로 수집', 'selectedElements.map(itemPath).filter(Boolean)'],
+        ['드래그 종료 시 선택 경로 반영', 'onSelectPaths?.(selectedPathsRef.current)'],
     ]);
     assert.doesNotMatch(sources.organizer, /OrganizerFilenameDialog|org-filename-input|openVolumeEditor|editingVolume|org-context-menu/);
     assert.doesNotMatch(sources.organizer, /image_count\}p/);
@@ -401,8 +414,9 @@ test('폴더 탭 컨텍스트 메뉴는 기존 Python 메뉴 항목과 단축키
 test('경로 표시줄 새로고침은 현재 읽기 목록을 갱신하고 일반 폴더는 강제 스캔한다', () => {
     assert.match(
         sources.folder,
-        /<FolderPathBar[\s\S]*onRefresh=\{\(\) => isReadingList \? refreshActiveReadingList\(\) : handleSmartRefresh\(true\)\}/,
+        /<FolderPathBar[\s\S]*onRefresh=\{\(\) => isReadingList \? handleRefresh\(\) : handleSmartRefresh\(true\)\}/,
     );
+    assert.match(sources.folder, /const handleRefresh = useCallback\(async \(\) => \{[\s\S]*?if \(isReadingList\) \{\s*await refreshActiveReadingList\(\);\s*return;/);
     assert.match(
         sources.folder,
         /event\.key === 'F5'[\s\S]*handleRefreshShortcut\(\)/,
@@ -444,7 +458,8 @@ test('폴더 탭 패널 splitter는 드래그 중 React 상태 갱신을 프레�
         ['리사이즈 중 ResizeObserver 상태 갱신 차단', 'if (!panelResizingRef.current) updateRightPanelWidth()'],
         ['패널 리사이즈 프레임 예약', 'window.requestAnimationFrame'],
         ['좌우 splitter 종료 시 상태 커밋', 'setLeftPanelWidth(current => current === savedWidth ? current : savedWidth)'],
-        ['상하 splitter 종료 시 상태 커밋', 'setDetailPanelHeight(current => current === savedHeight ? current : savedHeight)'],
+        ['아래 상세패널 splitter 종료 시 높이 커밋', 'setDetailPanelHeight(savedSize)'],
+        ['우측 상세패널 splitter 종료 시 너비 커밋', 'if (isDetailPanelRight) setDetailPanelWidth(savedSize)'],
     ]);
     assertInventory('folderCss', [
         ['패널 리사이즈 중 선택 방지', 'body.is-resizing-panel'],
@@ -453,6 +468,11 @@ test('폴더 탭 패널 splitter는 드래그 중 React 상태 갱신을 프레�
         ['패널 리사이즈 중 포인터 이벤트 차단', 'pointer-events: none'],
         ['패널 리사이즈 가이드 스타일', '.folder-resize-guide'],
     ]);
+    const detailResize = sources.folder.slice(sources.folder.indexOf('const startDetailResize ='), sources.folder.indexOf('const handleSort ='));
+    const pointerMove = detailResize.slice(detailResize.indexOf('const handleMove ='), detailResize.indexOf('const handleUp ='));
+    assert.match(pointerMove, /window\.requestAnimationFrame[\s\S]*updateFolderResizeGuide/);
+    assert.doesNotMatch(pointerMove, /setDetailPanel(?:Height|Width)/);
+    assert.match(detailResize, /const handleUp = [\s\S]*setDetailPanelWidth\(savedSize\)[\s\S]*setDetailPanelHeight\(savedSize\)/);
 });
 
 test('이름 바꾸기 미리보기는 컬럼 크기 조절과 변경 색상 표시를 제공한다', () => {
@@ -503,7 +523,11 @@ test('썸네일 모드는 커버 카드 오버레이 디자인을 사용한다',
     assertInventory('thumbnailView', [
         ['썸네일 커버 카드 구조', 'thumbnail-cover-card'],
         ['썸네일 평점 배지', 'thumbnail-rating-badge'],
-        ['썸네일 페이지 배지', 'thumbnail-page-badge'],
+        ['썸네일 공통 상태 배지', '<ViewerStatusBadgeRow'],
+        ['썸네일 페이지 수 전달', 'pageText={displayPages(file) ? `${displayPages(file)}p` : \'\'}'],
+    ]);
+    assertInventory('viewerStatusBadges', [
+        ['공통 페이지 수 배지 표시', '{pageText && <span className="viewer-page-count-badge">{pageText}</span>}'],
     ]);
 });
 
@@ -550,7 +574,14 @@ test('상세보기 패널 접기 상태는 선택 항목과 독립적으로 유�
         ['상세보기 접기 상태 토글', 'setIsDetailPanelCollapsed(current => !current)'],
         ['상세보기 토글 확장 상태', 'aria-expanded={!isDetailPanelCollapsed}'],
         ['상세보기 토글 제어 대상', 'aria-controls="folder-detail-panel"'],
-        ['상세보기 접힘 렌더링', 'hidden={isDetailPanelCollapsed}'],
+        ['상세보기 접힘 컴포넌트', '<DetailPanelDisclosure'],
+        ['상세보기 접힘 상태 전달', 'open={!isDetailPanelCollapsed}'],
+    ]);
+    assertInventory('detailPanelDisclosure', [
+        ['상세보기 토글 제어 대상 ID', 'id="folder-detail-panel"'],
+        ['상세보기 접기 모션 완료 후 숨김', 'hidden={!visible}'],
+        ['접힌 상세보기 접근성 숨김', 'aria-hidden={!open}'],
+        ['접힌 상세보기 입력 차단', "inert={open ? undefined : ''}"],
     ]);
     assert.match(
         sources.folder,
@@ -648,9 +679,11 @@ test('타일 모드는 항목 크기 변화에도 카드 레이아웃을 유지�
         ['타일 줄거리 표시', 'tile-summary'],
     ]);
     assertInventory('folderCss', [
-        ['타일 커버 카드 겹침 레이어', '.tile-cover-card::before'],
+        ['타일 커버 카드 크기 스타일', '.tile-cover-card {'],
         ['타일 이미지 배경색', 'background: #1c1c1c;'],
     ]);
+    assert.match(sources.folderCss, /\.tile-cover-card\s*\{[^}]*width: var\(--tile-image-width, 94px\);[^}]*height: var\(--tile-image-height, 124px\);[^}]*min-width: var\(--tile-image-width, 94px\);/);
+    assert.match(sources.folderCss, /\.tile-image\s*\{[^}]*width: 100%;[^}]*height: 100%;/);
 });
 
 test('리스트 파일 강제 업데이트는 선택 파일을 단일 파일 미리보기로 갱신한다', () => {

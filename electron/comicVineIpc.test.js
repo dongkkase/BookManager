@@ -181,7 +181,7 @@ test('Comic Vine hasNext survives full search pages and cached responses without
         assert.ok(first.results.every(item => item.metadataProviderHasNext === hasNext));
         assert.equal(first.cached, false);
         const [cacheKey, saved] = [...harness.cached][0];
-        assert.equal(cacheKey, 'Vine:comic::Sample::p1::v17::comicvine-v5');
+        assert.equal(cacheKey, 'Vine:comic::Sample::p1::v18::comicvine-v5');
         assert.ok(saved.every(item => item.metadataProviderHasNext === hasNext));
         assert.ok(saved.every(item => item.coverCacheUrl === undefined));
         assert.ok(!cacheKey.includes('private-vine-key'));
@@ -195,8 +195,10 @@ test('Comic Vine hasNext survives full search pages and cached responses without
     }
 });
 
-test('Comic Vine bypasses stale search entries while other providers retain their cache keys', async () => {
+test('metadata search bypasses cached results from older field normalization', async () => {
     const harness = createHarness();
+    harness.cached.set('Google Books:book::Sample::p1::v17', [{ id: 'old-rating', metadata: { CommunityRating: '4.5' } }]);
+    harness.cached.set('Vine:comic::Sample::p1::v17::comicvine-v5', [{ id: 'old-fields' }]);
     harness.cached.set('Vine:comic::Sample::p1::v17', [{ id: 'stale', title: 'Outdated cover' }]);
     harness.cached.set('Vine:comic::Sample::p1::v17::comicvine-v2', [{ id: 'missing-creators', title: 'Missing creator information' }]);
     harness.cached.set('Vine:comic::Sample::p1::v17::comicvine-v3', [{ id: 'missing-first-issue', title: 'Missing first issue information' }]);
@@ -208,7 +210,8 @@ test('Comic Vine bypasses stale search entries while other providers retain thei
     assert.equal(harness.searchCalls.length, 1);
     const google = await harness.fetch({ api: 'Google Books', query: 'Sample', bookType: 'book' });
     assert.equal(google.success, true, google.error);
-    assert.ok(harness.cached.has('Google Books:book::Sample::p1::v17'));
+    assert.equal(google.cached, false);
+    assert.ok(harness.cached.has('Google Books:book::Sample::p1::v18'));
     assert.equal(harness.opened, harness.closed);
 });
 
@@ -310,7 +313,7 @@ test('deferred Comic Vine search returns fresh and cached summaries without wait
     }
     assert.equal(harness.searchCalls.length, 1);
     assert.equal(harness.searchCalls[0][4]?.deferCreators, true);
-    assert.ok(harness.cached.has('Vine:comic::Sample::p1::v17::comicvine-v5::summary'));
+    assert.ok(harness.cached.has('Vine:comic::Sample::p1::v18::comicvine-v5::summary'));
     assert.equal(harness.opened, harness.closed);
 });
 
@@ -338,7 +341,7 @@ test('the Comic Vine defer option leaves other providers image enrichment and ca
     assert.equal(response.success, true, response.error);
     assert.equal(response.results[0].coverCacheUrl, 'transient-cover');
     assert.equal(harness.imageCalls.length, 1);
-    assert.ok(harness.cached.has('Google Books:book::Sample::p1::v17'));
+    assert.ok(harness.cached.has('Google Books:book::Sample::p1::v18'));
 });
 
 test('missing or blank Comic Vine credentials reject before reading an existing search cache', async () => {

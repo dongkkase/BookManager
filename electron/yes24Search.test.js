@@ -210,7 +210,7 @@ test('YES24 IPC 검색은 저장된 키, 페이지와 책 타입을 결과 및 �
         assert.equal(result.results[0].metadata.Year, '2026');
         assert.equal(result.results[0].metadata.Month, '9');
         assert.equal(result.results[0].metadata.Day, '6');
-        assert.equal(result.results[0].metadata.Manga, bookType === 'comic' ? 'YesAndRightToLeft' : '');
+        assert.equal(result.results[0].metadata.Manga, '');
         const fromCache = await handler({}, { ...options, apiSource: '예스24', query: '왕좌의 게임' });
         assert.equal(fromCache.cached, true);
     }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { FILE_TOOL_CATEGORIES, FILE_TOOLS } from './fileTools.js';
 import { formatTranslation, legacyTranslations, translate, translateKnownText } from './utils/i18n.js';
@@ -150,9 +151,16 @@ test('상세 패널 배치와 크기 조절 문구를 세 언어로 제공한다
 });
 
 test('Readive transfer confirmations and pairing instructions are localized in all supported languages', () => {
+    const keys = new Set(['send', 'pair_instructions', 'confirm', 'confirm_large', 'hard_limit', 'scan_failed', 'enqueue_failed', 'destination', 'status_queued', 'qr_alt', 'shared_libraries', 'shared_libraries_description', 'no_libraries', 'mobile_requested', 'copy', 'copied', 'pair_ticket', 'manual_instructions', 'manual_approval_title', 'manual_approval_message', 'manual_approval_detail', 'manual_approve', 'manual_deny', 'copy_failed', 'destination_waiting', 'destination_parent', 'destination_refresh', 'destination_loading', 'destination_failed', 'destination_empty', 'destination_more', 'open_app_hint', 'destination_selected', 'destination_required']);
+    for (const component of ['ReadiveConnectionPanel', 'ReadiveTransferDialog']) {
+        const source = readFileSync(new URL(`./components/${component}.jsx`, import.meta.url), 'utf8');
+        for (const [, key] of source.matchAll(/['"]readive\.([a-z_]+)['"]/g)) keys.add(key);
+    }
     for (const language of ['ko', 'en', 'ja']) {
-        for (const key of ['send', 'pair_instructions', 'confirm', 'confirm_large', 'hard_limit', 'scan_failed', 'enqueue_failed', 'destination', 'status_queued', 'qr_alt', 'shared_libraries', 'shared_libraries_description', 'no_libraries', 'mobile_requested', 'copy', 'copied', 'pair_ticket', 'manual_instructions', 'manual_approval_title', 'manual_approval_message', 'manual_approval_detail', 'manual_approve', 'manual_deny', 'copy_failed', 'destination_description', 'destination_parent', 'destination_refresh', 'destination_loading', 'destination_failed', 'destination_empty', 'destination_more', 'destination_choose', 'destination_selected', 'destination_required']) {
-            assert.notEqual(translate(`readive.${key}`, language), `readive.${key}`);
+        const translations = translate('readive', language);
+        for (const key of keys) {
+            assert.ok(Object.hasOwn(translations, key), `${language}:readive.${key}`);
+            assert.notEqual(translate(`readive.${key}`, language), `readive.${key}`, `${language}:readive.${key}`);
         }
         assert.match(translate('readive.confirm_large', language), /100.*30.*2 GiB/);
         assert.match(translate('readive.hard_limit', language), /1,000.*300.*10 GiB/);

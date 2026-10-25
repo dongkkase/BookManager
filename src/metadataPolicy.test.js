@@ -16,7 +16,27 @@ import {
     normalizeMetadataAutoNumber,
     normalizeMetadataDecimal,
     splitCombinedGenreTags,
+    stepMetadataSequence,
 } from './metadataPolicy.js';
+
+test('metadata sequence steps retain decimals without rounding or truncation', () => {
+    for (const [value, delta, expected] of [
+        ['', 1, '1'], ['', -1, '0'], [null, 1, '1'], [undefined, -1, '0'],
+        ['  ', 1, '1'], ['0', -1, '0'], ['001', 1, '2'], ['+002', -1, '1'],
+        ['1.5', 1, '2.5'], ['1.5', -1, '0.5'], ['1.1', -1, '0.1'],
+        ['.5', 1, '1.5'], ['2.', -1, '1'], ['0.5', -1, '0'], ['-1', 1, '0'],
+        [' 001.50 ', 1, '2.50'], ['9007199254740993', 1, '9007199254740994'],
+        ['1.0000000000000001', -1, '0.0000000000000001'],
+    ]) {
+        assert.equal(stepMetadataSequence(value, delta), expected, `${value} ${delta}`);
+    }
+});
+
+test('metadata sequence steps reject custom issue numbers, ranges and lists', () => {
+    for (const value of ['001AU', '1-551', '1,3', '1/2', '1e2', '0x10', 'Infinity', 'NaN', '-', '.', '1권']) {
+        for (const delta of [-1, 1]) assert.equal(stepMetadataSequence(value, delta), null, value);
+    }
+});
 
 test('saved series groups remain global candidates when editing another file', () => {
     const savedOptions = buildMetadataSeriesGroupOptions({

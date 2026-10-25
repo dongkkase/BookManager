@@ -157,7 +157,7 @@ function normalizeZipEntryName(name = '') {
 
 function zipEntryMatchesName(entryName, targetName, options = {}) {
     return options.removeMatchingBasename === true
-        ? path.basename(entryName).toLowerCase() === path.basename(targetName).toLowerCase()
+        ? path.posix.basename(normalizeZipEntryName(entryName)) === path.posix.basename(normalizeZipEntryName(targetName))
         : normalizeZipEntryName(entryName) === normalizeZipEntryName(targetName);
 }
 
@@ -582,6 +582,10 @@ export async function replaceZipEntryAppendOnly(filePath, entryName, content, op
 export async function replaceZipEntry(filePath, entryName, content, options = {}) {
     const source = await fs.readFile(filePath);
     const sourceEntries = listZipEntries(source);
+    const sourceEnd = findEndOfCentralDirectory(source);
+    const commentEnd = sourceEnd < 0 ? 0 : sourceEnd + 22 + source.readUInt16LE(sourceEnd + 20);
+    const comment = sourceEnd < 0 ? Buffer.alloc(0) : source.subarray(sourceEnd + 22, commentEnd);
+    const trailingData = sourceEnd < 0 ? Buffer.alloc(0) : source.subarray(commentEnd);
     const replacement = createEntry(entryName, content);
     const entries = [];
 
@@ -606,7 +610,8 @@ export async function replaceZipEntry(filePath, entryName, content, options = {}
     const centralOffset = offset;
     const central = Buffer.concat(centralParts);
     const eocd = endOfCentralDirectory(outputEntries.length, central.length, centralOffset);
-    await fs.writeFile(filePath, Buffer.concat([...localParts, central, eocd]));
+    eocd.writeUInt16LE(comment.length, 20);
+    await fs.writeFile(filePath, Buffer.concat([...localParts, central, eocd, comment, trailingData]));
 }
 
 function unsupportedZipRewrite(message) {

@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { LibraryDB } from './database/library_db.js';
 import { replaceZipEntry } from './core/zipArchive.js';
+import { COMICINFO_CACHE_VERSION } from './comicInfoXml.js';
 import { extractLibraryScanVisualItem } from './ipcHandlers.js';
 import { scanFolder } from './tasks/folderScanTask.js';
 import { SCAN_TARGET_EXTENSIONS } from './scanTargets.js';
@@ -452,6 +453,7 @@ test('메타데이터 전용 스캔은 썸네일 없는 유효 캐시를 다시 
             title: 'Cached Title',
             series: 'Cached Series',
             thumb_path: '',
+            comicinfo_version: COMICINFO_CACHE_VERSION,
         });
         await library.close();
 

@@ -248,8 +248,102 @@ test('API 검색 결과를 전체 저장에 사용할 ComicInfo 메타데이터�
     Title: 'Book',
     Writer: 'Author',
     Summary: '## 작품 소개\n설명',
-    Manga: 'YesAndRightToLeft',
   });
+});
+
+test('comic API metadata uses the requested default only for empty directions and maps ISBN and age codes', () => {
+    const defaultComicReadingDirection = 'YesAndRightToLeft';
+    for (const bookType of ['comic', undefined]) {
+        const result = { metadata: { ISBN: '9780425038918', AgeRating: '19세 이상', CommunityRating: '4.5' } };
+        const converted = metadataFromApiResult(result, { bookType, defaultComicReadingDirection });
+        assert.equal(converted.Manga, 'YesAndRightToLeft');
+        assert.equal(metadataFromApiResult(result, { bookType }).Manga, undefined);
+        assert.equal(converted.GTIN, '9780425038918');
+        assert.equal(converted.AgeRating, 'Adults Only 18+');
+        assert.equal(converted.CommunityRating, '4.5');
+        assert.equal(result.metadata.AgeRating, '19세 이상');
+        for (const Manga of [undefined, null, '', ' \t ']) {
+            const input = { metadata: { Manga } };
+            assert.equal(metadataFromApiResult(input, { bookType, defaultComicReadingDirection }).Manga, 'YesAndRightToLeft');
+            assert.equal(metadataFromApiResult(input, { bookType }).Manga, Manga);
+            assert.equal(input.metadata.Manga, Manga);
+        }
+    }
+    for (const Manga of ['No', 'Yes', 'Unknown', 'YesAndRightToLeft']) {
+        assert.equal(metadataFromApiResult({ metadata: { Manga } }, { bookType: 'comic', defaultComicReadingDirection }).Manga, Manga);
+    }
+    for (const bookType of ['book', 'pdf', 'audio']) {
+        for (const Manga of [undefined, null, '', ' ', 'No', 'YesAndRightToLeft']) {
+            assert.equal(metadataFromApiResult({ metadata: { Manga } }, { bookType, defaultComicReadingDirection }).Manga, Manga);
+        }
+    }
+    assert.equal(metadataFromApiResult({ metadata: { ISBN: 'isbn', GTIN: 'original' } }, { bookType: 'comic' }).GTIN, 'original');
+    assert.equal(metadataFromApiResult({ metadata: { ISBN: 'isbn', AgeRating: '19세 이상' } }, { bookType: 'book' }).GTIN, undefined);
+    assert.equal(metadataFromApiResult({ metadata: { AgeRating: 'Custom rating' } }, { bookType: 'comic' }).AgeRating, 'Custom rating');
+});
+
+test('검색 결과 선택 시 제목의 문자로 빈 언어 코드를 추정한다', () => {
+    const cases = [
+        ['전지적 독자 시점', 'ko'],
+        ['나 혼자 Level Up', 'ko'],
+        ['한글 제목'.normalize('NFD'), 'ko'],
+        ['君の名は。', 'ja'],
+        ['ドラゴンボール', 'ja'],
+        ['ﾄﾞﾗｺﾞﾝﾎﾞｰﾙ 第１巻', 'ja'],
+        ['三体', 'zh'],
+        ['呪術廻戦', 'zh'],
+        ['NARUTO', 'en'],
+        ['Le Petit Prince', 'en'],
+        ['Ｈｅｌｌｏ ２０２６', 'en'],
+        ['[코믹] NARUTO 1권 완결', 'en'],
+        ['NARUTO (1권) (완결)', 'en'],
+        ['NARUTO 완결', 'en'],
+        ['NARUTO1권', 'en'],
+        ['三体 1권 전자책', 'zh'],
+    ];
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        for (const [Title, expected] of cases) {
+            for (const LanguageISO of [undefined, null, '', ' \t ']) {
+                const input = { metadata: { Title, LanguageISO } };
+                const before = structuredClone(input);
+                const converted = metadataFromApiResult(input, { bookType, inferMissingLanguageFromTitle: true });
+                assert.equal(converted.LanguageISO, expected, `${bookType}: ${Title}`);
+                assert.equal(converted.Title, metadataFromApiResult(input, { bookType }).Title);
+                assert.deepEqual(input, before);
+            }
+        }
+    }
+});
+
+test('검색 결과의 명시적인 언어 코드는 추정으로 바꾸지 않는다', () => {
+    for (const LanguageISO of ['ko', 'en-US', 'ja', 'zh-TW', 'fr', 'und', ' en-US ']) {
+        assert.equal(metadataFromApiResult({ metadata: { Title: '한글 제목', LanguageISO } }, {
+            inferMissingLanguageFromTitle: true,
+        }).LanguageISO, LanguageISO);
+    }
+    for (const LanguageISO of [undefined, null, '', ' ']) {
+        const input = { metadata: { Title: '한글 제목', LanguageISO } };
+        assert.equal(metadataFromApiResult(input).LanguageISO, LanguageISO);
+        assert.equal(metadataFromApiResult(input, { inferMissingLanguageFromTitle: false }).LanguageISO, LanguageISO);
+    }
+});
+
+test('제목이 없을 때만 표시 제목을 사용하고 추정할 수 없으면 빈 언어를 유지한다', () => {
+    for (const Title of [undefined, null, '', ' ']) {
+        assert.equal(metadataFromApiResult({ title: '三体', metadata: { Title } }, {
+            inferMissingLanguageFromTitle: true,
+        }).LanguageISO, 'zh');
+    }
+    for (const Title of ['', '１９８４', '?!', '[코믹]', 'Привет', 'Hello Привет', 'Ελλάδα', '한글 カナ']) {
+        for (const LanguageISO of [undefined, null, '', ' ']) {
+            assert.equal(metadataFromApiResult({ metadata: { Title, LanguageISO } }, {
+                inferMissingLanguageFromTitle: true,
+            }).LanguageISO, LanguageISO, Title);
+        }
+    }
+    assert.equal(metadataFromApiResult({ title: '한글 제목', metadata: { Title: '1984', LanguageISO: '' } }, {
+        inferMissingLanguageFromTitle: true,
+    }).LanguageISO, '');
 });
 
 test('TXT 검색 결과의 전체권수를 빈 권/화 항목에 적용한다', () => {
@@ -374,7 +468,6 @@ test('API 검색 결과를 적용할 때 제목과 시리즈의 선행 태그가
     Title: '변경의 팔라딘',
     Series: '변경의 팔라딘',
     Summary: '',
-    Manga: 'YesAndRightToLeft',
   });
 });
 
@@ -416,7 +509,6 @@ test('API 검색어와 일치하는 시리즈명 뒤의 단위 없는 권수도 
     Count: '4',
     Volume: '1',
     Summary: '',
-    Manga: 'YesAndRightToLeft',
   });
 });
 

@@ -52,13 +52,20 @@ function fixture(initialReducedMotion = false) {
     };
 }
 
+function layerContent(layer) {
+    const children = Array.isArray(layer.props.children) ? layer.props.children : [layer.props.children];
+    const contents = children.filter(child => child?.type?.name === 'DetailPanelContent');
+    assert.equal(contents.length, 1, 'Each detail layer must render one selected file content');
+    return contents[0];
+}
+
 test('reduced motion replaces detail content without retaining an outgoing layer', () => {
     const value = fixture(true);
     for (const path of ['/books/second.cbz', '/books/third.cbz']) {
         const layers = value.select(path);
         assert.equal(layers.length, 1);
         assert.equal(layers[0].props.outgoing, false);
-        assert.equal(layers[0].props.children.props.selectedFile.full_path, path);
+        assert.equal(layerContent(layers[0]).props.selectedFile.full_path, path);
     }
 });
 
@@ -70,7 +77,7 @@ test('switching to reduced motion removes all previous detail layers immediately
     assert.equal(value.layers().length, 3);
     value.setReducedMotion(true);
     assert.equal(value.layers().length, 1);
-    assert.equal(value.layers()[0].props.children.props.selectedFile.full_path, '/books/third.cbz');
+    assert.equal(layerContent(value.layers()[0]).props.selectedFile.full_path, '/books/third.cbz');
     value.finish(outgoing);
     assert.equal(value.layers().length, 1, 'A stale exit event cannot remove the active detail');
 });

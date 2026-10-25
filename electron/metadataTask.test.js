@@ -15,7 +15,7 @@ import {
     parseComicInfo,
     saveMetadataItems,
 } from './tasks/metadataTask.js';
-import { LibraryDB } from './database/library_db.js';
+import { LibraryDB, normalizeLibraryFilePath } from './database/library_db.js';
 import {
     listZipEntries,
     readZipEntry,
@@ -163,7 +163,7 @@ async function createEpubWebpCoverWithJpegAlternateFixture(source) {
     await replaceZipEntry(source, 'OEBPS/images/bookmanager-cover.jpg', Buffer.from('jpg cover'));
 }
 
-test('ComicInfo XML preserves supported fields and ignores removed comic fields', () => {
+test('ComicInfo XML preserves 2.1 scalar fields and uses standard rating without new private timestamps', () => {
     const xml = createComicInfoXml({
         Series: 'A & B',
         AlternateSeries: '다른 시리즈',
@@ -173,21 +173,30 @@ test('ComicInfo XML preserves supported fields and ignores removed comic fields'
         Teams: '팀',
         Locations: '장소',
         BlackAndWhite: 'Yes',
-        CommunityRating: '4.5',
+        CommunityRating: '9',
+        StoryArcNumber: '2',
+        MainCharacterOrTeam: '주인공',
+        Review: '감상',
+        GTIN: '9781234567897',
         ISBN: '97800000000',
     });
 
     assert.match(xml, /xmlns:xsi=/);
     assert.match(xml, /<Series>A &amp; B<\/Series>/);
     assert.match(xml, /<BlackAndWhite>Yes<\/BlackAndWhite>/);
-    assert.match(xml, /<ComicZipAddedDate>/);
-    assert.match(xml, /<ComicZipModifiedDate>/);
-    assert.doesNotMatch(xml, /<AlternateSeries>/);
-    assert.doesNotMatch(xml, /<AlternateNumber>/);
-    assert.doesNotMatch(xml, /<AlternateCount>/);
-    assert.doesNotMatch(xml, /<Translator>/);
-    assert.doesNotMatch(xml, /<Teams>/);
-    assert.doesNotMatch(xml, /<Locations>/);
+    assert.match(xml, /<CommunityRating>4\.5<\/CommunityRating>/);
+    assert.doesNotMatch(xml, /<ComicZipAddedDate>/);
+    assert.doesNotMatch(xml, /<ComicZipModifiedDate>/);
+    assert.match(xml, /<AlternateSeries>다른 시리즈<\/AlternateSeries>/);
+    assert.match(xml, /<AlternateNumber>2<\/AlternateNumber>/);
+    assert.match(xml, /<AlternateCount>10<\/AlternateCount>/);
+    assert.match(xml, /<Translator>번역자<\/Translator>/);
+    assert.match(xml, /<Teams>팀<\/Teams>/);
+    assert.match(xml, /<Locations>장소<\/Locations>/);
+    assert.match(xml, /<StoryArcNumber>2<\/StoryArcNumber>/);
+    assert.match(xml, /<MainCharacterOrTeam>주인공<\/MainCharacterOrTeam>/);
+    assert.match(xml, /<Review>감상<\/Review>/);
+    assert.match(xml, /<GTIN>9781234567897<\/GTIN>/);
     assert.doesNotMatch(xml, /<ISBN>/);
 });
 
@@ -198,14 +207,16 @@ test('ComicInfo XML parsing is case insensitive and preserves added date', () =>
             <Translator>번역자</Translator>
             <Teams>팀</Teams>
             <Locations>장소</Locations>
+            <CommunityRating>4.5</CommunityRating>
             <ComicZipAddedDate>2024-01-02 03:04:05</ComicZipAddedDate>
         </ComicInfo>
     `);
 
     assert.equal(parsed.Series, '작품');
-    assert.equal(parsed.Translator, undefined);
-    assert.equal(parsed.Teams, undefined);
-    assert.equal(parsed.Locations, undefined);
+    assert.equal(parsed.Translator, '번역자');
+    assert.equal(parsed.Teams, '팀');
+    assert.equal(parsed.Locations, '장소');
+    assert.equal(parsed.CommunityRating, '9');
     assert.equal(parsed.ComicZipAddedDate, '2024-01-02 03:04:05');
 });
 
@@ -420,7 +431,8 @@ test('최신권 메타데이터는 라이브러리 DB의 다른 폴더에서 같
         const createArchive = async (filePath, metadata) => {
             fs.mkdirSync(path.dirname(filePath), { recursive: true });
             fs.writeFileSync(filePath, Buffer.alloc(0));
-            await replaceZipEntry(filePath, 'ComicInfo.xml', createComicInfoXml(metadata));
+            const xml = typeof metadata === 'string' ? metadata : createComicInfoXml(metadata);
+            await replaceZipEntry(filePath, 'ComicInfo.xml', xml);
         };
 
         await createArchive(currentPath, {
@@ -430,13 +442,13 @@ test('최신권 메타데이터는 라이브러리 DB의 다른 폴더에서 같
             Volume: '11',
             Publisher: '현재 파일 출판사',
         });
-        await createArchive(decimalPath, {
-            Series: decimalSeries,
-            SeriesGroup: '소수 권 세계관',
-            Title: `${baseTitle} 9.5권`,
-            Volume: '9.5',
-            Publisher: '소수 권 출판사',
-        });
+        await createArchive(decimalPath, `<ComicInfo>
+            <Series>${decimalSeries}</Series>
+            <SeriesGroup>소수 권 세계관</SeriesGroup>
+            <Title>${baseTitle} 9.5권</Title>
+            <Volume>9.5</Volume>
+            <Publisher>소수 권 출판사</Publisher>
+        </ComicInfo>`);
         await createArchive(latestPath, {
             Series: latestSeries,
             SeriesGroup: '최신 권 세계관',
@@ -534,8 +546,9 @@ test('최신권 메타데이터는 라이브러리 DB의 다른 폴더에서 같
         }, { dbPath });
 
         assert.ok(latest);
-        assert.equal(latest.sourcePath, latestPath);
-        assert.equal(latest.sourceName, path.basename(latestPath));
+        const storedLatestPath = normalizeLibraryFilePath(latestPath);
+        assert.equal(latest.sourcePath, storedLatestPath);
+        assert.equal(latest.sourceName, path.basename(storedLatestPath));
         assert.equal(latest.metadata.Series, latestSeries);
         assert.equal(latest.metadata.SeriesGroup, '최신 권 세계관');
         assert.equal(latest.metadata.Volume, '10');
@@ -616,8 +629,9 @@ test('최신권 메타데이터는 누락 파일과 ComicInfo가 없는 상위 �
         }, { dbPath });
 
         assert.ok(latest);
-        assert.equal(latest.sourcePath, validPath);
-        assert.equal(latest.sourceName, path.basename(validPath));
+        const storedValidPath = normalizeLibraryFilePath(validPath);
+        assert.equal(latest.sourcePath, storedValidPath);
+        assert.equal(latest.sourceName, path.basename(storedValidPath));
         assert.equal(latest.metadata.Volume, '10');
         assert.equal(latest.metadata.Publisher, '유효 후보 출판사');
     } finally {

@@ -1,4 +1,5 @@
 import { cleanMetadataSummary } from './metadataPolicy.js';
+import { normalizeComicInfoAgeRating } from './metadata/comicInfoPolicy.js';
 import { isMetadataApiSourceEnabled } from '../electron/metadataProviderSettings.js';
 
 export const UNIFIED_METADATA_API_SOURCE = '통합검색';
@@ -197,6 +198,30 @@ export function metadataSearchQueryForItem(item = {}) {
     return query;
 }
 
+function inferApiTitleLanguage(value = '') {
+    let title = cleanApiDecorativePrefix(String(value ?? '').normalize('NFKC'));
+    for (let pass = 0; pass < 4; pass += 1) {
+        let next = title.replace(API_SERIES_TRAILING_QUALIFIER_PATTERN, '')
+            .replace(SEARCH_COMPLETION_SUFFIX_PATTERN, '')
+            .replace(SEARCH_SEQUENCE_SUFFIX_PATTERN, '');
+        for (const pattern of API_SERIES_VOLUME_SUFFIX_PATTERNS) {
+            next = next.replace(pattern, '');
+        }
+        next = next.trim();
+        if (next === title) break;
+        title = next;
+    }
+
+    const hasHangul = /\p{Script=Hangul}/u.test(title);
+    const hasKana = /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(title);
+    if (hasHangul && hasKana) return '';
+    if (hasHangul) return 'ko';
+    if (hasKana) return 'ja';
+    if (/\p{Script=Han}/u.test(title)) return 'zh';
+    const letters = title.match(/\p{L}/gu) || [];
+    return letters.length && letters.every(letter => /\p{Script=Latin}/u.test(letter)) ? 'en' : '';
+}
+
 export function metadataFromApiResult(result = {}, options = {}) {
   const metadata = result.metadata || {};
   const normalized = {
@@ -210,6 +235,11 @@ export function metadataFromApiResult(result = {}, options = {}) {
   if (metadata.Title) {
     normalized.Title = cleanApiDecorativePrefix(metadata.Title);
   }
+    if (options.inferMissingLanguageFromTitle && !String(metadata.LanguageISO ?? '').trim()) {
+        const title = String(normalized.Title ?? '').trim() || result.title;
+        const language = inferApiTitleLanguage(title);
+        if (language) normalized.LanguageISO = language;
+    }
   if (metadata.Series) {
     normalized.Series = cleanApiSeriesName(
       cleanApiDecorativePrefix(metadata.Series),
@@ -217,9 +247,11 @@ export function metadataFromApiResult(result = {}, options = {}) {
     );
   }
   if (options.bookType === 'comic' || !options.bookType) {
-    normalized.Manga = metadata.Manga || 'YesAndRightToLeft';
-  } else if (metadata.Manga) {
-    normalized.Manga = metadata.Manga;
+        if (!String(metadata.Manga ?? '').trim() && options.defaultComicReadingDirection) {
+            normalized.Manga = options.defaultComicReadingDirection;
+        }
+        if (metadata.AgeRating) normalized.AgeRating = normalizeComicInfoAgeRating(metadata.AgeRating) ?? metadata.AgeRating;
+        if (!metadata.GTIN && metadata.ISBN) normalized.GTIN = metadata.ISBN;
   }
   return normalized;
 }
