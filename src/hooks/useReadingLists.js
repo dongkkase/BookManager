@@ -1,21 +1,62 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { mergeFolderFileCacheUpdate } from './useFolderScan.js';
+import { prepareAuthorCatalog } from '../authorCatalog.js';
 
 const EMPTY_FILES = [];
 
-export function useReadingLists(listId, t, localFiles = null, libraryPaths = []) {
+export function useReadingLists(listId, t, localFiles = null, libraryPaths = [], language = 'ko') {
     const libraryScopeKey = JSON.stringify([...new Set(libraryPaths)].sort());
     const isRecentList = listId === 'recent-added' || listId === 'recent-updated';
     const [overview, setOverview] = useState({ collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0, previewRevision: 0 });
     const [overviewError, setOverviewError] = useState('');
     const [snapshot, setSnapshot] = useState({ id: '', files: EMPTY_FILES, previewRevision: 0 });
     const [recentSnapshots, setRecentSnapshots] = useState({});
+    const [catalogSnapshot, setCatalogSnapshot] = useState(null);
+    const catalogRef = useRef(null);
+    const catalogScopeRef = useRef(libraryScopeKey);
+    const catalogRequestRef = useRef(0);
+    const catalogPendingRef = useRef(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const requestRef = useRef(0);
     const overviewRef = useRef(0);
     const listIdRef = useRef(listId);
     listIdRef.current = listId;
+    const invalidateCatalog = useCallback(() => {
+        catalogRef.current = null;
+        catalogRequestRef.current += 1;
+        catalogPendingRef.current = null;
+    }, []);
+    const refreshCatalog = useCallback(async ({ allowCached = false } = {}) => {
+        if (catalogScopeRef.current !== libraryScopeKey) {
+            catalogScopeRef.current = libraryScopeKey;
+            invalidateCatalog();
+            setCatalogSnapshot(null);
+        }
+        if (allowCached && catalogRef.current) return catalogRef.current;
+        if (catalogPendingRef.current) return catalogPendingRef.current.promise;
+        const sequence = ++catalogRequestRef.current;
+        const pending = { sequence, promise: null };
+        catalogPendingRef.current = pending;
+        pending.promise = (async () => {
+            try {
+                const result = await window.electronAPI?.readingLists?.({ operation: 'list', id: 'library-catalog' });
+                if (!result?.success) throw new Error(result?.error || 'unavailable');
+                await prepareAuthorCatalog(result.files, language, {
+                    isCurrent: () => sequence === catalogRequestRef.current && catalogScopeRef.current === libraryScopeKey,
+                });
+                const nextSnapshot = { id: 'library-catalog', files: result.files, previewRevision: sequence, libraryScopeKey };
+                if (sequence === catalogRequestRef.current && catalogScopeRef.current === libraryScopeKey) {
+                    catalogRef.current = nextSnapshot;
+                    setCatalogSnapshot(nextSnapshot);
+                }
+                return nextSnapshot;
+            } finally {
+                if (catalogPendingRef.current?.sequence === sequence) catalogPendingRef.current = null;
+            }
+        })();
+        return pending.promise;
+    }, [invalidateCatalog, language, libraryScopeKey]);
     const invalidateInactiveRecentLists = useCallback(() => {
         setRecentSnapshots(current => current[listIdRef.current]
             ? { [listIdRef.current]: current[listIdRef.current] }
@@ -51,7 +92,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [])
             if (sequence === overviewRef.current) setOverviewError(t('reading_lists.load_failed'));
         }
     }, [libraryScopeKey, t]);
-    const refresh = useCallback(async () => {
+    const refresh = useCallback(async ({ allowCached = false } = {}) => {
         const sequence = ++requestRef.current;
         if (localFiles !== null) {
             setSnapshot({ id: listId, files: localFiles, previewRevision: sequence });
@@ -65,9 +106,18 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [])
             if (listId === 'collections') await refreshOverview();
             return;
         }
+        if (listId === 'library-catalog' && allowCached && catalogRef.current?.libraryScopeKey === libraryScopeKey) {
+            setLoading(false);
+            setError('');
+            return;
+        }
         setLoading(true);
         setError('');
         try {
+            if (listId === 'library-catalog') {
+                await refreshCatalog({ allowCached });
+                return;
+            }
             const result = await window.electronAPI?.readingLists?.({ operation: 'list', id: listId });
             if (!result?.success) throw new Error(result?.error || 'unavailable');
             if (sequence === requestRef.current) {
@@ -93,18 +143,27 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [])
         } finally {
             if (sequence === requestRef.current) setLoading(false);
         }
-    }, [isRecentList, libraryScopeKey, listId, localFiles, refreshOverview, t]);
+    }, [isRecentList, libraryScopeKey, listId, localFiles, refreshCatalog, refreshOverview, t]);
     const refreshRef = useRef(refresh);
     refreshRef.current = refresh;
     useEffect(() => {
-        void refresh();
+        void refresh({ allowCached: true });
         return () => { requestRef.current += 1; };
     }, [refresh]);
     useEffect(() => {
+        void refreshCatalog({ allowCached: true }).catch(() => {});
+    }, [refreshCatalog]);
+    useEffect(() => () => {
+        catalogRequestRef.current += 1;
+        catalogPendingRef.current = null;
+    }, []);
+    useEffect(() => {
         const reload = () => {
             invalidateInactiveRecentLists();
+            invalidateCatalog();
             void refreshOverview();
             void refreshRef.current();
+            void refreshCatalog({ allowCached: true }).catch(() => {});
         };
         void refreshOverview();
         const unsubscribe = window.electronAPI?.onReadingListsChanged?.(reload);
@@ -124,7 +183,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [])
             window.removeEventListener('focus', reload);
             window.removeEventListener('bookmanager:metadata-saved', reload);
         };
-    }, [invalidateInactiveRecentLists, refreshOverview]);
+    }, [invalidateCatalog, invalidateInactiveRecentLists, refreshCatalog, refreshOverview]);
     const mutate = useCallback(async request => {
         const result = await window.electronAPI?.readingLists?.(request);
         if (!result?.success) {
@@ -132,10 +191,11 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [])
             throw new Error(t(`reading_lists.${key}`));
         }
         invalidateInactiveRecentLists();
-        await Promise.all([refreshOverview(), refreshRef.current()]);
+        invalidateCatalog();
+        await Promise.all([refreshOverview(), refreshRef.current(), refreshCatalog({ allowCached: true }).catch(() => {})]);
         return result;
-    }, [invalidateInactiveRecentLists, refreshOverview, t]);
-    const visibleSnapshot = isRecentList ? recentSnapshots[listId] : snapshot;
+    }, [invalidateCatalog, invalidateInactiveRecentLists, refreshCatalog, refreshOverview, t]);
+    const visibleSnapshot = listId === 'library-catalog' ? catalogSnapshot : isRecentList ? recentSnapshots[listId] : snapshot;
     const previewRevision = listId === 'collections' ? overview.previewRevision : visibleSnapshot?.previewRevision || 0;
     const updateFilePreview = useCallback(file => {
         if (listId === 'collections') {
@@ -165,8 +225,9 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [])
         ...overview,
         recentAddedCount: overview.libraryScopeKey === libraryScopeKey ? overview.recentAddedCount : 0,
         recentUpdatedCount: overview.libraryScopeKey === libraryScopeKey ? overview.recentUpdatedCount : 0,
+        catalogFiles: catalogSnapshot?.libraryScopeKey === libraryScopeKey ? catalogSnapshot.files : EMPTY_FILES,
         files: listId === 'collections' ? overview.collections
-            : visibleSnapshot?.id === listId && (!isRecentList || visibleSnapshot.libraryScopeKey === libraryScopeKey) ? visibleSnapshot.files : EMPTY_FILES,
+            : visibleSnapshot?.id === listId && (!(isRecentList || listId === 'library-catalog') || visibleSnapshot.libraryScopeKey === libraryScopeKey) ? visibleSnapshot.files : EMPTY_FILES,
         loading,
         error: listId === 'collections' ? overviewError : error,
         refresh,

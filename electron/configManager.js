@@ -163,7 +163,8 @@ export class ConfigManager {
 
   normalizeConfig(data = {}) {
     const defaults = this.getDefaultConfig();
-    const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    const raw = data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
+    delete raw.naver_photo_api;
     const lang = normalizeLanguage(raw.language || raw.lang, defaults.language);
     const rawLibraryPaths = [
       ...(raw.libraries || []),
@@ -250,6 +251,8 @@ export class ConfigManager {
         ...mergedApiKeys,
         yes24: String(mergedApiKeys.yes24 || '').trim(),
         hardcover: normalizeHardcoverToken(mergedApiKeys.hardcover),
+        naver_client_id: typeof mergedApiKeys.naver_client_id === 'string' ? mergedApiKeys.naver_client_id.trim().slice(0, 1024) : '',
+        naver_client_secret: typeof mergedApiKeys.naver_client_secret === 'string' ? mergedApiKeys.naver_client_secret.trim().slice(0, 1024) : '',
         ai_provider: aiProvider,
         ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
         ai_gemini_key: aiGeminiKey,
@@ -334,6 +337,8 @@ export class ConfigManager {
         vine: '',
         google: '',
         hardcover: '',
+        naver_client_id: '',
+        naver_client_secret: '',
         ai_provider: 'Gemini',
         ai_key: '',
         ai_gemini_key: '',

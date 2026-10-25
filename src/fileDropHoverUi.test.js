@@ -216,6 +216,19 @@ test('폴더 탭의 직접 드롭 요청과 비동기 파일 조회 이후에도
     assert.deepEqual(value.calls.open, ['/library/book.epub']);
 });
 
+test('라이브러리에 등록되지 않은 외부 파일도 드롭한 경로로 뷰어를 연다', async () => {
+    const value = dropFixture();
+    const filePath = '/outside-library/Downloads/book.epub';
+    await value.handleGlobalDrop(fileDrag([filePath]));
+    assert.deepEqual(value.calls.dispatch, [['folder', { action: 'drop-paths', activeTab: 'folder', paths: [filePath] }]]);
+    const opening = value.handleDroppedPaths(value.calls.dispatch[0][1].paths);
+    await new Promise(resolve => setImmediate(resolve));
+    value.calls.timers.shift()();
+    await opening;
+    assert.deepEqual(value.calls.open, [filePath]);
+    assert.deepEqual(value.calls.navigate, []);
+});
+
 test('세 작업 탭은 드래그 위치를 강조하고 실제 드롭 위치로 교체·추가를 결정한다', async () => {
     for (const tab of ['organizer', 'renamer', 'metadata']) {
         for (const [clientY, mode] of [[100, 'replace'], [279.99, 'replace'], [280, 'append'], [699, 'append']]) {

@@ -57,7 +57,7 @@ const baseline = {
     viewer_paths: { comic: '/fixture/A long directory/Comic Viewer.app', epub: '', pdf: '', text: '' },
     api_keys: {},
 };
-const calls = { saves: [], saveAttempts: [], viewerPersists: [], associations: [], closes: [], languages: [], effects: [] };
+const calls = { saves: [], saveAttempts: [], viewerPersists: [], associations: [], closes: [], languages: [], effects: [], externalLinks: [] };
 const dataFolderCalls = [];
 const dataFolderPath = '/Users/테스트 사용자/Library/Application Support/BookManager/BookManagerData';
 let dataFolderLoadFails = false;
@@ -102,7 +102,7 @@ window.electronAPI = {
     applyFileAssociations: async extensions => { calls.associations.push(extensions); return { success: true }; },
     saveConfig: async () => { throw new Error('Unexpected direct configuration save'); },
     installSupertonicModel: async () => { throw new Error('Unexpected model installation'); },
-    openExternal: async () => { throw new Error('Unexpected external navigation'); },
+    openExternal: async url => { calls.externalLinks.push(url); },
 };
 const root = createRoot(document.getElementById('root'));
 initializeMotionPreference();
@@ -191,9 +191,59 @@ async function change(element, value) {
     element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
     await frame();
 }
-const providerCards = () => [...panel().querySelectorAll('.settings-provider-card')];
+const providerCards = () => [...panel().querySelectorAll('.settings-provider-card[data-provider]')];
 const providerCard = source => providerCards().find(card => card.dataset.provider === source);
 const providerSwitch = source => providerCard(source)?.querySelector('[role="switch"]');
+const sourceHelpCard = source => source === 'naver' ? panel().querySelector('[data-photo-provider="naver"]') : providerCard(source);
+async function openProviderHelp(source) {
+    const card = sourceHelpCard(source);
+    const opener = card?.querySelector('.settings-provider-help');
+    const name = card?.querySelector('h4')?.textContent.trim();
+    check(opener?.tagName === 'BUTTON' && opener.type === 'button', 'Missing source help button: ' + source);
+    check(opener.getAttribute('aria-haspopup') === 'dialog', 'Source help does not announce its dialog: ' + source);
+    check(opener.getAttribute('aria-label') === name + ' · ' + translate('api_manual_title', language), 'Source help is not named for its source: ' + source);
+    opener.focus();
+    opener.click();
+    await until(() => document.querySelector('.settings-manual-dialog')?.contains(document.activeElement), 'Source help did not receive focus: ' + source);
+    const dialog = document.querySelector('.settings-manual-dialog');
+    check(dialog.dataset.provider === source && dialog.querySelector('#settings-manual-title')?.textContent.trim() === name, 'Source help displayed another source: ' + source);
+    check(dialog.querySelectorAll('.settings-provider-guide').length === 1, 'Source help contains unrelated guides: ' + source);
+    check(dialog.querySelector('.settings-provider-guide').textContent.trim().length > 20, 'Source help content is missing: ' + source);
+    check(dialog.querySelector('a[href^="https://"]'), 'Source help has no external guide link: ' + source);
+    check(!dialog.querySelector('input'), 'Source help exposed an editable credential field: ' + source);
+    check(!dialog.textContent.includes('metadata_provider_guide_'), 'Source help contains an untranslated guide: ' + source);
+    return { dialog, opener };
+}
+async function closeProviderHelp(opener, action = 'footer') {
+    const dialog = document.querySelector('.settings-manual-dialog');
+    const closesBefore = calls.closes.length;
+    if (action === 'escape') {
+        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    } else if (action === 'backdrop') {
+        document.querySelector('.settings-manual-backdrop').click();
+    } else {
+        dialog.querySelector(action === 'header' ? '.settings-manual-dismiss' : '.settings-manual-close').click();
+    }
+    await until(() => !document.querySelector('.settings-manual-dialog'), 'Source help did not close: ' + action);
+    check(document.querySelector('.settings-modal-content') && calls.closes.length === closesBefore, 'Closing source help also closed the settings');
+    await until(() => document.activeElement === opener, 'Source help did not restore focus: ' + action);
+    for (const selector of ['.modal-header', '.settings-workspace', '.settings-footer']) {
+        check(!document.querySelector(selector).inert, 'Closing source help left the settings inert: ' + selector);
+    }
+}
+async function checkProviderHelpLayout(context) {
+    const { dialog, opener } = await openProviderHelp('naver');
+    const bounds = dialog.getBoundingClientRect();
+    check(bounds.width > 0 && bounds.height > 0 && bounds.left >= -1 && bounds.right <= innerWidth + 1 && bounds.top >= -1 && bounds.bottom <= innerHeight + 1, context + ': source help escaped the viewport');
+    for (const element of [dialog, ...dialog.querySelectorAll('.settings-provider-guide')]) {
+        check(element.scrollWidth <= element.clientWidth + 1, context + ': source help overflows horizontally');
+    }
+    const close = dialog.querySelector('.settings-manual-close');
+    const closeBounds = close.getBoundingClientRect();
+    check(closeBounds.top >= bounds.top - 1 && closeBounds.bottom <= bounds.bottom + 1, context + ': source help close action is outside its dialog');
+    await closeProviderHelp(opener);
+}
+
 async function changeProviderSetting(id, value) {
     const control = document.getElementById(id);
     check(control, 'Missing provider setting: ' + id);
@@ -386,6 +436,16 @@ async function runInteractions() {
     await change(document.getElementById('settings-secret-ai_gemini_key'), 'fixture-api-key');
     await navigateApiSection('providers');
     await changeProviderSetting('settings-secret-hardcover', ' Bearer hc_fixture ');
+    const naverId = document.getElementById('settings-secret-naver_client_id');
+    const naverSecret = document.getElementById('settings-secret-naver_client_secret');
+    check(!document.getElementById('settings-naver-photo-api'), 'Author photo settings must use NAVER API HUB without an issuer selector');
+    check(naverId?.type === 'password' && naverSecret?.type === 'password', 'Naver credentials must be masked by default');
+    check(panel().querySelector('[data-photo-provider="naver"]') && !providerCards().some(card => card.dataset.provider === 'Naver'), 'Author image search must be separate from book metadata sources');
+    naverSecret.closest('.settings-secret-row').querySelector('button').click(); await frame();
+    check(naverSecret.type === 'text', 'Naver secret reveal toggle failed');
+    naverSecret.closest('.settings-secret-row').querySelector('button').click(); await frame();
+    await change(naverId, ' fixture-naver-id ');
+    await change(naverSecret, ' fixture-naver-secret ');
     await changeProviderSetting('settings-itunes-country', 'JP');
     await changeProviderSetting('settings-itunes-cover', 'standard');
     await changeProviderSetting('settings-kobo-country', 'ca');
@@ -416,6 +476,7 @@ async function runInteractions() {
     check(saved.target_format === 'cbz' && saved.img_quality === 85, 'Processing settings were not saved');
     check(saved.api_keys.ai_gemini_key === 'fixture-api-key', 'API setting was not saved across category navigation');
     check(saved.api_keys.hardcover === 'hc_fixture', 'Hardcover token was not normalized');
+    check(saved.api_keys.naver_client_id === 'fixture-naver-id' && saved.api_keys.naver_client_secret === 'fixture-naver-secret', 'Naver credentials were not normalized and saved');
     check(saved.api_keys.tag_rules === 'Action -> 액션', 'Tag rules were not saved across API section navigation');
     check(saved.preferred_meta_api_audio === 'Audible', 'Audiobook preference was not saved');
     check(JSON.stringify(saved.metadata_providers) === JSON.stringify({ itunes_country: 'JP', itunes_cover_resolution: 'standard', kobo_country: 'ca', kobo_language: 'fr', audible_region: 'uk' }), 'Provider options were not saved');
@@ -427,6 +488,14 @@ async function runInteractions() {
     await open({ config: properties.config });
     check(document.getElementById('settings-language').value === 'en' && document.getElementById('settings-font-scale').value === '125', 'Cancel discarded the last applied settings');
     check(applyButton().disabled, 'Reopened applied settings are dirty');
+    await navigate('api'); await navigateApiSection('providers');
+    check(document.getElementById('settings-secret-naver_client_secret').value === 'fixture-naver-secret', 'Naver credentials did not persist after reopening settings');
+    await change(document.getElementById('settings-secret-naver_client_secret'), 'unsaved-naver-secret');
+    document.querySelector('.settings-footer .btn-secondary').click();
+    await until(() => !document.querySelector('.settings-modal-content'), 'Cancel did not close the Naver settings draft');
+    await open({ config: properties.config });
+    await navigate('api'); await navigateApiSection('providers');
+    check(document.getElementById('settings-secret-naver_client_secret').value === 'fixture-naver-secret', 'Cancel replaced saved Naver credentials');
     await open({ initialTab: 'ttsApi', navigationRequest: 1 });
     checkTabSemantics('ttsApi');
     await navigate('basic');
@@ -456,28 +525,73 @@ async function runInteractions() {
     checkApiSection('preferred');
     check(document.getElementById('settings-preferred-audio').value === 'AudNexus', 'External API navigation discarded the draft');
     await navigateApiSection('providers');
-    const manualOpener = document.querySelector('.settings-api-manual-row button');
-    manualOpener.focus();
-    manualOpener.click();
-    await until(() => document.querySelector('.settings-manual-dialog')?.contains(document.activeElement), 'API manual did not receive focus');
-    const manual = document.querySelector('.settings-manual-dialog');
-    const manualButtons = [...manual.querySelectorAll('button')];
-    check(manual.querySelectorAll('.settings-provider-guide').length === 10, 'New source setup guides are missing');
-    check(manual.scrollWidth <= manual.clientWidth + 1, 'Provider setup guides overflow horizontally');
-    check(document.activeElement === manualButtons[0], 'API manual did not focus its first action');
-    for (const selector of ['.modal-header', '.settings-workspace', '.settings-footer']) {
-        check(document.querySelector(selector).inert, 'API manual left background interactive: ' + selector);
+    check(!document.querySelector('.settings-api-manual-row button'), 'The global setup guide remains in source settings');
+    check(!sourceHelpCard('naver').querySelector('ol, a[href]'), 'Naver setup instructions remain inline');
+    await change(document.getElementById('settings-secret-naver_client_secret'), 'unsaved-help-secret');
+    await setProviderEnabled('Goodreads', false);
+    const savedBeforeHelp = calls.saves.length;
+    const helpDraft = {
+        secret: document.getElementById('settings-secret-naver_client_secret').value,
+        id: document.getElementById('settings-secret-naver_client_id').value,
+        hardcover: document.getElementById('settings-secret-hardcover').value,
+        country: document.getElementById('settings-kobo-country').value,
+    };
+    for (const source of [...providerSources, 'naver']) {
+        const { dialog, opener } = await openProviderHelp(source);
+        for (const value of Object.values(helpDraft)) {
+            if (value.length > 4) check(!dialog.innerHTML.includes(value), 'Source help disclosed a saved or draft credential: ' + source);
+        }
+        check(dialog.scrollWidth <= dialog.clientWidth + 1, 'Source help overflows horizontally: ' + source);
+        check(document.activeElement === dialog.querySelector('.settings-manual-dismiss'), 'Source help did not focus its close action: ' + source);
+        for (const selector of ['.modal-header', '.settings-workspace', '.settings-footer']) {
+            check(document.querySelector(selector).inert, 'Source help left the background interactive: ' + selector);
+        }
+        const registration = dialog.querySelector('[data-link-kind="registration"]');
+        const requiresKey = source === 'naver' || ['YES24', '알라딘', 'Google Books', 'Vine', 'Hardcover'].includes(source);
+        check(Boolean(registration) === requiresKey, 'Registration link does not match the source credential requirements: ' + source);
+        for (const link of dialog.querySelectorAll('a[href]')) {
+            const linksBefore = calls.externalLinks.length;
+            link.click();
+            await until(() => calls.externalLinks.length === linksBefore + 1, 'Source link did not open externally: ' + source);
+            check(calls.externalLinks.at(-1) === link.href, 'Source link opened a different URL: ' + source);
+        }
+        await closeProviderHelp(opener);
     }
-    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
-    check(document.activeElement === manualButtons.at(-1), 'Shift+Tab escaped the API manual');
-    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
-    check(document.activeElement === manualButtons[0], 'Tab escaped the API manual');
-    const closesBeforeManual = calls.closes.length;
-    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    await until(() => !document.querySelector('.settings-manual-dialog'), 'Escape did not close the API manual');
-    check(document.querySelector('.settings-modal-content') && calls.closes.length === closesBeforeManual, 'Escape also closed the parent settings');
-    await until(() => document.activeElement === manualOpener, 'API manual did not restore focus to its opener');
-    return { categories: categories.length, apiSections: apiSections.length, saved: calls.saves.length, cancelled: calls.closes.length, keyboardMoves: 8, manualFocusChecks: 4 };
+    let manualFocusChecks = 0;
+    for (const action of ['escape', 'backdrop', 'header']) {
+        const { dialog, opener } = await openProviderHelp('naver');
+        const first = dialog.querySelector('.settings-manual-dismiss');
+        const last = dialog.querySelector('.settings-manual-close');
+        const link = dialog.querySelector('[data-link-kind="registration"]');
+        first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+        check(document.activeElement === last, 'Shift+Tab escaped source help');
+        last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+        check(document.activeElement === first, 'Tab escaped source help');
+        manualFocusChecks += 2;
+        link.focus();
+        check(document.activeElement === link, 'The source guide link cannot receive keyboard focus');
+        const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        link.dispatchEvent(tabEvent);
+        check(!tabEvent.defaultPrevented, 'Source help trapped keyboard focus on its guide link');
+        dialog.querySelector('.settings-provider-guide').click();
+        await frame();
+        check(document.querySelector('.settings-manual-dialog') === dialog, 'Clicking help content closed the dialog');
+        if (action === 'escape') {
+            const linksBefore = calls.externalLinks.length;
+            link.click();
+            await until(() => calls.externalLinks.length === linksBefore + 1, 'The guide link did not open externally');
+            check(calls.externalLinks.at(-1) === link.href && link.href === 'https://console.ncloud.com/', 'Naver registration link did not open the cloud console');
+            check(dialog.querySelector('[data-link-kind="guide"]').href === 'https://guide.ncloud-docs.com/docs/apihub-application', 'Naver help lost its setup guide');
+        }
+        await closeProviderHelp(opener, action);
+    }
+    check(calls.saves.length === savedBeforeHelp, 'Opening source help saved the settings draft');
+    check(document.getElementById('settings-secret-naver_client_secret').value === helpDraft.secret
+        && document.getElementById('settings-secret-naver_client_id').value === helpDraft.id
+        && document.getElementById('settings-secret-hardcover').value === helpDraft.hardcover
+        && document.getElementById('settings-kobo-country').value === helpDraft.country, 'Opening source help discarded field drafts');
+    check(providerSwitch('Goodreads').getAttribute('aria-checked') === 'false', 'Opening disabled source help changed its toggle');
+    return { categories: categories.length, apiSections: apiSections.length, saved: calls.saves.length, cancelled: calls.closes.length, keyboardMoves: 8, sourceGuides: providerSources.length + 1, manualFocusChecks };
 }
 async function runApplyInteractions() {
     await open();
@@ -1133,6 +1247,19 @@ function checkSidebarMenuLayout(context) {
 }
 function checkProviderLayout(context) {
     checkProviderCards(context);
+    const helpCards = [...providerCards(), sourceHelpCard('naver')];
+    check(helpCards.length === 20, context + ': missing source help card');
+    for (const card of helpCards) {
+        const source = card.dataset.provider || card.dataset.photoProvider;
+        const bounds = card.getBoundingClientRect();
+        const help = card.querySelector('.settings-provider-help');
+        check(help, context + ': missing source help: ' + source);
+        const helpBounds = help.getBoundingClientRect();
+        check(helpBounds.width > 0 && helpBounds.height > 0 && helpBounds.left >= bounds.left - 1 && helpBounds.right <= bounds.right + 1 && helpBounds.top >= bounds.top - 1 && helpBounds.bottom <= bounds.bottom + 1, context + ': source help escaped its card: ' + source);
+        check(bounds.right - helpBounds.right <= 32 && helpBounds.top - bounds.top <= 32, context + ': source help is not at the upper right: ' + source);
+        check(card.scrollWidth <= card.clientWidth + 1, context + ': source card overflows horizontally: ' + source);
+    }
+
     for (const card of providerCards()) {
         const source = card.dataset.provider;
         const bounds = card.getBoundingClientRect();
@@ -1153,8 +1280,12 @@ function checkProviderLayout(context) {
             const reveal = secret.querySelector('button');
             check(inlineLabel?.htmlFor === input?.id && input.labels.length > 0, context + ': provider secret lost its inline label: ' + source);
             check(reveal, context + ': provider secret lost its reveal action: ' + source);
-            check(secretBounds.right <= toggle.left + 1, context + ': provider secret is not left of the switch: ' + source);
-            check(Math.abs((secretBounds.top + secretBounds.bottom) / 2 - (toggle.top + toggle.bottom) / 2) <= 2, context + ': provider secret and switch are not vertically aligned: ' + source);
+            if (innerWidth <= 560) {
+                check(secretBounds.top >= toggle.bottom - 1, context + ': compact provider secret is not below its controls: ' + source);
+            } else {
+                check(secretBounds.right <= toggle.left + 1, context + ': provider secret is not left of the switch: ' + source);
+                check(Math.abs((secretBounds.top + secretBounds.bottom) / 2 - (toggle.top + toggle.bottom) / 2) <= 2, context + ': provider secret and switch are not vertically aligned: ' + source);
+            }
             const labelBounds = inlineLabel.getBoundingClientRect();
             const inputBounds = input.getBoundingClientRect();
             const revealBounds = reveal.getBoundingClientRect();
@@ -1197,6 +1328,7 @@ async function runLayout(scale, selectedLanguage = 'ko') {
             checkApiNavigationLayout(context + ':' + section, section);
             if (section === 'providers') {
                 checkProviderLayout(context + ':provider sources');
+                await checkProviderHelpLayout(context + ':source help');
             }
         }
         checkSidebarMenuLayout(context + ':' + id);
@@ -1255,7 +1387,7 @@ async function runLayout(scale, selectedLanguage = 'ko') {
 }
 render();
 window.runDataFolderInteractions = runDataFolderInteractions;
-window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview };
+window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview, openProviderHelp, closeProviderHelp };
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<html><head></head><body style="margin:0"><div id="root" style="width:100%;height:100vh"></div><script type="module" src="/fixture.jsx"></script></body></html>');
         server = await createServer({
@@ -1356,6 +1488,12 @@ app.whenReady().then(async () => {
                     await window.webContents.executeJavaScript('document.getElementById("settings-secret-google").closest(".settings-provider-card").scrollIntoView({ block: "center" }); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
                     await fs.writeFile('/tmp/bookmanager-settings-' + width + '-' + height + '-' + scale + '-api-provider-keys.png', (await window.webContents.capturePage()).toPNG());
                 }
+                if (scale === 100) {
+                    await window.webContents.executeJavaScript('window.settingsLayoutTests.navigate("api").then(() => window.settingsLayoutTests.navigateApiSection("providers"))');
+                    await window.webContents.executeJavaScript('window.settingsLayoutTests.openProviderHelp("naver").then(() => undefined)');
+                    await fs.writeFile('/tmp/bookmanager-settings-' + width + '-' + height + '-' + scale + '-naver-help.png', (await window.webContents.capturePage()).toPNG());
+                    await window.webContents.executeJavaScript('window.settingsLayoutTests.closeProviderHelp(document.querySelector("[data-photo-provider=naver] .settings-provider-help"))');
+                }
                 await window.webContents.executeJavaScript('window.settingsLayoutTests.navigate("licenses")');
                 await window.webContents.executeJavaScript('document.querySelector(".settings-license-notice summary").click(); new Promise(resolve => requestAnimationFrame(resolve))');
                 await fs.writeFile('/tmp/bookmanager-settings-' + width + '-' + height + '-' + scale + '-licenses-expanded.png', (await window.webContents.capturePage()).toPNG());
@@ -1400,7 +1538,8 @@ app.whenReady().then(async () => {
         assert.deepEqual(report.dataFolder, { pathVisible: true, selectable: true, opened: true, failures: true, retry: true, settingsUnchanged: true });
         assert.equal(report.interactions.categories, 8);
         assert.equal(report.interactions.apiSections, 5);
-        assert.equal(report.interactions.manualFocusChecks, 4);
+        assert.equal(report.interactions.sourceGuides, 20);
+        assert.equal(report.interactions.manualFocusChecks, 6);
         assert.deepEqual(report.apply, { initialClean: true, uiOnlyClean: true, revertedClean: true, duplicateBlocked: true, pendingEditsRetained: true, languageRetained: true, retry: true, fileAssociationGuards: true, partialBaseline: true });
         assert.deepEqual(report.providers, { sources: 19, persisted: true, cancelled: true, retainedValues: true, fallback: true, allDisabled: true, keyboardActivations: 2 });
         assert.deepEqual(report.libraryPreview, { mutations: 13, dragAndDrop: 7, draftIsolation: true, saved: true, cancelled: true, empty: true });

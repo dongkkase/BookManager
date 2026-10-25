@@ -371,6 +371,57 @@ test('커버 편집의 마지막 적용 방식과 해제한 옵션 및 검색 AP
     assert.equal(reloaded.language, 'en');
 });
 
+test('네이버 이미지 검색 인증값은 부분 저장과 재시작 후 유지하고 개별 삭제할 수 있다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-naver-images-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
+    const defaults = manager.loadConfig();
+    assert.equal(defaults.api_keys.naver_client_id, '');
+    assert.equal(defaults.api_keys.naver_client_secret, '');
+    assert.equal(manager.saveConfig({ api_keys: { naver_client_id: ' fixture-id ', naver_client_secret: ' fixture-secret ', google: 'google-key' } }), true);
+    assert.equal(manager.saveConfig({ api_keys: { yes24: 'yes24-key' } }), true);
+    const restarted = new ConfigManager(root, root, { platform: 'linux' });
+    const reloaded = restarted.loadConfig();
+    assert.equal(reloaded.api_keys.naver_client_id, 'fixture-id');
+    assert.equal(reloaded.api_keys.naver_client_secret, 'fixture-secret');
+    assert.equal(reloaded.api_keys.google, 'google-key');
+    assert.equal(reloaded.api_keys.yes24, 'yes24-key');
+    assert.equal(restarted.saveConfig({ api_keys: { naver_client_secret: '' } }), true);
+    const cleared = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
+    assert.equal(cleared.api_keys.naver_client_id, 'fixture-id');
+    assert.equal(cleared.api_keys.naver_client_secret, '');
+    const invalid = manager.normalizeConfig({ api_keys: { naver_client_id: {}, naver_client_secret: ['secret'] } });
+    assert.equal(invalid.api_keys.naver_client_id, '');
+    assert.equal(invalid.api_keys.naver_client_secret, '');
+    const bounded = manager.normalizeConfig({ api_keys: { naver_client_id: 'x'.repeat(1200), naver_client_secret: 'y'.repeat(1200) } });
+    assert.equal(bounded.api_keys.naver_client_id.length, 1024);
+    assert.equal(bounded.api_keys.naver_client_secret.length, 1024);
+});
+
+test('폐기한 네이버 발급처 설정은 저장에서 제외하고 기존 인증값은 유지한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-naver-migration-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, {
+        naver_photo_api: 'legacy',
+        api_keys: { naver_client_id: ' saved-id ', naver_client_secret: ' saved-secret ' },
+    });
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
+    const loaded = manager.loadConfig();
+    assert.equal(Object.hasOwn(loaded, 'naver_photo_api'), false);
+    assert.equal(loaded.api_keys.naver_client_id, 'saved-id');
+    assert.equal(loaded.api_keys.naver_client_secret, 'saved-secret');
+    assert.equal(manager.saveConfig({ language: 'en', naver_photo_api: 'hub' }), true);
+    const saved = JSON.parse(fs.readFileSync(dataConfigPath(root), 'utf8'));
+    assert.equal(Object.hasOwn(saved, 'naver_photo_api'), false);
+    const restarted = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
+    assert.equal(Object.hasOwn(restarted, 'naver_photo_api'), false);
+    assert.equal(restarted.api_keys.naver_client_id, 'saved-id');
+    assert.equal(restarted.api_keys.naver_client_secret, 'saved-secret');
+    const input = { naver_photo_api: 'legacy' };
+    manager.normalizeConfig(input);
+    assert.equal(input.naver_photo_api, 'legacy');
+});
+
 test('YES24 키와 기본 검색 API를 저장 후 다시 불러온다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-yes24-'));
     try {

@@ -198,7 +198,7 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
                         <details className="readive-network-settings">
                             <summary>{t('readive.network_settings')}</summary>
                             <div className="readive-network-content">
-                                <div className="readive-row readive-interface-row">
+                                <div className={`readive-row readive-interface-row${sharing ? ' sharing-field sharing-field-address' : ''}`}>
                                     <label className={sharing ? 'sharing-label' : undefined} htmlFor="readive-interface">{t('readive.interface')}</label>
                                     <select id="readive-interface" className={sharing ? 'sharing-input-select' : undefined} value={selectedAddress} disabled={busy || status.running || !statusLoaded} onChange={event => setAddress(event.target.value)}>
                                         {!interfaces.length && <option value="">{t('readive.no_interface')}</option>}

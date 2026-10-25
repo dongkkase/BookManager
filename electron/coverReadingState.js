@@ -58,18 +58,25 @@ export function applyCoverReadingAdjustment(storage, adjustment) {
     const { sourcePath, filePath } = adjustment;
     if (!sourcePath || !filePath) return;
     const updates = [];
-    const stateKey = `bookmanager-viewer-state:${sourcePath}`;
-    const state = storedJson(storage, stateKey);
     const databaseState = adjustment.readingState;
-    if (databaseState && (!state || timestamp(state.updatedAt) <= timestamp(adjustment.previousUpdatedAt))) {
-        updates.push([`bookmanager-viewer-state:${filePath}`, {
-            ...(state || {}),
-            ...databaseState,
-            coverEditPageIndex: databaseState.pageIndex,
-            readiveLocator: databaseState.locator,
-        }]);
-    } else if (state && typeof state === 'object' && !Array.isArray(state)) {
-        updates.push([`bookmanager-viewer-state:${filePath}`, remapCoverReadingState(state, adjustment)]);
+    for (const prefix of ['bookmanager-viewer-state:', 'bookmanager-viewer-external-state:']) {
+        const sourceKey = `${prefix}${sourcePath}`;
+        const targetKey = `${prefix}${filePath}`;
+        let state = storedJson(storage, sourceKey);
+        if (prefix === 'bookmanager-viewer-external-state:' && !state) {
+            if (storage.getItem(targetKey) === null) continue;
+            state = storedJson(storage, `bookmanager-viewer-state:${sourcePath}`);
+        }
+        if (databaseState && (!state || timestamp(state.updatedAt) <= timestamp(adjustment.previousUpdatedAt))) {
+            updates.push([targetKey, {
+                ...(state || {}),
+                ...databaseState,
+                coverEditPageIndex: databaseState.pageIndex,
+                readiveLocator: databaseState.locator,
+            }]);
+        } else if (state && typeof state === 'object' && !Array.isArray(state)) {
+            updates.push([targetKey, remapCoverReadingState(state, adjustment)]);
+        }
     }
     const bookmarks = storedJson(storage, `bookmanager-viewer-bookmarks:${sourcePath}`);
     if (Array.isArray(bookmarks)) {

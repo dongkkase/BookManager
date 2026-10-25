@@ -303,7 +303,7 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                             <span>{t('tab_sharing_https_enabled')}</span>
                         </label>
                         <div className="sharing-desc">{t('tab_sharing_https_desc')}</div>
-                        <div className="sharing-row">
+                        <div className="sharing-field sharing-field-address">
                             <label className="sharing-label" htmlFor="sharing-server-address">
                                 {text('tab_sharing_server_address', '서버 주소')}
                             </label>
@@ -334,24 +334,26 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                     <div className="sharing-groupbox-content">
                         <div className="sharing-desc">{t('reading_lists.shared_hint')}</div>
                         <div className="sharing-row">
-                            <label className="sharing-label" htmlFor="opds-port">{t('tab_sharing_port')}</label>
-                            <input
-                                id="opds-port"
-                                type="number"
-                                className="sharing-input-num"
-                                min={MIN_PORT}
-                                max={MAX_PORT}
-                                value={opdsPort}
-                                onChange={event => {
-                                    setOpdsPort(event.target.value);
-                                    const value = Number(event.target.value);
-                                    if (value >= MIN_PORT && value <= MAX_PORT) {
-                                        saveConfig?.({ opds_port: value }).catch(error => appendLog('ERROR', error.message));
-                                    }
-                                }}
-                                onBlur={() => savePort('opds_port', opdsPort, 8080, setOpdsPort)}
-                                disabled={opdsRunning || isServerBusy('OPDS')}
-                            />
+                            <div className="sharing-field sharing-field-port">
+                                <label className="sharing-label" htmlFor="opds-port">{t('tab_sharing_port')}</label>
+                                <input
+                                    id="opds-port"
+                                    type="number"
+                                    className="sharing-input-num"
+                                    min={MIN_PORT}
+                                    max={MAX_PORT}
+                                    value={opdsPort}
+                                    onChange={event => {
+                                        setOpdsPort(event.target.value);
+                                        const value = Number(event.target.value);
+                                        if (value >= MIN_PORT && value <= MAX_PORT) {
+                                            saveConfig?.({ opds_port: value }).catch(error => appendLog('ERROR', error.message));
+                                        }
+                                    }}
+                                    onBlur={() => savePort('opds_port', opdsPort, 8080, setOpdsPort)}
+                                    disabled={opdsRunning || isServerBusy('OPDS')}
+                                />
+                            </div>
                             <button
                                 type="button"
                                 className={`sharing-btn-toggle ${opdsRunning ? 'running' : ''}`}
@@ -370,8 +372,9 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                             <div className="sharing-spacer" />
                         </div>
 
-                        <div className="sharing-row url-row">
-                            <input type="text" className="sharing-input-url" value={opdsUrl} readOnly />
+                        <div className="sharing-field sharing-field-url url-row">
+                            <label className="sharing-label" htmlFor="opds-url">URL</label>
+                            <input id="opds-url" type="text" className="sharing-input-url" value={opdsUrl} readOnly />
                             <button type="button" className="sharing-btn-copy" onClick={() => handleCopyUrl(opdsUrl)}>
                                 <FaIcon name="copy" /> {t('tab_sharing_copy')}
                             </button>
@@ -385,24 +388,26 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                         <div className="sharing-desc">{t('tab_sharing_web_desc')}</div>
 
                         <div className="sharing-row">
-                            <label className="sharing-label" htmlFor="web-port">{t('tab_sharing_port')}</label>
-                            <input
-                                id="web-port"
-                                type="number"
-                                className="sharing-input-num"
-                                min={MIN_PORT}
-                                max={MAX_PORT}
-                                value={webPort}
-                                onChange={event => {
-                                    setWebPort(event.target.value);
-                                    const value = Number(event.target.value);
-                                    if (value >= MIN_PORT && value <= MAX_PORT) {
-                                        saveConfig?.({ web_port: value }).catch(error => appendLog('ERROR', error.message));
-                                    }
-                                }}
-                                onBlur={() => savePort('web_port', webPort, 8082, setWebPort)}
-                                disabled={webRunning || isServerBusy('Web')}
-                            />
+                            <div className="sharing-field sharing-field-port">
+                                <label className="sharing-label" htmlFor="web-port">{t('tab_sharing_port')}</label>
+                                <input
+                                    id="web-port"
+                                    type="number"
+                                    className="sharing-input-num"
+                                    min={MIN_PORT}
+                                    max={MAX_PORT}
+                                    value={webPort}
+                                    onChange={event => {
+                                        setWebPort(event.target.value);
+                                        const value = Number(event.target.value);
+                                        if (value >= MIN_PORT && value <= MAX_PORT) {
+                                            saveConfig?.({ web_port: value }).catch(error => appendLog('ERROR', error.message));
+                                        }
+                                    }}
+                                    onBlur={() => savePort('web_port', webPort, 8082, setWebPort)}
+                                    disabled={webRunning || isServerBusy('Web')}
+                                />
+                            </div>
                             <button
                                 type="button"
                                 className={`sharing-btn-toggle ${webRunning ? 'running' : ''}`}
@@ -421,8 +426,9 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                             <div className="sharing-spacer" />
                         </div>
 
-                        <div className="sharing-row url-row">
-                            <input type="text" className="sharing-input-url" value={webUrl} readOnly />
+                        <div className="sharing-field sharing-field-url url-row">
+                            <label className="sharing-label" htmlFor="web-url">URL</label>
+                            <input id="web-url" type="text" className="sharing-input-url" value={webUrl} readOnly />
                             <button type="button" className="sharing-btn-copy" onClick={() => handleCopyUrl(webUrl)}>
                                 <FaIcon name="copy" /> {t('tab_sharing_copy')}
                             </button>
@@ -435,28 +441,30 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                     <div className="sharing-groupbox-content">
                         <div className="sharing-desc">{t('tab_sharing_webdav_desc')}</div>
 
-                        <div className="sharing-row">
-                            <label className="sharing-label" htmlFor="webdav-id">{t('tab_sharing_webdav_id')}</label>
-                            <input
-                                id="webdav-id"
-                                type="text"
-                                className="sharing-input"
-                                value={webdavId}
-                                onChange={event => {
-                                    setWebdavId(event.target.value);
-                                    saveConfig?.({
-                                        webdav_username: event.target.value.trim() || 'user',
-                                    }).catch(error => appendLog('ERROR', error.message));
-                                }}
-                                onBlur={() => saveCredential('webdav_username', webdavId, 'user', setWebdavId)}
-                                disabled={webdavRunning}
-                            />
-                            <label className="sharing-label ml-10" htmlFor="webdav-password">{t('tab_sharing_webdav_pw')}</label>
-                            <div className="sharing-pw-wrapper">
+                        <div className="sharing-row sharing-credentials-row">
+                            <div className="sharing-field sharing-field-credential">
+                                <label className="sharing-label" htmlFor="webdav-id">{t('tab_sharing_webdav_id')}</label>
+                                <input
+                                    id="webdav-id"
+                                    type="text"
+                                    className="sharing-input"
+                                    value={webdavId}
+                                    onChange={event => {
+                                        setWebdavId(event.target.value);
+                                        saveConfig?.({
+                                            webdav_username: event.target.value.trim() || 'user',
+                                        }).catch(error => appendLog('ERROR', error.message));
+                                    }}
+                                    onBlur={() => saveCredential('webdav_username', webdavId, 'user', setWebdavId)}
+                                    disabled={webdavRunning}
+                                />
+                            </div>
+                            <div className="sharing-field sharing-field-credential">
+                                <label className="sharing-label" htmlFor="webdav-password">{t('tab_sharing_webdav_pw')}</label>
                                 <input
                                     id="webdav-password"
                                     type={webdavPwVisible ? 'text' : 'password'}
-                                    className="sharing-input pw-input"
+                                    className="sharing-input"
                                     value={webdavPw}
                                     onChange={event => {
                                         setWebdavPw(event.target.value);
@@ -477,28 +485,29 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                                     <FaIcon name={webdavPwVisible ? 'eye' : 'eyeSlash'} />
                                 </button>
                             </div>
-                            <div className="sharing-spacer" />
                         </div>
 
                         <div className="sharing-row">
-                            <label className="sharing-label" htmlFor="webdav-port">{t('tab_sharing_port')}</label>
-                            <input
-                                id="webdav-port"
-                                type="number"
-                                className="sharing-input-num"
-                                min={MIN_PORT}
-                                max={MAX_PORT}
-                                value={webdavPort}
-                                onChange={event => {
-                                    setWebdavPort(event.target.value);
-                                    const value = Number(event.target.value);
-                                    if (value >= MIN_PORT && value <= MAX_PORT) {
-                                        saveConfig?.({ webdav_port: value }).catch(error => appendLog('ERROR', error.message));
-                                    }
-                                }}
-                                onBlur={() => savePort('webdav_port', webdavPort, 8081, setWebdavPort)}
-                                disabled={webdavRunning || isServerBusy('WebDAV')}
-                            />
+                            <div className="sharing-field sharing-field-port">
+                                <label className="sharing-label" htmlFor="webdav-port">{t('tab_sharing_port')}</label>
+                                <input
+                                    id="webdav-port"
+                                    type="number"
+                                    className="sharing-input-num"
+                                    min={MIN_PORT}
+                                    max={MAX_PORT}
+                                    value={webdavPort}
+                                    onChange={event => {
+                                        setWebdavPort(event.target.value);
+                                        const value = Number(event.target.value);
+                                        if (value >= MIN_PORT && value <= MAX_PORT) {
+                                            saveConfig?.({ webdav_port: value }).catch(error => appendLog('ERROR', error.message));
+                                        }
+                                    }}
+                                    onBlur={() => savePort('webdav_port', webdavPort, 8081, setWebdavPort)}
+                                    disabled={webdavRunning || isServerBusy('WebDAV')}
+                                />
+                            </div>
                             <button
                                 type="button"
                                 className={`sharing-btn-toggle ${webdavRunning ? 'running' : ''}`}
@@ -517,8 +526,9 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
                             <div className="sharing-spacer" />
                         </div>
 
-                        <div className="sharing-row url-row">
-                            <input type="text" className="sharing-input-url" value={webdavUrl} readOnly />
+                        <div className="sharing-field sharing-field-url url-row">
+                            <label className="sharing-label" htmlFor="webdav-url">URL</label>
+                            <input id="webdav-url" type="text" className="sharing-input-url" value={webdavUrl} readOnly />
                             <button type="button" className="sharing-btn-copy" onClick={() => handleCopyUrl(webdavUrl)}>
                                 <FaIcon name="copy" /> {t('tab_sharing_copy')}
                             </button>

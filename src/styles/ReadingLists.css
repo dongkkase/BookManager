@@ -43,7 +43,7 @@
     font-size: var(--font-xs);
 }
 
-.recent-list-toolbar {
+.recent-list-toolbar:not(.is-inline) {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -53,15 +53,14 @@
     font-size: var(--font-xs);
 }
 
-.recent-list-toolbar label {
+.recent-list-toolbar:not(.is-inline) label {
     display: flex;
     align-items: center;
     gap: 6px;
     color: var(--muted);
 }
 
-.recent-list-toolbar select,
-.recent-list-toolbar button {
+.recent-list-toolbar:not(.is-inline) button:not(.toolbar-btn) {
     max-width: 100%;
     padding: 5px 8px;
     border: 1px solid var(--line);
@@ -71,7 +70,7 @@
     font: inherit;
 }
 
-.recent-list-toolbar button {
+.recent-list-toolbar:not(.is-inline) button {
     cursor: pointer;
 }
 
@@ -79,4 +78,41 @@
     margin-left: auto;
     color: var(--muted);
     white-space: nowrap;
+}
+
+.right-toolbar-left:has(> .recent-list-toolbar.is-inline) {
+    align-items: flex-start;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.recent-list-toolbar.is-inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.recent-list-toolbar-controls {
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.recent-list-toolbar-controls > .toolbar-btn,
+.recent-list-toolbar-controls > .toolbar-dropdown {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.recent-list-toolbar-controls > .toolbar-btn:first-child {
+    border-radius: 3px 0 0 3px;
+}
+
+.recent-list-toolbar.is-inline .recent-list-result-count {
+    margin-left: 0;
+    font-size: var(--font-xs);
+    font-variant-numeric: tabular-nums;
 }

@@ -1,0 +1,272 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { authorHue, authorInitials, authorKey, authorNames, buildAuthorCatalog, buildAuthorIndex, getAuthorCatalog, normalizeAuthorProfile, prepareAuthorCatalog } from './authorCatalog.js';
+import { buildFolderCharacterIndex } from './folderCharacterIndex.js';
+
+test('저자 이름은 공동저자 구분자를 처리하고 대소문자·공백·유니코드 차이를 중복으로 세지 않는다', () => {
+    const names = authorNames({ writer: ' Jane   Doe, 한강;JANE DOE | 한강\n한강; Émile Zola, E\u0301mile Zola , ; | ' });
+    assert.deepEqual(names.map(authorKey), ['jane doe', '한강', 'émile zola']);
+    assert.equal(authorKey('  JANE\t DOE  '), 'jane doe');
+    assert.equal(authorKey('한강'), '한강');
+    assert.equal(authorKey(null), '');
+});
+
+test('명시된 writer만 저자로 사용하고 writer 필드가 없는 경우에만 author로 보완한다', () => {
+    assert.deepEqual(authorNames({ writer: '글 작가', author: '다른 저자', creators: '제작자' }), ['글 작가']);
+    assert.deepEqual(authorNames({ author: '저자', creators: 'Adobe PDF Library' }), ['저자']);
+    for (const writer of ['', ' \t ', undefined, null, {}, 123]) {
+        assert.deepEqual(authorNames({ writer, author: 'Adobe PDF Library', creators: 'Adobe PDF Library' }), []);
+    }
+    assert.deepEqual(authorNames({ creators: 'Adobe PDF Library' }), []);
+    assert.deepEqual(authorNames({ author: '', creators: 'Acrobat Distiller' }), []);
+    for (const file of [null, undefined, {}, { writer: ' ' }, { writer: 123 }]) assert.deepEqual(authorNames(file), []);
+});
+
+test('공동저자는 같은 도서를 공유하되 중복 경로·폴더·저자 없는 파일을 도서 수에 포함하지 않는다', () => {
+    const first = Object.freeze({ path: '/books/one.epub', writer: 'Alice, Bob, Alice' });
+    const second = Object.freeze({ full_path: '/books/two.pdf', path: '/display/two.pdf', author: 'alice' });
+    const files = Object.freeze([
+        first, second,
+        { path: '/books/one.epub', writer: 'Alice, Bob' },
+        { full_path: '/books/two.pdf', writer: 'Alice' },
+        { path: '/books/directory', writer: 'Alice', isDirectory: true },
+        { path: '/books/other-directory', writer: 'Bob', is_folder: true },
+        { path: '/books/unknown.epub' }, { writer: 'Missing path' }, null, {},
+        { full_path: {}, path: '/books/three.txt', author: 'Bob' },
+        { path: '/books/software.pdf', writer: '', author: 'Adobe PDF Library', creators: 'Adobe PDF Library' },
+        { path: '/books/producer-only.pdf', creators: 'Acrobat Distiller' },
+    ]);
+    const result = buildAuthorCatalog(files, 'en');
+    assert.deepEqual(result.map(author => author.key), ['alice', 'bob']);
+    assert.deepEqual(result[0].books, [first, second]);
+    assert.deepEqual(result[1].books.map(file => file.path), ['/books/one.epub', '/books/three.txt']);
+    assert.equal(result[0].name, 'Alice');
+    assert.equal(result[0].paths, undefined);
+    assert.equal(first.writer, 'Alice, Bob, Alice');
+    assert.deepEqual(buildAuthorCatalog(), []);
+    assert.deepEqual(buildAuthorCatalog(null), []);
+    assert.deepEqual(buildAuthorCatalog({ files }), []);
+});
+
+test('한글 초성·영문·숫자·기호 그룹을 만들고 같은 영문 이름은 숫자 순서로 정렬한다', () => {
+    const names = ['한강', '김영하', '까치', '나태주', 'Alice 10', 'Alice 2', 'Émile Zola', '123 저자', '#익명'];
+    const files = names.map((writer, index) => ({ writer, path: `/books/${index}.epub` }));
+    for (const language of ['ko', 'en']) {
+        const result = buildAuthorCatalog(files, language);
+        const byName = new Map(result.map(author => [author.name, author.initial]));
+        assert.deepEqual(Object.fromEntries(byName), {
+            한강: 'ㅎ', 김영하: 'ㄱ', 까치: 'ㄱ', 나태주: 'ㄴ',
+            'Alice 10': 'A', 'Alice 2': 'A', 'Émile Zola': 'E', '123 저자': '0–9', '#익명': '#',
+        });
+        assert.ok(result.findIndex(author => author.name === 'Alice 2') < result.findIndex(author => author.name === 'Alice 10'));
+    }
+});
+
+test('마지막 추가일은 가장 최근의 유효한 날짜이며 누락·잘못된 날짜를 무시한다', () => {
+    const result = buildAuthorCatalog([
+        { path: '/one.epub', writer: 'Author', readingListAddedAt: '2026-10-22T01:00:00Z' },
+        { path: '/two.epub', writer: 'Author', readingListAddedAt: 'not a date' },
+        { path: '/three.epub', writer: 'Author', readingListAddedAt: '2026-10-25T11:30:00+09:00' },
+        { path: '/four.epub', writer: 'Author' },
+        { path: '/five.epub', writer: 'Unknown date', readingListAddedAt: null },
+    ], 'en');
+    assert.equal(result.find(author => author.name === 'Author').lastAdded, Date.parse('2026-10-25T02:30:00Z'));
+    assert.equal(result.find(author => author.name === 'Unknown date').lastAdded, 0);
+});
+
+test('같은 도서 스냅샷의 저자 집계는 재사용하고 새 스냅샷과 언어 변경은 다시 계산한다', () => {
+    const files = [{ path: '/books/one.epub', writer: '한강' }];
+    const first = getAuthorCatalog(files, 'ko');
+    assert.equal(getAuthorCatalog(files, 'ko'), first);
+    assert.notEqual(getAuthorCatalog(files, 'en'), first);
+    const refreshed = getAuthorCatalog([...files, { path: '/books/two.epub', writer: '김초엽' }], 'ko');
+    assert.equal(refreshed.length, 2);
+    assert.notEqual(refreshed, first);
+    assert.equal(getAuthorCatalog(files, 'ko'), first);
+});
+
+test('저자 초성 색인은 각 그룹의 첫 저자와 개수를 기존 문자 탐색기와 동일하게 유지한다', () => {
+    const names = ['한강', '김영하', '김초엽', '까치', '123 저자', '#익명', 'Alice 2', 'Alice 10', 'Émile Zola', 'Öberg', '大江', '村上', 'あき', 'いち', 'カナ', '가나', 'Йван', 'Иван'];
+    const files = names.map((writer, index) => ({ writer, path: `/books/${index}.epub` }));
+    for (const language of ['ko', 'en', 'ja', 'sv']) {
+        const authors = getAuthorCatalog(files, language);
+        const expected = buildFolderCharacterIndex(authors.map(author => ({ name: author.name, path: author.key })), language);
+        assert.deepEqual(buildAuthorIndex(authors, language), expected);
+        const filtered = authors.filter(author => !author.name.includes('김'));
+        assert.deepEqual(buildAuthorIndex(filtered, language), buildFolderCharacterIndex(filtered.map(author => ({ name: author.name, path: author.key })), language));
+    }
+});
+
+test('대형 카탈로그 준비는 작업을 나누고 배지와 화면에서 완성된 집계를 재사용한다', async t => {
+    let time = 0;
+    t.mock.method(performance, 'now', () => time += 10);
+    const files = Array.from({ length: 2048 }, (_, index) => ({
+        path: `/books/${index}.epub`, writer: `작가 ${index % 300}, 공동 저자`, readingListAddedAt: '2026-10-25T00:00:00Z',
+    }));
+    let yielded = 0;
+    const prepared = await prepareAuthorCatalog(files, 'ko', {
+        yieldTask: async () => { yielded += 1; },
+    });
+    assert.ok(yielded > 1);
+    assert.deepEqual(prepared, buildAuthorCatalog(files, 'ko'));
+    assert.equal(getAuthorCatalog(files, 'ko'), prepared);
+    assert.equal(await prepareAuthorCatalog(files, 'ko', { yieldTask: () => assert.fail('Cached catalogs must not be rebuilt') }), prepared);
+});
+
+test('라이브러리가 변경되면 진행 중인 저자 집계를 중단하고 부분 결과를 캐시하지 않는다', async t => {
+    let time = 0;
+    let active = true;
+    let visited = 0;
+    t.mock.method(performance, 'now', () => time += 10);
+    const files = Array.from({ length: 2048 }, (_, index) => ({
+        path: `/books/${index}.epub`,
+        get writer() { visited += 1; return `작가 ${index % 100}`; },
+    }));
+    const result = await prepareAuthorCatalog(files, 'ko', {
+        isCurrent: () => active,
+        yieldTask: async () => { active = false; },
+    });
+    assert.equal(result, null);
+    assert.ok(visited < files.length);
+    assert.equal(getAuthorCatalog(files, 'ko').reduce((total, author) => total + author.books.length, 0), files.length);
+});
+
+test('프로필은 신뢰할 수 없는 저장 URL을 버리고 검증한 저자 ID에서 사진과 출처 URL을 만든다', () => {
+    const profile = normalizeAuthorProfile({
+        id: 'OL23919A', name: 'J. K. Rowling', birthDate: '1965', deathDate: null, topWork: 'Harry Potter',
+        alternateNames: ['Joanne Rowling', null, 12, ...Array.from({ length: 10 }, (_, index) => `Name ${index}`)],
+        photoUrl: 'javascript:alert(1)', sourceUrl: 'https://openlibrary.org.attacker.test/author',
+        privateValue: 'must not be retained',
+    });
+    assert.equal(profile.photoUrl, 'https://covers.openlibrary.org/a/olid/OL23919A-M.jpg?default=false');
+    assert.equal(profile.sourceUrl, 'https://openlibrary.org/authors/OL23919A');
+    assert.equal(profile.deathDate, '');
+    assert.equal(profile.alternateNames.length, 8);
+    assert.ok(profile.alternateNames.every(name => typeof name === 'string'));
+    assert.equal(profile.privateValue, undefined);
+    assert.equal(normalizeAuthorProfile({ id: 'OL1A', name: 'x'.repeat(1001) }).name.length, 1000);
+    for (const id of ['', 'OL0A', 'OL1W', 'ol1a', 'OL1A/../../private', '/authors/OL1A', 'https://attacker.test/OL1A', `OL${'1'.repeat(16)}A`, ['OL1A'], null, 1]) {
+        assert.equal(normalizeAuthorProfile({ id, name: 'Invalid' }), null);
+    }
+    assert.equal(normalizeAuthorProfile(null), null);
+});
+
+test('사진 없는 저자의 이니셜과 색상은 이름에서 일관되게 계산된다', () => {
+    assert.equal(authorInitials(' Jane Austen '), 'JA');
+    assert.equal(authorInitials('A. A. Milne'), 'AM');
+    assert.equal(authorInitials('한강'), '한강');
+    assert.equal(authorInitials(''), '?');
+    assert.equal(authorInitials('𠮷田'), '𠮷田');
+    assert.equal(authorHue(' Jane  Doe '), authorHue('jane doe'));
+    assert.equal(authorHue('한강'), authorHue('한강'));
+    for (const name of ['한강', 'Jane Doe', '', 'Émile Zola', '𠮷田']) {
+        assert.ok(Number.isInteger(authorHue(name)) && authorHue(name) >= 0 && authorHue(name) < 360);
+    }
+});
+
+test('Wikidata·Wikipedia 프로필은 검증된 식별자와 Wikimedia 사진·저작자 정보를 보존한다', () => {
+    const photoUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Han_Kang.jpg/320px-Han_Kang.jpg';
+    const wikidata = normalizeAuthorProfile({
+        provider: 'wikidata', id: 'Q12345', name: '한강', photoUrl,
+        aliases: ['Han Kang'], works: ['채식주의자', null, '채식주의자'], description: '<b>소설가</b>\u0000 소개',
+        sourceUrl: 'https://untrusted.invalid/profile', entityId: 'Q666',
+        imageSourceUrl: 'https://commons.wikimedia.org/wiki/File:Han_Kang.jpg',
+        imageLicense: '<a href="javascript:bad">CC BY-SA 4.0</a>', imageArtist: '<b>Photographer</b>',
+    });
+    assert.equal(wikidata.sourceUrl, 'https://www.wikidata.org/wiki/Q12345');
+    assert.equal(wikidata.entityId, 'Q12345');
+    assert.equal(wikidata.photoUrl, photoUrl);
+    assert.deepEqual(wikidata.alternateNames, ['Han Kang']);
+    assert.deepEqual(wikidata.works, ['채식주의자']);
+    assert.equal(wikidata.description, '소설가  소개');
+    assert.equal(wikidata.imageLicense, 'CC BY-SA 4.0');
+    assert.equal(wikidata.imageArtist, 'Photographer');
+    assert.equal(wikidata.imageSourceUrl, 'https://commons.wikimedia.org/wiki/File:Han_Kang.jpg');
+    assert.deepEqual(normalizeAuthorProfile(wikidata), wikidata);
+    const wikipedia = normalizeAuthorProfile({ ...wikidata, provider: 'wikipedia', id: 'wikipedia:ja:12345' });
+    assert.equal(wikipedia.sourceUrl, 'https://ja.wikipedia.org/?curid=12345');
+    assert.equal(wikipedia.entityId, 'Q12345');
+    assert.equal(normalizeAuthorProfile({ id: 'OL1A', photoUrl: '' }).photoUrl, '');
+});
+
+test('새 프로필의 외부 URL·잘못된 식별자·비이미지 경로는 사용하지 않는다', () => {
+    for (const entry of [
+        { provider: 'wikidata', id: 'Q0' }, { provider: 'wikidata', id: 'Q123/extra' },
+        { provider: 'wikipedia', id: 'wikipedia:attacker:123' }, { provider: 'wikipedia', id: 'wikipedia:en:0' },
+        { provider: 'unknown', id: 'OL1A' }, { provider: 'wikidata', id: 'OL1A' },
+    ]) assert.equal(normalizeAuthorProfile(entry), null);
+    for (const photoUrl of [
+        'https://attacker.invalid/photo.jpg', 'http://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg',
+        'https://upload.wikimedia.org.attacker.invalid/wikipedia/commons/a/ab/Photo.jpg',
+        'https://user:secret@upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg',
+        'https://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.svg',
+        'https://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg?redirect=1',
+        'https://upload.wikimedia.org/wikipedia/commons/a/ab/%00Photo.jpg', 'javascript:alert(1)',
+    ]) assert.equal(normalizeAuthorProfile({ provider: 'wikidata', id: 'Q1', photoUrl }).photoUrl, '');
+    for (const imageSourceUrl of ['https://attacker.invalid/File:Photo.jpg', 'https://commons.wikimedia.org/wiki/Main_Page', 'https://en.wikipedia.org/wiki/File:Photo.jpg#section']) {
+        assert.equal(normalizeAuthorProfile({ provider: 'wikidata', id: 'Q1', imageSourceUrl }).imageSourceUrl, '');
+    }
+});
+
+test('직접 고른 사진은 로컬 캐시 주소를 사용하고 기존 작가 소개와 출처를 유지한다', () => {
+    const photoOverride = { id: 'a1'.repeat(32), sourceUrl: 'https://images.example.com/author.jpg?size=large', query: '한강 작가' };
+    const original = {
+        provider: 'wikidata', id: 'Q123', name: '한강', description: '한국의 소설가', birthDate: '1970',
+        topWork: '채식주의자', works: ['채식주의자'], alternateNames: ['Han Kang'],
+        photoUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Author.jpg',
+        imageSourceUrl: 'https://commons.wikimedia.org/wiki/File:Author.jpg', imageLicense: 'CC BY-SA', imageArtist: 'Previous photographer',
+    };
+    const updated = normalizeAuthorProfile({ ...original, photoOverride, privatePath: '/Users/private/photo.png' });
+    assert.equal(updated.photoUrl, `bookmanager-thumbnail://author-photo/${photoOverride.id}.png`);
+    assert.equal(updated.sourceUrl, 'https://www.wikidata.org/wiki/Q123');
+    assert.equal(updated.description, original.description);
+    assert.equal(updated.birthDate, original.birthDate);
+    assert.deepEqual(updated.works, original.works);
+    assert.deepEqual(updated.alternateNames, original.alternateNames);
+    assert.equal(updated.imageSourceUrl, photoOverride.sourceUrl);
+    assert.equal(updated.imageLicense, '');
+    assert.equal(updated.imageArtist, '');
+    assert.equal(updated.privatePath, undefined);
+    assert.deepEqual(updated.photoOverride, photoOverride);
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(updated))), updated);
+    assert.equal(normalizeAuthorProfile({ id: 'OL1A', name: '한강', photoOverride }).sourceUrl, 'https://openlibrary.org/authors/OL1A');
+});
+
+test('사진만 선택한 작가는 검증한 해시와 검색어로 Naver 프로필과 출처를 만든다', () => {
+    const id = '0123456789abcdef'.repeat(4);
+    const updated = normalizeAuthorProfile({
+        provider: 'naver', id, name: '한강', photoUrl: 'file:///private/photo.png', sourceUrl: 'javascript:alert(1)',
+        photoOverride: { id, sourceUrl: 'https://images.example.com/author.png', query: '<b>한강</b>\n 작가', filePath: '/private/photo.png' },
+    });
+    assert.equal(updated.sourceUrl, `https://search.naver.com/search.naver?where=image&query=${encodeURIComponent('한강 작가')}`);
+    assert.equal(updated.photoUrl, `bookmanager-thumbnail://author-photo/${id}.png`);
+    assert.deepEqual(updated.photoOverride, { id, sourceUrl: 'https://images.example.com/author.png', query: '한강 작가' });
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(updated))), updated);
+    assert.equal(normalizeAuthorProfile({ ...updated, photoOverride: { ...updated.photoOverride, query: '가'.repeat(300) } }).photoOverride.query.length, 200);
+});
+
+test('수동 사진의 잘못된 해시와 비공개 URL은 프로필 이미지로 사용하지 않는다', () => {
+    const id = 'ab'.repeat(32);
+    const photoOverride = { id, sourceUrl: 'https://images.example.com/author.jpg', query: '작가 사진' };
+    for (const invalidId of ['', 'AB'.repeat(32), 'a'.repeat(63), 'a'.repeat(65), '../photo.png', `${id}.png`, ['ab'.repeat(32)]]) {
+        assert.equal(normalizeAuthorProfile({ provider: 'naver', id, photoOverride: { ...photoOverride, id: invalidId } }), null);
+    }
+    for (const sourceUrl of [
+        'javascript:alert(1)', 'file:///private/photo.jpg', 'data:image/png;base64,AAAA',
+        'https://user:secret@images.example.com/photo.jpg', 'https://images.example.com:8443/photo.jpg',
+        'http://localhost/photo.jpg', 'http://localhost./photo.jpg', 'http://server.local/photo.jpg', 'http://intranet/photo.jpg',
+        'http://127.0.0.1/photo.jpg', 'http://2130706433/photo.jpg', 'http://0x7f000001/photo.jpg',
+        'http://10.0.0.1/photo.jpg', 'http://172.16.1.1/photo.jpg', 'http://192.168.0.1/photo.jpg',
+        'http://169.254.169.254/photo.jpg', 'http://100.64.0.1/photo.jpg', 'http://[::1]/photo.jpg',
+        'http://[::ffff:127.0.0.1]/photo.jpg', 'https://images.example.com/\\photo.jpg', 'https://images.example.com/\nphoto.jpg',
+    ]) {
+        const invalidOverride = { ...photoOverride, sourceUrl };
+        assert.equal(normalizeAuthorProfile({ provider: 'naver', id, photoOverride: invalidOverride }), null, sourceUrl);
+        const existing = normalizeAuthorProfile({ id: 'OL1A', photoOverride: invalidOverride });
+        assert.equal(existing.photoOverride, undefined);
+        assert.equal(existing.photoUrl, 'https://covers.openlibrary.org/a/olid/OL1A-M.jpg?default=false');
+    }
+    assert.equal(normalizeAuthorProfile({ provider: 'naver', id: 'cd'.repeat(32), photoOverride }), null);
+    assert.equal(normalizeAuthorProfile({ provider: 'naver', id, photoOverride: { ...photoOverride, query: '' } }), null);
+    assert.equal(normalizeAuthorProfile({ provider: 'naver', id }), null);
+});

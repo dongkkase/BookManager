@@ -16,6 +16,7 @@ const imports = {
     react: React,
     '../../recentReadingListState.js': recentReadingListState,
     '../../folderColumnLayout.js': folderColumnLayout,
+    './ToolbarDropdown': { ToolbarSelect: () => null },
 };
 new Function('module', 'exports', 'require', compiled)(module, module.exports, name => imports[name]);
 

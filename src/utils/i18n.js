@@ -5,6 +5,7 @@ export const SUPPORTED_LANGUAGES = ['ko', 'en', 'ja'];
 
 const EXTRA_TRANSLATIONS = {
   ko: {
+    meta_comicvine_first_issue_credits: '첫 권 크레딧 기준',
     support: {
         actions: '프로젝트 지원 및 모바일 앱',
         github: 'GitHub 스타',
@@ -801,6 +802,7 @@ const EXTRA_TRANSLATIONS = {
         add_highlight: '하이라이트 추가',
         add_highlight_short: '하이라이트',
         add_underline: '밑줄 긋기',
+        add_strikethrough: '취소선 긋기',
         copy: '복사',
         copy_success: '텍스트를 복사했습니다.',
         copy_failed: '텍스트를 복사할 수 없습니다.',
@@ -810,6 +812,11 @@ const EXTRA_TRANSLATIONS = {
         highlight_color_blue: '파랑',
         highlight_color_pink: '분홍',
         highlight_color_purple: '보라',
+        highlight_color_orange: '주황',
+        highlight_color_red: '빨강',
+        highlight_color_olive: '올리브',
+        highlight_color_cyan: '청록',
+        highlight_color_gray: '회색',
         search_in_book: '이 책에서 검색',
         search_in_book_short: '책 검색',
         dictionary_search: '사전 검색',
@@ -977,6 +984,7 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   en: {
+    meta_comicvine_first_issue_credits: 'Based on first issue credits',
     support: {
         actions: 'Project support and mobile apps',
         github: 'Star on GitHub',
@@ -1773,6 +1781,7 @@ const EXTRA_TRANSLATIONS = {
         add_highlight: 'Add highlight',
         add_highlight_short: 'Highlight',
         add_underline: 'Underline',
+        add_strikethrough: 'Strikethrough',
         copy: 'Copy',
         copy_success: 'Text copied.',
         copy_failed: 'Could not copy text.',
@@ -1782,6 +1791,11 @@ const EXTRA_TRANSLATIONS = {
         highlight_color_blue: 'Blue',
         highlight_color_pink: 'Pink',
         highlight_color_purple: 'Purple',
+        highlight_color_orange: 'Orange',
+        highlight_color_red: 'Red',
+        highlight_color_olive: 'Olive',
+        highlight_color_cyan: 'Cyan',
+        highlight_color_gray: 'Gray',
         search_in_book: 'Search in this book',
         search_in_book_short: 'Book search',
         dictionary_search: 'Dictionary search',
@@ -1949,6 +1963,7 @@ const EXTRA_TRANSLATIONS = {
     },
   },
   ja: {
+    meta_comicvine_first_issue_credits: '第1巻のクレジットに基づく',
     support: {
         actions: 'プロジェクトの支援とモバイルアプリ',
         github: 'GitHubでスターを付ける',
@@ -2745,6 +2760,7 @@ const EXTRA_TRANSLATIONS = {
         add_highlight: 'ハイライトを追加',
         add_highlight_short: 'ハイライト',
         add_underline: '下線を引く',
+        add_strikethrough: '取り消し線を引く',
         copy: 'コピー',
         copy_success: 'テキストをコピーしました。',
         copy_failed: 'テキストをコピーできませんでした。',
@@ -2754,6 +2770,11 @@ const EXTRA_TRANSLATIONS = {
         highlight_color_blue: '青',
         highlight_color_pink: 'ピンク',
         highlight_color_purple: '紫',
+        highlight_color_orange: 'オレンジ',
+        highlight_color_red: '赤',
+        highlight_color_olive: 'オリーブ',
+        highlight_color_cyan: 'シアン',
+        highlight_color_gray: '灰色',
         search_in_book: 'この本で検索',
         search_in_book_short: '本内検索',
         dictionary_search: '辞書検索',

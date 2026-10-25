@@ -338,12 +338,14 @@ export function setupViewerWindowManager(options = {}) {
         const dbPath = getLibraryDbPath?.();
         if (!session?.filePath || session.preview || !dbPath) return null;
         if (configManager?.canPruneLibraryData?.()
-            && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries)) return null;
+            && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries)
+            && session.retainOutsideLibrary !== true) return null;
         try {
             if (!readingStateDb) readingStateDb = new LibraryDB({ dbPath });
             const saved = await readingStateDb.upsertReadingState(session.filePath, {
                 ...state,
                 format: session.type || state.format || '',
+                retainOutsideLibrary: session.retainOutsideLibrary === true,
             });
             const mainWindow = mainAppWindow();
             if (saved && mainWindow) {
@@ -706,6 +708,10 @@ export function setupViewerWindowManager(options = {}) {
 
     const focusContextWindow = (context, session, options = {}) => {
         coverEditGuard.assertCanOpen(session.filePath);
+        if (session.retainOutsideLibrary === undefined) {
+            session.retainOutsideLibrary = !session.preview
+                && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries);
+        }
         const preserveMiniPlayer = options.preserveMiniPlayer === true;
         const preserveCloseRequest = options.preserveCloseRequest === true;
         const wasMiniPlayerActive = context.kind === 'audio' && context.miniPlayerActive;

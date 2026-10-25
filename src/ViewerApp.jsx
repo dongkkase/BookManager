@@ -7,6 +7,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
 import { viewerPdfResourceOptions } from './viewerPdfResources';
 import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
+import { DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS, normalizeHighlightColor } from './highlightColors.js';
 import { isLibraryReadingStorageAllowed, pruneLibraryReadingStorage } from './libraryReadingStorage';
 import { createViewerTtsRequests } from './viewerTtsRequests';
 import { reportViewerTtsUsage } from './viewerTtsTelemetry';
@@ -185,14 +186,6 @@ const THEMES = [
   { id: 'sepia', label: '세피아', bg: '#d8c3a0', fg: '#24190d', headerFg: '#564936', footerFg: '#5e4f3c' },
   { id: 'white', label: '화이트', bg: '#f7f7f7', fg: '#202020', headerFg: '#5c5c5c', footerFg: '#6d6d6d' },
   { id: 'green', label: '그린', bg: '#dfeedd', fg: '#162018', headerFg: '#4e5a4f', footerFg: '#5e6a5f' },
-];
-const DEFAULT_HIGHLIGHT_COLOR = 'yellow';
-const HIGHLIGHT_COLORS = [
-  { id: 'yellow', label: '노랑', labelKey: 'viewer.context.highlight_color_yellow' },
-  { id: 'green', label: '초록', labelKey: 'viewer.context.highlight_color_green' },
-  { id: 'blue', label: '파랑', labelKey: 'viewer.context.highlight_color_blue' },
-  { id: 'pink', label: '분홍', labelKey: 'viewer.context.highlight_color_pink' },
-  { id: 'purple', label: '보라', labelKey: 'viewer.context.highlight_color_purple' },
 ];
 const DEFAULT_READER_SETTINGS = {
     epubStyle: 'original',
@@ -1502,6 +1495,9 @@ function ViewerFlipBook({
 }
 
 function storageKey(session, suffix) {
+    if (suffix === 'state' && session?.retainOutsideLibrary === true && !session.preview) {
+        return session.filePath ? `bookmanager-viewer-external-state:${session.filePath}` : '';
+    }
   return session?.filePath ? `bookmanager-viewer-${suffix}:${session.filePath}` : '';
 }
 
@@ -2323,27 +2319,31 @@ function selectionFocusPoint(selection, fallbackPoint) {
   return fallbackPoint;
 }
 
-function selectionToolbarPosition(point = {}) {
-  const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
-  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
-  const margin = 10;
-    const toolbarWidth = Math.min(300, viewportWidth - (margin * 2));
-  const x = clamp(Number(point.x) || viewportWidth / 2, margin + (toolbarWidth / 2), viewportWidth - margin - (toolbarWidth / 2));
-  const y = clamp(Number(point.y) || viewportHeight / 2, margin, viewportHeight - margin);
-    const placement = y < 118 && viewportHeight - y > 130 ? 'below' : 'above';
-    const toolbarBottom = placement === 'below' ? y + 112 : y - 12;
-    const submenuPlacement = viewportHeight - toolbarBottom < 92 ? 'above' : 'below';
-    return { x, y, placement, submenuPlacement };
+function selectionToolbarPosition(point = {}, size = {}) {
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
+    const margin = 10;
+    const gap = 12;
+    const toolbarWidth = Math.min(size.width || 300, Math.max(1, viewportWidth - margin * 2));
+    const toolbarHeight = size.height || 129;
+    const anchorX = Number(point.x) || viewportWidth / 2;
+    const anchorY = Number(point.y) || viewportHeight / 2;
+    const x = clamp(anchorX, margin + toolbarWidth / 2, viewportWidth - margin - toolbarWidth / 2);
+    const aboveSpace = anchorY - margin - gap;
+    const belowSpace = viewportHeight - anchorY - margin - gap;
+    const placement = aboveSpace < toolbarHeight && belowSpace > aboveSpace ? 'below' : 'above';
+    const top = clamp(
+        placement === 'below' ? anchorY + gap : anchorY - gap - toolbarHeight,
+        margin,
+        Math.max(margin, viewportHeight - margin - toolbarHeight),
+    );
+    const y = placement === 'below' ? top - gap : top + toolbarHeight + gap;
+    const submenuPlacement = viewportHeight - top - toolbarHeight < 92 ? 'above' : 'below';
+    return { x, y, placement, submenuPlacement, anchorX, anchorY };
 }
 
 function selectionQueryText(text = '', maxLength = 1800) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
-}
-
-function normalizeHighlightColor(color) {
-  const value = String(color || '').trim();
-    if (value === 'underline') return value;
-  return HIGHLIGHT_COLORS.some(item => item.id === value) ? value : DEFAULT_HIGHLIGHT_COLOR;
 }
 
 function renderMarkedText(text = '', pageIndex = 0, highlights = [], activeSearch = null) {
@@ -5137,7 +5137,7 @@ function ViewerNavigationPanel({
             <div key={highlight.id} className="viewer-navigation-list-row">
               <button type="button" className="viewer-navigation-list-item" onClick={() => onHighlightClick(highlight)}>
                 <span className="viewer-navigation-highlight-label">
-                    {highlight.color === 'underline' ? <FaIcon name="underline" /> : (
+                    {highlight.color === 'underline' || highlight.color === 'strikethrough' ? <FaIcon name={highlight.color} /> : (
                         <i className={`viewer-highlight-swatch is-${normalizeHighlightColor(highlight.color)}`} aria-hidden="true" />
                     )}
                   {highlight.snippet || highlight.text}
@@ -5941,6 +5941,11 @@ function ViewerApp() {
   const [comicSinglePageNames, setComicSinglePageNames] = useState([]);
   const [highlights, setHighlights] = useState([]);
   const [selectionMenu, setSelectionMenu] = useState(null);
+    const selectionToolbarRef = useRef(null);
+    const [selectionToolbarSize, setSelectionToolbarSize] = useState({ width: 300, height: 129 });
+    const selectionToolbarLayout = selectionMenu?.kind === 'text-selection'
+        ? selectionToolbarPosition({ x: selectionMenu.anchorX, y: selectionMenu.anchorY }, selectionToolbarSize)
+        : null;
     const [selectionSubmenu, setSelectionSubmenu] = useState(null);
   const [selectionTtsLoading, setSelectionTtsLoading] = useState(false);
   const [navigationPanelOpen, setNavigationPanelOpen] = useState(false);
@@ -7747,6 +7752,21 @@ function ViewerApp() {
     }
   }, [pageCount, pageCountReadyForNavigation, pageIndex, setPageIndexSynced]);
 
+    useLayoutEffect(() => {
+        if (selectionMenu?.kind !== 'text-selection') return undefined;
+        const toolbar = selectionToolbarRef.current;
+        if (!toolbar) return undefined;
+        const measure = () => setSelectionToolbarSize({ width: toolbar.offsetWidth, height: toolbar.offsetHeight });
+        measure();
+        const observer = new ResizeObserver(measure);
+        observer.observe(toolbar);
+        window.addEventListener('resize', measure);
+        return () => {
+            observer.disconnect();
+            window.removeEventListener('resize', measure);
+        };
+    }, [selectionMenu?.kind]);
+
   useEffect(() => {
     selectionTtsRunRef.current += 1;
     setSelectionTtsLoading(false);
@@ -8288,6 +8308,23 @@ function ViewerApp() {
     setActiveSearch({ pageIndex: result.pageIndex, text: result.text });
   }, [goNavigationPage]);
 
+    useEffect(() => {
+        const key = storageKey(session, 'highlights');
+        if (!key) return undefined;
+        const refreshHighlights = event => {
+            if ((event.storageArea && event.storageArea !== window.localStorage) || (event.key !== null && event.key !== key)) return;
+            try {
+                const value = window.localStorage.getItem(key);
+                const nextHighlights = value === null ? [] : JSON.parse(value);
+                if (Array.isArray(nextHighlights)) setHighlights(nextHighlights);
+            } catch {
+                // Keep the current highlights when external storage is unavailable or invalid.
+            }
+        };
+        window.addEventListener('storage', refreshHighlights);
+        return () => window.removeEventListener('storage', refreshHighlights);
+    }, [session?.filePath]);
+
   const saveHighlights = useCallback(nextHighlights => {
     setHighlights(nextHighlights);
     saveJson(storageKey(session, 'highlights'), nextHighlights);
@@ -8575,10 +8612,7 @@ function ViewerApp() {
     const position = selectionToolbarPosition(point);
     setSelectionMenu({
       kind: 'text-selection',
-      x: position.x,
-      y: position.y,
-      placement: position.placement,
-            submenuPlacement: position.submenuPlacement,
+        ...position,
       text: selectedText,
       ttsText: selectionEpubTtsText(selection),
       pageIndex: clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1)),
@@ -10448,10 +10482,11 @@ function ViewerApp() {
             )}
           </MenuSurface>
             <MenuSurface
+                ref={selectionToolbarRef}
                 open={selectionMenu?.kind === 'text-selection'}
-                origin={selectionMenu?.placement === 'below' ? 'top center' : 'bottom center'}
-                className={`viewer-selection-toolbar is-${selectionMenu?.placement || 'above'} has-menus-${selectionMenu?.submenuPlacement || 'below'}`}
-                style={{ left: selectionMenu?.x, top: selectionMenu?.y }}
+                origin={selectionToolbarLayout?.placement === 'below' ? 'top center' : 'bottom center'}
+                className={`viewer-selection-toolbar is-${selectionToolbarLayout?.placement || 'above'} has-menus-${selectionToolbarLayout?.submenuPlacement || 'below'}`}
+                style={{ left: selectionToolbarLayout?.x, top: selectionToolbarLayout?.y }}
                 role="toolbar"
                 aria-label={viewerText('viewer.context.selection_toolbar', '선택 텍스트 도구')}
                 onPointerDown={event => event.stopPropagation()}
@@ -10476,12 +10511,21 @@ function ViewerApp() {
                     ))}
                     <button
                         type="button"
-                        className="viewer-selection-color"
+                        className="viewer-selection-color is-underline"
                         title={viewerText('viewer.context.add_underline', '밑줄 긋기')}
                         aria-label={viewerText('viewer.context.add_underline', '밑줄 긋기')}
                         onClick={() => addHighlightFromSelection('underline')}
                     >
                         <FaIcon name="underline" size={16} />
+                    </button>
+                    <button
+                        type="button"
+                        className="viewer-selection-color is-strikethrough"
+                        title={viewerText('viewer.context.add_strikethrough', '취소선 긋기')}
+                        aria-label={viewerText('viewer.context.add_strikethrough', '취소선 긋기')}
+                        onClick={() => addHighlightFromSelection('strikethrough')}
+                    >
+                        <FaIcon name="strikethrough" size={16} />
                     </button>
                 </div>
                 <div className="viewer-selection-actions">
@@ -10514,7 +10558,7 @@ function ViewerApp() {
                             <span className="viewer-selection-tool-icon"><FaIcon name="search" /><FaIcon name="angleDown" size={8} /></span>
                             <span>{viewerText('viewer.lookup.title', '검색')}</span>
                         </button>
-                        <MenuSurface open={selectionSubmenu === 'search'} origin={selectionMenu?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                        <MenuSurface open={selectionSubmenu === 'search'} origin={selectionToolbarLayout?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
                             <button type="button" role="menuitem" onClick={searchBookFromSelection}>
                                 {viewerText('viewer.context.search_in_book', '이 책에서 검색')}
                             </button>
@@ -10535,7 +10579,7 @@ function ViewerApp() {
                             <span className="viewer-selection-tool-icon"><FaIcon name="bookOpen" /><FaIcon name="angleDown" size={8} /></span>
                             <span>{viewerText('viewer.context.dictionary_search_short', '사전')}</span>
                         </button>
-                        <MenuSurface open={selectionSubmenu === 'dictionary'} origin={selectionMenu?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                        <MenuSurface open={selectionSubmenu === 'dictionary'} origin={selectionToolbarLayout?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
                             <button type="button" role="menuitem" onClick={() => openSelectionDictionary('naver')}>
                                 {viewerText('viewer.context.dictionary_naver', 'Naver 사전')}
                             </button>
@@ -10556,7 +10600,7 @@ function ViewerApp() {
                             <span className="viewer-selection-tool-icon"><FaIcon name="language" /><FaIcon name="angleDown" size={8} /></span>
                             <span>{viewerText('viewer.context.translate_short', '번역')}</span>
                         </button>
-                        <MenuSurface open={selectionSubmenu === 'translation'} origin={selectionMenu?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
+                        <MenuSurface open={selectionSubmenu === 'translation'} origin={selectionToolbarLayout?.submenuPlacement === 'above' ? 'bottom right' : 'top right'} className="viewer-selection-menu-list" role="menu" onClick={() => setSelectionSubmenu(null)}>
                             <button type="button" role="menuitem" onClick={() => openSelectionTranslation('google')}>
                                 {viewerText('viewer.context.translate_google', 'Google 번역')}
                             </button>

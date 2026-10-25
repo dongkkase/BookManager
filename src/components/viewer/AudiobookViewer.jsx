@@ -232,7 +232,10 @@ function saveStoredJson(key, value, libraryPaths) {
 }
 
 function audioStateKey(session) {
-    return `bookmanager-viewer-state:${session?.filePath || session?.fileName || session?.id || ''}`;
+    const prefix = session?.retainOutsideLibrary === true && !session.preview
+        ? 'bookmanager-viewer-external-state:'
+        : 'bookmanager-viewer-state:';
+    return `${prefix}${session?.filePath || session?.fileName || session?.id || ''}`;
 }
 
 function audioBookmarksKey(session) {

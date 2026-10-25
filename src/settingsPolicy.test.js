@@ -110,6 +110,43 @@ test('settings normalization preserves legacy aliases and bounds values', () => 
     assert.equal(normalized.api_keys.tts_google_key, 'google-tts');
 });
 
+test('네이버 이미지 검색 인증값을 정리하고 다른 API 설정을 유지한다', () => {
+    const defaults = normalizeSettingsConfig();
+    assert.equal(defaults.api_keys.naver_client_id, '');
+    assert.equal(defaults.api_keys.naver_client_secret, '');
+    const normalized = normalizeSettingsConfig({
+        api_keys: { naver_client_id: ' fixture-id ', naver_client_secret: ' fixture-secret ', google: 'google-key' },
+    });
+    assert.equal(normalized.api_keys.naver_client_id, 'fixture-id');
+    assert.equal(normalized.api_keys.naver_client_secret, 'fixture-secret');
+    assert.equal(normalized.api_keys.google, 'google-key');
+    assert.equal(settingsEffects(defaults, normalized).restartRecommended, false);
+    assert.equal(settingsConfigsEqual(normalized, {
+        ...normalized,
+        api_keys: { ...normalized.api_keys, naver_client_id: ' fixture-id ', naver_client_secret: ' fixture-secret ' },
+    }), true);
+    const invalid = normalizeSettingsConfig({ api_keys: { naver_client_id: {}, naver_client_secret: ['secret'] } });
+    assert.equal(invalid.api_keys.naver_client_id, '');
+    assert.equal(invalid.api_keys.naver_client_secret, '');
+    const bounded = normalizeSettingsConfig({ api_keys: { naver_client_id: 'x'.repeat(1200), naver_client_secret: 'y'.repeat(1200) } });
+    assert.equal(bounded.api_keys.naver_client_id.length, 1024);
+    assert.equal(bounded.api_keys.naver_client_secret.length, 1024);
+});
+
+test('폐기한 네이버 발급처 설정은 설정 비교에서 제외하고 인증값은 유지한다', () => {
+    const input = {
+        naver_photo_api: 'legacy',
+        api_keys: { naver_client_id: 'saved-id', naver_client_secret: 'saved-secret' },
+    };
+    const normalized = normalizeSettingsConfig(input);
+    assert.equal(Object.hasOwn(normalized, 'naver_photo_api'), false);
+    assert.equal(normalized.api_keys.naver_client_id, 'saved-id');
+    assert.equal(normalized.api_keys.naver_client_secret, 'saved-secret');
+    assert.equal(input.naver_photo_api, 'legacy');
+    assert.equal(settingsConfigsEqual(input, { ...input, naver_photo_api: 'hub' }), true);
+    assert.equal(settingsConfigsEqual(input, normalized), true);
+});
+
 test('YES24 키를 정리하고 책 타입별 기본 검색 API를 유지한다', () => {
     const normalized = normalizeSettingsConfig({
         api_keys: { yes24: '  yk_live_test  ', aladin: 'aladin-key' },

@@ -163,6 +163,19 @@
     font-size: var(--font-sm, 12px);
 }
 
+.readive-interface-row.sharing-field {
+    flex-wrap: nowrap;
+    gap: 8px;
+}
+
+.readive-interface-row.sharing-field > label {
+    flex: 0 0 auto;
+}
+
+.readive-interface-row.sharing-field > select:focus-visible {
+    outline: none;
+}
+
 .readive-interface-row select {
     flex: 1;
     min-width: 0;

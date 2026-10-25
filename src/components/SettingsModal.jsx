@@ -29,6 +29,7 @@ import { fontVarsForConfig } from '../fontPolicy';
 import { SettingsLibraryPreview } from './SettingsLibraryPreview';
 import { SettingsLibraryList } from './SettingsLibraryList';
 import { SettingsDataFolder } from './SettingsDataFolder';
+import { METADATA_PROVIDER_GUIDES } from '../metadataProviderGuides.js';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -108,25 +109,65 @@ const FALLBACK_SYSTEM_FONT_OPTIONS = [
   'Verdana',
   'Consolas',
 ];
-const METADATA_PROVIDER_GUIDES = [
-    { name: 'Hardcover', key: 'hardcover', url: 'https://hardcover.app/account/api' },
-    { name: 'Goodreads', key: 'goodreads', url: 'https://www.goodreads.com/' },
-    { name: 'Open Library', key: 'openlibrary', url: 'https://openlibrary.org/dev/docs/api/search' },
-    { name: 'iTunes', key: 'itunes', url: 'https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/Searching.html' },
-    { name: 'Kobo', key: 'kobo', url: 'https://www.kobo.com/' },
-    { name: 'LubimyCzytac', key: 'lubimyczytac', url: 'https://lubimyczytac.pl/' },
-    { name: 'RanobeDB', key: 'ranobedb', url: 'https://ranobedb.org/' },
-    { name: 'Audible', key: 'audible', url: 'https://www.audible.com/' },
-    { name: 'AudNexus', key: 'audnexus', url: 'https://audnex.us/' },
-    { name: 'Libro.fm', key: 'librofm', url: 'https://libro.fm/' },
-];
-
 const METADATA_PROVIDER_KEY_LABELS = {
     yes24: 'YES24 API Key',
     aladin: 'Aladin TTBKey',
     google: 'Google Books API Key',
     vine: 'Comic Vine API Key',
     hardcover: 'Hardcover API Token',
+    naver_client_id: 'Naver Client ID',
+    naver_client_secret: 'Naver Client Secret',
+};
+
+const PROVIDER_REGISTRATION_LABELS = {
+    ko: 'API 등록 / 키 발급',
+    en: 'Register / get an API key',
+    ja: 'API登録 / キー取得',
+};
+
+const NAVER_PHOTO_SETTINGS_TEXT = {
+    ko: {
+        group: '저자 사진 검색',
+        title: '네이버 이미지 검색',
+        description: '저자 상세 화면에서 검색한 사진을 직접 선택할 때 사용합니다. 저장한 키는 수동 사진 검색에만 사용됩니다.',
+        credentials: 'NAVER API HUB Application의 인증 정보에서 Client ID·Client Secret을 복사한 뒤 적용하세요. NAVER 검색의 이미지를 선택해야 합니다.',
+        setup: 'NAVER API HUB 키 발급 방법',
+        steps: [
+            '네이버 클라우드 콘솔 → Application Services → NAVER API HUB로 이동합니다.',
+            'Subscription → 서비스 이용 신청을 진행합니다.',
+            'Application → 등록에서 NAVER 검색의 이미지를 선택합니다.',
+            '이름을 BookManager로 등록한 뒤 인증 정보에서 Client ID·Client Secret을 확인합니다.',
+        ],
+        register: 'NAVER API HUB 공식 등록 안내',
+    },
+    en: {
+        group: 'Author photo search',
+        title: 'Naver image search',
+        description: 'Search for photos and choose one in the author details. Saved credentials are used only for manual photo searches.',
+        credentials: 'Copy the Client ID and Client Secret from your NAVER API HUB Application authentication information, then apply. Enable Image under NAVER Search.',
+        setup: 'Get NAVER API HUB credentials',
+        steps: [
+            'In the Naver Cloud console, open Application Services → NAVER API HUB.',
+            'Open Subscription and apply to use the service.',
+            'Register an Application and select Image under NAVER Search.',
+            'Use BookManager as the name, then find the Client ID and Client Secret in Authentication information.',
+        ],
+        register: 'Official NAVER API HUB registration guide',
+    },
+    ja: {
+        group: '著者の写真検索',
+        title: 'Naver画像検索',
+        description: '著者の詳細画面で写真を検索して選択できます。保存した認証情報は手動の写真検索にのみ使用します。',
+        credentials: 'NAVER API HUBのApplicationの認証情報からClient IDとClient Secretをコピーして適用してください。NAVER検索の画像を選択する必要があります。',
+        setup: 'NAVER API HUBのキー発行方法',
+        steps: [
+            'Naver CloudコンソールでApplication Services → NAVER API HUBを開きます。',
+            'Subscriptionからサービスの利用を申し込みます。',
+            'Applicationの登録でNAVER検索の画像を選択します。',
+            '名前をBookManagerとして登録し、認証情報でClient IDとClient Secretを確認します。',
+        ],
+        register: 'NAVER API HUB公式登録ガイド',
+    },
 };
 
 const DEFAULT_API_KEYS = {
@@ -135,6 +176,8 @@ const DEFAULT_API_KEYS = {
   vine: '',
   google: '',
     hardcover: '',
+    naver_client_id: '',
+    naver_client_secret: '',
   ai_provider: 'Gemini',
   ai_key: '',
   tts_openai_key: '',
@@ -227,7 +270,8 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
   const [soundOptions, setSoundOptions] = React.useState(['Default.wav']);
   const [bundledFontFaces, setBundledFontFaces] = React.useState([]);
   const [systemFontOptions, setSystemFontOptions] = React.useState(FALLBACK_SYSTEM_FONT_OPTIONS);
-  const [showApiManual, setShowApiManual] = React.useState(false);
+    const [manualSource, setManualSource] = React.useState(null);
+    const showApiManual = manualSource !== null;
   const [fileAssociationStatus, setFileAssociationStatus] = React.useState(null);
   const [selectedFileAssociations, setSelectedFileAssociations] = React.useState([]);
   const [fileAssociationLoading, setFileAssociationLoading] = React.useState(false);
@@ -257,7 +301,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     onClose?.();
   }, [appliedConfig, onClose]);
   const dialogRef = useModalAccessibility(isOpen, () => {
-    if (showApiManual) setShowApiManual(false);
+    if (showApiManual) setManualSource(null);
     else if (activeTab === 'folder' && selectedDupFolder) {
         setSelectedDupFolder('');
         settingsBodyRef.current?.focus({ preventScroll: true });
@@ -265,11 +309,12 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     else handleCancel();
   });
 
-    const manualDialogRef = useModalAccessibility(isOpen && showApiManual, () => setShowApiManual(false));
+    const manualDialogRef = useModalAccessibility(isOpen && showApiManual, () => setManualSource(null));
 
   React.useEffect(() => {
     if (!isOpen) {
       settingsOpenInitializedRef.current = false;
+        setManualSource(null);
       return;
     }
     if (settingsOpenInitializedRef.current) return;
@@ -584,6 +629,17 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         localConfig.metadata_api_enabled,
     );
     const providerSettings = localConfig.metadata_providers;
+    const naverPhotoLabels = NAVER_PHOTO_SETTINGS_TEXT[localConfig.language || localConfig.lang] || NAVER_PHOTO_SETTINGS_TEXT.ko;
+    const manualProvider = ALL_METADATA_API_SOURCES.find(source => source.value === manualSource);
+    const providerGuide = METADATA_PROVIDER_GUIDES[manualSource];
+    const manualTitle = manualSource === 'naver' ? naverPhotoLabels.title : manualProvider ? apiSourceLabel(manualProvider) : '';
+    const registrationUrl = manualSource === 'naver' ? 'https://console.ncloud.com/' : providerGuide?.registrationUrl;
+    const guideUrl = manualSource === 'naver' ? 'https://guide.ncloud-docs.com/docs/apihub-application' : providerGuide?.url;
+    const registrationLabel = providerGuide?.registrationLabel?.[localConfig.language || localConfig.lang]
+        || PROVIDER_REGISTRATION_LABELS[localConfig.language || localConfig.lang] || PROVIDER_REGISTRATION_LABELS.ko;
+    const providerGuideText = providerGuide?.guideKey
+        ? t(providerGuide.guideKey)
+        : providerGuide?.text?.[localConfig.language || localConfig.lang] || providerGuide?.text?.ko;
     const regionNames = new Intl.DisplayNames([localConfig.lang || 'ko'], { type: 'region' });
     const languageNames = new Intl.DisplayNames([localConfig.lang || 'ko'], { type: 'language' });
     const countryLabel = country => regionNames.of(country.toUpperCase() === 'UK' ? 'GB' : country.toUpperCase());
@@ -1036,6 +1092,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         type={showSecrets[key] ? 'text' : 'password'}
         placeholder={placeholder}
         value={localConfig.api_keys?.[key] || ''}
+        maxLength={key === 'naver_client_id' || key === 'naver_client_secret' ? 1024 : undefined}
         onChange={event => handleApiChange(key, event.target.value)}
         disabled={disabled}
       />
@@ -1052,6 +1109,27 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
       </button>
     </div>
   );
+
+    const renderProviderHelp = (source, name) => (
+        <button type="button" className="settings-provider-help" aria-haspopup="dialog"
+            aria-label={`${name} · ${label('api_manual_title', '검색 소스 설정 안내')}`}
+            title={`${name} · ${label('api_manual_title', '검색 소스 설정 안내')}`}
+            onClick={() => setManualSource(source)}>
+            <FaIcon name="circleQuestion" />
+        </button>
+    );
+
+    const renderManualLink = (url, text, kind) => (
+        <a className="settings-manual-link" data-link-kind={kind} href={url}
+            target="_blank" rel="noopener noreferrer" onClick={event => {
+                if (window.electronAPI?.openExternal) {
+                    event.preventDefault();
+                    window.electronAPI.openExternal(event.currentTarget.href);
+                }
+            }}>
+            {text}<FaIcon name="externalLink" />
+        </a>
+    );
 
     const renderProviderSettings = source => {
         return <>
@@ -1073,17 +1151,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                             [{label('aladin_openapi_shutdown_details', '자세히보기')}]
                         </a>
                     </p>
-            )}
-            {source.value === 'Hardcover' && (
-                <p className="settings-help">{t('metadata_provider_guide_hardcover')}{' '}
-                    <a className="settings-help-link" href="https://hardcover.app/account/api" target="_blank" rel="noopener noreferrer"
-                        onClick={event => {
-                            if (window.electronAPI?.openExternal) {
-                                event.preventDefault();
-                                window.electronAPI.openExternal(event.currentTarget.href);
-                            }
-                        }}>{t('metadata_provider_get_token')}</a>
-                </p>
             )}
             {source.value === 'iTunes' && <>
                     <div className="settings-row settings-control-field">
@@ -1682,10 +1749,26 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               {activeApiSection === 'providers' && <>
                 <div className="settings-provider-toolbar settings-api-manual-row">
                     <p className="settings-help">{t('metadata_provider_enabled_help')}</p>
-                    <button type="button" className="settings-action-btn settings-blue-btn" onClick={() => setShowApiManual(true)}>
-                        <FaIcon name="bookOpen" />{label('btn_api_manual', '검색 소스 설정 안내')}
-                    </button>
                 </div>
+                <section className="settings-provider-group" aria-labelledby="settings-author-photo-title">
+                    <h3 id="settings-author-photo-title" className="settings-provider-group-title">{naverPhotoLabels.group}</h3>
+                    <article className="settings-provider-card" data-photo-provider="naver">
+                        <div className="settings-provider-header">
+                            <div className="settings-provider-copy">
+                                <h4>{naverPhotoLabels.title}</h4>
+                                {(!localConfig.api_keys?.naver_client_id?.trim() || !localConfig.api_keys?.naver_client_secret?.trim()) && (
+                                    <span className="settings-provider-status is-setup_required">{t('metadata_provider_setup_required')}</span>
+                                )}
+                            </div>
+                            <div className="settings-provider-actions">{renderProviderHelp('naver', naverPhotoLabels.title)}</div>
+                        </div>
+                        <p className="settings-provider-description">{naverPhotoLabels.description}</p>
+                        <div className="settings-provider-fields settings-provider-list">
+                            {renderSecretInput('naver_client_id', '', false, 'Client ID')}
+                            {renderSecretInput('naver_client_secret', '', false, 'Client Secret')}
+                        </div>
+                    </article>
+                </section>
                 {METADATA_PROVIDER_GROUPS.map(group => (
                     <section key={group.id} className="settings-provider-group" aria-labelledby={`settings-provider-group-${group.id}`}>
                         <h3 id={`settings-provider-group-${group.id}`} className="settings-provider-group-title">{t(group.labelKey)}</h3>
@@ -1694,7 +1777,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                 const enabled = isMetadataApiSourceEnabled(source.value, localConfig.metadata_api_enabled);
                                 const key = requiredApiKeyForSource(source.value);
                                 const ready = apiSourceHasRequiredKey(source.value, localConfig.api_keys);
-                                const hasSettings = ['알라딘', 'Hardcover', 'iTunes', 'Kobo', 'Audible'].includes(source.value);
+                                const hasSettings = ['알라딘', 'iTunes', 'Kobo', 'Audible'].includes(source.value);
                                 const descriptionKey = source.labelKey.replace('api_source_', 'metadata_provider_description_');
                                 const descriptionId = `settings-${descriptionKey}`;
                                 return (
@@ -1706,11 +1789,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                             </div>
                                             {key && renderSecretInput(key, key === 'yes24' ? 'yk_live_...' : '', false,
                                                 key === 'aladin' ? 'TTBKey' : key === 'hardcover' ? 'API Token' : 'API Key')}
-                                            <button type="button" role="switch" className="settings-provider-switch"
-                                                aria-label={apiSourceLabel(source)} aria-checked={enabled} aria-describedby={descriptionId}
-                                                onClick={() => handleProviderEnabledChange(source.value, !enabled)}>
-                                                <span aria-hidden="true" />
-                                            </button>
+                                            <div className="settings-provider-actions">
+                                                <button type="button" role="switch" className="settings-provider-switch"
+                                                    aria-label={apiSourceLabel(source)} aria-checked={enabled} aria-describedby={descriptionId}
+                                                    onClick={() => handleProviderEnabledChange(source.value, !enabled)}>
+                                                    <span aria-hidden="true" />
+                                                </button>
+                                                {renderProviderHelp(source.value, apiSourceLabel(source))}
+                                            </div>
                                         </div>
                                         <p id={descriptionId} className="settings-provider-description">{t(descriptionKey)}</p>
                                         {hasSettings && (
@@ -1897,25 +1983,36 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             </div>
         </div>
         {showApiManual && (
-          <div className="settings-manual-backdrop" onClick={() => setShowApiManual(false)}>
-            <div ref={manualDialogRef} className="settings-manual-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-manual-title" tabIndex={-1} onClick={event => event.stopPropagation()}>
-              <h3 id="settings-manual-title">{label('api_manual_title', 'API 발급 매뉴얼')}</h3>
-                <button onClick={() => window.electronAPI?.openExternal?.('https://developers.yes24.com/docs/apikey')}>YES24 OpenAPI</button>
-              <button onClick={() => window.electronAPI?.openExternal?.('https://blog.aladin.co.kr/openapi')}>Aladin OpenAPI</button>
-              <button onClick={() => window.electronAPI?.openExternal?.('https://comicvine.gamespot.com/api/')}>Comic Vine API</button>
-              <button onClick={() => window.electronAPI?.openExternal?.('https://console.cloud.google.com/')}>Google Cloud Console</button>
-                {METADATA_PROVIDER_GUIDES.map(provider => (
-                    <section key={provider.key} className="settings-provider-guide">
-                        <h4>{provider.name}</h4>
-                        <p className="settings-help">{t(`metadata_provider_guide_${provider.key}`)}</p>
-                        <button type="button" onClick={() => window.electronAPI?.openExternal?.(provider.url)}>
-                            {provider.name} · {t('metadata_provider_open_guide')}
+            <div className="settings-manual-backdrop" onClick={() => setManualSource(null)}>
+                <div ref={manualDialogRef} className="settings-manual-dialog" data-provider={manualSource}
+                    role="dialog" aria-modal="true" aria-labelledby="settings-manual-title" tabIndex={-1} onClick={event => event.stopPropagation()}>
+                    <div className="settings-manual-header">
+                        <div>
+                            <p className="settings-manual-eyebrow">{label('api_manual_title', '검색 소스 설정 안내')}</p>
+                            <h3 id="settings-manual-title">{manualTitle}</h3>
+                        </div>
+                        <button type="button" className="settings-manual-dismiss" aria-label={label('btn_close', '닫기')} onClick={() => setManualSource(null)}>
+                            <FaIcon name="xmark" />
                         </button>
-                    </section>
-                ))}
-              <button className="settings-manual-close" onClick={() => setShowApiManual(false)}>{label('btn_close', '닫기')}</button>
+                    </div>
+                    <div className="settings-manual-body">
+                        <section className="settings-provider-guide">
+                            {manualSource === 'naver' ? <>
+                                <p className="settings-help">{naverPhotoLabels.credentials}</p>
+                                <h4>{naverPhotoLabels.setup}</h4>
+                                <ol className="settings-help">{naverPhotoLabels.steps.map(step => <li key={step}>{step}</li>)}</ol>
+                            </> : <p className="settings-help">{providerGuideText}</p>}
+                            {registrationUrl && renderManualLink(registrationUrl,
+                                `${manualSource === 'naver' ? 'NAVER API HUB' : manualTitle} · ${registrationLabel}`, 'registration')}
+                            {guideUrl !== registrationUrl && renderManualLink(guideUrl,
+                                manualSource === 'naver' ? naverPhotoLabels.register : `${manualTitle} · ${t('metadata_provider_open_guide')}`, 'guide')}
+                        </section>
+                    </div>
+                    <div className="settings-manual-footer">
+                        <button type="button" className="settings-manual-close" onClick={() => setManualSource(null)}>{label('btn_close', '닫기')}</button>
+                    </div>
+                </div>
             </div>
-          </div>
         )}
       </div>
     </div>

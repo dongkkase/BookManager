@@ -1,6 +1,7 @@
 import { resolveBookType } from './metadata/metadataTypes.js';
 
 const VIEWER_STATE_PREFIX = 'bookmanager-viewer-state:';
+const VIEWER_EXTERNAL_STATE_PREFIX = 'bookmanager-viewer-external-state:';
 const VIEWER_BOOKMARKS_PREFIX = 'bookmanager-viewer-bookmarks:';
 
 function safeStorage(storage) {
@@ -74,6 +75,7 @@ export function viewerStatusPageCount(file = {}, state = {}) {
 
 export function isViewerStatusStorageKey(key = '') {
     return String(key || '').startsWith(VIEWER_STATE_PREFIX)
+        || String(key || '').startsWith(VIEWER_EXTERNAL_STATE_PREFIX)
         || String(key || '').startsWith(VIEWER_BOOKMARKS_PREFIX);
 }
 
@@ -85,6 +87,12 @@ function normalizeBookmarkCount(bookmarkValue) {
 function readingTimestamp(value) {
     const timestamp = typeof value === 'number' ? value : Date.parse(value || '');
     return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function selectLocalReadingState(standardState, externalState) {
+    if (externalState && (!standardState
+        || readingTimestamp(externalState.updatedAt) > readingTimestamp(standardState.updatedAt))) return externalState;
+    return standardState || null;
 }
 
 function matchesLocalReadingPosition(file, localState, databaseState) {
@@ -164,7 +172,12 @@ export function readViewerFileStatus(file = {}, storage = null) {
     const filePath = viewerStatusFilePath(file);
     if (!filePath) return buildViewerFileStatus(file);
     const stateKey = `${VIEWER_STATE_PREFIX}${filePath}`;
-    const { state, hasState } = selectReadingState(file, readStoredJson(targetStorage, stateKey, {}), hasStoredKey(targetStorage, stateKey));
+    const externalStateKey = `${VIEWER_EXTERNAL_STATE_PREFIX}${filePath}`;
+    const localState = selectLocalReadingState(
+        hasStoredKey(targetStorage, stateKey) ? readStoredJson(targetStorage, stateKey, {}) : null,
+        hasStoredKey(targetStorage, externalStateKey) ? readStoredJson(targetStorage, externalStateKey, {}) : null,
+    );
+    const { state, hasState } = selectReadingState(file, localState || {}, localState !== null);
     const bookmarks = readStoredJson(targetStorage, `${VIEWER_BOOKMARKS_PREFIX}${filePath}`, []);
     return buildViewerFileStatus(file, state, bookmarks, hasState);
 }
@@ -172,6 +185,7 @@ export function readViewerFileStatus(file = {}, storage = null) {
 export function createViewerStatusReader(storage = null) {
     const targetStorage = safeStorage(storage);
     const stateByPath = new Map();
+    const externalStateByPath = new Map();
     const bookmarkCountByPath = new Map();
 
     if (!targetStorage) return file => readViewerFileStatus(file, null);
@@ -183,6 +197,11 @@ export function createViewerStatusReader(storage = null) {
             if (key.startsWith(VIEWER_STATE_PREFIX)) {
                 stateByPath.set(
                     key.slice(VIEWER_STATE_PREFIX.length),
+                    readJsonValue(targetStorage.getItem(key), {}),
+                );
+            } else if (key.startsWith(VIEWER_EXTERNAL_STATE_PREFIX)) {
+                externalStateByPath.set(
+                    key.slice(VIEWER_EXTERNAL_STATE_PREFIX.length),
                     readJsonValue(targetStorage.getItem(key), {}),
                 );
             } else if (key.startsWith(VIEWER_BOOKMARKS_PREFIX)) {
@@ -198,7 +217,8 @@ export function createViewerStatusReader(storage = null) {
 
     return file => {
         const filePath = viewerStatusFilePath(file);
-        const { state, hasState } = selectReadingState(file, stateByPath.get(filePath) || {}, stateByPath.has(filePath));
+        const localState = selectLocalReadingState(stateByPath.get(filePath), externalStateByPath.get(filePath));
+        const { state, hasState } = selectReadingState(file, localState || {}, localState !== null);
         return buildViewerFileStatus(
             file,
             state,

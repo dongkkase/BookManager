@@ -35,6 +35,19 @@ const LIBRARY_DISPLAY_FIELDS = [
     ['files', 'folder_library_show_files'],
     ['updatedAt', 'folder_library_show_updated'],
 ];
+const READING_DISPLAY_FIELDS_STORAGE_KEY = 'bookmanager.folderSidebar.readingDisplayFields';
+const READING_ORDER_STORAGE_KEY = 'bookmanager.folderSidebar.readingOrder';
+const READING_DISPLAY_FIELDS = [
+    ['favorites', 'folder.sidebar.favorites'],
+    ['collections', 'reading_lists.collections'],
+    ['recent-reading', 'folder.sidebar.recent_reading'],
+    ['recent-added', 'reading_lists.recent_added'],
+    ['recent-updated', 'reading_lists.recent_updated'],
+    ['wishlist', 'reading_lists.wishlist'],
+    ['authors', 'reading_lists.authors'],
+    ['annotations', 'reading_lists.annotations'],
+    ['missing-volumes', 'tf_btn_check_missing'],
+];
 
 function readStoredLibraryVisibleCount() {
     try {
@@ -55,15 +68,56 @@ function readStoredLibraryDisplayFields() {
     return Object.fromEntries(LIBRARY_DISPLAY_FIELDS.map(([key]) => [key, stored?.[key] !== false]));
 }
 
-function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
+function readStoredReadingDisplayFields() {
+    let stored;
+    try {
+        stored = JSON.parse(window.localStorage.getItem(READING_DISPLAY_FIELDS_STORAGE_KEY));
+    } catch {
+        stored = null;
+    }
+    return Object.fromEntries(READING_DISPLAY_FIELDS.map(([key]) => [key, stored?.[key] !== false]));
+}
+
+function readStoredReadingOrder() {
+    const defaults = READING_DISPLAY_FIELDS.map(([key]) => key);
+    try {
+        const stored = JSON.parse(window.localStorage.getItem(READING_ORDER_STORAGE_KEY));
+        return [...new Set([...(Array.isArray(stored) ? stored.filter(key => defaults.includes(key)) : []), ...defaults])];
+    } catch {
+        return defaults;
+    }
+}
+
+function SidebarDisplayOptions({ value, onChange, fields, onToggleField, onMoveField, t, fieldOptions = LIBRARY_DISPLAY_FIELDS, showCountOptions = true, labelKey = 'folder_library_display_options', classPrefix = 'library' }) {
     const [open, setOpen] = useState(false);
     const [position, setPosition] = useState(null);
+    const [draggedKey, setDraggedKey] = useState(null);
+    const [dropTarget, setDropTarget] = useState(null);
+    const draggedKeyRef = useRef(null);
+    const reorderFocusRef = useRef(null);
     const buttonRef = useRef(null);
     const menuRef = useRef(null);
+    const clearDrag = useCallback(() => {
+        draggedKeyRef.current = null;
+        setDraggedKey(null);
+        setDropTarget(null);
+    }, []);
     const closeMenu = useCallback(() => {
         setOpen(false);
         buttonRef.current?.focus({ preventScroll: true });
     }, []);
+
+    useEffect(() => {
+        if (!open) clearDrag();
+    }, [open, clearDrag]);
+
+    useLayoutEffect(() => {
+        if (!reorderFocusRef.current) return;
+        const row = Array.from(menuRef.current?.querySelectorAll('[data-reading-key]') || [])
+            .find(element => element.dataset.readingKey === reorderFocusRef.current);
+        row?.querySelector('.reading-display-reorder-handle')?.focus();
+        reorderFocusRef.current = null;
+    }, [fieldOptions]);
 
     useLayoutEffect(() => {
         if (!open || !menuRef.current || !buttonRef.current) return;
@@ -76,7 +130,11 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
     }, [open]);
 
     useLayoutEffect(() => {
-        if (open && position) menuRef.current?.querySelector('[role="menuitemradio"][aria-checked="true"]')?.focus({ preventScroll: true });
+        if (open && position) {
+            const firstOption = menuRef.current?.querySelector('[role="menuitemradio"][aria-checked="true"]')
+                || menuRef.current?.querySelector('[role="menuitemcheckbox"]');
+            firstOption?.focus({ preventScroll: true });
+        }
     }, [open, position]);
 
     useEffect(() => {
@@ -109,9 +167,9 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
         <button
             ref={buttonRef}
             type="button"
-            className="folder-sidebar-icon-btn folder-sidebar-tooltip-btn library-display-options-button"
-            aria-label={t('folder_library_display_options')}
-            data-tooltip={t('folder_library_display_options')}
+            className={`folder-sidebar-icon-btn folder-sidebar-tooltip-btn ${classPrefix}-display-options-button`}
+            aria-label={t(labelKey)}
+            data-tooltip={t(labelKey)}
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={() => {
@@ -126,17 +184,21 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
                 open={open}
                 origin="top right"
                 ref={menuRef}
-                className="folder-context-menu library-display-options-menu"
+                className={`folder-context-menu ${classPrefix}-display-options-menu`}
                 role="menu"
-                aria-label={t('folder_library_display_options')}
+                aria-label={t(labelKey)}
                 style={position || { left: 0, top: 0, visibility: 'hidden' }}
                 onKeyDown={event => {
                     event.stopPropagation();
                     if (event.key === 'Tab') {
                         setOpen(false);
+                    } else if (onMoveField && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+                        event.preventDefault();
+                        const row = document.activeElement?.closest('.reading-display-field-row');
+                        row?.querySelector(event.key === 'ArrowLeft' ? '.reading-display-reorder-handle' : '.library-display-field-option')?.focus();
                     } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
                         event.preventDefault();
-                        const options = Array.from(event.currentTarget.querySelectorAll('button'));
+                        const options = Array.from(event.currentTarget.querySelectorAll(onMoveField ? '[role="menuitemcheckbox"]' : 'button'));
                         const current = options.indexOf(document.activeElement);
                         const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
                             : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
@@ -145,7 +207,8 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
                 }}
             >
                 {open && <>
-                {LIBRARY_VISIBLE_COUNTS.map(count => (
+                {onMoveField && <div className="reading-display-order-hint" role="presentation">{t('reading_lists.reorder_hint')}</div>}
+                {showCountOptions && LIBRARY_VISIBLE_COUNTS.map(count => (
                     <button
                         key={count}
                         type="button"
@@ -160,9 +223,9 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
                         <span>{t(count === 0 ? 'folder_library_show_all' : 'folder_library_show_items', [count])}</span>
                     </button>
                 ))}
-                <div className="folder-context-menu-separator" role="separator" />
-                {LIBRARY_DISPLAY_FIELDS.map(([key, labelKey]) => (
-                    <button
+                {showCountOptions && <div className="folder-context-menu-separator" role="separator" />}
+                {fieldOptions.map(([key, fieldLabelKey], index) => {
+                    const toggle = <button
                         key={key}
                         type="button"
                         role="menuitemcheckbox"
@@ -170,10 +233,80 @@ function LibraryDisplayOptions({ value, onChange, fields, onToggleField, t }) {
                         aria-checked={fields[key]}
                         onClick={() => onToggleField(key)}
                     >
-                        <span>{t(labelKey)}</span>
+                        <span>{t(fieldLabelKey)}</span>
                         <span className="library-display-field-switch" aria-hidden="true" />
-                    </button>
-                ))}
+                    </button>;
+                    if (!onMoveField) return toggle;
+                    return <div
+                        key={key}
+                        role="presentation"
+                        className="reading-display-field-row"
+                        data-reading-key={key}
+                        data-dragging={draggedKey === key || undefined}
+                        data-drop-position={dropTarget?.key === key ? dropTarget.position : undefined}
+                        onDragOver={event => {
+                            if (!draggedKeyRef.current) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            event.dataTransfer.dropEffect = 'move';
+                            if (draggedKeyRef.current === key) {
+                                setDropTarget(null);
+                                return;
+                            }
+                            const bounds = event.currentTarget.getBoundingClientRect();
+                            const position = event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after';
+                            setDropTarget(current => current?.key === key && current.position === position ? current : { key, position });
+                        }}
+                        onDragLeave={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget)) {
+                                setDropTarget(current => current?.key === key ? null : current);
+                            }
+                        }}
+                        onDrop={event => {
+                            const source = draggedKeyRef.current;
+                            if (!source) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const bounds = event.currentTarget.getBoundingClientRect();
+                            if (source !== key) {
+                                reorderFocusRef.current = source;
+                                onMoveField(source, key, event.clientY >= bounds.top + bounds.height / 2);
+                            }
+                            clearDrag();
+                        }}
+                    >
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className="reading-display-reorder-handle"
+                            draggable
+                            aria-label={t('reading_lists.reorder_item', [t(fieldLabelKey), index + 1, fieldOptions.length])}
+                            title={t('reading_lists.reorder_keyboard_hint')}
+                            aria-keyshortcuts="ArrowUp ArrowDown"
+                            onDragStart={event => {
+                                event.stopPropagation();
+                                draggedKeyRef.current = key;
+                                setDraggedKey(key);
+                                event.dataTransfer.effectAllowed = 'move';
+                                event.dataTransfer.setData('application/x-bookmanager-reading-menu', key);
+                                event.dataTransfer.setDragImage(event.currentTarget.parentElement, 16, 16);
+                            }}
+                            onDragEnd={clearDrag}
+                            onKeyDown={event => {
+                                if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                const next = index + (event.key === 'ArrowUp' ? -1 : 1);
+                                if (next < 0 || next >= fieldOptions.length) return;
+                                reorderFocusRef.current = key;
+                                onMoveField(key, fieldOptions[next][0], next > index);
+                            }}
+                        >
+                            <FaIcon name="gripVertical" size={12} />
+                        </button>
+                        {toggle}
+                    </div>;
+                })}
                 </>}
             </MenuSurface>,
             document.body,
@@ -195,11 +328,22 @@ function readStoredSidebarCollapseState() {
  * 좌측 사이드바 컴포넌트
  * 읽기 목록, 라이브러리 목록, 폴더 트리 뷰를 포함
  */
-function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEMS, favorites = EMPTY_ITEMS, selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, onSelectReadingList, missingCount = 0, onCheckMissingVolumes, isCheckingMissing = false, missingCheckDisabled = false, libraryScanStateMap = {}, refreshToken = 0, onRefresh, refreshing = false, refreshDisabled = false }) {
+function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEMS, favorites = EMPTY_ITEMS, selectedLibrary, onSelectLibrary, selectedFolderPath, onSelectFolder, onSelectLibraryFolder, onFolderContextMenu, onLibraryContextMenu, onOpenLibrarySettings, onSyncLibrary, recentReadingSelected = false, recentReadingCount = 0, onSelectRecentReading, readingListSelected = '', recentAddedCount = 0, recentUpdatedCount = 0, wishlistCount = 0, collectionCount = 0, authorCount = 0, annotationCount = 0, onSelectReadingList, missingCount = 0, onCheckMissingVolumes, isCheckingMissing = false, missingCheckDisabled = false, libraryScanStateMap = {}, refreshToken = 0, onRefresh, refreshing = false, refreshDisabled = false }) {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(readStoredSidebarCollapseState);
     const [libraryVisibleCount, setLibraryVisibleCount] = useState(readStoredLibraryVisibleCount);
     const [libraryDisplayFields, setLibraryDisplayFields] = useState(readStoredLibraryDisplayFields);
+    const [readingDisplayFields, setReadingDisplayFields] = useState(readStoredReadingDisplayFields);
+    const [readingOrder, setReadingOrder] = useState(readStoredReadingOrder);
+    const readingFieldOptions = useMemo(() => readingOrder.map(key => READING_DISPLAY_FIELDS.find(field => field[0] === key)), [readingOrder]);
+    const moveReadingField = useCallback((key, targetKey, after) => {
+        setReadingOrder(current => {
+            if (key === targetKey || !current.includes(key) || !current.includes(targetKey)) return current;
+            const next = current.filter(item => item !== key);
+            next.splice(next.indexOf(targetKey) + (after ? 1 : 0), 0, key);
+            return next.every((item, index) => item === current[index]) ? current : next;
+        });
+    }, []);
     const [libraryListHeight, setLibraryListHeight] = useState(null);
     const libraryListRef = useRef(null);
   const [roots, setRoots] = useState([]);
@@ -234,6 +378,20 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
             // Keep the current choice when local storage is unavailable.
         }
     }, [libraryDisplayFields]);
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(READING_DISPLAY_FIELDS_STORAGE_KEY, JSON.stringify(readingDisplayFields));
+        } catch {
+            // Keep the current choice when local storage is unavailable.
+        }
+    }, [readingDisplayFields]);
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(READING_ORDER_STORAGE_KEY, JSON.stringify(readingOrder));
+        } catch {
+            // Keep the current order when local storage is unavailable.
+        }
+    }, [readingOrder]);
     useLayoutEffect(() => {
         const list = libraryListRef.current;
         if (!list) return;
@@ -485,7 +643,7 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
             >
               <FaIcon name="plus" size={12} />
             </button>
-            <LibraryDisplayOptions
+            <SidebarDisplayOptions
                 value={libraryVisibleCount}
                 onChange={setLibraryVisibleCount}
                 fields={libraryDisplayFields}
@@ -597,106 +755,78 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
       <div className={`sidebar-section sidebar-section-reading ${collapsed ? 'is-collapsed' : ''}`}>
         <div className="nav-header">
             {renderSectionToggle('reading', sectionLabel)}
+            <div className="folder-sidebar-header-actions">
+                <SidebarDisplayOptions
+                    fields={readingDisplayFields}
+                    onToggleField={key => setReadingDisplayFields(current => ({ ...current, [key]: !current[key] }))}
+                    fieldOptions={readingFieldOptions}
+                    onMoveField={moveReadingField}
+                    showCountOptions={false}
+                    labelKey="reading_lists.display_options"
+                    classPrefix="reading"
+                    t={t}
+                />
+            </div>
         </div>
         <div className="sidebar-section-content" aria-hidden={collapsed} inert={collapsed ? '' : undefined}>
             <div className="sidebar-section-content-inner">
           <ul className="nav-list">
-            <li className={`recent-reading-list-item ${readingListSelected === 'favorites' ? 'selected' : ''}`}>
-                <button
-                    type="button"
-                    className="reading-list-nav-button"
-                    onClick={event => {
-                        applySidebarSelection(event);
-                        setSelectedSource('favorites');
-                        setOptimisticSelectedPath('');
-                        onSelectReadingList?.('favorites');
-                    }}
-                    aria-current={readingListSelected === 'favorites' ? 'page' : undefined}
-                >
-                    <span className="recent-reading-list-main">
-                        <FaIcon name="star" size={12} />
-                        <span>{t('folder.sidebar.favorites')}</span>
-                    </span>
-                    <span className="recent-reading-count" aria-label={t('reading_lists.count', [favorites.length])}>
-                        {favorites.length}
-                    </span>
-                </button>
-            </li>
-                <li className={`recent-reading-list-item ${readingListSelected === 'collections' || readingListSelected === 'collection' ? 'selected' : ''}`}>
-                    <button
-                        type="button"
-                        className="reading-list-nav-button"
-                        onClick={event => {
-                            applySidebarSelection(event);
-                            setSelectedSource('collections');
-                            setOptimisticSelectedPath('');
-                            onSelectReadingList?.('collections');
-                        }}
-                        aria-current={readingListSelected === 'collections' || readingListSelected === 'collection' ? 'page' : undefined}
-                    >
-                        <span className="recent-reading-list-main">
-                            <FaIcon name="layers" size={12} />
-                            <span>{t('reading_lists.collections')}</span>
-                        </span>
-                        <span className="recent-reading-count" aria-label={t('reading_lists.count', [collectionCount])}>
-                            {collectionCount}
-                        </span>
-                    </button>
-                </li>
-            <li
-              className={`recent-reading-list-item ${recentReadingSelected ? 'selected' : ''}`}
-              onClick={(event) => {
-                applySidebarSelection(event);
-                setSelectedSource('recent-reading');
-                setOptimisticSelectedPath('');
-                onSelectRecentReading?.();
-              }}
-            >
-              <span className="recent-reading-list-main">
-                <FaIcon name="clock" size={12} />
-                <span>{t('folder.sidebar.recent_reading')}</span>
-              </span>
-                <span className="recent-reading-count" aria-label={t('folder.recent.count', [recentReadingCount])}>
-                    {recentReadingCount}
-                </span>
-            </li>
-                {[
-                    ['recent-added', 'calendar', recentAddedCount],
-                    ['recent-updated', 'rotateRight', recentUpdatedCount],
-                    ['wishlist', 'bookmark', wishlistCount],
-                ].map(([kind, icon, count]) => (
-                    <li key={kind} className={`recent-reading-list-item ${readingListSelected === kind ? 'selected' : ''}`}>
-                        <button type="button" className="reading-list-nav-button" onClick={event => {
-                            applySidebarSelection(event);
-                            setSelectedSource(kind);
-                            setOptimisticSelectedPath('');
-                            onSelectReadingList?.(kind);
-                        }} aria-current={readingListSelected === kind ? 'page' : undefined}>
-                            <span className="recent-reading-list-main"><FaIcon name={icon} size={12} /><span>{t(`reading_lists.${kind.replaceAll('-', '_')}`)}</span></span>
-                            <span className="recent-reading-count" aria-label={t('reading_lists.count', [count])}>{count}</span>
-                        </button>
-                    </li>
-                ))}
-                <li className="recent-reading-list-item">
-                    <button
-                        type="button"
-                        className="reading-list-nav-button"
-                        onClick={onCheckMissingVolumes}
-                        disabled={isCheckingMissing || missingCheckDisabled}
-                        aria-busy={isCheckingMissing}
-                    >
-                        <span className="recent-reading-list-main">
-                            <FaIcon name="search" size={12} />
-                            <span>{isCheckingMissing ? t('msg_analyzing') : t('tf_btn_check_missing')}</span>
-                        </span>
-                        {!isCheckingMissing && missingCount > 0 && (
-                            <span className="recent-reading-count missing-count-indicator">
-                                <FaIcon name="circle" size={7} />
-                                <span>{missingCount}</span>
+                {readingFieldOptions.filter(([kind]) => readingDisplayFields[kind]).map(([kind, labelKey]) => {
+                    if (kind === 'missing-volumes') return <li key={kind} className="recent-reading-list-item">
+                        <button
+                            type="button"
+                            className="reading-list-nav-button"
+                            onClick={onCheckMissingVolumes}
+                            disabled={isCheckingMissing || missingCheckDisabled}
+                            aria-busy={isCheckingMissing}
+                        >
+                            <span className="recent-reading-list-main">
+                                <FaIcon name="search" size={12} />
+                                <span>{isCheckingMissing ? t('msg_analyzing') : t(labelKey)}</span>
                             </span>
-                        )}
-                    </button>
-                </li>
+                            {!isCheckingMissing && missingCount > 0 && (
+                                <span className="recent-reading-count missing-count-indicator">
+                                    <FaIcon name="circle" size={7} />
+                                    <span>{missingCount}</span>
+                                </span>
+                            )}
+                        </button>
+                    </li>;
+                    const [icon, count] = {
+                        favorites: ['star', favorites.length],
+                        collections: ['layers', collectionCount],
+                        'recent-reading': ['clock', recentReadingCount],
+                        'recent-added': ['calendar', recentAddedCount],
+                        'recent-updated': ['rotateRight', recentUpdatedCount],
+                        wishlist: ['bookmark', wishlistCount],
+                        authors: ['users', authorCount],
+                        annotations: ['pen', annotationCount],
+                    }[kind];
+                    const selected = kind === 'recent-reading' ? recentReadingSelected
+                        : readingListSelected === kind || (kind === 'collections' && readingListSelected === 'collection');
+                    return <li key={kind} className={`recent-reading-list-item ${selected ? 'selected' : ''}`}>
+                        <button
+                            type="button"
+                            className="reading-list-nav-button"
+                            onClick={event => {
+                                applySidebarSelection(event);
+                                setSelectedSource(kind);
+                                setOptimisticSelectedPath('');
+                                if (kind === 'recent-reading') onSelectRecentReading?.();
+                                else onSelectReadingList?.(kind);
+                            }}
+                            aria-current={selected ? 'page' : undefined}
+                        >
+                            <span className="recent-reading-list-main">
+                                <FaIcon name={icon} size={12} />
+                                <span>{t(labelKey)}</span>
+                            </span>
+                            <span className="recent-reading-count" aria-label={t(kind === 'recent-reading' ? 'folder.recent.count' : 'reading_lists.count', [count])}>
+                                {count}
+                            </span>
+                        </button>
+                    </li>;
+                })}
           </ul>
             </div>
         </div>

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import { transformSync } from 'esbuild';
+import { prepareAuthorCatalog } from './authorCatalog.js';
 
 const compiled = transformSync(fs.readFileSync(new URL('./hooks/useReadingLists.js', import.meta.url), 'utf8'), { format: 'cjs', target: 'es2022' }).code;
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -18,7 +19,8 @@ async function fixture(initial = {}) {
     let cursor = 0;
     let dirty = false;
     let effects = [];
-    let hold = false;
+    let hold = Boolean(initial.hold);
+    let catalogFailure = Boolean(initial.catalogFailure);
     let revision = 1;
     let timerId = 0;
     let props = { listId: 'recent-added', libraries: ['/books'], localFiles: null, ...initial };
@@ -61,7 +63,8 @@ async function fixture(initial = {}) {
             electronAPI: {
                 readingLists(request) {
                     calls.push(copy(request));
-                    const files = request.id?.startsWith('recent-')
+                    if (request.id === 'library-catalog' && catalogFailure) return Promise.resolve({ success: false, error: 'unavailable' });
+                    const files = request.id?.startsWith('recent-') || request.id === 'library-catalog'
                         ? [...new Set(props.libraries)].map(root => ({ path: `${root}/${request.id}.epub`, title: `Revision ${revision}` }))
                         : [{ path: '/outside/saved.epub', title: `Revision ${revision}` }];
                     const result = request.operation === 'overview'
@@ -81,6 +84,7 @@ async function fixture(initial = {}) {
         },
         require(name) {
             if (name === 'react') return react;
+            if (name === '../authorCatalog.js') return { prepareAuthorCatalog };
             assert.equal(name, './useFolderScan.js');
             return { mergeFolderFileCacheUpdate: (entry, update) => ({ ...entry, ...update }) };
         },
@@ -111,6 +115,7 @@ async function fixture(initial = {}) {
         result: () => result,
         update(update) { props = { ...props, ...update }; return render(); },
         hold(value) { hold = value; },
+        failCatalog(value) { catalogFailure = value; },
         revision(value) { revision = value; },
         emit(name) { listeners.get(name)?.(); },
         close() { slots.forEach(slot => slot.cleanup?.()); },
@@ -177,8 +182,9 @@ for (const event of ['lists', 'scan', 'focus', 'bookmanager:metadata-saved', 'ti
             if (event === 'timer') [...app.timers.values()][0]();
             else app.emit(event);
             await app.settle();
-            assert.equal(app.pending.filter(item => item.request.operation === 'list').length, 1);
+            assert.equal(app.pending.filter(item => item.request.operation === 'list' && item.request.id !== 'library-catalog').length, 1);
             assert.equal(app.pending.find(item => item.request.operation === 'list').request.id, 'recent-updated');
+            assert.equal(app.pending.filter(item => item.request.id === 'library-catalog').length, event === 'timer' ? 0 : 1);
             assert.equal(app.result().files[0].path, '/books/recent-updated.epub');
             const changed = app.update({ listId: 'recent-added' });
             assert.equal(changed.files.length, 0, 'Inactive cached data must not survive an invalidation');
@@ -210,7 +216,8 @@ test('local favorites keep their preview updates without causing repeated overvi
     const favorite = { path: '/outside/favorite.epub', title: 'Favorite' };
     const app = await fixture({ listId: 'favorites', localFiles: [favorite] });
     try {
-        assert.equal(app.calls.filter(call => call.operation === 'list').length, 0);
+        assert.equal(app.calls.filter(call => call.operation === 'list' && call.id !== 'library-catalog').length, 0);
+        assert.equal(app.calls.filter(call => call.id === 'library-catalog').length, 1);
         app.result().updateFilePreview({ ...favorite, title: 'Extracted title', cover: 'cached-cover' });
         await app.settle();
         assert.equal(app.result().files[0].title, 'Favorite');
@@ -233,5 +240,157 @@ test('a delayed preview from an earlier list snapshot cannot replace its refresh
         previousPreview({ ...currentFile, cover: 'outdated-cover' });
         await app.settle();
         assert.equal(app.result().files[0].cover, 'current-cover');
+    } finally { app.close(); }
+});
+
+test('catalog revisits reuse the same snapshot without repeating IPC after another list is opened', async () => {
+    const app = await fixture({ listId: 'library-catalog' });
+    try {
+        const files = app.result().files;
+        app.update({ listId: 'want-to-read' });
+        await app.settle();
+        app.hold(true);
+        assert.equal(app.update({ listId: 'library-catalog' }).files, files);
+        await app.settle();
+        assert.equal(app.result().files, files);
+        assert.equal(app.result().loading, false);
+        assert.equal(app.calls.filter(call => call.id === 'library-catalog').length, 1);
+        app.revision(2);
+        void app.result().refresh();
+        await app.settle();
+        assert.equal(app.result().files, files, 'Explicit refresh keeps the visible snapshot until its response arrives');
+        assert.equal(app.pending.length, 1);
+        app.pending.shift().release();
+        await app.settle();
+        assert.equal(app.result().files[0].title, 'Revision 2');
+    } finally { app.close(); }
+});
+
+for (const event of ['lists', 'scan', 'focus', 'bookmanager:metadata-saved']) {
+    test(`${event} refreshes the shared catalog while keeping its previous snapshot visible`, async () => {
+        const app = await fixture({ listId: 'library-catalog' });
+        try {
+            app.revision(2);
+            const first = app.result().files;
+            app.hold(true);
+            app.emit(event);
+            await app.settle();
+            assert.equal(app.result().files, first);
+            while (app.pending.length) app.pending.shift().release();
+            await app.settle();
+            assert.equal(app.result().files[0].title, 'Revision 2');
+            app.hold(false);
+            app.update({ listId: 'want-to-read' });
+            await app.settle();
+            const previousCatalog = app.result().catalogFiles;
+            app.hold(true);
+            app.revision(3);
+            app.emit(event);
+            await app.settle();
+            assert.equal(app.result().catalogFiles, previousCatalog);
+            assert.equal(app.update({ listId: 'library-catalog' }).files, previousCatalog);
+            await app.settle();
+            assert.equal(app.pending.filter(item => item.request.id === 'library-catalog').length, 1);
+            while (app.pending.length) app.pending.shift().release();
+            await app.settle();
+            assert.equal(app.result().files[0].title, 'Revision 3');
+            assert.equal(app.result().catalogFiles, app.result().files);
+        } finally { app.close(); }
+    });
+}
+
+test('library scope changes hide catalog data immediately and reject earlier scope responses', async () => {
+    const app = await fixture({ listId: 'library-catalog', libraries: ['/A', '/B'] });
+    try {
+        app.hold(true);
+        void app.result().refresh();
+        assert.equal(app.update({ libraries: ['/B'] }).files.length, 0);
+        assert.equal(app.result().catalogFiles.length, 0);
+        app.pending.shift().release();
+        await app.settle();
+        assert.equal(app.result().files.length, 0);
+        while (app.pending.length) app.pending.shift().release();
+        await app.settle();
+        assert.deepEqual(copy(app.result().files).map(file => file.path), ['/B/library-catalog.epub']);
+        assert.equal(app.update({ libraries: [] }).files.length, 0);
+        assert.equal(app.result().catalogFiles.length, 0);
+    } finally { app.close(); }
+});
+
+test('the shared catalog is loaded before visiting its view and remains cached across other lists and overview timers', async () => {
+    const app = await fixture({ listId: '' });
+    try {
+        const files = app.result().catalogFiles;
+        assert.equal(files[0].path, '/books/library-catalog.epub');
+        assert.equal(app.result().files.length, 0);
+        assert.equal(app.result().loading, false);
+        app.update({ listId: 'want-to-read' });
+        await app.settle();
+        [...app.timers.values()][0]();
+        await app.settle();
+        assert.equal(app.result().catalogFiles, files);
+        assert.equal(app.update({ listId: 'library-catalog' }).files, files);
+        await app.settle();
+        assert.equal(app.calls.filter(call => call.id === 'library-catalog').length, 1);
+    } finally { app.close(); }
+});
+
+test('entering a catalog during its background load shares the request and leaving does not discard its result', async () => {
+    const app = await fixture({ listId: '', hold: true });
+    try {
+        assert.equal(app.result().loading, false);
+        assert.equal(app.result().catalogFiles.length, 0);
+        app.update({ listId: 'library-catalog' });
+        await app.settle();
+        assert.equal(app.result().loading, true);
+        assert.equal(app.pending.filter(item => item.request.id === 'library-catalog').length, 1);
+        app.update({ listId: 'want-to-read' });
+        await app.settle();
+        while (app.pending.length) app.pending.shift().release();
+        await app.settle();
+        assert.equal(app.result().files[0].path, '/outside/saved.epub');
+        const files = app.result().catalogFiles;
+        assert.equal(files[0].path, '/books/library-catalog.epub');
+        assert.equal(app.update({ listId: 'library-catalog' }).files, files);
+        await app.settle();
+        assert.equal(app.calls.filter(call => call.id === 'library-catalog').length, 1);
+        assert.equal(app.result().loading, false);
+    } finally { app.close(); }
+});
+
+test('an invalidated background catalog response cannot overwrite a newer snapshot', async () => {
+    const app = await fixture({ listId: '' });
+    try {
+        app.hold(true);
+        app.revision(2);
+        app.emit('scan');
+        await app.settle();
+        const outdated = app.pending.find(item => item.request.id === 'library-catalog');
+        app.revision(3);
+        app.emit('bookmanager:metadata-saved');
+        await app.settle();
+        app.pending.filter(item => item.request.id === 'library-catalog').at(-1).release();
+        await app.settle();
+        assert.equal(app.result().catalogFiles[0].title, 'Revision 3');
+        outdated.release();
+        await app.settle();
+        assert.equal(app.result().catalogFiles[0].title, 'Revision 3');
+    } finally { app.close(); }
+});
+
+test('a background catalog failure leaves other views usable and the catalog view can retry it', async () => {
+    const app = await fixture({ listId: 'want-to-read', catalogFailure: true });
+    try {
+        assert.equal(app.result().files[0].path, '/outside/saved.epub');
+        assert.equal(app.result().error, '');
+        assert.equal(app.result().loading, false);
+        app.update({ listId: 'library-catalog' });
+        await app.settle();
+        assert.equal(app.result().error, 'reading_lists.load_failed');
+        app.failCatalog(false);
+        await app.result().refresh();
+        await app.settle();
+        assert.equal(app.result().error, '');
+        assert.equal(app.result().files[0].path, '/books/library-catalog.epub');
     } finally { app.close(); }
 });

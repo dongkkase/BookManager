@@ -127,36 +127,87 @@
 }
 
 /* Inputs */
+.sharing-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding-left: 12px;
+    background-color: #09090b;
+    border: 1px solid #27272a;
+    border-radius: 6px;
+}
+
+.sharing-field:focus-within {
+    border-color: #3b82f6;
+    background-color: #18181b;
+}
+
+.sharing-field > .sharing-label {
+    flex: 0 0 auto;
+    padding: 8px 0;
+    font-size: var(--font-sm);
+    white-space: nowrap;
+}
+
+.sharing-field:has(input:disabled, select:disabled) > .sharing-label {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sharing-field-address,
+.sharing-field-url {
+    width: 100%;
+}
+
+.sharing-credentials-row {
+    flex-wrap: wrap;
+}
+
+.sharing-field-credential {
+    flex: 1 1 180px;
+}
+
 .sharing-input,
 .sharing-input-num,
-.sharing-input-select {
-  background-color: #09090b;
-  color: #f4f4f5;
-  border: 1px solid #27272a;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: var(--font-base);
+.sharing-input-select,
+.sharing-input-url {
+    min-width: 0;
+    align-self: stretch;
+    background-color: transparent;
+    color: #f4f4f5;
+    border: none;
+    border-radius: 0 5px 5px 0;
+    padding: 8px 12px 8px 0;
+    font-size: var(--font-base);
 }
 
 .sharing-input:focus,
 .sharing-input-num:focus,
-.sharing-input-select:focus {
-  border-color: #3b82f6;
-  background-color: #18181b;
-  outline: none;
+.sharing-input-select:focus,
+.sharing-input-url:focus {
+    outline: none;
 }
 
 .sharing-input-num {
-  width: 100px;
+    width: 90px;
 }
 
-.sharing-input {
-  width: 110px;
+.sharing-input,
+.sharing-input-url {
+    flex: 1;
+    width: 0;
 }
 
 .sharing-input-select {
-  min-width: 240px;
-  max-width: 100%;
+    flex: 1;
+    max-width: 100%;
+    text-overflow: ellipsis;
+}
+
+.sharing-input-select option {
+    color: #f4f4f5;
+    background-color: #09090b;
 }
 
 .sharing-input:disabled,
@@ -166,25 +217,16 @@
   cursor: not-allowed;
 }
 
-.sharing-pw-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.pw-input {
-  padding-right: 30px;
-}
-
 .sharing-btn-pw-eye {
-  position: absolute;
-  right: 5px;
-  background: none;
-  border: none;
-  color: #a1a1aa;
-  cursor: pointer;
-  font-size: var(--font-md);
-  padding: 4px;
+    flex-shrink: 0;
+    align-self: stretch;
+    background: none;
+    border: none;
+    border-radius: 0 5px 5px 0;
+    color: #a1a1aa;
+    cursor: pointer;
+    font-size: var(--font-md);
+    padding: 4px 10px;
 }
 
 /* Buttons */
@@ -221,20 +263,6 @@
   background-color: #c94444;
 }
 
-.sharing-input-url {
-  flex: 1;
-  background-color: #09090b;
-  color: #f4f4f5;
-  border: 1px solid #27272a;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: var(--font-base);
-}
-
-.sharing-input-url:focus {
-  outline: none;
-}
-
 .sharing-btn-copy {
   background-color: #27272a;
   color: #f4f4f5;
@@ -256,6 +284,16 @@
 
 .sharing-btn-copy:active {
   background-color: #52525b;
+}
+
+.sharing-field-url > .sharing-btn-copy {
+    flex-shrink: 0;
+    align-self: stretch;
+    margin-left: -8px;
+    border-width: 0 0 0 1px;
+    border-radius: 0 5px 5px 0;
+    padding: 8px 12px;
+    white-space: nowrap;
 }
 
 /* Log Console */

@@ -30,8 +30,64 @@ class MemoryStorage {
 
 test('뷰어 상태 저장 키를 식별한다', () => {
     assert.equal(isViewerStatusStorageKey('bookmanager-viewer-state:C:/a.cbz'), true);
+    assert.equal(isViewerStatusStorageKey('bookmanager-viewer-external-state:C:/a.cbz'), true);
     assert.equal(isViewerStatusStorageKey('bookmanager-viewer-bookmarks:C:/a.cbz'), true);
     assert.equal(isViewerStatusStorageKey('bookmanager-viewer-prefs:comic'), false);
+});
+
+test('외부 뷰어의 읽기 위치와 책갈피를 단일 조회와 일괄 조회에 동일하게 반영한다', () => {
+    const file = { path: '/Downloads/book.epub' };
+    const storage = new MemoryStorage({
+        [`bookmanager-viewer-external-state:${file.path}`]: JSON.stringify({ pageIndex: 39, pageCount: 100 }),
+        [`bookmanager-viewer-bookmarks:${file.path}`]: JSON.stringify([{ id: 'bookmark' }]),
+    });
+    const single = readViewerFileStatus(file, storage);
+    assert.deepEqual(createViewerStatusReader(storage)(file), single);
+    assert.equal(single.hasReadingProgress, true);
+    assert.equal(single.percent, 40);
+    assert.equal(single.bookmarkCount, 1);
+    assert.equal(viewerReadingProgressText(single), '40% · 40 / 100p');
+});
+
+test('일반·외부 읽기 위치가 함께 있으면 최신 값을 사용하고 같은 시각에는 일반 위치를 우선한다', () => {
+    const file = { path: '/Downloads/book.pdf' };
+    const standardKey = `bookmanager-viewer-state:${file.path}`;
+    const externalKey = `bookmanager-viewer-external-state:${file.path}`;
+    for (const [standardTime, externalTime, expectedPage] of [
+        [1000, 2000, 39],
+        [2000, 1000, 19],
+        [1000, 1000, 19],
+        [undefined, undefined, 19],
+        ['2026-10-26T10:00:00Z', Date.parse('2026-10-26T11:00:00Z'), 39],
+    ]) {
+        const entries = [
+            [standardKey, JSON.stringify({ pageIndex: 19, pageCount: 100, updatedAt: standardTime })],
+            [externalKey, JSON.stringify({ pageIndex: 39, pageCount: 100, updatedAt: externalTime })],
+        ];
+        for (const ordered of [entries, [...entries].reverse()]) {
+            const storage = new MemoryStorage(Object.fromEntries(ordered));
+            const single = readViewerFileStatus(file, storage);
+            assert.deepEqual(createViewerStatusReader(storage)(file), single);
+            assert.equal(single.pageIndex, expectedPage);
+        }
+    }
+});
+
+test('외부 읽기 위치도 기존 DB 최신값과 동일 위치 선택 정책을 따른다', () => {
+    const path = '/Downloads/book.epub';
+    const local = { pageIndex: 8, pageCount: 100, scrollPercent: 8, updatedAt: 2000 };
+    const storage = new MemoryStorage({ [`bookmanager-viewer-external-state:${path}`]: JSON.stringify(local) });
+    for (const [readingState, expectedPage, expectedText] of [
+        [{ pageIndex: 29, pageCount: 100, updatedAt: 1000 }, 8, '9% · 9 / 100p'],
+        [{ pageIndex: 29, pageCount: 100, updatedAt: 3000 }, 29, '30% · 30 / 100p'],
+        [{ ...local, updatedAt: 3000, status: 'reading', locator: { kind: 'normalized', normalizedPosition: 0.08 } }, 8, '9% · 9 / 100p'],
+    ]) {
+        const file = { path, readingState };
+        const single = readViewerFileStatus(file, storage);
+        assert.deepEqual(createViewerStatusReader(storage)(file), single);
+        assert.equal(single.pageIndex, expectedPage);
+        assert.equal(viewerReadingProgressText(single), expectedText);
+    }
 });
 
 test('읽는 중과 완료 상태를 계산한다', () => {

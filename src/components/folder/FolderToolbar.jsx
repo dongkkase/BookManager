@@ -1,82 +1,10 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   FOLDER_GROUP_KEYS,
   FOLDER_SORT_KEYS,
 } from '../../folderToolbarState';
-import { dropdownVerticalPlacement } from '../../interactionPolicy';
 import { FaIcon } from '../FaIcon';
-import MenuSurface from '../MenuSurface';
-
-function toolbarDropdownLabel(label = '') {
-  return String(label || '').replace(/\s*▼\s*$/u, '');
-}
-
-function Dropdown({ buttonClassName = '', buttonLabel, children, open, setOpen, menuClassName = '' }) {
-  const ref = useRef(null);
-  const menuRef = useRef(null);
-  const [placement, setPlacement] = useState('down');
-    const [horizontalOffset, setHorizontalOffset] = useState(0);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = event => {
-      if (!ref.current?.contains(event.target)) setOpen(false);
-    };
-    const handleKeyDown = event => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setOpen(false);
-      ref.current?.querySelector('button')?.focus();
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [open, setOpen]);
-
-    useLayoutEffect(() => {
-        if (!open || !ref.current || !menuRef.current) return;
-        const triggerRect = ref.current.getBoundingClientRect();
-        const panelRect = ref.current.closest('.folder-right-panel')?.getBoundingClientRect();
-        const minLeft = Math.max(8, (panelRect?.left ?? 0) + 8);
-        const maxRight = Math.min(window.innerWidth - 8, (panelRect?.right ?? window.innerWidth) - 8);
-        menuRef.current.style.maxWidth = `${Math.max(0, maxRight - minLeft)}px`;
-        setPlacement(dropdownVerticalPlacement(
-            triggerRect,
-            menuRef.current.offsetHeight,
-            window.innerHeight,
-        ));
-        const left = Math.max(minLeft, Math.min(triggerRect.left, maxRight - menuRef.current.offsetWidth));
-        setHorizontalOffset(left - triggerRect.left);
-        menuRef.current.querySelector('button')?.focus();
-    }, [open]);
-
-  return (
-    <div className="toolbar-dropdown" ref={ref}>
-      <button
-        className={`toolbar-btn ${buttonClassName}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <span>{toolbarDropdownLabel(buttonLabel)}</span>
-        <FaIcon name="caret-down" size={9} />
-      </button>
-        <MenuSurface
-            open={open}
-            origin={placement === 'up' ? 'bottom left' : 'top left'}
-          ref={menuRef}
-          role="menu"
-          className={`dropdown-menu dropdown-menu-${placement} ${menuClassName}`}
-            style={{ left: horizontalOffset }}
-        >
-          {children}
-        </MenuSurface>
-    </div>
-  );
-}
+import ToolbarDropdown from './ToolbarDropdown';
 
 function FolderToolbar({
   t,
@@ -102,9 +30,6 @@ function FolderToolbar({
         setOpenMenu('');
         action?.(...args);
     };
-    const handleLayoutKeyDown = event => {
-        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
-    };
 
   const groupLabels = {
     none: t('menu_none'),
@@ -129,7 +54,7 @@ function FolderToolbar({
 
   return (
     <div className="folder-toolbar">
-      <Dropdown
+      <ToolbarDropdown
         buttonClassName={groupKey !== 'none' ? 'active' : ''}
         buttonLabel={t('folder_grouped')}
         open={openMenu === 'group'}
@@ -138,34 +63,42 @@ function FolderToolbar({
         {FOLDER_GROUP_KEYS.map(key => (
           <button
             key={key}
+            type="button"
+            role="menuitemradio"
+            tabIndex={-1}
+            aria-checked={groupKey === key}
             className={`dropdown-item ${groupKey === key ? 'active' : ''}`}
             onClick={() => {
               setGroupKey(key);
               setOpenMenu('');
             }}
           >
-            <span className="check-mark">{groupKey === key ? '✓' : ''}</span>
-            {groupLabels[key]}
+            <span className="check-mark" aria-hidden="true">{groupKey === key ? '✓' : ''}</span>
+            <span className="dropdown-item-label">{groupLabels[key]}</span>
           </button>
         ))}
-      </Dropdown>
+      </ToolbarDropdown>
 
-      <Dropdown
+      <ToolbarDropdown
         buttonClassName={metadataMissingOnly ? 'active' : ''}
         buttonLabel={t('folder_filter')}
         open={openMenu === 'filter'}
         setOpen={setMenu('filter')}
       >
         <button
+          type="button"
+          role="menuitemcheckbox"
+          tabIndex={-1}
+          aria-checked={metadataMissingOnly}
           className={`dropdown-item ${metadataMissingOnly ? 'active' : ''}`}
           onClick={() => setMetadataMissingOnly(!metadataMissingOnly)}
         >
-          <span className="check-mark">{metadataMissingOnly ? '✓' : ''}</span>
-          {t('filter_no_meta')}
+          <span className="check-mark" aria-hidden="true">{metadataMissingOnly ? '✓' : ''}</span>
+          <span className="dropdown-item-label">{t('filter_no_meta')}</span>
         </button>
-      </Dropdown>
+      </ToolbarDropdown>
 
-      <Dropdown
+      <ToolbarDropdown
         buttonClassName={sortKey !== 'name' || sortOrder !== 'asc' ? 'active' : ''}
         buttonLabel={t('folder_sorted')}
         open={openMenu === 'sort'}
@@ -174,47 +107,53 @@ function FolderToolbar({
         {FOLDER_SORT_KEYS.map(key => (
           <button
             key={key}
+            type="button"
+            role="menuitemradio"
+            tabIndex={-1}
+            aria-checked={sortKey === key}
             className={`dropdown-item ${sortKey === key ? 'active' : ''}`}
             onClick={() => {
               onSort(key, false);
               setOpenMenu('');
             }}
           >
-            <span className="check-mark">{sortKey === key ? '✓' : ''}</span>
-            {sortLabels[key]}
+            <span className="check-mark" aria-hidden="true">{sortKey === key ? '✓' : ''}</span>
+            <span className="dropdown-item-label">{sortLabels[key]}</span>
           </button>
         ))}
         <div className="dropdown-separator" />
-        <button className="dropdown-item" onClick={onToggleSortOrder}>
-          <span className="check-mark">{sortOrder === 'asc' ? '↑' : '↓'}</span>
-          {t('menu_toggle_order')}
+        <button type="button" role="menuitem" tabIndex={-1} className="dropdown-item" onClick={onToggleSortOrder}>
+          <span className="check-mark" aria-hidden="true">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+          <span className="dropdown-item-label">{t('menu_toggle_order')}</span>
         </button>
-      </Dropdown>
+      </ToolbarDropdown>
 
-      <Dropdown
+      <ToolbarDropdown
         buttonLabel={t('folder_layouts')}
         open={openMenu === 'layout'}
         setOpen={setMenu('layout')}
         menuClassName="layout-menu"
       >
-        <button type="button" role="menuitem" className="dropdown-item" onClick={() => runLayoutAction(onEditLayout)} onKeyDown={handleLayoutKeyDown}><span />{t('menu_edit_layout')}</button>
-        <button type="button" role="menuitem" className="dropdown-item" onClick={() => runLayoutAction(onSaveLayout)} onKeyDown={handleLayoutKeyDown}><span />{t('menu_save_layout')}</button>
+        <button type="button" role="menuitem" tabIndex={-1} className="dropdown-item" onClick={() => runLayoutAction(onEditLayout)}><span aria-hidden="true" /><span className="dropdown-item-label">{t('menu_edit_layout')}</span></button>
+        <button type="button" role="menuitem" tabIndex={-1} className="dropdown-item" onClick={() => runLayoutAction(onSaveLayout)}><span aria-hidden="true" /><span className="dropdown-item-label">{t('menu_save_layout')}</span></button>
         {savedLayouts.length > 0 && <div className="dropdown-separator" />}
         {savedLayouts.map(name => (
-            <div key={name} className="saved-layout-row" role="none" onKeyDown={handleLayoutKeyDown}>
+            <div key={name} className="saved-layout-row" role="none">
                 <button
                     type="button"
                     role="menuitem"
+                    tabIndex={-1}
                     className="dropdown-item saved-layout-name"
                     title={name}
                     onClick={() => runLayoutAction(onApplyLayout, name)}
                 >
-                    <span />
-                    <span>{name}</span>
+                    <span aria-hidden="true" />
+                    <span className="dropdown-item-label">{name}</span>
                 </button>
                 <button
                     type="button"
                     role="menuitem"
+                    tabIndex={-1}
                     className="saved-layout-action"
                     title={t('layout_edit_named', [name])}
                     aria-label={t('layout_edit_named', [name])}
@@ -225,6 +164,7 @@ function FolderToolbar({
                 <button
                     type="button"
                     role="menuitem"
+                    tabIndex={-1}
                     className="saved-layout-action saved-layout-delete"
                     title={t('layout_delete_named', [name])}
                     aria-label={t('layout_delete_named', [name])}
@@ -234,7 +174,7 @@ function FolderToolbar({
                 </button>
             </div>
         ))}
-      </Dropdown>
+      </ToolbarDropdown>
 
         <button
             type="button"

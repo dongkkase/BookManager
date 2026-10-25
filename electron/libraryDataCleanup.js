@@ -105,9 +105,10 @@ export async function pruneUnregisteredLibraryData(library, libraryPaths) {
                 rememberCover(row.cover_override_path);
             }
             planRemoval('files', outsideFiles, 'deletedFileCount');
+            planRemoval('reading_states', outsideRows('reading_states', 'file_path', ['retain_outside_library'])
+                .filter(row => row.retain_outside_library !== 1), 'deletedReadingStateCount');
             for (const [table, column, countKey] of [
                 ['reading_file_activity', 'path', 'deletedActivityCount'],
-                ['reading_states', 'file_path', 'deletedReadingStateCount'],
                 ['text_metadata_paths', 'path', 'deletedTextMetadataPathCount'],
                 ['dup_target_index', 'full_path', 'deletedDuplicateIndexCount'],
             ]) {

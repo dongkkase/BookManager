@@ -29,6 +29,7 @@ const clearCacheCallback = fragment('const runSearch = (', 'const toggleTranslat
 const dialogRequestEffectStart = source.lastIndexOf('useEffect(() => {', source.indexOf('return () => { dialogRequestRef.current = null; };'));
 const dialogRequestEffect = source.slice(dialogRequestEffectStart, source.indexOf('const resolvingRidiDates =', dialogRequestEffectStart));
 const translationCallback = fragment('const toggleTranslation = async () => {', 'const text = (key, fallback, values) => {');
+const comicVinePendingState = fragment('const comicVineDetailPending =', 'const selectedResultKey =');
 const translationEffectStart = source.lastIndexOf('useEffect(() => {', source.indexOf('translationRequestRef.current += 1;'));
 const translationEffect = source.slice(translationEffectStart, source.indexOf('useEffect(() => {', translationEffectStart + 1));
 
@@ -500,6 +501,7 @@ function translationHarness() {
     });
     vm.runInContext(`globalThis.render = function(rawSelected, values, state) {
         const { translatedResult, showTranslated, translating } = values;
+        ${comicVinePendingState}
         const selectedResultKey = metadataSearchResultKey(rawSelected, state.apiSource);
         ${translationEffect}
         ${translationCallback}
@@ -555,4 +557,28 @@ test('closing a search dialog invalidates its pending translation', async () => 
     assert.equal(h.values.translatedResult, null);
     assert.equal(h.values.showTranslated, false);
     assert.equal(h.values.translationError, '');
+});
+
+test('Comic Vine translation waits for details and uses the enriched result once it is ready', async () => {
+    const h = translationHarness();
+    const summary = { apiSource: 'Vine', id: 42, title: 'Volume', summary: 'Search summary' };
+    await h.render(summary)();
+    await h.render({ ...summary, comicVineDetailLoading: true })();
+    assert.equal(h.requests.length, 0);
+    const detailed = { ...summary, summary: 'Full description', comicVineDetailResolved: true };
+    const translating = h.render(detailed)();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].result.summary, 'Full description');
+    h.requests[0].resolve({ success: true, result: { title: '번역 제목' } });
+    await translating;
+    assert.equal(h.values.showTranslated, true);
+});
+
+test('Comic Vine detail failure still permits translating the retained search result', async () => {
+    const h = translationHarness();
+    const translating = h.render({ apiSource: 'Vine', id: 42, title: 'Volume', comicVineDetailError: 'Unavailable' })();
+    assert.equal(h.requests.length, 1);
+    h.requests[0].resolve({ success: true, result: { title: '번역 제목' } });
+    await translating;
+    assert.equal(h.values.showTranslated, true);
 });

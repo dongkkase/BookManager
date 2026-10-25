@@ -20,7 +20,8 @@ test('폴더탭 탐색기 패널의 아이콘은 이모지 대신 FontAwesome을
     assert.doesNotMatch(folderTabSource, forbidden);
     assert.match(folderTabSource, /import\s+\{\s*FaIcon\s*\}\s+from\s+['"]\.\.\/components\/FaIcon['"]/);
     assert.match(source, /<FaIcon name="plus"/);
-    assert.match(source, /<FaIcon name="star"/);
+    assert.match(source, /favorites:\s*\['star', favorites\.length\]/);
+    assert.match(source, /<FaIcon name=\{icon\}/);
     assert.match(source, /<FaIcon name="ellipsisVertical"/);
     assert.match(treeSource, /name=\{row\.expanded \? 'angleDown' : 'chevronRight'\}/);
     assert.match(folderTabSource, /icon="folderOpen"/);

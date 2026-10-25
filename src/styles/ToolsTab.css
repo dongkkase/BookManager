@@ -613,10 +613,17 @@ button.file-tool-item {
     box-shadow: inset 0 0 0 1px var(--text-cleaner-accent);
 }
 
-.text-cleaner-search button:focus-visible,
-.text-cleaner-search input:focus-visible {
+.text-cleaner-search button:focus-visible {
     outline: 1px solid var(--text-cleaner-accent);
     outline-offset: -1px;
+}
+
+.text-cleaner-search:has(input:focus-visible):not(.has-error) {
+    border-color: var(--text-cleaner-accent);
+}
+
+.text-cleaner-search input:focus-visible {
+    outline: none;
 }
 
 .text-cleaner-search-toggle {

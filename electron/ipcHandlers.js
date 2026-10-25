@@ -4,6 +4,8 @@ import { registerObservedHandler } from './observabilityOperations.js';
 import { reportTelemetryError } from './telemetry.js';
 import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
+import { registerAuthorProfilesIpc } from './authorProfiles.js';
+import { registerAuthorPhotoSearchIpc } from './authorPhotoSearch.js';
 import { registerAppDataIpc } from './appDataIpc.js';
 import { createLibraryDataMaintenance } from './libraryDataMaintenance.js';
 import { isRegisteredLibraryFile } from './libraryPathScope.js';
@@ -87,6 +89,7 @@ import { setLanguage, t as i18nT } from './utils/i18n.js';
 import { searchYes24 } from './yes24Search.js';
 import { originalMunpiaCoverUrl, searchMunpia } from './munpiaSearch.js';
 import { searchKmas } from './kmasSearch.js';
+import { clearComicVineCoverCache, clearComicVineCreditsCache, getComicVineCreators, getComicVineVolume, getComicVineVolumeCovers, isComicVineImageUrl, searchComicVine } from './comicVineSearch.js';
 import { additionalMetadataErrorMessage, createAdditionalMetadataContext, searchAdditionalMetadataProvider } from './additionalMetadataProviders.js';
 import { isMetadataApiSourceEnabled } from './metadataProviderSettings.js';
 import { detectImageMimeType } from './imageMagic.js';
@@ -741,6 +744,7 @@ function normalizeSearchResult(raw = {}, id = '') {
 
 const ridiPublishDateCache = new BoundedMemoryCache({ maxEntries: 512, maxBytes: 1024 * 1024 });
 const ridiBookDetailCache = new BoundedMemoryCache({ maxEntries: 512, maxBytes: 4 * 1024 * 1024 });
+const comicVineDetailCache = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 8 * 1024 * 1024 });
 const googleBooksRatingCache = new BoundedMemoryCache({ maxEntries: 300, maxBytes: 1024 * 1024 });
 const metadataTranslationCache = new BoundedMemoryCache({ maxEntries: 256, maxBytes: 8 * 1024 * 1024 });
 const coverTitleIdentificationCache = new BoundedMemoryCache({ maxEntries: 64, maxBytes: 2 * 1024 * 1024 });
@@ -1687,50 +1691,14 @@ async function searchAladin(query, ttbKey = '', page = 1, bookType = 'comic') {
   });
 }
 
-async function searchVine(query, apiKey = '', page = 1) {
-  if (!apiKey) return [];
-  const params = new URLSearchParams({
-    api_key: apiKey,
-    format: 'json',
-    resources: 'volume',
-    query,
-    limit: '20',
-    page: String(page || 1),
-  });
-  const data = await requestJsonGeneric(`https://comicvine.gamespot.com/api/search/?${params.toString()}`, {
-    'User-Agent': 'BookManager_App/1.0',
-  }, 15000);
-  return (data.results || []).map(item => {
-    const publisher = typeof item.publisher === 'object' && item.publisher ? item.publisher.name || '' : '';
-    const coverUrl = typeof item.image === 'object' && item.image ? item.image.medium_url || item.image.original_url || '' : '';
-    const year = item.start_year ? String(item.start_year) : '';
-    const raw = {
-      Title: item.name || '',
-      Series: item.name || '',
-      Writer: '',
-      Publisher: publisher,
-      Summary: stripHtml(item.description || ''),
-      Web: item.site_detail_url || '',
-      CoverUrl: coverUrl,
-      Tags: '',
-      Genre: '',
-      LocalizedSeries: item.name || '',
-      Count: item.count_of_issues ? String(item.count_of_issues) : '',
-      Format: 'Comic',
-      Rating: '-',
-      RatingScore: '-',
-      CommunityRating: '',
-      AgeRating: '',
-      PubDate: year,
-      Year: year,
-      Month: '',
-      Day: '',
-      Volume: '',
-      Number: '',
-      Characters: '',
-    };
-    return normalizeSearchResult(raw, item.id || item.api_detail_url || item.site_detail_url);
-  });
+async function searchVine(query, apiKey = '', page = 1, options = {}) {
+    const items = await searchComicVine(query, apiKey, page, requestJsonGeneric, options);
+    const results = items.map(item => normalizeSearchResult({
+        ...item,
+        metadataProviderHasNext: items.hasNext,
+    }, item.ID));
+    results.hasNext = items.hasNext;
+    return results;
 }
 
 function escapeRegExp(value = '') {
@@ -2481,7 +2449,13 @@ async function fetchImageCacheFileFromUrl(imageUrl = '', cacheDir = '') {
 
   const hash = crypto.createHash('sha1').update(url).digest('hex');
   const cachedPath = await findApiCoverCacheFile(cacheDir, hash);
-  if (cachedPath) return ensureApiCoverCompatibleCacheFile(cachedPath, cacheDir, hash);
+    const comicVineImage = isComicVineImageUrl(url);
+    if (cachedPath) {
+        if (!comicVineImage || detectImageMimeType(await fs.promises.readFile(cachedPath))) {
+            return ensureApiCoverCompatibleCacheFile(cachedPath, cacheDir, hash);
+        }
+        await fs.promises.unlink(cachedPath);
+    }
 
   const imageOrigin = new URL(url).origin;
   const isRidiImage = /ridicdn\.net|ridibooks\.com/i.test(url);
@@ -2490,6 +2464,7 @@ async function fetchImageCacheFileFromUrl(imageUrl = '', cacheDir = '') {
     Accept: 'image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5',
     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
   }, 12000);
+    if (comicVineImage && !detectImageMimeType(buffer)) throw new Error('INVALID_COVER_IMAGE');
   const mimeType = mimeFromUrl(url, contentType);
   const normalized = normalizeApiCoverImageBuffer(buffer, mimeType);
   const filePath = path.join(cacheDir, `${hash}${imageExtensionFromMime(normalized.mimeType)}`);
@@ -2858,11 +2833,20 @@ async function enrichResultImages(results = [], cacheDir = '') {
       cursor += 1;
       const coverUrl = next[index].coverUrl || next[index].CoverUrl || '';
       if (!coverUrl || next[index].coverCacheUrl) continue;
-      try {
-        next[index].coverCacheUrl = await fetchImageCacheUrlFromUrl(coverUrl, cacheDir);
-      } catch {
+        const candidates = [...new Set([coverUrl, ...(Array.isArray(next[index].CoverUrls) ? next[index].CoverUrls : [])])].filter(Boolean).slice(0, 3);
         next[index].coverCacheUrl = '';
-      }
+        for (const candidate of candidates) {
+            try {
+                const cachedUrl = await fetchImageCacheUrlFromUrl(candidate, cacheDir);
+                if (!cachedUrl) continue;
+                next[index].coverCacheUrl = cachedUrl;
+                next[index].CoverUrl = candidate;
+                next[index].coverUrl = candidate;
+                break;
+            } catch {
+                // Try the next image size supplied by the metadata provider.
+            }
+        }
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, next.length) }, worker));
@@ -3206,6 +3190,13 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
+    registerAuthorProfilesIpc({ ipcMain, getMainWindow: hooks.getMainWindow });
+    registerAuthorPhotoSearchIpc({
+        ipcMain,
+        getMainWindow: hooks.getMainWindow,
+        getConfig: () => configManager.getConfig(),
+        getPhotoDirectory: () => path.join(resolveAppDataDir(getExecutableDir()), 'author-photos'),
+    });
     const epubEditorService = registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, openViewerPreview: hooks.openViewerPreview });
     const epubOptimizerService = registerEpubOptimizerIpc({ ipcMain, BrowserWindow });
   const cancellationRegistry = new TaskCancellationRegistry();
@@ -3938,6 +3929,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     const config = configManager.getConfig() || {};
     const apiKeys = { ...(config.api_keys || {}), ...(options.apiKeys || {}) };
     const apiName = normalizeApiSource(options.api || options.apiName || options.source || options.apiSource);
+    const deferComicVineEnrichment = apiName === 'Vine' && options.deferComicVineEnrichment === true;
     const bookType = normalizeSearchBookType(options.bookType || options.mediaType || options.type);
     const queryText = String(options.query || '').trim();
     const query = apiName === 'YES24' || apiName === '문피아' || apiName === '한국웹툰' ? queryText.normalize('NFC') : queryText;
@@ -3965,6 +3957,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         cached: false,
       };
     }
+    if (apiName === 'Vine' && !String(apiKeys.vine || '').trim()) {
+        return {
+            success: false, api: apiName, actualQuery: query, results: [], cached: false,
+            error: additionalMetadataErrorMessage({ code: 'API_AUTH_REQUIRED' }, 'Comic Vine', i18nT),
+        };
+    }
     metadataSearchLog('Search started', { api: apiName, query, page });
 
     let actualQuery = query;
@@ -3983,7 +3981,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             error: additionalMetadataErrorMessage({ code: providerContext.errorCode }, apiName, i18nT),
         };
     }
-    const cacheQuery = `${bookType}::${query}::p${page}::v17${providerContext?.cacheSuffix || ''}`;
+    const cacheQuery = `${bookType}::${query}::p${page}::v17${apiName === 'Vine' ? '::comicvine-v5' : ''}${deferComicVineEnrichment ? '::summary' : ''}${providerContext?.cacheSuffix || ''}`;
     try {
       if (apiCacheDb) {
         const cachedResults = getCachedApiResults(apiCacheDb, apiName, cacheQuery);
@@ -4000,7 +3998,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             success: true,
             api: apiName,
             actualQuery,
-            results: await enrichResultImages(cachedResults, apiCoverCacheDir()),
+            results: deferComicVineEnrichment ? stripTransientApiImageFieldsFromResults(cachedResults) : await enrichResultImages(cachedResults, apiCoverCacheDir()),
             ...(apiName === '한국웹툰' ? { hasNext: cachedResults.some(item => item.kmasHasNext) } : {}),
             ...(typeof cachedResults[0]?.metadataProviderHasNext === 'boolean' ? { hasNext: cachedResults[0].metadataProviderHasNext } : {}),
             cached: true,
@@ -4043,7 +4041,8 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
       } else if (apiName === 'Amazon') {
         results = await searchAmazon(query, page, bookType);
       } else if (apiName === 'Vine') {
-        results = await searchVine(query, apiKeys.vine || '', page);
+        results = await searchVine(query, apiKeys.vine || '', page, { deferCreators: deferComicVineEnrichment });
+        providerHasNext = results.hasNext;
       } else if (providerContext) {
         const items = await searchAdditionalMetadataProvider(apiName, {
             query, page, bookType, apiKeys, settings: providerContext.settings,
@@ -4064,7 +4063,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         throw new Error(i18nT('api_search_unsupported', { api: apiName }));
       }
     } catch (error) {
-      const message = providerContext ? additionalMetadataErrorMessage(error, apiName, i18nT) : error.message || String(error);
+      const message = providerContext || apiName === 'Vine' ? additionalMetadataErrorMessage(error, apiName === 'Vine' ? 'Comic Vine' : apiName, i18nT) : error.message || String(error);
       metadataSearchLog('Search failed', { api: apiName, query, actualQuery, page, error: message });
       return {
         success: false,
@@ -4078,7 +4077,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     if (apiName === 'Anilist' || apiName === 'Vine' || apiName === 'Amazon') {
       results = results.map(result => ({ ...result, identifiedSearchQuery: actualQuery }));
     }
-    results = await enrichResultImages(results, apiCoverCacheDir());
+    if (!deferComicVineEnrichment) results = await enrichResultImages(results, apiCoverCacheDir());
     metadataSearchLog('Search completed', {
       api: apiName,
       query,
@@ -4090,7 +4089,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
     const writeCacheDb = openApiCacheDbSafe();
     try {
-      if (writeCacheDb && Array.isArray(results) && results.length > 0) {
+      if (writeCacheDb && Array.isArray(results) && results.length > 0 && !results.some(item => item.comicVineCreditsError || item.comicVineCoversError)) {
         await setCachedApiResults(writeCacheDb, apiName, cacheQuery, stripTransientApiImageFieldsFromResults(results));
       }
     } finally {
@@ -4106,6 +4105,90 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
 
   ipcMain.handle('api:ridiBookDetail', async (_event, bookId) => getRidiBookDetail(bookId));
   ipcMain.handle('api:ridiPublishDate', async (_event, bookId) => getRidiPublishDate(bookId));
+
+    ipcMain.handle('api:comicVineCovers', async (_event, volumeIds) => {
+        const config = configManager.getConfig() || {};
+        try {
+            if (!isMetadataApiSourceEnabled('Vine', config.metadata_api_enabled)) {
+                return { success: false, code: 'API_DISABLED', error: i18nT('api_provider_disabled', { api: 'Comic Vine' }) };
+            }
+            const apiKey = String(config.api_keys?.vine || '').trim();
+            if (!apiKey) throw Object.assign(new Error('API_AUTH_REQUIRED'), { code: 'API_AUTH_REQUIRED' });
+            if (!Array.isArray(volumeIds) || volumeIds.length === 0 || volumeIds.length > 10
+                || volumeIds.some(id => !/^[1-9]\d*$/.test(String(id ?? '')))) {
+                throw Object.assign(new Error('API_INVALID_RESPONSE'), { code: 'API_INVALID_RESPONSE' });
+            }
+            const items = await getComicVineVolumeCovers(volumeIds.map(String), apiKey, requestJsonGeneric);
+            return {
+                success: true,
+                results: items.map(item => ({
+                    ...item, id: item.ID, coverUrl: item.CoverUrl, publisher: item.Publisher,
+                    metadata: { Publisher: item.Publisher, Count: item.Count },
+                })),
+            };
+        } catch (error) {
+            return {
+                success: false, code: error.code || 'API_REQUEST_FAILED',
+                error: additionalMetadataErrorMessage(error, 'Comic Vine', i18nT),
+            };
+        }
+    });
+
+    ipcMain.handle('api:comicVineCredits', async (_event, volumeId, firstIssueId) => {
+        const config = configManager.getConfig() || {};
+        try {
+            if (!isMetadataApiSourceEnabled('Vine', config.metadata_api_enabled)) {
+                return { success: false, code: 'API_DISABLED', error: i18nT('api_provider_disabled', { api: 'Comic Vine' }) };
+            }
+            const apiKey = String(config.api_keys?.vine || '').trim();
+            if (!apiKey) throw Object.assign(new Error('API_AUTH_REQUIRED'), { code: 'API_AUTH_REQUIRED' });
+            const id = String(volumeId || '').trim();
+            const issueId = String(firstIssueId || '').trim();
+            if (!/^[1-9]\d*$/.test(id) || !/^[1-9]\d*$/.test(issueId)) {
+                throw Object.assign(new Error('API_INVALID_RESPONSE'), { code: 'API_INVALID_RESPONSE' });
+            }
+            const credits = await getComicVineCreators(id, issueId, apiKey, requestJsonGeneric);
+            return {
+                success: true,
+                result: {
+                    ...credits,
+                    author: credits.Writer || credits.Penciller || '',
+                    metadata: { Writer: credits.Writer, Penciller: credits.Penciller },
+                },
+            };
+        } catch (error) {
+            return {
+                success: false, code: error.code || 'API_REQUEST_FAILED',
+                error: additionalMetadataErrorMessage(error, 'Comic Vine', i18nT),
+            };
+        }
+    });
+
+    ipcMain.handle('api:comicVineDetail', async (_event, volumeId, options = {}) => {
+        const config = configManager.getConfig() || {};
+        try {
+            if (!isMetadataApiSourceEnabled('Vine', config.metadata_api_enabled)) {
+                return { success: false, code: 'API_DISABLED', error: i18nT('api_provider_disabled', { api: 'Comic Vine' }) };
+            }
+            const apiKey = String(config.api_keys?.vine || '').trim();
+            if (!apiKey) throw Object.assign(new Error('API_AUTH_REQUIRED'), { code: 'API_AUTH_REQUIRED' });
+            const id = String(volumeId || '').trim();
+            if (!/^[1-9]\d*$/.test(id)) throw Object.assign(new Error('API_INVALID_RESPONSE'), { code: 'API_INVALID_RESPONSE' });
+            const cached = comicVineDetailCache.has(id);
+            const item = await comicVineDetailCache.getOrLoad(id, async () => {
+                const detail = await getComicVineVolume(id, apiKey, requestJsonGeneric);
+                if (detail.comicVineCreditsError) {
+                    throw Object.assign(new Error(detail.comicVineCreditsError), { code: detail.comicVineCreditsError });
+                }
+                return detail;
+            }, { ttlMs: 60 * 60 * 1000 });
+            const normalized = normalizeSearchResult(item, item.ID);
+            const [result] = options?.deferImages === true ? [normalized] : await enrichResultImages([normalized], apiCoverCacheDir());
+            return { success: true, result, cached };
+        } catch (error) {
+            return { success: false, error: additionalMetadataErrorMessage(error, 'Comic Vine', i18nT) };
+        }
+    });
 
   ipcMain.handle('api:translateMetadata', async (_event, result = {}) => {
     const config = configManager.getConfig() || {};
@@ -4344,6 +4427,9 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   ipcMain.handle('cache:clearApi', async () => {
     ridiPublishDateCache.clear();
     ridiBookDetailCache.clear();
+    comicVineDetailCache.clear();
+    clearComicVineCoverCache(requestJsonGeneric);
+    clearComicVineCreditsCache(requestJsonGeneric);
     googleBooksRatingCache.clear();
     metadataTranslationCache.clear();
     coverTitleIdentificationCache.clear();
@@ -4440,12 +4526,12 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
   };
 
   const recordReadingOpened = async filePath => {
-    if (configManager.canPruneLibraryData?.() && !isRegisteredLibraryFile(filePath, configManager.getConfig().libraries)) return;
     const db = new LibraryDB({ dbPath: libraryDbPath() });
     try {
       const state = await db.upsertReadingState(filePath, {
         format: readingFormatForPath(filePath),
         lastReadAt: Date.now(),
+        retainOutsideLibrary: !isRegisteredLibraryFile(filePath, configManager.getConfig()?.libraries),
       });
       if (state) broadcastReadingChanged({
         filePath: state.filePath,

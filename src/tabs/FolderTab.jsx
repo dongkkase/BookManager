@@ -7,7 +7,12 @@ import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { ReadingCollectionsDialog } from '../components/folder/ReadingCollections';
 import { useReadingLists } from '../hooks/useReadingLists';
+import { useAnnotationCatalog } from '../hooks/useAnnotationCatalog';
+import { getAuthorCatalog } from '../authorCatalog';
+import { useAuthorBookDetails } from '../hooks/useAuthorBookDetails';
 import { RecentReadingToolbar } from '../components/folder/RecentReadingToolbar';
+import { AuthorsBrowser } from '../components/folder/AuthorsBrowser';
+import AnnotationsBrowser from '../components/folder/AnnotationsBrowser';
 import { defaultRecentListOptions, filterRecentListFiles, recentListExtension, sortRecentListFiles } from '../recentReadingListState';
 import '../styles/ReadingLists.css';
 import { FileTableView } from '../components/folder/FileTableView';
@@ -569,6 +574,8 @@ const FolderSearchInput = React.memo(function FolderSearchInput({
     );
 });
 
+const EMPTY_CATALOG_SELECTION = [];
+
 function FolderTab({ config, saveConfig, t, showToast }) {
     const saveConfigWithNotice = useConfigSaveNotice(saveConfig, showToast);
   const runtimePlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
@@ -735,10 +742,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const [recentReadingLoaded, setRecentReadingLoaded] = useState(false);
     const recentReadingRequestRef = useRef(0);
     const isRecentReading = folderSource === 'recent-reading';
-    const readingListKind = ['favorites', 'recent-added', 'recent-updated', 'wishlist', 'collections', 'collection'].includes(folderSource) ? folderSource : '';
+    const readingListKind = ['favorites', 'recent-added', 'recent-updated', 'wishlist', 'collections', 'collection', 'authors', 'annotations'].includes(folderSource) ? folderSource : '';
+    const isCatalogView = readingListKind === 'authors' || readingListKind === 'annotations';
     const isFavoritesView = readingListKind === 'favorites';
     const isCollectionView = readingListKind === 'collections' || readingListKind === 'collection';
     const isReadingList = isRecentReading || Boolean(readingListKind);
+    const authorBackRef = useRef(null);
+    const [canGoBackFromAuthor, setCanGoBackFromAuthor] = useState(false);
+    const handleAuthorBackActionChange = useCallback(action => {
+        authorBackRef.current = action;
+        setCanGoBackFromAuthor(Boolean(action));
+    }, []);
+    const isAuthorDetail = readingListKind === 'authors' && canGoBackFromAuthor;
     const isRecentList = isRecentReading || readingListKind.startsWith('recent-');
     const [recentListOptionsByKind, setRecentListOptionsByKind] = useState({});
     const recentListOptions = useMemo(() => recentListOptionsByKind[folderSource] || defaultRecentListOptions(folderSource), [folderSource, recentListOptionsByKind]);
@@ -765,8 +780,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const libraries = useMemo(() => JSON.parse(libraryPathsKey), [libraryPathsKey]);
     const readingLibraryPathsRef = useRef(null);
     readingLibraryPathsRef.current = config && !config.library_data_prune_pending && Array.isArray(config.libraries) ? libraries : null;
-    const readingLists = useReadingLists(readingListKind === 'collection' ? selectedCollectionId : readingListKind === 'wishlist' ? 'want-to-read' : readingListKind, t, isFavoritesView ? favoriteFiles : null, libraries);
+    const catalogLanguage = config?.language || config?.lang || 'ko';
+    const readingLists = useReadingLists(isCatalogView ? 'library-catalog' : readingListKind === 'collection' ? selectedCollectionId : readingListKind === 'wishlist' ? 'want-to-read' : readingListKind, t, isFavoritesView ? favoriteFiles : null, libraries, catalogLanguage);
     const { mutate: mutateList, refresh: refreshReadingList } = readingLists;
+    const catalogAuthors = useMemo(() => getAuthorCatalog(readingLists.catalogFiles, catalogLanguage), [readingLists.catalogFiles, catalogLanguage]);
+    const authorCount = catalogAuthors.length;
+    const authorBookCount = useMemo(() => {
+        const paths = new Set();
+        for (const author of catalogAuthors) for (const file of author.books) paths.add(file.full_path || file.path);
+        return paths.size;
+    }, [catalogAuthors]);
+    const { catalog: annotationCatalog, refresh: refreshAnnotations, deleteAnnotation } = useAnnotationCatalog(readingLists.catalogFiles);
+    const [annotationToolbarTarget, setAnnotationToolbarTarget] = useState(null);
     const activeCollection = readingLists.collections.find(collection => collection.id === selectedCollectionId);
     const readingListTitle = isFavoritesView ? t('folder.sidebar.favorites') : isRecentReading ? t('folder.recent.title')
         : readingListKind === 'collection' ? activeCollection?.name || t('reading_lists.collections')
@@ -1266,7 +1291,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     );
   const isFolderTagSearchActive = folderTagSelections.length > 0
     && folderTagResultScopeKey === folderTagDatabaseScopeKey;
-  const normalRawFileData = isReadingList
+  const normalRawFileData = isCatalogView ? EMPTY_CATALOG_SELECTION : isReadingList
     ? isRecentReading ? recentReadingFiles : readingLists.files
     : isLibrarySearchActive
       ? librarySearchResults
@@ -1459,7 +1484,24 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         showToast?.(t('reading_lists.filters_reset'));
     }, [changeRecentListOptions, folderSource, resetSearchQuery, showToast, t]);
   const activeSelectedFile = selectedFileData();
-  const detailSelectedFile = activeSelectedFile?.collectionId ? null : activeSelectedFile || null;
+    const {
+        file: authorBookFile, selectedPath: authorBookPath, selectFile: selectAuthorBookFile,
+        patchFiles: patchAuthorBooks, error: authorBookError,
+    } = useAuthorBookDetails({
+        enabled: isAuthorDetail,
+        scopeKey: JSON.stringify([libraryPathsKey, localSearchQuery]),
+        revision: readingLists.previewRevision,
+    });
+    const handleAuthorBookSelect = useCallback(file => {
+        selectAuthorBookFile(file);
+        if (file) setIsDetailPanelCollapsed(false);
+    }, [selectAuthorBookFile]);
+    const detailSelectedFile = isCatalogView
+        ? (authorBookFile ? mapViewerStatus(authorBookFile, authorBookFile.readingState) : null)
+        : activeSelectedFile?.collectionId ? null : activeSelectedFile || null;
+    useEffect(() => {
+        if (authorBookError) showToast?.(t('reading_lists.book_details_failed'));
+    }, [authorBookError, showToast, t]);
   const selectedFileSet = useMemo(() => new Set(selectedFiles), [selectedFiles]);
   const selectedFilesTotalBytes = useMemo(() => (
     selectedFiles.reduce((total, filePath) => total + (Number(fileLookup.getFile(filePath)?.size) || 0), 0)
@@ -1580,7 +1622,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         clearSelection();
         resetSearchQuery();
         setContextMenu(null);
-        if (kind === readingListKind && collectionId === selectedCollectionId) void refreshReadingList();
+        if (kind === readingListKind && collectionId === selectedCollectionId && kind !== 'authors' && kind !== 'annotations') void refreshReadingList();
     }, [cancelFolderLocationRestore, clearSelection, readingListKind, refreshReadingList, rememberCurrentFolderLocation, resetSearchQuery, selectedCollectionId]);
 
     const changeListMembership = useCallback(async (action, paths, { preserveSelection = false } = {}) => {
@@ -1682,11 +1724,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [groupKey, itemScales, saveConfigWithNotice, sortKey, sortOrder, viewMode]);
 
   useEffect(() => {
-    if (!activeSelectedFile || initializedDetailHeightRef.current) return;
+    if (!detailSelectedFile || initializedDetailHeightRef.current) return;
     const rightHeight = rightPanelRef.current?.clientHeight || 700;
     setDetailPanelHeight(resolveDetailHeight(undefined, rightHeight));
     initializedDetailHeightRef.current = true;
-  }, [activeSelectedFile]);
+  }, [detailSelectedFile]);
 
   const updateRightPanelWidth = useCallback(() => {
     const panel = rightPanelRef.current;
@@ -2176,6 +2218,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   }, [config?.lang, config?.language, handleSafeFolderNavigation, runtimePlatform, saveConfig, t]);
 
     const handleFolderHistoryNavigation = useCallback(async direction => {
+        if (readingListKind === 'authors') {
+            if (direction < 0) authorBackRef.current?.();
+            return;
+        }
         if (direction < 0 && readingListKind === 'collection') {
             handleSelectReadingList('collections');
             return;
@@ -2295,8 +2341,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         setLibrarySearchResults(updateRating);
         setFolderTagSearchResults(updateRating);
         setRecentReadingFiles(updateRating);
+        patchAuthorBooks(changes.map(item => ({ path: item.filePath, rating: String(item.rating) })));
         updateCachedFiles(selectedFolderPath, scanOptions, changes.map(item => ({ path: item.filePath, rating: String(item.rating) })));
-    }), [selectedFolderPath, scanOptions, updateCachedFiles]);
+    }), [patchAuthorBooks, selectedFolderPath, scanOptions, updateCachedFiles]);
 
   // 누락 권수 확인
   const checkMissingVolumes = useCallback(async () => {
@@ -2318,7 +2365,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     useFolderMouseNavigation({
         isVisible: isFolderTabVisible,
-        canNavigate: () => (!isReadingList || isCollectionView) && canFocusGotoPath(),
+        canNavigate: () => (!isReadingList || isCollectionView || isAuthorDetail) && canFocusGotoPath(),
         onNavigate: handleFolderHistoryNavigation,
     });
 
@@ -2382,6 +2429,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             setLibrarySearchResults(updateRating);
             setFolderTagSearchResults(updateRating);
             setRecentReadingFiles(updateRating);
+            patchAuthorBooks([{ path: result.filePath, rating: String(result.rating) }]);
             updateCachedFiles(selectedFolderPath, scanOptions, [{
                 path: ratingEditorTarget?.path || result.filePath,
                 rating: String(result.rating),
@@ -2390,7 +2438,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             showToast?.(t(result.storage === 'file' ? 'rating_saved_file' : 'rating_saved_database'));
         }
         return result;
-    }, [ratingEditorTarget, runInternalFileAction, scanOptions, selectedFolderPath, showToast, t, updateCachedFiles]);
+    }, [patchAuthorBooks, ratingEditorTarget, runInternalFileAction, scanOptions, selectedFolderPath, showToast, t, updateCachedFiles]);
 
     useEffect(() => {
         const handleMetadataSaved = event => {
@@ -2724,22 +2772,23 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
   const ensureActiveSelectionVisible = useCallback(() => {
     if (folderLocationRestoreRef.current) return;
-    if (!activeSelectedPath) return;
+    const selectedPath = isAuthorDetail ? authorBookPath : activeSelectedPath;
+    if (!selectedPath) return;
     const container = viewContainerRef.current;
     if (!container) return;
-    const targetPath = String(activeSelectedPath);
-    const activeElement = Array.from(container.querySelectorAll('[data-file-path]'))
-      .find(element => String(element?.dataset?.filePath || '') === targetPath);
+    const targetPath = String(selectedPath);
+    const activeElement = Array.from(container.querySelectorAll(isAuthorDetail ? '[data-author-book-path]' : '[data-file-path]'))
+      .find(element => String(isAuthorDetail ? element.dataset.authorBookPath : element.dataset.filePath) === targetPath);
     if (!activeElement) return;
     activeElement.scrollIntoView({
       block: 'nearest',
       inline: 'nearest',
     });
-  }, [activeSelectedPath]);
+  }, [activeSelectedPath, authorBookPath, isAuthorDetail]);
 
   useEffect(() => {
     if (folderLocationRestoreRef.current) return;
-    if (!activeSelectedPath) return;
+    if (!(isAuthorDetail ? authorBookPath : activeSelectedPath)) return;
     let frame = 0;
     let nestedFrame = 0;
     frame = window.requestAnimationFrame(() => {
@@ -2749,7 +2798,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (frame) window.cancelAnimationFrame(frame);
       if (nestedFrame) window.cancelAnimationFrame(nestedFrame);
     };
-  }, [activeSelectedPath, detailPanelHeight, detailPanelPosition, visibleDetailPanelWidth, isDetailPanelCollapsed, ensureActiveSelectionVisible, viewMode]);
+  }, [activeSelectedPath, authorBookPath, isAuthorDetail, detailPanelHeight, detailPanelPosition, visibleDetailPanelWidth, isDetailPanelCollapsed, ensureActiveSelectionVisible, viewMode]);
 
     const selectedEntryObjects = useMemo(() => (
         selectedFiles.map(filePath => fileLookup.getFile(filePath)).filter(file => file && !file.collectionId)
@@ -3801,6 +3850,17 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       }
       if (!shouldHandleGlobalShortcut(event)) return;
 
+        if (isCatalogView) {
+            if (event.key === 'F5') {
+                event.preventDefault();
+                handleRefreshShortcut();
+            } else if (hasPrimaryModifier(event, runtimePlatform) && isShortcutKey(event, 'f')) {
+                event.preventDefault();
+                searchInputRef.current?.focus();
+            }
+            return;
+        }
+
       if (event.key === 'F1') {
         event.preventDefault();
         sendSelectedFilesToTab('organizer');
@@ -3874,7 +3934,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isFavoritesView, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, removeSelectedFavorites, runtimePlatform, selectAll, sendSelectedFilesToTab, showLayoutDialog, undoLastRename]);
+  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isCatalogView, isFavoritesView, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, removeSelectedFavorites, runtimePlatform, selectAll, sendSelectedFilesToTab, showLayoutDialog, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -4316,6 +4376,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 recentUpdatedCount={readingLists.recentUpdatedCount}
                 wishlistCount={readingLists.wishlistCount}
                 collectionCount={readingLists.collections.length}
+                authorCount={authorCount}
+                annotationCount={annotationCatalog.entries.length}
                 onSelectReadingList={handleSelectReadingList}
                 missingCount={missingData.length}
                 onCheckMissingVolumes={checkMissingVolumes}
@@ -4367,13 +4429,18 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 />
               </button>
               
-              {isReadingList && !isCollectionView && !isFavoritesView && (
-                <div className="recent-reading-toolbar-title" title={readingListKind.startsWith('recent-') ? t(`reading_lists.${readingListKind === 'recent-added' ? 'recent_added_hint' : 'recent_updated_hint'}`) : undefined}>
-                  <FaIcon name={readingListKind === 'wishlist' ? 'bookmark' : readingListKind.startsWith('collection') ? 'layers' : 'clock'} size={12} />
-                  <strong>{readingListTitle}</strong>
-                  <span>{isRecentReading ? recentReadingFiles.length : readingListKind === 'collections' ? readingLists.collections.length : readingLists.files.length}</span>
-                </div>
-              )}
+              {readingListKind === 'annotations' && <div className="annotations-toolbar-slot" ref={setAnnotationToolbarTarget} />}
+                {isRecentList && <RecentReadingToolbar
+                    inline
+                    kind={folderSource}
+                    options={recentListOptions}
+                    extensions={recentListExtensions}
+                    onChange={changeRecentListOptions}
+                    onReset={resetRecentListOptions}
+                    count={filteredFileData.length}
+                    total={activeRawFileData.length}
+                    t={t}
+                />}
               {(!isReadingList || isCollectionView || isFavoritesView) && (
                 <FolderToolbar
                   t={t}
@@ -4510,20 +4577,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             </div>
           </div>
 
-            {isRecentList && <RecentReadingToolbar
-                kind={folderSource}
-                options={recentListOptions}
-                extensions={recentListExtensions}
-                onChange={changeRecentListOptions}
-                onReset={resetRecentListOptions}
-                count={filteredFileData.length}
-                total={activeRawFileData.length}
-                t={t}
-            />}
             {isRecentList && <p className="reading-list-note">{t(`reading_lists.${isRecentReading ? 'recent_reading_hint' : readingListKind === 'recent-added' ? 'recent_added_hint' : 'recent_updated_hint'}`)}</p>}
           <FolderPathBar
             value={gotoPathDraft}
-            virtualLocation={isFavoritesView ? readingListTitle : isCollectionView ? `${t('reading_lists.collections')}${readingListKind === 'collection' ? ` / ${activeCollection?.name || ''}` : ''}` : ''}
+            virtualLocation={isCatalogView || isFavoritesView ? readingListTitle : isCollectionView ? `${t('reading_lists.collections')}${readingListKind === 'collection' ? ` / ${activeCollection?.name || ''}` : ''}` : ''}
             history={gotoPathHistory}
             inputRef={gotoPathInputRef}
             isOpen={showGotoPathHistory}
@@ -4535,7 +4592,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             favoriteDisabled={savingPathFavorite}
             onToggleFavorite={togglePathFavorite}
             shortcutLabel={formatPrimaryShortcut('L', runtimePlatform)}
-            canGoBack={readingListKind === 'collection' || (!isReadingList && (folderNavigation.index > 0 || Boolean(collectionFolderOriginRef.current)))}
+            canGoBack={isAuthorDetail || readingListKind === 'collection' || (!isReadingList && (folderNavigation.index > 0 || Boolean(collectionFolderOriginRef.current)))}
             canGoForward={!isReadingList && folderNavigation.index < folderNavigation.entries.length - 1}
             canGoUp={readingListKind === 'collection' || Boolean(upFolderPath) || (!isReadingList && collectionFolderOriginRef.current?.path === selectedFolderPath)}
             onBack={() => void handleFolderHistoryNavigation(-1)}
@@ -4567,6 +4624,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                  <FaIcon name="spinner" className="content-index-spinner" size={15} />
                  <span>{t(isRecentReading ? 'folder.recent.loading' : 'reading_lists.loading')}</span>
                </div>
+             ) : isCatalogView ? (
+                readingListKind === 'authors'
+                    ? <AuthorsBrowser key={libraryPathsKey} files={readingLists.files} query={localSearchQuery} language={config?.language || config?.lang || 'ko'} thumbnailScale={itemScales.thumbnail} onOpenFile={openFileInViewer} onSelectBook={handleAuthorBookSelect} selectedBookPath={authorBookPath} onBackActionChange={handleAuthorBackActionChange} t={t} />
+                    : <AnnotationsBrowser key={libraryPathsKey} catalog={annotationCatalog} onRefresh={refreshAnnotations} onDelete={deleteAnnotation} query={localSearchQuery} language={catalogLanguage} onOpenFile={openFileInViewer} toolbarTarget={annotationToolbarTarget} />
              ) : isReadingList && filteredFileData.length === 0 ? (
                <div className="recent-reading-state">
                  <FaIcon name={isFavoritesView ? 'star' : 'bookOpen'} size={22} />
@@ -4631,7 +4692,11 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
           <div className="right-bottom-bar">
             <div className="status-info">
-              {!isReadingList && scanning
+              {isCatalogView
+                ? readingListKind === 'authors'
+                    ? t('reading_lists.authors_status', [authorCount.toLocaleString(catalogLanguage), authorBookCount.toLocaleString(catalogLanguage)])
+                    : t('reading_lists.annotations_status', [annotationCatalog.entries.length.toLocaleString(catalogLanguage)])
+                : !isReadingList && scanning
                 ? statusMessage || t('msg_loading_list')
                 : librarySearchLoading && isLibrarySearchActive
                 ? t('folder_searching_libraries')
@@ -4659,6 +4724,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                         </button>
                     ))}
                 </div>
+                {!isCatalogView && <>
                 <span className="view-controls-divider" role="separator" aria-orientation="vertical" />
               <button
                 className={`view-icon-btn ${viewMode === 'table' ? 'active' : ''}`}
@@ -4693,6 +4759,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 value={itemScale}
                 onChange={e => setItemScales(prev => ({ ...prev, [viewMode]: Number(e.target.value) }))}
               />
+                </>}
             </div>
           </div>
         </div>

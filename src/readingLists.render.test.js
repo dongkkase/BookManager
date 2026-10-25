@@ -47,6 +47,7 @@ const collections = [];
 const requests = [];
 const scannedPaths = [];
 const viewerPaths = [];
+const revealedPaths = [];
 const notices = [];
 const coverSource = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="#4386ad"/></svg>');
 book.cover = coverSource + '#book';
@@ -74,6 +75,7 @@ window.electronAPI = {
     readDir: async filePath => (filePath === '/fixture' ? [folder, book] : [childBook]).map(entry => ({ ...entry, isFile: !entry.isDirectory })),
     scanFolder: async filePath => { scannedPaths.push(filePath); return filePath === folder.path ? [childBook] : [folder, book]; },
     openInternalViewer: async filePath => { viewerPaths.push(filePath); return { success: true }; },
+    showInFolder: async filePath => { revealedPaths.push(filePath); return { success: true }; },
     getFilePreview: async filePath => {
         previewRequests.push(filePath);
         if (filePath !== folder.path) return { success: false };
@@ -149,13 +151,40 @@ const navigateByPathEnter = async value => {
         window.continuePathEnter = null;
     }
 };
+const recentControl = label => document.querySelector('.recent-list-toolbar button[aria-haspopup="menu"][aria-label="' + label + '"]');
+const recentMenu = label => document.querySelector('.folder-toolbar-menu[role="menu"][aria-label="' + label + '"]');
+async function openRecentMenu(label) {
+    const control = recentControl(label);
+    check(control, 'Missing toolbar control: ' + label);
+    control.click();
+    await until(() => control.getAttribute('aria-expanded') === 'true' && recentMenu(label)?.querySelector('[role="menuitemradio"]'), 'Toolbar menu did not open: ' + label);
+    check(recentMenu(label).querySelector('[aria-checked="true"]')?.dataset.value === control.dataset.value, 'Toolbar menu must mark its selected value: ' + label);
+    return recentMenu(label);
+}
 const selectOption = async (label, value) => {
-    const select = document.querySelector('.recent-list-toolbar select[aria-label="' + label + '"]');
-    check(select, 'Missing select: ' + label);
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, value);
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    const menu = await openRecentMenu(label);
+    const choice = [...menu.querySelectorAll('[role="menuitemradio"]')].find(item => item.dataset.value === String(value));
+    check(choice, 'Missing toolbar choice: ' + label + '=' + value);
+    choice.click();
+    await until(() => recentControl(label)?.dataset.value === String(value) && recentControl(label)?.getAttribute('aria-expanded') === 'false', 'Toolbar choice did not apply and close: ' + label);
     await frame();
 };
+function checkRecentToolbar(kind) {
+    const toolbars = [...document.querySelectorAll('.recent-list-toolbar')];
+    check(toolbars.length === 1, 'Recent list controls must be rendered once: ' + kind);
+    const toolbar = toolbars[0];
+    check(toolbar.parentElement.classList.contains('right-toolbar-left') && toolbar.classList.contains('is-inline'), 'Recent list filters must use the existing top toolbar: ' + kind);
+    check(toolbar.querySelectorAll('button[aria-haspopup="menu"]').length === 5 && toolbar.querySelector('.recent-list-result-count'), 'Moving recent list controls must preserve all filters and the result count');
+    return toolbar;
+}
+async function resizeReadingWindow(width) {
+    await new Promise(resolve => {
+        window.readingViewportWidth = width;
+        window.continueReadingResize = resolve;
+        console.log('READING_RESIZE');
+    });
+    for (let index = 0; index < 3; index += 1) await frame();
+}
 const rowPaths = () => [...document.querySelectorAll('tr[data-file-path]')].map(row => row.dataset.filePath);
 const badge = label => [...document.querySelectorAll('.sidebar-section-reading li')].find(item => item.querySelector('.recent-reading-list-main')?.textContent.trim() === label)?.querySelector('.recent-reading-count')?.textContent;
 const rowFor = filePath => [...document.querySelectorAll('tr[data-file-path]')].find(row => row.dataset.filePath === filePath);
@@ -262,7 +291,7 @@ async function resetRecentList(dateLabel, defaultDays, firstPath) {
     await click('초기화', document.querySelector('.recent-list-toolbar'));
     check(document.querySelector('.folder-search-control input').value === '', 'Reset retained the submitted search query');
     check(rowPaths().length === 3 && rowPaths()[0] === firstPath, 'Reset did not restore the default results and sorting');
-    const values = [...document.querySelectorAll('.recent-list-toolbar select')].map(select => select.value);
+    const values = [...document.querySelectorAll('.recent-list-toolbar button[aria-haspopup="menu"]')].map(control => control.dataset.value);
     check(JSON.stringify(values) === JSON.stringify([defaultDays, '', '', dateLabel === '읽은 날짜' ? 'lastReadAt' : 'readingListAddedAt', 'desc']), 'Reset did not restore all filter controls');
     const noticeCount = notices.length;
     await click('초기화', document.querySelector('.recent-list-toolbar'));
@@ -279,6 +308,7 @@ window.readingListTests = (async () => {
     for (const preference of ['full', 'reduced']) supportDialogShortcuts.push(await verifySupportDialogShortcuts(preference));
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
     await until(loadedFolderCover, 'Wishlist folder cover did not load without a selected folder');
+    check(!document.querySelector('.recent-list-toolbar'), 'Leaving recent lists must remove their toolbar controls');
     for (const label of ['menu_thumbnail', 'menu_tile', 'menu_detail']) {
         [...document.querySelectorAll('.view-icon-btn')].find(item => item.title === t(label)).click();
         await frame();
@@ -311,10 +341,39 @@ window.readingListTests = (async () => {
     await until(() => !rowFor(folder.path), 'Preview restored a removed wishlist entry');
     await click('최근 추가됨');
     await until(() => rowPaths().length === 3, 'Recently added books did not load');
+    checkRecentToolbar('recent-added');
     const recentNavigationOverviewCount = requests.filter(request => request.operation === 'overview').length;
     check(badge('최근 추가됨') === '3' && badge('최근 업데이트 됨') === '3' && badge('최근 읽음') === '3', 'Recent menu badges missing');
     check(document.querySelector('.reading-list-note').textContent.includes('1,000'), 'Recent activity limit hint missing');
     check(rowPaths()[0] === childBook.path, 'Default added date sorting failed');
+    const dateControl = recentControl('추가 날짜');
+    rowFor(childBook.path).click();
+    await frame();
+    check(selectedRows().includes(childBook.path), 'Toolbar keyboard regression needs a selected file');
+    const openedBeforeMenu = viewerPaths.length + revealedPaths.length;
+    dateControl.focus();
+    await shortcut('Enter');
+    await until(() => dateControl.getAttribute('aria-expanded') === 'true' && recentMenu('추가 날짜')?.contains(document.activeElement), 'Enter on the toolbar trigger must open its menu');
+    check(viewerPaths.length + revealedPaths.length === openedBeforeMenu, 'Enter on a toolbar trigger must not open or reveal the selected file');
+    await shortcut('Escape');
+    check(dateControl.getAttribute('aria-expanded') === 'false' && document.activeElement === dateControl, 'Escape must return from the keyboard-opened menu to its trigger');
+    dateControl.focus();
+    await shortcut('Down');
+    await until(() => dateControl.getAttribute('aria-expanded') === 'true' && recentMenu('추가 날짜')?.contains(document.activeElement), 'Keyboard must open the date menu and focus its selected item');
+    check(document.activeElement.dataset.value === '14' && document.activeElement.getAttribute('aria-checked') === 'true', 'Keyboard menu opening must focus the checked option');
+    await shortcut('Down');
+    check(document.activeElement.dataset.value === '7', 'ArrowDown must move to the next date option');
+    await shortcut('Enter');
+    await until(() => dateControl.dataset.value === '7' && dateControl.getAttribute('aria-expanded') === 'false', 'Enter must apply the focused date option');
+    check(document.activeElement === dateControl && rowPaths().length === 2, 'Menu selection must return focus and update results');
+    check(viewerPaths.length + revealedPaths.length === openedBeforeMenu, 'Enter on a toolbar menu option must not reach the selected file shortcut');
+    await openRecentMenu('추가 날짜');
+    await shortcut('Escape');
+    check(dateControl.getAttribute('aria-expanded') === 'false' && document.activeElement === dateControl, 'Escape must close the menu and restore trigger focus');
+    await openRecentMenu('추가 날짜');
+    document.querySelector('.reading-list-note').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await until(() => dateControl.getAttribute('aria-expanded') === 'false', 'Clicking outside must close the toolbar menu');
+    await selectOption('추가 날짜', '14');
     await selectOption('추가 날짜', '7');
     check(rowPaths().length === 2 && badge('최근 추가됨') === '3', 'Date filter changed total badge');
     await selectOption('읽기 상태', 'completed');
@@ -327,9 +386,12 @@ window.readingListTests = (async () => {
     await selectOption('정렬 방향', 'desc');
     check(rowPaths()[0] === '/fixture/other.pdf', 'Descending sorting failed');
     await selectOption('추가 날짜', '7');
+    await openRecentMenu('추가 날짜');
     await click('최근 업데이트 됨');
-    await until(() => rowPaths().length === 3 && document.querySelector('select[aria-label="업데이트 날짜"]'), 'Updated list did not load');
-    check(document.querySelector('select[aria-label="업데이트 날짜"]').value === '14', 'Added filters leaked into updated list');
+    check(!recentMenu('추가 날짜') && !document.querySelector('.recent-list-toolbar button[aria-expanded="true"]'), 'Changing recent-list screens must remove the previous open menu');
+    await until(() => rowPaths().length === 3 && recentControl('업데이트 날짜'), 'Updated list did not load');
+    checkRecentToolbar('recent-updated');
+    check(recentControl('업데이트 날짜').dataset.value === '14', 'Added filters leaked into updated list');
     await selectOption('업데이트 날짜', '1');
     check(rowPaths().length === 1 && rowFor(book.path), 'Update date filter used the wrong date');
     await resetRecentList('업데이트 날짜', '14', book.path);
@@ -340,26 +402,63 @@ window.readingListTests = (async () => {
     check(requests.filter(request => request.operation === 'overview').length === recentNavigationOverviewCount, 'Recent navigation unnecessarily reloaded sidebar counts');
     holdRecentAdded = false;
     releaseRecentAdded();
-    await until(() => rowPaths().length === 2 && document.querySelector('select[aria-label="추가 날짜"]')?.value === '7', 'Added filters were not retained');
-    check(document.querySelector('select[aria-label="정렬 방향"]').value === 'desc', 'Added sorting was not retained');
-    [...document.querySelectorAll('.sidebar-section-reading li')].find(item => item.querySelector('.recent-reading-list-main')?.textContent.trim() === '최근 읽음').click();
-    await until(() => document.querySelector('select[aria-label="읽은 날짜"]'), 'Read list filters missing');
-    check(rowPaths().length === 3 && document.querySelector('select[aria-label="읽은 날짜"]').value === '0', 'Read list lost its all-time default');
+    await until(() => rowPaths().length === 2 && recentControl('추가 날짜')?.dataset.value === '7', 'Added filters were not retained');
+    check(recentControl('정렬 방향').dataset.value === 'desc', 'Added sorting was not retained');
+    checkRecentToolbar('recent-added');
+    await click('최근 읽음', document.querySelector('.sidebar-section-reading'));
+    await until(() => recentControl('읽은 날짜'), 'Read list filters missing');
+    checkRecentToolbar('recent-reading');
+    check(rowPaths().length === 3 && recentControl('읽은 날짜').dataset.value === '0', 'Read list lost its all-time default');
     await selectOption('정렬 기준', 'progress');
     check(rowPaths()[0] === childBook.path, 'Reading progress sorting failed');
     await selectOption('읽은 날짜', '7');
     check(rowPaths().length === 2 && !rowFor(book.path), 'Read date filter failed');
     await resetRecentList('읽은 날짜', '0', '/fixture/other.pdf');
+    if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_READ'); });
+    await resizeReadingWindow(800);
+    const narrowReadToolbar = checkRecentToolbar('recent-reading');
+    const readTopToolbar = narrowReadToolbar.closest('.right-toolbar');
+    const clearReadButton = readTopToolbar.querySelector('.recent-reading-clear-button');
+    const readSearch = readTopToolbar.querySelector('.folder-search-control input');
+    check(clearReadButton && !clearReadButton.disabled && readSearch, 'Recently read must retain its clear-history and search controls');
+    check(readTopToolbar.scrollWidth <= readTopToolbar.clientWidth + 1, 'Narrow recently read toolbar must not overflow horizontally');
+    const readTopBounds = readTopToolbar.getBoundingClientRect();
+    check([...narrowReadToolbar.querySelectorAll('button'), clearReadButton, readSearch].every(control => {
+        const bounds = control.getBoundingClientRect();
+        return bounds.left >= readTopBounds.left && bounds.right <= readTopBounds.right + 1;
+    }), 'Recently read filters, search and clear-history controls must remain inside the narrow toolbar');
+    if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_READ_NARROW'); });
+    await resizeReadingWindow(1100);
     await click('최근 추가됨');
-    await until(() => document.querySelector('select[aria-label="추가 날짜"]'), 'Added toolbar missing');
+    await until(() => recentControl('추가 날짜'), 'Added toolbar missing');
     await click('초기화', document.querySelector('.recent-list-toolbar'));
     const nameHeader = [...document.querySelectorAll('th')].find(header => header.textContent.includes(t('col_name')));
     nameHeader.click(); await frame();
-    check(rowPaths()[0] === book.path && document.querySelector('select[aria-label="정렬 기준"]').value === 'name', 'Table header sorting is not connected');
+    check(rowPaths()[0] === book.path && recentControl('정렬 기준').dataset.value === 'name', 'Table header sorting is not connected');
     check(document.querySelector('.recent-list-result-count').textContent === '3 / 3개 표시', 'Filtered result count missing');
-    const toolbar = document.querySelector('.recent-list-toolbar');
+    const toolbar = checkRecentToolbar('recent-added');
     check(toolbar.scrollWidth <= toolbar.clientWidth, 'Recent toolbar overflowed');
     if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_RECENT'); });
+    await resizeReadingWindow(800);
+    const narrowToolbar = checkRecentToolbar('recent-added');
+    const topToolbar = narrowToolbar.closest('.right-toolbar');
+    check(topToolbar.scrollWidth <= topToolbar.clientWidth + 1, 'Narrow recent activity toolbar must not overflow horizontally');
+    const topBounds = topToolbar.getBoundingClientRect();
+    check([...narrowToolbar.querySelectorAll('button')].every(control => {
+        const bounds = control.getBoundingClientRect();
+        return bounds.left >= topBounds.left && bounds.right <= topBounds.right + 1;
+    }), 'Recent activity controls must remain inside the narrow top toolbar');
+    if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_RECENT_NARROW'); });
+    const narrowMenu = await openRecentMenu('정렬 기준');
+    const narrowMenuBounds = narrowMenu.getBoundingClientRect();
+    check(narrowMenuBounds.left >= 0 && narrowMenuBounds.right <= innerWidth && narrowMenuBounds.top >= 0 && narrowMenuBounds.bottom <= innerHeight, 'Narrow toolbar menu must stay inside the window');
+    if (${Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT)}) {
+        await until(() => !narrowMenu.getAnimations().some(animation => animation.playState === 'running')
+            && Number(getComputedStyle(narrowMenu).opacity) === 1, 'Toolbar menu must finish opening before capture');
+        await new Promise(resolve => { window.continueReadingTest = resolve; console.log('CAPTURE_READING_RECENT_MENU'); });
+    }
+    await shortcut('Escape');
+    await resizeReadingWindow(1100);
     await expectWishlistState(book.path, true, false);
     await contextAction('읽고 싶은 책 추가');
     await until(() => books.get('want-to-read').length === 1, 'Wishlist mutation was not called');
@@ -379,6 +478,20 @@ window.readingListTests = (async () => {
     await navigateByPathEnter('/fixture');
     await until(() => rowFor(folder.path), 'Folder browser did not load for collection registration');
     const normalHeaders = [...document.querySelectorAll('.view-container th')].map(cell => cell.textContent).join('|');
+    for (const [labelKey, optionKey, defaultKey] of [['folder_grouped', 'col_ext', 'menu_none'], ['folder_sorted', 'col_size', 'col_name']]) {
+        const trigger = button(t(labelKey).replace('▼', '').trim(), document.querySelector('.right-toolbar-left'));
+        check(trigger?.getAttribute('aria-haspopup') === 'menu', 'Common folder toolbar trigger is missing: ' + labelKey);
+        trigger.click();
+        await until(() => trigger.getAttribute('aria-expanded') === 'true' && document.querySelector('.folder-toolbar-menu[role="menu"]'), 'Common folder menu did not open');
+        const choice = key => [...document.querySelectorAll('.folder-toolbar-menu .dropdown-item')].find(item => item.textContent.replace('✓', '').trim() === t(key));
+        check(choice(defaultKey)?.querySelector('.check-mark')?.textContent === '✓', 'Common folder menu lost its checked default');
+        choice(optionKey).click();
+        await until(() => trigger.getAttribute('aria-expanded') === 'false', 'Common folder selection did not close the menu');
+        trigger.click();
+        await until(() => choice(optionKey)?.querySelector('.check-mark')?.textContent === '✓', 'Common folder selection did not update its check mark');
+        choice(defaultKey).click();
+        await until(() => trigger.getAttribute('aria-expanded') === 'false', 'Restoring the common folder default did not close its menu');
+    }
     await contextAction('컬렉션에 추가', folder.path);
     await until(() => document.querySelector('dialog[open]'), 'Folder collection picker missing');
     dialog = document.querySelector('dialog[open]');
@@ -536,13 +649,21 @@ app.whenReady().then(async () => {
             const input = await window.webContents.executeJavaScript('window.shortcutInput');
             window.webContents.focus();
             window.webContents.sendInputEvent({ type: 'keyDown', ...input });
+            if (!input.modifiers?.length && ['Enter', 'Space', ' '].includes(input.keyCode)) {
+                window.webContents.sendInputEvent({ type: 'char', ...input, keyCode: input.keyCode === 'Space' ? ' ' : input.keyCode });
+            }
             window.webContents.sendInputEvent({ type: 'keyUp', ...input });
             await window.webContents.executeJavaScript('window.continueShortcut()');
         }
-        if (['CAPTURE_READING_MODAL', 'CAPTURE_READING_COLLECTION', 'CAPTURE_READING_RECENT'].includes(message)) {
+        if (message === 'READING_RESIZE') {
+            const width = await window.webContents.executeJavaScript('window.readingViewportWidth');
+            window.setSize(width, 800);
+            await window.webContents.executeJavaScript('window.continueReadingResize()');
+        }
+        if (['CAPTURE_READING_MODAL', 'CAPTURE_READING_COLLECTION', 'CAPTURE_READING_RECENT', 'CAPTURE_READING_RECENT_NARROW', 'CAPTURE_READING_READ', 'CAPTURE_READING_READ_NARROW', 'CAPTURE_READING_RECENT_MENU'].includes(message)) {
             const screenshot = await window.webContents.capturePage();
             const filename = ${JSON.stringify(process.env.BOOKMANAGER_READING_SCREENSHOT || '/tmp/bookmanager-reading-lists.png')};
-            require('node:fs').writeFileSync(message === 'CAPTURE_READING_RECENT' ? filename.replace('.png', '-recent.png') : message === 'CAPTURE_READING_COLLECTION' ? filename.replace('.png', '-collections.png') : filename, screenshot.toPNG());
+            require('node:fs').writeFileSync(message === 'CAPTURE_READING_RECENT_MENU' ? filename.replace('.png', '-recent-menu.png') : message === 'CAPTURE_READING_READ_NARROW' ? filename.replace('.png', '-read-narrow.png') : message === 'CAPTURE_READING_READ' ? filename.replace('.png', '-read.png') : message === 'CAPTURE_READING_RECENT_NARROW' ? filename.replace('.png', '-recent-narrow.png') : message === 'CAPTURE_READING_RECENT' ? filename.replace('.png', '-recent.png') : message === 'CAPTURE_READING_COLLECTION' ? filename.replace('.png', '-collections.png') : filename, screenshot.toPNG());
             await window.webContents.executeJavaScript('window.continueReadingTest()');
         }
     });

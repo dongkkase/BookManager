@@ -132,6 +132,8 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         vine: String(apiKeys.vine || '').trim(),
         google: String(apiKeys.google || '').trim(),
         hardcover: normalizeHardcoverToken(apiKeys.hardcover),
+        naver_client_id: typeof apiKeys.naver_client_id === 'string' ? apiKeys.naver_client_id.trim().slice(0, 1024) : '',
+        naver_client_secret: typeof apiKeys.naver_client_secret === 'string' ? apiKeys.naver_client_secret.trim().slice(0, 1024) : '',
         ai_provider: aiProvider,
         ai_key: aiProvider === 'OpenAI' ? aiOpenAiKey : aiGeminiKey,
         ai_gemini_key: aiGeminiKey,
@@ -168,9 +170,11 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
     );
 
     const fontFamily = String(config.font_family || 'Noto Sans KR');
+    const retainedConfig = { ...config };
+    delete retainedConfig.naver_photo_api;
 
     return {
-        ...config,
+        ...retainedConfig,
         lang,
         language: lang,
         target_format: FORMAT_KEYS.has(config.target_format) ? config.target_format : 'none',

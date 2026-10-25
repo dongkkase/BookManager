@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import '../../styles/FolderCharacterIndex.css';
 
-const SCROLLER_SELECTOR = '.file-table-container, .thumbnail-grid, .tile-grid';
+const SCROLLER_SELECTOR = '.file-table-container, .thumbnail-grid, .tile-grid, .authors-browser';
 
 function FolderCharacterIndex({ entries = [], onNavigate, scrollContainerRef, t }) {
     const railRef = useRef(null);

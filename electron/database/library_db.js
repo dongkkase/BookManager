@@ -107,6 +107,7 @@ const READING_STATE_COLUMNS = [
     'device_id',
     'revision',
     'deleted_at',
+    'retain_outside_library',
 ];
 
 const FILE_SEARCH_COLUMNS = [
@@ -477,7 +478,8 @@ export class LibraryDB {
                 updated_at TEXT NOT NULL,
                 device_id TEXT NOT NULL DEFAULT '',
                 revision INTEGER NOT NULL DEFAULT 1,
-                deleted_at TEXT NOT NULL DEFAULT ''
+                deleted_at TEXT NOT NULL DEFAULT '',
+                retain_outside_library INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_files_series ON files(series);
             CREATE INDEX IF NOT EXISTS idx_files_title ON files(title);
@@ -539,6 +541,9 @@ export class LibraryDB {
         const dupColumns = this.tableColumns('dup_target_index');
         if (!dupColumns.has('mtime')) {
             this.db.exec('ALTER TABLE dup_target_index ADD COLUMN mtime REAL DEFAULT 0');
+        }
+        if (!this.tableColumns('reading_states').has('retain_outside_library')) {
+            this.db.exec('ALTER TABLE reading_states ADD COLUMN retain_outside_library INTEGER NOT NULL DEFAULT 0');
         }
     }
 
@@ -1372,7 +1377,9 @@ export class LibraryDB {
                     INSERT INTO reading_states (${READING_STATE_COLUMNS.join(', ')})
                     VALUES (${READING_STATE_COLUMNS.map(column => `@${column}`).join(', ')})
                     ON CONFLICT(file_path) DO UPDATE SET ${READING_STATE_COLUMNS.filter(column => column !== 'file_path')
-                        .map(column => `${column} = excluded.${column}`).join(', ')}
+                        .map(column => column === 'retain_outside_library'
+                            ? `${column} = MAX(reading_states.${column}, excluded.${column})`
+                            : `${column} = excluded.${column}`).join(', ')}
                 `).run(next);
                 return { readingState: normalizeReadingStateRow(next), previousUpdatedAt: previous.updated_at };
             })();
@@ -1424,6 +1431,7 @@ export class LibraryDB {
                 device_id: previous.device_id || this.readingDeviceId(connection),
                 revision: Math.max(0, Math.floor(finiteReadingNumber(previous.revision, 0))) + 1,
                 deleted_at: '',
+                retain_outside_library: previous.retain_outside_library === 1 || patch.retainOutsideLibrary === true ? 1 : 0,
             };
             nextState.status = readingStateStatus({
                 ...nextState,
@@ -1453,7 +1461,8 @@ export class LibraryDB {
                     updated_at = excluded.updated_at,
                     device_id = excluded.device_id,
                     revision = excluded.revision,
-                    deleted_at = ''
+                    deleted_at = '',
+                    retain_outside_library = excluded.retain_outside_library
             `).run(nextState);
             return normalizeReadingStateRow(
                 connection.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(normalizedPath),

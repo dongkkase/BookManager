@@ -47,6 +47,7 @@ import {
   preferredMetadataApiSource,
 } from '../metadataApiPolicy';
 import { metadataSearchResultKey, searchMetadata } from '../metadataSearch';
+import { comicVineSearchThumbnail, createComicVineSearchEnricher, mergeComicVineSearchEnrichment } from '../comicVineSearchEnrichment';
 import {
   AUDIOBOOK_BASIC_FIELDS,
   AUDIOBOOK_CREATOR_FIELDS,
@@ -280,6 +281,39 @@ function fileNameFromPath(filePath = '') {
   return String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || String(filePath || '');
 }
 
+function mergeComicVineDetail(result, detail) {
+    const populatedFields = value => Object.fromEntries(Object.entries(value || {}).filter(([, field]) => (
+        field !== undefined && field !== null && field !== ''
+        && (typeof field !== 'string' || field.trim() !== '')
+        && (!Array.isArray(field) || field.length > 0)
+    )));
+    const merged = {
+        ...result,
+        ...populatedFields(detail),
+        metadata: { ...result.metadata, ...populatedFields(detail.metadata) },
+        id: result.id,
+        ID: result.ID,
+        apiSource: result.apiSource || 'Vine',
+        comicVineDetailResolved: true,
+        comicVineDetailLoading: false,
+        comicVineDetailError: '',
+    };
+    const nextCover = detail.coverUrl || detail.CoverUrl;
+    if (nextCover && nextCover !== (result.coverUrl || result.CoverUrl)) {
+        const currentCover = result.coverUrl || result.CoverUrl;
+        if (result.coverCacheUrl && detail.CoverUrls?.includes(currentCover)) {
+            merged.coverUrl = currentCover;
+            merged.CoverUrl = currentCover;
+            merged.metadata.CoverUrl = currentCover;
+            merged.coverCacheUrl = result.coverCacheUrl;
+        } else {
+            merged.coverCacheUrl = detail.coverCacheUrl || '';
+            merged.coverDataUrl = detail.coverDataUrl || '';
+        }
+    }
+    return merged;
+}
+
 function apiResultCoverUrl(result = {}) {
   return result?.coverUrl
     || result?.CoverUrl
@@ -368,6 +402,8 @@ function MetadataTab({ config, t, showToast }) {
   const [savedSeriesGroupOptions, setSavedSeriesGroupOptions] = useState([]);
   const [apiSearch, setApiSearch] = useState({ open: false, loading: false, results: [], error: '', actualQuery: '', page: 1, apiSource: initialApiSource, query: '', cached: false });
     const apiSearchRequestRef = useRef(0);
+    const comicVineDetailsRef = useRef({ requestId: 0, requests: new Map() });
+    const comicVineEnrichmentRef = useRef(null);
     const closeApiSearch = useCallback(() => {
         apiSearchRequestRef.current += 1;
         setApiSearch(prev => ({ ...prev, open: false, loading: false }));
@@ -1092,6 +1128,42 @@ function MetadataTab({ config, t, showToast }) {
     return normalized;
   }, [normalizeTagText]);
 
+    useEffect(() => {
+        if (!apiSearch.open || apiSearch.loading) {
+            comicVineEnrichmentRef.current?.worker.cancel();
+            comicVineEnrichmentRef.current = null;
+            return;
+        }
+        const requestId = apiSearch.requestId;
+        if (comicVineEnrichmentRef.current?.requestId !== requestId) {
+            comicVineEnrichmentRef.current?.worker.cancel();
+            const worker = createComicVineSearchEnricher({
+                fetchCredits: window.electronAPI?.fetchComicVineCredits,
+                fetchCovers: window.electronAPI?.fetchComicVineCovers,
+                cacheCover: window.electronAPI?.cacheMetadataRemoteCover,
+                isCancelled: () => apiSearchRequestRef.current !== requestId,
+                onUpdate: (resultKey, update) => {
+                    if (apiSearchRequestRef.current !== requestId) return;
+                    setApiSearch(prev => {
+                        if (!prev.open || prev.requestId !== requestId) return prev;
+                        return {
+                            ...prev,
+                            results: prev.results.map(item => metadataSearchResultKey(item, prev.apiSource) === resultKey
+                                ? mergeComicVineSearchEnrichment(item, update) : item),
+                        };
+                    });
+                },
+            });
+            comicVineEnrichmentRef.current = { requestId, worker };
+        }
+        comicVineEnrichmentRef.current.worker.enqueue(apiSearch.results, apiSearch.apiSource);
+    }, [apiSearch.open, apiSearch.loading, apiSearch.requestId, apiSearch.results, apiSearch.apiSource]);
+
+    useEffect(() => () => {
+        apiSearchRequestRef.current += 1;
+        comicVineEnrichmentRef.current?.worker.cancel();
+    }, []);
+
     const fetchMetadataResults = useCallback(async ({ source = apiSource, query = searchQuery, page = 1 } = {}) => {
         const cleanQuery = String(query || '').trim();
         if (!cleanQuery) return;
@@ -1128,7 +1200,7 @@ function MetadataTab({ config, t, showToast }) {
                 bookType: activeBookType,
                 apiKeys: config?.api_keys || {},
                 metadataApiEnabled: config?.metadata_api_enabled,
-            }, options => window.electronAPI.fetchMetadata(options), { isCancelled });
+            }, options => window.electronAPI.fetchMetadata({ ...options, deferComicVineEnrichment: true }), { isCancelled });
             if (isCancelled()) return;
             let error = '';
             if (result.success === false) {
@@ -1143,7 +1215,8 @@ function MetadataTab({ config, t, showToast }) {
             setApiSearch({
                 ...searchState,
                 loading: false,
-                results: result.results || [],
+                results: (result.results || []).map(item => (item.apiSource || source) === 'Vine'
+                    ? { ...item, comicVineEnrichmentDeferred: true } : item),
                 error,
                 failures: result.failures || [],
                 hasNext: Boolean(result.hasNext),
@@ -1564,6 +1637,48 @@ function MetadataTab({ config, t, showToast }) {
       )),
     }));
   }, []);
+
+    const resolveComicVineDetail = useCallback((result) => {
+        const bookId = result?.id || result?.ID;
+        if (!bookId || result.comicVineDetailResolved) return;
+        const requestId = apiSearchRequestRef.current;
+        const resultKey = metadataSearchResultKey(result, 'Vine');
+        if (comicVineDetailsRef.current.requestId !== requestId) {
+            comicVineDetailsRef.current = { requestId, requests: new Map() };
+        }
+        const requests = comicVineDetailsRef.current.requests;
+        if (requests.has(resultKey)) return requests.get(resultKey);
+        const updateResult = update => {
+            if (apiSearchRequestRef.current !== requestId) return;
+            setApiSearch(prev => {
+                if (!prev.open || prev.requestId !== requestId) return prev;
+                return {
+                    ...prev,
+                    results: prev.results.map(item => (
+                        metadataSearchResultKey(item, prev.apiSource) === resultKey ? update(item) : item
+                    )),
+                };
+            });
+        };
+        updateResult(item => ({ ...item, comicVineDetailLoading: true, comicVineDetailError: '' }));
+        const pending = (async () => {
+            try {
+                const response = await window.electronAPI?.fetchComicVineDetail?.(bookId, { deferImages: true });
+                if (!response?.success || !response.result) {
+                    throw new Error(response?.error || text('api_provider_request_failed', 'Comic Vine에 연결하지 못했습니다. 잠시 후 다시 검색하세요.', { api: 'Comic Vine' }));
+                }
+                updateResult(item => mergeComicVineDetail(item, response.result));
+            } catch (error) {
+                updateResult(item => ({
+                    ...item,
+                    comicVineDetailLoading: false,
+                    comicVineDetailError: error.message || text('meta_search_failed', '검색에 실패했습니다.'),
+                }));
+            }
+        })();
+        requests.set(resultKey, pending);
+        return pending;
+    }, [text]);
 
   const handleLoadLatest = async () => {
     if (!activeItem || isWorking || latestMetadataLoadingRef.current) return;
@@ -2737,6 +2852,7 @@ function MetadataTab({ config, t, showToast }) {
           onUseCover={canUseApiCover ? handleUseApiCoverResult : null}
           onSearch={fetchMetadataResults}
           onResolveRidiDate={resolveRidiPublishDate}
+            onResolveComicVineDetail={resolveComicVineDetail}
           minWidth={config?.metadata_search_min_width}
           minHeight={config?.metadata_search_min_height}
           sourceFilePath={activeItem?.filepath || ''}
@@ -2935,6 +3051,7 @@ function MetadataSearchDialog({
   onUseCover,
   onSearch,
   onResolveRidiDate,
+    onResolveComicVineDetail,
   minWidth = 1050,
   minHeight = 780,
   sourceFilePath = '',
@@ -2967,6 +3084,8 @@ function MetadataSearchDialog({
     }, [state.requestId]);
   const resolvingRidiDates = useRef(new Set());
   const rawSelected = state.results[selectedIndex];
+    const comicVineDetailPending = Boolean(rawSelected && (rawSelected.apiSource || state.apiSource) === 'Vine'
+        && (rawSelected.id || rawSelected.ID) && !rawSelected.comicVineDetailResolved && !rawSelected.comicVineDetailError);
     const selectedResultKey = rawSelected ? metadataSearchResultKey(rawSelected, state.apiSource) : '';
     const translationRequestRef = useRef(0);
     const selected = showTranslated && translatedResult?.key === selectedResultKey ? translatedResult.result : rawSelected;
@@ -3047,7 +3166,7 @@ function MetadataSearchDialog({
 
   useEffect(() => {
     resultRefs.current[selectedIndex]?.scrollIntoView?.({ block: 'nearest' });
-  }, [selectedIndex, state.results]);
+  }, [selectedIndex, state.requestId, state.results.length]);
 
   useEffect(() => {
         translationRequestRef.current += 1;
@@ -3056,7 +3175,8 @@ function MetadataSearchDialog({
     setTranslating(false);
     setTranslationError('');
         return () => { translationRequestRef.current += 1; };
-    }, [selectedResultKey, state.apiSource, state.query, state.page]);
+    }, [selectedResultKey, state.apiSource, state.query, state.page, state.requestId, rawSelected?.comicVineDetailResolved,
+        rawSelected?.Writer, rawSelected?.Penciller, rawSelected?.metadata?.Writer, rawSelected?.metadata?.Penciller]);
 
   useEffect(() => {
     setDialogApi(state.apiSource || apiSources[0]?.value || '');
@@ -3075,6 +3195,11 @@ function MetadataSearchDialog({
             .catch(() => {})
             .finally(() => resolvingRidiDates.current.delete(detailKey));
     }, [onResolveRidiDate, selected, state.apiSource, state.requestId]);
+
+    useEffect(() => {
+        if (!comicVineDetailPending || rawSelected.comicVineDetailLoading) return;
+        onResolveComicVineDetail?.(rawSelected);
+    }, [comicVineDetailPending, onResolveComicVineDetail, rawSelected, state.requestId]);
 
   const runSearch = (page = 1, query = dialogQuery) => {
     onSearch({ source: dialogApi, query, page });
@@ -3101,7 +3226,7 @@ function MetadataSearchDialog({
   };
 
   const toggleTranslation = async () => {
-    if (!rawSelected || translating) return;
+    if (!rawSelected || translating || comicVineDetailPending) return;
     if (showTranslated) {
       setShowTranslated(false);
       setTranslationError('');
@@ -3226,6 +3351,9 @@ function MetadataSearchDialog({
         metadataValue(item, 'author', 'Writer'),
         metadataValue(item, 'Penciller'),
     ].map(value => String(value).trim()).filter(Boolean))].join(', ');
+    const isComicVineResult = item => (item?.apiSource || state.apiSource) === 'Vine';
+    const comicVineCreditsNote = item => isComicVineResult(item) && item?.comicVineCreditsIssueId
+        ? text('meta_comicvine_first_issue_credits', '첫 권 크레딧 기준') : '';
 
   const publicationDate = selected && (
     metadataValue(selected, 'PubDate')
@@ -3302,16 +3430,16 @@ function MetadataSearchDialog({
       event.preventDefault();
       event.stopPropagation();
       runSearch(1);
-    } else if (code === 'KeyX' && onUseCover && selected && selectedCoverUrl) {
+    } else if (code === 'KeyX' && onUseCover && selected && selectedCoverUrl && !comicVineDetailPending) {
       event.preventDefault();
       event.stopPropagation();
       onUseCover(selected);
-    } else if (code === 'KeyC' && selected) {
+    } else if (code === 'KeyC' && selected && !comicVineDetailPending) {
       event.preventDefault();
       event.stopPropagation();
       onSelect(selected);
     }
-  }, [dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, onUseCover, selected, selectedCoverUrl, state.loading, state.results.length]);
+  }, [comicVineDetailPending, dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, onUseCover, selected, selectedCoverUrl, state.loading, state.results.length]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleShortcut, true);
@@ -3446,15 +3574,21 @@ function MetadataSearchDialog({
                 aria-selected={selectedIndex === index}
                 onClick={() => setSelectedIndex(index)}
               >
-                <RemoteCoverImage src={result.coverCacheUrl || result.coverDataUrl || result.coverUrl} className="meta-api-thumb" fallbackClassName="meta-api-no-cover" />
+                <RemoteCoverImage src={comicVineSearchThumbnail(result)} className="meta-api-thumb" fallbackClassName="meta-api-no-cover" />
                 <span className="meta-api-result-content">
                   <strong>{result.title || '-'}</strong>
                   <span className="meta-api-result-summary">{result.summary || '-'}</span>
+                    {isComicVineResult(result) && (
+                        <span className="meta-api-result-meta" title={comicVineCreditsNote(result) || undefined}>
+                            <span>{text('meta_writer', '작가')}: {metadataValue(result, 'Writer') || '-'}</span>
+                            <span>{text('t3_f_pen', '그림 작가')}: {metadataValue(result, 'Penciller') || '-'}</span>
+                        </span>
+                    )}
                   <span className="meta-api-result-meta">
                     {state.apiSource === UNIFIED_METADATA_API_SOURCE && (
                         <span>{apiSourceLabel(result.apiSource)}</span>
                     )}
-                    <span>{authorNames(result) || '-'}</span>
+                    {!isComicVineResult(result) && <span>{authorNames(result) || '-'}</span>}
                     <span>{result.publisher || '-'}</span>
                     <span className="meta-api-rating"><FaIcon name="star" size={11} />{result.rating || '-'}</span>
                   </span>
@@ -3475,7 +3609,7 @@ function MetadataSearchDialog({
             {selected ? (
               <div className="meta-api-preview-surface">
                 <RemoteCoverImage
-                  src={selected.coverCacheUrl || selected.coverDataUrl || selected.coverUrl}
+                  src={comicVineSearchThumbnail(rawSelected)}
                   className="meta-api-preview-background"
                   fallbackClassName="meta-api-preview-background-fallback"
                 />
@@ -3485,7 +3619,7 @@ function MetadataSearchDialog({
                     <button
                       type="button"
                       className={`meta-api-translate-btn ${showTranslated ? 'original' : ''}`}
-                      disabled={translating}
+                      disabled={translating || comicVineDetailPending}
                       onClick={toggleTranslation}
                     >
                       <FaIcon name={showTranslated ? 'chevronLeft' : 'language'} size={12} />
@@ -3497,14 +3631,21 @@ function MetadataSearchDialog({
                     </button>
                   </div>
                   {translationError && <div className="meta-api-translation-error">{translationError}</div>}
+                    {comicVineDetailPending && <div role="status">{text('loading', '로딩 중...')}</div>}
+                    {rawSelected?.comicVineDetailError && <div className="meta-api-translation-error" role="alert">{rawSelected.comicVineDetailError}</div>}
                   <div className="meta-api-preview-tags">
                     {selectedTags.map(tag => <span key={tag}>{tag}</span>)}
                   </div>
                   <div className="meta-api-preview-main">
-                    <RemoteCoverImage src={selected.coverCacheUrl || selected.coverDataUrl || selected.coverUrl} className="meta-api-large-cover" fallbackClassName="meta-api-large-no-cover" size={48} />
+                    <RemoteCoverImage src={comicVineSearchThumbnail(rawSelected)} className="meta-api-large-cover" fallbackClassName="meta-api-large-no-cover" size={48} />
                     <div className="meta-api-preview-card">
                       <dl>
-                        <dt>{detailLabel('user', text('meta_writer', '작가'))}</dt><dd>{renderValue(authorNames(selected))}</dd>
+                        <dt>{detailLabel('user', text('meta_writer', '작가'))}</dt><dd>{renderValue(isComicVineResult(selected) ? metadataValue(selected, 'Writer') : authorNames(selected))}</dd>
+                        {isComicVineResult(selected) && (
+                            <>
+                                <dt>{detailLabel('pen', text('t3_f_pen', '그림 작가'))}</dt><dd>{renderValue(metadataValue(selected, 'Penciller'))}</dd>
+                            </>
+                        )}
                         <dt>{detailLabel('building', text('meta_publisher', '출판사'))}</dt><dd>{renderValue(metadataValue(selected, 'publisher', 'Publisher'))}</dd>
                         {(bookType === 'book' || selectedIsbn) && (
                           <>
@@ -3536,6 +3677,9 @@ function MetadataSearchDialog({
                           ) : renderValue('-')}
                         </dd>
                       </dl>
+                        {comicVineCreditsNote(selected) && (
+                            <small className="meta-api-result-meta">{comicVineCreditsNote(selected)}</small>
+                        )}
                     </div>
                   </div>
                   <div className="meta-api-summary-card">
@@ -3556,14 +3700,14 @@ function MetadataSearchDialog({
             {onUseCover && (
               <button
                 className="cover"
-                disabled={!selected || !selectedCoverUrl}
+                disabled={!selected || !selectedCoverUrl || comicVineDetailPending}
                 onClick={() => selected && onUseCover(selected)}
               >
                 <FaIcon name="cloudArrowDown" size={11} />
                 {text('btn_use_cover', '표지 사용(X)')}
               </button>
             )}
-            <button className="primary" title="C" disabled={!selected} onClick={() => selected && onSelect(selected)}><FaIcon name="check" size={11} />{text('btn_select', '선택')} (C)</button>
+            <button className="primary" title="C" disabled={!selected || comicVineDetailPending} onClick={() => selected && onSelect(selected)}><FaIcon name="check" size={11} />{text('btn_select', '선택')} (C)</button>
           </div>
         </div>
       </div>

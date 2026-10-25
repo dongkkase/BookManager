@@ -3,10 +3,10 @@ import { renderTtsSegments } from '../../../electron/epubEditor/tts.js';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics, getEpubOriginalAnchorRects } from '../../epubOriginalDocument.js';
 import EpubInlineMedia from './EpubInlineMedia.jsx';
+import { ANNOTATION_COLORS, normalizeHighlightColor } from '../../highlightColors.js';
 import '../../styles/epubOriginalDocument.css';
 
 const EMPTY_HIGHLIGHTS = [];
-const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple', 'underline'];
 
 function collectTextRanges(document, queries) {
     const viewport = document.defaultView;
@@ -246,11 +246,11 @@ export default function EpubOriginalDocument({
         const document = frameRef.current?.contentDocument;
         const viewport = document?.defaultView;
         if (!ready || !viewport?.CSS?.highlights || !viewport.Highlight) return;
-        const names = ['bookmanager-search', ...HIGHLIGHT_COLORS.map(color => `bookmanager-highlight-${color}`)];
+        const names = ['bookmanager-search', ...ANNOTATION_COLORS.map(color => `bookmanager-highlight-${color}`)];
         names.forEach(name => viewport.CSS.highlights.delete(name));
         const marks = [{ text: searchQuery, name: 'bookmanager-search' }, ...highlights.map(mark => ({
             text: mark.text,
-            name: `bookmanager-highlight-${HIGHLIGHT_COLORS.includes(mark.color) ? mark.color : 'yellow'}`,
+            name: `bookmanager-highlight-${normalizeHighlightColor(mark.color)}`,
         }))].filter(mark => String(mark.text || '').trim());
         if (!marks.length) return;
         const ranges = collectTextRanges(document, marks.map(mark => mark.text));

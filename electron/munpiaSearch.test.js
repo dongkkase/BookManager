@@ -6,6 +6,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { detectImageMimeType } from './imageMagic.js';
 import { originalMunpiaCoverUrl, searchMunpia } from './munpiaSearch.js';
+import { isComicVineImageUrl } from './comicVineSearch.js';
 import { setLanguage, t } from './utils/i18n.js';
 
 setLanguage('ko');
@@ -224,7 +225,7 @@ test('이전 문피아 검색 결과도 원본 표지를 요청하며 기존 축
         `async ${sourceFunction('fetchImageCacheUrlFromUrl')}`,
         'fetchImageCacheUrlFromUrl',
     ].join('\n'), {
-        URL, path, crypto: { createHash }, originalMunpiaCoverUrl,
+        URL, path, crypto: { createHash }, originalMunpiaCoverUrl, isComicVineImageUrl,
         apiCoverUrlCache: cache,
         apiCoverCacheFileFromProtocolUrl: () => '',
         findApiCoverCacheFile: async (_directory, key) => {

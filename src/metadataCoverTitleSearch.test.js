@@ -72,5 +72,5 @@ test('AniList·Comic Vine·Amazon 검색은 자동 원제 변환 없이 입력�
     assert.doesNotMatch(ipcSource, /identifyOriginalTitles|NamuWiki|titleCandidates/);
     assert.match(ipcSource, /results = await searchAnilist\(query, page\)/);
     assert.match(ipcSource, /results = await searchAmazon\(query, page, bookType\)/);
-    assert.match(ipcSource, /results = await searchVine\(query, apiKeys\.vine \|\| '', page\)/);
+    assert.match(ipcSource, /results = await searchVine\(query, apiKeys\.vine \|\| '', page, \{ deferCreators: deferComicVineEnrichment \}\)/);
 });

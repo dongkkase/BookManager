@@ -204,9 +204,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // API 관련
   fetchMetadata: (options) => ipcRenderer.invoke('api:fetch', options),
+    searchAuthorProfiles: (name, options) => ipcRenderer.invoke('authors:searchProfiles', name, options),
+    searchAuthorPhotos: (request) => ipcRenderer.invoke('authors:searchPhotos', request),
+    previewAuthorPhoto: (candidateId) => ipcRenderer.invoke('authors:previewPhoto', candidateId),
+    selectAuthorPhoto: (request) => ipcRenderer.invoke('authors:selectPhoto', request),
+    releaseAuthorPhotos: () => ipcRenderer.invoke('authors:releasePhotos'),
   identifyMetadataCoverTitles: (options) => ipcRenderer.invoke('api:identifyCoverTitles', options),
   translateMetadata: (result) => ipcRenderer.invoke('api:translateMetadata', result),
   fetchRidiBookDetail: (bookId) => ipcRenderer.invoke('api:ridiBookDetail', bookId),
+    fetchComicVineCovers: (volumeIds) => ipcRenderer.invoke('api:comicVineCovers', volumeIds),
+    fetchComicVineCredits: (volumeId, firstIssueId) => ipcRenderer.invoke('api:comicVineCredits', volumeId, firstIssueId),
+    fetchComicVineDetail: (volumeId, options = {}) => ipcRenderer.invoke('api:comicVineDetail', volumeId, options),
   fetchRidiPublishDate: (bookId) => ipcRenderer.invoke('api:ridiPublishDate', bookId),
   fetchImageDataUrl: (url) => ipcRenderer.invoke('api:imageDataUrl', url),
   

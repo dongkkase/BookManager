@@ -131,14 +131,13 @@ function getProcessLogPath() {
 }
 
 async function recordExternalViewerOpen(filePath, format) {
-    if (configManager?.canPruneLibraryData?.()
-        && !isRegisteredLibraryFile(filePath, configManager.getConfig()?.libraries)) return;
   let db = null;
   try {
     db = new LibraryDB({ dbPath: resolveLibraryDbPath(getExecutableDir()) });
     const saved = await db.upsertReadingState(filePath, {
       format,
       lastReadAt: Date.now(),
+        retainOutsideLibrary: !isRegisteredLibraryFile(filePath, configManager.getConfig()?.libraries),
     });
     if (
       saved
@@ -335,7 +334,12 @@ async function initializeApp() {
     if (!requestedName || path.basename(requestedName) !== requestedName) {
       return new Response('Not found', { status: 404 });
     }
-    const cacheDir = requestUrl.hostname === 'api-cover'
+    if (requestUrl.hostname === 'author-photo' && !/^[a-f0-9]{64}\.png$/.test(requestedName)) {
+        return new Response('Not found', { status: 404 });
+    }
+    const cacheDir = requestUrl.hostname === 'author-photo'
+        ? path.join(resolveAppDataDir(getExecutableDir()), 'author-photos')
+      : requestUrl.hostname === 'api-cover'
       ? resolveApiCoverCacheDir(getExecutableDir())
         : requestUrl.hostname === 'text-cover'
             ? path.join(path.dirname(resolveLibraryDbPath(getExecutableDir())), 'text-thumbnails')

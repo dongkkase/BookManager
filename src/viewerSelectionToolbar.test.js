@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { translate } from './utils/i18n.js';
+import { HIGHLIGHT_COLORS, highlightBackground } from './highlightColors.js';
+import { runInNewContext } from 'node:vm';
 
 const viewerSource = readFileSync(fileURLToPath(new URL('./ViewerApp.jsx', import.meta.url)), 'utf8');
 const viewerCss = readFileSync(fileURLToPath(new URL('./styles/viewer.css', import.meta.url)), 'utf8');
@@ -58,28 +60,22 @@ test('선택 영역 TTS는 실제 재생 전까지 회전 로딩 아이콘을 �
 });
 
 test('하이라이트는 색상을 선택해 저장하고 표시한다', () => {
-    assert.match(viewerSource, /const DEFAULT_HIGHLIGHT_COLOR = 'yellow'/);
-    assert.match(viewerSource, /const HIGHLIGHT_COLORS = \[/);
-    assert.match(viewerSource, /function normalizeHighlightColor/);
+    assert.match(viewerSource, /import \{ DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS, normalizeHighlightColor \} from '\.\/highlightColors\.js'/);
     assert.match(viewerSource, /color: normalizeHighlightColor\(color\)/);
     assert.match(viewerSource, /className: `viewer-text-highlight is-\$\{color\}`/);
     assert.match(viewerSource, /className=\{`viewer-highlight-swatch is-\$\{color\.id\}`\}/);
     assert.match(viewerSource, /className=\{`viewer-highlight-swatch is-\$\{normalizeHighlightColor\(highlight\.color\)\}`\}/);
-    assert.match(viewerCss, /\.viewer-text-highlight\.is-yellow/);
-    assert.match(viewerCss, /\.viewer-text-highlight\.is-green/);
-    assert.match(viewerCss, /\.viewer-text-highlight\.is-blue/);
-    assert.match(viewerCss, /\.viewer-text-highlight\.is-pink/);
-    assert.match(viewerCss, /\.viewer-text-highlight\.is-purple/);
+    assert.equal(HIGHLIGHT_COLORS.length, 10);
+    for (const color of HIGHLIGHT_COLORS) {
+        const selector = `.viewer-text-highlight.is-${color.id},\n.viewer-highlight-swatch.is-${color.id} {`;
+        const block = viewerCss.slice(viewerCss.indexOf(selector)).split('}')[0];
+        assert.ok(viewerCss.includes(selector), `본문과 도구에 ${color.id} 색상 제공`);
+        assert.ok(block.includes(`--viewer-highlight-bg: ${highlightBackground(color.id)};`), `${color.id} 배경은 공유 팔레트와 일치`);
+        assert.ok(block.includes(`--viewer-highlight-swatch: ${color.hex};`), `${color.id} 견본은 공유 팔레트와 일치`);
+    }
     assert.match(viewerCss, /\.viewer-selection-colors\s*\{/);
     for (const language of ['ko', 'en', 'ja']) {
-        for (const key of [
-            'viewer.context.highlight_color_yellow',
-            'viewer.context.highlight_color_green',
-            'viewer.context.highlight_color_blue',
-            'viewer.context.highlight_color_pink',
-            'viewer.context.highlight_color_purple',
-            'viewer.context.add_underline',
-        ]) {
+        for (const key of [...HIGHLIGHT_COLORS.map(color => color.labelKey), 'viewer.context.add_underline', 'viewer.context.add_strikethrough']) {
             assert.notEqual(translate(key, language), key, `${language}:${key}`);
         }
     }
@@ -149,4 +145,30 @@ test('Esc는 옵션, 도움말, 목차 패널을 뷰어 창보다 먼저 닫는�
     for (const language of ['ko', 'en', 'ja']) {
         assert.notEqual(translate('viewer.help.shortcut_escape', language), 'viewer.help.shortcut_escape');
     }
+});
+
+
+test('두 줄 색상 도구는 측정한 크기로 화면 가장자리 안에 배치된다', () => {
+    const source = viewerSource.match(/function selectionToolbarPosition\(point = \{\}, size = \{\}\) \{[\s\S]*?\n\}/)?.[0];
+    assert.ok(source);
+    const position = runInNewContext(`${source}; selectionToolbarPosition`, {
+        window: { innerWidth: 360, innerHeight: 280 },
+        document: {},
+        clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
+    });
+    for (const point of [{ x: 1, y: 20 }, { x: 355, y: 130 }, { x: 180, y: 265 }]) {
+        const result = position(point, { width: 300, height: 150 });
+        const top = result.placement === 'below' ? result.y + 12 : result.y - 12 - 150;
+        assert.ok(top >= 10, `top ${top}`);
+        assert.ok(top + 150 <= 270, `bottom ${top + 150}`);
+        assert.ok(result.x - 150 >= 10);
+        assert.ok(result.x + 150 <= 350);
+        assert.equal(result.anchorX, point.x);
+        assert.equal(result.anchorY, point.y);
+    }
+    assert.equal(position({ x: 180, y: 20 }, { width: 300, height: 150 }).placement, 'below');
+    assert.equal(position({ x: 180, y: 265 }, { width: 300, height: 150 }).placement, 'above');
+    assert.match(viewerSource, /toolbar\.offsetWidth, height: toolbar\.offsetHeight/);
+    assert.match(viewerSource, /ref=\{selectionToolbarRef\}/);
+    assert.match(viewerSource, /kind: 'text-selection',\s*\.\.\.position/);
 });

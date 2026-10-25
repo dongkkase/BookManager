@@ -7,6 +7,10 @@ import { initializeReadingFileActivity } from './readingFileActivity.js';
 
 const RECENT_ACTIVITY_LIMIT = 1000;
 const RECENT_ACTIVITY_DAYS = 14;
+const CATALOG_FILE_COLUMNS = [
+    'path', 'mtime', 'size', 'ext', 'title', 'series', 'writer', 'creators',
+    'thumb_path', 'cover_override_path', 'has_metadata', 'metadata_override',
+];
 
 function recentActivityCutoff() {
     return new Date(Date.now() - RECENT_ACTIVITY_DAYS * 86400000).toISOString();
@@ -172,6 +176,15 @@ export async function readingListsRequest(library, request = {}, libraryPaths = 
                 WHERE list_id = ? ORDER BY is_directory, added_at, path`).all(request.id) };
         }
         if (operation === 'list') {
+            if (request.id === 'library-catalog') {
+                const scope = createLibraryPathScope(library, libraryPaths, 'files.path');
+                // Catalog cards open books by path; long metadata belongs to the viewer and detail queries.
+                const columns = CATALOG_FILE_COLUMNS.map(column => `files.${column}`).join(', ');
+                const rows = db.prepare(`SELECT ${columns}, COALESCE(activity.added_at, '') AS list_added_at
+                    FROM files LEFT JOIN reading_file_activity activity ON activity.path = files.path
+                    WHERE ${scope.where} ORDER BY files.path`).all(...scope.params);
+                return { rows: rows.filter(row => readingActionFormat(row.path)) };
+            }
             if (['recent-added', 'recent-updated'].includes(request.id)) {
                 const column = request.id === 'recent-added' ? 'added_at' : 'updated_at';
                 const scope = createLibraryPathScope(library, libraryPaths, 'activity.path');
@@ -213,10 +226,29 @@ export async function readingListsRequest(library, request = {}, libraryPaths = 
     });
 }
 
-export async function hydrateReadingListRows(rows, normalize, { verifyPresence = true } = {}) {
+function catalogFileForRenderer(file) {
+    return {
+        path: file.path,
+        full_path: file.full_path,
+        name: file.name,
+        title: file.title,
+        series: file.series,
+        writer: file.writer,
+        ext: file.ext,
+        size: file.size,
+        mtime: file.mtime,
+        cover: file.cover,
+        thumb_path: file.thumb_path,
+        cover_override_path: file.cover_override_path,
+        has_metadata: file.has_metadata,
+        metadata_override: file.metadata_override,
+    };
+}
+
+export async function hydrateReadingListRows(rows, normalize, { verifyPresence = true, catalog = false } = {}) {
     const files = new Array(rows.length);
     let index = 0;
-    await Promise.all(Array.from({ length: Math.min(16, rows.length) }, async () => {
+    await Promise.all(Array.from({ length: Math.min(verifyPresence ? 16 : 1, rows.length) }, async () => {
         while (index < rows.length) {
             const current = index++;
             const row = rows[current];
@@ -225,8 +257,9 @@ export async function hydrateReadingListRows(rows, normalize, { verifyPresence =
                 try { stat = await fs.stat(row.path); } catch { stat = null; }
             }
             const isDirectory = stat ? stat.isDirectory() : Boolean(row.is_directory);
+            const normalized = normalize({ ...row, size: row.size ?? stat?.size, mtime: row.mtime ?? stat?.mtimeMs });
             files[current] = {
-                ...normalize({ ...row, size: row.size ?? stat?.size, mtime: row.mtime ?? stat?.mtimeMs }),
+                ...(catalog ? catalogFileForRenderer(normalized) : normalized),
                 ...(isDirectory ? {
                     name: path.basename(row.path),
                     title: path.basename(row.path),
@@ -241,6 +274,10 @@ export async function hydrateReadingListRows(rows, normalize, { verifyPresence =
                 ...(verifyPresence ? { exists: Boolean(stat?.isFile() || stat?.isDirectory()) } : {}),
                 readingListAddedAt: row.list_added_at,
             };
+            // Snapshot reads have no filesystem await; let other IPC and window events run between batches.
+            if (!verifyPresence && index % 500 === 0 && index < rows.length) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
         }
     }));
     return files;
@@ -280,9 +317,12 @@ export function registerReadingListsIpc({ ipcMain, getMainWindow, createLibrary,
             library ||= createLibrary();
             const result = await readingListsRequest(library, request, getLibraryPaths());
             if (result.rows) {
-                // Recent activity uses the DB snapshot; opening a book verifies its original path.
-                const recent = ['recent-added', 'recent-updated'].includes(request.id);
-                return { success: true, files: await hydrateReadingListRows(result.rows, normalizeFile, { verifyPresence: !recent }) };
+                // Catalog and recent activity use the DB snapshot; opening a book verifies its original path.
+                const snapshot = ['library-catalog', 'recent-added', 'recent-updated'].includes(request.id);
+                return { success: true, files: await hydrateReadingListRows(result.rows, normalizeFile, {
+                    verifyPresence: !snapshot,
+                    catalog: request.id === 'library-catalog',
+                }) };
             }
             if (result.previewRows) return { success: true, file: await loadCollectionPreview(result.previewRows, loadPreview) };
             if (!['overview', 'list', 'membership'].includes(request.operation)) broadcast();

@@ -1,5 +1,6 @@
 import { epubOriginalCssParts, rewriteEpubOriginalCssUrls } from '../electron/epubOriginal.js';
 import { parseMediaUrl } from '../electron/epubEditor/authoring.js';
+import { HIGHLIGHT_COLORS, highlightBackground } from './highlightColors.js';
 
 const RESOURCE_SCHEME = /^(?:bookmanager-document:\/\/|\/api\/viewer\/epub-asset\/)/i;
 const VISUAL_RESOURCE_ENTRY = /\.(?:jpe?g|png|webp|bmp|gif|svg|avif|apng|ttf|otf|woff2?|eot)$/i;
@@ -455,12 +456,9 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
         .bookmanager-epub-audio-icon { flex: 0 0 14px; text-align: center; }
         .bookmanager-epub-audio-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         ::highlight(bookmanager-search) { background: #ffd45b; color: #171717; }
-        ::highlight(bookmanager-highlight-yellow) { background: rgba(255, 201, 58, 0.48); }
-        ::highlight(bookmanager-highlight-green) { background: rgba(83, 214, 128, 0.46); }
-        ::highlight(bookmanager-highlight-blue) { background: rgba(80, 168, 255, 0.46); }
-        ::highlight(bookmanager-highlight-pink) { background: rgba(255, 125, 179, 0.48); }
-        ::highlight(bookmanager-highlight-purple) { background: rgba(185, 139, 255, 0.48); }
+        ${HIGHLIGHT_COLORS.map(color => `::highlight(bookmanager-highlight-${color.id}) { background: ${highlightBackground(color.id)}; }`).join('\n        ')}
         ::highlight(bookmanager-highlight-underline) { text-decoration: underline; }
+        ::highlight(bookmanager-highlight-strikethrough) { text-decoration: line-through; }
     ` + (fixed ? `
         html { width: ${original.viewport.width}px !important; height: ${original.viewport.height}px !important; overflow: hidden !important; }
     ` : mode === 'scroll' ? `

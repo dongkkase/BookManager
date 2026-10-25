@@ -178,3 +178,70 @@ test('DB보다 최신인 로컬 위치를 유지하고 다른 책의 저장값�
     assert.equal(storage.get('bookmanager-viewer-state:/book.cbz').pageIndex, 3);
     assert.deepEqual(storage.get('bookmanager-viewer-state:/other.cbz'), { pageIndex: 20 });
 });
+
+test('외부 도서의 표지 보정은 일반·외부 읽기 위치를 각각 최신 기록으로 갱신한다', () => {
+    const storage = new MemoryStorage();
+    const ordinaryKey = 'bookmanager-viewer-state:/book.cbz';
+    const externalKey = 'bookmanager-viewer-external-state:/book.cbz';
+    storage.put(ordinaryKey, { pageIndex: 2, pageCount: 4, updatedAt: 2000 });
+    storage.put(externalKey, { pageIndex: 0, pageCount: 4, updatedAt: 500 });
+    storage.put('bookmanager-viewer-external-state:/other.cbz', { pageIndex: 20 });
+    applyCoverReadingAdjustment(storage, {
+        format: 'comic', sourcePath: '/book.cbz', filePath: '/book.cbz', pageCount: 5,
+        pageIndexMap: [1, 2, 3, 4], previousUpdatedAt: 1000,
+        readingState: { pageIndex: 2, pageCount: 5, locator: { kind: 'page', pageIndex: 2, pageCount: 5 } },
+    });
+    assert.equal(storage.get(ordinaryKey).pageIndex, 3);
+    assert.equal(storage.get(externalKey).pageIndex, 2);
+    assert.equal(storage.get(externalKey).readiveLocator.pageIndex, 2);
+    assert.deepEqual(storage.get('bookmanager-viewer-external-state:/other.cbz'), { pageIndex: 20 });
+});
+
+test('DB 기록이 없어도 외부 EPUB의 위치를 보정하고 변환 시 원본 키는 유지한다', () => {
+    const storage = new MemoryStorage();
+    const sourceKey = 'bookmanager-viewer-external-state:/source.epub';
+    const state = { pageIndex: 10, pageCount: 21, locator: { kind: 'normalized', normalizedPosition: 0.5 } };
+    storage.put(sourceKey, state);
+    applyCoverReadingAdjustment(storage, {
+        format: 'epub', sourcePath: '/source.epub', filePath: '/converted.epub', pageOffset: 1,
+    });
+    assert.deepEqual(storage.get(sourceKey), state);
+    const copied = storage.get('bookmanager-viewer-external-state:/converted.epub');
+    assert.equal(copied.pageIndex, 11);
+    assert.equal(copied.pageCount, 22);
+    assert.equal(copied.locator.normalizedPosition, 11 / 21);
+    assert.equal(storage.getItem('bookmanager-viewer-state:/converted.epub'), null);
+});
+
+test('변환 대상의 외부 키가 이미 있으면 원본의 보정 위치로 갱신한다', () => {
+    const storage = new MemoryStorage();
+    const state = { pageIndex: 1, pageCount: 2 };
+    storage.put('bookmanager-viewer-state:/source.cbr', state);
+    storage.put('bookmanager-viewer-external-state:/converted.cbz', { pageIndex: 20, pageCount: 30 });
+    applyCoverReadingAdjustment(storage, {
+        format: 'comic', sourcePath: '/source.cbr', filePath: '/converted.cbz', pageCount: 3, pageIndexMap: [1, 2],
+    });
+    assert.deepEqual(storage.get('bookmanager-viewer-state:/source.cbr'), state);
+    assert.equal(storage.get('bookmanager-viewer-state:/converted.cbz').pageIndex, 2);
+    assert.equal(storage.get('bookmanager-viewer-external-state:/converted.cbz').pageIndex, 2);
+});
+
+test('외부 위치 보정 뒤 쓰기가 실패하면 기존 두 키와 새 복사본을 모두 원복한다', () => {
+    for (const targetPath of ['/book.cbz', '/converted.cbz']) {
+        const storage = new MemoryStorage();
+        storage.put('bookmanager-viewer-state:/book.cbz', { pageIndex: 1, pageCount: 2 });
+        storage.put('bookmanager-viewer-external-state:/book.cbz', { pageIndex: 0, pageCount: 2 });
+        storage.put('bookmanager-viewer-bookmarks:/book.cbz', [{ pageIndex: 1 }]);
+        const original = new Map(storage.values);
+        let writes = 0;
+        const setItem = storage.setItem.bind(storage);
+        storage.setItem = (key, value) => {
+            if (++writes === 3) throw new Error('storage full');
+            setItem(key, value);
+        };
+        assert.throws(() => applyCoverReadingAdjustment(storage, {
+            format: 'comic', sourcePath: '/book.cbz', filePath: targetPath, pageCount: 3, pageIndexMap: [1, 2],
+        }), /storage full/);
+        assert.deepEqual(storage.values, original);
+    }
+});

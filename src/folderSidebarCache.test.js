@@ -67,6 +67,7 @@ function fixture({ indexed = false } = {}) {
         react,
         'react-dom': { createPortal: node => node },
         '../FaIcon': { FaIcon: 'FaIcon' },
+        '../MenuSurface': { default: 'MenuSurface', __esModule: true },
         '../../folderTreeState': treeState,
         '../../folderLibraryStatus': libraryStatus,
         '../../selectionVisualFeedback': {
