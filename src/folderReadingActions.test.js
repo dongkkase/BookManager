@@ -30,6 +30,14 @@ test('목록의 혼합 선택과 사이드바 대상은 각각 올바른 범위�
     assert.deepEqual(resolveReadingActionPaths({ type: 'file', file: { path: '/unselected.txt' } }, selected), ['/unselected.txt']);
 });
 
+test('상세 패널 작업은 다중 선택과 상위 폴더 선택에 관계없이 표시된 책에만 적용된다', () => {
+    const book = { path: '/books/series/book.epub' };
+    const selected = [{ path: '/books/series', isDirectory: true }, book, { path: '/books/other.epub' }];
+    const menu = { type: 'file', source: 'detail', file: book };
+    assert.deepEqual(resolveReadingActionPaths(menu, selected), [book.path]);
+    assert.deepEqual(resolveReadingActionPaths(menu, selected, { preserveNestedEntries: true }), [book.path]);
+});
+
 test('초기화는 예전 EPUB 위치를 제거하고 책갈피와 뷰어 설정을 보존한다', () => {
     const filePath = '/books/소설.epub';
     const key = `bookmanager-viewer-state:${filePath}`;

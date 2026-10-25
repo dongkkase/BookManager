@@ -14,6 +14,8 @@ import { FileTableView } from '../components/folder/FileTableView';
 import { ThumbnailView } from '../components/folder/ThumbnailView';
 import { TileView } from '../components/folder/TileView';
 import { DetailPanel } from '../components/folder/DetailPanel';
+import { DetailPanelDisclosure } from '../components/folder/DetailPanelDisclosure';
+import { DetailActionsMenu } from '../components/folder/DetailActionsMenu';
 import { FolderCoverPreviewContext } from '../components/folder/FolderCoverPreviewContext';
 import { createFolderCoverPreviewStore, folderPreviewMetadataUpdate } from '../folderCoverPreviewStore';
 import { FolderToolbar } from '../components/folder/FolderToolbar';
@@ -45,8 +47,11 @@ import { useConfigSaveNotice } from '../hooks/useConfigSaveNotice';
 import { useFileSelection } from '../hooks/useFileSelection';
 import {
   clampDetailHeight,
+    clampDetailWidth,
   clampSidebarWidth,
+    normalizeDetailPanelPosition,
   resolveDetailHeight,
+    resolveDetailWidth,
   resolveSidebarWidth,
 } from '../folderLayout';
 import {
@@ -583,6 +588,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const rightPanelRef = useRef(null);
   const viewContainerRef = useRef(null);
   const panelResizingRef = useRef(false);
+    const detailResizeCleanupRef = useRef(null);
   const viewScrollPositionsRef = useRef({ table: 0, tile: 0, thumbnail: 0 });
     const folderLocationsRef = useRef(new Map());
     const folderLocationContextRef = useRef(null);
@@ -607,6 +613,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const conflictResolverRef = useRef(null);
   const restoredLayoutRef = useRef(false);
   const initializedDetailHeightRef = useRef(false);
+    const detailHeightManuallySizedRef = useRef(false);
   const restoredColumnLayoutRef = useRef(false);
   const restoredViewSettingsRef = useRef(false);
   const restoredFolderPathRef = useRef(false);
@@ -663,6 +670,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [rightPanelWidth, setRightPanelWidth] = useState(900);
   const [viewContainerWidth, setViewContainerWidth] = useState(900);
   const [detailPanelHeight, setDetailPanelHeight] = useState(245);
+    const [detailPanelPosition, setDetailPanelPosition] = useState(() => normalizeDetailPanelPosition(config?.folder_detail_panel_position));
+    const [detailPanelWidth, setDetailPanelWidth] = useState(360);
+    const isDetailPanelRight = detailPanelPosition === 'right';
+    const visibleDetailPanelWidth = clampDetailWidth(detailPanelWidth, rightPanelWidth);
   const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
 
   // --- 뷰 상태 ---
@@ -1572,13 +1583,13 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         if (kind === readingListKind && collectionId === selectedCollectionId) void refreshReadingList();
     }, [cancelFolderLocationRestore, clearSelection, readingListKind, refreshReadingList, rememberCurrentFolderLocation, resetSearchQuery, selectedCollectionId]);
 
-    const changeListMembership = useCallback(async (action, paths) => {
+    const changeListMembership = useCallback(async (action, paths, { preserveSelection = false } = {}) => {
         if (!paths.length || listMembershipBusyRef.current) return;
         listMembershipBusyRef.current = true;
         setListMembershipBusy(true);
         try {
             const result = await mutateList({ operation: action.endsWith('-remove') ? 'remove' : 'add', paths, id: action.startsWith('wishlist-') ? 'want-to-read' : selectedCollectionId });
-            clearSelection();
+            if (!preserveSelection) clearSelection();
             const message = action.endsWith('-remove') ? 'removed' : result.matchedCount === 0 ? 'no_books' : 'added';
             showToast?.(result.errors?.length
                 ? t('reading_lists.partial', [result.errors.length])
@@ -1632,6 +1643,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const rightHeight = rightPanelRef.current?.clientHeight || 700;
     setLeftPanelWidth(resolveSidebarWidth(config.folder_left_panel_width, mainWidth));
     setDetailPanelHeight(resolveDetailHeight(config.folder_detail_panel_height, rightHeight));
+    const savedDetailHeight = Number(config.folder_detail_panel_height);
+    detailHeightManuallySizedRef.current = Number.isFinite(savedDetailHeight) && savedDetailHeight > 0;
+    setDetailPanelPosition(normalizeDetailPanelPosition(config.folder_detail_panel_position));
+    setDetailPanelWidth(resolveDetailWidth(config.folder_detail_panel_width, rightPanelRef.current?.clientWidth || 900));
     initializedDetailHeightRef.current = config.folder_detail_panel_height !== undefined;
     restoredLayoutRef.current = true;
   }, [config]);
@@ -2734,7 +2749,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       if (frame) window.cancelAnimationFrame(frame);
       if (nestedFrame) window.cancelAnimationFrame(nestedFrame);
     };
-  }, [activeSelectedPath, detailPanelHeight, ensureActiveSelectionVisible, viewMode]);
+  }, [activeSelectedPath, detailPanelHeight, detailPanelPosition, visibleDetailPanelWidth, isDetailPanelCollapsed, ensureActiveSelectionVisible, viewMode]);
 
     const selectedEntryObjects = useMemo(() => (
         selectedFiles.map(filePath => fileLookup.getFile(filePath)).filter(file => file && !file.collectionId)
@@ -2777,6 +2792,22 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const canRemoveFromWishlist = wishlistMembershipReady && wishlistMembership.memberCount > 0;
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+    useEffect(() => {
+        if (contextMenu?.source !== 'detail') return;
+        const targetPath = contextMenu.file?.full_path || contextMenu.file?.path;
+        const detailPath = detailSelectedFile?.full_path || detailSelectedFile?.path;
+        if (isDetailPanelCollapsed || targetPath !== detailPath || contextMenu.position !== detailPanelPosition) {
+            closeContextMenu();
+        }
+    }, [closeContextMenu, contextMenu, detailSelectedFile, detailPanelPosition, isDetailPanelCollapsed]);
+
+    const showDetailActions = useCallback((event, file) => {
+        const anchor = event.currentTarget;
+        setContextMenu(current => current?.source === 'detail' ? null : {
+            type: 'file', source: 'detail', file, anchor, position: detailPanelPosition,
+        });
+    }, [detailPanelPosition]);
 
   const handleViewModeChange = useCallback(nextMode => {
     cancelFolderLocationRestore();
@@ -3626,7 +3657,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (!menu) return;
 
     if (action === 'wishlist-add' || action === 'wishlist-remove' || action === 'collection-remove') {
-        await changeListMembership(action, resolveReadingActionPaths(menu, selectedEntryObjects, { preserveNestedEntries: true }));
+        await changeListMembership(action, resolveReadingActionPaths(menu, selectedEntryObjects, { preserveNestedEntries: true }), {
+            preserveSelection: menu.source === 'detail' && !(action === 'wishlist-remove' && readingListKind === 'wishlist'),
+        });
     } else if (action === 'collection-add') {
         const paths = resolveReadingActionPaths(menu, selectedEntryObjects, { preserveNestedEntries: true });
         if (paths.length) setCollectionDialog({ paths });
@@ -3635,7 +3668,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
         setRatingEditorTarget(menu.file);
     } else if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
-        const paths = resolveCoverEditorTargets(menu.file, selectedEntryObjects).map(file => file.full_path || file.path);
+        const paths = resolveCoverEditorTargets(menu.file, menu.source === 'detail' ? [menu.file] : selectedEntryObjects).map(file => file.full_path || file.path);
         if (paths.length > 0) {
             window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
                 detail: { tabId: 'tools', toolId: 'cover-editor', paths, source: 'folder', mode: 'append' },
@@ -3720,7 +3753,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'send-file-renamer') {
       sendSelectedFilesToTab('renamer');
     } else if (action === 'send-file-metadata') {
-      sendSelectedFilesToTab('metadata');
+        if (menu.source === 'detail') sendFolderToTab(menu.file?.full_path || menu.file?.path, 'metadata');
+        else sendSelectedFilesToTab('metadata');
     } else if (action === 'send-file-text-cleaner') {
       const target = menu.file?.full_path || menu.file?.path;
       if (isTextCleanerPath(target)) {
@@ -3743,7 +3777,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     } else if (action === 'refresh-list') {
       await handleRefresh();
     }
-  }, [addFavorite, changeListMembership, changeReadingProgress, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, handleSafeFolderNavigation, hasSelectedDirectories, invertSelection, isFavoritesView, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, removeSelectedFavorites, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
+  }, [addFavorite, changeListMembership, changeReadingProgress, closeContextMenu, contextMenu, deleteContextFolder, deleteSelectedFiles, forceUpdateSelectedFiles, groupSelectedBySeries, handleFolderChange, handleRefresh, handleSafeFolderNavigation, hasSelectedDirectories, invertSelection, isFavoritesView, isFolderTabVisible, loadRecentReading, moveContextFolderToLibrary, openFileInViewer, openFolderPath, openLibraryMoveDialog, openReadiveSharing, readingListKind, refreshContextFolder, removeFavorite, removeLibrary, removeRecentReading, removeSelectedFavorites, renameContextFolder, renameSelectedFile, runLibraryIndexAction, selectAll, selectedEntryObjects, selectedFolderPath, sendFolderToTab, sendSelectedFilesToTab, showToast, t, undoLastRename]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -3940,62 +3974,79 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     window.addEventListener('mouseup', handleUp);
   }, [isSidebarVisible, leftPanelWidth, saveConfig, updateRightPanelWidth, updateViewContainerWidth]);
 
-  const startVerticalResize = useCallback((event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = detailPanelHeight;
-    const containerHeight = rightPanelRef.current?.clientHeight || 700;
-    const rightPanelRect = rightPanelRef.current?.getBoundingClientRect?.();
-    const bottomBarHeight = rightPanelRef.current?.querySelector?.('.right-bottom-bar')?.getBoundingClientRect?.().height || 0;
-    const detailBottom = (rightPanelRect?.bottom || window.innerHeight) - bottomBarHeight;
-    const guide = createFolderResizeGuide('y', detailBottom - startHeight);
-    let frameId = 0;
-    let pendingGuidePosition = detailBottom - startHeight;
+    useEffect(() => () => detailResizeCleanupRef.current?.(), []);
 
-    const scheduleHeight = height => {
-      pendingGuidePosition = detailBottom - height;
-      if (frameId) return;
-      frameId = window.requestAnimationFrame(() => {
-        frameId = 0;
-        updateFolderResizeGuide(guide, 'y', pendingGuidePosition);
-      });
-    };
+    const changeDetailPanelPosition = useCallback(position => {
+        const nextPosition = normalizeDetailPanelPosition(position);
+        if (nextPosition === detailPanelPosition) return;
+        detailResizeCleanupRef.current?.();
+        setDetailPanelPosition(nextPosition);
+        void saveConfigWithNotice({ folder_detail_panel_position: nextPosition });
+    }, [detailPanelPosition, saveConfigWithNotice]);
 
-    const cleanup = () => {
-      if (frameId) {
-        window.cancelAnimationFrame(frameId);
-        frameId = 0;
-      }
-      guide?.remove();
-      panelResizingRef.current = false;
-      document.body.classList.remove('is-resizing-panel', 'is-resizing-folder-vertical');
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-    };
+    const startDetailResize = useCallback(event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        detailResizeCleanupRef.current?.();
+        const panel = rightPanelRef.current;
+        const panelRect = panel?.getBoundingClientRect();
+        const axis = isDetailPanelRight ? 'x' : 'y';
+        const startPointer = isDetailPanelRight ? event.clientX : event.clientY;
+        const startSize = isDetailPanelRight ? visibleDetailPanelWidth : detailPanelHeight;
+        const containerSize = isDetailPanelRight ? panel?.clientWidth || 900 : panel?.clientHeight || 700;
+        const bottomBarHeight = panel?.querySelector('.right-bottom-bar')?.getBoundingClientRect().height || 0;
+        const panelEnd = isDetailPanelRight
+            ? (panelRect?.right || window.innerWidth) - (panel?.clientLeft || 0)
+            : (panelRect?.bottom || window.innerHeight) - bottomBarHeight;
+        const clampSize = isDetailPanelRight ? clampDetailWidth : clampDetailHeight;
+        const guide = createFolderResizeGuide(axis, panelEnd - startSize);
+        const resizingClass = isDetailPanelRight ? 'is-resizing-folder-horizontal' : 'is-resizing-folder-vertical';
+        let frameId = 0;
+        let pendingSize = startSize;
 
-    const handleMove = (moveEvent) => {
-      moveEvent.preventDefault();
-      const nextHeight = startHeight - (moveEvent.clientY - startY);
-      scheduleHeight(clampDetailHeight(nextHeight, containerHeight));
-    };
+        const nextSize = pointerEvent => clampSize(startSize - (
+            (isDetailPanelRight ? pointerEvent.clientX : pointerEvent.clientY) - startPointer
+        ), containerSize);
+        const cleanup = () => {
+            if (frameId) window.cancelAnimationFrame(frameId);
+            guide?.remove();
+            panelResizingRef.current = false;
+            detailResizeCleanupRef.current = null;
+            document.body.classList.remove('is-resizing-panel', resizingClass);
+            window.removeEventListener('mousemove', handleMove);
+            window.removeEventListener('mouseup', handleUp);
+            window.removeEventListener('blur', cleanup);
+        };
+        const handleMove = moveEvent => {
+            moveEvent.preventDefault();
+            pendingSize = nextSize(moveEvent);
+            if (frameId) return;
+            frameId = window.requestAnimationFrame(() => {
+                frameId = 0;
+                updateFolderResizeGuide(guide, axis, panelEnd - pendingSize);
+            });
+        };
+        const handleUp = upEvent => {
+            const savedSize = nextSize(upEvent);
+            cleanup();
+            if (isDetailPanelRight) setDetailPanelWidth(savedSize);
+            else {
+                detailHeightManuallySizedRef.current = true;
+                setDetailPanelHeight(savedSize);
+            }
+            window.requestAnimationFrame(updateViewContainerWidth);
+            void saveConfigWithNotice({
+                [isDetailPanelRight ? 'folder_detail_panel_width' : 'folder_detail_panel_height']: savedSize,
+            });
+        };
 
-    const handleUp = (upEvent) => {
-      const nextHeight = startHeight - (upEvent.clientY - startY);
-      const savedHeight = clampDetailHeight(nextHeight, containerHeight);
-      cleanup();
-      setDetailPanelHeight(current => current === savedHeight ? current : savedHeight);
-      window.requestAnimationFrame(updateViewContainerWidth);
-      saveConfig?.({ folder_detail_panel_height: savedHeight }).catch(error => {
-        console.error('폴더 상하 splitter 저장 실패:', error);
-      });
-    };
-
-    panelResizingRef.current = true;
-    document.body.classList.add('is-resizing-panel', 'is-resizing-folder-vertical');
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
-  }, [detailPanelHeight, saveConfig, updateViewContainerWidth]);
+        detailResizeCleanupRef.current = cleanup;
+        panelResizingRef.current = true;
+        document.body.classList.add('is-resizing-panel', resizingClass);
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleUp);
+        window.addEventListener('blur', cleanup);
+    }, [detailPanelHeight, isDetailPanelRight, saveConfigWithNotice, updateViewContainerWidth, visibleDetailPanelWidth]);
 
   const handleSort = useCallback((key, toggleSameKey = true) => {
         if (isRecentList) {
@@ -4139,12 +4190,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         }
     }, [config?.folder_saved_layouts, saveConfig]);
 
-  const handleDetailContentHeightChange = useCallback(contentHeight => {
-    if (!contentHeight) return;
-    const containerHeight = rightPanelRef.current?.clientHeight || 700;
-    const nextHeight = clampDetailHeight(contentHeight, containerHeight);
-    setDetailPanelHeight(current => Math.abs(current - nextHeight) > 2 ? nextHeight : current);
-  }, []);
+    const handleDetailContentHeightChange = useCallback(contentHeight => {
+        if (!contentHeight || isDetailPanelCollapsed || isDetailPanelRight || detailHeightManuallySizedRef.current) return;
+        const containerHeight = rightPanelRef.current?.clientHeight || 700;
+        const nextHeight = clampDetailHeight(contentHeight, containerHeight);
+        setDetailPanelHeight(current => Math.abs(current - nextHeight) > 2 ? nextHeight : current);
+    }, [isDetailPanelCollapsed, isDetailPanelRight]);
 
   const handleColumnLayoutChange = useCallback((nextLayout, persist = false) => {
     const normalized = normalizeColumnLayout(nextLayout);
@@ -4495,6 +4546,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             t={t}
           />
 
+            <div className={`folder-content-area${isDetailPanelRight ? ' is-detail-right' : ''}`}>
           <div
             className={`view-container${characterIndexEntries.length > 0 ? ' has-character-index' : ''}`}
             onPointerDownCapture={event => {
@@ -4541,41 +4593,41 @@ function FolderTab({ config, saveConfig, t, showToast }) {
           
           {detailSelectedFile && (
             <>
-              <div className={`folder-detail-resizer-row ${isDetailPanelCollapsed ? 'is-collapsed' : 'is-expanded'}`}>
+              <div className={`folder-detail-resizer-row ${isDetailPanelCollapsed ? 'is-collapsed' : 'is-expanded'}${isDetailPanelRight ? ' is-right' : ''}`}>
                 <div
                   className="folder-resizer folder-resizer-horizontal"
                   role="separator"
-                  aria-orientation="horizontal"
+                  aria-orientation={isDetailPanelRight ? 'vertical' : 'horizontal'}
+                  aria-label={t('folder.detail.resize')}
                   aria-disabled={isDetailPanelCollapsed}
-                  onMouseDown={isDetailPanelCollapsed ? undefined : startVerticalResize}
+                  onMouseDown={isDetailPanelCollapsed ? undefined : startDetailResize}
                 />
                 <button
-                  type="button"
-                  className="folder-detail-panel-toggle"
-                  onClick={() => setIsDetailPanelCollapsed(current => !current)}
-                  title={t(isDetailPanelCollapsed ? 'folder.detail.expand' : 'folder.detail.collapse')}
-                  aria-label={t(isDetailPanelCollapsed ? 'folder.detail.expand' : 'folder.detail.collapse')}
-                  aria-expanded={!isDetailPanelCollapsed}
-                  aria-controls="folder-detail-panel"
+                    type="button"
+                    className="folder-detail-panel-toggle"
+                    onClick={() => setIsDetailPanelCollapsed(current => !current)}
+                    title={t(isDetailPanelCollapsed ? 'folder.detail.expand' : 'folder.detail.collapse')}
+                    aria-label={t(isDetailPanelCollapsed ? 'folder.detail.expand' : 'folder.detail.collapse')}
+                    aria-expanded={!isDetailPanelCollapsed}
+                    aria-controls="folder-detail-panel"
                 >
-                  <span>{t('folder.detail.label')}</span>
-                  <FaIcon name={isDetailPanelCollapsed ? 'angleUp' : 'angleDown'} size={11} />
+                    <span>{t('folder.detail.label')}</span>
+                    <FaIcon name={isDetailPanelRight
+                        ? (isDetailPanelCollapsed ? 'angleLeft' : 'angleRight')
+                        : (isDetailPanelCollapsed ? 'angleUp' : 'angleDown')} size={11} />
                 </button>
               </div>
-              <div
-                id="folder-detail-panel"
-                className="detail-panel-wrap"
-                hidden={isDetailPanelCollapsed}
-                style={isDetailPanelCollapsed
-                  ? undefined
-                  : { flexBasis: `${detailPanelHeight}px`, flexShrink: 0, height: `${detailPanelHeight}px` }}
-              >
-                {!isDetailPanelCollapsed && (
-                  <DetailPanel onEditRating={supportsRatingEditor(detailSelectedFile) ? () => setRatingEditorTarget(detailSelectedFile) : undefined} selectedFile={detailSelectedFile} onOpenFile={openFileInViewer} onContentHeightChange={handleDetailContentHeightChange} t={t} />
-                )}
-              </div>
+                <DetailPanelDisclosure
+                    open={!isDetailPanelCollapsed}
+                    position={detailPanelPosition}
+                    size={isDetailPanelRight ? visibleDetailPanelWidth : detailPanelHeight}
+                    onSettled={ensureActiveSelectionVisible}
+                >
+                    <DetailPanel position={detailPanelPosition} onEditRating={supportsRatingEditor(detailSelectedFile) ? () => setRatingEditorTarget(detailSelectedFile) : undefined} selectedFile={detailSelectedFile} onOpenFile={openFileInViewer} onMore={showDetailActions} moreMenuOpen={contextMenu?.source === 'detail'} onContentHeightChange={handleDetailContentHeightChange} t={t} />
+                </DetailPanelDisclosure>
             </>
           )}
+            </div>
 
           <div className="right-bottom-bar">
             <div className="status-info">
@@ -4586,6 +4638,28 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 : formatStatus(t, selectedFiles, filteredFileData, selectedFilesTotalBytes)}
             </div>
             <div className="view-controls">
+                <div className="folder-detail-position-controls" role="group" aria-label={t('folder.detail.position')}>
+                    {['bottom', 'right'].map(position => (
+                        <button
+                            key={position}
+                            type="button"
+                            className={`view-icon-btn folder-detail-position-button ${detailPanelPosition === position ? 'active' : ''}`}
+                            data-position={position}
+                            title={t(`folder.detail.${position}`)}
+                            aria-label={t(`folder.detail.${position}`)}
+                            aria-pressed={detailPanelPosition === position}
+                            onClick={() => changeDetailPanelPosition(position)}
+                        >
+                            <span className="view-mode-glyph" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                                <rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                                {position === 'bottom'
+                                    ? <path d="M3 11h14v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" fill="currentColor" />
+                                    : <path d="M11 4h5a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-5z" fill="currentColor" />}
+                            </svg></span>
+                        </button>
+                    ))}
+                </div>
+                <span className="view-controls-divider" role="separator" aria-orientation="vertical" />
               <button
                 className={`view-icon-btn ${viewMode === 'table' ? 'active' : ''}`}
                 title={t('menu_detail')}
@@ -4636,7 +4710,24 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                     return result;
                 }} onClose={() => setCollectionDialog(null)} />
         )}
-        <ContextMenu open={Boolean(contextMenu)} x={contextMenu?.x} y={contextMenu?.y}>
+        <DetailActionsMenu
+            open={contextMenu?.source === 'detail'}
+            anchor={contextMenu?.source === 'detail' ? contextMenu.anchor : null}
+            label={t('folder.detail.more_actions')}
+            onClose={closeContextMenu}
+            onAction={handleContextAction}
+            items={[
+                { action: 'wishlist-add', label: t('reading_lists.wishlist_add'), icon: 'bookmark', disabled: listMembershipBusy || !canAddToWishlist },
+                { action: 'wishlist-remove', label: t('reading_lists.wishlist_remove'), icon: 'trash', danger: true, disabled: listMembershipBusy || !canRemoveFromWishlist },
+                { action: 'collection-add', label: t('reading_lists.collection_add'), icon: 'layers', disabled: listMembershipBusy },
+                { action: 'mark-read', label: t('folder.reading.mark_read'), icon: 'bookOpen', disabled: readingActionBusy, separator: true },
+                { action: 'reset-progress', label: t('folder.reading.reset_progress'), icon: 'arrowRotateLeft', disabled: readingActionBusy },
+                { action: 'edit-rating', label: t('rating_editor_title'), icon: 'star', disabled: !supportsRatingEditor(contextMenu?.file), separator: true },
+                { action: 'send-file-metadata', label: t('folder.detail.edit_metadata'), icon: 'fileLines' },
+                { action: 'edit-cover', label: t('folder.detail.edit_cover'), icon: 'image', disabled: !supportsCoverEditor(contextMenu?.file) },
+            ]}
+        />
+        <ContextMenu open={Boolean(contextMenu) && contextMenu.source !== 'detail'} x={contextMenu?.x} y={contextMenu?.y}>
             {contextMenu && <>
             {contextMenu.type === 'collection' ? <>
                 <ContextMenuItem label={t('reading_lists.open')} icon="folderOpen" onClick={() => {

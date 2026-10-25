@@ -140,6 +140,15 @@ test('상세 패널 접기와 열기 문구를 세 언어로 제공한다', () =
     }
 });
 
+test('상세 패널 배치와 크기 조절 문구를 세 언어로 제공한다', () => {
+    for (const language of ['ko', 'en', 'ja']) {
+        for (const key of ['position', 'bottom', 'right', 'resize', 'more_actions', 'edit_metadata', 'edit_cover']) {
+            const translationKey = `folder.detail.${key}`;
+            assert.notEqual(translate(translationKey, language), translationKey);
+        }
+    }
+});
+
 test('Readive transfer confirmations and pairing instructions are localized in all supported languages', () => {
     for (const language of ['ko', 'en', 'ja']) {
         for (const key of ['send', 'pair_instructions', 'confirm', 'confirm_large', 'hard_limit', 'scan_failed', 'enqueue_failed', 'destination', 'status_queued', 'qr_alt', 'shared_libraries', 'shared_libraries_description', 'no_libraries', 'mobile_requested', 'copy', 'copied', 'pair_ticket', 'manual_instructions', 'manual_approval_title', 'manual_approval_message', 'manual_approval_detail', 'manual_approve', 'manual_deny', 'copy_failed', 'destination_description', 'destination_parent', 'destination_refresh', 'destination_loading', 'destination_failed', 'destination_empty', 'destination_more', 'destination_choose', 'destination_selected', 'destination_required']) {

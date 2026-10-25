@@ -1,11 +1,16 @@
 export const DEFAULT_MAIN_SIDEBAR_RATIO = 0.2;
 export const DEFAULT_DETAIL_PANEL_RATIO = 0.35;
+export const DEFAULT_DETAIL_PANEL_WIDTH_RATIO = 0.4;
 export const MIN_SIDEBAR_WIDTH = 220;
 export const MAX_SIDEBAR_WIDTH = 520;
 export const MIN_CONTENT_WIDTH = 520;
 export const MIN_DETAIL_HEIGHT = 112;
 export const MAX_DETAIL_HEIGHT = 420;
 export const MIN_FILE_LIST_HEIGHT = 64;
+export const MIN_DETAIL_WIDTH = 300;
+export const MAX_DETAIL_WIDTH = 640;
+export const MIN_FILE_LIST_WIDTH = 180;
+export const DETAIL_PANEL_RESIZER_WIDTH = 20;
 export const RIGHT_PANEL_FIXED_HEIGHT = 96;
 
 function finiteNumber(value) {
@@ -50,4 +55,26 @@ export function resolveDetailHeight(savedHeight, containerHeight) {
     const height = finiteNumber(savedHeight)
         ?? (finiteNumber(containerHeight) || 700) * DEFAULT_DETAIL_PANEL_RATIO;
     return clampDetailHeight(height, containerHeight);
+}
+
+export function normalizeDetailPanelPosition(value) {
+    return value === 'right' ? 'right' : 'bottom';
+}
+
+export function clampDetailWidth(width, containerWidth) {
+    const availableWidth = Math.max(
+        0,
+        (finiteNumber(containerWidth) ?? 900) - MIN_FILE_LIST_WIDTH - DETAIL_PANEL_RESIZER_WIDTH,
+    );
+    return Math.min(
+        MAX_DETAIL_WIDTH,
+        availableWidth,
+        Math.max(MIN_DETAIL_WIDTH, Math.round(finiteNumber(width) ?? MIN_DETAIL_WIDTH)),
+    );
+}
+
+export function resolveDetailWidth(savedWidth, containerWidth) {
+    const width = finiteNumber(savedWidth)
+        ?? (finiteNumber(containerWidth) ?? 900) * DEFAULT_DETAIL_PANEL_WIDTH_RATIO;
+    return clampDetailWidth(width, containerWidth);
 }

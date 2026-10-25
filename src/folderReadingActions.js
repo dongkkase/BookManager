@@ -8,6 +8,7 @@ export function resolveReadingActionPaths(menu, selectedEntries = [], { preserve
         return menu.folderPath ? [menu.folderPath] : [];
     }
     const target = menu.file?.full_path || menu.file?.path || menu.folderPath;
+    if (menu.source === 'detail') return target ? [target] : [];
     const entries = selectedEntries.some(entry => (entry.full_path || entry.path) === target)
         ? selectedEntries : target ? [{ ...menu.file, path: target }] : [];
     return preserveNestedEntries

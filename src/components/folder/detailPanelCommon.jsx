@@ -192,11 +192,11 @@ export function DetailCoverFrame({ children }) {
     );
 }
 
-export function DetailOpenButton({ selectedFile, onOpenFile, t }) {
+export function DetailOpenButton({ selectedFile, onOpenFile, onMore, moreMenuOpen = false, t }) {
     if (!selectedFile || selectedFile.isDirectory || selectedFile.collectionId || !onOpenFile) return null;
     const isAudio = resolveBookType(selectedFile) === 'audio';
 
-    return (
+    const openButton = (
         <button
             type="button"
             className="btn btn-primary detail-open-button"
@@ -208,6 +208,32 @@ export function DetailOpenButton({ selectedFile, onOpenFile, t }) {
             <FaIcon name={isAudio ? 'headphones' : 'bookOpen'} size={18} />
             <span>{t(isAudio ? 'folder.detail.listen' : 'folder.detail.read')}</span>
         </button>
+    );
+
+    if (!onMore) return openButton;
+
+    return (
+        <div className="detail-action-buttons">
+            {openButton}
+            <button
+                type="button"
+                className="btn detail-more-button"
+                aria-label={t('folder.detail.more_actions')}
+                title={t('folder.detail.more_actions')}
+                aria-haspopup="menu"
+                aria-expanded={moreMenuOpen}
+                aria-controls="folder-detail-actions-menu"
+                onClick={event => {
+                    event.stopPropagation();
+                    onMore(event, selectedFile);
+                }}
+                onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+                }}
+            >
+                <FaIcon name="ellipsisVertical" size={18} />
+            </button>
+        </div>
     );
 }
 

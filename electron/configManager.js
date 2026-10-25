@@ -365,6 +365,8 @@ export class ConfigManager {
       last_tab_index: 0,
       folder_left_panel_width: null,
       folder_detail_panel_height: null,
+        folder_detail_panel_position: 'bottom',
+        folder_detail_panel_width: null,
       folder_last_path: '',
       folder_goto_history: [],
       folder_search_history: [],

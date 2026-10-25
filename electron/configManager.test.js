@@ -35,6 +35,34 @@ test('모션 설정은 이전 설정에 기본값을 부여하고 저장 후 다
     assert.equal(manager.normalizeConfig({ motion_preference: 'invalid' }).motion_preference, 'system');
 });
 
+test('상세 패널은 기존 하단 배치를 기본으로 유지하고 배치별 크기를 저장한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-detail-layout-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, { folder_detail_panel_height: 260 });
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
+    const config = manager.loadConfig();
+    assert.equal(config.folder_detail_panel_position, 'bottom');
+    assert.equal(config.folder_detail_panel_width, null);
+    assert.equal(config.folder_detail_panel_height, 260);
+
+    assert.equal(manager.saveConfig({
+        ...config,
+        folder_detail_panel_position: 'right',
+        folder_detail_panel_width: 420,
+    }), true);
+    const restarted = new ConfigManager(root, root, { platform: 'linux' });
+    const restored = restarted.loadConfig();
+    assert.equal(restored.folder_detail_panel_position, 'right');
+    assert.equal(restored.folder_detail_panel_width, 420);
+    assert.equal(restored.folder_detail_panel_height, 260);
+
+    assert.equal(restarted.saveConfig({ ...restored, folder_detail_panel_position: 'bottom' }), true);
+    const bottom = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
+    assert.equal(bottom.folder_detail_panel_position, 'bottom');
+    assert.equal(bottom.folder_detail_panel_width, 420);
+    assert.equal(bottom.folder_detail_panel_height, 260);
+});
+
 test('라이브러리 데이터 정리는 정상 등록 경로 설정의 초기화가 끝난 뒤에만 허용한다', async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-prune-ready-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));

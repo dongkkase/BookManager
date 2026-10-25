@@ -6,7 +6,7 @@ import { AudiobookDetailPanel } from './AudiobookDetailPanel';
 import { BookDetailPanel } from './BookDetailPanel';
 import { ComicDetailPanel } from './ComicDetailPanel';
 import { PdfDetailPanel } from './PdfDetailPanel';
-import { DetailCoverFrame, DetailFieldGroup, formatDate, useDetailContentHeight } from './detailPanelCommon';
+import { DetailCoverFrame, DetailFieldGroup, DetailOpenButton, formatDate, useDetailContentHeight } from './detailPanelCommon';
 import { useFolderCoverPreview } from './FolderCoverPreviewContext';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
@@ -163,6 +163,7 @@ const DetailPanelLayer = ({ id, outgoing, onExited, children }) => {
 
 const DetailPanel = React.memo((props) => {
     const reducedMotion = useReducedMotion();
+    const isRight = props.position === 'right';
     const selectedFile = props.selectedFile || null;
     const selectionKey = selectedFile
         ? `${selectedFile.isDirectory ? 'directory' : resolveBookType(selectedFile)}:${selectedFile.full_path || selectedFile.path || selectedFile.name}`
@@ -190,7 +191,19 @@ const DetailPanel = React.memo((props) => {
                         isActive={index === 0}
                         onContentHeightChange={index === 0 ? props.onContentHeightChange : undefined}
                         onEditRating={index === 0 ? props.onEditRating : panel.onEditRating}
+                        onOpenFile={isRight ? undefined : props.onOpenFile}
                     />
+                    {isRight && panel.selectedFile && !panel.selectedFile.isDirectory && !panel.selectedFile.collectionId && props.onOpenFile && (
+                        <div className="detail-panel-footer">
+                            <DetailOpenButton
+                                selectedFile={panel.selectedFile}
+                                onOpenFile={props.onOpenFile}
+                                onMore={props.onMore}
+                                moreMenuOpen={index === 0 && props.moreMenuOpen}
+                                t={props.t}
+                            />
+                        </div>
+                    )}
                 </DetailPanelLayer>
             ))}
         </div>
