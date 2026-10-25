@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { catalogCreatedAt, catalogDate, catalogPathKey, readCatalogReadingDates } from './catalogDates.js';
 import { FOLDER_TAG_CATEGORIES } from '../../../src/folderTagFilter.js';
 import { assertNoSymlinks, readiveFileFormat } from '../../readive/manifest.js';
 import { fail } from '../../readive/policy.js';
@@ -141,7 +142,7 @@ export async function readTagCatalog(library, roots, filterValue = null, signal)
                 cancelled(signal);
                 if (stopped) return;
                 if (!stat.isFile()) continue;
-                matches.push({ ...row, size: stat.size });
+                matches.push({ ...row, size: stat.size, createdAt: catalogCreatedAt(stat), modifiedAt: catalogDate(stat.mtime.toISOString()) });
                 if (matches.length > maximumResults) throw fail('catalog_too_large', 413);
             }
         } catch (error) {
@@ -151,7 +152,8 @@ export async function readTagCatalog(library, roots, filterValue = null, signal)
     }));
     cancelled(signal);
     matches.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
-    return { ...facets, matches };
+    const dates = await readCatalogReadingDates(library, matches.map(row => row.path), signal);
+    return { ...facets, matches: matches.map(row => ({ ...row, lastOpenedAt: dates.get(catalogPathKey(row.path)) ?? null })) };
 }
 
 export function directTagEntries(matches, scope) {
@@ -161,6 +163,7 @@ export function directTagEntries(matches, scope) {
             id: crypto.createHash('sha256').update(`${scope.libraryId}\0${relativePath}`).digest('hex').slice(0, 32),
             name: path.basename(row.path), relativePath, kind: 'file',
             size: row.size, format: readiveFileFormat(row.path),
+            createdAt: row.createdAt ?? null, lastOpenedAt: row.lastOpenedAt ?? null,
         };
     });
 }

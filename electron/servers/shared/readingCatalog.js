@@ -1,4 +1,5 @@
 import { readingListsRequest } from '../../readingLists.js';
+import { catalogDate, readCollectionReadingDates } from './catalogDates.js';
 import { sharingText } from './sharingCommon.js';
 
 export const SHARED_READING_LISTS = [
@@ -19,7 +20,10 @@ export async function readSharedReadingList(library, id, collectionId = '', libr
     }
     if (id === 'collections') {
         const { collections } = await readingListsRequest(library, { operation: 'overview' }, libraryPaths);
-        if (!collectionId) return { collections, rows: [] };
+        if (!collectionId) {
+            const dates = await readCollectionReadingDates(library, collections, libraryPaths);
+            return { collections: collections.map(collection => ({ ...collection, createdAt: catalogDate(collection.created_at), lastOpenedAt: dates.get(collection.id) ?? null })), rows: [] };
+        }
         const collection = collections.find(item => item.id === collectionId);
         if (!collection) throw new Error('list_not_found');
         const { rows } = await readingListsRequest(library, { operation: 'list', id: collectionId }, libraryPaths);

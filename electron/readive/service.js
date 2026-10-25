@@ -789,7 +789,8 @@ export class ReadiveService {
                     return { json: result };
                 }
                 const { scope } = await validateReadiveLibrary(state, this.getRegisteredLibraries(), libraryId);
-                const result = await readReadiveLibraryEntries(scope, query.get('path') || '', query.get('cursor') || '', { secret: this.catalogSecret, cache: this.catalogCache, signal });
+                const library = await this.getLibraryDb?.();
+                const result = await readReadiveLibraryEntries(scope, query.get('path') || '', query.get('cursor') || '', { secret: this.catalogSecret, cache: this.catalogCache, signal, library });
                 await validateReadiveLibrary(this.store.state, this.getRegisteredLibraries(), libraryId, scope);
                 this.validateLibraryPermission(scope);
                 if (!this.store.state.devices.some(item => item.id === device.id && equalDigest(item.tokenHash, device.tokenHash))) throw fail('unauthorized', 401);

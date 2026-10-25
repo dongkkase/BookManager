@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { catalogCreatedAt, catalogPathKey, readCatalogReadingDates } from '../servers/shared/catalogDates.js';
 import { readSharedReadingList, sharedReadingLists } from '../servers/shared/readingCatalog.js';
 import { readReadiveLibraryEntries, registeredReadiveLibraries, resolveReadiveLibraryPath, validateReadiveLibrary } from './catalog.js';
 import { cleanRelativePath, fail, READIVE_LIMITS } from './policy.js';
@@ -110,7 +111,7 @@ export class ReadiveReadingCatalog {
     }
 
     page(entries, libraryId, relativePath, cursor, secret) {
-        const signature = hash(JSON.stringify(entries));
+        const signature = hash(JSON.stringify(entries.map(({ createdAt, lastOpenedAt, ...entry }) => entry)));
         const scope = `${libraryId}:${relativePath}`;
         let offset = 0;
         if (cursor) {
@@ -139,20 +140,24 @@ export class ReadiveReadingCatalog {
         if (location.parts.length) {
             const resolved = await this.resolve(libraryId, relativePath, options.signal);
             const scope = { ...resolved.scope, libraryId, approvalId: hash(`${resolved.scope.approvalId}\0${relativePath}`) };
-            const result = await readReadiveLibraryEntries(scope, resolved.relativePath, cursor, { ...options, cache: undefined });
+            const result = await readReadiveLibraryEntries(scope, resolved.relativePath, cursor, { ...options, cache: undefined, library: location.db });
             await this.validate(resolved.scope);
             return { ...result, path: relativePath, entries: result.entries.map(entry => ({
                 ...entry, relativePath: `${relativePath}/${entry.name}`,
             })) };
         }
         const members = location.collections ? null : await this.members(location, options.signal);
+        const dates = members ? await readCatalogReadingDates(location.db,
+            members.filter(member => member.stat.isFile()).map(member => member.sourcePath), options.signal,
+            members.filter(member => member.stat.isDirectory()).map(member => member.sourcePath)) : new Map();
         const entries = location.collections
-            ? location.collections.map(collection => ({ id: hash(`${libraryId}\0${collection.id}`).slice(0, 32), name: collection.name, kind: 'directory', relativePath: collection.id, size: null, format: null }))
+            ? location.collections.map(collection => ({ id: hash(`${libraryId}\0${collection.id}`).slice(0, 32), name: collection.name, kind: 'directory', relativePath: collection.id, size: null, format: null, createdAt: collection.createdAt ?? null, lastOpenedAt: collection.lastOpenedAt ?? null }))
             : members.map(member => ({
                 id: member.key, name: path.basename(member.sourcePath), kind: member.stat.isDirectory() ? 'directory' : 'file',
                 relativePath: [location.collectionId, member.key].filter(Boolean).join('/'),
                 size: member.stat.isFile() ? member.stat.size : null,
                 format: member.stat.isFile() ? readiveFileFormat(member.sourcePath) : null,
+                createdAt: catalogCreatedAt(member.stat), lastOpenedAt: dates.get(catalogPathKey(member.sourcePath)) ?? null,
             }));
         for (const scope of new Map((members || []).map(member => [member.scope.libraryId, member.scope])).values()) await this.validate(scope);
         checkCancelled(options.signal);

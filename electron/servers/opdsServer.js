@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { readSharedReadingList, sharedReadingLists } from './shared/readingCatalog.js';
+import { catalogCreatedAt, catalogDate, catalogPathKey, readCatalogReadingDates } from './shared/catalogDates.js';
 import {
     ARCHIVE_MIME_TYPES,
     archiveImageEntries,
@@ -85,7 +86,7 @@ function numericPageCount(value) {
 
 function makeOpdsFeed({ title, id, entries, links = [], updatedIso = new Date().toISOString() }) {
     return `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog">
+<feed xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:pse="http://vaemendis.net/opds-pse/ns">
   <id>${escapeXml(id)}</id>
   <title>${escapeXml(title)}</title>
   <updated>${escapeXml(updatedIso)}</updated>
@@ -95,16 +96,18 @@ ${entries.join('\n')}
 </feed>`;
 }
 
-function makeOpdsFolderEntry({ folderPath, title, thumbnailHref = '', href, updatedIso }) {
+function makeOpdsFolderEntry({ folderPath, title, thumbnailHref = '', href, updatedIso, createdAt, lastOpenedAt }) {
     const folderUrl = href || `/opds?dir=${encodeURIComponent(folderPath)}`;
+    const published = createdAt ? `\n    <published>${escapeXml(createdAt)}</published>` : '';
+    const readingDate = lastOpenedAt ? ` pse:lastReadDate="${escapeXml(lastOpenedAt)}"` : '';
     const thumbnailLinks = thumbnailHref ? `
     <link rel="http://opds-spec.org/image/thumbnail" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />
     <link rel="http://opds-spec.org/image" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />` : '';
     return `  <entry>
     <title>${escapeXml(title || path.basename(folderPath) || folderPath)}</title>
     <id>${escapeXml(stableOpdsId(folderUrl))}</id>
-    <updated>${escapeXml(updatedIso)}</updated>
-    <link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="${escapeXml(folderUrl)}" />${thumbnailLinks}
+    <updated>${escapeXml(updatedIso)}</updated>${published}
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="${escapeXml(folderUrl)}"${readingDate} />${thumbnailLinks}
   </entry>`;
 }
 
@@ -126,9 +129,11 @@ function makeOpdsFileEntry(record, { updatedIso, roots, options }) {
     const thumbnailLinks = thumbnailHref ? `
     <link rel="http://opds-spec.org/image/thumbnail" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />
     <link rel="http://opds-spec.org/image" href="${escapeXml(thumbnailHref)}" type="image/jpeg" />` : '';
+    const published = record.createdAt ? `\n    <published>${escapeXml(record.createdAt)}</published>` : '';
+    const readingDate = record.lastOpenedAt ? ` pse:lastReadDate="${escapeXml(record.lastOpenedAt)}"` : '';
     const acquisitionLink = supportsPageStream && pageCount !== '0'
-        ? `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://opds-spec.org/acquisition/open-access" type="${escapeXml(mimeType)}" href="${escapeXml(downloadUrl)}" p5:count="${escapeXml(pageCount)}" />`
-        : `<link rel="http://opds-spec.org/acquisition/open-access" type="${escapeXml(mimeType)}" href="${escapeXml(downloadUrl)}" />`;
+        ? `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://opds-spec.org/acquisition/open-access" type="${escapeXml(mimeType)}" href="${escapeXml(downloadUrl)}" p5:count="${escapeXml(pageCount)}"${readingDate} />`
+        : `<link rel="http://opds-spec.org/acquisition/open-access" type="${escapeXml(mimeType)}" href="${escapeXml(downloadUrl)}"${readingDate} />`;
     const streamLink = supportsPageStream
         ? pageCount !== '0'
             ? `<link xmlns:p5="http://vaemendis.net/opds-pse/ns" rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="${escapeXml(streamUrl)}" p5:count="${escapeXml(pageCount)}" />`
@@ -136,7 +141,7 @@ function makeOpdsFileEntry(record, { updatedIso, roots, options }) {
         : '';
 
     return `  <entry>
-    <updated>${escapeXml(updatedIso)}</updated>
+    <updated>${escapeXml(record.modifiedAt || updatedIso)}</updated>${published}
     <id>${escapeXml(stableOpdsId(filePath))}</id>
     <title>${escapeXml(`⭘ ${title}`)}</title>
     <summary>${escapeXml(`File Type: ${mimeType} - ${extent} Summary: ${summary}`)}</summary>
@@ -321,13 +326,13 @@ function normalizeIndexedRecord(row = {}) {
 }
 
 function isValidCatalogFile(record, roots) {
-    return Boolean(
-        record.path
-        && fs.existsSync(record.path)
-        && fs.statSync(record.path).isFile()
-        && OPDS_PUBLICATION_EXTENSIONS.has(path.extname(record.path).toLowerCase())
-        && isWithinRoot(record.path, roots)
-    );
+    if (!record.path || !fs.existsSync(record.path)
+        || !OPDS_PUBLICATION_EXTENSIONS.has(path.extname(record.path).toLowerCase())
+        || !isWithinRoot(record.path, roots)) return false;
+    const stat = fs.statSync(record.path);
+    if (!stat.isFile()) return false;
+    Object.assign(record, opdsStatDates(stat));
+    return true;
 }
 
 function indexedCatalogFromRows(currentDir, rows = [], roots = []) {
@@ -434,13 +439,68 @@ async function opdsCatalog(currentDir, roots, rootEntries, options = {}, log = (
     return filesystemCatalog(currentDir);
 }
 
+function opdsStatDates(stat) {
+    return {
+        createdAt: catalogCreatedAt(stat),
+        modifiedAt: Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0
+            ? new Date(stat.mtimeMs).toISOString()
+            : null,
+    };
+}
+
+async function enrichOpdsCatalogDates(catalog, roots, library = null, signal) {
+    const paths = [];
+    const directories = [];
+    for (const [records, targets] of [[catalog.folders, directories], [catalog.files, paths]]) {
+        for (const record of records) {
+            if (signal?.aborted) throw new Error('request_cancelled');
+            if (!record.path || !isWithinRoot(record.path, roots)) continue;
+            if (!Object.hasOwn(record, 'createdAt')) {
+                try {
+                    Object.assign(record, opdsStatDates(await fs.promises.stat(record.path)));
+                } catch {
+                    record.createdAt = null;
+                    record.modifiedAt = null;
+                    continue;
+                }
+            }
+            targets.push(record.path);
+        }
+    }
+    const dates = await readCatalogReadingDates(library, paths, signal, directories);
+    for (const record of [...catalog.folders, ...catalog.files]) {
+        if (record.path) record.lastOpenedAt = library
+            ? dates.get(catalogPathKey(record.path)) || null
+            : catalogDate(record.lastOpenedAt) || catalogDate(record.last_read_at);
+    }
+    return catalog;
+}
+
+async function enrichOpdsCatalogWithDatabase(catalog, roots, options, log) {
+    let db;
+    try {
+        if (options.dbPath) {
+            const { LibraryDB } = await import('../database/library_db.js');
+            db = new LibraryDB({ dbPath: options.dbPath, readOnly: true });
+        }
+        await enrichOpdsCatalogDates(catalog, roots, db);
+    } catch (error) {
+        log(`OPDS reading dates unavailable: ${error.message}`, 'ERROR');
+        await enrichOpdsCatalogDates(catalog, roots);
+    } finally {
+        if (db) await db.close();
+    }
+}
+
 function catalogEntries(catalog, roots, options, updatedIso) {
     const folderEntries = catalog.folders.map(folder => makeOpdsFolderEntry({
         folderPath: folder.path,
         title: folder.title,
         href: folder.href,
         thumbnailHref: folder.thumbnailHref || (folder.sample ? thumbnailHrefForRecord(folder.sample, roots, options) : ''),
-        updatedIso,
+        updatedIso: folder.modifiedAt || updatedIso,
+        createdAt: folder.createdAt,
+        lastOpenedAt: folder.lastOpenedAt,
     }));
     const fileEntries = catalog.files.map(file => makeOpdsFileEntry(file, {
         updatedIso,
@@ -463,6 +523,8 @@ async function opdsReadingCatalog(id, collectionId, roots, options) {
                 title: collection.name,
                 href: readingListHref('collections', collection.id),
                 thumbnailHref: `/reading-thumbnail?collection=${encodeURIComponent(collection.id)}`,
+                createdAt: collection.createdAt || null,
+                lastOpenedAt: collection.lastOpenedAt || null,
             })),
             files: [],
         };
@@ -473,12 +535,12 @@ async function opdsReadingCatalog(id, collectionId, roots, options) {
             if (!record.path || !isWithinRoot(record.path, roots)) continue;
             let stat;
             try { stat = await fs.promises.stat(record.path); } catch { continue; }
-            if (stat.isDirectory()) folders.push({ path: record.path, title: path.basename(record.path) });
+            if (stat.isDirectory()) folders.push({ path: record.path, title: path.basename(record.path), ...opdsStatDates(stat) });
             else if (stat.isFile() && OPDS_PUBLICATION_EXTENSIONS.has(path.extname(record.path).toLowerCase())) {
-                files.push({ ...record, size: stat.size, mtime: stat.mtimeMs });
+                files.push({ ...record, size: stat.size, mtime: stat.mtimeMs, ...opdsStatDates(stat) });
             }
         }
-        return { folders, files, title: result.collection?.name };
+        return await enrichOpdsCatalogDates({ folders, files, title: result.collection?.name }, roots, db);
     } finally {
         await db.close();
     }
@@ -512,9 +574,18 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
             db = new LibraryDB({ dbPath: options.dbPath, readOnly: true });
             const result = await readTagCatalog(db, currentDir ? [currentDir] : roots, req.body.filter, controller.signal);
             const rows = result.matches.length ? await db.listFilesByPaths(result.matches.map(row => row.path)) : [];
+            const datesByPath = new Map(result.matches.map(record => [catalogPathKey(record.path), record]));
+            const catalog = {
+                folders: [],
+                files: rows.map(normalizeStoredRecord).filter(row => isStoredCatalogFile(row, roots)).map(record => {
+                    const dates = datesByPath.get(catalogPathKey(record.path));
+                    return { ...record, createdAt: dates?.createdAt || null,
+                        modifiedAt: dates?.modifiedAt || null, lastOpenedAt: dates?.lastOpenedAt || null };
+                }),
+            };
             const feed = makeOpdsFeed({
                 title: 'BookManager', id: 'urn:bookmanager:opds:tag-search',
-                entries: catalogEntries({ folders: [], files: rows.map(normalizeStoredRecord).filter(row => isStoredCatalogFile(row, roots)) }, roots, options, new Date().toISOString()),
+                entries: catalogEntries(catalog, roots, options, new Date().toISOString()),
             });
             if (!controller.signal.aborted) res.json({ genres: result.genres, tags: result.tags, publishers: result.publishers,
                     authors: result.authors, characters: result.characters, years: result.years, feed });
@@ -552,6 +623,7 @@ export function buildOpdsApp(config, log = () => {}, options = {}) {
             const catalog = readingList
                 ? await opdsReadingCatalog(readingList.id, collectionId, roots, options)
                 : await opdsCatalog(currentDir, roots, rootEntries, options, log);
+            if (!readingList) await enrichOpdsCatalogWithDatabase(catalog, roots, options, log);
             if (!readingList && !currentDir) {
                 catalog.folders.push(...readingLists.map(list => ({ title: list.name, href: readingListHref(list.id) })));
             }

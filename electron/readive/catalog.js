@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { catalogCreatedAt, catalogPathKey, readCatalogReadingDates } from '../servers/shared/catalogDates.js';
 import { assertNoSymlinks, isReadiveSkippedName, readiveFileFormat } from './manifest.js';
 import { cleanRelativePath, fail, READIVE_LIMITS } from './policy.js';
 
@@ -189,7 +190,7 @@ async function scanDirectoryNames(sourcePath, stat, relativePath, signal) {
     return { entries, signature, bytes };
 }
 
-async function readPageEntries(scope, sourcePath, relativePath, entries, signal) {
+async function readPageEntries(scope, sourcePath, relativePath, entries, signal, library) {
     const result = new Array(entries.length);
     let next = 0;
     let failure;
@@ -208,12 +209,21 @@ async function readPageEntries(scope, sourcePath, relativePath, entries, signal)
                 result[index] = {
                     id: hash(`${scope.libraryId}\0${childPath}`).slice(0, 32), name: entry.name, kind: entry.kind, relativePath: childPath,
                     size: entry.kind === 'file' ? stat.size : null, format: entry.kind === 'file' ? readiveFileFormat(entry.name) : null,
+                    createdAt: catalogCreatedAt(stat), lastOpenedAt: null,
                 };
             } catch (error) { failure ||= error; }
         }
     }));
     if (failure) throw failure;
-    return result;
+    return addReadingDates(result, scope, library, signal);
+}
+
+async function addReadingDates(entries, scope, library, signal) {
+    const sourcePath = entry => path.resolve(scope.rootPath, ...entry.relativePath.split('/'));
+    const dates = await readCatalogReadingDates(library,
+        entries.filter(entry => entry.kind === 'file').map(sourcePath), signal,
+        entries.filter(entry => entry.kind === 'directory').map(sourcePath));
+    return entries.map(entry => ({ ...entry, lastOpenedAt: dates.get(catalogPathKey(sourcePath(entry))) ?? null }));
 }
 
 export async function readReadiveLibraryEntries(scope, relativePath, cursor, options) {
@@ -221,7 +231,7 @@ export async function readReadiveLibraryEntries(scope, relativePath, cursor, opt
     return readCatalogPage(scope, relativePath, cursor, options);
 }
 
-async function readCatalogPage(scope, relativePath, cursor, { secret, cache, signal }) {
+async function readCatalogPage(scope, relativePath, cursor, { secret, cache, signal, library }) {
     checkCatalogCancelled(signal);
     const { sourcePath, stat } = await resolveReadiveLibraryPath(scope, relativePath);
     checkCatalogCancelled(signal);
@@ -236,7 +246,7 @@ async function readCatalogPage(scope, relativePath, cursor, { secret, cache, sig
         if (extra || !signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw fail('invalid_cursor');
         let parsed;
         try { parsed = JSON.parse(Buffer.from(payload, 'base64url')); } catch { throw fail('invalid_cursor'); }
-        if (parsed?.v === undefined) return readLegacyReadiveLibraryEntries(scope, relativePath, cursor, { secret, signal });
+        if (parsed?.v === undefined) return readLegacyReadiveLibraryEntries(scope, relativePath, cursor, { secret, signal, library });
         if (parsed.v !== 2 || parsed.scope !== scopeKey || !Number.isInteger(parsed.offset)
             || parsed.offset < 1 || parsed.offset > READIVE_LIMITS.browseEntries || typeof parsed.signature !== 'string'
             || !/^[a-f0-9]{64}$/.test(parsed.signature)) throw fail('invalid_cursor');
@@ -247,7 +257,7 @@ async function readCatalogPage(scope, relativePath, cursor, { secret, cache, sig
     const snapshot = cache ? await cache.read(scopeKey, stat, scan) : await scan(signal);
     checkCatalogCancelled(signal);
     if (previousSignature && previousSignature !== snapshot.signature) throw fail('catalog_changed', 409);
-    const entries = await readPageEntries(scope, sourcePath, relativePath, snapshot.entries.slice(offset, offset + 200), signal);
+    const entries = await readPageEntries(scope, sourcePath, relativePath, snapshot.entries.slice(offset, offset + 200), signal, library);
     await validateDirectory(sourcePath, stat);
     checkCatalogCancelled(signal);
     let nextCursor = null;
@@ -258,7 +268,7 @@ async function readCatalogPage(scope, relativePath, cursor, { secret, cache, sig
     return { entries, path: relativePath, nextCursor };
 }
 
-async function readLegacyReadiveLibraryEntries(scope, relativePath, cursor, { secret, signal }) {
+async function readLegacyReadiveLibraryEntries(scope, relativePath, cursor, { secret, signal, library }) {
     const { sourcePath, stat } = await resolveReadiveLibraryPath(scope, relativePath);
     checkCatalogCancelled(signal);
     if (!stat.isDirectory()) throw fail('invalid_library_path');
@@ -291,7 +301,7 @@ async function readLegacyReadiveLibraryEntries(scope, relativePath, cursor, { se
         if (childStat.isSymbolicLink() || (!childStat.isDirectory() && !childStat.isFile())) continue;
         const format = childStat.isFile() ? readiveFileFormat(child.name) : null;
         if (childStat.isFile() && !format) continue;
-        entries.push({ id: hash(`${scope.libraryId}\0${childPath}`).slice(0, 32), name: child.name, kind: childStat.isDirectory() ? 'directory' : 'file', relativePath: childPath, size: childStat.isFile() ? childStat.size : null, format });
+        entries.push({ id: hash(`${scope.libraryId}\0${childPath}`).slice(0, 32), name: child.name, kind: childStat.isDirectory() ? 'directory' : 'file', relativePath: childPath, size: childStat.isFile() ? childStat.size : null, format, createdAt: catalogCreatedAt(childStat), lastOpenedAt: null });
         identities.push([child.name, childStat.ino, childStat.dev, childStat.size, childStat.mtimeMs, childStat.ctimeMs]);
     }
     await assertNoSymlinks(sourcePath);
@@ -300,7 +310,7 @@ async function readLegacyReadiveLibraryEntries(scope, relativePath, cursor, { se
     const signature = hash(JSON.stringify({ identity: rootIdentity(stat), mtime: stat.mtimeMs, ctime: stat.ctimeMs, identities: identities.sort((a, b) => a[0].localeCompare(b[0])) }));
     if (previousSignature && previousSignature !== signature) throw fail('catalog_changed', 409);
     entries.sort(compareEntries);
-    const page = entries.slice(offset, offset + 200);
+    const page = await addReadingDates(entries.slice(offset, offset + 200), scope, library, signal);
     let nextCursor = null;
     if (offset + page.length < entries.length) {
         const payload = Buffer.from(JSON.stringify({ libraryId: scope.libraryId, approvalId: scope.approvalId, path: relativePath, offset: offset + page.length, signature })).toString('base64url');
