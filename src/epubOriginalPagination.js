@@ -76,15 +76,18 @@ export function buildOriginalEpubPages(chapters, layouts, { scroll = false } = {
 
 function matchingChapterPages(pages, position) {
     if (!Array.isArray(pages) || !position) return [];
-    const entries = pages.map((page, index) => ({ page, index, text: normalizedText(page) }));
+    const entries = [];
     if (position.entryName) {
-        const matches = entries.filter(({ page }) => page?.name === position.entryName);
-        if (matches.length) return matches;
+        pages.forEach((page, index) => {
+            if (page?.name === position.entryName) entries.push({ page, index });
+        });
     }
-    if (Number.isInteger(position.chapterIndex)) {
-        return entries.filter(({ page }) => page?.chapterIndex === position.chapterIndex);
+    if (!entries.length && Number.isInteger(position.chapterIndex)) {
+        pages.forEach((page, index) => {
+            if (page?.chapterIndex === position.chapterIndex) entries.push({ page, index });
+        });
     }
-    return [];
+    return entries.map(entry => ({ ...entry, text: normalizedText(entry.page) }));
 }
 
 export function captureEpubReadingPosition(pages, pageIndex) {

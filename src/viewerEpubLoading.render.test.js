@@ -90,7 +90,22 @@ window.loadingTests = (async () => {
         const targetDocument = target.contentDocument;
         for (let count = 0; count < 20; count += 1) await frame();
         check(target.isConnected && target.contentDocument === targetDocument, flowMode + ': ready page reloaded');
-        results.push({ flowMode, initialFrames: initialFrames.size, measuredChapters: measuredChapters.size, exposedPendingFrames });
+        const slideToggle = document.querySelector('.viewer-slide-toggle');
+        const slideStrip = document.querySelector('.viewer-slide-strip');
+        check(slideToggle?.getAttribute('aria-expanded') === 'false', flowMode + ': slide navigation must start closed');
+        check(slideStrip.querySelectorAll('.viewer-slide-thumb').length === 0, flowMode + ': closed EPUB navigation created thumbnails');
+        slideToggle.click();
+        await until(() => slideToggle.getAttribute('aria-expanded') === 'true' && slideStrip.querySelector('.viewer-slide-thumb'), flowMode + ': opening navigation did not render thumbnails');
+        const thumbnailPages = () => [...slideStrip.querySelectorAll('.viewer-slide-thumb-reader-preview strong')].map(node => Number(node.textContent));
+        const totalPages = () => flowMode === 'scroll' ? chapters.length : Number(document.querySelector('.viewer-title small').textContent.match(/\\d+/g)[1]);
+        await until(() => thumbnailPages().length === totalPages(), flowMode + ': navigation did not include every page');
+        const visiblePages = thumbnailPages();
+        check(visiblePages.every((page, index) => page === index + 1), flowMode + ': navigation skipped or reordered pages');
+        check(slideStrip.querySelector('[aria-current="page"]'), flowMode + ': navigation did not mark the current page');
+        slideToggle.click();
+        await until(() => slideToggle.getAttribute('aria-expanded') === 'false' && slideStrip.querySelectorAll('.viewer-slide-thumb').length === 0, flowMode + ': closing navigation retained EPUB thumbnails');
+        check(document.querySelector('.viewer-slide-controls').inert, flowMode + ': closed navigation must not receive focus');
+        results.push({ flowMode, initialFrames: initialFrames.size, measuredChapters: measuredChapters.size, exposedPendingFrames, navigationPages: visiblePages.length });
     }
     await loadSession({ id: 'error', filePath: '/fixture/error.epub', type: 'epub' });
     await until(() => document.querySelector('.viewer-error'), 'EPUB error is missing');

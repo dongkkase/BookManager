@@ -178,3 +178,26 @@ test('saved quotes are limited to 100 characters and do not mutate source data',
     assert.equal(resolveEpubReadingPosition(pages, Object.freeze(position)), 0);
     assert.equal(page.text.length, 150);
 });
+
+test('reading positions inspect text only in the matching chapter and prefer entry names', () => {
+    const pages = [
+        { name: 'other', chapterIndex: 1, get text() { throw new Error('Unrelated chapter text was read'); } },
+        { name: 'current', chapterIndex: 1, text: 'A B' },
+        { name: 'current', chapterIndex: 2, text: 'C D' },
+    ];
+    const position = captureEpubReadingPosition(pages, 2);
+    assert.deepEqual(position, { entryName: 'current', chapterIndex: 2, chapterProgress: 0.5, textQuote: 'CD' });
+    assert.equal(resolveEpubReadingPosition(pages, { ...position, chapterIndex: 1 }), 2);
+});
+
+test('missing entry names fall back to chapter indexes without reading unrelated text', () => {
+    const pages = [
+        { name: 'other', chapterIndex: 0, get text() { throw new Error('Unrelated chapter text was read'); } },
+        { chapterIndex: 1, text: 'AB' },
+        { chapterIndex: 1, text: 'CD' },
+    ];
+    const position = captureEpubReadingPosition(pages, 2);
+    assert.equal(position.chapterProgress, 0.5);
+    assert.equal(resolveEpubReadingPosition(pages, { ...position, entryName: 'missing' }), 2);
+    assert.equal(resolveEpubReadingPosition(pages, { entryName: 'missing' }), 0);
+});

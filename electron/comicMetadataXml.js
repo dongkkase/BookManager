@@ -121,7 +121,9 @@ function convertCoMet(root) {
             if (parts[index + 1]) values[name] = String(Number(parts[index + 1]));
         }
     }
-    if (textValue(fields, 'readingdirection')?.toLowerCase() === 'rtl') values.Manga = 'YesAndRightToLeft';
+    const direction = textValue(fields, 'readingdirection')?.toLowerCase();
+    if (direction === 'rtl') values.Manga = 'YesAndRightToLeft';
+    else if (direction === 'ltr') values.Manga = 'No';
     const gtin = productIdentifier(textValue(fields, 'identifier'));
     if (gtin) values.GTIN = gtin;
     return buildComicInfo(values, null, root);

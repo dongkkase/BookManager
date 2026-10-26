@@ -116,7 +116,7 @@ window.pageCurlDragTests = (async () => {
         const currentPages = () => [...document.querySelectorAll('.viewer-page-transition-layer.is-current [data-page-index], .viewer-page-transition-layer.is-current [data-reader-page-index]')]
             .map(node => Number(node.dataset.pageIndex ?? node.dataset.readerPageIndex)).sort((a, b) => a - b).join(',');
         await until(() => !document.querySelector('.is-initial-render-loading') && currentPages() === '0,1', 'Timed-effect fixture did not load');
-        const nextPage = () => [...document.querySelectorAll('button')].find(node => node.title === '다음장').click();
+        const nextPage = () => [...document.querySelectorAll('.viewer-toolbar button')].find(node => node.getAttribute('aria-label')?.startsWith('다음장 (')).click();
         nextPage();
         await until(() => document.querySelector('.has-page-effect'), 'Full motion must start its page transition');
         updateMotion('reduced');
@@ -207,7 +207,7 @@ window.pageCurlDragTests = (async () => {
     const forward = gesture(forwardSide, { insideFrame: original });
     forward.move(0.42);
     await until(animating, 'Forward drag must animate');
-    const next = [...document.querySelectorAll('button')].find(node => node.title === '다음장');
+    const next = [...document.querySelectorAll('.viewer-toolbar button')].find(node => node.getAttribute('aria-label')?.startsWith('다음장 ('));
     check(next && !next.disabled, 'The toolbar must expose its next-page action during the drag');
     next.click();
     check(sources().join(',') === '0,1', 'Toolbar navigation during a held drag must not advance independently');

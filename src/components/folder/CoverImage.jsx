@@ -28,7 +28,7 @@ function coverImageKey(file = {}) {
   ].join('|');
 }
 
-function CoverImage({ src: originalSrc, file, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true, isDirectory = false }) {
+function CoverImage({ src: originalSrc, file, alt = '', className = '', t, iconSize = 24, showLoadingIndicator = true, isDirectory = false, showFolderBadge = true }) {
     const previewFile = useFolderCoverPreview(file);
     const src = previewFile?.cover ?? originalSrc;
   const imageRef = useRef(null);
@@ -107,7 +107,7 @@ function CoverImage({ src: originalSrc, file, alt = '', className = '', t, iconS
         }}
         onError={() => setFailed(true)}
       />
-        {isDirectory && (
+        {isDirectory && showFolderBadge && (
             <span className="folder-item-cover-badge" title={t('folder_item_type')}>
                 <FaIcon name="folder" size={Math.min(18, Math.max(12, Math.round(iconSize / 2)))} />
             </span>

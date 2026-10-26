@@ -42,6 +42,7 @@ async function inlineOriginalSnapshotResources(clone) {
     };
     const replacements = [];
     for (const node of [clone, ...clone.querySelectorAll('[style]')]) {
+        if (!node.style.cssText.includes('url(')) continue;
         for (const property of node.style) {
             const value = node.style.getPropertyValue(property);
             if (!value.includes('url(')) continue;
@@ -119,8 +120,9 @@ function cloneReaderSnapshot(node, families, documents) {
         const media = original.closest('.viewer-epub-inline-media');
         if (media && media !== original) return;
         const copy = copies[index];
+        copy.removeAttribute('data-bookmanager-curl-style');
         const computed = original.ownerDocument.defaultView.getComputedStyle(original);
-        for (const property of computed) copy.style.setProperty(property, computed.getPropertyValue(property));
+        copy.style.cssText = Array.from(computed, property => `${property}:${computed.getPropertyValue(property)};`).join('');
         copy.style.visibility = 'visible';
         copy.style.animation = 'none';
         copy.style.transition = 'none';
@@ -164,34 +166,141 @@ function cloneReaderSnapshot(node, families, documents) {
     return clone;
 }
 
-async function snapshotReaderPage(node, width, height, pixelRatio) {
+function shareSnapshotStyles(clones) {
+    const styles = new Map();
+    for (const clone of clones) {
+        if (clone.querySelector('style, link[rel="stylesheet"]')) continue;
+        for (const node of [clone, ...clone.querySelectorAll('[style]')]) {
+            const value = node.style.cssText;
+            if (!value) continue;
+            if (!styles.has(value)) styles.set(value, []);
+            styles.get(value).push(node);
+        }
+    }
+    const rules = [];
+    for (const [value, nodes] of styles) {
+        if (nodes.length < 2) continue;
+        const name = `s${rules.length}`;
+        nodes.forEach(node => {
+            node.removeAttribute('style');
+            node.setAttribute('data-bookmanager-curl-style', name);
+        });
+        rules.push(`[data-bookmanager-curl-style="${name}"]{${value}}`);
+    }
+    return rules.join('\n');
+}
+
+async function snapshotReaderPages(entries) {
     const families = new Set();
-    const documents = new Set([node.ownerDocument]);
-    const clone = cloneReaderSnapshot(node, families, documents);
-    Object.assign(clone.style, {
-        position: 'relative', left: 'auto', top: 'auto', margin: '0', transform: 'none',
-        width: `${width}px`, height: `${height}px`,
+    const documents = new Set(entries.map(entry => entry.node.ownerDocument));
+    const clones = entries.map(({ node, width, height }) => {
+        const clone = cloneReaderSnapshot(node, families, documents);
+        Object.assign(clone.style, {
+            position: 'relative', left: 'auto', top: 'auto', margin: '0', transform: 'none',
+            width: `${width}px`, height: `${height}px`,
+        });
+        return clone;
     });
     const [fontStyles] = await Promise.all([
         snapshotFontStyles(families, documents),
-        documents.size > 1 ? inlineOriginalSnapshotResources(clone) : undefined,
+        documents.size > 1 ? Promise.all(clones.map(inlineOriginalSnapshotResources)) : undefined,
     ]);
-    const serialized = new XMLSerializer().serializeToString(clone);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><style>${fontStyles.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</style><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
+    // Resource URLs must be embedded before repeated inline styles become shared rules.
+    const sharedStyles = shareSnapshotStyles(clones);
+    const serializer = new XMLSerializer();
+    const width = entries.reduce((total, entry) => total + entry.width, 0);
+    const height = Math.max(...entries.map(entry => entry.height));
+    let left = 0;
+    const fragments = clones.map((clone, index) => {
+        const entry = entries[index];
+        const fragment = `<foreignObject x="${left}" y="0" width="${entry.width}" height="${entry.height}" overflow="hidden">${serializer.serializeToString(clone)}</foreignObject>`;
+        left += entry.width;
+        return fragment;
+    });
+    const styles = `${fontStyles}\n${sharedStyles}`.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><style>${styles}</style>${fragments.join('')}</svg>`;
     const image = new Image();
-    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-    await image.decode();
-    const canvas = makeCanvas(width, height, pixelRatio);
+    let atlas;
+    const canvases = [];
     try {
-        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-        return canvas;
+        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+        await image.decode();
+        if (entries.length === 1) {
+            const canvas = makeCanvas(width, height, entries[0].pixelRatio);
+            canvases.push(canvas);
+            canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+            return canvases;
+        }
+        const pixelRatio = Math.max(...entries.map(entry => entry.pixelRatio));
+        atlas = makeCanvas(width, height, pixelRatio);
+        atlas.getContext('2d').drawImage(image, 0, 0, atlas.width, atlas.height);
+        left = 0;
+        for (const entry of entries) {
+            const canvas = makeCanvas(entry.width, entry.height, entry.pixelRatio);
+            canvases.push(canvas);
+            canvas.getContext('2d').drawImage(atlas,
+                left * atlas.width / width, 0, entry.width * atlas.width / width, entry.height * atlas.height / height,
+                0, 0, canvas.width, canvas.height);
+            left += entry.width;
+        }
+        return canvases;
     } catch (error) {
-        canvas.width = 0;
-        canvas.height = 0;
+        canvases.forEach(canvas => { canvas.width = 0; canvas.height = 0; });
         throw error;
     } finally {
+        if (atlas) { atlas.width = 0; atlas.height = 0; }
         image.src = '';
     }
+}
+
+async function snapshotReaderPage(node, width, height, pixelRatio) {
+    return (await snapshotReaderPages([{ node, width, height, pixelRatio }]))[0];
+}
+
+export async function snapshotPageCurlLeaves(requests) {
+    const results = new Array(requests.length);
+    const groups = new Map();
+    const pending = [];
+    const individually = (request, index) => {
+        pending.push(snapshotPageCurlLeaf(request.node, request).then(
+            value => { results[index] = { status: 'fulfilled', value }; },
+            reason => { results[index] = { status: 'rejected', reason }; },
+        ));
+    };
+    requests.forEach((request, index) => {
+        const { node, width, height, pixelRatio = 1 } = request;
+        const reader = node?.querySelector('.viewer-text-page');
+        const bounds = node?.getBoundingClientRect();
+        // Separate iframe documents can redefine fonts; inline SVG can reuse fragment IDs.
+        if (!reader || node.classList.contains('is-blank') || reader.querySelector('iframe, svg, style, link[rel="stylesheet"]')
+            || !(bounds.width / width > 0 && bounds.height / height > 0)) {
+            individually(request, index);
+            return;
+        }
+        if (!groups.has(reader.ownerDocument)) groups.set(reader.ownerDocument, []);
+        groups.get(reader.ownerDocument).push({ ...request, node: reader, pixelRatio, request, index });
+    });
+    for (const entries of groups.values()) {
+        const width = entries.reduce((total, entry) => total + entry.width, 0);
+        const height = Math.max(...entries.map(entry => entry.height));
+        const ratio = Math.max(...entries.map(entry => entry.pixelRatio));
+        if (entries.length < 2 || Math.max(width, height) * ratio > 8192 || width * height * ratio ** 2 > 32 * 1024 * 1024) {
+            entries.forEach(entry => individually(entry.request, entry.index));
+            continue;
+        }
+        pending.push(snapshotReaderPages(entries).then(canvases => {
+            entries.forEach((entry, index) => {
+                results[entry.index] = {
+                    status: 'fulfilled',
+                    value: { image: canvases[index], frame: { x: entry.x || 0, y: 0, width: entry.width, height: entry.height } },
+                };
+            });
+        }, reason => {
+            entries.forEach(entry => { results[entry.index] = { status: 'rejected', reason }; });
+        }));
+    }
+    await Promise.all(pending);
+    return results;
 }
 
 function imagePaintRect(image, rect) {

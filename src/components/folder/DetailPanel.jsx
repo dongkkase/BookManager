@@ -91,7 +91,8 @@ const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = 
             <div className="folder-detail-scroll" ref={scrollRef}>
                 <div className="folder-detail-content" ref={contentRef}>
                     <div className="detail-cover-section">
-                        <DetailCoverFrame>
+                        <DetailCoverFrame coverSrc={coverAvailable ? cover : ''} coverAlt={selectedFile.name || ''}
+                            coverFilePath={selectedFile.cover_file_path || preview?.cover_file_path || ''} isActive={isActive} t={t}>
                             {coverAvailable ? (
                                 <>
                                     <img src={cover} alt={selectedFile.name || ''} className="detail-cover-image" onError={() => setFailedCover(cover)} />

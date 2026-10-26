@@ -30,7 +30,7 @@ import ViewerPageCurlBook from ${JSON.stringify(`/@fs/${path.join(projectRoot, '
 import { applyMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import EpubInlineMedia from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubInlineMedia.jsx')}`)};
 import EpubOriginalDocument from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
-import { releasePageCurlSnapshots, snapshotPageCurlLeaf } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/viewerPageCurlSnapshot.js')}`)};
+import { releasePageCurlSnapshots, snapshotPageCurlLeaf, snapshotPageCurlLeaves } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/viewerPageCurlSnapshot.js')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/viewer.css')}`)};
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -350,6 +350,49 @@ window.testDone = (async () => {
     expectReleased('Reader completion must release all HTML snapshot canvases');
     results.push('Korean and ruby HTML snapshots animate');
 
+    const atlasFontStyle = document.createElement('style');
+    atlasFontStyle.textContent = '@font-face{font-family:FixtureAtlasFont;src:url("/@fs/${path.join(projectRoot, 'src/fonts/NanumGothic-Bold.ttf')}")}';
+    document.head.append(atlasFontStyle);
+    await document.fonts.load('18px FixtureAtlasFont', '한국어');
+    const atlasLeaves = [0, 1, 2, 3].map(index => document.querySelector('[data-flipbook-index="' + index + '"]'));
+    atlasLeaves.forEach((leaf, index) => {
+        const article = leaf.querySelector('.viewer-text-page');
+        article.style.fontFamily = 'FixtureAtlasFont';
+        article.style.background = colors[index];
+    });
+    await frames();
+    const atlasSources = [];
+    const nativeAtlasDecode = HTMLImageElement.prototype.decode;
+    HTMLImageElement.prototype.decode = function (...args) {
+        if (this.src.startsWith('data:image/svg+xml')) atlasSources.push(decodeURIComponent(this.src.slice(this.src.indexOf(',') + 1)));
+        return nativeAtlasDecode.apply(this, args);
+    };
+    let atlasResults;
+    try {
+        atlasResults = await snapshotPageCurlLeaves(atlasLeaves.map((node, index) => ({ node, width: 240, height: 320, pixelRatio: 2, x: index % 2 * 240 })));
+    } finally {
+        HTMLImageElement.prototype.decode = nativeAtlasDecode;
+    }
+    check(atlasResults.every(result => result.status === 'fulfilled'), 'All atlas leaves must produce snapshots');
+    check(atlasSources.length === 1 && (atlasSources[0].match(/@font-face/g) || []).length === 1, 'Four reader leaves must embed and decode their shared font only once');
+    check(atlasSources[0].includes('data-bookmanager-curl-style'), 'Repeated computed styles must share their serialized declarations');
+    for (const [index, result] of atlasResults.entries()) {
+        const entry = result.value;
+        check(entry.image.width === 480 && entry.image.height === 640 && entry.frame.x === index % 2 * 240, 'Atlas crops must preserve pixel ratio and leaf placement');
+        const pixels = entry.image.getContext('2d').getImageData(0, 0, 480, 640).data;
+        const expected = colors[index].slice(1).match(/../g).map(value => parseInt(value, 16));
+        check(expected.every((value, channel) => Math.abs(pixels[(10 * 480 + 10) * 4 + channel] - value) < 3), 'Atlas crops must retain each leaf background without neighboring pixels');
+        let glyphPixels = 0;
+        for (let offset = 0; offset < pixels.length; offset += 4) {
+            if (pixels[offset + 3] > 128 && Math.max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) < 80) glyphPixels += 1;
+        }
+        check(glyphPixels > 100, 'Every atlas crop must contain Korean and ruby text in its embedded font');
+    }
+    releasePageCurlSnapshots(atlasResults.map(result => result.value));
+    atlasFontStyle.remove();
+    expectReleased('Reader atlas and its cropped snapshots must release all backing stores');
+    results.push('reader atlas shares fonts and preserves double-density leaf crops');
+
     const embeddedLeaf = document.createElement('div');
     embeddedLeaf.style.cssText = 'position:absolute;left:0;top:0;width:240px;height:320px';
     const embeddedReader = document.createElement('article');
@@ -494,7 +537,7 @@ window.testDone = (async () => {
                 const startedAt = performance.now();
                 api().flip(2);
                 await until(() => painted(overlay()) && document.querySelector('[data-curl-animating="true"]'), 'Reader snapshots taking longer than 800ms must still animate');
-                check(delayedSnapshots === 4 && performance.now() - startedAt >= 900, 'The slow-reader regression must delay all four snapshot decodes');
+                check(delayedSnapshots === 3 && performance.now() - startedAt >= 900, 'The slow-reader regression must delay the player snapshots and shared reader atlas');
                 check(changes.length === beforeSlowMediaFlip, 'Slow media snapshot preparation must not commit before drawing');
                 await until(() => api().getCurrentPageIndex() === 2 && visibleIndexes().join(',') === '2,3', 'Slow media page curl did not finish');
                 check(changes.slice(beforeSlowMediaFlip).join(',') === '2', 'Slow media page curl must commit exactly once');
@@ -590,7 +633,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PAGE_CURL_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const report = JSON.parse(payload);
-        assert.equal(report.results.length, 14);
+        assert.equal(report.results.length, 15);
         assert.ok(report.transientCanvasCount > 1, 'The renderer must exercise actual snapshot allocation');
         t.diagnostic(payload);
     } finally {

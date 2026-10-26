@@ -41,8 +41,11 @@ const book = {
     title: '상세패널 배치 확인을 위한 여러 줄로 표시되는 긴 제목', series: '긴 메타데이터 시리즈 이름과 부제', author: '테스트 작가', publisher: '테스트 출판사',
     description: Array.from({ length: 60 }, (_, index) => '설명 ' + index + ': 긴 책 정보를 아래로 스크롤하여 읽을 수 있어야 합니다.').join('\\n'),
     genre: '판타지, 사이버펑크', tags: '모험, 여행, LongUnbrokenMetadataTagForOverflowVerification', size: 2048, exists: true, has_metadata: true,
+    cover: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="254" viewBox="0 0 180 254"><rect width="180" height="254" fill="#36536c"/><rect x="24" y="32" width="132" height="190" fill="#d6c79d"/></svg>'),
     readingState: { status: 'reading', pageIndex: 0, pageCount: 6, scrollPercent: 17 },
 };
+const originalCover = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1270" viewBox="0 0 180 254"><rect width="180" height="254" fill="#36536c"/><rect x="24" y="32" width="132" height="190" fill="#d6c79d"/></svg>');
+const coverRequests = [];
 localStorage.setItem('bookmanager-viewer-bookmarks:' + book.path, JSON.stringify([{ pageIndex: 0 }]));
 window.electronAPI = {
     getRoots: async () => [], getSpecialPaths: async () => ({}),
@@ -50,6 +53,7 @@ window.electronAPI = {
     stat: async filePath => ({ isDirectory: filePath === '/fixture', isFile: filePath === book.path }),
     readDir: async () => [{ ...book, isFile: true }], scanFolder: async () => [book],
     getFilePreview: async () => ({ success: false }),
+    loadMetadataCover: async filePath => { coverRequests.push(filePath); return originalCover; },
     readingLists: async () => ({ success: true, collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0 }),
 };
 const root = createRoot(document.getElementById('root'));
@@ -80,7 +84,11 @@ async function mount(config) {
     await frame();
     document.querySelector('tr[data-file-path="' + book.path + '"]').click();
     await until(() => panel()?.textContent.includes(book.title), 'Selecting the actual book did not show its details');
-    await until(() => panel()?.querySelector('.viewer-detail-reading-status'), 'Reading status did not load into the detail panel');
+    await until(() => panel()?.querySelector('.detail-cover-progress'), 'Reading progress did not load onto the cover');
+    await until(() => {
+        const image = panel()?.querySelector('.detail-cover-image');
+        return image?.complete && image.naturalWidth > 0;
+    }, 'The detail cover image did not load');
     await document.fonts.ready;
     await frame();
     const position = config.folder_detail_panel_position === 'right' ? 'right' : 'bottom';
@@ -109,6 +117,96 @@ async function capture(name) {
         console.log('FOLDER_DETAIL_CAPTURE');
     });
 }
+async function nativeKey(keyCode, modifiers = []) {
+    await new Promise(resolve => {
+        window.detailKeyRequest = { keyCode, modifiers };
+        window.continueDetailKey = resolve;
+        console.log('FOLDER_DETAIL_KEY');
+    });
+    await frame();
+}
+async function verifyCoverPreview() {
+    const cover = panel().querySelector('.detail-cover-frame');
+    const trigger = cover.querySelector('.detail-cover-preview-button');
+    const currentDialog = () => document.querySelector('.detail-cover-preview-dialog');
+    const waitOpen = async source => {
+        await until(() => currentDialog()?.open, 'The cover preview dialog did not open from ' + source);
+        check(currentDialog().parentElement === document.body, 'The cover preview must escape the detail panel clipping');
+        check(currentDialog().contains(document.activeElement), 'Opening the cover preview must move focus inside it');
+        return currentDialog();
+    };
+    const waitClosed = async () => {
+        await until(() => !currentDialog(), 'Closing the cover preview must remove its dialog');
+        check(document.activeElement === trigger, 'Closing the cover preview must restore focus to its trigger');
+        check(document.querySelector('tr[data-file-path="' + book.path + '"]')?.classList.contains('selected'), 'Closing the cover preview must preserve the selected file');
+    };
+    const clickBackdrop = dialog => {
+        const bounds = rect(dialog.querySelector('.detail-cover-preview-image'));
+        const target = document.elementFromPoint(bounds.left - 8, bounds.top + bounds.height / 2);
+        check(target === dialog, 'The ambient glow beside the actual cover must remain a backdrop target');
+        target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    };
+    check(trigger && getComputedStyle(cover).cursor === 'zoom-in', 'A loaded cover must offer the zoom-in preview control');
+    check(coverRequests.length === 0, 'The original cover must load only when the preview opens');
+    trigger.focus();
+    await nativeKey('Enter');
+    let dialog = await waitOpen('initial Enter');
+    const backdropStyle = getComputedStyle(dialog, '::backdrop');
+    check((backdropStyle.backdropFilter || backdropStyle.webkitBackdropFilter).includes('blur(10px)'), 'The cover preview backdrop must blur the underlying screen');
+    const dialogStyle = getComputedStyle(dialog);
+    check(!dialog.querySelector('header, h2') && dialogStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && dialogStyle.borderTopWidth === '0px' && dialogStyle.boxShadow === 'none', 'The cover preview must show only the image and close control without a modal box or header');
+    await until(() => {
+        const image = dialog.querySelector('.detail-cover-preview-image');
+        return image?.complete && image.naturalWidth === 900;
+    }, 'The original cover did not replace the preview thumbnail');
+    check(coverRequests.at(-1) === book.path, 'The preview must request the selected book original cover');
+    const image = dialog.querySelector('.detail-cover-preview-image');
+    const imageBounds = rect(image);
+    const ambient = dialog.querySelector('.detail-cover-preview-ambient');
+    await until(() => ambient?.height === 360, 'The ambient canvas must update to the loaded original cover');
+    check(ambient.width > 0 && Math.max(ambient.width, ambient.height) <= 360, 'The ambient canvas must keep its longest edge within 360 pixels');
+    const ambientPixel = ambient.getContext('2d').getImageData(Math.floor(ambient.width / 2), Math.floor(ambient.height / 2), 1, 1).data;
+    check(ambientPixel[0] === 54 && ambientPixel[1] === 83 && ambientPixel[2] === 108 && ambientPixel[3] === 255, 'The ambient canvas must be painted from the cover edge colors');
+    const ambientStyle = getComputedStyle(ambient);
+    const imageStyle = getComputedStyle(image);
+    const closeStyle = getComputedStyle(dialog.querySelector('.detail-cover-preview-close'));
+    check(ambient.getAttribute('aria-hidden') === 'true' && ambientStyle.pointerEvents === 'none', 'The decorative ambient canvas must not intercept input or accessibility focus');
+    check(ambient.parentElement === image.parentElement && getComputedStyle(image.parentElement).isolation === 'isolate' && Number(ambientStyle.zIndex) < Number(imageStyle.zIndex) && Number(imageStyle.zIndex) < Number(closeStyle.zIndex), 'The ambient glow must remain behind the image and its close control');
+    check(ambientStyle.filter === 'blur(74px) saturate(1.45) contrast(1.05)' && ambientStyle.opacity === '0.78', 'The enlarged cover must use the viewer ambient glow appearance');
+    const ambientBounds = rect(ambient);
+    check(ambientBounds.left < imageBounds.left && ambientBounds.right > imageBounds.right && ambientBounds.top < imageBounds.top && ambientBounds.bottom > imageBounds.bottom, 'The ambient glow must extend beyond the cover image');
+    check(document.elementFromPoint(imageBounds.left + imageBounds.width / 2, imageBounds.top + imageBounds.height / 2) === image, 'The cover image must remain the pointer target above the ambient glow');
+    check(imageBounds.width > rect(cover).width && imageBounds.height > rect(cover).height, 'The preview must display a larger cover');
+    check(imageBounds.left >= 0 && imageBounds.top >= 0 && imageBounds.right <= innerWidth && imageBounds.bottom <= innerHeight, 'The enlarged cover must stay inside the viewport');
+    check(getComputedStyle(image).objectFit === 'contain', 'The preview must preserve the complete cover image');
+    const closeBounds = rect(dialog.querySelector('.detail-cover-preview-close'));
+    check(near(closeBounds.top, imageBounds.top) && near(closeBounds.left, imageBounds.right + 12) && closeBounds.right <= innerWidth && closeBounds.top >= 0 && closeBounds.bottom <= innerHeight, 'The close control must stay 12 pixels outside the cover top-right and inside the viewport');
+    image.click();
+    await frame();
+    check(currentDialog()?.open, 'Clicking the enlarged image must keep its preview open');
+    await nativeKey('3');
+    await nativeKey('l', [/Mac|iPhone|iPad/.test(navigator.platform) ? 'meta' : 'control']);
+    check(document.querySelector('.file-table') && dialog.contains(document.activeElement), 'Preview shortcuts must not switch folder view or focus the folder path');
+    await capture('cover-preview');
+    dialog.querySelector('.detail-cover-preview-close').click();
+    await waitClosed();
+    clickVisibleButton(trigger);
+    dialog = await waitOpen('cover click');
+    clickBackdrop(dialog);
+    await waitClosed();
+    cover.querySelector('.viewer-status-reading').click();
+    await waitOpen('reading status icon');
+    await nativeKey('Escape');
+    await waitClosed();
+    for (const key of ['Enter', 'Space']) {
+        trigger.focus();
+        await nativeKey(key);
+        dialog = await waitOpen(key);
+        if (key === 'Enter') dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+        else clickBackdrop(dialog);
+        await waitClosed();
+    }
+}
 async function verifyButtons(position, label) {
     await Promise.all(Array.from(document.querySelectorAll('.view-controls .view-icon-btn'))
         .flatMap(button => button.getAnimations()).map(animation => animation.finished.catch(() => {})));
@@ -118,7 +216,7 @@ async function verifyButtons(position, label) {
         check(button?.querySelector('svg'), label + ': position control needs an icon');
         check(button.getAttribute('aria-label') && !button.getAttribute('aria-label').startsWith('folder.'), label + ': position control needs a translated accessible name');
         check(button.getAttribute('aria-pressed') === String(position === value), label + ': incorrect active position');
-        check(button.title === button.getAttribute('aria-label'), label + ': icon tooltip must describe its action');
+        check(button.getAttribute('data-tooltip') === button.getAttribute('aria-label') && !button.hasAttribute('title'), label + ': icon bubble tooltip must describe its action without a native tooltip');
         check(button.classList.contains('view-icon-btn'), label + ': position controls must use the shared view button style');
         const matchingViewButton = viewButtons.find(viewButton => viewButton.getAttribute('aria-pressed') === button.getAttribute('aria-pressed'));
         check(matchingViewButton, label + ': a matching view control state must exist');
@@ -153,7 +251,7 @@ async function verifyButtons(position, label) {
     if (!panel().hidden) {
         const panelBounds = rect(panel());
         check(near(rect(panel().querySelector('.detail-panel-transition')).top, panelBounds.top), label + ': position controls must not reserve a detail header row');
-        const badges = panel().querySelector('.detail-panel-status-row');
+        const badges = panel().querySelector('.detail-cover-status-icons');
         check(badges.querySelector('.viewer-status-bookmark'), label + ': the bookmark fixture must be visible');
         check(controlBounds.top >= rect(badges).bottom, label + ': bottom bar controls must not overlap the reading status badges');
     }
@@ -162,6 +260,25 @@ function verifyLayout(position, label) {
     const listBounds = rect(list());
     const panelBounds = rect(panel());
     const contentBounds = rect(content());
+    const cover = panel().querySelector('.detail-cover-frame');
+    const coverBounds = rect(cover);
+    const coverImageBounds = rect(cover.querySelector('.detail-cover-image'));
+    const statusIcons = cover.querySelector('.detail-cover-status-icons');
+    const statusBounds = rect(statusIcons);
+    const progress = cover.querySelector('.detail-cover-progress');
+    const progressBounds = rect(progress);
+    const progressbar = cover.querySelector('[role="progressbar"]');
+    const progressFill = progress.querySelector('.viewer-cover-progress-fill');
+    check(statusIcons.querySelector('.viewer-status-reading') && statusIcons.querySelector('.viewer-status-bookmark'), label + ': reading and bookmark icons must remain on the cover');
+    check(near(statusBounds.top, coverBounds.top + 6) && near(statusBounds.right, coverBounds.right - 6), label + ': status icons must stay inside the cover top-right corner');
+    check(statusBounds.left >= coverBounds.left && statusBounds.bottom <= coverBounds.bottom, label + ': status icons must fit within the cover');
+    check(Math.abs(progressBounds.bottom - coverImageBounds.bottom) <= 0.25, label + ': reading progress must sit flush inside the displayed cover bottom (image bottom: ' + coverImageBounds.bottom + ', progress bottom: ' + progressBounds.bottom + ')');
+    check(Math.abs(progressBounds.left - coverImageBounds.left) <= 0.25 && Math.abs(progressBounds.right - coverImageBounds.right) <= 0.25, label + ': reading progress must span the full displayed cover width');
+    check(progressBounds.top >= coverImageBounds.top && progressBounds.bottom <= coverImageBounds.bottom + 0.25, label + ': reading progress must remain inside the displayed cover image');
+    check(Math.abs(progressBounds.height - 4) <= 0.25, label + ': reading progress must remain 4px high');
+    check(progressbar?.getAttribute('aria-valuenow') === '17', label + ': reading progress must expose its percentage');
+    check(near(rect(progressFill).width, progressFill.parentElement.clientWidth * 0.17), label + ': reading progress fill must match the percentage');
+    check(!panel().querySelector('.viewer-detail-reading-status, .detail-panel-status-row'), label + ': the previous standalone reading status must be removed');
     check(content().classList.contains('is-detail-right') === (position === 'right'), label + ': content orientation differs from selected position');
     if (position === 'right') {
         check(listBounds.right <= panelBounds.left, label + ': list overlaps the right detail panel');
@@ -169,7 +286,6 @@ function verifyLayout(position, label) {
         check(near(listBounds.bottom, panelBounds.bottom), label + ': list and detail panel must share their bottom edge');
         check(listBounds.width >= 178, label + ': detail panel leaves insufficient list space');
         const detailContent = panel().querySelector('.folder-detail-content');
-        const coverBounds = rect(panel().querySelector('.detail-cover-frame'));
         const heading = panel().querySelector('.detail-heading');
         const headingBounds = rect(heading);
         const infoBounds = rect(panel().querySelector('.detail-info-card'));
@@ -334,6 +450,7 @@ window.runFolderDetailPositionTests = async () => {
         await verifyButtons('right', preference + ' restored');
         verifyLayout('right', preference + ' restored');
         check(near(rect(panel()).width, savedWidth), 'Remounting did not restore the saved width');
+        if (preference === 'reduced') await verifyCoverPreview();
         if (preference === 'reduced') await capture('right-wide');
         await resizeWindow(760, 650);
         await until(() => rect(panel()).width < savedWidth - 20, 'Shrinking the window did not constrain the right panel width');
@@ -391,6 +508,16 @@ app.whenReady().then(async () => {
             const { width, height } = await window.webContents.executeJavaScript('window.detailResizeRequest');
             window.setContentSize(width, height);
             await window.webContents.executeJavaScript('window.continueDetailResize()');
+        }
+        if (message === 'FOLDER_DETAIL_KEY') {
+            const request = await window.webContents.executeJavaScript('window.detailKeyRequest');
+            window.webContents.focus();
+            window.webContents.sendInputEvent({ type: 'keyDown', ...request });
+            if (request.keyCode === 'Enter' || request.keyCode === 'Space') {
+                window.webContents.sendInputEvent({ type: 'char', ...request });
+            }
+            window.webContents.sendInputEvent({ type: 'keyUp', ...request });
+            await window.webContents.executeJavaScript('window.continueDetailKey()');
         }
         if (message === 'FOLDER_DETAIL_CAPTURE') {
             const screenshot = await window.webContents.capturePage();

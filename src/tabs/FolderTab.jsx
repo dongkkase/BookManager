@@ -2360,6 +2360,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     && !document.querySelector('.app-support-dialog-layer.is-open')
     && !document.querySelector('.app-lock-screen')
     && !document.querySelector('.app-library-scan-slide')
+    && !document.querySelector('.detail-cover-preview-dialog[open]')
     && !mainAreaRef.current?.closest('.folder-tab')?.querySelector('.folder-dialog-backdrop')
   ), []);
 
@@ -4710,7 +4711,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                             type="button"
                             className={`view-icon-btn folder-detail-position-button ${detailPanelPosition === position ? 'active' : ''}`}
                             data-position={position}
-                            title={t(`folder.detail.${position}`)}
+                            data-tooltip={t(`folder.detail.${position}`)}
                             aria-label={t(`folder.detail.${position}`)}
                             aria-pressed={detailPanelPosition === position}
                             onClick={() => changeDetailPanelPosition(position)}
@@ -4728,7 +4729,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 <span className="view-controls-divider" role="separator" aria-orientation="vertical" />
               <button
                 className={`view-icon-btn ${viewMode === 'table' ? 'active' : ''}`}
-                title={t('menu_detail')}
+                data-tooltip={t('menu_detail')}
+                aria-label={t('menu_detail')}
                 aria-pressed={viewMode === 'table'}
                 onClick={() => handleViewModeChange('table')}
               >
@@ -4736,7 +4738,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'thumbnail' ? 'active' : ''}`}
-                title={t('menu_thumbnail')}
+                data-tooltip={t('menu_thumbnail')}
+                aria-label={t('menu_thumbnail')}
                 aria-pressed={viewMode === 'thumbnail'}
                 onClick={() => handleViewModeChange('thumbnail')}
               >
@@ -4744,7 +4747,8 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               </button>
               <button
                 className={`view-icon-btn ${viewMode === 'tile' ? 'active' : ''}`}
-                title={t('menu_tile')}
+                data-tooltip={t('menu_tile')}
+                aria-label={t('menu_tile')}
                 aria-pressed={viewMode === 'tile'}
                 onClick={() => handleViewModeChange('tile')}
               >

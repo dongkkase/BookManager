@@ -35,6 +35,8 @@ test('PDF 책넘김 배경은 본문 캔버스를 재사용하고 leaf 밖에서
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import ViewerPageCurlBook from './src/ViewerPageCurlBook';
+import { paintAmbientCanvasFromSource } from './src/viewerAmbient.js';
+import { useReducedMotion } from './src/hooks/useReducedMotion';
 import { buildFlipBookPageModel, buildFlipBookStructureKey, finishAndTurnFlipBookToPage,
     getFlipBookAmbientEntries, getFlipBookCurrentGroupEntries, getFlipBookNearbyGroupEntries } from './src/viewerFlipBook.js';
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
@@ -45,7 +47,6 @@ ${section('function fitScaleForViewMode(', 'function normalizeTtsSettings(')}
 ${section('function scaledPageSizeForViewMode(')}
 ${section('function viewerClassName(')}
 ${section('function viewerElementsIncludingSelf(', 'function viewerInitialRenderIsPrepared(')}
-${section('function paintAmbientCanvasFromSource(')}
 ${section('function FadingFlipBookAmbientLayer(', 'function storageKey(')}
 ${section('function PdfPageCanvas(', 'function PdfFlipBookAmbientPage(')}
 ${section('function PdfFlipBookAmbientPage(')}

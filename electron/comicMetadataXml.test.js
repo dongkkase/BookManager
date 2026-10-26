@@ -179,10 +179,22 @@ test('CoMet XML 1.1 with schema declarations converts to a ComicInfo XML 1.0 doc
 
 test('CoMet accepts year or year-month and leaves unspecified reading direction unset', async () => {
     for (const [date, expected] of [['2024', { Year: '2024' }], ['2024-09', { Year: '2024', Month: '9' }]]) {
-        const result = await read({ 'CoMet.xml': `<comet><date>${date}</date><readingDirection>ltr</readingDirection></comet>` });
+        const result = await read({ 'CoMet.xml': `<comet><date>${date}</date></comet>` });
         assert.deepEqual(result.metadata, expected);
     }
     await assert.rejects(read({ 'CoMet.xml': '<comet><date>2024-13-02</date></comet>' }), /publication date/);
+});
+
+test('CoMet explicit reading direction survives conversion and repeated ComicInfo saves', async () => {
+    for (const [direction, expected] of [
+        ['ltr', 'No'], [' LTR ', 'No'], ['rtl', 'YesAndRightToLeft'], ['', undefined], ['unknown', undefined],
+    ]) {
+        const result = await read({ 'CoMet.xml': `<comet><readingDirection>${direction}</readingDirection></comet>` });
+        assert.equal(result.metadata.Manga, expected, direction);
+        const saved = createComicInfoXml(result.metadata, result.comicInfoXml);
+        assert.equal(parseComicInfoXml(saved).Manga, expected, direction);
+        assert.equal(createComicInfoXml(parseComicInfoXml(saved), saved), saved);
+    }
 });
 
 test('unknown legacy age labels survive conversion and subsequent ComicInfo saves', async () => {

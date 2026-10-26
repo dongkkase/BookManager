@@ -1,11 +1,12 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { resolveBookType } from '../../metadata/metadataTypes';
 import {
     formatDetailValue,
     splitMetadataValues,
 } from '../../detailPanelState';
-import { ViewerDetailStatusBadges } from './ViewerStatusBadges';
+import { ViewerDetailCoverStatus } from './ViewerStatusBadges';
+import { CoverPreviewDialog } from './CoverPreviewDialog';
 
 export function formatSize(bytes) {
     if (!bytes) return '-';
@@ -184,11 +185,42 @@ export function DetailFieldGroup({ fields, onEditRating, t }) {
     );
 }
 
-export function DetailCoverFrame({ children }) {
+export function DetailCoverFrame({ children, selectedFile, coverSrc = '', coverAlt, coverFilePath, isActive = true, t }) {
+    const [preview, setPreview] = useState(null);
+    const triggerRef = useRef(null);
+    const filePath = coverFilePath ?? selectedFile?.full_path ?? selectedFile?.path ?? '';
+    const alt = coverAlt ?? selectedFile?.title ?? selectedFile?.name ?? '';
+    const canPreview = Boolean(coverSrc && isActive);
+
+    useEffect(() => {
+        setPreview(null);
+    }, [coverSrc, filePath, isActive]);
+
+    const openPreview = () => {
+        if (!canPreview) return;
+        triggerRef.current?.focus();
+        setPreview({ src: coverSrc, filePath });
+    };
+
     return (
-        <div className="detail-cover-frame">
-            {children}
-        </div>
+        <>
+            <div className={`detail-cover-frame${canPreview ? ' is-previewable' : ''}`}
+                onClick={canPreview ? event => { event.stopPropagation(); openPreview(); } : undefined}>
+                {children}
+                {canPreview && (
+                    <button ref={triggerRef} type="button" className="detail-cover-preview-button"
+                        aria-label={t('cover_preview')} aria-haspopup="dialog"
+                        onKeyDown={event => {
+                            if (event.key !== 'Enter' && event.key !== ' ') return;
+                            event.stopPropagation();
+                        }} />
+                )}
+                <ViewerDetailCoverStatus file={selectedFile} t={t} />
+            </div>
+            {preview && canPreview && preview.src === coverSrc && preview.filePath === filePath && (
+                <CoverPreviewDialog src={coverSrc} filePath={filePath} alt={alt} t={t} onClose={() => setPreview(null)} />
+            )}
+        </>
     );
 }
 
@@ -234,16 +266,6 @@ export function DetailOpenButton({ selectedFile, onOpenFile, onMore, moreMenuOpe
                 <FaIcon name="ellipsisVertical" size={18} />
             </button>
         </div>
-    );
-}
-
-export function DetailPanelStatusBadges({ selectedFile, t }) {
-    return (
-        <ViewerDetailStatusBadges
-            file={selectedFile}
-            t={t}
-            className="detail-panel-status-row"
-        />
     );
 }
 

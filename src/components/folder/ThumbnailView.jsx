@@ -14,7 +14,7 @@ import {
   isPlainPrimaryClick,
 } from '../../selectionVisualFeedback';
 import { FolderEmptyState } from './FolderEmptyState';
-import { ViewerStatusBadgeRow } from './ViewerStatusBadges';
+import { ViewerCoverProgress, ViewerStatusBadgeRow } from './ViewerStatusBadges';
 
 /**
  * ThumbnailView - 썸네일 그리드 뷰 컴포넌트
@@ -331,6 +331,7 @@ const ThumbnailView = ({
                         className="thumbnail-status-row"
                     />
                 )}
+                {!file.isDirectory && <ViewerCoverProgress file={file} t={t} />}
                 <span className="thumb-label">{file.name || '-'}</span>
               </div>
 	            </div>
@@ -383,6 +384,7 @@ const ThumbnailView = ({
                         className="thumbnail-status-row"
                     />
                 )}
+                {!file.isDirectory && <ViewerCoverProgress file={file} t={t} />}
                 <span className="thumb-label">{file.name || '-'}</span>
               </div>
 	            </div>

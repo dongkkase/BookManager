@@ -2,7 +2,6 @@ import React from 'react';
 import { FaIcon } from '../FaIcon';
 import {
     viewerBookmarkStatusText,
-    viewerReadingProgressParts,
     viewerReadingProgressText,
     viewerReadingStatusText,
 } from '../../viewerStatusState';
@@ -54,29 +53,40 @@ export function ViewerStatusIcons({ file, status, t, size = 11, className = '' }
     );
 }
 
-export function ViewerDetailStatusBadges({ file, status, t, size = 19, className = '' }) {
+export function ViewerCoverProgress({ file, status, t, className = '' }) {
     const resolvedStatus = resolveStatus(file, status);
-    const hasReadingStatus = resolvedStatus.isCompleted || resolvedStatus.hasReadingProgress;
-    const hasStatus = hasReadingStatus || resolvedStatus.hasBookmarks;
-    if (!hasStatus) return null;
-    const { percentText, pageText } = viewerReadingProgressParts(resolvedStatus);
+    if (!resolvedStatus.isCompleted && !resolvedStatus.hasReadingProgress) return null;
+    const rawPercent = Number(resolvedStatus.percent);
+    const percent = resolvedStatus.isCompleted ? 100 : Math.max(0, Math.min(100, Number.isFinite(rawPercent) ? rawPercent : 0));
     const progressText = viewerReadingProgressText(resolvedStatus);
     const readingLabel = [viewerReadingStatusText(resolvedStatus, t), progressText].filter(Boolean).join(' ');
     return (
-        <div className={`viewer-status-badge-row ${className}`.trim()}>
-            {hasReadingStatus && (
-                <span
-                    className="viewer-detail-reading-status"
-                    title={readingLabel}
-                    aria-label={readingLabel}
-                >
-                    {percentText && <span className="viewer-status-percent-text">{percentText}</span>}
-                    {pageText && <span className="viewer-status-page-text">{pageText}</span>}
-                    <ViewerReadingStatusIcon status={resolvedStatus} t={t} size={size} />
-                </span>
-            )}
-            <ViewerBookmarkStatusIcon status={resolvedStatus} t={t} size={size} />
+        <div
+            className={`viewer-cover-progress ${className}${resolvedStatus.isCompleted ? ' is-complete' : ''}`.trim()}
+            role="progressbar"
+            aria-label={viewerReadingStatusText(resolvedStatus, t)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            aria-valuetext={readingLabel}
+            title={readingLabel}
+        >
+            <span className="viewer-cover-progress-fill" style={{ width: `${percent}%` }} />
         </div>
+    );
+}
+
+export function ViewerDetailCoverStatus({ file, status, t, size = 12 }) {
+    const resolvedStatus = resolveStatus(file, status);
+    if (!resolvedStatus.isCompleted && !resolvedStatus.hasReadingProgress && !resolvedStatus.hasBookmarks) return null;
+    return (
+        <>
+            <div className="viewer-status-badge-row detail-cover-status-icons">
+                <ViewerReadingStatusIcon status={resolvedStatus} t={t} size={size} />
+                <ViewerBookmarkStatusIcon status={resolvedStatus} t={t} size={size} />
+            </div>
+            <ViewerCoverProgress status={resolvedStatus} t={t} className="detail-cover-progress" />
+        </>
     );
 }
 

@@ -1,6 +1,6 @@
 import React, { Children, cloneElement, forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { drawPageCurlFrame } from './viewerPageCurlRenderer';
-import { releasePageCurlSnapshots, snapshotPageCurlLeaf } from './viewerPageCurlSnapshot';
+import { releasePageCurlSnapshots, snapshotPageCurlLeaves } from './viewerPageCurlSnapshot';
 import { useReducedMotion } from './hooks/useReducedMotion';
 
 export const PAGE_CURL_SNAPSHOT_TIMEOUT = { reader: 3000, image: 800 };
@@ -152,10 +152,10 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
             const prepareTimeout = indexes.some(index => rootRef.current
                 .querySelector(`[data-flipbook-index="${index}"] .viewer-text-page`))
                 ? PAGE_CURL_SNAPSHOT_TIMEOUT.reader : PAGE_CURL_SNAPSHOT_TIMEOUT.image;
-            const pendingSnapshots = Promise.allSettled(indexes.map((index, offset) => snapshotPageCurlLeaf(
-                rootRef.current.querySelector(`[data-flipbook-index="${index}"]`),
-                { width, height, x: offset % slots * width, pixelRatio },
-            )));
+            const pendingSnapshots = snapshotPageCurlLeaves(indexes.map((index, offset) => ({
+                node: rootRef.current.querySelector(`[data-flipbook-index="${index}"]`),
+                width, height, x: offset % slots * width, pixelRatio,
+            })));
             let prepareTimer;
             const results = await Promise.race([
                 pendingSnapshots,

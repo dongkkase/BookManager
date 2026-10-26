@@ -70,7 +70,7 @@ const book = () => document.querySelector('.viewer-page-curl-book');
 const visibleIndexes = () => [...document.querySelectorAll('[data-curl-visible="true"]')]
     .map(node => Number(node.dataset.flipbookIndex));
 const players = () => [...document.querySelectorAll('.viewer-epub-inline-media iframe')];
-const button = title => [...document.querySelectorAll('button')].find(node => node.title === title);
+const button = title => [...document.querySelectorAll('.viewer-toolbar button')].find(node => node.getAttribute('aria-label')?.startsWith(title + ' ('));
 let playerLoads = 0;
 window.addEventListener('message', event => {
     if (event.data === 'epub-media-effect-player-ready') playerLoads += 1;

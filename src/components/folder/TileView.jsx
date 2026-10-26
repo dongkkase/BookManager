@@ -14,7 +14,7 @@ import {
   isPlainPrimaryClick,
 } from '../../selectionVisualFeedback';
 import { FolderEmptyState } from './FolderEmptyState';
-import { ViewerStatusBadgeRow } from './ViewerStatusBadges';
+import { ViewerCoverProgress, ViewerStatusBadgeRow } from './ViewerStatusBadges';
 
 /**
  * TileView - 타일 뷰 컴포넌트
@@ -331,6 +331,7 @@ const TileView = ({
                         className="tile-status-row"
                     />
                 )}
+                {!file.isDirectory && <ViewerCoverProgress file={file} t={t} />}
               </div>
               {file.isDirectory ? (
                 <div className="tile-info">
@@ -412,6 +413,7 @@ const TileView = ({
                         className="tile-status-row"
                     />
                 )}
+                {!file.isDirectory && <ViewerCoverProgress file={file} t={t} />}
               </div>
               {file.isDirectory ? (
                 <div className="tile-info">

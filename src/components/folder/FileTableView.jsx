@@ -424,6 +424,7 @@ const FileTableView = forwardRef(({
                         t={t}
                         iconSize={file.isDirectory ? 24 : 14}
                         isDirectory={file.isDirectory}
+                        showFolderBadge={false}
                         showLoadingIndicator={visibleCoverPathSet.has(file.path)}
                     />
                 </td>
