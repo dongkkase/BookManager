@@ -3,6 +3,7 @@ import { FaIcon } from '../FaIcon';
 import { CoverArtwork } from '../CoverArtwork';
 import { mergeReadiveResumeState } from '../../readiveViewerResume';
 import { isLibraryReadingStorageAllowed } from '../../libraryReadingStorage';
+import { useReadingActivity } from '../../hooks/useReadingActivity';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const SKIP_INTERVALS = [5, 10, 15, 30, 60];
@@ -305,6 +306,7 @@ function AudiobookViewer({
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [playing, setPlaying] = useState(false);
+    const [activityPlaying, setActivityPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [scrubbing, setScrubbing] = useState(false);
@@ -327,6 +329,12 @@ function AudiobookViewer({
 
     const t = useCallback((key, values) => textFor(language, key, values), [language]);
     const activeAudioData = audioData?._sessionId === session?.id ? audioData : null;
+    const flushReadingActivity = useReadingActivity({
+        session,
+        ready: Boolean(activeAudioData) && !loading && !error,
+        playing: activityPlaying,
+        visualReading: false,
+    });
     const metadata = activeAudioData?.metadata || {};
     const title = metadata.title || String(session?.fileName || '').replace(/\.[^.]+$/, '') || t('audiobook');
     const artist = metadata.artist || metadata.albumArtist || t('unknownArtist');
@@ -386,6 +394,7 @@ function AudiobookViewer({
         setAudioData(null);
         setQueue({ currentIndex: -1, items: [] });
         setPlaying(false);
+        setActivityPlaying(false);
         setCurrentTime(0);
         setDuration(0);
         setPanel('');
@@ -578,6 +587,7 @@ function AudiobookViewer({
         if (adjacentLoading) return;
         audioRef.current?.pause();
         savePlaybackState();
+        flushReadingActivity();
         autoplayNextRef.current = autoplay;
         try {
             const moved = await onMoveAdjacent?.(direction);
@@ -586,24 +596,26 @@ function AudiobookViewer({
             autoplayNextRef.current = false;
             setError(moveError?.message || String(moveError));
         }
-    }, [adjacentLoading, onMoveAdjacent, savePlaybackState]);
+    }, [adjacentLoading, flushReadingActivity, onMoveAdjacent, savePlaybackState]);
 
     const closeViewer = useCallback(() => {
         publishAudioMiniPlayback();
+        flushReadingActivity();
         onClose?.();
-    }, [onClose, publishAudioMiniPlayback]);
+    }, [flushReadingActivity, onClose, publishAudioMiniPlayback]);
 
     const openQueueItem = useCallback(async fileName => {
         if (!fileName || adjacentLoading) return;
         audioRef.current?.pause();
         savePlaybackState();
+        flushReadingActivity();
         autoplayNextRef.current = false;
         try {
             await onOpenQueueItem?.(fileName);
         } catch (queueError) {
             setError(queueError?.message || String(queueError));
         }
-    }, [adjacentLoading, onOpenQueueItem, savePlaybackState]);
+    }, [adjacentLoading, flushReadingActivity, onOpenQueueItem, savePlaybackState]);
 
     const setSleepTimer = useCallback(value => {
         if (value === 'off' || value === 'end') {
@@ -634,6 +646,7 @@ function AudiobookViewer({
 
     const handleEnded = useCallback(() => {
         setPlaying(false);
+        setActivityPlaying(false);
         savePlaybackState();
         if (sleepMode === 'end') {
             setSleepMode('off');
@@ -755,12 +768,20 @@ function AudiobookViewer({
                     }
                 }}
                 onPlay={() => setPlaying(true)}
+                onPlaying={() => setActivityPlaying(true)}
+                onWaiting={() => setActivityPlaying(false)}
+                onSeeking={() => setActivityPlaying(false)}
+                onSeeked={event => setActivityPlaying(!event.currentTarget.paused && event.currentTarget.readyState >= 3)}
                 onPause={() => {
                     setPlaying(false);
+                    setActivityPlaying(false);
                     savePlaybackState();
                 }}
                 onEnded={handleEnded}
-                onError={() => setError(t('loadError'))}
+                onError={() => {
+                    setActivityPlaying(false);
+                    setError(t('loadError'));
+                }}
             />
 
             <header className="audiobook-toolbar">

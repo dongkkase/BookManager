@@ -14,13 +14,13 @@ import {
 
 test('애니메이션 설정은 기본값을 보완하고 저장할 세 선택을 유지한다', () => {
     const defaults = normalizeSettingsConfig();
-    assert.equal(defaults.motion_preference, 'system');
+    assert.equal(defaults.motion_preference, 'full');
     for (const value of ['system', 'full', 'reduced']) {
         const next = normalizeSettingsConfig({ motion_preference: value });
         assert.equal(next.motion_preference, value);
         assert.equal(settingsEffects(defaults, next).restartRecommended, false);
     }
-    assert.equal(normalizeSettingsConfig({ motion_preference: 'invalid' }).motion_preference, 'system');
+    assert.equal(normalizeSettingsConfig({ motion_preference: 'invalid' }).motion_preference, 'full');
     assert.equal(settingsConfigsEqual(defaults, { ...defaults, motion_preference: 'reduced' }), false);
 });
 

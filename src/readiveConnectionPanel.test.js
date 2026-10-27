@@ -98,6 +98,7 @@ async function fixture(options = {}) {
         clearInterval: id => timers.delete(id),
         requestAnimationFrame: callback => schedule(callback, 16),
         cancelAnimationFrame: id => timers.delete(id),
+        document: { documentElement: { getAttribute: name => name === 'data-motion-preference' ? 'system' : null } },
         matchMedia: () => ({ matches: options.reducedMotion ?? false }),
         electronAPI: {
             getReadiveStatus: async () => {

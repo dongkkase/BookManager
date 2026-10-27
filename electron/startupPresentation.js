@@ -8,7 +8,7 @@ export function readStartupMotionPreference(executableDir) {
     try {
         return normalizeMotionPreference(JSON.parse(fs.readFileSync(resolveConfigPath(executableDir), 'utf8')).motion_preference);
     } catch {
-        return 'system';
+        return 'full';
     }
 }
 
@@ -33,7 +33,7 @@ export function createStartupPresentation({
     let finished = false;
 
     return {
-        async start({ BrowserWindow, systemPreferences, motionPreference = 'system', enabled = true }) {
+        async start({ BrowserWindow, systemPreferences, motionPreference = 'full', enabled = true }) {
             if (!enabled || platform !== 'darwin' || finished || splash) return;
             try {
                 splash = createSplash({

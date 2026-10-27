@@ -50,8 +50,42 @@
 .author-card:hover { background: var(--panel-bg-2); border-color: var(--line); }
 .author-card strong { max-width: 100%; font-weight: 500; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .author-card-image { position: relative; }
-.author-avatar { position: relative; display: grid; flex-shrink: 0; place-items: center; width: 108px; height: 108px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, hsl(var(--author-hue) 35% 52%), hsl(var(--author-hue) 42% 31%)); color: white; font-family: Georgia, serif; font-size: 32px; font-weight: 500; }
-.author-avatar img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
+.author-avatar { position: relative; display: grid; flex-shrink: 0; place-items: center; width: 108px; height: 108px; border-radius: 50%; background: linear-gradient(145deg, hsl(var(--author-hue) 35% 52%), hsl(var(--author-hue) 42% 31%)); color: white; font-family: Georgia, serif; font-size: 32px; font-weight: 500; }
+.author-avatar:has(.author-photo-status) {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    padding-bottom: 26px;
+}
+.author-avatar > span[aria-hidden="true"] { flex-shrink: 0; }
+.author-avatar img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.author-photo-status {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: max-content;
+    max-width: 124px;
+    min-height: 22px;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    border-radius: 5px;
+    background: #0009;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.3;
+    text-align: center;
+}
+.author-photo-status > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.author-photo-status.is-loading { background: #000b; }
+.author-photo-spinner { display: inline-flex; flex-shrink: 0; transform-origin: center; }
 .author-book-count { position: absolute; right: 1px; bottom: 1px; display: grid; place-items: center; min-width: 23px; height: 23px; box-sizing: border-box; padding: 0 5px; background: var(--panel-bg-3); color: var(--text); border: 3px solid var(--panel-bg); border-radius: 12px; font-size: 10px; font-weight: 600; }
 .author-empty { padding: 60px 20px; text-align: center; color: var(--muted); }
 .author-empty h3 { margin-top: 20px; color: var(--text); font-size: 16px; }
@@ -59,16 +93,35 @@
 
 .author-profile {
     --author-profile-padding: 22px;
+    position: relative;
     display: grid;
     grid-template-columns: 112px minmax(0, 1fr) minmax(144px, max-content);
     align-items: center;
     gap: 20px 24px;
-    padding: var(--author-profile-padding);
+    padding: var(--author-profile-padding) var(--author-profile-padding) 42px;
     border: 1px solid var(--line);
     border-radius: 12px;
     background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 5%, var(--panel-bg)), var(--panel-bg));
 }
-.author-profile-portrait { width: 112px; height: 136px; border-radius: 9px; font-size: 40px; box-shadow: 0 3px 10px #0002; }
+.author-portrait-button { position: relative; display: block; width: 112px; height: 136px; padding: 0; border: 0; border-radius: 9px; background: transparent; }
+.author-portrait-button .author-profile-portrait { width: 100%; height: 100%; border-radius: inherit; font-size: 40px; box-shadow: 0 3px 10px #0002; overflow: hidden; }
+.author-portrait-button .author-profile-portrait:has(.author-photo-status) { display: grid; place-items: center; padding: 0; }
+.author-profile-portrait .author-photo-status { position: absolute; left: 0; bottom: 0; width: 100%; max-width: 100%; transform: none; border-radius: 0 0 9px 9px; }
+.author-profile-portrait .author-photo-status > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.author-photo-change { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; border-radius: inherit; background: #0009; color: white; font-size: 12px; font-weight: 500; pointer-events: none; }
+.author-profile-title-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.author-profile-title-row > div:first-child { min-width: 0; }
+.author-profile-hover-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 5px; margin-left: auto; }
+.author-profile-hover-actions button, .author-profile-corner-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; border: 1px solid transparent; border-radius: 6px; padding: 5px 7px; background: transparent; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.author-profile-hover-actions button:hover, .author-profile-corner-actions button:hover { border-color: var(--line); background: var(--panel-bg-2); color: var(--accent); }
+.author-profile-hover-actions .author-profile-edit { color: var(--accent); }
+.author-profile-corner-actions { position: absolute; display: flex; gap: 5px; right: 12px; bottom: 8px; }
+.author-profile-corner-actions button { width: 30px; padding: 5px; }
+@media (hover: none) {
+    .author-profile-hover-actions, .author-profile-corner-actions { opacity: 1 !important; pointer-events: auto !important; }
+    .author-photo-change { opacity: 1 !important; background: linear-gradient(transparent 55%, #000a); justify-content: flex-end; padding-bottom: 9px; }
+    .author-photo-change > svg { display: none; }
+}
 .author-profile-info { min-width: 0; padding: 2px 0; }
 .author-profile .author-eyebrow { margin-bottom: 6px; font-size: 11px; letter-spacing: 0; }
 .author-profile-info h2 { overflow-wrap: anywhere; }
@@ -81,24 +134,6 @@
 .author-profile-stats dt { margin: 0 0 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .author-profile-stats dd { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .author-profile-stats .author-profile-date { font-size: 14px; line-height: 1.5; font-weight: 500; }
-.author-profile-actions {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-    margin: 0 calc(-1 * var(--author-profile-padding)) calc(-1 * var(--author-profile-padding));
-    padding: 12px var(--author-profile-padding);
-    border-top: 1px solid var(--line);
-    font-size: 12px;
-}
-.author-profile-edit-actions, .author-profile-reset-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
-.author-profile-reset-actions { margin-left: auto; }
-.author-profile-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 7px 11px; background: var(--panel-bg-2); line-height: 1.4; }
-.author-profile-actions button:hover { border-color: var(--accent); }
-.author-profile-actions .author-profile-edit, .author-profile-actions button[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg)); color: var(--accent); }
-.author-profile-reset-actions button { border-color: transparent; background: transparent; color: var(--muted); }
-.author-profile-reset-actions button:hover { border-color: var(--line); background: var(--panel-bg-2); color: var(--text); }
 .author-books { margin-top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; }
 .author-section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
 .author-section-heading h3 { margin: 0; font-size: 13px; font-weight: 600; }
@@ -172,14 +207,14 @@
     .author-profile-stats { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--line); }
     .author-profile-stats > div + div { padding-left: 16px; border-left: 1px solid var(--line); }
     .author-profile-stats dd { font-size: 22px; }
-    .author-profile-actions { gap: 4px 12px; }
 }
 
 @container (max-width: 600px) {
     .author-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 12px; }
     .author-avatar { width: 88px; height: 88px; font-size: 26px; }
     .author-profile { --author-profile-padding: 18px; grid-template-columns: 96px minmax(0, 1fr); gap: 18px; }
-    .author-profile-portrait { width: 96px; height: 120px; font-size: 34px; }
+    .author-portrait-button { width: 96px; height: 120px; }
+    .author-portrait-button .author-profile-portrait { font-size: 34px; }
     .author-profile h2 { font-size: 24px; }
     .author-books { padding: 14px; }
     .author-book-controls { width: 100%; }
@@ -188,14 +223,14 @@
 
 @container (max-width: 480px) {
     .author-profile { --author-profile-padding: 16px; grid-template-columns: 80px minmax(0, 1fr); gap: 16px; align-items: start; }
-    .author-profile-portrait { width: 80px; height: 100px; font-size: 30px; }
+    .author-portrait-button { width: 80px; height: 100px; }
+    .author-portrait-button .author-profile-portrait { font-size: 30px; }
     .author-profile h2 { font-size: 22px; }
     .author-profile-meta { gap: 4px 10px; font-size: 11px; }
     .author-profile-description { font-size: 12px; }
-    .author-profile-actions { gap: 8px; }
-    .author-profile-edit-actions { flex: 1 1 100%; }
-    .author-profile-edit-actions button { flex: 1; }
-    .author-profile-reset-actions { margin-left: 0; }
+    .author-profile-hover-actions { justify-content: flex-start; margin-left: 0; }
+    .author-photo-change { gap: 6px; font-size: 11px; }
+    .author-photo-change > svg { width: 24px; }
     .author-book-shelf.is-list .author-book { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 12px; }
     .author-book-shelf.is-list .author-book-cover { width: 44px; height: 64px; }
     .author-book-shelf.is-list .author-book-description strong { font-size: 13px; }

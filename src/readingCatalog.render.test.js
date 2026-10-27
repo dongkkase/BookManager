@@ -27,6 +27,8 @@ import { TooltipLayer } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'sr
 import { translate } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/utils/i18n.js')}`)};
 import { applyMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import { HIGHLIGHT_COLORS } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/highlightColors.js')}`)};
+import { authorKey } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/authorCatalog.js')}`)};
+import { AUTOMATIC_AUTHOR_PROFILES_KEY } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/authorProfileStore.js')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/global.css')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/App.css')}`)};
 const t = (key, values) => translate(key, 'ko', values);
@@ -67,7 +69,7 @@ async function until(predicate, message) {
     while (performance.now() < deadline) { if (predicate()) return; await frame(); }
     throw new Error(message);
 }
-const longAuthorName = '서점과 도서관에서 만나는 아주 긴 이름의 작가 Alexandre de la Bibliothèque';
+const longAuthorName = '가까운 서점과 도서관에서 만나는 아주 긴 이름의 작가 Alexandre de la Bibliothèque';
 const names = ['김초엽', '김영하', '김금희', '김연수', '김애란', '박완서', '백수린', longAuthorName, '손원평', '양귀자', '장강명', '정세랑', '최은영', '한강', '황정은', 'Agatha Christie', 'Albert Camus', 'Bora Chung', 'Jane Austen', 'Jorge Luis Borges', 'Virginia Woolf'];
 const titles = ['우리가 빛의 속도로 갈 수 없다면', '오직 두 사람', '경애의 마음', '파도가 바다의 일이라면', '바깥은 여름', '그 많던 싱아는 누가 다 먹었을까', '눈부신 안부', '여름의 문장', '아몬드', '모순', '한국이 싫어서', '보건교사 안은영', '내게 무해한 사람', '흰', '계속해보겠습니다', 'And Then There Were None', 'The Stranger', 'Cursed Bunny', 'Pride and Prejudice', 'Ficciones', 'A Room of One’s Own'];
 let files = names.map((writer, index) => ({
@@ -89,6 +91,11 @@ const copiedQuotes = [];
 Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copiedQuotes.push(text); } } });
 const apiQueries = [];
 const profileOptions = [];
+const profilePhotoSaves = [];
+let failNextProfilePhotoSave = false;
+let allowMissingProfilePhoto = false;
+let releaseFirstProfile;
+const firstProfileGate = new Promise(resolve => { releaseFirstProfile = resolve; });
 const photoQueries = [];
 const photoSelections = [];
 let naverConfigured = false;
@@ -111,6 +118,14 @@ let changed;
 let catalogResponseGate = null;
 let catalogResponses = 0;
 window.electronAPI = {
+    saveAuthorProfilePhoto: async profile => {
+        profilePhotoSaves.push(profile);
+        if (failNextProfilePhotoSave && profile.id === 'wikipedia:ko:12345' || profile.id === 'OL404A' && !allowMissingProfilePhoto) {
+            if (profile.id === 'wikipedia:ko:12345') failNextProfilePhotoSave = false;
+            return { success: false, code: 'AUTHOR_PHOTO_STORAGE_FAILED' };
+        }
+        return { success: true, dataUrl: previewPhotoDataUrl, photo: { id: (profile.provider === 'wikipedia' ? 'd' : 'c').repeat(64), sourceUrl: profile.photoUrl } };
+    },
     searchAuthorPhotos: async request => {
         photoQueries.push(request);
         if (!naverConfigured) return { success: false, code: 'AUTHOR_PHOTO_MISSING_KEYS' };
@@ -120,7 +135,7 @@ window.electronAPI = {
     selectAuthorPhoto: async request => {
         photoSelections.push(request);
         if (photoSelectionGate) await photoSelectionGate;
-        return { success: true, photo: { id: (request.candidateId === 'photo-1' ? 'a' : 'b').repeat(64), sourceUrl: 'https://example.org/author.jpg', query: photoQueries.at(-1).query } };
+        return { success: true, dataUrl: previewPhotoDataUrl, photo: { id: (request.candidateId === 'photo-1' ? 'a' : 'b').repeat(64), sourceUrl: 'https://example.org/author.jpg', query: photoQueries.at(-1).query } };
     },
     releaseAuthorPhotos: async () => { releasedPhotoSearches += 1; return { success: true }; },
     getRoots: async () => [], getSpecialPaths: async () => ({}), getReadingStates: async () => [],
@@ -146,6 +161,7 @@ window.electronAPI = {
     searchAuthorProfiles: async (name, options) => {
         apiQueries.push(name);
         profileOptions.push(options);
+        if (apiQueries.length === 1) await firstProfileGate;
         if (name === '김애란') return { success: true, profiles: [] };
         if (name === '김연수') return { success: false, profiles: [] };
         const wikimediaProfile = {
@@ -275,15 +291,13 @@ function checkProfileLayout(narrow = false) {
     const portrait = profile.querySelector('.author-profile-portrait').getBoundingClientRect();
     const info = profile.querySelector('.author-profile-info').getBoundingClientRect();
     const stats = profile.querySelector('.author-profile-stats').getBoundingClientRect();
-    const actions = profile.querySelector('.author-profile-actions').getBoundingClientRect();
     check(document.querySelector('#author-profile-heading')?.tagName === 'H2', 'Author detail must expose its named heading');
     check(profile.querySelectorAll('.author-profile-stats dt').length === 2 && profile.querySelectorAll('.author-profile-stats dd').length === 2, 'Author stats must associate their labels with values');
-    for (const element of profile.querySelectorAll('.author-profile-portrait, .author-profile-info, .author-profile-stats, .author-profile-actions, h2, p, dt, dd, button, a')) {
+    for (const element of profile.querySelectorAll('.author-profile-portrait, .author-profile-info, .author-profile-stats, .author-profile-hover-actions, .author-profile-corner-actions, h2, p, dt, dd, button, a')) {
         const rectangle = element.getBoundingClientRect();
         check(rectangle.left >= bounds.left - 1 && rectangle.right <= bounds.right + 1, 'Author profile content overflowed its horizontal bounds: ' + element.className);
     }
     check(info.left >= portrait.right - 1, 'Author identity overlaps its portrait');
-    check(actions.top >= Math.max(portrait.bottom, info.bottom, stats.bottom) - 1, 'Author controls overlap the profile information');
     check(![...profile.querySelectorAll('.author-profile-info > p')].some(element => !element.textContent.trim()), 'Missing identity data must not leave an empty paragraph');
     if (narrow) check(stats.top >= Math.max(portrait.bottom, info.bottom) - 1, 'Narrow profile stats must move below the identity');
 }
@@ -303,9 +317,41 @@ window.catalogResult = (async () => {
     await until(() => document.querySelector('.sidebar-container'), 'Folder panel did not mount');
     await until(() => badge('저자') === String(names.length) && badge('주석') === '10', 'Catalog badges must load before opening either view');
     check(!document.querySelector('.authors-browser, .annotations-browser'), 'Badges should not require opening a catalog view');
+    let backgroundRefreshes = 0;
+    const backgroundRefreshTimer = setInterval(() => {
+        backgroundRefreshes += 1;
+        window.dispatchEvent(new Event('bookmanager:metadata-saved'));
+    }, 750);
+    try {
+        await until(() => apiQueries.length === 1, 'Background profile lookup must start during repeated catalog refreshes without opening authors');
+    } finally {
+        clearInterval(backgroundRefreshTimer);
+    }
+    check(backgroundRefreshes >= 4, 'Background lookup must survive repeated catalog replacements');
     const initialCatalogRequests = requests.filter(request => request.id === 'library-catalog').length;
+    check(initialCatalogRequests > 4, 'Metadata changes must refresh the background author catalog');
+    check(!document.querySelector('.authors-browser'), 'Background profile lookup must not mount the author page');
+    const backgroundAuthor = apiQueries[0];
+    check(!profileOptions[0]?.allSources, 'Background lookup must use the automatic profile sources');
+    await click('저자', document.querySelector('.sidebar-container'));
+    await until(() => document.querySelectorAll('.author-card').length === names.length, 'Author cards did not load during background lookup');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    check(apiQueries.length === 1, 'Opening authors must share the in-flight background lookup without starting another request');
+    await click('대시보드', document.querySelector('.sidebar-container'));
+    await until(() => !document.querySelector('.authors-browser') && document.querySelector('.reading-dashboard'), 'Could not return to the dashboard during background lookup');
+    const backgroundCompletedAt = performance.now();
+    releaseFirstProfile();
+    const cachedProfiles = () => JSON.parse(localStorage.getItem(AUTOMATIC_AUTHOR_PROFILES_KEY) || '{}');
+    await until(() => cachedProfiles()[authorKey(backgroundAuthor)]?.profile?.storedPhoto, 'Leaving authors must preserve the background photo as a local file');
+    check(profilePhotoSaves.some(profile => profile.name === backgroundAuthor), 'Background photos must use the persistent photo storage API');
+    check(apiQueries.length === 1, 'Background lookup must wait before requesting the next author');
+    await until(() => apiQueries.length === 2, 'Background lookup must continue after leaving the author page');
+    check(performance.now() - backgroundCompletedAt >= 4500, 'Background lookups must leave a quiet interval between requests');
+    check(document.querySelector('.reading-dashboard') && !document.querySelector('.authors-browser'), 'The next background lookup must run while the dashboard is open');
+    await until(() => Object.hasOwn(cachedProfiles(), authorKey(apiQueries[1])), 'Background lookup must cache subsequent results');
     await click('저자', document.querySelector('.sidebar-container'));
     await until(() => document.querySelectorAll('.author-card').length === names.length, 'Author cards did not load');
+    const authorPreviewStart = previewQueries.length;
     check(!document.querySelector('.authors-heading'), 'Author intro header must be removed');
     check(!document.querySelector('.author-scroll-sentinel, .authors-browser > .author-load-more'), 'Complete author lists must not show a load-more control');
     checkCatalogFooter('저자 21명 · 도서 21권');
@@ -313,11 +359,13 @@ window.catalogResult = (async () => {
     check(!document.querySelector('tr[data-file-path]'), 'Catalog used the file table');
     const authorCard = name => [...document.querySelectorAll('.author-card')].find(node => node.textContent.includes(name));
     await until(() => authorCard('김초엽')?.querySelector('img')?.naturalWidth > 0, 'Author photos were not loaded automatically');
+    check(authorCard('김초엽').querySelector('img').src.startsWith('bookmanager-thumbnail://author-photo/'), 'Automatic author cards must load saved local photos');
     await until(() => apiQueries.includes('김금희') && apiQueries.includes('김애란') && apiQueries.includes('김연수'), 'Visible authors were not searched');
+    check(apiQueries.filter(name => name === backgroundAuthor).length === 1, 'Reopening authors must reuse the background profile cache');
     await until(() => !authorCard('김금희').querySelector('img'), 'Missing photo did not fall back to initials');
     check(authorCard('김금희').querySelector('.author-avatar > span').textContent === '김금', 'Photo fallback initials are incorrect');
     check(!authorCard('김애란').querySelector('img') && !authorCard('김연수').querySelector('img'), 'Empty or failed search must display initials');
-    check(!apiQueries.includes('Virginia Woolf'), 'Offscreen authors should not be requested eagerly');
+    check(!apiQueries.includes('Virginia Woolf'), 'Visible authors should take priority over the remaining background queue');
     const rail = document.querySelector('.authors-browser-shell > .folder-character-index');
     check(rail && !document.querySelector('.author-index'), 'Authors must use the existing right-side character index');
     const railTop = rail.getBoundingClientRect().top;
@@ -353,24 +401,35 @@ window.catalogResult = (async () => {
     check(document.querySelectorAll('.author-book').length === 2, 'Author books incorrect');
     check(document.querySelector('.author-profile a')?.href === 'https://www.wikidata.org/wiki/Q12345', 'Automatic Wikidata profile missing from details');
     check(document.querySelector('.author-image-credit')?.textContent.includes('CC BY-SA 4.0'), 'Image attribution is missing');
-    await click('프로필 변경');
+    await nativeEnter(button('프로필 변경'));
     const profileToggle = button('프로필 변경');
-    check(profileToggle.getAttribute('aria-expanded') === 'true' && profileToggle.getAttribute('aria-controls') === 'author-profile-search', 'Profile search toggle must describe its expanded panel');
-    check(document.querySelector('#author-profile-search .author-profile-finder input') === document.activeElement, 'Opening profile search must focus its input');
+    const profileEditor = () => document.querySelector('dialog.author-editor-dialog');
+    check(profileToggle.getAttribute('aria-haspopup') === 'dialog' && profileEditor()?.open, 'Profile control must open its dialog');
+    check(profileEditor().querySelector('input[aria-label="저자 이름 또는 작품명"]') === document.activeElement, 'Opening profile search must focus its input');
     await nativeEscape();
-    await until(() => !document.querySelector('#author-profile-search'), 'Escape did not close the profile picker');
-    check(profileToggle.getAttribute('aria-expanded') === 'false' && document.activeElement === profileToggle, 'Closing profile search must restore focus to its toggle');
+    await until(() => !profileEditor(), 'Escape did not close the profile picker');
+    check(document.activeElement === profileToggle, 'Closing profile search must restore focus to its toggle');
     check(document.querySelector('.author-profile h2')?.textContent === '김초엽', 'Closing profile search must stay in author detail');
-    await click('프로필 변경');
-    const form = document.querySelector('.author-profile-finder form');
+    await nativeEnter(button('프로필 변경'));
+    const form = profileEditor().querySelector('form');
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    await until(() => document.querySelector('.author-profile-candidate'), 'Profile candidates missing');
+    await until(() => profileEditor().querySelector('.author-editor-result'), 'Profile candidates missing');
     check(apiQueries.at(-1) === '김초엽', 'Manual profile request name incorrect');
-    check(profileOptions.at(-1)?.allSources === true, 'Manual search must include all profile sources');
-    check(document.querySelectorAll('.author-profile-candidate')[1].textContent.includes('Wikipedia'), 'Profile candidates must identify their source');
-    await nativeEnter(document.querySelectorAll('.author-profile-candidate')[1]);
-    await until(() => !document.querySelector('.author-profile-finder'), 'Profile selection failed');
+    check(profileOptions.at(-1)?.allSources === true && profileOptions.at(-1)?.source === 'all', 'Manual search must include all profile sources');
+    check(profileEditor().querySelectorAll('.author-editor-result')[1].textContent.includes('Wikipedia'), 'Profile candidates must identify their source');
+    const previousPhotoUrl = document.querySelector('.author-profile-portrait img').src;
+    failNextProfilePhotoSave = true;
+    await nativeEnter(profileEditor().querySelectorAll('.author-editor-result')[1]);
+    await click('이 프로필 선택', profileEditor());
+    await until(() => document.querySelector('.author-detail > [role="alert"]')?.textContent.includes('저장하지 못했습니다'), 'A failed disk write must report the save failure');
+    check(profileEditor(), 'A failed disk write must keep the profile picker available for retry');
+    check(document.querySelector('.author-profile a')?.href === 'https://www.wikidata.org/wiki/Q12345'
+        && document.querySelector('.author-profile-portrait img').src === previousPhotoUrl, 'A failed disk write must preserve the current author and photo');
+    await click('이 프로필 선택', profileEditor());
+    await until(() => !profileEditor(), 'Profile selection failed');
     check(JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'].id === 'wikipedia:ko:12345', 'Selected Wikipedia profile was not saved');
+    check(JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'].storedPhoto?.id === 'd'.repeat(64), 'Manually selected profile photos must also retain their local file identity');
+    check(profilePhotoSaves.filter(profile => profile.id === 'wikipedia:ko:12345').length >= 2, 'Manual photo saving must retry after a disk write failure');
     await until(() => document.querySelector('.author-profile a')?.href === 'https://ko.wikipedia.org/?curid=12345', 'Manual profile did not replace the automatic profile');
     await capture('author-detail');
     checkProfileLayout();
@@ -387,7 +446,7 @@ window.catalogResult = (async () => {
     check(!document.querySelector('.author-book-format'), 'Owned books must not show file format badges');
     const ownedBook = document.querySelector('[data-author-book-path="' + files[0].path + '"]');
     const ownedCover = ownedBook.querySelector('.thumbnail-cover-card');
-    check(previewQueries.length === 0, 'Owned books must load full metadata only after selection');
+    check(previewQueries.length === authorPreviewStart, 'Owned books must load full metadata only after selection');
     applyMotionPreference('full');
     await nativeHover(ownedBook);
     await until(() => new DOMMatrix(getComputedStyle(ownedCover).transform).m42 < -1.5, 'Owned book hover did not lift its cover');
@@ -397,7 +456,7 @@ window.catalogResult = (async () => {
     await nativeEnter(ownedBook);
     await until(() => document.querySelector('#folder-detail-panel')?.textContent.includes('선택한 책의 상세 설명입니다.'), 'Owned book did not load its full details');
     check(opened.length === 0, 'Single-click book selection must not open the viewer');
-    check(previewQueries.length === 1 && previewQueries[0] === files[0].path, 'Details must load only the selected book');
+    check(previewQueries.length === authorPreviewStart + 1 && previewQueries[authorPreviewStart] === files[0].path, 'Details must load only the selected book');
     check(ownedBook.getAttribute('aria-pressed') === 'true', 'Selected owned book was not highlighted');
     check(document.querySelector('#folder-detail-panel').textContent.includes('9781234567890'), 'Detailed ISBN missing');
     check(document.querySelector('#folder-detail-panel').textContent.includes('테스트 출판사'), 'Detailed publisher missing');
@@ -413,7 +472,7 @@ window.catalogResult = (async () => {
     await capture('author-books-grid-selected');
     ownedBook.click(); await frame();
     check(document.querySelector('.folder-detail-panel-toggle').getAttribute('aria-expanded') === 'true', 'Selecting a book did not reopen its details');
-    check(previewQueries.length === 1, 'Reopening the same book must reuse its loaded details');
+    check(previewQueries.length === authorPreviewStart + 1, 'Reopening the same book must reuse its loaded details');
     await nativeEnter(document.querySelector('#folder-detail-panel .detail-open-button'));
     check(opened.at(-1) === files[0].path, 'Author book did not open from the detail panel');
     await click('목록 보기');
@@ -778,28 +837,39 @@ window.catalogResult = (async () => {
     await nativeEnter([...document.querySelectorAll('.author-card')].find(node => node.textContent.includes('김초엽')));
     await until(() => document.querySelector('.author-profile'), 'Author detail unavailable after revisit');
     check(document.querySelector('.author-profile a')?.href === 'https://ko.wikipedia.org/?curid=12345', 'Manual profile did not persist across view changes');
-    await click('네이버 사진 검색');
-    const photoToggle = button('네이버 사진 검색');
-    check(photoToggle.getAttribute('aria-expanded') === 'true' && photoToggle.getAttribute('aria-controls') === 'author-profile-search', 'Photo search toggle must describe its expanded panel');
-    check(document.querySelector('#author-profile-search .author-photo-finder input') === document.activeElement, 'Opening photo search must focus its input');
+    await nativeEnter(button('사진 변경'));
+    const photoToggle = button('사진 변경');
+    check(photoToggle.getAttribute('aria-haspopup') === 'dialog' && profileEditor()?.open, 'Photo control must open its dialog');
+    check(profileEditor().querySelector('input[aria-label="저자 이름 또는 작품명"]') === document.activeElement, 'Opening photo search must focus its input');
     await nativeEscape();
-    await until(() => !document.querySelector('#author-profile-search'), 'Escape did not close the photo picker');
-    check(photoToggle.getAttribute('aria-expanded') === 'false' && document.activeElement === photoToggle, 'Closing photo search must restore focus to its toggle');
+    await until(() => !profileEditor(), 'Escape did not close the photo picker');
+    check(document.activeElement === photoToggle, 'Closing photo search must restore focus to its toggle');
     check(document.querySelector('.author-profile h2')?.textContent === '김초엽', 'Closing photo search must stay in author detail');
-    await click('네이버 사진 검색');
-    const submitPhotos = () => document.querySelector('.author-photo-finder form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    submitPhotos();
-    await until(() => document.querySelector('.author-photo-finder [role="alert"]')?.textContent.includes('Client ID'), 'Missing Naver keys must explain how to configure them');
-    check(!document.querySelector('.author-photo-candidate') && photoSelections.length === 0, 'Missing keys must not select a photo');
+    await nativeEnter(button('사진 변경'));
+    const submitPhotos = async () => {
+        const source = profileEditor().querySelector('select[aria-label="검색 소스"]');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(source, 'naver');
+        source.dispatchEvent(new Event('change', { bubbles: true }));
+        await frame();
+        profileEditor().querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    };
+    const applyPhoto = async () => {
+        await until(() => button('이 사진 사용', profileEditor()) && !button('이 사진 사용', profileEditor()).disabled, 'The selected photo should be ready for applying');
+        await click('이 사진 사용', profileEditor());
+    };
+    await submitPhotos();
+    await until(() => profileEditor()?.querySelector('[role="alert"]')?.textContent.includes('Client ID'), 'Missing Naver keys must explain how to configure them');
+    check(!document.querySelector('.author-editor-result') && photoSelections.length === 0, 'Missing keys must not select a photo');
     naverConfigured = true;
-    submitPhotos();
-    await until(() => document.querySelector('.author-photo-candidate:not(:disabled)'), 'Naver previews did not become selectable');
-    await click('사진 더 보기', document.querySelector('.author-photo-finder'));
-    await until(() => document.querySelectorAll('.author-photo-candidate:not(:disabled)').length === 2, 'Naver pagination lost the existing candidates');
+    await submitPhotos();
+    await until(() => document.querySelector('.author-editor-result:not(:disabled)'), 'Naver previews did not become selectable');
+    await click('사진 더 보기', profileEditor());
+    await until(() => document.querySelectorAll('.author-editor-result:not(:disabled)').length === 2, 'Naver pagination lost the existing candidates');
     check(photoQueries.at(-1).start === 21 && photoQueries.at(-1).query === '김초엽', 'Naver pagination changed the query');
     await capture('author-naver-photos', true);
-    await nativeEnter(document.querySelectorAll('.author-photo-candidate')[1]);
-    await until(() => !document.querySelector('.author-photo-finder'), 'Selecting a Naver photo did not close the picker');
+    await nativeEnter(document.querySelectorAll('.author-editor-result')[1]);
+    await applyPhoto();
+    await until(() => !profileEditor(), 'Selecting a Naver photo did not close the picker');
     const selectedPhoto = JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'];
     check(selectedPhoto.provider === 'wikipedia' && selectedPhoto.id === 'wikipedia:ko:12345' && selectedPhoto.description === '대한민국의 소설가', 'Changing a photo replaced author metadata');
     check(selectedPhoto.photoOverride.id === 'b'.repeat(64), 'Selected Naver photo was not persisted');
@@ -810,27 +880,30 @@ window.catalogResult = (async () => {
     await until(() => !document.querySelector('.author-profile'), 'Author navigation failed after selecting a photo');
     await nativeEnter(authorCard('김초엽'));
     await until(() => document.querySelector('.author-profile-portrait img')?.src.includes('b'.repeat(64)), 'Selected photo did not persist after navigating away');
-    await click('네이버 사진 검색'); submitPhotos();
-    await until(() => document.querySelector('.author-photo-candidate:not(:disabled)'), 'Pending photo test did not load candidates');
+    await nativeEnter(button('사진 변경')); await submitPhotos();
+    await until(() => document.querySelector('.author-editor-result:not(:disabled)'), 'Pending photo test did not load candidates');
     let finishPhotoSelection;
     photoSelectionGate = new Promise(resolve => { finishPhotoSelection = resolve; });
-    document.querySelector('.author-photo-candidate').click();
-    await until(() => document.querySelector('.author-photo-finder [role="status"]')?.textContent === '사진 저장 중…', 'Photo selection did not enter a pending state');
+    document.querySelector('.author-editor-result').click();
+    await until(() => profileEditor()?.querySelector('[aria-busy="true"]'), 'Photo selection did not enter a pending state');
     const updatedProfiles = JSON.parse(localStorage.getItem('bookmanager.authorProfiles'));
     updatedProfiles['김초엽'] = { ...updatedProfiles['김초엽'], description: '갱신된 작가 소개' };
     localStorage.setItem('bookmanager.authorProfiles', JSON.stringify(updatedProfiles));
     window.dispatchEvent(new StorageEvent('storage', { key: 'bookmanager.authorProfiles' }));
     await until(() => document.querySelector('.author-profile').textContent.includes('갱신된 작가 소개'), 'Profile refresh during photo download did not render');
     photoSelectionGate = null; finishPhotoSelection();
-    await until(() => !document.querySelector('.author-photo-finder'), 'Pending photo selection did not finish');
+    await applyPhoto();
+    await until(() => !profileEditor(), 'Pending photo selection did not finish');
     check(JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'].description === '갱신된 작가 소개', 'A photo download overwrote newer author metadata');
-    await click('네이버 사진 검색'); submitPhotos();
-    await until(() => document.querySelector('.author-photo-candidate:not(:disabled)'), 'Cancellation photo test did not load candidates');
+    await nativeEnter(button('사진 변경')); await submitPhotos();
+    await until(() => document.querySelector('.author-editor-result:not(:disabled)'), 'Cancellation photo test did not load candidates');
     photoSelectionGate = new Promise(resolve => { finishPhotoSelection = resolve; });
-    document.querySelector('.author-photo-candidate').click();
-    await until(() => document.querySelector('.author-photo-finder [role="status"]'), 'Cancellation photo test did not start downloading');
+    document.querySelector('.author-editor-result').click();
+    await until(() => profileEditor()?.querySelector('[aria-busy="true"]'), 'Cancellation photo test did not start downloading');
+    await nativeEscape();
+    await until(() => !profileEditor(), 'A pending photo preview should be cancellable');
     await click('자동으로 찾기');
-    await until(() => !document.querySelector('.author-photo-finder') && document.querySelector('.author-profile a')?.href === 'https://www.wikidata.org/wiki/Q12345', 'Automatic selection did not dismiss a pending photo download');
+    await until(() => !profileEditor() && document.querySelector('.author-profile a')?.href === 'https://www.wikidata.org/wiki/Q12345', 'Automatic selection did not dismiss a pending photo download');
     photoSelectionGate = null; finishPhotoSelection(); await frame(); await frame();
     check(!JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'], 'A late photo download overwrote automatic selection');
     const manualQueries = apiQueries.filter(name => name === '김초엽').length;
@@ -866,13 +939,14 @@ window.catalogResult = (async () => {
     await nativeEnter(authorCard('김애란'));
     await until(() => document.querySelector('.author-profile h2')?.textContent === '김애란', 'Author without a profile did not open');
     for (const candidateIndex of [0, 1]) {
-        await click('네이버 사진 검색'); submitPhotos();
-        await until(() => document.querySelector('.author-photo-candidate:not(:disabled)'), 'Standalone photo search failed');
-        if (candidateIndex) { await click('사진 더 보기', document.querySelector('.author-photo-finder')); await until(() => document.querySelectorAll('.author-photo-candidate:not(:disabled)').length === 2, 'Replacement photo results failed'); }
-        document.querySelectorAll('.author-photo-candidate')[candidateIndex].click();
-        await until(() => !document.querySelector('.author-photo-finder'), 'Standalone photo selection failed');
+        await nativeEnter(button('사진 변경')); await submitPhotos();
+        await until(() => document.querySelector('.author-editor-result:not(:disabled)'), 'Standalone photo search failed');
+        if (candidateIndex) { await click('사진 더 보기', profileEditor()); await until(() => document.querySelectorAll('.author-editor-result:not(:disabled)').length === 2, 'Replacement photo results failed'); }
+        document.querySelectorAll('.author-editor-result')[candidateIndex].click();
+        await applyPhoto();
+        await until(() => !profileEditor(), 'Standalone photo selection failed');
         const savedPhoto = JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김애란'];
-        check(savedPhoto.provider === 'naver' && savedPhoto.id === (candidateIndex ? 'b' : 'a').repeat(64), 'Standalone Naver photos must support replacing the previous selection');
+        check(savedPhoto.provider === 'local' && savedPhoto.id === (candidateIndex ? 'b' : 'a').repeat(64), 'Standalone Naver photos must support replacing the previous selection');
     }
     toolbarBack().click();
     await until(() => !document.querySelector('.author-profile'), 'Standalone photo back navigation failed');
@@ -880,6 +954,7 @@ window.catalogResult = (async () => {
     await until(() => document.querySelector('.author-profile') && !document.querySelector('.author-profile-portrait img'), 'Missing photo did not settle');
     await click('이니셜로 표시');
     await new Promise(resolve => { window.continuePhoto = resolve; console.log('CATALOG_ALLOW_PHOTO'); });
+    allowMissingProfilePhoto = true;
     await click('자동으로 찾기');
     await until(() => document.querySelector('.author-profile-portrait img')?.naturalWidth > 0, 'Retrying the same failed photo URL must load it again');
     await click('주석', document.querySelector('.sidebar-container'));
@@ -973,7 +1048,7 @@ window.catalogResult = (async () => {
     await until(() => badge('저자') === '0' && badge('주석') === '0', 'Empty library must show zero badges');
     checkCatalogFooter('저자 0명 · 도서 0권');
     root.unmount();
-    return { authorCount: names.length, annotationCount: 11, keyboardOpenedBooks: opened.length, profilePersisted: true, automaticPhotos: true, initialsFallback: true, manualOverride: true, narrowLayout: true, authorBackNavigation: true,
+    return { authorCount: names.length, annotationCount: 11, keyboardOpenedBooks: opened.length, profilePersisted: true, automaticPhotos: true, permanentPhotos: { automatic: true, manual: true, failedSavePreservesPhoto: true, retry: true }, backgroundPhotos: { beforeAuthorPage: true, repeatedCatalogRefreshes: backgroundRefreshes, sharedRequest: true, continuesAfterLeaving: true, cached: true }, initialsFallback: true, manualOverride: true, narrowLayout: true, authorBackNavigation: true,
         sidebarBadges: true, automaticAuthorScroll: true, annotationTools: { grouping: true, compact: true, copy: true, delete: true, hoverActions: true, actionFade: true, actionTooltips: true, alwaysVisibleFilters: true, monthlyFilters: true, automaticScroll: true },
         largeCatalog: { books: catalogBookCount, authors: largeAuthorTotal, coldEntry, focusEntry, largeAnnotationsMs, revisitMs, annotationStorageReads } };
 })();

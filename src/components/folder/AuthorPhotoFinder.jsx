@@ -132,7 +132,7 @@ export function AuthorPhotoFinder({ author, language, onSelect, onClose }) {
             const result = await window.electronAPI?.selectAuthorPhoto?.({ candidateId: candidate.id });
             if (request !== requestRef.current) return;
             if (!result?.success) { setError(errorMessage(result?.code, labels)); return; }
-            selectCallbackRef.current(result.photo);
+            await selectCallbackRef.current(result.photo);
         } catch {
             if (request === requestRef.current) setError(labels.imageFailed);
         } finally {

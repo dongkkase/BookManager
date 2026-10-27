@@ -2669,6 +2669,61 @@ body.is-resizing-panel * {
   padding: 16px 12px 12px;
 }
 
+.settings-library-setup {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px;
+    border: 1px solid color-mix(in srgb, #c4a46c 32%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, #c4a46c 7%, transparent);
+    color: var(--text-primary);
+}
+
+.settings-library-setup-icon {
+    display: grid;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    border-radius: 12px;
+    background: color-mix(in srgb, #c4a46c 15%, transparent);
+    color: color-mix(in srgb, #c4a46c 70%, var(--text-primary));
+    font-size: 20px;
+}
+
+.settings-library-setup p {
+    margin: 8px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    line-height: 1.65;
+}
+
+.settings-library-setup .settings-library-setup-step {
+    margin: 0 0 5px;
+    color: color-mix(in srgb, #c4a46c 60%, var(--text-primary));
+    font-size: var(--font-xs);
+    font-weight: 600;
+}
+
+.settings-library-setup h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-base);
+    line-height: 1.5;
+}
+
+.settings-library-toolbar .settings-library-setup-add {
+    background: #d8c29a;
+    border-color: #d8c29a;
+    color: #25231f;
+}
+
+.settings-library-toolbar .settings-library-setup-add:hover:not(:disabled) {
+    background: #e6d4b4;
+    border-color: #e6d4b4;
+}
+
 .settings-library-layout {
     container: settings-library / inline-size;
     margin-top: 16px;
@@ -2710,6 +2765,14 @@ body.is-resizing-panel * {
     min-height: 240px;
     max-height: none;
     overflow: clip;
+}
+
+.settings-library-layout.is-setup .settings-library-workspace {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-library-layout.is-setup .settings-library-list {
+    min-height: 112px;
 }
 
 .settings-library-preview-canvas {

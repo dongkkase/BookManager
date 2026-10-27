@@ -1,0 +1,499 @@
+.dashboard-journal .dashboard-journal-grid {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.15fr);
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--dash-border, var(--line));
+    border-radius: var(--dash-card-radius, 8px);
+    background: var(--dash-surface, var(--panel-bg-2));
+}
+
+.dashboard-journal .dashboard-calendar-panel,
+.dashboard-journal .dashboard-time-panel {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 28px 32px;
+}
+
+.dashboard-journal .dashboard-time-panel {
+    border-left: 1px solid var(--dash-border, var(--line));
+}
+
+.dashboard-calendar-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.dashboard-journal .dashboard-calendar-panel h3,
+.dashboard-journal .dashboard-panel-heading h3 {
+    font-size: var(--font-sm);
+    font-weight: 600;
+}
+
+.dashboard-journal .dashboard-calendar-panel h3 > svg {
+    color: var(--dash-gold, #c4a46c);
+}
+
+.dashboard-calendar-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--muted);
+    font-size: var(--font-xs);
+}
+
+.dashboard-calendar-summary strong {
+    color: var(--dash-sage-text, var(--text));
+    font-weight: 600;
+}
+
+.dashboard-journal .dashboard-month-navigation {
+    gap: 8px;
+}
+
+.dashboard-month-switcher {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px;
+    border: 1px solid var(--dash-border, var(--line));
+    border-radius: 30px;
+    background: var(--dash-surface, var(--panel-bg-2));
+}
+
+.dashboard-month-switcher button {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    color: var(--muted);
+}
+
+.dashboard-month-switcher button:not(:disabled):hover {
+    color: var(--dash-gold, #c4a46c);
+    background: var(--dash-soft, var(--panel-bg));
+}
+
+.dashboard-journal .dashboard-month-switcher strong {
+    min-width: 108px;
+    padding: 0 7px;
+    font-size: var(--font-sm);
+    font-weight: 500;
+}
+
+.dashboard-journal .dashboard-month-navigation > .reading-dashboard-link {
+    border-radius: 20px;
+    padding: 8px 10px;
+    font-size: var(--font-xs);
+}
+
+.dashboard-journal .dashboard-calendar-weekdays,
+.dashboard-journal .dashboard-calendar-days {
+    gap: 5px;
+}
+
+.dashboard-journal .dashboard-calendar-weekdays {
+    margin: 27px 0 13px;
+    color: var(--muted);
+}
+
+.dashboard-journal .dashboard-calendar-days button {
+    display: grid;
+    place-items: center;
+    justify-self: center;
+    width: 100%;
+    max-width: 42px;
+    height: auto;
+    aspect-ratio: 1;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-sm);
+    font-weight: 400;
+}
+
+.dashboard-journal .dashboard-calendar-days button[data-level='1'] {
+    background: color-mix(in srgb, var(--dash-sage, #8cad9a) 12%, transparent);
+}
+
+.dashboard-journal .dashboard-calendar-days button[data-level='2'] {
+    background: color-mix(in srgb, var(--dash-sage, #8cad9a) 22%, transparent);
+}
+
+.dashboard-journal .dashboard-calendar-days button[data-level='3'] {
+    background: color-mix(in srgb, var(--dash-sage, #8cad9a) 34%, transparent);
+}
+
+.dashboard-journal .dashboard-calendar-days button[data-level='4'] {
+    background: color-mix(in srgb, var(--dash-sage, #8cad9a) 46%, transparent);
+}
+
+.dashboard-journal .dashboard-calendar-days button[aria-current='date'] {
+    color: var(--dash-gold-text, var(--text));
+    font-weight: 700;
+}
+
+.dashboard-journal .dashboard-calendar-days button[aria-pressed='true'] {
+    outline: none;
+    border-color: var(--dash-gold, #c4a46c);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dash-gold, #c4a46c) 9%, transparent);
+    color: var(--text);
+}
+
+.dashboard-journal .dashboard-calendar-days button:not(:disabled):hover {
+    border-color: color-mix(in srgb, var(--dash-gold, #c4a46c) 60%, transparent);
+    color: var(--dash-gold, #c4a46c);
+}
+
+.dashboard-journal .dashboard-calendar-days button:disabled {
+    opacity: 0.26;
+}
+
+.dashboard-journal .dashboard-calendar-days i {
+    bottom: 5px;
+    width: 3px;
+    height: 3px;
+    left: calc(50% - 1.5px);
+    color: var(--dash-gold, #c4a46c);
+}
+
+.dashboard-journal .dashboard-day-detail {
+    margin-top: 25px;
+    padding-top: 18px;
+    border-color: var(--dash-border, var(--line));
+}
+
+.dashboard-journal .dashboard-day-detail .dashboard-panel-heading > strong {
+    font-size: var(--font-xs);
+    font-weight: 500;
+}
+
+.dashboard-journal .dashboard-day-detail .dashboard-panel-heading > span {
+    color: var(--dash-sage-text, var(--text));
+}
+
+.dashboard-journal .dashboard-day-detail > .dashboard-journal-muted {
+    padding: 10px 0 4px;
+}
+
+.dashboard-journal .dashboard-day-detail li {
+    padding: 8px 0;
+}
+
+.dashboard-journal .dashboard-day-detail li svg,
+.dashboard-journal .dashboard-day-detail li > button:not(:disabled):hover {
+    color: var(--dash-gold, #c4a46c);
+}
+
+.dashboard-journal .dashboard-time-total > span {
+    color: var(--muted);
+    font-size: var(--font-sm);
+}
+
+.dashboard-journal .dashboard-time-total > span svg {
+    color: var(--dash-sage, #8cad9a);
+}
+
+.dashboard-journal .dashboard-time-total > strong {
+    margin: 9px 0 0;
+    font-size: clamp(28px, 3.6cqw, 46px);
+    font-weight: 500;
+    line-height: 1.35;
+    letter-spacing: -0.055em;
+    overflow-wrap: anywhere;
+}
+
+.dashboard-journal .dashboard-time-chart {
+    margin: 22px 0 20px;
+}
+
+.dashboard-chart-caption {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+    color: var(--muted);
+    font-size: var(--font-xs);
+}
+
+.dashboard-journal .dashboard-time-bars {
+    height: 72px;
+    gap: 5px;
+    border-color: var(--dash-border, var(--line));
+    background: linear-gradient(to bottom, transparent calc(50% - 1px), var(--dash-border, var(--line)) 50%, transparent calc(50% + 1px));
+}
+
+.dashboard-journal .dashboard-time-bars i {
+    border-radius: 4px 4px 0 0;
+    background: var(--dash-sage, #8cad9a);
+    opacity: 0.9;
+}
+
+.dashboard-journal .dashboard-time-bars > span[data-selected='true'] i {
+    background: var(--dash-gold, #c4a46c);
+    opacity: 1;
+}
+
+.dashboard-journal .dashboard-time-axis {
+    margin-top: 8px;
+    font-size: var(--font-2xs);
+}
+
+.dashboard-journal .dashboard-time-summary {
+    gap: 0;
+    padding: 0 0 24px;
+}
+
+.dashboard-journal .dashboard-time-summary > div + div {
+    padding-left: 18px;
+    border-left: 1px solid var(--dash-border, var(--line));
+}
+
+.dashboard-journal .dashboard-time-summary > div:not(:last-child) {
+    padding-right: 12px;
+}
+
+.dashboard-journal .dashboard-time-summary strong {
+    margin-top: 7px;
+    font-size: var(--font-md);
+    font-weight: 500;
+}
+
+.dashboard-journal .dashboard-monthly-goal {
+    padding-top: 20px;
+    border-color: var(--dash-border, var(--line));
+}
+
+.dashboard-journal .dashboard-monthly-goal > .dashboard-panel-heading {
+    margin-bottom: 18px;
+}
+
+.dashboard-journal .dashboard-monthly-goal .reading-dashboard-link {
+    padding: 4px 0;
+    color: var(--dash-gold-text, var(--text));
+    font-size: var(--font-xs);
+}
+
+.dashboard-goal-overview {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.dashboard-journal .dashboard-goal-progress {
+    --goal-color: var(--dash-gold, #c4a46c);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    margin: 0;
+}
+
+.dashboard-journal .dashboard-goal-time {
+    --goal-color: var(--dash-sage, #8cad9a);
+}
+
+.dashboard-journal .dashboard-goal-progress > .dashboard-goal-ring {
+    position: relative;
+    display: grid;
+    place-items: center;
+    justify-content: center;
+    gap: 0;
+    flex: 0 0 58px;
+    width: 58px;
+    height: 58px;
+    margin: 0;
+    padding: 0;
+    border-radius: 50%;
+    background: conic-gradient(var(--goal-color) var(--goal-progress), var(--dash-soft, var(--line)) 0);
+    overflow: hidden;
+}
+
+.dashboard-goal-ring::before {
+    position: absolute;
+    inset: 5px;
+    border-radius: inherit;
+    background: var(--dash-surface, var(--panel-bg-2));
+    content: '';
+}
+
+.dashboard-journal .dashboard-goal-ring > span {
+    position: relative;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 1px;
+    width: auto;
+    height: auto;
+    background: none;
+    color: var(--text);
+    font-size: var(--font-md);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.dashboard-goal-ring small {
+    color: var(--muted);
+    font-size: var(--font-3xs);
+}
+
+.dashboard-goal-caption {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 5px;
+}
+
+.dashboard-goal-caption > span:first-child {
+    color: var(--muted);
+    font-size: var(--font-xs);
+}
+
+.dashboard-goal-caption > strong {
+    color: var(--text);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.dashboard-journal .dashboard-goal-reached {
+    color: color-mix(in srgb, var(--goal-color) 60%, var(--text));
+    font-size: var(--font-2xs);
+}
+
+.dashboard-journal .dashboard-goal-inputs input {
+    padding: 10px 12px;
+    border-color: var(--dash-border, var(--line));
+    border-radius: 9px;
+    background: var(--dash-soft, var(--panel-bg));
+    font-size: var(--font-sm);
+}
+
+.dashboard-journal .dashboard-goal-form .reading-dashboard-settings {
+    padding: 7px 15px;
+    border: 1px solid color-mix(in srgb, var(--dash-gold, #c4a46c) 30%, transparent);
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--dash-gold, #c4a46c) 10%, transparent);
+    color: var(--dash-gold, #c4a46c);
+    font-size: var(--font-xs);
+}
+
+.dashboard-tracking-details {
+    margin-top: 13px;
+    color: var(--muted);
+    font-size: var(--font-xs);
+}
+
+.dashboard-tracking-details > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    padding: 3px 0;
+    cursor: pointer;
+    list-style: none;
+}
+
+.dashboard-tracking-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.dashboard-tracking-details > summary::after {
+    content: '+';
+    margin-left: 2px;
+}
+
+.dashboard-tracking-details[open] > summary::after {
+    content: '−';
+}
+
+.dashboard-journal .dashboard-tracking-note {
+    margin-top: 7px;
+    padding-left: 18px;
+}
+
+.dashboard-journal button:focus-visible,
+.dashboard-journal .dashboard-calendar-days button:focus-visible,
+.dashboard-tracking-details > summary:focus-visible {
+    outline: 2px solid var(--dash-gold, #c4a46c);
+    outline-offset: 3px;
+}
+
+@container (max-width: 1000px) {
+    .dashboard-journal .dashboard-calendar-panel,
+    .dashboard-journal .dashboard-time-panel {
+        padding: 24px;
+    }
+
+    .dashboard-goal-overview {
+        gap: 14px;
+    }
+
+    .dashboard-journal .dashboard-goal-progress {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 9px;
+    }
+}
+
+@container (max-width: 680px) {
+    .dashboard-journal .dashboard-journal-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-journal .dashboard-calendar-panel,
+    .dashboard-journal .dashboard-time-panel {
+        padding: 23px;
+    }
+
+    .dashboard-journal .dashboard-time-panel {
+        border-left: 0;
+        border-top: 1px solid var(--dash-border, var(--line));
+    }
+
+    .dashboard-journal .dashboard-month-navigation {
+        width: auto;
+    }
+
+    .dashboard-journal .dashboard-calendar-weekdays {
+        margin-top: 22px;
+    }
+
+    .dashboard-journal .dashboard-calendar-days {
+        row-gap: 8px;
+    }
+
+    .dashboard-journal .dashboard-time-total > strong {
+        font-size: 34px;
+    }
+
+    .dashboard-journal .dashboard-goal-progress {
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
+    }
+}
+
+@container (max-width: 420px) {
+    .dashboard-journal .dashboard-calendar-panel,
+    .dashboard-journal .dashboard-time-panel {
+        padding: 20px;
+    }
+
+    .dashboard-journal .dashboard-time-summary > div + div {
+        padding-left: 10px;
+    }
+
+    .dashboard-goal-overview {
+        grid-template-columns: 1fr;
+    }
+}

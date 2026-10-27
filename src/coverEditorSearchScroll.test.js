@@ -120,6 +120,7 @@ test('smooth motion clamps to content boundaries and outward edge input remains 
 
 test('reduced motion uses native wheel behavior and changing the preference stops an active animation', () => {
     const value = harness({ reduced: true });
+    value.setPreference('system');
     assert.equal(value.wheel(100).defaultPrevented, false);
     assert.equal(value.frames.size, 0);
     value.setReduced(false);

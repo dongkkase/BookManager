@@ -57,7 +57,7 @@ const baseline = {
     viewer_paths: { comic: '/fixture/A long directory/Comic Viewer.app', epub: '', pdf: '', text: '' },
     api_keys: {},
 };
-const calls = { saves: [], saveAttempts: [], viewerPersists: [], associations: [], closes: [], languages: [], effects: [], externalLinks: [] };
+const calls = { saves: [], saveAttempts: [], viewerPersists: [], associations: [], closes: [], languages: [], effects: [], externalLinks: [], folderSelections: [] };
 const dataFolderCalls = [];
 const dataFolderPath = '/Users/테스트 사용자/Library/Application Support/BookManager/BookManagerData';
 let dataFolderLoadFails = false;
@@ -94,7 +94,7 @@ window.electronAPI = {
         ],
     }),
     playSound: async value => { calls.effects.push(['sound', value]); },
-    selectFile: async () => null, selectFolder: async () => nextSelectedFolder,
+    selectFile: async () => null, selectFolder: async () => { calls.folderSelections.push(nextSelectedFolder); return nextSelectedFolder; },
     getRoots: async () => { calls.effects.push(['roots']); return []; },
     getSpecialPaths: async () => { calls.effects.push(['special-paths']); return {}; },
     readDir: async () => { calls.effects.push(['read-directory']); return []; },
@@ -335,7 +335,7 @@ async function open(patch = {}) {
     await until(() => !document.querySelector('.settings-modal-content'), 'Settings did not close before reopening');
     await frame();
     language = patch.config?.language || baseline.language;
-    render({ isOpen: true, config: baseline, initialTab: 'basic', ...patch });
+    render({ isOpen: true, config: baseline, initialTab: 'basic', initialFocus: null, ...patch });
     await until(() => document.querySelector('.settings-modal-content') && panel(), 'Settings did not open');
     await frame();
 }
@@ -407,8 +407,8 @@ async function runInteractions() {
     await change(document.getElementById('settings-language'), 'en');
     await change(document.getElementById('settings-font'), 'Jua');
     await change(document.getElementById('settings-font-scale'), '125');
-    check(document.getElementById('settings-motion-preference').value === 'system', 'Motion must default to system preference');
-    await change(document.getElementById('settings-motion-preference'), 'full');
+    check(document.getElementById('settings-motion-preference').value === 'full', 'Motion must default to animations enabled');
+    await change(document.getElementById('settings-motion-preference'), 'system');
     check(document.querySelector('.settings-font-preview')?.textContent.trim(), 'Font sample is missing');
     check(calls.languages.at(-1) === 'en', 'Language preview callback was not invoked');
     await navigate('processing');
@@ -472,7 +472,7 @@ async function runInteractions() {
     const saved = await applySettings('settings across categories');
     check(calls.saves.length === 1 && calls.closes.length === 0, 'Apply invoked an unexpected save or close callback');
     check(saved.language === 'en' && saved.font_family === 'Jua' && saved.font_scale === 125, 'General settings were not saved');
-    check(saved.motion_preference === 'full', 'Animation preference was not saved');
+    check(saved.motion_preference === 'system', 'Explicit system animation preference was not saved');
     check(saved.target_format === 'cbz' && saved.img_quality === 85, 'Processing settings were not saved');
     check(saved.api_keys.ai_gemini_key === 'fixture-api-key', 'API setting was not saved across category navigation');
     check(saved.api_keys.hardcover === 'hc_fixture', 'Hardcover token was not normalized');
@@ -993,7 +993,7 @@ async function runLibraryPreviewInteractions() {
     return { mutations: 13, dragAndDrop: 7, draftIsolation: true, saved: true, cancelled: true, empty: true };
 }
 async function runLibraryEditorTransitions(reducedMotion = false) {
-    await open({ initialTab: 'folder' });
+    await open({ initialTab: 'folder', config: { ...baseline, motion_preference: 'system' } });
     check(matchMedia('(prefers-reduced-motion: reduce)').matches === reducedMotion, 'Editor fixture has an unexpected motion preference');
     if (reducedMotion) {
         await selectPreview('/fixture/Books');
@@ -1385,9 +1385,73 @@ async function runLayout(scale, selectedLanguage = 'ko') {
     await open({ config: { ...baseline, font_scale: scale, language: selectedLanguage } });
     return { viewport: [innerWidth, innerHeight], scale, language: selectedLanguage, measurements };
 }
+async function prepareLibrarySetup(chooseFolder = false) {
+    for (const [key, value] of Object.entries(fontVarsForConfig({ font_scale: 100 }))) {
+        document.getElementById('root').style.setProperty(key, value);
+    }
+    await open({ initialTab: 'folder', initialFocus: 'library-setup', config: {
+        ...baseline, language: 'ko', font_scale: 100, libraries: [], library_entries: [], dup_check_folders: [],
+    } });
+    await until(() => document.activeElement === document.querySelector('.settings-library-setup-add'), 'Library setup did not focus folder selection');
+    if (chooseFolder) {
+        nextSelectedFolder = '/fixture/First Library';
+        document.querySelector('.settings-library-setup-add').click();
+        await until(() => !applyButton().disabled, 'Setup screenshot did not select a folder');
+        document.querySelector('.settings-library-setup').click();
+        await until(() => !document.querySelector('.settings-library-editor'), 'Setup screenshot kept the optional alias editor open');
+    }
+    for (let index = 0; index < 12; index += 1) await frame();
+    return true;
+}
+async function runLibrarySetupInteractions() {
+    const savesBefore = calls.saves.length;
+    const selectionsBefore = calls.folderSelections.length;
+    await prepareLibrarySetup();
+    const guide = () => document.querySelector('.settings-library-setup');
+    const add = () => document.querySelector('.settings-library-setup-add');
+    check(guide()?.textContent.includes(translate('dashboard.setup_settings_choose_title', language)), 'Setup folder guidance is missing');
+    check(!document.querySelector('.settings-library-preview'), 'Setup must avoid the ordinary Apply instruction in the library preview');
+    check(calls.folderSelections.length === selectionsBefore, 'Setup opened a folder picker without a user action');
+    check(applyButton().disabled && applyButton().textContent === translate('dashboard.setup_settings_start', language), 'Setup must wait for a folder before saving');
+    nextSelectedFolder = null;
+    add().click();
+    await frame();
+    check(calls.folderSelections.length === selectionsBefore + 1 && applyButton().disabled, 'Cancelling folder selection changed the draft');
+    nextSelectedFolder = '/fixture/First Library';
+    add().click();
+    await until(() => !applyButton().disabled && guide()?.textContent.includes(translate('dashboard.setup_settings_ready_title', language)), 'Selected folder did not advance setup guidance');
+    check(!document.querySelector('.settings-library-editor'), 'Setup must leave the optional alias editor closed after choosing a folder');
+    check(calls.saves.length === savesBefore, 'Selecting a folder saved without confirmation');
+    const closesBefore = calls.closes.length;
+    let rejectSave;
+    nextSave = new Promise((_resolve, reject) => { rejectSave = reject; });
+    applyButton().click();
+    await until(() => applyButton().disabled && applyButton().getAttribute('aria-busy') === 'true', 'Setup saving state is missing');
+    check(document.querySelector('.settings-modal-content') && calls.closes.length === closesBefore, 'Setup closed before its save completed');
+    check(document.querySelector('.settings-workspace').inert, 'Setup must protect its submitted draft while saving');
+    rejectSave(Object.assign(new Error('Setup save failed'), { settingsSaveNotified: true }));
+    await until(() => !applyButton().disabled, 'Failed setup save did not allow retry');
+    check(calls.closes.length === closesBefore && calls.saves.length === savesBefore, 'A failed setup save closed or committed the settings');
+    check(document.querySelector('[data-library-path="/fixture/First Library"]'), 'A failed setup save lost the selected folder');
+    applyButton().click();
+    await until(() => !document.querySelector('.settings-modal-content'), 'Successful setup save did not return to the dashboard');
+    check(calls.saves.length === savesBefore + 1 && calls.closes.length === closesBefore + 1, 'Setup did not save and close exactly once');
+    check(calls.saves.at(-1).libraries.includes('/fixture/First Library') && calls.closes.at(-1)?.language === 'ko', 'Setup close did not receive the saved settings');
+    await prepareLibrarySetup();
+    nextSelectedFolder = '/fixture/Cancelled Library';
+    add().click();
+    await until(() => !applyButton().disabled, 'Cancel setup fixture did not select a folder');
+    document.querySelector('.settings-footer .btn-secondary').click();
+    await until(() => !document.querySelector('.settings-modal-content'), 'Setup cancel did not close settings');
+    check(calls.saves.length === savesBefore + 1, 'Setup cancel saved its draft');
+    await open({ initialTab: 'folder', config: { ...baseline, libraries: [], library_entries: [], dup_check_folders: [] } });
+    check(!guide() && applyButton().textContent === translate('settings.apply', language), 'Ordinary library settings inherited onboarding behavior');
+    nextSelectedFolder = null;
+    return { explicitSelection: true, initialFocus: true, cancellation: true, retry: true, savesAndCloses: true, ordinarySettingsUnchanged: true };
+}
 render();
 window.runDataFolderInteractions = runDataFolderInteractions;
-window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview, openProviderHelp, closeProviderHelp };
+window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview, openProviderHelp, closeProviderHelp, prepareLibrarySetup, runLibrarySetupInteractions };
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<html><head></head><body style="margin:0"><div id="root" style="width:100%;height:100vh"></div><script type="module" src="/fixture.jsx"></script></body></html>');
         server = await createServer({
@@ -1517,7 +1581,17 @@ app.whenReady().then(async () => {
             }
         }
     }
-    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ dataFolder, interactions, apply, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts }));
+    const librarySetup = await window.webContents.executeJavaScript('window.settingsLayoutTests.runLibrarySetupInteractions()');
+    if (${Boolean(process.env.BOOKMANAGER_ONBOARDING_SCREENSHOTS)}) {
+        for (const [width, height] of [[1280, 900], [520, 650]]) {
+            window.setContentSize(width, height);
+            for (const selected of [false, true]) {
+                await window.webContents.executeJavaScript('window.settingsLayoutTests.prepareLibrarySetup(' + selected + ')');
+                await fs.writeFile('/tmp/bookmanager-settings-library-setup-' + width + '-' + (selected ? 'selected' : 'empty') + '.png', (await window.webContents.capturePage()).toPNG());
+            }
+        }
+    }
+    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ dataFolder, interactions, apply, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts, librarySetup }));
     app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
 `);
@@ -1552,6 +1626,7 @@ app.whenReady().then(async () => {
             pointerSelections: ['list', 'preview', 'row'].map(source => ({ source, trustedPointer: true, retainsOpenEditor: true })),
         });
         assert.equal(report.layouts.length, 10);
+        assert.deepEqual(report.librarySetup, { explicitSelection: true, initialFocus: true, cancellation: true, retry: true, savesAndCloses: true, ordinarySettingsUnchanged: true });
         assert.ok(report.layouts.every(layout => layout.measurements.length === 12));
         t.diagnostic(JSON.stringify(report));
     } finally {

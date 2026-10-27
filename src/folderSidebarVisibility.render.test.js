@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { build } from 'esbuild';
 
-test('모아보기 표시 설정은 순서 변경·숨김·복원·저장과 기존 라이브러리 설정을 유지한다', async t => {
+test('모아보기는 대시보드를 항상 맨 위에 표시하고 나머지 항목의 순서·표시 설정을 유지한다', async t => {
     if (process.env.BOOKMANAGER_RENDERER_TESTS !== '1' || (process.platform === 'linux' && !process.env.DISPLAY)) {
         t.skip('Set BOOKMANAGER_RENDERER_TESTS=1 with a display to run the isolated Electron renderer.');
         return;
@@ -63,11 +63,11 @@ window.electronAPI = {
 };
 applyMotionPreference('reduced');
 localStorage.clear();
-function renderSidebar() {
+function renderSidebar(selected = 'authors') {
     root.render(<div className="folder-tab"><div className="folder-main-area">
         <aside className="folder-left-panel" style={{ width: 280 }}><div className="sidebar-container">
             <FolderSidebar key={++mount} t={t} libraries={libraries} favorites={favorites}
-                readingListSelected="authors" collectionCount={2} recentReadingCount={3}
+                readingListSelected={selected} collectionCount={2} recentReadingCount={3}
                 recentAddedCount={4} recentUpdatedCount={5} wishlistCount={6}
                 authorCount={7} annotationCount={8} missingCount={9}
                 onSelectReadingList={kind => navigation.push(kind)}
@@ -85,6 +85,7 @@ const handle = key => row(key)?.querySelector('.reading-display-reorder-handle')
 const menuOrder = () => [...menu().querySelectorAll('.reading-display-field-row')].map(node => node.dataset.readingKey);
 const labels = () => [...document.querySelectorAll('.sidebar-section-reading .nav-list .recent-reading-list-main')]
     .map(node => node.textContent.trim());
+const dashboard = () => document.querySelector('.reading-dashboard-list .reading-list-nav-button');
 const visible = key => labels().includes(t(items.find(item => item[0] === key)[1]));
 function keyDown(key) {
     document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
@@ -96,8 +97,8 @@ async function openMenu() {
 }
 function checkOrder(expected) {
     check(JSON.stringify(menuOrder()) === JSON.stringify(expected), 'Settings rows must follow the configured order: ' + menuOrder().join(', '));
-    const expectedLabels = expected.filter(key => option(key).getAttribute('aria-checked') === 'true')
-        .map(key => t(items.find(item => item[0] === key)[1]));
+    const expectedLabels = [t('reading_lists.dashboard'), ...expected.filter(key => option(key).getAttribute('aria-checked') === 'true')
+        .map(key => t(items.find(item => item[0] === key)[1]))];
     check(JSON.stringify(labels()) === JSON.stringify(expectedLabels), 'Visible sidebar rows must follow the configured order: ' + labels().join(', '));
 }
 async function moveWithKeyboard(key, direction) {
@@ -130,13 +131,19 @@ async function toggle(key) {
     check(Boolean(menu()), 'The menu must stay open for consecutive changes');
     check(visible(key) !== wasChecked, 'The corresponding navigation row did not update: ' + key);
 }
+localStorage.setItem(storageKey, JSON.stringify({ dashboard: false }));
+localStorage.setItem(orderStorageKey, JSON.stringify([...defaultOrder, 'dashboard']));
 renderSidebar();
 window.runFolderSidebarVisibilityTest = async () => {
     await document.fonts.ready;
-    await until(() => labels().length === items.length, 'All nine reading items should be visible by default');
+    await until(() => labels().length === items.length + 1, 'The dashboard and all nine configurable reading items should be visible by default');
+    check(labels()[0] === t('reading_lists.dashboard'), 'Saved visibility and ordering must not hide or reposition the dashboard');
+    check(!('dashboard' in JSON.parse(localStorage.getItem(storageKey))), 'The dashboard must stay outside saved visibility settings');
+    check(!JSON.parse(localStorage.getItem(orderStorageKey)).includes('dashboard'), 'The dashboard must stay outside saved ordering');
     check(trigger().getAttribute('aria-label') === '모아보기 표시 설정', 'Display options needs an accessible label');
     check(trigger().getAttribute('aria-haspopup') === 'menu', 'Display options needs menu semantics');
     await openMenu();
+    check(!row('dashboard') && !options().some(button => button.textContent.trim() === t('reading_lists.dashboard')), 'The dashboard must not have visibility or ordering controls');
     check(options().every(button => button.getAttribute('aria-checked') === 'true'), 'Every default toggle should be enabled');
     check(document.activeElement === options()[0], 'Opening the menu should focus its first option');
     keyDown('ArrowDown');
@@ -183,7 +190,7 @@ window.runFolderSidebarVisibilityTest = async () => {
 
     renderSidebar();
     await frames();
-    check(labels().length === 7 && !visible('authors') && !visible('annotations'), 'A remount should restore saved hidden items');
+    check(labels().length === 8 && !visible('authors') && !visible('annotations'), 'A remount should restore saved hidden items and retain the dashboard');
     await openMenu();
     check(option('authors').getAttribute('aria-checked') === 'false', 'The restored menu should match saved visibility');
     checkOrder(savedOrder);
@@ -198,14 +205,14 @@ window.runFolderSidebarVisibilityTest = async () => {
     for (const [key] of items) {
         if (option(key).getAttribute('aria-checked') === 'true') await toggle(key);
     }
-    check(labels().length === 0, 'All reading items may be hidden');
+    check(labels().length === 1 && labels()[0] === t('reading_lists.dashboard'), 'Hiding every configurable item must leave the dashboard visible');
     check(navigation.length === 0, 'Visibility changes must never select or execute a menu item');
     keyDown('Escape');
     await until(() => !menu(), 'The all-hidden menu should still close');
     check(trigger().getBoundingClientRect().height > 0, 'The display settings trigger must remain reachable when all items are hidden');
     await openMenu();
     await toggle('authors');
-    check(labels().length === 1 && visible('authors'), 'The menu should restore items from an all-hidden state');
+    check(labels().length === 2 && visible('authors'), 'The menu should restore items beside the fixed dashboard');
     check(document.querySelector('.sidebar-section-reading [aria-current="page"]')?.textContent.includes(t('reading_lists.authors')), 'Restoring the selected item should keep its selected state');
     keyDown('Escape');
     await until(() => !menu(), 'Reading settings should close before library settings');
@@ -230,16 +237,16 @@ window.runFolderSidebarVisibilityTest = async () => {
         localStorage.setItem(storageKey, invalid);
         renderSidebar();
         await frames();
-        check(labels().length === 9, 'Malformed visibility settings should preserve all default navigation items');
+        check(labels().length === 10, 'Malformed visibility settings should preserve all default navigation items');
     }
     localStorage.setItem(storageKey, JSON.stringify({ authors: false }));
     renderSidebar();
     await frames();
-    check(labels().length === 8 && !visible('authors') && visible('annotations'), 'Missing fields in saved settings should remain visible');
+    check(labels().length === 9 && !visible('authors') && visible('annotations'), 'Missing fields in saved settings should remain visible');
     localStorage.removeItem(storageKey);
     renderSidebar();
     await frames();
-    check(labels().length === 9, 'Missing saved settings should restore the default view');
+    check(labels().length === 10, 'Missing saved settings should restore the default view');
     for (const invalid of ['{broken', 'null', '"invalid"', '{}']) {
         localStorage.setItem(orderStorageKey, invalid);
         renderSidebar();
@@ -258,6 +265,24 @@ window.runFolderSidebarVisibilityTest = async () => {
     check(JSON.stringify(JSON.parse(localStorage.getItem(orderStorageKey))) === JSON.stringify(normalizedOrder), 'Saved order must remove invalid keys and duplicates and append missing items');
     keyDown('Escape');
     await until(() => !menu(), 'Normalized-order menu should close');
+
+    const sectionToggle = () => document.querySelector('.sidebar-section-reading .sidebar-section-toggle-btn');
+    sectionToggle().click();
+    await frames();
+    check(sectionToggle().getAttribute('aria-expanded') === 'false', 'The reading section should collapse');
+    check(dashboard().getBoundingClientRect().height > 0 && getComputedStyle(dashboard()).visibility === 'visible', 'The dashboard must remain visibly rendered when the reading section is collapsed');
+    check(!dashboard().closest('[inert], [aria-hidden="true"]'), 'The dashboard must remain accessible when the reading section is collapsed');
+    dashboard().focus();
+    check(document.activeElement === dashboard(), 'The collapsed section must leave the dashboard keyboard accessible');
+    dashboard().click();
+    check(navigation.length === 1 && navigation[0] === 'dashboard', 'The pinned dashboard should navigate when clicked');
+    renderSidebar('dashboard');
+    await frames();
+    check(sectionToggle().getAttribute('aria-expanded') === 'false', 'The reading section should restore its collapsed state');
+    check(dashboard().getAttribute('aria-current') === 'page' && dashboard().parentElement.classList.contains('selected'), 'The dashboard must retain its selected state inside a collapsed section');
+    check(getComputedStyle(dashboard()).visibility === 'visible', 'The dashboard must remain visible after restoring a collapsed section');
+    sectionToggle().click();
+    await frames();
     localStorage.removeItem(orderStorageKey);
     renderSidebar();
     await frames();
@@ -265,7 +290,7 @@ window.runFolderSidebarVisibilityTest = async () => {
     checkOrder(defaultOrder);
     const bounds = menu().getBoundingClientRect();
     check(bounds.left >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight, 'The menu must stay inside the window');
-    return { itemCount: items.length, navigationCount: navigation.length, savedVisibility: true, savedOrder: true, keyboardNavigation: true, dragReordering: true, librarySettings: true };
+    return { itemCount: items.length, navigationCount: navigation.length, pinnedDashboard: true, savedVisibility: true, savedOrder: true, keyboardNavigation: true, dragReordering: true, librarySettings: true };
 };
 `;
         await build({
@@ -312,7 +337,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/FOLDER_SIDEBAR_VISIBILITY_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         assert.deepEqual(JSON.parse(payload), {
-            itemCount: 9, navigationCount: 0, savedVisibility: true, savedOrder: true, keyboardNavigation: true, dragReordering: true, librarySettings: true,
+            itemCount: 9, navigationCount: 1, pinnedDashboard: true, savedVisibility: true, savedOrder: true, keyboardNavigation: true, dragReordering: true, librarySettings: true,
         });
     } finally {
         await fs.rm(directory, { recursive: true, force: true });

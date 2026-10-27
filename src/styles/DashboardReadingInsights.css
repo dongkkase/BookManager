@@ -1,0 +1,199 @@
+.dashboard-journal-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 16px;
+}
+
+.dashboard-calendar-panel,
+.dashboard-time-panel,
+.dashboard-passage-card {
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: var(--panel-bg-2);
+    padding: 22px;
+}
+
+.dashboard-calendar-panel h3,
+.dashboard-panel-heading h3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: var(--font-base);
+    font-weight: 600;
+}
+
+.dashboard-calendar-panel h3 > svg {
+    color: var(--accent);
+}
+
+.dashboard-month-navigation,
+.dashboard-shelf-navigation,
+.dashboard-inline-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.dashboard-month-navigation strong {
+    min-width: 100px;
+    text-align: center;
+    font-size: var(--font-base);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.dashboard-month-navigation > button:not(.reading-dashboard-link),
+.dashboard-shelf-navigation button {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--panel-bg-2);
+}
+
+.dashboard-journal button:disabled,
+.dashboard-shelf-navigation button:disabled,
+.dashboard-passage button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.dashboard-calendar-weekdays,
+.dashboard-calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 7px;
+    text-align: center;
+}
+
+.dashboard-calendar-weekdays {
+    margin: 22px 0 9px;
+    color: var(--muted);
+    font-size: var(--font-xs);
+}
+
+.dashboard-calendar-days button {
+    position: relative;
+    min-width: 0;
+    height: 42px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--panel-bg);
+    color: var(--muted);
+    font-size: var(--font-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.dashboard-calendar-days button[data-level='1'] { background: color-mix(in srgb, var(--accent) 16%, var(--panel-bg)); color: var(--text); }
+.dashboard-calendar-days button[data-level='2'] { background: color-mix(in srgb, var(--accent) 30%, var(--panel-bg)); color: var(--text); }
+.dashboard-calendar-days button[data-level='3'] { background: color-mix(in srgb, var(--accent) 50%, var(--panel-bg)); color: var(--text); }
+.dashboard-calendar-days button[data-level='4'] { background: color-mix(in srgb, var(--accent) 75%, var(--panel-bg)); color: var(--text); }
+.dashboard-calendar-days button[aria-current='date'] { border-color: var(--muted); font-weight: 700; }
+.dashboard-calendar-days button[aria-pressed='true'] { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--text); }
+.dashboard-calendar-days button:not(:disabled):hover { border-color: var(--accent); }
+
+.dashboard-calendar-days i {
+    position: absolute;
+    bottom: 4px;
+    left: calc(50% - 2px);
+    width: 4px;
+    height: 4px;
+    background: currentColor;
+    border-radius: 50%;
+}
+
+.dashboard-day-detail {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: var(--font-sm);
+}
+
+.dashboard-panel-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.dashboard-panel-heading > span,
+.dashboard-journal-muted,
+.dashboard-goal-form p {
+    color: var(--muted);
+    font-size: var(--font-xs);
+    line-height: 1.65;
+}
+
+.dashboard-day-detail ul { padding: 0; margin: 8px 0 0; list-style: none; max-height: 150px; overflow: auto; }
+.dashboard-day-detail li { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.dashboard-day-detail li > button { min-width: 0; flex: 1; background: none; padding: 0; text-align: left; }
+.dashboard-day-detail li > button span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dashboard-day-detail li > button:not(:disabled):hover { color: var(--accent); }
+.dashboard-day-detail li > span { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; font-size: var(--font-xs); }
+.dashboard-day-detail li svg { color: var(--accent); }
+
+.dashboard-time-total > span { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--font-sm); }
+.dashboard-time-total > strong { display: block; margin: 9px 0 22px; font-size: var(--font-4xl); font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.dashboard-time-summary { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 12px; }
+.dashboard-time-summary > div { min-width: 0; }
+.dashboard-time-summary span { color: var(--muted); font-size: var(--font-xs); }
+.dashboard-time-summary strong { display: block; margin-top: 6px; font-weight: 600; font-size: var(--font-base); overflow-wrap: anywhere; }
+.dashboard-time-chart { margin: 22px 0; }
+.dashboard-time-bars { display: grid; grid-template-columns: repeat(var(--day-count), minmax(0, 1fr)); gap: 4px; height: 88px; align-items: end; border-bottom: 1px solid var(--line); }
+.dashboard-time-bars > span { display: flex; height: 100%; align-items: flex-end; }
+.dashboard-time-bars i { display: block; width: 100%; border-radius: 3px 3px 0 0; background: var(--accent); opacity: 0.75; }
+.dashboard-time-axis { display: flex; justify-content: space-between; margin-top: 6px; color: var(--muted); font-size: var(--font-xs); }
+.dashboard-monthly-goal { border-top: 1px solid var(--line); padding-top: 16px; }
+.dashboard-goal-progress + .dashboard-goal-progress { margin-top: 14px; }
+.dashboard-goal-progress > div:first-child { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 5px; margin-bottom: 8px; font-size: var(--font-sm); }
+.dashboard-goal-progress [role='progressbar'] { height: 5px; background: var(--line); border-radius: 5px; overflow: hidden; }
+.dashboard-goal-progress [role='progressbar'] > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.dashboard-goal-reached { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: var(--font-xs); }
+.dashboard-goal-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.dashboard-goal-inputs label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: var(--font-xs); color: var(--muted); }
+.dashboard-goal-inputs input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-bg); color: var(--text); font: inherit; }
+.dashboard-goal-form p { margin: 8px 0; }
+.dashboard-tracking-note { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; color: var(--muted); font-size: var(--font-xs); line-height: 1.65; }
+.dashboard-inline-error { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; font-size: var(--font-sm); color: var(--muted); }
+
+.dashboard-reading-keepsakes { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr); gap: 24px; margin-top: 28px; }
+.reading-dashboard .dashboard-reading-keepsakes > .reading-dashboard-section { min-width: 0; margin-top: 0; }
+.dashboard-passage-card { display: flex; flex-direction: column; position: relative; min-height: 265px; }
+.dashboard-quote-mark { color: #c7ab79; font-family: Georgia, serif; font-size: 60px; height: 42px; line-height: 1; }
+.dashboard-passage blockquote { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; margin: 8px 0 20px; font-family: Georgia, 'AppleMyungjo', 'Batang', serif; font-size: var(--font-md); line-height: 1.9; overflow-wrap: anywhere; white-space: pre-wrap; }
+.dashboard-passage blockquote.is-expanded { display: block; max-height: 360px; overflow: auto; }
+.dashboard-passage-expand { align-self: flex-start; margin: -12px 0 10px; }
+.dashboard-passage-book { display: flex; align-items: center; gap: 12px; width: 100%; padding: 0; margin-top: auto; background: none; text-align: left; }
+.dashboard-passage-book > .reading-dashboard-cover { width: 38px; }
+.dashboard-passage-book > span:last-child { display: flex; flex-direction: column; min-width: 0; gap: 4px; }
+.dashboard-passage-book strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--font-sm); }
+.dashboard-passage-book small { color: var(--muted); font-size: var(--font-xs); }
+.dashboard-passage-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); }
+.dashboard-shelf-count { margin-left: 10px; color: var(--muted); font-size: var(--font-xs); font-weight: 400; }
+.dashboard-finished-books { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; padding: 15px 16px 20px; border-bottom: 5px solid var(--line); border-radius: 6px; background: var(--panel-bg-2); }
+.dashboard-finished-book { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: stretch; padding: 0; background: transparent; text-align: left; }
+.dashboard-finished-book .reading-dashboard-cover { box-shadow: 0 7px 10px #0003; }
+.dashboard-finished-book .reading-dashboard-book-title { font-size: var(--font-xs); margin-top: 9px; }
+.dashboard-finished-book .reading-dashboard-book-author { font-size: var(--font-xs); }
+.dashboard-finished-badge { display: inline-flex; gap: 4px; align-items: center; color: var(--accent); margin-top: 10px; font-size: var(--font-xs); }
+.dashboard-finished > .dashboard-journal-muted { margin-top: 10px; }
+
+@container (max-width: 1000px) {
+    .dashboard-reading-keepsakes { grid-template-columns: 1fr; }
+    .dashboard-finished-books { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+
+@container (max-width: 680px) {
+    .dashboard-journal-grid { grid-template-columns: 1fr; }
+    .dashboard-journal > .reading-dashboard-section-heading { align-items: flex-start; flex-direction: column; }
+    .dashboard-month-navigation { width: 100%; justify-content: flex-start; gap: 8px; }
+    .dashboard-finished-books { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .dashboard-calendar-panel, .dashboard-time-panel, .dashboard-passage-card { padding: 16px; }
+}

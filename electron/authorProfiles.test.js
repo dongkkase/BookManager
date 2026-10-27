@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { createAuthorProfileService, registerAuthorProfilesIpc, requestAuthorProfilesJson } from './authorProfiles.js';
 
-function networkFixture({ body = '{"docs":[]}', statusCode = 200, stalled = false } = {}) {
+function networkFixture({ body = '{"docs":[]}', statusCode = 200, headers = {}, stalled = false } = {}) {
     const calls = [];
     const requests = [];
     const get = (url, options, callback) => {
@@ -18,6 +18,7 @@ function networkFixture({ body = '{"docs":[]}', statusCode = 200, stalled = fals
         if (!stalled) queueMicrotask(() => {
             const response = new PassThrough();
             response.statusCode = statusCode;
+            response.headers = headers;
             callback(response);
             response.end(body);
         });
@@ -37,6 +38,7 @@ function serviceFixture(load) {
     let clock = 0;
     const calls = [];
     const service = createAuthorProfileService({
+        webSearchers: {},
         now: () => clock,
         sleep: async delay => { clock += delay; },
         requestJson: async value => {
@@ -318,6 +320,56 @@ test('provider rate limits do not block other sources or immediately retry the r
     assert.equal(calls.filter(url => url.hostname === 'openlibrary.org').length, 2);
 });
 
+test('provider cooldown honors longer Retry-After delays and resumes only after they expire', async () => {
+    let clock = 0;
+    let limitedCalls = 0;
+    const service = createAuthorProfileService({
+        now: () => clock,
+        sleep: async delay => { clock += delay; },
+        requestJson: async value => {
+            const url = new URL(value);
+            if (url.hostname === 'www.wikidata.org') {
+                limitedCalls += 1;
+                if (limitedCalls === 1) {
+                    const error = new Error('Back off');
+                    error.code = 'AUTHOR_PROFILE_RATE_LIMIT';
+                    error.retryAfterMs = 120000;
+                    throw error;
+                }
+            }
+            if (url.hostname === 'openlibrary.org') return { docs: [{ key: 'OL1A', name: 'Author' }] };
+            return emptyResponse(url);
+        },
+    });
+    assert.equal((await service.search('First')).partial, true);
+    clock = 60001;
+    assert.equal((await service.search('Second')).partial, true);
+    assert.equal(limitedCalls, 1);
+    clock = 120001;
+    assert.equal((await service.search('Third')).partial, undefined);
+    assert.equal(limitedCalls, 2);
+});
+
+test('network rate limits preserve Retry-After seconds and dates without retrying the request', async () => {
+    const url = 'https://openlibrary.org/search/authors.json?q=Author&limit=8';
+    const now = Date.UTC(2026, 0, 1);
+    for (const [statusCode, retryAfter, expectedDelay] of [
+        [429, '120', 120000],
+        [429, new Date(now + 180000).toUTCString(), 180000],
+        [503, '240', 240000],
+        [429, 'not a date', undefined],
+        [429, '0', undefined],
+    ]) {
+        const fixture = networkFixture({ statusCode, headers: { 'retry-after': retryAfter } });
+        await assert.rejects(requestAuthorProfilesJson(url, { ...fixture, now: () => now }), error => {
+            assert.equal(error.code, 'AUTHOR_PROFILE_RATE_LIMIT');
+            assert.equal(error.retryAfterMs, expectedDelay);
+            return true;
+        });
+        assert.equal(fixture.calls.length, 1);
+    }
+});
+
 test('network requests identify the app, reject redirects and excessive responses, and stop on timeout', async () => {
     const url = 'https://openlibrary.org/search/authors.json?q=Author&limit=8';
     const valid = networkFixture();
@@ -394,4 +446,121 @@ test('IPC permits only the main window top frame and returns safe error messages
     assert.equal(failure.success, false);
     assert.deepEqual(failure.profiles, []);
     assert.doesNotMatch(failure.error, /internal path/);
+});
+
+test('수동 검색은 선택한 국내 소스만 호출하며 자동 조회는 기존 소스만 사용한다', async () => {
+    const calls = [];
+    const jsonCalls = [];
+    const service = createAuthorProfileService({
+        requestJson: async value => { const url = new URL(value); jsonCalls.push(url); return emptyResponse(url); },
+        sleep: async () => {},
+        requestText: async url => { calls.push(url); return 'result'; },
+        webSearchers: {
+            aladin: async (query, request) => {
+                await request('https://www.aladin.co.kr/author/search/wauthor_search_name.aspx?SearchWord=' + encodeURIComponent(query));
+                return [{ provider: 'aladin', id: 'aladin:49154', name: query, photoUrl: '' }];
+            },
+            kyobo: async () => assert.fail('Unselected source must not be queried'),
+        },
+    });
+    const selected = await service.search('한강', { allSources: true, source: 'aladin' });
+    assert.equal(selected[0].id, 'aladin:49154');
+    assert.equal(calls.length, 1);
+    assert.equal(jsonCalls.length, 0);
+    await service.search('한강', { allSources: true, source: 'aladin' });
+    assert.equal(calls.length, 1);
+    await service.search('한강');
+    assert.equal(calls.length, 1);
+    assert.ok(jsonCalls.some(url => url.hostname === 'openlibrary.org'));
+    await assert.rejects(service.search('한강', { source: 'https://attacker.test' }), { code: 'AUTHOR_PROFILE_INVALID_SOURCE' });
+});
+
+test('전체 수동 검색은 추가 출처를 포함하고 실패한 소스 이름을 결과와 함께 제공한다', async () => {
+    let failures = true;
+    const service = createAuthorProfileService({
+        requestJson: async value => emptyResponse(new URL(value)),
+        sleep: async () => {},
+        webSearchers: {
+            aladin: async () => [{ provider: 'aladin', id: 'aladin:49154', name: '한강' }],
+            kyobo: async () => [{ provider: 'kyobo', id: 'kyobo:1000646901', name: '한강' }],
+            cartoon: async () => [],
+            kmas: async () => { if (failures) throw Object.assign(new Error('private transport error'), { code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' }); return []; },
+        },
+    });
+    const result = await service.search('한강', { allSources: true, source: 'all' });
+    assert.equal(result.length, 2);
+    assert.equal(result.partial, true);
+    assert.deepEqual(result.failedSources, [{ source: 'kmas', code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' }]);
+    failures = false;
+    assert.equal((await service.search('한강', { allSources: true, source: 'all' })).partial, undefined);
+});
+
+test('국내 상세 보강 일부 실패는 후보를 유지하고 같은 검색을 재시도할 수 있다', async () => {
+    let calls = 0;
+    const service = createAuthorProfileService({
+        webSearchers: { aladin: async () => {
+            calls += 1;
+            const profiles = [{ provider: 'aladin', id: 'aladin:1', name: '작가' }];
+            if (calls === 1) Object.defineProperty(profiles, 'partial', { value: true });
+            return profiles;
+        } },
+    });
+    const first = await service.search('작가', { source: 'aladin' });
+    assert.equal(first.length, 1);
+    assert.equal(first.partial, true);
+    assert.deepEqual(first.failedSources.map(item => item.source), ['aladin']);
+    assert.equal((await service.search('작가', { source: 'aladin' })).partial, undefined);
+    assert.equal(calls, 2);
+});
+
+test('HTTP 200 오류 페이지는 원문 캐시에 남지 않아 검색과 상세 조회가 즉시 복구된다', async () => {
+    const searchHtml = '<!--검색결과 시작--><div class="newbg_authorbox"><table><a href="/author/wauthor_overview.aspx?AuthorSearch=@49154"><strong>한강</strong></a></table></div><!--검색결과 끝-->';
+    const detailHtml = '<script type="application/ld+json">' + JSON.stringify({
+        '@type': 'Person', name: '한강', description: '복구된 작가 소개',
+    }) + '</script>';
+    for (const failedStage of ['search', 'detail']) {
+        let blocked = true;
+        const calls = { search: 0, detail: 0 };
+        const service = createAuthorProfileService({
+            sleep: async () => {},
+            requestJson: async () => assert.fail('A selected web source must not query other sources'),
+            requestText: async url => {
+                const stage = url.includes('/search/') ? 'search' : 'detail';
+                calls[stage] += 1;
+                if (blocked && stage === failedStage) return '<title>Access denied</title>';
+                return stage === 'search' ? searchHtml : detailHtml;
+            },
+        });
+        if (failedStage === 'search') {
+            await assert.rejects(service.search('한강', { source: 'aladin' }), { code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' });
+        } else {
+            assert.equal((await service.search('한강', { source: 'aladin' })).partial, true);
+        }
+        blocked = false;
+        const result = await service.search('한강', { source: 'aladin' });
+        assert.equal(result.partial, undefined);
+        assert.equal(result[0].description, '복구된 작가 소개');
+        assert.equal(calls[failedStage], 2);
+        const recoveredCalls = { ...calls };
+        await service.search('한강', { source: 'aladin' });
+        assert.deepEqual(calls, recoveredCalls, 'Successful recovered responses should be cached');
+    }
+});
+
+test('IPC는 선택 소스와 실패 출처를 전달하고 임의 요청 주소는 전달하지 않는다', async () => {
+    const handlers = new Map();
+    const mainFrame = {};
+    const sender = { mainFrame, isDestroyed: () => false };
+    registerAuthorProfilesIpc({
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+        getMainWindow: () => ({ webContents: sender, isDestroyed: () => false }),
+        service: { search: async (_name, options) => {
+            assert.deepEqual(options, { allSources: true, source: 'kmas' });
+            throw Object.assign(new Error('internal detail'), { code: 'AUTHOR_PROFILE_ACCESS_BLOCKED', failedSources: [{ source: 'kmas', code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' }] });
+        } },
+    });
+    const result = await handlers.get('authors:searchProfiles')({ sender, senderFrame: mainFrame }, '작가', { allSources: true, source: 'kmas', url: 'https://attacker.test' });
+    assert.equal(result.success, false);
+    assert.deepEqual(result.failedSources, [{ source: 'kmas', code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' }]);
+    assert.ok(!result.error.includes('internal detail'));
 });

@@ -151,8 +151,18 @@ export function normalizeAuthorProfile(profile) {
     const override = profile.photoOverride;
     const overrideSourceUrl = publicPhotoSourceUrl(override?.sourceUrl);
     const overrideQuery = plainText(override?.query).replace(/\s+/g, ' ').slice(0, 200);
-    const photoOverride = typeof override?.id === 'string' && /^[a-f\d]{64}$/.test(override.id) && overrideSourceUrl && overrideQuery
-        ? { id: override.id, sourceUrl: overrideSourceUrl, query: overrideQuery } : null;
+    const overrideSource = ['local', 'naver', 'wikidata', 'wikipedia', 'openlibrary', 'aladin', 'kyobo', 'cartoon', 'kmas'].includes(override?.source) ? override.source : '';
+    const localOverride = overrideSource === 'local' && !override.sourceUrl;
+    const photoOverride = typeof override?.id === 'string' && /^[a-f\d]{64}$/.test(override.id)
+        && (localOverride || overrideSourceUrl && overrideQuery)
+        ? {
+            id: override.id, sourceUrl: overrideSourceUrl, query: overrideQuery,
+            ...(overrideSource ? { source: overrideSource } : {}),
+            ...(['wikidata', 'wikipedia', 'openlibrary', 'aladin', 'kyobo', 'cartoon', 'kmas'].includes(overrideSource) ? {
+                imageSourceUrl: publicPhotoSourceUrl(override.imageSourceUrl),
+                imageArtist: plainText(override.imageArtist), imageLicense: plainText(override.imageLicense),
+            } : {}),
+        } : null;
     let sourceUrl = '';
     let photoUrl = '';
     let entityId = typeof profile.entityId === 'string' && /^Q[1-9]\d{0,14}$/.test(profile.entityId) ? profile.entityId : '';
@@ -165,10 +175,18 @@ export function normalizeAuthorProfile(profile) {
     } else if (provider === 'wikipedia') {
         const page = /^wikipedia:(ko|ja|en):([1-9]\d{0,14})$/.exec(profile.id);
         if (page) sourceUrl = `https://${page[1]}.wikipedia.org/?curid=${page[2]}`;
+    } else if (provider === 'aladin' && /^aladin:[1-9]\d{0,14}$/.test(profile.id)) {
+        sourceUrl = `https://www.aladin.co.kr/author/wauthor_overview.aspx?AuthorSearch=@${profile.id.slice(7)}`;
+    } else if (provider === 'kyobo' && /^kyobo:\d{10}$/.test(profile.id)) {
+        sourceUrl = `https://store.kyobobook.co.kr/person/detail/${profile.id.slice(6)}`;
+    } else if (provider === 'cartoon' && /^cartoon:[a-f\d]{64}$/.test(profile.id)) {
+        sourceUrl = 'https://www.cartoon.or.kr/all-member';
+    } else if (provider === 'kmas' && /^kmas:\d{10}$/.test(profile.id)) {
+        sourceUrl = `https://www.kmas.or.kr/archive/writrList/detail/${profile.id.slice(5)}`;
     } else if (provider === 'naver' && photoOverride && profile.id === photoOverride.id) {
         sourceUrl = `https://search.naver.com/search.naver?where=image&query=${encodeURIComponent(photoOverride.query)}`;
     }
-    if (!sourceUrl) return null;
+    if (!sourceUrl && !(provider === 'local' && photoOverride && profile.id === photoOverride.id)) return null;
     const safeWikimediaUrl = (value, image) => {
         if (typeof value !== 'string' || value.length > 2048) return '';
         try {
@@ -186,7 +204,34 @@ export function normalizeAuthorProfile(profile) {
             return '';
         }
     };
-    if (provider !== 'openlibrary') photoUrl = safeWikimediaUrl(profile.photoUrl, true);
+    const safeSourcePhotoUrl = value => {
+        if (typeof value !== 'string' || value.length > 2048) return '';
+        try {
+            const url = new URL(value);
+            if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
+                || /[\u0000-\u001f\u007f\\]/.test(decodeURIComponent(url.pathname))) return '';
+            const id = profile.id.slice(profile.id.indexOf(':') + 1);
+            if (provider === 'aladin' && url.hostname === 'image.aladin.co.kr' && !url.search
+                && new RegExp(`^/Author/Photo/${id}/${id}(?:_[0-9]+)?\\.(?:jpe?g|png|webp)$`, 'i').test(url.pathname)) return url.href;
+            if (provider === 'kyobo' && url.hostname === 'contents.kyobobook.co.kr'
+                && (!url.search || [...url.searchParams.keys()].length === 1 && /^\d{1,16}$/.test(url.searchParams.get('t') || ''))
+                && new RegExp(`^/(?:(?:sih/)?fit-in/[0-9]+x[0-9]+/)?dtl/author/${id}\\.(?:jpe?g|png|webp)$`, 'i').test(url.pathname)) return url.href;
+            if (provider === 'kmas' && ['kmas.or.kr', 'www.kmas.or.kr'].includes(url.hostname)
+                && url.pathname === '/common/file/atchmnflDownload.ajax'
+                && [...url.searchParams.keys()].length === 1
+                && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(url.searchParams.get('fileImageId') || '')) return url.href;
+            return '';
+        } catch { return ''; }
+    };
+    const webSource = ['aladin', 'kyobo', 'cartoon', 'kmas'].includes(provider);
+    if (webSource) photoUrl = safeSourcePhotoUrl(profile.photoUrl);
+    else if (provider !== 'openlibrary') photoUrl = safeWikimediaUrl(profile.photoUrl, true);
+    const saved = profile.storedPhoto;
+    const storedSourceUrl = provider === 'openlibrary'
+        ? saved?.sourceUrl === `https://covers.openlibrary.org/a/olid/${profile.id}-M.jpg?default=false` ? saved.sourceUrl : ''
+        : webSource ? safeSourcePhotoUrl(saved?.sourceUrl) : safeWikimediaUrl(saved?.sourceUrl, true);
+    const storedPhoto = !photoOverride && typeof saved?.id === 'string' && /^[a-f\d]{64}$/.test(saved.id) && storedSourceUrl
+        ? { id: saved.id, sourceUrl: storedSourceUrl } : null;
     return {
         id: profile.id,
         provider,
@@ -197,13 +242,14 @@ export function normalizeAuthorProfile(profile) {
         alternateNames: list(profile.alternateNames || profile.aliases, provider === 'openlibrary' ? 8 : 32),
         works: list(profile.works, 32),
         description: text('description'),
-        photoUrl: photoOverride ? `bookmanager-thumbnail://author-photo/${photoOverride.id}.png` : photoUrl,
+        photoUrl: photoOverride || storedPhoto ? `bookmanager-thumbnail://author-photo/${(photoOverride || storedPhoto).id}.png` : photoUrl,
         sourceUrl,
         entityId,
         authorVerified: typeof profile.authorVerified === 'boolean' ? profile.authorVerified : undefined,
-        imageSourceUrl: photoOverride ? photoOverride.sourceUrl : safeWikimediaUrl(profile.imageSourceUrl, false),
-        imageLicense: photoOverride ? '' : text('imageLicense'),
-        imageArtist: photoOverride ? '' : text('imageArtist'),
+        imageSourceUrl: photoOverride ? photoOverride.imageSourceUrl || photoOverride.sourceUrl : webSource ? (photoUrl || storedPhoto ? sourceUrl : '') : safeWikimediaUrl(profile.imageSourceUrl, false),
+        imageLicense: photoOverride ? photoOverride.imageLicense || '' : text('imageLicense'),
+        imageArtist: photoOverride ? photoOverride.imageArtist || '' : text('imageArtist'),
         ...(photoOverride ? { photoOverride } : {}),
+        ...(storedPhoto ? { storedPhoto } : {}),
     };
 }

@@ -944,6 +944,39 @@ export function setupViewerWindowManager(options = {}) {
         viewerContextForCurrentSessionRequest(event, sessionId);
         return recordReadingState(sessions.get(sessionId), state);
     });
+    ipcMain.handle('viewer:recordReadingActivity', async (event, sessionId, interval = {}) => {
+        viewerContextForCurrentSessionRequest(event, sessionId);
+        const session = sessions.get(sessionId);
+        const dbPath = getLibraryDbPath?.();
+        if (!session?.filePath || session.preview || !dbPath) return null;
+        if (configManager?.canPruneLibraryData?.()
+            && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries)
+            && session.retainOutsideLibrary !== true) return null;
+        const startedAt = Number(interval?.startedAt);
+        const endedAt = Number(interval?.endedAt);
+        const eventId = typeof interval?.eventId === 'string' ? interval.eventId : '';
+        const now = Date.now();
+        if (!eventId || eventId.length > 128 || !Number.isSafeInteger(startedAt) || !Number.isSafeInteger(endedAt)
+            || startedAt < now - 120_000 || endedAt > now + 5_000 || endedAt <= startedAt
+            || endedAt - startedAt > 60_000) return null;
+        try {
+            if (!readingStateDb) readingStateDb = new LibraryDB({ dbPath });
+            const saved = await readingStateDb.recordReadingActivity(session.filePath, {
+                eventId: `${session.id}:${eventId}`,
+                startedAt,
+                endedAt,
+                retainOutsideLibrary: session.retainOutsideLibrary === true,
+            });
+            const mainWindow = mainAppWindow();
+            if (saved?.changes && mainWindow) {
+                mainWindow.webContents.send('reading:changed', { filePath: session.filePath, activity: true });
+            }
+            return saved;
+        } catch (error) {
+            console.warn(`[ReadingActivity] Failed to save ${session.filePath}: ${error.message}`);
+            return null;
+        }
+    });
     ipcMain.on('viewer:audio-track-state', (event, state = {}) => {
         const resolved = audioContextForPublishedState(event, state);
         if (!resolved) return;
@@ -975,7 +1008,7 @@ export function setupViewerWindowManager(options = {}) {
         return {
             lang: language,
             language,
-            motion_preference: config.motion_preference || 'system',
+            motion_preference: config.motion_preference || 'full',
             readingLibraryPaths: configManager?.canPruneLibraryData?.() ? config.libraries : null,
             hasTtsOpenAiKey: Boolean(String(apiKeys.tts_openai_key || '').trim()),
             hasTtsGoogleKey: Boolean(String(apiKeys.tts_google_key || '').trim()),

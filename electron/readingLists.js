@@ -4,11 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { readingActionFormat } from './readingActions.js';
 import { createLibraryPathScope } from './libraryPathScope.js';
 import { initializeReadingFileActivity } from './readingFileActivity.js';
+import { moveReadingActivityPaths, readingActivityDashboard, saveReadingMonthlyGoal } from './readingActivity.js';
 
 const RECENT_ACTIVITY_LIMIT = 1000;
 const RECENT_ACTIVITY_DAYS = 14;
 const CATALOG_FILE_COLUMNS = [
-    'path', 'mtime', 'size', 'ext', 'title', 'series', 'writer', 'creators',
+    'path', 'mtime', 'size', 'ext', 'title', 'series', 'volume', 'writer', 'creators', 'genre',
     'thumb_path', 'cover_override_path', 'has_metadata', 'metadata_override',
 ];
 
@@ -60,6 +61,7 @@ export function initializeReadingLists(db) {
 const prefixPattern = value => `${`${value}${path.sep}`.replace(/[\\%_]/g, '\\$&')}%`;
 
 export function moveReadingListPaths(db, move) {
+    moveReadingActivityPaths(db, move);
     const where = move.recursive ? "path = ? OR path LIKE ? ESCAPE '\\'" : 'path = ?';
     const params = move.recursive ? [move.src, prefixPattern(move.src)] : [move.src];
     for (const table of ['reading_list_members', 'reading_file_activity']) {
@@ -149,6 +151,8 @@ export async function readingListsRequest(library, request = {}, libraryPaths = 
     }
     return library.withLock(() => {
         const db = library.getConnection();
+        if (operation === 'dashboard') return readingActivityDashboard(library, db, request.month, libraryPaths);
+        if (operation === 'dashboard-goal') return saveReadingMonthlyGoal(db, request.month, request.goal);
         if (operation === 'overview') {
             const lists = db.prepare(`SELECT lists.id, lists.name, lists.kind, lists.created_at, COUNT(members.path) AS count
                 FROM reading_lists lists LEFT JOIN reading_list_members members ON members.list_id = lists.id
@@ -233,6 +237,8 @@ function catalogFileForRenderer(file) {
         name: file.name,
         title: file.title,
         series: file.series,
+        volume: file.volume,
+        genre: file.genre,
         writer: file.writer,
         ext: file.ext,
         size: file.size,
@@ -316,6 +322,11 @@ export function registerReadingListsIpc({ ipcMain, getMainWindow, createLibrary,
         try {
             library ||= createLibrary();
             const result = await readingListsRequest(library, request, getLibraryPaths());
+            if (result.completedRows) {
+                const { completedRows, ...dashboard } = result;
+                const completedFiles = await hydrateReadingListRows(completedRows, normalizeFile, { verifyPresence: false });
+                return { success: true, ...dashboard, completedFiles };
+            }
             if (result.rows) {
                 // Catalog and recent activity use the DB snapshot; opening a book verifies its original path.
                 const snapshot = ['library-catalog', 'recent-added', 'recent-updated'].includes(request.id);

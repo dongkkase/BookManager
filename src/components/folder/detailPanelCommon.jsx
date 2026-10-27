@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { resolveBookType } from '../../metadata/metadataTypes';
 import {
@@ -7,6 +7,8 @@ import {
 } from '../../detailPanelState';
 import { ViewerDetailCoverStatus } from './ViewerStatusBadges';
 import { CoverPreviewDialog } from './CoverPreviewDialog';
+
+export const DetailCoverPreviewContext = createContext(null);
 
 export function formatSize(bytes) {
     if (!bytes) return '-';
@@ -186,11 +188,27 @@ export function DetailFieldGroup({ fields, onEditRating, t }) {
 }
 
 export function DetailCoverFrame({ children, selectedFile, coverSrc = '', coverAlt, coverFilePath, isActive = true, t }) {
+    const sharedPreview = useContext(DetailCoverPreviewContext);
     const [preview, setPreview] = useState(null);
+    const frameRef = useRef(null);
     const triggerRef = useRef(null);
     const filePath = coverFilePath ?? selectedFile?.full_path ?? selectedFile?.path ?? '';
     const alt = coverAlt ?? selectedFile?.title ?? selectedFile?.name ?? '';
     const canPreview = Boolean(coverSrc && isActive);
+    const selectionKey = sharedPreview?.selectionKey;
+    const onPreviewChange = sharedPreview?.onChange;
+    const getPreview = useCallback(() => ({
+        src: coverSrc,
+        filePath,
+        alt,
+        previewKey: selectionKey,
+        sourceElement: frameRef.current?.querySelector('.detail-cover-image'),
+        returnFocusElement: triggerRef.current || frameRef.current?.closest('.folder-right-panel')?.querySelector('.view-container'),
+    }), [coverSrc, filePath, alt, selectionKey]);
+
+    useLayoutEffect(() => {
+        if (isActive) onPreviewChange?.(getPreview());
+    }, [getPreview, isActive, onPreviewChange]);
 
     useEffect(() => {
         setPreview(null);
@@ -199,12 +217,17 @@ export function DetailCoverFrame({ children, selectedFile, coverSrc = '', coverA
     const openPreview = () => {
         if (!canPreview) return;
         triggerRef.current?.focus();
-        setPreview({ src: coverSrc, filePath });
+        if (sharedPreview) sharedPreview.onOpen(getPreview());
+        else setPreview(getPreview());
     };
 
     return (
         <>
-            <div className={`detail-cover-frame${canPreview ? ' is-previewable' : ''}`}
+            <div ref={frameRef} className={`detail-cover-frame${canPreview ? ' is-previewable' : ''}`}
+                onDragStart={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }}
                 onClick={canPreview ? event => { event.stopPropagation(); openPreview(); } : undefined}>
                 {children}
                 {canPreview && (
@@ -218,7 +241,8 @@ export function DetailCoverFrame({ children, selectedFile, coverSrc = '', coverA
                 <ViewerDetailCoverStatus file={selectedFile} t={t} />
             </div>
             {preview && canPreview && preview.src === coverSrc && preview.filePath === filePath && (
-                <CoverPreviewDialog src={coverSrc} filePath={filePath} alt={alt} t={t} onClose={() => setPreview(null)} />
+                <CoverPreviewDialog src={coverSrc} filePath={filePath} sourceElement={preview.sourceElement}
+                    alt={alt} t={t} onClose={() => setPreview(null)} />
             )}
         </>
     );

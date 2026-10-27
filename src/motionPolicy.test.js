@@ -35,9 +35,9 @@ function fixture(systemReduced = false) {
     };
 }
 
-test('모션 설정은 시스템 기본값과 두 명시적 선택을 일관되게 해석한다', () => {
+test('모션 설정은 애니메이션 켜기 기본값과 저장된 선택을 일관되게 해석한다', () => {
     for (const value of [undefined, null, '', 'invalid', true, {}, []]) {
-        assert.equal(normalizeMotionPreference(value), 'system');
+        assert.equal(normalizeMotionPreference(value), 'full');
     }
     for (const systemReduced of [false, true]) {
         assert.equal(resolveReducedMotion('system', systemReduced), systemReduced);
@@ -56,11 +56,13 @@ test('시스템 변경과 앱 선택을 CSS와 JS에 즉시 동일하게 반영�
         assert.equal(isMotionReduced(view), reduced);
         assert.equal(attributes.get('data-motion'), reduced ? 'reduced' : 'full');
     };
+    check(false);
+    assert.equal(attributes.get('data-motion-preference'), 'full');
+    applyMotionPreference('system', view);
     check(true);
-    assert.equal(attributes.get('data-motion-preference'), 'system');
     changeSystem(false);
     check(false);
-    assert.equal(changes, 1);
+    assert.equal(changes, 2);
     applyMotionPreference('full', view);
     const beforeSystemChange = changes;
     changeSystem(true);
@@ -89,8 +91,8 @@ test('모션 설정을 반복 적용해도 중복 변경 이벤트가 발생하�
     const dispose = initializeMotionPreference(view);
     let changes = 0;
     const unsubscribe = subscribeMotionPreference(() => { changes += 1; }, view);
-    applyMotionPreference('system', view);
-    applyMotionPreference('system', view);
+    applyMotionPreference('full', view);
+    applyMotionPreference('full', view);
     assert.equal(changes, 0);
     applyMotionPreference('reduced', view);
     applyMotionPreference('reduced', view);

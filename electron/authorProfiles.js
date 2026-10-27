@@ -1,15 +1,24 @@
 import https from 'node:https';
 import { BoundedMemoryCache } from './boundedMemoryCache.js';
+import { requestAuthorProfileText } from './authorProfileWebRequest.js';
+import { searchAladinAuthors, searchKyoboAuthors } from './bookstoreAuthorProfiles.js';
+import { searchCartoonAuthors, searchKmasAuthors } from './comicsAuthorProfiles.js';
+
+const WEB_SOURCES = { aladin: searchAladinAuthors, kyobo: searchKyoboAuthors, cartoon: searchCartoonAuthors, kmas: searchKmasAuthors };
+const SOURCE_IDS = ['wikidata', 'wikipedia', 'openlibrary', ...Object.keys(WEB_SOURCES)];
 
 const PROFILE_LIMIT = 8;
 const WIKIPEDIA_LIMIT = 4;
 const REQUEST_INTERVAL_MS = 1050;
 const REQUEST_TIMEOUT_MS = 12000;
+const RATE_LIMIT_BACKOFF_MS = 60000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_AGENT = 'BookManager author profiles (https://github.com/dongkkase/BookManager)';
 const ERROR_MESSAGES = {
     AUTHOR_PROFILE_INVALID_QUERY: 'Enter an author name of up to 200 characters.',
+    AUTHOR_PROFILE_INVALID_SOURCE: 'Choose an available author profile source.',
+    AUTHOR_PROFILE_ACCESS_BLOCKED: 'The author profile source is blocking this request.',
     AUTHOR_PROFILE_UNTRUSTED_SENDER: 'Author profiles are only available in the main library window.',
     AUTHOR_PROFILE_RATE_LIMIT: 'The author profile service is receiving too many requests. Try again later.',
     AUTHOR_PROFILE_TIMEOUT: 'The author profile request timed out. Try again later.',
@@ -53,7 +62,7 @@ function normalizeProfiles(data) {
     });
 }
 
-export function requestAuthorProfilesJson(url, { get = https.get, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+export function requestAuthorProfilesJson(url, { get = https.get, timeoutMs = REQUEST_TIMEOUT_MS, now = Date.now } = {}) {
     let target;
     try {
         target = new URL(url);
@@ -87,7 +96,14 @@ export function requestAuthorProfilesJson(url, { get = https.get, timeoutMs = RE
             }, response => {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
                     response.resume();
-                    finish(profileError(response.statusCode === 429 ? 'AUTHOR_PROFILE_RATE_LIMIT' : 'AUTHOR_PROFILE_REQUEST_FAILED'));
+                    const retryAfter = response.headers?.['retry-after'];
+                    const retryAfterMs = typeof retryAfter === 'string'
+                        ? /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - now()
+                        : 0;
+                    const rateLimited = response.statusCode === 429 || response.statusCode === 503 && retryAfterMs > 0;
+                    const error = profileError(rateLimited ? 'AUTHOR_PROFILE_RATE_LIMIT' : 'AUTHOR_PROFILE_REQUEST_FAILED');
+                    if (rateLimited && Number.isFinite(retryAfterMs) && retryAfterMs > 0) error.retryAfterMs = retryAfterMs;
+                    finish(error);
                     return;
                 }
                 let bytes = 0;
@@ -232,13 +248,15 @@ function responsePages(data) {
     return data.query.pages;
 }
 
-export function createAuthorProfileService({ requestJson = requestAuthorProfilesJson, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+export function createAuthorProfileService({ requestJson = requestAuthorProfilesJson, requestText = requestAuthorProfileText, webSearchers = WEB_SOURCES, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
     const cache = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 1024 * 1024, now });
     const responses = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 4 * 1024 * 1024, now });
     const providers = new Map();
 
-    function request(url) {
-        return responses.getOrLoad(url, () => {
+    function request(url, textOptions, responseKeys) {
+        const responseKey = textOptions ? `text:${textOptions.method || 'GET'}:${url}:${textOptions.body || ''}` : url;
+        responseKeys?.add(responseKey);
+        return responses.getOrLoad(responseKey, () => {
             const host = new URL(url).host;
             let state = providers.get(host);
             if (!state) {
@@ -251,6 +269,11 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
                 if (delay) await sleep(delay);
                 state.nextRequestAt = now() + REQUEST_INTERVAL_MS;
                 try {
+                    if (textOptions) {
+                        const text = await requestText(url, textOptions);
+                        if (typeof text !== 'string' || !text.trim()) throw profileError('AUTHOR_PROFILE_INVALID_RESPONSE');
+                        return text;
+                    }
                     const data = await requestJson(url);
                     if (!data || typeof data !== 'object' || Array.isArray(data) || data.error) {
                         throw profileError(['ratelimited', 'maxlag'].includes(data?.error?.code)
@@ -266,7 +289,10 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
                     }
                     return data;
                 } catch (error) {
-                    if (error?.code === 'AUTHOR_PROFILE_RATE_LIMIT') state.retryAt = now() + 60000;
+                    if (error?.code === 'AUTHOR_PROFILE_RATE_LIMIT') {
+                        const retryAfterMs = Number.isFinite(error.retryAfterMs) ? error.retryAfterMs : 0;
+                        state.retryAt = now() + Math.max(RATE_LIMIT_BACKOFF_MS, retryAfterMs);
+                    }
                     throw error;
                 }
             });
@@ -367,43 +393,73 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
         async search(name, options) {
             if (typeof name !== 'string' || name.length > 200 || !cleanText(name)) throw profileError('AUTHOR_PROFILE_INVALID_QUERY');
             const query = cleanText(name, 200).normalize('NFC');
-            const allSources = options?.allSources === true;
-            const cacheKey = `${allSources ? 'all' : 'auto'}:${query.toLocaleLowerCase('en-US')}`;
+            const source = options?.source || 'all';
+            if (source !== 'all' && !SOURCE_IDS.includes(source)) throw profileError('AUTHOR_PROFILE_INVALID_SOURCE');
+            const allSources = options?.allSources === true || source !== 'all';
+            const includes = value => source === 'all' || source === value;
+            const cacheKey = `${allSources ? source : 'auto'}:${query.toLocaleLowerCase('en-US')}`;
             const result = await cache.getOrLoad(cacheKey, async () => {
                 const language = queryLanguage(query);
                 const errors = [];
+                const failedSources = new Map();
                 let successes = 0;
-                const attempt = async (load, fallback) => {
+                const attempt = async (load, fallback, provider) => {
                     try {
                         const value = await load();
                         successes += 1;
                         return value;
                     } catch (error) {
                         errors.push(error);
+                        if (provider) failedSources.set(provider, {
+                            source: provider, code: ERROR_MESSAGES[error?.code] ? error.code : 'AUTHOR_PROFILE_REQUEST_FAILED',
+                        });
                         return fallback;
                     }
                 };
-                const profiles = await attempt(() => searchWikidata(query, language, attempt), []);
+                const webRequests = allSources ? Object.entries(webSearchers).filter(([provider]) => includes(provider)).map(([provider, search]) =>
+                    attempt(async () => {
+                        const responseKeys = new Set();
+                        let successful = false;
+                        try {
+                            const found = await search(query, (url, requestOptions = {}) => request(url, requestOptions, responseKeys));
+                            if (found.partial) failedSources.set(provider, { source: provider, code: 'AUTHOR_PROFILE_REQUEST_FAILED' });
+                            successful = !found.partial;
+                            return found.slice(0, PROFILE_LIMIT);
+                        } finally {
+                            if (!successful) for (const key of responseKeys) responses.delete(key);
+                        }
+                    }, [], provider)) : [];
+                const profiles = includes('wikidata') ? await attempt(() => searchWikidata(query, language,
+                    (load, fallback) => attempt(load, fallback, 'wikidata')), [], 'wikidata') : [];
                 const hasExactPhoto = () => {
                     const matches = profiles.filter(profile => profile.authorVerified
                         && [profile.name, ...profile.alternateNames].some(value => nameKey(value) === nameKey(query)));
                     return matches.some(profile => profile.photoUrl) && new Set(matches.map(profile => profile.entityId || profile.id)).size === 1;
                 };
                 for (const wikiLanguage of [...new Set([language, 'en'])]) {
-                    if (!allSources && hasExactPhoto()) break;
-                    profiles.push(...await attempt(() => searchWikipedia(query, wikiLanguage, attempt), []));
+                    if (!includes('wikipedia') || !allSources && hasExactPhoto()) break;
+                    profiles.push(...await attempt(() => searchWikipedia(query, wikiLanguage,
+                        (load, fallback) => attempt(load, fallback, 'wikipedia')), [], 'wikipedia'));
                 }
-                if (allSources || !hasExactPhoto()) {
+                if (includes('openlibrary') && (allSources || !hasExactPhoto())) {
                     profiles.push(...await attempt(async () => {
                         const params = new URLSearchParams({ q: query, limit: String(PROFILE_LIMIT) });
                         return normalizeProfiles(await request(`https://openlibrary.org/search/authors.json?${params}`));
-                    }, []));
+                    }, [], 'openlibrary'));
                 }
-                if ((!successes || !profiles.length) && errors.length) throw errors[0];
+                profiles.push(...(await Promise.all(webRequests)).flat());
+                if ((!successes || !profiles.length) && errors.length) {
+                    const error = profileError(ERROR_MESSAGES[errors[0]?.code] ? errors[0].code : 'AUTHOR_PROFILE_REQUEST_FAILED');
+                    error.failedSources = [...failedSources.values()];
+                    throw error;
+                }
                 const seen = new Set();
                 const sorted = profiles.sort((a, b) => Number(Boolean(b.photoUrl)) - Number(Boolean(a.photoUrl)))
-                    .filter(profile => !seen.has(profile.id) && seen.add(profile.id)).slice(0, PROFILE_LIMIT * 3);
-                if (errors.length) Object.defineProperty(sorted, 'partial', { value: true });
+                    .filter(profile => !seen.has(profile.id) && seen.add(profile.id)).slice(0, PROFILE_LIMIT * (allSources ? SOURCE_IDS.length : 3));
+                if (errors.length || failedSources.size) {
+                    Object.defineProperty(sorted, 'partial', { value: true });
+                    Object.defineProperty(sorted, 'failedSources', { value: [...failedSources.values()] });
+                }
                 return sorted;
             }, { ttlMs: CACHE_TTL_MS });
             if (result.partial) cache.delete(cacheKey);
@@ -420,11 +476,13 @@ export function registerAuthorProfilesIpc({ ipcMain, getMainWindow, service = cr
                 || event.sender.isDestroyed() || (event.senderFrame && event.senderFrame !== event.sender.mainFrame)) {
                 throw profileError('AUTHOR_PROFILE_UNTRUSTED_SENDER');
             }
-            const profiles = await service.search(name, { allSources: options?.allSources === true });
-            return { success: true, profiles, ...(profiles.partial ? { partial: true } : {}) };
+            const sourceOptions = { allSources: options?.allSources === true };
+            if (options?.source !== undefined) sourceOptions.source = options.source;
+            const profiles = await service.search(name, sourceOptions);
+            return { success: true, profiles, ...(profiles.partial ? { partial: true, failedSources: profiles.failedSources || [] } : {}) };
         } catch (error) {
             const code = ERROR_MESSAGES[error?.code] ? error.code : 'AUTHOR_PROFILE_REQUEST_FAILED';
-            return { success: false, profiles: [], error: ERROR_MESSAGES[code], code };
+            return { success: false, profiles: [], error: ERROR_MESSAGES[code], code, ...(error?.failedSources ? { failedSources: error.failedSources } : {}) };
         }
     });
 }

@@ -9,6 +9,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
     const isRecentList = listId === 'recent-added' || listId === 'recent-updated';
     const [overview, setOverview] = useState({ collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0, previewRevision: 0 });
     const [overviewError, setOverviewError] = useState('');
+    const [overviewLoading, setOverviewLoading] = useState(false);
     const [snapshot, setSnapshot] = useState({ id: '', files: EMPTY_FILES, previewRevision: 0 });
     const [recentSnapshots, setRecentSnapshots] = useState({});
     const [catalogSnapshot, setCatalogSnapshot] = useState(null);
@@ -64,6 +65,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
     }, []);
     const refreshOverview = useCallback(async () => {
         const sequence = ++overviewRef.current;
+        setOverviewLoading(true);
         try {
             const result = await window.electronAPI?.readingLists?.({ operation: 'overview' });
             if (!result?.success) throw new Error(result?.error || 'unavailable');
@@ -90,6 +92,8 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
             }
         } catch {
             if (sequence === overviewRef.current) setOverviewError(t('reading_lists.load_failed'));
+        } finally {
+            if (sequence === overviewRef.current) setOverviewLoading(false);
         }
     }, [libraryScopeKey, t]);
     const refresh = useCallback(async ({ allowCached = false } = {}) => {
@@ -230,7 +234,11 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
             : visibleSnapshot?.id === listId && (!(isRecentList || listId === 'library-catalog') || visibleSnapshot.libraryScopeKey === libraryScopeKey) ? visibleSnapshot.files : EMPTY_FILES,
         loading,
         error: listId === 'collections' ? overviewError : error,
+        overviewError,
+        overviewLoading,
+        overviewLoaded: overview.previewRevision > 0,
         refresh,
+        refreshOverview,
         mutate,
         previewRevision,
         updateFilePreview,

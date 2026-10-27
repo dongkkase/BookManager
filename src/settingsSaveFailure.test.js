@@ -153,6 +153,14 @@ test('설정 취소는 저장 없이 창을 닫고 마지막 저장 언어로 �
     assert.deepEqual(cancelled.calls.visible, [false]);
 });
 
+test('라이브러리 시작 완료로 닫을 때 방금 저장된 언어를 유지한다', async () => {
+    const completed = createFixture({ language: 'ko' });
+    await completed.close({ language: 'en' });
+    assert.deepEqual(completed.calls.languages, ['en']);
+    assert.deepEqual(completed.calls.visible, [false]);
+    assert.deepEqual(completed.calls.saves, []);
+});
+
 test('적용 후 작업 탭 초기화·라이브러리 갱신·재시작 동작과 최종 저장 결과를 유지한다', async () => {
     const value = createFixture({
         save: updates => updates,

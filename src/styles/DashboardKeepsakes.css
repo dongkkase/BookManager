@@ -1,0 +1,274 @@
+.reading-dashboard .dashboard-passage-card {
+    position: relative;
+    min-height: 305px;
+    padding: 28px 30px 18px;
+    border: 1px solid color-mix(in srgb, var(--dash-gold) 17%, transparent);
+    border-radius: var(--dash-card-radius);
+    background: linear-gradient(115deg, color-mix(in srgb, var(--dash-gold) 7%, var(--dash-surface)), var(--dash-surface));
+    box-shadow: 0 8px 22px rgb(0 0 0 / 4%), inset 4px 0 color-mix(in srgb, var(--dash-gold) 11%, transparent);
+    isolation: isolate;
+}
+
+.dashboard-passage-bookmark {
+    position: absolute;
+    top: -1px;
+    right: 27px;
+    width: 20px;
+    height: 39px;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--dash-gold) 55%, transparent), color-mix(in srgb, var(--dash-gold) 80%, transparent));
+}
+
+.dashboard-passage-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.reading-dashboard .dashboard-quote-mark {
+    display: block;
+    height: 36px;
+    color: var(--dash-gold);
+    font-size: 62px;
+    line-height: 1;
+    font-weight: 400;
+}
+
+.reading-dashboard .dashboard-passage blockquote {
+    margin: 15px 0 22px;
+    color: color-mix(in srgb, var(--text) 92%, var(--dash-gold));
+    font-size: clamp(16px, 1.3cqi, 19px);
+    font-weight: 400;
+    line-height: 1.95;
+    letter-spacing: -0.015em;
+    word-break: keep-all;
+}
+
+.reading-dashboard .dashboard-passage-expand {
+    margin: -11px 0 20px;
+    padding: 3px 0;
+    color: var(--dash-gold-text);
+    font-size: var(--font-xs);
+}
+
+.dashboard-passage-footer {
+    margin-top: auto;
+}
+
+.reading-dashboard .dashboard-passage-book {
+    gap: 11px;
+    padding: 12px 0;
+    border-top: 1px solid color-mix(in srgb, var(--dash-gold) 14%, transparent);
+}
+
+.reading-dashboard .dashboard-passage-book > .reading-dashboard-cover {
+    width: 34px;
+    border-radius: 2px 4px 4px 2px;
+    box-shadow: 2px 4px 7px rgb(0 0 0 / 16%);
+}
+
+.dashboard-passage-book > span:nth-child(2) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    gap: 4px;
+}
+
+.reading-dashboard .dashboard-passage-book strong {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    line-height: 1.55;
+}
+
+.dashboard-passage-book > svg {
+    flex: 0 0 auto;
+    width: 10px;
+    color: var(--muted);
+}
+
+.reading-dashboard .dashboard-passage-book:hover strong,
+.reading-dashboard .dashboard-passage-book:hover > svg {
+    color: var(--dash-gold);
+}
+
+.reading-dashboard .dashboard-passage-actions {
+    gap: 8px;
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top-color: color-mix(in srgb, var(--dash-gold) 14%, transparent);
+}
+
+.reading-dashboard .dashboard-passage-actions > button {
+    min-height: 28px;
+    padding: 3px 0;
+    font-size: var(--font-xs);
+    color: var(--muted);
+}
+
+.reading-dashboard .dashboard-passage-actions > button:not(:disabled):hover {
+    color: var(--dash-gold);
+}
+
+.dashboard-passage-copy-error {
+    margin: 8px 0 0;
+    font-size: var(--font-xs);
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.reading-dashboard .dashboard-shelf-count {
+    display: inline-flex;
+    align-items: center;
+    min-height: 23px;
+    margin-left: 9px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--dash-sage) 11%, transparent);
+    color: var(--dash-sage-text);
+    font-size: 11px;
+    font-weight: 500;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.reading-dashboard .dashboard-shelf-navigation {
+    gap: 6px;
+}
+
+.reading-dashboard .dashboard-shelf-navigation button {
+    width: 31px;
+    height: 31px;
+    border: 1px solid var(--dash-border);
+    background: transparent;
+    color: var(--muted);
+}
+
+.reading-dashboard .dashboard-shelf-navigation button:not(:disabled):hover {
+    color: var(--dash-gold);
+    background: var(--dash-soft);
+    border-color: color-mix(in srgb, var(--dash-gold) 40%, transparent);
+}
+
+.reading-dashboard .dashboard-finished-books {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 108px), 1fr));
+    gap: 18px;
+    padding: 24px 18px 18px;
+    border: 0;
+    border-radius: var(--dash-card-radius);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--dash-gold) 4%, var(--dash-surface)), transparent);
+}
+
+.reading-dashboard .dashboard-finished-book {
+    gap: 0;
+    align-items: center;
+    border: 0;
+}
+
+.dashboard-finished-cover {
+    position: relative;
+    display: block;
+    width: 100%;
+    max-width: 120px;
+    margin: 0 auto;
+}
+
+.dashboard-finished-cover::after {
+    content: '';
+    position: absolute;
+    right: -9px;
+    bottom: -10px;
+    left: -9px;
+    height: 5px;
+    border-radius: 1px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--dash-gold) 17%, var(--panel-bg)), color-mix(in srgb, var(--dash-gold) 7%, var(--panel-bg)));
+    box-shadow: 0 5px 7px rgb(0 0 0 / 8%);
+}
+
+.reading-dashboard .dashboard-finished-cover .reading-dashboard-cover {
+    position: relative;
+    border-radius: 2px 5px 5px 2px;
+    box-shadow: 4px 7px 12px rgb(0 0 0 / 18%), 1px 1px 2px rgb(0 0 0 / 20%);
+}
+
+.dashboard-finished-cover .reading-dashboard-cover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgb(0 0 0 / 17%), transparent 3%, rgb(255 255 255 / 13%) 4%, transparent 7%, transparent 96%, rgb(0 0 0 / 10%));
+    pointer-events: none;
+}
+
+.dashboard-finished-book-copy {
+    display: block;
+    width: 100%;
+    max-width: 120px;
+    margin-top: 23px;
+}
+
+.reading-dashboard .dashboard-finished-book .reading-dashboard-book-title {
+    margin-top: 0;
+    font-size: var(--font-xs);
+    line-height: 1.65;
+    font-weight: 500;
+}
+
+.reading-dashboard .dashboard-finished-book:hover .reading-dashboard-book-title {
+    color: var(--dash-gold);
+}
+
+.reading-dashboard .dashboard-finished > .dashboard-journal-muted {
+    margin-top: 10px;
+    padding-left: 18px;
+    font-size: 11px;
+}
+
+.reading-dashboard .dashboard-keepsake-empty {
+    min-height: 250px;
+    padding: 30px;
+    border: 1px dashed var(--dash-border);
+    border-radius: var(--dash-card-radius);
+    background: var(--dash-surface);
+}
+
+.reading-dashboard .dashboard-keepsake-empty > svg {
+    color: var(--dash-gold);
+}
+
+@container (max-width: 1000px) {
+    .reading-dashboard .dashboard-passage-card {
+        min-height: 250px;
+        padding: 25px 30px 18px;
+    }
+
+    .reading-dashboard .dashboard-passage blockquote {
+        max-width: 58ch;
+    }
+
+    .reading-dashboard .dashboard-finished-books {
+        gap: 22px;
+        padding: 24px 22px 18px;
+    }
+
+    .dashboard-finished-cover::after {
+        right: -11px;
+        left: -11px;
+    }
+}
+
+@container (max-width: 680px) {
+    .reading-dashboard .dashboard-passage-card {
+        min-height: 280px;
+        padding: 25px 23px 15px;
+    }
+
+    .reading-dashboard .dashboard-finished-books {
+        gap: 28px 24px;
+        padding: 22px 18px 18px;
+    }
+
+    .dashboard-finished-cover::after {
+        right: -12px;
+        left: -12px;
+    }
+}

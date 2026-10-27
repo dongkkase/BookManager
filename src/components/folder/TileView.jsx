@@ -245,6 +245,7 @@ const TileView = ({
 	    <div
 	      ref={containerRef}
 	      className={`tile-grid ${shouldVirtualize ? 'is-virtualized' : ''}`}
+            data-navigation-columns={columnCount}
 	      onScroll={handleGridScroll}
 	      onClick={event => {
 	        if (rubberSelectRef.current.moved) {

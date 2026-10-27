@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   getEpubText: sessionId => ipcRenderer.invoke('viewer:getEpubText', sessionId),
     getReadiveReadingState: sessionId => ipcRenderer.invoke('viewer:getReadiveReadingState', sessionId),
   saveReadingState: (sessionId, state) => ipcRenderer.invoke('viewer:saveReadingState', sessionId, state),
+    recordReadingActivity: (sessionId, interval) => ipcRenderer.invoke('viewer:recordReadingActivity', sessionId, interval),
   getConfig: () => ipcRenderer.invoke('viewer:getConfig'),
   openTtsSettings: () => ipcRenderer.invoke('viewer:openTtsSettings'),
   getSupertonicModelStatus: () => ipcRenderer.invoke('tts:supertonicStatus'),

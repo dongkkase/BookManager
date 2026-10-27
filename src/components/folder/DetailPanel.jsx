@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverArtwork } from '../CoverArtwork';
 import { resolveBookType } from '../../metadata/metadataTypes';
@@ -6,7 +6,8 @@ import { AudiobookDetailPanel } from './AudiobookDetailPanel';
 import { BookDetailPanel } from './BookDetailPanel';
 import { ComicDetailPanel } from './ComicDetailPanel';
 import { PdfDetailPanel } from './PdfDetailPanel';
-import { DetailCoverFrame, DetailFieldGroup, DetailOpenButton, formatDate, useDetailContentHeight } from './detailPanelCommon';
+import { DetailCoverFrame, DetailCoverPreviewContext, DetailFieldGroup, DetailOpenButton, formatDate, useDetailContentHeight } from './detailPanelCommon';
+import { CoverPreviewDialog } from './CoverPreviewDialog';
 import { useFolderCoverPreview } from './FolderCoverPreviewContext';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
@@ -91,7 +92,7 @@ const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = 
             <div className="folder-detail-scroll" ref={scrollRef}>
                 <div className="folder-detail-content" ref={contentRef}>
                     <div className="detail-cover-section">
-                        <DetailCoverFrame coverSrc={coverAvailable ? cover : ''} coverAlt={selectedFile.name || ''}
+                        <DetailCoverFrame selectedFile={selectedFile} coverSrc={coverAvailable ? cover : ''} coverAlt={selectedFile.name || ''}
                             coverFilePath={selectedFile.cover_file_path || preview?.cover_file_path || ''} isActive={isActive} t={t}>
                             {coverAvailable ? (
                                 <>
@@ -170,6 +171,15 @@ const DetailPanel = React.memo((props) => {
         ? `${selectedFile.isDirectory ? 'directory' : resolveBookType(selectedFile)}:${selectedFile.full_path || selectedFile.path || selectedFile.name}`
         : 'empty';
     const [panels, setPanels] = useState(() => [{ id: 0, selectionKey, selectedFile, onEditRating: props.onEditRating }]);
+    const [coverPreview, setCoverPreview] = useState(null);
+    const updateCoverPreview = useCallback(preview => {
+        setCoverPreview(current => current ? preview : null);
+    }, []);
+    const previewContext = useMemo(() => ({
+        selectionKey,
+        onOpen: setCoverPreview,
+        onChange: updateCoverPreview,
+    }), [selectionKey, updateCoverPreview]);
     const currentPanel = panels[0];
 
     if (currentPanel.selectionKey !== selectionKey) {
@@ -184,29 +194,35 @@ const DetailPanel = React.memo((props) => {
 
     return (
         <div className="detail-panel-transition">
-            {panels.map((panel, index) => (
-                <DetailPanelLayer key={panel.id} id={panel.id} outgoing={index > 0} onExited={removePanel}>
-                    <DetailPanelContent
-                        {...props}
-                        selectedFile={panel.selectedFile}
-                        isActive={index === 0}
-                        onContentHeightChange={index === 0 ? props.onContentHeightChange : undefined}
-                        onEditRating={index === 0 ? props.onEditRating : panel.onEditRating}
-                        onOpenFile={isRight ? undefined : props.onOpenFile}
-                    />
-                    {isRight && panel.selectedFile && !panel.selectedFile.isDirectory && !panel.selectedFile.collectionId && props.onOpenFile && (
-                        <div className="detail-panel-footer">
-                            <DetailOpenButton
-                                selectedFile={panel.selectedFile}
-                                onOpenFile={props.onOpenFile}
-                                onMore={props.onMore}
-                                moreMenuOpen={index === 0 && props.moreMenuOpen}
-                                t={props.t}
-                            />
-                        </div>
-                    )}
-                </DetailPanelLayer>
-            ))}
+            <DetailCoverPreviewContext.Provider value={previewContext}>
+                {panels.map((panel, index) => (
+                    <DetailPanelLayer key={panel.id} id={panel.id} outgoing={index > 0} onExited={removePanel}>
+                        <DetailPanelContent
+                            {...props}
+                            selectedFile={panel.selectedFile}
+                            isActive={index === 0}
+                            onContentHeightChange={index === 0 ? props.onContentHeightChange : undefined}
+                            onEditRating={index === 0 ? props.onEditRating : panel.onEditRating}
+                            onOpenFile={isRight ? undefined : props.onOpenFile}
+                        />
+                        {isRight && panel.selectedFile && !panel.selectedFile.isDirectory && !panel.selectedFile.collectionId && props.onOpenFile && (
+                            <div className="detail-panel-footer">
+                                <DetailOpenButton
+                                    selectedFile={panel.selectedFile}
+                                    onOpenFile={props.onOpenFile}
+                                    onMore={props.onMore}
+                                    moreMenuOpen={index === 0 && props.moreMenuOpen}
+                                    t={props.t}
+                                />
+                            </div>
+                        )}
+                    </DetailPanelLayer>
+                ))}
+            </DetailCoverPreviewContext.Provider>
+            {coverPreview && (
+                <CoverPreviewDialog {...coverPreview} onNavigate={props.onNavigatePreview}
+                    t={props.t} onClose={() => setCoverPreview(null)} />
+            )}
         </div>
     );
 });

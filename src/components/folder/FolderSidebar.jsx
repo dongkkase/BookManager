@@ -768,6 +768,26 @@ function FolderSidebar({ t, libraries = EMPTY_ITEMS, libraryEntries = EMPTY_ITEM
                 />
             </div>
         </div>
+        <ul className="nav-list reading-dashboard-list">
+            <li className={`recent-reading-list-item ${readingListSelected === 'dashboard' ? 'selected' : ''}`}>
+                <button
+                    type="button"
+                    className="reading-list-nav-button"
+                    onClick={event => {
+                        applySidebarSelection(event);
+                        setSelectedSource('dashboard');
+                        setOptimisticSelectedPath('');
+                        onSelectReadingList?.('dashboard');
+                    }}
+                    aria-current={readingListSelected === 'dashboard' ? 'page' : undefined}
+                >
+                    <span className="recent-reading-list-main">
+                        <FaIcon name="house" size={12} />
+                        <span>{t('reading_lists.dashboard')}</span>
+                    </span>
+                </button>
+            </li>
+        </ul>
         <div className="sidebar-section-content" aria-hidden={collapsed} inert={collapsed ? '' : undefined}>
             <div className="sidebar-section-content-inner">
           <ul className="nav-list">

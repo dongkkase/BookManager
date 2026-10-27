@@ -33,6 +33,7 @@ import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
 import { applyMotionPreference } from './motionPolicy';
 import { useReducedMotion } from './hooks/useReducedMotion';
+import { useReadingActivity } from './hooks/useReadingActivity';
 import { useViewerTtsTransition } from './hooks/useViewerTtsTransition';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { paintAmbientCanvasFromSource } from './viewerAmbient';
@@ -3129,12 +3130,13 @@ function ZoomControl({ zoom, step, onZoomChange, onReset, onWheel }) {
   );
 }
 
-function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', sessionPreview = false, onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onMenuOpenChange, onPlaybackChange, playbackRef }) {
+function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], pageIndex = 0, pageCount = 0, language = 'ko', sessionId = '', sessionPreview = false, onMovePage, onMoveToPage, onOpenTtsSettings, onToast, closeMenu = false, onMenuOpen, onMenuOpenChange, onPlaybackChange, onReadingPlaybackChange, playbackRef }) {
   const [settings, setSettings] = useState(() => normalizeTtsSettings(readJson(VIEWER_TTS_SETTINGS_KEY, DEFAULT_TTS_SETTINGS)));
   const [availableVoices, setAvailableVoices] = useState(() => window.speechSynthesis?.getVoices?.() || []);
   const [ttsApiKeyState, setTtsApiKeyState] = useState({ openai: false, google: false });
   const [supertonicModelInstalled, setSupertonicModelInstalled] = useState(false);
   const [openAiState, setOpenAiState] = useState({ status: 'idle', currentChunk: 0, totalChunks: 0 });
+    const [remoteReadingPlaying, setRemoteReadingPlaying] = useState(false);
   const [open, setOpen] = useState(false);
   const [rateOpen, setRateOpen] = useState(false);
     const [readingSettingsOpen, setReadingSettingsOpen] = useState(false);
@@ -3269,6 +3271,11 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
         onPlaybackChange?.(Boolean(isActivelyPlaying || previewingVoiceValue));
     }, [isActivelyPlaying, onPlaybackChange, previewingVoiceValue]);
     useEffect(() => () => onPlaybackChange?.(false), [onPlaybackChange]);
+    const readingPlaying = !previewingVoiceValue && (isRemoteEngine ? remoteReadingPlaying : state.isPlaying && !state.isPaused);
+    useEffect(() => {
+        onReadingPlaybackChange?.(Boolean(readingPlaying));
+    }, [onReadingPlaybackChange, readingPlaying]);
+    useEffect(() => () => onReadingPlaybackChange?.(false), [onReadingPlaybackChange]);
   const canMovePrevious = pageIndex > 0;
   const canMoveNext = pageIndex < pageCount - 1;
   const hasOpenAiTtsApiKey = ttsApiKeyState.openai;
@@ -3549,10 +3556,13 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
         const notifyPlaybackStart = () => {
             if (settled || openAiRunRef.current !== runId) return;
             reportTtsUsage(engine, model);
+            setRemoteReadingPlaying(true);
             setOpenAiState(current => ({ ...current, status: 'playing' }));
         };
     const cleanup = () => {
+        setRemoteReadingPlaying(false);
       audio.onplaying = null;
+        audio.onwaiting = null;
       audio.onpause = null;
       audio.onended = null;
       audio.onerror = null;
@@ -3574,7 +3584,9 @@ function ViewerTtsControls({ text = '', prefetchPages = [], previousPages = [], 
     openAiPlaybackCancelRef.current = cancel;
     openAiAudioRef.current = audio;
         audio.onplaying = notifyPlaybackStart;
+        audio.onwaiting = () => setRemoteReadingPlaying(false);
     audio.onpause = () => {
+        setRemoteReadingPlaying(false);
       if (!audio.ended && openAiRunRef.current === runId) {
         setOpenAiState(current => ({ ...current, status: 'paused' }));
       }
@@ -5884,6 +5896,7 @@ function ViewerApp() {
         return { autoplay: saved.autoplay !== false, volume: clamp(Number.isFinite(saved.volume) ? saved.volume : 0.8, 0, 1), muted: saved.muted === true };
     });
     const [epubTtsActive, setEpubTtsActive] = useState(false);
+    const [readingTtsPlaying, setReadingTtsPlaying] = useState(false);
     const [epubOriginalLayoutState, setEpubOriginalLayoutState] = useState({ key: '', layouts: {} });
     const epubPositionPendingRef = useRef(null);
     const epubStablePositionRef = useRef(null);
@@ -5943,6 +5956,11 @@ function ViewerApp() {
   const [viewerSessionResolved, setViewerSessionResolved] = useState(false);
   const [adjacentLoading, setAdjacentLoading] = useState(false);
   const [error, setError] = useState('');
+    const flushReadingActivity = useReadingActivity({
+        session,
+        ready: Boolean(session) && session.type !== 'audio' && !loading && !initialRenderLoading && !error,
+        playing: readingTtsPlaying,
+    });
   const toolbarRef = useRef(null);
   const scrollRef = useRef(null);
   const readerMeasureRef = useRef(null);
@@ -7787,6 +7805,7 @@ function ViewerApp() {
     const hasAdjacentBook = Number(direction) < 0 ? hasPreviousBook : hasNextBook;
     if (!session || !hasAdjacentBook || adjacentLoadingRef.current) return null;
     persistCurrentPositionRef.current?.();
+        flushReadingActivity();
     cancelMotion();
     adjacentLoadingRef.current = true;
     setAdjacentLoading(true);
@@ -7804,7 +7823,7 @@ function ViewerApp() {
       adjacentLoadingRef.current = false;
       setAdjacentLoading(false);
     }
-  }, [cancelMotion, hasNextBook, hasPreviousBook, loadSession, session]);
+  }, [cancelMotion, flushReadingActivity, hasNextBook, hasPreviousBook, loadSession, session]);
 
   const openAudioQueueItem = useCallback(async fileName => {
     if (!session || session.type !== 'audio' || adjacentLoadingRef.current) return null;
@@ -9129,12 +9148,13 @@ function ViewerApp() {
         event.stopPropagation();
         goBoundaryPage(1);
       } else if (event.key === 'Escape') {
+        flushReadingActivity();
         window.viewerAPI?.closeWindow?.();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, goBoundaryPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
+  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, flushReadingActivity, goBoundaryPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -10201,6 +10221,7 @@ function ViewerApp() {
                 onOpenTtsSettings={window.viewerAPI?.openTtsSettings}
                 onToast={showViewerToast}
                 onPlaybackChange={setEpubTtsActive}
+                onReadingPlaybackChange={setReadingTtsPlaying}
                 onMenuOpenChange={setTtsMenuOpen}
                 onMenuOpen={() => {
                     cancelMotion();

@@ -2,7 +2,7 @@ export const MOTION_CHANGE_EVENT = 'bookmanager:motion-change';
 const MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 export function normalizeMotionPreference(value) {
-    return ['system', 'full', 'reduced'].includes(value) ? value : 'system';
+    return ['system', 'full', 'reduced'].includes(value) ? value : 'full';
 }
 
 export function resolveReducedMotion(preference, systemReduced = false) {

@@ -98,6 +98,8 @@
           "i18n.js",
           "i18nData.js",
           "readingListTranslations.js",
+          "dashboardTranslations.js",
+          "recommendationPreferenceTranslations.js",
           "folderUtils.js"
         ]
       },
@@ -114,6 +116,8 @@
         "to": "src",
         "filter": [
           "folderTagFilter.js",
+          "authorCatalog.js",
+          "folderCharacterIndex.js",
           "missingVolumesPolicy.js",
           "motionPolicy.js"
         ]

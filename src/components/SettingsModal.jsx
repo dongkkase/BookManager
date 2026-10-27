@@ -251,7 +251,7 @@ function normalizeConfig(config) {
   }, navigator.hardwareConcurrency || 4);
 }
 
-function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', navigationRequest = 0, onLanguagePreviewChange }) {
+function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewerPaths, t, showToast, initialTab = 'basic', initialFocus = null, navigationRequest = 0, onLanguagePreviewChange }) {
     const reducedMotion = useReducedMotion();
   const [localConfig, setLocalConfig] = React.useState(null);
     const [appliedConfig, setAppliedConfig] = React.useState(null);
@@ -278,11 +278,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
   const [fileAssociationBusy, setFileAssociationBusy] = React.useState('');
   const [fileAssociationFeedback, setFileAssociationFeedback] = React.useState(null);
     const settingsBodyRef = React.useRef(null);
+    const libraryAddButtonRef = React.useRef(null);
+    const librarySetupFocusedRef = React.useRef(null);
     const libraryEditorRef = React.useRef(null);
     const lastLibraryEntryRef = React.useRef(null);
     const [libraryEditorMounted, setLibraryEditorMounted] = React.useState(false);
     const [libraryEditorExpanded, setLibraryEditorExpanded] = React.useState(false);
     const libraryEntries = React.useMemo(() => normalizeLibraryEntries(localConfig), [localConfig]);
+    const librarySetupActive = initialFocus === 'library-setup' && activeTab === 'folder';
     const selectedLibraryEntry = libraryEntries.find(entry => entry.path === selectedDupFolder) || null;
     const libraryEditorOpen = isOpen && activeTab === 'folder' && Boolean(selectedLibraryEntry);
     const displayedLibraryEntry = libraryEditorOpen
@@ -331,6 +334,19 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
     setActiveApiSection('preferred');
     setSelectedDupFolder('');
   }, [initialTab, isOpen, navigationRequest]);
+
+    React.useEffect(() => {
+        if (!isOpen) {
+            librarySetupFocusedRef.current = null;
+            return undefined;
+        }
+        if (!librarySetupActive || !localConfig || librarySetupFocusedRef.current === navigationRequest) return undefined;
+        const frame = window.requestAnimationFrame(() => {
+            libraryAddButtonRef.current?.focus({ preventScroll: true });
+            librarySetupFocusedRef.current = navigationRequest;
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [isOpen, librarySetupActive, Boolean(localConfig), navigationRequest]);
 
     React.useLayoutEffect(() => {
         if (libraryEditorOpen) lastLibraryEntryRef.current = selectedLibraryEntry;
@@ -696,11 +712,13 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
 
     const handleApply = async () => {
         if (!hasChanges || applyingRef.current || fileAssociationApplyingRef.current) return;
+        if (librarySetupActive && libraryEntries.length === 0) return;
         applyingRef.current = true;
         setIsApplying(true);
         const submittedConfig = localConfig;
         const coreCount = navigator.hardwareConcurrency || 4;
         const nextConfig = normalizeSettingsConfig(submittedConfig, coreCount);
+        let completedSetup = null;
         try {
             const result = await onSave(nextConfig);
             const savedConfig = normalizeConfig(result && typeof result === 'object' ? result : nextConfig);
@@ -709,6 +727,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             }
             setAppliedConfig(savedConfig);
             setLocalConfig(current => mergeSettingsDraft(savedConfig, submittedConfig, current, coreCount));
+            if (librarySetupActive && normalizeLibraryEntries(savedConfig).length > 0) completedSetup = savedConfig;
         } catch (error) {
             if (!error?.settingsSaveNotified) {
                 showToast?.(label('config_save_failed', '설정 저장 실패: {msg}')
@@ -719,6 +738,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             setIsApplying(false);
             onLanguagePreviewChange?.(draftLanguageRef.current);
         }
+        if (completedSetup) onClose?.(completedSetup);
     };
 
   const updateViewerPath = (viewerType, filePath) => {
@@ -957,7 +977,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
       if (entries.some(entry => libraryPathKey(entry.path) === libraryPathKey(folderPath))) return entries;
       return [...entries, { path: folderPath, alias: '', group: '' }];
     });
-    setSelectedDupFolder(folderPath);
+    setSelectedDupFolder(librarySetupActive ? '' : folderPath);
   };
 
   const handleRemoveDupFolder = (folderPath) => {
@@ -1250,7 +1270,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
             <button className="modal-close" aria-label={t('btn_close')} onClick={handleCancel} disabled={isApplying}>×</button>
         </div>
 
-        <div className="settings-workspace" inert={showApiManual ? '' : undefined}>
+        <div className="settings-workspace" inert={showApiManual || (librarySetupActive && isApplying) ? '' : undefined}>
             <aside id="settings-sidebar" className="settings-sidebar">
                 <div className="settings-tabs" role="tablist" aria-label={t('settings.navigation')} aria-orientation={compactNavigation ? 'horizontal' : 'vertical'}>
                     {SETTINGS_TABS.map(tab => (
@@ -1639,16 +1659,25 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
 
           {activeTab === 'folder' && (
             <div className="settings-panel">
-              <fieldset className="settings-fieldset settings-library-fieldset">
+              <fieldset className="settings-fieldset settings-library-fieldset" disabled={librarySetupActive && isApplying}>
               <legend>{t('grp_dup_folders_title')}</legend>
-              <p className="settings-help">{t('dup_folder_desc')}</p>
-                <div className="settings-library-layout">
+              {librarySetupActive ? (
+                    <div className="settings-library-setup" role="status">
+                        <span className="settings-library-setup-icon" aria-hidden="true"><FaIcon name={libraryEntries.length > 0 ? 'check' : 'folderPlus'} /></span>
+                        <div>
+                            <p className="settings-library-setup-step">{t(libraryEntries.length > 0 ? 'dashboard.setup_settings_ready_step' : 'dashboard.setup_settings_choose_step')}</p>
+                            <h3>{t(libraryEntries.length > 0 ? 'dashboard.setup_settings_ready_title' : 'dashboard.setup_settings_choose_title')}</h3>
+                            <p>{t(libraryEntries.length > 0 ? 'dashboard.setup_settings_ready_hint' : 'dashboard.setup_settings_choose_hint')}</p>
+                        </div>
+                    </div>
+              ) : <p className="settings-help">{t('dup_folder_desc')}</p>}
+                <div className={`settings-library-layout${librarySetupActive ? ' is-setup' : ''}`}>
                     <div className="settings-library-workspace">
                         <div className="settings-library-editing">
                             <div className="settings-library-toolbar">
                                 <h3>{t('settings.library_preview.registered')}</h3>
-                                <button className="settings-action-btn settings-blue-btn" onClick={handleAddDupFolder}>
-                                    <FaIcon name="folderPlus" />{label('btn_add', '추가')}
+                                <button ref={libraryAddButtonRef} className={`settings-action-btn settings-blue-btn${librarySetupActive ? ' settings-library-setup-add' : ''}`} onClick={handleAddDupFolder} disabled={librarySetupActive && isApplying}>
+                                    <FaIcon name="folderPlus" />{librarySetupActive ? t(libraryEntries.length > 0 ? 'dashboard.setup_settings_add_more' : 'dashboard.setup_settings_choose') : label('btn_add', '추가')}
                                 </button>
                             </div>
                             <SettingsLibraryList
@@ -1660,17 +1689,17 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                 t={t}
                             />
                         </div>
-                        <SettingsLibraryPreview
+                        {!librarySetupActive && <SettingsLibraryPreview
                             entries={libraryEntries}
                             selectedPath={selectedDupFolder}
                             onSelect={setSelectedDupFolder}
                             config={localConfig}
                             t={t}
-                        />
+                        />}
                     </div>
                 </div>
               </fieldset>
-              <fieldset className="settings-fieldset">
+              {!librarySetupActive && <fieldset className="settings-fieldset">
               <legend>{label('settings_maintenance_title', '인덱스 및 캐시 관리')}</legend>
                     <p className="settings-notice">
                         <FaIcon name="info" />
@@ -1688,7 +1717,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                   <FaIcon name="trash" />{label('folder_clear_cache', '중복 매칭 캐시 초기화')}
                 </button>
               </div>
-              </fieldset>
+              </fieldset>}
             </div>
           )}
 
@@ -1976,10 +2005,10 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
         )}
 
         <div className="modal-footer settings-footer" inert={showApiManual ? '' : undefined}>
-            <p className="settings-save-note">{t('settings.save_note')}</p>
+            <p className="settings-save-note">{t(librarySetupActive ? 'dashboard.setup_settings_save_note' : 'settings.save_note')}</p>
             <div className="settings-footer-actions">
                 <button className="btn btn-secondary" onClick={handleCancel} disabled={isApplying}>{t('btn_cancel')}</button>
-                <button className="btn btn-primary" onClick={handleApply} disabled={!hasChanges || isApplying || Boolean(fileAssociationBusy)} aria-busy={isApplying}>{t('settings.apply')}</button>
+                <button className="btn btn-primary" onClick={handleApply} disabled={!hasChanges || isApplying || Boolean(fileAssociationBusy) || (librarySetupActive && libraryEntries.length === 0)} aria-busy={isApplying}>{t(librarySetupActive ? 'dashboard.setup_settings_start' : 'settings.apply')}</button>
             </div>
         </div>
         {showApiManual && (

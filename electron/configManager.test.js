@@ -26,13 +26,13 @@ test('모션 설정은 이전 설정에 기본값을 부여하고 저장 후 다
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     writeDataConfig(root, { language: 'ko' });
     const manager = new ConfigManager(root, root, { platform: 'linux' });
-    assert.equal(manager.loadConfig().motion_preference, 'system');
+    assert.equal(manager.loadConfig().motion_preference, 'full');
     for (const motion_preference of ['full', 'reduced', 'system']) {
         assert.equal(manager.saveConfig({ ...manager.getConfig(), motion_preference }), true);
         const restarted = new ConfigManager(root, root, { platform: 'linux' });
         assert.equal(restarted.loadConfig().motion_preference, motion_preference);
     }
-    assert.equal(manager.normalizeConfig({ motion_preference: 'invalid' }).motion_preference, 'system');
+    assert.equal(manager.normalizeConfig({ motion_preference: 'invalid' }).motion_preference, 'full');
 });
 
 test('상세 패널은 기존 하단 배치를 기본으로 유지하고 배치별 크기를 저장한다', t => {
@@ -61,6 +61,25 @@ test('상세 패널은 기존 하단 배치를 기본으로 유지하고 배치�
     assert.equal(bottom.folder_detail_panel_position, 'bottom');
     assert.equal(bottom.folder_detail_panel_width, 420);
     assert.equal(bottom.folder_detail_panel_height, 260);
+});
+
+test('마지막 모아보기 페이지와 컬렉션은 다른 설정 저장 및 재실행 후에도 유지한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-reading-location-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    writeDataConfig(root, { folder_last_path: '/Books/Last Folder' });
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
+    const config = manager.loadConfig();
+    assert.equal(config.folder_last_source, 'folder');
+    assert.equal(config.folder_last_collection_id, '');
+    for (const source of ['dashboard', 'favorites', 'recent-reading', 'recent-added', 'recent-updated', 'wishlist', 'collections', 'collection', 'authors', 'annotations', 'folder']) {
+        const collectionId = source === 'collection' ? 'saved-collection' : '';
+        assert.equal(manager.saveConfig({ folder_last_source: source, folder_last_collection_id: collectionId }), true);
+        assert.equal(manager.saveConfig({ play_sound: false }), true);
+        const restarted = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
+        assert.equal(restarted.folder_last_source, source);
+        assert.equal(restarted.folder_last_collection_id, collectionId);
+        assert.equal(restarted.folder_last_path, '/Books/Last Folder');
+    }
 });
 
 test('라이브러리 데이터 정리는 정상 등록 경로 설정의 초기화가 끝난 뒤에만 허용한다', async t => {
@@ -585,6 +604,8 @@ test('config가 없으면 기본 설정을 생성한다', () => {
         assert.equal(loaded.completion_sound, 'Default.wav');
         assert.equal(loaded.last_tab_id, 'folder');
         assert.equal(loaded.folder_last_path, '');
+        assert.equal(loaded.folder_last_source, 'folder');
+        assert.equal(loaded.folder_last_collection_id, '');
         assert.deepEqual(loaded.folder_goto_history, []);
         assert.deepEqual(loaded.folder_search_history, []);
         assert.equal(loaded.last_meta_api, '리디북스');

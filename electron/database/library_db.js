@@ -11,6 +11,7 @@ import { buildLibraryFolderIndexRecords } from '../libraryFolderIndex.js';
 import { remapCoverReadingState } from '../coverReadingState.js';
 import { initializeReadingLists, moveReadingListPaths, deleteReadingListPaths } from '../readingLists.js';
 import { fileActivityDates, markReadingFileMetadataUpdated } from '../readingFileActivity.js';
+import { initializeReadingActivity, recordReadingActivity, recordReadingCompletion } from '../readingActivity.js';
 
 const require = createRequire(import.meta.url);
 let DatabaseConstructor = null;
@@ -340,6 +341,7 @@ export class LibraryDB {
         this.normalizeStoredFilePaths();
         this.sanitizeFormatColumn();
         initializeReadingLists(this.db);
+        initializeReadingActivity(this.db);
         this.db.pragma('optimize');
         return this.db;
     }
@@ -1447,7 +1449,7 @@ export class LibraryDB {
                     : defaultReadingLocator(nextState);
             nextState.locator_json = JSON.stringify(locator);
 
-            connection.prepare(`
+            const saveState = connection.prepare(`
                 INSERT INTO reading_states (${READING_STATE_COLUMNS.join(', ')})
                 VALUES (${READING_STATE_COLUMNS.map(column => `@${column}`).join(', ')})
                 ON CONFLICT(file_path) DO UPDATE SET
@@ -1465,11 +1467,23 @@ export class LibraryDB {
                     revision = excluded.revision,
                     deleted_at = '',
                     retain_outside_library = excluded.retain_outside_library
-            `).run(nextState);
-            return normalizeReadingStateRow(
-                connection.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(normalizedPath),
-            );
+            `);
+            return connection.transaction(() => {
+                saveState.run(nextState);
+                recordReadingCompletion(connection, previous, nextState, now);
+                return normalizeReadingStateRow(
+                    connection.prepare('SELECT * FROM reading_states WHERE file_path = ?').get(normalizedPath),
+                );
+            })();
         });
+    }
+
+    async recordReadingActivity(filePath, activity = {}) {
+        if (typeof filePath !== 'string' || !filePath || filePath.length > 32768
+            || filePath.includes('\0') || !path.isAbsolute(filePath)) throw new Error('invalid_reading_paths');
+        return this.withLock(() => recordReadingActivity(
+            this.getConnection(), this.normalizeFilePath(path.resolve(filePath)), activity,
+        ));
     }
 
     async listReadingStatesByPaths(filePaths) {

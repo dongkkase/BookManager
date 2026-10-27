@@ -23,6 +23,8 @@ test('라이브러리 카탈로그는 전체 기간의 지원 도서를 중복 �
         path: path.join(folder, 'nested', `${String(index).padStart(4, '0')}.epub`),
         title: `Book ${index}`,
         series: 'A series',
+        volume: String(index + 1),
+        genre: 'Fantasy, Adventure',
         writer: 'Writer One, Writer Two',
         creators: '[{"name":"Writer One","role":"writer"}]',
         summary: 'Book description',
@@ -54,7 +56,7 @@ test('라이브러리 카탈로그는 전체 기간의 지원 도서를 중복 �
     assert.equal(rows.length, records.length + supported.length);
     assert.equal(new Set(rows.map(row => row.path)).size, rows.length);
     const first = rows.find(row => row.path === library.normalizeFilePath(records[0].path));
-    for (const field of ['title', 'series', 'writer', 'creators', 'thumb_path', 'cover_override_path', 'has_metadata', 'metadata_override', 'size', 'mtime']) {
+    for (const field of ['title', 'series', 'volume', 'genre', 'writer', 'creators', 'thumb_path', 'cover_override_path', 'has_metadata', 'metadata_override', 'size', 'mtime']) {
         assert.equal(first[field], records[0][field], field);
     }
     assert.equal(Object.hasOwn(first, 'summary'), false);
@@ -100,6 +102,8 @@ test('라이브러리 카탈로그 IPC는 stat 없이 정규화하고 현재 등
     const record = {
         path: path.join(folder, 'book.epub'),
         title: 'A book',
+        volume: '2.5',
+        genre: 'Mystery',
         writer: 'An author',
         thumb_path: path.join(root, 'cached.jpg'),
         size: 123,
@@ -122,6 +126,7 @@ test('라이브러리 카탈로그 IPC는 stat 없이 정규화하고 현재 등
             full_path: row.path,
             cover: `cached:${row.thumb_path}`,
             description: 'Detailed metadata is loaded when a book is selected',
+            full_meta: { Summary: 'Detailed metadata stays out of the catalog' },
             duplicate_matches: [],
         }),
         broadcast: () => assert.fail('Catalog reads must not broadcast changes'),
@@ -137,12 +142,15 @@ test('라이브러리 카탈로그 IPC는 stat 없이 정규화하고 현재 등
         const file = result.files[0];
         assert.equal(file.full_path, library.normalizeFilePath(record.path));
         assert.equal(file.writer, record.writer);
+        assert.equal(file.volume, record.volume);
+        assert.equal(file.genre, record.genre);
         assert.equal(file.cover, `cached:${record.thumb_path}`);
         assert.equal(file.size, record.size);
         assert.equal(file.mtime, record.mtime);
         assert.equal(file.readingListAddedAt, addedAt);
         assert.equal(Object.hasOwn(file, 'list_added_at'), false);
         assert.equal(Object.hasOwn(file, 'description'), false);
+        assert.equal(Object.hasOwn(file, 'full_meta'), false);
         assert.equal(Object.hasOwn(file, 'duplicate_matches'), false);
         assert.equal(Object.hasOwn(file, 'exists'), false);
         assert.equal(file.isDirectory, false);

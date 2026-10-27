@@ -84,6 +84,7 @@ function App() {
     const [readiveConnectionAttention, setReadiveConnectionAttention] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('basic');
+    const [settingsInitialFocus, setSettingsInitialFocus] = useState(null);
   const [settingsNavigationRequest, setSettingsNavigationRequest] = useState(0);
   const [toast, setToast] = useState(null);
   const [appVersion, setAppVersion] = useState('');
@@ -409,8 +410,9 @@ function App() {
     return () => window.removeEventListener('bookmanager:navigate', handleNavigate);
   }, [activeTab, dispatchTabAction, isAppLocked, scheduleLastTabSave]);
 
-  const openSettings = useCallback((tab = 'basic', source = 'menu') => {
+  const openSettings = useCallback((tab = 'basic', source = 'menu', focus = null) => {
     setSettingsInitialTab(tab);
+        setSettingsInitialFocus(tab === 'folder' && focus === 'library-setup' ? focus : null);
     setSettingsNavigationRequest(current => current + 1);
     setShowSettings(true);
         if (!showSettings) trackTelemetry('menu_opened', { menu: 'settings', source });
@@ -422,7 +424,7 @@ function App() {
 
   useEffect(() => {
     const handleOpenSettings = event => {
-      openSettings(event.detail?.tab || 'basic', 'navigation');
+      openSettings(event.detail?.tab || 'basic', 'navigation', event.detail?.focus);
     };
     window.addEventListener('bookmanager:open-settings', handleOpenSettings);
     return () => window.removeEventListener('bookmanager:open-settings', handleOpenSettings);
@@ -542,9 +544,9 @@ function App() {
     dispatchTabAction(activeTab, { action: 'drop-paths', activeTab, paths: acceptedPaths, ...(activeTab !== 'folder' ? { dropMode } : {}) });
   }, [activeTab, dispatchTabAction, dropInteractionBlocked, language, resetFileDropHover, showToast, t]);
 
-    const handleSettingsClose = useCallback(async () => {
+    const handleSettingsClose = useCallback(async savedConfig => {
         setShowSettings(false);
-        const savedLang = config?.language || config?.lang || 'ko';
+        const savedLang = savedConfig?.language || savedConfig?.lang || config?.language || config?.lang || 'ko';
         await changeLanguage(savedLang);
     }, [changeLanguage, config]);
 
@@ -914,6 +916,7 @@ function App() {
         <SettingsModal 
           config={config} 
           initialTab={settingsInitialTab}
+          initialFocus={settingsInitialFocus}
           navigationRequest={settingsNavigationRequest}
           onClose={handleSettingsClose}
           onSave={handleSettingsSave}

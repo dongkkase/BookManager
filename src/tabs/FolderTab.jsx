@@ -6,10 +6,12 @@ import { CoverArtwork } from '../components/CoverArtwork';
 import leftSidebarIcon from '../images/left_sidebar.svg';
 import { FolderSidebar } from '../components/folder/FolderSidebar';
 import { ReadingCollectionsDialog } from '../components/folder/ReadingCollections';
+import { ReadingDashboard } from '../components/folder/ReadingDashboard';
 import { useReadingLists } from '../hooks/useReadingLists';
 import { useAnnotationCatalog } from '../hooks/useAnnotationCatalog';
 import { getAuthorCatalog } from '../authorCatalog';
 import { useAuthorBookDetails } from '../hooks/useAuthorBookDetails';
+import { useAuthorProfiles } from '../hooks/useAuthorProfiles';
 import { RecentReadingToolbar } from '../components/folder/RecentReadingToolbar';
 import { AuthorsBrowser } from '../components/folder/AuthorsBrowser';
 import AnnotationsBrowser from '../components/folder/AnnotationsBrowser';
@@ -50,6 +52,7 @@ import { useFolderMouseNavigation } from '../hooks/useFolderMouseNavigation';
 import { useFolderSearchHistory } from '../hooks/useFolderSearchHistory';
 import { useConfigSaveNotice } from '../hooks/useConfigSaveNotice';
 import { useFileSelection } from '../hooks/useFileSelection';
+import { folderSelectionTarget } from '../folderSelectionState';
 import {
   clampDetailHeight,
     clampDetailWidth,
@@ -232,6 +235,7 @@ const typeSpecificViewerPath = (config, filePath) => {
 };
 
 const viewerErrorMessage = result => result?.message || result?.error || '';
+const READING_LIST_KINDS = ['dashboard', 'favorites', 'recent-added', 'recent-updated', 'wishlist', 'collections', 'collection', 'authors', 'annotations'];
 
 function FolderScanFeedback({ compact = false, message = '', onCancel, t }) {
     const resolvedMessage = message || t('msg_loading_list');
@@ -740,10 +744,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const [recentReadingFiles, setRecentReadingFiles] = useState([]);
     const [recentReadingLoading, setRecentReadingLoading] = useState(false);
     const [recentReadingLoaded, setRecentReadingLoaded] = useState(false);
+    const [recentReadingError, setRecentReadingError] = useState(false);
     const recentReadingRequestRef = useRef(0);
     const isRecentReading = folderSource === 'recent-reading';
-    const readingListKind = ['favorites', 'recent-added', 'recent-updated', 'wishlist', 'collections', 'collection', 'authors', 'annotations'].includes(folderSource) ? folderSource : '';
-    const isCatalogView = readingListKind === 'authors' || readingListKind === 'annotations';
+    const readingListKind = READING_LIST_KINDS.includes(folderSource) ? folderSource : '';
+    const isDashboard = readingListKind === 'dashboard';
+    const isCatalogView = isDashboard || readingListKind === 'authors' || readingListKind === 'annotations';
     const isFavoritesView = readingListKind === 'favorites';
     const isCollectionView = readingListKind === 'collections' || readingListKind === 'collection';
     const isReadingList = isRecentReading || Boolean(readingListKind);
@@ -782,8 +788,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     readingLibraryPathsRef.current = config && !config.library_data_prune_pending && Array.isArray(config.libraries) ? libraries : null;
     const catalogLanguage = config?.language || config?.lang || 'ko';
     const readingLists = useReadingLists(isCatalogView ? 'library-catalog' : readingListKind === 'collection' ? selectedCollectionId : readingListKind === 'wishlist' ? 'want-to-read' : readingListKind, t, isFavoritesView ? favoriteFiles : null, libraries, catalogLanguage);
-    const { mutate: mutateList, refresh: refreshReadingList } = readingLists;
+    const { mutate: mutateList, refresh: refreshReadingList, refreshOverview: refreshReadingOverview } = readingLists;
+    const readingListError = readingLists.error || (isDashboard ? readingLists.overviewError : '');
     const catalogAuthors = useMemo(() => getAuthorCatalog(readingLists.catalogFiles, catalogLanguage), [readingLists.catalogFiles, catalogLanguage]);
+    const authorProfileStore = useAuthorProfiles(catalogAuthors);
     const authorCount = catalogAuthors.length;
     const authorBookCount = useMemo(() => {
         const paths = new Set();
@@ -1253,8 +1261,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             if (requestId !== recentReadingRequestRef.current) return;
             setRecentReadingFiles(Array.isArray(files) ? files : []);
             setRecentReadingLoaded(true);
+            setRecentReadingError(false);
         } catch (error) {
             if (requestId === recentReadingRequestRef.current) {
+                setRecentReadingError(true);
                 console.error('최근 읽은 항목 조회 실패:', error);
             }
         } finally {
@@ -1280,8 +1290,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, [loadRecentReading]);
 
     const refreshActiveReadingList = useCallback(() => (
-        isRecentReading ? loadRecentReading() : refreshReadingList()
-    ), [isRecentReading, loadRecentReading, refreshReadingList]);
+        isDashboard ? Promise.all([refreshReadingList(), refreshReadingOverview(), loadRecentReading()])
+            : isRecentReading ? loadRecentReading() : refreshReadingList()
+    ), [isDashboard, isRecentReading, loadRecentReading, refreshReadingList, refreshReadingOverview]);
 
   // 필터링된 파일 데이터
     const currentFolderEntries = useMemo(() => getCurrentFileData(), [getCurrentFileData]);
@@ -1368,6 +1379,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     }, [readingFilesScope, readingFilesScopeKey]);
     const viewerStatusReader = useMemo(() => createViewerStatusReader(), [viewerStatusVersion]);
     const mapViewerStatus = useMemo(() => createCachedViewerStatusMapper(viewerStatusReader), [viewerStatusReader]);
+    const dashboardRecentFiles = useMemo(() => isDashboard
+        ? recentReadingFiles.map(file => mapViewerStatus(file, file.readingState))
+        : EMPTY_CATALOG_SELECTION, [isDashboard, mapViewerStatus, recentReadingFiles]);
     const getReadingStatePathKey = useMemo(() => createReadingStatePathKeyResolver(runtimePlatform), [runtimePlatform]);
   const fileDataWithViewerStatus = useMemo(() => {
     if (activeDuplicateFileData.length === 0) return activeDuplicateFileData;
@@ -1496,7 +1510,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         selectAuthorBookFile(file);
         if (file) setIsDetailPanelCollapsed(false);
     }, [selectAuthorBookFile]);
-    const detailSelectedFile = isCatalogView
+    const detailSelectedFile = isDashboard ? null : isCatalogView
         ? (authorBookFile ? mapViewerStatus(authorBookFile, authorBookFile.readingState) : null)
         : activeSelectedFile?.collectionId ? null : activeSelectedFile || null;
     useEffect(() => {
@@ -1601,16 +1615,29 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         if (isReadingList || !selectedFolderPath) cancelFolderLocationRestore();
     }, [cancelFolderLocationRestore, isReadingList, selectedFolderPath]);
 
+    const saveFolderPage = useCallback((source, collectionId = '', folderPath = '') => {
+        restoredFolderPathRef.current = true;
+        const updates = {
+            folder_last_source: source,
+            folder_last_collection_id: source === 'collection' ? collectionId : '',
+            ...(source === 'folder' && folderPath ? { folder_last_path: folderPath } : {}),
+        };
+        saveConfig?.(updates).catch(error => {
+            console.error('마지막 탐색 페이지 저장 실패:', error);
+        });
+    }, [saveConfig]);
+
   const handleSelectRecentReading = useCallback(() => {
     collectionFolderOriginRef.current = null;
     rememberCurrentFolderLocation();
     cancelFolderLocationRestore();
     folderNavigationRequestRef.current += 1;
     setFolderSource('recent-reading');
+    saveFolderPage('recent-reading');
     clearSelection();
     resetSearchQuery();
     void loadRecentReading();
-  }, [cancelFolderLocationRestore, clearSelection, loadRecentReading, rememberCurrentFolderLocation, resetSearchQuery]);
+  }, [cancelFolderLocationRestore, clearSelection, loadRecentReading, rememberCurrentFolderLocation, resetSearchQuery, saveFolderPage]);
 
     const handleSelectReadingList = useCallback((kind, collectionId = '') => {
         collectionFolderOriginRef.current = null;
@@ -1619,11 +1646,12 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         folderNavigationRequestRef.current += 1;
         setFolderSource(kind);
         setSelectedCollectionId(collectionId);
+        saveFolderPage(kind, collectionId);
         clearSelection();
         resetSearchQuery();
         setContextMenu(null);
-        if (kind === readingListKind && collectionId === selectedCollectionId && kind !== 'authors' && kind !== 'annotations') void refreshReadingList();
-    }, [cancelFolderLocationRestore, clearSelection, readingListKind, refreshReadingList, rememberCurrentFolderLocation, resetSearchQuery, selectedCollectionId]);
+        if (kind === readingListKind && collectionId === selectedCollectionId && !['dashboard', 'authors', 'annotations'].includes(kind)) void refreshReadingList();
+    }, [cancelFolderLocationRestore, clearSelection, readingListKind, refreshReadingList, rememberCurrentFolderLocation, resetSearchQuery, saveFolderPage, selectedCollectionId]);
 
     const changeListMembership = useCallback(async (action, paths, { preserveSelection = false } = {}) => {
         if (!paths.length || listMembershipBusyRef.current) return;
@@ -2130,11 +2158,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     setShowGotoPathHistory(false);
     clearSelection();
     resetSearchQuery();
-    if (nextFolderPath && config?.folder_last_path !== nextFolderPath) {
-      saveConfig?.({ folder_last_path: nextFolderPath }).catch(error => {
-        console.error('마지막 폴더 경로 저장 실패:', error);
-      });
-    }
+    saveFolderPage('folder', '', nextFolderPath);
     const files = await scanFolder(nextFolderPath, locationRequest.location.viewMode
         ? { ...scanOptions, fastInitial: false }
         : scanOptions);
@@ -2142,7 +2166,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     completeFolderLocationScan(locationRequest);
     const localMissing = findMissingVolumes((files || []).filter(file => !file.isDirectory));
     scheduleLocalMissingToast(nextFolderPath, localMissing);
-  }, [completeFolderLocationScan, config?.folder_last_path, prepareFolderLocationRestore, scanOptions, scanFolder, clearSelection, resetSearchQuery, saveConfig, scheduleLocalMissingToast]);
+  }, [completeFolderLocationScan, prepareFolderLocationRestore, scanOptions, scanFolder, clearSelection, resetSearchQuery, saveFolderPage, scheduleLocalMissingToast]);
 
   const handleSafeFolderNavigation = useCallback(async (folderPath, options = {}) => {
     if (!folderPath) return false;
@@ -2157,10 +2181,27 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     return true;
   }, [handleFolderChange]);
 
+    useEffect(() => () => {
+        folderNavigationRequestRef.current += 1;
+        restoredFolderPathRef.current = false;
+    }, []);
+
   useEffect(() => {
     if (!config || restoredFolderPathRef.current || scanning || preparingDuplicates) return undefined;
+    const savedSource = config.folder_last_source;
+    const savedCollectionId = typeof config.folder_last_collection_id === 'string' ? config.folder_last_collection_id.trim() : '';
+    if (savedSource === 'collection' && savedCollectionId && !readingLists.overviewLoaded && !readingLists.overviewError) return undefined;
     restoredFolderPathRef.current = true;
-    let cancelled = false;
+    if (savedSource === 'recent-reading') {
+        handleSelectRecentReading();
+        return undefined;
+    }
+    if (READING_LIST_KINDS.includes(savedSource)) {
+        const missingCollection = savedSource === 'collection' && (!savedCollectionId
+            || !readingLists.overviewError && !readingLists.collections.some(collection => collection.collectionId === savedCollectionId));
+        handleSelectReadingList(missingCollection ? 'collections' : savedSource, savedSource === 'collection' && !missingCollection ? savedCollectionId : '');
+        return undefined;
+    }
     const candidates = [
       config.folder_last_path,
       config.last_folder_path,
@@ -2169,21 +2210,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       libraries[0],
     ].filter(Boolean);
     const uniqueCandidates = [...new Set(candidates)];
-    if (uniqueCandidates.length === 0) return undefined;
+    if (uniqueCandidates.length === 0) {
+        handleSelectReadingList('dashboard');
+        return undefined;
+    }
 
     const restoreLastFolder = async () => {
       for (const folderPath of uniqueCandidates) {
-        if (cancelled) return;
         const requestId = folderNavigationRequestRef.current + 1;
         if (await handleSafeFolderNavigation(folderPath)) return;
         if (requestId !== folderNavigationRequestRef.current) return;
       }
     };
     restoreLastFolder();
-    return () => {
-      cancelled = true;
-    };
-  }, [config, handleSafeFolderNavigation, libraries, preparingDuplicates, scanning]);
+  }, [config, handleSafeFolderNavigation, handleSelectReadingList, handleSelectRecentReading, libraries, preparingDuplicates, readingLists.collections, readingLists.overviewError, readingLists.overviewLoaded, scanning]);
 
   const handlePathNavigation = useCallback(async (targetPathValue, options = {}) => {
     const targetPath = String(targetPathValue || '').trim();
@@ -2361,6 +2401,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     && !document.querySelector('.app-lock-screen')
     && !document.querySelector('.app-library-scan-slide')
     && !document.querySelector('.detail-cover-preview-dialog[open]')
+    && !document.querySelector('.author-editor-dialog[open]')
     && !mainAreaRef.current?.closest('.folder-tab')?.querySelector('.folder-dialog-backdrop')
   ), []);
 
@@ -2537,6 +2578,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
     const folderRefreshBusy = isRefreshingTree || scanning || preparingDuplicates
         || librarySearchLoading || folderTagLoading
+        || (isDashboard && (recentReadingLoading || readingLists.overviewLoading))
         || (isReadingList && (isRecentReading ? recentReadingLoading : readingLists.loading));
 
     const handleRefreshTree = useCallback(async () => {
@@ -2558,9 +2600,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     await handleFolderChange(folderPath);
   }, [handleFolderChange, saveConfig]);
 
-  const openLibrarySettings = useCallback(() => {
+  const openLibrarySettings = useCallback((options) => {
     window.dispatchEvent(new CustomEvent('bookmanager:open-settings', {
-      detail: { tab: 'folder' },
+      detail: { tab: 'folder', ...(options?.focus === 'library-setup' ? { focus: 'library-setup' } : {}) },
     }));
   }, []);
 
@@ -2678,6 +2720,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     selectedFolderPathRef.current = folderPath;
     setSelectedFolderPath(folderPath);
     setFolderSource('folder');
+    saveFolderPage('folder', '', folderPath);
     const nextNavigation = pushFolderNavigation(folderNavigationRef.current, folderPath);
     folderNavigationRef.current = nextNavigation;
     setFolderNavigation(nextNavigation);
@@ -2705,6 +2748,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     prepareFolderLocationRestore,
     refreshLibraryScanStates,
     resetSearchQuery,
+    saveFolderPage,
     saveConfig,
     scanFolder,
     scanOptions,
@@ -2762,6 +2806,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       return;
     }
     if (!filePath) return;
+    viewContainerRef.current?.focus({ preventScroll: true });
     if (event?.shiftKey) {
       rangeSelect(filePath, null, index);
     } else if (hasPrimaryModifier(event, runtimePlatform)) {
@@ -2770,6 +2815,61 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       selectFile(filePath, null, index);
     }
   }, [clearSelection, rangeSelect, runtimePlatform, selectFile, toggleFile]);
+
+    const handleFileNavigationKeyDown = useCallback(event => {
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        if (event.defaultPrevented || event.isComposing || event.nativeEvent?.isComposing
+            || event.altKey || event.ctrlKey || event.metaKey || isCatalogView
+            || contextMenu || showLayoutDialog || !isFolderTabVisible() || !canFocusGotoPath()) return;
+        const container = viewContainerRef.current;
+        if (!container?.contains(event.target)
+            || event.target.closest('input, textarea, select, button, a, [contenteditable], [role="menu"], [role="dialog"], [role="slider"]')) return;
+        if (viewMode === 'table' && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) return;
+        const scroller = container.querySelector('.file-table-container, .thumbnail-grid, .tile-grid');
+        if (!scroller) return;
+        const currentIndex = fileLookup.getIndex(activeSelectedPath) ?? -1;
+        const columnCount = viewMode === 'table' ? 1 : Number(scroller.dataset.navigationColumns) || 1;
+        const nextIndex = folderSelectionTarget(groupedFileData, currentIndex, event.key, columnCount);
+        if (nextIndex < 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        cancelFolderLocationRestore();
+        const nextPath = moveActiveSelection(nextIndex - currentIndex, event.shiftKey);
+        if (!nextPath) return;
+        setCharacterIndexNavigation({
+            id: ++folderLocationSequenceRef.current,
+            revealPath: nextPath,
+            scrollTop: scroller.scrollTop,
+            scrollLeft: scroller.scrollLeft,
+            files: displayedFileData,
+            viewMode,
+        });
+    }, [activeSelectedPath, canFocusGotoPath, cancelFolderLocationRestore, contextMenu, displayedFileData, fileLookup,
+        groupedFileData, isCatalogView, isFolderTabVisible, moveActiveSelection, showLayoutDialog, viewMode]);
+
+    const handleCoverPreviewNavigate = useCallback(direction => {
+        if (isCatalogView || !isFolderTabVisible() || (direction !== -1 && direction !== 1)) return;
+        const currentIndex = fileLookup.getIndex(activeSelectedPath) ?? -1;
+        if (currentIndex < 0) return;
+        let nextIndex = currentIndex + direction;
+        while (nextIndex >= 0 && nextIndex < displayedFileData.length && displayedFileData[nextIndex].collectionId) {
+            nextIndex += direction;
+        }
+        if (nextIndex < 0 || nextIndex >= displayedFileData.length) return;
+        cancelFolderLocationRestore();
+        const nextPath = moveActiveSelection(nextIndex - currentIndex);
+        const scroller = viewContainerRef.current?.querySelector('.file-table-container, .thumbnail-grid, .tile-grid');
+        if (!nextPath || !scroller) return;
+        setCharacterIndexNavigation({
+            id: ++folderLocationSequenceRef.current,
+            revealPath: nextPath,
+            scrollTop: scroller.scrollTop,
+            scrollLeft: scroller.scrollLeft,
+            files: displayedFileData,
+            viewMode,
+        });
+    }, [activeSelectedPath, cancelFolderLocationRestore, displayedFileData, fileLookup, isCatalogView,
+        isFolderTabVisible, moveActiveSelection, viewMode]);
 
   const ensureActiveSelectionVisible = useCallback(() => {
     if (folderLocationRestoreRef.current) return;
@@ -3909,17 +4009,6 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         event.preventDefault();
         if (activeSelectedFile?.isDirectory) openSelectedInViewer();
         else openSelectedInExplorer();
-      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-        event.preventDefault();
-        cancelFolderLocationRestore();
-        const nextPath = moveActiveSelection(event.key === 'ArrowUp' ? -1 : 1, event.shiftKey);
-        if (nextPath) {
-          window.requestAnimationFrame(() => {
-            viewContainerRef.current
-              ?.querySelector('.active-selection')
-              ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-          });
-        }
       } else if (event.key === '1') {
         handleViewModeChange('table');
       } else if (event.key === '2') {
@@ -3935,7 +4024,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('click', closeContextMenu);
     };
-  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isCatalogView, isFavoritesView, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, moveActiveSelection, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, removeSelectedFavorites, runtimePlatform, selectAll, sendSelectedFilesToTab, showLayoutDialog, undoLastRename]);
+  }, [activeSelectedFile, activeSelectedPath, cancelFolderLocationRestore, canFocusGotoPath, clearSelection, closeContextMenu, closeTopOverlay, deleteSelectedFiles, focusGotoPathInput, handleRefreshShortcut, handleRenameShortcut, handleViewModeChange, invertSelection, isCatalogView, isFavoritesView, isFolderTabVisible, isReadingList, isRecentReading, readingListKind, changeListMembership, selectedEntryObjects, openSelectedInExplorer, openSelectedInViewer, removeRecentReading, removeSelectedFavorites, runtimePlatform, selectAll, sendSelectedFilesToTab, showLayoutDialog, undoLastRename]);
 
   useEffect(() => {
     const handleAppAction = (event) => {
@@ -3946,6 +4035,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         return;
       }
       if (preparingDuplicates || scanning) return;
+        if (isDashboard && ['remove-selected', 'clear-all', 'toggle-all', 'invert-selection'].includes(action)) return;
       if (action === 'add-folder') handleAddFolderFromToolbar();
       else if (action === 'add-file') handleAddFileFromToolbar();
       else if (action === 'drop-paths') handleDroppedPaths(event.detail?.paths);
@@ -3969,6 +4059,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     handleCancelCurrentTask,
     handleDroppedPaths,
     invertSelection,
+    isDashboard,
     preparingDuplicates,
     selectAll,
     selectedFiles.length,
@@ -4515,7 +4606,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                   )}
                 </button>
               )}
-              <div className="folder-search-control">
+              {!isDashboard && <div className="folder-search-control">
                 <FolderSearchInput
                   key={searchResetToken}
                   inputRef={searchInputRef}
@@ -4540,7 +4631,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                     historyDeleteLabel={t('folder_search_history_delete')}
                     historyClearLabel={t('folder_search_history_clear')}
                 />
-              </div>
+              </div>}
               {!isReadingList && <div className="content-index-control">
                 <button
                   type="button"
@@ -4607,27 +4698,53 @@ function FolderTab({ config, saveConfig, t, showToast }) {
             <div className={`folder-content-area${isDetailPanelRight ? ' is-detail-right' : ''}`}>
           <div
             className={`view-container${characterIndexEntries.length > 0 ? ' has-character-index' : ''}`}
+            tabIndex={isCatalogView ? -1 : 0}
+            onKeyDown={handleFileNavigationKeyDown}
             onPointerDownCapture={event => {
                 if (event.button < 3) cancelFolderLocationRestore();
+                if (event.button === 0 && !isCatalogView
+                    && !event.target.closest('input, textarea, select, button, a, [contenteditable]')) {
+                    event.currentTarget.focus({ preventScroll: true });
+                }
             }}
             onWheelCapture={cancelFolderLocationRestore}
             ref={viewContainerRef}
             style={{ '--folder-view-width': `${viewContainerWidth}px` }}
-            aria-busy={isReadingList ? (isRecentReading ? recentReadingLoading : readingLists.loading) : scanning}
+            aria-busy={isReadingList ? (isRecentReading ? recentReadingLoading : readingLists.loading || (isDashboard && readingLists.overviewLoading)) : scanning}
           >
-            {readingListKind && readingLists.error ? (
+            {readingListKind && readingListError ? (
                 <div className="recent-reading-state" role="alert">
-                    <span>{readingLists.error}</span>
-                    <button type="button" onClick={() => void refreshReadingList()}>{t('action_refresh')}</button>
+                    <span>{readingListError}</span>
+                    <button type="button" onClick={() => void refreshActiveReadingList()}>{t('action_refresh')}</button>
                 </div>
-            ) : (isRecentReading && recentReadingLoading && !recentReadingLoaded) || (readingListKind && readingLists.loading && !readingLists.files.length) ? (
+            ) : (isRecentReading && recentReadingLoading && !recentReadingLoaded) || (readingListKind && readingLists.loading && !readingLists.files.length)
+                || (isDashboard && readingLists.overviewLoading && !readingLists.overviewLoaded) ? (
                <div className="recent-reading-state" role="status">
                  <FaIcon name="spinner" className="content-index-spinner" size={15} />
                  <span>{t(isRecentReading ? 'folder.recent.loading' : 'reading_lists.loading')}</span>
                </div>
+             ) : isDashboard ? (
+                <ReadingDashboard
+                    t={t}
+                    language={catalogLanguage}
+                    files={readingLists.catalogFiles}
+                    recentFiles={dashboardRecentFiles}
+                    annotationCatalog={annotationCatalog}
+                    onRefreshAnnotations={refreshAnnotations}
+                    libraries={libraryEntries}
+                    collections={readingLists.collections}
+                    wishlistCount={readingLists.wishlistCount}
+                    recentAddedCount={readingLists.recentAddedCount}
+                    recentLoading={recentReadingLoading}
+                    recentError={recentReadingError ? t('reading_lists.load_failed') : ''}
+                    onRefreshRecent={loadRecentReading}
+                    onOpenFile={openFileInViewer}
+                    onNavigate={kind => kind === 'recent-reading' ? handleSelectRecentReading() : handleSelectReadingList(kind)}
+                    onOpenLibrarySettings={openLibrarySettings}
+                />
              ) : isCatalogView ? (
                 readingListKind === 'authors'
-                    ? <AuthorsBrowser key={libraryPathsKey} files={readingLists.files} query={localSearchQuery} language={config?.language || config?.lang || 'ko'} thumbnailScale={itemScales.thumbnail} onOpenFile={openFileInViewer} onSelectBook={handleAuthorBookSelect} selectedBookPath={authorBookPath} onBackActionChange={handleAuthorBackActionChange} t={t} />
+                    ? <AuthorsBrowser key={libraryPathsKey} files={readingLists.files} profileStore={authorProfileStore} query={localSearchQuery} language={config?.language || config?.lang || 'ko'} thumbnailScale={itemScales.thumbnail} onOpenFile={openFileInViewer} onSelectBook={handleAuthorBookSelect} selectedBookPath={authorBookPath} onBackActionChange={handleAuthorBackActionChange} t={t} />
                     : <AnnotationsBrowser key={libraryPathsKey} catalog={annotationCatalog} onRefresh={refreshAnnotations} onDelete={deleteAnnotation} query={localSearchQuery} language={catalogLanguage} onOpenFile={openFileInViewer} toolbarTarget={annotationToolbarTarget} />
              ) : isReadingList && filteredFileData.length === 0 ? (
                <div className="recent-reading-state">
@@ -4685,7 +4802,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                     size={isDetailPanelRight ? visibleDetailPanelWidth : detailPanelHeight}
                     onSettled={ensureActiveSelectionVisible}
                 >
-                    <DetailPanel position={detailPanelPosition} onEditRating={supportsRatingEditor(detailSelectedFile) ? () => setRatingEditorTarget(detailSelectedFile) : undefined} selectedFile={detailSelectedFile} onOpenFile={openFileInViewer} onMore={showDetailActions} moreMenuOpen={contextMenu?.source === 'detail'} onContentHeightChange={handleDetailContentHeightChange} t={t} />
+                    <DetailPanel position={detailPanelPosition} onEditRating={supportsRatingEditor(detailSelectedFile) ? () => setRatingEditorTarget(detailSelectedFile) : undefined} selectedFile={detailSelectedFile} onNavigatePreview={isCatalogView ? undefined : handleCoverPreviewNavigate} onOpenFile={openFileInViewer} onMore={showDetailActions} moreMenuOpen={contextMenu?.source === 'detail'} onContentHeightChange={handleDetailContentHeightChange} t={t} />
                 </DetailPanelDisclosure>
             </>
           )}
@@ -4693,7 +4810,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
 
           <div className="right-bottom-bar">
             <div className="status-info">
-              {isCatalogView
+              {isDashboard ? t('reading_lists.dashboard_status', [readingLists.catalogFiles.length.toLocaleString(catalogLanguage), libraries.length.toLocaleString(catalogLanguage)]) : isCatalogView
                 ? readingListKind === 'authors'
                     ? t('reading_lists.authors_status', [authorCount.toLocaleString(catalogLanguage), authorBookCount.toLocaleString(catalogLanguage)])
                     : t('reading_lists.annotations_status', [annotationCatalog.entries.length.toLocaleString(catalogLanguage)])
@@ -4703,7 +4820,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 ? t('folder_searching_libraries')
                 : formatStatus(t, selectedFiles, filteredFileData, selectedFilesTotalBytes)}
             </div>
-            <div className="view-controls">
+            {!isDashboard && <div className="view-controls">
                 <div className="folder-detail-position-controls" role="group" aria-label={t('folder.detail.position')}>
                     {['bottom', 'right'].map(position => (
                         <button
@@ -4764,7 +4881,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                 onChange={e => setItemScales(prev => ({ ...prev, [viewMode]: Number(e.target.value) }))}
               />
                 </>}
-            </div>
+            </div>}
           </div>
         </div>
       </div>

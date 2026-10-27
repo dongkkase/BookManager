@@ -10,6 +10,7 @@ import { ReadiveStore } from './store.js';
 import { fail, isOnLink, listReadiveInterfaces, transferSizePolicy } from './policy.js';
 import { openFrozenAsset, publicSnapshot, resolveFrozenAssetHash, scanReadivePaths, selectSnapshotEntries, summarizeEntries } from './manifest.js';
 import { exchangeReading, getImportedReadingState, readingRowSignature } from './reading.js';
+import { exchangeReadingActivity } from './readingActivity.js';
 import { ReadiveCatalogCache, readReadiveLibraryEntries, registeredReadiveLibraries, resolveReadiveLibraryPath, validateReadiveLibrary } from './catalog.js';
 import { pairingQrDataUrl } from './qr.js';
 import { openReaderAsset, ReadiveReaders } from './readers.js';
@@ -825,6 +826,14 @@ export class ReadiveService {
                 try { this.onRatingChanged(result.changed); } catch { /* A closing window must not undo the saved rating. */ }
             }
             return { json: { records: result.records } };
+        }
+        if (method === 'POST' && pathname === `${PREFIX}/reading-activity`) {
+            const { changed, ...snapshot } = await exchangeReadingActivity(body, await this.getLibraryDb?.(), () => {
+                this.validateDevice(device);
+                if (signal?.aborted) throw fail('catalog_cancelled', 409);
+            });
+            if (changed) this.onReadingChanged();
+            return { json: snapshot };
         }
         if (method === 'POST' && pathname === `${PREFIX}/reading`) {
             const report = {};

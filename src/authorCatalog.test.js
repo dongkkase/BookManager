@@ -208,7 +208,7 @@ test('새 프로필의 외부 URL·잘못된 식별자·비이미지 경로는 �
     }
 });
 
-test('직접 고른 사진은 로컬 캐시 주소를 사용하고 기존 작가 소개와 출처를 유지한다', () => {
+test('직접 고른 사진은 전용 폴더 주소를 사용하고 기존 작가 소개와 출처를 유지한다', () => {
     const photoOverride = { id: 'a1'.repeat(32), sourceUrl: 'https://images.example.com/author.jpg?size=large', query: '한강 작가' };
     const original = {
         provider: 'wikidata', id: 'Q123', name: '한강', description: '한국의 소설가', birthDate: '1970',
@@ -230,6 +230,44 @@ test('직접 고른 사진은 로컬 캐시 주소를 사용하고 기존 작가
     assert.deepEqual(updated.photoOverride, photoOverride);
     assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(updated))), updated);
     assert.equal(normalizeAuthorProfile({ id: 'OL1A', name: '한강', photoOverride }).sourceUrl, 'https://openlibrary.org/authors/OL1A');
+});
+
+test('영구 저장한 프로필 사진은 로컬 주소와 원본 출처·저작자 정보를 재시작 후에도 유지한다', () => {
+    for (const original of [
+        { id: 'OL1A', name: 'Author', photoUrl: 'https://covers.openlibrary.org/a/olid/OL1A-M.jpg?default=false' },
+        { provider: 'wikidata', id: 'Q1', name: 'Author', photoUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Author.jpg',
+            imageSourceUrl: 'https://commons.wikimedia.org/wiki/File:Author.jpg', imageLicense: 'CC BY-SA', imageArtist: 'Photographer' },
+    ]) {
+        const storedPhoto = { id: 'ab'.repeat(32), sourceUrl: original.photoUrl };
+        const stored = normalizeAuthorProfile({ ...original, storedPhoto });
+        assert.equal(stored.photoUrl, `bookmanager-thumbnail://author-photo/${storedPhoto.id}.png`);
+        assert.deepEqual(stored.storedPhoto, storedPhoto);
+        assert.equal(stored.imageSourceUrl, original.imageSourceUrl || '');
+        assert.equal(stored.imageLicense, original.imageLicense || '');
+        assert.equal(stored.imageArtist, original.imageArtist || '');
+        assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(stored))), stored);
+    }
+});
+
+test('저장 사진의 파일 식별자와 원본 주소를 검증하며 직접 고른 사진이 우선한다', () => {
+    const sourceUrl = 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Author.jpg';
+    const original = { provider: 'wikidata', id: 'Q1', name: 'Author', photoUrl: sourceUrl };
+    for (const storedPhoto of [
+        { id: '../photo', sourceUrl }, { id: 'AB'.repeat(32), sourceUrl },
+        { id: 'ab'.repeat(32), sourceUrl: 'file:///tmp/photo.png' },
+        { id: 'ab'.repeat(32), sourceUrl: 'https://example.com/Author.jpg' },
+    ]) {
+        const stored = normalizeAuthorProfile({ ...original, storedPhoto });
+        assert.equal(stored.storedPhoto, undefined);
+        assert.equal(stored.photoUrl, sourceUrl);
+    }
+    assert.equal(normalizeAuthorProfile({ id: 'OL1A', storedPhoto: {
+        id: 'ab'.repeat(32), sourceUrl: 'https://covers.openlibrary.org/a/olid/OL2A-M.jpg?default=false',
+    } }).storedPhoto, undefined);
+    const photoOverride = { id: 'cd'.repeat(32), sourceUrl: 'https://images.example.com/photo.jpg', query: 'Author' };
+    const chosen = normalizeAuthorProfile({ ...original, storedPhoto: { id: 'ab'.repeat(32), sourceUrl }, photoOverride });
+    assert.equal(chosen.storedPhoto, undefined);
+    assert.equal(chosen.photoUrl, `bookmanager-thumbnail://author-photo/${photoOverride.id}.png`);
 });
 
 test('사진만 선택한 작가는 검증한 해시와 검색어로 Naver 프로필과 출처를 만든다', () => {
@@ -269,4 +307,78 @@ test('수동 사진의 잘못된 해시와 비공개 URL은 프로필 이미지�
     assert.equal(normalizeAuthorProfile({ provider: 'naver', id: 'cd'.repeat(32), photoOverride }), null);
     assert.equal(normalizeAuthorProfile({ provider: 'naver', id, photoOverride: { ...photoOverride, query: '' } }), null);
     assert.equal(normalizeAuthorProfile({ provider: 'naver', id }), null);
+});
+
+test('로컬 업로드 사진은 외부 프로필 없이 저장되고 다시 읽을 수 있다', () => {
+    const id = 'ab'.repeat(32);
+    const photoOverride = { id, source: 'local', sourceUrl: '', query: '' };
+    const profile = normalizeAuthorProfile({ provider: 'local', id, name: '저자', photoOverride });
+    assert.equal(profile.photoUrl, `bookmanager-thumbnail://author-photo/${id}.png`);
+    assert.equal(profile.sourceUrl, '');
+    assert.equal(profile.imageSourceUrl, '');
+    assert.deepEqual(profile.photoOverride, photoOverride);
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(profile))), profile);
+    assert.equal(normalizeAuthorProfile({ ...profile, id: '../private' }), null);
+    assert.equal(normalizeAuthorProfile({ ...profile, photoOverride: { ...photoOverride, sourceUrl: 'file:///private/photo.png' } }), null);
+});
+
+test('다른 프로필의 사진을 선택해도 저자 정보와 사진 저작자 및 라이선스를 각각 보존한다', () => {
+    const photoOverride = {
+        id: 'cd'.repeat(32), source: 'wikidata', sourceUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Author.jpg',
+        query: 'Author', imageSourceUrl: 'https://commons.wikimedia.org/wiki/File:Author.jpg',
+        imageArtist: 'Photographer', imageLicense: 'CC BY 4.0',
+    };
+    const profile = normalizeAuthorProfile({ id: 'OL1A', name: '저자', birthDate: '1960', description: '소개', photoOverride });
+    assert.equal(profile.id, 'OL1A');
+    assert.equal(profile.birthDate, '1960');
+    assert.equal(profile.description, '소개');
+    assert.equal(profile.imageSourceUrl, photoOverride.imageSourceUrl);
+    assert.equal(profile.imageArtist, 'Photographer');
+    assert.equal(profile.imageLicense, 'CC BY 4.0');
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(profile))), profile);
+    const unsafe = normalizeAuthorProfile({ ...profile, photoOverride: { ...photoOverride, imageSourceUrl: 'file:///private/photo.png', imageArtist: '<b>Credit</b>' } });
+    assert.equal(unsafe.photoOverride.imageSourceUrl, '');
+    assert.equal(unsafe.imageArtist, 'Credit');
+});
+
+test('국내 저자 출처는 인물 식별자로 링크를 만들고 확인된 프로필 사진 경로만 사용한다', () => {
+    const profiles = [
+        { provider: 'aladin', id: 'aladin:49154', photoUrl: 'https://image.aladin.co.kr/Author/Photo/49154/49154_2.jpg', sourceUrl: 'https://www.aladin.co.kr/author/wauthor_overview.aspx?AuthorSearch=@49154' },
+        { provider: 'kyobo', id: 'kyobo:1000646901', photoUrl: 'https://contents.kyobobook.co.kr/sih/fit-in/300x0/dtl/author/1000646901.jpg?t=2988445', sourceUrl: 'https://store.kyobobook.co.kr/person/detail/1000646901' },
+        { provider: 'cartoon', id: `cartoon:${'ab'.repeat(32)}`, photoUrl: '', sourceUrl: 'https://www.cartoon.or.kr/all-member' },
+        { provider: 'kmas', id: 'kmas:0000042604', photoUrl: 'https://www.kmas.or.kr/common/file/atchmnflDownload.ajax?fileImageId=cd2302ca-686d-42a8-85fd-22b071fb82d8', sourceUrl: 'https://www.kmas.or.kr/archive/writrList/detail/0000042604' },
+    ];
+    for (const original of profiles) {
+        const profile = normalizeAuthorProfile({ ...original, name: '작가', sourceUrl: 'https://attacker.test/fake' });
+        assert.equal(profile.sourceUrl, original.sourceUrl);
+        assert.equal(profile.photoUrl, original.photoUrl);
+        assert.equal(profile.imageSourceUrl, original.photoUrl ? original.sourceUrl : '');
+        assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(profile))), profile);
+        if (profile.photoUrl) {
+            const saved = normalizeAuthorProfile({ ...profile, storedPhoto: { id: 'ab'.repeat(32), sourceUrl: original.photoUrl } });
+            assert.equal(saved.photoUrl, `bookmanager-thumbnail://author-photo/${'ab'.repeat(32)}.png`);
+            assert.equal(saved.imageSourceUrl, original.sourceUrl);
+            assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(saved))), saved);
+            const chosen = normalizeAuthorProfile({ id: 'OL1A', name: '원래 저자', photoOverride: {
+                id: 'cd'.repeat(32), source: original.provider, sourceUrl: original.photoUrl,
+                query: '작가', imageSourceUrl: original.sourceUrl,
+            } });
+            assert.equal(chosen.id, 'OL1A');
+            assert.equal(chosen.imageSourceUrl, original.sourceUrl);
+        }
+    }
+});
+
+test('국내 저자 사진은 표지·다른 인물·임의 호스트와 추가 URL 인자를 허용하지 않는다', () => {
+    const cases = [
+        { provider: 'aladin', id: 'aladin:49154', urls: ['https://image.aladin.co.kr/product/1/cover.jpg', 'https://image.aladin.co.kr/Author/Photo/123/123.jpg', 'https://image.aladin.co.kr/Author/Photo/49154/49154.jpg?url=https://example.com'] },
+        { provider: 'kyobo', id: 'kyobo:1000646901', urls: ['https://contents.kyobobook.co.kr/sih/fit-in/300x0/pdt/9780000000000.jpg', 'https://contents.kyobobook.co.kr/dtl/author/1000646902.jpg', 'https://contents.kyobobook.co.kr/dtl/author/1000646901.jpg?t=1&redirect=private'] },
+        { provider: 'kmas', id: 'kmas:0000042604', urls: ['https://www.kmas.or.kr/common/file/atchmnflDownload.ajax?fileImageId=../../private', 'https://www.kmas.or.kr/common/file/atchmnflDownload.ajax?fileImageId=cd2302ca-686d-42a8-85fd-22b071fb82d8&filePath=private'] },
+    ];
+    for (const { provider, id, urls } of cases) {
+        for (const photoUrl of [...urls, 'https://attacker.test/author.jpg', 'file:///private/photo.jpg']) {
+            assert.equal(normalizeAuthorProfile({ provider, id, photoUrl }).photoUrl, '');
+        }
+        assert.equal(normalizeAuthorProfile({ provider, id: `${id}/../fake` }), null);
+    }
 });

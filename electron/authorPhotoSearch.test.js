@@ -213,6 +213,18 @@ test('search results contain opaque IDs and clean display data, never credential
     assert.equal((await h.invoke('selectPhoto', { candidateId: 'missing', url: 'https://attacker.example/photo' })).code, 'AUTHOR_PHOTO_INVALID_CANDIDATE');
 });
 
+test('selected Naver photos expose editable pixels only when requested', async t => {
+    const h = await harness(t);
+    const candidateId = (await h.invoke('searchPhotos', { query: 'Author' })).results[0].id;
+    const regular = await h.invoke('selectPhoto', { candidateId });
+    assert.equal(regular.success, true);
+    assert.equal(Object.hasOwn(regular, 'dataUrl'), false);
+    const editable = await h.invoke('selectPhoto', { candidateId, includeDataUrl: true });
+    assert.equal(editable.success, true);
+    assert.equal(editable.dataUrl, `data:image/png;base64,${PNG.toString('base64')}`);
+    assert.deepEqual(editable.photo, regular.photo);
+});
+
 test('unsafe returned image addresses are excluded and short pages stop pagination', async t => {
     const h = await harness(t, { requestJson: async () => ({ total: 100, items: [
         { ...items(1)[0], link: 'http://127.0.0.1/private' },

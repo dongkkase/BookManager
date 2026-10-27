@@ -29,7 +29,7 @@ test('설정의 인덱스 색인 갱신은 변경사항 확인 모드로 요청�
 });
 
 function folderFixture(choice, result = { success: true }) {
-    const calls = { index: [], scans: [], errors: [] };
+    const calls = { index: [], scans: [], errors: [], pages: [] };
     const context = {
         useCallback: callback => callback,
         window: { electronAPI: {
@@ -42,6 +42,7 @@ function folderFixture(choice, result = { success: true }) {
         backgroundLibraryScanCancelRef: { current: null },
         config: { language: 'ko' },
         saveConfig: async () => {},
+        saveFolderPage: (...args) => calls.pages.push(args),
         basename,
         normalizeLibraryKey: value => value,
         folderStatusItemRef: { current: {} },
@@ -85,6 +86,7 @@ for (const choice of ['smart', 'force']) {
         assert.equal(value.calls.scans.length, 1);
         assert.equal(value.calls.scans[0][1].refresh, true);
         assert.equal(value.calls.scans[0][1].force, false);
+        assert.deepEqual(value.calls.pages, [['folder', '', '/Library']]);
     });
 }
 
@@ -93,4 +95,5 @@ test('취소된 인덱스 갱신 뒤에는 후속 목록 스캔을 실행하지 
     await value.run('/Library');
     assert.equal(value.calls.index.length, 1);
     assert.equal(value.calls.scans.length, 0);
+    assert.deepEqual(value.calls.pages, []);
 });

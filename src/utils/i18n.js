@@ -1,5 +1,7 @@
 import { legacyTranslations } from './i18nData.js';
 import { readingListTranslations } from './readingListTranslations.js';
+import { dashboardTranslations } from './dashboardTranslations.js';
+import { recommendationPreferenceTranslations } from './recommendationPreferenceTranslations.js';
 
 export const SUPPORTED_LANGUAGES = ['ko', 'en', 'ja'];
 
@@ -48,6 +50,8 @@ const EXTRA_TRANSLATIONS = {
         star_action: 'GitHub에서 스타 남기기',
     },
     reading_lists: readingListTranslations.ko,
+    dashboard: dashboardTranslations.ko,
+    recommendation_preferences: recommendationPreferenceTranslations.ko,
     settings: {
         data_folder: {
             title: '데이터 폴더',
@@ -472,6 +476,10 @@ const EXTRA_TRANSLATIONS = {
         more_actions: '더보기',
         edit_metadata: '메타데이터 수정',
         edit_cover: '표지 수정',
+        preview_previous: '이전 이미지',
+        preview_next: '다음 이미지',
+        preview_previous_hint: '이전 이미지. 키보드 ← 또는 ↑로도 이동할 수 있습니다.',
+        preview_next_hint: '다음 이미지. 키보드 → 또는 ↓로도 이동할 수 있습니다.',
         file_count: '파일 수',
         folder_count: '하위 폴더 수',
         reading_time: '예상 독서 시간',
@@ -1058,6 +1066,8 @@ const EXTRA_TRANSLATIONS = {
         star_action: 'Leave a star on GitHub',
     },
     reading_lists: readingListTranslations.en,
+    dashboard: dashboardTranslations.en,
+    recommendation_preferences: recommendationPreferenceTranslations.en,
     settings: {
         data_folder: {
             title: 'Data folder',
@@ -1482,6 +1492,10 @@ const EXTRA_TRANSLATIONS = {
         more_actions: 'More actions',
         edit_metadata: 'Edit metadata',
         edit_cover: 'Edit cover',
+        preview_previous: 'Previous image',
+        preview_next: 'Next image',
+        preview_previous_hint: 'Previous image. You can also use the ← or ↑ arrow key.',
+        preview_next_hint: 'Next image. You can also use the → or ↓ arrow key.',
         file_count: 'Files',
         folder_count: 'Subfolders',
         reading_time: 'Estimated reading time',
@@ -2068,6 +2082,8 @@ const EXTRA_TRANSLATIONS = {
         star_action: 'GitHubでスターを付ける',
     },
     reading_lists: readingListTranslations.ja,
+    dashboard: dashboardTranslations.ja,
+    recommendation_preferences: recommendationPreferenceTranslations.ja,
     settings: {
         data_folder: {
             title: 'データフォルダー',
@@ -2492,6 +2508,10 @@ const EXTRA_TRANSLATIONS = {
         more_actions: 'その他の操作',
         edit_metadata: 'メタデータを編集',
         edit_cover: '表紙を編集',
+        preview_previous: '前の画像',
+        preview_next: '次の画像',
+        preview_previous_hint: '前の画像。キーボードの ← または ↑ キーでも移動できます。',
+        preview_next_hint: '次の画像。キーボードの → または ↓ キーでも移動できます。',
         file_count: 'ファイル数',
         folder_count: 'サブフォルダー数',
         reading_time: '予想読書時間',

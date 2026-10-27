@@ -35,7 +35,7 @@ test('macOS waits for the first splash paint and preserves the caller window act
         },
         signalReady: () => events.push('signaled'),
     });
-    await presentation.start({ BrowserWindow: {}, systemPreferences: systemSettings(true) });
+    await presentation.start({ BrowserWindow: {}, motionPreference: 'system', systemPreferences: systemSettings(true) });
     presentation.update('loading');
     const completion = presentation.complete({
         mainWindow: mainWindow(),

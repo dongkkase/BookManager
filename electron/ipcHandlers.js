@@ -6,6 +6,7 @@ import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
 import { registerAuthorProfilesIpc } from './authorProfiles.js';
 import { registerAuthorPhotoSearchIpc } from './authorPhotoSearch.js';
+import { registerAuthorProfilePhotosIpc } from './authorProfilePhotos.js';
 import { registerAppDataIpc } from './appDataIpc.js';
 import { createLibraryDataMaintenance } from './libraryDataMaintenance.js';
 import { isRegisteredLibraryFile } from './libraryPathScope.js';
@@ -3203,6 +3204,11 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
     registerAuthorProfilesIpc({ ipcMain, getMainWindow: hooks.getMainWindow });
+    registerAuthorProfilePhotosIpc({
+        ipcMain,
+        getMainWindow: hooks.getMainWindow,
+        getPhotoDirectory: () => path.join(resolveAppDataDir(getExecutableDir()), 'author-photos'),
+    });
     registerAuthorPhotoSearchIpc({
         ipcMain,
         getMainWindow: hooks.getMainWindow,
@@ -5313,7 +5319,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             window.webContents.send('viewer:config-change', {
                 lang: savedConfig.lang,
                 language: savedConfig.language,
-                motion_preference: savedConfig.motion_preference || 'system',
+                motion_preference: savedConfig.motion_preference || 'full',
                 hasTtsOpenAiKey: Boolean(String(savedApiKeys.tts_openai_key || '').trim()),
                 hasTtsGoogleKey: Boolean(String(savedApiKeys.tts_google_key || '').trim()),
                 hasSupertonicModel: supertonicModelManager.status().installed,

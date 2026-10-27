@@ -361,7 +361,10 @@ export function registerAuthorPhotoSearchIpc(options) {
                 if (temporaryPath) await fs.rm(temporaryPath, { force: true }).catch(() => {});
             }
             controller.signal.throwIfAborted();
-            return { success: true, photo: { id, sourceUrl: photo.sourceUrl, query: candidate.query } };
+            return {
+                success: true, photo: { id, sourceUrl: photo.sourceUrl, query: candidate.query },
+                ...(request.includeDataUrl === true ? { dataUrl: `data:image/png;base64,${photo.buffer.toString('base64')}` } : {}),
+            };
         } catch (error) {
             return failure(error, 'AUTHOR_PHOTO_IMAGE_FAILED');
         } finally {
