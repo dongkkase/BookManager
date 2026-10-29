@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { dailyPassage, dashboardDate, dashboardMonth, dashboardMonthDays, readingDurationLabel, shiftDashboardMonth } from './dashboardActivityState.js';
+import { randomPassage, dashboardDate, dashboardMonth, dashboardMonthDays, readingDurationLabel, shiftDashboardMonth } from './dashboardActivityState.js';
 
 test('독서 달력은 로컬 날짜와 연도 경계에 맞춰 월을 이동한다', () => {
     assert.equal(dashboardMonth(new Date(2026, 0, 1, 0, 1)), '2026-01');
@@ -42,21 +42,20 @@ test('독서 시간은 분 미만·분·시간 경계에서 과장 없이 표시
     assert.deepEqual(readingDurationLabel(86400, t), { key: 'dashboard.hours_minutes', values: [24, 0] });
 });
 
-test('오늘의 문장은 같은 날짜에 안정적으로 선택되며 저장 목록 순서에 영향받지 않는다', () => {
+test('문장은 날짜와 관계없이 매번 새 난수로 전체 후보에서 선택한다', () => {
     const entries = Object.freeze(Array.from({ length: 24 }, (_, index) => Object.freeze({ id: `passage-${index}`, text: `Saved passage ${index}` })));
-    const selected = dailyPassage(entries, '2026-10-26');
-    assert.ok(entries.includes(selected));
-    assert.equal(dailyPassage(entries, '2026-10-26'), selected);
-    assert.equal(dailyPassage([...entries].reverse(), '2026-10-26'), selected);
-    assert.equal(dailyPassage([...entries.slice(9), ...entries.slice(0, 9)], '2026-10-26'), selected);
-    const selections = new Set(Array.from({ length: 31 }, (_, index) => dailyPassage(entries, `2026-10-${String(index + 1).padStart(2, '0')}`).id));
-    assert.ok(selections.size > 1, 'Daily passages must not stay fixed to one entry for the entire month');
+    for (let index = 0; index < entries.length; index += 1) {
+        assert.equal(randomPassage(entries, () => (index + 0.5) / entries.length), entries[index]);
+    }
+    assert.equal(randomPassage(entries, () => 0), entries[0]);
+    assert.equal(randomPassage(entries, () => 0.999999), entries.at(-1));
 });
 
 test('문장 선택은 빈 문장을 건너뛰며 문장이 없으면 빈 상태를 반환한다', () => {
     const valid = { id: 'saved', text: '한 문장' };
-    assert.equal(dailyPassage([null, {}, { id: 'blank', text: ' \n\t ' }, valid], '2026-10-26'), valid);
-    assert.equal(dailyPassage([], '2026-10-26'), null);
-    assert.equal(dailyPassage(undefined, '2026-10-26'), null);
-    assert.equal(dailyPassage([{ id: 'blank', text: '' }], '2026-10-26'), null);
+    assert.equal(randomPassage([null, {}, { id: 'blank', text: ' \n\t ' }, valid], () => 0.999999), valid);
+    const noRandom = () => assert.fail('Empty passages do not need a random draw');
+    assert.equal(randomPassage([], noRandom), null);
+    assert.equal(randomPassage(undefined, noRandom), null);
+    assert.equal(randomPassage([{ id: 'blank', text: '' }], noRandom), null);
 });

@@ -188,6 +188,14 @@ async function verifyRecommendationBackgroundRefresh(trigger, label) {
     const coverButton = card.querySelector('.reading-dashboard-recommendation-cover');
     const coverImage = coverButton?.querySelector('img');
     check(readButton && description && coverImage, label + ': recommendation preview is incomplete');
+    const sourceCover = new Image();
+    sourceCover.src = cover;
+    await sourceCover.decode();
+    await until(() => {
+        const bounds = coverImage.getBoundingClientRect();
+        const scale = Math.max(bounds.width * devicePixelRatio / sourceCover.naturalWidth, bounds.height * devicePixelRatio / sourceCover.naturalHeight);
+        return coverImage.complete && coverImage.naturalWidth > 0 && (scale >= 1 || coverImage.getAttribute('src')?.startsWith('blob:'));
+    }, label + ': recommendation cover resampling did not settle');
     const coverSource = coverImage.getAttribute('src');
     const removedContent = [];
     const observer = new MutationObserver(records => {

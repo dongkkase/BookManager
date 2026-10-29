@@ -33,7 +33,7 @@ export function AppLockOverlay({
                                     className={`app-library-scan-card ${item.src ? '' : 'is-placeholder'}`}
                                     key={item.key || item.src || item.path || item.name}
                                 >
-                                    <CoverArtwork className="app-library-scan-thumbnail" src={item.src} />
+                                    <CoverArtwork className="app-library-scan-thumbnail" src={item.src} smooth />
                                     {item.name && (
                                         <span className="app-library-scan-caption" title={item.path || item.name}>
                                             {item.name}
@@ -70,7 +70,7 @@ export function AppLockOverlay({
                                 className={`app-lock-thumbnail-frame ${item.src ? '' : 'is-placeholder'}`}
                                 key={item.key || item.src || item.path || item.name}
                             >
-                                <CoverArtwork className="app-lock-thumbnail" src={item.src} />
+                                <CoverArtwork className="app-lock-thumbnail" src={item.src} smooth />
                                 {item.name && (
                                     <span className="app-lock-thumbnail-caption" title={item.path || item.name}>
                                         {item.name}

@@ -854,7 +854,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-preview-title">{t('cover_preview')}</div>
         <div className="renamer-preview-img-box">
           {coverPreview && !previewError.cover
-            ? <img src={coverPreview} alt="" onError={() => setPreviewError(current => ({ ...current, cover: true }))} />
+            ? <SmoothCoverImage src={coverPreview} alt="" onError={() => setPreviewError(current => ({ ...current, cover: true }))} />
             : <SmoothCoverImage src={noImage} alt={activeArchive ? t('no_preview') : t('tf_empty_no_data')} className="renamer-no-image" />}
         </div>
 
@@ -863,7 +863,7 @@ function RenamerTab({ config, saveConfig, t, showToast }) {
         <div className="renamer-preview-title">{t('inner_preview')}</div>
         <div className="renamer-preview-img-box">
           {innerPreview && !previewError.inner
-            ? <img src={innerPreview} alt="" onError={() => setPreviewError(current => ({ ...current, inner: true }))} />
+            ? <SmoothCoverImage src={innerPreview} alt="" onError={() => setPreviewError(current => ({ ...current, inner: true }))} />
             : <SmoothCoverImage src={noImage} alt={activeEntry ? t('no_image') : t('tf_empty_no_data')} className="renamer-no-image" />}
         </div>
       </div>

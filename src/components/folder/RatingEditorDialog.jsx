@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import { detailMetadataValue } from './detailPanelCommon';
 import { initialRating, ratingStarFill } from '../../ratingPolicy';
 import '../../styles/RatingEditorDialog.css';
@@ -90,7 +91,7 @@ export function RatingEditorDialog({ file, t, onSave, onClose }) {
                 aria-labelledby={`${id}-title`} aria-busy={saving} tabIndex={-1} onSubmit={submit}>
                 <button className="rating-editor-close" type="button" aria-label={t('rating_close')} onClick={onClose} disabled={saving}>×</button>
                 <header className="rating-editor-book">
-                    {file.cover && !imageError ? <img src={file.cover} alt="" onError={() => setImageError(true)} />
+                    {file.cover && !imageError ? <SmoothCoverImage src={file.cover} alt="" onError={() => setImageError(true)} />
                         : <CoverArtwork className="rating-editor-cover" fallbackAlt="" />}
                     <div>
                         <div className="rating-editor-series">{detailMetadataValue(file, 'series', 'Series', 'album') || t('info_no_series')}</div>

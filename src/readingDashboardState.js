@@ -19,11 +19,11 @@ function usableBook(file) {
 
 function insertLatest(items, file, limit) {
     const date = dashboardAddedTimestamp(file);
-    const index = items.findIndex(item => dashboardAddedTimestamp(item) < date);
+    const index = items.findIndex(item => item.date < date);
     if (index === -1) {
-        if (items.length < limit) items.push(file);
+        if (items.length < limit) items.push({ file, date });
     } else {
-        items.splice(index, 0, file);
+        items.splice(index, 0, { file, date });
         if (items.length > limit) items.pop();
     }
 }
@@ -39,7 +39,7 @@ export function summarizeDashboardCatalog(files = [], limit = 6) {
         paths.add(path);
         if (maxItems > 0) insertLatest(latest, file, maxItems);
     }
-    return { bookCount: paths.size, latest };
+    return { bookCount: paths.size, latest: latest.map(item => item.file) };
 }
 
 export function selectDashboardRecent(files = [], limit = 3) {

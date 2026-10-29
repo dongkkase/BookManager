@@ -68,6 +68,35 @@ function credentials(config) {
     return { id, secret };
 }
 
+function searchPage(data, start) {
+    if (!Array.isArray(data?.items)) throw photoError('AUTHOR_PHOTO_REQUEST_FAILED');
+    const items = data.items.slice(0, PAGE_SIZE).flatMap(item => {
+        const url = imageUrl(item?.link);
+        const thumbnail = imageUrl(item?.thumbnail, 8192);
+        if (!url || !thumbnail) return [];
+        const title = decodeHTML(String(item.title || '').replace(/<[^>]*>/g, '')).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 300);
+        const dimension = value => Math.min(100000, Math.max(0, Math.round(Number(value) || 0)));
+        return [{ url, thumbnail, title, width: dimension(item.sizewidth), height: dimension(item.sizeheight) }];
+    });
+    const nextStart = start + Math.min(PAGE_SIZE, data.items.length);
+    const hasNext = nextStart <= 1000 && data.items.length >= PAGE_SIZE && nextStart <= Number(data.total);
+    return { items, hasNext, nextStart: hasNext ? nextStart : null };
+}
+
+function cachedSearchPage(value, start) {
+    if (!Array.isArray(value?.items) || value.items.length > PAGE_SIZE || typeof value.hasNext !== 'boolean'
+        || (value.hasNext ? value.nextStart !== start + PAGE_SIZE || value.nextStart > 1000 : value.nextStart !== null)) return null;
+    const items = [];
+    for (const item of value.items) {
+        const url = imageUrl(item?.url);
+        const thumbnail = imageUrl(item?.thumbnail, 8192);
+        if (!url || !thumbnail || typeof item.title !== 'string' || item.title.length > 300
+            || ![item.width, item.height].every(size => Number.isInteger(size) && size >= 0 && size <= 100000)) return null;
+        items.push({ url, thumbnail, title: item.title.replace(/[\u0000-\u001f\u007f]/g, ' '), width: item.width, height: item.height });
+    }
+    return { items, hasNext: value.hasNext, nextStart: value.nextStart };
+}
+
 export function requestNaverImages({ query, start, keys, signal }, { get = https.get, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
     const url = new URL(NAVER_IMAGE_URL);
     url.search = new URLSearchParams({ query, start: String(start), display: String(PAGE_SIZE), sort: 'sim' }).toString();
@@ -151,7 +180,7 @@ async function resizePhoto(buffer, maxSize) {
 }
 
 export function registerAuthorPhotoSearchIpc(options) {
-    const { ipcMain, getMainWindow, getConfig, getPhotoDirectory } = options;
+    const { ipcMain, getMainWindow, getConfig, getPhotoDirectory, resultCache } = options;
     const requestJson = options.requestJson || requestNaverImages;
     const downloadImage = options.downloadImage || downloadCoverImage;
     const resizeImage = options.resizeImage || resizePhoto;
@@ -270,31 +299,39 @@ export function registerAuthorPhotoSearchIpc(options) {
             const config = await getConfig();
             const keys = credentials(config);
             controller.signal.throwIfAborted();
-            const data = await requestJson({ query, start, keys, signal: controller.signal });
+            const scope = createHash('sha256').update(JSON.stringify([keys.id, keys.secret])).digest('hex');
+            const cacheKey = JSON.stringify([query, start, scope]);
+            let page;
+            try {
+                const cached = await resultCache?.get('naver-photos', cacheKey);
+                if (Number.isFinite(cached?.expiresAt) && cached.expiresAt > now()) page = cachedSearchPage(cached.value, start);
+            } catch { /* Search remains available when the optional cache cannot be read. */ }
             controller.signal.throwIfAborted();
-            if (owner.disposed || !Array.isArray(data?.items)) throw photoError('AUTHOR_PHOTO_REQUEST_FAILED');
+            if (!page) {
+                const data = await requestJson({ query, start, keys, signal: controller.signal });
+                controller.signal.throwIfAborted();
+                if (owner.disposed) throw photoError('AUTHOR_PHOTO_CANCELLED');
+                page = searchPage(data, start);
+                try { await resultCache?.set('naver-photos', cacheKey, page); }
+                catch { /* A cache write failure must not discard valid search results. */ }
+                controller.signal.throwIfAborted();
+            }
+            if (owner.disposed) throw photoError('AUTHOR_PHOTO_CANCELLED');
             for (const [id, candidate] of owner.candidates) {
                 if (now() - candidate.created >= CANDIDATE_TTL_MS) { owner.candidates.delete(id); owner.previews.delete(id); }
             }
             const results = [];
-            for (const item of data.items.slice(0, PAGE_SIZE)) {
-                const url = imageUrl(item?.link);
-                const thumbnail = imageUrl(item?.thumbnail, 8192);
-                if (!url || !thumbnail) continue;
+            for (const item of page.items) {
                 const id = randomUUID();
-                const title = decodeHTML(String(item.title || '').replace(/<[^>]*>/g, '')).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 300);
-                const dimension = value => Math.min(100000, Math.max(0, Math.round(Number(value) || 0)));
-                owner.candidates.set(id, { url, thumbnail, query, created: now() });
-                results.push({ id, title, width: dimension(item.sizewidth), height: dimension(item.sizeheight) });
+                owner.candidates.set(id, { url: item.url, thumbnail: item.thumbnail, query, created: now() });
+                results.push({ id, title: item.title, width: item.width, height: item.height });
             }
             while (owner.candidates.size > MAX_CANDIDATES) {
                 const oldest = owner.candidates.keys().next().value;
                 owner.candidates.delete(oldest);
                 owner.previews.delete(oldest);
             }
-            const nextStart = start + data.items.slice(0, PAGE_SIZE).length;
-            const hasNext = nextStart <= 1000 && data.items.length >= PAGE_SIZE && nextStart <= Number(data.total);
-            return { success: true, results, hasNext, nextStart: hasNext ? nextStart : null };
+            return { success: true, results, hasNext: page.hasNext, nextStart: page.nextStart };
         } catch (error) {
             return { ...failure(controller?.signal.aborted ? photoError('AUTHOR_PHOTO_CANCELLED') : error), results: [] };
         } finally {

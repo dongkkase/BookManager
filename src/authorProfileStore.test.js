@@ -1045,19 +1045,55 @@ test('Naver 단독 사진은 수동으로만 사용하고 이니셜 또는 자�
     store.dispose();
 });
 
+test('사진 없는 직접 입력 프로필은 다시 시작해도 남고 사진 추가 후에도 정보가 유지된다', async () => {
+    const entered = { provider: 'local', id: 'local:5273c576-25e3-4c58-b6f2-d5636ed0da46', name: 'Jane Doe',
+        birthDate: '1970', deathDate: '', topWork: 'A Book', description: 'Manually entered biography\n\nSecond paragraph' };
+    const storage = memoryStorage();
+    const clock = scheduler();
+    const create = () => createAuthorProfileStore({ storage, ...clock,
+        search: () => assert.fail('A manually entered profile must not trigger automatic search'),
+        persistPhoto: () => assert.fail('A photo-less or imported local profile must not download a photo') });
+    let store = create();
+    assert.equal(await store.saveManual('Jane Doe', entered), true);
+    assert.equal(store.getStatus('Jane Doe'), 'empty');
+    assert.equal(store.hasOverride('Jane Doe'), true);
+    assert.equal(storage.read(AUTHOR_PROFILES_KEY)['jane doe'].id, entered.id);
+    store.dispose();
+    store = create();
+    store.setAuthors([author()]);
+    store.setBackgroundAuthors([author()]);
+    await clock.advance(30 * DAY_MS);
+    assert.deepEqual(store.getProfile('Jane Doe'), normalizeAuthorProfile(entered));
+    assert.equal(clock.pending(), 0);
+    const photoOverride = { id: 'cd'.repeat(32), source: 'local', sourceUrl: '', query: '' };
+    assert.equal(await store.saveManual('Jane Doe', { ...store.getProfile('Jane Doe'), photoOverride }), true);
+    store.reload();
+    const withPhoto = store.getProfile('Jane Doe');
+    assert.equal(withPhoto.id, entered.id);
+    assert.equal(withPhoto.description, entered.description);
+    assert.equal(withPhoto.birthDate, entered.birthDate);
+    assert.equal(withPhoto.topWork, entered.topWork);
+    assert.equal(withPhoto.photoOverride.id, photoOverride.id);
+    assert.equal(store.getStatus('Jane Doe'), 'ready');
+    store.dispose();
+});
+
 test('검색 응답이나 자동 캐시에 수동 사진이 섞여 있어도 자동으로 지정하지 않는다', async () => {
     const id = 'ef'.repeat(32);
     const photoOverride = { id, sourceUrl: 'https://images.example.com/author.jpg', query: 'Jane Doe' };
     const naver = { provider: 'naver', id, name: 'Jane Doe', photoOverride };
     const overridden = profile('OL9A', 'Jane Doe', { photoOverride });
-    for (const profiles of [[naver], [overridden], [naver, overridden], [naver, overridden, profile()]]) {
+    const local = { provider: 'local', id: 'local:5273c576-25e3-4c58-b6f2-d5636ed0da46', name: 'Jane Doe' };
+    for (const profiles of [[naver], [overridden], [local], [naver, overridden], [naver, overridden, profile()]]) {
         const storage = memoryStorage({ [AUTOMATIC_AUTHOR_PROFILES_KEY]: {
             'jane doe': { profile: naver, checkedAt: 1, expiresAt: DAY_MS, version: AUTHOR_PROFILE_CACHE_VERSION },
             other: { profile: overridden, checkedAt: 1, expiresAt: DAY_MS, version: AUTHOR_PROFILE_CACHE_VERSION },
+            local: { profile: local, checkedAt: 1, expiresAt: DAY_MS, version: AUTHOR_PROFILE_CACHE_VERSION },
         } });
         const store = createAuthorProfileStore({ storage, now: () => 100, search: async () => ({ success: true, profiles }) });
         assert.equal(store.getProfile('Jane Doe'), null);
         assert.equal(store.getProfile('Other'), null);
+        assert.equal(store.getProfile('Local'), null);
         store.setAuthors([author()]);
         await flush();
         assert.equal(store.getProfile('Jane Doe')?.id || null, profiles.length === 3 ? 'OL1A' : null);

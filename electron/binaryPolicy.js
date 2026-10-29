@@ -50,6 +50,16 @@ function appendSevenZipPackageCandidates(candidates, root, platform, arch, alias
     }
 }
 
+function appendFullSevenZipCandidates(candidates, roots, platform, arch) {
+    const platformPath = platform === 'win32' ? path.win32 : path;
+    const folder = sevenZipBinPlatformFolder(platform);
+    const binary = platform === 'win32' ? '7z.exe' : '7zz';
+    for (const root of roots) {
+        candidates.push(platformPath.join(root, 'bin', folder, arch, binary));
+        candidates.push(platformPath.join(root, 'node_modules', '7zip-bin-full', folder, arch, binary));
+    }
+}
+
 function appendWindowsFfmpegCandidates(candidates, platform, aliases) {
     if (platform !== 'win32') return;
     for (const directory of ['C:\\ffmpeg\\bin']) {
@@ -67,7 +77,9 @@ export function binaryCandidates(toolName, options = {}) {
         ? Object.fromEntries(Object.entries(environment).map(([key, value]) => [key.toUpperCase(), value]))
         : environment;
     const arch = options.arch || process.arch;
-    const aliases = TOOL_ALIASES[toolName] || [toolName];
+    const aliases = [...(TOOL_ALIASES[toolName] || [toolName])];
+    if (platform !== 'win32' && toolName === '7z') aliases.unshift('7zz');
+    if (platform !== 'win32' && toolName === '7za') aliases.push('7zz');
     const roots = [
         options.resourcesPath,
         options.executableDir,
@@ -75,6 +87,10 @@ export function binaryCandidates(toolName, options = {}) {
     ].filter(Boolean);
     const platformFolders = platformBinaryFolders(platform, arch);
     const candidates = [];
+
+    if (toolName === '7z') {
+        appendFullSevenZipCandidates(candidates, roots, platform, arch);
+    }
 
     for (const root of roots) {
         for (const folder of platformFolders) {
@@ -138,7 +154,13 @@ export function findBinaryPath(toolName, options = {}) {
 }
 
 export function missingBinaryMessage(toolName, platform = process.platform) {
-    if (toolName === '7za' || toolName === '7z') {
+    if (toolName === '7z') {
+        const bundledPath = platform === 'win32'
+            ? 'bin/win/<arch>/7z.exe 및 7z.dll'
+            : platform === 'darwin' ? 'bin/mac/<arch>/7zz' : 'bin/linux/<arch>/7zz';
+        return `7-Zip 실행 파일을 찾을 수 없습니다. 앱의 ${bundledPath}를 확인하거나 7-Zip을 설치하세요.`;
+    }
+    if (toolName === '7za') {
         return platform === 'win32'
             ? '7-Zip 실행 파일을 찾을 수 없습니다. 앱의 bin/win/7za.exe를 확인하거나 7-Zip을 설치하세요.'
             : '7z 실행 파일을 찾을 수 없습니다. 앱의 bundled bin/mac/<arch>/7za를 확인하거나 Homebrew 등으로 7-Zip을 설치하세요.';

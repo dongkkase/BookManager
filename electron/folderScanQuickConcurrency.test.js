@@ -31,7 +31,7 @@ function captureEvents() {
     };
 }
 
-test('quick recursive scans overlap bounded directory reads and stats while preserving breadth-first results', async t => {
+test('quick recursive scans overlap bounded directory reads and entry stats while preserving breadth-first results', async t => {
     const { root, directories } = createFixture(t);
     const calls = { readdir: new Map(), stat: new Map() };
     const active = { readdir: 0, stat: 0 };
@@ -74,9 +74,50 @@ test('quick recursive scans overlap bounded directory reads and stats while pres
         assert.equal(active[method], 0);
         assert.ok([...calls[method].values()].every(count => count === 1));
     }
-    assert.deepEqual([...calls.stat.keys()], directories);
+    assert.deepEqual([...calls.stat.keys()], expected);
+    assert.equal(calls.stat.has(path.join(root, 'Ignored.png')), false);
+    assert.equal(calls.stat.has(path.join(root, 'Linked')), false);
     assert.equal(calls.readdir.has(path.join(root, '.hidden')), false);
     assert.equal(calls.readdir.has(path.join(root, 'Linked')), false);
+});
+
+test('quick scans skip deleted, inaccessible, and replaced files while retaining other streamed file stats', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-quick-file-stats-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const names = ['Deleted.cbz', 'Inaccessible.cbz', 'Replaced.cbz', 'Visible.cbz'];
+    for (const name of names) fs.writeFileSync(path.join(root, name), 'book content');
+    const visiblePath = path.join(root, 'Visible.cbz');
+    const expectedStats = fs.statSync(visiblePath);
+    const stat = fs.promises.stat;
+    t.mock.method(fs.promises, 'stat', async (...args) => {
+        if (args[0] === path.join(root, 'Deleted.cbz')) {
+            await fs.promises.unlink(args[0]);
+        }
+        if (args[0] === path.join(root, 'Inaccessible.cbz')) {
+            throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+        }
+        if (args[0] === path.join(root, 'Replaced.cbz')) {
+            await fs.promises.unlink(args[0]);
+            await fs.promises.mkdir(args[0]);
+        }
+        return stat(...args);
+    });
+    const { events, event } = captureEvents();
+    const rows = await scanFolder(root, {
+        quickListOnly: true,
+        includeSubfolders: true,
+        reportQuickFiles: true,
+        resultCacheKey: 'file-stats',
+    }, event);
+    assert.deepEqual(rows.map(row => row.path), [visiblePath]);
+    assert.equal(rows[0].size, expectedStats.size);
+    assert.equal(rows[0].mtime, expectedStats.mtimeMs);
+    assert.equal(rows[0].ctime, expectedStats.ctimeMs);
+    assert.equal(rows[0].created, new Date(expectedStats.birthtimeMs).toISOString());
+    assert.equal(rows[0].modified, new Date(expectedStats.mtimeMs).toISOString());
+    const batches = events.filter(event => event.channel === 'folder:quickFiles');
+    assert.deepEqual(batches.flatMap(event => event.data.files), rows);
+    assert.equal(batches.at(-1).data.matchedCount, 1);
 });
 
 test('a prefetched read failure and unavailable folder stat do not discard other quick scan results', async t => {

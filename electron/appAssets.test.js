@@ -10,6 +10,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const require = createRequire(import.meta.url);
 const { createSingleFileZip } = require('./zipWindowsPortable.cjs');
 const afterPackHook = require('./afterPack.cjs');
+const { Arch } = require('builder-util');
 const packageConfig = JSON.parse(
     fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
 );
@@ -37,6 +38,19 @@ function readZipEntryNames(filePath) {
         offset = nameStart + nameLength + extraLength + commentLength;
     }
     return names;
+}
+
+function createSevenZipFixture(projectDir, platform, arch) {
+    const packagePath = path.join(projectDir, 'node_modules', '7zip-bin-full');
+    const sourceDir = path.join(packagePath, platform, arch);
+    const binaries = platform === 'win' ? ['7z.exe', '7z.dll'] : ['7zz'];
+    fs.mkdirSync(sourceDir, { recursive: true });
+    for (const fileName of [...binaries, 'License.txt']) {
+        const sourcePath = path.join(sourceDir, fileName);
+        fs.writeFileSync(sourcePath, `${platform}/${arch}/${fileName}`);
+        fs.chmodSync(sourcePath, 0o644);
+    }
+    fs.writeFileSync(path.join(packagePath, 'LICENSE.txt'), 'package license');
 }
 
 test('macOS 고해상도 앱 아이콘은 1024px 정사각형이다', () => {
@@ -78,17 +92,29 @@ test('macOS 배포본은 Developer ID 서명과 공증 설정을 사용한다', 
     assert.match(notarizeSource, /APPLE_KEYCHAIN_PROFILE/);
 });
 
-test('macOS 배포본은 bundled 7za 리소스를 포함한다', () => {
+test('배포본은 RAR를 지원하는 full 7-Zip 리소스를 포함한다', () => {
     assert.equal(packageConfig.devDependencies['7zip-bin'], '^5.2.0');
+    assert.equal(packageConfig.devDependencies['7zip-bin-full'], '26.5.1');
     assert.equal(packageConfig.build.afterPack, 'electron/afterPack.cjs');
-    assert.deepEqual(afterPackHook.MAC_7ZA_RELATIVE_PATHS, [
-        path.join('Contents', 'Resources', 'bin', 'mac', 'x64', '7za'),
-        path.join('Contents', 'Resources', 'bin', 'mac', 'arm64', '7za'),
+    assert.deepEqual(afterPackHook.MAC_SEVEN_ZIP_RELATIVE_PATHS, [
+        path.join('Contents', 'Resources', 'bin', 'mac', 'x64', '7zz'),
+        path.join('Contents', 'Resources', 'bin', 'mac', 'arm64', '7zz'),
     ]);
     assert.equal(
         afterPackHook.MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH,
         path.join('Contents', 'Resources', 'bin', 'mac', 'universal', 'file-association-helper'),
     );
+});
+
+test('macOS full 7-Zip 패키지는 x64와 arm64를 모두 포함한 universal 바이너리다', () => {
+    for (const arch of ['x64', 'arm64']) {
+        const binary = fs.readFileSync(path.join(projectRoot, 'node_modules', '7zip-bin-full', 'mac', arch, '7zz'));
+        assert.equal(binary.readUInt32BE(0), 0xcafebabe);
+        const architectureCount = binary.readUInt32BE(4);
+        const cpuTypes = Array.from({ length: architectureCount }, (_, index) => binary.readUInt32BE(8 + index * 20));
+        assert.ok(cpuTypes.includes(0x01000007), 'x86_64 architecture is required');
+        assert.ok(cpuTypes.includes(0x0100000c), 'arm64 architecture is required');
+    }
 });
 
 test('macOS 배포본은 지원 확장자와 코믹 UTI를 선언한다', () => {
@@ -115,18 +141,14 @@ test('Supertonic ONNX 런타임과 제3자 고지는 배포본에 포함한다',
     assert.equal(fs.existsSync(path.join(projectRoot, 'THIRD_PARTY_NOTICES.md')), true);
 });
 
-test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한다', async () => {
+test('macOS universal afterPack은 full 7-Zip과 라이선스를 복사하고 실행 권한을 보정한다', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-'));
     try {
         const projectDir = path.join(tempDir, 'project');
         const appOutDir = path.join(tempDir, 'out');
         const appRoot = path.join(appOutDir, 'BookManager.app');
-        for (const relativePath of afterPackHook.MAC_7ZA_RELATIVE_PATHS) {
-            const arch = path.basename(path.dirname(relativePath));
-            const sourcePath = path.join(projectDir, 'node_modules', '7zip-bin', 'mac', arch, '7za');
-            fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-            fs.writeFileSync(sourcePath, `7za ${arch}`);
-            fs.chmodSync(sourcePath, 0o644);
+        for (const arch of ['x64', 'arm64']) {
+            createSevenZipFixture(projectDir, 'mac', arch);
         }
         const helperPath = path.join(
             appRoot,
@@ -138,6 +160,7 @@ test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한�
 
         await afterPackHook.afterPack({
             electronPlatformName: 'darwin',
+            arch: Arch.universal,
             appOutDir,
             packager: {
                 projectDir,
@@ -147,11 +170,14 @@ test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한�
             },
         });
 
-        for (const relativePath of afterPackHook.MAC_7ZA_RELATIVE_PATHS) {
+        for (const relativePath of afterPackHook.MAC_SEVEN_ZIP_RELATIVE_PATHS) {
             const destinationPath = path.join(appRoot, relativePath);
+            const arch = path.basename(path.dirname(relativePath));
             const mode = fs.statSync(destinationPath).mode;
-            assert.equal(fs.readFileSync(destinationPath, 'utf8'), `7za ${path.basename(path.dirname(relativePath))}`);
+            assert.equal(fs.readFileSync(destinationPath, 'utf8'), `mac/${arch}/7zz`);
             assert.equal((mode & 0o111) !== 0, true);
+            assert.equal(fs.readFileSync(path.join(path.dirname(destinationPath), 'License.txt'), 'utf8'), `mac/${arch}/License.txt`);
+            assert.equal(fs.readFileSync(path.join(path.dirname(destinationPath), '7zip-bin-full-LICENSE.txt'), 'utf8'), 'package license');
         }
         assert.equal((fs.statSync(helperPath).mode & 0o111) !== 0, true);
     } finally {
@@ -159,11 +185,12 @@ test('macOS afterPack은 bundled 7za를 복사하고 실행 권한을 보정한�
     }
 });
 
-test('macOS universal 임시 앱 afterPack에서는 bundled 7za를 복사하지 않는다', async () => {
+test('macOS universal 임시 앱 afterPack에서는 full 7-Zip을 복사하지 않는다', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-temp-'));
     try {
         await afterPackHook.afterPack({
             electronPlatformName: 'darwin',
+            arch: Arch.x64,
             appOutDir: path.join(tempDir, 'mac-universal-x64-temp'),
             packager: {
                 projectDir: tempDir,
@@ -174,6 +201,72 @@ test('macOS universal 임시 앱 afterPack에서는 bundled 7za를 복사하지 
         });
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('afterPack은 대상 플랫폼과 아키텍처의 full 7-Zip 파일만 복사한다', async t => {
+    for (const [electronPlatformName, platform, arch] of [
+        ['darwin', 'mac', 'x64'],
+        ['darwin', 'mac', 'arm64'],
+        ['win32', 'win', 'x64'],
+        ['linux', 'linux', 'x64'],
+        ['linux', 'linux', 'arm64'],
+    ]) {
+        await t.test(`${platform}/${arch}`, async () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-target-'));
+            try {
+                const projectDir = path.join(tempDir, 'project');
+                const appOutDir = path.join(tempDir, 'out');
+                for (const sourcePlatform of ['mac', 'win', 'linux']) {
+                    for (const sourceArch of ['x64', 'arm64']) createSevenZipFixture(projectDir, sourcePlatform, sourceArch);
+                }
+                const resourcesPath = electronPlatformName === 'darwin'
+                    ? path.join(appOutDir, 'BookManager.app', 'Contents', 'Resources')
+                    : path.join(appOutDir, 'resources');
+                if (electronPlatformName === 'darwin') {
+                    const helperPath = path.join(appOutDir, 'BookManager.app', afterPackHook.MAC_FILE_ASSOCIATION_HELPER_RELATIVE_PATH);
+                    fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+                    fs.writeFileSync(helperPath, 'file association helper');
+                }
+                await afterPackHook.afterPack({
+                    electronPlatformName,
+                    arch: Arch[arch],
+                    appOutDir,
+                    packager: { projectDir, appInfo: { productFilename: 'BookManager' } },
+                });
+                assert.deepEqual(fs.readdirSync(path.join(resourcesPath, 'bin')), [platform]);
+                assert.deepEqual(fs.readdirSync(path.join(resourcesPath, 'bin', platform)).filter(name => name !== 'universal'), [arch]);
+                const destinationDir = path.join(resourcesPath, 'bin', platform, arch);
+                const binaries = platform === 'win' ? ['7z.exe', '7z.dll'] : ['7zz'];
+                assert.deepEqual(fs.readdirSync(destinationDir).sort(), [...binaries, 'License.txt', '7zip-bin-full-LICENSE.txt'].sort());
+                for (const binary of binaries) {
+                    assert.equal(fs.readFileSync(path.join(destinationDir, binary), 'utf8'), `${platform}/${arch}/${binary}`);
+                    if (platform !== 'win') assert.notEqual(fs.statSync(path.join(destinationDir, binary)).mode & 0o111, 0);
+                }
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+    }
+});
+
+test('afterPack은 필요한 7-Zip DLL이나 라이선스가 없으면 배포를 중단한다', async t => {
+    for (const missingFile of ['7z.dll', 'License.txt']) {
+        await t.test(missingFile, async () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-afterpack-missing-'));
+            try {
+                createSevenZipFixture(tempDir, 'win', 'x64');
+                fs.unlinkSync(path.join(tempDir, 'node_modules', '7zip-bin-full', 'win', 'x64', missingFile));
+                await assert.rejects(afterPackHook.afterPack({
+                    electronPlatformName: 'win32',
+                    arch: Arch.x64,
+                    appOutDir: path.join(tempDir, 'out'),
+                    packager: { projectDir: tempDir },
+                }), error => error.message.includes('Missing bundled 7-Zip resource') && error.message.endsWith(missingFile));
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
     }
 });
 

@@ -402,7 +402,7 @@ async function initializeApp() {
     distIndexPath: DIST_INDEX_PATH,
     preloadPath: path.join(__dirname, 'viewerPreload.cjs'),
     getIconPath: getAppIconPath,
-    getSevenZPath: async () => await getBinPath('7za') || await getBinPath('7z'),
+    getSevenZPath: async () => await getBinPath('7z'),
     getAudioLibraryRecord: getViewerAudioLibraryRecord,
     getLibraryDbPath: () => resolveLibraryDbPath(getExecutableDir()),
     getMainWindow: () => mainWindow,

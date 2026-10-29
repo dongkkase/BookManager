@@ -199,6 +199,66 @@ window.runDashboardInsightsTests = async () => {
     await ready();
     check(goal().querySelector('[role="progressbar"][aria-valuemax="5"]'), 'Goal was not restored after remount');
 
+    const originalRandom = Math.random;
+    const passageText = () => passage().querySelector('blockquote')?.textContent;
+    const activateTab = activeTab => window.dispatchEvent(new CustomEvent('bookmanager:active-tab-changed', { detail: { activeTab } }));
+    try {
+        Math.random = () => 0;
+        render(true);
+        await ready();
+        check(passageText() === originalCatalog.entries[0].text, 'A dashboard visit should choose a passage with fresh randomness');
+        Math.random = () => 0.999;
+        render();
+        await frames();
+        check(passageText() === originalCatalog.entries[0].text, 'Ordinary dashboard rerenders must not reroll the selected passage');
+        annotationCatalog = { entries: originalCatalog.entries.map(entry => ({ ...entry })), errors: [] };
+        render();
+        await frames();
+        check(passageText() === originalCatalog.entries[0].text, 'Refreshing equivalent annotation entries must preserve the current passage');
+        render(true);
+        await ready();
+        check(passageText() === originalCatalog.entries[1].text, 'Returning to the dashboard on the same day must choose a new random passage');
+        Math.random = () => 0;
+        await until(() => byLabel(t('dashboard.expand'), passage()), 'The long selected passage must offer expansion');
+        byLabel(t('dashboard.expand'), passage()).click();
+        await frames();
+        check(passageText() === originalCatalog.entries[1].text && passage().querySelector('blockquote').classList.contains('is-expanded'),
+            'Expanding a passage must retain the chosen text');
+        byLabel(t('dashboard.copy'), passage()).click();
+        await until(() => byLabel(t('dashboard.copied'), passage()), 'The chosen passage should remain copyable');
+        check(passageText() === originalCatalog.entries[1].text && copied.at(-1) === originalCatalog.entries[1].text,
+            'Copying a passage must retain the selected text and copy the whole passage');
+        activateTab('metadata');
+        await frames();
+        check(passageText() === originalCatalog.entries[1].text, 'Leaving the folder tab must not change the hidden passage');
+        activateTab('folder');
+        await until(() => passageText() === originalCatalog.entries[0].text, 'Returning to a mounted dashboard must reroll its passage');
+        await until(() => !passage().querySelector('blockquote').classList.contains('is-expanded') && !byLabel(t('dashboard.copied'), passage()),
+            'A newly chosen passage must reset expansion and copy feedback');
+        annotationCatalog = { entries: [], errors: [] };
+        render(true);
+        await ready();
+        check(!passage().querySelector('blockquote'), 'An empty catalog must not retain a passage from the previous visit');
+        Math.random = () => 0.999;
+        annotationCatalog = originalCatalog;
+        render();
+        await until(() => passageText() === originalCatalog.entries[1].text, 'Annotations loaded after dashboard entry must receive a random initial selection');
+        annotationCatalog = { entries: [originalCatalog.entries[0]], errors: [] };
+        render(true);
+        await ready();
+        check(passageText() === originalCatalog.entries[0].text && byLabel(t('dashboard.next_passage'), passage()).disabled,
+            'A single passage must remain visible with the other-passage action disabled');
+        activateTab('metadata');
+        activateTab('folder');
+        await frames();
+        check(passageText() === originalCatalog.entries[0].text, 'Revisiting with one passage must safely keep that passage');
+    } finally {
+        Math.random = originalRandom;
+        annotationCatalog = originalCatalog;
+        render(true);
+        await ready();
+    }
+
     const firstPassage = passage().querySelector('blockquote').textContent;
     byLabel(t('dashboard.next_passage'), passage()).click();
     await frames();
@@ -240,10 +300,21 @@ window.runDashboardInsightsTests = async () => {
     check(shelf().querySelector('.dashboard-finished-book').title === firstShelfTitles[0], 'Shelf previous page did not restore the first books');
     failDashboard = true;
     byLabel(t('dashboard.previous_month'), journal()).click();
+    await until(() => journal()?.querySelector('[role="alert"]') && shelf()?.querySelector('.dashboard-finished-book'), 'Cached dashboard failure did not retain its finished shelf');
+    check(!shelf().textContent.includes(t('dashboard.shelf_failed')) && document.querySelector('.dashboard-time-total strong').textContent === readingDurationLabel(1020, t), 'Cached month data was cleared after a failed refresh');
+    failDashboard = false;
+    byLabel(t('dashboard.retry'), journal()).click();
+    await ready(previousMonth);
+    check(!journal().querySelector('[role="alert"]'), 'Cached dashboard retry did not clear its error');
+
+    const uncachedMonth = shiftDashboardMonth(previousMonth, -1);
+    failDashboard = true;
+    byLabel(t('dashboard.previous_month'), journal()).click();
     await until(() => journal()?.querySelector('[role="alert"]') && shelf()?.textContent.includes(t('dashboard.shelf_failed')), 'Dashboard and shelf failed state was not shown');
+    check(!shelf().querySelector('.dashboard-finished-book'), 'An uncached month displayed a finished shelf from another month');
     failDashboard = false;
     byLabel(t('dashboard.retry'), shelf()).click();
-    await ready(previousMonth);
+    await ready(uncachedMonth);
     byLabel(t('dashboard.this_month'), journal()).click();
     await ready();
 

@@ -703,6 +703,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
   const [folderTagFacetScopeKey, setFolderTagFacetScopeKey] = useState('');
   const [folderTagResultScopeKey, setFolderTagResultScopeKey] = useState('');
   const [includeSubfolders, setIncludeSubfolders] = useState(false);
+    const [filesOnly, setFilesOnly] = useState(false);
   const [enableDupCheck, setEnableDupCheck] = useState(false);
   const [preparingDuplicates, setPreparingDuplicates] = useState(false);
   const [duplicatePreparationStatus, setDuplicatePreparationStatus] = useState('');
@@ -1416,9 +1417,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         const files = filterFolderFiles(fileDataWithViewerStatus, {
             query: localSearchQuery,
             metadataMissingOnly: (!isReadingList || isCollectionView || isFavoritesView) && metadataMissingOnly,
+            filesOnly: (!isReadingList || isCollectionView || isFavoritesView) && filesOnly,
         });
         return isRecentList ? filterRecentListFiles(files, folderSource, recentListOptions) : files;
-    }, [fileDataWithViewerStatus, folderSource, isCollectionView, isFavoritesView, isReadingList, isRecentList, localSearchQuery, metadataMissingOnly, recentListOptions]);
+    }, [fileDataWithViewerStatus, filesOnly, folderSource, isCollectionView, isFavoritesView, isReadingList, isRecentList, localSearchQuery, metadataMissingOnly, recentListOptions]);
   const folderTagSearchButtonLabel = folderTagSelections.length > 0
     ? `${t('folder_tag_search_button_title')} · ${t('folder_tag_selected_count', [folderTagSelections.length])}`
     : t('folder_tag_search_button_title');
@@ -1523,7 +1525,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     const itemScale = itemScales[viewMode] || DEFAULT_VIEW_SCALE;
   const scaleMax = MAX_VIEW_SCALE_BY_MODE[viewMode] || MAX_VIEW_SCALE_BY_MODE.table;
 
-    const folderLocationLayoutKey = JSON.stringify([sortKey, sortOrder, groupKey, itemScale, includeSubfolders, localSearchQuery, metadataMissingOnly, viewContainerWidth]);
+    const folderLocationLayoutKey = JSON.stringify([sortKey, sortOrder, groupKey, itemScale, includeSubfolders, filesOnly, localSearchQuery, metadataMissingOnly, viewContainerWidth]);
     folderLocationContextRef.current = { isReadingList, isLibrarySearchActive, selectedFiles, activeSelectedPath, viewMode, layoutKey: folderLocationLayoutKey };
     const rememberCurrentFolderLocation = useCallback(() => {
         const context = folderLocationContextRef.current;
@@ -4567,6 +4569,20 @@ function FolderTab({ config, saveConfig, t, showToast }) {
                         {t(folderToggleLabelKey('subfolders', includeSubfolders))}
                     </button>
                     <button
+                        className={`toolbar-btn folder-checkable-btn folder-toolbar-tooltip-btn ${filesOnly ? 'checked' : ''}`}
+                        type="button"
+                        data-tooltip={t('folder.toolbar.files_only_hint')}
+                        aria-label={t('folder.toolbar.files_only')}
+                        aria-description={t('folder.toolbar.files_only_hint')}
+                        aria-pressed={filesOnly}
+                        onClick={() => {
+                            clearSelection();
+                            setFilesOnly(value => !value);
+                        }}
+                    >
+                        {t('folder.toolbar.files_only')}
+                    </button>
+                    <button
                         className={`toolbar-btn folder-checkable-btn folder-toolbar-tooltip-btn ${enableDupCheck ? 'checked' : ''}`}
                         type="button"
                         data-tooltip={t('folder.toolbar.duplicate_check_hint')}
@@ -5975,7 +5991,7 @@ function ConflictFileCard({ title, file, filePath, t }) {
         <section className="move-conflict-card">
             <strong>{title}</strong>
             <div className="move-conflict-cover">
-                <CoverArtwork src={file?.cover} isDirectory={file?.isDirectory} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} />
+                <CoverArtwork src={file?.cover} isDirectory={file?.isDirectory} alt={file?.name || ''} fallbackAlt={t('folder_no_cover')} smooth />
             </div>
             <dl className="move-conflict-facts">
                 <div><dt>{t('move_conflict_size')}</dt><dd>{file?.size == null ? '-' : formatBytes(file.size)}</dd></div>

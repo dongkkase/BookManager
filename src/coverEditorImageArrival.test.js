@@ -1,7 +1,30 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
+import { transformSync } from 'esbuild';
 import { animateCoverEditorImageArrival } from './coverEditorImageArrival.js';
 import { applyMotionPreference } from './motionPolicy.js';
+import * as motionPolicy from './motionPolicy.js';
+import { coverResamplingTarget } from './coverImageResampling.js';
+
+const compiled = transformSync(fs.readFileSync(new URL('./coverEditorImageArrival.js', import.meta.url), 'utf8'), { format: 'cjs', target: 'es2022' }).code;
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const deferred = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+    return { promise, resolve, reject };
+};
+
+function arrivalWithResampler(acquireResampledCover) {
+    const module = { exports: {} };
+    new Function('require', 'module', 'exports', compiled)(name => {
+        if (name === './motionPolicy.js') return motionPolicy;
+        if (name === './coverImageResampling.js') return { acquireResampledCover, coverResamplingTarget };
+        throw new Error(`Unexpected import: ${name}`);
+    }, module, module.exports);
+    return module.exports.animateCoverEditorImageArrival;
+}
 
 function eventTarget() {
     const listeners = new Map();
@@ -17,22 +40,25 @@ function eventTarget() {
     };
 }
 
-function harness({ reduced = false, preference = 'system', hidden = false, animationSupported = true, decodeSupported = true, image = {} } = {}) {
+function harness({ reduced = false, preference = 'system', hidden = false, animationSupported = true, decodeSupported = true,
+    devicePixelRatio = 2, naturalWidth = 600, naturalHeight = 800, arrival = animateCoverEditorImageArrival, image = {} } = {}) {
     let resolveDecode;
     let rejectDecode;
     const decoded = new Promise((resolve, reject) => { resolveDecode = resolve; rejectDecode = reject; });
+    const resampledDecode = deferred();
     const media = { ...eventTarget(), matches: reduced };
     const timers = new Map();
+    const timerDurations = [];
     const animations = [];
     const created = [];
     const observers = [];
     const view = {
-        ...eventTarget(), innerWidth: 1100, innerHeight: 900,
+        ...eventTarget(), innerWidth: 1100, innerHeight: 900, devicePixelRatio,
         Event,
         dispatchEvent(event) { this.emit(event.type); },
         getComputedStyle(element) { return element.style; },
         matchMedia: () => media,
-        setTimeout(callback) { const token = {}; timers.set(token, callback); return token; },
+        setTimeout(callback, duration) { const token = {}; timers.set(token, callback); timerDurations.push(duration); return token; },
         clearTimeout(token) { timers.delete(token); },
         MutationObserver: class {
             constructor(callback) { this.callback = callback; this.targets = []; this.connected = true; observers.push(this); }
@@ -70,7 +96,11 @@ function harness({ reduced = false, preference = 'system', hidden = false, anima
                 return animation;
             };
         }
-        if (tag === 'img' && decodeSupported) node.decode = () => decoded;
+        if (tag === 'img') {
+            node.naturalWidth = naturalWidth;
+            node.naturalHeight = naturalHeight;
+            if (decodeSupported) node.decode = () => node.src?.startsWith('blob:') ? resampledDecode.promise : decoded;
+        }
         created.push(node);
         return node;
     };
@@ -78,16 +108,18 @@ function harness({ reduced = false, preference = 'system', hidden = false, anima
     const sourceElement = element({ left: 400, top: 100, width: 500, height: 600 });
     const targetElement = element({ left: 20, top: 300, width: 240, height: 300 });
     let finishes = 0;
-    const cancel = animateCoverEditorImageArrival({
+    const cancel = arrival({
         sourceElement, targetElement, container,
         image: { width: 600, height: 800, dataUrl: 'data:image/png;base64,aW1hZ2U=', ...image },
         onFinish: () => { finishes += 1; },
     });
     return {
-        view, document, media, timers, animations, observers, container, sourceElement, targetElement, created, cancel,
+        view, document, media, timers, timerDurations, animations, observers, container, sourceElement, targetElement, created, cancel,
         get finishes() { return finishes; },
         async decoded() { resolveDecode(); await decoded; await Promise.resolve(); },
         async decodeFailed() { rejectDecode(new Error('Cannot decode image')); await decoded.catch(() => {}); await Promise.resolve(); },
+        async resampledDecoded() { resampledDecode.resolve(); await tick(); },
+        async resampledDecodeFailed() { resampledDecode.reject(new Error('Cannot decode resampled image')); await tick(); },
         mutations() { observers.filter(observer => observer.connected).forEach(observer => observer.callback()); },
         timeout() { [...timers.values()].forEach(callback => callback()); },
         assertClean() {
@@ -124,6 +156,28 @@ test('decoded image appears at the panel center and shrinks toward the new cover
     value.cancel();
     assert.equal(value.finishes, 1);
     assert.equal(animation.cancelled, true);
+    value.assertClean();
+});
+
+test('images without metadata dimensions use their decoded size for the same arrival geometry', async () => {
+    const value = harness({ image: { width: undefined, height: undefined } });
+    assert.equal(value.animations.length, 0);
+    await value.decoded();
+    const flyer = value.created[0];
+    assert.equal(flyer.style.width, '450px');
+    assert.equal(flyer.style.height, '600px');
+    assert.equal(value.animations[0].keyframes.at(-1).transform, 'translate(-510px, 50px) scale(0.32)');
+    value.animations[0].onfinish();
+    assert.equal(value.finishes, 1);
+    value.assertClean();
+});
+
+test('missing dimensions still finish safely when decoding provides no usable size', async () => {
+    const value = harness({ image: { width: undefined, height: undefined } });
+    value.created.find(node => node.tag === 'img').naturalWidth = 0;
+    await value.decoded();
+    assert.equal(value.animations.length, 0);
+    assert.equal(value.finishes, 1);
     value.assertClean();
 });
 

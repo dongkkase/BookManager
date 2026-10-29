@@ -29,19 +29,7 @@ export function readingDurationLabel(seconds, t) {
         : t('dashboard.minutes', [minutes]);
 }
 
-export function dailyPassage(entries, day) {
-    let chosen = null;
-    let rank = Infinity;
-    for (const entry of entries || []) {
-        if (!entry?.text?.trim()) continue;
-        const value = `${day}|${entry.id}`;
-        let hash = 2166136261;
-        for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
-        const candidate = hash >>> 0;
-        if (candidate < rank || candidate === rank && entry.id < chosen.id) {
-            chosen = entry;
-            rank = candidate;
-        }
-    }
-    return chosen;
+export function randomPassage(entries, random = Math.random) {
+    const candidates = (entries || []).filter(entry => typeof entry?.text === 'string' && entry.text.trim());
+    return candidates.length ? candidates[Math.floor(random() * candidates.length)] : null;
 }

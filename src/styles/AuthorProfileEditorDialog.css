@@ -1,3 +1,5 @@
+@import './CoverEditorImageArrival.css';
+
 .author-editor-dialog {
     position: fixed;
     inset: 0;
@@ -17,11 +19,11 @@
     overflow: hidden;
 }
 .author-editor-dialog::backdrop { background: #0009; }
-.author-editor-dialog button:not(:where(.ee-dialog *)), .author-editor-dialog input:not(:where(.ee-dialog *)), .author-editor-dialog select:not(:where(.ee-dialog *)) { font: inherit; color: inherit; }
+.author-editor-dialog button:not(:where(.ee-dialog *)), .author-editor-dialog input:not(:where(.ee-dialog *)), .author-editor-dialog textarea:not(:where(.ee-dialog *)), .author-editor-dialog select:not(:where(.ee-dialog *)) { font: inherit; color: inherit; }
 .author-editor-dialog button:not(:where(.ee-dialog *)) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg-2); cursor: pointer; font-size: 12px; }
 .author-editor-dialog button:not(:where(.ee-dialog *)):hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel-bg-2)); }
 .author-editor-dialog button:not(:where(.ee-dialog *)):disabled { opacity: 0.55; cursor: default; }
-.author-editor-dialog button:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog input:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog select:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog a:not(:where(.ee-dialog *)):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.author-editor-dialog button:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog input:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog textarea:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog select:not(:where(.ee-dialog *)):focus-visible, .author-editor-dialog a:not(:where(.ee-dialog *)):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .author-editor-dialog a:not(:where(.ee-dialog *)) { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
 .author-editor-dialog a:not(:where(.ee-dialog *)):hover { text-decoration: underline; }
 .author-editor-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -34,6 +36,12 @@
 .author-editor-dialog .author-editor-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 13px 16px; background: transparent; color: var(--muted); white-space: nowrap; }
 .author-editor-dialog .author-editor-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .author-editor-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.author-editor-profile-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 18px; flex: 1; min-height: 0; margin: 0; padding: 24px; border-top: 1px solid var(--line); overflow: auto; overscroll-behavior: contain; }
+.author-editor-profile-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--muted); font-size: 12px; }
+.author-editor-profile-field.is-wide, .author-editor-profile-source { grid-column: 1 / -1; }
+.author-editor-profile-field input, .author-editor-profile-field textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--input-bg, var(--panel-bg-2)); color: var(--text); font-size: 13px; }
+.author-editor-profile-field textarea { resize: vertical; min-height: 120px; line-height: 1.7; }
+.author-editor-profile-source { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .author-editor-search { display: flex; gap: 9px; padding: 20px 24px 0; flex: 0 0 auto; }
 .author-editor-search input, .author-editor-search select { min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--input-bg, var(--panel-bg-2)); font-size: 13px; }
 .author-editor-search select { flex: 0 1 170px; }
@@ -66,10 +74,10 @@
 .author-editor-profile-fields dt { color: var(--muted); }
 .author-editor-profile-fields dd { margin: 0; overflow-wrap: anywhere; }
 .author-editor-description h4 { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
-.author-editor-description p { margin: 0; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.author-editor-description p { margin: 0; font-size: 13px; line-height: 1.8; white-space: pre-line; overflow-wrap: anywhere; }
 .author-editor-credit { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .author-editor-credit:empty { display: none; }
-.author-editor-photo-stage { display: flex; align-items: center; justify-content: center; flex: 1; min-height: 130px; max-height: 380px; padding: 12px; border-radius: 9px; background: var(--panel-bg-2); }
+.author-editor-photo-stage { position: relative; display: flex; align-items: center; justify-content: center; flex: 1; min-height: 130px; max-height: 380px; padding: 12px; border-radius: 9px; background: var(--panel-bg-2); }
 .author-editor-photo-stage img { display: block; width: 100%; height: 100%; max-height: 340px; min-height: 0; object-fit: contain; }
 .author-editor-photo-caption { display: flex; flex-direction: column; gap: 5px; font-size: 13px; overflow-wrap: anywhere; }
 .author-editor-photo-caption small { color: var(--muted); font-size: 11px; }
@@ -80,14 +88,32 @@
 .author-editor-upload small { font-size: 11px; line-height: 1.7; }
 .author-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--line); flex: 0 0 auto; }
 .author-editor-footer > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.author-editor-footer > div:last-child { justify-content: flex-end; }
 .author-editor-dialog .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast, #fff); }
 .author-editor-dialog .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, #000); }
+.author-editor-body.is-photo-layout { grid-template-columns: 250px minmax(0, 1fr); }
+.is-photo-layout > .author-editor-preview { box-sizing: border-box; align-items: center; padding: 16px; border-right: 1px solid var(--line); gap: 14px; text-align: center; }
+.is-photo-layout .author-editor-photo-stage { flex: 0 0 auto; width: 100%; height: 200px; min-height: 0; padding: 8px; }
+.is-photo-layout .author-editor-photo-stage img { max-height: 100%; }
+.is-photo-layout .author-editor-photo-caption { width: 100%; }
+.is-photo-layout .author-editor-credit { justify-content: center; }
+.is-photo-layout .author-editor-credit > span:empty { display: none; }
+.author-editor-dialog .is-photo-layout .author-editor-edit { align-self: stretch; width: 100%; }
+.is-photo-layout .author-editor-empty { padding: 20px 0; overflow-wrap: anywhere; }
+.author-editor-results.is-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(120px, 100%), 1fr)); grid-auto-rows: max-content; align-content: start; gap: 12px; padding: 16px; border-right: 0; }
+.author-editor-dialog .is-gallery .author-editor-result { position: relative; flex-direction: column; gap: 10px; margin: 0; padding: 12px 8px; text-align: center; }
+.is-gallery .author-editor-result-image { width: 96px; height: 96px; border-radius: 50%; }
+.is-gallery .author-editor-result > span:not(.author-editor-result-image) { width: 100%; flex: 0 0 auto; }
+.is-gallery .author-editor-result strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; }
+.is-gallery .author-editor-result > svg { position: absolute; top: 8px; right: 8px; color: var(--accent); }
+.is-gallery > .author-editor-empty, .is-gallery > .author-editor-more { grid-column: 1 / -1; }
 @media (max-width: 720px) {
     .author-editor-dialog { width: calc(100vw - 20px); height: calc(100dvh - 20px); }
     .author-editor-header { padding: 16px; }
     .author-editor-tabs { padding: 0 10px; overflow-x: auto; }
     .author-editor-dialog .author-editor-tabs button { padding: 12px 10px; font-size: 11px; }
     .author-editor-search { flex-wrap: wrap; padding: 16px 16px 0; }
+    .author-editor-profile-form { padding: 16px; gap: 16px; }
     .author-editor-search select { flex-basis: 128px; }
     .author-editor-search input { min-width: 90px; }
     .author-editor-hint { margin: 10px 16px; }

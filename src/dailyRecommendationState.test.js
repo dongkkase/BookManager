@@ -4,6 +4,7 @@ import {
     DAILY_RECOMMENDATION_STORAGE_KEY,
     dailyRecommendationDay,
     findDailyRecommendation,
+    findDailyRecommendations,
     isDailyRecommendationEntryVolume,
     nextRecommendationDelay,
     readDailyRecommendation,
@@ -306,4 +307,198 @@ test('목록 변경이나 언마운트로 취소한 조회의 결과는 게시�
     release([]);
     assert.equal(await promise, null);
     assert.equal(requests, 1);
+});
+
+function selectMany(files, overrides = {}) {
+    return findDailyRecommendations({
+        files, day: '2026-10-26', seed: 12345,
+        request: async () => [], readStatus: createViewerStatusReader(memoryStorage()),
+        ...overrides,
+    });
+}
+
+test('추천 목록은 중복 없이 최대 8권을 같은 순서로 고르고 큰 서재도 필요한 배치만 조회한다', async () => {
+    const files = Array.from({ length: 10000 }, (_, index) => ({ path: `/books/${index}.epub` }));
+    const batches = [];
+    const first = await selectMany([...files, ...files], { request: async paths => { batches.push(paths); return []; } });
+    const reversed = await selectMany([...files].reverse());
+    assert.equal(first.files.length, 8);
+    assert.equal(new Set(first.record.paths).size, 8);
+    assert.deepEqual(first.record.paths, reversed.record.paths);
+    assert.equal(first.file, first.files[0]);
+    assert.equal(first.sourceFile, first.sourceFiles[0]);
+    assert.deepEqual(batches.map(batch => batch.length), [50]);
+    assert.equal((await selectMany(files, { count: 100 })).files.length, 8);
+});
+
+test('단일 추천 저장값은 첫 위치를 유지하여 8권으로 확장하고 저장목록과 활성 책을 재진입에도 유지한다', async () => {
+    const files = Array.from({ length: 12 }, (_, index) => ({ path: `/books/${index}.epub` }));
+    const old = await select(files);
+    const migrated = await selectMany(files, { record: old.record });
+    assert.equal(migrated.record.paths[0], old.record.path);
+    assert.equal(migrated.file.path, old.file.path);
+    const record = { ...migrated.record, path: migrated.record.paths[5] };
+    const requests = [];
+    const restored = await selectMany([{ path: '/books/new.epub' }, ...files].reverse(), {
+        record,
+        request: async paths => {
+            requests.push(paths);
+            return paths.map(filePath => ({ filePath, status: 'completed' }));
+        },
+    });
+    assert.deepEqual(restored.record, record);
+    assert.deepEqual(restored.files.map(file => file.path), record.paths);
+    assert.equal(restored.file.path, record.path);
+    assert.ok(restored.files.every(file => file.viewerStatus.isCompleted));
+    assert.deepEqual(requests, [record.paths]);
+});
+
+test('추천 목록에서 삭제되거나 중간권이 된 책을 빼고 미독 후보로 보충하며 남은 순서는 유지한다', async () => {
+    const files = Array.from({ length: 14 }, (_, index) => ({ path: `/books/${index}.epub` }));
+    const first = await selectMany(files);
+    const [removed, middle] = first.record.paths;
+    const nextFiles = files.filter(file => file.path !== removed).map(file => file.path === middle ? { ...file, volume: '2' } : file);
+    const batches = [];
+    const next = await selectMany(nextFiles, { record: first.record, request: async paths => { batches.push(paths); return []; } });
+    assert.equal(next.files.length, 8);
+    assert.deepEqual(next.record.paths.slice(0, 6), first.record.paths.slice(2));
+    assert.ok(!next.record.paths.includes(removed));
+    assert.ok(!next.record.paths.includes(middle));
+    assert.ok(!batches.flat().includes(removed));
+    assert.ok(!batches.flat().includes(middle));
+    assert.equal(next.file.path, first.record.paths[2]);
+});
+
+test('다음 날 추천 목록은 미독 상태를 다시 확인하고 전날 활성 책은 가능한 뒤로 배치한다', async () => {
+    const files = [{ path: '/books/a.epub' }, { path: '/books/b.epub' }, { path: '/books/c.epub' }];
+    const first = await selectMany(files);
+    const reading = first.record.paths[1];
+    const next = await selectMany(files, {
+        day: '2026-10-27', record: first.record,
+        request: async paths => paths.filter(path => path === reading).map(filePath => ({ filePath, status: 'reading' })),
+    });
+    assert.equal(next.files.length, 2);
+    assert.notEqual(next.file.path, first.file.path);
+    assert.equal(next.record.paths.at(-1), first.file.path);
+    assert.ok(!next.record.paths.includes(reading));
+    assert.equal(next.record.previousPath, first.file.path);
+});
+
+test('추천 목록도 로컬 읽음·첫권 조건·경로 정규화를 따르며 적은 후보와 빈 서재를 처리한다', async () => {
+    const decomposed = '/books/책.epub'.normalize('NFD');
+    const files = [
+        { path: decomposed }, { path: decomposed.normalize('NFC') },
+        { path: '/books/local.epub' }, { path: '/books/reading.epub' },
+        { path: '/books/middle.epub', volume: '2' }, { path: '/books/missing.epub', exists: false },
+    ];
+    const storage = memoryStorage({ 'bookmanager-viewer-state:/books/local.epub': JSON.stringify({ pageIndex: 0 }) });
+    const result = await selectMany(files, {
+        platform: 'MacIntel', readStatus: createViewerStatusReader(storage),
+        request: async () => [{ filePath: '/books/reading.epub', status: 'reading' }],
+    });
+    assert.deepEqual(result.record.paths, [decomposed]);
+    const empty = await selectMany([], { request: () => assert.fail('Empty catalogs must not query reading state') });
+    assert.deepEqual(empty.files, []);
+    assert.equal(empty.file, null);
+    assert.equal(empty.record, null);
+    const allRead = await selectMany(files, { request: async paths => paths.map(filePath => ({ filePath, status: 'completed' })) });
+    assert.deepEqual(allRead.files, []);
+    assert.equal(allRead.record.path, '');
+    assert.deepEqual(allRead.record.paths, []);
+});
+
+test('추천 목록 저장값은 이전 단일 형식을 허용하고 손상된 목록은 무시한다', async () => {
+    const first = await selectMany([{ path: '/books/a.epub' }, { path: '/books/b.epub' }]);
+    const storage = memoryStorage();
+    const read = record => {
+        storage.setItem(DAILY_RECOMMENDATION_STORAGE_KEY, JSON.stringify(record));
+        return readDailyRecommendation(storage);
+    };
+    assert.deepEqual(read(first.record), first.record);
+    for (const paths of [null, {}, [first.record.path, first.record.path], [false], [''], Array.from({ length: 9 }, (_, index) => `/books/${index}.epub`), []]) {
+        assert.equal(read({ ...first.record, paths }), null, JSON.stringify(paths));
+    }
+    assert.equal(read({ ...first.record, path: '/books/not-in-list.epub' }), null);
+    const { paths, ...legacy } = first.record;
+    assert.deepEqual(read(legacy), legacy);
+    assert.deepEqual(read({ ...first.record, paths: [], path: '' }).paths, []);
+});
+
+test('추천 목록 검증 실패는 전달하고 취소한 배치 뒤에는 추가 요청을 하지 않는다', async () => {
+    const files = Array.from({ length: 123 }, (_, index) => ({ path: `/books/${index}.epub` }));
+    await assert.rejects(selectMany(files, { request: async () => ({ success: false }) }), /reading_state_unavailable/);
+    await assert.rejects(selectMany(files, { request: async () => { throw new Error('offline'); } }), /offline/);
+    let current = true;
+    let release;
+    let requests = 0;
+    const pending = selectMany(files, {
+        isCurrent: () => current,
+        request: () => { requests += 1; return new Promise(resolve => { release = resolve; }); },
+    });
+    current = false;
+    release([]);
+    assert.equal(await pending, null);
+    assert.equal(requests, 1);
+});
+
+test('전체 재추첨은 기존 8권 밖의 미독 책만으로 새 8권을 만들고 기존 목록은 조회하지 않는다', async () => {
+    const files = Array.from({ length: 20 }, (_, index) => ({ path: `/books/${index}.epub` }));
+    const first = await selectMany(files);
+    const requests = [];
+    const next = await selectMany(files, {
+        record: first.record, seed: 98765, redraw: true,
+        request: async paths => { requests.push(...paths); return []; },
+    });
+    assert.equal(next.files.length, 8);
+    assert.equal(new Set(next.record.paths).size, 8);
+    assert.ok(next.record.paths.every(path => !first.record.paths.includes(path)));
+    assert.ok(requests.every(path => !first.record.paths.includes(path)));
+    assert.equal(next.file, next.files[0]);
+    assert.equal(next.record.seed, 98765);
+});
+
+test('전체 재추첨은 새 후보가 부족하면 기존 미독 목록에서 보충하되 읽은 책과 중간권을 제외한다', async () => {
+    const files = Array.from({ length: 10 }, (_, index) => ({ path: `/books/${index}.epub` }));
+    const first = await selectMany(files);
+    const readingPath = first.record.paths[2];
+    const middlePath = first.record.paths[3];
+    const outsidePaths = files.map(file => file.path).filter(path => !first.record.paths.includes(path));
+    const next = await selectMany([...files.map(file => file.path === middlePath ? { ...file, volume: '2' } : file), ...files.slice(0, 1)], {
+        record: first.record, seed: 98765, redraw: true,
+        request: async paths => paths.filter(path => path === readingPath).map(filePath => ({ filePath, status: 'reading' })),
+    });
+    assert.equal(next.files.length, 8);
+    assert.equal(new Set(next.record.paths).size, 8);
+    assert.deepEqual(new Set(next.record.paths.slice(0, 2)), new Set(outsidePaths));
+    assert.ok(!next.record.paths.includes(readingPath));
+    assert.ok(!next.record.paths.includes(middlePath));
+    assert.notEqual(next.file.path, first.file.path);
+});
+
+test('기존 책만 있는 전체 재추첨도 우연히 같은 순서가 나오면 재정렬하고 활성 책을 가능한 뒤로 둔다', async () => {
+    for (const count of [2, 8]) {
+        const files = Array.from({ length: count }, (_, index) => ({ path: `/books/${index}.epub` }));
+        const first = await selectMany(files);
+        const record = { ...first.record, path: first.record.paths.at(-1) };
+        const next = await selectMany(files, { record, redraw: true });
+        assert.equal(next.files.length, count);
+        assert.deepEqual(new Set(next.record.paths), new Set(record.paths));
+        assert.notDeepEqual(next.record.paths, record.paths);
+        if (count > 2) assert.notEqual(next.file.path, record.path);
+        assert.deepEqual(next.sourceFiles.map(file => file.path), next.record.paths);
+    }
+});
+
+test('전체 재추첨에서 가능한 책이 한 권이면 유지하고 모두 읽혔으면 빈 결과를 반환한다', async () => {
+    const files = [{ path: '/books/only.epub' }];
+    const first = await selectMany(files);
+    const next = await selectMany(files, { record: first.record, redraw: true, seed: 98765 });
+    assert.deepEqual(next.record.paths, first.record.paths);
+    const empty = await selectMany(files, {
+        record: first.record, redraw: true,
+        request: async paths => paths.map(filePath => ({ filePath, status: 'completed' })),
+    });
+    assert.deepEqual(empty.files, []);
+    assert.equal(empty.file, null);
+    assert.deepEqual(empty.record.paths, []);
 });

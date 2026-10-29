@@ -7,6 +7,7 @@ import * as recommendationState from './dailyRecommendationState.js';
 import * as viewerStatus from './viewerStatusState.js';
 import * as readingStates from './folderReadingStates.js';
 import * as recommendationPreferences from './recommendationPreferencesState.js';
+import * as dashboardCatalogCache from './dashboardCatalogCache.js';
 
 const compiled = transformSync(fs.readFileSync(new URL('./hooks/useDailyRecommendation.js', import.meta.url), 'utf8'), { format: 'cjs', target: 'es2022' }).code;
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -15,6 +16,7 @@ function fixture(initialFiles, initialStorage = {}) {
     const slots = [];
     const states = [];
     const previews = [];
+    const catalogReads = { options: 0 };
     const values = new Map(Object.entries(initialStorage));
     const timers = new Map();
     let cursor = 0;
@@ -86,6 +88,13 @@ function fixture(initialFiles, initialStorage = {}) {
             if (name.endsWith('viewerStatusState.js')) return viewerStatus;
             if (name.endsWith('folderReadingStates.js')) return readingStates;
             if (name.endsWith('recommendationPreferencesState.js')) return recommendationPreferences;
+            if (name.endsWith('dashboardCatalogCache.js')) return {
+                ...dashboardCatalogCache,
+                dashboardRecommendationOptions(files) {
+                    catalogReads.options += 1;
+                    return dashboardCatalogCache.dashboardRecommendationOptions(files);
+                },
+            };
             if (name.endsWith('dailyRecommendationState.js')) return {
                 ...recommendationState,
                 dailyRecommendationDay: () => recommendationState.dailyRecommendationDay(clock),
@@ -104,7 +113,7 @@ function fixture(initialFiles, initialStorage = {}) {
     };
     render();
     return {
-        states, previews, render, storage, window, document, timers,
+        states, previews, render, storage, window, document, timers, catalogReads,
         result: () => result,
         recent: () => recentListener?.(),
         setClock: value => { clock = value; },
@@ -112,6 +121,28 @@ function fixture(initialFiles, initialStorage = {}) {
         close: () => slots.forEach(slot => slot.cleanup?.()),
     };
 }
+
+test('대시보드 재진입은 카탈로그 캐시를 재사용하되 읽음 상태를 검증하고 취향 옵션은 요청할 때 준비한다', async () => {
+    const files = [{ path: '/books/a.epub', genre: 'Fantasy' }];
+    const first = await loadedFixture(files);
+    assert.equal(first.catalogReads.options, 0);
+    const options = first.result().preferenceOptions;
+    assert.equal(first.catalogReads.options, 1);
+    assert.equal(options.genres[0].title, 'Fantasy');
+    const storageKey = recommendationState.DAILY_RECOMMENDATION_STORAGE_KEY;
+    const saved = first.storage.getItem(storageKey);
+    first.close();
+
+    const revisited = fixture(files, { [storageKey]: saved });
+    assert.equal(revisited.catalogReads.options, 0);
+    assert.equal(revisited.result().preferenceOptions, options);
+    assert.deepEqual(revisited.states[0].paths, ['/books/a.epub']);
+    revisited.states[0].resolve([{ path: '/books/a.epub', isCompleted: true }]);
+    await tick();
+    assert.equal(revisited.render().file.path, '/books/a.epub');
+    assert.equal(revisited.storage.getItem(storageKey), saved);
+    revisited.close();
+});
 
 test('추천 한 권만 미리보기를 읽고 같은 날 상태 갱신에는 재사용하며 새 catalog 메타에는 다시 읽는다', async () => {
     const files = [{ path: '/books/a.epub', title: '원래 제목' }];
@@ -275,25 +306,27 @@ test('자정·포커스·visible 복귀·읽기 저장 이벤트에 다시 검�
     timer.callback();
     f.states[1].resolve([]);
     await tick();
+    f.states[2].resolve([]);
+    await tick();
     assert.notEqual(f.render().file.path, first);
     f.window.emit('focus');
-    f.states[2].resolve([]);
+    f.states[3].resolve([]);
     await tick();
     f.document.visibilityState = 'hidden';
     f.document.emit('visibilitychange');
-    assert.equal(f.states.length, 3);
+    assert.equal(f.states.length, 4);
     f.document.visibilityState = 'visible';
     f.document.emit('visibilitychange');
-    f.states[3].resolve([]);
+    f.states[4].resolve([]);
     await tick();
     f.window.emit('storage', { key: 'unrelated-setting' });
-    assert.equal(f.states.length, 4);
+    assert.equal(f.states.length, 5);
     const selected = f.render().file.path;
     f.storage.setItem(`bookmanager-viewer-state:${selected}`, JSON.stringify({ pageIndex: 0 }));
     f.window.emit('storage', { key: `bookmanager-viewer-state:${selected}` });
-    f.states[4].resolve([]);
+    f.states[5].resolve([]);
     await tick();
-    assert.equal(f.states.length, 5, 'Reading the saved daily pick must not start a replacement search');
+    assert.equal(f.states.length, 6, 'Reading the saved daily pick must not start a replacement search');
     assert.equal(f.render().file.path, selected);
     f.close();
 });
@@ -308,13 +341,190 @@ async function loadedFixture(files = [{ path: '/books/a.epub' }, { path: '/books
     return f;
 }
 
-async function prepareAlternative(f) {
+async function prepareAlternative(f, readRows = () => []) {
+    let stateIndex = f.states.length;
+    let previewIndex = f.previews.length;
+    let settled = false;
     const promise = f.result().prepareNewRecommendation();
-    f.states.at(-1).resolve([]);
-    await tick();
-    f.previews.at(-1).resolve({ success: true, file: { description: '새 추천 소개', cover: 'new-cover' } });
+    void promise.then(() => { settled = true; }, () => { settled = true; });
+    for (let attempt = 0; attempt < 20 && !settled; attempt += 1) {
+        while (stateIndex < f.states.length) {
+            const request = f.states[stateIndex++];
+            request.resolve(readRows(request.paths));
+        }
+        while (previewIndex < f.previews.length) {
+            f.previews[previewIndex++].resolve({ success: true, file: { description: '새 추천 소개', cover: 'new-cover' } });
+        }
+        await tick();
+    }
+    assert.ok(settled, 'Preparing new recommendations did not finish');
     return promise;
 }
+
+test('8권 목록은 슬라이드 선택과 재시작에도 순서를 유지하고 선택한 표지만 필요할 때 조회한다', async () => {
+    const files = Array.from({ length: 12 }, (_, index) => ({ path: `/books/pick-${index}.epub`, title: `추천 ${index}` }));
+    const f = await loadedFixture(files);
+    const paths = Array.from(f.result().recommendations, file => file.path);
+    assert.equal(paths.length, 8);
+    assert.equal(new Set(paths).size, 8);
+    assert.equal(f.previews.length, 1);
+    const initial = f.result().file;
+    const nextPath = paths[3];
+    f.result().selectRecommendation(nextPath);
+    assert.equal(f.render().file.path, nextPath);
+    assert.equal(f.states.length, 1, 'Slide navigation must not query reading state again');
+    await tick();
+    assert.equal(f.previews.length, 2);
+    assert.equal(f.previews[1].path, nextPath);
+    f.previews[1].resolve({ success: true, file: { title: '선택한 책', description: '선택한 소개', cover: 'selected-cover' } });
+    await tick();
+    assert.equal(f.render().file.description, '선택한 소개');
+    f.result().selectRecommendation(initial.path);
+    await tick();
+    assert.equal(f.render().file.cover, 'current-cover');
+    f.result().selectRecommendation(nextPath);
+    await tick();
+    assert.equal(f.render().file.cover, 'selected-cover');
+    assert.equal(f.previews.length, 2, 'Visited slides must reuse their previews');
+    const key = recommendationState.DAILY_RECOMMENDATION_STORAGE_KEY;
+    const saved = f.storage.getItem(key);
+    assert.deepEqual(JSON.parse(saved).paths, paths);
+    assert.equal(JSON.parse(saved).path, nextPath);
+    f.close();
+    const restored = fixture([...files].reverse(), { [key]: saved });
+    assert.deepEqual(restored.states[0].paths, paths);
+    restored.states[0].resolve([{ filePath: nextPath, status: 'completed' }]);
+    await tick();
+    assert.equal(restored.render().file.path, nextPath);
+    assert.deepEqual(Array.from(restored.result().recommendations, file => file.path), paths);
+    assert.equal(restored.result().file.viewerStatus.isCompleted, true);
+    restored.close();
+});
+
+test('슬라이드의 늦은 미리보기나 백그라운드 검증은 사용자가 새로 선택한 책을 되돌리지 않는다', async () => {
+    const files = Array.from({ length: 10 }, (_, index) => ({ path: `/books/slide-${index}.epub` }));
+    const f = await loadedFixture(files);
+    const [initial, second, third] = f.result().recommendations;
+    f.result().selectRecommendation(second.path);
+    await tick();
+    const secondPreview = f.previews.at(-1);
+    f.recent();
+    f.result().selectRecommendation(third.path);
+    await tick();
+    const thirdPreview = f.previews.at(-1);
+    secondPreview.resolve({ success: true, file: { cover: 'second-cover' } });
+    f.states.at(-1).resolve([]);
+    await tick();
+    assert.equal(f.render().file.path, third.path);
+    thirdPreview.resolve({ success: true, file: { cover: 'third-cover' } });
+    await tick();
+    assert.equal(f.render().file.path, third.path);
+    assert.equal(f.result().file.cover, 'third-cover');
+    assert.equal(JSON.parse(f.storage.getItem(recommendationState.DAILY_RECOMMENDATION_STORAGE_KEY)).path, third.path);
+    f.result().selectRecommendation(initial.path);
+    await tick();
+    assert.equal(f.render().file.cover, 'current-cover');
+    f.close();
+});
+
+test('동일한 두 권만 있어도 새로운 추천은 순서를 바꾸고 첫 슬라이드부터 보여 준다', async () => {
+    const f = await loadedFixture();
+    const before = Array.from(f.result().recommendations, file => file.path);
+    const prepared = await prepareAlternative(f);
+    const commit = f.result().commitNewRecommendation(prepared);
+    f.states.at(-1).resolve([]);
+    assert.equal(await commit, true);
+    assert.equal(f.render().file.path, prepared.file.path);
+    const after = Array.from(f.result().recommendations, file => file.path);
+    assert.deepEqual(after, [...before].reverse());
+    assert.equal(new Set(after).size, before.length);
+    assert.deepEqual(JSON.parse(f.storage.getItem(recommendationState.DAILY_RECOMMENDATION_STORAGE_KEY)).paths, after);
+    f.close();
+});
+
+test('새로운 추천은 충분한 후보가 있으면 8권 전체를 교체하고 첫 책을 공개한다', async () => {
+    const files = Array.from({ length: 20 }, (_, index) => ({ path: `/books/replacement-${index}.epub` }));
+    const f = await loadedFixture(files);
+    const before = Array.from(f.result().recommendations, file => file.path);
+    const storageKey = recommendationState.DAILY_RECOMMENDATION_STORAGE_KEY;
+    const saved = f.storage.getItem(storageKey);
+    f.result().selectRecommendation(before[3]);
+    await tick();
+    f.previews.at(-1).resolve({ success: false });
+    await tick();
+    f.render();
+    const prepared = await prepareAlternative(f);
+    assert.ok(!before.includes(prepared.file.path));
+    assert.deepEqual(Array.from(f.render().recommendations, file => file.path), before);
+    const commit = f.result().commitNewRecommendation(prepared);
+    const validationPaths = f.states.at(-1).paths;
+    assert.equal(validationPaths.length, 8);
+    assert.ok(validationPaths.every(path => !before.includes(path)));
+    f.states.at(-1).resolve([]);
+    assert.equal(await commit, true);
+    assert.deepEqual(Array.from(f.render().recommendations, file => file.path), validationPaths);
+    assert.equal(f.result().file.path, validationPaths[0]);
+    assert.equal(f.result().file.cover, 'new-cover');
+    const record = JSON.parse(f.storage.getItem(storageKey));
+    assert.deepEqual(record.paths, validationPaths);
+    assert.notEqual(record.seed, JSON.parse(saved).seed);
+    f.close();
+});
+
+test('새 후보가 부족하면 기존 미독 책으로 채우고 전체 목록을 첫 위치부터 다시 표시한다', async () => {
+    const files = Array.from({ length: 10 }, (_, index) => ({ path: `/books/fill-${index}.epub` }));
+    const f = await loadedFixture(files);
+    const before = Array.from(f.result().recommendations, file => file.path);
+    const outside = files.filter(file => !before.includes(file.path)).map(file => file.path);
+    const prepared = await prepareAlternative(f);
+    const commit = f.result().commitNewRecommendation(prepared);
+    const paths = f.states.at(-1).paths;
+    assert.equal(paths.length, 8);
+    assert.equal(new Set(paths).size, 8);
+    assert.deepEqual(new Set(paths.slice(0, 2)), new Set(outside));
+    f.states.at(-1).resolve([]);
+    assert.equal(await commit, true);
+    assert.equal(f.render().file.path, paths[0]);
+    assert.deepEqual(Array.from(f.result().recommendations, file => file.path), paths);
+    f.close();
+});
+
+test('첫 책이 같아도 추천 목록이 바뀌면 ready로 공개하고 전체 목록을 교체한다', async () => {
+    const f = await loadedFixture(Array.from({ length: 8 }, (_, index) => ({ path: `/books/same-first-${index}.epub` })));
+    const initial = f.result().file;
+    const prepared = await prepareAlternative(f, paths => paths.filter(filePath => filePath !== initial.path)
+        .map(filePath => ({ filePath, status: 'completed' })));
+    assert.equal(prepared.status, 'ready');
+    assert.equal(prepared.file.path, initial.path);
+    const commit = f.result().commitNewRecommendation(prepared);
+    assert.deepEqual(f.states.at(-1).paths, [initial.path]);
+    f.states.at(-1).resolve([]);
+    assert.equal(await commit, true);
+    assert.deepEqual(Array.from(f.render().recommendations, file => file.path), [initial.path]);
+    f.close();
+});
+
+test('새 목록의 첫 책 이외 항목도 존재와 읽음 상태를 검증하고 하나라도 바뀌면 전체 확정을 취소한다', async () => {
+    for (const changed of ['reading', 'local-reading', 'removed', 'middle-volume']) {
+        const files = Array.from({ length: 20 }, (_, index) => ({ path: `/books/atomic-${index}.epub` }));
+        const f = await loadedFixture(files);
+        const before = Array.from(f.result().recommendations, file => file.path);
+        const storageKey = recommendationState.DAILY_RECOMMENDATION_STORAGE_KEY;
+        const saved = f.storage.getItem(storageKey);
+        const prepared = await prepareAlternative(f);
+        const commit = f.result().commitNewRecommendation(prepared);
+        const validation = f.states.at(-1);
+        const changedPath = validation.paths[4];
+        if (changed === 'removed') f.render(files.filter(file => file.path !== changedPath));
+        if (changed === 'middle-volume') f.render(files.map(file => file.path === changedPath ? { ...file, volume: '2' } : file));
+        if (changed === 'local-reading') f.storage.setItem(`bookmanager-viewer-state:${changedPath}`, JSON.stringify({ pageIndex: 0 }));
+        validation.resolve(changed === 'reading' ? [{ filePath: changedPath, status: 'reading' }] : []);
+        assert.equal(await commit, false, changed);
+        assert.deepEqual(Array.from(f.render().recommendations, file => file.path), before, changed);
+        assert.equal(f.storage.getItem(storageKey), saved, changed);
+        f.close();
+    }
+});
 
 test('추천을 읽거나 완독한 뒤 창 복귀·로컬 상태 변경·재시작에도 당일 책과 저장값을 유지한다', async () => {
     const files = [{ path: '/books/a.epub' }, { path: '/books/b.epub' }];
@@ -333,7 +543,7 @@ test('추천을 읽거나 완독한 뒤 창 복귀·로컬 상태 변경·재시
         }
         assert.equal(f.render().file.path, initial.path);
         assert.equal(f.result().file.cover, initial.cover);
-        assert.deepEqual(f.states.at(-1).paths, [initial.path]);
+        assert.deepEqual(f.states.at(-1).paths, JSON.parse(saved).paths);
         f.states.at(-1).resolve([{ filePath: initial.path, status, updatedAt: '2026-10-26' }]);
         await tick();
         assert.equal(f.render().file.path, initial.path);
@@ -347,7 +557,7 @@ test('추천을 읽거나 완독한 뒤 창 복귀·로컬 상태 변경·재시
     f.close();
 
     const restored = fixture(files, { [storageKey]: saved, [localKey]: f.storage.getItem(localKey) });
-    assert.deepEqual(restored.states[0].paths, [initial.path]);
+    assert.deepEqual(restored.states[0].paths, JSON.parse(saved).paths);
     restored.states[0].resolve([{ filePath: initial.path, status: 'completed' }]);
     await tick();
     restored.previews[0].resolve({ success: true, file: initial });
@@ -381,7 +591,8 @@ test('재추첨 준비·공개 중 기존 추천과 저장값을 유지하고 �
     assert.equal((await f.result().prepareNewRecommendation()).status, 'cancelled');
     assert.equal(f.states.length, requests, 'A second click must not start another draw');
     const commit = f.result().commitNewRecommendation({ ...prepared });
-    assert.deepEqual(f.states.at(-1).paths, [prepared.file.path]);
+    assert.equal(f.states.at(-1).paths.length, 2);
+    assert.equal(f.states.at(-1).paths[0], prepared.file.path);
     assert.equal(f.render().file, initial);
     f.states.at(-1).resolve([]);
     assert.equal(await commit, true);

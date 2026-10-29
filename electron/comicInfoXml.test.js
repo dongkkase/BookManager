@@ -51,6 +51,23 @@ test('all upstream AgeRating enum values round trip and old labels become canoni
     assert.equal(parseComicInfoXml(createComicInfoXml({ AgeRating: 'Unrecognized' })).AgeRating, 'Unrecognized');
 });
 
+test('Manga preserves standard values and accepts the BookManager Webtoon extension independently of Format', () => {
+    for (const manga of ['Unknown', 'No', 'Yes', 'YesAndRightToLeft', 'Webtoon']) {
+        const xml = createComicInfoXml({ Manga: ` ${manga.toLowerCase()} `, Format: 'GraphicNovel' });
+        assert.deepEqual(parseComicInfoXml(xml), { Format: 'GraphicNovel', Manga: manga });
+        assert.equal(createComicInfoXml(parseComicInfoXml(xml), xml), xml);
+    }
+    const original = '<ComicInfo><Format>Digital</Format><Manga>wEbToOn</Manga></ComicInfo>';
+    const updated = createComicInfoXml({ Title: 'Updated' }, original);
+    assert.deepEqual(parseComicInfoXml(updated), { Title: 'Updated', Format: 'Digital', Manga: 'Webtoon' });
+    assert.deepEqual(parseComicInfoXml(createComicInfoXml({ Format: 'Webtoon', Manga: 'No' })), {
+        Format: 'Webtoon', Manga: 'No',
+    });
+    assert.equal(parseComicInfoXml(createComicInfoXml({ Manga: '' }, updated)).Manga, undefined);
+    assert.throws(() => createComicInfoXml({ Manga: 'Webtoon Special' }), /Unsupported Manga/);
+    assert.throws(() => createComicInfoXml({ BlackAndWhite: 'Webtoon' }), /Unsupported BlackAndWhite/);
+});
+
 test('XML five-point ratings convert once, including decimal lexical forms and legacy values', () => {
     for (const [stored, app, written] of [
         ['0', '0', '0'], ['.5', '1', '0.5'], ['+4.5', '9', '4.5'], ['5.', '10', '5'],

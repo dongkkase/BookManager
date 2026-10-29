@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion, useAnimationControls } from 'motion/react';
 import { CoverArtwork } from '../CoverArtwork';
 import { FaIcon } from '../FaIcon';
 import { RecommendationShuffleOverlay } from './RecommendationShuffleOverlay';
@@ -7,9 +8,11 @@ import { DashboardReadingInsights } from './DashboardReadingInsights';
 import { DashboardFinishedShelf, DashboardPassage } from './DashboardReadingShelves';
 import { DashboardLibraryOnboarding } from './DashboardLibraryOnboarding';
 import { useDailyRecommendation } from '../../hooks/useDailyRecommendation';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useDashboardActivity } from '../../hooks/useDashboardActivity';
 import { dashboardMonth } from '../../dashboardActivityState';
-import { dashboardAddedTimestamp, dashboardFilePath, selectDashboardRecent, summarizeDashboardCatalog } from '../../readingDashboardState';
+import { dashboardAddedTimestamp, dashboardFilePath, selectDashboardRecent } from '../../readingDashboardState';
+import { dashboardCatalogSummary } from '../../dashboardCatalogCache';
 import { viewerReadingProgressParts } from '../../viewerStatusState';
 import '../../styles/ReadingDashboard.css';
 
@@ -24,7 +27,7 @@ function bookAuthor(file) {
 
 function BookCover({ file }) {
     return <span className="reading-dashboard-cover" aria-hidden="true">
-        <CoverArtwork src={file.cover} alt="" fallbackAlt="" isDirectory={false} />
+        <CoverArtwork src={file.cover} alt="" fallbackAlt="" isDirectory={false} smooth />
     </span>;
 }
 
@@ -52,49 +55,138 @@ function ContinueBook({ file, onOpenFile, t }) {
 
 function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }) {
     const { file, loading, error, refresh } = recommendation;
+    const reducedMotion = useReducedMotion();
     const [shuffleOpen, setShuffleOpen] = useState(false);
     const [preferencesOpen, setPreferencesOpen] = useState(false);
+    const [paused, setPaused] = useState(false);
+    const [hovered, setHovered] = useState(false);
+    const [focused, setFocused] = useState(false);
+    const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
+    const directionRef = useRef(1);
+    const slideAnimation = useAnimationControls();
+    const sectionRef = useRef(null);
     const preferencesButtonRef = useRef(null);
     const shuffleButtonRef = useRef(null);
     const recommendationCoverRef = useRef(null);
     const lastShuffleOriginRef = useRef(null);
     const canOpen = Boolean(file) && !loading && !error;
+    const picks = recommendation.recommendations || (file ? [file] : []);
+    const currentPath = file ? dashboardFilePath(file) : '';
+    const currentIndex = Math.max(0, picks.findIndex(pick => dashboardFilePath(pick) === currentPath));
+    const controlsDisabled = shuffleOpen || preferencesOpen || recommendation.newRecommendationLoading;
+    const autoplay = canOpen && picks.length > 1 && !reducedMotion && !paused && !hovered && !focused && !hidden && !controlsDisabled;
+    const selectPick = index => {
+        if (controlsDisabled || picks.length < 2) return;
+        const nextIndex = (index + picks.length) % picks.length;
+        directionRef.current = index < currentIndex ? -1 : 1;
+        recommendation.selectRecommendation(dashboardFilePath(picks[nextIndex]));
+    };
+    useEffect(() => {
+        if (reducedMotion || !currentPath) {
+            slideAnimation.set({ opacity: 1, x: 0 });
+        } else {
+            slideAnimation.set({ opacity: 0.35, x: directionRef.current * 16 });
+            void slideAnimation.start({ opacity: 1, x: 0, transition: { duration: 0.28, ease: 'easeOut' } });
+        }
+        return () => slideAnimation.stop();
+    }, [currentPath, reducedMotion, slideAnimation]);
+    useEffect(() => {
+        const onVisibility = () => setHidden(document.visibilityState === 'hidden');
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+    }, []);
+    useEffect(() => {
+        setFocused(Boolean(sectionRef.current?.contains(document.activeElement)));
+    }, [canOpen, reducedMotion]);
+    useEffect(() => {
+        if (!autoplay) return;
+        const timer = window.setTimeout(() => {
+            directionRef.current = 1;
+            recommendation.selectRecommendation(dashboardFilePath(picks[(currentIndex + 1) % picks.length]));
+        }, 7000);
+        return () => window.clearTimeout(timer);
+    }, [autoplay, currentPath, currentIndex, picks, recommendation.selectRecommendation]);
     const description = [file, file?.metadata, file?.full_meta].flatMap(source => (
         ['description', 'summary', 'Summary', 'Description'].map(key => source?.[key])
     )).find(value => typeof value === 'string' && value.trim())?.trim() || '';
     const openBook = () => onOpenFile?.(file);
-    return <><section className="reading-dashboard-recommendation" aria-busy={loading}
-        aria-label={t('reading_lists.dashboard_recommendation')} data-file-path={canOpen ? dashboardFilePath(file) : undefined}>
-        <div className="reading-dashboard-recommendation-copy">
-            <div className="reading-dashboard-recommendation-heading"><span className="reading-dashboard-recommendation-label">{t('reading_lists.dashboard_recommendation')}</span>
-                <button type="button" ref={preferencesButtonRef} className="reading-dashboard-preferences-button" disabled={shuffleOpen || recommendation.newRecommendationLoading}
-                    onClick={() => setPreferencesOpen(true)}><FaIcon name="sliders" size={11} />{t('recommendation_preferences.title')}</button>
-            </div>
-            {canOpen ? <>
-                <strong className="reading-dashboard-book-title" title={bookTitle(file)}>{bookTitle(file)}</strong>
-                <span className="reading-dashboard-book-author" title={bookAuthor(file)}>{bookAuthor(file) || String(file.ext || '').replace(/^\./, '').toUpperCase()}</span>
-                {description ? <p className="reading-dashboard-recommendation-description">{description}</p>
-                    : <p className="reading-dashboard-recommendation-hint">{t('reading_lists.dashboard_recommendation_hint')}</p>}
-                <div className="reading-dashboard-recommendation-actions">
-                    <button type="button" className="reading-dashboard-recommendation-read" onClick={openBook}
-                        aria-label={`${t('reading_lists.dashboard_read')}: ${bookTitle(file)}`}>
-                        <FaIcon name="bookOpen" size={12} />{t('reading_lists.dashboard_read')}<FaIcon name="angleRight" size={11} />
-                    </button>
-                    <button type="button" ref={shuffleButtonRef} className="reading-dashboard-recommendation-shuffle" onClick={() => setShuffleOpen(true)}
-                        disabled={shuffleOpen || recommendation.newRecommendationLoading}>
-                        <FaIcon name="shuffle" size={12} />{t('reading_lists.dashboard_new_recommendation')}
-                    </button>
-                </div>
-            </> : <>
-                <span className="reading-dashboard-recommendation-message" role={loading ? 'status' : error ? 'alert' : undefined}>
-                    {t(loading ? 'reading_lists.dashboard_recommendation_loading' : error ? 'reading_lists.dashboard_recommendation_failed' : 'reading_lists.dashboard_recommendation_empty')}
-                </span>
-                {error && !loading && <button type="button" className="reading-dashboard-link" onClick={refresh}>{t('reading_lists.dashboard_retry')}</button>}
-            </>}
+    return <><section ref={sectionRef} className="reading-dashboard-recommendation" aria-busy={loading}
+        aria-label={t('reading_lists.dashboard_recommendation')} aria-roledescription={t('reading_lists.dashboard_recommendation_carousel')}
+        data-file-path={canOpen ? currentPath : undefined}
+        onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+        onFocusCapture={() => setFocused(true)} onBlurCapture={event => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+        }}
+        onKeyDown={event => {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !canOpen || picks.length < 2 || controlsDisabled) return;
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault();
+                event.stopPropagation();
+                selectPick(currentIndex + (event.key === 'ArrowLeft' ? -1 : 1));
+            }
+        }}>
+        <div className="reading-dashboard-recommendation-heading"><span className="reading-dashboard-recommendation-label">{t('reading_lists.dashboard_recommendation')}</span>
+            <button type="button" ref={preferencesButtonRef} className="reading-dashboard-preferences-button" disabled={shuffleOpen || recommendation.newRecommendationLoading}
+                onClick={() => setPreferencesOpen(true)}><FaIcon name="sliders" size={11} />{t('recommendation_preferences.title')}</button>
         </div>
-        {canOpen ? <button type="button" ref={recommendationCoverRef} className="reading-dashboard-recommendation-cover" onClick={openBook}
-            aria-label={`${t('reading_lists.dashboard_open_book')}: ${bookTitle(file)}`}><BookCover file={file} /></button>
-            : <span className="reading-dashboard-recommendation-placeholder" aria-hidden="true"><FaIcon name="bookOpen" size={38} /></span>}
+        <motion.div className="reading-dashboard-recommendation-slide" initial={false} animate={slideAnimation}>
+            <div className="reading-dashboard-recommendation-copy">
+                {canOpen ? <>
+                    <strong className="reading-dashboard-book-title" title={bookTitle(file)}>{bookTitle(file)}</strong>
+                    <span className="reading-dashboard-book-author" title={bookAuthor(file)}>{bookAuthor(file) || String(file.ext || '').replace(/^\./, '').toUpperCase()}</span>
+                    {description ? <p className="reading-dashboard-recommendation-description">{description}</p>
+                        : <p className="reading-dashboard-recommendation-hint">{t('reading_lists.dashboard_recommendation_hint')}</p>}
+                    <div className="reading-dashboard-recommendation-actions">
+                        <button type="button" className="reading-dashboard-recommendation-read" onClick={openBook}
+                            aria-label={`${t('reading_lists.dashboard_read')}: ${bookTitle(file)}`}>
+                            <FaIcon name="bookOpen" size={12} />{t('reading_lists.dashboard_read')}<FaIcon name="angleRight" size={11} />
+                        </button>
+                        <button type="button" ref={shuffleButtonRef} className="reading-dashboard-recommendation-shuffle" onClick={() => setShuffleOpen(true)}
+                            disabled={shuffleOpen || recommendation.newRecommendationLoading}>
+                            <FaIcon name="shuffle" size={12} />{t('reading_lists.dashboard_new_recommendation')}
+                        </button>
+                    </div>
+                </> : <>
+                    <span className="reading-dashboard-recommendation-message" role={loading ? 'status' : error ? 'alert' : undefined}>
+                        {t(loading ? 'reading_lists.dashboard_recommendation_loading' : error ? 'reading_lists.dashboard_recommendation_failed' : 'reading_lists.dashboard_recommendation_empty')}
+                    </span>
+                    {error && !loading && <button type="button" className="reading-dashboard-link" onClick={refresh}>{t('reading_lists.dashboard_retry')}</button>}
+                </>}
+            </div>
+            {canOpen ? <motion.button type="button" ref={recommendationCoverRef} className="reading-dashboard-recommendation-cover" onClick={openBook}
+                initial="rest" animate="rest" whileHover="engaged" whileFocus="engaged"
+                aria-label={`${t('reading_lists.dashboard_open_book')}: ${bookTitle(file)}`}>
+                <motion.span className="reading-dashboard-cover" aria-hidden="true"
+                    variants={{ rest: { rotateY: reducedMotion ? 0 : -12, scale: 1 }, engaged: { rotateY: 0, scale: reducedMotion ? 1 : 1.035 } }}
+                    transition={{ duration: reducedMotion ? 0 : 0.3, ease: 'easeOut' }}>
+                    <CoverArtwork src={file.cover} alt="" fallbackAlt="" isDirectory={false} smooth />
+                </motion.span>
+            </motion.button>
+                : <span className="reading-dashboard-recommendation-placeholder" aria-hidden="true"><FaIcon name="bookOpen" size={38} /></span>}
+        </motion.div>
+        {canOpen && <div className="reading-dashboard-recommendation-controls">
+            {picks.length > 1 && <>
+                <div className="reading-dashboard-recommendation-navigation">
+                    <button type="button" className="reading-dashboard-recommendation-prev" disabled={controlsDisabled}
+                        aria-label={t('reading_lists.dashboard_recommendation_previous')} onClick={() => selectPick(currentIndex - 1)}><FaIcon name="angleLeft" size={12} /></button>
+                    <div className="reading-dashboard-recommendation-dots" role="group" aria-label={t('reading_lists.dashboard_recommendation_choose')}>
+                        {picks.map((pick, index) => <button type="button" key={dashboardFilePath(pick)} className="reading-dashboard-recommendation-dot"
+                            disabled={controlsDisabled} aria-current={index === currentIndex ? 'true' : undefined}
+                            aria-label={t('reading_lists.dashboard_recommendation_goto', [index + 1, bookTitle(pick)])}
+                            onClick={() => selectPick(index)}><span /></button>)}
+                    </div>
+                    <button type="button" className="reading-dashboard-recommendation-next" disabled={controlsDisabled}
+                        aria-label={t('reading_lists.dashboard_recommendation_next')} onClick={() => selectPick(currentIndex + 1)}><FaIcon name="angleRight" size={12} /></button>
+                </div>
+                {!reducedMotion && <button type="button" className="reading-dashboard-recommendation-playback" disabled={controlsDisabled}
+                    aria-pressed={paused} onClick={() => setPaused(value => !value)}
+                    aria-label={t(paused ? 'reading_lists.dashboard_recommendation_resume' : 'reading_lists.dashboard_recommendation_pause')}>
+                    <FaIcon name={paused ? 'play' : 'pause'} size={9} />{t(paused ? 'reading_lists.dashboard_recommendation_resume' : 'reading_lists.dashboard_recommendation_pause')}
+                </button>}
+            </>}
+            <span className="reading-dashboard-recommendation-position" aria-live={autoplay ? 'off' : 'polite'} aria-atomic="true"
+                aria-label={t('reading_lists.dashboard_recommendation_position', [currentIndex + 1, picks.length])}>{currentIndex + 1} / {picks.length}</span>
+        </div>}
     </section>
         {preferencesOpen && <RecommendationPreferences preferences={recommendation.preferences} options={recommendation.preferenceOptions} libraries={libraries} currentFile={file}
             onApply={next => { recommendation.updatePreferences(next); setPreferencesOpen(false); }} onClose={() => setPreferencesOpen(false)} returnFocusElement={preferencesButtonRef.current} t={t} />}
@@ -111,7 +203,7 @@ export function ReadingDashboard({
     annotationCatalog, onRefreshAnnotations,
     onOpenFile, onNavigate, onOpenLibrarySettings, onRefreshRecent,
 }) {
-    const catalog = useMemo(() => summarizeDashboardCatalog(files, 4), [files]);
+    const catalog = dashboardCatalogSummary(files, 4);
     const continueBooks = useMemo(() => selectDashboardRecent(recentFiles), [recentFiles]);
     const recommendation = useDailyRecommendation(files);
     const [month, setMonth] = useState(() => dashboardMonth());

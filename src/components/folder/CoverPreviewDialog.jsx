@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { animate, motion, useMotionValue, useSpring } from 'motion/react';
 import { FaIcon } from '../FaIcon';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import { paintAmbientCanvasFromSource } from '../../viewerAmbient';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
@@ -265,7 +266,7 @@ export function CoverPreviewDialog({ src, filePath, sourceElement, previewKey, r
                         <motion.div className="detail-cover-preview-tilt"
                             style={{ rotateX, rotateY, scale, transformPerspective: reducedMotion ? 0 : 1200 }}>
                             <canvas ref={ambientCanvasRef} className="detail-cover-preview-ambient" aria-hidden="true" />
-                            <img key={`${resourceKey}:${imageSrc}`} ref={imageRef} className="detail-cover-preview-image" src={imageSrc} alt={alt} draggable={false}
+                            <SmoothCoverImage key={`${resourceKey}:${imageSrc}`} ref={imageRef} className="detail-cover-preview-image" src={imageSrc} alt={alt} draggable={false}
                                 onDragStart={event => {
                                     event.preventDefault();
                                     event.stopPropagation();

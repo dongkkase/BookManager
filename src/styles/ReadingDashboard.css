@@ -143,17 +143,26 @@
 
 .reading-dashboard-recommendation {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     min-width: 0;
     min-height: 250px;
     padding: 24px 26px;
-    gap: 28px;
     overflow: hidden;
     border: 1px solid #35404b;
     border-radius: var(--dash-card-radius);
     background: linear-gradient(112deg, #131b23 0%, #202833 100%);
     color: #f0e7d7;
     text-align: left;
+}
+
+.reading-dashboard-recommendation-slide {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    min-height: 218px;
+    gap: 28px;
 }
 
 .reading-dashboard-recommendation-copy {
@@ -317,9 +326,92 @@
     position: relative;
     overflow: visible;
     border-radius: 2px;
-    transform: rotateY(-12deg);
+    backface-visibility: hidden;
+    will-change: transform;
     transform-origin: left center;
     box-shadow: -12px 10px 18px rgb(0 0 0 / 45%), 3px 2px 5px rgb(0 0 0 / 25%);
+}
+
+.reading-dashboard-recommendation-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    margin-top: 22px;
+}
+
+.reading-dashboard-recommendation-navigation,
+.reading-dashboard-recommendation-dots {
+    display: flex;
+    align-items: center;
+}
+
+.reading-dashboard-recommendation-navigation {
+    gap: 6px;
+}
+
+.reading-dashboard .reading-dashboard-recommendation-prev,
+.reading-dashboard .reading-dashboard-recommendation-next,
+.reading-dashboard .reading-dashboard-recommendation-playback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    gap: 6px;
+    height: 30px;
+    padding: 0 11px;
+    border: 1px solid #9da7b250;
+    border-radius: 20px;
+    background: transparent;
+    color: #d4d6d9;
+    font-size: var(--font-xs);
+}
+
+.reading-dashboard .reading-dashboard-recommendation-prev,
+.reading-dashboard .reading-dashboard-recommendation-next {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+}
+
+.reading-dashboard .reading-dashboard-recommendation-dot {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 30px;
+    padding: 0;
+    border-radius: 10px;
+    background: transparent;
+}
+
+.reading-dashboard-recommendation-dot span {
+    width: 5px;
+    height: 5px;
+    border-radius: 4px;
+    background: #89929e;
+}
+
+.reading-dashboard-recommendation-dot[aria-current='true'] span {
+    width: 16px;
+    height: 6px;
+    background: #ead7b0;
+}
+
+.reading-dashboard-recommendation-controls button:hover {
+    background: #d9c29d18;
+}
+
+.reading-dashboard-recommendation-controls button:disabled {
+    opacity: 0.5;
+}
+
+.reading-dashboard-recommendation-position {
+    margin-left: auto;
+    color: #b3b7be;
+    font-size: var(--font-xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .reading-dashboard-recommendation-cover .reading-dashboard-cover::before {
@@ -333,7 +425,15 @@
 
 .reading-dashboard-recommendation-cover .reading-dashboard-cover img {
     border-radius: 2px;
+    image-rendering: auto;
+    backface-visibility: hidden;
+    -webkit-mask-image: linear-gradient(#fff, #fff);
+    mask-image: linear-gradient(#fff, #fff);
     box-shadow: inset 3px 0 3px rgb(0 0 0 / 30%);
+}
+
+:root[data-motion='reduced'] .reading-dashboard-recommendation-cover .reading-dashboard-cover {
+    will-change: auto;
 }
 
 .reading-dashboard-recommendation-placeholder {
@@ -911,6 +1011,9 @@
 
     .reading-dashboard-recommendation {
         padding: 21px;
+    }
+
+    .reading-dashboard-recommendation-slide {
         gap: 20px;
     }
 
@@ -933,8 +1036,19 @@
 
 @container (max-width: 390px) {
     .reading-dashboard-recommendation {
-        gap: 14px;
         padding: 18px;
+    }
+
+    .reading-dashboard-recommendation-slide {
+        gap: 14px;
+    }
+
+    .reading-dashboard-recommendation-navigation {
+        gap: 3px;
+    }
+
+    .reading-dashboard .reading-dashboard-recommendation-dot {
+        width: 18px;
     }
 
     .reading-dashboard-recommendation-cover,

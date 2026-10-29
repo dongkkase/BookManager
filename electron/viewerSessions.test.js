@@ -316,11 +316,92 @@ test('CBZ 뷰어 세션은 macOS AppleDouble 메타데이터를 페이지에서 
 
         assert.equal(listed.readingDirection, 'ltr');
         assert.deepEqual(listed.pages.map(page => page.name), ['1.png']);
+        assert.equal(listed.pages[0].size, firstPage.length);
         assert.equal(manager.comicArchiveEntryCaches.get(session.id)?.zipEntries.size, 1);
         const pageData = await manager.getComicPageData(session.id, '1.png');
         assert.deepEqual(pageData.buffer, firstPage);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('CBZ 뷰어 목록은 ComicInfo 루트의 Format 값을 원문 대소문자로 반환한다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-comic-format-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const cases = [
+        ['웹툰', '<ComicInfo><Manga>YesAndRightToLeft</Manga><Format>Webtoon</Format></ComicInfo>', 'Webtoon', 'rtl'],
+        ['웹툰 읽기 방향', '<ComicInfo><Manga>Webtoon</Manga><Format>GraphicNovel</Format></ComicInfo>', 'GraphicNovel', 'webtoon'],
+        ['출판 포맷과 읽기 방향의 독립성', '<ComicInfo><Manga>No</Manga><Format>Webtoon</Format></ComicInfo>', 'Webtoon', 'ltr'],
+        ['비웹툰', '<ComicInfo><Format>Trade Paperback</Format></ComicInfo>', 'Trade Paperback'],
+        ['원문 대소문자', '<ComicInfo><Format>  wEbToOn  </Format></ComicInfo>', 'wEbToOn'],
+        ['CDATA', '<ComicInfo><Format><![CDATA[Webtoon & Digital]]></Format></ComicInfo>', 'Webtoon & Digital'],
+        ['엔터티', '<ComicInfo><Format>Web&#116;oon &amp; Digital</Format></ComicInfo>', 'Webtoon & Digital'],
+        ['ComicInfo 없음', null, ''],
+        ['Format 없음', '<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>', '', 'rtl'],
+        ['빈 Format', '<ComicInfo><Format/></ComicInfo>', ''],
+        ['중첩 Format', '<ComicInfo><Summary><Format>Webtoon</Format></Summary></ComicInfo>', ''],
+        ['주석 Format', '<ComicInfo><!--<Format>Webtoon</Format>--></ComicInfo>', ''],
+        ['다른 네임스페이스', '<ComicInfo><other:Format xmlns:other="urn:example">Webtoon</other:Format></ComicInfo>', ''],
+        ['다른 루트', '<Other><Format>Webtoon</Format></Other>', ''],
+        ['잘못된 XML', '<ComicInfo><Format>Webtoon</Format>', ''],
+        ['중복 Format', '<ComicInfo><Format>Webtoon</Format><Format>Comic</Format></ComicInfo>', ''],
+    ];
+    for (const [index, [label, xml, format, readingDirection = 'ltr']] of cases.entries()) {
+        await t.test(label, async () => {
+            const comicPath = path.join(root, `${index}.cbz`);
+            const image = pngHeader(690, 1600);
+            fs.writeFileSync(comicPath, Buffer.alloc(0));
+            await replaceZipEntry(comicPath, '001.png', image);
+            if (xml !== null) await replaceZipEntry(comicPath, 'metadata/ComicInfo.xml', xml);
+            const manager = new ViewerSessionManager();
+            const session = manager.create(comicPath, { skipAdjacent: true });
+
+            const listed = await manager.listComicPages(session.id);
+
+            assert.equal(listed.format, format);
+            assert.equal(listed.readingDirection, readingDirection);
+            assert.deepEqual(listed.pages.map(page => page.name), ['001.png']);
+            assert.equal(listed.pages[0].size, image.length);
+        });
+    }
+});
+
+test('CBZ 웹툰 읽기 방향은 유효한 ComicInfo 루트의 Manga 값만 사용한다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-manga-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const cases = [
+        ['대소문자와 공백', '<ComicInfo><Manga>  wEbToOn  </Manga></ComicInfo>', 'webtoon'],
+        ['CDATA', '<ComicInfo><Manga><![CDATA[Webtoon]]></Manga></ComicInfo>', 'webtoon'],
+        ['엔터티', '<ComicInfo><Manga>Web&#116;oon</Manga></ComicInfo>', 'webtoon'],
+        ['다른 방향 확장보다 우선', '<ComicInfo><Manga>Webtoon</Manga><ReadingDirection>rtl</ReadingDirection></ComicInfo>', 'webtoon'],
+        ['Manga 없음', '<ComicInfo><Format>Webtoon</Format></ComicInfo>', 'ltr'],
+        ['빈 Manga', '<ComicInfo><Manga/></ComicInfo>', 'ltr'],
+        ['일부 일치', '<ComicInfo><Manga>Webtoon Special</Manga></ComicInfo>', 'ltr'],
+        ['중첩 Manga', '<ComicInfo><Notes><Manga>Webtoon</Manga></Notes></ComicInfo>', 'ltr'],
+        ['주석 Manga', '<ComicInfo><!--<Manga>Webtoon</Manga>--></ComicInfo>', 'ltr'],
+        ['Notes 내용', '<ComicInfo><Notes><![CDATA[<Manga>Webtoon</Manga>]]></Notes></ComicInfo>', 'ltr'],
+        ['다른 네임스페이스', '<ComicInfo><other:Manga xmlns:other="urn:example">Webtoon</other:Manga></ComicInfo>', 'ltr'],
+        ['다른 루트', '<Other><Manga>Webtoon</Manga></Other>', 'ltr'],
+        ['잘못된 XML', '<ComicInfo><Manga>Webtoon</Manga>', 'ltr'],
+        ['중복 Manga', '<ComicInfo><Manga>Webtoon</Manga><Manga>No</Manga></ComicInfo>', 'ltr'],
+        ['기존 Manga RTL', '<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>', 'rtl'],
+        ['기존 ReadingDirection RTL', '<ComicInfo><ReadingDirection>right-to-left</ReadingDirection></ComicInfo>', 'rtl'],
+        ['ReadingDirection만 지정', '<ComicInfo><ReadingDirection>Webtoon</ReadingDirection></ComicInfo>', 'ltr'],
+    ];
+    for (const [index, [label, xml, readingDirection]] of cases.entries()) {
+        await t.test(label, async () => {
+            const comicPath = path.join(root, `${index}.cbz`);
+            fs.writeFileSync(comicPath, Buffer.alloc(0));
+            await replaceZipEntry(comicPath, '001.png', pngHeader(690, 1600));
+            await replaceZipEntry(comicPath, 'ComicInfo.xml', xml);
+            const manager = new ViewerSessionManager();
+            const session = manager.create(comicPath, { skipAdjacent: true });
+
+            const listed = await manager.listComicPages(session.id);
+
+            assert.equal(listed.readingDirection, readingDirection);
+            assert.equal(listed.pages.length, 1);
+        });
     }
 });
 
@@ -341,6 +422,7 @@ test('CBZ 뷰어 세션은 페이지 요청에 ZIP 엔트리 캐시를 재사용
 
         assert.equal(listed.readingDirection, 'rtl');
         assert.deepEqual(listed.pages.map(page => page.name), ['001.png', '002.png']);
+        assert.deepEqual(listed.pages.map(page => page.size), [firstPage.length, pngHeader(1200, 1800).length]);
         const archiveEntryCache = manager.comicArchiveEntryCaches.get(session.id);
         assert.ok(archiveEntryCache);
         assert.equal(archiveEntryCache.zipEntries.size, 3);
@@ -372,7 +454,8 @@ test('CBZ 뷰어 세션은 페이지 요청에 ZIP 엔트리 캐시를 재사용
         assert.deepEqual(pageData.buffer, updatedPage);
         assert.equal(manager.comicArchiveEntryCaches.has(session.id), false);
 
-        await manager.listComicPages(session.id);
+        const updatedListing = await manager.listComicPages(session.id);
+        assert.equal(updatedListing.pages.find(page => page.name === '001.png').size, updatedPage.length);
         assert.equal(manager.comicArchiveEntryCaches.has(session.id), true);
         for (let index = 0; index < 16; index += 1) {
             const documentPath = path.join(root, `${String(index).padStart(2, '0')}.pdf`);

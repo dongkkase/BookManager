@@ -47,6 +47,22 @@ only .cjs filenames/imports and four-space indentation were adapted.
 
 Both full license texts are included with the bundled encoder.
 
+## 7-Zip comic archive reader
+
+The comic viewer uses the official 7-Zip 26.05 binaries distributed through
+7zip-bin-full 26.5.1 to read 7z and RAR archives, including RAR5.
+Only the target platform's binaries are copied into the application resources.
+
+- 7-Zip: Copyright (C) 1999-2026 Igor Pavlov.
+- License: GNU LGPL 2.1 or later, with the unRAR restriction for RAR code,
+  and BSD licenses for specific components.
+- Sources: https://github.com/ip7z/7zip/tree/26.05
+- Binary distribution: https://github.com/ollm/7zip-bin-full
+- The upstream license information is included beside the binaries as
+  `bin/<platform>/<arch>/License.txt`.
+- The 7zip-bin-full package's MIT notice is included in the same directory as
+  `7zip-bin-full-LICENSE.txt`.
+
 ## CodeMirror 6 and supporting packages
 
 The text cleaner uses CodeMirror for virtualized text editing. The EPUB editor

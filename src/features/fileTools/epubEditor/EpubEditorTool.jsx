@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { SmoothCoverImage } from '../../../components/SmoothCoverImage';
 import { createPortal } from 'react-dom';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { EditorState, Selection } from '@tiptap/pm/state';
@@ -946,7 +947,7 @@ function Studio({ initial, assetUrls, loadAsset, onHome, onBack, showToast, regi
                                 else if (asset.kind === 'audio') editor.chain().focus().insertContent({ type: 'audio', attrs: { assetId: asset.id, title: asset.name, kind: 'effect', loop: false } }).run();
                                 else update(current => ({ ...current, style: { ...current.style, font: `font-${asset.id}` } }));
                             }}
-                        >{asset.kind === 'image' ? <img draggable={false} src={assetUrls.current[asset.id]} alt="" /> : <strong style={{ fontFamily: `font-${asset.id}` }}>{asset.kind === 'audio' ? <EditorIcon command="addAudio" /> : 'Aa'}</strong>}<span>{asset.name}</span></button>)}</div>
+                        >{asset.kind === 'image' ? <SmoothCoverImage draggable={false} src={assetUrls.current[asset.id]} alt="" /> : <strong style={{ fontFamily: `font-${asset.id}` }}>{asset.kind === 'audio' ? <EditorIcon command="addAudio" /> : 'Aa'}</strong>}<span>{asset.name}</span></button>)}</div>
                     </>}
                 </div>
                 <button className="ee-sidebar-book" onClick={() => { setRightTab('book'); setShowInspector(true); }}><FaIcon name="book" />{l('book')}<FaIcon name="chevronRight" size={10} /></button>

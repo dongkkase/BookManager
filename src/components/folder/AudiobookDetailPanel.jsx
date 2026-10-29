@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import {
     duplicateDetailRows,
     splitMetadataValues,
@@ -139,7 +140,7 @@ const AudiobookDetailPanel = ({ selectedFile = null, onContentHeightChange, onEd
                         <div className="detail-cover-stack">
                             <DetailCoverFrame selectedFile={selectedFile} coverSrc={coverAvailable ? cover : ''} isActive={isActive} t={t}>
                                 {coverAvailable ? (
-                                    <img
+                                    <SmoothCoverImage
                                         src={cover}
                                         alt={selectedFile.name || ''}
                                         className="detail-cover-image"

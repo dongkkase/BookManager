@@ -322,6 +322,53 @@ test('로컬 업로드 사진은 외부 프로필 없이 저장되고 다시 읽
     assert.equal(normalizeAuthorProfile({ ...profile, photoOverride: { ...photoOverride, sourceUrl: 'file:///private/photo.png' } }), null);
 });
 
+test('직접 입력한 로컬 프로필은 사진 없이 저장되고 사진을 추가해도 식별자와 소개를 유지한다', () => {
+    const id = 'local:5273c576-25e3-4c58-b6f2-d5636ed0da46';
+    const profile = normalizeAuthorProfile({ provider: 'local', id, name: '<b>한강</b>', birthDate: '1970-11-27',
+        deathDate: '', topWork: '채식주의자', description: '직접 입력한 소개', works: ['채식주의자', '소년이 온다'] });
+    assert.equal(profile.name, '한강');
+    assert.equal(profile.birthDate, '1970-11-27');
+    assert.equal(profile.topWork, '채식주의자');
+    assert.equal(profile.description, '직접 입력한 소개');
+    assert.equal(profile.photoUrl, '');
+    assert.equal(profile.sourceUrl, '');
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(profile))), profile);
+    const photoOverride = { id: 'cd'.repeat(32), source: 'local', sourceUrl: '', query: '' };
+    const withPhoto = normalizeAuthorProfile({ ...profile, photoOverride });
+    assert.equal(withPhoto.id, id);
+    assert.equal(withPhoto.description, profile.description);
+    assert.equal(withPhoto.photoUrl, `bookmanager-thumbnail://author-photo/${photoOverride.id}.png`);
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(withPhoto))), withPhoto);
+});
+
+test('직접 입력한 로컬 프로필은 외부 주소나 저장 사진 경로를 프로필 사진으로 사용하지 않는다', () => {
+    const profile = { provider: 'local', id: 'local:5273c576-25e3-4c58-b6f2-d5636ed0da46', name: '저자' };
+    for (const photoUrl of ['file:///private/photo.png', 'https://images.example.com/portrait.png',
+        'https://upload.wikimedia.org/wikipedia/commons/a/ab/Author.jpg', `bookmanager-thumbnail://author-photo/${'ab'.repeat(32)}.png`]) {
+        const value = normalizeAuthorProfile({ ...profile, photoUrl, sourceUrl: 'https://example.com/profile',
+            storedPhoto: { id: 'ab'.repeat(32), sourceUrl: photoUrl } });
+        assert.equal(value.sourceUrl, '');
+        assert.equal(value.photoUrl, '');
+        assert.equal(value.storedPhoto, undefined);
+    }
+    for (const id of ['../private', 'local:', 'local:author', 'local:5273c576-25e3-4c58-b6f2-d5636ed0da46/extra', 'ab'.repeat(32)]) {
+        assert.equal(normalizeAuthorProfile({ ...profile, id }), null);
+    }
+});
+
+test('프로필 소개는 문단 줄바꿈을 유지하고 다른 필드는 한 줄로 정리한다', () => {
+    const original = { provider: 'local', id: 'local:5273c576-25e3-4c58-b6f2-d5636ed0da46',
+        name: '저자\n이름', topWork: '첫 작품\n다음 작품',
+        description: '  <b>첫 문단</b>\r\n\r\n두 번째\t문단\u0000\n마지막 문단  ' };
+    const value = normalizeAuthorProfile(original);
+    assert.equal(value.description, '첫 문단\n\n두 번째 문단 \n마지막 문단');
+    assert.equal(value.name, '저자 이름');
+    assert.equal(value.topWork, '첫 작품 다음 작품');
+    assert.deepEqual(normalizeAuthorProfile(JSON.parse(JSON.stringify(value))), value);
+    assert.equal(normalizeAuthorProfile({ ...original, description: 123 }).description, '');
+    assert.equal(normalizeAuthorProfile({ ...original, description: '가'.repeat(1200) }).description.length, 1000);
+});
+
 test('다른 프로필의 사진을 선택해도 저자 정보와 사진 저작자 및 라이선스를 각각 보존한다', () => {
     const photoOverride = {
         id: 'cd'.repeat(32), source: 'wikidata', sourceUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Author.jpg',

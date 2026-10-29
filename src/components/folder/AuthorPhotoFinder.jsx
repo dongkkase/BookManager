@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 
 const LABELS = {
     ko: {
@@ -75,7 +76,7 @@ function PhotoCandidate({ candidate, labels, disabled, selecting, onSelect }) {
     return <button ref={elementRef} type="button" className="author-photo-candidate" disabled={disabled || !preview || failed}
         onClick={() => onSelect(candidate)} aria-label={`${labels.select}: ${candidate.title}`}>
         <span className="author-photo-preview">
-            {preview && !failed ? <img src={preview} alt="" onError={() => setFailed(true)} />
+            {preview && !failed ? <SmoothCoverImage src={preview} alt="" onError={() => setFailed(true)} />
                 : <span>{failed ? labels.imageFailed : '…'}</span>}
         </span>
         <strong>{candidate.title}</strong>

@@ -92,6 +92,7 @@ Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { wri
 const apiQueries = [];
 const profileOptions = [];
 const profilePhotoSaves = [];
+const profilePhotoConfirmations = [];
 let failNextProfilePhotoSave = false;
 let allowMissingProfilePhoto = false;
 let releaseFirstProfile;
@@ -118,6 +119,7 @@ let changed;
 let catalogResponseGate = null;
 let catalogResponses = 0;
 window.electronAPI = {
+    showMessage: async options => { profilePhotoConfirmations.push(options); return 'yes'; },
     saveAuthorProfilePhoto: async profile => {
         profilePhotoSaves.push(profile);
         if (failNextProfilePhotoSave && profile.id === 'wikipedia:ko:12345' || profile.id === 'OL404A' && !allowMissingProfilePhoto) {
@@ -293,7 +295,7 @@ function checkProfileLayout(narrow = false) {
     const stats = profile.querySelector('.author-profile-stats').getBoundingClientRect();
     check(document.querySelector('#author-profile-heading')?.tagName === 'H2', 'Author detail must expose its named heading');
     check(profile.querySelectorAll('.author-profile-stats dt').length === 2 && profile.querySelectorAll('.author-profile-stats dd').length === 2, 'Author stats must associate their labels with values');
-    for (const element of profile.querySelectorAll('.author-profile-portrait, .author-profile-info, .author-profile-stats, .author-profile-hover-actions, .author-profile-corner-actions, h2, p, dt, dd, button, a')) {
+    for (const element of profile.querySelectorAll('.author-profile-portrait, .author-profile-info, .author-profile-stats, .author-profile-hover-actions, h2, p, dt, dd, button, a')) {
         const rectangle = element.getBoundingClientRect();
         check(rectangle.left >= bounds.left - 1 && rectangle.right <= bounds.right + 1, 'Author profile content overflowed its horizontal bounds: ' + element.className);
     }
@@ -422,11 +424,14 @@ window.catalogResult = (async () => {
     await nativeEnter(profileEditor().querySelectorAll('.author-editor-result')[1]);
     await click('이 프로필 선택', profileEditor());
     await until(() => document.querySelector('.author-detail > [role="alert"]')?.textContent.includes('저장하지 못했습니다'), 'A failed disk write must report the save failure');
+    check(profilePhotoConfirmations.length === 1 && profilePhotoConfirmations[0].buttons === 'yes-no-cancel'
+        && profilePhotoConfirmations[0].defaultChoice === 'no', 'Replacing a profile that already has a photo must ask before saving');
     check(profileEditor(), 'A failed disk write must keep the profile picker available for retry');
     check(document.querySelector('.author-profile a')?.href === 'https://www.wikidata.org/wiki/Q12345'
         && document.querySelector('.author-profile-portrait img').src === previousPhotoUrl, 'A failed disk write must preserve the current author and photo');
     await click('이 프로필 선택', profileEditor());
     await until(() => !profileEditor(), 'Profile selection failed');
+    check(profilePhotoConfirmations.length === 2, 'Retrying a failed profile save must confirm photo replacement again');
     check(JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'].id === 'wikipedia:ko:12345', 'Selected Wikipedia profile was not saved');
     check(JSON.parse(localStorage.getItem('bookmanager.authorProfiles'))['김초엽'].storedPhoto?.id === 'd'.repeat(64), 'Manually selected profile photos must also retain their local file identity');
     check(profilePhotoSaves.filter(profile => profile.id === 'wikipedia:ko:12345').length >= 2, 'Manual photo saving must retry after a disk write failure');

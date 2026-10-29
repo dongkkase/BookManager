@@ -117,11 +117,14 @@ const FileTableView = forwardRef(({
     const shouldVirtualize = shouldVirtualizeFolderItems(groupedData);
     const virtualRows = shouldVirtualize ? tableRows : [];
     const virtualBuffer = 12;
-    const virtualStartIndex = shouldVirtualize
-        ? Math.max(0, Math.floor(scrollTop / rowHeight) - virtualBuffer)
-        : 0;
     const virtualVisibleCount = shouldVirtualize
         ? Math.ceil((viewportHeight || 600) / rowHeight) + (virtualBuffer * 2)
+        : 0;
+    const virtualStartIndex = shouldVirtualize
+        ? Math.min(
+            Math.max(0, virtualRows.length - virtualVisibleCount),
+            Math.max(0, Math.floor(scrollTop / rowHeight) - virtualBuffer),
+        )
         : 0;
     const virtualEndIndex = shouldVirtualize
         ? Math.min(virtualRows.length, virtualStartIndex + virtualVisibleCount)

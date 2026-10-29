@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverArtwork } from '../CoverArtwork';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import { resolveBookType } from '../../metadata/metadataTypes';
 import { AudiobookDetailPanel } from './AudiobookDetailPanel';
 import { BookDetailPanel } from './BookDetailPanel';
@@ -96,7 +97,7 @@ const DirectoryDetailPanel = ({ selectedFile, onContentHeightChange, isActive = 
                             coverFilePath={selectedFile.cover_file_path || preview?.cover_file_path || ''} isActive={isActive} t={t}>
                             {coverAvailable ? (
                                 <>
-                                    <img src={cover} alt={selectedFile.name || ''} className="detail-cover-image" onError={() => setFailedCover(cover)} />
+                                    <SmoothCoverImage src={cover} alt={selectedFile.name || ''} className="detail-cover-image" onError={() => setFailedCover(cover)} />
                                     <span className="folder-item-cover-badge"><FaIcon name="folder" size={18} title={t('folder_item_type')} /></span>
                                 </>
                             ) : (

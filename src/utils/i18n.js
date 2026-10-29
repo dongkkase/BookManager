@@ -454,6 +454,8 @@ const EXTRA_TRANSLATIONS = {
         toolbar: {
             export_csv_hint: '현재 목록과 표시 중인 열을 CSV 파일로 저장합니다.',
             include_subfolders_hint: '하위 폴더의 파일도 목록에 함께 표시합니다.',
+            files_only: '파일만보기',
+            files_only_hint: '목록에서 폴더를 숨기고 파일만 표시합니다.',
             duplicate_check_hint: '등록한 라이브러리와 파일명을 비교해 중복 후보를 표시합니다.',
         },
         character_index: {
@@ -806,6 +808,7 @@ const EXTRA_TRANSLATIONS = {
         actual: '원본 크기',
       },
       read_mode: {
+        auto: '자동 보기',
         single: '한장보기',
         spread: '두장보기',
         scroll: '스크롤',
@@ -977,6 +980,7 @@ const EXTRA_TRANSLATIONS = {
         toolbar_zoom: '배율 슬라이더와 리셋 버튼을 열어 확대/축소를 조절합니다.',
         toolbar_single: '한 페이지씩 읽습니다.',
         toolbar_spread: '두 페이지를 펼침 형태로 읽습니다.',
+        toolbar_auto: '화면 비율에 맞춰 한장·두장보기를 전환하고, 가로 페이지는 단독으로 표시하며 웹툰은 스크롤로 읽습니다.',
         toolbar_scroll: '문서를 세로로 이어서 스크롤합니다.',
         toolbar_tts: 'EPUB/TXT에서 본문을 가리지 않는 상단 TTS 도구 모음을 열어 현재 페이지 본문을 읽습니다. 음성 드롭다운에서 시스템, Supertonic, OpenAI, Google 음성을 선택할 수 있고, 도구 모음이 열린 동안 Space로 재생/일시정지를 전환합니다. 다음/이전 페이지로 이동하면 새 페이지 본문부터 다시 읽고, 페이지 말머리는 읽지 않습니다.',
         toolbar_direction: '만화책의 좌우 읽기 방향을 전환합니다. 하단 썸네일과 이동 버튼은 읽기 방향을 따르며, 상단 좌우 이동 버튼은 좌/우 방향키 설정을 따릅니다.',
@@ -1470,6 +1474,8 @@ const EXTRA_TRANSLATIONS = {
         toolbar: {
             export_csv_hint: 'Save the current list and visible columns as a CSV file.',
             include_subfolders_hint: 'Include files from subfolders in the list.',
+            files_only: 'Files Only',
+            files_only_hint: 'Hide folders and show only files in the list.',
             duplicate_check_hint: 'Compare file names with registered libraries to show possible duplicates.',
         },
         character_index: {
@@ -1822,6 +1828,7 @@ const EXTRA_TRANSLATIONS = {
         actual: 'Actual size',
       },
       read_mode: {
+        auto: 'Automatic view',
         single: 'Single page mode',
         spread: 'Two-page mode',
         scroll: 'Scroll mode',
@@ -1993,6 +2000,7 @@ const EXTRA_TRANSLATIONS = {
         toolbar_zoom: 'Open the zoom slider and reset control.',
         toolbar_single: 'Read one page at a time.',
         toolbar_spread: 'Read two pages as a spread.',
+        toolbar_auto: 'Switch between single pages and spreads to fit the viewport, show landscape pages alone, and scroll through webtoons.',
         toolbar_scroll: 'Read the document as a vertical scroll.',
         toolbar_tts: 'In EPUB/TXT, open the top TTS toolbar to read the current page body without covering it. Use the voice dropdown to choose a system, Supertonic, OpenAI, or Google voice; while the toolbar is open, press Space to toggle play/pause. Moving to the previous or next page restarts from the new page body, and page headers are skipped.',
         toolbar_direction: 'Switch comic reading direction. Bottom thumbnails and navigation buttons follow the reading direction; top left/right navigation buttons follow the arrow key setting.',
@@ -2486,6 +2494,8 @@ const EXTRA_TRANSLATIONS = {
         toolbar: {
             export_csv_hint: '現在の一覧と表示中の列をCSVファイルに保存します。',
             include_subfolders_hint: 'サブフォルダーのファイルも一覧に表示します。',
+            files_only: 'ファイルのみ表示',
+            files_only_hint: '一覧のフォルダーを非表示にして、ファイルのみ表示します。',
             duplicate_check_hint: '登録したライブラリとファイル名を比較し、重複候補を表示します。',
         },
         character_index: {
@@ -2838,6 +2848,7 @@ const EXTRA_TRANSLATIONS = {
         actual: '原寸',
       },
       read_mode: {
+        auto: '自動表示',
         single: '1ページ表示',
         spread: '2ページ表示',
         scroll: 'スクロール表示',
@@ -3009,6 +3020,7 @@ const EXTRA_TRANSLATIONS = {
         toolbar_zoom: '倍率スライダーとリセット操作を開きます。',
         toolbar_single: '1ページずつ読みます。',
         toolbar_spread: '2ページを見開きで読みます。',
+        toolbar_auto: '画面の縦横比に合わせて1ページ・見開きを切り替え、横長のページは単独で、ウェブトゥーンはスクロールで表示します。',
         toolbar_scroll: '文書を縦に連続してスクロールします。',
         toolbar_tts: 'EPUB/TXTで本文を隠さない上部のTTSツールバーを開き、現在ページの本文を読み上げます。音声ドロップダウンでシステム、Supertonic、OpenAI、Google音声を選択でき、ツールバーが開いている間はSpaceで再生/一時停止を切り替えます。前後のページへ移動すると新しいページ本文から読み直し、ページのヘッダーは読み上げません。',
         toolbar_direction: 'コミックの読む方向を切り替えます。下部のサムネイルと移動ボタンは読む方向に従い、上部の左右移動ボタンは左右方向キーの設定に従います。',

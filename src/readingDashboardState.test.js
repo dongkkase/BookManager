@@ -24,6 +24,22 @@ test('dashboard catalog counts usable unique books and keeps only the latest bou
     assert.equal(dashboardAddedTimestamp({ readingListAddedAt: Number.MAX_VALUE }), 0);
 });
 
+test('latest selection keeps input order for equal dates and honors date fallbacks before limiting', () => {
+    const books = [
+        { path: '/unknown.epub', readingListAddedAt: 'invalid', created: -1, mtime: 0 },
+        { path: '/first.epub', readingListAddedAt: '2026-10-20' },
+        { path: '/fallback.epub', readingListAddedAt: 'invalid', created: '2026-10-20' },
+        { path: '/modified.epub', readingListAddedAt: Number.MAX_VALUE, created: 'invalid', mtime: Date.parse('2026-10-20') },
+        { path: '/last.epub', readingListAddedAt: '2026-10-20' },
+        { path: '/newest.epub', readingListAddedAt: '2026-10-21' },
+        { path: '/first.epub', readingListAddedAt: '2026-10-30' },
+    ];
+    const summary = summarizeDashboardCatalog(books, 4);
+    assert.equal(summary.bookCount, 6);
+    assert.deepEqual(summary.latest, [books[5], books[1], books[2], books[3]]);
+    assert.deepEqual(summarizeDashboardCatalog(books, 7).latest, [books[5], books[1], books[2], books[3], books[4], books[0]]);
+});
+
 test('continue reading prefers unfinished books before the most recently completed books', () => {
     const recent = [
         { path: '/finished.epub', lastReadAt: '2026-10-25', viewerStatus: { isCompleted: true } },

@@ -90,6 +90,7 @@ function fixture(initialMonth = '2026-10', initialScope = '/books') {
         if (flush) flushEffects();
         return result;
     };
+    const close = () => { for (const slot of slots) slot.cleanup?.(); };
     render();
     return {
         requests, timers, window, document, recentListeners, listListeners, render, flushEffects,
@@ -100,9 +101,97 @@ function fixture(initialMonth = '2026-10', initialScope = '/books') {
             timers.clear();
             ready.forEach(timer => timer.callback());
         },
-        close: () => { for (const slot of slots) slot.cleanup?.(); },
+        close,
+        remount: (nextMonth = month, nextScope = scope) => {
+            close();
+            slots.length = 0;
+            effects = [];
+            return render(nextMonth, nextScope);
+        },
     };
 }
+
+test('대시보드 재진입은 마지막 통계를 즉시 표시하고 배경 갱신 및 실패에서도 보존한다', async () => {
+    const f = fixture();
+    const initial = response();
+    f.requests[0].resolve(initial);
+    await tick();
+    assert.equal(f.remount().data, initial);
+    assert.equal(f.result().loading, true);
+    assert.equal(f.result().error, false);
+    assert.equal(f.requests.length, 2);
+    const updated = { ...response('2026-10', 'updated'), goal: { books: 5, minutes: 300 } };
+    f.requests[1].resolve(updated);
+    await tick();
+    assert.equal(f.render().data, updated);
+    assert.equal(f.result().loading, false);
+    assert.equal(f.remount().data, updated);
+    f.requests[2].reject(new Error('offline'));
+    await tick();
+    assert.equal(f.render().data, updated);
+    assert.equal(f.result().loading, false);
+    assert.equal(f.result().error, true);
+    assert.equal(f.remount().data, updated);
+    assert.equal(f.result().error, false);
+    f.close();
+});
+
+test('캐시 통계는 라이브러리 범위와 월별로 분리하며 선택 즉시 해당 기록을 표시한다', async () => {
+    const f = fixture();
+    const initial = response();
+    f.requests[0].resolve(initial);
+    await tick();
+    assert.equal(f.render('2026-10', '/other-library').data, null);
+    const other = response('2026-10', 'other library');
+    f.requests[1].resolve(other);
+    await tick();
+    assert.equal(f.render('2026-09', '/books').data, null);
+    const september = response('2026-09', 'September');
+    f.requests[2].resolve(september);
+    await tick();
+    assert.equal(f.render('2026-10', '/books').data, initial);
+    assert.equal(f.result().loading, true);
+    assert.equal(f.remount('2026-10', '/other-library').data, other);
+    assert.equal(f.remount('2026-09', '/books').data, september);
+    f.close();
+});
+
+test('언마운트 이전의 늦은 응답은 재진입 후 갱신된 통계 캐시를 덮어쓰지 않는다', async () => {
+    const f = fixture();
+    const initial = response();
+    f.requests[0].resolve(initial);
+    await tick();
+    f.render();
+    const oldRefresh = f.result().refresh();
+    assert.equal(f.remount().data, initial);
+    const latest = response('2026-10', 'latest visit');
+    f.requests[2].resolve(latest);
+    await tick();
+    f.requests[1].resolve(response('2026-10', 'stale visit'));
+    await oldRefresh;
+    assert.equal(f.render().data, latest);
+    assert.equal(f.remount().data, latest);
+    f.close();
+});
+
+test('통계 캐시는 최근 성공한 12개 범위와 월 조합까지만 유지한다', async () => {
+    const f = fixture();
+    const initial = response();
+    f.requests[0].resolve(initial);
+    await tick();
+    const entries = [];
+    for (let index = 1; index <= 12; index += 1) {
+        f.render('2026-10', `/books-${index}`);
+        const entry = response('2026-10', `library ${index}`);
+        entries.push(entry);
+        f.requests[index].resolve(entry);
+        await tick();
+    }
+    assert.equal(f.remount('2026-10', '/books').data, null);
+    assert.equal(f.remount('2026-10', '/books-1').data, entries[0]);
+    assert.equal(f.remount('2026-10', '/books-12').data, entries[11]);
+    f.close();
+});
 
 test('독서 기록 재조회는 기존 데이터를 유지하며 오류와 재시도에서 복구한다', async () => {
     const f = fixture();

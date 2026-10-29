@@ -1,7 +1,7 @@
 import React, { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { acquireResampledCover, coverResamplingTarget } from '../coverImageResampling';
 
-function loadCoverSource(src, signal) {
+function loadCoverSource(src, signal, { crossOrigin, referrerPolicy }) {
     return new Promise((resolve, reject) => {
         const source = new Image();
         const cleanup = () => {
@@ -26,11 +26,14 @@ function loadCoverSource(src, signal) {
             return;
         }
         signal.addEventListener('abort', abort, { once: true });
+        if (crossOrigin != null) source.crossOrigin = crossOrigin;
+        else if (/^https?:\/\//i.test(src)) source.crossOrigin = 'anonymous';
+        if (referrerPolicy != null) source.referrerPolicy = referrerPolicy;
         source.src = src;
     });
 }
 
-const SmoothCoverImageSource = forwardRef(function SmoothCoverImageSource({ src, onError, ...props }, forwardedRef) {
+const SmoothCoverImageSource = forwardRef(function SmoothCoverImageSource({ src, onLoad, onError, crossOrigin, referrerPolicy, ...props }, forwardedRef) {
     const imageRef = useRef(null);
     const failedRef = useRef(false);
     const leasesRef = useRef(new Set());
@@ -71,7 +74,7 @@ const SmoothCoverImageSource = forwardRef(function SmoothCoverImageSource({ src,
 
     useEffect(() => {
         const image = imageRef.current;
-        if (!image || !src) return undefined;
+        if (!image || !src || /^data:image\/(?:gif|apng)[;,]|\.(?:gif|apng)(?:[?#]|$)/i.test(src)) return undefined;
         let disposed = false;
         let visible = typeof IntersectionObserver === 'undefined';
         let naturalWidth = 0;
@@ -90,13 +93,15 @@ const SmoothCoverImageSource = forwardRef(function SmoothCoverImageSource({ src,
         const resize = async () => {
             if (disposed || !visible || failedRef.current || !naturalWidth) return;
             const bounds = image.getBoundingClientRect();
+            const style = window.getComputedStyle(image);
             const target = coverResamplingTarget({
                 naturalWidth,
                 naturalHeight,
-                displayWidth: bounds.width,
-                displayHeight: bounds.height,
+                // Size the bitmap for the layout, even while an ancestor is animating from a small scale.
+                displayWidth: parseFloat(style.width) || bounds.width,
+                displayHeight: parseFloat(style.height) || bounds.height,
                 devicePixelRatio: window.devicePixelRatio,
-                fitMode: window.getComputedStyle(image).objectFit,
+                fitMode: style.objectFit,
             });
             const key = target ? `${target.width}x${target.height}` : '';
             if (key === appliedKey) {
@@ -115,7 +120,7 @@ const SmoothCoverImageSource = forwardRef(function SmoothCoverImageSource({ src,
             pendingKey = key;
             try {
                 // Keep the source independent of the displayed, resized image.
-                const source = await loadCoverSource(src, controller.signal);
+                const source = await loadCoverSource(src, controller.signal, { crossOrigin, referrerPolicy });
                 const nextLease = await acquireResampledCover(source, target, { signal: controller.signal });
                 if (disposed || !mountedRef.current || controller.signal.aborted) {
                     nextLease.release();
@@ -173,13 +178,18 @@ const SmoothCoverImageSource = forwardRef(function SmoothCoverImageSource({ src,
             image.removeEventListener('load', loaded);
             window.removeEventListener('resize', schedule);
         };
-    }, [src, clearLease]);
+    }, [src, crossOrigin, referrerPolicy, clearLease]);
 
     return (
         <img
             {...props}
             ref={attachRef}
             src={lease?.url || src}
+            crossOrigin={crossOrigin}
+            referrerPolicy={referrerPolicy}
+            onLoad={event => {
+                if (!lease && event.currentTarget.getAttribute('src') === src) onLoad?.(event);
+            }}
             onError={event => {
                 if (lease) {
                     failedRef.current = true;

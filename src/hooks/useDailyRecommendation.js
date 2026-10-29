@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     DAILY_RECOMMENDATION_STORAGE_KEY,
-    createDailyRecommendationIndex,
     dailyRecommendationDay,
-    findDailyRecommendation,
+    findDailyRecommendations,
     isDailyRecommendationEntryVolume,
     nextRecommendationDelay,
     readDailyRecommendation,
@@ -15,10 +14,10 @@ import {
     RECOMMENDATION_PREFERENCES_STORAGE_KEY,
     normalizeRecommendationPreferences,
     readRecommendationPreferences,
-    recommendationPreferenceOptions,
     recommendationPreferencesKey,
     recommendationSeries,
 } from '../recommendationPreferencesState.js';
+import { dashboardRecommendationIndex, dashboardRecommendationOptions } from '../dashboardCatalogCache.js';
 
 const EMPTY_FILES = [];
 
@@ -63,7 +62,6 @@ function mergeRecommendationPreview(file, preview) {
 export function useDailyRecommendation(files = EMPTY_FILES) {
     const [preferences, setPreferences] = useState(() => readRecommendationPreferences(recommendationStorage()));
     const preferencesRef = useRef(preferences);
-    const optionsRef = useRef(null);
     const [snapshot, setSnapshot] = useState(null);
     const snapshotRef = useRef(null);
     const filesRef = useRef(files);
@@ -71,7 +69,7 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
     const mountedRef = useRef(false);
     const recordRef = useRef(null);
     const seedRef = useRef(null);
-    const previewRef = useRef(null);
+    const previewsRef = useRef(new Map());
     const catalogRef = useRef(null);
     const newRecommendationRef = useRef(null);
     const newRecommendationSequenceRef = useRef(0);
@@ -82,12 +80,69 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         catalogRef.current = {
             source: files, platform, preferences: preferencesRef.current,
             preferencesKey: recommendationPreferencesKey(preferencesRef.current),
-            candidates: createDailyRecommendationIndex(files, platform, preferencesRef.current),
+            candidates: dashboardRecommendationIndex(files, platform, preferencesRef.current),
         };
     }
-    if (optionsRef.current?.source !== files) {
-        optionsRef.current = { source: files, value: recommendationPreferenceOptions(files) };
-    }
+
+    const saveRecord = useCallback(record => {
+        recordRef.current = record;
+        try {
+            const storage = recommendationStorage();
+            const serialized = JSON.stringify(record);
+            if (storage?.getItem(DAILY_RECOMMENDATION_STORAGE_KEY) !== serialized) {
+                storage?.setItem(DAILY_RECOMMENDATION_STORAGE_KEY, serialized);
+            }
+        } catch {
+            // Keep the current recommendations in memory when storage is unavailable.
+        }
+    }, []);
+
+    const loadPreview = useCallback((file, day) => {
+        const catalog = catalogRef.current;
+        const path = file.full_path || file.path;
+        const key = readingStatePathKey(path, catalog.platform);
+        const sourceFile = catalog.candidates.get(key)?.file;
+        const cached = previewsRef.current.get(key);
+        if (cached?.sourceFile === sourceFile && cached.day === day) return cached.promise;
+        const entry = {
+            sourceFile,
+            day,
+            promise: Promise.resolve().then(() => window.electronAPI?.getFilePreview?.(path, { force: false }))
+                .then(response => response?.success && response.file ? response.file : null).catch(() => null),
+        };
+        previewsRef.current.set(key, entry);
+        void entry.promise.then(preview => {
+            if (!preview && previewsRef.current.get(key) === entry) previewsRef.current.delete(key);
+        });
+        return entry.promise;
+    }, []);
+
+    const selectRecommendation = useCallback(path => {
+        if (!mountedRef.current || newRecommendationRef.current) return;
+        const catalog = catalogRef.current;
+        const day = dailyRecommendationDay();
+        const current = visibleSnapshot(snapshotRef.current, catalog, day);
+        const key = readingStatePathKey(path, catalog.platform);
+        const file = current?.recommendations?.find(candidate => readingStatePathKey(candidate.full_path || candidate.path, catalog.platform) === key);
+        if (!file || !catalog.candidates.has(key)) return;
+        const next = { ...current, file };
+        snapshotRef.current = next;
+        setSnapshot(next);
+        const record = matchingRecord(recordRef.current, catalog.preferencesKey);
+        if (record?.day === day) saveRecord({ ...record, path: file.full_path || file.path });
+        if (!window.electronAPI?.getFilePreview) return;
+        void loadPreview(file, day).then(preview => {
+            const latest = snapshotRef.current;
+            if (!preview || !mountedRef.current || newRecommendationRef.current || catalogRef.current !== catalog || latest?.source !== current.source
+                || latest.day !== day || day !== dailyRecommendationDay()) return;
+            const updated = latest.recommendations.map(candidate => readingStatePathKey(candidate.full_path || candidate.path, catalog.platform) === key
+                ? mergeRecommendationPreview(candidate, preview) : candidate);
+            const selected = updated.find(candidate => (candidate.full_path || candidate.path) === (latest.file?.full_path || latest.file?.path));
+            const hydrated = { ...latest, recommendations: updated, file: selected || latest.file };
+            snapshotRef.current = hydrated;
+            setSnapshot(hydrated);
+        });
+    }, [loadPreview, saveRecord]);
 
     const refresh = useCallback(async () => {
         if (!mountedRef.current) return;
@@ -119,7 +174,7 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
             publish({ source, day, file: null, loading: Boolean(source?.length), error: null });
         }
         try {
-            const result = await findDailyRecommendation({
+            const result = await findDailyRecommendations({
                 files: source,
                 day,
                 record,
@@ -131,56 +186,42 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
                 isCurrent,
             });
             if (!isCurrent() || !result) return;
+            const latest = visibleSnapshot(snapshotRef.current, catalog, day);
+            const previousFiles = new Map((latest?.recommendations || []).map(file => [readingStatePathKey(file.full_path || file.path, platform), file]));
+            const recommendations = result.files.map(file => {
+                const retainedFile = previousFiles.get(readingStatePathKey(file.full_path || file.path, platform));
+                return retainedFile ? mergeRecommendationPreview(file, retainedFile) : file;
+            });
+            const latestPath = latest?.file?.full_path || latest?.file?.path;
+            const file = recommendations.find(candidate => readingStatePathKey(candidate.full_path || candidate.path, platform) === readingStatePathKey(latestPath, platform))
+                || recommendations.find(candidate => (candidate.full_path || candidate.path) === result.record?.path)
+                || recommendations[0] || null;
             if (result.record) {
                 result.record.preferencesKey = catalog.preferencesKey;
-                recordRef.current = result.record;
-                try {
-                    const nextRecord = JSON.stringify(result.record);
-                    if (storage?.getItem(DAILY_RECOMMENDATION_STORAGE_KEY) !== nextRecord) {
-                        storage?.setItem(DAILY_RECOMMENDATION_STORAGE_KEY, nextRecord);
-                    }
-                } catch {
-                    // Keep the current recommendation in memory when storage is unavailable.
-                }
+                result.record.path = file?.full_path || file?.path || '';
+                saveRecord(result.record);
             }
-            const nextSnapshot = { source, day, file: result.file, loading: false, error: null };
-            if (!result.file || !window.electronAPI?.getFilePreview) {
-                publish(nextSnapshot);
-                return;
+            const keys = new Set(recommendations.map(candidate => readingStatePathKey(candidate.full_path || candidate.path, platform)));
+            for (const key of previewsRef.current.keys()) {
+                if (!keys.has(key)) previewsRef.current.delete(key);
             }
-            const retainedPath = retained?.file?.full_path || retained?.file?.path;
-            const sameBook = readingStatePathKey(retainedPath, platform) === readingStatePathKey(result.record.path, platform);
-            if (!sameBook) {
-                publish(nextSnapshot);
-            }
-            const cached = previewRef.current;
-            if (cached?.sourceFile !== result.sourceFile || cached.day !== day) {
-                previewRef.current = {
-                    sourceFile: result.sourceFile,
-                    day,
-                    promise: Promise.resolve().then(() => window.electronAPI.getFilePreview(result.record.path, { force: false }))
-                        .then(preview => preview?.success && preview.file ? preview.file : null).catch(() => null),
-                };
-            }
-            const preview = await previewRef.current.promise;
-            if (!isCurrent()) return;
-            if (!preview) {
-                previewRef.current = null;
-                publish(sameBook ? { ...nextSnapshot, file: {
-                    ...retained.file,
-                    readingState: result.file.readingState,
-                    viewerStatus: result.file.viewerStatus,
-                } } : nextSnapshot);
-                return;
-            }
-            const file = mergeRecommendationPreview(result.file, preview);
-            publish({ source, day, file, loading: false, error: null });
+            const nextSnapshot = { source, day, file, recommendations, loading: false, error: null };
+            publish(nextSnapshot);
+            if (!file || !window.electronAPI?.getFilePreview) return;
+            const preview = await loadPreview(file, day);
+            if (!isCurrent() || !preview) return;
+            const current = snapshotRef.current;
+            const key = readingStatePathKey(file.full_path || file.path, platform);
+            const updated = current.recommendations.map(candidate => readingStatePathKey(candidate.full_path || candidate.path, platform) === key
+                ? mergeRecommendationPreview(candidate, preview) : candidate);
+            const selected = updated.find(candidate => (candidate.full_path || candidate.path) === (current.file?.full_path || current.file?.path));
+            publish({ ...current, recommendations: updated, file: selected || current.file });
         } catch (error) {
             if (isCurrent() && !retained?.file) {
                 publish({ source, day, file: null, loading: false, error: error || new Error('reading_state_unavailable') });
             }
         }
-    }, []);
+    }, [loadPreview, saveRecord]);
 
     const finishNewRecommendation = useCallback((pending, revalidate = true) => {
         if (newRecommendationRef.current !== pending) return;
@@ -210,11 +251,11 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         requestRef.current += 1;
         recordRef.current = null;
         seedRef.current = randomSeed();
-        previewRef.current = null;
+        previewsRef.current.clear();
         const currentCatalog = catalogRef.current;
         catalogRef.current = {
             source: filesRef.current, platform: currentCatalog.platform, preferences: next, preferencesKey,
-            candidates: createDailyRecommendationIndex(filesRef.current, currentCatalog.platform, next),
+            candidates: dashboardRecommendationIndex(filesRef.current, currentCatalog.platform, next),
         };
         void refresh();
     }, [refresh]);
@@ -242,11 +283,14 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
             || matchingRecord(recordRef.current, catalog.preferencesKey);
         const current = visibleSnapshot(snapshotRef.current, catalog, day);
         const currentPath = current?.file?.full_path || current?.file?.path || (record?.day === day ? record.path : '');
+        const currentPaths = current?.recommendations?.map(file => file.full_path || file.path)
+            || (record?.day === day ? record.paths || [record.path] : []);
+        const seed = randomSeed();
         const pending = {
             token: ++newRecommendationSequenceRef.current,
             day,
             snapshot: current,
-            seed: randomSeed(),
+            seed: seed === record?.seed ? (seed + 1) >>> 0 : seed,
             revision: 0,
             prepared: null,
             result: null,
@@ -258,15 +302,16 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         const isCurrent = () => mountedRef.current && newRecommendationRef.current === pending
             && day === dailyRecommendationDay();
         try {
-            const result = await findDailyRecommendation({
+            const result = await findDailyRecommendations({
                 day,
-                record,
+                record: { ...record, day, path: currentPath, paths: currentPaths,
+                    previousPath: record?.day === day ? record.previousPath || '' : record?.path || '' },
                 seed: pending.seed,
                 request: window.electronAPI?.getReadingStates,
                 readStatus: createViewerStatusReader(storage),
                 platform: catalog.platform,
                 candidates: catalog.candidates,
-                preferDifferentFrom: currentPath,
+                redraw: true,
                 isCurrent,
             });
             if (!isCurrent() || !result) {
@@ -275,18 +320,21 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
             }
             let file = result.file;
             if (result.record) result.record.preferencesKey = catalog.preferencesKey;
-            const same = file && readingStatePathKey(result.record.path, catalog.platform)
+            const sameBook = file && readingStatePathKey(result.record.path, catalog.platform)
                 === readingStatePathKey(currentPath, catalog.platform);
-            if (file && !same && window.electronAPI?.getFilePreview) {
+            const same = file && result.files.length === currentPaths.length
+                && result.files.every((candidate, index) => readingStatePathKey(candidate.full_path || candidate.path, catalog.platform)
+                    === readingStatePathKey(currentPaths[index], catalog.platform));
+            if (file && !sameBook && window.electronAPI?.getFilePreview) {
                 const preview = await Promise.resolve().then(() => window.electronAPI.getFilePreview(result.record.path, { force: false }))
                     .then(response => response?.success && response.file ? response.file : null).catch(() => null);
                 if (preview) file = mergeRecommendationPreview(file, preview);
-            } else if (same && current?.file) {
+            } else if (sameBook && current?.file) {
                 file = mergeRecommendationPreview(file, current.file);
             }
             const latest = catalogRef.current;
-            if (!isCurrent() || (file && (!latest.candidates.has(readingStatePathKey(result.record.path, latest.platform))
-                || !isDailyRecommendationEntryVolume(file)))) {
+            if (!isCurrent() || result.files.some(candidate => !latest.candidates.has(readingStatePathKey(candidate.full_path || candidate.path, latest.platform)))
+                || (file && !isDailyRecommendationEntryVolume(file))) {
                 finishNewRecommendation(pending);
                 return cancelled;
             }
@@ -313,38 +361,43 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         try {
             if (!isCurrent()) return false;
             const catalog = catalogRef.current;
-            const key = readingStatePathKey(pending.result.record.path, catalog.platform);
-            if (!catalog.candidates.has(key)) return false;
+            const paths = pending.result.record.paths;
+            if (paths.some(path => !catalog.candidates.has(readingStatePathKey(path, catalog.platform)))) return false;
             const revision = pending.revision;
-            const candidate = catalog.candidates.get(key);
-            const rows = await window.electronAPI?.getReadingStates?.([candidate.path]);
+            const rows = await window.electronAPI?.getReadingStates?.(paths);
             if (!isCurrent() || revision !== pending.revision) return false;
             if (!Array.isArray(rows)) throw new Error('reading_state_unavailable');
             const latest = catalogRef.current;
-            const latestCandidate = latest.candidates.get(readingStatePathKey(candidate.path, latest.platform));
-            if (!latestCandidate) return false;
-            const readingState = rows.find(row => row && !row.deletedAt
-                && readingStatePathKey(row.filePath, latest.platform) === latestCandidate.key) || null;
-            const file = {
-                ...pending.prepared.file,
-                ...(latestCandidate.file === pending.result.sourceFile ? {} : latestCandidate.file),
-                path: latestCandidate.file.path,
-                full_path: latestCandidate.path,
-                readingState,
-            };
-            const storage = recommendationStorage();
-            file.viewerStatus = createViewerStatusReader(storage)(file);
-            if (!isDailyRecommendationEntryVolume(file) || file.viewerStatus.isCompleted || file.viewerStatus.hasReadingProgress) return false;
-            const record = { ...pending.result.record, path: latestCandidate.path };
-            recordRef.current = record;
-            seedRef.current = record.seed;
-            try {
-                storage?.setItem(DAILY_RECOMMENDATION_STORAGE_KEY, JSON.stringify(record));
-            } catch {
-                // Keep the confirmed choice in memory if persistence is unavailable.
+            const states = new Map(rows.filter(row => row && !row.deletedAt && typeof row.filePath === 'string')
+                .map(row => [readingStatePathKey(row.filePath, latest.platform), row]));
+            const readStatus = createViewerStatusReader(recommendationStorage());
+            const recommendations = [];
+            for (let index = 0; index < paths.length; index += 1) {
+                const key = readingStatePathKey(paths[index], latest.platform);
+                const candidate = latest.candidates.get(key);
+                if (!candidate) return false;
+                const file = {
+                    ...(index === 0 ? pending.prepared.file : pending.result.files[index]),
+                    ...(candidate.file === pending.result.sourceFiles[index] ? {} : candidate.file),
+                    path: candidate.file.path,
+                    full_path: candidate.path,
+                    readingState: states.get(key) || null,
+                };
+                file.viewerStatus = readStatus(file);
+                if (!isDailyRecommendationEntryVolume(file) || file.viewerStatus.isCompleted || file.viewerStatus.hasReadingProgress) return false;
+                recommendations.push(file);
             }
-            previewRef.current = { sourceFile: latestCandidate.file, day: pending.day, promise: Promise.resolve(file) };
-            const next = { source: latest.source, day: pending.day, file, loading: false, error: null };
+            const file = recommendations[0];
+            const record = { ...pending.result.record, path: file.full_path, paths: recommendations.map(candidate => candidate.full_path) };
+            seedRef.current = record.seed;
+            saveRecord(record);
+            const key = readingStatePathKey(file.full_path, latest.platform);
+            previewsRef.current.set(key, { sourceFile: latest.candidates.get(key).file, day: pending.day, promise: Promise.resolve(file) });
+            const retainedKeys = new Set(record.paths.map(path => readingStatePathKey(path, latest.platform)));
+            for (const previewKey of previewsRef.current.keys()) {
+                if (!retainedKeys.has(previewKey)) previewsRef.current.delete(previewKey);
+            }
+            const next = { source: latest.source, day: pending.day, file, recommendations, loading: false, error: null };
             snapshotRef.current = next;
             setSnapshot(next);
             finishNewRecommendation(pending, false);
@@ -352,7 +405,7 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         } finally {
             finishNewRecommendation(pending);
         }
-    }, [finishNewRecommendation]);
+    }, [finishNewRecommendation, saveRecord]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -392,7 +445,7 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
                     const catalog = catalogRef.current;
                     catalogRef.current = {
                         ...catalog, preferences: next, preferencesKey: recommendationPreferencesKey(next),
-                        candidates: createDailyRecommendationIndex(filesRef.current, catalog.platform, next),
+                        candidates: dashboardRecommendationIndex(filesRef.current, catalog.platform, next),
                     };
                     void refresh();
                     return;
@@ -418,6 +471,8 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         ? newRecommendationRef.current.snapshot : visibleSnapshot(snapshot, catalogRef.current, dailyRecommendationDay());
     return {
         file: current?.file || null,
+        recommendations: current?.recommendations || EMPTY_FILES,
+        selectRecommendation,
         loading: current ? current.loading : Boolean(files?.length),
         error: current?.error || null,
         refresh,
@@ -426,7 +481,7 @@ export function useDailyRecommendation(files = EMPTY_FILES) {
         cancelNewRecommendation,
         newRecommendationLoading,
         preferences,
-        preferenceOptions: optionsRef.current.value,
+        get preferenceOptions() { return dashboardRecommendationOptions(files); },
         updatePreferences,
         excludeRecommendation,
     };

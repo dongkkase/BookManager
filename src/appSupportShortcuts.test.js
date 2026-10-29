@@ -49,6 +49,19 @@ function metadataHelpers() {
         + between(metadataSource, 'function metadataTreeNodeKey(', 'function metadataModifiedDate(');
 }
 
+function createMetadataTabRef() {
+    const panel = { hidden: false };
+    return {
+        current: {
+            closest(selector) {
+                assert.equal(selector, '[hidden]');
+                return panel.hidden ? panel : null;
+            },
+        },
+        setHidden(hidden) { panel.hidden = hidden; },
+    };
+}
+
 test('정리 화면 단축키는 닫힌 Git스타 레이어를 허용하고 열린 동안만 차단한다', () => {
     for (const runtimePlatform of ['MacIntel', 'Win32']) {
         const document = supportDialogDocument();
@@ -82,12 +95,13 @@ test('정리 화면 단축키는 닫힌 Git스타 레이어를 허용하고 열�
     }
 });
 
-test('메타데이터 검색·저장·적용 단축키는 Git스타를 닫으면 즉시 복구된다', () => {
+test('메타데이터 검색·저장·적용 단축키는 현재 탭과 Git스타의 열림 상태를 따른다', () => {
     for (const platform of ['MacIntel', 'Win32']) {
         const document = supportDialogDocument();
+        const metadataTabRef = createMetadataTabRef();
         const calls = [];
         const handler = loadHandler(metadataSource, 'handleShortcut', "window.addEventListener('keydown', handleShortcut", {
-            document, navigator: { platform }, isTextEntryTarget, hasPlatformPrimaryModifier: hasPrimaryModifier,
+            document, metadataTabRef, navigator: { platform }, isTextEntryTarget, hasPlatformPrimaryModifier: hasPrimaryModifier,
             apiSearch: { open: false }, isWorking: false, activeItem: {}, checkedCount: 2, searchQuery: 'book',
             apiSearchInputRef: { current: { focus: () => calls.push('focus-search') } },
             handleSave: all => calls.push(`save:${all}`), handleSearchApi: page => calls.push(`search:${page}`),
@@ -95,8 +109,10 @@ test('메타데이터 검색·저장·적용 단축키는 Git스타를 닫으면
             handleApplyBatchToSeries: () => calls.push('apply-series'),
         }, metadataHelpers());
         const primary = platform === 'MacIntel' ? { metaKey: true } : { ctrlKey: true };
-        for (const open of [false, true, false]) {
+        for (const [hidden, open] of [[false, false], [true, false], [false, false], [false, true], [true, true], [true, false], [false, false]]) {
+            metadataTabRef.setHidden(hidden);
             document.setOpen(open);
+            const handled = !hidden && !open;
             for (const [key, modifiers, expected] of [
                 ['f', primary, 'focus-search'], ['s', primary, 'save:false'],
                 ['s', { ...primary, shiftKey: true }, 'save:true'], ['s', {}, 'search:1'],
@@ -105,18 +121,19 @@ test('메타데이터 검색·저장·적용 단축키는 Git스타를 닫으면
                 calls.length = 0;
                 const event = keyEvent(key, modifiers);
                 handler(event);
-                assert.equal(event.defaultPrevented, !open);
-                assert.deepEqual(calls, open ? [] : [expected]);
+                assert.equal(event.defaultPrevented, handled);
+                assert.deepEqual(calls, handled ? [expected] : []);
             }
         }
     }
 });
 
-test('메타데이터 트리 이동과 삭제도 Git스타의 실제 열림 상태를 따른다', async () => {
+test('숨겨진 메타데이터 탭은 트리가 활성화되어 있어도 방향키와 삭제를 가로채지 않는다', async () => {
     const document = supportDialogDocument();
+    const metadataTabRef = createMetadataTabRef();
     const calls = [];
     const scope = {
-        document, isTextEntryTarget, apiSearch: { open: false }, isWorking: false,
+        document, metadataTabRef, isTextEntryTarget, apiSearch: { open: false }, isWorking: false,
         metadataTreeKeyboardActiveRef: { current: true },
         visibleTreeNodes: [{ type: 'group', groupName: 'Books' }, { type: 'file', groupName: 'Books', id: 'one' }],
         selectedTreeKey: 'group:Books', selectedFileId: 'one', selectedGroup: '',
@@ -128,14 +145,16 @@ test('메타데이터 트리 이동과 삭제도 Git스타의 실제 열림 상�
     };
     const tree = loadHandler(metadataSource, 'handleMetadataTreeKeyDown', "window.addEventListener('keydown', handleMetadataTreeKeyDown", scope, metadataHelpers());
     const remove = loadHandler(metadataSource, 'handleDelete', "window.addEventListener('keydown', handleDelete", scope, metadataHelpers());
-    for (const open of [false, true, false]) {
+    for (const [hidden, open] of [[false, false], [true, false], [false, false], [false, true], [true, true], [true, false], [false, false]]) {
+        metadataTabRef.setHidden(hidden);
         document.setOpen(open);
+        const handled = !hidden && !open;
         for (const [handler, key, expected] of [[tree, 'ArrowDown', 'select:one'], [tree, 'ArrowRight', 'collapse:false'], [remove, 'Delete', ['two']]]) {
             calls.length = 0;
             const event = keyEvent(key);
             await handler(event);
-            assert.equal(event.defaultPrevented, !open);
-            assert.deepEqual(calls, open ? [] : [expected]);
+            assert.equal(event.defaultPrevented, handled);
+            assert.deepEqual(calls, handled ? [expected] : []);
         }
     }
 });

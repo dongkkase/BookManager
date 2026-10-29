@@ -14,6 +14,8 @@ const REQUEST_TIMEOUT_MS = 12000;
 const RATE_LIMIT_BACKOFF_MS = 60000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MANUAL_CACHE_TTL_MS = 7 * CACHE_TTL_MS;
+const MANUAL_CACHE_NAMESPACE = 'author-profiles-v1';
 const USER_AGENT = 'BookManager author profiles (https://github.com/dongkkase/BookManager)';
 const ERROR_MESSAGES = {
     AUTHOR_PROFILE_INVALID_QUERY: 'Enter an author name of up to 200 characters.',
@@ -248,10 +250,33 @@ function responsePages(data) {
     return data.query.pages;
 }
 
-export function createAuthorProfileService({ requestJson = requestAuthorProfilesJson, requestText = requestAuthorProfileText, webSearchers = WEB_SOURCES, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+export function createAuthorProfileService({ requestJson = requestAuthorProfilesJson, requestText = requestAuthorProfileText, webSearchers = WEB_SOURCES, resultCache, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
     const cache = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 1024 * 1024, now });
     const responses = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 4 * 1024 * 1024, now });
     const providers = new Map();
+    const manualRequests = new Map();
+
+    function cachedManualSearch(key, source, load) {
+        if (!resultCache) return cache.getOrLoad(key, load, { ttlMs: MANUAL_CACHE_TTL_MS });
+        if (manualRequests.has(key)) return manualRequests.get(key);
+        const request = (async () => {
+            try {
+                const entry = await resultCache.get(MANUAL_CACHE_NAMESPACE, key);
+                if (entry?.expiresAt > now() && entry.expiresAt <= now() + MANUAL_CACHE_TTL_MS
+                    && Array.isArray(entry.value) && entry.value.length <= PROFILE_LIMIT
+                    && entry.value.every(profile => profile && profile.provider === source
+                        && typeof profile.id === 'string' && typeof profile.name === 'string')) return entry.value;
+            } catch { /* Search remains available when the cache cannot be read. */ }
+            const profiles = await load();
+            if (!profiles.partial) {
+                try { await resultCache.set(MANUAL_CACHE_NAMESPACE, key, profiles); }
+                catch { /* A cache write failure must not discard search results. */ }
+            }
+            return profiles;
+        })().finally(() => { manualRequests.delete(key); });
+        manualRequests.set(key, request);
+        return request;
+    }
 
     function request(url, textOptions, responseKeys) {
         const responseKey = textOptions ? `text:${textOptions.method || 'GET'}:${url}:${textOptions.body || ''}` : url;
@@ -389,16 +414,45 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
         });
     }
 
-    return {
+    const service = {
         async search(name, options) {
             if (typeof name !== 'string' || name.length > 200 || !cleanText(name)) throw profileError('AUTHOR_PROFILE_INVALID_QUERY');
             const query = cleanText(name, 200).normalize('NFC');
             const source = options?.source || 'all';
             if (source !== 'all' && !SOURCE_IDS.includes(source)) throw profileError('AUTHOR_PROFILE_INVALID_SOURCE');
             const allSources = options?.allSources === true || source !== 'all';
+            if (allSources && source === 'all') {
+                const sources = ['wikidata', 'wikipedia', 'openlibrary', ...Object.keys(webSearchers)];
+                const settled = await Promise.allSettled(sources.map(provider => service.search(query, { source: provider })));
+                const failedSources = [];
+                const profiles = [];
+                let firstError;
+                for (const [index, result] of settled.entries()) {
+                    if (result.status === 'fulfilled') {
+                        profiles.push(...result.value);
+                        if (result.value.partial) failedSources.push(...result.value.failedSources);
+                    } else {
+                        firstError ||= result.reason;
+                        failedSources.push({ source: sources[index], code: ERROR_MESSAGES[result.reason?.code] ? result.reason.code : 'AUTHOR_PROFILE_REQUEST_FAILED' });
+                    }
+                }
+                if (!profiles.length && firstError) {
+                    const error = profileError(ERROR_MESSAGES[firstError?.code] ? firstError.code : 'AUTHOR_PROFILE_REQUEST_FAILED');
+                    error.failedSources = failedSources;
+                    throw error;
+                }
+                const seen = new Set();
+                const sorted = profiles.sort((a, b) => Number(Boolean(b.photoUrl)) - Number(Boolean(a.photoUrl)))
+                    .filter(profile => !seen.has(profile.id) && seen.add(profile.id)).slice(0, PROFILE_LIMIT * SOURCE_IDS.length);
+                if (failedSources.length) {
+                    Object.defineProperty(sorted, 'partial', { value: true });
+                    Object.defineProperty(sorted, 'failedSources', { value: failedSources });
+                }
+                return sorted;
+            }
             const includes = value => source === 'all' || source === value;
             const cacheKey = `${allSources ? source : 'auto'}:${query.toLocaleLowerCase('en-US')}`;
-            const result = await cache.getOrLoad(cacheKey, async () => {
+            const load = async () => {
                 const language = queryLanguage(query);
                 const errors = [];
                 const failedSources = new Map();
@@ -461,14 +515,17 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
                     Object.defineProperty(sorted, 'failedSources', { value: [...failedSources.values()] });
                 }
                 return sorted;
-            }, { ttlMs: CACHE_TTL_MS });
+            };
+            const result = await (allSources ? cachedManualSearch(cacheKey, source, load)
+                : cache.getOrLoad(cacheKey, load, { ttlMs: CACHE_TTL_MS }));
             if (result.partial) cache.delete(cacheKey);
             return result;
         },
     };
+    return service;
 }
 
-export function registerAuthorProfilesIpc({ ipcMain, getMainWindow, service = createAuthorProfileService() }) {
+export function registerAuthorProfilesIpc({ ipcMain, getMainWindow, resultCache, service = createAuthorProfileService({ resultCache }) }) {
     ipcMain.handle('authors:searchProfiles', async (event, name, options) => {
         try {
             const window = getMainWindow?.();

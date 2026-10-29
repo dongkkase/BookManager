@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
+import { SmoothCoverImage } from '../components/SmoothCoverImage';
 import { parseReleaseMarkdown } from '../releasePolicy';
 import { releaseNotificationKey } from '../releaseNotificationPolicy';
 import { isMotionReduced, subscribeMotionPreference } from '../motionPolicy';
@@ -95,7 +96,7 @@ function ReleaseImage({ image, onOpenExternal }) {
             aria-label={image.alt || 'Image'}
             onClick={() => onOpenExternal(image.src)}
         >
-            <img
+            <SmoothCoverImage
                 className="release-card-image"
                 src={imageSrc}
                 alt={image.alt}

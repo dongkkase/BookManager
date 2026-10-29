@@ -908,7 +908,7 @@ function validAudioCoverOverridePath(cached = {}) {
   }
 }
 
-function createQuickFileData(fullPath) {
+function createQuickFileData(fullPath, stats) {
   const name = path.basename(fullPath);
   const folderPath = path.dirname(fullPath);
   const ext = path.extname(name).toLowerCase();
@@ -924,11 +924,11 @@ function createQuickFileData(fullPath) {
     book_type: bookType,
     bookType,
     format: '',
-    size: 0,
-    mtime: 0,
-    ctime: 0,
-    created: '',
-    modified: '',
+    size: stats.size,
+    mtime: stats.mtimeMs,
+    ctime: stats.ctimeMs,
+    created: new Date(stats.birthtimeMs).toISOString(),
+    modified: new Date(stats.mtimeMs).toISOString(),
     is_folder: false,
     series: '',
     title,
@@ -1811,19 +1811,21 @@ export async function scanFolder(folderPath, options = {}, event) {
                     for (const directory of directories) pendingDirectories.push(directory);
                     prefetchDirectories();
                 }
-                const directoryStats = new Map();
+                const statEntries = entries.filter(entry => entry.isDirectory()
+                    ? includeDirectories && currentPath === rootPath
+                    : entry.isFile() && normalizedExtSet.has(path.extname(entry.name).toLowerCase()));
+                const entryStats = new Map();
                 let nextStatIndex = 0;
-                function prefetchDirectoryStats() {
-                    if (!includeDirectories || currentPath !== rootPath) return;
-                    while (directoryStats.size < QUICK_SCAN_IO_CONCURRENCY && nextStatIndex < directories.length) {
+                function prefetchEntryStats() {
+                    while (entryStats.size < QUICK_SCAN_IO_CONCURRENCY && nextStatIndex < statEntries.length) {
                         throwIfTaskCancelled(options);
-                        const directoryPath = directories[nextStatIndex++];
-                        directoryStats.set(directoryPath, fs.promises.stat(directoryPath).catch(() => null));
+                        const entryPath = path.join(currentPath, statEntries[nextStatIndex++].name);
+                        entryStats.set(entryPath, fs.promises.stat(entryPath).catch(() => null));
                     }
                 }
 
                 try {
-                    prefetchDirectoryStats();
+                    prefetchEntryStats();
                     const now = Date.now();
                     if (now - lastTaskProgressAt > 150) {
                         lastTaskProgressAt = now;
@@ -1840,10 +1842,10 @@ export async function scanFolder(folderPath, options = {}, event) {
                         const fullPath = path.join(currentPath, entry.name);
                         if (entry.isDirectory()) {
                             if (includeDirectories && currentPath === rootPath) {
-                                const stats = await directoryStats.get(fullPath);
-                                directoryStats.delete(fullPath);
+                                const stats = await entryStats.get(fullPath);
+                                entryStats.delete(fullPath);
                                 throwIfTaskCancelled(options);
-                                prefetchDirectoryStats();
+                                prefetchEntryStats();
                                 const directory = createDirectoryData(fullPath, stats);
                                 results.push(directory);
                                 if (options.reportQuickFiles && quickFileCacheKey) {
@@ -1855,7 +1857,12 @@ export async function scanFolder(folderPath, options = {}, event) {
                             scannedCount += 1;
                             const ext = path.extname(entry.name).toLowerCase();
                             if (normalizedExtSet.has(ext)) {
-                                const file = createQuickFileData(fullPath);
+                                const stats = await entryStats.get(fullPath);
+                                entryStats.delete(fullPath);
+                                throwIfTaskCancelled(options);
+                                prefetchEntryStats();
+                                if (!stats?.isFile()) continue;
+                                const file = createQuickFileData(fullPath, stats);
                                 results.push(file);
                                 matchedCount += 1;
                                 if (options.reportQuickFiles && quickFileCacheKey) {
@@ -1867,7 +1874,7 @@ export async function scanFolder(folderPath, options = {}, event) {
                     }
                     emitQuickFileBatch();
                 } finally {
-                    await Promise.all(directoryStats.values());
+                    await Promise.all(entryStats.values());
                 }
             }
         } finally {

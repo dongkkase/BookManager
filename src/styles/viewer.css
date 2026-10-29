@@ -9,6 +9,7 @@ body,
 }
 
 .viewer-app {
+    --viewer-zoom-menu-height: 36px;
   position: relative;
   width: 100vw;
   height: 100vh;
@@ -810,7 +811,6 @@ body,
 }
 
 .viewer-toolbar {
-    --viewer-zoom-menu-height: 36px;
   position: relative;
   z-index: 60;
   flex: 0 0 auto;

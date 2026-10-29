@@ -1,8 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+const activityCache = new Map();
+const ACTIVITY_CACHE_LIMIT = 12;
+
+function cachedSnapshot(key) {
+    const data = activityCache.get(key);
+    return data ? { key, data, loading: true, error: false } : null;
+}
+
+function rememberActivity(key, data) {
+    activityCache.delete(key);
+    activityCache.set(key, data);
+    if (activityCache.size > ACTIVITY_CACHE_LIMIT) activityCache.delete(activityCache.keys().next().value);
+}
+
 export function useDashboardActivity(month, scopeKey) {
     const key = `${scopeKey}|${month}`;
-    const [snapshot, setSnapshot] = useState(null);
+    const [snapshot, setSnapshot] = useState(() => cachedSnapshot(key));
     const sequenceRef = useRef(0);
     const mountedRef = useRef(false);
     const currentKeyRef = useRef(key);
@@ -10,11 +24,14 @@ export function useDashboardActivity(month, scopeKey) {
     const refresh = useCallback(async () => {
         if (!mountedRef.current || currentKeyRef.current !== key) return;
         const sequence = ++sequenceRef.current;
-        setSnapshot(previous => ({ key, data: previous?.key === key ? previous.data : null, loading: true, error: false }));
+        setSnapshot(previous => ({ key, data: previous?.key === key ? previous.data : activityCache.get(key) || null, loading: true, error: false }));
         try {
             const result = await window.electronAPI?.readingLists?.({ operation: 'dashboard', month });
             if (!result?.success || !Array.isArray(result.days)) throw new Error('dashboard_unavailable');
-            if (mountedRef.current && currentKeyRef.current === key && sequence === sequenceRef.current) setSnapshot({ key, data: result, loading: false, error: false });
+            if (mountedRef.current && currentKeyRef.current === key && sequence === sequenceRef.current) {
+                rememberActivity(key, result);
+                setSnapshot({ key, data: result, loading: false, error: false });
+            }
         } catch {
             if (mountedRef.current && currentKeyRef.current === key && sequence === sequenceRef.current) {
                 setSnapshot(previous => ({ key, data: previous?.key === key ? previous.data : null, loading: false, error: true }));
@@ -51,6 +68,6 @@ export function useDashboardActivity(month, scopeKey) {
         if (!result?.success) throw new Error('goal_save_failed');
         await refresh();
     }, [month, refresh]);
-    const current = snapshot?.key === key ? snapshot : null;
+    const current = snapshot?.key === key ? snapshot : cachedSnapshot(key);
     return { data: current?.data || null, loading: current?.loading ?? true, error: current?.error || false, refresh, saveGoal };
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { motion } from 'motion/react';
 import { FaIcon } from '../FaIcon';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import { CoverImage } from './CoverImage';
 import { FolderCharacterIndex } from './FolderCharacterIndex';
 import { AuthorProfileEditorDialog } from './AuthorProfileEditorDialog';
@@ -88,7 +89,7 @@ export function AuthorAvatar({ name, profile, status = 'idle', labels = LABELS.k
     return <span className={`author-avatar ${className}`} style={{ '--author-hue': authorHue(name) }}
         data-photo-status={photoStatus} aria-busy={busy} title={statusText}>
         <span aria-hidden="true">{authorInitials(name)}</span>
-        {profile?.photoUrl && !failed && <img key={profile.photoUrl} src={profile.photoUrl} alt="" loading="lazy" referrerPolicy="no-referrer"
+        {profile?.photoUrl && !failed && <SmoothCoverImage key={profile.photoUrl} src={profile.photoUrl} alt="" loading="lazy" referrerPolicy="no-referrer"
             style={{ opacity: loaded ? 1 : 0 }} onLoad={event => setImageState({ src: profile.photoUrl, status: event.currentTarget.naturalWidth > 0 ? 'loaded' : 'failed' })}
             onError={() => setImageState({ src: profile.photoUrl, status: 'failed' })} />}
         {statusText && (busy || photoStatus === 'queued') && <span className={`author-photo-status${busy ? ' is-loading' : ''}`}>
@@ -167,7 +168,9 @@ function AuthorDetail({ author, profile, profileStatus, hasOverride, onAutomatic
     const savePhoto = photo => {
         const next = normalizeAuthorProfile({
             ...(profile && !['naver', 'local'].includes(profile.provider) ? profile : {
-                provider: 'local', id: photo?.id, name: author.name,
+                ...profile, provider: 'local',
+                id: profile?.provider === 'local' && profile.id.startsWith('local:') ? profile.id : photo?.id,
+                name: profile?.name || author.name,
             }), photoOverride: photo,
         });
         if (!next?.photoOverride || next.photoOverride.id !== photo?.id) { setError(labels.saveFailed); return false; }
@@ -206,6 +209,9 @@ function AuthorDetail({ author, profile, profileStatus, hasOverride, onAutomatic
                         <button ref={findRef} type="button" className="author-profile-edit" disabled={saving}
                             aria-haspopup="dialog" onClick={event => openFinder('profile', event)}><FaIcon name="user" />{labels.change}</button>
                         {profile && <button type="button" disabled={saving} onClick={() => saveProfile(null)}>{labels.clear}</button>}
+                        {hasOverride && <button type="button" disabled={saving} title={labels.automatic} aria-label={labels.automatic} onClick={() => {
+                            setError(onAutomaticProfile(author.key) ? '' : labels.saveFailed);
+                        }}><FaIcon name="rotateLeft" /></button>}
                     </motion.div>
                 </div>
                 {profile && (profile.name !== author.name || profileDates || profile.sourceUrl) && <div className="author-profile-meta">
@@ -222,14 +228,6 @@ function AuthorDetail({ author, profile, profileStatus, hasOverride, onAutomatic
                 <div><dt>{labels.owned}</dt><dd>{author.books.length.toLocaleString(language)}</dd></div>
                 {author.lastAdded > 0 && <div><dt>{labels.lastAdded}</dt><dd className="author-profile-date">{new Date(author.lastAdded).toLocaleDateString(language)}</dd></div>}
             </dl>
-            <motion.div className="author-profile-corner-actions" initial={false} animate={{ opacity: showActions ? 1 : 0 }}
-                transition={fadeTransition} style={{ pointerEvents: showActions ? 'auto' : 'none' }}>
-                {hasOverride && <button type="button" disabled={saving} title={labels.automatic} aria-label={labels.automatic} onClick={() => {
-                    setError(onAutomaticProfile(author.key) ? '' : labels.saveFailed);
-                }}><FaIcon name="rotateLeft" /></button>}
-                <button type="button" disabled={saving} title={labels.editProfile} aria-label={labels.editProfile}
-                    aria-haspopup="dialog" onClick={event => openFinder('profile', event)}><FaIcon name="pen" /></button>
-            </motion.div>
         </section>
         {saving && <p role="status">{labels.saving}</p>}
         {error && <p role="alert">{error}</p>}

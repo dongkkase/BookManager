@@ -6,6 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
 import { viewerPdfResourceOptions } from './viewerPdfResources';
+import { pdfAutoSpreadStepSize, scanViewerPdfPageRatios } from './viewerPdfAutoFlow';
 import { mergeReadiveResumeState, resolveReadiveResumePage } from './readiveViewerResume';
 import { DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS, normalizeHighlightColor } from './highlightColors.js';
 import { isLibraryReadingStorageAllowed, pruneLibraryReadingStorage } from './libraryReadingStorage';
@@ -31,6 +32,9 @@ import { restoreEpubOriginalScrollPosition } from './epubOriginalScrollRestore';
 import { buildOriginalEpubPages, captureEpubReadingPosition, resolveEpubReadingPosition } from './epubOriginalPagination';
 import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
+import { normalizeViewerFlowMode, resolveViewerFlowMode, textPageOffsets, textPageIndexAtOffset, webtoonZoomForWidth, webtoonWidthReference, webtoonPageSize } from './viewerAutoFlow';
+import { createWebtoonDetectionSession } from './viewerWebtoonDetection';
+import { loadViewerWebtoonDecision } from './loadViewerWebtoonDecision';
 import { applyMotionPreference } from './motionPolicy';
 import { useReducedMotion } from './hooks/useReducedMotion';
 import { useReadingActivity } from './hooks/useReadingActivity';
@@ -61,6 +65,7 @@ import helpIcon from './images/help.svg';
 import leftReadIcon from './images/left_read.svg';
 import plusMinusIcon from './images/plus_minus.svg';
 import readModeDoublePageIcon from './images/read_mode_double_page.svg';
+import readModeAutoPageIcon from './images/read_mode_auto_page.svg';
 import readModeOnePageIcon from './images/read_mode_one_page.svg';
 import readModeScrollIcon from './images/read_mode_scroll.svg';
 import showFullSizeIcon from './images/show_full_size.svg';
@@ -161,6 +166,7 @@ const VIEW_MODES = [
   { id: 'actual', label: '원본 크기', labelKey: 'viewer.fit.actual', key: '0', iconSrc: fitToPageIcon },
 ];
 const FLOW_MODES = [
+    { id: 'auto', label: '자동 보기', labelKey: 'viewer.read_mode.auto', iconSrc: readModeAutoPageIcon },
   { id: 'single', label: '한장보기', labelKey: 'viewer.read_mode.single', iconSrc: readModeOnePageIcon },
   { id: 'spread', label: '두장보기', labelKey: 'viewer.read_mode.spread', iconSrc: readModeDoublePageIcon },
   { id: 'scroll', label: '스크롤', labelKey: 'viewer.read_mode.scroll', iconSrc: readModeScrollIcon },
@@ -4329,6 +4335,7 @@ function ViewerHelpModal({ open, onClose }) {
     { iconSrc: showFullSizeIcon, title: viewerText('viewer.fit.fit', '전체 맞춤'), description: viewerText('viewer.help.toolbar_fit_page', '페이지 전체가 보이도록 크기를 맞춥니다.') },
     { iconSrc: fitToPageIcon, title: viewerText('viewer.fit.actual', '원본 크기'), description: viewerText('viewer.help.toolbar_actual', '원본 크기 기준으로 표시합니다.') },
     { iconSrc: plusMinusIcon, title: viewerText('viewer.zoom.title', '확대/축소'), description: viewerText('viewer.help.toolbar_zoom', '배율 슬라이더와 리셋 버튼을 열어 확대/축소를 조절합니다.') },
+    { iconSrc: readModeAutoPageIcon, title: viewerText('viewer.read_mode.auto', '자동 보기'), description: viewerText('viewer.help.toolbar_auto', '화면 비율에 맞춰 한장·두장보기를 전환하고, 가로 페이지는 단독으로 표시하며 웹툰은 스크롤로 읽습니다.') },
     { iconSrc: readModeOnePageIcon, title: viewerText('viewer.read_mode.single', '한장보기'), description: viewerText('viewer.help.toolbar_single', '한 페이지씩 읽습니다.') },
     { iconSrc: readModeDoublePageIcon, title: viewerText('viewer.read_mode.spread', '두장보기'), description: viewerText('viewer.help.toolbar_spread', '두 페이지를 펼침 형태로 읽습니다.') },
     { iconSrc: readModeScrollIcon, title: viewerText('viewer.read_mode.scroll', '스크롤'), description: viewerText('viewer.help.toolbar_scroll', '문서를 세로로 이어서 스크롤합니다.') },
@@ -5507,6 +5514,7 @@ function ReaderSettingsPanel({
   onClose,
     viewMode,
     flowMode,
+    effectiveFlowMode = flowMode,
     spreadCoverFirst,
     readingDirection,
     slideNavOpen,
@@ -5563,7 +5571,7 @@ function ReaderSettingsPanel({
                         onChange={onFlowModeChange}
                     />
                 )}
-                {showComicSettings && flowMode === 'spread' && (
+                {showComicSettings && (flowMode === 'auto' || effectiveFlowMode === 'spread') && (
                     <ReaderSegmentedSetting
                         label={viewerText('viewer.settings.cover_display', '커버 표시')}
                         value={spreadCoverFirst ? 'single' : 'spread'}
@@ -5571,7 +5579,7 @@ function ReaderSettingsPanel({
                         onChange={value => onSpreadCoverFirstChange(value === 'single')}
                     />
                 )}
-                {flowMode === 'scroll' && (
+                {effectiveFlowMode === 'scroll' && (
                     <ViewerScrollOptions
                         settings={scrollSettings}
                         onChange={onScrollSettingsChange}
@@ -5886,6 +5894,9 @@ function ViewerApp() {
   const [pageSizes, setPageSizes] = useState({});
   const [pdfDocument, setPdfDocument] = useState(null);
   const [pdfPageCount, setPdfPageCount] = useState(0);
+    const [pdfPageRatioState, setPdfPageRatioState] = useState({ document: null, ratios: {} });
+    const pdfPageRatios = useMemo(() => pdfPageRatioState.document === pdfDocument
+        ? pdfPageRatioState.ratios : {}, [pdfDocument, pdfPageRatioState]);
   const [textContent, setTextContent] = useState('');
   const [epubChapters, setEpubChapters] = useState([]);
   const [epubToc, setEpubToc] = useState([]);
@@ -5903,7 +5914,11 @@ function ViewerApp() {
     const epubOriginalScrollRestoreRef = useRef({ cancel: null, position: null, generation: 0 });
   const [measuredEpubPagination, setMeasuredEpubPagination] = useState(null);
   const [pdfToc, setPdfToc] = useState([]);
-  const [flowMode, setFlowMode] = useState('single');
+    const [selectedFlowMode, setSelectedFlowMode] = useState('single');
+    const [webtoonDecision, setWebtoonDecision] = useState(null);
+    const webtoonDetectionRef = useRef(null);
+    const textLayoutPositionRef = useRef(null);
+    const previousFlowPositionRef = useRef(null);
     const [scrollSettings, setScrollSettings] = useState(() => normalizeScrollSettings());
     const [ttsMenuOpen, setTtsMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState('fit');
@@ -5947,6 +5962,8 @@ function ViewerApp() {
   const [fontGroups, setFontGroups] = useState(() => normalizeFontGroups(DEFAULT_FONT_GROUPS));
   const [scrollPercent, setScrollPercent] = useState(0);
   const [readerViewport, setReaderViewport] = useState({ width: 900, height: 700 });
+    const flowMode = resolveViewerFlowMode(selectedFlowMode, readerViewport,
+        session?.type === 'comic' && webtoonDecision?.sessionId === session.id && webtoonDecision.decision === 'scroll');
   const [readerPageFitScale, setReaderPageFitScale] = useState(READER_PAGE_FIT_SCALE_DEFAULT);
   const [toolbarHeight, setToolbarHeight] = useState(42);
   const [loading, setLoading] = useState(false);
@@ -6185,6 +6202,7 @@ function ViewerApp() {
         });
     }, [epubOriginalLayoutKey]);
   const textPages = useMemo(() => paginateText(textContent, readerPageMetrics), [readerPageMetrics, textContent]);
+    const textOffsets = useMemo(() => textPageOffsets(textPages), [textPages]);
   const textReaderItems = useMemo(() => textPages.map(text => ({ text })), [textPages]);
   const estimatedEpubPages = useMemo(() => (
     epubChapters.flatMap((chapter, chapterIndex) => chapter.originalOnly ? [] : paginateReaderChapter({
@@ -6334,7 +6352,7 @@ function ViewerApp() {
         if (pending?.sessionId === session.id && pending.position) {
             const resolvedIndex = resolveEpubReadingPosition(epubPages, pending.position);
             const target = flowMode === 'spread' ? Math.floor(resolvedIndex / 2) * 2 : resolvedIndex;
-            if (pageIndex !== target) {
+            if (pageIndex !== target || selectedPageIndex !== resolvedIndex) {
                 setPageIndexSynced(target, { selectedPageIndex: resolvedIndex });
                 return;
             }
@@ -6371,12 +6389,18 @@ function ViewerApp() {
         epubStablePositionRef.current = {
             sessionId: session.id,
             key: epubActiveLayoutKey,
-            position: epubOriginalScrollRestoreRef.current.position || captureCurrentEpubPosition(pageIndex),
+            pageIndex,
+            selectedPageIndex,
+            position: epubOriginalScrollRestoreRef.current.position
+                || (selectedFlowMode === 'auto' && (pending?.position
+                    || (previous?.key === epubActiveLayoutKey && previous.pageIndex === pageIndex
+                        && previous.selectedPageIndex === selectedPageIndex && previous.position)))
+                || captureCurrentEpubPosition(selectedPageIndex),
             original: isOriginalEpub,
             flowMode,
             scrollPercent,
         };
-    }, [captureCurrentEpubPosition, epubActiveLayoutKey, epubLayoutReady, epubPages, flowMode, isOriginalEpub, loading, pageIndex, readiveResumeReady, scrollPercent, session, setPageIndexSynced]);
+    }, [captureCurrentEpubPosition, epubActiveLayoutKey, epubLayoutReady, epubPages, flowMode, isOriginalEpub, loading, pageIndex, readiveResumeReady, scrollPercent, selectedFlowMode, selectedPageIndex, session, setPageIndexSynced]);
     useEffect(() => () => {
         const restore = epubOriginalScrollRestoreRef.current;
         restore.generation += 1;
@@ -6577,7 +6601,7 @@ function ViewerApp() {
         setBookSearchResults([]);
     }
     if (patch?.pageEffect === 'page') {
-      setFlowMode('spread');
+        if (selectedFlowMode !== 'auto') setSelectedFlowMode('spread');
       showViewerToast(viewerText(
         'viewer.toast.page_turn_effect_notice',
         '책넘김 효과는 두장보기에서 적용되며, 몰입형 배경과 함께 사용할 수 있습니다.'
@@ -6587,8 +6611,8 @@ function ViewerApp() {
   };
   const updateFlowMode = nextFlowMode => {
     cancelMotion();
-    setFlowMode(nextFlowMode);
-    if (nextFlowMode !== 'spread' && readerSettings.pageEffect === 'page') {
+    setSelectedFlowMode(normalizeViewerFlowMode(nextFlowMode));
+    if (!['auto', 'spread'].includes(nextFlowMode) && readerSettings.pageEffect === 'page') {
       setReaderSettings(current => normalizeReaderSettings({ ...current, pageEffect: 'slide' }));
     }
   };
@@ -6751,15 +6775,20 @@ function ViewerApp() {
         timeoutId = window.setTimeout(cleanup, 1500);
         scheduleAnchor();
     }, []);
+    const webtoonZoomRef = useRef(null);
     useLayoutEffect(() => {
         zoomValueRef.current = zoom;
         scrollZoomAnchorApplyRef.current?.();
     });
     useEffect(() => () => scrollZoomAnchorCleanupRef.current?.(), []);
-    const setZoomValue = useCallback(value => {
+    const setZoomValue = useCallback((value, automatic = false, savedAnchor = null) => {
         cancelMotion();
-        const anchor = createScrollZoomAnchor();
+        const anchor = savedAnchor || createScrollZoomAnchor();
         const nextZoom = clamp(Number(value) || 100, ZOOM_MIN, ZOOM_MAX);
+        if (!automatic && webtoonZoomRef.current) {
+            webtoonZoomRef.current.manual = true;
+            webtoonZoomRef.current.requestedZoom = nextZoom;
+        }
         zoomValueRef.current = nextZoom;
         setZoom(nextZoom);
         restoreScrollZoomAnchor(anchor);
@@ -6768,6 +6797,10 @@ function ViewerApp() {
         cancelMotion();
         const currentZoom = Number(zoomValueRef.current) || 100;
         const nextZoom = clamp(currentZoom + delta, ZOOM_MIN, ZOOM_MAX);
+        if (webtoonZoomRef.current) {
+            webtoonZoomRef.current.manual = true;
+            webtoonZoomRef.current.requestedZoom = nextZoom;
+        }
         let anchor = createScrollZoomAnchor(currentZoom < 100 || nextZoom < 100 ? undefined : event);
         if (anchor && !anchor.centered && (!anchor.target
             || anchor.target.ratioX < 0 || anchor.target.ratioX > 1
@@ -6870,9 +6903,10 @@ function ViewerApp() {
       pageCount: 'pageCount' in patch ? patch.pageCount : pageCount,
     };
     const viewerPrefs = {
-      flowMode: 'flowMode' in patch ? patch.flowMode : flowMode,
+      flowMode: 'flowMode' in patch ? patch.flowMode : selectedFlowMode,
       viewMode: 'viewMode' in patch ? patch.viewMode : viewMode,
-      zoom: 'zoom' in patch ? patch.zoom : zoom,
+      zoom: 'zoom' in patch ? patch.zoom : webtoonZoomRef.current?.sessionId === session.id
+          ? webtoonZoomRef.current.requestedZoom : zoom,
       readingDirection: 'readingDirection' in patch ? patch.readingDirection : readingDirection,
       spreadCoverFirst: 'spreadCoverFirst' in patch ? patch.spreadCoverFirst : spreadCoverFirst,
       readerSettings: 'readerSettings' in patch ? patch.readerSettings : readerSettings,
@@ -6891,7 +6925,7 @@ function ViewerApp() {
     }).catch(error => {
       console.warn('읽기 상태 저장 실패:', error);
     });
-  }, [autoScrolling, captureCurrentEpubPosition, flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readiveResumeReady, scrollPercent, scrollSettings, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
+  }, [autoScrolling, captureCurrentEpubPosition, flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readiveResumeReady, scrollPercent, scrollSettings, selectedFlowMode, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
 
   const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {
     if (!session || flowMode !== 'scroll' || !readiveResumeReady || epubPositionPendingRef.current || epubOriginalScrollRestoreRef.current.position) return;
@@ -7004,16 +7038,22 @@ function ViewerApp() {
   }, [resetScrollZoomOffset]);
 
   useEffect(() => {
-    if (readerSettings.pageEffect !== 'page' || flowMode === 'spread') return;
-    setFlowMode('spread');
+    if (readerSettings.pageEffect !== 'page' || flowMode === 'spread' || selectedFlowMode === 'auto') return;
+    setSelectedFlowMode('spread');
     resetPageModeScroll();
     window.requestAnimationFrame(resetPageModeScroll);
-  }, [flowMode, readerSettings.pageEffect, resetPageModeScroll]);
+  }, [flowMode, readerSettings.pageEffect, resetPageModeScroll, selectedFlowMode]);
 
   const rememberComicPageImageSize = useCallback((pageName, naturalWidth, naturalHeight) => {
     const width = Math.max(1, Number(naturalWidth) || 0);
     const height = Math.max(1, Number(naturalHeight) || 0);
     if (!pageName || width <= 1 || height <= 1) return;
+    if (pageSizes[pageName]?.width === width && pageSizes[pageName]?.height === height) return;
+    const autoZoom = webtoonZoomRef.current;
+    if (autoZoom?.active && autoZoom.ready && !autoZoom.resizeAnchor
+        && width <= autoZoom.referenceWidth) {
+        autoZoom.resizeAnchor = createScrollZoomAnchor();
+    }
     const ratio = width / height;
     setPageRatios(prev => (prev[pageName] === ratio ? prev : {
       ...prev,
@@ -7027,7 +7067,7 @@ function ViewerApp() {
         [pageName]: { width, height },
       };
     });
-  }, []);
+  }, [createScrollZoomAnchor, pageSizes]);
 
   const clearPageTurnRuntime = useCallback(() => {
     if (pageTurnTimerRef.current) {
@@ -7066,7 +7106,7 @@ function ViewerApp() {
   const triggerTimedPageEffect = useCallback((format, targetIndex, currentIndex, onComplete, direction) => {
     if (flowMode === 'scroll' || targetIndex === currentIndex) return false;
     if (reducedMotion) return false;
-    if (readerSettings.pageEffect === 'page') {
+    if (readerSettings.pageEffect === 'page' && flowMode === 'spread') {
       if (pageTurnPendingRef.current) return true;
       clearPageTurnRuntime();
       pageTurnPendingRef.current = true;
@@ -7082,14 +7122,15 @@ function ViewerApp() {
     }
     if (pageTurnPendingRef.current) return true;
     clearPageTurnRuntime();
-    const duration = PAGE_EFFECT_DURATIONS[readerSettings.pageEffect] || 0;
+    const effect = readerSettings.pageEffect === 'page' ? 'slide' : readerSettings.pageEffect;
+    const duration = PAGE_EFFECT_DURATIONS[effect] || 0;
     const sequence = pageTurnSequenceRef.current + 1;
     pageTurnSequenceRef.current = sequence;
     pageTurnPendingRef.current = true;
     pageTurnCompletionRef.current = { sequence, callback: onComplete };
     setPageTurn(current => ({
       format,
-      effect: readerSettings.pageEffect,
+      effect,
       direction: direction || getPageEffectDirection(targetIndex, currentIndex),
       sequence,
       active: true,
@@ -7248,6 +7289,38 @@ function ViewerApp() {
     setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
   }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, readerSettings.epubStyle, readerSettings.epubOriginalTheme, readerSettings.epubOriginalVerticalPadding, readerSettings.epubOriginalHorizontalPadding, readingDirection, session?.type, viewMode]);
 
+    const detectViewerWebtoon = useCallback(async (targetSession, comicPages) => {
+        const entry = webtoonDetectionRef.current;
+        if (!entry || entry.sessionId !== targetSession.id) return 'paged';
+        const decision = await entry.detector.detect(isCancelled => loadViewerWebtoonDecision({
+            pages: comicPages,
+            bookName: targetSession.fileName || '',
+            readingDirection: entry.readingDirection,
+            getPageUrl: async page => (await window.viewerAPI.getComicPage(targetSession.id, page.name)).dataUrl,
+        }, isCancelled));
+        if (webtoonDetectionRef.current === entry) {
+            setWebtoonDecision(current => current?.sessionId === targetSession.id && current.decision === decision
+                ? current : { sessionId: targetSession.id, decision });
+        }
+        return decision;
+    }, []);
+
+    useEffect(() => () => webtoonDetectionRef.current?.detector.dispose(), []);
+
+    useEffect(() => {
+        if (selectedFlowMode !== 'auto' || session?.type !== 'comic' || loading || pages.length === 0) return;
+        void detectViewerWebtoon(session, pages);
+    }, [detectViewerWebtoon, loading, pages, selectedFlowMode, session]);
+
+    useLayoutEffect(() => {
+        const previous = previousFlowPositionRef.current;
+        previousFlowPositionRef.current = { sessionId: session?.id, flowMode, pageIndex: selectedPageIndex };
+        if (session?.type !== 'comic' || loading || !readiveResumeReady
+            || previous?.sessionId !== session.id || previous.flowMode === flowMode) return;
+        if (flowMode === 'scroll') restoreCoverEditedScrollPage('comic', previous.pageIndex);
+        else resetPageModeScroll();
+    }, [flowMode, loading, readiveResumeReady, resetPageModeScroll, restoreCoverEditedScrollPage, selectedPageIndex, session]);
+
   const loadSession = useCallback(async nextSession => {
     if (!nextSession) return;
     persistCurrentPositionRef.current?.();
@@ -7256,6 +7329,10 @@ function ViewerApp() {
     stopDetachedRemoteTtsAudio();
     const loadSequence = loadSequenceRef.current + 1;
     loadSequenceRef.current = loadSequence;
+        webtoonDetectionRef.current?.detector.dispose();
+        webtoonDetectionRef.current = { sessionId: nextSession.id, readingDirection: '', detector: createWebtoonDetectionSession() };
+        webtoonZoomRef.current = null;
+        textLayoutPositionRef.current = null;
     const isCurrentLoad = () => loadSequenceRef.current === loadSequence;
     await readingLibraryConfigReadyRef.current;
     if (!isCurrentLoad()) return;
@@ -7263,6 +7340,7 @@ function ViewerApp() {
     setInitialRenderLoading(true);
     setInitialRenderSequence(current => current + 1);
     setSession(nextSession);
+        setWebtoonDecision(null);
         setReadiveResumeReady(false);
         setReadiveResumePending(null);
     setPages([]);
@@ -7320,10 +7398,10 @@ function ViewerApp() {
     const savedViewerPrefs = readJson(viewerPrefsKey(nextSession), {});
     const savedPrefs = { ...savedFileState, ...savedViewerPrefs };
     const savedPageIndex = Math.max(0, Number(savedFileState.pageIndex) || 0);
-    setFlowMode(savedPrefs.flowMode || 'single');
+    setSelectedFlowMode(normalizeViewerFlowMode(savedPrefs.flowMode));
     setViewMode(savedPrefs.viewMode || 'fit');
     setZoom(clamp(Number(savedPrefs.zoom) || 100, ZOOM_MIN, ZOOM_MAX));
-    setReadingDirection(savedPrefs.readingDirection || 'ltr');
+    setReadingDirection(savedPrefs.readingDirection === 'rtl' ? 'rtl' : 'ltr');
     setSpreadCoverFirst(savedPrefs.spreadCoverFirst !== false);
     setSlideNavOpen(savedPrefs.slideNavOpen !== false);
     setScrollSettings(normalizeScrollSettings(savedPrefs.scrollSettings));
@@ -7339,9 +7417,16 @@ function ViewerApp() {
         const result = await window.viewerAPI.listComicPages(nextSession.id);
         if (!isCurrentLoad()) return;
         const listedPages = Array.isArray(result) ? result : (result.pages || []);
+        if (webtoonDetectionRef.current?.sessionId === nextSession.id) {
+            webtoonDetectionRef.current.readingDirection = Array.isArray(result) ? '' : result.readingDirection;
+        }
         setPages(listedPages);
-        setReadingDirection(savedPrefs.readingDirection || result.readingDirection || 'ltr');
+        setReadingDirection((savedPrefs.readingDirection || result.readingDirection) === 'rtl' ? 'rtl' : 'ltr');
         setPageIndexSynced(clamp(savedPageIndex, 0, Math.max(0, listedPages.length - 1)));
+        if (savedPrefs.flowMode === 'auto') {
+            await detectViewerWebtoon(nextSession, listedPages);
+            if (!isCurrentLoad()) return;
+        }
       } else if (nextSession.type === 'pdf') {
         const result = await window.viewerAPI.getDocumentData(nextSession.id);
         if (!isCurrentLoad()) return;
@@ -7398,7 +7483,7 @@ function ViewerApp() {
       if (isCurrentLoad() && nextSession.type !== 'pdf') documentAbortRef.current = null;
       if (isCurrentLoad()) setLoading(false);
     }
-  }, [cancelMotion, clearDocumentFrame, clearPageTurnRuntime, restoreSavedScrollPosition, setPageIndexSynced]);
+  }, [cancelMotion, clearDocumentFrame, clearPageTurnRuntime, detectViewerWebtoon, restoreSavedScrollPosition, setPageIndexSynced]);
 
     useEffect(() => {
         if (!session || readiveResumePending?.sessionId !== session.id || loading || !pageCountReadyForNavigation) return;
@@ -7550,13 +7635,34 @@ function ViewerApp() {
     };
   }, [pdfDocument, session?.type]);
 
+    useEffect(() => {
+        if (session?.type !== 'pdf' || !pdfDocument || selectedFlowMode !== 'auto') return undefined;
+        let canceled = false;
+        void scanViewerPdfPageRatios(pdfDocument, {
+            initialRatios: pdfPageRatios,
+            getCurrentIndex: () => pageIndexRef.current,
+            isCancelled: () => canceled,
+            onRatios: ratios => {
+                if (!canceled) setPdfPageRatioState({ document: pdfDocument, ratios });
+            },
+        });
+        return () => { canceled = true; };
+    }, [pdfDocument, selectedFlowMode, session?.type]);
+
   useEffect(() => {
     const updateViewport = () => {
       const node = scrollRef.current;
       if (!node) return;
+        const nextWidth = node.clientWidth || 900;
+        const nextHeight = node.clientHeight || 700;
+        const autoZoom = webtoonZoomRef.current;
+        if (autoZoom?.active && !autoZoom.manual && !autoZoom.resizeAnchor
+            && (autoZoom.viewportWidth !== nextWidth || autoZoom.viewportHeight !== nextHeight)) {
+            autoZoom.resizeAnchor = createScrollZoomAnchor();
+        }
       setReaderViewport({
-        width: node.clientWidth || 900,
-        height: node.clientHeight || 700,
+        width: nextWidth,
+        height: nextHeight,
       });
     };
     updateViewport();
@@ -7570,7 +7676,7 @@ function ViewerApp() {
       observer?.disconnect();
       window.removeEventListener('resize', updateViewport);
     };
-  }, [session?.type]);
+  }, [createScrollZoomAnchor, session?.type]);
 
   useEffect(() => {
     setReaderPageFitScale(READER_PAGE_FIT_SCALE_DEFAULT);
@@ -7849,6 +7955,9 @@ function ViewerApp() {
 
   const getStepSizeForIndex = useCallback(index => {
     if (flowMode !== 'spread') return 1;
+    if (session?.type === 'pdf' && selectedFlowMode === 'auto') {
+        return pdfAutoSpreadStepSize(index, pdfPageCount, pdfPageRatios);
+    }
     if (session?.type !== 'comic') return 2;
     if (spreadCoverFirst && index === 0) return 1;
     if (isComicSinglePage(index) || isComicSinglePage(index + 1)) return 1;
@@ -7857,13 +7966,14 @@ function ViewerApp() {
     const next = pages[index + 1];
     if (!next || isComicLandscapePage(index + 1)) return 1;
     return 2;
-  }, [flowMode, isComicLandscapePage, isComicSinglePage, pages, session?.type, spreadCoverFirst]);
+  }, [flowMode, isComicLandscapePage, isComicSinglePage, pages, pdfPageCount, pdfPageRatios, selectedFlowMode, session?.type, spreadCoverFirst]);
 
   const isForwardBoundaryIndex = useCallback(index => {
     if (pageCount <= 0) return false;
     const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pageCount - 1));
     if (flowMode !== 'spread') return targetIndex >= pageCount - 1;
-    const stepSizeResolver = session?.type === 'comic' ? getStepSizeForIndex : undefined;
+    const stepSizeResolver = session?.type === 'comic' || (session?.type === 'pdf' && selectedFlowMode === 'auto')
+        ? getStepSizeForIndex : undefined;
     const currentStartIndex = resolveSpreadPageStartIndex(targetIndex, pageCount, stepSizeResolver);
     return adjacentSpreadPageStartIndex(
       currentStartIndex,
@@ -7871,7 +7981,7 @@ function ViewerApp() {
       pageCount,
       stepSizeResolver,
     ) === currentStartIndex;
-  }, [flowMode, getStepSizeForIndex, pageCount, session?.type]);
+  }, [flowMode, getStepSizeForIndex, pageCount, selectedFlowMode, session?.type]);
 
   useEffect(() => {
     if (!session || !hasNextBook || pageCount <= 0 || flowMode === 'scroll') return;
@@ -7892,35 +8002,57 @@ function ViewerApp() {
     return resolveSpreadPageStartIndex(
       targetIndex,
       pageCount,
-      session?.type === 'comic' ? getStepSizeForIndex : undefined,
+      session?.type === 'comic' || (session?.type === 'pdf' && selectedFlowMode === 'auto') ? getStepSizeForIndex : undefined,
     );
-  }, [flowMode, getStepSizeForIndex, pageCount, session?.type]);
+  }, [flowMode, getStepSizeForIndex, pageCount, selectedFlowMode, session?.type]);
 
   useLayoutEffect(() => {
     if (!['comic', 'pdf', 'epub', 'text'].includes(session?.type)) return;
     if (!pageCountReadyForNavigation) return;
+        if (session.type === 'epub' && epubPositionPendingRef.current) return;
+        if (session.type === 'text' && !loading && readiveResumeReady) {
+            const previous = textLayoutPositionRef.current;
+            const continuesPosition = selectedFlowMode === 'auto' && previous?.sessionId === session.id
+                && (previous.pages !== textPages
+                    || (previous.pageIndex === pageIndex && previous.selectedPageIndex === selectedPageIndex));
+            const offset = continuesPosition ? previous.offset : textOffsets[selectedPageIndex] || 0;
+            if (continuesPosition && previous.pages !== textPages) {
+                const resolvedIndex = textPageIndexAtOffset(textOffsets, offset);
+                const targetIndex = flowMode === 'spread' ? Math.floor(resolvedIndex / 2) * 2 : resolvedIndex;
+                textLayoutPositionRef.current = { sessionId: session.id, pages: textPages, pageIndex: targetIndex, selectedPageIndex: resolvedIndex, offset };
+                if (pageIndex !== targetIndex || selectedPageIndex !== resolvedIndex) {
+                    setPageIndexSynced(targetIndex, { selectedPageIndex: resolvedIndex });
+                    return;
+                }
+            } else {
+                textLayoutPositionRef.current = { sessionId: session.id, pages: textPages, pageIndex, selectedPageIndex, offset };
+            }
+        } else {
+            textLayoutPositionRef.current = null;
+        }
     if (flowMode !== 'spread') {
       const restoredPageIndex = clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1));
       if (pageIndex !== restoredPageIndex) setPageIndexSynced(restoredPageIndex);
       return;
     }
-    const normalizationTargetPageIndex = session?.type === 'comic'
+    const retainsSelectedPage = session?.type === 'comic' || (session?.type === 'pdf' && selectedFlowMode === 'auto');
+    const normalizationTargetPageIndex = retainsSelectedPage
       ? clamp(selectedPageIndex, 0, Math.max(0, pageCount - 1))
       : pageIndex;
     const normalizedPageIndex = resolveSpreadNavigationIndex(normalizationTargetPageIndex);
     if (normalizedPageIndex !== pageIndex) {
       if (
-        session?.type === 'comic'
+        retainsSelectedPage
         && pageTurnPendingRef.current
         && bookPageTurnTargetRef.current === pageIndex
       ) {
         bookPageTurnTargetRef.current = normalizedPageIndex;
       }
       setPageIndexSynced(normalizedPageIndex, {
-        selectedPageIndex: session?.type === 'comic' ? normalizationTargetPageIndex : pageIndex,
+        selectedPageIndex: retainsSelectedPage ? normalizationTargetPageIndex : pageIndex,
       });
     }
-  }, [flowMode, pageCount, pageCountReadyForNavigation, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session?.type, setPageIndexSynced]);
+  }, [flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readiveResumeReady, resolveSpreadNavigationIndex, selectedFlowMode, selectedPageIndex, session, setPageIndexSynced, textOffsets, textPages]);
 
   const movePage = useCallback(delta => {
         if (bookPageDragActiveRef.current) return;
@@ -7948,9 +8080,16 @@ function ViewerApp() {
     }
     if (session?.type === 'pdf') {
       const size = flowMode === 'spread' ? 2 : 1;
-      const nextIndex = clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
+      const automaticSpread = selectedFlowMode === 'auto' && flowMode === 'spread';
+      const nextIndex = automaticSpread
+        ? adjacentSpreadPageStartIndex(currentIndex, delta, pageCount, getStepSizeForIndex)
+        : clamp(currentIndex + (delta > 0 ? size : -size), 0, Math.max(0, pageCount - 1));
       if (nextIndex === currentIndex) return;
-      goPdfPage(nextIndex);
+      goPdfPage(nextIndex, {
+        selectedPageIndex: automaticSpread && delta < 0
+            ? adjacentSpreadSelectionIndex(currentIndex, delta, pageCount, getStepSizeForIndex)
+            : nextIndex,
+      });
       return;
     }
     const nextIndex = flowMode === 'spread'
@@ -7972,7 +8111,7 @@ function ViewerApp() {
       || triggerComicPageEffect(nextIndex, currentIndex, commitPageIndex);
     if (deferred) return;
     commitPageIndex();
-  }, [flowMode, getStepSizeForIndex, goPdfPage, hasNextBook, isForwardBoundaryIndex, moveAdjacentBook, pageCount, resetPageModeScroll, scrollByKeyboard, session?.type, setPageIndexSynced, showNextBookHint, triggerComicPageEffect, triggerReaderPageEffect]);
+  }, [flowMode, getStepSizeForIndex, goPdfPage, hasNextBook, isForwardBoundaryIndex, moveAdjacentBook, pageCount, resetPageModeScroll, scrollByKeyboard, selectedFlowMode, session?.type, setPageIndexSynced, showNextBookHint, triggerComicPageEffect, triggerReaderPageEffect]);
 
   const handleFlipBookPageIndexChange = useCallback(nextIndex => {
     if (flowMode === 'scroll' || pageCount <= 0) return;
@@ -8038,7 +8177,7 @@ function ViewerApp() {
       pageIndex: bookmarkPageIndex,
       ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition(bookmarkPageIndex) } : {}),
       scrollPercent,
-      flowMode,
+      flowMode: selectedFlowMode,
       label: session.type === 'comic' || session.type === 'pdf'
         ? `${bookmarkPageIndex + 1}p - ${visibleText}`
         : visibleText.slice(0, 80),
@@ -8047,7 +8186,7 @@ function ViewerApp() {
     const next = [bookmark, ...bookmarks].slice(0, 30);
     setBookmarks(next);
     saveJson(storageKey(session, 'bookmarks'), next);
-  }, [bookmarks, captureCurrentEpubPosition, epubPages, flowMode, pageCount, pageIndex, pages, scrollPercent, session, textPages]);
+  }, [bookmarks, captureCurrentEpubPosition, epubPages, flowMode, pageCount, pageIndex, pages, scrollPercent, selectedFlowMode, session, textPages]);
 
   const deleteBookmark = id => {
     if (!session) return;
@@ -8065,6 +8204,7 @@ function ViewerApp() {
   const goBookmark = bookmark => {
     cancelMotion();
         resetScrollZoomOffset();
+        previousFlowPositionRef.current = null;
     const targetPageIndex = session?.type === 'epub' && bookmark.epubPosition
         ? resolveEpubReadingPosition(epubPages, bookmark.epubPosition)
         : clamp(Number(bookmark.pageIndex) || 0, 0, Math.max(0, pageCount - 1));
@@ -8078,11 +8218,12 @@ function ViewerApp() {
     if (session?.type === 'epub' && bookmark.epubPosition) {
         epubPositionPendingRef.current = { sessionId: session.id, position: bookmark.epubPosition, flowMode: bookmark.flowMode, scrollPercent: bookmark.scrollPercent };
     }
-    setFlowMode(bookmark.flowMode || flowMode);
+    setSelectedFlowMode(normalizeViewerFlowMode(bookmark.flowMode || selectedFlowMode));
     setPageIndexSynced(targetPageIndex);
     window.requestAnimationFrame(() => {
       const node = scrollRef.current;
-      if (node && bookmark.flowMode === 'scroll') {
+      if (node && resolveViewerFlowMode(bookmark.flowMode || selectedFlowMode, readerViewport,
+          session?.type === 'comic' && webtoonDecision?.sessionId === session.id && webtoonDecision.decision === 'scroll') === 'scroll') {
         if (Number.isInteger(bookmark.coverEditPageIndex) && ['comic', 'epub'].includes(session?.type)) {
             restoreCoverEditedScrollPage(session.type, targetPageIndex);
         } else node.scrollTop = ((node.scrollHeight - node.clientHeight) * (Number(bookmark.scrollPercent) || 0)) / 100;
@@ -9169,15 +9310,91 @@ function ViewerApp() {
 
   const comicSpreadPages = useMemo(() => getComicSpreadPagesForIndex(pageIndex), [getComicSpreadPagesForIndex, pageIndex]);
 
-  const imageClassName = `viewer-comic-image view-${viewMode}`;
+    const comicViewMode = selectedFlowMode === 'auto' && flowMode === 'scroll' && viewMode === 'fit' ? 'width' : viewMode;
+    const isWebtoonScroll = session?.type === 'comic' && flowMode === 'scroll'
+        && webtoonDecision?.sessionId === session.id && webtoonDecision.decision === 'scroll';
+    const webtoonReference = useMemo(() => isWebtoonScroll ? webtoonWidthReference(pages, pageSizes) : null,
+        [isWebtoonScroll, pages, pageSizes]);
+    const getWebtoonDisplayWidth = useCallback(renderZoom => {
+        if (!webtoonReference) return null;
+        return scaledPageSizeForViewMode({
+            viewMode: comicViewMode,
+            baseWidth: webtoonReference.width,
+            baseHeight: webtoonReference.height,
+            availableWidth: Math.max(120, (Number(readerViewport.width) || 900) - 24),
+            availableHeight: Math.max(120, (Number(readerViewport.height) || 700) - 24),
+            zoom: renderZoom,
+        }).width;
+    }, [comicViewMode, readerViewport.height, readerViewport.width, webtoonReference]);
+    useLayoutEffect(() => {
+        if (session?.type !== 'comic' || loading) return;
+        let state = webtoonZoomRef.current;
+        if (state?.sessionId !== session.id) {
+            state = {
+                sessionId: session.id, requestedZoom: zoom, appliedZoom: zoom, viewMode,
+                viewportWidth: readerViewport.width, viewportHeight: readerViewport.height,
+                manual: false, active: false, resizeAnchor: null,
+            };
+            webtoonZoomRef.current = state;
+        } else if (state.appliedZoom !== zoom || state.viewMode !== viewMode) {
+            state.requestedZoom = zoom;
+            state.appliedZoom = zoom;
+            state.viewMode = viewMode;
+            state.manual = true;
+        }
+        if (!isWebtoonScroll) {
+            if (state.active && !state.manual && zoom !== state.requestedZoom) {
+                state.appliedZoom = state.requestedZoom;
+                setZoomValue(state.requestedZoom, true);
+            }
+            state.active = false;
+            state.resizeAnchor = null;
+            return;
+        }
+        state.active = true;
+        state.ready = !initialRenderLoading && readiveResumeReady;
+        const referenceChanged = state.referenceWidth !== webtoonReference?.width
+            || state.referenceHeight !== webtoonReference?.height;
+        if (state.manual) {
+            state.referenceWidth = webtoonReference?.width;
+            state.referenceHeight = webtoonReference?.height;
+            if (state.resizeAnchor && state.ready) restoreScrollZoomAnchor(state.resizeAnchor);
+            state.resizeAnchor = null;
+            return;
+        }
+        if (scrollRef.current?.clientWidth !== readerViewport.width) return;
+        state.referenceWidth = webtoonReference?.width;
+        state.referenceHeight = webtoonReference?.height;
+        state.viewportWidth = readerViewport.width;
+        state.viewportHeight = readerViewport.height;
+        const resizeAnchor = state.resizeAnchor;
+        state.resizeAnchor = null;
+        const availableWidth = Math.max(120, (Number(readerViewport.width) || 900) - 24);
+        const requestedZoom = referenceChanged ? state.requestedZoom : zoom;
+        const displayedWidth = getWebtoonDisplayWidth(requestedZoom)
+            ?? (comicViewMode === 'width' ? Math.floor(availableWidth * requestedZoom / 100) : 0);
+        const nextZoom = webtoonZoomForWidth(requestedZoom, displayedWidth, ZOOM_MIN);
+        if (nextZoom === zoom) {
+            if (resizeAnchor && !initialRenderLoading && readiveResumeReady) restoreScrollZoomAnchor(resizeAnchor);
+            return;
+        }
+        state.appliedZoom = nextZoom;
+        if (initialRenderLoading || !readiveResumeReady) {
+            // Let the initial reading-position restore use the already reduced page sizes.
+            zoomValueRef.current = nextZoom;
+            setZoom(nextZoom);
+        } else setZoomValue(nextZoom, true, resizeAnchor);
+    }, [comicViewMode, getWebtoonDisplayWidth, initialRenderLoading, isWebtoonScroll, loading, readerViewport.height,
+        readerViewport.width, readiveResumeReady, restoreScrollZoomAnchor, session, setZoomValue, viewMode, webtoonReference, zoom]);
+  const imageClassName = `viewer-comic-image view-${comicViewMode}`;
   const getComicImageStyle = (page, pageSlots = 1, renderZoom = zoom) => {
     const size = pageSizes[page?.name];
     if (!size) return undefined;
     const slots = Math.max(1, Number(pageSlots) || 1);
     const availableWidth = Math.max(120, ((Number(readerViewport.width) || 900) - 24) / slots);
     const availableHeight = Math.max(120, (Number(readerViewport.height) || 700) - 24);
-    const scaledSize = scaledPageSizeForViewMode({
-      viewMode,
+    const scaledSize = webtoonPageSize(size, getWebtoonDisplayWidth(renderZoom)) || scaledPageSizeForViewMode({
+      viewMode: comicViewMode,
       baseWidth: size.width,
       baseHeight: size.height,
       availableWidth,
@@ -9228,7 +9445,7 @@ function ViewerApp() {
         page={page}
         index={index}
         src={src}
-        viewMode={viewMode}
+        viewMode={comicViewMode}
         imageClassName={imageClassName}
         frameStyle={frameStyle}
         imageStyle={fittedImageStyle}
@@ -9717,7 +9934,7 @@ function ViewerApp() {
     const getPdfPageIndexesForIndex = index => {
       const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pdfPageCount - 1));
       if (flowMode === 'scroll') return Array.from({ length: pdfPageCount }, (_, pageNumberIndex) => pageNumberIndex);
-      if (flowMode === 'spread') return [targetIndex, targetIndex + 1].filter(pageNumberIndex => pageNumberIndex >= 0 && pageNumberIndex < pdfPageCount);
+      if (flowMode === 'spread') return Array.from({ length: Math.min(getStepSizeForIndex(targetIndex), pdfPageCount - targetIndex) }, (_, offset) => targetIndex + offset);
       return [targetIndex].filter(pageNumberIndex => pageNumberIndex >= 0 && pageNumberIndex < pdfPageCount);
     };
     const displayStartIndex = pageIndex;
@@ -9753,6 +9970,7 @@ function ViewerApp() {
       const pdfFlipBookRenderKey = [
         pageIndex,
         pdfPageCount,
+        selectedFlowMode === 'auto' ? Object.keys(pdfPageRatios).length : 0,
         readerViewport.width,
         readerViewport.height,
         viewMode,
@@ -9768,6 +9986,8 @@ function ViewerApp() {
           currentPageIndex={pageIndex}
           spread={spread}
           pageSize={pageSize}
+          getStepSizeForIndex={getStepSizeForIndex}
+          shouldSplitSinglePage={selectedFlowMode === 'auto' ? index => pdfPageRatios[index] > 1 : undefined}
           absoluteNavigationKey={absolutePageJumpSequence}
           visualScale={flipBookVisualScale}
           renderKey={pdfFlipBookRenderKey}
@@ -9775,16 +9995,27 @@ function ViewerApp() {
           canStartDrag={canStartFlipBookDrag}
           onPageTurnStart={handleFlipBookDragStart}
           onPageTurnCancel={handleFlipBookDragCancel}
-          renderPage={(sourceIndex, _entry, renderState) => renderPdfPage(
-            sourceIndex,
-            slots,
-            'flipbook',
-            pageIndex,
-            Math.abs(sourceIndex - pageIndex) <= slots + 1,
-            flipBookRenderZoom,
-            pageSize.width,
-            renderState.onAmbientReady,
-          )}
+          renderPage={(sourceIndex, entry, renderState) => {
+            const page = renderPdfPage(
+                sourceIndex,
+                entry.splitSpread ? 1 : slots,
+                'flipbook',
+                pageIndex,
+                Math.abs(sourceIndex - pageIndex) <= slots + 1,
+                flipBookRenderZoom,
+                pageSize.width * (entry.splitSpread ? 2 : 1),
+                renderState.onAmbientReady,
+            );
+            return entry.splitSpread ? (
+                <div style={getSplitSpreadFrameStyle({
+                    width: pageSize.width * 2,
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }, entry.side)}>{page}</div>
+            ) : page;
+          }}
         />
       );
     }
@@ -10193,11 +10424,11 @@ function ViewerApp() {
                   key={option.id}
                   title={viewerText(option.labelKey, option.label)}
                   iconSrc={option.iconSrc}
-                  active={flowMode === option.id}
+                  active={selectedFlowMode === option.id}
                   className={option.id === 'scroll' && autoScrolling ? 'is-auto-scrolling' : ''}
                   ariaControls={option.id === 'scroll' ? 'viewer-scroll-menu' : undefined}
                   onClick={runToolbarAction(() => {
-                      if (flowMode !== option.id) updateFlowMode(option.id);
+                      if (selectedFlowMode !== option.id) updateFlowMode(option.id);
                   })}
                 />
               ))}
@@ -10620,7 +10851,8 @@ function ViewerApp() {
             : setReaderSettings(normalizeReaderSettings())}
         onClose={runToolbarAction(() => setSettingsOpen(false))}
         viewMode={supportsViewControls ? viewMode : null}
-        flowMode={supportsFlowControls ? flowMode : null}
+        flowMode={supportsFlowControls ? selectedFlowMode : null}
+        effectiveFlowMode={flowMode}
         spreadCoverFirst={spreadCoverFirst}
         readingDirection={readingDirection}
         slideNavOpen={slideNavOpen}

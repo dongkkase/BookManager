@@ -26,6 +26,7 @@ function fixture(options = {}) {
     const mocks = {
         react,
         '../CoverArtwork': { CoverArtwork: 'CoverArtwork' },
+        '../SmoothCoverImage': { SmoothCoverImage: 'SmoothCoverImage' },
         './detailPanelCommon': { detailMetadataValue: (file, ...keys) => keys.map(key => file[key]).find(value => value !== undefined) || '' },
         '../../ratingPolicy': { initialRating, ratingStarFill },
         '../../styles/RatingEditorDialog.css': {},

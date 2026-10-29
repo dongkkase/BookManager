@@ -96,29 +96,27 @@
     position: relative;
     display: grid;
     grid-template-columns: 112px minmax(0, 1fr) minmax(144px, max-content);
-    align-items: center;
+    align-items: start;
     gap: 20px 24px;
-    padding: var(--author-profile-padding) var(--author-profile-padding) 42px;
+    padding: var(--author-profile-padding);
     border: 1px solid var(--line);
     border-radius: 12px;
     background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 5%, var(--panel-bg)), var(--panel-bg));
 }
 .author-portrait-button { position: relative; display: block; width: 112px; height: 136px; padding: 0; border: 0; border-radius: 9px; background: transparent; }
 .author-portrait-button .author-profile-portrait { width: 100%; height: 100%; border-radius: inherit; font-size: 40px; box-shadow: 0 3px 10px #0002; overflow: hidden; }
-.author-portrait-button .author-profile-portrait:has(.author-photo-status) { display: grid; place-items: center; padding: 0; }
+.author-portrait-button .author-profile-portrait:has(.author-photo-status) { display: grid; place-content: center; place-items: center; padding: 0; }
 .author-profile-portrait .author-photo-status { position: absolute; left: 0; bottom: 0; width: 100%; max-width: 100%; transform: none; border-radius: 0 0 9px 9px; }
 .author-profile-portrait .author-photo-status > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .author-photo-change { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; border-radius: inherit; background: #0009; color: white; font-size: 12px; font-weight: 500; pointer-events: none; }
 .author-profile-title-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .author-profile-title-row > div:first-child { min-width: 0; }
 .author-profile-hover-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 5px; margin-left: auto; }
-.author-profile-hover-actions button, .author-profile-corner-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; border: 1px solid transparent; border-radius: 6px; padding: 5px 7px; background: transparent; color: var(--muted); font-size: 11px; line-height: 1.4; }
-.author-profile-hover-actions button:hover, .author-profile-corner-actions button:hover { border-color: var(--line); background: var(--panel-bg-2); color: var(--accent); }
+.author-profile-hover-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; border: 1px solid transparent; border-radius: 6px; padding: 5px 7px; background: transparent; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.author-profile-hover-actions button:hover { border-color: var(--line); background: var(--panel-bg-2); color: var(--accent); }
 .author-profile-hover-actions .author-profile-edit { color: var(--accent); }
-.author-profile-corner-actions { position: absolute; display: flex; gap: 5px; right: 12px; bottom: 8px; }
-.author-profile-corner-actions button { width: 30px; padding: 5px; }
 @media (hover: none) {
-    .author-profile-hover-actions, .author-profile-corner-actions { opacity: 1 !important; pointer-events: auto !important; }
+    .author-profile-hover-actions { opacity: 1 !important; pointer-events: auto !important; }
     .author-photo-change { opacity: 1 !important; background: linear-gradient(transparent 55%, #000a); justify-content: flex-end; padding-bottom: 9px; }
     .author-photo-change > svg { display: none; }
 }
@@ -128,7 +126,7 @@
 .author-profile-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .author-profile-meta a { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); text-decoration: none; }
 .author-profile-meta a:hover { color: var(--accent); text-decoration: underline; }
-.author-profile-description { max-width: 68ch; margin: 12px 0 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.author-profile-description { max-width: 68ch; margin: 12px 0 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-line; }
 .author-profile-stats { display: grid; align-content: center; gap: 18px; min-width: 0; margin: 0; padding-left: 24px; border-left: 1px solid var(--line); }
 .author-profile-stats > div { min-width: 0; }
 .author-profile-stats dt { margin: 0 0 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }

@@ -194,6 +194,11 @@
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
 }
 
+.viewer-app:has(> .viewer-toolbar .viewer-zoom-menu) > .viewer-scroll-menu {
+    top: calc(var(--viewer-toolbar-height, 42px) + var(--viewer-zoom-menu-height) + 10px);
+    max-height: calc(100vh - var(--viewer-toolbar-height, 42px) - var(--viewer-zoom-menu-height) - 24px);
+}
+
 .viewer-scroll-close {
     display: inline-flex;
     flex: 0 0 auto;

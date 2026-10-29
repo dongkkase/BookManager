@@ -83,7 +83,8 @@ function fieldValue(field, input) {
         return String(number);
     }
     if (field === 'BlackAndWhite' || field === 'Manga') {
-        const options = field === 'Manga' ? ['Unknown', 'No', 'Yes', 'YesAndRightToLeft'] : ['Unknown', 'No', 'Yes'];
+        // Webtoon is BookManager's reading-mode extension to the standard Manga values.
+        const options = field === 'Manga' ? ['Unknown', 'No', 'Yes', 'YesAndRightToLeft', 'Webtoon'] : ['Unknown', 'No', 'Yes'];
         const normalized = options.find(option => option.toLowerCase() === value.toLowerCase());
         if (!normalized) throw invalid(`Unsupported ${field}: ${value}`);
         return normalized;

@@ -5,6 +5,7 @@ import { reportTelemetryError } from './telemetry.js';
 import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
 import { registerAuthorProfilesIpc } from './authorProfiles.js';
+import { createAuthorSearchCache } from './authorSearchCache.js';
 import { registerAuthorPhotoSearchIpc } from './authorPhotoSearch.js';
 import { registerAuthorProfilePhotosIpc } from './authorProfilePhotos.js';
 import { registerAppDataIpc } from './appDataIpc.js';
@@ -3203,7 +3204,8 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 
 // IPC 핸들러 설정
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
-    registerAuthorProfilesIpc({ ipcMain, getMainWindow: hooks.getMainWindow });
+    const authorSearchCache = createAuthorSearchCache({ getDbPath: () => resolveApiCacheDbPath(getExecutableDir()) });
+    registerAuthorProfilesIpc({ ipcMain, getMainWindow: hooks.getMainWindow, resultCache: authorSearchCache });
     registerAuthorProfilePhotosIpc({
         ipcMain,
         getMainWindow: hooks.getMainWindow,
@@ -3213,6 +3215,7 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         ipcMain,
         getMainWindow: hooks.getMainWindow,
         getConfig: () => configManager.getConfig(),
+        resultCache: authorSearchCache,
         getPhotoDirectory: () => path.join(resolveAppDataDir(getExecutableDir()), 'author-photos'),
     });
     const epubEditorService = registerEpubEditorIpc({ ipcMain, app, BrowserWindow, dialog, openViewerPreview: hooks.openViewerPreview });

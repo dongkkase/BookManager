@@ -1,7 +1,10 @@
 import React, { Suspense, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import { authorInitials, normalizeAuthorProfile } from '../../authorCatalog.js';
 import { authorProfileSourceLabels } from '../../authorProfileSourceLabels.js';
+import { extractCoverImageTransfer, isCoverImagePath } from '../../coverEditorImageTransfer.js';
+import { animateCoverEditorImageArrival } from '../../coverEditorImageArrival.js';
 import '../../styles/AuthorProfileEditorDialog.css';
 
 const CoverImageEditorDialog = React.lazy(() => import('../../features/fileTools/coverEditor/CoverImageEditorDialog'));
@@ -9,12 +12,14 @@ const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const LABELS = {
     ko: {
         title: '프로필 수정', profile: '프로필 찾기', photo: '프로필 사진 찾기', upload: '프로필 사진 업로드',
+        editProfile: '프로필 편집', name: '이름', saveProfile: '변경사항 저장',
+        profileEditHint: '이름, 출생·사망 정보, 대표작과 소개를 수정하세요.', requiredName: '이름을 입력해 주세요.', dateHint: '예: 1970 또는 1970-01-01',
         query: '저자 이름 또는 작품명', source: '검색 소스', all: '전체 소스', search: '검색', searching: '검색 중…', close: '닫기',
         profileHint: '이름과 대표작을 확인한 뒤 사용할 프로필을 선택하세요.', photoHint: '네이버 이미지와 프로필 검색 소스에서 사진을 찾습니다.',
         searchHint: '검색어와 소스를 선택하고 검색하세요.', empty: '검색 결과가 없습니다. 다른 검색어를 입력해 보세요.',
         selectHint: '검색 결과를 선택하면 상세 정보를 확인할 수 있습니다.', selectPhotoHint: '사진을 선택하면 미리 보고 편집할 수 있습니다.',
-        selectProfile: '이 프로필 선택', selectPhoto: '이 사진 사용', edit: '사진 편집', current: '현재 사진 편집',
-        uploadHint: '사진 파일을 선택하거나 이곳에 끌어 놓으세요.', chooseFile: '사진 파일 선택', formats: 'JPG, PNG, WebP, GIF, BMP · 최대 16MB',
+        selectProfile: '이 프로필 선택', editSelectedProfile: '이 프로필 편집', selectPhoto: '이 사진 사용', edit: '사진 편집', current: '현재 사진 편집',
+        uploadHint: '사진 파일을 선택하거나 파일·웹브라우저의 이미지를 이곳에 끌어 놓으세요.', chooseFile: '사진 파일 선택', formats: 'JPG, PNG, WebP, GIF, BMP · 최대 16MB',
         noPhoto: '사진 없음', loadingPhoto: '사진 불러오는 중…', saving: '저장 중…', more: '사진 더 보기',
         failed: '검색하지 못했습니다. 잠시 후 다시 시도해 주세요.', imageFailed: '사진을 불러오지 못했습니다. 다른 사진을 선택해 주세요.',
         saveFailed: '변경사항을 저장하지 못했습니다. 다시 시도해 주세요.', size: '16MB 이하의 이미지 파일 하나를 선택해 주세요.',
@@ -26,15 +31,20 @@ const LABELS = {
         expired: '검색 결과가 만료되었습니다. 다시 검색해 주세요.', storage: '사진을 저장하지 못했습니다. 저장 공간과 폴더 권한을 확인해 주세요.',
         edited: '편집한 사진', local: '업로드한 사진', results: '검색 결과', partial: '일부 소스를 검색하지 못했습니다.',
         editHint: '편집을 적용한 뒤 이 사진 사용을 눌러 저장하세요.',
+        replacePhotoTitle: '프로필 사진 변경',
+        replacePhoto: '프로필 정보와 함께 사진도 변경할까요?\n\n예: 선택한 프로필의 사진으로 변경합니다.\n아니오: 기존 사진을 유지하고 프로필 정보만 변경합니다.',
+        removePhoto: '선택한 프로필에는 사진이 없습니다. 기존 사진을 지우고 이니셜로 표시할까요?\n\n예: 사진 없이 새 프로필을 저장합니다.\n아니오: 기존 사진을 유지하고 프로필 정보만 변경합니다.',
     },
     en: {
         title: 'Edit profile', profile: 'Find profile', photo: 'Find profile photo', upload: 'Upload profile photo',
+        editProfile: 'Edit profile', name: 'Name', saveProfile: 'Save changes',
+        profileEditHint: 'Edit the name, birth and death information, notable work, and biography.', requiredName: 'Enter a name.', dateHint: 'e.g. 1970 or 1970-01-01',
         query: 'Author name or book title', source: 'Search source', all: 'All sources', search: 'Search', searching: 'Searching…', close: 'Close',
         profileHint: 'Check the name and notable works before choosing a profile.', photoHint: 'Find photos in Naver Images and profile sources.',
         searchHint: 'Choose a source and enter a search term.', empty: 'No results found. Try another search.',
         selectHint: 'Select a result to view its details.', selectPhotoHint: 'Select a photo to preview and edit it.',
-        selectProfile: 'Use this profile', selectPhoto: 'Use this photo', edit: 'Edit photo', current: 'Edit current photo',
-        uploadHint: 'Choose a photo or drop it here.', chooseFile: 'Choose photo', formats: 'JPG, PNG, WebP, GIF, BMP · Up to 16MB',
+        selectProfile: 'Use this profile', editSelectedProfile: 'Edit this profile', selectPhoto: 'Use this photo', edit: 'Edit photo', current: 'Edit current photo',
+        uploadHint: 'Choose a photo, or drag an image here from a file or web browser.', chooseFile: 'Choose photo', formats: 'JPG, PNG, WebP, GIF, BMP · Up to 16MB',
         noPhoto: 'No photo', loadingPhoto: 'Loading photo…', saving: 'Saving…', more: 'More photos',
         failed: 'Unable to search. Please try again later.', imageFailed: 'Unable to load this photo. Choose another photo.',
         saveFailed: 'Unable to save your changes. Please try again.', size: 'Choose one image file up to 16MB.',
@@ -46,15 +56,20 @@ const LABELS = {
         expired: 'These results have expired. Please search again.', storage: 'Unable to save the photo. Check storage and folder permissions.',
         edited: 'Edited photo', local: 'Uploaded photo', results: 'Search results', partial: 'Some sources could not be searched.',
         editHint: 'Apply your edits, then choose Use this photo to save.',
+        replacePhotoTitle: 'Change profile photo',
+        replacePhoto: 'Change the photo along with the profile information?\n\nYes: Use the selected profile’s photo.\nNo: Keep the current photo and update only the profile information.',
+        removePhoto: 'The selected profile has no photo. Remove the current photo and show initials?\n\nYes: Save the new profile without a photo.\nNo: Keep the current photo and update only the profile information.',
     },
     ja: {
         title: 'プロフィール編集', profile: 'プロフィールを探す', photo: 'プロフィール写真を探す', upload: 'プロフィール写真をアップロード',
+        editProfile: 'プロフィール編集', name: '名前', saveProfile: '変更を保存',
+        profileEditHint: '名前、生没情報、代表作、紹介を編集してください。', requiredName: '名前を入力してください。', dateHint: '例：1970 または 1970-01-01',
         query: '著者名または作品名', source: '検索ソース', all: 'すべてのソース', search: '検索', searching: '検索中…', close: '閉じる',
         profileHint: '名前と代表作を確認してプロフィールを選択してください。', photoHint: 'Naver画像とプロフィールの検索ソースから写真を探します。',
         searchHint: '検索語とソースを選択して検索してください。', empty: '結果がありません。別のキーワードを入力してください。',
         selectHint: '検索結果を選択すると詳細を確認できます。', selectPhotoHint: '写真を選択してプレビューと編集ができます。',
-        selectProfile: 'このプロフィールを使用', selectPhoto: 'この写真を使用', edit: '写真を編集', current: '現在の写真を編集',
-        uploadHint: '写真を選択するか、ここにドラッグしてください。', chooseFile: '写真ファイルを選択', formats: 'JPG, PNG, WebP, GIF, BMP · 最大16MB',
+        selectProfile: 'このプロフィールを使用', editSelectedProfile: 'このプロフィールを編集', selectPhoto: 'この写真を使用', edit: '写真を編集', current: '現在の写真を編集',
+        uploadHint: '写真を選択するか、ファイルやWebブラウザーの画像をここにドラッグしてください。', chooseFile: '写真ファイルを選択', formats: 'JPG, PNG, WebP, GIF, BMP · 最大16MB',
         noPhoto: '写真なし', loadingPhoto: '写真を読み込み中…', saving: '保存中…', more: '写真をもっと見る',
         failed: '検索できませんでした。後で再試行してください。', imageFailed: '写真を読み込めませんでした。別の写真を選択してください。',
         saveFailed: '変更を保存できませんでした。再試行してください。', size: '16MB以下の画像ファイルを1つ選択してください。',
@@ -66,6 +81,9 @@ const LABELS = {
         expired: '検索結果の有効期限が切れました。再検索してください。', storage: '写真を保存できませんでした。空き容量とフォルダの権限を確認してください。',
         edited: '編集した写真', local: 'アップロードした写真', results: '検索結果', partial: '一部のソースを検索できませんでした。',
         editHint: '編集を適用してから「この写真を使用」で保存してください。',
+        replacePhotoTitle: 'プロフィール写真の変更',
+        replacePhoto: 'プロフィール情報と一緒に写真も変更しますか？\n\nはい：選択したプロフィールの写真に変更します。\nいいえ：現在の写真を保持し、プロフィール情報のみ変更します。',
+        removePhoto: '選択したプロフィールには写真がありません。現在の写真を削除し、イニシャルを表示しますか？\n\nはい：写真なしで新しいプロフィールを保存します。\nいいえ：現在の写真を保持し、プロフィール情報のみ変更します。',
     },
 };
 
@@ -74,7 +92,7 @@ function errorText(value, labels, fallback = 'failed') {
         AUTHOR_PHOTO_MISSING_KEYS: 'missingKeys', AUTHOR_PHOTO_INVALID_KEYS: 'invalidKeys',
         AUTHOR_PHOTO_RATE_LIMIT: 'rateLimit', AUTHOR_PHOTO_TIMEOUT: 'timeout',
         AUTHOR_PHOTO_INVALID_CANDIDATE: 'expired', AUTHOR_PHOTO_IMAGE_FAILED: 'imageFailed',
-        AUTHOR_PHOTO_STORAGE_FAILED: 'storage', AUTHOR_PHOTO_TOO_LARGE: 'size',
+        AUTHOR_PHOTO_STORAGE_FAILED: 'storage', AUTHOR_PHOTO_TOO_LARGE: 'size', COVER_IMAGE_TOO_LARGE: 'size',
         AUTHOR_PROFILE_RATE_LIMIT: 'profileRateLimit', AUTHOR_PROFILE_TIMEOUT: 'timeout', AUTHOR_PROFILE_ACCESS_BLOCKED: 'accessBlocked',
     }[value?.code]] || labels[fallback];
 }
@@ -122,7 +140,7 @@ function CandidateImage({ candidate, labels }) {
         return () => { active = false; observer?.disconnect(); };
     }, [candidate.id, candidate.source]);
     return <span ref={ref} className="author-editor-result-image">
-        {image && !failed ? <img src={image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        {image && !failed ? <SmoothCoverImage src={image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
             : <span title={failed ? labels.imageFailed : labels.noPhoto}>{authorInitials(candidate.title)}</span>}
     </span>;
 }
@@ -132,12 +150,22 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
     const sources = authorProfileSourceLabels(language);
     const titleId = useId();
     const [tab, setTab] = useState(initialTab);
+    const [profileDraft, setProfileDraft] = useState(null);
+    const [profileDraftSource, setProfileDraftSource] = useState(null);
+    const draftSource = profileDraftSource || profile;
+    const draft = profileDraft || {
+        name: draftSource?.name || author.name, birthDate: draftSource?.birthDate || '', deathDate: draftSource?.deathDate || '',
+        topWork: draftSource?.topWork || '', description: draftSource?.description || '',
+    };
+    const hasDraftName = Boolean(draft.name.replace(/<[^>]*>/g, '').trim());
     const [source, setSource] = useState('all');
     const [query, setQuery] = useState(author.name);
     const [searchedQuery, setSearchedQuery] = useState('');
     const [results, setResults] = useState(null);
     const [selected, setSelected] = useState(null);
     const [photo, setPhoto] = useState(null);
+    const [imageArrival, setImageArrival] = useState(null);
+    const [arrivalHighlight, setArrivalHighlight] = useState(0);
     const [nextStart, setNextStart] = useState(null);
     const [searching, setSearching] = useState(false);
     const [loadingPhoto, setLoadingPhoto] = useState(false);
@@ -149,8 +177,12 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
     const dialogRef = useRef(null);
     const closeButtonRef = useRef(null);
     const inputRef = useRef(null);
+    const nameRef = useRef(null);
+    const focusDraftRef = useRef(false);
     const fileRef = useRef(null);
     const editRef = useRef(null);
+    const uploadRef = useRef(null);
+    const photoStageRef = useRef(null);
     const tabRefs = useRef({});
     const requestRef = useRef(0);
     const photoRequestRef = useRef(0);
@@ -167,7 +199,7 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
         const dialog = dialogRef.current;
         const previous = document.activeElement;
         dialog.showModal();
-        (initialTab === 'upload' ? fileRef.current?.previousElementSibling : inputRef.current)?.focus();
+        (initialTab === 'edit' ? nameRef.current : initialTab === 'upload' ? fileRef.current?.previousElementSibling : inputRef.current)?.focus();
         const cancel = event => {
             if (event.target !== dialog) return;
             event.preventDefault();
@@ -194,9 +226,37 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
             target?.focus({ preventScroll: true });
         }
     }, [busy, searching, editing]);
+    useLayoutEffect(() => {
+        if (tab === 'edit' && focusDraftRef.current) {
+            focusDraftRef.current = false;
+            nameRef.current?.focus({ preventScroll: true });
+        }
+    }, [tab]);
+    useEffect(() => {
+        if (!imageArrival) return;
+        if (imageArrival.id !== photoRequestRef.current || tab !== 'upload' || busy || editing) {
+            setImageArrival(null);
+            return;
+        }
+        let cancelled = false;
+        const cancel = animateCoverEditorImageArrival({
+            sourceElement: uploadRef.current,
+            targetElement: photoStageRef.current,
+            container: dialogRef.current,
+            image: imageArrival.image,
+            onFinish: () => {
+                if (cancelled || !mountedRef.current || imageArrival.id !== photoRequestRef.current) return;
+                setImageArrival(current => current?.id === imageArrival.id ? null : current);
+                setArrivalHighlight(imageArrival.id);
+            },
+        });
+        return () => { cancelled = true; cancel(); };
+    }, [imageArrival, tab, busy, editing]);
     const resetSearch = () => {
         requestRef.current += 1;
         photoRequestRef.current += 1;
+        setImageArrival(null);
+        setArrivalHighlight(0);
         setSearching(false);
         setLoadingPhoto(false);
         setResults(null);
@@ -210,6 +270,18 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
         resetSearch();
         setTab(value);
         if (value === 'profile' && source === 'naver') setSource('all');
+    };
+    const updateDraft = (field, value) => setProfileDraft(current => ({ ...(current || draft), [field]: value }));
+    const editSelectedProfile = () => {
+        if (busy || searching || editing || savingRef.current || !selected?.profile) return;
+        const next = selected.profile;
+        setProfileDraftSource(next);
+        setProfileDraft({
+            name: next.name, birthDate: next.birthDate, deathDate: next.deathDate,
+            topWork: next.topWork || next.works.join(', '), description: next.description,
+        });
+        focusDraftRef.current = true;
+        changeTab('edit');
     };
     const search = async (start = 1) => {
         if (busy || searching || !query.trim()) return;
@@ -259,6 +331,8 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
     const choosePhoto = async (candidate, openEditor = false) => {
         if (savingRef.current || busy || searching) return;
         const request = ++photoRequestRef.current;
+        setImageArrival(null);
+        setArrivalHighlight(0);
         setSelected(candidate);
         setPhoto(null);
         setLoadingPhoto(true);
@@ -277,40 +351,93 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
             if (mountedRef.current && request === photoRequestRef.current) setLoadingPhoto(false);
         }
     };
-    const upload = async files => {
+    const upload = async transfer => {
         if (busy || editing) return;
-        if (files?.length !== 1 || !files[0].size || files[0].size > MAX_IMAGE_BYTES || !/^image\/(?:jpeg|png|webp|gif|bmp)$/i.test(files[0].type)) {
+        if (!transfer || transfer.errorKey) {
+            setError(transfer?.errorKey === 'cover_editor_drop_one' ? labels.size : labels.imageFailed);
+            return;
+        }
+        const { file, url } = transfer;
+        if (file && (!file.size || file.size > MAX_IMAGE_BYTES
+            || !/^image\/(?:jpeg|png|webp|gif|bmp|x-ms-bmp)$/i.test(file.type) && !(!file.type && isCoverImagePath(file.name)))) {
             setError(labels.size);
             return;
         }
         const request = ++photoRequestRef.current;
+        let importedImage;
+        setImageArrival(null);
+        setArrivalHighlight(0);
         setLoadingPhoto(true);
         setError('');
-        setSelected(null);
-        setPhoto(null);
         try {
-            const dataUrl = await readImage(files[0]);
+            let dataUrl;
+            if (file) {
+                dataUrl = await readImage(file);
+            } else {
+                importedImage = await window.electronAPI?.previewCoverEditorImportedImage?.({ url });
+                if (!mountedRef.current || request !== photoRequestRef.current) return;
+                if (importedImage?.error || !importedImage?.dataUrl) throw importedImage || new Error();
+                dataUrl = importedImage.dataUrl;
+            }
             if (!mountedRef.current || request !== photoRequestRef.current) return;
             const value = await window.electronAPI?.importAuthorPhoto?.({ dataUrl });
             if (!mountedRef.current || request !== photoRequestRef.current) return;
             if (!value?.success || !value.photo || !value.dataUrl) throw value || new Error();
-            setPhoto({ ...value, title: files[0].name, edited: false });
+            setSelected(null);
+            const nextPhoto = { ...value, title: file?.name || labels.local, edited: false };
+            setImageArrival({ id: request, image: nextPhoto, previousPhoto: photo });
+            setPhoto(nextPhoto);
         } catch (failure) {
             if (mountedRef.current && request === photoRequestRef.current) setError(errorText(failure, labels, 'imageFailed'));
         } finally {
+            if (importedImage?.imagePath) void Promise.resolve(window.electronAPI?.releaseCoverEditorImages?.({ imagePath: importedImage.imagePath })).catch(() => {});
             if (mountedRef.current && request === photoRequestRef.current) setLoadingPhoto(false);
             if (fileRef.current) fileRef.current.value = '';
         }
     };
     const save = async () => {
-        if (busy || searching || savingRef.current || tab === 'profile' && !selected?.profile || tab !== 'profile' && !photo) return;
+        if (busy || searching || savingRef.current || (tab === 'edit' ? !hasDraftName : tab === 'profile' ? !selected?.profile : !photo)) return;
         savingRef.current = true;
         setSaving(true);
         setError('');
         try {
             let saved;
-            if (tab === 'profile') saved = await saveCallbacksRef.current.onSaveProfile(selected.profile);
-            else {
+            if (tab === 'edit' || tab === 'profile') {
+                let next = tab === 'edit' ? normalizeAuthorProfile({
+                    ...(draftSource || { provider: 'local', id: `local:${crypto.randomUUID()}` }), ...draft,
+                }) : selected.profile;
+                if (tab === 'edit' && !next?.name) { setError(labels.requiredName); return; }
+                const current = normalizeAuthorProfile(profile);
+                if ((tab === 'profile' || profileDraftSource) && current?.photoUrl) {
+                    const choice = await window.electronAPI?.showMessage?.({
+                        type: 'question', title: labels.replacePhotoTitle,
+                        message: next.photoUrl ? labels.replacePhoto : labels.removePhoto,
+                        buttons: 'yes-no-cancel', defaultChoice: 'no', language,
+                    });
+                    if (!mountedRef.current || !['yes', 'no'].includes(choice)) return;
+                    if (choice === 'no') {
+                        let preservedPhoto = current.photoOverride;
+                        if (!preservedPhoto) {
+                            let stored = current.storedPhoto;
+                            if (!stored) {
+                                const value = await window.electronAPI?.saveAuthorProfilePhoto?.(current);
+                                if (!mountedRef.current) return;
+                                if (!value?.success || !value.photo) throw value || new Error();
+                                stored = value.photo;
+                            }
+                            preservedPhoto = {
+                                id: stored.id, sourceUrl: stored.sourceUrl, source: current.provider,
+                                query: current.name || author.name,
+                                imageSourceUrl: current.imageSourceUrl, imageArtist: current.imageArtist, imageLicense: current.imageLicense,
+                            };
+                        }
+                        next = normalizeAuthorProfile({ ...next, photoOverride: preservedPhoto });
+                        if (!next?.photoOverride || next.photoOverride.id !== preservedPhoto.id) throw new Error();
+                    }
+                }
+                if (!mountedRef.current) return;
+                saved = await saveCallbacksRef.current.onSaveProfile(next);
+            } else {
                 let chosen = photo.photo;
                 if (photo.edited) {
                     const value = await window.electronAPI?.importAuthorPhoto?.({ dataUrl: photo.dataUrl, photo: chosen });
@@ -335,7 +462,29 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
         setPhoto(current => ({ ...current, dataUrl, edited: true }));
     };
     const chosenProfile = tab === 'profile' ? selected?.profile : null;
-    const tabs = ['profile', 'photo', 'upload'];
+    const previewPhoto = imageArrival ? imageArrival.previousPhoto : photo;
+    const preview = <div className="author-editor-preview" aria-busy={loadingPhoto}>
+        {chosenProfile ? <>
+            <div className="author-editor-profile-summary">
+                <CandidateImage key={selected.id} candidate={selected} labels={labels} />
+                <div><h3>{chosenProfile.name}</h3><SourceLink url={chosenProfile.sourceUrl}>{sources[chosenProfile.provider]}</SourceLink></div>
+            </div>
+            <dl className="author-editor-profile-fields">
+                {[[labels.birth, chosenProfile.birthDate], [labels.death, chosenProfile.deathDate], [labels.works, chosenProfile.topWork || chosenProfile.works?.join(', ')]].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+            </dl>
+            {chosenProfile.description && <div className="author-editor-description"><h4>{labels.description}</h4><p>{chosenProfile.description}</p></div>}
+            <div className="author-editor-credit"><SourceLink url={chosenProfile.imageSourceUrl}>{labels.imageSource}</SourceLink><span>{[chosenProfile.imageArtist, chosenProfile.imageLicense].filter(Boolean).join(' · ')}</span></div>
+        </> : tab !== 'profile' && photo ? <>
+            <div ref={photoStageRef} className="author-editor-photo-stage">
+                {previewPhoto ? <SmoothCoverImage src={previewPhoto.dataUrl} alt={previewPhoto.title} /> : <FaIcon name="image" size={32} />}
+                {arrivalHighlight > 0 && <span key={arrivalHighlight} className="cover-editor-arrival-highlight" aria-hidden="true" />}
+            </div>
+            <div className="author-editor-photo-caption"><strong>{photo.title}</strong><small>{photo.edited ? labels.edited : photo.photo.source === 'local' ? labels.local : sources[photo.photo.source] || sources[selected?.source]}</small></div>
+            <div className="author-editor-credit"><SourceLink url={photo.photo.imageSourceUrl || photo.photo.sourceUrl}>{labels.imageSource}</SourceLink><span>{[photo.photo.imageArtist, photo.photo.imageLicense].filter(Boolean).join(' · ')}</span></div>
+            <button ref={editRef} type="button" className="author-editor-edit" disabled={busy} onClick={() => setEditing(true)}><FaIcon name="pen" />{labels.edit}</button>
+        </> : <div className="author-editor-empty" role={loadingPhoto ? 'status' : undefined}><FaIcon name={tab === 'profile' ? 'user' : 'image'} size={32} /><p>{loadingPhoto ? labels.loadingPhoto : tab === 'profile' ? labels.selectHint : labels.selectPhotoHint}</p></div>}
+    </div>;
+    const tabs = ['edit', 'profile', 'photo', 'upload'];
     return <dialog ref={dialogRef} className="author-editor-dialog" tabIndex={-1} role="dialog" aria-labelledby={titleId} aria-modal="true"
         onClick={event => { if (event.target === event.currentTarget) close(); }}
         onDragEnter={event => { event.preventDefault(); event.stopPropagation(); }}
@@ -356,7 +505,7 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
                 close();
             }
             if (event.key !== 'Tab' || editing) return;
-            const controls = [...dialogRef.current.querySelectorAll('button, input, select, a[href], [tabindex="0"]')]
+            const controls = [...dialogRef.current.querySelectorAll('button, input, textarea, select, a[href], [tabindex="0"]')]
                 .filter(element => !element.disabled && element.getClientRects().length && !element.closest('[inert]'));
             const first = controls[0];
             const last = controls.at(-1);
@@ -373,13 +522,13 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
                     id={`${titleId}-${value}`} aria-controls={`${titleId}-panel`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1}
                     disabled={busy} onClick={() => changeTab(value)} onKeyDown={event => {
                         const index = tabs.indexOf(value);
-                        const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length] : event.key === 'ArrowLeft' ? tabs[(index + 2) % tabs.length]
-                            : event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[2] : null;
+                        const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length] : event.key === 'ArrowLeft' ? tabs[(index + tabs.length - 1) % tabs.length]
+                            : event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : null;
                         if (next) { event.preventDefault(); changeTab(next); tabRefs.current[next]?.focus(); }
-                    }}><FaIcon name={value === 'profile' ? 'user' : value === 'photo' ? 'search' : 'image'} />{labels[value]}</button>)}
+                    }}><FaIcon name={value === 'edit' ? 'pen' : value === 'profile' ? 'user' : value === 'photo' ? 'search' : 'image'} />{value === 'edit' ? labels.editProfile : labels[value]}</button>)}
             </div>
             <section id={`${titleId}-panel`} role="tabpanel" aria-labelledby={`${titleId}-${tab}`} className="author-editor-panel">
-                {tab !== 'upload' && <form className="author-editor-search" onSubmit={event => { event.preventDefault(); void search(); }}>
+                {(tab === 'profile' || tab === 'photo') && <form className="author-editor-search" onSubmit={event => { event.preventDefault(); void search(); }}>
                     <select aria-label={labels.source} value={source} disabled={busy || searching} onChange={event => { resetSearch(); setPhoto(null); setSource(event.target.value); }}>
                         <option value="all">{labels.all}</option>
                         {Object.entries(sources).filter(([value]) => tab === 'photo' || value !== 'naver').map(([value, name]) => <option key={value} value={value}>{name}</option>)}
@@ -387,20 +536,33 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
                     <input ref={inputRef} value={query} maxLength={200} onChange={event => setQuery(event.target.value)} aria-label={labels.query} placeholder={labels.query} disabled={busy} />
                     <button type="submit" disabled={busy || searching || !query.trim()}><FaIcon name="search" />{searching ? labels.searching : labels.search}</button>
                 </form>}
-                <p className="author-editor-hint">{tab === 'profile' ? labels.profileHint : tab === 'photo' ? labels.photoHint : labels.editHint}</p>
+                <p className="author-editor-hint">{tab === 'edit' ? labels.profileEditHint : tab === 'profile' ? labels.profileHint : tab === 'photo' ? labels.photoHint : labels.editHint}</p>
                 {error && <p className="author-editor-message is-error" role="alert">{error}</p>}
                 {notice && <p className="author-editor-message" role="status">{notice}</p>}
-                <div className={`author-editor-body${tab === 'upload' ? ' is-upload' : ''}`}>
-                    {tab === 'upload' ? <div className={`author-editor-upload${dragging ? ' is-dragging' : ''}`}
+                {tab === 'edit' ? <form className="author-editor-profile-form" aria-label={labels.editProfile}
+                    onSubmit={event => { event.preventDefault(); void save(); }}>
+                    {[['name', labels.name], ['birthDate', labels.birth], ['deathDate', labels.death], ['topWork', labels.works], ['description', labels.description]].map(([field, label]) => <label
+                        key={field} className={`author-editor-profile-field${field === 'birthDate' || field === 'deathDate' ? '' : ' is-wide'}`}>
+                        <span>{label}</span>
+                        {field === 'description' ? <textarea value={draft[field]} maxLength={1000} rows={5} disabled={busy}
+                            onChange={event => updateDraft(field, event.target.value)} />
+                            : <input ref={field === 'name' ? nameRef : undefined} value={draft[field]} maxLength={1000} required={field === 'name'} disabled={busy}
+                                placeholder={field === 'birthDate' || field === 'deathDate' ? labels.dateHint : undefined}
+                                onChange={event => updateDraft(field, event.target.value)} />}
+                    </label>)}
+                    {draftSource?.sourceUrl && <div className="author-editor-profile-source"><span>{labels.sourceLink}</span><SourceLink url={draftSource.sourceUrl}>{sources[draftSource.provider]}</SourceLink></div>}
+                </form> : <div className={`author-editor-body${tab !== 'profile' ? ' is-photo-layout' : ''}${tab === 'upload' ? ' is-upload' : ''}`}>
+                    {tab !== 'profile' && preview}
+                    {tab === 'upload' ? <div ref={uploadRef} className={`author-editor-upload${dragging ? ' is-dragging' : ''}`}
                         onDragEnter={event => { event.preventDefault(); if (!busy) setDragging(true); }}
                         onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; }}
                         onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
-                        onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); void upload(Array.from(event.dataTransfer.files)); }}>
+                        onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); void upload(extractCoverImageTransfer(event.dataTransfer)); }}>
                         <FaIcon name="image" size={36} /><p>{labels.uploadHint}</p>
                         <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}>{labels.chooseFile}</button>
-                        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp" aria-label={labels.upload} hidden onChange={event => void upload(Array.from(event.target.files))} />
+                        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp" aria-label={labels.upload} hidden onChange={event => void upload(extractCoverImageTransfer({ files: event.target.files }, { allowUrls: false }))} />
                         <small>{labels.formats}</small>
-                    </div> : <div className="author-editor-results" aria-label={labels.results} aria-busy={searching}>
+                    </div> : <div className={`author-editor-results${tab === 'photo' ? ' is-gallery' : ''}`} aria-label={labels.results} aria-busy={searching}>
                         {searching && !results && <p className="author-editor-empty" role="status">{labels.searching}</p>}
                         {!searching && (!results || !results.length) && <p className="author-editor-empty">{results ? labels.empty : labels.searchHint}</p>}
                         {results?.map(candidate => <button key={`${candidate.source}:${candidate.id}`} type="button"
@@ -411,35 +573,19 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
                             }}>
                             <CandidateImage candidate={candidate} labels={labels} />
                             <span><strong>{candidate.title}</strong><small>{sources[candidate.source]}</small>
-                                {candidate.profile && <small>{candidate.profile.topWork || candidate.profile.description}</small>}</span>
+                                {tab === 'profile' && candidate.profile && <small>{candidate.profile.topWork || candidate.profile.description}</small>}</span>
                             {selected?.id === candidate.id && <FaIcon name="check" size={12} />}
                         </button>)}
                         {nextStart && <button type="button" className="author-editor-more" disabled={busy || searching} onClick={() => void search(nextStart)}>{searching ? labels.searching : labels.more}</button>}
                     </div>}
-                    <div className="author-editor-preview" aria-busy={loadingPhoto}>
-                        {chosenProfile ? <>
-                            <div className="author-editor-profile-summary">
-                                <CandidateImage key={selected.id} candidate={selected} labels={labels} />
-                                <div><h3>{chosenProfile.name}</h3><SourceLink url={chosenProfile.sourceUrl}>{sources[chosenProfile.provider]}</SourceLink></div>
-                            </div>
-                            <dl className="author-editor-profile-fields">
-                                {[[labels.birth, chosenProfile.birthDate], [labels.death, chosenProfile.deathDate], [labels.works, chosenProfile.topWork || chosenProfile.works?.join(', ')]].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
-                            </dl>
-                            {chosenProfile.description && <div className="author-editor-description"><h4>{labels.description}</h4><p>{chosenProfile.description}</p></div>}
-                            <div className="author-editor-credit"><SourceLink url={chosenProfile.imageSourceUrl}>{labels.imageSource}</SourceLink><span>{[chosenProfile.imageArtist, chosenProfile.imageLicense].filter(Boolean).join(' · ')}</span></div>
-                        </> : tab !== 'profile' && photo ? <>
-                            <div className="author-editor-photo-stage"><img src={photo.dataUrl} alt={photo.title} /></div>
-                            <div className="author-editor-photo-caption"><strong>{photo.title}</strong><small>{photo.edited ? labels.edited : photo.photo.source === 'local' ? labels.local : sources[photo.photo.source] || sources[selected?.source]}</small></div>
-                            <div className="author-editor-credit"><SourceLink url={photo.photo.imageSourceUrl || photo.photo.sourceUrl}>{labels.imageSource}</SourceLink><span>{[photo.photo.imageArtist, photo.photo.imageLicense].filter(Boolean).join(' · ')}</span></div>
-                            <button ref={editRef} type="button" className="author-editor-edit" disabled={busy} onClick={() => setEditing(true)}><FaIcon name="pen" />{labels.edit}</button>
-                        </> : <div className="author-editor-empty" role={loadingPhoto ? 'status' : undefined}><FaIcon name={tab === 'profile' ? 'user' : 'image'} size={32} /><p>{loadingPhoto ? labels.loadingPhoto : tab === 'profile' ? labels.selectHint : labels.selectPhotoHint}</p></div>}
-                    </div>
-                </div>
+                    {tab === 'profile' && preview}
+                </div>}
             </section>
             <footer className="author-editor-footer">
-                <div>{tab !== 'profile' && profile?.photoUrl && <button type="button" disabled={busy || searching} onClick={() => void choosePhoto({ id: 'current', source: 'current', title: author.name, profile }, true)}><FaIcon name="pen" />{labels.current}</button>}</div>
+                <div>{(tab === 'photo' || tab === 'upload') && profile?.photoUrl && <button type="button" disabled={busy || searching} onClick={() => void choosePhoto({ id: 'current', source: 'current', title: author.name, profile }, true)}><FaIcon name="pen" />{labels.current}</button>}</div>
                 <div><button type="button" onClick={close} disabled={saving}>{labels.close}</button>
-                    <button type="button" className="primary" onClick={() => void save()} disabled={busy || searching || (tab === 'profile' ? !chosenProfile : !photo)}><FaIcon name="check" />{saving ? labels.saving : tab === 'profile' ? labels.selectProfile : labels.selectPhoto}</button></div>
+                    {tab === 'profile' && <button type="button" onClick={editSelectedProfile} disabled={busy || searching || !chosenProfile}><FaIcon name="pen" />{labels.editSelectedProfile}</button>}
+                    <button type="button" className="primary" onClick={() => void save()} disabled={busy || searching || (tab === 'edit' ? !hasDraftName : tab === 'profile' ? !chosenProfile : !photo)}><FaIcon name="check" />{saving ? labels.saving : tab === 'edit' ? labels.saveProfile : tab === 'profile' ? labels.selectProfile : labels.selectPhoto}</button></div>
             </footer>
             {editing && photo && <Suspense fallback={<p role="status" className="author-editor-message">{labels.loadingPhoto}</p>}>
                 <CoverImageEditorDialog image={photo} onApply={applyEdit} onClose={() => { setEditing(false); editRef.current?.focus(); }}

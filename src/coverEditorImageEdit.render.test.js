@@ -147,19 +147,19 @@ async function runCoverImageChecks() {
         check(calls.saved.length === 0, 'Applying an image edit must leave the original book untouched');
         check(calls.released.some(request => request?.imagePath === source.imagePath), 'Replacing the candidate must release its old temporary image');
         check(document.activeElement === opened.edit, 'Applying image edits must restore focus to the edit button');
-        const editedCandidate = candidate().src;
+        const editedCandidate = candidate();
         opened = await openEditor();
         button('90° 회전', opened.dialog).click();
         button('취소', opened.dialog).click();
         await until(() => !imageDialog(), 'Cancel must close only the image editor');
-        check(candidate().src === editedCandidate && calls.imported.length === 1, 'Cancelling must keep the previously applied candidate');
+        check(candidate() === editedCandidate && calls.imported.length === 1, 'Cancelling must keep the previously applied candidate');
         check(calls.closed === 0, 'Image edit cancellation must keep the cover tool open');
         await until(() => document.activeElement === opened.edit, 'Cancelling must restore focus to the image edit button');
         opened = await openEditor();
         button('90° 회전', opened.dialog).focus();
         await window.fixtureDriver.escape();
         await until(() => !imageDialog(), 'Escape must close the native image dialog');
-        check(calls.closed === 0 && candidate().src === editedCandidate, 'Escape must preserve the parent and selected cover');
+        check(calls.closed === 0 && candidate() === editedCandidate, 'Escape must preserve the parent and selected cover');
         await until(() => document.activeElement === opened.edit, 'Escape must restore focus to the image edit button');
         check(document.activeElement === opened.edit, 'Escape must restore focus to the image edit button');
         if (window.fixtureDriver.capture) await window.fixtureDriver.capture('candidate');
@@ -175,6 +175,7 @@ async function runCoverImageChecks() {
         check(picker, 'The standalone dialog must offer image selection');
         picker.click();
         await until(() => button(t('cover_editor_edit')) && candidate()?.src === dataUrl, 'The standalone dialog must load the candidate');
+        const standaloneCandidate = candidate();
         opened = await openEditor();
         const focusTarget = button('90° 회전', opened.dialog);
         focusTarget.focus();
@@ -182,7 +183,7 @@ async function runCoverImageChecks() {
         check(document.activeElement === focusTarget, 'The parent focus trap must not steal focus from image editing');
         await window.fixtureDriver.escape();
         await until(() => !imageDialog(), 'Escape must close the standalone nested image editor');
-        check(calls.closed === 0 && candidate().src === dataUrl, 'Nested Escape must not close the standalone cover dialog or change its cover');
+        check(calls.closed === 0 && candidate() === standaloneCandidate, 'Nested Escape must not close the standalone cover dialog or change its cover');
         await until(() => document.activeElement === opened.edit, 'Nested Escape must restore focus in the standalone parent');
         check(document.activeElement === opened.edit, 'Nested Escape must restore focus in the standalone parent');
         check(calls.saved.length === 1 && calls.toasts.length === 0, 'Image editing and cancellation must not cause extra saves or errors');
@@ -202,8 +203,10 @@ async function runCoverImageChecks() {
         check(croppedCover.extension === '.jpg' && croppedCover.dataUrl.startsWith('data:image/jpeg;base64,'),
             'The large opaque cover must be imported as JPEG without PNG expansion');
         check(croppedCover.width === 3072 && croppedCover.height === 4096, 'Applying must preserve the full cropped resolution');
-        await until(() => candidate()?.complete && candidate().naturalWidth === 3072 && candidate().naturalHeight === 4096,
-            'The new cover preview must decode the actual cropped image');
+        await until(() => candidate()?.complete && candidate().naturalWidth > 0 && candidate().naturalHeight > 0,
+            'The new cover thumbnail must decode the cropped image');
+        check(candidate().closest('.cover-editor-preview').textContent.includes('3072 × 4096'),
+            'The resized thumbnail must retain the original cropped dimensions in its label');
         check(calls.saved.length === 1, 'Applying the large crop must still wait for explicit cover saving');
         check(calls.released.some(request => request?.imagePath === largeSource.imagePath), 'Applying the large crop must release the replaced source');
         button(t('cover_editor_save')).click();

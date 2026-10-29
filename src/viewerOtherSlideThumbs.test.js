@@ -92,7 +92,7 @@ test('두 장 보기에서 목차로 펼침면의 두 번째 페이지를 선택
 
     assert.match(
         normalizationSource,
-        /return resolveSpreadPageStartIndex\([\s\S]*?session\?\.type === 'comic' \? getStepSizeForIndex : undefined/,
+        /return resolveSpreadPageStartIndex\([\s\S]*?session\?\.type === 'comic' \|\| \(session\?\.type === 'pdf' && selectedFlowMode === 'auto'\) \? getStepSizeForIndex : undefined/,
     );
     assert.match(
         normalizationSource,
@@ -104,15 +104,15 @@ test('두 장 보기에서 목차로 펼침면의 두 번째 페이지를 선택
     );
     assert.match(
         normalizationSource,
-        /const normalizationTargetPageIndex = session\?\.type === 'comic'[\s\S]*?\? clamp\(selectedPageIndex,[\s\S]*?: pageIndex;/,
+        /const normalizationTargetPageIndex = retainsSelectedPage[\s\S]*?\? clamp\(selectedPageIndex,[\s\S]*?: pageIndex;/,
     );
     assert.match(
         normalizationSource,
-        /selectedPageIndex: session\?\.type === 'comic' \? normalizationTargetPageIndex : pageIndex/,
+        /selectedPageIndex: retainsSelectedPage \? normalizationTargetPageIndex : pageIndex/,
     );
     assert.match(
         normalizationSource,
-        /\[flowMode, pageCount, pageCountReadyForNavigation, pageIndex, resolveSpreadNavigationIndex, selectedPageIndex, session\?\.type, setPageIndexSynced\]/,
+        /\[flowMode,[^\]]*pageCountReadyForNavigation,[^\]]*resolveSpreadNavigationIndex,[^\]]*selectedPageIndex,[^\]]*setPageIndexSynced,/,
     );
 
     const activeTocStart = viewerSource.indexOf('const activeTocId = useMemo');

@@ -14,6 +14,7 @@ import {
     readAudioMetadata,
 } from './audioMetadata.js';
 import { missingBinaryMessage } from './binaryPolicy.js';
+import { parseComicInfoXml } from './comicInfoXml.js';
 import { parseMediaUrl } from './epubEditor/authoring.js';
 import {
     epubOriginalCssParts,
@@ -1679,6 +1680,19 @@ function parseComicReadingDirection(xml = '') {
     return 'ltr';
 }
 
+function parseComicViewerMetadata(xml = '') {
+    const readingDirection = parseComicReadingDirection(xml);
+    try {
+        const metadata = parseComicInfoXml(xml);
+        return {
+            readingDirection: metadata.Manga?.toLowerCase() === 'webtoon' ? 'webtoon' : readingDirection,
+            format: metadata.Format || '',
+        };
+    } catch {
+        return { readingDirection, format: '' };
+    }
+}
+
 function decodeWithEncoding(buffer, encodingName, options = {}) {
     return new TextDecoder(encodingName, options).decode(buffer);
 }
@@ -1796,7 +1810,7 @@ function run7z(sevenZExe, args, options = {}) {
 }
 
 async function listWith7z(filePath, sevenZExe) {
-    const stdout = (await run7z(sevenZExe, ['l', '-slt', filePath], {
+    const stdout = (await run7z(sevenZExe, ['l', '-slt', '-ba', '-sccUTF-8', '--', filePath], {
         maxBuffer: 20 * 1024 * 1024,
     })).toString('utf8');
     const entries = [];
@@ -1808,9 +1822,11 @@ async function listWith7z(filePath, sevenZExe) {
         const value = line.slice(index + 3);
         if (key === 'Path') {
             if (current?.name) entries.push(current);
-            current = { name: normalizeInnerPath(value), isDir: false, size: 0, encrypted: false };
+            current = { name: value.replace(/\\/g, '/'), isDir: false, size: 0, encrypted: false };
+        } else if (current && key === 'Folder') {
+            current.isDir = current.isDir || value === '+';
         } else if (current && key === 'Attributes') {
-            current.isDir = value.includes('D');
+            current.isDir = current.isDir || value.includes('D');
         } else if (current && key === 'Size') {
             current.size = Number(value) || 0;
         } else if (current && key === 'Encrypted') {
@@ -1818,12 +1834,7 @@ async function listWith7z(filePath, sevenZExe) {
         }
     }
     if (current?.name) entries.push(current);
-    const archivePath = normalizeInnerPath(path.resolve(filePath)).toLowerCase();
-    const archiveName = path.basename(filePath).normalize('NFC').toLowerCase();
-    return entries.filter(entry => {
-        const entryName = normalizeInnerPath(entry.name).toLowerCase();
-        return entryName !== archivePath && entryName !== archiveName;
-    });
+    return entries;
 }
 
 async function listArchiveEntries(filePath, sevenZExe) {
@@ -1942,7 +1953,7 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
         }
         if (!sevenZExe) throw nativeZipError;
     }
-    return run7z(sevenZExe, ['x', '-so', filePath, normalizedEntryName], {
+    return run7z(sevenZExe, ['x', '-so', '-spd', '-ssc', '-sccUTF-8', `-i!${entryName}`, '--', filePath], {
         maxBuffer: options.maxBytes || 500 * 1024 * 1024,
     });
 }
@@ -2225,19 +2236,23 @@ export class ViewerSessionManager {
             this.comicArchiveEntryCaches.delete(session.id);
         }
         let readingDirection = 'ltr';
+        let format = '';
         if (comicInfoEntry) {
             try {
                 const buffer = await extractArchiveEntry(session.filePath, comicInfoEntry.name, sevenZExe, {
                     maxBytes: 2 * 1024 * 1024,
                     zipEntry: stableSignature ? cacheableZipEntry(comicInfoEntry) : null,
                 });
-                readingDirection = parseComicReadingDirection(buffer.toString('utf8'));
+                const metadata = parseComicViewerMetadata(buffer.toString('utf8'));
+                readingDirection = metadata.readingDirection;
+                format = metadata.format;
             } catch {
                 readingDirection = 'ltr';
             }
         }
         return {
             readingDirection,
+            format,
             pages: images.map((entry, index) => ({
                 index,
                 name: entry.name,

@@ -186,7 +186,8 @@ export function normalizeAuthorProfile(profile) {
     } else if (provider === 'naver' && photoOverride && profile.id === photoOverride.id) {
         sourceUrl = `https://search.naver.com/search.naver?where=image&query=${encodeURIComponent(photoOverride.query)}`;
     }
-    if (!sourceUrl && !(provider === 'local' && photoOverride && profile.id === photoOverride.id)) return null;
+    const localProfile = provider === 'local' && /^local:[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/.test(profile.id);
+    if (!sourceUrl && !localProfile && !(provider === 'local' && photoOverride && profile.id === photoOverride.id)) return null;
     const safeWikimediaUrl = (value, image) => {
         if (typeof value !== 'string' || value.length > 2048) return '';
         try {
@@ -225,12 +226,12 @@ export function normalizeAuthorProfile(profile) {
     };
     const webSource = ['aladin', 'kyobo', 'cartoon', 'kmas'].includes(provider);
     if (webSource) photoUrl = safeSourcePhotoUrl(profile.photoUrl);
-    else if (provider !== 'openlibrary') photoUrl = safeWikimediaUrl(profile.photoUrl, true);
+    else if (provider !== 'openlibrary' && provider !== 'local') photoUrl = safeWikimediaUrl(profile.photoUrl, true);
     const saved = profile.storedPhoto;
     const storedSourceUrl = provider === 'openlibrary'
         ? saved?.sourceUrl === `https://covers.openlibrary.org/a/olid/${profile.id}-M.jpg?default=false` ? saved.sourceUrl : ''
         : webSource ? safeSourcePhotoUrl(saved?.sourceUrl) : safeWikimediaUrl(saved?.sourceUrl, true);
-    const storedPhoto = !photoOverride && typeof saved?.id === 'string' && /^[a-f\d]{64}$/.test(saved.id) && storedSourceUrl
+    const storedPhoto = provider !== 'local' && !photoOverride && typeof saved?.id === 'string' && /^[a-f\d]{64}$/.test(saved.id) && storedSourceUrl
         ? { id: saved.id, sourceUrl: storedSourceUrl } : null;
     return {
         id: profile.id,
@@ -241,7 +242,8 @@ export function normalizeAuthorProfile(profile) {
         topWork: text('topWork'),
         alternateNames: list(profile.alternateNames || profile.aliases, provider === 'openlibrary' ? 8 : 32),
         works: list(profile.works, 32),
-        description: text('description'),
+        description: typeof profile.description === 'string'
+            ? profile.description.replace(/<[^>]*>/g, '').replace(/\r\n/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, 1000) : '',
         photoUrl: photoOverride || storedPhoto ? `bookmanager-thumbnail://author-photo/${(photoOverride || storedPhoto).id}.png` : photoUrl,
         sourceUrl,
         entityId,

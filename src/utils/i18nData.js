@@ -221,7 +221,7 @@ export const legacyTranslations = {
       "Hardcover": "하드커버",
       "TradePaperback": "트레이드 페이퍼백",
       "GraphicNovel": "그래픽 노블",
-      "Webtoon": "웹툰",
+      "Webtoon": "웹툰 (Webtoon)",
       "WebComic": "웹코믹",
       "Digital": "디지털판"
     },
@@ -314,7 +314,8 @@ export const legacyTranslations = {
     "meta_manga": {
       "No": "일반(No)",
       "Yes": "만화(Yes)",
-      "YesAndRightToLeft": "일본식 우→좌(YesAndRightToLeft)"
+      "YesAndRightToLeft": "일본식 우→좌(YesAndRightToLeft)",
+      "Webtoon": "웹툰 (Webtoon)"
     },
     "meta_yes_no": {
       "No": "아니오",
@@ -1719,7 +1720,8 @@ export const legacyTranslations = {
     "meta_manga": {
       "No": "No",
       "Yes": "Yes",
-      "YesAndRightToLeft": "YesAndRightToLeft"
+      "YesAndRightToLeft": "YesAndRightToLeft",
+      "Webtoon": "Webtoon"
     },
     "meta_yes_no": {
       "No": "No",
@@ -3124,7 +3126,8 @@ export const legacyTranslations = {
     "meta_manga": {
       "No": "一般 (No)",
       "Yes": "漫画 (Yes)",
-      "YesAndRightToLeft": "日本式 右→左 (YesAndRightToLeft)"
+      "YesAndRightToLeft": "日本式 右→左 (YesAndRightToLeft)",
+      "Webtoon": "ウェブトゥーン"
     },
     "meta_yes_no": {
       "No": "いいえ",

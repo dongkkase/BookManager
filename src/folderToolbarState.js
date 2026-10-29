@@ -63,8 +63,10 @@ export function hasArchiveMetadata(file = {}) {
 export function filterFolderFiles(files = [], options = {}) {
     const query = String(options.query || '').trim().toLowerCase();
     const metadataMissingOnly = options.metadataMissingOnly === true;
-    if (!query && !metadataMissingOnly) return files;
+    const filesOnly = options.filesOnly === true;
+    if (!query && !metadataMissingOnly && !filesOnly) return files;
     return files.filter(file => {
+        if (filesOnly && file?.isDirectory) return false;
         if (metadataMissingOnly && (file?.isDirectory === true || hasArchiveMetadata(file))) return false;
         if (!query) return true;
         return normalizedSearchValues(file).some(value => value.includes(query));

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { SmoothCoverImage } from '../../../components/SmoothCoverImage';
 import { editorText as l } from './labels';
 import { STYLE_PRESETS, coverSvg } from '../../../../electron/epubEditor/model';
 import { normalizeAudioVolume } from './audioNode';
@@ -122,7 +123,7 @@ export default function Inspector({ hidden, onClose, tab, setTab, project, updat
                         {['background', 'color'].map(key => <ColorField key={key} label={l(key)} value={project.cover[key]} onChange={value => patchCover({ [key]: value })} />)}
                     </>}
                     {project.cover.mode === 'image' && <><Field label={l('coverImage')}><select value={project.cover.assetId} onChange={event => patchCover({ assetId: event.target.value })}><option value="">—</option>{project.assets.filter(asset => asset.kind === 'image').map(asset => <option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></Field><button className="ee-button" onClick={() => onAddAsset('image', true)}>{l('addImage')}</button></>}
-                    {project.cover.mode !== 'none' && coverUrl && <img className="ee-cover-preview" src={coverUrl} alt={l('cover')} />}
+                    {project.cover.mode !== 'none' && coverUrl && <SmoothCoverImage className="ee-cover-preview" src={coverUrl} alt={l('cover')} />}
                 </section>
             </>}
         </div>

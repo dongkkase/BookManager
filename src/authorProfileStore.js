@@ -31,7 +31,7 @@ function readAutomaticProfiles(storage) {
     for (const [name, value] of readEntries(storage, AUTOMATIC_AUTHOR_PROFILES_KEY)) {
         const key = authorKey(name);
         const profile = normalizeAuthorProfile(value?.profile);
-        if (!key || !value || (value.profile !== null && !profile) || value.profile?.photoOverride || profile?.provider === 'naver'
+        if (!key || !value || (value.profile !== null && !profile) || value.profile?.photoOverride || ['naver', 'local'].includes(profile?.provider)
             || !Number.isFinite(value.checkedAt) || !Number.isFinite(value.expiresAt)
             || value.checkedAt < 0 || value.expiresAt <= value.checkedAt) continue;
         profiles.set(key, {
@@ -56,7 +56,7 @@ function mergeAutomaticProfiles(first, second) {
 }
 
 function chooseAutomaticProfile(author, candidates) {
-    const profiles = candidates.filter(candidate => candidate?.provider !== 'naver' && !candidate?.photoOverride).map(normalizeAuthorProfile)
+    const profiles = candidates.filter(candidate => !['naver', 'local'].includes(candidate?.provider) && !candidate?.photoOverride).map(normalizeAuthorProfile)
         .filter(profile => profile && (profile.provider === 'openlibrary' || profile.authorVerified !== false));
     const name = authorKey(author.name);
     const matching = profiles.filter(profile => [profile.name, ...profile.alternateNames].some(value => authorKey(value) === name));

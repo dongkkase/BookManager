@@ -69,6 +69,21 @@ async function harness(t, overrides = {}) {
     return { invoke, sender, window, event, searches, downloads, sizes, directory, api };
 }
 
+function resultCacheFixture(now = Date.now) {
+    const entries = new Map();
+    const writes = [];
+    return {
+        entries,
+        writes,
+        get: async (namespace, key) => entries.get(`${namespace}:${key}`) || null,
+        set: async (namespace, key, value) => {
+            const copy = JSON.parse(JSON.stringify(value));
+            writes.push({ namespace, key, value: copy });
+            entries.set(`${namespace}:${key}`, { value: copy, expiresAt: now() + 7 * 24 * 60 * 60 * 1000 });
+        },
+    };
+}
+
 test('Naver credentials are sent only to the fixed API HUB endpoint using its authentication headers', async () => {
     for (const api of [undefined, 'hub', 'legacy', 'https://attacker.example', 'constructor', '', null]) {
         const calls = [];
@@ -430,4 +445,121 @@ test('image normalization and persistence failures do not expose raw errors or l
     assert.equal(result.code, 'AUTHOR_PHOTO_STORAGE_FAILED');
     assert.ok(!result.error.includes(keys.secret));
     assert.deepEqual(await fs.readdir(unavailable.directory), []);
+});
+
+test('cached photo pages survive release and IPC recreation with fresh selectable candidate IDs', async t => {
+    const resultCache = resultCacheFixture();
+    const firstSession = await harness(t, { resultCache });
+    const first = await firstSession.invoke('searchPhotos', { query: '  작가  ' });
+    const second = await firstSession.invoke('searchPhotos', { query: '작가', start: 21 });
+    assert.equal(firstSession.searches.length, 2);
+    assert.equal(second.nextStart, 41);
+    await firstSession.invoke('releasePhotos');
+    assert.equal((await firstSession.invoke('previewPhoto', first.results[0].id)).code, 'AUTHOR_PHOTO_INVALID_CANDIDATE');
+    const replay = await firstSession.invoke('searchPhotos', { query: '작가' });
+    assert.equal(firstSession.searches.length, 2);
+    assert.notEqual(replay.results[0].id, first.results[0].id);
+    assert.equal((await firstSession.invoke('previewPhoto', replay.results[0].id)).success, true);
+    firstSession.api.dispose();
+    const nextSession = await harness(t, { resultCache });
+    const restored = await nextSession.invoke('searchPhotos', { query: '작가', start: 21 });
+    assert.equal(nextSession.searches.length, 0);
+    assert.equal(restored.nextStart, 41);
+    assert.notEqual(restored.results[0].id, second.results[0].id);
+    assert.equal((await nextSession.invoke('previewPhoto', second.results[0].id)).code, 'AUTHOR_PHOTO_INVALID_CANDIDATE');
+    assert.equal((await nextSession.invoke('previewPhoto', restored.results[0].id)).success, true);
+    assert.equal((await nextSession.invoke('selectPhoto', { candidateId: restored.results[0].id })).success, true);
+    const serialized = JSON.stringify(resultCache.writes);
+    assert.ok(!serialized.includes(keys.id) && !serialized.includes(keys.secret));
+    assert.ok(!serialized.includes(first.results[0].id) && !serialized.includes(second.results[0].id));
+    assert.deepEqual(Object.keys(resultCache.writes[0].value.items[0]), ['url', 'thumbnail', 'title', 'width', 'height']);
+});
+
+test('photo search cache expires exactly seven days after fetching without extending on cache reads', async t => {
+    const day = 24 * 60 * 60 * 1000;
+    let clock = 1000;
+    const resultCache = resultCacheFixture(() => clock);
+    const h = await harness(t, { resultCache, now: () => clock });
+    await h.invoke('searchPhotos', { query: '작가' });
+    const expiresAt = [...resultCache.entries.values()][0].expiresAt;
+    for (const elapsed of [day, 7 * day - 1]) {
+        clock = 1000 + elapsed;
+        assert.equal((await h.invoke('searchPhotos', { query: '작가' })).success, true);
+        assert.equal(h.searches.length, 1);
+        assert.equal(resultCache.writes.length, 1);
+        assert.equal([...resultCache.entries.values()][0].expiresAt, expiresAt);
+    }
+    clock = 1000 + 7 * day;
+    await h.invoke('searchPhotos', { query: '작가' });
+    assert.equal(h.searches.length, 2);
+    assert.equal(resultCache.writes.length, 2);
+});
+
+test('empty photo results are cached and credential changes use a separate cache scope', async t => {
+    const resultCache = resultCacheFixture();
+    let config = { api_keys: { naver_client_id: keys.id, naver_client_secret: keys.secret } };
+    let calls = 0;
+    const h = await harness(t, {
+        resultCache, getConfig: () => config,
+        requestJson: async () => { calls += 1; return { items: [], total: 0 }; },
+    });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        assert.deepEqual(await h.invoke('searchPhotos', { query: 'Empty author' }), { success: true, results: [], hasNext: false, nextStart: null });
+    }
+    assert.equal(calls, 1);
+    config = { api_keys: { naver_client_id: 'replacement-id', naver_client_secret: 'replacement-secret' } };
+    await h.invoke('searchPhotos', { query: 'Empty author' });
+    assert.equal(calls, 2);
+    assert.equal(resultCache.entries.size, 2);
+    assert.ok(!JSON.stringify([...resultCache.entries]).includes('replacement-secret'));
+    config = {};
+    assert.equal((await h.invoke('searchPhotos', { query: 'Empty author' })).code, 'AUTHOR_PHOTO_MISSING_KEYS');
+    assert.equal(calls, 2);
+});
+
+test('malformed or cancelled photo responses are not persisted and cache failures do not block search', async t => {
+    const resultCache = resultCacheFixture();
+    let mode = 'failure';
+    const h = await harness(t, { resultCache, requestJson: async ({ signal }) => {
+        if (mode === 'failure') throw Object.assign(new Error('temporary failure'), { code: 'AUTHOR_PHOTO_TIMEOUT' });
+        if (mode === 'malformed') return { error: 'not search results' };
+        if (mode === 'cancelled') {
+            await h.invoke('releasePhotos');
+            assert.equal(signal.aborted, true);
+        }
+        return { items: items(1), total: 1 };
+    } });
+    for (const state of ['failure', 'malformed', 'cancelled']) {
+        mode = state;
+        assert.equal((await h.invoke('searchPhotos', { query: 'Author' })).success, false);
+        assert.equal(resultCache.writes.length, 0);
+    }
+    mode = 'ready';
+    assert.equal((await h.invoke('searchPhotos', { query: 'Author' })).success, true);
+    assert.equal(resultCache.writes.length, 1);
+    const unavailable = await harness(t, { resultCache: {
+        get: async () => { throw new Error('unavailable cache'); },
+        set: async () => { throw new Error('read-only cache'); },
+    } });
+    assert.equal((await unavailable.invoke('searchPhotos', { query: 'Author' })).success, true);
+});
+
+test('restored photo metadata is validated before creating session candidates', async t => {
+    const resultCache = resultCacheFixture();
+    const h = await harness(t, { resultCache, requestJson: async request => {
+        h.searches.push(request);
+        return { items: [{ ...items(1)[0], title: '&amp;lt;literal&amp;gt;' }], total: 1, secret: keys.secret };
+    } });
+    const first = await h.invoke('searchPhotos', { query: 'Author' });
+    const restored = await h.invoke('searchPhotos', { query: 'Author' });
+    assert.equal(first.results[0].title, '&lt;literal&gt;');
+    assert.equal(restored.results[0].title, first.results[0].title);
+    assert.equal(h.searches.length, 1);
+    assert.ok(!JSON.stringify([...resultCache.entries]).includes(keys.secret));
+    const entry = [...resultCache.entries.values()][0];
+    entry.value.items[0].url = 'http://127.0.0.1/private';
+    const refreshed = await h.invoke('searchPhotos', { query: 'Author' });
+    assert.equal(refreshed.success, true);
+    assert.equal(h.searches.length, 2);
+    assert.ok(!JSON.stringify([...resultCache.entries]).includes('127.0.0.1'));
 });

@@ -1195,7 +1195,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                                     return <li key={resultKey}><button type="button" title={title} disabled={busy || Boolean(result)}
                                         aria-pressed={image?.source === 'metadata' && image.resultKey === resultKey} onClick={() => chooseMetadataImage(item)}>
                                         <span className="cover-editor-search-artwork"><FaIcon name="image" size={24} aria-hidden="true" />
-                                            {thumbnail && <img src={thumbnail} alt="" hidden={artwork?.failed} loading="lazy" referrerPolicy="no-referrer"
+                                            {thumbnail && <SmoothCoverImage src={thumbnail} alt="" hidden={artwork?.failed} loading="lazy" referrerPolicy="no-referrer"
                                                 onError={event => updateMetadataArtwork(requestId, resultKey, thumbnail, event.currentTarget, true)}
                                                 onLoad={event => updateMetadataArtwork(requestId, resultKey, thumbnail, event.currentTarget)} />}
                                             <span className="cover-editor-search-overlay">
@@ -1225,7 +1225,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                                         aria-pressed={image?.source === 'archive' && image.sourceFilePath === filePath && image.entryName === entry.name}
                                         onClick={() => chooseArchiveImage(entry.name)}>
                                         <span className="cover-editor-search-artwork cover-editor-archive-thumbnail">
-                                            {entry.thumbnailDataUrl ? <img src={entry.thumbnailDataUrl} alt="" loading="lazy" /> : <FaIcon name="image" size={24} aria-hidden="true" />}
+                                            {entry.thumbnailDataUrl ? <SmoothCoverImage src={entry.thumbnailDataUrl} alt="" loading="lazy" /> : <FaIcon name="image" size={24} aria-hidden="true" />}
                                             <span className="cover-editor-archive-number" aria-hidden="true">{archiveImages.offset + index + 1}</span>
                                             <span className="cover-editor-search-overlay"><strong>{entry.name}</strong></span>
                                         </span>
@@ -1254,7 +1254,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 <div className="cover-editor-preview">
                     <h3>{t('cover_editor_current')}{(isBatch || embedded) && selectedEntry?.name && <span className="cover-editor-preview-name" title={filePath}>{selectedEntry.name}</span>}</h3>
                     <div className="cover-editor-image">
-                        {coverLoading ? <span role="status">{t('cover_editor_loading')}</span> : info?.coverDataUrl ? <img src={info.coverDataUrl} alt={t('cover_editor_current')} />
+                        {coverLoading ? <span role="status">{t('cover_editor_loading')}</span> : info?.coverDataUrl ? <SmoothCoverImage src={info.coverDataUrl} alt={t('cover_editor_current')} />
                             : selectedEntry?.error || coverError ? <span>{selectedEntry?.error || coverError}</span>
                                 : <SmoothCoverImage src={noImage} alt={t('cover_editor_no_cover')} className="cover-editor-no-image" />}
                     </div>
@@ -1269,7 +1269,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 <div className="cover-editor-preview">
                     <h3>{t('cover_editor_new')}{image && <span className="cover-editor-preview-name">{t(`cover_editor_source_${image.source}`)}</span>}</h3>
                     <div ref={candidateRef} className={`cover-editor-image cover-editor-candidate ${image ? 'has-image' : ''}`} aria-busy={imageLoading}>
-                        {previewImage ? <img src={previewImage.dataUrl} alt={t('cover_editor_new')} />
+                        {previewImage ? <SmoothCoverImage src={previewImage.dataUrl} alt={t('cover_editor_new')} />
                             : <SmoothCoverImage src={noImage} alt={t('cover_editor_preview_empty')} className="cover-editor-no-image" />}
                         {arrivalHighlight > 0 && <span key={arrivalHighlight} className="cover-editor-arrival-highlight" aria-hidden="true" />}
                         {imageLoading && <span className="cover-editor-image-loading" role="status">{t('cover_editor_loading')}</span>}

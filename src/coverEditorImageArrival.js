@@ -1,4 +1,5 @@
 import { isMotionReduced, subscribeMotionPreference } from './motionPolicy.js';
+import { acquireResampledCover, coverResamplingTarget } from './coverImageResampling.js';
 
 const ARRIVAL_DURATION = 800;
 const RASTER_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif|bmp|x-ms-bmp);base64,/i;
@@ -33,11 +34,14 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
     let timeout;
     let observer;
     let unsubscribeMotion;
+    let resamplingController;
+    let resampledLease;
     const listeners = [];
     const finish = (notify = true) => {
         if (finished) return;
         finished = true;
         if (timeout !== undefined) view.clearTimeout(timeout);
+        resamplingController?.abort();
         unsubscribeMotion?.();
         observer?.disconnect();
         for (const [target, name, listener, options] of listeners) target.removeEventListener(name, listener, options);
@@ -51,6 +55,7 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
             animation.cancel();
         }
         flyer?.remove();
+        resampledLease?.release();
         if (notify) onFinish?.();
     };
     const cancel = () => finish(false);
@@ -62,7 +67,7 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
     const canShow = () => !document.hidden
         && visibleRect(container, view) && visibleRect(sourceElement, view) && visibleRect(targetElement, view);
     if (!view || isMotionReduced(view) || !document.createElement || !container.appendChild || !RASTER_DATA_URL.test(image?.dataUrl || '')
-        || !Number.isFinite(image?.width) || !Number.isFinite(image?.height) || image.width <= 0 || image.height <= 0
+        || [image?.width, image?.height].some(value => value !== undefined && (!Number.isFinite(value) || value <= 0))
         || !canShow()) {
         finish();
         return cancel;
@@ -106,11 +111,17 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
             finish();
             return;
         }
+        const width = image.width ?? thumbnail.naturalWidth;
+        const height = image.height ?? thumbnail.naturalHeight;
+        if (![width, height].every(value => Number.isFinite(value) && value > 0)) {
+            finish();
+            return;
+        }
         started = true;
         const source = visibleRect(sourceElement, view);
         const target = targetElement.getBoundingClientRect();
-        const destination = fitImage(image.width, image.height, target.width, target.height);
-        const size = fitImage(image.width, image.height,
+        const destination = fitImage(width, height, target.width, target.height);
+        const size = fitImage(width, height,
             Math.min(destination.width * 2, view.innerWidth - 32),
             Math.min(destination.height * 2, view.innerHeight - 32));
         const scale = Math.min(0.32, destination.width / size.width);
@@ -120,33 +131,64 @@ export function animateCoverEditorImageArrival({ sourceElement, targetElement, c
         const dy = target.top + target.height / 2 - (top + size.height / 2);
         Object.assign(flyer.style, { left: `${left}px`, top: `${top}px`, width: `${size.width}px`, height: `${size.height}px` });
         const destinationTransform = `translate(${dx}px, ${dy}px) scale(${scale})`;
-        try {
-            animation = flyer.animate([
-                { transform: 'translate(0, 0) scale(1)', opacity: 0, offset: 0, easing: 'ease-out' },
-                { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: 0.175 },
-                { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: 0.4, easing: 'cubic-bezier(0.55, 0.05, 0.82, 0.52)' },
-                { transform: destinationTransform, opacity: 1, offset: 0.925 },
-                { transform: destinationTransform, opacity: 0, offset: 1 },
-            ], { duration: ARRIVAL_DURATION, fill: 'both' });
-            animation.onfinish = finishMotion;
-            animation.oncancel = finishMotion;
-            view.clearTimeout(timeout);
-            timeout = view.setTimeout(finishMotion, ARRIVAL_DURATION + 200);
-        } catch {
-            finish();
+        const play = () => {
+            if (finished || animation) return;
+            if (!canShow()) {
+                finish();
+                return;
+            }
+            try {
+                animation = flyer.animate([
+                    { transform: 'translate(0, 0) scale(1)', opacity: 0, offset: 0, easing: 'ease-out' },
+                    { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: 0.175 },
+                    { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: 0.4, easing: 'cubic-bezier(0.55, 0.05, 0.82, 0.52)' },
+                    { transform: destinationTransform, opacity: 1, offset: 0.925 },
+                    { transform: destinationTransform, opacity: 0, offset: 1 },
+                ], { duration: ARRIVAL_DURATION, fill: 'both' });
+                animation.onfinish = finishMotion;
+                animation.oncancel = finishMotion;
+                view.clearTimeout(timeout);
+                timeout = view.setTimeout(finishMotion, ARRIVAL_DURATION + 200);
+            } catch {
+                finish();
+            }
+        };
+        const resamplingTarget = coverResamplingTarget({
+            naturalWidth: thumbnail.naturalWidth,
+            naturalHeight: thumbnail.naturalHeight,
+            displayWidth: size.width,
+            displayHeight: size.height,
+            devicePixelRatio: view.devicePixelRatio || 1,
+            fitMode: 'contain',
+        });
+        if (!resamplingTarget) {
+            play();
+            return;
+        }
+        resamplingController = new AbortController();
+        acquireResampledCover(thumbnail, resamplingTarget, { signal: resamplingController.signal }).then(lease => {
+            if (finished) {
+                lease.release();
+                return;
+            }
+            resampledLease = lease;
+            loadThumbnail(lease.url, play);
+        }, play);
+    };
+    const loadThumbnail = (src, onReady) => {
+        thumbnail.onerror = finishMotion;
+        if (typeof thumbnail.decode !== 'function') thumbnail.onload = onReady;
+        thumbnail.src = src;
+        if (typeof thumbnail.decode === 'function') {
+            try {
+                Promise.resolve(thumbnail.decode()).then(onReady, finishMotion);
+            } catch {
+                finish();
+            }
+        } else if (thumbnail.complete && thumbnail.naturalWidth > 0) {
+            onReady();
         }
     };
-    thumbnail.onerror = finishMotion;
-    if (typeof thumbnail.decode !== 'function') thumbnail.onload = start;
-    thumbnail.src = image.dataUrl;
-    if (typeof thumbnail.decode === 'function') {
-        try {
-            Promise.resolve(thumbnail.decode()).then(start, finishMotion);
-        } catch {
-            finish();
-        }
-    } else if (thumbnail.complete && thumbnail.naturalWidth > 0) {
-        start();
-    }
+    loadThumbnail(image.dataUrl, start);
     return cancel;
 }

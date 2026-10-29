@@ -178,7 +178,7 @@ test('폴더 스캔 기본 대상 확장자에는 텍스트 파일이 포함된�
     }
 });
 
-test('폴더 클릭용 빠른 목록은 파일명 데이터만 먼저 반환한다', async () => {
+test('폴더 클릭용 빠른 목록은 파일명과 파일 속성을 압축 해제 없이 반환한다', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-folder-quick-list-'));
     const libraryDir = path.join(root, 'library');
     const nestedDir = path.join(libraryDir, 'nested');
@@ -198,7 +198,12 @@ test('폴더 클릭용 빠른 목록은 파일명 데이터만 먼저 반환한�
         assert.deepEqual(files.map(file => file.name), ['Quick Book 01.cbz']);
         assert.equal(files[0].cache_source, 'quick');
         assert.equal(files[0].title, 'Quick Book 01');
-        assert.equal(files[0].size, 0);
+        const stats = fs.statSync(path.join(libraryDir, 'Quick Book 01.cbz'));
+        assert.equal(files[0].size, stats.size);
+        assert.equal(files[0].mtime, stats.mtimeMs);
+        assert.equal(files[0].ctime, stats.ctimeMs);
+        assert.equal(files[0].created, new Date(stats.birthtimeMs).toISOString());
+        assert.equal(files[0].modified, new Date(stats.mtimeMs).toISOString());
         assert.equal(files[0].cover, '');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });

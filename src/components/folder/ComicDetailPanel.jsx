@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
+import { SmoothCoverImage } from '../SmoothCoverImage';
 import {
     duplicateDetailRows,
     splitMetadataValues,
@@ -66,7 +67,7 @@ const ComicDetailPanel = ({ selectedFile = null, onContentHeightChange, onEditRa
                         <div className="detail-cover-stack">
                             <DetailCoverFrame selectedFile={selectedFile} coverSrc={coverAvailable ? selectedFile.cover : ''} isActive={isActive} t={t}>
                                 {coverAvailable ? (
-                                    <img
+                                    <SmoothCoverImage
                                         src={selectedFile.cover}
                                         alt={selectedFile.name || ''}
                                         className="detail-cover-image"

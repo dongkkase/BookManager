@@ -319,7 +319,7 @@ export function RecommendationShuffleOverlay({ files, currentFile, prepare, comm
                                 const file = candidate ? selectedFile : sample[(column * 3 + row % 3) % sample.length];
                                 return <div key={row} className="recommendation-shuffle-tile" data-column={column} data-row={row % 3}
                                     data-shuffle-candidate={candidate ? 'true' : undefined}>
-                                    <CoverArtwork src={file.cover} alt="" fallbackAlt="" />
+                                    <CoverArtwork src={file.cover} alt="" fallbackAlt="" smooth />
                                 </div>;
                             })}
                         </div>
@@ -341,7 +341,7 @@ export function RecommendationShuffleOverlay({ files, currentFile, prepare, comm
         </div>
         {selectedFile && <>
             <div className="recommendation-shuffle-selected" data-file-path={dashboardFilePath(selectedFile)} ref={selectedRef} aria-hidden="true">
-                <CoverArtwork src={selectedFile.cover} alt="" fallbackAlt="" />
+                <CoverArtwork src={selectedFile.cover} alt="" fallbackAlt="" smooth />
             </div>
             <div ref={captionRef} className="recommendation-shuffle-caption" role="status" aria-live="polite"
                 aria-hidden={phase !== 'revealing'}>

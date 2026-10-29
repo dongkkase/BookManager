@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../components/FaIcon';
 import { CoverArtwork } from '../components/CoverArtwork';
+import { SmoothCoverImage } from '../components/SmoothCoverImage';
 import { AudiobookMetadataEditor } from '../components/metadata/AudiobookMetadataEditor';
 import { BookMetadataEditor } from '../components/metadata/BookMetadataEditor';
 import { ComicMetadataEditor } from '../components/metadata/ComicMetadataEditor';
@@ -370,6 +371,7 @@ function languageIsoFromConfig(value = '') {
 }
 
 function MetadataTab({ config, t, showToast }) {
+    const metadataTabRef = useRef(null);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('bookmanager:tab-ready', { detail: { tabId: 'metadata' } }));
@@ -1934,6 +1936,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleDelete = async (event) => {
+        if (metadataTabRef.current?.closest('[hidden]')) return;
         if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (event.key !== 'Delete' || apiSearch.open || isWorking || isMetadataTextInput(event.target)) return;
       if (!selectedFileId && !selectedGroup) return;
@@ -1970,6 +1973,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleMetadataTreeKeyDown = (event) => {
+        if (metadataTabRef.current?.closest('[hidden]')) return;
         if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       const treeIsActive = isMetadataTreeTarget(event.target) || metadataTreeKeyboardActiveRef.current;
@@ -2050,6 +2054,7 @@ function MetadataTab({ config, t, showToast }) {
 
   useEffect(() => {
     const handleShortcut = (event) => {
+        if (metadataTabRef.current?.closest('[hidden]')) return;
         if (document.querySelector('.app-support-dialog-layer.is-open')) return;
       if (apiSearch.open || event.defaultPrevented || event.repeat) return;
       const code = shortcutCode(event);
@@ -2403,7 +2408,7 @@ function MetadataTab({ config, t, showToast }) {
                 <div className="meta-col-label">{text('txt_cover_label', '표지')}</div>
                 <div className="meta-epub-cover-field">
                     <div className="meta-epub-cover-thumb-box">
-                        <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={text('txt_cover_empty', '등록된 표지가 없습니다.')} />
+                        <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={text('txt_cover_empty', '등록된 표지가 없습니다.')} smooth />
                     </div>
                     <div className="meta-epub-cover-tools">
                         <div className="meta-epub-cover-buttons">
@@ -2462,7 +2467,7 @@ function MetadataTab({ config, t, showToast }) {
           <div className="meta-col-label">{text('meta_epub_cover_label', '표지')}</div>
           <div className="meta-epub-cover-field">
             <div className="meta-epub-cover-thumb-box">
-                <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={t('no_image')} onLoad={handleCoverImageLoad} />
+                <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={t('no_image')} onLoad={handleCoverImageLoad} smooth />
             </div>
             <div className="meta-epub-cover-tools">
               <select
@@ -2534,7 +2539,7 @@ function MetadataTab({ config, t, showToast }) {
           <div className="meta-col-label">{text('audio_cover_label', '썸네일')}</div>
           <div className="meta-epub-cover-field">
             <div className="meta-epub-cover-thumb-box">
-                <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={t('audio_no_cover')} />
+                <CoverArtwork src={activeItem.coverDataUrl} fallbackAlt={t('audio_no_cover')} smooth />
             </div>
             <div className="meta-epub-cover-tools">
               <div className="meta-epub-cover-buttons">
@@ -2612,7 +2617,7 @@ function MetadataTab({ config, t, showToast }) {
   };
 
   return (
-    <div className="metadata-tab">
+    <div ref={metadataTabRef} className="metadata-tab">
       {fileList.length === 0 ? (
         <div className="meta-empty-drop">
           <img src={dragDropImage} alt="" />
@@ -2626,6 +2631,7 @@ function MetadataTab({ config, t, showToast }) {
             <CoverArtwork
                 src={activeItem?.coverDataUrl}
                 className="meta-cover-image"
+                smooth
                 fallbackAlt={activeBookType === 'audio'
                     ? t('audio_no_cover')
                     : activeIsTxt ? text('txt_cover_empty', '등록된 표지가 없습니다.') : t('no_image')}
@@ -3792,7 +3798,7 @@ function RemoteCoverImage({ src, className, fallbackClassName, size = 18 }) {
   }, [src]);
 
   if (imageSrc && !failed) {
-    return <img src={imageSrc} alt="" className={className} onError={() => setFailed(true)} />;
+    return <SmoothCoverImage src={imageSrc} alt="" className={className} onError={() => setFailed(true)} />;
   }
     return <CoverArtwork className={fallbackClassName} />;
 }

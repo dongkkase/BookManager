@@ -61,6 +61,7 @@ export const MANGA_READING_OPTIONS = [
     'No',
     'Yes',
     'YesAndRightToLeft',
+    'Webtoon',
 ];
 
 export const PUBLISHER_FIELDS = [

@@ -564,3 +564,132 @@ test('IPC는 선택 소스와 실패 출처를 전달하고 임의 요청 주소
     assert.deepEqual(result.failedSources, [{ source: 'kmas', code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' }]);
     assert.ok(!result.error.includes('internal detail'));
 });
+
+function persistentSearchFixture(now) {
+    const entries = new Map();
+    const writes = [];
+    const resultCache = {
+        async get(namespace, key) { return structuredClone(entries.get(`${namespace}:${key}`)) || null; },
+        async set(namespace, key, value) {
+            writes.push({ namespace, key });
+            entries.set(`${namespace}:${key}`, { value: structuredClone(value), expiresAt: now() + 7 * 24 * 60 * 60 * 1000 });
+        },
+    };
+    return { resultCache, entries, writes };
+}
+
+test('수동 프로필 검색은 서비스 재생성 후 7일간 재사용하고 캐시 조회로 만료 시각을 연장하지 않는다', async () => {
+    const ttl = 7 * 24 * 60 * 60 * 1000;
+    let clock = 1000;
+    let searches = 0;
+    const { resultCache, entries, writes } = persistentSearchFixture(() => clock);
+    const create = () => createAuthorProfileService({
+        resultCache, now: () => clock,
+        webSearchers: { aladin: async query => [{ provider: 'aladin', id: 'aladin:49154', name: query, description: `검색 ${++searches}` }] },
+    });
+    const first = await create().search('  한강  ', { source: 'aladin' });
+    clock += ttl - 1;
+    const restarted = create();
+    assert.deepEqual(await restarted.search('한강', { source: 'aladin' }), first);
+    assert.equal(searches, 1);
+    assert.equal(writes.length, 1);
+    clock += 1;
+    assert.equal((await restarted.search('한강', { source: 'aladin' }))[0].description, '검색 2');
+    assert.equal(searches, 2);
+    entries.clear();
+    await restarted.search('한강', { source: 'aladin' });
+    assert.equal(searches, 3, 'Clearing the persistent API cache must also invalidate manual search reuse');
+});
+
+test('전체 수동 검색은 성공한 소스를 저장하고 재실행 후 실패한 소스만 다시 검색한다', async () => {
+    const { resultCache, writes } = persistentSearchFixture(() => 1);
+    const calls = { aladin: 0, kyobo: 0, json: 0 };
+    let failing = true;
+    const create = () => createAuthorProfileService({
+        resultCache, now: () => 1, sleep: async () => {},
+        requestJson: async url => { calls.json += 1; return emptyResponse(new URL(url)); },
+        webSearchers: {
+            aladin: async () => { calls.aladin += 1; return [{ provider: 'aladin', id: 'aladin:49154', name: '한강' }]; },
+            kyobo: async () => {
+                calls.kyobo += 1;
+                if (failing) throw Object.assign(new Error('private transport error'), { code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' });
+                return [{ provider: 'kyobo', id: 'kyobo:1000646901', name: '한강' }];
+            },
+        },
+    });
+    const first = await create().search('한강', { allSources: true });
+    assert.equal(first.partial, true);
+    assert.deepEqual(first.failedSources, [{ source: 'kyobo', code: 'AUTHOR_PROFILE_ACCESS_BLOCKED' }]);
+    assert.equal(writes.some(entry => entry.key.startsWith('kyobo:')), false);
+    const firstJsonCalls = calls.json;
+    failing = false;
+    const restarted = create();
+    const recovered = await restarted.search('한강', { allSources: true });
+    assert.equal(recovered.partial, undefined);
+    assert.equal(recovered.length, 2);
+    assert.deepEqual(calls, { aladin: 1, kyobo: 2, json: firstJsonCalls });
+    assert.equal((await restarted.search('한강', { source: 'aladin' })).length, 1);
+    assert.equal(calls.aladin, 1, 'All-source and individual-source searches must share successful source results');
+});
+
+test('수동 프로필 캐시는 검색어·소스를 구분하고 자동 조회에 적용하지 않는다', async () => {
+    const { resultCache, writes } = persistentSearchFixture(() => 1);
+    let calls = 0;
+    let jsonCalls = 0;
+    const create = () => createAuthorProfileService({
+        resultCache, now: () => 1, sleep: async () => {},
+        requestJson: async url => { jsonCalls += 1; return emptyResponse(new URL(url)); },
+        webSearchers: {
+            aladin: async name => { calls += 1; return [{ provider: 'aladin', id: 'aladin:1', name }]; },
+            kyobo: async name => { calls += 1; return [{ provider: 'kyobo', id: 'kyobo:1000000001', name }]; },
+        },
+    });
+    const service = create();
+    await Promise.all([service.search('Author', { source: 'aladin' }), service.search('author', { source: 'aladin' })]);
+    assert.equal(calls, 1, 'Identical in-flight manual searches should be shared');
+    await service.search('Other', { source: 'aladin' });
+    await service.search('Author', { source: 'kyobo' });
+    assert.equal(calls, 3);
+    const manualWrites = writes.length;
+    assert.deepEqual(await create().search('Author'), []);
+    assert.ok(jsonCalls > 0, 'Automatic lookup must not reuse a manual result with a different selection policy');
+    assert.equal(writes.length, manualWrites, 'Automatic lookup must not create manual search cache entries');
+});
+
+test('빈 검색 결과는 저장하지만 일부 상세 실패와 잘못된 저장값은 재시도한다', async () => {
+    let clock = 1;
+    const { resultCache, entries, writes } = persistentSearchFixture(() => clock);
+    let searches = 0;
+    let partial = true;
+    const create = () => createAuthorProfileService({
+        resultCache, now: () => clock,
+        webSearchers: { aladin: async query => {
+            searches += 1;
+            const profiles = query === '없음' ? [] : [{ provider: 'aladin', id: 'aladin:1', name: query }];
+            if (query !== '없음' && partial) Object.defineProperty(profiles, 'partial', { value: true });
+            return profiles;
+        } },
+    });
+    assert.deepEqual(await create().search('없음', { source: 'aladin' }), []);
+    clock += 6 * 24 * 60 * 60 * 1000;
+    assert.deepEqual(await create().search('없음', { source: 'aladin' }), []);
+    assert.equal(searches, 1);
+    assert.equal((await create().search('작가', { source: 'aladin' })).partial, true);
+    assert.equal(writes.length, 1);
+    partial = false;
+    assert.equal((await create().search('작가', { source: 'aladin' })).partial, undefined);
+    const lastKey = [...entries.keys()].find(key => key.endsWith(':작가'));
+    entries.set(lastKey, { value: [null], expiresAt: clock + 1000 });
+    await create().search('작가', { source: 'aladin' });
+    assert.equal(searches, 4, 'Malformed persisted results should be replaced by a fresh search');
+});
+
+test('영속 검색 캐시를 읽거나 쓰지 못해도 정상 검색 결과를 반환한다', async () => {
+    let searches = 0;
+    const service = createAuthorProfileService({
+        resultCache: { get: async () => { throw new Error('read failed'); }, set: async () => { throw new Error('write failed'); } },
+        webSearchers: { aladin: async name => { searches += 1; return [{ provider: 'aladin', id: 'aladin:1', name }]; } },
+    });
+    for (let index = 0; index < 2; index += 1) assert.equal((await service.search('작가', { source: 'aladin' }))[0].name, '작가');
+    assert.equal(searches, 2);
+});

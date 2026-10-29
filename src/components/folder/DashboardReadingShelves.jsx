@@ -1,22 +1,39 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CoverArtwork } from '../CoverArtwork';
 import { FaIcon } from '../FaIcon';
-import { dailyPassage, dashboardDate } from '../../dashboardActivityState';
+import { randomPassage } from '../../dashboardActivityState';
 import '../../styles/DashboardKeepsakes.css';
 
 const EMPTY_CATALOG = { entries: [], errors: [] };
 
 export function DashboardPassage({ catalog = EMPTY_CATALOG, onOpenFile, onNavigate, onRefresh, t }) {
-    const [chosenId, setChosenId] = useState(null);
+    const [chosenId, setChosenId] = useState(() => randomPassage(catalog.entries)?.id || null);
     const [expanded, setExpanded] = useState(false);
     const [copyState, setCopyState] = useState('');
     const [overflowing, setOverflowing] = useState(false);
     const passageRef = useRef(null);
     const entryIdRef = useRef(null);
-    const day = dashboardDate();
-    const daily = useMemo(() => dailyPassage(catalog.entries, day), [catalog.entries, day]);
-    const entry = catalog.entries.find(item => item.id === chosenId) || daily;
+    const folderActiveRef = useRef(true);
+    const entry = catalog.entries.find(item => item.id === chosenId && item.text?.trim());
     entryIdRef.current = entry?.id;
+    useEffect(() => {
+        if (!entry) setChosenId(randomPassage(catalog.entries)?.id || null);
+    }, [catalog.entries, entry]);
+    useEffect(() => {
+        const onActiveTabChanged = event => {
+            const activeTab = event.detail?.activeTab;
+            if (typeof activeTab !== 'string') return;
+            const returning = activeTab === 'folder' && !folderActiveRef.current;
+            folderActiveRef.current = activeTab === 'folder';
+            if (returning) {
+                setChosenId(randomPassage(catalog.entries)?.id || null);
+                setExpanded(false);
+                setCopyState('');
+            }
+        };
+        window.addEventListener('bookmanager:active-tab-changed', onActiveTabChanged);
+        return () => window.removeEventListener('bookmanager:active-tab-changed', onActiveTabChanged);
+    }, [catalog.entries]);
     useEffect(() => { setExpanded(false); setCopyState(''); }, [entry?.id]);
     useLayoutEffect(() => {
         const element = passageRef.current;
@@ -52,7 +69,7 @@ export function DashboardPassage({ catalog = EMPTY_CATALOG, onOpenFile, onNaviga
             </div>
             <div className="dashboard-passage-footer">
                 <button type="button" className="dashboard-passage-book" onClick={() => onOpenFile?.(entry.file)} aria-label={`${t('dashboard.open_book')}: ${entry.title}`}>
-                    <span className="reading-dashboard-cover"><CoverArtwork src={entry.file.cover} alt="" fallbackAlt="" /></span>
+                    <span className="reading-dashboard-cover"><CoverArtwork src={entry.file.cover} alt="" fallbackAlt="" smooth /></span>
                     <span><strong>{entry.title}</strong><small>{entry.author}</small></span>
                     <FaIcon name="angleRight" />
                 </button>
@@ -97,7 +114,7 @@ export function DashboardFinishedShelf({ activity, onOpenFile, t }) {
             : !data && loading ? <div className="reading-dashboard-empty" role="status">{t('dashboard.loading')}</div>
                 : files.length ? <><div className="dashboard-finished-books" ref={shelfRef}>{files.slice(visiblePage * pageSize, visiblePage * pageSize + pageSize).map(file => <button type="button" className="dashboard-finished-book" key={file.full_path || file.path} onClick={() => onOpenFile?.(file)} title={file.title || file.name}>
                     <span className="dashboard-finished-cover">
-                        <span className="reading-dashboard-cover"><CoverArtwork src={file.cover} alt="" fallbackAlt="" /></span>
+                        <span className="reading-dashboard-cover"><CoverArtwork src={file.cover} alt="" fallbackAlt="" smooth /></span>
                     </span>
                     <span className="dashboard-finished-book-copy"><strong className="reading-dashboard-book-title">{file.title || file.name}</strong></span>
                 </button>)}</div><p className="dashboard-journal-muted">{t('dashboard.shelf_recent', [files.length])}</p></>

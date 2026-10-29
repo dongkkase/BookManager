@@ -21,6 +21,7 @@ test('목록 방향키가 포커스·표시 순서·범위 선택과 가상 목�
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { FolderTab } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/tabs/FolderTab.jsx')}`)};
+import { MetadataTab } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/tabs/MetadataTab.jsx')}`)};
 import { applyMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import { translate } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/utils/i18n.js')}`)};
 import ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/styles/App.css')}`)};
@@ -51,6 +52,10 @@ window.electronAPI = {
     readDir: async () => entries.map(book => ({ ...book, isFile: true })),
     scanFolder: async () => { completedScanKey = mountKey; return [...entries]; },
     getFilePreview: async () => ({ success: false }), loadMetadataCover: async () => cover,
+    analyzeMetadata: async () => ({ items: books.slice(0, 3).map((book, index) => ({
+        id: 'metadata-' + index, filepath: book.path, name: book.name, group: 'Books',
+        metadata: { Title: book.title }, coverDataUrl: cover,
+    })) }),
     readingLists: async () => ({ success: true, collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0 }),
 };
 const root = createRoot(document.getElementById('root'));
@@ -92,12 +97,53 @@ async function expectActive(filePath, label) {
 }
 async function mount(mode, count = 24, extra = {}) {
     entries = books.slice(0, count).reverse();
-    root.render(<FolderTab key={++mountKey} config={{ libraries: [], folder_last_path: '/fixture', folder_view_mode: mode,
+    root.render(<><div id="folder-tab-panel" style={{ height: '100%' }}><FolderTab key={++mountKey} config={{ libraries: [], folder_last_path: '/fixture', folder_view_mode: mode,
         folder_detail_panel_height: 200, folder_item_scales: { table: 75, tile: 50, thumbnail: 50 }, ...extra }}
-        t={t} saveConfig={async () => {}} showToast={() => {}} />);
+        t={t} saveConfig={async () => {}} showToast={() => {}} /></div>
+        <div id="metadata-tab-panel" hidden><MetadataTab config={{}} t={t} showToast={() => {}} /></div></>);
     await until(() => completedScanKey === mountKey && list()?.getAttribute('aria-busy') === 'false' && paths().length > 1
         && (mode === 'table' ? list().querySelector('table') : list().querySelector('.' + (mode === 'tile' ? 'tile-grid' : 'thumbnail-grid'))), mode + ': fixture did not load');
     for (let index = 0; index < 4; index += 1) await frame();
+}
+async function verifyHiddenMetadata() {
+    await mount('table');
+    const folderPanel = document.getElementById('folder-tab-panel');
+    const metadataPanel = document.getElementById('metadata-tab-panel');
+    folderPanel.hidden = true;
+    metadataPanel.hidden = false;
+    window.dispatchEvent(new CustomEvent('bookmanager:action', { detail: {
+        activeTab: 'metadata', action: 'load-paths', paths: books.slice(0, 3).map(book => book.path),
+    } }));
+    const metadataActive = () => metadataPanel.querySelector('.meta-tree-file.selected')?.dataset.metaTreeKey;
+    await until(() => metadataPanel.querySelectorAll('.meta-tree-file').length === 3, 'Metadata fixture did not load');
+    metadataPanel.querySelector('.meta-tree-file').click();
+    await key('Down');
+    await until(() => metadataActive() === 'file:metadata-1', 'Visible metadata tree must handle arrows');
+    metadataPanel.hidden = true;
+    folderPanel.hidden = false;
+    const order = paths();
+    await clickItem(order[0]);
+    const failures = [];
+    await key('Down');
+    if (activePath() !== order[1]) failures.push('Hidden metadata intercepted the list arrow');
+    if (metadataActive() !== 'file:metadata-1') failures.push('Hidden metadata selection changed from the list');
+    await clickItem(order[0]);
+    await expectActive(order[0], 'Preview starting selection');
+    document.querySelector('#folder-detail-panel .detail-cover-preview-button').click();
+    await until(() => document.querySelector('.detail-cover-preview-dialog[open]'), 'Cover dialog did not open');
+    await key('Right');
+    if (activePath() !== order[1]) failures.push('Hidden metadata intercepted the enlarged cover arrow');
+    await key('Escape');
+    await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Cover dialog did not close');
+    check(failures.length === 0, failures.join('; '));
+    folderPanel.hidden = true;
+    metadataPanel.hidden = false;
+    metadataPanel.querySelector('.meta-tree-container').focus();
+    await key('Up');
+    await until(() => metadataActive() === 'file:metadata-0', 'Returning to metadata must restore arrow navigation');
+    metadataPanel.hidden = true;
+    folderPanel.hidden = false;
+    return { mode: 'hidden-metadata' };
 }
 async function verifyTable() {
     await mount('table', 24, { folder_group_key: 'author', folder_sort_order: 'desc' });
@@ -209,7 +255,7 @@ async function verifyVirtualReveal(mode) {
 }
 window.runFolderKeyboardSelectionTests = async () => {
     applyMotionPreference('reduced');
-    const results = [await verifyTable()];
+    const results = [await verifyHiddenMetadata(), await verifyTable()];
     for (const mode of ['tile', 'thumbnail']) results.push(await verifyGrid(mode));
     for (const mode of ['table', 'tile', 'thumbnail']) results.push(await verifyVirtualReveal(mode));
     root.unmount();
@@ -268,7 +314,7 @@ app.whenReady().then(async () => {
         const payload = output.result.match(/FOLDER_KEYBOARD_SELECTION_RESULT=(.+)/)?.[1];
         assert.ok(payload, output.result);
         const results = JSON.parse(payload);
-        assert.deepEqual(results.map(result => result.mode), ['table', 'tile', 'thumbnail', 'table-virtual', 'tile-virtual', 'thumbnail-virtual']);
+        assert.deepEqual(results.map(result => result.mode), ['hidden-metadata', 'table', 'tile', 'thumbnail', 'table-virtual', 'tile-virtual', 'thumbnail-virtual']);
         for (const result of results) t.diagnostic(JSON.stringify(result));
     } finally {
         await server?.close();

@@ -31,6 +31,51 @@ test('macOS는 bundled 경로와 시스템 PATH fallback을 모두 탐색한다'
     assert.equal(normalizedCandidates.includes('/opt/homebrew/bin/7z'), true);
 });
 
+for (const [platform, folder, arch, binary] of [
+    ['darwin', 'mac', 'arm64', '7zz'],
+    ['win32', 'win', 'x64', '7z.exe'],
+    ['linux', 'linux', 'x64', '7zz'],
+]) {
+    test(`${platform} 뷰어는 RAR을 지원하는 full 7-Zip을 기존 7za보다 우선한다`, t => {
+        const platformPath = platform === 'win32' ? path.win32 : path;
+        const root = platform === 'win32' ? 'C:\\BookManager' : '/BookManager';
+        const bundled = platformPath.join(root, 'bin', folder, arch, binary);
+        const development = platformPath.join(root, 'node_modules', '7zip-bin-full', folder, arch, binary);
+        const legacy = platformPath.join(root, 'bin', folder, platform === 'win32' ? '7za.exe' : '7za');
+        const available = new Set([bundled, development, legacy]);
+        t.mock.method(fs, 'accessSync', candidate => {
+            if (!available.has(candidate)) throw new Error('ENOENT');
+        });
+        const options = { platform, arch, projectRoot: root, pathValue: '', env: {} };
+        assert.equal(findBinaryPath('7z', options), bundled);
+        available.delete(bundled);
+        assert.equal(findBinaryPath('7z', options), development);
+        available.delete(development);
+        assert.equal(findBinaryPath('7z', options), legacy);
+    });
+}
+
+test('Unix 뷰어는 시스템의 공식 7zz 명령도 탐색한다', () => {
+    for (const platform of ['darwin', 'linux']) {
+        const candidates = binaryCandidates('7z', { platform, pathValue: '/custom/bin' });
+        assert.equal(candidates.includes('/custom/bin/7zz'), true);
+        assert.equal(candidates.includes('/usr/local/bin/7zz'), true);
+    }
+});
+
+test('기존 7za 요청도 macOS/Linux 배포본의 full 7zz를 사용할 수 있다', t => {
+    for (const [platform, folder] of [['darwin', 'mac'], ['linux', 'linux']]) {
+        const bundled = `/BookManager/bin/${folder}/arm64/7zz`;
+        const access = t.mock.method(fs, 'accessSync', candidate => {
+            if (candidate !== bundled) throw new Error('ENOENT');
+        });
+        assert.equal(findBinaryPath('7za', {
+            platform, arch: 'arm64', resourcesPath: '/BookManager', pathValue: '', env: {},
+        }), bundled);
+        access.mock.restore();
+    }
+});
+
 test('공백과 한글이 포함된 실행 경로를 그대로 반환한다', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), '북 매니저 binary-'));
     try {
