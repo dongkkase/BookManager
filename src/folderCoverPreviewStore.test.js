@@ -75,3 +75,15 @@ test('evicted previews can be requested again and subscribed visible covers rema
     store.clear();
     assert.equal(store.snapshot(first), null);
 });
+
+test('rear folder covers update the subscribed card without triggering metadata changes', () => {
+    const source = file('/library/folder', { isDirectory: true });
+    const store = createFolderCoverPreviewStore();
+    const folder_covers = [{ cover: 'second.jpg', cover_file_path: '/library/folder/2.cbz' }];
+    const preview = { cover: 'first.jpg', folder_covers };
+    store.publish(source, preview);
+    assert.deepEqual(store.resolve(source).folder_covers, folder_covers);
+    assert.equal(folderPreviewMetadataUpdate(source, preview), null);
+    store.publish(source, { ...preview, folder_covers: [] });
+    assert.deepEqual(store.resolve(source).folder_covers, []);
+});

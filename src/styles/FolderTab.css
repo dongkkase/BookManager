@@ -3440,27 +3440,65 @@ body.is-reordering-table-column {
     transition: transform 300ms ease, filter 120ms ease;
 }
 
-.folder-item-cover-card::before,
-.folder-item-cover-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgba(0, 0, 0, 0.58);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.28);
-  pointer-events: none;
+.folder-item-cover-card {
+    --folder-stack-width: var(--thumb-image-width, 96px);
+    --folder-stack-inset: clamp(3.5px, calc(var(--folder-stack-width) * 0.05), 10px);
+    --folder-stack-bottom: calc(var(--folder-stack-inset) * 0.75);
+    --folder-stack-radius: clamp(3px, calc(var(--folder-stack-width) * 0.04), 8px);
+    border-radius: var(--folder-stack-radius);
+    isolation: isolate;
 }
 
-.folder-item-cover-card::before {
-  z-index: 0;
-  transform: translate(8px, 8px);
-  opacity: 0.62;
+.tile-cover-card.folder-item-cover-card {
+    --folder-stack-width: var(--tile-image-width, 94px);
 }
 
-.folder-item-cover-card::after {
-  z-index: 1;
-  transform: translate(4px, 4px);
-  opacity: 0.78;
+.folder-item-cover-card > .folder-cover-layer {
+    position: absolute;
+    overflow: hidden;
+    border: 0.5px solid rgba(180, 185, 193, 0.5);
+    border-radius: var(--folder-stack-radius);
+    background: #383838;
+    box-shadow:
+        inset -2px -1px 3px rgba(0, 0, 0, 0.12),
+        0 calc(var(--folder-stack-inset) * 1.8) calc(var(--folder-stack-inset) * 3.4) calc(var(--folder-stack-inset) * -2.2) rgba(0, 0, 0, 0.35);
+    transform-origin: 10% 95%;
+    pointer-events: none;
+}
+
+.folder-item-cover-card > .folder-cover-layer.is-back {
+    z-index: 0;
+    inset: var(--folder-stack-bottom) 0 0 var(--folder-stack-inset);
+    transform: rotate(2deg) scale(0.96);
+    filter: blur(0.5px);
+    opacity: 0.75;
+}
+
+.folder-item-cover-card > .folder-cover-layer.is-middle {
+    z-index: 1;
+    inset: calc(var(--folder-stack-bottom) / 2) calc(var(--folder-stack-inset) / 2);
+    transform: rotate(1deg) scale(0.98);
+}
+
+.folder-cover-layer > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.folder-item-cover-card > :is(.thumb-image, .tile-image) {
+    width: calc(100% - var(--folder-stack-inset));
+    height: calc(100% - var(--folder-stack-bottom));
+    border: 0.5px solid rgba(180, 185, 193, 0.5);
+    border-radius: var(--folder-stack-radius);
+    box-shadow: 0 calc(var(--folder-stack-inset) * 2.4) calc(var(--folder-stack-inset) * 4.8) calc(var(--folder-stack-inset) * -2.6) rgba(0, 0, 0, 0.48);
+}
+
+.folder-item-cover-card > .thumb-label {
+    right: var(--folder-stack-inset);
+    bottom: var(--folder-stack-bottom);
+    max-height: calc(100% - var(--folder-stack-bottom));
 }
 
 .thumbnail-item.selected .thumbnail-cover-card {

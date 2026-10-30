@@ -13,7 +13,8 @@ const HOLD_DURATION = 700;
 const LAND_DURATION = 1000;
 const EXIT_DURATION = 160;
 const COLUMN_COUNT = 9;
-const SAMPLE_SIZE = COLUMN_COUNT * 3;
+const ROW_COUNT = 6;
+const SAMPLE_SIZE = COLUMN_COUNT * ROW_COUNT;
 const CENTER_TRANSFORM = 'translate(-50%, -50%) translate3d(0px, 0px, 0px) rotateX(0deg) rotateZ(0deg) scale(1)';
 
 function thumbnailSample(files, fallback) {
@@ -173,7 +174,7 @@ export function RecommendationShuffleOverlay({ files, currentFile, prepare, comm
             tracks.forEach((track, index) => {
                 const from = index % 2 ? -distance : 0;
                 const to = index % 2 ? 0 : -distance;
-                const duration = 25 + index % 3 * 3;
+                const duration = 50 + index % 3 * 6;
                 track.dataset.distance = String(distance);
                 track.dataset.duration = String(duration);
                 if (!reducedRef.current) {
@@ -245,16 +246,20 @@ export function RecommendationShuffleOverlay({ files, currentFile, prepare, comm
                 }
                 changePhase('landing');
                 const landingTransform = destinationTransform();
+                let landingMotion;
                 if (!reducedRef.current) {
                     play(sceneRef.current, { opacity: [1, 0] }, { duration: 0.65, ease: 'easeInOut' });
                     play(captionRef.current, { opacity: [1, 0] }, { duration: 0.2 });
-                    play(selected, { transform: [CENTER_TRANSFORM, landingTransform], borderRadius: ['6px', '2px'] }, {
+                    landingMotion = play(selected, { transform: [CENTER_TRANSFORM, landingTransform], borderRadius: ['6px', '2px'] }, {
                         duration: LAND_DURATION / 1000, ease: [0.65, 0, 0.3, 1],
                     });
                     await wait(LAND_DURATION);
                 }
                 if (!live()) return;
+                // The timer can finish before the animation presents its final frame.
+                landingMotion?.cancel();
                 selected.style.transform = destinationTransform();
+                selected.style.borderRadius = '2px';
                 sceneRef.current.style.opacity = '0';
                 captionRef.current.style.opacity = '0';
                 changePhase('committing');
@@ -314,10 +319,10 @@ export function RecommendationShuffleOverlay({ files, currentFile, prepare, comm
                 <div className="recommendation-shuffle-plane" ref={planeRef}>
                     {Array.from({ length: COLUMN_COUNT }, (_, column) => <div className="recommendation-shuffle-column" key={column}>
                         <div className="recommendation-shuffle-track" data-direction={column % 2 ? 'down' : 'up'}>
-                            {Array.from({ length: 6 }, (_, row) => {
-                                const candidate = Boolean(selectedFile) && column === selectionSlot?.column && row % 3 === selectionSlot?.row;
-                                const file = candidate ? selectedFile : sample[(column * 3 + row % 3) % sample.length];
-                                return <div key={row} className="recommendation-shuffle-tile" data-column={column} data-row={row % 3}
+                            {Array.from({ length: ROW_COUNT * 2 }, (_, row) => {
+                                const candidate = Boolean(selectedFile) && column === selectionSlot?.column && row % ROW_COUNT === selectionSlot?.row;
+                                const file = candidate ? selectedFile : sample[(column * ROW_COUNT + row % ROW_COUNT) % sample.length];
+                                return <div key={row} className="recommendation-shuffle-tile" data-column={column} data-row={row % ROW_COUNT}
                                     data-shuffle-candidate={candidate ? 'true' : undefined}>
                                     <CoverArtwork src={file.cover} alt="" fallbackAlt="" smooth />
                                 </div>;

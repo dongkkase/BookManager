@@ -1,5 +1,8 @@
 const { spawn } = require('node:child_process');
 const electron = require('electron');
+const { buildMacCursorCompat } = require('./buildMacCursorCompat.cjs');
+
+buildMacCursorCompat();
 
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;

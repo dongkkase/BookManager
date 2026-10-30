@@ -66,7 +66,8 @@ let holdRecentAdded = false;
 let releaseRecentAdded;
 let heldMembershipPath = '';
 const pendingMembership = [];
-let changed;
+const readingListListeners = new Set();
+const changed = () => { for (const callback of [...readingListListeners]) callback(); };
 window.electronAPI = {
     getRoots: async () => [], getSpecialPaths: async () => ({}),
     getReadingStates: async paths => recentFiles.filter(file => paths.includes(file.path) && file.readingState).map(file => ({ ...file.readingState, filePath: file.path })),
@@ -83,7 +84,10 @@ window.electronAPI = {
         if (holdPreviews) return await new Promise(resolve => pendingPreviews.push(() => resolve(result)));
         return result;
     },
-    onReadingListsChanged: callback => { changed = callback; return () => {}; },
+    onReadingListsChanged: callback => {
+        readingListListeners.add(callback);
+        return () => readingListListeners.delete(callback);
+    },
     readingLists: async request => {
         requests.push(request);
         const { operation, id } = request;
@@ -304,13 +308,15 @@ async function resetRecentList(dateLabel, defaultDays, firstPath) {
 window.readingListTests = (async () => {
     books.set('want-to-read', [folder]);
     await until(() => document.querySelector('.sidebar-container'), 'Folder sidebar did not mount');
+    await until(() => document.querySelector('.reading-dashboard') && readingListListeners.size === 2, 'Dashboard and reading lists must subscribe independently');
     const supportDialogShortcuts = [];
     for (const preference of ['full', 'reduced']) supportDialogShortcuts.push(await verifySupportDialogShortcuts(preference));
     await click('읽고 싶은 책', document.querySelector('.sidebar-container'));
     await until(loadedFolderCover, 'Wishlist folder cover did not load without a selected folder');
+    check(readingListListeners.size === 1, 'Leaving the dashboard must remove only its own reading-list subscription');
     check(!document.querySelector('.recent-list-toolbar'), 'Leaving recent lists must remove their toolbar controls');
     for (const label of ['menu_thumbnail', 'menu_tile', 'menu_detail']) {
-        [...document.querySelectorAll('.view-icon-btn')].find(item => item.title === t(label)).click();
+        [...document.querySelectorAll('.view-icon-btn')].find(item => item.getAttribute('aria-label') === t(label)).click();
         await frame();
         await until(loadedFolderCover, 'Wishlist cover missing in view: ' + label);
     }
@@ -505,7 +511,7 @@ window.readingListTests = (async () => {
     check(rowFor(collectionPath).querySelector('.folder-item-name')?.textContent.includes('Weekend'), 'Collection is not rendered as a named folder');
     check(document.querySelector('.goto-path-input').value === '컬렉션' && document.querySelector('.goto-path-input').readOnly, 'Collection location is not virtual');
     for (const label of ['menu_thumbnail', 'menu_tile', 'menu_detail']) {
-        [...document.querySelectorAll('.view-icon-btn')].find(item => item.title === t(label)).click();
+        [...document.querySelectorAll('.view-icon-btn')].find(item => item.getAttribute('aria-label') === t(label)).click();
         await frame();
         await until(() => loadedCollectionCover(book.cover), 'Collection cover missing in view: ' + label);
         if (label === 'menu_thumbnail' && ${JSON.stringify(Boolean(process.env.BOOKMANAGER_READING_SCREENSHOT))}) {
@@ -618,7 +624,7 @@ window.readingListTests = (async () => {
     for (let index = 0; index < 5; index += 1) await frame();
     check(!button('읽고 싶은 책 추가').disabled && button('읽고 싶은 책 삭제').disabled, 'Stale registered-file membership replaced the new unregistered-folder menu');
     await closeContext();
-    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership'].includes(request.operation)).map(request => request.operation), recentCacheVisible: true, staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true, supportDialogShortcuts };
+    const report = { mutations: requests.filter(request => !['list', 'overview', 'preview', 'membership', 'dashboard'].includes(request.operation)).map(request => request.operation), recentCacheVisible: true, staleResponseIgnored: true, folderOpened: true, fileOpened: true, folderCoversLoaded: true, virtualCollections: true, wishlistMembershipStates: true, staleMembershipIgnored: true, supportDialogShortcuts };
     root.unmount();
     return report;
 })();

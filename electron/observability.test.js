@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { readTelemetryAppVersion, readTelemetryServiceConfig, telemetryServiceConfigFromEnv } from './observabilityConfig.js';
-import { isTelemetrySenderAllowed } from './observabilityIpc.js';
+import { isTelemetrySenderAllowed, setupTelemetryIPC } from './observabilityIpc.js';
 import { observeOperation, operationOutcome, reportOperationError } from './observabilityOperations.js';
 import { saveConfigWithTelemetryConsent } from './observabilityConsent.js';
 import { attachOperationErrors, getOperationErrors } from './operationDiagnostics.js';
@@ -26,6 +26,52 @@ test('only the app main frame can report telemetry; embedded books and foreign U
     const frame = { url: pathToFileURL(distIndexPath).href };
     assert.equal(isTelemetrySenderAllowed({ senderFrame: frame, sender: { mainFrame: { ...frame } } }, options), false);
     assert.equal(isTelemetrySenderAllowed({}, options), false);
+});
+
+test('renderer telemetry accepts navigation and recommendation refresh clicks while blocking operation results', () => {
+    const distIndexPath = path.join(os.tmpdir(), 'Book Manager', 'dist', 'index.html');
+    const devServerUrl = 'http://127.0.0.1:5173/';
+    const listeners = new Map();
+    const events = [];
+    setupTelemetryIPC({
+        ipcMain: { handle() {}, on: (channel, listener) => listeners.set(channel, listener) },
+        distIndexPath,
+        devServerUrl,
+        track: payload => events.push(payload),
+    });
+    const receive = listeners.get('telemetry:event');
+    const sender = url => {
+        const frame = { url };
+        return { senderFrame: frame, sender: { mainFrame: frame } };
+    };
+    const allowed = sender(pathToFileURL(distIndexPath).href);
+    const payloads = [
+        ...['dashboard', 'authors', 'annotations'].map(menu => ({ event: 'menu_opened', menu, source: 'navigation' })),
+        { event: 'tool_opened', tool: 'cover-editor', source: 'navigation' },
+        { event: 'feature_used', feature: 'daily-recommendation-refresh', source: 'renderer' },
+    ];
+    for (const payload of payloads) receive(allowed, payload);
+    receive(sender(devServerUrl), payloads[4]);
+    assert.deepEqual(events, [...payloads, payloads[4]]);
+    for (const event of ['feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled', 'viewer_tts_used', 'app_active', 'unknown_event']) {
+        receive(allowed, { event, feature: 'daily-recommendation-refresh' });
+        receive(allowed, { event, feature: 'text-cleaner' });
+    }
+    for (const feature of ['text-cleaner', 'viewer-open', 'daily-recommendation-private', undefined]) {
+        receive(allowed, { event: 'feature_used', feature });
+    }
+    for (const payload of [undefined, null, {}, 'feature_used']) receive(allowed, payload);
+    const embeddedFrame = { url: pathToFileURL(distIndexPath).href };
+    for (const untrusted of [
+        {},
+        sender('https://attacker.example/index.html'),
+        sender('http://127.0.0.1:5173/book.html'),
+        sender('bookmanager-document://session/private-book'),
+        { senderFrame: embeddedFrame, sender: { mainFrame: { ...embeddedFrame } } },
+    ]) {
+        for (const payload of payloads) receive(untrusted, payload);
+    }
+    assert.deepEqual(events, [...payloads, payloads[4]]);
 });
 
 test('build configuration includes only public ingestion credentials and missing metadata disables reporting', t => {

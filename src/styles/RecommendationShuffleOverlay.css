@@ -27,6 +27,17 @@
     background: #080e15;
 }
 
+.recommendation-shuffle-scene::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    -webkit-mask-image: radial-gradient(ellipse at center, transparent 50%, #0004 70%, #000 92%);
+    mask-image: radial-gradient(ellipse at center, transparent 50%, #0004 70%, #000 92%);
+    pointer-events: none;
+}
+
 .recommendation-shuffle-wall {
     position: absolute;
     inset: 0;

@@ -56,6 +56,8 @@ let delayConfig = false;
 let statDelay = 0;
 let overviewDelay = 0;
 let failOverview = false;
+let heldListId = '';
+let releaseList;
 window.electronAPI = {
     getRoots: async () => [], getSpecialPaths: async () => ({}), getLibraryScanStates: async () => ({}),
     getReadingStates: async () => [], listRecentReading: async () => [{ ...folderBook, lastReadAt: new Date().toISOString() }],
@@ -75,7 +77,10 @@ window.electronAPI = {
             return { success: true, collections: [...collections], wishlistCount: 1, recentAddedCount: 2, recentUpdatedCount: 2 };
         }
         if (request.operation === 'dashboard') return { success: true, month: request.month, days: [], totals: { seconds: 0, readingDays: 0, completedBooks: 0 }, goal: { books: 0, minutes: 0 }, completedFiles: [], completedCount: 0 };
-        if (request.operation === 'list') return { success: true, files: request.id === 'collection-1' ? [collectionBook] : [...files] };
+        if (request.operation === 'list') {
+            if (request.id === heldListId) await new Promise(resolve => { releaseList = resolve; });
+            return { success: true, files: request.id === 'collection-1' ? [collectionBook] : [...files] };
+        }
         return { success: true, files: [], changes: 0, errors: [] };
     },
 };
@@ -152,6 +157,32 @@ window.runSessionRestoreTests = async () => {
     await until(() => selected('collections') && row(collectionBook.path) && !row(folderBook.path), 'Saved collection detail was not restored');
     check(scans.length === scansBeforeCollection, 'Collection restore must not scan the old physical folder');
     check(requests.some(request => request.operation === 'list' && request.id === 'collection-1'), 'Restored collection was not requested');
+
+    await visit('wishlist');
+    await until(() => row(folderBook.path) && row(collectionBook.path), 'Wishlist did not load');
+    await visit('collections');
+    heldListId = 'collection-1';
+    row('collection://collection-1').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await until(() => releaseList, 'Collection refresh did not start');
+    await settle();
+    check(row(collectionBook.path) && !row(folderBook.path), 'Cached collection members disappeared during slow file access');
+    check(document.querySelector('.view-container').getAttribute('aria-busy') === 'true', 'Collection refresh must remain pending for the cache check');
+    heldListId = '';
+    releaseList();
+    releaseList = null;
+    await until(() => document.querySelector('.view-container').getAttribute('aria-busy') === 'false', 'Collection refresh did not finish');
+
+    heldListId = 'want-to-read';
+    await visit('wishlist');
+    await until(() => releaseList, 'Wishlist refresh did not start');
+    check(row(folderBook.path) && row(collectionBook.path), 'Cached wishlist disappeared during slow file access');
+    check(document.querySelector('.view-container').getAttribute('aria-busy') === 'true', 'Wishlist refresh must remain pending for the cache check');
+    await visit('favorites');
+    heldListId = '';
+    releaseList();
+    releaseList = null;
+    await settle();
+    check(selected('favorites') && !row(collectionBook.path), 'A delayed wishlist response replaced the newly selected page');
 
     document.querySelector('[data-folder-sidebar-path="/fixture"]').click();
     await until(() => row(folderBook.path) && !row(collectionBook.path), 'Returning to the previous physical folder failed');

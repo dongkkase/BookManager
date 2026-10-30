@@ -145,6 +145,70 @@ test('recent list revisits display cached books immediately while refreshing wit
     } finally { app.close(); }
 });
 
+test('wishlist and collection revisits keep cached books and covers visible during slow file checks', async () => {
+    const app = await fixture({ listId: 'want-to-read' });
+    try {
+        app.result().updateFilePreview({ ...app.result().files[0], cover: 'saved-cover' });
+        await app.settle();
+        const wishlist = app.result().files;
+        app.update({ listId: 'collection-a' });
+        await app.settle();
+        const collection = app.result().files;
+        app.revision(2);
+        app.hold(true);
+        assert.equal(app.update({ listId: 'want-to-read' }).files, wishlist);
+        assert.equal(app.result().files[0].cover, 'saved-cover');
+        await app.settle();
+        assert.equal(app.result().loading, true);
+        app.pending.shift().release();
+        await app.settle();
+        assert.equal(app.result().files[0].title, 'Revision 2');
+        assert.equal(app.update({ listId: 'collection-a' }).files, collection);
+        assert.equal(app.calls.filter(call => call.operation === 'overview').length, 1);
+    } finally { app.close(); }
+});
+
+for (const event of ['lists', 'scan', 'focus', 'bookmanager:metadata-saved', 'timer']) {
+    test(`${event} invalidates inactive manual lists without hiding the active snapshot`, async () => {
+        const app = await fixture({ listId: 'want-to-read' });
+        try {
+            app.update({ listId: 'collection-a' });
+            await app.settle();
+            const collection = app.result().files;
+            app.hold(true);
+            if (event === 'timer') [...app.timers.values()][0]();
+            else app.emit(event);
+            await app.settle();
+            assert.equal(app.result().files, collection);
+            assert.equal(app.update({ listId: 'want-to-read' }).files.length, 0);
+            while (app.pending.length) app.pending.shift().release();
+            await app.settle();
+            assert.equal(app.result().files.length, 1);
+        } finally { app.close(); }
+    });
+}
+
+test('manual list snapshots are bounded and hidden immediately when the library scope changes', async () => {
+    const app = await fixture({ listId: 'collection-0' });
+    try {
+        for (let index = 1; index < 9; index += 1) {
+            app.update({ listId: `collection-${index}` });
+            await app.settle();
+        }
+        app.hold(true);
+        assert.equal(app.update({ listId: 'collection-1' }).files.length, 1);
+        assert.equal(app.update({ listId: 'collection-0' }).files.length, 0);
+        assert.equal(app.update({ listId: 'collection-8' }).files.length, 1);
+        assert.equal(app.update({ libraries: ['/other'] }).files.length, 0);
+        app.pending.shift().release();
+        await app.settle();
+        assert.equal(app.result().files.length, 0, 'An earlier scope response must stay hidden');
+        while (app.pending.length) app.pending.shift().release();
+        await app.settle();
+        assert.equal(app.result().files.length, 1);
+    } finally { app.close(); }
+});
+
 test('library changes immediately hide cached books and counts and discard previous scope responses', async () => {
     const app = await fixture({ libraries: ['/A', '/B'] });
     try {

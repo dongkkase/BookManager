@@ -280,6 +280,8 @@ export function mergeFolderFilePreservingCover(currentFile, incomingFile) {
         cover_file_path: previewSource.cover_file_path || '',
         cover_file_mtime: previewSource.cover_file_mtime || 0,
         cover_file_size: previewSource.cover_file_size || 0,
+        ...(Object.hasOwn(currentFile, 'folder_covers') || Object.hasOwn(incomingFile, 'folder_covers')
+            ? { folder_covers: previewSource.folder_covers || [] } : {}),
     };
 }
 

@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const { createSingleFileZip } = require('./zipWindowsPortable.cjs');
 const afterPackHook = require('./afterPack.cjs');
 const { Arch } = require('builder-util');
+const { getFileMatchers } = require('app-builder-lib/out/fileMatcher');
 const packageConfig = JSON.parse(
     fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
 );
@@ -139,6 +140,26 @@ test('Supertonic ONNX 런타임과 제3자 고지는 배포본에 포함한다',
     assert.deepEqual(packageConfig.build.asarUnpack, ['node_modules/onnxruntime-node/**/*']);
     assert.ok(packageConfig.build.files.includes('THIRD_PARTY_NOTICES.md'));
     assert.equal(fs.existsSync(path.join(projectRoot, 'THIRD_PARTY_NOTICES.md')), true);
+});
+
+test('macOS 커서 보정 모듈은 macOS 배포본에만 포함한다', () => {
+    assert.equal(packageConfig.build.beforePack, 'electron/beforePack.cjs');
+    const binary = 'electron/native/build/MacCursorCompat.node';
+    assert.deepEqual(packageConfig.build.mac.asarUnpack, [binary]);
+    const fileStat = { isDirectory: () => false };
+    for (const platform of ['mac', 'win', 'linux']) {
+        const matchers = getFileMatchers(packageConfig.build, 'files', path.join(projectRoot, 'dist-electron'), {
+            defaultSrc: projectRoot,
+            customBuildOptions: packageConfig.build[platform],
+            globalOutDir: path.join(projectRoot, 'dist-electron'),
+            macroExpander: value => value,
+        });
+        const filter = matchers.find(matcher => matcher.from === projectRoot).createFilter();
+        assert.equal(filter(path.join(projectRoot, binary), fileStat), platform === 'mac', platform);
+        for (const file of ['MacCursorCompat.build.json', '.MacCursorCompat-arm64-123.node']) {
+            assert.equal(filter(path.join(projectRoot, 'electron', 'native', 'build', file), fileStat), false, `${platform}/${file}`);
+        }
+    }
 });
 
 test('macOS universal afterPack은 full 7-Zip과 라이선스를 복사하고 실행 권한을 보정한다', async () => {

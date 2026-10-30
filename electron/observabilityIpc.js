@@ -14,14 +14,15 @@ export function isTelemetrySenderAllowed(event, { distIndexPath, devServerUrl })
     }
 }
 
-export function setupTelemetryIPC({ ipcMain, distIndexPath, devServerUrl, report = reportTelemetryError }) {
+export function setupTelemetryIPC({ ipcMain, distIndexPath, devServerUrl, report = reportTelemetryError, track = trackTelemetryEvent }) {
     const isAllowed = event => isTelemetrySenderAllowed(event, { distIndexPath, devServerUrl });
     ipcMain.handle('telemetry:status', event => isAllowed(event) ? getTelemetryStatus() : {});
     ipcMain.on('telemetry:event', (event, payload) => {
         if (!isAllowed(event)) return;
         // Operation results are recorded by the main process, never by arbitrary renderer payloads.
-        if (!['menu_opened', 'tool_opened'].includes(payload?.event)) return;
-        trackTelemetryEvent(payload);
+        const isFeatureUsage = payload?.event === 'feature_used' && payload.feature === 'daily-recommendation-refresh';
+        if (!['menu_opened', 'tool_opened'].includes(payload?.event) && !isFeatureUsage) return;
+        track(payload);
     });
     ipcMain.on('telemetry:error', (event, payload) => {
         if (!isAllowed(event) || !payload || typeof payload !== 'object') return;

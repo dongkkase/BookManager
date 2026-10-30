@@ -118,3 +118,49 @@ test('보존된 외부 기록도 최근 순서와 개수 제한 및 모두 지�
     assert.equal((await value.list()).length, 0);
     assert.deepEqual(value.notifications, [{ cleared: true }]);
 });
+
+test('최근 읽음 조회는 DB 초기화를 반복하지 않고 파일 접근을 제한된 동시성으로 기다린다', async t => {
+    const value = fixture(t);
+    const paths = Array.from({ length: 20 }, (_, index) => path.join(value.root, `Book ${index}.epub`));
+    for (const [index, filePath] of paths.entries()) {
+        await value.db.upsertReadingState(filePath, {
+            format: 'epub', retainOutsideLibrary: true, lastReadAt: 1700000000000 + index * 1000,
+        });
+    }
+    t.mock.method(LibraryDB.prototype, 'createTables', () => assert.fail('Recent reads must not initialize writable schemas'));
+    t.mock.method(fs, 'statSync', () => assert.fail('Recent reads must not synchronously inspect original files'));
+    let active = 0;
+    let peak = 0;
+    let completed = 0;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    t.mock.method(fs.promises, 'stat', async filePath => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await gate;
+        await new Promise(resolve => setImmediate(resolve));
+        active -= 1;
+        completed += 1;
+        return { isFile: () => true, size: paths.indexOf(filePath) + 1, mtimeMs: 1700000000000 };
+    });
+    const pending = value.list();
+    while (!active) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(completed, 0, 'Other event-loop tasks must run while file access is pending');
+    assert.ok(active > 1 && active <= 8, `Expected bounded parallel reads, received ${active}`);
+    release();
+    const listed = await pending;
+    assert.equal(completed, paths.length);
+    assert.ok(peak <= 8);
+    assert.deepEqual(Array.from(listed, row => row.path), [...paths].reverse());
+    assert.ok(listed.every(row => row.exists && row.size === paths.indexOf(row.path) + 1));
+});
+
+test('아직 생성되지 않은 최근 읽음 DB는 빈 목록을 반환하고 DB를 생성하지 않는다', async t => {
+    const value = fixture(t);
+    const dbPath = path.join(value.root, 'library.db');
+    assert.deepEqual(Array.from(await value.list()), []);
+    assert.equal(fs.existsSync(dbPath), false);
+    fs.writeFileSync(dbPath, '');
+    assert.deepEqual(Array.from(await value.list()), []);
+    assert.equal(fs.statSync(dbPath).size, 0);
+});

@@ -5,6 +5,7 @@ const MAX_RESPONSE_BYTES = 3 * 1024 * 1024;
 const TIMEOUT_MS = 12000;
 const MEMBER_SHEET = '/spreadsheets/d/10IYjP6cEZlQIHQqQoFWIbwgA2zs9fC2vqvgbUpE1jow/gviz/tq';
 const HOST_GROUPS = {
+    'namu.wiki': 'namuwiki',
     'www.aladin.co.kr': 'aladin',
     'store.kyobobook.co.kr': 'kyobo',
     'search.kyobobook.co.kr': 'kyobo',

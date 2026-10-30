@@ -2312,7 +2312,7 @@ function selectionToolbarPosition(point = {}, size = {}) {
         Math.max(margin, viewportHeight - margin - toolbarHeight),
     );
     const y = placement === 'below' ? top - gap : top + toolbarHeight + gap;
-    const submenuPlacement = viewportHeight - top - toolbarHeight < 92 ? 'above' : 'below';
+    const submenuPlacement = viewportHeight - top - toolbarHeight < 125 ? 'above' : 'below';
     return { x, y, placement, submenuPlacement, anchorX, anchorY };
 }
 
@@ -8602,6 +8602,14 @@ function ViewerApp() {
     const text = selectionQueryText(selectionMenu?.text);
     if (!text) return;
     const encodedText = encodeURIComponent(text);
+    if (provider === 'wikipedia') {
+        const language = ['ko', 'en', 'ja'].includes(viewerLanguage) ? viewerLanguage : 'ko';
+        void openLookupWindow(
+            `https://${language}.wikipedia.org/w/index.php?search=${encodedText}`,
+            viewerText('viewer.context.dictionary_wikipedia', '위키피디아'),
+        );
+        return;
+    }
     const url = provider === 'naver'
       ? `https://dict.naver.com/search.dict?query=${encodedText}`
       : `https://www.google.com/search?q=${encodeURIComponent(`define:${text}`)}`;
@@ -10804,6 +10812,9 @@ function ViewerApp() {
                             </button>
                             <button type="button" role="menuitem" onClick={() => openSelectionDictionary('google')}>
                                 {viewerText('viewer.context.dictionary_google', 'Google 사전')}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => openSelectionDictionary('wikipedia')}>
+                                {viewerText('viewer.context.dictionary_wikipedia', '위키피디아')}
                             </button>
                         </MenuSurface>
                     </div>

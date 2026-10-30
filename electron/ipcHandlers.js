@@ -5,6 +5,7 @@ import { reportTelemetryError } from './telemetry.js';
 import { updateReadingProgress } from './readingActions.js';
 import { registerReadingListsIpc } from './readingLists.js';
 import { registerAuthorProfilesIpc } from './authorProfiles.js';
+import { registerAuthorWebSearchIpc } from './authorWebSearchWindow.js';
 import { createAuthorSearchCache } from './authorSearchCache.js';
 import { registerAuthorPhotoSearchIpc } from './authorPhotoSearch.js';
 import { registerAuthorProfilePhotosIpc } from './authorProfilePhotos.js';
@@ -3206,6 +3207,8 @@ export async function extractLibraryScanVisualItem(filePath, options = {}) {
 export function setupIPCHandlers(configManager, getExecutableDir, getResourcePath, getBinPath, getFontPath, hooks = {}) {
     const authorSearchCache = createAuthorSearchCache({ getDbPath: () => resolveApiCacheDbPath(getExecutableDir()) });
     registerAuthorProfilesIpc({ ipcMain, getMainWindow: hooks.getMainWindow, resultCache: authorSearchCache });
+    registerAuthorWebSearchIpc({ ipcMain, getMainWindow: hooks.getMainWindow,
+        getLanguage: () => configManager.getConfig()?.language || configManager.getConfig()?.lang || 'ko' });
     registerAuthorProfilePhotosIpc({
         ipcMain,
         getMainWindow: hooks.getMainWindow,
@@ -4598,38 +4601,53 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
     });
 
   ipcMain.handle('reading:listRecent', async (_event, limit = 50) => {
-    const db = new LibraryDB({ dbPath: libraryDbPath() });
+    const dbPath = libraryDbPath();
     try {
-      const states = await db.listRecentReadingStates(limit);
-      const rows = await db.listFilesByPaths(states.map(state => state.filePath));
-      const rowsByPath = new Map(rows.map(row => [row.path, row]));
-      return states.map(state => {
-        const filePath = state.filePath;
-        let stat = null;
-        try {
-          stat = fs.statSync(filePath);
-        } catch {
-          stat = null;
-        }
-        const row = rowsByPath.get(filePath) || {
-          path: filePath,
-          ext: path.extname(filePath).toLowerCase(),
-          title: path.parse(filePath).name,
-          book_type: state.format,
-          size: Number(stat?.size) || 0,
-          mtime: Number(stat?.mtimeMs) || 0,
-        };
-        return {
-          ...normalizeLibrarySearchFileForRenderer(row),
-          exists: Boolean(stat?.isFile?.()),
-          itemId: state.itemId,
-          lastReadAt: state.lastReadAt,
-          updatedAt: state.updatedAt,
-          readingState: state,
-        };
-      });
+        await fs.promises.access(dbPath);
+    } catch (error) {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+    }
+    const db = new LibraryDB({ dbPath, readOnly: true });
+    try {
+        if (!db.getConnection().prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'reading_states'").get()) return [];
+        const states = await db.listRecentReadingStates(limit);
+        const rows = await db.listFilesByPaths(states.map(state => state.filePath));
+        const rowsByPath = new Map(rows.map(row => [row.path, row]));
+        const files = new Array(states.length);
+        let index = 0;
+        await Promise.all(Array.from({ length: Math.min(8, states.length) }, async () => {
+            while (index < states.length) {
+                const current = index++;
+                const state = states[current];
+                const filePath = state.filePath;
+                let stat = null;
+                try {
+                    stat = await fs.promises.stat(filePath);
+                } catch {
+                    stat = null;
+                }
+                const row = rowsByPath.get(filePath) || {
+                    path: filePath,
+                    ext: path.extname(filePath).toLowerCase(),
+                    title: path.parse(filePath).name,
+                    book_type: state.format,
+                    size: Number(stat?.size) || 0,
+                    mtime: Number(stat?.mtimeMs) || 0,
+                };
+                files[current] = {
+                    ...normalizeLibrarySearchFileForRenderer(row),
+                    exists: Boolean(stat?.isFile?.()),
+                    itemId: state.itemId,
+                    lastReadAt: state.lastReadAt,
+                    updatedAt: state.updatedAt,
+                    readingState: state,
+                };
+            }
+        }));
+        return files;
     } finally {
-      await db.close();
+        await db.close();
     }
   });
 

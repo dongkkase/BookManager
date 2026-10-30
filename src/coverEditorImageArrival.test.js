@@ -41,7 +41,8 @@ function eventTarget() {
 }
 
 function harness({ reduced = false, preference = 'system', hidden = false, animationSupported = true, decodeSupported = true,
-    devicePixelRatio = 2, naturalWidth = 600, naturalHeight = 800, arrival = animateCoverEditorImageArrival, image = {} } = {}) {
+    devicePixelRatio = 2, naturalWidth = 600, naturalHeight = 800, arrival = animateCoverEditorImageArrival, image = {},
+    targetRect = { left: 20, top: 300, width: 240, height: 300 } } = {}) {
     let resolveDecode;
     let rejectDecode;
     const decoded = new Promise((resolve, reject) => { resolveDecode = resolve; rejectDecode = reject; });
@@ -106,7 +107,7 @@ function harness({ reduced = false, preference = 'system', hidden = false, anima
     };
     const container = element();
     const sourceElement = element({ left: 400, top: 100, width: 500, height: 600 });
-    const targetElement = element({ left: 20, top: 300, width: 240, height: 300 });
+    const targetElement = element(targetRect);
     let finishes = 0;
     const cancel = arrival({
         sourceElement, targetElement, container,
@@ -300,6 +301,129 @@ test('load events support environments without decode and cannot start the same 
     image.onload();
     assert.equal(value.animations.length, 1);
     value.animations[0].onfinish();
+    assert.equal(value.finishes, 1);
+    value.assertClean();
+});
+
+function resamplingHarness(options = {}) {
+    const pending = deferred();
+    const calls = [];
+    let releases = 0;
+    const arrival = arrivalWithResampler((source, target, request) => {
+        calls.push({ source, target, signal: request.signal });
+        return pending.promise;
+    });
+    const value = harness({
+        naturalWidth: 2400, naturalHeight: 3200,
+        image: { width: 2400, height: 3200 },
+        targetRect: { left: 20, top: 300, width: 180, height: 240 },
+        arrival, ...options,
+    });
+    return {
+        value, calls, pending,
+        get releases() { return releases; },
+        async resolve() {
+            pending.resolve({ url: 'blob:arrival-thumbnail', release() { releases += 1; } });
+            await tick();
+        },
+    };
+}
+
+test('arrival samples the decoded source once at its largest visible size and device resolution before motion', async () => {
+    const state = resamplingHarness();
+    const { value, calls } = state;
+    const [flyer, thumbnail] = value.created;
+    assert.equal(calls.length, 0);
+    await value.decoded();
+    assert.equal(flyer.style.width, '360px');
+    assert.equal(flyer.style.height, '480px');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].source, thumbnail);
+    assert.deepEqual(calls[0].target, { width: 720, height: 960 });
+    assert.equal(calls[0].signal.aborted, false);
+    assert.deepEqual(value.timerDurations, [1800]);
+    assert.equal(value.animations.length, 0);
+    await state.resolve();
+    assert.equal(thumbnail.src, 'blob:arrival-thumbnail');
+    assert.equal(value.animations.length, 0, 'the resized bitmap must also decode before it is animated');
+    await value.resampledDecoded();
+    assert.equal(calls.length, 1, 'motion frames must not create more resized bitmaps');
+    assert.equal(value.animations.length, 1);
+    assert.deepEqual(value.timerDurations, [1800, 1000]);
+    value.animations[0].onfinish();
+    assert.equal(value.finishes, 1);
+    assert.equal(state.releases, 1);
+    assert.equal(calls[0].signal.aborted, true);
+    value.assertClean();
+});
+
+test('a failed resize uses the original decoded image and still finishes the arrival', async () => {
+    const state = resamplingHarness();
+    const { value } = state;
+    await value.decoded();
+    state.pending.reject(new Error('Resize failed'));
+    await tick();
+    assert.equal(value.created[1].src, 'data:image/png;base64,aW1hZ2U=');
+    assert.equal(value.animations.length, 1);
+    value.animations[0].onfinish();
+    assert.equal(value.finishes, 1);
+    assert.equal(state.releases, 0);
+    value.assertClean();
+});
+
+test('cancellation, reduced motion and the preparation timeout release late resized images without starting motion', async () => {
+    for (const kind of ['cancel', 'reduced', 'timeout']) {
+        const state = resamplingHarness();
+        const { value } = state;
+        await value.decoded();
+        assert.equal(value.timerDurations[0], 1800);
+        if (kind === 'cancel') value.cancel();
+        else if (kind === 'reduced') applyMotionPreference('reduced', value.view);
+        else value.timeout();
+        assert.equal(state.calls[0].signal.aborted, true);
+        await state.resolve();
+        assert.equal(state.releases, 1);
+        assert.equal(value.animations.length, 0);
+        assert.equal(value.finishes, kind === 'cancel' ? 0 : 1);
+        value.cancel();
+        assert.equal(state.releases, 1);
+        value.assertClean();
+    }
+});
+
+test('canceling or failing the resized image decode releases its lease and never leaves an invisible flyer', async () => {
+    for (const kind of ['cancel', 'decode-failed']) {
+        const state = resamplingHarness();
+        const { value } = state;
+        await value.decoded();
+        await state.resolve();
+        if (kind === 'cancel') {
+            value.cancel();
+            await value.resampledDecoded();
+        } else {
+            await value.resampledDecodeFailed();
+        }
+        assert.equal(state.releases, 1);
+        assert.equal(value.animations.length, 0);
+        assert.equal(value.finishes, kind === 'cancel' ? 0 : 1);
+        value.assertClean();
+    }
+});
+
+test('resampled thumbnails also support load-event fallback without duplicate animation or lease release', async () => {
+    const state = resamplingHarness({ decodeSupported: false });
+    const { value } = state;
+    const thumbnail = value.created[1];
+    thumbnail.onload();
+    thumbnail.onload();
+    assert.equal(state.calls.length, 1);
+    await state.resolve();
+    thumbnail.onload();
+    thumbnail.onload();
+    assert.equal(value.animations.length, 1);
+    value.animations[0].onfinish();
+    value.cancel();
+    assert.equal(state.releases, 1);
     assert.equal(value.finishes, 1);
     value.assertClean();
 });

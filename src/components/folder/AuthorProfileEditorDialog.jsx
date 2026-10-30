@@ -15,13 +15,16 @@ const LABELS = {
         editProfile: '프로필 편집', name: '이름', saveProfile: '변경사항 저장',
         profileEditHint: '이름, 출생·사망 정보, 대표작과 소개를 수정하세요.', requiredName: '이름을 입력해 주세요.', dateHint: '예: 1970 또는 1970-01-01',
         query: '저자 이름 또는 작품명', source: '검색 소스', all: '전체 소스', search: '검색', searching: '검색 중…', close: '닫기',
-        profileHint: '이름과 대표작을 확인한 뒤 사용할 프로필을 선택하세요.', photoHint: '네이버 이미지와 프로필 검색 소스에서 사진을 찾습니다.',
+        webSearch: '검색 창에서 선택', webHint: '자동 검색이 제한되면 검색 창에서 직접 선택하세요.',
+        googleProfileHint: '구글 검색 결과의 제목·요약을 확인하고 사용할 프로필을 선택하세요.', googlePhotoHint: '구글 목록은 썸네일입니다. 큰 사진은 검색 창에서 선택하세요.',
+        profileHint: '이름과 대표작을 확인한 뒤 사용할 프로필을 선택하세요.', photoHint: '네이버·구글 이미지와 프로필 검색 소스에서 사진을 찾습니다.',
         searchHint: '검색어와 소스를 선택하고 검색하세요.', empty: '검색 결과가 없습니다. 다른 검색어를 입력해 보세요.',
         selectHint: '검색 결과를 선택하면 상세 정보를 확인할 수 있습니다.', selectPhotoHint: '사진을 선택하면 미리 보고 편집할 수 있습니다.',
         selectProfile: '이 프로필 선택', editSelectedProfile: '이 프로필 편집', selectPhoto: '이 사진 사용', edit: '사진 편집', current: '현재 사진 편집',
         uploadHint: '사진 파일을 선택하거나 파일·웹브라우저의 이미지를 이곳에 끌어 놓으세요.', chooseFile: '사진 파일 선택', formats: 'JPG, PNG, WebP, GIF, BMP · 최대 16MB',
         noPhoto: '사진 없음', loadingPhoto: '사진 불러오는 중…', saving: '저장 중…', more: '사진 더 보기',
         failed: '검색하지 못했습니다. 잠시 후 다시 시도해 주세요.', imageFailed: '사진을 불러오지 못했습니다. 다른 사진을 선택해 주세요.',
+        cancelled: '검색을 취소했습니다.',
         saveFailed: '변경사항을 저장하지 못했습니다. 다시 시도해 주세요.', size: '16MB 이하의 이미지 파일 하나를 선택해 주세요.',
         sourceLink: '프로필 출처', imageSource: '사진 출처', birth: '출생', death: '사망', works: '대표작', description: '소개',
         missingKeys: '네이버 이미지 검색을 사용하려면 설정 → 메타데이터 검색 및 API에서 NAVER API HUB의 Client ID와 Client Secret을 입력하세요.',
@@ -40,13 +43,16 @@ const LABELS = {
         editProfile: 'Edit profile', name: 'Name', saveProfile: 'Save changes',
         profileEditHint: 'Edit the name, birth and death information, notable work, and biography.', requiredName: 'Enter a name.', dateHint: 'e.g. 1970 or 1970-01-01',
         query: 'Author name or book title', source: 'Search source', all: 'All sources', search: 'Search', searching: 'Searching…', close: 'Close',
-        profileHint: 'Check the name and notable works before choosing a profile.', photoHint: 'Find photos in Naver Images and profile sources.',
+        webSearch: 'Choose in search window', webHint: 'If automatic search is restricted, choose a result in the search window.',
+        googleProfileHint: 'Review Google result titles and snippets before choosing a profile.', googlePhotoHint: 'Google lists thumbnails. Choose a larger photo in the search window.',
+        profileHint: 'Check the name and notable works before choosing a profile.', photoHint: 'Find photos in Naver Images, Google Images, and profile sources.',
         searchHint: 'Choose a source and enter a search term.', empty: 'No results found. Try another search.',
         selectHint: 'Select a result to view its details.', selectPhotoHint: 'Select a photo to preview and edit it.',
         selectProfile: 'Use this profile', editSelectedProfile: 'Edit this profile', selectPhoto: 'Use this photo', edit: 'Edit photo', current: 'Edit current photo',
         uploadHint: 'Choose a photo, or drag an image here from a file or web browser.', chooseFile: 'Choose photo', formats: 'JPG, PNG, WebP, GIF, BMP · Up to 16MB',
         noPhoto: 'No photo', loadingPhoto: 'Loading photo…', saving: 'Saving…', more: 'More photos',
         failed: 'Unable to search. Please try again later.', imageFailed: 'Unable to load this photo. Choose another photo.',
+        cancelled: 'Search cancelled.',
         saveFailed: 'Unable to save your changes. Please try again.', size: 'Choose one image file up to 16MB.',
         sourceLink: 'Profile source', imageSource: 'Image source', birth: 'Born', death: 'Died', works: 'Notable works', description: 'About',
         missingKeys: 'To use Naver Images, enter your NAVER API HUB Client ID and Client Secret in Settings → Metadata search & API.',
@@ -65,13 +71,16 @@ const LABELS = {
         editProfile: 'プロフィール編集', name: '名前', saveProfile: '変更を保存',
         profileEditHint: '名前、生没情報、代表作、紹介を編集してください。', requiredName: '名前を入力してください。', dateHint: '例：1970 または 1970-01-01',
         query: '著者名または作品名', source: '検索ソース', all: 'すべてのソース', search: '検索', searching: '検索中…', close: '閉じる',
-        profileHint: '名前と代表作を確認してプロフィールを選択してください。', photoHint: 'Naver画像とプロフィールの検索ソースから写真を探します。',
+        webSearch: '検索ウィンドウで選択', webHint: '自動検索が制限される場合は検索ウィンドウで直接選択してください。',
+        googleProfileHint: 'Google検索結果のタイトルと要約を確認してプロフィールを選択してください。', googlePhotoHint: 'Googleの一覧はサムネイルです。大きな写真は検索ウィンドウで選択してください。',
+        profileHint: '名前と代表作を確認してプロフィールを選択してください。', photoHint: 'Naver画像、Google画像、プロフィールの検索ソースから写真を探します。',
         searchHint: '検索語とソースを選択して検索してください。', empty: '結果がありません。別のキーワードを入力してください。',
         selectHint: '検索結果を選択すると詳細を確認できます。', selectPhotoHint: '写真を選択してプレビューと編集ができます。',
         selectProfile: 'このプロフィールを使用', editSelectedProfile: 'このプロフィールを編集', selectPhoto: 'この写真を使用', edit: '写真を編集', current: '現在の写真を編集',
         uploadHint: '写真を選択するか、ファイルやWebブラウザーの画像をここにドラッグしてください。', chooseFile: '写真ファイルを選択', formats: 'JPG, PNG, WebP, GIF, BMP · 最大16MB',
         noPhoto: '写真なし', loadingPhoto: '写真を読み込み中…', saving: '保存中…', more: '写真をもっと見る',
         failed: '検索できませんでした。後で再試行してください。', imageFailed: '写真を読み込めませんでした。別の写真を選択してください。',
+        cancelled: '検索をキャンセルしました。',
         saveFailed: '変更を保存できませんでした。再試行してください。', size: '16MB以下の画像ファイルを1つ選択してください。',
         sourceLink: 'プロフィール出典', imageSource: '写真の出典', birth: '生年月日', death: '没年月日', works: '代表作', description: '紹介',
         missingKeys: 'Naver画像検索には設定 → メタデータ検索とAPIでNAVER API HUBのClient IDとClient Secretを入力してください。',
@@ -94,6 +103,7 @@ function errorText(value, labels, fallback = 'failed') {
         AUTHOR_PHOTO_INVALID_CANDIDATE: 'expired', AUTHOR_PHOTO_IMAGE_FAILED: 'imageFailed',
         AUTHOR_PHOTO_STORAGE_FAILED: 'storage', AUTHOR_PHOTO_TOO_LARGE: 'size', COVER_IMAGE_TOO_LARGE: 'size',
         AUTHOR_PROFILE_RATE_LIMIT: 'profileRateLimit', AUTHOR_PROFILE_TIMEOUT: 'timeout', AUTHOR_PROFILE_ACCESS_BLOCKED: 'accessBlocked',
+        AUTHOR_PROFILE_CANCELLED: 'cancelled',
     }[value?.code]] || labels[fallback];
 }
 
@@ -214,6 +224,7 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
             dialog.removeEventListener('cancel', cancel);
             dialog.close();
             void Promise.resolve(window.electronAPI?.releaseAuthorPhotos?.()).catch(() => {});
+            void Promise.resolve(window.electronAPI?.cancelAuthorWebSearch?.()).catch(() => {});
             if (previous?.isConnected) previous.focus({ preventScroll: true });
         };
     }, []);
@@ -253,6 +264,7 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
         return () => { cancelled = true; cancel(); };
     }, [imageArrival, tab, busy, editing]);
     const resetSearch = () => {
+        void Promise.resolve(window.electronAPI?.cancelAuthorWebSearch?.()).catch(() => {});
         requestRef.current += 1;
         photoRequestRef.current += 1;
         setImageArrival(null);
@@ -300,7 +312,7 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
         }
         const tasks = [];
         if (start === 1 && source !== 'naver') tasks.push((async () => {
-            const value = await window.electronAPI?.searchAuthorProfiles?.(text, { allSources: true, source });
+            const value = await window.electronAPI?.searchAuthorProfiles?.(text, { allSources: true, source, photos });
             if (!value?.success) throw value || new Error();
             return { partial: value.partial, failedSources: value.failedSources, results: value.profiles.map(normalizeAuthorProfile).filter(item => item && (source === 'all' || source === item.provider) && (!photos || item.photoUrl))
                 .map(item => ({ id: item.id, source: item.provider, title: item.name, profile: item })) };
@@ -327,6 +339,36 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
         setResults(previous => start === 1 ? found : [...(previous || []), ...found]);
         setNextStart(successes.find(value => value.nextStart)?.nextStart || null);
         setSearching(false);
+    };
+    const searchInWindow = async () => {
+        if (busy || searching || !query.trim() || !['google', 'namuwiki'].includes(source)) return;
+        const request = ++requestRef.current;
+        setSearching(true);
+        setError('');
+        try {
+            const value = await window.electronAPI?.openAuthorWebSearch?.({ source, query: query.trim(), kind: tab === 'photo' ? 'photo' : 'profile' });
+            if (!mountedRef.current || request !== requestRef.current || value?.cancelled) return;
+            if (tab === 'profile') {
+                const profile = normalizeAuthorProfile(value?.profile);
+                if (!profile) throw value || new Error();
+                const candidate = { id: profile.id, source: profile.provider, title: profile.name, profile };
+                setResults(current => [candidate, ...(current || []).filter(item => item.id !== candidate.id)]);
+                setSelected(candidate);
+            } else {
+                if (!value?.dataUrl || !value.photo) throw value || new Error();
+                const imported = await window.electronAPI?.importAuthorPhoto?.({ dataUrl: value.dataUrl, photo: value.photo });
+                if (!mountedRef.current || request !== requestRef.current) return;
+                if (!imported?.success || !imported.photo || !imported.dataUrl) throw imported || new Error();
+                setImageArrival(null);
+                setArrivalHighlight(0);
+                setSelected(null);
+                setPhoto({ ...imported, title: query.trim(), edited: false });
+            }
+        } catch (failure) {
+            if (mountedRef.current && request === requestRef.current) setError(errorText(failure, labels));
+        } finally {
+            if (mountedRef.current && request === requestRef.current) setSearching(false);
+        }
     };
     const choosePhoto = async (candidate, openEditor = false) => {
         if (savingRef.current || busy || searching) return;
@@ -535,8 +577,10 @@ export function AuthorProfileEditorDialog({ author, profile, initialTab = 'profi
                     </select>
                     <input ref={inputRef} value={query} maxLength={200} onChange={event => setQuery(event.target.value)} aria-label={labels.query} placeholder={labels.query} disabled={busy} />
                     <button type="submit" disabled={busy || searching || !query.trim()}><FaIcon name="search" />{searching ? labels.searching : labels.search}</button>
+                    {['google', 'namuwiki'].includes(source) && <button type="button" title={labels.webHint} disabled={busy || searching || !query.trim()} onClick={() => void searchInWindow()}><FaIcon name="externalLink" />{labels.webSearch}</button>}
                 </form>}
-                <p className="author-editor-hint">{tab === 'edit' ? labels.profileEditHint : tab === 'profile' ? labels.profileHint : tab === 'photo' ? labels.photoHint : labels.editHint}</p>
+                <p className="author-editor-hint">{tab === 'edit' ? labels.profileEditHint : tab === 'profile' ? source === 'google' ? labels.googleProfileHint : labels.profileHint
+                    : tab === 'photo' ? source === 'google' ? labels.googlePhotoHint : labels.photoHint : labels.editHint}</p>
                 {error && <p className="author-editor-message is-error" role="alert">{error}</p>}
                 {notice && <p className="author-editor-message" role="status">{notice}</p>}
                 {tab === 'edit' ? <form className="author-editor-profile-form" aria-label={labels.editProfile}

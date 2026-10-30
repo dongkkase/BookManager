@@ -57,7 +57,8 @@ export function createCoverPreviewQueue({ concurrency = 2, queueLimit = 96, requ
         while (nextVisibleIndex < visibleFiles.length && queue.length < limit) {
             const file = visibleFiles[nextVisibleIndex++];
             const key = keyForFile(file);
-            if (!key || file.cover || attempted.has(key) || seen.has(key)) continue;
+            const hasCoverPreview = file.cover && (!file.isDirectory || Array.isArray(file.folder_covers));
+            if (!key || hasCoverPreview || attempted.has(key) || seen.has(key)) continue;
             seen.add(key);
             queue.push({ file, key, context: visibleContext, generation });
         }

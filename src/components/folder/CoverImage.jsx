@@ -3,6 +3,7 @@ import { CoverArtwork } from '../CoverArtwork';
 import { SmoothCoverImage } from '../SmoothCoverImage';
 import { FaIcon } from '../FaIcon';
 import { useFolderCoverPreview } from './FolderCoverPreviewContext';
+import { useCoverFadeIn } from '../../hooks/useCoverFadeIn';
 
 const LOADED_COVER_SRC_CACHE_LIMIT = 512;
 const loadedCoverSrcSet = new Set();
@@ -34,6 +35,7 @@ function CoverImage({ src: originalSrc, file, alt = '', className = '', t, iconS
   const imageRef = useRef(null);
   const [loaded, setLoaded] = useState(() => isCoverSourceLoaded(src));
   const [failed, setFailed] = useState(false);
+    useCoverFadeIn(imageRef, src, loaded && !failed);
 
   useEffect(() => {
     setLoaded(isCoverSourceLoaded(src));
@@ -99,6 +101,7 @@ function CoverImage({ src: originalSrc, file, alt = '', className = '', t, iconS
         alt={alt}
         loading="lazy"
         className={loaded ? 'loaded' : ''}
+        style={{ opacity: 0, transition: 'none' }}
         onLoad={event => {
           if (event.currentTarget.naturalWidth > 0) {
             rememberLoadedCoverSource(src);

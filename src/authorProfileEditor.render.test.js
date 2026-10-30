@@ -58,6 +58,10 @@ context.fillStyle = '#304b61'; context.fillRect(0, 0, 120, 160);
 context.fillStyle = '#d6b395'; context.beginPath(); context.ellipse(60, 58, 28, 35, 0, 0, 2 * Math.PI); context.fill();
 context.fillStyle = '#748e83'; context.beginPath(); context.ellipse(60, 150, 48, 50, 0, 0, 2 * Math.PI); context.fill();
 const dataUrl = canvas.toDataURL('image/png');
+const thumbnailCanvas = document.createElement('canvas');
+thumbnailCanvas.width = 1200; thumbnailCanvas.height = 1600;
+thumbnailCanvas.getContext('2d').drawImage(canvas, 0, 0, 1200, 1600);
+const thumbnailDataUrl = thumbnailCanvas.toDataURL('image/png');
 const original = normalizeAuthorProfile({
     provider: 'wikidata', id: 'Q101', name: '가쇼 쇼지', description: '일본의 소설가', birthDate: '1971',
     photoUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Portrait.png',
@@ -80,6 +84,8 @@ const previewImports = [];
 const releasedImages = [];
 const confirmations = [];
 const profilePhotoSaves = [];
+const webSearches = [];
+let webSearchResult = { cancelled: true };
 let confirmationChoice = 'yes';
 let confirmationGate = null;
 let failPreservedPhoto = false;
@@ -99,6 +105,8 @@ const store = {
     useAutomatic: () => true,
 };
 window.electronAPI = {
+    openAuthorWebSearch: async request => { webSearches.push(request); return webSearchResult; },
+    cancelAuthorWebSearch: async () => ({ success: true }),
     showMessage: async options => { await pause(20); confirmations.push(options); if (confirmationGate) await confirmationGate; return confirmationChoice; },
     searchAuthorProfiles: async (query, options) => { searches.push({ source: 'profiles', query, options }); return { success: true, profiles: sourceProfiles || profiles, partial: failedSources.length > 0, failedSources }; },
     searchAuthorPhotos: async value => {
@@ -109,7 +117,7 @@ window.electronAPI = {
             title: '가쇼 쇼지 작가의 프로필 사진과 긴 설명이 함께 표시되는 검색 결과 ' + (start + index),
         })), hasNext: start < 41, nextStart: start < 41 ? start + 20 : null };
     },
-    previewAuthorPhoto: async () => ({ success: true, dataUrl }),
+    previewAuthorPhoto: async () => ({ success: true, dataUrl: thumbnailDataUrl }),
     selectAuthorPhoto: async () => ({ success: true, dataUrl, photo: { id: 'b'.repeat(64), sourceUrl: 'https://example.com/portrait.png', query: '가쇼 쇼지' } }),
     saveAuthorProfilePhoto: async profile => {
         profilePhotoSaves.push(profile);
@@ -174,7 +182,7 @@ const assertPhotoLayout = (upload = false) => {
     check(previewStyle.alignItems === 'center' && previewStyle.textAlign === 'center', 'Photo preview contents must be horizontally centered');
     for (const node of preview.querySelectorAll('.author-editor-photo-stage, .author-editor-photo-caption, .author-editor-credit, .author-editor-edit')) {
         const bounds = node.getBoundingClientRect();
-        if (bounds.width) check(Math.abs((bounds.left + bounds.right - previewBounds.left - previewBounds.right) / 2) < 1.5,
+        if (bounds.width) check(Math.abs((bounds.left + bounds.right) / 2 - (previewBounds.left + preview.clientLeft + preview.clientWidth / 2)) < 1.5,
             'Photo preview items must align with the center of the preview column');
     }
     const editButton = preview.querySelector('.author-editor-edit');
@@ -304,6 +312,21 @@ window.runProfileEditorTests = async () => {
     await until(() => dialog()?.open && selectedTab() === '프로필 사진 찾기', 'Photo overlay should open photo search');
     click(button('검색', dialog()));
     await until(() => dialog().querySelectorAll('.author-editor-result').length >= 4, 'Photo search should include Naver and all profile photo sources');
+    await until(() => [...dialog().querySelectorAll('.is-gallery img')].some(image => image.complete && image.naturalWidth > 1),
+        'Photo thumbnails should load before checking their layout');
+    for (let frame = 0; frame < 40; frame += 1) {
+        for (const image of dialog().querySelectorAll('.is-gallery img')) {
+            if (!image.complete || !image.naturalWidth) continue;
+            const bounds = image.getBoundingClientRect();
+            const container = image.parentElement.getBoundingClientRect();
+            check(Math.abs(bounds.width - container.width) < 1 && Math.abs(bounds.height - container.height) < 1,
+                'Photo thumbnails must keep the circular frame dimensions while loading and resampling: '
+                    + JSON.stringify({ width: bounds.width, height: bounds.height, frameWidth: container.width, frameHeight: container.height }));
+        }
+        await pause(20);
+    }
+    await until(() => [...dialog().querySelectorAll('.is-gallery img')].some(image => image.src.startsWith('blob:') && image.complete),
+        'The thumbnail layout check should exercise a resampled photo');
     await capture('photo-gallery-many');
     assertGalleryContents();
     assertPhotoLayout();
@@ -840,6 +863,56 @@ window.runProfileEditorTests = async () => {
     check(saves.at(-1).id === localProfile.id && saves.at(-1).provider === 'local' && saves.at(-1).name === localProfile.name
         && saves.at(-1).description === localProfile.description && saves.at(-1).photoOverride?.source === 'local',
         'Adding a photo to a manually entered profile must preserve its identity and edited metadata');
+    for (const provider of ['google', 'namuwiki']) {
+        await setFixtureProfile(original);
+        const candidate = normalizeAuthorProfile(provider === 'google' ? {
+            provider, id: 'google:' + 'e'.repeat(64), name: '검색한 작가', description: '구글 검색 결과 요약',
+            sourceUrl: 'https://example.com/author', photoUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:portrait',
+        } : { provider, id: 'namuwiki:검색한 작가', name: '검색한 작가', birthDate: '1970년',
+            photoUrl: 'https://i.namu.wiki/i/portrait.webp', description: '나무위키 작가 소개' });
+        sourceProfiles = [candidate];
+        click(button('프로필 변경'));
+        await until(() => dialog()?.open, 'Web source profile search should open');
+        changeValue(dialog().querySelector('select[aria-label="검색 소스"]'), provider);
+        await pause(0);
+        click(button('검색', dialog()));
+        await until(() => dialog().querySelectorAll('.author-editor-result').length === 1, 'Web source should populate the profile list');
+        click(dialog().querySelector('.author-editor-result'));
+        await until(() => dialog().querySelector('.author-editor-description')?.textContent.includes(candidate.description), 'Web profile should show its snippet or introduction');
+        webSearchResult = { cancelled: true };
+        click(button('검색 창에서 선택', dialog()));
+        await pause(0);
+        await until(() => !button('검색 창에서 선택', dialog()).disabled, 'Closing a search window should re-enable search');
+        check(dialog().querySelector('.author-editor-profile-summary h3')?.textContent === candidate.name,
+            'Cancelling web search must preserve the selected profile');
+        webSearchResult = { profile: { ...candidate, description: '직접 선택한 프로필' } };
+        click(button('검색 창에서 선택', dialog()));
+        await until(() => dialog().querySelector('.author-editor-description')?.textContent.includes('직접 선택한 프로필'), 'A directly chosen profile should appear without saving');
+        check(webSearches.at(-1).source === provider && webSearches.at(-1).kind === 'profile', 'Direct profile search should use the selected source');
+        click(button('이 프로필 편집', dialog()));
+        await until(() => selectedTab() === '프로필 편집', 'A web result should be editable');
+        check(editField('소개').value === '직접 선택한 프로필', 'The selected web introduction should reach the edit draft');
+        click(button('프로필 사진 찾기', dialog()));
+        await until(() => selectedTab() === '프로필 사진 찾기', 'Web photo search should open');
+        click(button('검색', dialog()));
+        await until(() => dialog().querySelectorAll('.author-editor-result').length === 1, 'Web source photos should populate the gallery');
+        check(searches.at(-1).options.photos === true, 'Photo search must reach the image-search path');
+        click(dialog().querySelector('.author-editor-result'));
+        await until(() => !button('이 사진 사용', dialog()).disabled, 'An automatic web photo should become selectable');
+        webSearchResult = { dataUrl, photo: { id: 'e'.repeat(64), source: provider, query: '검색한 작가',
+            sourceUrl: 'https://example.com/chosen.png', imageSourceUrl: candidate.sourceUrl } };
+        click(button('검색 창에서 선택', dialog()));
+        await until(() => imported.at(-1)?.photo?.source === provider && !button('이 사진 사용', dialog()).disabled,
+            'A directly selected web photo should import and become ready to save');
+        check(webSearches.at(-1).kind === 'photo', 'Direct photo search should request image selection');
+        await capture('web-search-' + provider);
+        assertPhotoLayout();
+        click(button('이 사진 사용', dialog()));
+        await until(() => !dialog(), 'A chosen web photo should save');
+        check(saves.at(-1).id === original.id && saves.at(-1).photoOverride?.source === provider
+            && saves.at(-1).imageSourceUrl === candidate.sourceUrl, 'Web photo saving must preserve the existing profile and selected photo source');
+    }
+    sourceProfiles = null;
     await setFixtureProfile(original);
     await selectProfileForSaving(addedProfiles[1]);
     let finishConfirmation;

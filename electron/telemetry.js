@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { classifyRendererErrorMessage, isTelemetryIpcChannelAllowed, isTelemetryRejectionTypeAllowed } from './rendererErrorDiagnostics.js';
 import { isWindowsControlExit } from './processSafety.js';
 
-const EVENTS = new Set(['app_active', 'menu_opened', 'tool_opened', 'feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled', 'viewer_tts_used']);
-const MENUS = new Set(['folder', 'organizer', 'renamer', 'metadata', 'tools', 'sharing', 'releases', 'settings']);
+const EVENTS = new Set(['app_active', 'menu_opened', 'tool_opened', 'feature_used', 'feature_started', 'feature_completed', 'feature_failed', 'feature_cancelled', 'viewer_tts_used']);
+const MENUS = new Set(['folder', 'dashboard', 'authors', 'annotations', 'organizer', 'renamer', 'metadata', 'tools', 'sharing', 'releases', 'settings']);
 const TOOLS = new Set(['text-cleaner', 'epub-editor', 'cover-editor', 'epub-optimizer']);
-const FEATURES = new Set(['archive-organizer', 'archive-renamer', 'metadata-save', 'text-cleaner', 'epub-export', 'epub-save', 'epub-import', 'epub-optimize', 'viewer-open', 'viewer-tts', 'sharing-start']);
+const FEATURES = new Set(['archive-organizer', 'archive-renamer', 'metadata-save', 'text-cleaner', 'epub-export', 'epub-save', 'epub-import', 'epub-optimize', 'viewer-open', 'viewer-tts', 'sharing-start', 'daily-recommendation-refresh']);
 const FORMATS = new Set(['comic', 'epub', 'pdf', 'text', 'audio']);
 const APP_LANGUAGES = new Set(['ko', 'en', 'ja']);
 const TTS_MODELS = new Map([
@@ -418,6 +418,7 @@ export function createTelemetry(options = {}) {
             if (input.event === 'menu_opened' && !properties.menu) return false;
             if (input.event === 'tool_opened' && !properties.tool) return false;
             if (input.event.startsWith('feature_') && !properties.feature) return false;
+            if (input.event === 'feature_used' && properties.feature !== 'daily-recommendation-refresh') return false;
             if (input.event === 'viewer_tts_used' && (properties.feature !== 'viewer-tts'
                 || !['epub', 'text'].includes(properties.format) || !properties.tts_model)) return false;
             const day = new Date(now()).toISOString().slice(0, 10);

@@ -205,6 +205,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // API 관련
   fetchMetadata: (options) => ipcRenderer.invoke('api:fetch', options),
     searchAuthorProfiles: (name, options) => ipcRenderer.invoke('authors:searchProfiles', name, options),
+    openAuthorWebSearch: request => ipcRenderer.invoke('authors:openWebSearch', request),
+    cancelAuthorWebSearch: () => ipcRenderer.invoke('authors:cancelWebSearch'),
     saveAuthorProfilePhoto: (profile, options) => ipcRenderer.invoke('authors:saveProfilePhoto', profile, options),
     importAuthorPhoto: (request) => ipcRenderer.invoke('authors:importPhoto', request),
     searchAuthorPhotos: (request) => ipcRenderer.invoke('authors:searchPhotos', request),

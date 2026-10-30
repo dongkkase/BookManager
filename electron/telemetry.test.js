@@ -114,6 +114,55 @@ test('usage events include only the supported app language from settings', async
     }
 });
 
+test('dashboard navigation and recommendation refresh clicks use only fixed identifiers', async t => {
+    const { telemetry, requests } = setup(t, {}, { telemetry_usage_stats: true });
+    const privateData = {
+        bookId: 'private-book-id', title: 'Private Book', author: 'Private Author',
+        path: '/private/book.epub', coverUrl: 'https://private.example/cover.jpg',
+        result: { books: ['Private Book'] }, properties: { email: 'private@example.test' },
+    };
+    for (const menu of ['dashboard', 'authors', 'annotations']) {
+        assert.equal(telemetry.trackTelemetryEvent({ event: 'menu_opened', menu, source: 'navigation', ...privateData }), true);
+    }
+    for (let index = 0; index < 2; index += 1) {
+        assert.equal(telemetry.trackTelemetryEvent({ event: 'feature_used', feature: 'daily-recommendation-refresh', source: 'renderer', ...privateData }), true);
+    }
+    for (const feature of ['viewer-open', 'text-cleaner', 'daily-recommendation-private', undefined]) {
+        assert.equal(telemetry.trackTelemetryEvent({ event: 'feature_used', feature }), false);
+    }
+    assert.equal(telemetry.trackTelemetryEvent({ event: 'menu_opened', menu: 'Private Book' }), false);
+    await telemetry.flushTelemetry();
+    const events = requests.map(request => JSON.parse(request.body));
+    assert.deepEqual(events.map(event => event.event), ['app_active', 'menu_opened', 'menu_opened', 'menu_opened', 'feature_used', 'feature_used']);
+    assert.deepEqual(events.filter(event => event.event === 'menu_opened').map(event => event.properties.menu), ['dashboard', 'authors', 'annotations']);
+    for (const event of events.filter(event => event.event === 'feature_used')) {
+        assert.deepEqual(event.properties, {
+            feature: 'daily-recommendation-refresh', source: 'renderer',
+            distinct_id: event.properties.distinct_id, app_version: '3.2.1', app_language: 'ko', os: process.platform,
+            $process_person_profile: false, $geoip_disable: true, $ip: null,
+        });
+    }
+    assert.doesNotMatch(JSON.stringify(events), /private|Private|bookId|title|author"|path|coverUrl|result|email/);
+});
+
+test('dashboard navigation and recommendation refresh do not transmit without usage consent or after revocation', async t => {
+    const { telemetry, requests, storageDir } = setup(t, {}, { telemetry_error_reports: true, telemetry_usage_stats: false });
+    const inputs = [
+        ...['dashboard', 'authors', 'annotations'].map(menu => ({ event: 'menu_opened', menu })),
+        { event: 'feature_used', feature: 'daily-recommendation-refresh' },
+    ];
+    for (const input of inputs) assert.equal(telemetry.trackTelemetryEvent(input), false);
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 0);
+    assert.deepEqual(fs.readdirSync(storageDir), []);
+    telemetry.updateTelemetryConsent(CONSENT);
+    for (const input of inputs) assert.equal(telemetry.trackTelemetryEvent(input), true);
+    telemetry.updateTelemetryConsent({ telemetry_error_reports: true, telemetry_usage_stats: false });
+    for (const input of inputs) assert.equal(telemetry.trackTelemetryEvent(input), false);
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 0);
+});
+
 test('language changes reach subsequent usage events only after settings are saved', async t => {
     let config = { ...CONSENT, language: 'ko' };
     let saveSucceeds = false;

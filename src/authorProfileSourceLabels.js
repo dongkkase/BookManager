@@ -2,12 +2,13 @@ const COMMON_SOURCE_LABELS = {
     wikidata: 'Wikidata',
     wikipedia: 'Wikipedia',
     openlibrary: 'Open Library',
+    google: 'Google',
 };
 
 const SOURCE_LABELS = {
-    ko: { ...COMMON_SOURCE_LABELS, aladin: '알라딘', kyobo: '교보문고', cartoon: '한국만화가협회', kmas: '한국웹툰', naver: '네이버' },
-    en: { ...COMMON_SOURCE_LABELS, aladin: 'Aladin', kyobo: 'Kyobo Book Centre', cartoon: 'Korea Cartoonists Association', kmas: 'Korean Webtoons', naver: 'Naver' },
-    ja: { ...COMMON_SOURCE_LABELS, aladin: 'アラジン', kyobo: '教保文庫', cartoon: '韓国漫画家協会', kmas: '韓国ウェブトゥーン', naver: 'Naver' },
+    ko: { ...COMMON_SOURCE_LABELS, namuwiki: '나무위키', aladin: '알라딘', kyobo: '교보문고', cartoon: '한국만화가협회', kmas: '한국웹툰', naver: '네이버' },
+    en: { ...COMMON_SOURCE_LABELS, namuwiki: 'Namuwiki', aladin: 'Aladin', kyobo: 'Kyobo Book Centre', cartoon: 'Korea Cartoonists Association', kmas: 'Korean Webtoons', naver: 'Naver' },
+    ja: { ...COMMON_SOURCE_LABELS, namuwiki: 'ナムウィキ', aladin: 'アラジン', kyobo: '教保文庫', cartoon: '韓国漫画家協会', kmas: '韓国ウェブトゥーン', naver: 'Naver' },
 };
 
 export function authorProfileSourceLabels(language = 'ko') {

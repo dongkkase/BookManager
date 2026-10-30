@@ -1,5 +1,8 @@
 const { spawn } = require('node:child_process');
 const electron = require('electron');
+const { buildMacCursorCompat } = require('./buildMacCursorCompat.cjs');
+
+buildMacCursorCompat();
 
 const useUnsafeDevNodeIntegration = process.argv.includes('--unsafe-dev-node');
 const env = { ...process.env };

@@ -38,6 +38,7 @@ import { MultiRenameDialog } from '../components/MultiRenameDialog';
 import { ReadiveTransferDialog } from '../components/ReadiveTransferDialog';
 import { resolveReadivePaths } from '../readiveTransferPolicy';
 import { BOOKMANAGER_PATHS_MIME } from '../appShell';
+import { trackTelemetry } from '../telemetry.js';
 import { isEpubOptimizerPath, isTextCleanerPath } from '../fileTools';
 import { extractCoreTitle } from '../utils/folderUtils';
 import {
@@ -1641,12 +1642,15 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     void loadRecentReading();
   }, [cancelFolderLocationRestore, clearSelection, loadRecentReading, rememberCurrentFolderLocation, resetSearchQuery, saveFolderPage]);
 
-    const handleSelectReadingList = useCallback((kind, collectionId = '') => {
+    const handleSelectReadingList = useCallback((kind, collectionId = '', source = 'navigation') => {
         collectionFolderOriginRef.current = null;
         rememberCurrentFolderLocation();
         cancelFolderLocationRestore();
         folderNavigationRequestRef.current += 1;
         setFolderSource(kind);
+        if (source && kind !== readingListKind && ['dashboard', 'authors', 'annotations'].includes(kind)) {
+            trackTelemetry('menu_opened', { menu: kind, source });
+        }
         setSelectedCollectionId(collectionId);
         saveFolderPage(kind, collectionId);
         clearSelection();
@@ -2201,7 +2205,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     if (READING_LIST_KINDS.includes(savedSource)) {
         const missingCollection = savedSource === 'collection' && (!savedCollectionId
             || !readingLists.overviewError && !readingLists.collections.some(collection => collection.collectionId === savedCollectionId));
-        handleSelectReadingList(missingCollection ? 'collections' : savedSource, savedSource === 'collection' && !missingCollection ? savedCollectionId : '');
+        handleSelectReadingList(missingCollection ? 'collections' : savedSource, savedSource === 'collection' && !missingCollection ? savedCollectionId : '', null);
         return undefined;
     }
     const candidates = [
@@ -2213,7 +2217,7 @@ function FolderTab({ config, saveConfig, t, showToast }) {
     ].filter(Boolean);
     const uniqueCandidates = [...new Set(candidates)];
     if (uniqueCandidates.length === 0) {
-        handleSelectReadingList('dashboard');
+        handleSelectReadingList('dashboard', '', null);
         return undefined;
     }
 

@@ -3,8 +3,9 @@ import { BoundedMemoryCache } from './boundedMemoryCache.js';
 import { requestAuthorProfileText } from './authorProfileWebRequest.js';
 import { searchAladinAuthors, searchKyoboAuthors } from './bookstoreAuthorProfiles.js';
 import { searchCartoonAuthors, searchKmasAuthors } from './comicsAuthorProfiles.js';
+import { createGoogleSearchCancellationCheck, searchGoogleAuthors, searchNamuAuthors } from './authorWebProfiles.js';
 
-const WEB_SOURCES = { aladin: searchAladinAuthors, kyobo: searchKyoboAuthors, cartoon: searchCartoonAuthors, kmas: searchKmasAuthors };
+const WEB_SOURCES = { aladin: searchAladinAuthors, kyobo: searchKyoboAuthors, cartoon: searchCartoonAuthors, kmas: searchKmasAuthors, google: searchGoogleAuthors, namuwiki: searchNamuAuthors };
 const SOURCE_IDS = ['wikidata', 'wikipedia', 'openlibrary', ...Object.keys(WEB_SOURCES)];
 
 const PROFILE_LIMIT = 8;
@@ -21,6 +22,7 @@ const ERROR_MESSAGES = {
     AUTHOR_PROFILE_INVALID_QUERY: 'Enter an author name of up to 200 characters.',
     AUTHOR_PROFILE_INVALID_SOURCE: 'Choose an available author profile source.',
     AUTHOR_PROFILE_ACCESS_BLOCKED: 'The author profile source is blocking this request.',
+    AUTHOR_PROFILE_CANCELLED: 'Author profile search was cancelled.',
     AUTHOR_PROFILE_UNTRUSTED_SENDER: 'Author profiles are only available in the main library window.',
     AUTHOR_PROFILE_RATE_LIMIT: 'The author profile service is receiving too many requests. Try again later.',
     AUTHOR_PROFILE_TIMEOUT: 'The author profile request timed out. Try again later.',
@@ -250,7 +252,7 @@ function responsePages(data) {
     return data.query.pages;
 }
 
-export function createAuthorProfileService({ requestJson = requestAuthorProfilesJson, requestText = requestAuthorProfileText, webSearchers = WEB_SOURCES, resultCache, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+export function createAuthorProfileService({ requestJson = requestAuthorProfilesJson, requestText = requestAuthorProfileText, webSearchers = WEB_SOURCES, resultCache, getMainWindow, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
     const cache = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 1024 * 1024, now });
     const responses = new BoundedMemoryCache({ maxEntries: 128, maxBytes: 4 * 1024 * 1024, now });
     const providers = new Map();
@@ -423,7 +425,7 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
             const allSources = options?.allSources === true || source !== 'all';
             if (allSources && source === 'all') {
                 const sources = ['wikidata', 'wikipedia', 'openlibrary', ...Object.keys(webSearchers)];
-                const settled = await Promise.allSettled(sources.map(provider => service.search(query, { source: provider })));
+                const settled = await Promise.allSettled(sources.map(provider => service.search(query, { source: provider, photos: options?.photos === true })));
                 const failedSources = [];
                 const profiles = [];
                 let firstError;
@@ -451,7 +453,8 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
                 return sorted;
             }
             const includes = value => source === 'all' || source === value;
-            const cacheKey = `${allSources ? source : 'auto'}:${query.toLocaleLowerCase('en-US')}`;
+            const isCancelled = source === 'google' ? createGoogleSearchCancellationCheck(getMainWindow?.()) : undefined;
+            const cacheKey = `${allSources ? source : 'auto'}${source === 'google' && options?.photos ? ':photos' : ''}:${query.toLocaleLowerCase('en-US')}`;
             const load = async () => {
                 const language = queryLanguage(query);
                 const errors = [];
@@ -475,7 +478,8 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
                         const responseKeys = new Set();
                         let successful = false;
                         try {
-                            const found = await search(query, (url, requestOptions = {}) => request(url, requestOptions, responseKeys));
+                            const found = await search(query, (url, requestOptions = {}) => request(url, requestOptions, responseKeys),
+                                { photos: options?.photos === true, getMainWindow, isCancelled });
                             if (found.partial) failedSources.set(provider, { source: provider, code: 'AUTHOR_PROFILE_REQUEST_FAILED' });
                             successful = !found.partial;
                             return found.slice(0, PROFILE_LIMIT);
@@ -525,7 +529,7 @@ export function createAuthorProfileService({ requestJson = requestAuthorProfiles
     return service;
 }
 
-export function registerAuthorProfilesIpc({ ipcMain, getMainWindow, resultCache, service = createAuthorProfileService({ resultCache }) }) {
+export function registerAuthorProfilesIpc({ ipcMain, getMainWindow, resultCache, service = createAuthorProfileService({ resultCache, getMainWindow }) }) {
     ipcMain.handle('authors:searchProfiles', async (event, name, options) => {
         try {
             const window = getMainWindow?.();
@@ -534,6 +538,7 @@ export function registerAuthorProfilesIpc({ ipcMain, getMainWindow, resultCache,
                 throw profileError('AUTHOR_PROFILE_UNTRUSTED_SENDER');
             }
             const sourceOptions = { allSources: options?.allSources === true };
+            if (options?.photos === true) sourceOptions.photos = true;
             if (options?.source !== undefined) sourceOptions.source = options.source;
             const profiles = await service.search(name, sourceOptions);
             return { success: true, profiles, ...(profiles.partial ? { partial: true, failedSources: profiles.failedSources || [] } : {}) };

@@ -112,6 +112,7 @@ ZIP 일괄 갱신이 불완전한 끝 레코드·주석이나 지원하지 않�
 | `app_active` | 사용 통계 전송 활성화 또는 UTC 날짜가 바뀐 뒤 첫 관측 활동 | 공통 속성 |
 | `menu_opened` | 사용자가 메뉴를 선택하거나 기능 이동으로 메뉴가 전환됨 | `menu`, `source` |
 | `tool_opened` | 파일 도구에서 사용 가능한 도구를 열음 | `tool`, `source` |
+| `feature_used` | 오늘의 추천에서 사용자가 새로운 추천 버튼을 누름. 작업 결과와 별도로 집계 | `feature = daily-recommendation-refresh`, `source` |
 | `feature_started` | 계측된 작업 시작 | `feature`, 선택적인 `format` |
 | `feature_completed` | 계측된 작업이 정상 결과를 반환함 | `feature`, `duration_ms`, 선택적인 `format` |
 | `feature_failed` | 계측된 작업이 실패를 반환하거나 예외 발생 | `feature`, `duration_ms` |
@@ -127,6 +128,7 @@ ZIP 일괄 갱신이 불완전한 끝 레코드·주석이나 지원하지 않�
 | 식별자 | 계측 대상과 해석 |
 | --- | --- |
 | 메뉴 `folder`, `organizer`, `renamer`, `metadata`, `tools`, `sharing`, `releases`, `settings` | 각 메뉴로 이동하거나 설정을 열기 |
+| 메뉴 `dashboard`, `authors`, `annotations` | 폴더 화면에서 대시보드·저자·주석 페이지를 선택해 이동하기. 같은 페이지 반복 선택과 시작 시 자동 복원은 제외 |
 | 도구 `text-cleaner`, `epub-editor`, `cover-editor`, `epub-optimizer` | 텍본 정리기·EPUB 제작 에디터·표지 추가 및 교체·EPUB 용량 최적화 열기 |
 | 기능 `archive-organizer`, `archive-renamer` | 압축 구조 정리·내부 파일명 변경 실행 |
 | 기능 `metadata-save` | 메타데이터 저장 작업 |
@@ -136,8 +138,11 @@ ZIP 일괄 갱신이 불완전한 끝 레코드·주석이나 지원하지 않�
 | 기능 `viewer-open` | 일반 내장 뷰어 세션 생성과 열기 요청. 외부 뷰어·미리보기·이전/다음 책 이동은 제외하며, 책의 렌더링 완료나 읽기 완료를 의미하지 않음 |
 | 기능 `viewer-tts` | EPUB·텍스트 뷰어의 낭독 또는 선택한 텍스트 듣기에서 실제 재생한 엔진·모델. 전용 이벤트 `viewer_tts_used`로 전송 |
 | 기능 `sharing-start` | 공유 서버 시작. 실제 접속자 수나 파일 전송량을 의미하지 않음 |
+| 기능 `daily-recommendation-refresh` | 오늘의 추천의 새로운 추천 버튼 클릭. `feature_used`로 기록하며 자동 갱신·슬라이드 이동·좌우 탐색은 제외. 추천 성공·실패·취소를 나타내지 않음 |
 
 내장 뷰어의 모든 버튼·책갈피 등 아직 연결되지 않은 기능을 사용하지 않는 기능으로 판단하면 안 됩니다. 파일 도구 카탈로그의 다른 작업 탭 바로가기는 대상 메뉴의 `menu_opened`로 집계합니다.
+
+대시보드·저자·주석 페이지와 새로운 추천 통계는 고정 식별자만 전송합니다. 저자명, 주석 본문, 책 제목·경로, 추천 목록·선호 설정은 포함하지 않습니다. 기존 사용 통계 동의·개발 실행 제한·전송량 제한을 그대로 적용하며, 이 계측이 포함된 앱을 배포한 이후의 이용부터 수집됩니다.
 
 EPUB 용량 최적화는 도구를 여는 횟수와 실제 최적화 실행을 구분합니다. `epub-optimize`는 최적화가 시작된 EPUB 파일마다 시작·결과를 기록하므로 여러 파일을 일괄 실행하면 파일 수만큼 집계됩니다. 분석과 취소 요청 자체는 별도 실행으로 세지 않습니다. 파일명·경로·자료 목록·작업 옵션·절감 용량은 전송하지 않습니다. 실행 통계는 이 계측을 포함한 앱을 배포한 뒤부터 수집되며, 기존 도구 열기 기록으로 과거 실행 횟수를 복원하지 않습니다.
 
@@ -176,14 +181,14 @@ TTS 엔진과 모델은 다음 허용 값만 전송합니다.
 | 인사이트 | 현재 집계 내용 |
 | --- | --- |
 | 활성 설치 | `app_active`의 기간 전체 `uniqExact(distinct_id)` |
-| 메뉴·도구 사용 | 메뉴 8개와 도구 4개별 열기 횟수, 고유 사용 설치 수, 활성 설치 대비 사용 비율 |
+| 메뉴·도구·추천 사용 | 메뉴 11개와 도구 4개의 열기 및 새로운 추천 버튼의 클릭 횟수, 고유 사용 설치 수, 활성 설치 대비 사용 비율 |
 | 기능 사용과 작업 결과 | 계측된 기능 10개별 고유 사용 설치 수와 시작·완료·실패·취소 건수 |
 
-메뉴·도구 표는 위 계측 목록의 메뉴 8개와 도구 4개를 고정 목록으로 합친 뒤 이벤트 집계를 `LEFT JOIN`하여 사용량이 0인 항목도 표시합니다. 표지 추가 및 교체는 `tool_opened`의 `tool = cover-editor`로 페이지 열기를 집계하며 표지 저장 실행 횟수를 의미하지 않습니다. EPUB 용량 최적화의 열기는 `tool = epub-optimizer`로 집계합니다. 기능 표는 실제 계측된 기능 10개의 고정 목록을 사용하며 `EPUB 용량 최적화 (파일별 실행)`은 `feature = epub-optimize`를 집계합니다. 기능 사용 설치 수는 `feature_started`, `feature_completed`, `feature_failed`, `feature_cancelled` 중 하나라도 관측된 고유 `distinct_id` 수입니다. 시작 이벤트만을 기준으로 한 수와는 다를 수 있습니다.
+메뉴·도구·추천 표는 위 계측 목록의 메뉴 11개와 도구 4개, 새로운 추천 버튼 1개를 고정 목록으로 합친 뒤 이벤트 집계를 `LEFT JOIN`하여 사용량이 0인 항목도 표시합니다. 대시보드·저자·주석은 `menu_opened`의 `menu = dashboard`, `authors`, `annotations`로 집계합니다. 새로운 추천은 `feature_used`의 `feature = daily-recommendation-refresh`로 버튼 클릭을 집계하며 추천 성공·실패·취소를 의미하지 않습니다. 표지 추가 및 교체는 `tool_opened`의 `tool = cover-editor`로 페이지 열기를 집계하며 표지 저장 실행 횟수를 의미하지 않습니다. EPUB 용량 최적화의 열기는 `tool = epub-optimizer`로 집계합니다. 기능 표는 실제 계측된 기능 10개의 고정 목록을 사용하며 `EPUB 용량 최적화 (파일별 실행)`은 `feature = epub-optimize`를 집계합니다. 기능 사용 설치 수는 `feature_started`, `feature_completed`, `feature_failed`, `feature_cancelled` 중 하나라도 관측된 고유 `distinct_id` 수입니다. 시작 이벤트만을 기준으로 한 수와는 다를 수 있습니다.
 
 기간과 테스트 버전 제외 조건이 SQL에 직접 들어 있으므로 대시보드 상단의 날짜·속성 필터를 바꾸어도 현재 세 인사이트에 적용되지 않습니다. 다른 기간이나 특정 `app_version`·`os`를 분석하려면 해당 SQL 조건을 수정하거나 별도 인사이트를 만듭니다.
 
-메뉴·도구 사용 비율은 해당 항목을 쓴 고유 설치 수를 같은 기간의 활성 설치 수로 나눕니다. 일별 고유 수를 합산하면 같은 설치가 중복되므로 기간 전체 고유 수로 계산합니다. 창 종료·전송 누락·기간 경계 때문에 시작과 종료 횟수가 맞지 않을 수 있습니다. 작업 ID를 보내지 않아 개별 실행을 정확히 짝지은 감사 기록으로는 사용할 수 없습니다.
+메뉴·도구·추천 사용 비율은 해당 항목을 쓴 고유 설치 수를 같은 기간의 활성 설치 수로 나눕니다. 일별 고유 수를 합산하면 같은 설치가 중복되므로 기간 전체 고유 수로 계산합니다. 창 종료·전송 누락·기간 경계 때문에 시작과 종료 횟수가 맞지 않을 수 있습니다. 작업 ID를 보내지 않아 개별 실행을 정확히 짝지은 감사 기록으로는 사용할 수 없습니다.
 
 추가 분석으로는 버전·OS별 추이, `feature_completed`의 `duration_ms` 중앙값·상위 백분위, 다른 날의 반복 사용을 별도 Trends 인사이트로 만들 수 있습니다. 성공률도 완료 건수를 완료·실패·취소 건수의 합으로 나눈 참고 지표로 추가할 수 있으며 시작 건수와 함께 해석합니다. 이 항목들은 현재 세 인사이트에 포함되어 있지 않습니다. 집계와 속성별 분리는 [Trends 공식 문서](https://posthog.com/docs/product-analytics/trends/overview)를 참고합니다.
 
@@ -207,6 +212,8 @@ node --test electron/rendererDiagnostics.test.js electron/rendererErrorDiagnosti
 node --test electron/processSafety.test.js electron/viewerProcessDiagnostics.test.js
 node --test electron/metadataDiagnostics.test.js electron/zipOpenRetry.test.js
 node --test electron/viewerTelemetry.test.js src/viewerTtsTelemetry.test.js src/viewerTtsHistory.test.js src/viewerSelectionToolbar.test.js
+BOOKMANAGER_RENDERER_TESTS=1 BOOKMANAGER_DASHBOARD_TELEMETRY_ONLY=1 node --test src/readingDashboard.render.test.js
+BOOKMANAGER_RENDERER_TESTS=1 node --test src/dailyRecommendationCarousel.render.test.js
 npx vite build
 ```
 

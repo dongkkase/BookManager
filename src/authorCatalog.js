@@ -151,14 +151,14 @@ export function normalizeAuthorProfile(profile) {
     const override = profile.photoOverride;
     const overrideSourceUrl = publicPhotoSourceUrl(override?.sourceUrl);
     const overrideQuery = plainText(override?.query).replace(/\s+/g, ' ').slice(0, 200);
-    const overrideSource = ['local', 'naver', 'wikidata', 'wikipedia', 'openlibrary', 'aladin', 'kyobo', 'cartoon', 'kmas'].includes(override?.source) ? override.source : '';
+    const overrideSource = ['local', 'naver', 'wikidata', 'wikipedia', 'openlibrary', 'aladin', 'kyobo', 'cartoon', 'kmas', 'google', 'namuwiki'].includes(override?.source) ? override.source : '';
     const localOverride = overrideSource === 'local' && !override.sourceUrl;
     const photoOverride = typeof override?.id === 'string' && /^[a-f\d]{64}$/.test(override.id)
         && (localOverride || overrideSourceUrl && overrideQuery)
         ? {
             id: override.id, sourceUrl: overrideSourceUrl, query: overrideQuery,
             ...(overrideSource ? { source: overrideSource } : {}),
-            ...(['wikidata', 'wikipedia', 'openlibrary', 'aladin', 'kyobo', 'cartoon', 'kmas'].includes(overrideSource) ? {
+            ...(['wikidata', 'wikipedia', 'openlibrary', 'aladin', 'kyobo', 'cartoon', 'kmas', 'google', 'namuwiki'].includes(overrideSource) ? {
                 imageSourceUrl: publicPhotoSourceUrl(override.imageSourceUrl),
                 imageArtist: plainText(override.imageArtist), imageLicense: plainText(override.imageLicense),
             } : {}),
@@ -183,6 +183,10 @@ export function normalizeAuthorProfile(profile) {
         sourceUrl = 'https://www.cartoon.or.kr/all-member';
     } else if (provider === 'kmas' && /^kmas:\d{10}$/.test(profile.id)) {
         sourceUrl = `https://www.kmas.or.kr/archive/writrList/detail/${profile.id.slice(5)}`;
+    } else if (provider === 'google' && /^google:[a-f\d]{64}$/.test(profile.id)) {
+        sourceUrl = publicPhotoSourceUrl(profile.sourceUrl);
+    } else if (provider === 'namuwiki' && /^namuwiki:[^\u0000-\u001f\u007f:#?\\/]{1,300}$/.test(profile.id)) {
+        sourceUrl = `https://namu.wiki/w/${encodeURIComponent(profile.id.slice(9))}`;
     } else if (provider === 'naver' && photoOverride && profile.id === photoOverride.id) {
         sourceUrl = `https://search.naver.com/search.naver?where=image&query=${encodeURIComponent(photoOverride.query)}`;
     }
@@ -212,6 +216,10 @@ export function normalizeAuthorProfile(profile) {
             if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
                 || /[\u0000-\u001f\u007f\\]/.test(decodeURIComponent(url.pathname))) return '';
             const id = profile.id.slice(profile.id.indexOf(':') + 1);
+            if (provider === 'google' && /^encrypted-tbn\d+\.gstatic\.com$/.test(url.hostname)
+                && url.pathname === '/images' && url.searchParams.has('q')) return url.href;
+            if (provider === 'namuwiki' && url.hostname === 'i.namu.wiki' && !url.search
+                && /^\/i\/[\w-]+\.(?:jpe?g|png|webp|gif)$/i.test(url.pathname)) return url.href;
             if (provider === 'aladin' && url.hostname === 'image.aladin.co.kr' && !url.search
                 && new RegExp(`^/Author/Photo/${id}/${id}(?:_[0-9]+)?\\.(?:jpe?g|png|webp)$`, 'i').test(url.pathname)) return url.href;
             if (provider === 'kyobo' && url.hostname === 'contents.kyobobook.co.kr'
@@ -224,7 +232,7 @@ export function normalizeAuthorProfile(profile) {
             return '';
         } catch { return ''; }
     };
-    const webSource = ['aladin', 'kyobo', 'cartoon', 'kmas'].includes(provider);
+    const webSource = ['aladin', 'kyobo', 'cartoon', 'kmas', 'google', 'namuwiki'].includes(provider);
     if (webSource) photoUrl = safeSourcePhotoUrl(profile.photoUrl);
     else if (provider !== 'openlibrary' && provider !== 'local') photoUrl = safeWikimediaUrl(profile.photoUrl, true);
     const saved = profile.storedPhoto;

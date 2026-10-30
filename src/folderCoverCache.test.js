@@ -264,3 +264,11 @@ test('일반 재스캔에서도 수정된 폴더의 이전 표지는 해제한�
     assert.equal(result[0].cover_file_mtime, 0);
     assert.equal(result[0].cover_file_size, 0);
 });
+
+test('뒤쪽 폴더 표지는 일반 스캔에서 유지하고 폴더 변경과 새 미리보기에서 갱신한다', () => {
+    const cached = { ...directory, folder_covers: [{ cover: 'second.jpg', cover_file_path: '/books/Series/2.cbz' }] };
+    const scanned = { path: directory.path, isDirectory: true, mtime: directory.mtime, cover: '', thumb_path: '' };
+    assert.deepEqual(mergeFolderFilePreservingCover(cached, scanned).folder_covers, cached.folder_covers);
+    assert.deepEqual(mergeFolderFilePreservingCover(cached, { ...scanned, mtime: 3000 }).folder_covers, []);
+    assert.deepEqual(mergeFolderFilePreservingCover(cached, { ...scanned, cover_file_path: '', folder_covers: [] }).folder_covers, []);
+});

@@ -14,6 +14,7 @@ test('대시보드가 서재·최근 읽음을 연결하고 숨은 파일 작업
         return;
     }
     const projectRoot = fileURLToPath(new URL('..', import.meta.url));
+    const telemetryOnly = process.env.BOOKMANAGER_DASHBOARD_TELEMETRY_ONLY === '1';
     const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'reading-dashboard-render-')));
     const captureDirectory = process.env.BOOKMANAGER_DASHBOARD_CAPTURE_DIR;
     if (captureDirectory) await fs.mkdir(captureDirectory, { recursive: true });
@@ -77,14 +78,17 @@ const requests = [];
 const savedConfig = [];
 const viewerPaths = [];
 const previewPaths = [];
+const coverPreviewPaths = [];
 const previewDescription = '일상에서 마주친 풍경과 오래 기억하고 싶은 순간을 담았습니다. 익숙한 장소를 새로운 시선으로 바라보며 천천히 읽어가는 이야기입니다. 작은 발견들이 모여 오늘의 시간을 조금 다르게 만듭니다.';
 const physicalActions = [];
 const navigations = [];
 const settingsRequests = [];
+const telemetryEvents = [];
 const recentListeners = new Set();
 window.addEventListener('bookmanager:navigate', event => navigations.push(event.detail));
 window.addEventListener('bookmanager:open-settings', event => settingsRequests.push(event.detail));
 window.electronAPI = {
+    trackTelemetry: payload => { telemetryEvents.push(payload); },
     getRoots: async () => [], getSpecialPaths: async () => ({}), getLibraryScanStates: async () => ({}),
     getReadingStates: async paths => {
         if (failReadingStates) throw new Error('Reading states unavailable');
@@ -106,7 +110,7 @@ window.electronAPI = {
         const file = [third, fourth].find(entry => entry.path === filePath);
         return file ? { success: true, file: { ...file, cover: file.cover || cover.replace('BOOK%20JOURNAL', encodeURIComponent(file.title.slice(0, 10))), description: previewDescription } } : { success: false };
     },
-    loadMetadataCover: async () => cover,
+    loadMetadataCover: async filePath => { coverPreviewPaths.push(filePath); return cover; },
     openInternalViewer: async filePath => { viewerPaths.push(filePath); return { success: true }; },
     showInFolder: async filePath => { physicalActions.push(['reveal', filePath]); return { success: true }; },
     deleteFiles: async paths => { physicalActions.push(['delete', paths]); return { success: true }; },
@@ -136,9 +140,9 @@ window.electronAPI = {
 applyMotionPreference('reduced');
 const root = createRoot(document.getElementById('root'));
 let mountKey = 0;
-function mount(libraries = ['/fixture'], lastFolderPath = '/fixture', remount = true) {
+function mount(libraries = ['/fixture'], lastFolderPath = '/fixture', remount = true, lastSource) {
     if (remount) mountKey += 1;
-    root.render(<FolderTab key={mountKey} config={{ libraries, language: 'ko', folder_view_mode: 'table', folder_last_path: lastFolderPath }}
+    root.render(<FolderTab key={mountKey} config={{ libraries, language: 'ko', folder_view_mode: 'table', folder_last_path: lastFolderPath, folder_last_source: lastSource }}
         t={t} saveConfig={async patch => { savedConfig.push(patch); }} showToast={() => {}} />);
 }
 const dashboard = () => document.querySelector('.reading-dashboard');
@@ -181,12 +185,14 @@ async function refresh() {
     await frames();
 }
 async function verifyRecommendationBackgroundRefresh(trigger, label) {
+    const refreshEvents = () => telemetryEvents.filter(event => event.event === 'feature_used' && event.feature === 'daily-recommendation-refresh');
+    const beforeRefreshEvents = refreshEvents().length;
     const card = recommendation();
     const filePath = card.dataset.filePath;
     const readButton = recommendationButton();
     const description = card.querySelector('.reading-dashboard-recommendation-description');
-    const coverButton = card.querySelector('.reading-dashboard-recommendation-cover');
-    const coverImage = coverButton?.querySelector('img');
+    const coverButton = card.querySelector('.reading-dashboard-recommendation-cover-trigger');
+    const coverImage = card.querySelector('.reading-dashboard-recommendation-cover img');
     check(readButton && description && coverImage, label + ': recommendation preview is incomplete');
     const sourceCover = new Image();
     sourceCover.src = cover;
@@ -211,8 +217,9 @@ async function verifyRecommendationBackgroundRefresh(trigger, label) {
     });
     observer.observe(card, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['src'], attributeOldValue: true });
     const assertPreserved = phase => {
+        check(refreshEvents().length === beforeRefreshEvents, label + ': background validation tracked a recommendation refresh');
         check(recommendation() === card && card.dataset.filePath === filePath, label + ': ' + phase + ' replaced the current recommendation');
-        check(recommendationButton() === readButton && !readButton.disabled && card.querySelector('.reading-dashboard-recommendation-cover') === coverButton,
+        check(recommendationButton() === readButton && !readButton.disabled && card.querySelector('.reading-dashboard-recommendation-cover-trigger') === coverButton,
             label + ': ' + phase + ' replaced reading controls with loading content');
         check(card.querySelector('.reading-dashboard-recommendation-description') === description && description.textContent === previewDescription,
             label + ': ' + phase + ' lost the loaded description');
@@ -282,6 +289,40 @@ window.previewDashboardSetupTheme = async theme => {
     await frames(5);
     verifyLayout();
 };
+window.runDashboardTelemetryTests = async () => {
+    const beforeTelemetry = telemetryEvents.length;
+    const menuEvents = () => telemetryEvents.slice(beforeTelemetry).filter(event => event.event === 'menu_opened');
+    const selected = kind => sidebarButton(t('reading_lists.' + kind))?.getAttribute('aria-current') === 'page';
+    const expected = [];
+    const initialPanel = document.querySelector('.folder-tab');
+    mount();
+    await until(() => document.querySelector('.folder-tab') !== initialPanel && row(first)
+        && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'false', 'Telemetry fixture did not load');
+    check(menuEvents().length === 0, 'Initial folder restore tracked a menu opening');
+    for (const kind of ['dashboard', 'authors', 'annotations']) {
+        sidebarButton(t('reading_lists.' + kind)).click();
+        await until(() => selected(kind) && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'false', kind + ': navigation did not settle');
+        expected.push({ event: 'menu_opened', menu: kind, source: 'navigation' });
+        check(JSON.stringify(menuEvents()) === JSON.stringify(expected), kind + ': navigation must track exactly one menu opening');
+        sidebarButton(t('reading_lists.' + kind)).click();
+        await frames();
+        check(JSON.stringify(menuEvents()) === JSON.stringify(expected), kind + ': reselecting the active menu tracked a duplicate');
+    }
+    for (const kind of ['dashboard', 'authors', 'annotations']) {
+        const previousPanel = document.querySelector('.folder-tab');
+        mount(['/fixture'], '/fixture', true, kind);
+        await until(() => document.querySelector('.folder-tab') !== previousPanel && selected(kind)
+            && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'false', kind + ': saved menu did not restore');
+        await frames();
+        check(JSON.stringify(menuEvents()) === JSON.stringify(expected), kind + ': saved menu restoration tracked a menu opening');
+    }
+    const previousPanel = document.querySelector('.folder-tab');
+    mount([], '');
+    await until(() => document.querySelector('.folder-tab') !== previousPanel && dashboard()
+        && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'false', 'Default dashboard did not load');
+    await frames();
+    check(JSON.stringify(menuEvents()) === JSON.stringify(expected), 'Default dashboard startup tracked a menu opening');
+};
 window.runDashboardTests = async () => {
     mount();
     await until(() => row(first) && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'false', 'Initial folder did not load');
@@ -329,9 +370,21 @@ window.runDashboardTests = async () => {
     check(document.activeElement === document.querySelector('.goto-path-input'), 'Dashboard must retain keyboard access to its location');
 
     const initialSavedRecommendation = localStorage.getItem(DAILY_RECOMMENDATION_STORAGE_KEY);
-    recommendation().querySelector('.reading-dashboard-recommendation-cover').click();
-    await until(() => viewerPaths.length === beforeViewers + 1, 'Clicking the daily recommendation cover did not open its book');
-    check(viewerPaths.at(-1) === initialRecommendation.path, 'Daily recommendation cover opened the wrong book');
+    const coverButton = recommendation().querySelector('.reading-dashboard-recommendation-cover-trigger');
+    coverButton.click();
+    await until(() => document.querySelector('.detail-cover-preview-dialog')?.open, 'Clicking the recommendation cover did not open the shared image preview');
+    await until(() => coverPreviewPaths.at(-1) === initialRecommendation.path, 'Cover preview did not request the recommended book original');
+    check(viewerPaths.length === beforeViewers, 'Cover preview must not open the book viewer');
+    await nativeKey('Escape');
+    await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Cover preview did not close with Escape');
+    check(document.activeElement === coverButton, 'Closing the cover preview did not restore cover focus');
+    await nativeKey('Enter');
+    await until(() => document.querySelector('.detail-cover-preview-dialog')?.open, 'Keyboard activation did not open the cover preview');
+    document.querySelector('.detail-cover-preview-close').click();
+    await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Cover preview close button did not close');
+    check(viewerPaths.length === beforeViewers, 'Keyboard cover preview must not open the book viewer');
+    recommendationButton().click();
+    await until(() => viewerPaths.length === beforeViewers + 1, 'Read button did not open the recommended book');
     readingStates.set(initialRecommendation.path, { status: 'reading', scrollPercent: 20, updatedAt: daysAgo(0) });
     await verifyRecommendationBackgroundRefresh(() => readingChanged(initialRecommendation.path), 'Opened recommendation reading update');
     await verifyRecommendationBackgroundRefresh(() => window.dispatchEvent(new Event('focus')), 'Return from recommendation viewer');
@@ -613,7 +666,7 @@ window.runDashboardShuffleTests = async () => {
                 // The persisted selection can update before React paints the committing phase.
                 if (overlay().dataset.phase === 'landing' && !reachedTarget) verifyCurrent(currentPath, currentRecord, 'Landing in progress');
                 if (recommendedFile()?.path !== currentPath || savedRecord() !== currentRecord) {
-                    check(reachedTarget, 'Recommendation was committed before its cover reached the dashboard target');
+                    check(reachedTarget, 'Recommendation was committed before its cover reached the dashboard target: ' + JSON.stringify({ actual: bounds.toJSON(), target: target.toJSON(), phase: overlay().dataset.phase }));
                 }
                 await frame();
             }
@@ -641,11 +694,14 @@ window.runDashboardShuffleTests = async () => {
         const staticCover = selectedCover();
         const initialTransform = transform(staticCover);
         verifyCurrent(reducedOriginalPath, reducedRecord, 'Reduced-motion selected cover');
-        await frames(2);
-        const settledTransform = transform(staticCover);
-        check(Math.abs(settledTransform.m11 - initialTransform.m11) < 0.001 && Math.abs(settledTransform.m22 - initialTransform.m22) < 0.001
-            && Math.abs(settledTransform.m41 - initialTransform.m41) < 0.001 && Math.abs(settledTransform.m42 - initialTransform.m42) < 0.001,
-            'Reduced motion must not move or enlarge the selected cover');
+        for (let index = 0; index < 2; index += 1) {
+            await frame();
+            if (overlay()?.dataset.phase !== 'revealing') break;
+            const settledTransform = transform(staticCover);
+            check(Math.abs(settledTransform.m11 - initialTransform.m11) < 0.001 && Math.abs(settledTransform.m22 - initialTransform.m22) < 0.001
+                && Math.abs(settledTransform.m41 - initialTransform.m41) < 0.001 && Math.abs(settledTransform.m42 - initialTransform.m42) < 0.001,
+                'Reduced motion must not move or enlarge the selected cover during reveal');
+        }
         await expectClosed(reducedTrigger, reducedSelectedPath);
         check(reducedSelectedPath === (reducedOriginalPath === third.path ? fourth.path : third.path) && JSON.parse(savedRecord()).path === reducedSelectedPath,
             'Reduced-motion shuffle did not commit the next unread book');
@@ -653,6 +709,69 @@ window.runDashboardShuffleTests = async () => {
     } finally {
         releaseStates();
         applyMotionPreference('reduced');
+    }
+};
+window.verifyDashboardShuffleCoverage = async () => {
+    applyMotionPreference('full');
+    await frames();
+    const overlay = () => document.querySelector('.recommendation-shuffle-overlay');
+    const button = recommendation()?.querySelector('.reading-dashboard-recommendation-shuffle');
+    check(button && !button.disabled, 'Coverage fixture must offer a new recommendation');
+    holdReadingStates = true;
+    button.click();
+    try {
+        await until(() => overlay()?.open && pendingReadingStates.length > 0, 'Coverage fixture did not open its cover wall');
+        const plane = overlay().querySelector('.recommendation-shuffle-plane');
+        const tracks = [...plane.querySelectorAll('.recommendation-shuffle-track')];
+        const animations = tracks.flatMap(track => track.getAnimations());
+        check(animations.length >= tracks.length, 'Coverage fixture must exercise moving cover tracks');
+        animations.forEach(animation => animation.pause());
+        const verifyCoverage = phase => {
+            const bounds = plane.getBoundingClientRect();
+            const style = getComputedStyle(plane);
+            const matrix = new DOMMatrixReadOnly(style.transform);
+            const determinant = matrix.m11 * matrix.m22 - matrix.m12 * matrix.m21;
+            const width = parseFloat(style.width);
+            const height = parseFloat(style.height);
+            const gap = parseFloat(style.columnGap) || 0;
+            const rows = tracks.map(track => {
+                const column = track.parentElement;
+                const first = track.firstElementChild;
+                const last = track.lastElementChild;
+                const transform = getComputedStyle(track).transform;
+                const shift = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42;
+                return {
+                    left: column.offsetLeft, right: column.offsetLeft + column.offsetWidth,
+                    top: first.offsetTop + shift, bottom: last.offsetTop + last.offsetHeight + shift,
+                };
+            });
+            for (const x of [1, innerWidth / 2, innerWidth - 1]) {
+                for (const y of [1, innerHeight / 2, innerHeight - 1]) {
+                    const dx = x - bounds.left - bounds.width / 2;
+                    const dy = y - bounds.top - bounds.height / 2;
+                    const localX = width / 2 + (matrix.m22 * dx - matrix.m21 * dy) / determinant;
+                    const localY = height / 2 + (matrix.m11 * dy - matrix.m12 * dx) / determinant;
+                    check(rows.some(row => localX >= row.left - gap / 2 - 1 && localX <= row.right + gap / 2 + 1
+                        && localY >= row.top - 1 && localY <= row.bottom + 1),
+                    'Cover wall leaves an empty outer edge at ' + innerWidth + 'x' + innerHeight + ', phase ' + phase + ', point ' + x + ',' + y);
+                }
+            }
+        };
+        for (const progress of [0, 0.5, 0.999]) {
+            animations.forEach(animation => { animation.currentTime = animation.effect.getTiming().duration * progress; });
+            await frames();
+            verifyCoverage(progress);
+        }
+        applyMotionPreference('reduced');
+        await frames();
+        verifyCoverage('reduced');
+    } finally {
+        if (overlay()) await nativeKey('Escape');
+        await until(() => !overlay(), 'Coverage fixture did not close');
+        holdReadingStates = false;
+        pendingReadingStates.splice(0).forEach(release => release());
+        applyMotionPreference('reduced');
+        await frames();
     }
 };
 window.runDashboardVolumeTests = async () => {
@@ -775,6 +894,12 @@ app.whenReady().then(async () => {
     }
     await window.loadURL(${JSON.stringify(fixtureUrl)});
     const result = await window.webContents.executeJavaScript('window.runDashboardTests()');
+    if (${JSON.stringify(telemetryOnly)}) {
+        await window.webContents.executeJavaScript('window.runDashboardTelemetryTests()');
+        console.log('READING_DASHBOARD_RESULT=' + JSON.stringify({ menuTelemetry: true, recommendationBackgroundTelemetry: true }));
+        app.exit(0);
+        return;
+    }
     await capture('dashboard-full-width-dark');
     window.setContentSize(1280, 900);
     await window.webContents.executeJavaScript('window.verifyDashboardLayout()');
@@ -784,6 +909,10 @@ app.whenReady().then(async () => {
     await capture('dashboard-narrow-dark');
     window.setContentSize(1600, 900);
     const shuffle = await window.webContents.executeJavaScript('window.runDashboardShuffleTests()');
+    for (const [width, height] of [[1600, 900], [800, 1200], [2400, 800]]) {
+        window.setContentSize(width, height);
+        await window.webContents.executeJavaScript('window.verifyDashboardShuffleCoverage()');
+    }
     window.setContentSize(800, 900);
     const volumes = await window.webContents.executeJavaScript('window.runDashboardVolumeTests()');
     const empty = await window.webContents.executeJavaScript('window.runDashboardEmptyTests()');
@@ -798,6 +927,7 @@ app.whenReady().then(async () => {
     await capture('dashboard-setup-narrow-light');
     await window.webContents.executeJavaScript('window.previewDashboardSetupTheme("dark")');
     const setupComplete = await window.webContents.executeJavaScript('window.runDashboardSetupCompleteTest()');
+    await window.webContents.executeJavaScript('window.runDashboardTelemetryTests()');
     console.log('READING_DASHBOARD_RESULT=' + JSON.stringify({ ...result, ...shuffle, ...volumes, ...empty, ...setupComplete, widths: [1600, 1280, 800] }));
     app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
@@ -816,7 +946,7 @@ app.whenReady().then(async () => {
         assert.equal(output.code, 0, output.result);
         const payload = output.result.match(/READING_DASHBOARD_RESULT=(.+)/)?.[1];
         assert.ok(payload, output.result);
-        assert.deepEqual(JSON.parse(payload), {
+        assert.deepEqual(JSON.parse(payload), telemetryOnly ? { menuTelemetry: true, recommendationBackgroundTelemetry: true } : {
             hiddenFileActionsBlocked: true, recentBookOpened: true, keyboardNavigation: true, refreshed: true, overviewWaited: true, liveProgress: true,
             errorRecovered: true, recommendationOpened: true, recommendationStable: true, recommendationReadingStable: true, recommendationBackgroundStable: true, recommendationEligibility: true, recommendationRetry: true, recommendationLocalState: true,
             shuffleCancelled: true, shuffleCommitted: true, shuffleLanding: true, shuffleVariedOrigins: true, shuffleCoversStable: true, shuffleResizeStable: true, shuffleReducedMotion: true,

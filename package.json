@@ -82,6 +82,7 @@
     "productName": "BookManager",
     "executableName": "BookManager",
     "afterSign": "electron/notarize.cjs",
+    "beforePack": "electron/beforePack.cjs",
     "afterPack": "electron/afterPack.cjs",
     "artifactBuildStarted": "electron/portable/artifactBuildStarted.cjs",
     "afterAllArtifactBuild": "electron/zipWindowsPortable.cjs",
@@ -91,6 +92,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "!electron/native/build/**/*",
       "THIRD_PARTY_NOTICES.md",
       {
         "from": "src/utils",
@@ -182,6 +184,12 @@
       "splashImage": "electron/portable/splash.bmp"
     },
     "mac": {
+      "files": [
+        "electron/native/build/MacCursorCompat.node"
+      ],
+      "asarUnpack": [
+        "electron/native/build/MacCursorCompat.node"
+      ],
       "target": [
         {
           "target": "zip",

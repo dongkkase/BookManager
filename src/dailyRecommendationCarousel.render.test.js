@@ -46,10 +46,15 @@ const files = titles.map((title, index) => {
 });
 const description = '기억에 남는 장면과 작은 발견을 담은 이야기. 책장을 넘길 때마다 조금씩 다른 풍경이 펼쳐집니다.';
 const opened = [];
+const coverRequests = [];
+const telemetryEvents = [];
+const refreshEvents = () => telemetryEvents.filter(event => event.event === 'feature_used' && event.feature === 'daily-recommendation-refresh');
 const recentListeners = new Set();
 window.electronAPI = {
+    trackTelemetry: payload => { telemetryEvents.push(payload); },
     getReadingStates: async () => [],
     getFilePreview: async filePath => ({ success: true, file: { ...files.find(file => file.path === filePath), description } }),
+    loadMetadataCover: async filePath => { coverRequests.push(filePath); return files.find(file => file.path === filePath)?.cover || ''; },
     onRecentReadingChanged: callback => { recentListeners.add(callback); return () => recentListeners.delete(callback); },
     readingLists: async request => ({ success: true, month: request.month, days: [], totals: { seconds: 0, readingDays: 0, completedBooks: 0 }, goal: { books: 0, minutes: 0 }, completedFiles: [], completedCount: 0 }),
 };
@@ -93,11 +98,11 @@ async function go(index) {
     await until(() => selectedIndex() === index, 'Dot did not select slide ' + index);
     await frames();
 }
-async function moveMouse(element) {
+async function moveMouse(element, horizontal = 0.5, vertical = 0.5) {
     const bounds = element?.getBoundingClientRect();
     await new Promise((resolve, reject) => {
         const timeout = nativeTimeout(() => reject(new Error('Native mouse input did not finish')), 8000);
-        window.carouselInput = { type: 'mouseMove', x: bounds ? Math.round(bounds.left + bounds.width / 2) : 1, y: bounds ? Math.round(bounds.top + bounds.height / 2) : 1 };
+        window.carouselInput = { type: 'mouseMove', x: bounds ? Math.round(bounds.left + bounds.width * horizontal) : 1, y: bounds ? Math.round(bounds.top + bounds.height * vertical) : 1 };
         window.continueCarouselInput = () => { nativeClearTimeout(timeout); resolve(); };
         console.log('CAROUSEL_INPUT');
     });
@@ -144,10 +149,38 @@ window.runCarouselNavigationTests = async () => {
         await go(index);
         order.push(currentPath());
         select('read').click();
-        select('cover').click();
-        check(opened.at(-1) === order[index] && opened.at(-2) === order[index], 'Read or cover opened a different slide');
+        const openedCount = opened.length;
+        select('cover-trigger').click();
+        await until(() => document.querySelector('.detail-cover-preview-dialog')?.open && coverRequests.at(-1) === order[index], 'Cover did not preview the selected slide');
+        check(opened.length === openedCount && opened.at(-1) === order[index], 'Cover must preview its image while Read opens the selected book');
+        document.querySelector('.detail-cover-preview-close').click();
+        await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Slide cover preview did not close');
+        check(document.activeElement === select('cover-trigger'), 'Cover preview did not restore focus');
     }
     check(new Set(order).size === 8, 'Carousel repeats a book');
+    check(getComputedStyle(select('cover-trigger')).cursor === 'zoom-in', 'Recommendation cover must use the detail-panel zoom cursor');
+    const openedBeforePreviewNavigation = opened.length;
+    select('cover-trigger').click();
+    await until(() => document.querySelector('.detail-cover-preview-dialog')?.open, 'Navigation preview did not open');
+    const previewDialog = document.querySelector('.detail-cover-preview-dialog');
+    const expectPreview = async index => {
+        await until(() => currentPath() === order[index] && coverRequests.at(-1) === order[index]
+            && previewDialog.querySelector('.detail-cover-preview-image')?.alt === files.find(file => file.path === order[index]).title,
+        'Preview navigation did not load the selected recommendation');
+        check(document.querySelector('.detail-cover-preview-dialog') === previewDialog && previewDialog.open, 'Navigation replaced or closed the preview dialog');
+        check(opened.length === openedBeforePreviewNavigation, 'Preview navigation opened the reader');
+    };
+    previewDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await expectPreview(0);
+    previewDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    await expectPreview(7);
+    previewDialog.querySelector('.detail-cover-preview-prev').click();
+    await expectPreview(6);
+    previewDialog.querySelector('.detail-cover-preview-next').click();
+    await expectPreview(7);
+    previewDialog.querySelector('.detail-cover-preview-close').click();
+    await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Navigated preview did not close');
+    check(document.activeElement === select('cover-trigger'), 'Navigated preview did not restore the current cover focus');
     select('next').click();
     await until(() => selectedIndex() === 0 && currentPath() === order[0], 'Next did not wrap from the last slide');
     select('prev').click();
@@ -166,11 +199,12 @@ window.runCarouselNavigationTests = async () => {
     }
     await go(0);
     check(slideTimers.size === 0, 'Reduced motion scheduled automatic slides');
-    await moveMouse(select('cover'));
+    await moveMouse(select('cover-trigger'));
     const reduced = coverMatrix();
     check(Math.abs(reduced.m11 - 1) < 0.001 && Math.abs(reduced.m22 - 1) < 0.001 && Math.abs(reduced.m13) < 0.001, 'Reduced motion moved or rotated the cover');
     await moveMouse(null);
     verifyLayout();
+    check(refreshEvents().length === 0, 'Loading, manual navigation or remounting tracked a recommendation refresh');
     return { eightUniqueBooks: true, navigation: true, keyboardFocusPreserved: true, correctBookOpened: true, stableDailyOrder: true, reducedMotion: true };
 };
 window.runCarouselMotionTests = async () => {
@@ -207,14 +241,60 @@ window.runCarouselMotionTests = async () => {
     await frames();
     document.activeElement?.blur();
     await until(() => slideTimers.size === 1, 'Closing preferences did not resume automatic advance');
-    await until(() => Math.abs(Math.abs(coverMatrix().m13) - Math.sin(Math.PI / 15)) < 0.0001, 'Resting cover is not angled');
-    await captureCover('recommendation-cover-rest');
-    await moveMouse(select('cover'));
-    await until(() => slideTimers.size === 0, 'Hover did not pause automatic advance');
+    const previewedPath = currentPath();
+    select('cover-trigger').click();
+    await until(() => document.querySelector('.detail-cover-preview-dialog')?.dataset.phase === 'open' && slideTimers.size === 0, 'Cover preview did not pause automatic advance');
+    check(currentPath() === previewedPath && coverRequests.at(-1) === previewedPath, 'Cover preview changed the active recommendation');
+    document.querySelector('.detail-cover-preview-close').click();
+    await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Animated cover preview did not close');
+    check(document.activeElement === select('cover-trigger'), 'Animated preview did not restore cover focus');
+    document.activeElement.blur();
+    await until(() => slideTimers.size === 1, 'Closing cover preview did not resume automatic advance after focus left');
+    const checkStableCoverTarget = () => {
+        const button = select('cover-trigger');
+        const artwork = select('cover').querySelector('.reading-dashboard-cover');
+        check(button.parentElement === artwork.parentElement.parentElement && !button.contains(artwork), 'Cover artwork and preview button must be separate siblings');
+        const buttonStyle = getComputedStyle(button);
+        check(buttonStyle.transform === 'none' && buttonStyle.perspective === 'none', 'Cover motion must not transform the pointer target');
+        check(getComputedStyle(artwork.parentElement).perspective === '700px', 'Cover artwork must retain its 3D perspective');
+        check(getComputedStyle(artwork).pointerEvents === 'none', 'Animated artwork must not intercept pointer input');
+    };
+    const coverIsEngaged = () => {
+        const matrix = coverMatrix();
+        return Math.abs(matrix.m11 - 1.035) < 0.001 && Math.abs(matrix.m22 - 1.035) < 0.001 && Math.abs(matrix.m13) < 0.001;
+    };
     await until(() => {
         const matrix = coverMatrix();
-        return Math.abs(matrix.m13) < 0.001 && matrix.m11 > 1.02 && matrix.m11 < 1.06;
-    }, 'Hover did not gently enlarge and face the cover forward');
+        const angle = 12 * Math.PI / 180;
+        return Math.abs(matrix.m11 - Math.cos(angle)) < 0.001 && Math.abs(matrix.m22 - 1) < 0.001
+            && Math.abs(matrix.m13 - Math.sin(angle)) < 0.001;
+    }, 'Resting cover did not return to its 3D angle without scaling');
+    checkStableCoverTarget();
+    await captureCover('recommendation-cover-rest');
+    await moveMouse(select('cover-trigger'));
+    await until(() => slideTimers.size === 0, 'Hover did not pause automatic advance');
+    await until(coverIsEngaged, 'Hovered cover did not face forward and enlarge');
+    checkStableCoverTarget();
+    const hoveredCover = select('cover-trigger');
+    const hoveredBounds = hoveredCover.getBoundingClientRect();
+    const hoveredTarget = document.elementFromPoint(hoveredBounds.left + hoveredBounds.width / 2, hoveredBounds.top + hoveredBounds.height / 2);
+    check(hoveredTarget === hoveredCover, 'The preview button must receive pointer input instead of its transformed artwork');
+    check(getComputedStyle(hoveredTarget).cursor === 'zoom-in', 'The actual hovered target must use the zoom cursor');
+    await until(() => window.carouselCursor === 'zoom-in', () => 'Chromium cursor did not switch to zoom-in: ' + window.carouselCursor);
+    check(!hoveredCover.hasAttribute('title') && !select('cover').querySelector('[title], [data-tooltip]'), 'Recommendation cover must not show a tooltip');
+    check(getComputedStyle(hoveredCover).perspective === 'none', 'Perspective must belong to artwork rather than the hit target');
+    for (let pass = 0; pass < 2; pass += 1) {
+        await moveMouse(null);
+        await until(() => window.carouselCursor !== 'zoom-in', 'Leaving the cover must restore the outside cursor');
+        for (const [x, y] of [[0.05, 0.5], [0.5, 0.5], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9], [0.5, 0.1], [0.5, 0.5]]) {
+            await moveMouse(hoveredCover, x, y);
+            const point = window.carouselInput;
+            check(document.elementFromPoint(point.x, point.y) === hoveredCover, 'Artwork intercepted pointer input at ' + x + ',' + y);
+            check(window.carouselCursor === 'zoom-in', 'Chromium cursor changed inside the cover at ' + x + ',' + y + ': ' + window.carouselCursor);
+            checkStableCoverTarget();
+        }
+        await until(coverIsEngaged, 'Moving inside the cover interrupted its hover motion');
+    }
     await captureCover('recommendation-cover-hover');
     applyMotionPreference('reduced');
     await until(() => {
@@ -235,6 +315,7 @@ window.runCarouselMotionTests = async () => {
     await until(() => slideTimers.size === 0, 'Final pause did not clear the timer');
     await until(() => Number(getComputedStyle(select('slide')).opacity) > 0.999, 'Slide transition did not settle');
     verifyLayout();
+    check(refreshEvents().length === 0, 'Automatic slides or playback controls tracked a recommendation refresh');
     return { automaticAdvance: true, playbackControl: true, hoverAndFocusPause: true, preferencesPause: true, coverHover: true, visibilityPause: true };
 };
 window.verifyCarouselLayout = async () => { await frames(5); verifyLayout(); };
@@ -253,6 +334,8 @@ window.runCarouselShuffleTests = async () => {
     const trigger = select('shuffle');
     trigger.focus();
     trigger.click();
+    const expectedRefreshEvents = [{ event: 'feature_used', feature: 'daily-recommendation-refresh', source: 'navigation' }];
+    check(JSON.stringify(refreshEvents()) === JSON.stringify(expectedRefreshEvents), 'One shuffle click must track exactly one recommendation refresh');
     const overlay = () => document.querySelector('.recommendation-shuffle-overlay');
     await until(() => overlay()?.open, 'New recommendation did not open its shuffle overlay');
     check(currentPath() === previousPath && localStorage.getItem(DAILY_RECOMMENDATION_STORAGE_KEY) === previousRecord,
@@ -279,6 +362,7 @@ window.runCarouselShuffleTests = async () => {
         await go(index);
         check(currentPath() === committed.paths[index], 'Reopening changed the shuffled recommendation list');
     }
+    check(JSON.stringify(refreshEvents()) === JSON.stringify(expectedRefreshEvents), 'Shuffle completion, slide navigation or remounting tracked an extra recommendation refresh');
     return { entireListShuffled: true, shuffledFirstSlide: true, shuffledListRestored: true };
 };
 window.runCarouselSmallCatalogTests = async () => {
@@ -290,10 +374,15 @@ window.runCarouselSmallCatalogTests = async () => {
     await until(() => currentPath() === files[0].path && (!select('next') || select('next').disabled), 'Single-book catalog retained active navigation');
     check(!select('prev') || select('prev').disabled, 'Single-book catalog kept previous navigation enabled');
     check(!select('playback') || select('playback').disabled, 'Single-book catalog kept autoplay enabled');
+    select('cover-trigger').click();
+    await until(() => document.querySelector('.detail-cover-preview-dialog')?.open, 'Single-book preview did not open');
+    check(!document.querySelector('.detail-cover-preview-nav'), 'Single-book preview must not expose navigation');
+    document.querySelector('.detail-cover-preview-close').click();
+    await until(() => !document.querySelector('.detail-cover-preview-dialog'), 'Single-book preview did not close');
     check(slideTimers.size === 0, 'Single-book catalog scheduled automatic advance');
     render([]);
     await until(() => card() && !currentPath() && card().textContent.includes(t('reading_lists.dashboard_recommendation_empty')), 'Empty catalog retained a recommendation');
-    check(!select('read') && !select('cover') && dots().length === 0, 'Empty catalog retained book actions');
+    check(!select('read') && !select('cover-trigger') && dots().length === 0, 'Empty catalog retained book actions');
     verifyLayout();
     return { smallCatalog: true, singleBook: true, emptyCatalog: true };
 };
@@ -312,10 +401,13 @@ const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
 console.log('CAROUSEL_STAGE=bootstrap');
 app.setPath('userData', ${JSON.stringify(path.join(directory, 'profile'))});
-app.disableHardwareAcceleration();
+if (${JSON.stringify(process.env.BOOKMANAGER_RENDERER_GPU !== '1')}) app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
     console.log('CAROUSEL_STAGE=ready');
     const window = new BrowserWindow({ show: false, width: 1200, height: 900, useContentSize: true, webPreferences: { backgroundThrottling: false } });
+    window.webContents.on('cursor-changed', (_event, type) => {
+        void window.webContents.executeJavaScript('window.carouselCursor = ' + JSON.stringify(type));
+    });
     window.webContents.on('console-message', async (_event, level, message) => {
         if (level >= 2) console.error(message);
         if (message === 'CAROUSEL_INPUT') {

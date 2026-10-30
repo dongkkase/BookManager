@@ -403,3 +403,17 @@ test('an internal action from the previous folder cannot replace the current pol
     assert.equal(context.watchedMtimeRef.current, 9);
     assert.equal(context.internalFileActionRef.current, false);
 });
+
+test('folders with only a front cover request rear covers once while completed stacks are reused', async () => {
+    const h = coverHarness();
+    const incomplete = { path: 'folder', isDirectory: true, cover: 'front.jpg' };
+    const complete = { path: 'complete', isDirectory: true, cover: 'front.jpg', folder_covers: [] };
+    h.queue.enqueue([incomplete, complete, { path: 'book', cover: 'book.jpg' }]);
+    await tick();
+    assert.deepEqual(h.jobs.map(job => job.file.path), ['folder']);
+    h.jobs[0].finish();
+    await tick();
+    h.queue.enqueue([incomplete, complete]);
+    await tick();
+    assert.equal(h.jobs.length, 1);
+});

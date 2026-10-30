@@ -41,6 +41,7 @@ import { configureTelemetry, flushTelemetry, reportTelemetryError } from './tele
 import { readTelemetryAppVersion, readTelemetryServiceConfig } from './observabilityConfig.js';
 import { setupTelemetryIPC } from './observabilityIpc.js';
 import { startupPresentation } from './startupPresentation.js';
+import { installMacCursorCompat } from './macCursorCompat.js';
 
 installConsolePipeGuard();
 
@@ -371,6 +372,7 @@ async function initializeApp() {
 
   // i18n 초기화
   const config = configManager.loadConfig();
+    installMacCursorCompat({ app, BrowserWindow, enabled: config.mac_cursor_compatibility });
     configureTelemetry({
         config,
         storageDir: path.dirname(configManager.configPath),

@@ -136,9 +136,12 @@ function AuthorDetail({ author, profile, profileStatus, hasOverride, onAutomatic
     useEffect(() => headingRef.current?.focus({ preventScroll: true }), []);
     useEffect(() => () => { saveRequestRef.current += 1; }, []);
     useLayoutEffect(() => () => onSelectBook?.(null), [onSelectBook]);
-    const books = useMemo(() => author.books.filter(file => `${file.title} ${file.name}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice().sort((a, b) =>
-        sort === 'recent' ? (Date.parse(b.readingListAddedAt) || 0) - (Date.parse(a.readingListAddedAt) || 0)
-            : (a.title || a.name).localeCompare(b.title || b.name, language, { numeric: true })), [author, language, query, sort]);
+    const books = useMemo(() => {
+        const collator = new Intl.Collator(language, { numeric: true });
+        return author.books.filter(file => `${file.title} ${file.name}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice().sort((a, b) =>
+            sort === 'recent' ? (Date.parse(b.readingListAddedAt) || 0) - (Date.parse(a.readingListAddedAt) || 0)
+                : collator.compare(a.title || a.name, b.title || b.name));
+    }, [author, language, query, sort]);
     useLayoutEffect(() => {
         if (selectedBookPath && !books.some(file => (file.full_path || file.path) === selectedBookPath)) onSelectBook?.(null);
     }, [books, onSelectBook, selectedBookPath]);

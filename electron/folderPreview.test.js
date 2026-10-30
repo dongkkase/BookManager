@@ -38,7 +38,7 @@ async function createComic(filePath, withCover = true) {
     if (withCover) await replaceZipEntry(filePath, '001.png', PNG_1X1);
 }
 
-test('폴더 미리보기는 직계 지원 파일을 자연정렬해 첫 파일의 썸네일만 사용한다', async t => {
+test('폴더 미리보기는 직계 지원 파일을 자연정렬해 서로 다른 책의 표지를 사용한다', async t => {
     const { root, folderPath, options } = createFixture(t);
     const firstPath = path.join(folderPath, 'Book 2.CBZ');
     const secondPath = path.join(folderPath, 'Book 10.cbz');
@@ -73,7 +73,9 @@ test('폴더 미리보기는 직계 지원 파일을 자연정렬해 첫 파일�
     try {
         assert.equal((await library.getFileInfo(firstPath)).title, 'File title');
         assert.equal((await library.getFileInfo(firstPath)).thumb_path, preview.thumb_path);
-        assert.equal(await library.getFileInfo(secondPath), null);
+        assert.equal(preview.folder_covers.length, 1);
+        assert.equal(preview.folder_covers[0].cover_file_path, secondPath);
+        assert.equal((await library.getFileInfo(secondPath)).thumb_path, preview.folder_covers[0].thumb_path);
         assert.equal(await library.getFileInfo(folderPath), null);
     } finally {
         await library.close();
@@ -200,7 +202,8 @@ test('폴더 미리보기는 이름순으로 앞선 먼 폴더보다 가까운 �
     assert.equal(preview.cover_file_path, nearerPath);
     const library = new LibraryDB({ dbPath: options.dbPath });
     try {
-        assert.equal(await library.getFileInfo(deeperPath), null);
+        assert.equal(preview.folder_covers[0].cover_file_path, deeperPath);
+        assert.ok(await library.getFileInfo(deeperPath));
         assert.equal(await library.getFileInfo(folderPath), null);
     } finally {
         await library.close();
@@ -319,4 +322,29 @@ test('폴더 목록 스캔은 하위 폴더의 표지를 미리 추출하지 않
     assert.equal(Object.hasOwn(rows[0], 'cover_file_path'), false);
     assert.deepEqual(lookups, []);
     assert.equal(fs.existsSync(options.thumbnailDir), false);
+});
+
+test('폴더 표지는 표지가 없는 파일을 건너뛰고 세 권까지만 추출한다', async t => {
+    const { folderPath, options } = createFixture(t);
+    await createComic(path.join(folderPath, 'Book 1.cbz'), false);
+    const files = [2, 3, 4, 10].map(number => path.join(folderPath, `Book ${number}.cbz`));
+    for (const filePath of files) await createComic(filePath);
+
+    const preview = await inspectFolderFile(folderPath, options);
+    assert.deepEqual([preview, ...preview.folder_covers].map(file => file.cover_file_path), files.slice(0, 3));
+    assert.equal(new Set([preview, ...preview.folder_covers].map(file => file.cover)).size, 3);
+    const library = new LibraryDB({ dbPath: options.dbPath });
+    try {
+        assert.equal(await library.getFileInfo(files[3]), null);
+    } finally {
+        await library.close();
+    }
+});
+
+test('폴더에 표지가 한 권뿐이면 뒤쪽 표지를 복제하지 않는다', async t => {
+    const { folderPath, options } = createFixture(t);
+    await createComic(path.join(folderPath, 'Book.cbz'));
+    const preview = await inspectFolderFile(folderPath, options);
+    assert.ok(preview.cover);
+    assert.deepEqual(preview.folder_covers, []);
 });

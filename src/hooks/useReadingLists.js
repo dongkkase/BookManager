@@ -3,6 +3,7 @@ import { mergeFolderFileCacheUpdate } from './useFolderScan.js';
 import { prepareAuthorCatalog } from '../authorCatalog.js';
 
 const EMPTY_FILES = [];
+const MANUAL_SNAPSHOT_LIMIT = 8;
 
 export function useReadingLists(listId, t, localFiles = null, libraryPaths = [], language = 'ko') {
     const libraryScopeKey = JSON.stringify([...new Set(libraryPaths)].sort());
@@ -12,6 +13,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
     const [overviewLoading, setOverviewLoading] = useState(false);
     const [snapshot, setSnapshot] = useState({ id: '', files: EMPTY_FILES, previewRevision: 0 });
     const [recentSnapshots, setRecentSnapshots] = useState({});
+    const [manualSnapshots, setManualSnapshots] = useState({});
     const [catalogSnapshot, setCatalogSnapshot] = useState(null);
     const catalogRef = useRef(null);
     const catalogScopeRef = useRef(libraryScopeKey);
@@ -58,8 +60,11 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
         })();
         return pending.promise;
     }, [invalidateCatalog, language, libraryScopeKey]);
-    const invalidateInactiveRecentLists = useCallback(() => {
+    const invalidateInactiveLists = useCallback(() => {
         setRecentSnapshots(current => current[listIdRef.current]
+            ? { [listIdRef.current]: current[listIdRef.current] }
+            : {});
+        setManualSnapshots(current => current[listIdRef.current]
             ? { [listIdRef.current]: current[listIdRef.current] }
             : {});
     }, []);
@@ -139,7 +144,11 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
                         [countKey]: result.files.length,
                     }));
                 } else {
-                    setSnapshot(nextSnapshot);
+                    setManualSnapshots(current => Object.fromEntries([
+                        ...Object.entries(current).filter(([id, value]) => id !== listId && value.libraryScopeKey === libraryScopeKey)
+                            .slice(-(MANUAL_SNAPSHOT_LIMIT - 1)),
+                        [listId, nextSnapshot],
+                    ]));
                 }
             }
         } catch {
@@ -163,7 +172,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
     }, []);
     useEffect(() => {
         const reload = () => {
-            invalidateInactiveRecentLists();
+            invalidateInactiveLists();
             invalidateCatalog();
             void refreshOverview();
             void refreshRef.current();
@@ -173,7 +182,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
         const unsubscribe = window.electronAPI?.onReadingListsChanged?.(reload);
         const unsubscribeScan = window.electronAPI?.onScanComplete?.(reload);
         const timer = window.setInterval(() => {
-            invalidateInactiveRecentLists();
+            invalidateInactiveLists();
             void refreshOverview();
             if (listIdRef.current.startsWith('recent-')) void refreshRef.current();
         }, 60000);
@@ -187,19 +196,20 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
             window.removeEventListener('focus', reload);
             window.removeEventListener('bookmanager:metadata-saved', reload);
         };
-    }, [invalidateCatalog, invalidateInactiveRecentLists, refreshCatalog, refreshOverview]);
+    }, [invalidateCatalog, invalidateInactiveLists, refreshCatalog, refreshOverview]);
     const mutate = useCallback(async request => {
         const result = await window.electronAPI?.readingLists?.(request);
         if (!result?.success) {
             const key = ['duplicate_name', 'invalid_name', 'list_not_found'].includes(result?.error) ? result.error : 'save_failed';
             throw new Error(t(`reading_lists.${key}`));
         }
-        invalidateInactiveRecentLists();
+        invalidateInactiveLists();
         invalidateCatalog();
         await Promise.all([refreshOverview(), refreshRef.current(), refreshCatalog({ allowCached: true }).catch(() => {})]);
         return result;
-    }, [invalidateCatalog, invalidateInactiveRecentLists, refreshCatalog, refreshOverview, t]);
-    const visibleSnapshot = listId === 'library-catalog' ? catalogSnapshot : isRecentList ? recentSnapshots[listId] : snapshot;
+    }, [invalidateCatalog, invalidateInactiveLists, refreshCatalog, refreshOverview, t]);
+    const visibleSnapshot = listId === 'library-catalog' ? catalogSnapshot
+        : isRecentList ? recentSnapshots[listId] : localFiles !== null ? snapshot : manualSnapshots[listId];
     const previewRevision = listId === 'collections' ? overview.previewRevision : visibleSnapshot?.previewRevision || 0;
     const updateFilePreview = useCallback(file => {
         if (listId === 'collections') {
@@ -211,8 +221,8 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
             }));
             return;
         }
-        setSnapshot(current => {
-            if (current.id !== listId || current.previewRevision !== previewRevision) return current;
+        const updateSnapshot = current => {
+            if (current?.id !== listId || current.previewRevision !== previewRevision) return current;
             let changed = false;
             const files = current.files.map(entry => {
                 if (entry.path !== file.path) return entry;
@@ -223,6 +233,11 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
                 return updated;
             });
             return changed ? { ...current, files } : current;
+        };
+        if (localFiles !== null) setSnapshot(updateSnapshot);
+        else setManualSnapshots(current => {
+            const updated = updateSnapshot(current[listId]);
+            return updated === current[listId] ? current : { ...current, [listId]: updated };
         });
     }, [listId, localFiles, previewRevision]);
     return {
@@ -231,7 +246,7 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
         recentUpdatedCount: overview.libraryScopeKey === libraryScopeKey ? overview.recentUpdatedCount : 0,
         catalogFiles: catalogSnapshot?.libraryScopeKey === libraryScopeKey ? catalogSnapshot.files : EMPTY_FILES,
         files: listId === 'collections' ? overview.collections
-            : visibleSnapshot?.id === listId && (!(isRecentList || listId === 'library-catalog') || visibleSnapshot.libraryScopeKey === libraryScopeKey) ? visibleSnapshot.files : EMPTY_FILES,
+            : visibleSnapshot?.id === listId && (localFiles !== null || visibleSnapshot.libraryScopeKey === libraryScopeKey) ? visibleSnapshot.files : EMPTY_FILES,
         loading,
         error: listId === 'collections' ? overviewError : error,
         overviewError,

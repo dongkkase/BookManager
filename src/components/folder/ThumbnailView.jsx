@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { CoverImage, coverImageKey } from './CoverImage';
+import { FolderThumbnailLayers } from './FolderThumbnailLayers';
 import {
   buildVirtualGridLayout,
   groupFolderFiles,
@@ -310,6 +311,7 @@ const ThumbnailView = ({
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
+                {file.isDirectory && <FolderThumbnailLayers file={file} />}
                 <CoverImage
                     file={file}
                     key={coverImageKey(file)}
@@ -363,6 +365,7 @@ const ThumbnailView = ({
 	              onContextMenu={(event) => onContextMenu?.(event, file, fileIndex)}
 	            >
               <div className={`thumbnail-cover-card ${file.isDirectory ? 'folder-item-cover-card' : ''}`}>
+                {file.isDirectory && <FolderThumbnailLayers file={file} />}
                 <CoverImage
                     file={file}
                     key={coverImageKey(file)}

@@ -1,6 +1,6 @@
 const COVER_FIELDS = new Set([
     'cover', 'thumb_path', 'cover_file_path', 'cover_file_mtime', 'cover_file_size',
-    'cover_override_path', 'coverOverridePath',
+    'cover_override_path', 'coverOverridePath', 'folder_covers',
 ]);
 const PREVIEW_ONLY_FIELDS = new Set(['cache_source', 'duplicate_matches', 'dup_count', 'max_ratio']);
 

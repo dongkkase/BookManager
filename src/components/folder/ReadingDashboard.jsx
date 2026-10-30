@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, useAnimationControls } from 'motion/react';
 import { CoverArtwork } from '../CoverArtwork';
 import { FaIcon } from '../FaIcon';
 import { RecommendationShuffleOverlay } from './RecommendationShuffleOverlay';
 import { RecommendationPreferences } from './RecommendationPreferences';
+import { CoverPreviewDialog } from './CoverPreviewDialog';
 import { DashboardReadingInsights } from './DashboardReadingInsights';
 import { DashboardFinishedShelf, DashboardPassage } from './DashboardReadingShelves';
 import { DashboardLibraryOnboarding } from './DashboardLibraryOnboarding';
@@ -14,6 +15,7 @@ import { dashboardMonth } from '../../dashboardActivityState';
 import { dashboardAddedTimestamp, dashboardFilePath, selectDashboardRecent } from '../../readingDashboardState';
 import { dashboardCatalogSummary } from '../../dashboardCatalogCache';
 import { viewerReadingProgressParts } from '../../viewerStatusState';
+import { trackTelemetry } from '../../telemetry.js';
 import '../../styles/ReadingDashboard.css';
 
 function bookTitle(file) {
@@ -58,9 +60,11 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
     const reducedMotion = useReducedMotion();
     const [shuffleOpen, setShuffleOpen] = useState(false);
     const [preferencesOpen, setPreferencesOpen] = useState(false);
+    const [coverPreview, setCoverPreview] = useState(null);
     const [paused, setPaused] = useState(false);
     const [hovered, setHovered] = useState(false);
     const [focused, setFocused] = useState(false);
+    const [coverFocused, setCoverFocused] = useState(false);
     const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
     const directionRef = useRef(1);
     const slideAnimation = useAnimationControls();
@@ -68,12 +72,13 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
     const preferencesButtonRef = useRef(null);
     const shuffleButtonRef = useRef(null);
     const recommendationCoverRef = useRef(null);
+    const recommendationCoverTriggerRef = useRef(null);
     const lastShuffleOriginRef = useRef(null);
     const canOpen = Boolean(file) && !loading && !error;
     const picks = recommendation.recommendations || (file ? [file] : []);
     const currentPath = file ? dashboardFilePath(file) : '';
     const currentIndex = Math.max(0, picks.findIndex(pick => dashboardFilePath(pick) === currentPath));
-    const controlsDisabled = shuffleOpen || preferencesOpen || recommendation.newRecommendationLoading;
+    const controlsDisabled = shuffleOpen || preferencesOpen || Boolean(coverPreview) || recommendation.newRecommendationLoading;
     const autoplay = canOpen && picks.length > 1 && !reducedMotion && !paused && !hovered && !focused && !hidden && !controlsDisabled;
     const selectPick = index => {
         if (controlsDisabled || picks.length < 2) return;
@@ -81,6 +86,22 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
         directionRef.current = index < currentIndex ? -1 : 1;
         recommendation.selectRecommendation(dashboardFilePath(picks[nextIndex]));
     };
+    const navigateCoverPreview = direction => {
+        if (!coverPreview || picks.length < 2 || recommendation.newRecommendationLoading) return;
+        directionRef.current = direction;
+        const nextIndex = (currentIndex + direction + picks.length) % picks.length;
+        recommendation.selectRecommendation(dashboardFilePath(picks[nextIndex]));
+    };
+    useLayoutEffect(() => {
+        setCoverPreview(current => current && file ? {
+            ...current,
+            src: file.cover || '',
+            filePath: currentPath,
+            alt: bookTitle(file),
+            previewKey: currentPath,
+            sourceElement: recommendationCoverRef.current?.querySelector('img'),
+        } : current);
+    }, [file, currentPath]);
     useEffect(() => {
         if (reducedMotion || !currentPath) {
             slideAnimation.set({ opacity: 1, x: 0 });
@@ -97,6 +118,7 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
     }, []);
     useEffect(() => {
         setFocused(Boolean(sectionRef.current?.contains(document.activeElement)));
+        setCoverFocused(recommendationCoverTriggerRef.current === document.activeElement);
     }, [canOpen, reducedMotion]);
     useEffect(() => {
         if (!autoplay) return;
@@ -110,6 +132,18 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
         ['description', 'summary', 'Summary', 'Description'].map(key => source?.[key])
     )).find(value => typeof value === 'string' && value.trim())?.trim() || '';
     const openBook = () => onOpenFile?.(file);
+    const openCoverPreview = event => {
+        if (!file?.cover || controlsDisabled) return;
+        event.currentTarget.focus();
+        setCoverPreview({
+            src: file.cover,
+            filePath: currentPath,
+            alt: bookTitle(file),
+            previewKey: currentPath,
+            sourceElement: recommendationCoverRef.current?.querySelector('img'),
+            returnFocusElement: event.currentTarget,
+        });
+    };
     return <><section ref={sectionRef} className="reading-dashboard-recommendation" aria-busy={loading}
         aria-label={t('reading_lists.dashboard_recommendation')} aria-roledescription={t('reading_lists.dashboard_recommendation_carousel')}
         data-file-path={canOpen ? currentPath : undefined}
@@ -141,7 +175,10 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
                             aria-label={`${t('reading_lists.dashboard_read')}: ${bookTitle(file)}`}>
                             <FaIcon name="bookOpen" size={12} />{t('reading_lists.dashboard_read')}<FaIcon name="angleRight" size={11} />
                         </button>
-                        <button type="button" ref={shuffleButtonRef} className="reading-dashboard-recommendation-shuffle" onClick={() => setShuffleOpen(true)}
+                        <button type="button" ref={shuffleButtonRef} className="reading-dashboard-recommendation-shuffle" onClick={() => {
+                            trackTelemetry('feature_used', { feature: 'daily-recommendation-refresh', source: 'navigation' });
+                            setShuffleOpen(true);
+                        }}
                             disabled={shuffleOpen || recommendation.newRecommendationLoading}>
                             <FaIcon name="shuffle" size={12} />{t('reading_lists.dashboard_new_recommendation')}
                         </button>
@@ -153,15 +190,20 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
                     {error && !loading && <button type="button" className="reading-dashboard-link" onClick={refresh}>{t('reading_lists.dashboard_retry')}</button>}
                 </>}
             </div>
-            {canOpen ? <motion.button type="button" ref={recommendationCoverRef} className="reading-dashboard-recommendation-cover" onClick={openBook}
-                initial="rest" animate="rest" whileHover="engaged" whileFocus="engaged"
-                aria-label={`${t('reading_lists.dashboard_open_book')}: ${bookTitle(file)}`}>
-                <motion.span className="reading-dashboard-cover" aria-hidden="true"
-                    variants={{ rest: { rotateY: reducedMotion ? 0 : -12, scale: 1 }, engaged: { rotateY: 0, scale: reducedMotion ? 1 : 1.035 } }}
-                    transition={{ duration: reducedMotion ? 0 : 0.3, ease: 'easeOut' }}>
-                    <CoverArtwork src={file.cover} alt="" fallbackAlt="" isDirectory={false} smooth />
-                </motion.span>
-            </motion.button>
+            {canOpen ? <motion.div ref={recommendationCoverRef} className="reading-dashboard-recommendation-cover"
+                initial="rest" animate={coverFocused ? 'engaged' : 'rest'} whileHover="engaged">
+                <span className="reading-dashboard-cover-perspective" aria-hidden="true">
+                    <motion.span className="reading-dashboard-cover"
+                        variants={{ rest: { rotateY: reducedMotion ? 0 : -12, scale: 1 }, engaged: { rotateY: 0, scale: reducedMotion ? 1 : 1.035 } }}
+                        transition={{ duration: reducedMotion ? 0 : 0.3, ease: 'easeOut' }}>
+                        <CoverArtwork src={file.cover} alt="" fallbackAlt="" isDirectory={false} smooth />
+                    </motion.span>
+                </span>
+                <button type="button" ref={recommendationCoverTriggerRef} className="reading-dashboard-recommendation-cover-trigger"
+                    onClick={openCoverPreview} disabled={!file.cover} aria-haspopup="dialog"
+                    aria-label={`${t('cover_preview')}: ${bookTitle(file)}`}
+                    onFocus={() => setCoverFocused(true)} onBlur={() => setCoverFocused(false)} />
+            </motion.div>
                 : <span className="reading-dashboard-recommendation-placeholder" aria-hidden="true"><FaIcon name="bookOpen" size={38} /></span>}
         </motion.div>
         {canOpen && <div className="reading-dashboard-recommendation-controls">
@@ -188,6 +230,8 @@ function DailyRecommendation({ recommendation, files, libraries, onOpenFile, t }
                 aria-label={t('reading_lists.dashboard_recommendation_position', [currentIndex + 1, picks.length])}>{currentIndex + 1} / {picks.length}</span>
         </div>}
     </section>
+        {coverPreview && <CoverPreviewDialog {...coverPreview} t={t} onClose={() => setCoverPreview(null)}
+            onNavigate={picks.length > 1 ? navigateCoverPreview : undefined} />}
         {preferencesOpen && <RecommendationPreferences preferences={recommendation.preferences} options={recommendation.preferenceOptions} libraries={libraries} currentFile={file}
             onApply={next => { recommendation.updatePreferences(next); setPreferencesOpen(false); }} onClose={() => setPreferencesOpen(false)} returnFocusElement={preferencesButtonRef.current} t={t} />}
         {shuffleOpen && <RecommendationShuffleOverlay files={files} currentFile={file} t={t}

@@ -319,7 +319,33 @@
     padding: 0;
     margin: 5px 2px 5px 8px;
     background: transparent;
+}
+
+.reading-dashboard-recommendation-cover-trigger {
+    position: absolute;
+    inset: -5px -5px -5px -10px;
+    z-index: 3;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+}
+
+.reading-dashboard-recommendation-cover-trigger:not(:disabled) {
+    cursor: zoom-in;
+}
+
+.reading-dashboard-cover-perspective {
+    display: block;
     perspective: 700px;
+    pointer-events: none;
+}
+
+.reading-dashboard-recommendation-cover .reading-dashboard-cover,
+.reading-dashboard-recommendation-cover .reading-dashboard-cover::before,
+.reading-dashboard-recommendation-cover .reading-dashboard-cover img {
+    pointer-events: none;
+    cursor: inherit;
 }
 
 .reading-dashboard-recommendation-cover .reading-dashboard-cover {

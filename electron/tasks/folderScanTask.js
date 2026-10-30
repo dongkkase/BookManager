@@ -1655,8 +1655,13 @@ async function createDirectoryPreview(fullPath, stats, options = {}) {
         cover_file_path: '',
         cover_file_mtime: 0,
         cover_file_size: 0,
+        folder_covers: [],
     };
     const pendingDirectories = [{ path: fullPath, depth: 0 }];
+    const covers = [];
+    const result = () => covers.length > 0
+        ? { ...directory, ...covers[0], folder_covers: covers.slice(1) }
+        : fallback;
     let libraryDb = options.libraryDb || null;
     let fallback = directory;
     try {
@@ -1691,15 +1696,17 @@ async function createDirectoryPreview(fullPath, stats, options = {}) {
                         const file = await createFileData(filePath, fileStats, { ...options, libraryDb });
                         throwIfTaskCancelled(options);
                         const preview = {
-                            ...directory,
                             cover: file.cover || '',
                             thumb_path: file.thumb_path || '',
                             cover_file_path: filePath,
                             cover_file_mtime: file.mtime,
                             cover_file_size: file.size,
                         };
-                        if (file.cover) return preview;
-                        if (fallback === directory) fallback = preview;
+                        if (file.cover) {
+                            covers.push(preview);
+                            if (covers.length === 3) return result();
+                        }
+                        if (fallback === directory) fallback = { ...directory, ...preview };
                     } catch (error) {
                         if (error.code === 'TASK_CANCELLED') throw error;
                     }
@@ -1710,7 +1717,7 @@ async function createDirectoryPreview(fullPath, stats, options = {}) {
                 pendingDirectories.push({ path: path.join(current.path, child.name), depth: current.depth + 1 });
             }
         }
-        return fallback;
+        return result();
     } finally {
         if (!options.libraryDb) await libraryDb?.close();
     }
